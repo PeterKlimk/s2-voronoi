@@ -6,9 +6,9 @@ For hex3 app/workspace guidance, see `AGENTS.md` at the repo root.
 ## Build & Test
 
 ```bash
-cargo test -p s2-voronoi --release   # Release mode recommended (debug is slow)
-cargo test -p s2-voronoi --release --features qhull  # Include qhull comparison tests
-cargo clippy -p s2-voronoi
+cargo test --release   # Release mode recommended (debug is slow)
+cargo test --release --features qhull  # Include qhull comparison tests
+cargo clippy
 cargo fmt
 ```
 
@@ -23,7 +23,7 @@ The qhull backend (convex hull duality) is provided as ground truth for testing 
 ## Module Structure
 
 ```
-crates/s2-voronoi/src/
+src/
 ├── lib.rs            # Public API: compute(), VoronoiOutput, VoronoiDiagnostics
 ├── types.rs          # UnitVec3, UnitVec3Like trait
 ├── diagram.rs        # SphericalVoronoi, CellView diagram storage

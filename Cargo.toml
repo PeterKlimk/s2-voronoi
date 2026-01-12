@@ -8,6 +8,7 @@ keywords = ["voronoi", "sphere", "geometry", "s2"]
 categories = ["algorithms", "mathematics", "science"]
 
 [features]
+default = ["parallel"]
 parallel = ["rayon"]
 glam = []  # Enable UnitVec3Like impl for glam::Vec3
 timing = []  # Enable detailed timing instrumentation
@@ -32,3 +33,18 @@ rayon = { version = "1.10", optional = true }
 qhull-enhanced = { version = "0.1", optional = true }
 
 [dev-dependencies]
+
+[profile.checked]
+inherits = "release"
+opt-level = 3
+debug = true
+debug-assertions = true
+
+[profile.checked.package."*"]
+debug = false
+debug-assertions = false
+
+[profile.profiled]
+inherits = "release"
+opt-level = 3
+debug = true

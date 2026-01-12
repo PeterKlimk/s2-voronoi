@@ -6,9 +6,9 @@ For hex3 app/workspace guidance, see `CLAUDE.md` at the repo root.
 ## Build & Test Commands
 
 ```bash
-cargo test -p s2-voronoi --release   # Release mode recommended (debug is slow)
-cargo test -p s2-voronoi --release --features qhull  # Include qhull comparison tests
-cargo clippy -p s2-voronoi
+cargo test --release   # Release mode recommended (debug is slow)
+cargo test --release --features qhull  # Include qhull comparison tests
+cargo clippy
 cargo fmt
 ```
 
