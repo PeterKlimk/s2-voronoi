@@ -15,7 +15,7 @@ use glam::Vec3;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use s2_voronoi::VoronoiConfig;
+use s2_voronoi::{UnitVec3, VoronoiConfig};
 use std::io::{self, Write};
 use std::time::Instant;
 
@@ -237,8 +237,13 @@ fn validate_against_hull(points: &[Vec3], preprocess: bool) {
     let hull = s2_voronoi::convex_hull::compute_voronoi_qhull(points);
     let hull_time = t0.elapsed().as_secs_f64() * 1000.0;
 
+    let unit_points: Vec<UnitVec3> = points
+        .iter()
+        .map(|p| UnitVec3::new(p.x, p.y, p.z))
+        .collect();
+
     let t1 = Instant::now();
-    let s2_output = s2_voronoi::compute_with(points, VoronoiConfig { preprocess })
+    let s2_output = s2_voronoi::compute_with(&unit_points, VoronoiConfig { preprocess })
         .expect("s2-voronoi should succeed");
     let s2_time = t1.elapsed().as_secs_f64() * 1000.0;
 
@@ -296,11 +301,11 @@ struct BenchResult {
     num_cells: usize,
 }
 
-fn run_benchmark(points: &[Vec3]) -> BenchResult {
+fn run_benchmark(points: &[UnitVec3]) -> BenchResult {
     run_benchmark_with_config(points, VoronoiConfig::default())
 }
 
-fn run_benchmark_with_config(points: &[Vec3], config: VoronoiConfig) -> BenchResult {
+fn run_benchmark_with_config(points: &[UnitVec3], config: VoronoiConfig) -> BenchResult {
     let n = points.len();
 
     let t0 = Instant::now();
@@ -370,6 +375,10 @@ fn main() {
 
         let t_gen = Instant::now();
         let points = generate_points(*n, args.seed, args.lloyd);
+        let unit_points: Vec<UnitVec3> = points
+            .iter()
+            .map(|p| UnitVec3::new(p.x, p.y, p.z))
+            .collect();
         let gen_time = t_gen.elapsed().as_secs_f64() * 1000.0;
         println!("Point generation: {:.1}ms", gen_time);
 
@@ -386,7 +395,7 @@ fn main() {
                 io::stdout().flush().unwrap();
             }
 
-            let result = run_benchmark_with_config(&points, config.clone());
+            let result = run_benchmark_with_config(&unit_points, config.clone());
             times.push(result.time_ms);
 
             if args.repeat > 1 {
