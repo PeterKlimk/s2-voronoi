@@ -1,0 +1,34 @@
+[package]
+name = "s2-voronoi"
+version = "0.1.0"
+edition = "2021"
+description = "Spherical Voronoi diagrams on the unit sphere (S2)"
+license = "MIT OR Apache-2.0"
+keywords = ["voronoi", "sphere", "geometry", "s2"]
+categories = ["algorithms", "mathematics", "science"]
+
+[features]
+parallel = ["rayon"]
+glam = []  # Enable UnitVec3Like impl for glam::Vec3
+timing = []  # Enable detailed timing instrumentation
+qhull = ["qhull-enhanced"]  # Convex hull backend (test/bench only)
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+kiddo = "4"
+rand = "0.8"
+rand_chacha = "0.3"
+# Math (always internal dependency)
+glam = { version = "0.29", features = ["bytemuck"] }
+bytemuck = { version = "1.19", features = ["derive"] }
+
+# Fast hashing for integer keys
+rustc-hash = "2"
+
+# Optional: parallelism
+rayon = { version = "1.10", optional = true }
+
+# Optional: convex hull backend (test-only)
+qhull-enhanced = { version = "0.1", optional = true }
+
+[dev-dependencies]

@@ -1,0 +1,104 @@
+//! K-nearest neighbor provider for Voronoi cell construction.
+
+use glam::Vec3;
+
+/// K-NN provider using CubeMapGrid - O(n) build time, good for large point sets.
+///
+/// Wraps a CubeMapGrid and provides confidence-based k-NN queries with const-generic
+/// fixed buffers for zero per-query allocation.
+pub struct CubeMapGridKnn<'a> {
+    grid: crate::cube_grid::CubeMapGrid,
+    points: &'a [Vec3],
+}
+
+impl<'a> CubeMapGridKnn<'a> {
+    pub fn new(points: &'a [Vec3]) -> Self {
+        Self::new_with_target_density(points, super::KNN_GRID_TARGET_DENSITY)
+    }
+
+    pub fn new_with_target_density(points: &'a [Vec3], target_points_per_cell: f64) -> Self {
+        let n = points.len();
+        let target = target_points_per_cell.max(1.0);
+        let res = ((n as f64 / (6.0 * target)).sqrt() as usize).max(4);
+        let grid = crate::cube_grid::CubeMapGrid::new(points, res);
+        Self { grid, points }
+    }
+
+    /// Access the underlying points slice.
+    #[inline]
+    pub fn points(&self) -> &[Vec3] {
+        self.points
+    }
+
+    /// Access the underlying cube-map grid.
+    #[inline]
+    pub fn grid(&self) -> &crate::cube_grid::CubeMapGrid {
+        &self.grid
+    }
+
+    /// Create a scratch buffer for k-NN queries.
+    #[inline]
+    pub fn make_scratch(&self) -> crate::cube_grid::CubeMapGridScratch {
+        self.grid.make_scratch()
+    }
+
+    /// Start a resumable k-NN query, tracking up to `track_limit` neighbors.
+    #[inline]
+    pub fn knn_resumable_into(
+        &self,
+        query: Vec3,
+        query_idx: usize,
+        k: usize,
+        track_limit: usize,
+        scratch: &mut crate::cube_grid::CubeMapGridScratch,
+        out_indices: &mut Vec<usize>,
+    ) -> crate::cube_grid::KnnStatus {
+        self.grid.find_k_nearest_resumable_into(
+            self.points,
+            query,
+            query_idx,
+            k,
+            track_limit,
+            scratch,
+            out_indices,
+        )
+    }
+
+    /// Resume a resumable k-NN query to fetch additional neighbors.
+    #[inline]
+    pub fn knn_resume_into(
+        &self,
+        query: Vec3,
+        query_idx: usize,
+        new_k: usize,
+        scratch: &mut crate::cube_grid::CubeMapGridScratch,
+        out_indices: &mut Vec<usize>,
+    ) -> crate::cube_grid::KnnStatus {
+        self.grid
+            .resume_k_nearest_into(self.points, query, query_idx, new_k, scratch, out_indices)
+    }
+
+    /// Find the k nearest neighbors to the query point.
+    #[inline]
+    pub fn knn_into(
+        &self,
+        query: Vec3,
+        query_idx: usize,
+        k: usize,
+        scratch: &mut crate::cube_grid::CubeMapGridScratch,
+        out_indices: &mut Vec<usize>,
+    ) {
+        out_indices.clear();
+        if k == 0 {
+            return;
+        }
+        self.grid.find_k_nearest_with_scratch_into_dot_topk(
+            self.points,
+            query,
+            query_idx,
+            k,
+            scratch,
+            out_indices,
+        );
+    }
+}
