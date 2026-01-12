@@ -85,7 +85,7 @@ pub(super) const KNN_RESTART_KS: [usize; 2] = [24, KNN_RESTART_MAX];
 /// Target points per cell for the cube-map KNN grid.
 /// Lower = more cells, faster scans, more heap overhead.
 /// Higher = fewer cells, longer scans, less overhead.
-pub(super) const KNN_GRID_TARGET_DENSITY: f64 = 24.0;
+pub(super) const KNN_GRID_TARGET_DENSITY: f64 = 16.0;
 
 // Default termination cadence:
 // - start near the end of the initial k pass
@@ -1119,6 +1119,8 @@ fn compute_voronoi_gpu_style_core(
     let t = Timer::start();
     let knn = CubeMapGridKnn::new(&effective_points);
     tb.set_knn_build(t.elapsed());
+    #[cfg(feature = "timing")]
+    tb.set_knn_build_sub(knn.grid_build_timings().clone());
 
     // Build cells using sharded live dedup
     let t = Timer::start();

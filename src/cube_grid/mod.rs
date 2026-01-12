@@ -16,6 +16,39 @@ pub mod packed_knn;
 use glam::{Vec3, Vec3A};
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
+use std::time::Duration;
+
+/// Fine-grained timings for `CubeMapGrid::new`.
+#[cfg(feature = "timing")]
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CubeMapGridBuildTimings {
+    pub count_cells: Duration,
+    pub prefix_sum: Duration,
+    pub scatter_soa: Duration,
+    pub neighbors: Duration,
+    pub ring2: Duration,
+    pub cell_bounds: Duration,
+    pub security_3x3: Duration,
+}
+
+/// Dummy timings when feature is disabled (zero-sized).
+#[cfg(not(feature = "timing"))]
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct CubeMapGridBuildTimings;
+
+#[cfg(feature = "timing")]
+impl CubeMapGridBuildTimings {
+    #[inline]
+    pub fn total(&self) -> Duration {
+        self.count_cells
+            + self.prefix_sum
+            + self.scatter_soa
+            + self.neighbors
+            + self.ring2
+            + self.cell_bounds
+            + self.security_3x3
+    }
+}
 
 trait UnitVec: Copy {
     fn dot(self, other: Self) -> f32;
@@ -732,10 +765,35 @@ impl CubeMapGrid {
     /// - res ≈ sqrt(n / 300) for ~50 points per cell
     /// - res ≈ sqrt(n / 600) for ~100 points per cell
     pub fn new(points: &[Vec3], res: usize) -> Self {
+        #[cfg(feature = "timing")]
+        let mut timings = CubeMapGridBuildTimings::default();
+        #[cfg(feature = "timing")]
+        return Self::new_impl(points, res, Some(&mut timings));
+        #[cfg(not(feature = "timing"))]
+        return Self::new_impl(points, res, None);
+    }
+
+    #[cfg(feature = "timing")]
+    pub fn new_with_build_timings(
+        points: &[Vec3],
+        res: usize,
+        timings: &mut CubeMapGridBuildTimings,
+    ) -> Self {
+        Self::new_impl(points, res, Some(timings))
+    }
+
+    fn new_impl(
+        points: &[Vec3],
+        res: usize,
+        #[cfg(feature = "timing")] mut timings: Option<&mut CubeMapGridBuildTimings>,
+        #[cfg(not(feature = "timing"))] _timings: Option<&mut CubeMapGridBuildTimings>,
+    ) -> Self {
         assert!(res > 0, "CubeMapGrid requires res > 0");
         let num_cells = 6 * res * res;
 
         // Step 1: Count points per cell
+        #[cfg(feature = "timing")]
+        let t = std::time::Instant::now();
         let mut cell_counts = vec![0u32; num_cells];
         let mut point_cells = Vec::with_capacity(points.len());
         for p in points {
@@ -744,8 +802,14 @@ impl CubeMapGrid {
             point_cells.push(cell as u32);
             cell_counts[cell] += 1;
         }
+        #[cfg(feature = "timing")]
+        if let Some(timings) = timings.as_deref_mut() {
+            timings.count_cells += t.elapsed();
+        }
 
         // Step 2: Prefix sum to get offsets
+        #[cfg(feature = "timing")]
+        let t = std::time::Instant::now();
         let mut cell_offsets = Vec::with_capacity(num_cells + 1);
         cell_offsets.push(0);
         let mut sum = 0u32;
@@ -753,10 +817,16 @@ impl CubeMapGrid {
             sum += count;
             cell_offsets.push(sum);
         }
+        #[cfg(feature = "timing")]
+        if let Some(timings) = timings.as_deref_mut() {
+            timings.prefix_sum += t.elapsed();
+        }
 
         // Step 3: Scatter points into cells and build SoA layout (points stored contiguous by cell).
         //
         // This is a single pass that avoids an additional gather pass over a random permutation.
+        #[cfg(feature = "timing")]
+        let t = std::time::Instant::now();
         let n = points.len();
         debug_assert_eq!(cell_offsets[num_cells] as usize, n, "prefix sum mismatch");
 
@@ -800,13 +870,39 @@ impl CubeMapGrid {
             cell_points_y.set_len(n);
             cell_points_z.set_len(n);
         }
+        #[cfg(feature = "timing")]
+        if let Some(timings) = timings.as_deref_mut() {
+            timings.scatter_soa += t.elapsed();
+        }
 
         // Step 4: Precompute neighbors and ring-2 cells for each cell
+        #[cfg(feature = "timing")]
+        let t = std::time::Instant::now();
         let neighbors = Self::compute_all_neighbors(res);
+        #[cfg(feature = "timing")]
+        if let Some(timings) = timings.as_deref_mut() {
+            timings.neighbors += t.elapsed();
+        }
+
+        #[cfg(feature = "timing")]
+        let t = std::time::Instant::now();
         let (ring2, ring2_lens) = Self::compute_ring2(res, &neighbors);
+        #[cfg(feature = "timing")]
+        if let Some(timings) = timings.as_deref_mut() {
+            timings.ring2 += t.elapsed();
+        }
+
+        #[cfg(feature = "timing")]
+        let t = std::time::Instant::now();
         let (cell_centers, cell_cos_radius, cell_sin_radius) = Self::compute_cell_bounds(res);
+        #[cfg(feature = "timing")]
+        if let Some(timings) = timings.as_deref_mut() {
+            timings.cell_bounds += t.elapsed();
+        }
 
         // Step 5: Precompute security_3x3 threshold per cell using ring-2 caps
+        #[cfg(feature = "timing")]
+        let t = std::time::Instant::now();
         let security_3x3 = Self::compute_security_3x3(
             res,
             &cell_centers,
@@ -815,6 +911,10 @@ impl CubeMapGrid {
             &ring2,
             &ring2_lens,
         );
+        #[cfg(feature = "timing")]
+        if let Some(timings) = timings.as_deref_mut() {
+            timings.security_3x3 += t.elapsed();
+        }
 
         CubeMapGrid {
             res,
@@ -901,33 +1001,101 @@ impl CubeMapGrid {
         for cell in 0..num_cells {
             let base = cell * 9;
             let near = &neighbors[base..base + 9];
+            debug_assert_eq!(near.len(), 9);
+
+            // Interior cells (>=2 away from any edge) have a fixed ring-2 pattern on the face.
+            let (face, iu, iv) = cell_to_face_ij(cell, res);
+            if iu >= 2 && iv >= 2 && iu + 2 < res && iv + 2 < res {
+                let mut ring = [u32::MAX; RING2_MAX];
+                let mut ring_len = 0usize;
+                let face_base = face * res * res;
+                let iu = iu as isize;
+                let iv = iv as isize;
+                for dv in -2isize..=2 {
+                    for du in -2isize..=2 {
+                        if du == 0 && dv == 0 {
+                            continue;
+                        }
+                        if du.abs().max(dv.abs()) != 2 {
+                            continue;
+                        }
+                        let u = (iu + du) as usize;
+                        let v = (iv + dv) as usize;
+                        ring[ring_len] = (face_base + v * res + u) as u32;
+                        ring_len += 1;
+                    }
+                }
+                debug_assert_eq!(
+                    ring_len, RING2_MAX,
+                    "interior ring2 size mismatch: {}",
+                    ring_len
+                );
+                ring2[cell] = ring;
+                ring2_lens[cell] = ring_len as u8;
+                continue;
+            }
+
+            // Unroll near-membership checks: this is hot (called for every neighbor-of-neighbor).
+            let near0 = near[0];
+            let near1 = near[1];
+            let near2 = near[2];
+            let near3 = near[3];
+            let near4 = near[4];
+            let near5 = near[5];
+            let near6 = near[6];
+            let near7 = near[7];
+            let near8 = near[8];
+
+            #[inline(always)]
+            fn ring_contains(ring: &[u32; RING2_MAX], ring_len: usize, v: u32) -> bool {
+                let mut i = 0usize;
+                while i < ring_len {
+                    if ring[i] == v {
+                        return true;
+                    }
+                    i += 1;
+                }
+                false
+            }
 
             let mut ring = [u32::MAX; RING2_MAX];
             let mut ring_len = 0usize;
-            for &n1 in near {
-                if n1 == u32::MAX {
+            for &n1_cell in near {
+                if n1_cell == u32::MAX {
                     continue;
                 }
-                let n1 = n1 as usize;
-                let b1 = n1 * 9;
-                let near2 = &neighbors[b1..b1 + 9];
-                for &n2 in near2 {
-                    if n2 == u32::MAX {
+                let n1_idx = n1_cell as usize;
+                let b1 = n1_idx * 9;
+                let near_of_n1 = &neighbors[b1..b1 + 9];
+                for &cand in near_of_n1 {
+                    if cand == u32::MAX {
                         continue;
                     }
-                    if near.iter().any(|&x| x == n2) {
+                    // Skip the 3×3 neighborhood (including self).
+                    if cand == near0
+                        || cand == near1
+                        || cand == near2
+                        || cand == near3
+                        || cand == near4
+                        || cand == near5
+                        || cand == near6
+                        || cand == near7
+                        || cand == near8
+                    {
                         continue;
                     }
-                    if ring[..ring_len].iter().any(|&x| x == n2) {
+                    if ring_contains(&ring, ring_len, cand) {
                         continue;
                     }
-                    debug_assert!(
-                        ring_len < RING2_MAX,
-                        "ring2 exceeded max size: {}",
-                        ring_len + 1
-                    );
-                    ring[ring_len] = n2;
+                    debug_assert!(ring_len < RING2_MAX, "ring2 exceeded max size");
+                    ring[ring_len] = cand;
                     ring_len += 1;
+                    if ring_len == RING2_MAX {
+                        break;
+                    }
+                }
+                if ring_len == RING2_MAX {
+                    break;
                 }
             }
 

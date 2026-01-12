@@ -10,6 +10,8 @@
 use std::time::Duration;
 
 #[cfg(feature = "timing")]
+use crate::cube_grid::CubeMapGridBuildTimings;
+#[cfg(feature = "timing")]
 use rustc_hash::FxHashMap;
 
 /// Histogram of neighbors processed at termination.
@@ -136,6 +138,7 @@ pub struct PhaseTimings {
     pub total: Duration,
     pub preprocess: Duration,
     pub knn_build: Duration,
+    pub knn_build_sub: Option<CubeMapGridBuildTimings>,
     pub cell_construction: Duration,
     pub cell_sub: CellSubPhases,
     pub dedup: Duration,
@@ -169,6 +172,54 @@ impl PhaseTimings {
             self.knn_build.as_secs_f64() * 1000.0,
             pct(self.knn_build)
         );
+        if let Some(sub) = &self.knn_build_sub {
+            if sub.total().as_nanos() > 0 {
+                // Sub-phase breakdown inside the grid build.
+                let sub_pct_knn = |d: Duration| {
+                    if self.knn_build.as_nanos() == 0 {
+                        0.0
+                    } else {
+                        d.as_secs_f64() / self.knn_build.as_secs_f64() * 100.0
+                    }
+                };
+                let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+                eprintln!(
+                    "    grid_count:      {:7.1}ms ({:4.1}%)",
+                    ms(sub.count_cells),
+                    sub_pct_knn(sub.count_cells)
+                );
+                eprintln!(
+                    "    grid_prefix:     {:7.1}ms ({:4.1}%)",
+                    ms(sub.prefix_sum),
+                    sub_pct_knn(sub.prefix_sum)
+                );
+                eprintln!(
+                    "    grid_scatter:    {:7.1}ms ({:4.1}%)",
+                    ms(sub.scatter_soa),
+                    sub_pct_knn(sub.scatter_soa)
+                );
+                eprintln!(
+                    "    grid_neighbors:  {:7.1}ms ({:4.1}%)",
+                    ms(sub.neighbors),
+                    sub_pct_knn(sub.neighbors)
+                );
+                eprintln!(
+                    "    grid_ring2:      {:7.1}ms ({:4.1}%)",
+                    ms(sub.ring2),
+                    sub_pct_knn(sub.ring2)
+                );
+                eprintln!(
+                    "    grid_bounds:     {:7.1}ms ({:4.1}%)",
+                    ms(sub.cell_bounds),
+                    sub_pct_knn(sub.cell_bounds)
+                );
+                eprintln!(
+                    "    grid_security:   {:7.1}ms ({:4.1}%)",
+                    ms(sub.security_3x3),
+                    sub_pct_knn(sub.security_3x3)
+                );
+            }
+        }
         eprintln!(
             "  cell_construction: {:7.1}ms ({:4.1}%)",
             self.cell_construction.as_secs_f64() * 1000.0,
@@ -889,6 +940,7 @@ pub struct TimingBuilder {
     t_start: std::time::Instant,
     preprocess: Duration,
     knn_build: Duration,
+    knn_build_sub: Option<CubeMapGridBuildTimings>,
     cell_construction: Duration,
     cell_sub: CellSubPhases,
     dedup: Duration,
@@ -904,6 +956,7 @@ impl TimingBuilder {
             t_start: std::time::Instant::now(),
             preprocess: Duration::ZERO,
             knn_build: Duration::ZERO,
+            knn_build_sub: None,
             cell_construction: Duration::ZERO,
             cell_sub: CellSubPhases::default(),
             dedup: Duration::ZERO,
@@ -919,6 +972,10 @@ impl TimingBuilder {
 
     pub fn set_knn_build(&mut self, d: Duration) {
         self.knn_build = d;
+    }
+
+    pub fn set_knn_build_sub(&mut self, sub: CubeMapGridBuildTimings) {
+        self.knn_build_sub = Some(sub);
     }
 
     pub fn set_cell_construction(&mut self, d: Duration, sub: CellSubPhases) {
@@ -944,6 +1001,7 @@ impl TimingBuilder {
             total: self.t_start.elapsed(),
             preprocess: self.preprocess,
             knn_build: self.knn_build,
+            knn_build_sub: self.knn_build_sub,
             cell_construction: self.cell_construction,
             cell_sub: self.cell_sub,
             dedup: self.dedup,

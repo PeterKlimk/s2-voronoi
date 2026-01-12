@@ -9,6 +9,8 @@ use glam::Vec3;
 pub struct CubeMapGridKnn<'a> {
     grid: crate::cube_grid::CubeMapGrid,
     points: &'a [Vec3],
+    #[cfg(feature = "timing")]
+    grid_build_timings: crate::cube_grid::CubeMapGridBuildTimings,
 }
 
 impl<'a> CubeMapGridKnn<'a> {
@@ -20,8 +22,25 @@ impl<'a> CubeMapGridKnn<'a> {
         let n = points.len();
         let target = target_points_per_cell.max(1.0);
         let res = ((n as f64 / (6.0 * target)).sqrt() as usize).max(4);
-        let grid = crate::cube_grid::CubeMapGrid::new(points, res);
-        Self { grid, points }
+        #[cfg(feature = "timing")]
+        {
+            let mut grid_build_timings = crate::cube_grid::CubeMapGridBuildTimings::default();
+            let grid = crate::cube_grid::CubeMapGrid::new_with_build_timings(
+                points,
+                res,
+                &mut grid_build_timings,
+            );
+            Self {
+                grid,
+                points,
+                grid_build_timings,
+            }
+        }
+        #[cfg(not(feature = "timing"))]
+        {
+            let grid = crate::cube_grid::CubeMapGrid::new(points, res);
+            Self { grid, points }
+        }
     }
 
     /// Access the underlying points slice.
@@ -34,6 +53,12 @@ impl<'a> CubeMapGridKnn<'a> {
     #[inline]
     pub fn grid(&self) -> &crate::cube_grid::CubeMapGrid {
         &self.grid
+    }
+
+    #[cfg(feature = "timing")]
+    #[inline]
+    pub fn grid_build_timings(&self) -> &crate::cube_grid::CubeMapGridBuildTimings {
+        &self.grid_build_timings
     }
 
     /// Create a scratch buffer for k-NN queries.
