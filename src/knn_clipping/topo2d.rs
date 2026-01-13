@@ -76,6 +76,7 @@ struct PolyBuffer {
     edge_planes: [usize; MAX_POLY_VERTICES],
     len: usize,
     max_r2: f64,
+    has_bounding_ref: bool,
 }
 
 impl PolyBuffer {
@@ -87,6 +88,7 @@ impl PolyBuffer {
             edge_planes: [0; MAX_POLY_VERTICES],
             len: 0,
             max_r2: 0.0,
+            has_bounding_ref: false,
         }
     }
 
@@ -102,12 +104,14 @@ impl PolyBuffer {
         self.edge_planes[2] = usize::MAX;
         self.len = 3;
         self.max_r2 = bound * bound;
+        self.has_bounding_ref = true;
     }
 
     #[inline]
     fn clear(&mut self) {
         self.len = 0;
         self.max_r2 = 0.0;
+        self.has_bounding_ref = false;
     }
 
     #[inline]
@@ -123,6 +127,9 @@ impl PolyBuffer {
         let r2 = u * u + w * w;
         if r2 > self.max_r2 {
             self.max_r2 = r2;
+        }
+        if vp.0 == usize::MAX || vp.1 == usize::MAX || ep == usize::MAX {
+            self.has_bounding_ref = true;
         }
         true
     }
@@ -140,12 +147,7 @@ impl PolyBuffer {
     /// Check if polygon still references bounding triangle.
     #[inline]
     fn has_bounding_ref(&self) -> bool {
-        self.vertex_planes[..self.len]
-            .iter()
-            .any(|(pa, pb)| *pa == usize::MAX || *pb == usize::MAX)
-            || self.edge_planes[..self.len]
-                .iter()
-                .any(|&ep| ep == usize::MAX)
+        self.has_bounding_ref
     }
 }
 
@@ -188,6 +190,7 @@ fn clip_convex(
     if n < 3 {
         out.len = 0;
         out.max_r2 = 0.0;
+        out.has_bounding_ref = false;
         return true;
     }
 
@@ -207,6 +210,7 @@ fn clip_convex(
         out.vertex_planes[..n].copy_from_slice(&poly.vertex_planes[..n]);
         out.edge_planes[..n].copy_from_slice(&poly.edge_planes[..n]);
         out.max_r2 = poly.max_r2;
+        out.has_bounding_ref = poly.has_bounding_ref;
         return true;
     }
 
@@ -214,6 +218,7 @@ fn clip_convex(
     if inside_count == 0 {
         out.len = 0;
         out.max_r2 = 0.0;
+        out.has_bounding_ref = false;
         return true;
     }
 
@@ -486,9 +491,7 @@ impl Topo2DBuilder {
 
     /// Get minimum vertex cosine (computed lazily from 2D gnomonic coords).
     pub fn min_vertex_cos(&mut self) -> f64 {
-        if !self.is_bounded() {
-            return 1.0; // Bounding triangle has huge coords, don't use
-        }
+        // Caller typically checks boundedness already; avoid recomputing it here.
         self.current_poly().min_cos()
     }
 
@@ -498,7 +501,7 @@ impl Topo2DBuilder {
             return false;
         }
 
-        let min_cos = self.min_vertex_cos();
+        let min_cos = self.current_poly().min_cos();
         // min_cos > 1.0 means degenerate vertex (sentinel value 2.0) - unsafe to terminate
         if min_cos <= 0.0 || min_cos > 1.0 {
             return false;
