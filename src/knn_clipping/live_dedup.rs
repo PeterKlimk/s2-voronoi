@@ -604,7 +604,7 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                     if packed_count > 0 {
                         let t_clip = Timer::start();
-                        for &neighbor_idx in seed.neighbors {
+                        for (pos, &neighbor_idx) in seed.neighbors.iter().enumerate() {
                             let neighbor_idx = neighbor_idx as usize;
                             if neighbor_idx == i {
                                 continue;
@@ -625,7 +625,17 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                             if builder.is_bounded() {
                                 if termination.should_check(cell_neighbors_processed)
-                                    && builder.can_terminate(worst_cos)
+                                    && builder.can_terminate({
+                                        let mut bound = worst_cos;
+                                        for &next in seed.neighbors.iter().skip(pos + 1) {
+                                            let next = next as usize;
+                                            if next != i {
+                                                bound = points[i].dot(points[next]);
+                                                break;
+                                            }
+                                        }
+                                        bound
+                                    })
                                 {
                                     terminated = true;
                                     break;
@@ -667,7 +677,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                     knn_stage = KnnCellStage::Resume(resume_k);
 
                     let t_clip = Timer::start();
-                    for &neighbor_idx in &neighbors {
+                    for (pos, &neighbor_idx) in neighbors.iter().enumerate() {
                         if did_packed && builder.has_neighbor(neighbor_idx) {
                             continue;
                         }
@@ -687,7 +697,16 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                         if builder.is_bounded() {
                             if termination.should_check(cell_neighbors_processed)
-                                && builder.can_terminate(worst_cos)
+                                && builder.can_terminate({
+                                    let mut bound = worst_cos;
+                                    for &next in neighbors.iter().skip(pos + 1) {
+                                        if next != i {
+                                            bound = points[i].dot(points[next]);
+                                            break;
+                                        }
+                                    }
+                                    bound
+                                })
                             {
                                 terminated = true;
                                 break;
@@ -728,7 +747,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                         knn_stage = KnnCellStage::Restart(k_stage);
 
                         let t_clip = Timer::start();
-                        for &neighbor_idx in &neighbors {
+                        for (pos, &neighbor_idx) in neighbors.iter().enumerate() {
                             if builder.has_neighbor(neighbor_idx) {
                                 continue;
                             }
@@ -742,7 +761,16 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                             if builder.is_bounded() {
                                 if termination.should_check(cell_neighbors_processed)
-                                    && builder.can_terminate(worst_cos)
+                                    && builder.can_terminate({
+                                        let mut bound = worst_cos;
+                                        for &next in neighbors.iter().skip(pos + 1) {
+                                            if next != i {
+                                                bound = points[i].dot(points[next]);
+                                                break;
+                                            }
+                                        }
+                                        bound
+                                    })
                                 {
                                     terminated = true;
                                     break;
@@ -825,7 +853,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                         knn_stage = KnnCellStage::Restart(next_k);
 
                         let t_clip = Timer::start();
-                        for &neighbor_idx in &neighbors {
+                        for (pos, &neighbor_idx) in neighbors.iter().enumerate() {
                             if builder.has_neighbor(neighbor_idx) {
                                 continue;
                             }
@@ -838,7 +866,16 @@ pub(super) fn build_cells_sharded_live_dedup(
                             worst_cos = worst_cos.min(dot);
 
                             if termination.should_check(cell_neighbors_processed)
-                                && builder.can_terminate(worst_cos)
+                                && builder.can_terminate({
+                                    let mut bound = worst_cos;
+                                    for &next in neighbors.iter().skip(pos + 1) {
+                                        if next != i {
+                                            bound = points[i].dot(points[next]);
+                                            break;
+                                        }
+                                    }
+                                    bound
+                                })
                             {
                                 terminated = true;
                                 break;
