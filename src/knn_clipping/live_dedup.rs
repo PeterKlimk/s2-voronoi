@@ -110,7 +110,7 @@ struct EdgeLocal {
 #[derive(Clone, Copy)]
 struct EdgeToLater {
     edge: EdgeLocal,
-    local_b: usize,
+    local_b: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -420,7 +420,7 @@ fn collect_cell_edges(
     let rank_a = rank_by_local[local];
 
     for i in 0..n {
-        let j = (i + 1) % n;
+        let j = if i + 1 == n { 0 } else { i + 1 };
         let key_i = cell_vertices[i].0;
         let key_j = cell_vertices[j].0;
         let neighbor = edge_neighbors[i];
@@ -430,11 +430,10 @@ fn collect_cell_edges(
         if neighbor == cell_idx {
             continue;
         }
-        let endpoints = canonical_endpoints(key_i, key_j);
-        let locals = if endpoints[0] == key_i {
-            [i as u8, j as u8]
+        let (endpoints, locals) = if key_i <= key_j {
+            ([key_i, key_j], [i as u8, j as u8])
         } else {
-            [j as u8, i as u8]
+            ([key_j, key_i], [j as u8, i as u8])
         };
         let edge = EdgeLocal {
             key: pack_edge(cell_idx, neighbor),
@@ -450,7 +449,10 @@ fn collect_cell_edges(
             );
             let rank_b = rank_by_local[local_b];
             if rank_a < rank_b {
-                edges_to_later.push(EdgeToLater { edge, local_b });
+                edges_to_later.push(EdgeToLater {
+                    edge,
+                    local_b: u32::try_from(local_b).expect("local index must fit in u32"),
+                });
             } else {
                 edges_to_earlier.push(edge);
             }
@@ -1115,7 +1117,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                 let t_edge_emit = Timer::start();
                 for entry in edges_to_later.drain(..) {
                     let locals = entry.edge.locals;
-                    shard.dedup.push_edge_check(entry.local_b, EdgeCheck {
+                    shard.dedup.push_edge_check(entry.local_b as usize, EdgeCheck {
                         key: entry.edge.key,
                         endpoints: entry.edge.endpoints,
                         indices: [
