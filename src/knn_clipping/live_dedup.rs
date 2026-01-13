@@ -82,6 +82,14 @@ struct EdgeCheck {
     indices: [u32; 2],
 }
 
+const EDGE_CHECK_NONE: u32 = u32::MAX;
+
+#[derive(Clone, Copy)]
+struct EdgeCheckNode {
+    check: EdgeCheck,
+    next: u32,
+}
+
 #[derive(Clone, Copy)]
 struct EdgeCheckOverflow {
     key: u64,
@@ -218,7 +226,9 @@ struct ShardDedup {
     support_map: FxHashMap<Vec<u32>, u32>,
     support_data: Vec<u32>,
     support_overflow: Vec<SupportOverflow>,
-    edge_check_pending: Vec<Vec<EdgeCheck>>,
+    edge_check_heads: Vec<u32>,
+    edge_check_nodes: Vec<EdgeCheckNode>,
+    edge_check_free: u32,
 }
 
 impl ShardDedup {
@@ -227,7 +237,52 @@ impl ShardDedup {
             support_map: FxHashMap::default(),
             support_data: Vec::new(),
             support_overflow: Vec::new(),
-            edge_check_pending: vec![Vec::new(); num_local_generators],
+            edge_check_heads: vec![EDGE_CHECK_NONE; num_local_generators],
+            edge_check_nodes: Vec::new(),
+            edge_check_free: EDGE_CHECK_NONE,
+        }
+    }
+
+    #[inline(always)]
+    fn push_edge_check(&mut self, local: usize, check: EdgeCheck) {
+        debug_assert!(local < self.edge_check_heads.len(), "edge check local out of bounds");
+
+        let idx = if self.edge_check_free != EDGE_CHECK_NONE {
+            let idx = self.edge_check_free;
+            let next_free = self.edge_check_nodes[idx as usize].next;
+            self.edge_check_free = next_free;
+            idx
+        } else {
+            let idx = u32::try_from(self.edge_check_nodes.len()).expect("edge check pool overflow");
+            self.edge_check_nodes.push(EdgeCheckNode {
+                check,
+                next: EDGE_CHECK_NONE,
+            });
+            idx
+        };
+
+        let head = self.edge_check_heads[local];
+        self.edge_check_nodes[idx as usize].check = check;
+        self.edge_check_nodes[idx as usize].next = head;
+        self.edge_check_heads[local] = idx;
+    }
+
+    #[inline(always)]
+    fn take_edge_checks(&mut self, local: usize) -> u32 {
+        debug_assert!(local < self.edge_check_heads.len(), "edge check local out of bounds");
+        let head = self.edge_check_heads[local];
+        self.edge_check_heads[local] = EDGE_CHECK_NONE;
+        head
+    }
+
+    #[inline(always)]
+    fn recycle_edge_checks(&mut self, mut head: u32) {
+        while head != EDGE_CHECK_NONE {
+            let node = &mut self.edge_check_nodes[head as usize];
+            let next = node.next;
+            node.next = self.edge_check_free;
+            self.edge_check_free = head;
+            head = next;
         }
     }
 }
@@ -411,13 +466,19 @@ fn resolve_cell_edge_checks(
     vertex_indices: &mut [u32],
     matched: &mut Vec<bool>,
 ) {
-    let mut assigned = std::mem::take(&mut shard.dedup.edge_check_pending[local]);
-    if assigned.is_empty() && edges_to_earlier.is_empty() {
+    let assigned_head = shard.dedup.take_edge_checks(local);
+    if assigned_head == EDGE_CHECK_NONE && edges_to_earlier.is_empty() {
         return;
     }
     matched.clear();
     matched.resize(edges_to_earlier.len(), false);
-    for assigned_edge in assigned.drain(..) {
+
+    let mut cur = assigned_head;
+    while cur != EDGE_CHECK_NONE {
+        let node = shard.dedup.edge_check_nodes[cur as usize];
+        let assigned_edge = node.check;
+        let next = node.next;
+
         let mut found = None;
         for (idx, edge) in edges_to_earlier.iter().enumerate() {
             if edge.key == assigned_edge.key {
@@ -425,44 +486,47 @@ fn resolve_cell_edge_checks(
                 break;
             }
         }
-        let Some(edge_idx) = found else {
+        if let Some(edge_idx) = found {
+            if matched[edge_idx] {
+                debug_assert!(false, "edge check duplicate side");
+                shard.output.bad_edges.push(BadEdgeRecord {
+                    key: assigned_edge.key,
+                    reason: BadEdgeReason::DuplicateSide,
+                });
+            } else {
+                matched[edge_idx] = true;
+                let emitted = edges_to_earlier[edge_idx];
+                for k in 0..2 {
+                    if assigned_edge.endpoints[k] == emitted.endpoints[k] {
+                        let idx = assigned_edge.indices[k];
+                        if idx != INVALID_INDEX {
+                            let local_idx = emitted.locals[k] as usize;
+                            let existing = vertex_indices[local_idx];
+                            if existing == INVALID_INDEX {
+                                vertex_indices[local_idx] = idx;
+                            } else if existing != idx {
+                                debug_assert!(false, "edge check index mismatch");
+                            }
+                        }
+                    }
+                }
+                if assigned_edge.endpoints != emitted.endpoints {
+                    shard.output.bad_edges.push(BadEdgeRecord {
+                        key: assigned_edge.key,
+                        reason: BadEdgeReason::EndpointMismatch,
+                    });
+                }
+            }
+        } else {
             shard.output.bad_edges.push(BadEdgeRecord {
                 key: assigned_edge.key,
                 reason: BadEdgeReason::MissingSide,
             });
-            continue;
-        };
-        if matched[edge_idx] {
-            debug_assert!(false, "edge check duplicate side");
-            shard.output.bad_edges.push(BadEdgeRecord {
-                key: assigned_edge.key,
-                reason: BadEdgeReason::DuplicateSide,
-            });
-            continue;
         }
-        matched[edge_idx] = true;
-        let emitted = edges_to_earlier[edge_idx];
-        for k in 0..2 {
-            if assigned_edge.endpoints[k] == emitted.endpoints[k] {
-                let idx = assigned_edge.indices[k];
-                if idx != INVALID_INDEX {
-                    let local_idx = emitted.locals[k] as usize;
-                    let existing = vertex_indices[local_idx];
-                    if existing == INVALID_INDEX {
-                        vertex_indices[local_idx] = idx;
-                    } else if existing != idx {
-                        debug_assert!(false, "edge check index mismatch");
-                    }
-                }
-            }
-        }
-        if assigned_edge.endpoints != emitted.endpoints {
-            shard.output.bad_edges.push(BadEdgeRecord {
-                key: assigned_edge.key,
-                reason: BadEdgeReason::EndpointMismatch,
-            });
-        }
+
+        cur = next;
     }
+    shard.dedup.recycle_edge_checks(assigned_head);
 
     for (idx, edge) in edges_to_earlier.iter().enumerate() {
         if !matched[idx] {
@@ -1049,7 +1113,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                 let t_edge_emit = Timer::start();
                 for entry in edges_to_later.drain(..) {
                     let locals = entry.edge.locals;
-                    shard.dedup.edge_check_pending[entry.local_b].push(EdgeCheck {
+                    shard.dedup.push_edge_check(entry.local_b, EdgeCheck {
                         key: entry.edge.key,
                         endpoints: entry.edge.endpoints,
                         indices: [
