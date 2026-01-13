@@ -1356,21 +1356,12 @@ pub(super) fn assemble_sharded_live_dedup(
     let mut cells: Vec<VoronoiCell> = vec![VoronoiCell::new(0, 0); num_cells];
     let mut cell_indices: Vec<u32> = vec![0; total_cell_indices as usize];
 
-    let shard_globals: Vec<Vec<u32>> = maybe_par_iter!(&finals)
-        .map(|shard| {
-            let mut globals = Vec::with_capacity(shard.output.cell_indices.len());
-            for &packed in &shard.output.cell_indices {
-                debug_assert_ne!(packed, DEFERRED, "deferred index leaked to assembly");
-                let (vbin, local) = unpack_ref(packed);
-                globals.push(vertex_offsets[vbin as usize] + local);
-            }
-            globals
-        })
-        .collect();
-
     #[cfg(debug_assertions)]
     {
-        let expected_indices: usize = shard_globals.iter().map(|v| v.len()).sum();
+        let expected_indices: usize = finals
+            .iter()
+            .map(|shard| shard.output.cell_indices.len())
+            .sum();
         debug_assert_eq!(
             expected_indices,
             cell_indices.len(),
@@ -1389,14 +1380,16 @@ pub(super) fn assemble_sharded_live_dedup(
             let count = shard.output.cell_counts[local] as usize;
 
             let dst_start = cell_starts_global[gen_idx] as usize;
-            let src = &shard_globals[bin][start..start + count];
+            let src = &shard.output.cell_indices[start..start + count];
             // Safety: pointer is valid for the buffer and each cell writes a disjoint range.
             unsafe {
-                std::ptr::copy_nonoverlapping(
-                    src.as_ptr(),
-                    (cell_indices_ptr as *mut u32).add(dst_start),
-                    count,
-                );
+                let dst = (cell_indices_ptr as *mut u32).add(dst_start);
+                for (i, &packed) in src.iter().enumerate() {
+                    debug_assert_ne!(packed, DEFERRED, "deferred index leaked to assembly");
+                    let (vbin, local) = unpack_ref(packed);
+                    dst.add(i)
+                        .write(vertex_offsets[vbin as usize] + local);
+                }
             }
             let count_u16 = u16::from(shard.output.cell_counts[local]);
             *cell = VoronoiCell::new(cell_starts_global[gen_idx], count_u16);
