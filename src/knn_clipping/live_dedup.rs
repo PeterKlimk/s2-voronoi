@@ -142,12 +142,6 @@ struct BinAssignment {
     num_bins: usize,
 }
 
-struct BinQuery {
-    cell: u32,
-    global: u32,
-    local: u32,
-}
-
 struct PackedSeed<'a> {
     neighbors: &'a [u32],
     count: usize,
@@ -204,6 +198,10 @@ fn assign_bins(points: &[Vec3], grid: &crate::cube_grid::CubeMapGrid) -> BinAssi
         .collect();
     for (i, &b) in generator_bin.iter().enumerate() {
         bin_generators[b as usize].push(i);
+    }
+
+    for generators in &mut bin_generators {
+        generators.sort_unstable_by_key(|&g| (grid.point_index_to_cell(g), g));
     }
 
     let mut global_to_local: Vec<u32> = vec![0; n];
@@ -390,7 +388,6 @@ fn with_two_mut<T>(v: &mut [T], i: usize, j: usize) -> (&mut T, &mut T) {
 fn collect_cell_edges(
     cell_idx: u32,
     local: usize,
-    rank_by_local: &[u32],
     cell_vertices: &[(VertexKey, Vec3)],
     edge_neighbors: &[u32],
     assignment: &BinAssignment,
@@ -412,12 +409,7 @@ fn collect_cell_edges(
         assignment.global_to_local[cell_idx as usize] as usize, local,
         "local index mismatch in edge checks"
     );
-    debug_assert!(
-        local < rank_by_local.len(),
-        "rank map out of bounds for local index"
-    );
-
-    let rank_a = rank_by_local[local];
+    let local_u32 = u32::try_from(local).expect("local index must fit in u32");
 
     for i in 0..n {
         let j = if i + 1 == n { 0 } else { i + 1 };
@@ -447,11 +439,12 @@ fn collect_cell_edges(
                 local, local_b,
                 "edge checks: neighbor mapped to same local index as cell"
             );
-            let rank_b = rank_by_local[local_b];
-            if rank_a < rank_b {
+            let local_b_u32 =
+                u32::try_from(local_b).expect("local index must fit in u32");
+            if local_u32 < local_b_u32 {
                 edges_to_later.push(EdgeToLater {
                     edge,
-                    local_b: u32::try_from(local_b).expect("local index must fit in u32"),
+                    local_b: local_b_u32,
                 });
             } else {
                 edges_to_earlier.push(edge);
@@ -598,37 +591,16 @@ pub(super) fn build_cells_sharded_live_dedup(
             let mut packed_scratch = PackedKnnCellScratch::new();
             let mut packed_timings = PackedKnnTimings::default();
 
-            let mut bin_queries: Vec<BinQuery> = Vec::with_capacity(my_generators.len());
-            for &i in my_generators {
-                let cell = grid.point_index_to_cell(i) as u32;
-                let local = assignment.global_to_local[i];
-                bin_queries.push(BinQuery {
-                    cell,
-                    global: u32::try_from(i).expect("point index must fit in u32"),
-                    local,
-                });
-            }
-            bin_queries.sort_unstable_by_key(|q| q.cell);
-            let mut rank_by_local: Vec<u32> = vec![0; my_generators.len()];
-            for (rank, q) in bin_queries.iter().enumerate() {
-                rank_by_local[q.local as usize] =
-                    u32::try_from(rank).expect("bin rank exceeds u32 capacity");
-            }
-            let packed_queries_all: Vec<u32> = bin_queries.iter().map(|q| q.global).collect();
+            let packed_queries_all: Vec<u32> = my_generators
+                .iter()
+                .map(|&i| u32::try_from(i).expect("point index must fit in u32"))
+                .collect();
 
             #[cfg(debug_assertions)]
             {
-                let mut seen_cells: rustc_hash::FxHashSet<u32> =
-                    rustc_hash::FxHashSet::with_capacity_and_hasher(
-                        bin_queries.len(),
-                        Default::default(),
-                    );
-                for q in &bin_queries {
-                    if !seen_cells.insert(q.cell) {
-                        continue;
-                    }
+                for &i in my_generators {
                     debug_assert_eq!(
-                        assignment.generator_bin[q.global as usize],
+                        assignment.generator_bin[i],
                         bin,
                         "cell assigned to wrong bin"
                     );
@@ -1053,7 +1025,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                 collect_cell_edges(
                     cell_idx,
                     local as usize,
-                    &rank_by_local,
                     &cell_vertices,
                     &edge_neighbors,
                     &assignment,
@@ -1155,16 +1126,18 @@ pub(super) fn build_cells_sharded_live_dedup(
             };
 
             let mut cursor = 0usize;
-            while cursor < bin_queries.len() {
-                let cell = bin_queries[cursor].cell;
+            while cursor < my_generators.len() {
+                let cell = grid.point_index_to_cell(my_generators[cursor]) as u32;
                 let start = cursor;
-                while cursor < bin_queries.len() && bin_queries[cursor].cell == cell {
+                while cursor < my_generators.len()
+                    && grid.point_index_to_cell(my_generators[cursor]) as u32 == cell
+                {
                     cursor += 1;
                 }
-                let group = &bin_queries[start..cursor];
+                let group_start = start;
 
                 if packed_k > 0 {
-                    let queries = &packed_queries_all[start..cursor];
+                    let queries = &packed_queries_all[group_start..cursor];
 
                     // NOTE: `packed_knn_cell_stream` invokes the callback per query.
                     // The callback builds the Voronoi cell and is separately timed (clipping,
@@ -1180,7 +1153,8 @@ pub(super) fn build_cells_sharded_live_dedup(
                         &mut packed_scratch,
                         &mut packed_timings,
                         |qi, query_idx, neighbors, count, security| {
-                            let local = group[qi].local;
+                            let local = u32::try_from(group_start + qi)
+                                .expect("local index must fit in u32");
                             let seed = PackedSeed {
                                 neighbors,
                                 count,
@@ -1193,8 +1167,11 @@ pub(super) fn build_cells_sharded_live_dedup(
                     let packed_elapsed = t_packed.elapsed();
 
                     if status == PackedKnnCellStatus::SlowPath {
-                        for q in group {
-                            process_cell(&mut sub_accum, q.global as usize, q.local, None);
+                        for local in group_start..cursor {
+                            let global = my_generators[local];
+                            let local_u32 =
+                                u32::try_from(local).expect("local index must fit in u32");
+                            process_cell(&mut sub_accum, global, local_u32, None);
                         }
                     }
 
@@ -1223,8 +1200,11 @@ pub(super) fn build_cells_sharded_live_dedup(
                     #[cfg(not(feature = "timing"))]
                     sub_accum.add_packed_knn(packed_elapsed);
                 } else {
-                    for q in group {
-                        process_cell(&mut sub_accum, q.global as usize, q.local, None);
+                    for local in group_start..cursor {
+                        let global = my_generators[local];
+                        let local_u32 =
+                            u32::try_from(local).expect("local index must fit in u32");
+                        process_cell(&mut sub_accum, global, local_u32, None);
                     }
                 }
             }
