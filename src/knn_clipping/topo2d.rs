@@ -178,6 +178,13 @@ impl TangentBasis {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipResult {
+    Unchanged,
+    Changed,
+    TooManyVertices,
+}
+
 /// Clip a convex polygon by a half-plane (standalone function to avoid borrow conflicts).
 #[inline]
 fn clip_convex(
@@ -185,13 +192,13 @@ fn clip_convex(
     hp: &HalfPlane,
     inside: &mut [bool; MAX_POLY_VERTICES],
     out: &mut PolyBuffer,
-) -> bool {
+) -> ClipResult {
     let n = poly.len;
     if n < 3 {
         out.len = 0;
         out.max_r2 = 0.0;
         out.has_bounding_ref = false;
-        return true;
+        return ClipResult::Changed;
     }
 
     // Pass 1: classify all vertices
@@ -203,15 +210,9 @@ fn clip_convex(
         inside_count += is_inside as usize;
     }
 
-    // All inside: copy unchanged\
+    // All inside: unchanged
     if inside_count == n {
-        out.len = n;
-        out.vertices[..n].copy_from_slice(&poly.vertices[..n]);
-        out.vertex_planes[..n].copy_from_slice(&poly.vertex_planes[..n]);
-        out.edge_planes[..n].copy_from_slice(&poly.edge_planes[..n]);
-        out.max_r2 = poly.max_r2;
-        out.has_bounding_ref = poly.has_bounding_ref;
-        return true;
+        return ClipResult::Unchanged;
     }
 
     // All outside: empty result
@@ -219,7 +220,7 @@ fn clip_convex(
         out.len = 0;
         out.max_r2 = 0.0;
         out.has_bounding_ref = false;
-        return true;
+        return ClipResult::Changed;
     }
 
     // Pass 2: find single entry and exit
@@ -252,14 +253,14 @@ fn clip_convex(
     let entry_edge_plane = poly.edge_planes[entry_idx];
 
     if !out.push(entry_pt, (entry_edge_plane, hp.plane_idx), entry_edge_plane) {
-        return false;
+        return ClipResult::TooManyVertices;
     }
 
     // Copy surviving inside vertices
     let mut i = entry_next;
     while i != (exit_idx + 1) % n {
         if !out.push(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]) {
-            return false;
+            return ClipResult::TooManyVertices;
         }
         i = (i + 1) % n;
     }
@@ -275,7 +276,7 @@ fn clip_convex(
     let exit_edge_plane = poly.edge_planes[exit_idx];
 
     if !out.push(exit_pt, (exit_edge_plane, hp.plane_idx), hp.plane_idx) {
-        return false;
+        return ClipResult::TooManyVertices;
     }
 
     // Fix edge plane of vertex before exit
@@ -283,7 +284,7 @@ fn clip_convex(
         out.edge_planes[out.len - 2] = exit_edge_plane;
     }
 
-    true
+    ClipResult::Changed
 }
 
 /// Incremental 2D topology builder for spherical Voronoi cells.
@@ -377,18 +378,22 @@ impl Topo2DBuilder {
         self.neighbor_indices.push(neighbor_idx);
 
         // Clip polygon
-        let clip_ok = if self.use_a {
+        let clip_result = if self.use_a {
             clip_convex(&self.poly_a, &hp, &mut self.inside, &mut self.poly_b)
         } else {
             clip_convex(&self.poly_b, &hp, &mut self.inside, &mut self.poly_a)
         };
 
-        if !clip_ok {
-            self.failed = Some(CellFailure::TooManyVertices);
-            return Err(CellFailure::TooManyVertices);
+        match clip_result {
+            ClipResult::TooManyVertices => {
+                self.failed = Some(CellFailure::TooManyVertices);
+                return Err(CellFailure::TooManyVertices);
+            }
+            ClipResult::Changed => {
+                self.use_a = !self.use_a;
+            }
+            ClipResult::Unchanged => {}
         }
-
-        self.use_a = !self.use_a;
 
         // Check if clipped away
         let poly = self.current_poly();
