@@ -68,6 +68,17 @@ impl HalfPlane {
     }
 }
 
+#[inline]
+fn is_inside_from_dist(hp: &HalfPlane, d: f64) -> bool {
+    if d >= 0.0 {
+        return true;
+    }
+    if hp.norm2 < 1e-28 {
+        return d >= -EPS_INSIDE;
+    }
+    d * d <= hp.eps2
+}
+
 /// Fixed-size polygon buffer for clipping.
 #[derive(Clone)]
 struct PolyBuffer {
@@ -190,7 +201,6 @@ enum ClipResult {
 fn clip_convex(
     poly: &PolyBuffer,
     hp: &HalfPlane,
-    inside: &mut [bool; MAX_POLY_VERTICES],
     out: &mut PolyBuffer,
 ) -> ClipResult {
     let n = poly.len;
@@ -201,13 +211,44 @@ fn clip_convex(
         return ClipResult::Changed;
     }
 
-    // Pass 1: classify all vertices
+    // Pass 1: classify vertices and track entry/exit transitions
     let mut inside_count = 0usize;
+    let mut entry_idx = usize::MAX;
+    let mut exit_idx = usize::MAX;
+    let mut entry_next = 0usize;
+    let mut exit_next = 0usize;
+    let mut entry_d0 = 0.0;
+    let mut entry_d1 = 0.0;
+    let mut exit_d0 = 0.0;
+    let mut exit_d1 = 0.0;
+
+    let last_idx = n - 1;
+    let (lu, lv) = poly.vertices[last_idx];
+    let mut prev_d = hp.signed_dist(lu, lv);
+    let mut prev_inside = is_inside_from_dist(hp, prev_d);
+    let mut prev_idx = last_idx;
+
     for i in 0..n {
         let (u, v) = poly.vertices[i];
-        let is_inside = hp.is_inside(u, v);
-        inside[i] = is_inside;
-        inside_count += is_inside as usize;
+        let curr_d = hp.signed_dist(u, v);
+        let curr_inside = is_inside_from_dist(hp, curr_d);
+        inside_count += curr_inside as usize;
+
+        if prev_inside && !curr_inside {
+            exit_idx = prev_idx;
+            exit_next = i;
+            exit_d0 = prev_d;
+            exit_d1 = curr_d;
+        } else if !prev_inside && curr_inside {
+            entry_idx = prev_idx;
+            entry_next = i;
+            entry_d0 = prev_d;
+            entry_d1 = curr_d;
+        }
+
+        prev_idx = i;
+        prev_inside = curr_inside;
+        prev_d = curr_d;
     }
 
     // All inside: unchanged
@@ -223,32 +264,15 @@ fn clip_convex(
         return ClipResult::Changed;
     }
 
-    // Pass 2: find single entry and exit
-    let mut entry_idx = usize::MAX;
-    let mut exit_idx = usize::MAX;
-
-    for i in 0..n {
-        let next = (i + 1) % n;
-        if inside[i] && !inside[next] {
-            exit_idx = i;
-        }
-        if !inside[i] && inside[next] {
-            entry_idx = i;
-        }
-    }
-
     debug_assert!(entry_idx != usize::MAX && exit_idx != usize::MAX);
 
-    // Pass 3: build output
+    // Pass 2: build output
     out.clear();
 
     // Entry intersection
-    let entry_next = (entry_idx + 1) % n;
     let (eu0, ev0) = poly.vertices[entry_idx];
     let (eu1, ev1) = poly.vertices[entry_next];
-    let d0 = hp.signed_dist(eu0, ev0);
-    let d1 = hp.signed_dist(eu1, ev1);
-    let t_entry = d0 / (d0 - d1);
+    let t_entry = entry_d0 / (entry_d0 - entry_d1);
     let entry_pt = (eu0 + t_entry * (eu1 - eu0), ev0 + t_entry * (ev1 - ev0));
     let entry_edge_plane = poly.edge_planes[entry_idx];
 
@@ -257,21 +281,29 @@ fn clip_convex(
     }
 
     // Copy surviving inside vertices
-    let mut i = entry_next;
-    while i != (exit_idx + 1) % n {
-        if !out.push(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]) {
-            return ClipResult::TooManyVertices;
+    if entry_next <= exit_idx {
+        for i in entry_next..=exit_idx {
+            if !out.push(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]) {
+                return ClipResult::TooManyVertices;
+            }
         }
-        i = (i + 1) % n;
+    } else {
+        for i in entry_next..n {
+            if !out.push(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]) {
+                return ClipResult::TooManyVertices;
+            }
+        }
+        for i in 0..=exit_idx {
+            if !out.push(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]) {
+                return ClipResult::TooManyVertices;
+            }
+        }
     }
 
     // Exit intersection
-    let exit_next = (exit_idx + 1) % n;
     let (xu0, xv0) = poly.vertices[exit_idx];
     let (xu1, xv1) = poly.vertices[exit_next];
-    let d0_exit = hp.signed_dist(xu0, xv0);
-    let d1_exit = hp.signed_dist(xu1, xv1);
-    let t_exit = d0_exit / (d0_exit - d1_exit);
+    let t_exit = exit_d0 / (exit_d0 - exit_d1);
     let exit_pt = (xu0 + t_exit * (xu1 - xu0), xv0 + t_exit * (xv1 - xv0));
     let exit_edge_plane = poly.edge_planes[exit_idx];
 
@@ -304,9 +336,6 @@ pub struct Topo2DBuilder {
     poly_b: PolyBuffer,
     use_a: bool,
 
-    // Classification scratch
-    inside: [bool; MAX_POLY_VERTICES],
-
     // State
     failed: Option<CellFailure>,
     term_sin_pad: f64,
@@ -334,7 +363,6 @@ impl Topo2DBuilder {
             poly_a,
             poly_b: PolyBuffer::new(),
             use_a: true,
-            inside: [false; MAX_POLY_VERTICES],
             failed: None,
             term_sin_pad,
             term_cos_pad,
@@ -379,9 +407,9 @@ impl Topo2DBuilder {
 
         // Clip polygon
         let clip_result = if self.use_a {
-            clip_convex(&self.poly_a, &hp, &mut self.inside, &mut self.poly_b)
+            clip_convex(&self.poly_a, &hp, &mut self.poly_b)
         } else {
-            clip_convex(&self.poly_b, &hp, &mut self.inside, &mut self.poly_a)
+            clip_convex(&self.poly_b, &hp, &mut self.poly_a)
         };
 
         match clip_result {
