@@ -103,7 +103,6 @@ struct EdgeCheckOverflow {
 #[derive(Clone, Copy)]
 struct EdgeLocal {
     key: u64,
-    endpoints: [VertexKey; 2],
     locals: [u8; 2],
 }
 
@@ -443,14 +442,13 @@ fn collect_cell_edges(
         if neighbor == cell_idx {
             continue;
         }
-        let (endpoints, locals) = if key_i <= key_j {
-            ([key_i, key_j], [i as u8, j as u8])
+        let locals = if key_i <= key_j {
+            [i as u8, j as u8]
         } else {
-            ([key_j, key_i], [j as u8, i as u8])
+            [j as u8, i as u8]
         };
         let edge = EdgeLocal {
             key: pack_edge(cell_idx, neighbor),
-            endpoints,
             locals,
         };
         let GenMap { bin: bin_b, local: local_b_u32 } = assignment.gen_map[neighbor as usize];
@@ -479,6 +477,7 @@ fn resolve_cell_edge_checks(
     shard: &mut ShardState,
     local: usize,
     edges_to_earlier: &mut Vec<EdgeLocal>,
+    cell_vertices: &[(VertexKey, Vec3)],
     vertex_indices: &mut [u32],
     matched: &mut Vec<bool>,
 ) {
@@ -512,8 +511,12 @@ fn resolve_cell_edge_checks(
             } else {
                 matched[edge_idx] = true;
                 let emitted = edges_to_earlier[edge_idx];
+                let emitted_endpoints = [
+                    cell_vertices[emitted.locals[0] as usize].0,
+                    cell_vertices[emitted.locals[1] as usize].0,
+                ];
                 for k in 0..2 {
-                    if assigned_edge.endpoints[k] == emitted.endpoints[k] {
+                    if assigned_edge.endpoints[k] == emitted_endpoints[k] {
                         let idx = assigned_edge.indices[k];
                         if idx != INVALID_INDEX {
                             let local_idx = emitted.locals[k] as usize;
@@ -526,7 +529,7 @@ fn resolve_cell_edge_checks(
                         }
                     }
                 }
-                if assigned_edge.endpoints != emitted.endpoints {
+                if assigned_edge.endpoints != emitted_endpoints {
                     shard.output.bad_edges.push(BadEdgeRecord {
                         key: assigned_edge.key,
                         reason: BadEdgeReason::EndpointMismatch,
@@ -1060,6 +1063,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                     &mut shard,
                     local as usize,
                     &mut edges_to_earlier,
+                    &cell_vertices,
                     &mut vertex_indices,
                     &mut edge_matched,
                 );
@@ -1107,9 +1111,13 @@ pub(super) fn build_cells_sharded_live_dedup(
                 let t_edge_emit = Timer::start();
                 for entry in edges_to_later.drain(..) {
                     let locals = entry.edge.locals;
+                    let endpoints = [
+                        cell_vertices[locals[0] as usize].0,
+                        cell_vertices[locals[1] as usize].0,
+                    ];
                     shard.dedup.push_edge_check(entry.local_b as usize, EdgeCheck {
                         key: entry.edge.key,
-                        endpoints: entry.edge.endpoints,
+                        endpoints,
                         indices: [
                             vertex_indices[locals[0] as usize],
                             vertex_indices[locals[1] as usize],
@@ -1119,11 +1127,15 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                 for entry in edges_overflow.drain(..) {
                     let locals = entry.edge.locals;
+                    let endpoints = [
+                        cell_vertices[locals[0] as usize].0,
+                        cell_vertices[locals[1] as usize].0,
+                    ];
                     shard.output.edge_check_overflow.push(EdgeCheckOverflow {
                         key: entry.edge.key,
                         side: entry.side,
                         source_bin: bin,
-                        endpoints: entry.edge.endpoints,
+                        endpoints,
                         indices: [
                             vertex_indices[locals[0] as usize],
                             vertex_indices[locals[1] as usize],
