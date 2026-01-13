@@ -75,6 +75,7 @@ struct PolyBuffer {
     vertex_planes: [(usize, usize); MAX_POLY_VERTICES],
     edge_planes: [usize; MAX_POLY_VERTICES],
     len: usize,
+    max_r2: f64,
 }
 
 impl PolyBuffer {
@@ -85,6 +86,7 @@ impl PolyBuffer {
             vertex_planes: [(0, 0); MAX_POLY_VERTICES],
             edge_planes: [0; MAX_POLY_VERTICES],
             len: 0,
+            max_r2: 0.0,
         }
     }
 
@@ -99,11 +101,13 @@ impl PolyBuffer {
         self.edge_planes[1] = usize::MAX;
         self.edge_planes[2] = usize::MAX;
         self.len = 3;
+        self.max_r2 = bound * bound;
     }
 
     #[inline]
     fn clear(&mut self) {
         self.len = 0;
+        self.max_r2 = 0.0;
     }
 
     #[inline]
@@ -115,6 +119,11 @@ impl PolyBuffer {
         self.vertex_planes[self.len] = vp;
         self.edge_planes[self.len] = ep;
         self.len += 1;
+        let (u, w) = v;
+        let r2 = u * u + w * w;
+        if r2 > self.max_r2 {
+            self.max_r2 = r2;
+        }
         true
     }
 
@@ -122,13 +131,10 @@ impl PolyBuffer {
     /// Computes lazily from 2D gnomonic coords: cos(θ) = 1 / sqrt(1 + u² + v²)
     #[inline]
     fn min_cos(&self) -> f64 {
-        let mut min_cos = 1.0f64;
-        for i in 0..self.len {
-            let (u, v) = self.vertices[i];
-            let cos = 1.0 / (1.0 + u * u + v * v).sqrt();
-            min_cos = min_cos.min(cos);
+        if self.len == 0 {
+            return 1.0;
         }
-        min_cos
+        1.0 / (1.0 + self.max_r2).sqrt()
     }
 
     /// Check if polygon still references bounding triangle.
@@ -181,6 +187,7 @@ fn clip_convex(
     let n = poly.len;
     if n < 3 {
         out.len = 0;
+        out.max_r2 = 0.0;
         return true;
     }
 
@@ -199,12 +206,14 @@ fn clip_convex(
         out.vertices[..n].copy_from_slice(&poly.vertices[..n]);
         out.vertex_planes[..n].copy_from_slice(&poly.vertex_planes[..n]);
         out.edge_planes[..n].copy_from_slice(&poly.edge_planes[..n]);
+        out.max_r2 = poly.max_r2;
         return true;
     }
 
     // All outside: empty result
     if inside_count == 0 {
         out.len = 0;
+        out.max_r2 = 0.0;
         return true;
     }
 
@@ -296,11 +305,15 @@ pub struct Topo2DBuilder {
 
     // State
     failed: Option<CellFailure>,
+    term_sin_pad: f64,
+    term_cos_pad: f64,
 }
 
 impl Topo2DBuilder {
     /// Create a new builder for the given generator.
     pub fn new(generator_idx: usize, generator: Vec3) -> Self {
+        let angle_pad = 8.0 * f32::EPSILON as f64;
+        let (term_sin_pad, term_cos_pad) = angle_pad.sin_cos();
         let gen64 =
             DVec3::new(generator.x as f64, generator.y as f64, generator.z as f64).normalize();
         let basis = TangentBasis::new(gen64);
@@ -321,6 +334,8 @@ impl Topo2DBuilder {
             use_a: true,
             inside: [false; MAX_POLY_VERTICES],
             failed: None,
+            term_sin_pad,
+            term_cos_pad,
         }
     }
 
@@ -336,7 +351,7 @@ impl Topo2DBuilder {
         self.neighbor_positions.clear();
         self.plane_normals_unnorm.clear();
         self.poly_a.init_bounding(1e6);
-        self.poly_b.len = 0;
+        self.poly_b.clear();
         self.use_a = true;
         self.failed = None;
     }
@@ -490,10 +505,8 @@ impl Topo2DBuilder {
         }
 
         // Same bound as the legacy termination logic: 2 * max_vertex_angle
-        let angle_pad = 8.0 * f32::EPSILON as f64;
-        let (sin_pad, cos_pad) = angle_pad.sin_cos();
         let sin_theta = (1.0 - min_cos * min_cos).max(0.0).sqrt();
-        let cos_theta_pad = min_cos * cos_pad - sin_theta * sin_pad;
+        let cos_theta_pad = min_cos * self.term_cos_pad - sin_theta * self.term_sin_pad;
         let cos_2max = 2.0 * cos_theta_pad * cos_theta_pad - 1.0;
         let threshold = cos_2max - 3.0 * f32::EPSILON as f64;
 
