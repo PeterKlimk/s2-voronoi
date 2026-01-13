@@ -297,8 +297,6 @@ pub struct Topo2DBuilder {
     // Half-planes and neighbor data (grow as needed)
     half_planes: Vec<HalfPlane>,
     neighbor_indices: Vec<usize>,
-    neighbor_positions: Vec<DVec3>,
-    plane_normals_unnorm: Vec<DVec3>,
 
     // Current polygon (double-buffered with fixed arrays)
     poly_a: PolyBuffer,
@@ -332,8 +330,6 @@ impl Topo2DBuilder {
             basis,
             half_planes: Vec::with_capacity(32),
             neighbor_indices: Vec::with_capacity(32),
-            neighbor_positions: Vec::with_capacity(32),
-            plane_normals_unnorm: Vec::with_capacity(32),
             poly_a,
             poly_b: PolyBuffer::new(),
             use_a: true,
@@ -353,8 +349,6 @@ impl Topo2DBuilder {
         self.basis = TangentBasis::new(gen64);
         self.half_planes.clear();
         self.neighbor_indices.clear();
-        self.neighbor_positions.clear();
-        self.plane_normals_unnorm.clear();
         self.poly_a.init_bounding(1e6);
         self.poly_b.clear();
         self.use_a = true;
@@ -381,8 +375,6 @@ impl Topo2DBuilder {
         // Store plane data
         self.half_planes.push(hp);
         self.neighbor_indices.push(neighbor_idx);
-        self.neighbor_positions.push(n64);
-        self.plane_normals_unnorm.push(normal_unnorm);
 
         // Clip polygon
         let clip_ok = if self.use_a {
@@ -469,18 +461,6 @@ impl Topo2DBuilder {
     #[inline]
     pub fn plane_neighbor_index_u32(&self, plane_idx: usize) -> u32 {
         self.neighbor_indices[plane_idx] as u32
-    }
-
-    /// Get unnormalized plane normal.
-    #[inline]
-    pub fn plane_normal_unnorm(&self, plane_idx: usize) -> DVec3 {
-        self.plane_normals_unnorm[plane_idx]
-    }
-
-    /// Get neighbor position.
-    #[inline]
-    pub fn neighbor_position(&self, plane_idx: usize) -> DVec3 {
-        self.neighbor_positions[plane_idx]
     }
 
     /// Iterate over neighbor indices.
