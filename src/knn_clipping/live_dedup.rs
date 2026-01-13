@@ -135,9 +135,17 @@ struct SupportOverflow {
     pos: Vec3,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct GenMap {
+    bin: u32,
+    local: u32,
+}
+
 struct BinAssignment {
     generator_bin: Vec<u32>,
     global_to_local: Vec<u32>,
+    gen_map: Vec<GenMap>,
     bin_generators: Vec<Vec<usize>>,
     num_bins: usize,
 }
@@ -211,9 +219,21 @@ fn assign_bins(points: &[Vec3], grid: &crate::cube_grid::CubeMapGrid) -> BinAssi
         }
     }
 
+    let mut gen_map: Vec<GenMap> = vec![
+        GenMap { bin: 0, local: 0 };
+        n
+    ];
+    for (global_idx, &bin) in generator_bin.iter().enumerate() {
+        gen_map[global_idx] = GenMap {
+            bin,
+            local: global_to_local[global_idx],
+        };
+    }
+
     BinAssignment {
         generator_bin,
         global_to_local,
+        gen_map,
         bin_generators,
         num_bins,
     }
@@ -404,9 +424,10 @@ fn collect_cell_edges(
         return;
     }
 
-    let bin_a = assignment.generator_bin[cell_idx as usize];
+    let bin_a = assignment.gen_map[cell_idx as usize].bin;
     debug_assert_eq!(
-        assignment.global_to_local[cell_idx as usize] as usize, local,
+        assignment.gen_map[cell_idx as usize].local as usize,
+        local,
         "local index mismatch in edge checks"
     );
     let local_u32 = u32::try_from(local).expect("local index must fit in u32");
@@ -432,15 +453,13 @@ fn collect_cell_edges(
             endpoints,
             locals,
         };
-        let bin_b = assignment.generator_bin[neighbor as usize];
+        let GenMap { bin: bin_b, local: local_b_u32 } = assignment.gen_map[neighbor as usize];
         if bin_a == bin_b {
-            let local_b = assignment.global_to_local[neighbor as usize] as usize;
+            let local_b = local_b_u32 as usize;
             debug_assert_ne!(
                 local, local_b,
                 "edge checks: neighbor mapped to same local index as cell"
             );
-            let local_b_u32 =
-                u32::try_from(local_b).expect("local index must fit in u32");
             if local_u32 < local_b_u32 {
                 edges_to_later.push(EdgeToLater {
                     edge,
