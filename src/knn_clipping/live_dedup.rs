@@ -417,6 +417,8 @@ fn collect_cell_edges(
         "rank map out of bounds for local index"
     );
 
+    let rank_a = rank_by_local[local];
+
     for i in 0..n {
         let j = (i + 1) % n;
         let key_i = cell_vertices[i].0;
@@ -442,10 +444,10 @@ fn collect_cell_edges(
         let bin_b = assignment.generator_bin[neighbor as usize];
         if bin_a == bin_b {
             let local_b = assignment.global_to_local[neighbor as usize] as usize;
-            if local == local_b {
-                continue;
-            }
-            let rank_a = rank_by_local[local];
+            debug_assert_ne!(
+                local, local_b,
+                "edge checks: neighbor mapped to same local index as cell"
+            );
             let rank_b = rank_by_local[local_b];
             if rank_a < rank_b {
                 edges_to_later.push(EdgeToLater { edge, local_b });
