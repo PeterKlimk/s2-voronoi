@@ -32,6 +32,7 @@ impl CubeMapGrid {
         Self::new_impl(points, res, Some(timings))
     }
 
+    #[inline(never)]
     fn new_impl(
         points: &[Vec3],
         res: usize,
