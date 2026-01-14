@@ -183,21 +183,27 @@ pub(super) fn resolve_cell_edge_checks(
                     cell_vertices[emitted.locals[0] as usize].0,
                     cell_vertices[emitted.locals[1] as usize].0,
                 ];
+                
+                let mut endpoints_match = true;
                 for k in 0..2 {
-                    if assigned_edge.endpoints[k] == emitted_endpoints[k] {
-                        let idx = assigned_edge.indices[k];
-                        if idx != INVALID_INDEX {
-                            let local_idx = emitted.locals[k] as usize;
-                            let existing = vertex_indices[local_idx];
-                            if existing == INVALID_INDEX {
-                                vertex_indices[local_idx] = idx;
-                            } else if existing != idx {
-                                debug_assert!(false, "edge check index mismatch");
-                            }
-                        }
+                    if assigned_edge.endpoints[k] != emitted_endpoints[k] {
+                        endpoints_match = false;
+                        continue;
+                    }
+
+                    let idx = assigned_edge.indices[k];
+                    if idx == INVALID_INDEX {
+                        continue;
+                    }
+                    let local_idx = emitted.locals[k] as usize;
+                    let existing = vertex_indices[local_idx];
+                    if existing == INVALID_INDEX {
+                        vertex_indices[local_idx] = idx;
+                    } else {
+                        debug_assert_eq!(existing, idx, "edge check index mismatch");
                     }
                 }
-                if assigned_edge.endpoints != emitted_endpoints {
+                if !endpoints_match {
                     shard.output.bad_edges.push(BadEdgeRecord {
                         key: assigned_edge.key,
                         reason: BadEdgeReason::EndpointMismatch,
