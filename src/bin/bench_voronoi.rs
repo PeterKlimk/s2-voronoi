@@ -243,22 +243,25 @@ fn validate_against_hull(points: &[Vec3], preprocess: bool) {
         .collect();
 
     let t1 = Instant::now();
-    let s2_output = s2_voronoi::compute_with(&unit_points, VoronoiConfig { preprocess })
-        .expect("s2-voronoi should succeed");
+    let s2_diagram = s2_voronoi::compute_with(
+        &unit_points,
+        VoronoiConfig {
+            preprocess,
+            ..VoronoiConfig::default()
+        },
+    )
+    .expect("s2-voronoi should succeed");
     let s2_time = t1.elapsed().as_secs_f64() * 1000.0;
 
     let mut exact_match = 0usize;
-    let mut bad_cells = 0usize;
+    let report = s2_voronoi::validation::validate(&s2_diagram);
 
     for i in 0..points.len() {
         let hull_count = hull.diagram.cell(i).len();
-        let s2_count = s2_output.diagram.cell(i).len();
+        let s2_count = s2_diagram.cell(i).len();
 
         if hull_count == s2_count {
             exact_match += 1;
-        }
-        if s2_count < 3 {
-            bad_cells += 1;
         }
     }
 
@@ -276,14 +279,16 @@ fn validate_against_hull(points: &[Vec3], preprocess: bool) {
         points.len(),
         match_pct
     );
-    if bad_cells > 0 {
-        println!("  Invalid cells:    {:>8} (< 3 vertices)", bad_cells);
-    }
-    if !s2_output.diagnostics.is_clean() {
+    if report.degenerate_cells > 0 {
         println!(
-            "  Diagnostics:      {:>8} bad, {} degenerate",
-            s2_output.diagnostics.bad_cells.len(),
-            s2_output.diagnostics.degenerate_cells.len()
+            "  Invalid cells:    {:>8} (< 3 vertices)",
+            report.degenerate_cells
+        );
+    }
+    if report.cells_with_duplicates > 0 {
+        println!(
+            "  Duplicate verts:  {:>8} cells",
+            report.cells_with_duplicates
         );
     }
 }
@@ -304,13 +309,13 @@ fn run_benchmark_with_config(points: &[UnitVec3], config: VoronoiConfig) -> Benc
     let n = points.len();
 
     let t0 = Instant::now();
-    let output = s2_voronoi::compute_with(points, config).expect("s2-voronoi should succeed");
+    let diagram = s2_voronoi::compute_with(points, config).expect("s2-voronoi should succeed");
     let time_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     #[cfg(debug_assertions)]
     {
         use s2_voronoi::validation::validate;
-        let report = validate(&output.diagram);
+        let report = validate(&diagram);
         if !report.is_perfect() {
             eprintln!("WARNING: Validation failed for n={}: {}", n, report);
         } else {
@@ -321,8 +326,8 @@ fn run_benchmark_with_config(points: &[UnitVec3], config: VoronoiConfig) -> Benc
     BenchResult {
         n,
         time_ms,
-        num_vertices: output.diagram.vertices.len(),
-        num_cells: output.diagram.num_cells(),
+        num_vertices: diagram.vertices.len(),
+        num_cells: diagram.num_cells(),
     }
 }
 
@@ -382,6 +387,7 @@ fn main() {
 
         let config = VoronoiConfig {
             preprocess: !args.no_preprocess,
+            ..VoronoiConfig::default()
         };
 
         for iter in 0..args.repeat {

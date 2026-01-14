@@ -7,8 +7,8 @@ use support::points::fibonacci_sphere_points;
 #[test]
 fn test_validation_basic() {
     let points = fibonacci_sphere_points(100, 0.0, 0);
-    let output = compute(&points).unwrap();
-    let report = validate(&output.diagram);
+    let diagram = compute(&points).unwrap();
+    let report = validate(&diagram);
 
     assert!(report.is_valid(), "Expected valid diagram: {}", report);
     assert_eq!(report.num_cells, 100);
@@ -18,8 +18,8 @@ fn test_validation_basic() {
 #[test]
 fn test_validation_larger() {
     let points = fibonacci_sphere_points(1000, 0.0, 0);
-    let output = compute(&points).unwrap();
-    let report = validate(&output.diagram);
+    let diagram = compute(&points).unwrap();
+    let report = validate(&diagram);
 
     assert!(report.is_valid(), "Expected valid diagram: {}", report);
     // For 1000 cells, expect ~1996 vertices

@@ -19,7 +19,6 @@ macro_rules! maybe_par_into_iter {
 mod cell_builder;
 mod compute;
 mod constants;
-mod debug;
 mod edge_repair;
 mod knn;
 mod live_dedup;
@@ -27,25 +26,16 @@ mod preprocess;
 mod timing;
 mod topo2d;
 
-use std::sync::OnceLock;
-
 // Re-exports (internal use)
 #[allow(unused_imports)]
-pub use compute::compute_voronoi_gpu_style_with_termination;
-pub use compute::{compute_voronoi_gpu_style, compute_voronoi_gpu_style_no_preprocess};
+pub use compute::{
+    compute_voronoi_gpu_style, compute_voronoi_gpu_style_no_preprocess,
+    compute_voronoi_gpu_style_with_config, compute_voronoi_gpu_style_with_termination,
+};
 pub use knn::CubeMapGridKnn;
 pub use preprocess::merge_close_points;
 
 pub type MergeResult = preprocess::MergeResult;
-
-fn log_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var("S2V_LOG")
-            .ok()
-            .map_or(false, |v| v == "1" || v.eq_ignore_ascii_case("true"))
-    })
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct TerminationConfig {
@@ -56,6 +46,9 @@ pub struct TerminationConfig {
     /// correctness (so this should generally remain enabled for performance).
     pub check_start: usize,
     pub check_step: usize,
+    /// Optional cap on k if termination keeps requesting more neighbors.
+    /// None means unbounded.
+    pub max_k_cap: Option<usize>,
 }
 
 // Keep the k-NN schedule and the default termination cadence in one place.
@@ -79,6 +72,7 @@ impl Default for TerminationConfig {
         Self {
             check_start: DEFAULT_TERMINATION_CHECK_START,
             check_step: DEFAULT_TERMINATION_CHECK_STEP,
+            max_k_cap: None,
         }
     }
 }

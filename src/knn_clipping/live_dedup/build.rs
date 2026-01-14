@@ -614,12 +614,8 @@ pub(super) fn build_cells_sharded_live_dedup(
     // If termination is enabled but not proven after the kNN schedule, we keep requesting
     // more neighbors until the termination check succeeds.
     //
-    // This makes correctness independent of any fixed k cap. You can cap the extra work
-    // via `S2V_TERMINATION_MAX_K` if you prefer (unset/0 = no cap).
-    let termination_max_k_cap: Option<usize> = std::env::var("S2V_TERMINATION_MAX_K")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .and_then(|v| (v != 0).then_some(v));
+    // This makes correctness independent of any fixed k cap.
+    let termination_max_k_cap = termination.max_k_cap;
 
     let assignment = assign_bins(points, knn.grid());
     let num_bins = assignment.num_bins;

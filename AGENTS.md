@@ -24,7 +24,7 @@ The qhull backend (convex hull duality) is provided as ground truth for testing 
 
 ```
 src/
-├── lib.rs            # Public API: compute(), VoronoiOutput, VoronoiDiagnostics
+├── lib.rs            # Public API: compute(), validation::validate()
 ├── types.rs          # UnitVec3, UnitVec3Like trait
 ├── diagram.rs        # SphericalVoronoi, CellView diagram storage
 ├── error.rs          # VoronoiError
@@ -45,19 +45,20 @@ Note: glam is always an internal dependency; the `glam` feature only gates the p
 ## Public API
 
 - `UnitVec3`, `UnitVec3Like` - Input point types
-- `compute(&[P]) -> Result<VoronoiOutput, VoronoiError>` - Main entry point
-- `VoronoiOutput` - Contains `diagram: SphericalVoronoi` and `diagnostics: VoronoiDiagnostics`
+- `compute(&[P]) -> Result<SphericalVoronoi, VoronoiError>` - Main entry point
+- `compute_with(&[P], VoronoiConfig)` - Configured entry point
+- `validation::validate(&SphericalVoronoi) -> ValidationReport`
 - `SphericalVoronoi` - Diagram with `generators`, `vertices`, `iter_cells()`, `cell(i)`
 - `CellView` - Cell accessor with `vertex_indices`, `generator_index`, `len()`
 
 ## Tests
 
 Integration tests in `tests/`:
-- `api.rs` - Public API tests (10 tests)
+- `api.rs` - Public API tests (9 tests)
 - `correctness.rs` - Geometric invariants (8 tests)
 
 ## Known Limitations
 
 - Requires nightly Rust (`#![feature(portable_simd)]`)
 - Inputs should be normalized to unit length (not enforced, but assumed)
-- Some cells may be degenerate near numerical edge cases; check `VoronoiDiagnostics`
+- Some cells may be degenerate near numerical edge cases; use `validation::validate`

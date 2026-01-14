@@ -349,9 +349,9 @@ fn analyze_position_duplicates(diagram: &SphericalVoronoi) -> (usize, usize, usi
 #[ignore]
 fn debug_validation_helpers() {
     let points = support::points::fibonacci_sphere_points(200, 0.1, 4242);
-    let output = compute(&points).expect("compute should succeed");
+    let diagram = compute(&points).expect("compute should succeed");
 
-    analyze_missing_neighbor_edges(&output.diagram);
-    analyze_bad_vertex_edges(&output.diagram);
-    let _ = analyze_position_duplicates(&output.diagram);
+    analyze_missing_neighbor_edges(&diagram);
+    analyze_bad_vertex_edges(&diagram);
+    let _ = analyze_position_duplicates(&diagram);
 }

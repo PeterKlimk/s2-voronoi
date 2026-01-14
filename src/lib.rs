@@ -20,8 +20,8 @@
 //!     UnitVec3::new(0.0, 0.0, -1.0),
 //! ];
 //!
-//! let output = compute(&points).expect("computation should succeed");
-//! assert_eq!(output.diagram.num_cells(), 6);
+//! let diagram = compute(&points).expect("computation should succeed");
+//! assert_eq!(diagram.num_cells(), 6);
 //! ```
 
 mod diagram;
@@ -44,34 +44,6 @@ pub use types::{UnitVec3, UnitVec3Like};
 #[cfg(feature = "qhull")]
 pub use convex_hull::compute_voronoi_qhull;
 
-/// Output from Voronoi computation, including diagram and diagnostics.
-#[derive(Debug, Clone)]
-pub struct VoronoiOutput {
-    /// The computed Voronoi diagram.
-    pub diagram: SphericalVoronoi,
-    /// Diagnostic information about the computation.
-    pub diagnostics: VoronoiDiagnostics,
-}
-
-/// Diagnostic information from Voronoi computation.
-///
-/// In the current implementation, some cells may be degenerate or invalid.
-/// Once precision fallbacks are implemented, these should always be empty.
-#[derive(Debug, Clone, Default)]
-pub struct VoronoiDiagnostics {
-    /// Cell indices with fewer than 3 vertices (invalid for rendering/adjacency).
-    pub bad_cells: Vec<usize>,
-    /// Cell indices with duplicate vertex indices (degenerate polygons).
-    pub degenerate_cells: Vec<usize>,
-}
-
-impl VoronoiDiagnostics {
-    /// Returns true if no issues were detected.
-    pub fn is_clean(&self) -> bool {
-        self.bad_cells.is_empty() && self.degenerate_cells.is_empty()
-    }
-}
-
 /// Configuration for Voronoi computation.
 #[derive(Debug, Clone)]
 pub struct VoronoiConfig {
@@ -81,19 +53,28 @@ pub struct VoronoiConfig {
     /// but adds overhead for large point sets. For benchmarking or when inputs are known
     /// to be well-spaced, disabling this can substantially improve performance.
     pub preprocess: bool,
+    /// Optional override for the merge threshold used during preprocessing.
+    /// When None, uses a density-based default.
+    pub preprocess_threshold: Option<f32>,
+    /// Optional cap on k during termination fallback (None = no cap).
+    pub termination_max_k: Option<usize>,
 }
 
 impl Default for VoronoiConfig {
     fn default() -> Self {
-        Self { preprocess: true }
+        Self {
+            preprocess: true,
+            preprocess_threshold: None,
+            termination_max_k: None,
+        }
     }
 }
 
 /// Compute a spherical Voronoi diagram with default settings.
 ///
-/// Returns a diagram plus diagnostics. Errors are reserved for invalid inputs
-/// (e.g., insufficient points) or unrecoverable internal failures.
-pub fn compute<P: UnitVec3Like>(points: &[P]) -> Result<VoronoiOutput, VoronoiError> {
+/// Errors are reserved for invalid inputs (e.g., insufficient points) or
+/// unrecoverable internal failures.
+pub fn compute<P: UnitVec3Like>(points: &[P]) -> Result<SphericalVoronoi, VoronoiError> {
     compute_with(points, VoronoiConfig::default())
 }
 
@@ -101,7 +82,7 @@ pub fn compute<P: UnitVec3Like>(points: &[P]) -> Result<VoronoiOutput, VoronoiEr
 pub fn compute_with<P: UnitVec3Like>(
     points: &[P],
     config: VoronoiConfig,
-) -> Result<VoronoiOutput, VoronoiError> {
+) -> Result<SphericalVoronoi, VoronoiError> {
     use glam::Vec3;
 
     if points.len() < 4 {
@@ -115,34 +96,8 @@ pub fn compute_with<P: UnitVec3Like>(
         .collect();
 
     // Call knn_clipping backend
-    let diagram = if config.preprocess {
-        knn_clipping::compute_voronoi_gpu_style(&vec3_points)
-    } else {
-        knn_clipping::compute_voronoi_gpu_style_no_preprocess(&vec3_points)
-    };
-
-    // Collect diagnostics
-    let mut diagnostics = VoronoiDiagnostics::default();
-    for (i, cell) in diagram.iter_cells().enumerate() {
-        if cell.len() < 3 {
-            diagnostics.bad_cells.push(i);
-        }
-        // Check for duplicate vertex indices
-        let indices = cell.vertex_indices;
-        if indices.len() > 1 {
-            let mut sorted: Vec<u32> = indices.to_vec();
-            sorted.sort_unstable();
-            for w in sorted.windows(2) {
-                if w[0] == w[1] {
-                    diagnostics.degenerate_cells.push(i);
-                    break;
-                }
-            }
-        }
-    }
-
-    Ok(VoronoiOutput {
-        diagram,
-        diagnostics,
-    })
+    Ok(knn_clipping::compute_voronoi_gpu_style_with_config(
+        &vec3_points,
+        &config,
+    ))
 }

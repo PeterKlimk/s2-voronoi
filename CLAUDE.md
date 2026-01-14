@@ -29,7 +29,7 @@ Note: glam is always an internal dependency; the `glam` feature only gates the p
 
 ## Module Structure
 
-- `src/lib.rs` - Public API: `compute()`, `VoronoiOutput`, `VoronoiDiagnostics`
+- `src/lib.rs` - Public API: `compute()`, `validation::validate`
 - `src/types.rs` - `UnitVec3`, `UnitVec3Like` trait
 - `src/diagram.rs` - `SphericalVoronoi`, `CellView` diagram storage
 - `src/error.rs` - `VoronoiError`
@@ -47,4 +47,4 @@ Integration tests in `tests/`:
 
 - Requires nightly Rust (`#![feature(portable_simd)]`)
 - Inputs should be normalized to unit length (not enforced, but assumed)
-- Some cells may be degenerate near numerical edge cases; check `VoronoiDiagnostics`
+- Some cells may be degenerate near numerical edge cases; use `validation::validate`

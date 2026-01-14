@@ -65,25 +65,6 @@ fn dist_sq(a: Vec3, b: Vec3) -> f32 {
     d.length_squared()
 }
 
-pub(super) fn segment_len_stats(
-    segments: &[(u32, u32)],
-    vertices: &[Vec3],
-) -> (Option<f32>, Option<f32>) {
-    let mut min_len_sq: Option<f32> = None;
-    let mut max_len_sq: Option<f32> = None;
-    for &(a, b) in segments {
-        let a = a as usize;
-        let b = b as usize;
-        if a >= vertices.len() || b >= vertices.len() {
-            continue;
-        }
-        let len_sq = dist_sq(vertices[a], vertices[b]);
-        min_len_sq = Some(min_len_sq.map_or(len_sq, |v| v.min(len_sq)));
-        max_len_sq = Some(max_len_sq.map_or(len_sq, |v| v.max(len_sq)));
-    }
-    (min_len_sq.map(|v| v.sqrt()), max_len_sq.map(|v| v.sqrt()))
-}
-
 #[derive(Debug)]
 struct UnionFind {
     parent: Vec<u32>,
@@ -139,76 +120,10 @@ pub(super) fn repair_bad_edges(
     cell_indices: &[u32],
     vertex_keys: &[VertexKey],
 ) -> Option<(Vec<VoronoiCell>, Vec<u32>)> {
-    let log = super::log_enabled();
-
-    #[derive(Debug)]
-    struct SkipDebug {
-        a: u32,
-        b: u32,
-        seg_a_len: usize,
-        seg_b_len: usize,
-        seg_a_len_min: Option<f32>,
-        seg_a_len_max: Option<f32>,
-        seg_b_len_min: Option<f32>,
-        seg_b_len_max: Option<f32>,
-        min_cross_cell_len: Option<f32>,
-    }
-
-    fn min_cross_cell_len(
-        a: u32,
-        b: u32,
-        cells: &[VoronoiCell],
-        cell_indices: &[u32],
-        vertices: &[Vec3],
-    ) -> Option<f32> {
-        let a = a as usize;
-        let b = b as usize;
-        if a >= cells.len() || b >= cells.len() {
-            return None;
-        }
-        let a_cell = &cells[a];
-        let b_cell = &cells[b];
-        let a_start = a_cell.vertex_start();
-        let a_end = a_start + a_cell.vertex_count();
-        let b_start = b_cell.vertex_start();
-        let b_end = b_start + b_cell.vertex_count();
-        let a_slice = &cell_indices[a_start..a_end];
-        let b_slice = &cell_indices[b_start..b_end];
-        if a_slice.is_empty() || b_slice.is_empty() {
-            return None;
-        }
-        let mut best_sq: Option<f32> = None;
-        for &ai in a_slice {
-            let ai = ai as usize;
-            if ai >= vertices.len() {
-                continue;
-            }
-            for &bi in b_slice {
-                let bi = bi as usize;
-                if bi >= vertices.len() {
-                    continue;
-                }
-                let d = dist_sq(vertices[ai], vertices[bi]);
-                best_sq = Some(best_sq.map_or(d, |v| v.min(d)));
-            }
-        }
-        best_sq.map(|v| v.sqrt())
-    }
-
     let mut uf = UnionFind::new(vertices.len());
     let mut merged = 0usize;
-    let mut skipped = 0usize;
-    let mut already = 0usize;
-    let mut skip_debug: Vec<SkipDebug> = Vec::new();
-    const MAX_SKIP_DEBUG: usize = 16;
-    let mut degenerate_fixed = 0usize;
-    let mut degenerate_unions = 0usize;
     const DEGENERATE_LEN_EPS: f32 = 1e-6;
     const DEGENERATE_LEN_EPS_SQ: f32 = DEGENERATE_LEN_EPS * DEGENERATE_LEN_EPS;
-
-    if log {
-        eprintln!("edge repair: input_edges={}", edge_records.len());
-    }
 
     for record in edge_records {
         let (a, b) = unpack_edge(record.key.as_u64());
@@ -237,10 +152,8 @@ pub(super) fn repair_bad_edges(
                     let len_sq = dist_sq(vertices[v0_usize], vertices[v1_usize]);
                     if len_sq <= DEGENERATE_LEN_EPS_SQ {
                         handled_degenerate = true;
-                        degenerate_fixed += 1;
                         if uf.union(v0, v1) {
                             merged += 1;
-                            degenerate_unions += 1;
                         }
 
                         // If the neighbor cell contains an exactly coincident vertex, merge onto it
@@ -277,7 +190,6 @@ pub(super) fn repair_bad_edges(
                                 if let Some((vj, best_d)) = best {
                                     if best_d <= DEGENERATE_LEN_EPS_SQ && uf.union(vi, vj) {
                                         merged += 1;
-                                        degenerate_unions += 1;
                                     }
                                 }
                             }
@@ -289,22 +201,6 @@ pub(super) fn repair_bad_edges(
                 continue;
             }
 
-            skipped += 1;
-            if log && skip_debug.len() < MAX_SKIP_DEBUG {
-                let (seg_a_len_min, seg_a_len_max) = segment_len_stats(&seg_a, vertices);
-                let (seg_b_len_min, seg_b_len_max) = segment_len_stats(&seg_b, vertices);
-                skip_debug.push(SkipDebug {
-                    a,
-                    b,
-                    seg_a_len: seg_a.len(),
-                    seg_b_len: seg_b.len(),
-                    seg_a_len_min,
-                    seg_a_len_max,
-                    seg_b_len_min,
-                    seg_b_len_max,
-                    min_cross_cell_len: min_cross_cell_len(a, b, cells, cell_indices, vertices),
-                });
-            }
             continue;
         }
         let (a0, a1) = seg_a[0];
@@ -313,7 +209,6 @@ pub(super) fn repair_bad_edges(
         let share_a0 = a0 == b0 || a0 == b1;
         let share_a1 = a1 == b0 || a1 == b1;
         if share_a0 && share_a1 {
-            already += 1;
             continue;
         }
         if share_a0 || share_a1 {
@@ -376,39 +271,6 @@ pub(super) fn repair_bad_edges(
         let count_u16 = u16::try_from(count).expect("cell vertex count exceeds u16 capacity");
         let start_u32 = u32::try_from(base).expect("cell index buffer exceeds u32 capacity");
         new_cells.push(VoronoiCell::new(start_u32, count_u16));
-    }
-
-    if log {
-        eprintln!(
-            "edge repair: merged={} skipped={} already_aligned={}",
-            merged, skipped, already
-        );
-        if degenerate_fixed > 0 {
-            eprintln!(
-                "  degenerate edge repair: fixed_edges={} unions={}",
-                degenerate_fixed, degenerate_unions
-            );
-        }
-        if !skip_debug.is_empty() {
-            eprintln!(
-                "  skipped edge length debug (showing {}):",
-                skip_debug.len()
-            );
-            for dbg in &skip_debug {
-                eprintln!(
-                    "    edge=({},{}) seg_a={} seg_b={} seg_a_len=[{:?},{:?}] seg_b_len=[{:?},{:?}] min_cross_cell_len={:?}",
-                    dbg.a,
-                    dbg.b,
-                    dbg.seg_a_len,
-                    dbg.seg_b_len,
-                    dbg.seg_a_len_min,
-                    dbg.seg_a_len_max,
-                    dbg.seg_b_len_min,
-                    dbg.seg_b_len_max,
-                    dbg.min_cross_cell_len
-                );
-            }
-        }
     }
 
     Some((new_cells, new_indices))
