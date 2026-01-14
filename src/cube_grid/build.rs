@@ -32,6 +32,7 @@ impl CubeMapGrid {
         Self::new_impl(points, res, Some(timings))
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     fn new_impl(
         points: &[Vec3],
         res: usize,
@@ -185,6 +186,7 @@ impl CubeMapGrid {
     }
 
     /// Compute 3×3 neighborhood for all cells.
+    #[cfg_attr(feature = "profiling", inline(never))]
     fn compute_all_neighbors(res: usize) -> Vec<u32> {
         let num_cells = 6 * res * res;
         let mut neighbors = vec![u32::MAX; num_cells * 9];
@@ -266,6 +268,7 @@ impl CubeMapGrid {
         neighbors
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     fn compute_ring2(res: usize, neighbors: &[u32]) -> (Vec<[u32; RING2_MAX]>, Vec<u8>) {
         let num_cells = 6 * res * res;
         let mut ring2 = vec![[u32::MAX; RING2_MAX]; num_cells];
@@ -385,6 +388,7 @@ impl CubeMapGrid {
     ///
     /// For each cell, finds the max dot product from any point in the cell to any point
     /// in the ring-2 set (Chebyshev distance 2). Uses spherical caps as a conservative bound.
+    #[cfg_attr(feature = "profiling", inline(never))]
     fn compute_security_3x3(
         res: usize,
         cell_centers: &[Vec3],
@@ -439,6 +443,7 @@ impl CubeMapGrid {
         security
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     fn compute_cell_bounds(res: usize) -> (Vec<Vec3>, Vec<f32>, Vec<f32>) {
         let num_cells = 6 * res * res;
         let mut centers = Vec::with_capacity(num_cells);

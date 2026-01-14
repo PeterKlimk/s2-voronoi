@@ -29,6 +29,7 @@ struct EdgeScratch {
 }
 
 impl EdgeScratch {
+    #[cfg_attr(feature = "profiling", inline(never))]
     fn new() -> Self {
         Self {
             edges_to_earlier: Vec::new(),
@@ -39,6 +40,7 @@ impl EdgeScratch {
         }
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     fn collect(
         &mut self,
         cell_idx: u32,
@@ -62,6 +64,7 @@ impl EdgeScratch {
             .resize(cell_vertices.len(), INVALID_INDEX);
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     fn resolve(&mut self, shard: &mut ShardState, local: LocalId, cell_vertices: &[VertexData]) {
         resolve_cell_edge_checks(
             shard,
@@ -73,6 +76,7 @@ impl EdgeScratch {
         );
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     fn emit(
         &mut self,
         shard: &mut ShardState,
@@ -142,6 +146,7 @@ impl CellContext {
     }
 }
 
+#[cfg_attr(feature = "profiling", inline(never))]
 fn process_cell(
     cell_sub: &mut crate::knn_clipping::timing::CellSubAccum,
     ctx: &mut CellContext,

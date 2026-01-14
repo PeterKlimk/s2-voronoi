@@ -399,6 +399,7 @@ impl Topo2DBuilder {
     ///
     /// The caller is responsible for filtering duplicates and near-coincident neighbors.
     /// This method just clips—it doesn't check if the neighbor was already added.
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub fn clip(&mut self, neighbor_idx: usize, neighbor: Vec3) -> Result<(), CellFailure> {
         if let Some(f) = self.failed {
             return Err(f);
@@ -562,6 +563,7 @@ impl Topo2DBuilder {
         self.to_vertex_data_impl(out, Some(edge_neighbors))
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     fn to_vertex_data_impl(
         &self,
         out: &mut Vec<VertexData>,

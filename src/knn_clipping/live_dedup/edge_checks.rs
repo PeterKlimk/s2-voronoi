@@ -16,6 +16,7 @@ use std::time::Duration;
 
 impl ShardDedup {
     #[inline(always)]
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn push_edge_check(&mut self, local: LocalId, check: EdgeCheck) {
         let local = local.as_usize();
         debug_assert!(
@@ -44,6 +45,7 @@ impl ShardDedup {
     }
 
     #[inline(always)]
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn take_edge_checks(&mut self, local: LocalId) -> u32 {
         let local = local.as_usize();
         debug_assert!(
@@ -56,6 +58,7 @@ impl ShardDedup {
     }
 
     #[inline(always)]
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn recycle_edge_checks(&mut self, mut head: u32) {
         while head != EDGE_CHECK_NONE {
             let node = &mut self.edge_check_nodes[head as usize];
@@ -67,6 +70,7 @@ impl ShardDedup {
     }
 }
 
+#[cfg_attr(feature = "profiling", inline(never))]
 pub(super) fn collect_cell_edges(
     cell_idx: u32,
     local: LocalId,
@@ -139,6 +143,7 @@ pub(super) fn collect_cell_edges(
     }
 }
 
+#[cfg_attr(feature = "profiling", inline(never))]
 pub(super) fn resolve_cell_edge_checks(
     shard: &mut ShardState,
     local: LocalId,
@@ -224,6 +229,7 @@ pub(super) fn resolve_cell_edge_checks(
     edges_to_earlier.clear();
 }
 
+#[cfg_attr(feature = "profiling", inline(never))]
 pub(super) fn resolve_edge_check_overflow(
     shards: &mut [ShardState],
     edge_check_overflow: &mut Vec<EdgeCheckOverflow>,
