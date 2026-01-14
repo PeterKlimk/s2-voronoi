@@ -1,0 +1,114 @@
+//! Shard-local state for live dedup.
+
+use glam::Vec3;
+use rustc_hash::FxHashMap;
+
+use super::types::{
+    BadEdgeRecord, DeferredSlot, EdgeCheckNode, EdgeCheckOverflow, SupportOverflow,
+};
+use super::EDGE_CHECK_NONE;
+use crate::knn_clipping::cell_builder::VertexKey;
+
+/// Data only needed during vertex deduplication (dropped after overflow flush).
+pub(super) struct ShardDedup {
+    pub(super) support_map: FxHashMap<Vec<u32>, u32>,
+    pub(super) support_data: Vec<u32>,
+    pub(super) support_overflow: Vec<SupportOverflow>,
+    pub(super) edge_check_heads: Vec<u32>,
+    pub(super) edge_check_nodes: Vec<EdgeCheckNode>,
+    pub(super) edge_check_free: u32,
+}
+
+impl ShardDedup {
+    pub(super) fn new(num_local_generators: usize) -> Self {
+        Self {
+            support_map: FxHashMap::default(),
+            support_data: Vec::new(),
+            support_overflow: Vec::new(),
+            edge_check_heads: vec![EDGE_CHECK_NONE; num_local_generators],
+            edge_check_nodes: Vec::new(),
+            edge_check_free: EDGE_CHECK_NONE,
+        }
+    }
+}
+
+/// Output data needed for final assembly.
+pub(super) struct ShardOutput {
+    pub(super) vertices: Vec<Vec3>,
+    pub(super) vertex_keys: Vec<VertexKey>,
+    pub(super) bad_edges: Vec<BadEdgeRecord>,
+    pub(super) edge_check_overflow: Vec<EdgeCheckOverflow>,
+    pub(super) deferred: Vec<DeferredSlot>,
+    pub(super) cell_indices: Vec<u64>,
+    pub(super) cell_starts: Vec<u32>,
+    pub(super) cell_counts: Vec<u8>,
+}
+
+impl ShardOutput {
+    pub(super) fn new(num_local_generators: usize) -> Self {
+        Self {
+            vertices: Vec::new(),
+            vertex_keys: Vec::new(),
+            bad_edges: Vec::new(),
+            edge_check_overflow: Vec::new(),
+            deferred: Vec::new(),
+            cell_indices: Vec::new(),
+            cell_starts: vec![0; num_local_generators],
+            cell_counts: vec![0; num_local_generators],
+        }
+    }
+}
+
+/// Per-shard state during cell construction.
+pub(super) struct ShardState {
+    pub(super) dedup: ShardDedup,
+    pub(super) output: ShardOutput,
+    #[cfg(feature = "timing")]
+    pub(super) triplet_keys: u64,
+    #[cfg(feature = "timing")]
+    pub(super) support_keys: u64,
+}
+
+impl ShardState {
+    pub(super) fn new(num_local_generators: usize) -> Self {
+        Self {
+            dedup: ShardDedup::new(num_local_generators),
+            output: ShardOutput::new(num_local_generators),
+            #[cfg(feature = "timing")]
+            triplet_keys: 0,
+            #[cfg(feature = "timing")]
+            support_keys: 0,
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn dedup_support_owned(&mut self, support: Vec<u32>, pos: Vec3) -> u32 {
+        if let Some(&idx) = self.dedup.support_map.get(support.as_slice()) {
+            return idx;
+        }
+        let idx = self.output.vertices.len() as u32;
+        self.output.vertices.push(pos);
+        self.dedup.support_map.insert(support, idx);
+        idx
+    }
+
+    pub(super) fn into_final(self) -> ShardFinal {
+        ShardFinal {
+            output: self.output,
+            #[cfg(feature = "timing")]
+            triplet_keys: self.triplet_keys,
+            #[cfg(feature = "timing")]
+            support_keys: self.support_keys,
+        }
+        // self.dedup dropped here automatically
+    }
+}
+
+/// Shard state after construction, with dedup dropped.
+pub(super) struct ShardFinal {
+    pub(super) output: ShardOutput,
+    #[cfg(feature = "timing")]
+    pub(super) triplet_keys: u64,
+    #[cfg(feature = "timing")]
+    pub(super) support_keys: u64,
+}

@@ -4,11 +4,12 @@ use glam::Vec3;
 
 use super::binning::{BinAssignment, GenMap};
 use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
+use super::shard::{ShardDedup, ShardState};
 use super::types::{
     BadEdgeReason, BadEdgeRecord, EdgeCheck, EdgeCheckNode, EdgeCheckOverflow, EdgeLocal,
     EdgeOverflowLocal, EdgeToLater,
 };
-use super::{with_two_mut, ShardDedup, ShardState, EDGE_CHECK_NONE};
+use super::{with_two_mut, EDGE_CHECK_NONE};
 use crate::knn_clipping::cell_builder::VertexKey;
 use crate::knn_clipping::timing::Timer;
 use std::time::Duration;
