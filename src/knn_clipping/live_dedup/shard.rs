@@ -4,7 +4,7 @@ use glam::Vec3;
 use rustc_hash::FxHashMap;
 
 use super::types::{
-    BadEdgeRecord, DeferredSlot, EdgeCheckNode, EdgeCheckOverflow, SupportOverflow,
+    BadEdgeRecord, DeferredSlot, EdgeCheckNode, EdgeCheckOverflow, LocalId, SupportOverflow,
 };
 use super::EDGE_CHECK_NONE;
 use crate::knn_clipping::cell_builder::VertexKey;
@@ -56,6 +56,26 @@ impl ShardOutput {
             cell_starts: vec![0; num_local_generators],
             cell_counts: vec![0; num_local_generators],
         }
+    }
+
+    #[inline(always)]
+    pub(super) fn set_cell_start(&mut self, local: LocalId, start: u32) {
+        self.cell_starts[local.as_usize()] = start;
+    }
+
+    #[inline(always)]
+    pub(super) fn cell_start(&self, local: LocalId) -> u32 {
+        self.cell_starts[local.as_usize()]
+    }
+
+    #[inline(always)]
+    pub(super) fn set_cell_count(&mut self, local: LocalId, count: u8) {
+        self.cell_counts[local.as_usize()] = count;
+    }
+
+    #[inline(always)]
+    pub(super) fn cell_count(&self, local: LocalId) -> u8 {
+        self.cell_counts[local.as_usize()]
     }
 }
 

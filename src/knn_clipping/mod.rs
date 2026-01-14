@@ -691,7 +691,7 @@ fn repair_bad_edges(
     }
 
     for record in edge_records {
-        let (a, b) = unpack_edge(record.key);
+        let (a, b) = unpack_edge(record.key.as_u64());
         let seg_a = edge_segments_for_neighbor(a, b, cells, cell_indices, vertex_keys);
         let seg_b = edge_segments_for_neighbor(b, a, cells, cell_indices, vertex_keys);
         if seg_a.len() != 1 || seg_b.len() != 1 {
@@ -1124,7 +1124,7 @@ fn compute_voronoi_gpu_style_core(
     if log_enabled() && !bad_edges.is_empty() {
         eprintln!("edge checks (live): bad_edges={}", bad_edges.len());
         for record in &bad_edges {
-            let (a, b) = unpack_edge(record.key);
+            let (a, b) = unpack_edge(record.key.as_u64());
             eprintln!("  edge=({},{}) reason={:?}", a, b, record.reason);
         }
     }

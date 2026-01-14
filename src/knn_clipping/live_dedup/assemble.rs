@@ -8,7 +8,7 @@ use rustc_hash::FxHashMap;
 use super::edge_checks::resolve_edge_check_overflow;
 use super::packed::{pack_ref, unpack_ref, DEFERRED};
 use super::shard::ShardFinal;
-use super::types::{BadEdgeRecord, DeferredSlot, EdgeCheckOverflow, SupportOverflow};
+use super::types::{BadEdgeRecord, BinId, DeferredSlot, EdgeCheckOverflow, SupportOverflow};
 use super::with_two_mut;
 use super::ShardedCellsData;
 use crate::knn_clipping::cell_builder::VertexKey;
@@ -34,7 +34,7 @@ pub(super) fn assemble_sharded_live_dedup(
         (0..num_bins).map(|_| Vec::new()).collect();
     for shard in &mut data.shards {
         for entry in shard.dedup.support_overflow.drain(..) {
-            support_by_target[entry.target_bin as usize].push(entry);
+            support_by_target[entry.target_bin.as_usize()].push(entry);
         }
     }
 
@@ -43,17 +43,20 @@ pub(super) fn assemble_sharded_live_dedup(
     let t1 = Timer::start();
 
     // Phase 3: overflow flush (V1: single-threaded)
-    for target in 0..num_bins {
+    for target_idx in 0..num_bins {
+        let target_bin = BinId::from_usize(target_idx);
         // Support sets
-        for entry in support_by_target[target].drain(..) {
-            let source = entry.source_bin as usize;
-            let target = target;
-            debug_assert_ne!(source, target, "overflow should not target same bin");
-            let (source_shard, target_shard) = with_two_mut(&mut data.shards, source, target);
+        for entry in support_by_target[target_idx].drain(..) {
+            let source = entry.source_bin.as_usize();
+            debug_assert_ne!(
+                entry.source_bin, target_bin,
+                "overflow should not target same bin"
+            );
+            let (source_shard, target_shard) = with_two_mut(&mut data.shards, source, target_idx);
 
             let idx = target_shard.dedup_support_owned(entry.support, entry.pos);
             source_shard.output.cell_indices[entry.source_slot as usize] =
-                pack_ref(target as u32, idx);
+                pack_ref(target_bin, idx);
         }
     }
 
@@ -72,7 +75,7 @@ pub(super) fn assemble_sharded_live_dedup(
     let edge_checks_overflow_time =
         edge_checks_overflow_sort_time + edge_checks_overflow_match_time;
 
-    let patch_slot = |slot: &mut u64, owner_bin: u32, idx: u32| {
+    let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| {
         let packed = pack_ref(owner_bin, idx);
         if *slot == DEFERRED {
             *slot = packed;
@@ -82,21 +85,21 @@ pub(super) fn assemble_sharded_live_dedup(
     };
 
     let t_deferred = Timer::start();
-    let mut fallback_map: FxHashMap<VertexKey, (u32, u32)> = FxHashMap::default();
+    let mut fallback_map: FxHashMap<VertexKey, (BinId, u32)> = FxHashMap::default();
     for entry in deferred_slots {
-        let source_bin = entry.source_bin as usize;
+        let source_bin = entry.source_bin.as_usize();
         let source_slot = entry.source_slot as usize;
         if data.shards[source_bin].output.cell_indices[source_slot] != DEFERRED {
             continue;
         }
 
-        let owner_bin = data.assignment.generator_bin[entry.key[0] as usize] as u32;
+        let owner_bin = data.assignment.generator_bin[entry.key[0] as usize];
         let idx = if let Some(&(bin, idx)) = fallback_map.get(&entry.key) {
             debug_assert_eq!(bin, owner_bin, "fallback owner bin mismatch");
             idx
         } else {
             let new_idx = {
-                let owner_shard = &mut data.shards[owner_bin as usize];
+                let owner_shard = &mut data.shards[owner_bin.as_usize()];
                 let new_idx = owner_shard.output.vertices.len() as u32;
                 owner_shard.output.vertices.push(entry.pos);
                 owner_shard.output.vertex_keys.push(entry.key);
@@ -161,9 +164,9 @@ pub(super) fn assemble_sharded_live_dedup(
     let mut cell_starts_global: Vec<u32> = vec![0; num_cells + 1];
     let mut total_cell_indices = 0u32;
     for gen_idx in 0..num_cells {
-        let bin = data.assignment.generator_bin[gen_idx] as usize;
-        let local = data.assignment.global_to_local[gen_idx] as usize;
-        let count = finals[bin].output.cell_counts[local] as u32;
+        let bin = data.assignment.generator_bin[gen_idx].as_usize();
+        let local = data.assignment.global_to_local[gen_idx];
+        let count = finals[bin].output.cell_count(local) as u32;
         total_cell_indices = total_cell_indices
             .checked_add(count)
             .expect("cell index buffer exceeds u32 capacity");
@@ -226,19 +229,20 @@ pub(super) fn assemble_sharded_live_dedup(
     };
 
     maybe_par_into_iter!(0..num_cells).for_each(|gen_idx| {
-        let bin = data.assignment.generator_bin[gen_idx] as usize;
-        let local = data.assignment.global_to_local[gen_idx] as usize;
+        let bin = data.assignment.generator_bin[gen_idx].as_usize();
+        let local = data.assignment.global_to_local[gen_idx];
         let shard = &finals[bin];
-        let start = shard.output.cell_starts[local] as usize;
-        let count = shard.output.cell_counts[local] as usize;
+        let start = shard.output.cell_start(local) as usize;
+        let count = shard.output.cell_count(local) as usize;
 
         let dst_start = cell_starts_global[gen_idx] as usize;
 
         #[cfg(debug_assertions)]
         {
+            let local_idx = local.as_usize();
             debug_assert!(bin < num_bins, "generator bin out of range");
             debug_assert!(
-                local < shard.output.cell_counts.len(),
+                local_idx < shard.output.cell_counts.len(),
                 "local index out of range"
             );
             debug_assert!(
@@ -260,16 +264,16 @@ pub(super) fn assemble_sharded_live_dedup(
                 let (vbin, local) = unpack_ref(packed);
                 #[cfg(debug_assertions)]
                 {
-                    debug_assert!((vbin as usize) < num_bins, "packed vertex bin out of range");
+                    debug_assert!(vbin.as_usize() < num_bins, "packed vertex bin out of range");
                     debug_assert!(
-                        (local as usize) < finals[vbin as usize].output.vertices.len(),
+                        (local as usize) < finals[vbin.as_usize()].output.vertices.len(),
                         "packed vertex local index out of range"
                     );
                 }
-                dst.add(i).write(vertex_offsets[vbin as usize] + local);
+                dst.add(i).write(vertex_offsets[vbin.as_usize()] + local);
             }
 
-            let count_u16 = u16::from(shard.output.cell_counts[local]);
+            let count_u16 = u16::from(shard.output.cell_count(local));
             (cells_ptr as *mut VoronoiCell)
                 .add(gen_idx)
                 .write(VoronoiCell::new(cell_starts_global[gen_idx], count_u16));

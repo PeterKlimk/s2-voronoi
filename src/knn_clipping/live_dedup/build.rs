@@ -9,8 +9,8 @@ use super::edge_checks::{collect_cell_edges, resolve_cell_edge_checks};
 use super::packed::{pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::ShardState;
 use super::types::{
-    DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeLocal, EdgeOverflowLocal, EdgeToLater,
-    PackedSeed,
+    BinId, DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeLocal, EdgeOverflowLocal, EdgeToLater,
+    LocalId, PackedSeed,
 };
 use super::ShardedCellsData;
 use crate::cube_grid::packed_knn::{
@@ -20,17 +20,113 @@ use crate::knn_clipping::cell_builder::VertexData;
 use crate::knn_clipping::topo2d::Topo2DBuilder;
 use crate::knn_clipping::TerminationConfig;
 
+struct EdgeScratch {
+    edges_to_earlier: Vec<EdgeLocal>,
+    edges_to_later: Vec<EdgeToLater>,
+    edges_overflow: Vec<EdgeOverflowLocal>,
+    edge_matched: Vec<bool>,
+    vertex_indices: Vec<u32>,
+}
+
+impl EdgeScratch {
+    fn new() -> Self {
+        Self {
+            edges_to_earlier: Vec::new(),
+            edges_to_later: Vec::new(),
+            edges_overflow: Vec::new(),
+            edge_matched: Vec::new(),
+            vertex_indices: Vec::new(),
+        }
+    }
+
+    fn collect(
+        &mut self,
+        cell_idx: u32,
+        local: LocalId,
+        cell_vertices: &[VertexData],
+        edge_neighbors: &[u32],
+        assignment: &super::binning::BinAssignment,
+    ) {
+        collect_cell_edges(
+            cell_idx,
+            local,
+            cell_vertices,
+            edge_neighbors,
+            assignment,
+            &mut self.edges_to_earlier,
+            &mut self.edges_to_later,
+            &mut self.edges_overflow,
+        );
+        self.vertex_indices.clear();
+        self.vertex_indices
+            .resize(cell_vertices.len(), INVALID_INDEX);
+    }
+
+    fn resolve(&mut self, shard: &mut ShardState, local: LocalId, cell_vertices: &[VertexData]) {
+        resolve_cell_edge_checks(
+            shard,
+            local,
+            &mut self.edges_to_earlier,
+            cell_vertices,
+            &mut self.vertex_indices,
+            &mut self.edge_matched,
+        );
+    }
+
+    fn emit(
+        &mut self,
+        shard: &mut ShardState,
+        cell_vertices: &[VertexData],
+        cell_start: u32,
+        bin: BinId,
+    ) {
+        for entry in self.edges_to_later.drain(..) {
+            let locals = entry.edge.locals;
+            let endpoints = [
+                cell_vertices[locals[0] as usize].0,
+                cell_vertices[locals[1] as usize].0,
+            ];
+            shard.dedup.push_edge_check(
+                entry.local_b,
+                EdgeCheck {
+                    key: entry.edge.key,
+                    endpoints,
+                    indices: [
+                        self.vertex_indices[locals[0] as usize],
+                        self.vertex_indices[locals[1] as usize],
+                    ],
+                },
+            );
+        }
+
+        for entry in self.edges_overflow.drain(..) {
+            let locals = entry.edge.locals;
+            let endpoints = [
+                cell_vertices[locals[0] as usize].0,
+                cell_vertices[locals[1] as usize].0,
+            ];
+            shard.output.edge_check_overflow.push(EdgeCheckOverflow {
+                key: entry.edge.key,
+                side: entry.side,
+                source_bin: bin,
+                endpoints,
+                indices: [
+                    self.vertex_indices[locals[0] as usize],
+                    self.vertex_indices[locals[1] as usize],
+                ],
+                slots: [cell_start + locals[0] as u32, cell_start + locals[1] as u32],
+            });
+        }
+    }
+}
+
 struct CellContext {
     builder: Topo2DBuilder,
     scratch: crate::cube_grid::CubeMapGridScratch,
     neighbors: Vec<usize>,
     cell_vertices: Vec<VertexData>,
     edge_neighbors: Vec<u32>,
-    edges_to_earlier: Vec<EdgeLocal>,
-    edges_to_later: Vec<EdgeToLater>,
-    edges_overflow: Vec<EdgeOverflowLocal>,
-    edge_matched: Vec<bool>,
-    vertex_indices: Vec<u32>,
+    edge_scratch: EdgeScratch,
 }
 
 impl CellContext {
@@ -41,11 +137,7 @@ impl CellContext {
             neighbors: Vec::with_capacity(crate::knn_clipping::KNN_RESTART_MAX),
             cell_vertices: Vec::new(),
             edge_neighbors: Vec::new(),
-            edges_to_earlier: Vec::new(),
-            edges_to_later: Vec::new(),
-            edges_overflow: Vec::new(),
-            edge_matched: Vec::new(),
-            vertex_indices: Vec::new(),
+            edge_scratch: EdgeScratch::new(),
         }
     }
 }
@@ -59,9 +151,9 @@ fn process_cell(
     assignment: &super::binning::BinAssignment,
     termination: TerminationConfig,
     termination_max_k_cap: Option<usize>,
-    bin: u32,
+    bin: BinId,
     i: usize,
-    local: u32,
+    local: LocalId,
     packed: Option<PackedSeed<'_>>,
 ) {
     let builder = &mut ctx.builder;
@@ -69,17 +161,13 @@ fn process_cell(
     let neighbors = &mut ctx.neighbors;
     let cell_vertices = &mut ctx.cell_vertices;
     let edge_neighbors = &mut ctx.edge_neighbors;
-    let edges_to_earlier = &mut ctx.edges_to_earlier;
-    let edges_to_later = &mut ctx.edges_to_later;
-    let edges_overflow = &mut ctx.edges_overflow;
-    let edge_matched = &mut ctx.edge_matched;
-    let vertex_indices = &mut ctx.vertex_indices;
+    let edge_scratch = &mut ctx.edge_scratch;
 
     builder.reset(i, points[i]);
     neighbors.clear();
 
     let cell_start = shard.output.cell_indices.len() as u32;
-    shard.output.cell_starts[local as usize] = cell_start;
+    shard.output.set_cell_start(local, cell_start);
 
     let mut cell_neighbors_processed = 0usize;
     let mut terminated = false;
@@ -457,107 +545,58 @@ fn process_cell(
 
     let cell_idx = i as u32;
     let t_edge_collect = crate::knn_clipping::timing::Timer::start();
-    collect_cell_edges(
-        cell_idx,
-        local as usize,
-        cell_vertices,
-        edge_neighbors,
-        assignment,
-        edges_to_earlier,
-        edges_to_later,
-        edges_overflow,
-    );
-    vertex_indices.clear();
-    vertex_indices.resize(cell_vertices.len(), INVALID_INDEX);
+    edge_scratch.collect(cell_idx, local, cell_vertices, edge_neighbors, assignment);
     cell_sub.add_edge_collect(t_edge_collect.elapsed());
 
     let t_edge_resolve = crate::knn_clipping::timing::Timer::start();
-    resolve_cell_edge_checks(
-        shard,
-        local as usize,
-        edges_to_earlier,
-        cell_vertices,
-        vertex_indices,
-        edge_matched,
-    );
+    edge_scratch.resolve(shard, local, cell_vertices);
     cell_sub.add_edge_resolve(t_edge_resolve.elapsed());
 
     let count = cell_vertices.len();
-    shard.output.cell_counts[local as usize] =
-        u8::try_from(count).expect("cell vertex count exceeds u8 capacity");
+    shard.output.set_cell_count(
+        local,
+        u8::try_from(count).expect("cell vertex count exceeds u8 capacity"),
+    );
 
     let t_keys = crate::knn_clipping::timing::Timer::start();
-    for (idx, (key, pos)) in cell_vertices.iter().copied().enumerate() {
-        #[cfg(feature = "timing")]
-        {
-            shard.triplet_keys += 1;
-        }
-        let owner_bin = assignment.generator_bin[key[0] as usize];
-        if owner_bin == bin {
-            if vertex_indices[idx] == INVALID_INDEX {
-                let new_idx = shard.output.vertices.len() as u32;
-                shard.output.vertices.push(pos);
-                shard.output.vertex_keys.push(key);
-                vertex_indices[idx] = new_idx;
+    {
+        let vertex_indices = &mut edge_scratch.vertex_indices;
+        for (idx, (key, pos)) in cell_vertices.iter().copied().enumerate() {
+            #[cfg(feature = "timing")]
+            {
+                shard.triplet_keys += 1;
             }
-            let v_idx = vertex_indices[idx];
-            debug_assert!(v_idx != INVALID_INDEX, "missing on-shard vertex index");
-            shard.output.cell_indices.push(pack_ref(bin, v_idx));
-        } else {
-            debug_assert_eq!(
-                vertex_indices[idx], INVALID_INDEX,
-                "received index for off-shard owner"
-            );
-            let source_slot = shard.output.cell_indices.len() as u32;
-            shard.output.cell_indices.push(DEFERRED);
-            shard.output.deferred.push(DeferredSlot {
-                key,
-                pos,
-                source_bin: bin,
-                source_slot,
-            });
+            let owner_bin = assignment.generator_bin[key[0] as usize];
+            if owner_bin == bin {
+                if vertex_indices[idx] == INVALID_INDEX {
+                    let new_idx = shard.output.vertices.len() as u32;
+                    shard.output.vertices.push(pos);
+                    shard.output.vertex_keys.push(key);
+                    vertex_indices[idx] = new_idx;
+                }
+                let v_idx = vertex_indices[idx];
+                debug_assert!(v_idx != INVALID_INDEX, "missing on-shard vertex index");
+                shard.output.cell_indices.push(pack_ref(bin, v_idx));
+            } else {
+                debug_assert_eq!(
+                    vertex_indices[idx], INVALID_INDEX,
+                    "received index for off-shard owner"
+                );
+                let source_slot = shard.output.cell_indices.len() as u32;
+                shard.output.cell_indices.push(DEFERRED);
+                shard.output.deferred.push(DeferredSlot {
+                    key,
+                    pos,
+                    source_bin: bin,
+                    source_slot,
+                });
+            }
         }
     }
     cell_sub.add_key_dedup(t_keys.elapsed());
 
     let t_edge_emit = crate::knn_clipping::timing::Timer::start();
-    for entry in edges_to_later.drain(..) {
-        let locals = entry.edge.locals;
-        let endpoints = [
-            cell_vertices[locals[0] as usize].0,
-            cell_vertices[locals[1] as usize].0,
-        ];
-        shard.dedup.push_edge_check(
-            entry.local_b as usize,
-            EdgeCheck {
-                key: entry.edge.key,
-                endpoints,
-                indices: [
-                    vertex_indices[locals[0] as usize],
-                    vertex_indices[locals[1] as usize],
-                ],
-            },
-        );
-    }
-
-    for entry in edges_overflow.drain(..) {
-        let locals = entry.edge.locals;
-        let endpoints = [
-            cell_vertices[locals[0] as usize].0,
-            cell_vertices[locals[1] as usize].0,
-        ];
-        shard.output.edge_check_overflow.push(EdgeCheckOverflow {
-            key: entry.edge.key,
-            side: entry.side,
-            source_bin: bin,
-            endpoints,
-            indices: [
-                vertex_indices[locals[0] as usize],
-                vertex_indices[locals[1] as usize],
-            ],
-            slots: [cell_start + locals[0] as u32, cell_start + locals[1] as u32],
-        });
-    }
+    edge_scratch.emit(shard, cell_vertices, cell_start, bin);
     cell_sub.add_edge_emit(t_edge_emit.elapsed());
 
     debug_assert_eq!(
@@ -591,7 +630,7 @@ pub(super) fn build_cells_sharded_live_dedup(
             .map(|bin_usize| {
                 use crate::knn_clipping::timing::CellSubAccum;
 
-                let bin = bin_usize as u32;
+                let bin = BinId::from_usize(bin_usize);
                 let my_generators = &assignment.bin_generators[bin_usize];
                 let mut shard = ShardState::new(my_generators.len());
 
@@ -657,8 +696,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                             &mut packed_scratch,
                             &mut packed_timings,
                             |qi, query_idx, neighbors, count, security| {
-                                let local = u32::try_from(group_start + qi)
-                                    .expect("local index must fit in u32");
+                                let local = LocalId::from_usize(group_start + qi);
                                 let seed = PackedSeed {
                                     neighbors,
                                     count,
@@ -684,10 +722,9 @@ pub(super) fn build_cells_sharded_live_dedup(
                         let packed_elapsed = t_packed.elapsed();
 
                         if status == PackedKnnCellStatus::SlowPath {
-                            for local in group_start..cursor {
-                                let global = my_generators[local];
-                                let local_u32 =
-                                    u32::try_from(local).expect("local index must fit in u32");
+                            for local_idx in group_start..cursor {
+                                let global = my_generators[local_idx];
+                                let local = LocalId::from_usize(local_idx);
                                 process_cell(
                                     &mut sub_accum,
                                     &mut ctx,
@@ -699,7 +736,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                     termination_max_k_cap,
                                     bin,
                                     global,
-                                    local_u32,
+                                    local,
                                     None,
                                 );
                             }
@@ -731,10 +768,9 @@ pub(super) fn build_cells_sharded_live_dedup(
                         #[cfg(not(feature = "timing"))]
                         sub_accum.add_packed_knn(packed_elapsed);
                     } else {
-                        for local in group_start..cursor {
-                            let global = my_generators[local];
-                            let local_u32 =
-                                u32::try_from(local).expect("local index must fit in u32");
+                        for local_idx in group_start..cursor {
+                            let global = my_generators[local_idx];
+                            let local = LocalId::from_usize(local_idx);
                             process_cell(
                                 &mut sub_accum,
                                 &mut ctx,
@@ -746,7 +782,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                 termination_max_k_cap,
                                 bin,
                                 global,
-                                local_u32,
+                                local,
                                 None,
                             );
                         }

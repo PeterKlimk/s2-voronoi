@@ -6,8 +6,8 @@ use super::binning::{BinAssignment, GenMap};
 use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
 use super::types::{
-    BadEdgeReason, BadEdgeRecord, EdgeCheck, EdgeCheckNode, EdgeCheckOverflow, EdgeLocal,
-    EdgeOverflowLocal, EdgeToLater,
+    BadEdgeReason, BadEdgeRecord, BinId, EdgeCheck, EdgeCheckNode, EdgeCheckOverflow, EdgeLocal,
+    EdgeOverflowLocal, EdgeToLater, LocalId,
 };
 use super::{with_two_mut, EDGE_CHECK_NONE};
 use crate::knn_clipping::cell_builder::VertexKey;
@@ -16,7 +16,8 @@ use std::time::Duration;
 
 impl ShardDedup {
     #[inline(always)]
-    pub(super) fn push_edge_check(&mut self, local: usize, check: EdgeCheck) {
+    pub(super) fn push_edge_check(&mut self, local: LocalId, check: EdgeCheck) {
+        let local = local.as_usize();
         debug_assert!(
             local < self.edge_check_heads.len(),
             "edge check local out of bounds"
@@ -43,7 +44,8 @@ impl ShardDedup {
     }
 
     #[inline(always)]
-    pub(super) fn take_edge_checks(&mut self, local: usize) -> u32 {
+    pub(super) fn take_edge_checks(&mut self, local: LocalId) -> u32 {
+        let local = local.as_usize();
         debug_assert!(
             local < self.edge_check_heads.len(),
             "edge check local out of bounds"
@@ -67,7 +69,7 @@ impl ShardDedup {
 
 pub(super) fn collect_cell_edges(
     cell_idx: u32,
-    local: usize,
+    local: LocalId,
     cell_vertices: &[(VertexKey, Vec3)],
     edge_neighbors: &[u32],
     assignment: &BinAssignment,
@@ -86,10 +88,10 @@ pub(super) fn collect_cell_edges(
 
     let bin_a = assignment.gen_map[cell_idx as usize].bin;
     debug_assert_eq!(
-        assignment.gen_map[cell_idx as usize].local as usize, local,
+        assignment.gen_map[cell_idx as usize].local, local,
         "local index mismatch in edge checks"
     );
-    let local_u32 = u32::try_from(local).expect("local index must fit in u32");
+    let local_u32 = local.as_u32();
 
     for i in 0..n {
         let j = if i + 1 == n { 0 } else { i + 1 };
@@ -116,12 +118,13 @@ pub(super) fn collect_cell_edges(
             local: local_b_u32,
         } = assignment.gen_map[neighbor as usize];
         if bin_a == bin_b {
-            let local_b = local_b_u32 as usize;
+            let local_b = local_b_u32.as_usize();
             debug_assert_ne!(
-                local, local_b,
+                local.as_usize(),
+                local_b,
                 "edge checks: neighbor mapped to same local index as cell"
             );
-            if local_u32 < local_b_u32 {
+            if local_u32 < local_b_u32.as_u32() {
                 edges_to_later.push(EdgeToLater {
                     edge,
                     local_b: local_b_u32,
@@ -138,7 +141,7 @@ pub(super) fn collect_cell_edges(
 
 pub(super) fn resolve_cell_edge_checks(
     shard: &mut ShardState,
-    local: usize,
+    local: LocalId,
     edges_to_earlier: &mut Vec<EdgeLocal>,
     cell_vertices: &[(VertexKey, Vec3)],
     vertex_indices: &mut [u32],
@@ -231,7 +234,7 @@ pub(super) fn resolve_edge_check_overflow(
     let edge_checks_overflow_sort_time = t_edge_sort.elapsed();
 
     let t_edge_match = Timer::start();
-    let patch_slot = |slot: &mut u64, owner_bin: u32, idx: u32| {
+    let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| {
         let packed = pack_ref(owner_bin, idx);
         if *slot == DEFERRED {
             *slot = packed;
@@ -254,7 +257,7 @@ pub(super) fn resolve_edge_check_overflow(
                 });
             } else {
                 let (a_shard, b_shard) =
-                    with_two_mut(shards, a.source_bin as usize, b.source_bin as usize);
+                    with_two_mut(shards, a.source_bin.as_usize(), b.source_bin.as_usize());
                 for k in 0..2 {
                     if a.endpoints[k] == b.endpoints[k] {
                         if a.indices[k] != INVALID_INDEX {

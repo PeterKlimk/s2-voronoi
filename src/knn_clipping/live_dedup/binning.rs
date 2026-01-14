@@ -4,16 +4,18 @@ use glam::Vec3;
 
 use crate::cube_grid::{cell_to_face_ij, CubeMapGrid};
 
+use super::types::{BinId, LocalId};
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub(super) struct GenMap {
-    pub(super) bin: u32,
-    pub(super) local: u32,
+    pub(super) bin: BinId,
+    pub(super) local: LocalId,
 }
 
 pub(super) struct BinAssignment {
-    pub(super) generator_bin: Vec<u32>,
-    pub(super) global_to_local: Vec<u32>,
+    pub(super) generator_bin: Vec<BinId>,
+    pub(super) global_to_local: Vec<LocalId>,
     pub(super) gen_map: Vec<GenMap>,
     pub(super) bin_generators: Vec<Vec<usize>>,
     pub(super) num_bins: usize,
@@ -51,7 +53,7 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
     let layout = choose_bin_layout(grid.res());
     let num_bins = layout.num_bins;
 
-    let mut generator_bin: Vec<u32> = Vec::with_capacity(n);
+    let mut generator_bin: Vec<BinId> = Vec::with_capacity(n);
     let mut counts: Vec<usize> = vec![0; num_bins];
     for i in 0..n {
         let cell = grid.point_index_to_cell(i);
@@ -59,7 +61,7 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
         let bu = (iu / layout.bin_stride).min(layout.bin_res - 1);
         let bv = (iv / layout.bin_stride).min(layout.bin_res - 1);
         let b = face * layout.bin_res * layout.bin_res + bv * layout.bin_res + bu;
-        generator_bin.push(b as u32);
+        generator_bin.push(BinId::from_usize(b));
         counts[b] += 1;
     }
 
@@ -67,21 +69,27 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
         .map(|b| Vec::with_capacity(counts[b]))
         .collect();
     for (i, &b) in generator_bin.iter().enumerate() {
-        bin_generators[b as usize].push(i);
+        bin_generators[b.as_usize()].push(i);
     }
 
     for generators in &mut bin_generators {
         generators.sort_unstable_by_key(|&g| (grid.point_index_to_cell(g), g));
     }
 
-    let mut global_to_local: Vec<u32> = vec![0; n];
+    let mut global_to_local: Vec<LocalId> = vec![LocalId::from(0); n];
     for generators in &bin_generators {
         for (local_idx, &global_idx) in generators.iter().enumerate() {
-            global_to_local[global_idx] = local_idx as u32;
+            global_to_local[global_idx] = LocalId::from_usize(local_idx);
         }
     }
 
-    let mut gen_map: Vec<GenMap> = vec![GenMap { bin: 0, local: 0 }; n];
+    let mut gen_map: Vec<GenMap> = vec![
+        GenMap {
+            bin: BinId::from(0),
+            local: LocalId::from(0)
+        };
+        n
+    ];
     for (global_idx, &bin) in generator_bin.iter().enumerate() {
         gen_map[global_idx] = GenMap {
             bin,
