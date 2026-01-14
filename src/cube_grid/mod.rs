@@ -16,6 +16,7 @@ pub mod packed_knn;
 use glam::{Vec3, Vec3A};
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
+#[cfg(feature = "timing")]
 use std::time::Duration;
 
 /// Fine-grained timings for `CubeMapGrid::new`.

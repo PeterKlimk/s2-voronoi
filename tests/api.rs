@@ -57,7 +57,7 @@ fn test_compute_octahedron() {
 fn test_compute_various_sizes() {
     for n in [10, 50, 100, 500] {
         let points = fibonacci_sphere_points(n, 0.1, 42);
-        let output = compute(&points).expect(&format!("n={} should work", n));
+        let output = compute(&points).unwrap_or_else(|_| panic!("n={} should work", n));
         assert_eq!(output.diagram.num_cells(), n);
     }
 }

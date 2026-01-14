@@ -35,6 +35,7 @@ struct CellData {
 impl SphericalVoronoi {
     /// Create an empty diagram with generators but no computed cells.
     /// Used as placeholder during incremental implementation.
+    #[cfg(test)]
     pub(crate) fn empty(generators: Vec<UnitVec3>) -> Self {
         let n = generators.len();
         Self {

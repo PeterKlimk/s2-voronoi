@@ -3,32 +3,6 @@
 //! This module implements a "meshless" approach where each Voronoi cell is computed
 //! independently from its k nearest neighbors. This enables massive parallelism on GPU.
 
-macro_rules! maybe_par_iter {
-    ($v:expr) => {{
-        #[cfg(feature = "parallel")]
-        {
-            $v.par_iter()
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            $v.iter()
-        }
-    }};
-}
-
-macro_rules! maybe_par_iter_mut {
-    ($v:expr) => {{
-        #[cfg(feature = "parallel")]
-        {
-            $v.par_iter_mut()
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            $v.iter_mut()
-        }
-    }};
-}
-
 macro_rules! maybe_par_into_iter {
     ($v:expr) => {{
         #[cfg(feature = "parallel")]

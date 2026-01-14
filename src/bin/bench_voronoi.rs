@@ -42,7 +42,7 @@ fn mean_spacing(num_points: usize) -> f32 {
     (4.0 * std::f32::consts::PI / num_points as f32).sqrt()
 }
 
-const PHI: f32 = 1.618033988749895;
+const PHI: f32 = 1.618_034;
 
 fn fibonacci_sphere_points_with_rng<R: Rng>(n: usize, jitter: f32, rng: &mut R) -> Vec<Vec3> {
     use std::f32::consts::TAU;
@@ -293,16 +293,11 @@ fn validate_against_hull(_points: &[Vec3], _preprocess: bool) {
     println!("\nValidation requires the `qhull` feature; rebuild with --features qhull.");
 }
 
-
 struct BenchResult {
     n: usize,
     time_ms: f64,
     num_vertices: usize,
     num_cells: usize,
-}
-
-fn run_benchmark(points: &[UnitVec3]) -> BenchResult {
-    run_benchmark_with_config(points, VoronoiConfig::default())
 }
 
 fn run_benchmark_with_config(points: &[UnitVec3], config: VoronoiConfig) -> BenchResult {
@@ -415,10 +410,7 @@ fn main() {
             println!("  Min time:      {:>8.1}ms", min);
             println!("  Max time:      {:>8.1}ms", max);
             println!("  Avg time:      {:>8.1}ms", avg);
-            println!(
-                "  Throughput:    {:>8} (avg)",
-                format_rate(result.n, avg)
-            );
+            println!("  Throughput:    {:>8} (avg)", format_rate(result.n, avg));
         } else {
             println!("  Total time:    {:>8.1}ms", result.time_ms);
             println!(

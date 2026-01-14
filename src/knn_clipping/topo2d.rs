@@ -215,11 +215,7 @@ enum ClipResult {
 
 /// Clip a convex polygon by a half-plane (standalone function to avoid borrow conflicts).
 #[inline]
-fn clip_convex(
-    poly: &PolyBuffer,
-    hp: &HalfPlane,
-    out: &mut PolyBuffer,
-) -> ClipResult {
+fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
     let n = poly.len;
     if n < 3 {
         out.len = 0;
@@ -306,26 +302,14 @@ fn clip_convex(
     // Copy surviving inside vertices
     if entry_next <= exit_idx {
         for i in entry_next..=exit_idx {
-            out.push_unchecked(
-                poly.vertices[i],
-                poly.vertex_planes[i],
-                poly.edge_planes[i],
-            );
+            out.push_unchecked(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
         }
     } else {
         for i in entry_next..n {
-            out.push_unchecked(
-                poly.vertices[i],
-                poly.vertex_planes[i],
-                poly.edge_planes[i],
-            );
+            out.push_unchecked(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
         }
         for i in 0..=exit_idx {
-            out.push_unchecked(
-                poly.vertices[i],
-                poly.vertex_planes[i],
-                poly.edge_planes[i],
-            );
+            out.push_unchecked(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
         }
     }
 
