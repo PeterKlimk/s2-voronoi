@@ -194,6 +194,29 @@ impl CubeMapGrid {
             let (face, iu, iv) = cell_to_face_ij(cell, res);
             let base = cell * 9;
 
+            // Fast path for interior cells: all 3×3 neighbors stay on the same face, so we can
+            // compute them with simple index arithmetic and avoid cube-edge stitching logic.
+            //
+            // Margin is 1 cell (unlike ring-2 which needs margin 2).
+            if res >= 3 && iu >= 1 && iv >= 1 && iu + 1 < res && iv + 1 < res {
+                let center = cell as u32;
+                let left = (cell - 1) as u32;
+                let right = (cell + 1) as u32;
+                let down = (cell - res) as u32;
+                let up = (cell + res) as u32;
+
+                neighbors[base + 0] = (cell - res - 1) as u32; // down_left
+                neighbors[base + 1] = down;
+                neighbors[base + 2] = (cell - res + 1) as u32; // down_right
+                neighbors[base + 3] = left;
+                neighbors[base + 4] = center;
+                neighbors[base + 5] = right;
+                neighbors[base + 6] = (cell + res - 1) as u32; // up_left
+                neighbors[base + 7] = up;
+                neighbors[base + 8] = (cell + res + 1) as u32; // up_right
+                continue;
+            }
+
             let center = cell as u32;
             let (lf, lu, lv) = step_one(face, iu, iv, EdgeDir::Left, res);
             let left = (lf * res * res + lv * res + lu) as u32;
