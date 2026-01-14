@@ -183,21 +183,35 @@ pub(super) fn resolve_cell_edge_checks(
                     cell_vertices[emitted.locals[0] as usize].0,
                     cell_vertices[emitted.locals[1] as usize].0,
                 ];
-                for k in 0..2 {
-                    if assigned_edge.endpoints[k] == emitted_endpoints[k] {
+                if assigned_edge.endpoints == emitted_endpoints {
+                    for k in 0..2 {
                         let idx = assigned_edge.indices[k];
                         if idx != INVALID_INDEX {
                             let local_idx = emitted.locals[k] as usize;
                             let existing = vertex_indices[local_idx];
                             if existing == INVALID_INDEX {
                                 vertex_indices[local_idx] = idx;
-                            } else if existing != idx {
-                                debug_assert!(false, "edge check index mismatch");
+                            } else {
+                                debug_assert!(existing == idx , "edge check index mismatch");
                             }
                         }
                     }
-                }
-                if assigned_edge.endpoints != emitted_endpoints {
+                } else {
+                    // Rare path: salvage whatever we can, but still report mismatch.
+                    for k in 0..2 {
+                        if assigned_edge.endpoints[k] == emitted_endpoints[k] {
+                            let idx = assigned_edge.indices[k];
+                            if idx != INVALID_INDEX {
+                                let local_idx = emitted.locals[k] as usize;
+                                let existing = vertex_indices[local_idx];
+                                if existing == INVALID_INDEX {
+                                    vertex_indices[local_idx] = idx;
+                                } else {
+                                    debug_assert!(existing == idx , "edge check index mismatch");
+                                }
+                            }
+                        }
+                    }
                     shard.output.bad_edges.push(BadEdgeRecord {
                         key: assigned_edge.key,
                         reason: BadEdgeReason::EndpointMismatch,
