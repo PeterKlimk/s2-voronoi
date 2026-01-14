@@ -145,6 +145,23 @@ impl PolyBuffer {
         true
     }
 
+    #[inline]
+    fn push_unchecked(&mut self, v: (f64, f64), vp: (usize, usize), ep: usize) {
+        debug_assert!(self.len < MAX_POLY_VERTICES);
+        self.vertices[self.len] = v;
+        self.vertex_planes[self.len] = vp;
+        self.edge_planes[self.len] = ep;
+        self.len += 1;
+        let (u, w) = v;
+        let r2 = u * u + w * w;
+        if r2 > self.max_r2 {
+            self.max_r2 = r2;
+        }
+        if vp.0 == usize::MAX || vp.1 == usize::MAX || ep == usize::MAX {
+            self.has_bounding_ref = true;
+        }
+    }
+
     /// Get minimum cos across all vertices (for termination).
     /// Computes lazily from 2D gnomonic coords: cos(θ) = 1 / sqrt(1 + u² + v²)
     #[inline]
@@ -224,13 +241,18 @@ fn clip_convex(
 
     let last_idx = n - 1;
     let (lu, lv) = poly.vertices[last_idx];
-    let mut prev_d = hp.signed_dist(lu, lv);
+    let last_d = hp.signed_dist(lu, lv);
+    let mut prev_d = last_d;
     let mut prev_inside = is_inside_from_dist(hp, prev_d);
     let mut prev_idx = last_idx;
 
     for i in 0..n {
         let (u, v) = poly.vertices[i];
-        let curr_d = hp.signed_dist(u, v);
+        let curr_d = if i == last_idx {
+            last_d
+        } else {
+            hp.signed_dist(u, v)
+        };
         let curr_inside = is_inside_from_dist(hp, curr_d);
         inside_count += curr_inside as usize;
 
@@ -265,6 +287,9 @@ fn clip_convex(
     }
 
     debug_assert!(entry_idx != usize::MAX && exit_idx != usize::MAX);
+    if inside_count + 2 > MAX_POLY_VERTICES {
+        return ClipResult::TooManyVertices;
+    }
 
     // Pass 2: build output
     out.clear();
@@ -276,27 +301,31 @@ fn clip_convex(
     let entry_pt = (eu0 + t_entry * (eu1 - eu0), ev0 + t_entry * (ev1 - ev0));
     let entry_edge_plane = poly.edge_planes[entry_idx];
 
-    if !out.push(entry_pt, (entry_edge_plane, hp.plane_idx), entry_edge_plane) {
-        return ClipResult::TooManyVertices;
-    }
+    out.push_unchecked(entry_pt, (entry_edge_plane, hp.plane_idx), entry_edge_plane);
 
     // Copy surviving inside vertices
     if entry_next <= exit_idx {
         for i in entry_next..=exit_idx {
-            if !out.push(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]) {
-                return ClipResult::TooManyVertices;
-            }
+            out.push_unchecked(
+                poly.vertices[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i],
+            );
         }
     } else {
         for i in entry_next..n {
-            if !out.push(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]) {
-                return ClipResult::TooManyVertices;
-            }
+            out.push_unchecked(
+                poly.vertices[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i],
+            );
         }
         for i in 0..=exit_idx {
-            if !out.push(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]) {
-                return ClipResult::TooManyVertices;
-            }
+            out.push_unchecked(
+                poly.vertices[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i],
+            );
         }
     }
 
@@ -307,9 +336,7 @@ fn clip_convex(
     let exit_pt = (xu0 + t_exit * (xu1 - xu0), xv0 + t_exit * (xv1 - xv0));
     let exit_edge_plane = poly.edge_planes[exit_idx];
 
-    if !out.push(exit_pt, (exit_edge_plane, hp.plane_idx), hp.plane_idx) {
-        return ClipResult::TooManyVertices;
-    }
+    out.push_unchecked(exit_pt, (exit_edge_plane, hp.plane_idx), hp.plane_idx);
 
     // Fix edge plane of vertex before exit
     if out.len >= 2 {
