@@ -47,4 +47,11 @@ debug-assertions = false
 [profile.profiled]
 inherits = "release"
 opt-level = 3
-debug = true
+# Profiling-friendly settings:
+# - `debug=1` keeps enough symbols/line info for profilers without the size/slowdown of full debuginfo.
+# - `lto=false` avoids cross-crate inlining that can smear attribution and complicate stacks.
+# - `codegen-units=1` matches typical release performance characteristics (at the cost of compile time).
+debug = 1
+lto = false
+codegen-units = 1
+strip = "none"
