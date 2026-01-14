@@ -446,6 +446,22 @@ impl CubeMapGrid {
         let mut cos_r = Vec::with_capacity(num_cells);
         let mut sin_r = Vec::with_capacity(num_cells);
 
+        // Precompute ST→UV transform for grid lines and cell centers.
+        //
+        // `st_to_uv` is sqrt-heavy; doing this once avoids ~6 calls per cell.
+        let res_f = res as f32;
+        let inv_res = 1.0 / res_f;
+        let mut uv_lines: Vec<f32> = Vec::with_capacity(res + 1);
+        for i in 0..=res {
+            let s = i as f32 * inv_res;
+            uv_lines.push(st_to_uv(s));
+        }
+        let mut uv_centers: Vec<f32> = Vec::with_capacity(res);
+        for i in 0..res {
+            let s = (i as f32 + 0.5) * inv_res;
+            uv_centers.push(st_to_uv(s));
+        }
+
         #[inline]
         fn plane_normal_u(face: usize, u: f32) -> Vec3 {
             let n = match face {
@@ -471,6 +487,19 @@ impl CubeMapGrid {
             n.normalize()
         }
 
+        // Precompute normalized boundary plane normals for each face and each grid line.
+        // Planes depend only on (face, u_line) or (face, v_line), not on the points.
+        let line_count = res + 1;
+        let mut u_planes: Vec<Vec3> = Vec::with_capacity(6 * line_count);
+        let mut v_planes: Vec<Vec3> = Vec::with_capacity(6 * line_count);
+        for face in 0..6 {
+            for i in 0..=res {
+                let uv = uv_lines[i];
+                u_planes.push(plane_normal_u(face, uv));
+                v_planes.push(plane_normal_v(face, uv));
+            }
+        }
+
         #[inline]
         fn inside_all(p: Vec3, planes: &[Vec3; 4]) -> bool {
             planes.iter().all(|n| n.dot(p) >= -1e-6)
@@ -479,26 +508,21 @@ impl CubeMapGrid {
         for cell in 0..num_cells {
             let (face, iu, iv) = cell_to_face_ij(cell, res);
 
-            let s0 = (iu as f32) / res as f32;
-            let s1 = ((iu + 1) as f32) / res as f32;
-            let t0 = (iv as f32) / res as f32;
-            let t1 = ((iv + 1) as f32) / res as f32;
-            let u0 = st_to_uv(s0);
-            let u1 = st_to_uv(s1);
-            let v0 = st_to_uv(t0);
-            let v1 = st_to_uv(t1);
-
-            let sc = (s0 + s1) * 0.5;
-            let tc = (t0 + t1) * 0.5;
-            let uc = st_to_uv(sc);
-            let vc = st_to_uv(tc);
+            let uc = uv_centers[iu];
+            let vc = uv_centers[iv];
             let center = face_uv_to_3d(face, uc, vc);
 
+            // Cell boundary UV coordinates (grid lines).
+            let u0 = uv_lines[iu];
+            let u1 = uv_lines[iu + 1];
+            let v0 = uv_lines[iv];
+            let v1 = uv_lines[iv + 1];
+
             let mut planes = [
-                plane_normal_u(face, u0),
-                plane_normal_u(face, u1),
-                plane_normal_v(face, v0),
-                plane_normal_v(face, v1),
+                u_planes[face * line_count + iu],
+                u_planes[face * line_count + (iu + 1)],
+                v_planes[face * line_count + iv],
+                v_planes[face * line_count + (iv + 1)],
             ];
             for n in planes.iter_mut() {
                 if n.dot(center) < 0.0 {
