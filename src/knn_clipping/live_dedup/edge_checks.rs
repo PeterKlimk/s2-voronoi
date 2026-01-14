@@ -15,7 +15,6 @@ use crate::knn_clipping::timing::Timer;
 use std::time::Duration;
 
 impl ShardDedup {
-    #[inline(always)]
     #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn push_edge_check(&mut self, local: LocalId, check: EdgeCheck) {
         let local = local.as_usize();
@@ -44,7 +43,6 @@ impl ShardDedup {
         self.edge_check_heads[local] = idx;
     }
 
-    #[inline(always)]
     #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn take_edge_checks(&mut self, local: LocalId) -> u32 {
         let local = local.as_usize();
@@ -57,7 +55,6 @@ impl ShardDedup {
         head
     }
 
-    #[inline(always)]
     #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn recycle_edge_checks(&mut self, mut head: u32) {
         while head != EDGE_CHECK_NONE {
