@@ -1490,8 +1490,7 @@ pub(super) fn assemble_sharded_live_dedup(
             "cell index count mismatch after prefix sum"
         );
         debug_assert_eq!(
-            cell_starts_global[num_cells],
-            total_cell_indices,
+            cell_starts_global[num_cells], total_cell_indices,
             "prefix sum final total mismatch"
         );
         debug_assert_eq!(cell_starts_global[0], 0, "prefix sum must start at 0");
@@ -1534,8 +1533,14 @@ pub(super) fn assemble_sharded_live_dedup(
         #[cfg(debug_assertions)]
         {
             debug_assert!(bin < num_bins, "generator bin out of range");
-            debug_assert!(local < shard.output.cell_counts.len(), "local index out of range");
-            debug_assert!(start + count <= shard.output.cell_indices.len(), "src range OOB");
+            debug_assert!(
+                local < shard.output.cell_counts.len(),
+                "local index out of range"
+            );
+            debug_assert!(
+                start + count <= shard.output.cell_indices.len(),
+                "src range OOB"
+            );
             debug_assert!(
                 dst_start + count <= total_cell_indices as usize,
                 "dst range OOB"
@@ -1551,10 +1556,7 @@ pub(super) fn assemble_sharded_live_dedup(
                 let (vbin, local) = unpack_ref(packed);
                 #[cfg(debug_assertions)]
                 {
-                    debug_assert!(
-                        (vbin as usize) < num_bins,
-                        "packed vertex bin out of range"
-                    );
+                    debug_assert!((vbin as usize) < num_bins, "packed vertex bin out of range");
                     debug_assert!(
                         (local as usize) < finals[vbin as usize].output.vertices.len(),
                         "packed vertex local index out of range"
