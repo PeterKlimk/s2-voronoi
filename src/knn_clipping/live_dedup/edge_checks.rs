@@ -24,23 +24,10 @@ fn unpack_edge_key(key: EdgeKey) -> (u32, u32) {
 
 #[inline]
 fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> u32 {
-    let mut has_a = false;
-    let mut has_b = false;
-    let mut third = INVALID_THIRD;
-    for x in key {
-        if x == a {
-            has_a = true;
-        } else if x == b {
-            has_b = true;
-        } else {
-            third = x;
-        }
-    }
-    if has_a && has_b {
-        third
-    } else {
-        INVALID_THIRD
-    }
+    // key contains {a, b, third} in sorted order
+    // XOR is self-canceling: x ^ x = 0
+    // So: key[0] ^ key[1] ^ key[2] ^ a ^ b = third
+    key[0] ^ key[1] ^ key[2] ^ a ^ b
 }
 
 impl ShardDedup {
