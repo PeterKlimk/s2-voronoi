@@ -2,7 +2,7 @@
 
 use glam::Vec3;
 
-use super::binning::{BinAssignment, GenMap};
+use super::binning::BinAssignment;
 use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
 use super::types::{
@@ -87,9 +87,10 @@ pub(super) fn collect_cell_edges(
         return;
     }
 
-    let bin_a = assignment.gen_map[cell_idx as usize].bin;
+    let bin_a = assignment.generator_bin[cell_idx as usize];
     debug_assert_eq!(
-        assignment.gen_map[cell_idx as usize].local, local,
+        assignment.global_to_local[cell_idx as usize],
+        local,
         "local index mismatch in edge checks"
     );
     let local_u32 = local.as_u32();
@@ -114,11 +115,12 @@ pub(super) fn collect_cell_edges(
             key: pack_edge(cell_idx, neighbor),
             locals,
         };
-        let GenMap {
-            bin: bin_b,
-            local: local_b_u32,
-        } = assignment.gen_map[neighbor as usize];
+        // Load the neighbor bin first (cheap and used in both branches). Only load the neighbor's
+        // local id if we actually need it.
+        let neighbor_usize = neighbor as usize;
+        let bin_b = assignment.generator_bin[neighbor_usize];
         if bin_a == bin_b {
+            let local_b_u32 = assignment.global_to_local[neighbor_usize];
             let local_b = local_b_u32.as_usize();
             debug_assert_ne!(
                 local.as_usize(),
