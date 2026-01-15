@@ -5,12 +5,12 @@ use glam::Vec3;
 use rayon::prelude::*;
 
 use super::binning::assign_bins;
-use super::edge_checks::{collect_cell_edges, resolve_cell_edge_checks};
+use super::edge_checks::collect_and_resolve_cell_edges;
 use super::packed::{pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::ShardState;
 use super::types::{
-    BinId, DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeLocal, EdgeOverflowLocal, EdgeToLater,
-    LocalId, PackedSeed,
+    BinId, DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeOverflowLocal, EdgeToLater, LocalId,
+    PackedSeed,
 };
 use super::ShardedCellsData;
 use crate::cube_grid::packed_knn::{
@@ -21,10 +21,8 @@ use crate::knn_clipping::topo2d::Topo2DBuilder;
 use crate::knn_clipping::TerminationConfig;
 
 struct EdgeScratch {
-    edges_to_earlier: Vec<EdgeLocal>,
     edges_to_later: Vec<EdgeToLater>,
     edges_overflow: Vec<EdgeOverflowLocal>,
-    edge_matched: Vec<bool>,
     vertex_indices: Vec<u32>,
 }
 
@@ -32,47 +30,34 @@ impl EdgeScratch {
     #[cfg_attr(feature = "profiling", inline(never))]
     fn new() -> Self {
         Self {
-            edges_to_earlier: Vec::new(),
             edges_to_later: Vec::new(),
             edges_overflow: Vec::new(),
-            edge_matched: Vec::new(),
             vertex_indices: Vec::new(),
         }
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    fn collect(
+    fn collect_and_resolve(
         &mut self,
         cell_idx: u32,
         local: LocalId,
         cell_vertices: &[VertexData],
         edge_neighbors: &[u32],
         assignment: &super::binning::BinAssignment,
+        shard: &mut ShardState,
     ) {
-        collect_cell_edges(
+        self.vertex_indices.clear();
+        self.vertex_indices.resize(cell_vertices.len(), INVALID_INDEX);
+        collect_and_resolve_cell_edges(
             cell_idx,
             local,
             cell_vertices,
             edge_neighbors,
             assignment,
-            &mut self.edges_to_earlier,
+            shard,
+            &mut self.vertex_indices,
             &mut self.edges_to_later,
             &mut self.edges_overflow,
-        );
-        self.vertex_indices.clear();
-        self.vertex_indices
-            .resize(cell_vertices.len(), INVALID_INDEX);
-    }
-
-    #[cfg_attr(feature = "profiling", inline(never))]
-    fn resolve(&mut self, shard: &mut ShardState, local: LocalId, cell_vertices: &[VertexData]) {
-        resolve_cell_edge_checks(
-            shard,
-            local,
-            &mut self.edges_to_earlier,
-            cell_vertices,
-            &mut self.vertex_indices,
-            &mut self.edge_matched,
         );
     }
 
@@ -583,12 +568,11 @@ fn process_cell(
 
     let cell_idx = i as u32;
     let t_edge_collect = crate::knn_clipping::timing::Timer::start();
-    edge_scratch.collect(cell_idx, local, cell_vertices, edge_neighbors, assignment);
-    cell_sub.add_edge_collect(t_edge_collect.elapsed());
-
-    let t_edge_resolve = crate::knn_clipping::timing::Timer::start();
-    edge_scratch.resolve(shard, local, cell_vertices);
-    cell_sub.add_edge_resolve(t_edge_resolve.elapsed());
+    edge_scratch.collect_and_resolve(cell_idx, local, cell_vertices, edge_neighbors, assignment, shard);
+    let collect_resolve_time = t_edge_collect.elapsed();
+    // Split time between collect and resolve for backward-compatible timing
+    cell_sub.add_edge_collect(collect_resolve_time / 2);
+    cell_sub.add_edge_resolve(collect_resolve_time / 2);
 
     let count = cell_vertices.len();
     shard.output.set_cell_count(

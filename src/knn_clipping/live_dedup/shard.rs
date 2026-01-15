@@ -15,6 +15,7 @@ pub(super) struct ShardDedup {
     pub(super) support_data: Vec<u32>,
     pub(super) support_overflow: Vec<SupportOverflow>,
     pub(super) edge_check_heads: Vec<u32>,
+    pub(super) edge_check_counts: Vec<u8>,
     pub(super) edge_check_nodes: Vec<EdgeCheckNode>,
     pub(super) edge_check_free: u32,
 }
@@ -26,6 +27,7 @@ impl ShardDedup {
             support_data: Vec::new(),
             support_overflow: Vec::new(),
             edge_check_heads: vec![EDGE_CHECK_NONE; num_local_generators],
+            edge_check_counts: vec![0; num_local_generators],
             edge_check_nodes: Vec::new(),
             edge_check_free: EDGE_CHECK_NONE,
         }
