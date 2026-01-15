@@ -180,7 +180,7 @@ pub(super) fn collect_and_resolve_cell_edges(
             let mut search_cur = assigned_head;
             let mut idx = 0u32;
             while search_cur != EDGE_CHECK_NONE {
-                let node = shard.dedup.edge_check_nodes[search_cur as usize];
+                let node = &shard.dedup.edge_check_nodes[search_cur as usize];
                 if node.check.key == edge_key {
                     found_check = Some(node.check);
                     found_idx = idx;
@@ -255,7 +255,7 @@ pub(super) fn collect_and_resolve_cell_edges(
         let mut idx = 0u32;
         while cur != EDGE_CHECK_NONE {
             if matched & (1u64 << idx) == 0 {
-                let node = shard.dedup.edge_check_nodes[cur as usize];
+                let node = &shard.dedup.edge_check_nodes[cur as usize];
                 shard.output.bad_edges.push(BadEdgeRecord {
                     key: node.check.key,
                     reason: BadEdgeReason::MissingSide,
@@ -360,7 +360,7 @@ pub(super) fn resolve_cell_edge_checks(
 
     let mut cur = assigned_head;
     while cur != EDGE_CHECK_NONE {
-        let node = shard.dedup.edge_check_nodes[cur as usize];
+        let node = &shard.dedup.edge_check_nodes[cur as usize];
         let assigned_edge = node.check;
         let next = node.next;
 
