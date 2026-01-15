@@ -48,17 +48,12 @@ impl EdgeScratch {
     ) {
         self.vertex_indices.clear();
         self.vertex_indices.resize(cell_vertices.len(), INVALID_INDEX);
-        
-        let bin = assignment.gen_map[cell_idx as usize].bin;
-        let local_map = &assignment.local_maps[bin.as_usize()];
-        
         collect_and_resolve_cell_edges(
             cell_idx,
             local,
             cell_vertices,
             edge_neighbors,
             assignment,
-            local_map,
             shard,
             &mut self.vertex_indices,
             &mut self.edges_to_later,

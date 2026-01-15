@@ -2,8 +2,6 @@
 
 use glam::Vec3;
 
-use rustc_hash::FxHashMap;
-
 use crate::cube_grid::{cell_to_face_ij, CubeMapGrid};
 
 use super::types::{BinId, LocalId};
@@ -20,7 +18,6 @@ pub(super) struct BinAssignment {
     pub(super) global_to_local: Vec<LocalId>,
     pub(super) gen_map: Vec<GenMap>,
     pub(super) bin_generators: Vec<Vec<usize>>,
-    pub(super) local_maps: Vec<FxHashMap<u32, LocalId>>,
     pub(super) num_bins: usize,
 }
 
@@ -108,24 +105,12 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
             visited += 1;
         }
     }
+
     debug_assert_eq!(
         visited, n,
         "grid cell_points did not cover all points (visited={}, n={})",
         visited, n
     );
-    
-    // Build per-bin hash maps for fast local lookup
-    // Key: global generator ID (u32), Value: LocalId
-    let local_maps: Vec<FxHashMap<u32, LocalId>> = bin_generators
-        .iter()
-        .map(|gens| {
-            let mut map = FxHashMap::with_capacity_and_hasher(gens.len(), Default::default());
-            for (local_idx, &g_global) in gens.iter().enumerate() {
-                map.insert(g_global as u32, LocalId::from_usize(local_idx));
-            }
-            map
-        })
-        .collect();
     debug_assert!(
         !generator_bin.iter().any(|&b| b == BinId::from(u32::MAX)),
         "unassigned generator bin entries"
@@ -146,7 +131,6 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
         global_to_local,
         gen_map,
         bin_generators,
-        local_maps,
         num_bins,
     }
 }
