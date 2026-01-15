@@ -3,6 +3,7 @@
 use glam::Vec3;
 
 use super::binning::{BinAssignment, GenMap};
+use rustc_hash::FxHashMap;
 use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
 use super::types::{
@@ -98,6 +99,7 @@ pub(super) fn collect_and_resolve_cell_edges(
     cell_vertices: &[(VertexKey, Vec3)],
     edge_neighbors: &[u32],
     assignment: &BinAssignment,
+    local_map: &FxHashMap<u32, LocalId>,
     shard: &mut ShardState,
     vertex_indices: &mut [u32],
     edges_to_later: &mut Vec<EdgeToLater>,
@@ -141,93 +143,95 @@ pub(super) fn collect_and_resolve_cell_edges(
         };
         let edge_key = pack_edge(cell_idx, neighbor);
         
-        let GenMap {
-            bin: bin_b,
-            local: local_b,
-        } = assignment.gen_map[neighbor as usize];
-
-        if bin_a != bin_b {
-            // Cross-bin edge → overflow
-            let side = if cell_idx <= neighbor { 0 } else { 1 };
-            edges_overflow.push(EdgeOverflowLocal {
-                edge: EdgeLocal { key: edge_key, locals },
-                side,
-            });
-        } else if local_u32 < local_b.as_u32() {
-            // Edge to later neighbor → collect for emit
-            edges_to_later.push(EdgeToLater {
-                edge: EdgeLocal { key: edge_key, locals },
-                local_b,
-            });
-        } else {
-            // Edge to earlier neighbor → resolve immediately
-            // Search linked list for matching check
-            let mut found_check: Option<EdgeCheck> = None;
-            let mut found_idx = 0u32;
-            let mut search_cur = assigned_head;
-            let mut idx = 0u32;
-            while search_cur != EDGE_CHECK_NONE {
-                let node = &shard.dedup.edge_check_nodes[search_cur as usize];
-                if node.check.key == edge_key {
-                    found_check = Some(node.check);
-                    found_idx = idx;
-                    break;
-                }
-                search_cur = node.next;
-                idx += 1;
-            }
-
-            if let Some(check) = found_check {
-                if matched & (1u64 << found_idx) != 0 {
-                    // Duplicate
-                    debug_assert!(false, "edge check duplicate side");
-                    shard.output.bad_edges.push(BadEdgeRecord {
-                        key: edge_key,
-                        reason: BadEdgeReason::DuplicateSide,
+        let edge_key = pack_edge(cell_idx, neighbor);
+        
+        match local_map.get(&neighbor) {
+            Some(&local_b) => {
+                if local_u32 < local_b.as_u32() {
+                    // Edge to later neighbor → collect for emit
+                    edges_to_later.push(EdgeToLater {
+                        edge: EdgeLocal { key: edge_key, locals },
+                        local_b,
                     });
                 } else {
-                    matched |= 1u64 << found_idx;
-                    
-                    let (a, b) = unpack_edge_key(edge_key);
-                    let my_thirds = [
-                        third_for_edge_endpoint(cell_vertices[locals[0] as usize].0, a, b),
-                        third_for_edge_endpoint(cell_vertices[locals[1] as usize].0, a, b),
-                    ];
-
-                    let mut endpoints_match = true;
-                    for k in 0..2 {
-                        if check.thirds[k] == INVALID_THIRD
-                            || my_thirds[k] == INVALID_THIRD
-                            || check.thirds[k] != my_thirds[k]
-                        {
-                            endpoints_match = false;
-                            continue;
+                    // Edge to earlier neighbor → resolve immediately
+                    // Search linked list for matching check
+                    let mut found_check: Option<EdgeCheck> = None;
+                    let mut found_idx = 0u32;
+                    let mut search_cur = assigned_head;
+                    let mut idx = 0u32;
+                    while search_cur != EDGE_CHECK_NONE {
+                        let node = &shard.dedup.edge_check_nodes[search_cur as usize];
+                        if node.check.key == edge_key {
+                            found_check = Some(node.check);
+                            found_idx = idx;
+                            break;
                         }
+                        search_cur = node.next;
+                        idx += 1;
+                    }
 
-                        let idx = check.indices[k];
-                        if idx != INVALID_INDEX {
-                            let local_idx = locals[k] as usize;
-                            let existing = vertex_indices[local_idx];
-                            if existing == INVALID_INDEX {
-                                vertex_indices[local_idx] = idx;
-                            } else {
-                                debug_assert_eq!(existing, idx, "edge check index mismatch");
+                    if let Some(check) = found_check {
+                        if matched & (1u64 << found_idx) != 0 {
+                            // Duplicate
+                            debug_assert!(false, "edge check duplicate side");
+                            shard.output.bad_edges.push(BadEdgeRecord {
+                                key: edge_key,
+                                reason: BadEdgeReason::DuplicateSide,
+                            });
+                        } else {
+                            matched |= 1u64 << found_idx;
+                            
+                            let (a, b) = unpack_edge_key(edge_key);
+                            let my_thirds = [
+                                third_for_edge_endpoint(cell_vertices[locals[0] as usize].0, a, b),
+                                third_for_edge_endpoint(cell_vertices[locals[1] as usize].0, a, b),
+                            ];
+
+                            let mut endpoints_match = true;
+                            for k in 0..2 {
+                                if check.thirds[k] == INVALID_THIRD
+                                    || my_thirds[k] == INVALID_THIRD
+                                    || check.thirds[k] != my_thirds[k]
+                                {
+                                    endpoints_match = false;
+                                    continue;
+                                }
+
+                                let idx = check.indices[k];
+                                if idx != INVALID_INDEX {
+                                    let local_idx = locals[k] as usize;
+                                    let existing = vertex_indices[local_idx];
+                                    if existing == INVALID_INDEX {
+                                        vertex_indices[local_idx] = idx;
+                                    } else {
+                                        debug_assert_eq!(existing, idx, "edge check index mismatch");
+                                    }
+                                }
+                            }
+                            
+                            if !endpoints_match {
+                                shard.output.bad_edges.push(BadEdgeRecord {
+                                    key: edge_key,
+                                    reason: BadEdgeReason::EndpointMismatch,
+                                });
                             }
                         }
-                    }
-                    
-                    if !endpoints_match {
+                    } else {
+                        // Missing side - earlier neighbor didn't emit check
                         shard.output.bad_edges.push(BadEdgeRecord {
                             key: edge_key,
-                            reason: BadEdgeReason::EndpointMismatch,
+                            reason: BadEdgeReason::MissingSide,
                         });
                     }
                 }
-            } else {
-                // Missing side - earlier neighbor didn't emit check
-                shard.output.bad_edges.push(BadEdgeRecord {
-                    key: edge_key,
-                    reason: BadEdgeReason::MissingSide,
+            }
+            None => {
+                // Not in local map -> Cross-bin edge → overflow
+                let side = if cell_idx <= neighbor { 0 } else { 1 };
+                edges_overflow.push(EdgeOverflowLocal {
+                    edge: EdgeLocal { key: edge_key, locals },
+                    side,
                 });
             }
         }
