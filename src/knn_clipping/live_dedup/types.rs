@@ -108,7 +108,9 @@ pub(in crate::knn_clipping) struct BadEdgeRecord {
 #[derive(Clone, Copy)]
 pub(super) struct EdgeCheck {
     pub(super) key: EdgeKey,
-    pub(super) endpoints: [VertexKey; 2],
+    /// For edge (A, B), each endpoint vertex key is (A, B, T).
+    /// Store just the "third" generator T for each endpoint, in canonical order.
+    pub(super) thirds: [u32; 2],
     pub(super) indices: [u32; 2],
 }
 
@@ -123,7 +125,8 @@ pub(super) struct EdgeCheckOverflow {
     pub(super) key: EdgeKey,
     pub(super) side: u8,
     pub(super) source_bin: BinId,
-    pub(super) endpoints: [VertexKey; 2],
+    /// See `EdgeCheck::thirds`.
+    pub(super) thirds: [u32; 2],
     pub(super) indices: [u32; 2],
     pub(super) slots: [u32; 2],
 }

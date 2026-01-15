@@ -84,17 +84,49 @@ impl EdgeScratch {
         cell_start: u32,
         bin: BinId,
     ) {
+        #[inline]
+        fn unpack_edge_key(key: super::types::EdgeKey) -> (u32, u32) {
+            let v: u64 = key.into();
+            (v as u32, (v >> 32) as u32)
+        }
+
+        #[inline]
+        fn third_for_edge_endpoint(
+            key: crate::knn_clipping::cell_builder::VertexKey,
+            a: u32,
+            b: u32,
+        ) -> u32 {
+            let mut has_a = false;
+            let mut has_b = false;
+            let mut third = u32::MAX;
+            for x in key {
+                if x == a {
+                    has_a = true;
+                } else if x == b {
+                    has_b = true;
+                } else {
+                    third = x;
+                }
+            }
+            if has_a && has_b {
+                third
+            } else {
+                u32::MAX
+            }
+        }
+
         for entry in self.edges_to_later.drain(..) {
             let locals = entry.edge.locals;
-            let endpoints = [
-                cell_vertices[locals[0] as usize].0,
-                cell_vertices[locals[1] as usize].0,
+            let (a, b) = unpack_edge_key(entry.edge.key);
+            let thirds = [
+                third_for_edge_endpoint(cell_vertices[locals[0] as usize].0, a, b),
+                third_for_edge_endpoint(cell_vertices[locals[1] as usize].0, a, b),
             ];
             shard.dedup.push_edge_check(
                 entry.local_b,
                 EdgeCheck {
                     key: entry.edge.key,
-                    endpoints,
+                    thirds,
                     indices: [
                         self.vertex_indices[locals[0] as usize],
                         self.vertex_indices[locals[1] as usize],
@@ -105,15 +137,16 @@ impl EdgeScratch {
 
         for entry in self.edges_overflow.drain(..) {
             let locals = entry.edge.locals;
-            let endpoints = [
-                cell_vertices[locals[0] as usize].0,
-                cell_vertices[locals[1] as usize].0,
+            let (a, b) = unpack_edge_key(entry.edge.key);
+            let thirds = [
+                third_for_edge_endpoint(cell_vertices[locals[0] as usize].0, a, b),
+                third_for_edge_endpoint(cell_vertices[locals[1] as usize].0, a, b),
             ];
             shard.output.edge_check_overflow.push(EdgeCheckOverflow {
                 key: entry.edge.key,
                 side: entry.side,
                 source_bin: bin,
-                endpoints,
+                thirds,
                 indices: [
                     self.vertex_indices[locals[0] as usize],
                     self.vertex_indices[locals[1] as usize],

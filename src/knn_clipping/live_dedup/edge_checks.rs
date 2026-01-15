@@ -6,13 +6,42 @@ use super::binning::{BinAssignment, GenMap};
 use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
 use super::types::{
-    BadEdgeReason, BadEdgeRecord, BinId, EdgeCheck, EdgeCheckNode, EdgeCheckOverflow, EdgeLocal,
-    EdgeOverflowLocal, EdgeToLater, LocalId,
+    BadEdgeReason, BadEdgeRecord, BinId, EdgeCheck, EdgeCheckNode, EdgeCheckOverflow, EdgeKey,
+    EdgeLocal, EdgeOverflowLocal, EdgeToLater, LocalId,
 };
 use super::{with_two_mut, EDGE_CHECK_NONE};
 use crate::knn_clipping::cell_builder::VertexKey;
 use crate::knn_clipping::timing::Timer;
 use std::time::Duration;
+
+const INVALID_THIRD: u32 = u32::MAX;
+
+#[inline]
+fn unpack_edge_key(key: EdgeKey) -> (u32, u32) {
+    let v: u64 = key.into();
+    (v as u32, (v >> 32) as u32)
+}
+
+#[inline]
+fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> u32 {
+    let mut has_a = false;
+    let mut has_b = false;
+    let mut third = INVALID_THIRD;
+    for x in key {
+        if x == a {
+            has_a = true;
+        } else if x == b {
+            has_b = true;
+        } else {
+            third = x;
+        }
+    }
+    if has_a && has_b {
+        third
+    } else {
+        INVALID_THIRD
+    }
+}
 
 impl ShardDedup {
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -179,14 +208,18 @@ pub(super) fn resolve_cell_edge_checks(
             } else {
                 matched[edge_idx] = true;
                 let emitted = edges_to_earlier[edge_idx];
-                let emitted_endpoints = [
-                    cell_vertices[emitted.locals[0] as usize].0,
-                    cell_vertices[emitted.locals[1] as usize].0,
+                let (a, b) = unpack_edge_key(assigned_edge.key);
+                let emitted_thirds = [
+                    third_for_edge_endpoint(cell_vertices[emitted.locals[0] as usize].0, a, b),
+                    third_for_edge_endpoint(cell_vertices[emitted.locals[1] as usize].0, a, b),
                 ];
-                
+
                 let mut endpoints_match = true;
                 for k in 0..2 {
-                    if assigned_edge.endpoints[k] != emitted_endpoints[k] {
+                    if assigned_edge.thirds[k] == INVALID_THIRD
+                        || emitted_thirds[k] == INVALID_THIRD
+                        || assigned_edge.thirds[k] != emitted_thirds[k]
+                    {
                         endpoints_match = false;
                         continue;
                     }
@@ -268,7 +301,7 @@ pub(super) fn resolve_edge_check_overflow(
                 let (a_shard, b_shard) =
                     with_two_mut(shards, a.source_bin.as_usize(), b.source_bin.as_usize());
                 for k in 0..2 {
-                    if a.endpoints[k] == b.endpoints[k] {
+                    if a.thirds[k] != INVALID_THIRD && a.thirds[k] == b.thirds[k] {
                         if a.indices[k] != INVALID_INDEX {
                             let slot = &mut b_shard.output.cell_indices[b.slots[k] as usize];
                             patch_slot(slot, a.source_bin, a.indices[k]);
@@ -285,7 +318,7 @@ pub(super) fn resolve_edge_check_overflow(
                         }
                     }
                 }
-                if a.endpoints != b.endpoints {
+                if a.thirds != b.thirds {
                     bad_edges.push(BadEdgeRecord {
                         key: a.key,
                         reason: BadEdgeReason::EndpointMismatch,
