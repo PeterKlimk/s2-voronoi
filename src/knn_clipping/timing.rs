@@ -122,6 +122,8 @@ pub struct DedupSubPhases {
     pub triplet_keys: u64,
     /// Number of support keys processed.
     pub support_keys: u64,
+    /// Number of bad edges detected (endpoint mismatch or one-sided edges).
+    pub bad_edges_count: u64,
 }
 
 /// Dummy dedup sub-phases when feature is disabled.
@@ -587,6 +589,14 @@ impl PhaseTimings {
             }
         }
 
+        // Bad edges detected (before repair)
+        if self.dedup_sub.bad_edges_count > 0 {
+            eprintln!(
+                "  bad_edges:         {} detected",
+                self.dedup_sub.bad_edges_count
+            );
+        }
+
         if self.edge_repair.as_nanos() > 0 {
             eprintln!(
                 "  edge_repair:       {:7.1}ms ({:4.1}%)",
@@ -594,6 +604,7 @@ impl PhaseTimings {
                 pct(self.edge_repair)
             );
         }
+
         eprintln!(
             "  assemble:          {:7.1}ms ({:4.1}%)",
             self.assemble.as_secs_f64() * 1000.0,

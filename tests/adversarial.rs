@@ -381,3 +381,133 @@ fn test_multi_distribution_robustness() {
         }
     }
 }
+
+// =============================================================================
+// High-Volume Fuzz Tests
+//
+// Tests at large point counts (2-4M) where bad edges have been observed.
+// These are marked #[ignore] since they take several seconds each.
+// Run with: cargo test --test adversarial fuzz -- --ignored --nocapture
+// =============================================================================
+
+#[test]
+#[ignore = "high-volume fuzz test - run manually"]
+fn test_fuzz_2m_random_seeds() {
+    // 2M points with 5 different seeds
+    const N: usize = 2_000_000;
+    let seeds: [u64; 5] = [42, 123, 456, 789, 1001];
+
+    for seed in seeds {
+        let points = random_sphere_points(N, seed);
+        let result = compute(&points);
+
+        match result {
+            Ok(diagram) => {
+                let report = validate(&diagram);
+                let status = if report.is_valid() { "VALID" } else { "ISSUES" };
+                eprintln!(
+                    "fuzz_2m seed={}: {} cells, {} - {}",
+                    seed,
+                    diagram.num_cells(),
+                    report.summary(),
+                    status
+                );
+            }
+            Err(e) => {
+                eprintln!("fuzz_2m seed={}: FAILED {:?}", seed, e);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "high-volume fuzz test - run manually"]
+fn test_fuzz_3m_random_seeds() {
+    // 3M points with 5 different seeds - in the range where bad edges occur
+    const N: usize = 3_000_000;
+    let seeds: [u64; 5] = [42, 123, 456, 789, 1001];
+
+    for seed in seeds {
+        let points = random_sphere_points(N, seed);
+        let result = compute(&points);
+
+        match result {
+            Ok(diagram) => {
+                let report = validate(&diagram);
+                let status = if report.is_valid() { "VALID" } else { "ISSUES" };
+                eprintln!(
+                    "fuzz_3m seed={}: {} cells, {} - {}",
+                    seed,
+                    diagram.num_cells(),
+                    report.summary(),
+                    status
+                );
+            }
+            Err(e) => {
+                eprintln!("fuzz_3m seed={}: FAILED {:?}", seed, e);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "high-volume fuzz test - run manually"]
+fn test_fuzz_4m_random_seeds() {
+    // 4M points with 5 different seeds - in the range where bad edges occur
+    const N: usize = 4_000_000;
+    let seeds: [u64; 5] = [42, 123, 456, 789, 1001];
+
+    for seed in seeds {
+        let points = random_sphere_points(N, seed);
+        let result = compute(&points);
+
+        match result {
+            Ok(diagram) => {
+                let report = validate(&diagram);
+                let status = if report.is_valid() { "VALID" } else { "ISSUES" };
+                eprintln!(
+                    "fuzz_4m seed={}: {} cells, {} - {}",
+                    seed,
+                    diagram.num_cells(),
+                    report.summary(),
+                    status
+                );
+            }
+            Err(e) => {
+                eprintln!("fuzz_4m seed={}: FAILED {:?}", seed, e);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "high-volume fuzz test - run manually"]
+fn test_fuzz_sweep_sizes() {
+    // Sweep through sizes from 2M to 4.5M in 500k increments
+    let sizes: [usize; 6] = [
+        2_000_000, 2_500_000, 3_000_000, 3_500_000, 4_000_000, 4_500_000,
+    ];
+    let seed: u64 = 42;
+
+    for n in sizes {
+        let points = random_sphere_points(n, seed);
+        let result = compute(&points);
+
+        match result {
+            Ok(diagram) => {
+                let report = validate(&diagram);
+                let status = if report.is_valid() { "VALID" } else { "ISSUES" };
+                eprintln!(
+                    "fuzz_sweep n={}: {} cells, {} - {}",
+                    n,
+                    diagram.num_cells(),
+                    report.summary(),
+                    status
+                );
+            }
+            Err(e) => {
+                eprintln!("fuzz_sweep n={}: FAILED {:?}", n, e);
+            }
+        }
+    }
+}

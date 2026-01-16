@@ -316,7 +316,9 @@ pub(super) fn assemble_sharded_live_dedup(
         emit_cells: emit_cells_time,
         triplet_keys: finals.iter().map(|s| s.triplet_keys).sum(),
         support_keys: finals.iter().map(|s| s.support_keys).sum(),
+        bad_edges_count: bad_edges.len() as u64,
     };
+
     #[cfg(not(feature = "timing"))]
     let sub_phases = DedupSubPhases;
 
