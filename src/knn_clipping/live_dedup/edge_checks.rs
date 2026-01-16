@@ -2,7 +2,7 @@
 
 use glam::Vec3;
 
-use super::binning::{BinAssignment, GenMap};
+use super::binning::BinAssignment;
 use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
 use super::types::{
@@ -107,19 +107,16 @@ pub(super) fn collect_and_resolve_cell_edges(
     debug_assert_eq!(edge_neighbors.len(), n, "edge neighbor data out of sync");
     edges_to_later.clear();
     edges_overflow.clear();
-    
+
     debug_assert!(n >= 2, "cell has fewer than 2 vertices");
 
-    let bin_a = assignment.gen_map[cell_idx as usize].bin;
-    debug_assert_eq!(
-        assignment.gen_map[cell_idx as usize].local, local,
-        "local index mismatch in edge checks"
-    );
+    let (bin_a, local_a) = assignment.unpack(assignment.gen_map[cell_idx as usize]);
+    debug_assert_eq!(local_a, local, "local index mismatch in edge checks");
     let local_u32 = local.as_u32();
 
     // Take incoming checks from linked list (returns head and count)
     let (assigned_head, incoming_count) = shard.dedup.take_edge_checks(local);
-    
+
     // Track which incoming checks we've matched (bitmask, supports up to 64)
     let mut matched: u64 = 0;
 
@@ -129,34 +126,37 @@ pub(super) fn collect_and_resolve_cell_edges(
         let key_i = cell_vertices[i].0;
         let key_j = cell_vertices[j].0;
         let neighbor = edge_neighbors[i];
-        
+
         if neighbor == u32::MAX || neighbor == cell_idx {
             continue;
         }
-        
+
         let locals = if key_i <= key_j {
             [i as u8, j as u8]
         } else {
             [j as u8, i as u8]
         };
         let edge_key = pack_edge(cell_idx, neighbor);
-        
-        let GenMap {
-            bin: bin_b,
-            local: local_b,
-        } = assignment.gen_map[neighbor as usize];
+
+        let (bin_b, local_b) = assignment.unpack(assignment.gen_map[neighbor as usize]);
 
         if bin_a != bin_b {
             // Cross-bin edge → overflow
             let side = if cell_idx <= neighbor { 0 } else { 1 };
             edges_overflow.push(EdgeOverflowLocal {
-                edge: EdgeLocal { key: edge_key, locals },
+                edge: EdgeLocal {
+                    key: edge_key,
+                    locals,
+                },
                 side,
             });
         } else if local_u32 < local_b.as_u32() {
             // Edge to later neighbor → collect for emit
             edges_to_later.push(EdgeToLater {
-                edge: EdgeLocal { key: edge_key, locals },
+                edge: EdgeLocal {
+                    key: edge_key,
+                    locals,
+                },
                 local_b,
             });
         } else {
@@ -187,7 +187,7 @@ pub(super) fn collect_and_resolve_cell_edges(
                     });
                 } else {
                     matched |= 1u64 << found_idx;
-                    
+
                     let (a, b) = unpack_edge_key(edge_key);
                     let my_thirds = [
                         third_for_edge_endpoint(cell_vertices[locals[0] as usize].0, a, b),
@@ -215,7 +215,7 @@ pub(super) fn collect_and_resolve_cell_edges(
                             }
                         }
                     }
-                    
+
                     if !endpoints_match {
                         shard.output.bad_edges.push(BadEdgeRecord {
                             key: edge_key,
@@ -234,9 +234,8 @@ pub(super) fn collect_and_resolve_cell_edges(
     }
 
     // Fast path: if all incoming checks matched, skip the unmatched loop
-    let all_matched = incoming_count == 0 
-        || matched == (1u64 << incoming_count) - 1;
-    
+    let all_matched = incoming_count == 0 || matched == (1u64 << incoming_count) - 1;
+
     if !all_matched {
         let mut cur = assigned_head;
         let mut idx = 0u32;
@@ -252,7 +251,7 @@ pub(super) fn collect_and_resolve_cell_edges(
             idx += 1;
         }
     }
-    
+
     shard.dedup.recycle_edge_checks(assigned_head);
 }
 
@@ -276,11 +275,8 @@ pub(super) fn collect_cell_edges(
         return;
     }
 
-    let bin_a = assignment.gen_map[cell_idx as usize].bin;
-    debug_assert_eq!(
-        assignment.gen_map[cell_idx as usize].local, local,
-        "local index mismatch in edge checks"
-    );
+    let (bin_a, local_a) = assignment.unpack(assignment.gen_map[cell_idx as usize]);
+    debug_assert_eq!(local_a, local, "local index mismatch in edge checks");
     let local_u32 = local.as_u32();
 
     for i in 0..n {
@@ -303,10 +299,7 @@ pub(super) fn collect_cell_edges(
             key: pack_edge(cell_idx, neighbor),
             locals,
         };
-        let GenMap {
-            bin: bin_b,
-            local: local_b_u32,
-        } = assignment.gen_map[neighbor as usize];
+        let (bin_b, local_b_u32) = assignment.unpack(assignment.gen_map[neighbor as usize]);
         if bin_a == bin_b {
             let local_b = local_b_u32.as_usize();
             debug_assert_ne!(

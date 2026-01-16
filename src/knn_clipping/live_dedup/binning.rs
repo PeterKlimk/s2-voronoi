@@ -6,19 +6,39 @@ use crate::cube_grid::{cell_to_face_ij, CubeMapGrid};
 
 use super::types::{BinId, LocalId};
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(super) struct GenMap {
-    pub(super) bin: BinId,
-    pub(super) local: LocalId,
-}
-
 pub(super) struct BinAssignment {
     pub(super) generator_bin: Vec<BinId>,
     pub(super) global_to_local: Vec<LocalId>,
-    pub(super) gen_map: Vec<GenMap>,
+    /// Packed gen_map: each entry is `(bin << local_shift) | local`.
+    pub(super) gen_map: Vec<u32>,
+    /// Precomputed shift for extracting bin from packed gen_map.
+    pub(super) local_shift: u32,
+    /// Precomputed mask for extracting local from packed gen_map.
+    pub(super) local_mask: u32,
     pub(super) bin_generators: Vec<Vec<usize>>,
     pub(super) num_bins: usize,
+}
+
+impl BinAssignment {
+    /// Unpack a gen_map entry into (bin, local).
+    #[inline]
+    pub(super) fn unpack(&self, packed: u32) -> (BinId, LocalId) {
+        let bin = packed >> self.local_shift;
+        let local = packed & self.local_mask;
+        (BinId::from(bin), LocalId::from(local))
+    }
+
+    /// Unpack just the bin from a gen_map entry.
+    #[inline]
+    pub(super) fn unpack_bin(&self, packed: u32) -> BinId {
+        BinId::from(packed >> self.local_shift)
+    }
+
+    /// Unpack just the local from a gen_map entry.
+    #[inline]
+    pub(super) fn unpack_local(&self, packed: u32) -> LocalId {
+        LocalId::from(packed & self.local_mask)
+    }
 }
 
 struct BinLayout {
@@ -53,6 +73,17 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
     let layout = choose_bin_layout(grid.res());
     let num_bins = layout.num_bins;
 
+    // Compute bit layout for packed gen_map.
+    // bin_bits: minimum bits needed to represent num_bins - 1
+    // local_bits: remaining bits for local_id
+    let bin_bits = if num_bins <= 1 {
+        1
+    } else {
+        32 - (num_bins as u32 - 1).leading_zeros()
+    };
+    let local_shift = 32 - bin_bits;
+    let local_mask = (1u32 << local_shift) - 1;
+
     // Construct per-bin generator order directly from the grid's cell-major layout.
     //
     // This preserves the exact `(grid.point_index_to_cell(g), g)` order without a per-bin sort,
@@ -80,13 +111,7 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
 
     let mut generator_bin: Vec<BinId> = vec![BinId::from(u32::MAX); n];
     let mut global_to_local: Vec<LocalId> = vec![LocalId::from(u32::MAX); n];
-    let mut gen_map: Vec<GenMap> = vec![
-        GenMap {
-            bin: BinId::from(u32::MAX),
-            local: LocalId::from(u32::MAX),
-        };
-        n
-    ];
+    let mut gen_map: Vec<u32> = vec![u32::MAX; n];
 
     let mut visited = 0usize;
     for cell in 0..num_cells {
@@ -96,12 +121,22 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
             let g = g_u32 as usize;
             debug_assert!(g < n, "grid returned out-of-range point index");
 
-            let local = LocalId::from_usize(bin_generators[b_usize].len());
+            let local_usize = bin_generators[b_usize].len();
+            let local = LocalId::from_usize(local_usize);
             bin_generators[b_usize].push(g);
 
             generator_bin[g] = b;
             global_to_local[g] = local;
-            gen_map[g] = GenMap { bin: b, local };
+
+            // Pack: (bin << local_shift) | local
+            debug_assert!(
+                (local_usize as u32) <= local_mask,
+                "local_id {} exceeds {} bits (max {})",
+                local_usize,
+                local_shift,
+                local_mask
+            );
+            gen_map[g] = (b_usize as u32) << local_shift | (local_usize as u32);
             visited += 1;
         }
     }
@@ -122,7 +157,7 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
         "unassigned global_to_local entries"
     );
     debug_assert!(
-        !gen_map.iter().any(|m| m.bin == BinId::from(u32::MAX)),
+        !gen_map.iter().any(|&m| m == u32::MAX),
         "unassigned gen_map entries"
     );
 
@@ -130,6 +165,8 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
         generator_bin,
         global_to_local,
         gen_map,
+        local_shift,
+        local_mask,
         bin_generators,
         num_bins,
     }
