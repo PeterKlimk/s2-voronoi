@@ -98,6 +98,14 @@ fn test_clustered_cap_tight() {
     let diagram = result.unwrap();
     let report = validate(&diagram);
     eprintln!("clustered_cap_tight: {}", report.summary());
+    eprintln!(
+        "  cells={}, vertices={}, total_cell_vertices={}, unique_cells={}, duplicates={}",
+        report.num_cells,
+        report.num_vertices,
+        report.total_cell_vertices,
+        report.unique_cells,
+        report.duplicate_cells_count
+    );
 }
 
 #[test]
@@ -111,6 +119,83 @@ fn test_clustered_cap_extreme() {
     let diagram = result.unwrap();
     let report = validate(&diagram);
     eprintln!("clustered_cap_extreme: {}", report.summary());
+}
+
+// =============================================================================
+// No-Preprocessing Variants
+//
+// These tests run without preprocessing to isolate and compare behavior.
+// Preprocessing merges near-coincident points, which can hide or amplify issues.
+// =============================================================================
+
+#[test]
+#[ignore = "compare behavior with preprocessing disabled"]
+fn test_clustered_cap_small_no_preprocess() {
+    use s2_voronoi::{compute_with, VoronoiConfig};
+
+    let points = clustered_cap_points(100, 0.087, 42);
+    let config = VoronoiConfig {
+        preprocess: false,
+        ..Default::default()
+    };
+    let result = compute_with(&points, config);
+
+    match result {
+        Ok(diagram) => {
+            let report = validate(&diagram);
+            eprintln!("clustered_cap_small (no preprocess): {}", report.summary());
+            assert_eq!(diagram.num_cells(), 100);
+        }
+        Err(e) => {
+            eprintln!("clustered_cap_small (no preprocess) failed: {:?}", e);
+        }
+    }
+}
+
+#[test]
+#[ignore = "compare behavior with preprocessing disabled"]
+fn test_clustered_cap_tight_no_preprocess() {
+    use s2_voronoi::{compute_with, VoronoiConfig};
+
+    let points = clustered_cap_points(100, 0.0175, 42);
+    let config = VoronoiConfig {
+        preprocess: false,
+        ..Default::default()
+    };
+    let result = compute_with(&points, config);
+
+    match result {
+        Ok(diagram) => {
+            let report = validate(&diagram);
+            eprintln!("clustered_cap_tight (no preprocess): {}", report.summary());
+        }
+        Err(e) => {
+            eprintln!("clustered_cap_tight (no preprocess) failed: {:?}", e);
+        }
+    }
+}
+
+#[test]
+#[ignore = "compare behavior with preprocessing disabled"]
+fn test_cocircular_tight_no_preprocess() {
+    use s2_voronoi::{compute_with, VoronoiConfig};
+
+    let points = near_cocircular_stress_points(25, 0.001, 42);
+    let config = VoronoiConfig {
+        preprocess: false,
+        ..Default::default()
+    };
+    let result = compute_with(&points, config);
+
+    match result {
+        Ok(diagram) => {
+            let report = validate(&diagram);
+            eprintln!("cocircular_tight (no preprocess): {}", report.summary());
+        }
+        Err(e) => {
+            eprintln!("cocircular_tight (no preprocess) failed: {:?}", e);
+        }
+    }
 }
 
 // =============================================================================

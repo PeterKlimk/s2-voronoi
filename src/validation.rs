@@ -25,8 +25,10 @@ pub struct ValidationReport {
     pub degenerate_cells: usize,
     /// Number of cells with duplicate vertex indices.
     pub cells_with_duplicates: usize,
-    /// Sum of cell vertex counts (should be even = 2E).
+    /// Sum of cell vertex counts (includes duplicates from merged generators).
     pub total_cell_vertices: usize,
+    /// Sum of cell vertex counts for unique cells only (should be even = 2E).
+    pub total_unique_cell_vertices: usize,
 
     /// Number of vertices not on unit sphere (|v| not in [1-eps, 1+eps]).
     pub vertices_off_sphere: usize,
@@ -58,7 +60,7 @@ impl ValidationReport {
         let degenerate_ratio = self.degenerate_cells as f64 / self.num_cells.max(1) as f64;
         let degenerate_ok = degenerate_ratio <= 0.01;
         let no_duplicates = self.cells_with_duplicates == 0;
-        let edges_consistent = self.total_cell_vertices % 2 == 0;
+        let edges_consistent = self.total_unique_cell_vertices % 2 == 0;
         let on_sphere = self.vertices_off_sphere == 0;
         let degree3_bad = (self.degree_counts[1] + self.degree_counts[2]) as f64;
         let degree3_ratio = degree3_bad / self.num_vertices.max(1) as f64;
@@ -81,7 +83,7 @@ impl ValidationReport {
         self.euler_characteristic == 2
             && self.degenerate_cells == 0
             && self.cells_with_duplicates == 0
-            && self.total_cell_vertices % 2 == 0
+            && self.total_unique_cell_vertices % 2 == 0
             && self.vertices_off_sphere == 0
             && self.non_degree3_vertices == 0
     }
@@ -112,7 +114,7 @@ impl ValidationReport {
                 self.cells_with_duplicates
             ));
         }
-        if self.total_cell_vertices % 2 != 0 {
+        if self.total_unique_cell_vertices % 2 != 0 {
             issues.push("odd total cell vertices (edge inconsistency)".to_string());
         }
         if self.vertices_off_sphere > 0 {
@@ -250,8 +252,8 @@ pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
     // However, validation of Euler is best done on the unique diagram.
 
     // Recalculate E for the unique diagram
-    let total_unique_vertices: usize = unique_cell_signatures.iter().map(|s| s.len()).sum();
-    let unique_edges = total_unique_vertices / 2;
+    let total_unique_cell_vertices: usize = unique_cell_signatures.iter().map(|s| s.len()).sum();
+    let unique_edges = total_unique_cell_vertices / 2;
 
     // Euler characteristic: (V - orphans) - E + F (using unique cells)
     let effective_vertices = num_vertices.saturating_sub(orphan_vertices);
@@ -283,7 +285,8 @@ pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
         expected_vertices,
         degenerate_cells,
         cells_with_duplicates,
-        total_cell_vertices, // Keep total including duplicates for strict checking
+        total_cell_vertices,
+        total_unique_cell_vertices,
         vertices_off_sphere,
         non_degree3_vertices,
         orphan_vertices,
