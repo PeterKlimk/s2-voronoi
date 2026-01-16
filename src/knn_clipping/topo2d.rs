@@ -182,7 +182,7 @@ enum ClipResult {
 }
 
 /// Clip a convex polygon by a half-plane (standalone function to avoid borrow conflicts).
-#[inline]
+#[cfg_attr(feature = "profiling", inline(never))]
 fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
     let n = poly.len;
     if n < 3 {
