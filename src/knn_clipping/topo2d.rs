@@ -113,7 +113,7 @@ impl PolyBuffer {
         self.has_bounding_ref = false;
     }
 
-    #[inline]
+    #[cfg_attr(feature = "profiling", inline(never))]
     fn push_unchecked(&mut self, v: (f64, f64), vp: (usize, usize), ep: usize) {
         debug_assert!(self.len < MAX_POLY_VERTICES);
         self.vertices[self.len] = v;
