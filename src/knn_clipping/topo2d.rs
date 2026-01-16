@@ -56,7 +56,7 @@ impl HalfPlane {
     }
 }
 
-#[inline]
+#[cfg_attr(feature = "profiling", inline(never))]
 fn is_inside_from_dist(hp: &HalfPlane, d: f64) -> bool {
     if d >= 0.0 {
         return true;
