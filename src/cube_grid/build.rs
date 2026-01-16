@@ -19,6 +19,20 @@ macro_rules! maybe_par_range {
     }};
 }
 
+/// Conditionally parallel iterator over a slice.
+macro_rules! maybe_par_iter {
+    ($slice:expr) => {{
+        #[cfg(feature = "parallel")]
+        {
+            $slice.par_iter()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            $slice.iter()
+        }
+    }};
+}
+
 use super::{
     cell_to_face_ij, diagonal_from_edge_neighbors, face_uv_to_3d, face_uv_to_cell,
     point_to_face_uv, st_to_uv, step_one, CubeMapGrid, CubeMapGridBuildTimings, EdgeDir, RING2_MAX,
@@ -59,17 +73,49 @@ impl CubeMapGrid {
         assert!(res > 0, "CubeMapGrid requires res > 0");
         let num_cells = 6 * res * res;
 
-        // Step 1: Count points per cell
+        // Step 1: Classify points into cells (parallel).
         #[cfg(feature = "timing")]
         let t = std::time::Instant::now();
-        let mut cell_counts = vec![0u32; num_cells];
-        let mut point_cells = Vec::with_capacity(points.len());
-        for p in points {
-            let (face, u, v) = point_to_face_uv(*p);
-            let cell = face_uv_to_cell(face, u, v, res);
-            point_cells.push(cell as u32);
-            cell_counts[cell] += 1;
-        }
+
+        // Compute cell index for each point in parallel.
+        let point_cells: Vec<u32> = maybe_par_iter!(points)
+            .map(|p| {
+                let (face, u, v) = point_to_face_uv(*p);
+                face_uv_to_cell(face, u, v, res) as u32
+            })
+            .collect();
+
+        // Count points per cell using parallel fold + reduce.
+        #[cfg(feature = "parallel")]
+        let cell_counts: Vec<u32> = {
+            point_cells
+                .par_iter()
+                .fold(
+                    || vec![0u32; num_cells],
+                    |mut acc, &cell| {
+                        acc[cell as usize] += 1;
+                        acc
+                    },
+                )
+                .reduce(
+                    || vec![0u32; num_cells],
+                    |mut a, b| {
+                        for (x, y) in a.iter_mut().zip(b.iter()) {
+                            *x += *y;
+                        }
+                        a
+                    },
+                )
+        };
+        #[cfg(not(feature = "parallel"))]
+        let cell_counts: Vec<u32> = {
+            let mut counts = vec![0u32; num_cells];
+            for &cell in &point_cells {
+                counts[cell as usize] += 1;
+            }
+            counts
+        };
+
         #[cfg(feature = "timing")]
         if let Some(timings) = timings.as_deref_mut() {
             timings.count_cells += t.elapsed();
@@ -90,54 +136,38 @@ impl CubeMapGrid {
             timings.prefix_sum += t.elapsed();
         }
 
-        // Step 3: Scatter points into cells and build SoA layout (points stored contiguous by cell).
+        // Step 3: Sort points by cell and build SoA layout.
         //
-        // This is a single pass that avoids an additional gather pass over a random permutation.
+        // Instead of random-write scatter (poor cache locality), we:
+        // 1. Create a sorted permutation of point indices by cell.
+        // 2. Linear copy in sorted order (excellent cache locality).
+        //
+        // The parallel sort trades O(n) random writes for O(n log n) cache-friendly work.
         #[cfg(feature = "timing")]
         let t = std::time::Instant::now();
         let n = points.len();
         debug_assert_eq!(cell_offsets[num_cells] as usize, n, "prefix sum mismatch");
 
-        let mut point_indices = Vec::<u32>::with_capacity(n);
-        let mut cell_points_x = Vec::<f32>::with_capacity(n);
-        let mut cell_points_y = Vec::<f32>::with_capacity(n);
-        let mut cell_points_z = Vec::<f32>::with_capacity(n);
+        // Build sorted permutation: indices sorted by their cell assignment.
+        let mut sorted_order: Vec<u32> = (0..n as u32).collect();
+        #[cfg(feature = "parallel")]
+        sorted_order.par_sort_unstable_by_key(|&i| point_cells[i as usize]);
+        #[cfg(not(feature = "parallel"))]
+        sorted_order.sort_unstable_by_key(|&i| point_cells[i as usize]);
 
-        let indices_spare = point_indices.spare_capacity_mut();
-        let x_spare = cell_points_x.spare_capacity_mut();
-        let y_spare = cell_points_y.spare_capacity_mut();
-        let z_spare = cell_points_z.spare_capacity_mut();
-
-        let mut cell_cursors = cell_offsets[..num_cells].to_vec();
-        for (i, cell_u32) in point_cells.iter().copied().enumerate() {
-            let cell = cell_u32 as usize;
-            let pos = cell_cursors[cell] as usize;
-            let p = points[i];
-
-            indices_spare[pos].write(i as u32);
-            x_spare[pos].write(p.x);
-            y_spare[pos].write(p.y);
-            z_spare[pos].write(p.z);
-
-            cell_cursors[cell] += 1;
+        // Copy point data in sorted order (linear access pattern).
+        let mut point_indices = Vec::with_capacity(n);
+        let mut cell_points_x = Vec::with_capacity(n);
+        let mut cell_points_y = Vec::with_capacity(n);
+        let mut cell_points_z = Vec::with_capacity(n);
+        for &orig_idx in &sorted_order {
+            let p = points[orig_idx as usize];
+            point_indices.push(orig_idx);
+            cell_points_x.push(p.x);
+            cell_points_y.push(p.y);
+            cell_points_z.push(p.z);
         }
 
-        debug_assert!(
-            cell_cursors
-                .iter()
-                .zip(cell_offsets.iter().skip(1))
-                .all(|(cursor, offset_end)| cursor == offset_end),
-            "scatter cursors did not reach cell end offsets"
-        );
-
-        // SAFETY: The prefix-sum scatter visits each `pos` in `0..n` exactly once, so the first
-        // `n` elements of each vec's spare capacity have been fully initialized.
-        unsafe {
-            point_indices.set_len(n);
-            cell_points_x.set_len(n);
-            cell_points_y.set_len(n);
-            cell_points_z.set_len(n);
-        }
         #[cfg(feature = "timing")]
         if let Some(timings) = timings.as_deref_mut() {
             timings.scatter_soa += t.elapsed();
