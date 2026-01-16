@@ -47,7 +47,8 @@ impl EdgeScratch {
         shard: &mut ShardState,
     ) {
         self.vertex_indices.clear();
-        self.vertex_indices.resize(cell_vertices.len(), INVALID_INDEX);
+        self.vertex_indices
+            .resize(cell_vertices.len(), INVALID_INDEX);
         collect_and_resolve_cell_edges(
             cell_idx,
             local,
@@ -101,8 +102,8 @@ impl EdgeScratch {
         }
 
         for entry in self.edges_to_later.drain(..) {
-            let locals = entry.edge.locals;
-            let (a, b) = unpack_edge_key(entry.edge.key);
+            let locals = entry.locals;
+            let (a, b) = unpack_edge_key(entry.key);
             let thirds = [
                 third_for_edge_endpoint(cell_vertices[locals[0] as usize].0, a, b),
                 third_for_edge_endpoint(cell_vertices[locals[1] as usize].0, a, b),
@@ -110,7 +111,7 @@ impl EdgeScratch {
             shard.dedup.push_edge_check(
                 entry.local_b,
                 EdgeCheck {
-                    key: entry.edge.key,
+                    key: entry.key,
                     thirds,
                     indices: [
                         self.vertex_indices[locals[0] as usize],
@@ -121,14 +122,14 @@ impl EdgeScratch {
         }
 
         for entry in self.edges_overflow.drain(..) {
-            let locals = entry.edge.locals;
-            let (a, b) = unpack_edge_key(entry.edge.key);
+            let locals = entry.locals;
+            let (a, b) = unpack_edge_key(entry.key);
             let thirds = [
                 third_for_edge_endpoint(cell_vertices[locals[0] as usize].0, a, b),
                 third_for_edge_endpoint(cell_vertices[locals[1] as usize].0, a, b),
             ];
             shard.output.edge_check_overflow.push(EdgeCheckOverflow {
-                key: entry.edge.key,
+                key: entry.key,
                 side: entry.side,
                 source_bin: bin,
                 thirds,
@@ -568,7 +569,14 @@ fn process_cell(
 
     let cell_idx = i as u32;
     let t_edge_collect = crate::knn_clipping::timing::Timer::start();
-    edge_scratch.collect_and_resolve(cell_idx, local, cell_vertices, edge_neighbors, assignment, shard);
+    edge_scratch.collect_and_resolve(
+        cell_idx,
+        local,
+        cell_vertices,
+        edge_neighbors,
+        assignment,
+        shard,
+    );
     let collect_resolve_time = t_edge_collect.elapsed();
     // Split time between collect and resolve for backward-compatible timing
     cell_sub.add_edge_collect(collect_resolve_time / 2);

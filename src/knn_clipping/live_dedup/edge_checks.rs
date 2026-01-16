@@ -156,20 +156,16 @@ pub(super) fn collect_and_resolve_cell_edges(
             // Cross-bin edge → overflow
             let side = if cell_idx <= neighbor { 0 } else { 1 };
             edges_overflow.push(EdgeOverflowLocal {
-                edge: EdgeLocal {
-                    key: edge_key,
-                    locals,
-                },
+                key: edge_key,
+                locals,
                 side,
             });
         } else if local_u32 < local_b.as_u32() {
             // Edge to later neighbor → collect for emit
             edges_to_later.push(EdgeToLater {
-                edge: EdgeLocal {
-                    key: edge_key,
-                    locals,
-                },
+                key: edge_key,
                 local_b,
+                locals,
             });
         } else {
             // Edge to earlier neighbor → resolve immediately
@@ -321,15 +317,20 @@ pub(super) fn collect_cell_edges(
             );
             if local_u32 < local_b_u32.as_u32() {
                 edges_to_later.push(EdgeToLater {
-                    edge,
+                    key: edge.key,
                     local_b: local_b_u32,
+                    locals: edge.locals,
                 });
             } else {
                 edges_to_earlier.push(edge);
             }
         } else {
             let side = if cell_idx <= neighbor { 0 } else { 1 };
-            edges_overflow.push(EdgeOverflowLocal { edge, side });
+            edges_overflow.push(EdgeOverflowLocal {
+                key: edge.key,
+                locals: edge.locals,
+                side,
+            });
         }
     }
 }

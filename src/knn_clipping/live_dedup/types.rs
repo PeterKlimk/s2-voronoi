@@ -137,15 +137,21 @@ pub(super) struct EdgeLocal {
     pub(super) locals: [u8; 2],
 }
 
+/// Flattened for size: 16 bytes instead of 24.
+/// Layout: key (8) + local_b (4) + locals (2) + 2 padding = 16
 #[derive(Clone, Copy)]
 pub(super) struct EdgeToLater {
-    pub(super) edge: EdgeLocal,
+    pub(super) key: EdgeKey,
     pub(super) local_b: LocalId,
+    pub(super) locals: [u8; 2],
 }
 
+/// Flattened for size: 16 bytes instead of 24.
+/// Layout: key (8) + locals (2) + side (1) + 5 padding = 16
 #[derive(Clone, Copy)]
 pub(super) struct EdgeOverflowLocal {
-    pub(super) edge: EdgeLocal,
+    pub(super) key: EdgeKey,
+    pub(super) locals: [u8; 2],
     pub(super) side: u8,
 }
 
