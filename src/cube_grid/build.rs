@@ -111,38 +111,57 @@ impl CubeMapGrid {
             timings.prefix_sum += t.elapsed();
         }
 
-        // Step 3: Sort points by cell and build SoA layout.
+        // Step 3: Scatter points into cells and build SoA layout (points stored contiguous by cell).
         //
-        // Instead of random-write scatter (poor cache locality), we:
-        // 1. Create a sorted permutation of point indices by cell.
-        // 2. Linear copy in sorted order (excellent cache locality).
-        //
-        // The parallel sort trades O(n) random writes for O(n log n) cache-friendly work.
+        // This is a single pass that avoids an additional gather pass over a random permutation.
+        // Note: We tried a sort-based approach but O(n log n) sort with indirect key lookups
+        // was slower than O(n) random writes (spatial data has locality, modern CPUs have good
+        // write buffers).
         #[cfg(feature = "timing")]
         let t = std::time::Instant::now();
         let n = points.len();
         debug_assert_eq!(cell_offsets[num_cells] as usize, n, "prefix sum mismatch");
 
-        // Build sorted permutation: indices sorted by their cell assignment.
-        let mut sorted_order: Vec<u32> = (0..n as u32).collect();
-        #[cfg(feature = "parallel")]
-        sorted_order.par_sort_unstable_by_key(|&i| point_cells[i as usize]);
-        #[cfg(not(feature = "parallel"))]
-        sorted_order.sort_unstable_by_key(|&i| point_cells[i as usize]);
+        let mut point_indices = Vec::<u32>::with_capacity(n);
+        let mut cell_points_x = Vec::<f32>::with_capacity(n);
+        let mut cell_points_y = Vec::<f32>::with_capacity(n);
+        let mut cell_points_z = Vec::<f32>::with_capacity(n);
 
-        // Copy point data in sorted order (linear access pattern).
-        let mut point_indices = Vec::with_capacity(n);
-        let mut cell_points_x = Vec::with_capacity(n);
-        let mut cell_points_y = Vec::with_capacity(n);
-        let mut cell_points_z = Vec::with_capacity(n);
-        for &orig_idx in &sorted_order {
-            let p = points[orig_idx as usize];
-            point_indices.push(orig_idx);
-            cell_points_x.push(p.x);
-            cell_points_y.push(p.y);
-            cell_points_z.push(p.z);
+        let indices_spare = point_indices.spare_capacity_mut();
+        let x_spare = cell_points_x.spare_capacity_mut();
+        let y_spare = cell_points_y.spare_capacity_mut();
+        let z_spare = cell_points_z.spare_capacity_mut();
+
+        let mut cell_cursors = cell_offsets[..num_cells].to_vec();
+        for (i, cell_u32) in point_cells.iter().copied().enumerate() {
+            let cell = cell_u32 as usize;
+            let pos = cell_cursors[cell] as usize;
+            let p = points[i];
+
+            indices_spare[pos].write(i as u32);
+            x_spare[pos].write(p.x);
+            y_spare[pos].write(p.y);
+            z_spare[pos].write(p.z);
+
+            cell_cursors[cell] += 1;
         }
 
+        debug_assert!(
+            cell_cursors
+                .iter()
+                .zip(cell_offsets.iter().skip(1))
+                .all(|(cursor, offset_end)| cursor == offset_end),
+            "scatter cursors did not reach cell end offsets"
+        );
+
+        // SAFETY: The prefix-sum scatter visits each `pos` in `0..n` exactly once, so the first
+        // `n` elements of each vec's spare capacity have been fully initialized.
+        unsafe {
+            point_indices.set_len(n);
+            cell_points_x.set_len(n);
+            cell_points_y.set_len(n);
+            cell_points_z.set_len(n);
+        }
         #[cfg(feature = "timing")]
         if let Some(timings) = timings.as_deref_mut() {
             timings.scatter_soa += t.elapsed();
