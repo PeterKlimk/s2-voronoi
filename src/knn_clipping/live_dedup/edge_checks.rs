@@ -120,6 +120,18 @@ pub(super) fn collect_and_resolve_cell_edges(
     // Track which incoming checks we've matched (bitmask, supports up to 64)
     let mut matched: u64 = 0;
 
+    // Pre-gather neighbor gen_map entries to improve memory-level parallelism.
+    // This separates the random memory accesses from the dependent logic loop.
+    let mut neighbor_gen_maps = [0u32; 64];
+    debug_assert!(n <= 64, "cell has more than 64 vertices");
+
+    for i in 0..n {
+        let neighbor = edge_neighbors[i];
+        if neighbor != u32::MAX {
+            neighbor_gen_maps[i] = assignment.gen_map[neighbor as usize];
+        }
+    }
+
     // Process all edges
     for i in 0..n {
         let j = if i + 1 == n { 0 } else { i + 1 };
@@ -138,7 +150,7 @@ pub(super) fn collect_and_resolve_cell_edges(
         };
         let edge_key = pack_edge(cell_idx, neighbor);
 
-        let (bin_b, local_b) = assignment.unpack(assignment.gen_map[neighbor as usize]);
+        let (bin_b, local_b) = assignment.unpack(neighbor_gen_maps[i]);
 
         if bin_a != bin_b {
             // Cross-bin edge → overflow
