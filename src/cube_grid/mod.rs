@@ -176,10 +176,6 @@ pub struct CubeMapGrid {
     /// Stored as cos/sin for fast per-query bounds.
     pub(super) cell_cos_radius: Vec<f32>,
     pub(super) cell_sin_radius: Vec<f32>,
-    /// Precomputed security threshold for 3x3 neighborhood: max dot from any point in the cell
-    /// to any ring-2 cell (Chebyshev distance 2). This is computed using ring caps,
-    /// which overestimates by ~6.7% but can be precomputed once per cell.
-    pub(super) security_3x3: Vec<f32>,
 
     // === SoA layout: points stored contiguous by cell ===
     /// X coordinates of points, ordered by cell (use cell_offsets for ranges).
@@ -418,22 +414,11 @@ pub struct CubeMapGridScratch {
     /// Dot-product top-k buffer for non-resumable queries (unsorted).
     /// Stored as (dot, point_idx), where larger dot = closer for unit vectors.
     candidates_dot: Vec<(f32, u32)>,
-    worst_dot: f32,
-    worst_dot_pos: usize,
-
+    // worst_dot: f32, // Unused
+    // worst_dot_pos: usize, // Unused
     /// If true, we've done a brute-force scan and have an exhaustive candidate set
     /// (up to `track_limit`).
     exhausted: bool,
-}
-
-#[derive(Debug)]
-pub struct GridStats {
-    pub num_cells: usize,
-    pub num_points: usize,
-    pub min_points_per_cell: usize,
-    pub max_points_per_cell: usize,
-    pub empty_cells: usize,
-    pub avg_points_per_cell: f64,
 }
 
 #[cfg(test)]

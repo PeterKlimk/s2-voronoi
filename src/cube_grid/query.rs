@@ -5,7 +5,7 @@ use std::cmp::Reverse;
 
 use super::{
     face_uv_to_cell, point_to_face_uv, unit_vec_dist_sq_generic, CubeMapGrid, CubeMapGridScratch,
-    GridStats, KnnStatus, OrdF32, UnitVec,
+    KnnStatus, OrdF32, UnitVec,
 };
 
 impl CubeMapGridScratch {
@@ -22,8 +22,6 @@ impl CubeMapGridScratch {
             use_fixed: true,
             candidates_vec: Vec::new(),
             candidates_dot: Vec::new(),
-            worst_dot: f32::NEG_INFINITY,
-            worst_dot_pos: 0,
             exhausted: false,
         }
     }
@@ -44,30 +42,6 @@ impl CubeMapGridScratch {
                     .reserve(reserve - self.candidates_vec.capacity());
             }
         }
-
-        // Stamp 0 means "unvisited". Avoid ever using stamp 0 for a query.
-        self.stamp = self.stamp.wrapping_add(1).max(1);
-        if self.stamp == u32::MAX {
-            self.visited_stamp.fill(0);
-            self.stamp = 1;
-        }
-    }
-
-    #[inline]
-    fn begin_query_dot(&mut self, k: usize) {
-        self.cell_heap.clear();
-        self.exhausted = false;
-        self.track_limit = 0;
-        self.candidates_len = 0;
-        self.use_fixed = true;
-        self.candidates_vec.clear();
-        self.candidates_dot.clear();
-        if self.candidates_dot.capacity() < k {
-            self.candidates_dot
-                .reserve(k - self.candidates_dot.capacity());
-        }
-        self.worst_dot = f32::NEG_INFINITY;
-        self.worst_dot_pos = 0;
 
         // Stamp 0 means "unvisited". Avoid ever using stamp 0 for a query.
         self.stamp = self.stamp.wrapping_add(1).max(1);
@@ -125,28 +99,6 @@ impl CubeMapGridScratch {
         }
     }
 
-    #[inline]
-    fn have_k_dot(&self, k: usize) -> bool {
-        self.candidates_dot.len() >= k
-    }
-
-    #[inline]
-    fn kth_dist_sq_dot(&self, k: usize) -> f32 {
-        if k == 0 {
-            return 0.0;
-        }
-
-        let k = k.min(self.candidates_dot.len());
-        let mut worst = 1.0f32;
-        for &(dot, _) in self.candidates_dot.iter().take(k) {
-            if dot < worst {
-                worst = dot;
-            }
-        }
-        2.0 - 2.0 * worst
-    }
-
-    #[inline]
     fn try_add_neighbor(&mut self, idx: usize, dist_sq: f32) {
         let idx_u32 = idx as u32;
         let len = if self.use_fixed {
@@ -214,95 +166,6 @@ impl CubeMapGridScratch {
             }
         }
     }
-
-    #[inline]
-    fn append_k_indices_into(&self, prev_k: usize, new_k: usize, out: &mut Vec<usize>) {
-        let k = if self.use_fixed {
-            new_k.min(self.candidates_len)
-        } else {
-            new_k.min(self.candidates_vec.len())
-        };
-
-        if k <= prev_k {
-            return;
-        }
-
-        out.reserve(k - prev_k);
-        if self.use_fixed {
-            for i in prev_k..k {
-                out.push(self.candidates_fixed[i].1 as usize);
-            }
-        } else {
-            for i in prev_k..k {
-                out.push(self.candidates_vec[i].1 as usize);
-            }
-        }
-    }
-
-    #[inline]
-    fn copy_k_indices_dot_into(&mut self, k: usize, out: &mut Vec<usize>) {
-        out.clear();
-        if k == 0 || self.candidates_dot.is_empty() {
-            return;
-        }
-
-        let k = k.min(self.candidates_dot.len());
-        self.candidates_dot
-            .select_nth_unstable_by(k - 1, |a, b| b.0.partial_cmp(&a.0).unwrap());
-        let kth = self.candidates_dot[k - 1].0;
-        self.candidates_dot.retain(|(dot, _)| *dot >= kth - 1e-12);
-        self.candidates_dot
-            .sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
-        self.candidates_dot.truncate(k);
-
-        out.reserve(k);
-        for &(_, idx) in &self.candidates_dot {
-            out.push(idx as usize);
-        }
-    }
-
-    #[inline]
-    fn try_add_neighbor_dot(&mut self, idx: usize, dot: f32, k: usize) {
-        let idx_u32 = idx as u32;
-        let len = self.candidates_dot.len();
-        if len < k {
-            self.candidates_dot.push((dot, idx_u32));
-            if dot < self.worst_dot || len == 0 {
-                self.worst_dot = dot;
-                self.worst_dot_pos = len;
-            } else if len + 1 == k {
-                // Just reached k: compute worst in one pass.
-                let mut worst_dot = self.candidates_dot[0].0;
-                let mut worst_pos = 0usize;
-                for (i, &(d, _)) in self.candidates_dot.iter().enumerate().skip(1) {
-                    if d < worst_dot {
-                        worst_dot = d;
-                        worst_pos = i;
-                    }
-                }
-                self.worst_dot = worst_dot;
-                self.worst_dot_pos = worst_pos;
-            }
-            return;
-        }
-
-        if dot <= self.worst_dot {
-            return;
-        }
-
-        // Replace current worst, then rescan to find new worst (k is small: 12/24/48).
-        self.candidates_dot[self.worst_dot_pos] = (dot, idx_u32);
-        let mut worst_dot = self.candidates_dot[0].0;
-        let mut worst_pos = 0usize;
-        for (i, &(d, _)) in self.candidates_dot.iter().enumerate().skip(1) {
-            if d < worst_dot {
-                worst_dot = d;
-                worst_pos = i;
-            }
-        }
-        self.worst_dot = worst_dot;
-        self.worst_dot_pos = worst_pos;
-    }
 }
 
 impl CubeMapGrid {
@@ -349,10 +212,6 @@ impl CubeMapGrid {
 
     /// Get precomputed security_3x3 threshold for a cell.
     /// This is the max dot from any point in the cell to any ring-2 cell.
-    #[inline]
-    pub fn cell_security_3x3(&self, cell: usize) -> f32 {
-        self.security_3x3[cell]
-    }
 
     /// Create a reusable scratch buffer for fast repeated queries.
     pub fn make_scratch(&self) -> CubeMapGridScratch {
@@ -385,45 +244,9 @@ impl CubeMapGrid {
     /// Scratch-based k-NN query that writes results into `out_indices` (sorted closest-first).
     ///
     /// This is the preferred high-throughput API: it avoids per-query allocations.
-    pub fn find_k_nearest_with_scratch_into(
-        &self,
-        points: &[Vec3],
-        query: Vec3,
-        query_idx: usize,
-        k: usize,
-        scratch: &mut CubeMapGridScratch,
-        out_indices: &mut Vec<usize>,
-    ) {
-        self.find_k_nearest_with_scratch_into_impl(
-            points,
-            query,
-            query_idx,
-            k,
-            scratch,
-            out_indices,
-        );
-    }
 
     /// Non-resumable scratch-based k-NN query optimized for unit vectors:
     /// maintains an unsorted top-k by dot product and sorts once at the end.
-    pub fn find_k_nearest_with_scratch_into_dot_topk(
-        &self,
-        points: &[Vec3],
-        query: Vec3,
-        query_idx: usize,
-        k: usize,
-        scratch: &mut CubeMapGridScratch,
-        out_indices: &mut Vec<usize>,
-    ) {
-        self.find_k_nearest_with_scratch_into_dot_topk_impl(
-            points,
-            query,
-            query_idx,
-            k,
-            scratch,
-            out_indices,
-        );
-    }
 
     /// Start a resumable k-NN query.
     ///
@@ -458,17 +281,6 @@ impl CubeMapGrid {
     ///
     /// Call this after `find_k_nearest_resumable_into` when you need more neighbors.
     /// `new_k` should be larger than the previous k but within the original `track_limit`.
-    pub fn resume_k_nearest_into(
-        &self,
-        points: &[Vec3],
-        query: Vec3,
-        query_idx: usize,
-        new_k: usize,
-        scratch: &mut CubeMapGridScratch,
-        out_indices: &mut Vec<usize>,
-    ) -> KnnStatus {
-        self.resume_k_nearest_into_impl(points, query, query_idx, new_k, scratch, out_indices)
-    }
 
     /// Resume a k-NN query and append only the new neighbors to `out_indices`.
     ///
@@ -478,26 +290,6 @@ impl CubeMapGrid {
     ///
     /// This is an optimization over `resume_k_nearest_into` when the caller wants to process
     /// only the newly discovered neighbors.
-    pub fn resume_k_nearest_append_into(
-        &self,
-        points: &[Vec3],
-        query: Vec3,
-        query_idx: usize,
-        prev_k: usize,
-        new_k: usize,
-        scratch: &mut CubeMapGridScratch,
-        out_indices: &mut Vec<usize>,
-    ) -> KnnStatus {
-        self.resume_k_nearest_append_into_impl(
-            points,
-            query,
-            query_idx,
-            prev_k,
-            new_k,
-            scratch,
-            out_indices,
-        )
-    }
 
     fn bruteforce_fill_impl<P: UnitVec>(
         &self,
@@ -518,28 +310,6 @@ impl CubeMapGrid {
             }
             let dist_sq = unit_vec_dist_sq_generic(*p, query);
             scratch.try_add_neighbor(idx, dist_sq);
-        }
-        scratch.exhausted = true;
-    }
-
-    fn bruteforce_fill_dot_impl<P: UnitVec>(
-        &self,
-        points: &[P],
-        query: P,
-        query_idx: usize,
-        k: usize,
-        scratch: &mut CubeMapGridScratch,
-    ) {
-        scratch.candidates_dot.clear();
-        scratch.worst_dot = f32::NEG_INFINITY;
-        scratch.worst_dot_pos = 0;
-
-        for (idx, p) in points.iter().enumerate() {
-            if idx == query_idx {
-                continue;
-            }
-            let dot = p.dot(query);
-            scratch.try_add_neighbor_dot(idx, dot, k);
         }
         scratch.exhausted = true;
     }
@@ -578,201 +348,6 @@ impl CubeMapGrid {
     }
 
     #[inline]
-    fn scan_cell_points_dot_impl<P: UnitVec>(
-        &self,
-        _points: &[P],
-        query: P,
-        query_idx: usize,
-        k: usize,
-        cell: usize,
-        scratch: &mut CubeMapGridScratch,
-    ) {
-        let start = self.cell_offsets[cell] as usize;
-        let end = self.cell_offsets[cell + 1] as usize;
-
-        // Use SoA layout for contiguous memory access
-        let xs = &self.cell_points_x[start..end];
-        let ys = &self.cell_points_y[start..end];
-        let zs = &self.cell_points_z[start..end];
-        let indices = &self.point_indices[start..end];
-
-        let qv = query.to_vec3();
-        let (qx, qy, qz) = (qv.x, qv.y, qv.z);
-
-        for i in 0..xs.len() {
-            let pidx = indices[i] as usize;
-            if pidx == query_idx {
-                continue;
-            }
-            // Contiguous SoA access - should auto-vectorize well
-            let dot = xs[i] * qx + ys[i] * qy + zs[i] * qz;
-            scratch.try_add_neighbor_dot(pidx, dot, k);
-        }
-    }
-
-    fn find_k_nearest_with_scratch_into_impl<P: UnitVec>(
-        &self,
-        points: &[P],
-        query: P,
-        query_idx: usize,
-        k: usize,
-        scratch: &mut CubeMapGridScratch,
-        out_indices: &mut Vec<usize>,
-    ) {
-        let n = points.len();
-        out_indices.clear();
-
-        if k == 0 || n <= 1 {
-            return;
-        }
-        let k = k.min(n - 1);
-
-        let query_vec3 = query.to_vec3();
-        let num_cells = 6 * self.res * self.res;
-        scratch.begin_query(k, k);
-
-        let start_cell = if query_idx < self.point_cells.len() {
-            self.point_cells[query_idx]
-        } else {
-            self.point_to_cell(query_vec3) as u32
-        };
-
-        scratch.mark_visited(start_cell);
-        self.scan_cell_points_impl(points, query, query_idx, start_cell as usize, scratch);
-
-        let neighbors = self.cell_neighbors(start_cell as usize);
-        for &ncell in neighbors.iter() {
-            if ncell == u32::MAX || ncell == start_cell {
-                continue;
-            }
-            if !scratch.mark_visited(ncell) {
-                continue;
-            }
-            let bound = self.cell_min_dist_sq(query_vec3, ncell as usize);
-            scratch.push_cell(ncell, bound);
-        }
-
-        let mut visited = 1usize;
-        loop {
-            let (bound_dist_sq, _cell) = match scratch.peek_cell() {
-                Some(v) => v,
-                None => break,
-            };
-
-            if scratch.have_k(k) && bound_dist_sq >= scratch.kth_dist_sq(k) {
-                break;
-            }
-
-            let (_, cell) = scratch.pop_cell().expect("cell heap out of sync");
-            self.scan_cell_points_impl(points, query, query_idx, cell as usize, scratch);
-
-            let neighbors = self.cell_neighbors(cell as usize);
-            for &ncell in neighbors.iter() {
-                if ncell == u32::MAX {
-                    continue;
-                }
-                if !scratch.mark_visited(ncell) {
-                    continue;
-                }
-                let bound = self.cell_min_dist_sq(query_vec3, ncell as usize);
-                scratch.push_cell(ncell, bound);
-            }
-
-            visited += 1;
-            if visited >= num_cells {
-                break;
-            }
-        }
-
-        if !scratch.have_k(k) {
-            // Not enough results found; brute force remaining points
-            self.bruteforce_fill_impl(points, query, query_idx, scratch);
-        }
-
-        scratch.copy_k_indices_into(k, out_indices);
-    }
-
-    fn find_k_nearest_with_scratch_into_dot_topk_impl<P: UnitVec>(
-        &self,
-        points: &[P],
-        query: P,
-        query_idx: usize,
-        k: usize,
-        scratch: &mut CubeMapGridScratch,
-        out_indices: &mut Vec<usize>,
-    ) {
-        let n = points.len();
-        out_indices.clear();
-
-        if k == 0 || n <= 1 {
-            return;
-        }
-        let k = k.min(n - 1);
-
-        let query_vec3 = query.to_vec3();
-        let num_cells = 6 * self.res * self.res;
-        scratch.begin_query_dot(k);
-
-        let start_cell = if query_idx < self.point_cells.len() {
-            self.point_cells[query_idx]
-        } else {
-            self.point_to_cell(query_vec3) as u32
-        };
-
-        scratch.mark_visited(start_cell);
-        self.scan_cell_points_dot_impl(points, query, query_idx, k, start_cell as usize, scratch);
-
-        let neighbors = self.cell_neighbors(start_cell as usize);
-        for &ncell in neighbors.iter() {
-            if ncell == u32::MAX || ncell == start_cell {
-                continue;
-            }
-            if !scratch.mark_visited(ncell) {
-                continue;
-            }
-            let bound = self.cell_min_dist_sq(query_vec3, ncell as usize);
-            scratch.push_cell(ncell, bound);
-        }
-
-        let mut visited = 1usize;
-        loop {
-            let (bound_dist_sq, _cell) = match scratch.peek_cell() {
-                Some(v) => v,
-                None => break,
-            };
-
-            if scratch.have_k_dot(k) && bound_dist_sq >= scratch.kth_dist_sq_dot(k) {
-                break;
-            }
-
-            let (_, cell) = scratch.pop_cell().expect("cell heap out of sync");
-            self.scan_cell_points_dot_impl(points, query, query_idx, k, cell as usize, scratch);
-
-            let neighbors = self.cell_neighbors(cell as usize);
-            for &ncell in neighbors.iter() {
-                if ncell == u32::MAX {
-                    continue;
-                }
-                if !scratch.mark_visited(ncell) {
-                    continue;
-                }
-                let bound = self.cell_min_dist_sq(query_vec3, ncell as usize);
-                scratch.push_cell(ncell, bound);
-            }
-
-            visited += 1;
-            if visited >= num_cells {
-                break;
-            }
-        }
-
-        if !scratch.have_k_dot(k) {
-            // Not enough results found; brute force remaining points
-            self.bruteforce_fill_dot_impl(points, query, query_idx, k, scratch);
-        }
-
-        scratch.copy_k_indices_dot_into(k, out_indices);
-    }
 
     fn seed_start_cell_impl<P: UnitVec>(
         &self,
@@ -875,198 +450,6 @@ impl CubeMapGrid {
             KnnStatus::Exhausted
         } else {
             KnnStatus::CanResume
-        }
-    }
-
-    fn resume_k_nearest_into_impl<P: UnitVec>(
-        &self,
-        points: &[P],
-        query: P,
-        query_idx: usize,
-        new_k: usize,
-        scratch: &mut CubeMapGridScratch,
-        out_indices: &mut Vec<usize>,
-    ) -> KnnStatus {
-        out_indices.clear();
-
-        if new_k == 0 || points.len() <= 1 {
-            return KnnStatus::CanResume;
-        }
-
-        let new_k = new_k.min(points.len() - 1);
-        if scratch.track_limit == 0 {
-            return self.find_k_nearest_resumable_into_impl(
-                points,
-                query,
-                query_idx,
-                new_k,
-                new_k,
-                scratch,
-                out_indices,
-            );
-        }
-
-        debug_assert!(
-            new_k <= scratch.track_limit,
-            "resume_k_nearest_into called with new_k above track_limit"
-        );
-
-        if !scratch.exhausted && !scratch.have_k(new_k) {
-            let query_vec3 = query.to_vec3();
-            let num_cells = 6 * self.res * self.res;
-
-            let mut visited = 0usize;
-            while !scratch.have_k(new_k) {
-                let (bound_dist_sq, _cell) = match scratch.peek_cell() {
-                    Some(v) => v,
-                    None => break,
-                };
-
-                if scratch.have_k(new_k) && bound_dist_sq >= scratch.kth_dist_sq(new_k) {
-                    break;
-                }
-
-                let (_, cell) = scratch.pop_cell().expect("cell heap out of sync");
-                self.scan_cell_points_impl(points, query, query_idx, cell as usize, scratch);
-
-                let neighbors = self.cell_neighbors(cell as usize);
-                for &ncell in neighbors.iter() {
-                    if ncell == u32::MAX {
-                        continue;
-                    }
-                    if !scratch.mark_visited(ncell) {
-                        continue;
-                    }
-                    let bound = self.cell_min_dist_sq(query_vec3, ncell as usize);
-                    scratch.push_cell(ncell, bound);
-                }
-
-                visited += 1;
-                if visited >= num_cells {
-                    break;
-                }
-            }
-
-            if !scratch.have_k(new_k) {
-                self.bruteforce_fill_impl(points, query, query_idx, scratch);
-            }
-        }
-
-        scratch.copy_k_indices_into(new_k, out_indices);
-
-        if scratch.exhausted {
-            KnnStatus::Exhausted
-        } else {
-            KnnStatus::CanResume
-        }
-    }
-
-    fn resume_k_nearest_append_into_impl<P: UnitVec>(
-        &self,
-        points: &[P],
-        query: P,
-        query_idx: usize,
-        prev_k: usize,
-        new_k: usize,
-        scratch: &mut CubeMapGridScratch,
-        out_indices: &mut Vec<usize>,
-    ) -> KnnStatus {
-        if new_k == 0 || points.len() <= 1 {
-            return KnnStatus::CanResume;
-        }
-
-        let new_k = new_k.min(points.len() - 1);
-        if scratch.track_limit == 0 {
-            let status = self.find_k_nearest_resumable_into_impl(
-                points,
-                query,
-                query_idx,
-                new_k,
-                new_k,
-                scratch,
-                out_indices,
-            );
-            return status;
-        }
-
-        debug_assert!(
-            new_k <= scratch.track_limit,
-            "resume_k_nearest_append_into called with new_k above track_limit"
-        );
-
-        if !scratch.exhausted && !scratch.have_k(new_k) {
-            let query_vec3 = query.to_vec3();
-            let num_cells = 6 * self.res * self.res;
-
-            let mut visited = 0usize;
-            while !scratch.have_k(new_k) {
-                let (bound_dist_sq, _cell) = match scratch.peek_cell() {
-                    Some(v) => v,
-                    None => break,
-                };
-
-                if scratch.have_k(new_k) && bound_dist_sq >= scratch.kth_dist_sq(new_k) {
-                    break;
-                }
-
-                let (_, cell) = scratch.pop_cell().expect("cell heap out of sync");
-                self.scan_cell_points_impl(points, query, query_idx, cell as usize, scratch);
-
-                let neighbors = self.cell_neighbors(cell as usize);
-                for &ncell in neighbors.iter() {
-                    if ncell == u32::MAX {
-                        continue;
-                    }
-                    if !scratch.mark_visited(ncell) {
-                        continue;
-                    }
-                    let bound = self.cell_min_dist_sq(query_vec3, ncell as usize);
-                    scratch.push_cell(ncell, bound);
-                }
-
-                visited += 1;
-                if visited >= num_cells {
-                    break;
-                }
-            }
-
-            if !scratch.have_k(new_k) {
-                self.bruteforce_fill_impl(points, query, query_idx, scratch);
-            }
-        }
-
-        scratch.append_k_indices_into(prev_k, new_k, out_indices);
-
-        if scratch.exhausted {
-            KnnStatus::Exhausted
-        } else {
-            KnnStatus::CanResume
-        }
-    }
-
-    /// Statistics about the grid.
-    pub fn stats(&self) -> GridStats {
-        let num_cells = 6 * self.res * self.res;
-        let mut min_pts = u32::MAX;
-        let mut max_pts = 0u32;
-        let mut empty = 0usize;
-
-        for cell in 0..num_cells {
-            let count = self.cell_offsets[cell + 1] - self.cell_offsets[cell];
-            min_pts = min_pts.min(count);
-            max_pts = max_pts.max(count);
-            if count == 0 {
-                empty += 1;
-            }
-        }
-
-        GridStats {
-            num_cells,
-            num_points: self.point_indices.len(),
-            min_points_per_cell: min_pts as usize,
-            max_points_per_cell: max_pts as usize,
-            empty_cells: empty,
-            avg_points_per_cell: self.point_indices.len() as f64 / num_cells as f64,
         }
     }
 }

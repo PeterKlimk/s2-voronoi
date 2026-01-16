@@ -22,15 +22,6 @@ use types::BadEdgeRecord;
 
 pub(super) use types::EdgeRecord;
 
-#[inline]
-fn canonical_endpoints(a: VertexKey, b: VertexKey) -> [VertexKey; 2] {
-    if a <= b {
-        [a, b]
-    } else {
-        [b, a]
-    }
-}
-
 const EDGE_CHECK_NONE: u32 = u32::MAX;
 
 pub(super) struct ShardedCellsData {

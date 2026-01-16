@@ -28,10 +28,7 @@ mod topo2d;
 
 // Re-exports (internal use)
 #[allow(unused_imports)]
-pub use compute::{
-    compute_voronoi_gpu_style, compute_voronoi_gpu_style_no_preprocess,
-    compute_voronoi_gpu_style_with_config, compute_voronoi_gpu_style_with_termination,
-};
+pub use compute::compute_voronoi_gpu_style_with_config;
 pub use knn::CubeMapGridKnn;
 pub use preprocess::merge_close_points;
 

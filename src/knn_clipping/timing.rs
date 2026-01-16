@@ -32,8 +32,6 @@ pub enum KnnCellStage {
     Restart(usize),
     /// Ran full scan as fallback
     FullScanFallback,
-    /// Ran full scan for dead-cell recovery
-    FullScanRecovery,
 }
 
 /// Sub-phase timings within cell construction.
@@ -421,12 +419,6 @@ impl PhaseTimings {
             .get(&KnnCellStage::FullScanFallback)
             .copied()
             .unwrap_or(0);
-        let recovery = self
-            .cell_sub
-            .stage_counts
-            .get(&KnnCellStage::FullScanRecovery)
-            .copied()
-            .unwrap_or(0);
 
         // Build output string
         let mut stages_str = String::from("    knn_stages:");
@@ -443,13 +435,7 @@ impl PhaseTimings {
                 pct_cells(full_scan)
             ));
         }
-        if recovery > 0 {
-            stages_str.push_str(&format!(
-                " recovery={} ({:.1}%)",
-                recovery,
-                pct_cells(recovery)
-            ));
-        }
+
         stages_str.push_str(&format!(
             " exhausted={} ({:.1}%)",
             self.cell_sub.cells_knn_exhausted,
@@ -930,8 +916,6 @@ pub enum KnnCellStage {
     Restart(usize),
     /// Ran full scan as fallback
     FullScanFallback,
-    /// Ran full scan for dead-cell recovery
-    FullScanRecovery,
 }
 
 /// Builder for collecting phase timings.

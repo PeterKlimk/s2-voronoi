@@ -151,22 +151,6 @@ impl CubeMapGrid {
             timings.cell_bounds += t.elapsed();
         }
 
-        // Step 5: Precompute security_3x3 threshold per cell using ring-2 caps
-        #[cfg(feature = "timing")]
-        let t = std::time::Instant::now();
-        let security_3x3 = Self::compute_security_3x3(
-            res,
-            &cell_centers,
-            &cell_cos_radius,
-            &cell_sin_radius,
-            &ring2,
-            &ring2_lens,
-        );
-        #[cfg(feature = "timing")]
-        if let Some(timings) = timings.as_deref_mut() {
-            timings.security_3x3 += t.elapsed();
-        }
-
         CubeMapGrid {
             res,
             cell_offsets,
@@ -178,7 +162,6 @@ impl CubeMapGrid {
             cell_centers,
             cell_cos_radius,
             cell_sin_radius,
-            security_3x3,
             cell_points_x,
             cell_points_y,
             cell_points_z,
@@ -382,65 +365,6 @@ impl CubeMapGrid {
         }
 
         (ring2, ring2_lens)
-    }
-
-    /// Compute security_3x3 threshold for all cells using ring-2 caps.
-    ///
-    /// For each cell, finds the max dot product from any point in the cell to any point
-    /// in the ring-2 set (Chebyshev distance 2). Uses spherical caps as a conservative bound.
-    #[cfg_attr(feature = "profiling", inline(never))]
-    fn compute_security_3x3(
-        res: usize,
-        cell_centers: &[Vec3],
-        cell_cos_radius: &[f32],
-        cell_sin_radius: &[f32],
-        ring2: &[[u32; RING2_MAX]],
-        ring2_lens: &[u8],
-    ) -> Vec<f32> {
-        let num_cells = 6 * res * res;
-        let mut security = vec![f32::NEG_INFINITY; num_cells];
-
-        for cell in 0..num_cells {
-            let ring = &ring2[cell];
-            let ring_len = ring2_lens[cell] as usize;
-
-            let center_a = cell_centers[cell];
-            let cos_ra = cell_cos_radius[cell];
-            let sin_ra = cell_sin_radius[cell];
-
-            let mut max_dot = f32::NEG_INFINITY;
-            for i in 0..ring_len {
-                let ring_cell = ring[i] as usize;
-                let center_b = cell_centers[ring_cell];
-                let cos_rb = cell_cos_radius[ring_cell];
-                let sin_rb = cell_sin_radius[ring_cell];
-
-                // Compute max dot between two spherical caps
-                let cos_d = center_a.dot(center_b).clamp(-1.0, 1.0);
-
-                // If center cell is inside ring cell's cap (distance < radius), max_dot = 1.0
-                if cos_d > cos_rb {
-                    max_dot = 1.0;
-                    break;
-                }
-
-                // Max dot = cos(d - ra - rb) where d is center-to-center angle
-                // cos(d - r) = cos_d * cos_r + sin_d * sin_r
-                let sin_d = (1.0 - cos_d * cos_d).max(0.0).sqrt();
-
-                // First subtract ra: cos(d - ra)
-                let cos_d_minus_ra = cos_d * cos_ra + sin_d * sin_ra;
-                let sin_d_minus_ra = sin_d * cos_ra - cos_d * sin_ra;
-
-                // Then subtract rb: cos(d - ra - rb)
-                let cos_min_angle = cos_d_minus_ra * cos_rb + sin_d_minus_ra.abs() * sin_rb;
-                max_dot = max_dot.max(cos_min_angle);
-            }
-
-            security[cell] = max_dot;
-        }
-
-        security
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]

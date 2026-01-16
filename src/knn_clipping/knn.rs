@@ -43,12 +43,6 @@ impl<'a> CubeMapGridKnn<'a> {
         }
     }
 
-    /// Access the underlying points slice.
-    #[inline]
-    pub fn points(&self) -> &[Vec3] {
-        self.points
-    }
-
     /// Access the underlying cube-map grid.
     #[inline]
     pub fn grid(&self) -> &crate::cube_grid::CubeMapGrid {
@@ -87,43 +81,5 @@ impl<'a> CubeMapGridKnn<'a> {
             scratch,
             out_indices,
         )
-    }
-
-    /// Resume a resumable k-NN query to fetch additional neighbors.
-    #[inline]
-    pub fn knn_resume_into(
-        &self,
-        query: Vec3,
-        query_idx: usize,
-        new_k: usize,
-        scratch: &mut crate::cube_grid::CubeMapGridScratch,
-        out_indices: &mut Vec<usize>,
-    ) -> crate::cube_grid::KnnStatus {
-        self.grid
-            .resume_k_nearest_into(self.points, query, query_idx, new_k, scratch, out_indices)
-    }
-
-    /// Find the k nearest neighbors to the query point.
-    #[inline]
-    pub fn knn_into(
-        &self,
-        query: Vec3,
-        query_idx: usize,
-        k: usize,
-        scratch: &mut crate::cube_grid::CubeMapGridScratch,
-        out_indices: &mut Vec<usize>,
-    ) {
-        out_indices.clear();
-        if k == 0 {
-            return;
-        }
-        self.grid.find_k_nearest_with_scratch_into_dot_topk(
-            self.points,
-            query,
-            query_idx,
-            k,
-            scratch,
-            out_indices,
-        );
     }
 }

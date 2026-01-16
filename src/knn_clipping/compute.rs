@@ -111,38 +111,6 @@ pub(super) fn compute_voronoi_gpu_style_core(
     voronoi
 }
 
-/// Compute spherical Voronoi diagram using the GPU-style algorithm.
-///
-/// Uses adaptive k-NN (12→24→48→full) with early termination.
-///
-/// Timing output is controlled by the `timing` feature flag:
-/// ```bash
-/// cargo run --release --features timing
-/// ```
-pub fn compute_voronoi_gpu_style(points: &[Vec3]) -> crate::SphericalVoronoi {
-    let config = VoronoiConfig::default();
-    compute_voronoi_gpu_style_with_config(points, &config)
-}
-
-/// Compute spherical Voronoi with custom termination config (for benchmarks).
-#[allow(dead_code)]
-pub fn compute_voronoi_gpu_style_with_termination(
-    points: &[Vec3],
-    termination: TerminationConfig,
-) -> crate::SphericalVoronoi {
-    compute_voronoi_gpu_style_core(points, termination, None, false)
-}
-
-/// Compute spherical Voronoi WITHOUT preprocessing (merge close points).
-/// For benchmarking only - assumes points are already well-spaced.
-pub fn compute_voronoi_gpu_style_no_preprocess(points: &[Vec3]) -> crate::SphericalVoronoi {
-    let config = VoronoiConfig {
-        preprocess: false,
-        ..VoronoiConfig::default()
-    };
-    compute_voronoi_gpu_style_with_config(points, &config)
-}
-
 pub fn compute_voronoi_gpu_style_with_config(
     points: &[Vec3],
     config: &VoronoiConfig,

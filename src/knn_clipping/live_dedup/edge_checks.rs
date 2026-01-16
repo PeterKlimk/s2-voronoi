@@ -6,8 +6,8 @@ use super::binning::BinAssignment;
 use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
 use super::types::{
-    BadEdgeReason, BadEdgeRecord, BinId, EdgeCheck, EdgeCheckNode, EdgeCheckOverflow, EdgeKey,
-    EdgeLocal, EdgeOverflowLocal, EdgeToLater, LocalId,
+    BadEdgeRecord, BinId, EdgeCheck, EdgeCheckNode, EdgeCheckOverflow, EdgeKey, EdgeOverflowLocal,
+    EdgeToLater, LocalId,
 };
 use super::{with_two_mut, EDGE_CHECK_NONE};
 use crate::knn_clipping::cell_builder::VertexKey;
@@ -189,10 +189,7 @@ pub(super) fn collect_and_resolve_cell_edges(
                 if matched & (1u64 << found_idx) != 0 {
                     // Duplicate
                     debug_assert!(false, "edge check duplicate side");
-                    shard.output.bad_edges.push(BadEdgeRecord {
-                        key: edge_key,
-                        reason: BadEdgeReason::DuplicateSide,
-                    });
+                    shard.output.bad_edges.push(BadEdgeRecord { key: edge_key });
                 } else {
                     matched |= 1u64 << found_idx;
 
@@ -225,18 +222,12 @@ pub(super) fn collect_and_resolve_cell_edges(
                     }
 
                     if !endpoints_match {
-                        shard.output.bad_edges.push(BadEdgeRecord {
-                            key: edge_key,
-                            reason: BadEdgeReason::EndpointMismatch,
-                        });
+                        shard.output.bad_edges.push(BadEdgeRecord { key: edge_key });
                     }
                 }
             } else {
                 // Missing side - earlier neighbor didn't emit check
-                shard.output.bad_edges.push(BadEdgeRecord {
-                    key: edge_key,
-                    reason: BadEdgeReason::MissingSide,
-                });
+                shard.output.bad_edges.push(BadEdgeRecord { key: edge_key });
             }
         }
     }
@@ -252,7 +243,6 @@ pub(super) fn collect_and_resolve_cell_edges(
                 let node = &shard.dedup.edge_check_nodes[cur as usize];
                 shard.output.bad_edges.push(BadEdgeRecord {
                     key: node.check.key,
-                    reason: BadEdgeReason::MissingSide,
                 });
             }
             cur = shard.dedup.edge_check_nodes[cur as usize].next;
@@ -261,174 +251,6 @@ pub(super) fn collect_and_resolve_cell_edges(
     }
 
     shard.dedup.recycle_edge_checks(assigned_head);
-}
-
-#[cfg_attr(feature = "profiling", inline(never))]
-pub(super) fn collect_cell_edges(
-    cell_idx: u32,
-    local: LocalId,
-    cell_vertices: &[(VertexKey, Vec3)],
-    edge_neighbors: &[u32],
-    assignment: &BinAssignment,
-    edges_to_earlier: &mut Vec<EdgeLocal>,
-    edges_to_later: &mut Vec<EdgeToLater>,
-    edges_overflow: &mut Vec<EdgeOverflowLocal>,
-) {
-    let n = cell_vertices.len();
-    debug_assert_eq!(edge_neighbors.len(), n, "edge neighbor data out of sync");
-    edges_to_earlier.clear();
-    edges_to_later.clear();
-    edges_overflow.clear();
-    if n < 2 {
-        return;
-    }
-
-    let (bin_a, local_a) = assignment.unpack(assignment.gen_map[cell_idx as usize]);
-    debug_assert_eq!(local_a, local, "local index mismatch in edge checks");
-    let local_u32 = local.as_u32();
-
-    for i in 0..n {
-        let j = if i + 1 == n { 0 } else { i + 1 };
-        let key_i = cell_vertices[i].0;
-        let key_j = cell_vertices[j].0;
-        let neighbor = edge_neighbors[i];
-        if neighbor == u32::MAX {
-            continue;
-        }
-        if neighbor == cell_idx {
-            continue;
-        }
-        let locals = if key_i <= key_j {
-            [i as u8, j as u8]
-        } else {
-            [j as u8, i as u8]
-        };
-        let edge = EdgeLocal {
-            key: pack_edge(cell_idx, neighbor),
-            locals,
-        };
-        let (bin_b, local_b_u32) = assignment.unpack(assignment.gen_map[neighbor as usize]);
-        if bin_a == bin_b {
-            let local_b = local_b_u32.as_usize();
-            debug_assert_ne!(
-                local.as_usize(),
-                local_b,
-                "edge checks: neighbor mapped to same local index as cell"
-            );
-            if local_u32 < local_b_u32.as_u32() {
-                edges_to_later.push(EdgeToLater {
-                    key: edge.key,
-                    local_b: local_b_u32,
-                    locals: edge.locals,
-                });
-            } else {
-                edges_to_earlier.push(edge);
-            }
-        } else {
-            let side = if cell_idx <= neighbor { 0 } else { 1 };
-            edges_overflow.push(EdgeOverflowLocal {
-                key: edge.key,
-                locals: edge.locals,
-                side,
-            });
-        }
-    }
-}
-
-#[cfg_attr(feature = "profiling", inline(never))]
-pub(super) fn resolve_cell_edge_checks(
-    shard: &mut ShardState,
-    local: LocalId,
-    edges_to_earlier: &mut Vec<EdgeLocal>,
-    cell_vertices: &[(VertexKey, Vec3)],
-    vertex_indices: &mut [u32],
-    matched: &mut Vec<bool>,
-) {
-    let (assigned_head, _count) = shard.dedup.take_edge_checks(local);
-    if assigned_head == EDGE_CHECK_NONE && edges_to_earlier.is_empty() {
-        return;
-    }
-    matched.clear();
-    matched.resize(edges_to_earlier.len(), false);
-
-    let mut cur = assigned_head;
-    while cur != EDGE_CHECK_NONE {
-        let node = &shard.dedup.edge_check_nodes[cur as usize];
-        let assigned_edge = node.check;
-        let next = node.next;
-
-        let mut found = None;
-        for (idx, edge) in edges_to_earlier.iter().enumerate() {
-            if edge.key == assigned_edge.key {
-                found = Some(idx);
-                break;
-            }
-        }
-        if let Some(edge_idx) = found {
-            if matched[edge_idx] {
-                debug_assert!(false, "edge check duplicate side");
-                shard.output.bad_edges.push(BadEdgeRecord {
-                    key: assigned_edge.key,
-                    reason: BadEdgeReason::DuplicateSide,
-                });
-            } else {
-                matched[edge_idx] = true;
-                let emitted = edges_to_earlier[edge_idx];
-                let (a, b) = unpack_edge_key(assigned_edge.key);
-                let emitted_thirds = [
-                    third_for_edge_endpoint(cell_vertices[emitted.locals[0] as usize].0, a, b),
-                    third_for_edge_endpoint(cell_vertices[emitted.locals[1] as usize].0, a, b),
-                ];
-
-                let mut endpoints_match = true;
-                for k in 0..2 {
-                    if assigned_edge.thirds[k] == INVALID_THIRD
-                        || emitted_thirds[k] == INVALID_THIRD
-                        || assigned_edge.thirds[k] != emitted_thirds[k]
-                    {
-                        endpoints_match = false;
-                        continue;
-                    }
-
-                    let idx = assigned_edge.indices[k];
-                    if idx == INVALID_INDEX {
-                        continue;
-                    }
-                    let local_idx = emitted.locals[k] as usize;
-                    let existing = vertex_indices[local_idx];
-                    if existing == INVALID_INDEX {
-                        vertex_indices[local_idx] = idx;
-                    } else {
-                        debug_assert_eq!(existing, idx, "edge check index mismatch");
-                    }
-                }
-                if !endpoints_match {
-                    shard.output.bad_edges.push(BadEdgeRecord {
-                        key: assigned_edge.key,
-                        reason: BadEdgeReason::EndpointMismatch,
-                    });
-                }
-            }
-        } else {
-            shard.output.bad_edges.push(BadEdgeRecord {
-                key: assigned_edge.key,
-                reason: BadEdgeReason::MissingSide,
-            });
-        }
-
-        cur = next;
-    }
-    shard.dedup.recycle_edge_checks(assigned_head);
-
-    for (idx, edge) in edges_to_earlier.iter().enumerate() {
-        if !matched[idx] {
-            shard.output.bad_edges.push(BadEdgeRecord {
-                key: edge.key,
-                reason: BadEdgeReason::MissingSide,
-            });
-        }
-    }
-    edges_to_earlier.clear();
 }
 
 #[cfg_attr(feature = "profiling", inline(never))]
@@ -459,10 +281,7 @@ pub(super) fn resolve_edge_check_overflow(
             let b = edge_check_overflow[i + 1];
             if a.side == b.side {
                 debug_assert!(false, "edge check overflow duplicate side");
-                bad_edges.push(BadEdgeRecord {
-                    key: a.key,
-                    reason: BadEdgeReason::DuplicateSide,
-                });
+                bad_edges.push(BadEdgeRecord { key: a.key });
             } else {
                 let (a_shard, b_shard) =
                     with_two_mut(shards, a.source_bin.as_usize(), b.source_bin.as_usize());
@@ -485,17 +304,13 @@ pub(super) fn resolve_edge_check_overflow(
                     }
                 }
                 if a.thirds != b.thirds {
-                    bad_edges.push(BadEdgeRecord {
-                        key: a.key,
-                        reason: BadEdgeReason::EndpointMismatch,
-                    });
+                    bad_edges.push(BadEdgeRecord { key: a.key });
                 }
             }
             i += 2;
         } else {
             bad_edges.push(BadEdgeRecord {
                 key: edge_check_overflow[i].key,
-                reason: BadEdgeReason::MissingSide,
             });
             i += 1;
         }

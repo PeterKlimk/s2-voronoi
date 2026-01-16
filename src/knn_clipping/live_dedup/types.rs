@@ -93,16 +93,8 @@ pub(in crate::knn_clipping) struct EdgeRecord {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(in crate::knn_clipping) enum BadEdgeReason {
-    MissingSide,
-    EndpointMismatch,
-    DuplicateSide,
-}
-
-#[derive(Clone, Copy, Debug)]
 pub(in crate::knn_clipping) struct BadEdgeRecord {
     pub(in crate::knn_clipping) key: EdgeKey,
-    pub(in crate::knn_clipping) reason: BadEdgeReason,
 }
 
 #[derive(Clone, Copy)]
@@ -129,12 +121,6 @@ pub(super) struct EdgeCheckOverflow {
     pub(super) thirds: [u32; 2],
     pub(super) indices: [u32; 2],
     pub(super) slots: [u32; 2],
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct EdgeLocal {
-    pub(super) key: EdgeKey,
-    pub(super) locals: [u8; 2],
 }
 
 /// Flattened for size: 16 bytes instead of 24.

@@ -27,18 +27,6 @@ impl BinAssignment {
         let local = packed & self.local_mask;
         (BinId::from(bin), LocalId::from(local))
     }
-
-    /// Unpack just the bin from a gen_map entry.
-    #[inline]
-    pub(super) fn unpack_bin(&self, packed: u32) -> BinId {
-        BinId::from(packed >> self.local_shift)
-    }
-
-    /// Unpack just the local from a gen_map entry.
-    #[inline]
-    pub(super) fn unpack_local(&self, packed: u32) -> LocalId {
-        LocalId::from(packed & self.local_mask)
-    }
 }
 
 struct BinLayout {

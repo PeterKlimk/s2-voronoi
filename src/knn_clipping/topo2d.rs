@@ -54,18 +54,6 @@ impl HalfPlane {
     fn signed_dist(&self, u: f64, v: f64) -> f64 {
         self.a * u + self.b * v + self.c
     }
-
-    #[inline]
-    fn is_inside(&self, u: f64, v: f64) -> bool {
-        let d = self.signed_dist(u, v);
-        if d >= 0.0 {
-            return true;
-        }
-        if self.norm2 < 1e-28 {
-            return d >= -EPS_INSIDE;
-        }
-        d * d <= self.eps2
-    }
 }
 
 #[inline]
@@ -123,26 +111,6 @@ impl PolyBuffer {
         self.len = 0;
         self.max_r2 = 0.0;
         self.has_bounding_ref = false;
-    }
-
-    #[inline]
-    fn push(&mut self, v: (f64, f64), vp: (usize, usize), ep: usize) -> bool {
-        if self.len >= MAX_POLY_VERTICES {
-            return false;
-        }
-        self.vertices[self.len] = v;
-        self.vertex_planes[self.len] = vp;
-        self.edge_planes[self.len] = ep;
-        self.len += 1;
-        let (u, w) = v;
-        let r2 = u * u + w * w;
-        if r2 > self.max_r2 {
-            self.max_r2 = r2;
-        }
-        if vp.0 == usize::MAX || vp.1 == usize::MAX || ep == usize::MAX {
-            self.has_bounding_ref = true;
-        }
-        true
     }
 
     #[inline]
@@ -478,46 +446,16 @@ impl Topo2DBuilder {
         self.current_poly().len
     }
 
-    /// Get plane count.
-    #[inline]
-    pub fn planes_count(&self) -> usize {
-        self.half_planes.len()
-    }
-
     /// Check if neighbor already added.
     #[inline]
     pub fn has_neighbor(&self, neighbor_idx: usize) -> bool {
         self.neighbor_indices.contains(&neighbor_idx)
     }
 
-    /// Get generator.
-    #[inline]
-    pub fn generator(&self) -> DVec3 {
-        self.generator
-    }
-
-    /// Get generator index.
-    #[inline]
-    pub fn generator_index_u32(&self) -> u32 {
-        self.generator_idx as u32
-    }
-
-    /// Get plane's neighbor index.
-    #[inline]
-    pub fn plane_neighbor_index_u32(&self, plane_idx: usize) -> u32 {
-        self.neighbor_indices[plane_idx] as u32
-    }
-
     /// Iterate over neighbor indices.
     #[inline]
     pub fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.neighbor_indices.iter().copied()
-    }
-
-    /// Get minimum vertex cosine (computed lazily from 2D gnomonic coords).
-    pub fn min_vertex_cos(&mut self) -> f64 {
-        // Caller typically checks boundedness already; avoid recomputing it here.
-        self.current_poly().min_cos()
     }
 
     /// Check if we can terminate early.
@@ -543,6 +481,7 @@ impl Topo2DBuilder {
 
     /// Convert to vertex data with simple triplet keys.
     /// Each vertex key is (cell, neighbor_a, neighbor_b) sorted.
+    #[allow(dead_code)]
     pub fn to_vertex_data(&self) -> Result<Vec<VertexData>, CellFailure> {
         let mut out = Vec::new();
         self.to_vertex_data_into(&mut out)?;
@@ -550,6 +489,7 @@ impl Topo2DBuilder {
     }
 
     /// Convert to vertex data, writing into provided buffer.
+    #[allow(dead_code)]
     pub fn to_vertex_data_into(&self, out: &mut Vec<VertexData>) -> Result<(), CellFailure> {
         self.to_vertex_data_impl(out, None)
     }
