@@ -85,36 +85,11 @@ impl CubeMapGrid {
             })
             .collect();
 
-        // Count points per cell using parallel fold + reduce.
-        #[cfg(feature = "parallel")]
-        let cell_counts: Vec<u32> = {
-            point_cells
-                .par_iter()
-                .fold(
-                    || vec![0u32; num_cells],
-                    |mut acc, &cell| {
-                        acc[cell as usize] += 1;
-                        acc
-                    },
-                )
-                .reduce(
-                    || vec![0u32; num_cells],
-                    |mut a, b| {
-                        for (x, y) in a.iter_mut().zip(b.iter()) {
-                            *x += *y;
-                        }
-                        a
-                    },
-                )
-        };
-        #[cfg(not(feature = "parallel"))]
-        let cell_counts: Vec<u32> = {
-            let mut counts = vec![0u32; num_cells];
-            for &cell in &point_cells {
-                counts[cell as usize] += 1;
-            }
-            counts
-        };
+        // Count points per cell (sequential - memory-bound, parallelizing adds overhead).
+        let mut cell_counts = vec![0u32; num_cells];
+        for &cell in &point_cells {
+            cell_counts[cell as usize] += 1;
+        }
 
         #[cfg(feature = "timing")]
         if let Some(timings) = timings.as_deref_mut() {
