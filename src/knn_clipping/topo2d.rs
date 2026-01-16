@@ -381,11 +381,9 @@ impl Topo2DBuilder {
         let plane_idx = self.half_planes.len();
         let hp = HalfPlane::new_unnormalized(a, b, c, plane_idx);
 
-        // Store plane data
-        self.half_planes.push(hp);
-        self.neighbor_indices.push(neighbor_idx);
-
-        // Clip polygon
+        // Clip polygon first, then only store if plane actually clipped.
+        // If P ⊆ hp (unchanged), then P' = P ∩ other ⊆ P ⊆ hp for all future clips,
+        // so redundant planes stay redundant forever.
         let clip_result = if self.use_a {
             clip_convex(&self.poly_a, &hp, &mut self.poly_b)
         } else {
@@ -398,9 +396,12 @@ impl Topo2DBuilder {
                 return Err(CellFailure::TooManyVertices);
             }
             ClipResult::Changed => {
+                // Only store planes that actually contribute to the cell
+                self.half_planes.push(hp);
+                self.neighbor_indices.push(neighbor_idx);
                 self.use_a = !self.use_a;
             }
-            ClipResult::Unchanged => {}
+            ClipResult::Unchanged => {} // Redundant plane - skip storage
         }
 
         // Check if clipped away
