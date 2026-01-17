@@ -82,23 +82,16 @@ impl EdgeScratch {
             a: u32,
             b: u32,
         ) -> u32 {
-            let mut has_a = false;
-            let mut has_b = false;
-            let mut third = u32::MAX;
-            for x in key {
-                if x == a {
-                    has_a = true;
-                } else if x == b {
-                    has_b = true;
-                } else {
-                    third = x;
-                }
-            }
-            if has_a && has_b {
-                third
-            } else {
-                u32::MAX
-            }
+            // XOR is self-canceling: key contains {a, b, third} in sorted order
+            // So: key[0] ^ key[1] ^ key[2] ^ a ^ b = third
+            debug_assert!(
+                key.contains(&a) && key.contains(&b),
+                "vertex key {:?} does not contain edge endpoints ({}, {})",
+                key,
+                a,
+                b
+            );
+            key[0] ^ key[1] ^ key[2] ^ a ^ b
         }
 
         for entry in self.edges_to_later.drain(..) {

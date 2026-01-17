@@ -14,8 +14,6 @@ use crate::knn_clipping::cell_builder::VertexKey;
 use crate::knn_clipping::timing::Timer;
 use std::time::Duration;
 
-const INVALID_THIRD: u32 = u32::MAX;
-
 #[inline]
 fn unpack_edge_key(key: EdgeKey) -> (u32, u32) {
     let v: u64 = key.into();
@@ -186,44 +184,48 @@ pub(super) fn collect_and_resolve_cell_edges(
             }
 
             if let Some(check) = found_check {
-                if matched & (1u64 << found_idx) != 0 {
-                    // Duplicate
-                    debug_assert!(false, "edge check duplicate side");
-                    shard.output.bad_edges.push(BadEdgeRecord { key: edge_key });
-                } else {
-                    matched |= 1u64 << found_idx;
+                debug_assert!(
+                    matched & (1u64 << found_idx) == 0,
+                    "edge check duplicate side"
+                );
 
-                    let (a, b) = unpack_edge_key(edge_key);
-                    let my_thirds = [
-                        third_for_edge_endpoint(cell_vertices[locals[0] as usize].0, a, b),
-                        third_for_edge_endpoint(cell_vertices[locals[1] as usize].0, a, b),
-                    ];
+                matched |= 1u64 << found_idx;
 
-                    let mut endpoints_match = true;
+                let (a, b) = unpack_edge_key(edge_key);
+                let my_thirds = [
+                    third_for_edge_endpoint(cell_vertices[locals[0] as usize].0, a, b),
+                    third_for_edge_endpoint(cell_vertices[locals[1] as usize].0, a, b),
+                ];
+
+                let endpoints_match = check.thirds == my_thirds;
+                if endpoints_match {
                     for k in 0..2 {
-                        if check.thirds[k] == INVALID_THIRD
-                            || my_thirds[k] == INVALID_THIRD
-                            || check.thirds[k] != my_thirds[k]
-                        {
-                            endpoints_match = false;
-                            continue;
-                        }
-
-                        let idx = check.indices[k];
-                        if idx != INVALID_INDEX {
-                            let local_idx = locals[k] as usize;
-                            let existing = vertex_indices[local_idx];
-                            if existing == INVALID_INDEX {
-                                vertex_indices[local_idx] = idx;
-                            } else {
-                                debug_assert_eq!(existing, idx, "edge check index mismatch");
+                        let local_idx = locals[k] as usize;
+                        debug_assert!(
+                            vertex_indices[local_idx] == INVALID_INDEX
+                                || vertex_indices[local_idx] == check.indices[k],
+                            "edge check index mismatch"
+                        );
+                        vertex_indices[local_idx] = check.indices[k];
+                    }
+                } else {
+                    // Partial match: search for any shared endpoint (may be in different slots)
+                    for ck in 0..2 {
+                        let check_third = check.thirds[ck];
+                        for mk in 0..2 {
+                            if check_third == my_thirds[mk] {
+                                let local_idx = locals[mk] as usize;
+                                debug_assert!(
+                                    vertex_indices[local_idx] == INVALID_INDEX
+                                        || vertex_indices[local_idx] == check.indices[ck],
+                                    "edge check index mismatch (cross-slot)"
+                                );
+                                vertex_indices[local_idx] = check.indices[ck];
                             }
                         }
                     }
-
-                    if !endpoints_match {
-                        shard.output.bad_edges.push(BadEdgeRecord { key: edge_key });
-                    }
+                    // Endpoint mismatch
+                    shard.output.bad_edges.push(BadEdgeRecord { key: edge_key });
                 }
             } else {
                 // Missing side - earlier neighbor didn't emit check
@@ -266,11 +268,11 @@ pub(super) fn resolve_edge_check_overflow(
     let t_edge_match = Timer::start();
     let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| {
         let packed = pack_ref(owner_bin, idx);
-        if *slot == DEFERRED {
-            *slot = packed;
-        } else {
-            debug_assert_eq!(*slot, packed, "edge check index mismatch");
-        }
+        debug_assert!(
+            *slot == DEFERRED || *slot == packed,
+            "edge check overflow slot mismatch"
+        );
+        *slot = packed;
     };
     let mut i = 0usize;
     while i < edge_check_overflow.len() {
@@ -285,25 +287,48 @@ pub(super) fn resolve_edge_check_overflow(
             } else {
                 let (a_shard, b_shard) =
                     with_two_mut(shards, a.source_bin.as_usize(), b.source_bin.as_usize());
-                for k in 0..2 {
-                    if a.thirds[k] != INVALID_THIRD && a.thirds[k] == b.thirds[k] {
+
+                if a.thirds == b.thirds {
+                    // Full match: direct slot correspondence
+                    for k in 0..2 {
                         if a.indices[k] != INVALID_INDEX {
-                            let slot = &mut b_shard.output.cell_indices[b.slots[k] as usize];
-                            patch_slot(slot, a.source_bin, a.indices[k]);
+                            patch_slot(
+                                &mut b_shard.output.cell_indices[b.slots[k] as usize],
+                                a.source_bin,
+                                a.indices[k],
+                            );
                         }
                         if b.indices[k] != INVALID_INDEX {
-                            let slot = &mut a_shard.output.cell_indices[a.slots[k] as usize];
-                            patch_slot(slot, b.source_bin, b.indices[k]);
-                        }
-                        if a.indices[k] != INVALID_INDEX
-                            && b.indices[k] != INVALID_INDEX
-                            && (a.source_bin, a.indices[k]) != (b.source_bin, b.indices[k])
-                        {
-                            debug_assert!(false, "edge check overflow index mismatch");
+                            patch_slot(
+                                &mut a_shard.output.cell_indices[a.slots[k] as usize],
+                                b.source_bin,
+                                b.indices[k],
+                            );
                         }
                     }
-                }
-                if a.thirds != b.thirds {
+                } else {
+                    // Partial match: cross-slot search for any shared endpoint
+                    for ak in 0..2 {
+                        for bk in 0..2 {
+                            if a.thirds[ak] == b.thirds[bk] {
+                                if a.indices[ak] != INVALID_INDEX {
+                                    patch_slot(
+                                        &mut b_shard.output.cell_indices[b.slots[bk] as usize],
+                                        a.source_bin,
+                                        a.indices[ak],
+                                    );
+                                }
+                                if b.indices[bk] != INVALID_INDEX {
+                                    patch_slot(
+                                        &mut a_shard.output.cell_indices[a.slots[ak] as usize],
+                                        b.source_bin,
+                                        b.indices[bk],
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    // Endpoint mismatch
                     bad_edges.push(BadEdgeRecord { key: a.key });
                 }
             }
