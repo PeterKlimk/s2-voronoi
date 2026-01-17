@@ -67,9 +67,7 @@ impl ShardDedup {
 
     #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn recycle_edge_checks(&mut self, v: Vec<EdgeCheck>) {
-        if v.capacity() > 0 {
-            self.edge_check_pool.push(v);
-        }
+        self.edge_check_pool.push(v);
     }
 }
 
@@ -233,7 +231,9 @@ pub(super) fn collect_and_resolve_cell_edges(
         }
     }
 
-    shard.dedup.recycle_edge_checks(incoming_checks);
+    if incoming_count > 0 {
+        shard.dedup.recycle_edge_checks(incoming_checks);
+    }
 }
 
 #[cfg_attr(feature = "profiling", inline(never))]
