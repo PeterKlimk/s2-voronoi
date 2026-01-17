@@ -6,14 +6,14 @@ use crate::knn_clipping::cell_builder::VertexKey;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub(in crate::knn_clipping) struct BinId(u32);
+pub(in crate::knn_clipping) struct BinId(u8);
 
 impl BinId {
     pub(in crate::knn_clipping) fn from_usize(value: usize) -> Self {
-        Self(u32::try_from(value).expect("bin id must fit in u32"))
+        Self(u8::try_from(value).expect("bin id must fit in u8"))
     }
 
-    pub(in crate::knn_clipping) fn as_u32(self) -> u32 {
+    pub(in crate::knn_clipping) fn as_u8(self) -> u8 {
         self.0
     }
 
@@ -22,13 +22,13 @@ impl BinId {
     }
 }
 
-impl From<u32> for BinId {
-    fn from(value: u32) -> Self {
+impl From<u8> for BinId {
+    fn from(value: u8) -> Self {
         Self(value)
     }
 }
 
-impl From<BinId> for u32 {
+impl From<BinId> for u8 {
     fn from(value: BinId) -> Self {
         value.0
     }

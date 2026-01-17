@@ -23,7 +23,7 @@ impl BinAssignment {
     /// Unpack a gen_map entry into (bin, local).
     #[inline]
     pub(super) fn unpack(&self, packed: u32) -> (BinId, LocalId) {
-        let bin = packed >> self.local_shift;
+        let bin = (packed >> self.local_shift) as u8;
         let local = packed & self.local_mask;
         (BinId::from(bin), LocalId::from(local))
     }
@@ -97,7 +97,7 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
         .map(|b| Vec::with_capacity(counts[b]))
         .collect();
 
-    let mut generator_bin: Vec<BinId> = vec![BinId::from(u32::MAX); n];
+    let mut generator_bin: Vec<BinId> = vec![BinId::from(u8::MAX); n];
     let mut global_to_local: Vec<LocalId> = vec![LocalId::from(u32::MAX); n];
     let mut gen_map: Vec<u32> = vec![u32::MAX; n];
 
@@ -135,7 +135,7 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
         visited, n
     );
     debug_assert!(
-        !generator_bin.iter().any(|&b| b == BinId::from(u32::MAX)),
+        !generator_bin.iter().any(|&b| b == BinId::from(u8::MAX)),
         "unassigned generator bin entries"
     );
     debug_assert!(

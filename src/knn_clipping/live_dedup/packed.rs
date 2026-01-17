@@ -7,13 +7,13 @@ pub(super) const INVALID_INDEX: u32 = u32::MAX;
 
 #[inline]
 pub(super) fn pack_ref(bin: BinId, local: u32) -> u64 {
-    ((bin.as_u32() as u64) << 32) | (local as u64)
+    ((bin.as_u8() as u64) << 32) | (local as u64)
 }
 
 #[inline]
 pub(super) fn unpack_ref(packed: u64) -> (BinId, u32) {
     (
-        BinId::from((packed >> 32) as u32),
+        BinId::from((packed >> 32) as u8),
         (packed & 0xFFFF_FFFF) as u32,
     )
 }

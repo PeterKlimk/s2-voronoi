@@ -584,27 +584,24 @@ fn process_cell(
     let t_keys = crate::knn_clipping::timing::Timer::start();
     {
         let vertex_indices = &mut edge_scratch.vertex_indices;
-        for (idx, (key, pos)) in cell_vertices.iter().copied().enumerate() {
+        for ((key, pos), vi) in cell_vertices.iter().copied().zip(vertex_indices.iter_mut()) {
             #[cfg(feature = "timing")]
             {
                 shard.triplet_keys += 1;
             }
             let owner_bin = assignment.generator_bin[key[0] as usize];
             if owner_bin == bin {
-                if vertex_indices[idx] == INVALID_INDEX {
+                if *vi == INVALID_INDEX {
                     let new_idx = shard.output.vertices.len() as u32;
                     shard.output.vertices.push(pos);
                     shard.output.vertex_keys.push(key);
-                    vertex_indices[idx] = new_idx;
+                    *vi = new_idx;
                 }
-                let v_idx = vertex_indices[idx];
+                let v_idx = *vi;
                 debug_assert!(v_idx != INVALID_INDEX, "missing on-shard vertex index");
                 shard.output.cell_indices.push(pack_ref(bin, v_idx));
             } else {
-                debug_assert_eq!(
-                    vertex_indices[idx], INVALID_INDEX,
-                    "received index for off-shard owner"
-                );
+                debug_assert_eq!(*vi, INVALID_INDEX, "received index for off-shard owner");
                 let source_slot = shard.output.cell_indices.len() as u32;
                 shard.output.cell_indices.push(DEFERRED);
                 shard.output.deferred.push(DeferredSlot {
@@ -658,7 +655,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                 shard
                     .output
                     .vertices
-                    .reserve(my_generators.len().saturating_mul(4));
+                    .reserve(my_generators.len().saturating_mul(6));
                 shard
                     .output
                     .cell_indices
