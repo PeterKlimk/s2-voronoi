@@ -652,14 +652,15 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                 let mut sub_accum = CellSubAccum::new();
                 let mut ctx = CellContext::new(knn);
-                shard
-                    .output
-                    .vertices
-                    .reserve(my_generators.len().saturating_mul(6));
+                let vertex_capacity = my_generators.len().saturating_mul(6);
+                shard.output.vertices.reserve(vertex_capacity);
+                shard.output.vertex_keys.reserve(vertex_capacity);
                 shard
                     .output
                     .cell_indices
                     .reserve(my_generators.len().saturating_mul(6));
+                // Conservative estimate for off-shard vertices
+                shard.output.deferred.reserve(my_generators.len());
                 shard
                     .dedup
                     .support_data
