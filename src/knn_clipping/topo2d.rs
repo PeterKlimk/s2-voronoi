@@ -31,20 +31,20 @@ struct HalfPlane {
     b: f64,
     c: f64,
     plane_idx: usize,
-    eps2: f64,
+    eps: f64,
 }
 
 impl HalfPlane {
     #[inline]
     fn new_unnormalized(a: f64, b: f64, c: f64, plane_idx: usize) -> Self {
-        let norm2 = a * a + b * b;
-        let eps2 = EPS_INSIDE * EPS_INSIDE * norm2;
+        let norm = (a * a + b * b).sqrt();
+        let eps = EPS_INSIDE * norm;
         HalfPlane {
             a,
             b,
             c,
             plane_idx,
-            eps2,
+            eps,
         }
     }
 
@@ -56,7 +56,7 @@ impl HalfPlane {
 
 #[inline]
 fn is_inside_from_dist(hp: &HalfPlane, d: f64) -> bool {
-    d >= 0.0 || d * d <= hp.eps2
+    d >= -hp.eps
 }
 
 /// Fixed-size polygon buffer for clipping.
@@ -107,11 +107,11 @@ impl PolyBuffer {
         self.has_bounding_ref = false;
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
-    fn push_unchecked(&mut self, v: (f64, f64), vp: (usize, usize), ep: usize) {
+    /// Pure write - no accumulator updates. Caller tracks max_r2/has_bounding_ref.
+    #[inline]
+    fn push_raw(&mut self, v: (f64, f64), vp: (usize, usize), ep: usize) {
         let i = self.len;
         debug_assert!(i < MAX_POLY_VERTICES);
-
         // SAFETY: debug_assert guarantees i < MAX_POLY_VERTICES
         unsafe {
             *self.vertices.get_unchecked_mut(i) = v;
@@ -119,17 +119,6 @@ impl PolyBuffer {
             *self.edge_planes.get_unchecked_mut(i) = ep;
         }
         self.len = i + 1;
-
-        let (u, w) = v;
-        let r2 = u * u + w * w;
-        if r2 > self.max_r2 {
-            self.max_r2 = r2;
-        }
-        // vp.0 == MAX implies bounding ref: intersection points inherit edge_plane
-        // in their vp.0, and bounding vertices have vp = (MAX, MAX)
-        if vp.0 == usize::MAX {
-            self.has_bounding_ref = true;
-        }
     }
 
     /// Get minimum cos across all vertices (for termination).
@@ -257,40 +246,104 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
         return ClipResult::TooManyVertices;
     }
 
-    // Pass 2: build output
-    out.clear();
-
-    // Entry intersection
+    // Compute intersection points
     let (eu0, ev0) = poly.vertices[entry_idx];
     let (eu1, ev1) = poly.vertices[entry_next];
     let t_entry = entry_d0 / (entry_d0 - entry_d1);
     let entry_pt = (eu0 + t_entry * (eu1 - eu0), ev0 + t_entry * (ev1 - ev0));
     let entry_edge_plane = poly.edge_planes[entry_idx];
 
-    out.push_unchecked(entry_pt, (entry_edge_plane, hp.plane_idx), entry_edge_plane);
-
-    // Copy surviving inside vertices
-    if entry_next <= exit_idx {
-        for i in entry_next..=exit_idx {
-            out.push_unchecked(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
-        }
-    } else {
-        for i in entry_next..n {
-            out.push_unchecked(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
-        }
-        for i in 0..=exit_idx {
-            out.push_unchecked(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
-        }
-    }
-
-    // Exit intersection
     let (xu0, xv0) = poly.vertices[exit_idx];
     let (xu1, xv1) = poly.vertices[exit_next];
     let t_exit = exit_d0 / (exit_d0 - exit_d1);
     let exit_pt = (xu0 + t_exit * (xu1 - xu0), xv0 + t_exit * (xv1 - xv0));
     let exit_edge_plane = poly.edge_planes[exit_idx];
 
-    out.push_unchecked(exit_pt, (exit_edge_plane, hp.plane_idx), hp.plane_idx);
+    // Pass 2: build output with local accumulators
+    out.len = 0;
+
+    // Inline helper for r2 calculation
+    #[inline(always)]
+    fn r2_of(v: (f64, f64)) -> f64 {
+        v.0 * v.0 + v.1 * v.1
+    }
+
+    if poly.has_bounding_ref {
+        // Slow path: must track if bounding refs survive
+        let mut max_r2 = 0.0f64;
+        let mut has_bounding = false;
+
+        // Macro for push + accumulate
+        // if vp.0 == usize::MAX {
+        //     has_bounding = true;
+        // }
+        macro_rules! push {
+            ($v:expr, $vp:expr, $ep:expr) => {{
+                let v = $v;
+                let vp = $vp;
+                out.push_raw(v, vp, $ep);
+                let r2 = r2_of(v);
+                if r2 > max_r2 {
+                    max_r2 = r2;
+                }
+                has_bounding |= vp.0 == usize::MAX;
+            }};
+        }
+
+        push!(entry_pt, (entry_edge_plane, hp.plane_idx), entry_edge_plane);
+
+        if entry_next <= exit_idx {
+            for i in entry_next..=exit_idx {
+                push!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
+            }
+        } else {
+            for i in entry_next..n {
+                push!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
+            }
+            for i in 0..=exit_idx {
+                push!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
+            }
+        }
+
+        push!(exit_pt, (exit_edge_plane, hp.plane_idx), hp.plane_idx);
+
+        out.max_r2 = max_r2;
+        out.has_bounding_ref = has_bounding;
+    } else {
+        // Fast path: already bounded, skip sentinel checks
+        let mut max_r2 = 0.0f64;
+
+        macro_rules! push_fast {
+            ($v:expr, $vp:expr, $ep:expr) => {{
+                let v = $v;
+                out.push_raw(v, $vp, $ep);
+                let r2 = r2_of(v);
+                if r2 > max_r2 {
+                    max_r2 = r2;
+                }
+            }};
+        }
+
+        push_fast!(entry_pt, (entry_edge_plane, hp.plane_idx), entry_edge_plane);
+
+        if entry_next <= exit_idx {
+            for i in entry_next..=exit_idx {
+                push_fast!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
+            }
+        } else {
+            for i in entry_next..n {
+                push_fast!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
+            }
+            for i in 0..=exit_idx {
+                push_fast!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
+            }
+        }
+
+        push_fast!(exit_pt, (exit_edge_plane, hp.plane_idx), hp.plane_idx);
+
+        out.max_r2 = max_r2;
+        out.has_bounding_ref = false;
+    }
 
     // Fix edge plane of vertex before exit
     if out.len >= 2 {
