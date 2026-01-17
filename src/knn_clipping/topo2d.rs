@@ -31,7 +31,6 @@ struct HalfPlane {
     b: f64,
     c: f64,
     plane_idx: usize,
-    norm2: f64,
     eps2: f64,
 }
 
@@ -45,7 +44,6 @@ impl HalfPlane {
             b,
             c,
             plane_idx,
-            norm2,
             eps2,
         }
     }
@@ -56,15 +54,9 @@ impl HalfPlane {
     }
 }
 
-#[cfg_attr(feature = "profiling", inline(never))]
+#[inline]
 fn is_inside_from_dist(hp: &HalfPlane, d: f64) -> bool {
-    if d >= 0.0 {
-        return true;
-    }
-    if hp.norm2 < 1e-28 {
-        return d >= -EPS_INSIDE;
-    }
-    d * d <= hp.eps2
+    d >= 0.0 || d * d <= hp.eps2
 }
 
 /// Fixed-size polygon buffer for clipping.
