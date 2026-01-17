@@ -503,10 +503,13 @@ impl Topo2DBuilder {
             return Err(f);
         }
 
-        let n64 = DVec3::new(neighbor.x as f64, neighbor.y as f64, neighbor.z as f64).normalize();
+        let n_raw = DVec3::new(neighbor.x as f64, neighbor.y as f64, neighbor.z as f64);
 
-        // Create half-plane from bisector.
-        let normal_unnorm = self.generator - n64;
+        // Optimization: Avoid expensive division in normalize().
+        // The bisector normal direction is G - unit(N).
+        // By scaling by |N|, we get H = G*|N| - N, which has the same direction.
+        // Since HalfPlane::new_unnormalized handles scale, this is valid and faster.
+        let normal_unnorm = self.generator * n_raw.length() - n_raw;
         let (a, b, c) = self.basis.plane_to_line(normal_unnorm);
         let plane_idx = self.half_planes.len();
         let hp = HalfPlane::new_unnormalized(a, b, c, plane_idx);
