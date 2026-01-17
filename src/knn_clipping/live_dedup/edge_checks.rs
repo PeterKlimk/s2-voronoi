@@ -15,16 +15,23 @@ use crate::knn_clipping::timing::Timer;
 use std::time::Duration;
 
 #[inline]
-fn unpack_edge_key(key: EdgeKey) -> (u32, u32) {
+pub(super) fn unpack_edge_key(key: EdgeKey) -> (u32, u32) {
     let v: u64 = key.into();
     (v as u32, (v >> 32) as u32)
 }
 
 #[inline]
-fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> u32 {
+pub(super) fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> u32 {
     // key contains {a, b, third} in sorted order
     // XOR is self-canceling: x ^ x = 0
     // So: key[0] ^ key[1] ^ key[2] ^ a ^ b = third
+    debug_assert!(
+        key.contains(&a) && key.contains(&b),
+        "vertex key {:?} does not contain edge endpoints ({}, {})",
+        key,
+        a,
+        b
+    );
     key[0] ^ key[1] ^ key[2] ^ a ^ b
 }
 

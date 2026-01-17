@@ -70,29 +70,7 @@ impl EdgeScratch {
         cell_start: u32,
         bin: BinId,
     ) {
-        #[inline]
-        fn unpack_edge_key(key: super::types::EdgeKey) -> (u32, u32) {
-            let v: u64 = key.into();
-            (v as u32, (v >> 32) as u32)
-        }
-
-        #[inline]
-        fn third_for_edge_endpoint(
-            key: crate::knn_clipping::cell_builder::VertexKey,
-            a: u32,
-            b: u32,
-        ) -> u32 {
-            // XOR is self-canceling: key contains {a, b, third} in sorted order
-            // So: key[0] ^ key[1] ^ key[2] ^ a ^ b = third
-            debug_assert!(
-                key.contains(&a) && key.contains(&b),
-                "vertex key {:?} does not contain edge endpoints ({}, {})",
-                key,
-                a,
-                b
-            );
-            key[0] ^ key[1] ^ key[2] ^ a ^ b
-        }
+        use super::edge_checks::{third_for_edge_endpoint, unpack_edge_key};
 
         for entry in self.edges_to_later.drain(..) {
             let locals = entry.locals;
