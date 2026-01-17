@@ -61,25 +61,28 @@ fn is_inside_from_dist(hp: &HalfPlane, d: f64) -> bool {
 
 /// Fixed-size polygon buffer for clipping.
 #[derive(Clone)]
+#[repr(C)]
 struct PolyBuffer {
-    vertices: [(f64, f64); MAX_POLY_VERTICES],
-    vertex_planes: [(usize, usize); MAX_POLY_VERTICES],
-    edge_planes: [usize; MAX_POLY_VERTICES],
+    // Hot scalars first - keep in same cache line
     len: usize,
     max_r2: f64,
     has_bounding_ref: bool,
+    // Cold arrays after
+    vertices: [(f64, f64); MAX_POLY_VERTICES],
+    vertex_planes: [(usize, usize); MAX_POLY_VERTICES],
+    edge_planes: [usize; MAX_POLY_VERTICES],
 }
 
 impl PolyBuffer {
     #[inline]
     fn new() -> Self {
         Self {
-            vertices: [(0.0, 0.0); MAX_POLY_VERTICES],
-            vertex_planes: [(0, 0); MAX_POLY_VERTICES],
-            edge_planes: [0; MAX_POLY_VERTICES],
             len: 0,
             max_r2: 0.0,
             has_bounding_ref: false,
+            vertices: [(0.0, 0.0); MAX_POLY_VERTICES],
+            vertex_planes: [(0, 0); MAX_POLY_VERTICES],
+            edge_planes: [0; MAX_POLY_VERTICES],
         }
     }
 
@@ -107,17 +110,25 @@ impl PolyBuffer {
 
     #[cfg_attr(feature = "profiling", inline(never))]
     fn push_unchecked(&mut self, v: (f64, f64), vp: (usize, usize), ep: usize) {
-        debug_assert!(self.len < MAX_POLY_VERTICES);
-        self.vertices[self.len] = v;
-        self.vertex_planes[self.len] = vp;
-        self.edge_planes[self.len] = ep;
-        self.len += 1;
+        let i = self.len;
+        debug_assert!(i < MAX_POLY_VERTICES);
+
+        // SAFETY: debug_assert guarantees i < MAX_POLY_VERTICES
+        unsafe {
+            *self.vertices.get_unchecked_mut(i) = v;
+            *self.vertex_planes.get_unchecked_mut(i) = vp;
+            *self.edge_planes.get_unchecked_mut(i) = ep;
+        }
+        self.len = i + 1;
+
         let (u, w) = v;
         let r2 = u * u + w * w;
         if r2 > self.max_r2 {
             self.max_r2 = r2;
         }
-        if vp.0 == usize::MAX || vp.1 == usize::MAX || ep == usize::MAX {
+        // vp.0 == MAX implies bounding ref: intersection points inherit edge_plane
+        // in their vp.0, and bounding vertices have vp = (MAX, MAX)
+        if vp.0 == usize::MAX {
             self.has_bounding_ref = true;
         }
     }
