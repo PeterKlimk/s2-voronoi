@@ -160,14 +160,41 @@ impl TangentBasis {
     }
 }
 
+/// Bookkeeping for an edge transition (entry or exit point).
+#[derive(Clone, Copy)]
+struct Transition {
+    idx: usize,  // Edge start index (usize::MAX = no transition found)
+    next: usize, // Edge end index
+    d0: f64,     // Signed distance at idx
+    d1: f64,     // Signed distance at next
+}
+
+impl Default for Transition {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            idx: usize::MAX,
+            next: 0,
+            d0: 0.0,
+            d1: 0.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ClipResult {
+    /// Polygon unchanged (all vertices inside). Note: `out` is NOT written.
     Unchanged,
     Changed,
     TooManyVertices,
 }
 
 /// Clip a convex polygon by a half-plane (standalone function to avoid borrow conflicts).
+///
+/// # Returns
+/// - `Unchanged` if all vertices are inside the half-plane. **`out` is not modified.**
+/// - `Changed` if the polygon was clipped (result written to `out`)
+/// - `TooManyVertices` if the result would exceed `MAX_POLY_VERTICES`
 #[cfg_attr(feature = "profiling", inline(never))]
 fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
     let n = poly.len;
@@ -181,14 +208,8 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
     // Pass 1: classify vertices and track entry/exit transitions
     let neg_eps = -hp.eps;
     let mut inside_count = 0usize;
-    let mut entry_idx = usize::MAX;
-    let mut exit_idx = usize::MAX;
-    let mut entry_next = 0usize;
-    let mut exit_next = 0usize;
-    let mut entry_d0 = 0.0;
-    let mut entry_d1 = 0.0;
-    let mut exit_d0 = 0.0;
-    let mut exit_d1 = 0.0;
+    let mut entry = Transition::default();
+    let mut exit = Transition::default();
 
     let last_idx = n - 1;
     let (lu, lv) = poly.vertices[last_idx];
@@ -196,32 +217,34 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
     let last_d = hp.signed_dist(lu, lv);
     let first_d = hp.signed_dist(fu, fv);
     let first_in = first_d >= neg_eps;
+    let last_in = last_d >= neg_eps;
 
     inside_count += first_in as usize;
 
-    // Main loop: edges 0->1 through (n-2)->(n-1)
+    // Interior edges: 0->1 through (n-3)->(n-2)
     let mut prev_d = first_d;
     let mut prev_in = first_in;
-    for i in 1..n {
+    for i in 1..last_idx {
         let (u, v) = poly.vertices[i];
         let curr_d = hp.signed_dist(u, v);
         let curr_in = curr_d >= neg_eps;
         inside_count += curr_in as usize;
 
-        // XOR detects any transition; single branch covers both cases
         if prev_in != curr_in {
             if curr_in {
-                // Entry: !prev_in && curr_in
-                entry_idx = i - 1;
-                entry_next = i;
-                entry_d0 = prev_d;
-                entry_d1 = curr_d;
+                entry = Transition {
+                    idx: i - 1,
+                    next: i,
+                    d0: prev_d,
+                    d1: curr_d,
+                };
             } else {
-                // Exit: prev_in && !curr_in
-                exit_idx = i - 1;
-                exit_next = i;
-                exit_d0 = prev_d;
-                exit_d1 = curr_d;
+                exit = Transition {
+                    idx: i - 1,
+                    next: i,
+                    d0: prev_d,
+                    d1: curr_d,
+                };
             }
         }
 
@@ -229,25 +252,46 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
         prev_in = curr_in;
     }
 
-    // Wrap-around edge: (n-1) -> 0
-    // prev_d/prev_in now hold last vertex's values
-    if prev_in != first_in {
-        if first_in {
-            // Entry on wrap edge (last -> 0)
-            entry_idx = last_idx;
-            entry_next = 0;
-            entry_d0 = last_d;
-            entry_d1 = first_d;
+    // Edge (n-2) -> (n-1): use precomputed last_d/last_in
+    inside_count += last_in as usize;
+    if prev_in != last_in {
+        if last_in {
+            entry = Transition {
+                idx: last_idx - 1,
+                next: last_idx,
+                d0: prev_d,
+                d1: last_d,
+            };
         } else {
-            // Exit on wrap edge (last -> 0)
-            exit_idx = last_idx;
-            exit_next = 0;
-            exit_d0 = last_d;
-            exit_d1 = first_d;
+            exit = Transition {
+                idx: last_idx - 1,
+                next: last_idx,
+                d0: prev_d,
+                d1: last_d,
+            };
         }
     }
 
-    // All inside: unchanged
+    // Wrap-around edge: (n-1) -> 0
+    if last_in != first_in {
+        if first_in {
+            entry = Transition {
+                idx: last_idx,
+                next: 0,
+                d0: last_d,
+                d1: first_d,
+            };
+        } else {
+            exit = Transition {
+                idx: last_idx,
+                next: 0,
+                d0: last_d,
+                d1: first_d,
+            };
+        }
+    }
+
+    // All inside: unchanged (out is NOT written)
     if inside_count == n {
         return ClipResult::Unchanged;
     }
@@ -260,117 +304,128 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
         return ClipResult::Changed;
     }
 
-    debug_assert!(entry_idx != usize::MAX && exit_idx != usize::MAX);
+    debug_assert!(entry.idx != usize::MAX && exit.idx != usize::MAX);
     if inside_count + 2 > MAX_POLY_VERTICES {
         return ClipResult::TooManyVertices;
     }
 
     // Compute intersection points
-    let (eu0, ev0) = poly.vertices[entry_idx];
-    let (eu1, ev1) = poly.vertices[entry_next];
-    let t_entry = entry_d0 / (entry_d0 - entry_d1);
+    let (eu0, ev0) = poly.vertices[entry.idx];
+    let (eu1, ev1) = poly.vertices[entry.next];
+    let t_entry = entry.d0 / (entry.d0 - entry.d1);
     let entry_pt = (eu0 + t_entry * (eu1 - eu0), ev0 + t_entry * (ev1 - ev0));
-    let entry_edge_plane = poly.edge_planes[entry_idx];
+    let entry_edge_plane = poly.edge_planes[entry.idx];
 
-    let (xu0, xv0) = poly.vertices[exit_idx];
-    let (xu1, xv1) = poly.vertices[exit_next];
-    let t_exit = exit_d0 / (exit_d0 - exit_d1);
+    let (xu0, xv0) = poly.vertices[exit.idx];
+    let (xu1, xv1) = poly.vertices[exit.next];
+    let t_exit = exit.d0 / (exit.d0 - exit.d1);
     let exit_pt = (xu0 + t_exit * (xu1 - xu0), xv0 + t_exit * (xv1 - xv0));
-    let exit_edge_plane = poly.edge_planes[exit_idx];
+    let exit_edge_plane = poly.edge_planes[exit.idx];
 
-    // Pass 2: build output with local accumulators
-    out.len = 0;
-
-    // Inline helper for r2 calculation
-    #[inline(always)]
-    fn r2_of(v: (f64, f64)) -> f64 {
-        v.0 * v.0 + v.1 * v.1
-    }
-
+    // Pass 2: build output polygon
     if poly.has_bounding_ref {
-        // Slow path: must track if bounding refs survive
-        let mut max_r2 = 0.0f64;
-        let mut has_bounding = false;
-
-        // Macro for push + accumulate
-        // if vp.0 == usize::MAX {
-        //     has_bounding = true;
-        // }
-        macro_rules! push {
-            ($v:expr, $vp:expr, $ep:expr) => {{
-                let v = $v;
-                let vp = $vp;
-                out.push_raw(v, vp, $ep);
-                let r2 = r2_of(v);
-                if r2 > max_r2 {
-                    max_r2 = r2;
-                }
-                has_bounding |= vp.0 == usize::MAX;
-            }};
-        }
-
-        push!(entry_pt, (entry_edge_plane, hp.plane_idx), entry_edge_plane);
-
-        if entry_next <= exit_idx {
-            for i in entry_next..=exit_idx {
-                push!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
-            }
-        } else {
-            for i in entry_next..n {
-                push!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
-            }
-            for i in 0..=exit_idx {
-                push!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
-            }
-        }
-
-        push!(exit_pt, (exit_edge_plane, hp.plane_idx), hp.plane_idx);
-
-        out.max_r2 = max_r2;
-        out.has_bounding_ref = has_bounding;
+        build_output::<true>(
+            poly,
+            out,
+            n,
+            entry_pt,
+            entry_edge_plane,
+            entry.next,
+            exit_pt,
+            exit_edge_plane,
+            exit.idx,
+            hp.plane_idx,
+        );
     } else {
-        // Fast path: already bounded, skip sentinel checks
-        let mut max_r2 = 0.0f64;
-
-        // Macro for push without has_bounding check
-        macro_rules! push_fast {
-            ($v:expr, $vp:expr, $ep:expr) => {{
-                let v = $v;
-                out.push_raw(v, $vp, $ep);
-                let r2 = r2_of(v);
-                if r2 > max_r2 {
-                    max_r2 = r2;
-                }
-            }};
-        }
-
-        push_fast!(entry_pt, (entry_edge_plane, hp.plane_idx), entry_edge_plane);
-
-        if entry_next <= exit_idx {
-            for i in entry_next..=exit_idx {
-                push_fast!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
-            }
-        } else {
-            for i in entry_next..n {
-                push_fast!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
-            }
-            for i in 0..=exit_idx {
-                push_fast!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
-            }
-        }
-
-        push_fast!(exit_pt, (exit_edge_plane, hp.plane_idx), hp.plane_idx);
-
-        out.max_r2 = max_r2;
-        out.has_bounding_ref = false;
+        build_output::<false>(
+            poly,
+            out,
+            n,
+            entry_pt,
+            entry_edge_plane,
+            entry.next,
+            exit_pt,
+            exit_edge_plane,
+            exit.idx,
+            hp.plane_idx,
+        );
     }
 
-    // Fix edge plane of vertex before exit
+    // The exit point's edge_planes was set to hp.plane_idx, but the vertex
+    // *before* exit (last surviving input vertex) should keep exit_edge_plane
+    // since its outgoing edge leads to the exit intersection point.
     if out.len >= 2 {
         out.edge_planes[out.len - 2] = exit_edge_plane;
     }
 
     ClipResult::Changed
+}
+
+/// Build the output polygon from entry to exit.
+///
+/// `TRACK_BOUNDING`: if true, tracks whether bounding refs survive (slow path).
+/// If false, assumes already bounded and skips sentinel checks (fast path).
+#[inline(always)]
+fn build_output<const TRACK_BOUNDING: bool>(
+    poly: &PolyBuffer,
+    out: &mut PolyBuffer,
+    n: usize,
+    entry_pt: (f64, f64),
+    entry_edge_plane: usize,
+    entry_next: usize,
+    exit_pt: (f64, f64),
+    exit_edge_plane: usize,
+    exit_idx: usize,
+    hp_plane_idx: usize,
+) {
+    out.len = 0;
+
+    #[inline(always)]
+    fn r2_of(v: (f64, f64)) -> f64 {
+        v.0 * v.0 + v.1 * v.1
+    }
+
+    let mut max_r2 = 0.0f64;
+    let mut has_bounding = false;
+
+    // Push helper that tracks max_r2, and conditionally tracks bounding refs
+    macro_rules! push {
+        ($v:expr, $vp:expr, $ep:expr) => {{
+            let v = $v;
+            let vp = $vp;
+            out.push_raw(v, vp, $ep);
+            let r2 = r2_of(v);
+            if r2 > max_r2 {
+                max_r2 = r2;
+            }
+            if TRACK_BOUNDING {
+                has_bounding |= vp.0 == usize::MAX;
+            }
+        }};
+    }
+
+    // Entry intersection point
+    push!(entry_pt, (entry_edge_plane, hp_plane_idx), entry_edge_plane);
+
+    // Surviving input vertices from entry_next to exit_idx (cyclic)
+    if entry_next <= exit_idx {
+        for i in entry_next..=exit_idx {
+            push!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
+        }
+    } else {
+        for i in entry_next..n {
+            push!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
+        }
+        for i in 0..=exit_idx {
+            push!(poly.vertices[i], poly.vertex_planes[i], poly.edge_planes[i]);
+        }
+    }
+
+    // Exit intersection point
+    push!(exit_pt, (exit_edge_plane, hp_plane_idx), hp_plane_idx);
+
+    out.max_r2 = max_r2;
+    out.has_bounding_ref = if TRACK_BOUNDING { has_bounding } else { false };
 }
 
 /// Incremental 2D topology builder for spherical Voronoi cells.
