@@ -4,9 +4,8 @@ use glam::Vec3;
 use rustc_hash::FxHashMap;
 
 use super::types::{
-    BadEdgeRecord, DeferredSlot, EdgeCheckNode, EdgeCheckOverflow, LocalId, SupportOverflow,
+    BadEdgeRecord, DeferredSlot, EdgeCheck, EdgeCheckOverflow, LocalId, SupportOverflow,
 };
-use super::EDGE_CHECK_NONE;
 use crate::knn_clipping::cell_builder::VertexKey;
 
 /// Data only needed during vertex deduplication (dropped after overflow flush).
@@ -14,10 +13,10 @@ pub(super) struct ShardDedup {
     pub(super) support_map: FxHashMap<Vec<u32>, u32>,
     pub(super) support_data: Vec<u32>,
     pub(super) support_overflow: Vec<SupportOverflow>,
-    pub(super) edge_check_heads: Vec<u32>,
-    pub(super) edge_check_counts: Vec<u8>,
-    pub(super) edge_check_nodes: Vec<EdgeCheckNode>,
-    pub(super) edge_check_free: u32,
+    /// Per-local edge checks (Vec-based for cache locality)
+    pub(super) edge_checks: Vec<Vec<EdgeCheck>>,
+    /// Pool of reusable Vecs with existing capacity
+    pub(super) edge_check_pool: Vec<Vec<EdgeCheck>>,
 }
 
 impl ShardDedup {
@@ -26,10 +25,8 @@ impl ShardDedup {
             support_map: FxHashMap::default(),
             support_data: Vec::new(),
             support_overflow: Vec::new(),
-            edge_check_heads: vec![EDGE_CHECK_NONE; num_local_generators],
-            edge_check_counts: vec![0; num_local_generators],
-            edge_check_nodes: Vec::new(),
-            edge_check_free: EDGE_CHECK_NONE,
+            edge_checks: (0..num_local_generators).map(|_| Vec::new()).collect(),
+            edge_check_pool: Vec::new(),
         }
     }
 }

@@ -107,12 +107,6 @@ pub(super) struct EdgeCheck {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct EdgeCheckNode {
-    pub(super) check: EdgeCheck,
-    pub(super) next: u32,
-}
-
-#[derive(Clone, Copy)]
 pub(super) struct EdgeCheckOverflow {
     pub(super) key: EdgeKey,
     pub(super) side: u8,

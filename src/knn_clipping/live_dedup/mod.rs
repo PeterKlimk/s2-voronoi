@@ -22,8 +22,6 @@ use types::BadEdgeRecord;
 
 pub(super) use types::EdgeRecord;
 
-const EDGE_CHECK_NONE: u32 = u32::MAX;
-
 pub(super) struct ShardedCellsData {
     assignment: BinAssignment,
     shards: Vec<ShardState>,

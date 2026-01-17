@@ -1,15 +1,16 @@
 //! Edge-check bookkeeping helpers for live dedup.
 
 use glam::Vec3;
+use std::mem;
 
 use super::binning::BinAssignment;
 use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
 use super::types::{
-    BadEdgeRecord, BinId, EdgeCheck, EdgeCheckNode, EdgeCheckOverflow, EdgeKey, EdgeOverflowLocal,
-    EdgeToLater, LocalId,
+    BadEdgeRecord, BinId, EdgeCheck, EdgeCheckOverflow, EdgeKey, EdgeOverflowLocal, EdgeToLater,
+    LocalId,
 };
-use super::{with_two_mut, EDGE_CHECK_NONE};
+use super::with_two_mut;
 use crate::knn_clipping::cell_builder::VertexKey;
 use crate::knn_clipping::timing::Timer;
 use std::time::Duration;
@@ -38,55 +39,36 @@ pub(super) fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> u32 {
 impl ShardDedup {
     #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn push_edge_check(&mut self, local: LocalId, check: EdgeCheck) {
-        let local = local.as_usize();
+        let local_idx = local.as_usize();
         debug_assert!(
-            local < self.edge_check_heads.len(),
+            local_idx < self.edge_checks.len(),
             "edge check local out of bounds"
         );
 
-        let idx = if self.edge_check_free != EDGE_CHECK_NONE {
-            let idx = self.edge_check_free;
-            let next_free = self.edge_check_nodes[idx as usize].next;
-            self.edge_check_free = next_free;
-            idx
-        } else {
-            let idx = u32::try_from(self.edge_check_nodes.len()).expect("edge check pool overflow");
-            self.edge_check_nodes.push(EdgeCheckNode {
-                check,
-                next: EDGE_CHECK_NONE,
-            });
-            idx
-        };
-
-        let head = self.edge_check_heads[local];
-        self.edge_check_nodes[idx as usize].check = check;
-        self.edge_check_nodes[idx as usize].next = head;
-        self.edge_check_heads[local] = idx;
-        self.edge_check_counts[local] = self.edge_check_counts[local].saturating_add(1);
+        let slot = &mut self.edge_checks[local_idx];
+        if slot.capacity() == 0 {
+            if let Some(mut v) = self.edge_check_pool.pop() {
+                v.clear();
+                *slot = v;
+            }
+        }
+        slot.push(check);
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub(super) fn take_edge_checks(&mut self, local: LocalId) -> (u32, u8) {
-        let local = local.as_usize();
+    pub(super) fn take_edge_checks(&mut self, local: LocalId) -> Vec<EdgeCheck> {
+        let local_idx = local.as_usize();
         debug_assert!(
-            local < self.edge_check_heads.len(),
+            local_idx < self.edge_checks.len(),
             "edge check local out of bounds"
         );
-        let head = self.edge_check_heads[local];
-        let count = self.edge_check_counts[local];
-        self.edge_check_heads[local] = EDGE_CHECK_NONE;
-        self.edge_check_counts[local] = 0;
-        (head, count)
+        mem::take(&mut self.edge_checks[local_idx])
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub(super) fn recycle_edge_checks(&mut self, mut head: u32) {
-        while head != EDGE_CHECK_NONE {
-            let node = &mut self.edge_check_nodes[head as usize];
-            let next = node.next;
-            node.next = self.edge_check_free;
-            self.edge_check_free = head;
-            head = next;
+    pub(super) fn recycle_edge_checks(&mut self, v: Vec<EdgeCheck>) {
+        if v.capacity() > 0 {
+            self.edge_check_pool.push(v);
         }
     }
 }
@@ -119,8 +101,9 @@ pub(super) fn collect_and_resolve_cell_edges(
     debug_assert_eq!(local_a, local, "local index mismatch in edge checks");
     let local_u32 = local.as_u32();
 
-    // Take incoming checks from linked list (returns head and count)
-    let (assigned_head, incoming_count) = shard.dedup.take_edge_checks(local);
+    // Take incoming checks (now returns a Vec instead of linked list head)
+    let incoming_checks = shard.dedup.take_edge_checks(local);
+    let incoming_count = incoming_checks.len();
 
     // Track which incoming checks we've matched (bitmask, supports up to 64)
     let mut matched: u64 = 0;
@@ -174,20 +157,15 @@ pub(super) fn collect_and_resolve_cell_edges(
             });
         } else {
             // Edge to earlier neighbor → resolve immediately
-            // Search linked list for matching check
+            // Search Vec for matching check (cache-friendly sequential access)
             let mut found_check: Option<EdgeCheck> = None;
-            let mut found_idx = 0u32;
-            let mut search_cur = assigned_head;
-            let mut idx = 0u32;
-            while search_cur != EDGE_CHECK_NONE {
-                let node = &shard.dedup.edge_check_nodes[search_cur as usize];
-                if node.check.key == edge_key {
-                    found_check = Some(node.check);
+            let mut found_idx = 0usize;
+            for (idx, check) in incoming_checks.iter().enumerate() {
+                if check.key == edge_key {
+                    found_check = Some(*check);
                     found_idx = idx;
                     break;
                 }
-                search_cur = node.next;
-                idx += 1;
             }
 
             if let Some(check) = found_check {
@@ -245,21 +223,17 @@ pub(super) fn collect_and_resolve_cell_edges(
     let all_matched = incoming_count == 0 || matched == (1u64 << incoming_count) - 1;
 
     if !all_matched {
-        let mut cur = assigned_head;
-        let mut idx = 0u32;
-        while cur != EDGE_CHECK_NONE {
+        for (idx, check) in incoming_checks.iter().enumerate() {
             if matched & (1u64 << idx) == 0 {
-                let node = &shard.dedup.edge_check_nodes[cur as usize];
-                shard.output.bad_edges.push(BadEdgeRecord {
-                    key: node.check.key,
-                });
+                shard
+                    .output
+                    .bad_edges
+                    .push(BadEdgeRecord { key: check.key });
             }
-            cur = shard.dedup.edge_check_nodes[cur as usize].next;
-            idx += 1;
         }
     }
 
-    shard.dedup.recycle_edge_checks(assigned_head);
+    shard.dedup.recycle_edge_checks(incoming_checks);
 }
 
 #[cfg_attr(feature = "profiling", inline(never))]
