@@ -209,8 +209,7 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
         inside_count += curr_in as usize;
 
         // XOR detects any transition; single branch covers both cases
-        let changed = prev_in ^ curr_in;
-        if changed {
+        if prev_in != curr_in {
             if curr_in {
                 // Entry: !prev_in && curr_in
                 entry_idx = i - 1;
