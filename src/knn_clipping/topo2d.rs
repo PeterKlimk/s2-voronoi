@@ -666,11 +666,14 @@ impl Topo2DBuilder {
 
             // Compute 3D vertex position from gnomonic (u, v).
             let dir = self.basis.g + self.basis.t1 * u + self.basis.t2 * v;
-            let dir_len = dir.length();
-            if dir_len < 1e-14 {
+            // Check len² before sqrt to decouple branch from sqrt latency.
+            // Use scalar recip + packed mul instead of packed div (vmulpd >> vdivpd).
+            let len2 = dir.length_squared();
+            if len2 < 1e-28 {
                 return Err(CellFailure::NoValidSeed);
             }
-            let v_pos = dir / dir_len;
+            let inv_len = len2.sqrt().recip();
+            let v_pos = dir * inv_len;
             let pos = Vec3::new(v_pos.x as f32, v_pos.y as f32, v_pos.z as f32);
 
             // Build triplet key: (cell, neighbor_a, neighbor_b) sorted
