@@ -54,11 +54,6 @@ impl HalfPlane {
     }
 }
 
-#[inline]
-fn is_inside_from_dist(hp: &HalfPlane, d: f64) -> bool {
-    d >= -hp.eps
-}
-
 /// Fixed-size polygon buffer for clipping.
 #[derive(Clone)]
 struct PolyBuffer {
@@ -184,6 +179,7 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
     }
 
     // Pass 1: classify vertices and track entry/exit transitions
+    let neg_eps = -hp.eps;
     let mut inside_count = 0usize;
     let mut entry_idx = usize::MAX;
     let mut exit_idx = usize::MAX;
@@ -199,61 +195,57 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
     let (fu, fv) = poly.vertices[0];
     let last_d = hp.signed_dist(lu, lv);
     let first_d = hp.signed_dist(fu, fv);
-    let last_in = is_inside_from_dist(hp, last_d);
-    let first_in = is_inside_from_dist(hp, first_d);
+    let first_in = first_d >= neg_eps;
 
     inside_count += first_in as usize;
 
-    // last -> first edge (wrap-around)
-    if last_in && !first_in {
-        exit_idx = last_idx;
-        exit_next = 0;
-        exit_d0 = last_d;
-        exit_d1 = first_d;
-    } else if !last_in && first_in {
-        entry_idx = last_idx;
-        entry_next = 0;
-        entry_d0 = last_d;
-        entry_d1 = first_d;
-    }
-
-    // Edges 0->1, 1->2, ..., (n-3)->(n-2)
+    // Main loop: edges 0->1 through (n-2)->(n-1)
     let mut prev_d = first_d;
     let mut prev_in = first_in;
-    for i in 1..last_idx {
+    for i in 1..n {
         let (u, v) = poly.vertices[i];
         let curr_d = hp.signed_dist(u, v);
-        let curr_in = is_inside_from_dist(hp, curr_d);
+        let curr_in = curr_d >= neg_eps;
         inside_count += curr_in as usize;
 
-        if prev_in && !curr_in {
-            exit_idx = i - 1;
-            exit_next = i;
-            exit_d0 = prev_d;
-            exit_d1 = curr_d;
-        } else if !prev_in && curr_in {
-            entry_idx = i - 1;
-            entry_next = i;
-            entry_d0 = prev_d;
-            entry_d1 = curr_d;
+        // XOR detects any transition; single branch covers both cases
+        let changed = prev_in ^ curr_in;
+        if changed {
+            if curr_in {
+                // Entry: !prev_in && curr_in
+                entry_idx = i - 1;
+                entry_next = i;
+                entry_d0 = prev_d;
+                entry_d1 = curr_d;
+            } else {
+                // Exit: prev_in && !curr_in
+                exit_idx = i - 1;
+                exit_next = i;
+                exit_d0 = prev_d;
+                exit_d1 = curr_d;
+            }
         }
 
         prev_d = curr_d;
         prev_in = curr_in;
     }
 
-    // Final edge (n-2)->(n-1) using precomputed last_d/last_in
-    inside_count += last_in as usize;
-    if prev_in && !last_in {
-        exit_idx = last_idx - 1;
-        exit_next = last_idx;
-        exit_d0 = prev_d;
-        exit_d1 = last_d;
-    } else if !prev_in && last_in {
-        entry_idx = last_idx - 1;
-        entry_next = last_idx;
-        entry_d0 = prev_d;
-        entry_d1 = last_d;
+    // Wrap-around edge: (n-1) -> 0
+    // prev_d/prev_in now hold last vertex's values
+    if prev_in != first_in {
+        if first_in {
+            // Entry on wrap edge (last -> 0)
+            entry_idx = last_idx;
+            entry_next = 0;
+            entry_d0 = last_d;
+            entry_d1 = first_d;
+        } else {
+            // Exit on wrap edge (last -> 0)
+            exit_idx = last_idx;
+            exit_next = 0;
+            exit_d0 = last_d;
+            exit_d1 = first_d;
+        }
     }
 
     // All inside: unchanged
