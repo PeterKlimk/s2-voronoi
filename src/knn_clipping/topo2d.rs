@@ -61,7 +61,6 @@ fn is_inside_from_dist(hp: &HalfPlane, d: f64) -> bool {
 
 /// Fixed-size polygon buffer for clipping.
 #[derive(Clone)]
-#[repr(C)]
 struct PolyBuffer {
     // Hot scalars first - keep in same cache line
     len: usize,
