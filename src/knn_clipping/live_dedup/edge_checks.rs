@@ -116,19 +116,6 @@ pub(super) fn collect_and_resolve_cell_edges(
     // Track which incoming checks we've matched (bitmask, supports up to 64)
     let mut matched: u64 = 0;
 
-    // Pre-gather neighbor (bin, local) info using slot_gen_map for cache-friendly access.
-    // The edge_neighbor_slots are SOA indices, so slot_gen_map[slot] accesses are sequential
-    // for neighbors from the same knn cell - much better than random gen_map[global] access.
-    let mut neighbor_gen_maps = [0u32; 64];
-    debug_assert!(n <= 64, "cell has more than 64 vertices");
-
-    for i in 0..n {
-        let slot = edge_neighbor_slots[i];
-        if slot != u32::MAX {
-            neighbor_gen_maps[i] = assignment.slot_gen_map[slot as usize];
-        }
-    }
-
     // Process all edges
     for i in 0..n {
         let j = if i + 1 == n { 0 } else { i + 1 };
@@ -153,7 +140,7 @@ pub(super) fn collect_and_resolve_cell_edges(
         };
         let edge_key = pack_edge(cell_idx, neighbor);
 
-        let (bin_b, local_b) = assignment.unpack(neighbor_gen_maps[i]);
+        let (bin_b, local_b) = assignment.unpack(assignment.slot_gen_map[slot as usize]);
 
         if bin != bin_b {
             // Cross-bin edge → overflow
