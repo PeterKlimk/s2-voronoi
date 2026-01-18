@@ -81,7 +81,8 @@ pub(super) fn collect_and_resolve_cell_edges(
     cell_idx: u32,
     local: LocalId,
     cell_vertices: &[(VertexKey, Vec3)],
-    edge_neighbors: &[u32],
+    edge_neighbor_slots: &[u32],
+    point_indices: &[u32],
     assignment: &BinAssignment,
     shard: &mut ShardState,
     vertex_indices: &mut [u32],
@@ -89,7 +90,11 @@ pub(super) fn collect_and_resolve_cell_edges(
     edges_overflow: &mut Vec<EdgeOverflowLocal>,
 ) {
     let n = cell_vertices.len();
-    debug_assert_eq!(edge_neighbors.len(), n, "edge neighbor data out of sync");
+    debug_assert_eq!(
+        edge_neighbor_slots.len(),
+        n,
+        "edge neighbor slot data out of sync"
+    );
     edges_to_later.clear();
     edges_overflow.clear();
 
@@ -106,15 +111,16 @@ pub(super) fn collect_and_resolve_cell_edges(
     // Track which incoming checks we've matched (bitmask, supports up to 64)
     let mut matched: u64 = 0;
 
-    // Pre-gather neighbor gen_map entries to improve memory-level parallelism.
-    // This separates the random memory accesses from the dependent logic loop.
+    // Pre-gather neighbor (bin, local) info using slot_gen_map for cache-friendly access.
+    // The edge_neighbor_slots are SOA indices, so slot_gen_map[slot] accesses are sequential
+    // for neighbors from the same knn cell - much better than random gen_map[global] access.
     let mut neighbor_gen_maps = [0u32; 64];
     debug_assert!(n <= 64, "cell has more than 64 vertices");
 
     for i in 0..n {
-        let neighbor = edge_neighbors[i];
-        if neighbor != u32::MAX {
-            neighbor_gen_maps[i] = assignment.gen_map[neighbor as usize];
+        let slot = edge_neighbor_slots[i];
+        if slot != u32::MAX {
+            neighbor_gen_maps[i] = assignment.slot_gen_map[slot as usize];
         }
     }
 
@@ -123,9 +129,15 @@ pub(super) fn collect_and_resolve_cell_edges(
         let j = if i + 1 == n { 0 } else { i + 1 };
         let key_i = cell_vertices[i].0;
         let key_j = cell_vertices[j].0;
-        let neighbor = edge_neighbors[i];
+        let slot = edge_neighbor_slots[i];
 
-        if neighbor == u32::MAX || neighbor == cell_idx {
+        if slot == u32::MAX {
+            continue;
+        }
+
+        // Derive global index from slot for edge key packing
+        let neighbor = point_indices[slot as usize];
+        if neighbor == cell_idx {
             continue;
         }
 

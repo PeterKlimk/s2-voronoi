@@ -61,25 +61,25 @@ impl<'a> CubeMapGridKnn<'a> {
         self.grid.make_scratch()
     }
 
-    /// Start a resumable k-NN query, tracking up to `track_limit` neighbors.
+    /// Start a resumable k-NN query returning slots, tracking up to `track_limit` neighbors.
     #[inline]
-    pub fn knn_resumable_into(
+    pub fn knn_resumable_slots_into(
         &self,
         query: Vec3,
         query_idx: usize,
         k: usize,
         track_limit: usize,
         scratch: &mut crate::cube_grid::CubeMapGridScratch,
-        out_indices: &mut Vec<usize>,
+        out_slots: &mut Vec<u32>,
     ) -> crate::cube_grid::KnnStatus {
-        self.grid.find_k_nearest_resumable_into(
+        self.grid.find_k_nearest_resumable_slots_into(
             self.points,
             query,
             query_idx,
             k,
             track_limit,
             scratch,
-            out_indices,
+            out_slots,
         )
     }
 }

@@ -441,6 +441,8 @@ pub struct Topo2DBuilder {
     // Half-planes and neighbor data (grow as needed)
     half_planes: Vec<HalfPlane>,
     neighbor_indices: Vec<usize>,
+    /// Slot indices for each neighbor (SOA index, u32::MAX if not from packed_knn).
+    neighbor_slots: Vec<u32>,
 
     // Current polygon (double-buffered with fixed arrays)
     poly_a: PolyBuffer,
@@ -471,6 +473,7 @@ impl Topo2DBuilder {
             basis,
             half_planes: Vec::with_capacity(32),
             neighbor_indices: Vec::with_capacity(32),
+            neighbor_slots: Vec::with_capacity(32),
             poly_a,
             poly_b: PolyBuffer::new(),
             use_a: true,
@@ -489,6 +492,7 @@ impl Topo2DBuilder {
         self.basis = TangentBasis::new(gen64);
         self.half_planes.clear();
         self.neighbor_indices.clear();
+        self.neighbor_slots.clear();
         self.poly_a.init_bounding(1e6);
         self.poly_b.clear();
         self.use_a = true;
@@ -501,6 +505,19 @@ impl Topo2DBuilder {
     /// This method just clips—it doesn't check if the neighbor was already added.
     #[cfg_attr(feature = "profiling", inline(never))]
     pub fn clip(&mut self, neighbor_idx: usize, neighbor: Vec3) -> Result<(), CellFailure> {
+        self.clip_with_slot(neighbor_idx, u32::MAX, neighbor)
+    }
+
+    /// Add a neighbor and clip the cell, also storing the slot index.
+    ///
+    /// The slot is the SOA index from packed_knn. Use u32::MAX if not from packed_knn.
+    #[cfg_attr(feature = "profiling", inline(never))]
+    pub fn clip_with_slot(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+    ) -> Result<(), CellFailure> {
         if let Some(f) = self.failed {
             return Err(f);
         }
@@ -552,6 +569,7 @@ impl Topo2DBuilder {
                 // Only store planes that actually contribute to the cell
                 self.half_planes.push(hp);
                 self.neighbor_indices.push(neighbor_idx);
+                self.neighbor_slots.push(neighbor_slot);
                 self.use_a = !self.use_a;
             }
             ClipResult::Unchanged => {} // Redundant plane - skip storage
@@ -645,16 +663,20 @@ impl Topo2DBuilder {
     /// Convert to vertex data, writing into provided buffer.
     #[allow(dead_code)]
     pub fn to_vertex_data_into(&self, out: &mut Vec<VertexData>) -> Result<(), CellFailure> {
-        self.to_vertex_data_impl(out, None)
+        self.to_vertex_data_impl(out, None, None)
     }
 
     /// Convert to vertex data, also returning the edge neighbor for each vertex->next edge.
-    pub fn to_vertex_data_with_edge_neighbors_into(
+
+    /// Convert to vertex data, returning edge neighbor slots (SOA indices) instead of globals.
+    ///
+    /// The slots can be used with `slot_gen_map` for cache-friendly (bin, local) lookups.
+    pub fn to_vertex_data_with_edge_neighbor_slots_into(
         &self,
         out: &mut Vec<VertexData>,
-        edge_neighbors: &mut Vec<u32>,
+        edge_neighbor_slots: &mut Vec<u32>,
     ) -> Result<(), CellFailure> {
-        self.to_vertex_data_impl(out, Some(edge_neighbors))
+        self.to_vertex_data_impl(out, None, Some(edge_neighbor_slots))
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -662,6 +684,7 @@ impl Topo2DBuilder {
         &self,
         out: &mut Vec<VertexData>,
         mut edge_neighbors: Option<&mut Vec<u32>>,
+        mut edge_neighbor_slots: Option<&mut Vec<u32>>,
     ) -> Result<(), CellFailure> {
         if !self.is_bounded() {
             return Err(CellFailure::NoValidSeed);
@@ -677,6 +700,10 @@ impl Topo2DBuilder {
         if let Some(edge_neighbors) = edge_neighbors.as_deref_mut() {
             edge_neighbors.clear();
             edge_neighbors.reserve(poly.len);
+        }
+        if let Some(edge_neighbor_slots) = edge_neighbor_slots.as_deref_mut() {
+            edge_neighbor_slots.clear();
+            edge_neighbor_slots.reserve(poly.len);
         }
 
         let gen_idx = self.generator_idx as u32;
@@ -715,6 +742,15 @@ impl Topo2DBuilder {
                     self.neighbor_indices[edge_plane] as u32
                 };
                 edge_neighbors.push(neighbor);
+            }
+            if let Some(edge_neighbor_slots) = edge_neighbor_slots.as_deref_mut() {
+                let edge_plane = poly.edge_planes[i];
+                let slot = if edge_plane == usize::MAX {
+                    u32::MAX
+                } else {
+                    self.neighbor_slots[edge_plane]
+                };
+                edge_neighbor_slots.push(slot);
             }
         }
 

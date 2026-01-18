@@ -99,8 +99,7 @@ impl CubeMapGridScratch {
         }
     }
 
-    fn try_add_neighbor(&mut self, idx: usize, dist_sq: f32) {
-        let idx_u32 = idx as u32;
+    fn try_add_neighbor(&mut self, slot: u32, dist_sq: f32) {
         let len = if self.use_fixed {
             self.candidates_len
         } else {
@@ -110,10 +109,10 @@ impl CubeMapGridScratch {
 
         if len < k {
             if self.use_fixed {
-                self.candidates_fixed[len] = (dist_sq, idx_u32);
+                self.candidates_fixed[len] = (dist_sq, slot);
                 self.candidates_len += 1;
             } else {
-                self.candidates_vec.push((dist_sq, idx_u32));
+                self.candidates_vec.push((dist_sq, slot));
             }
 
             // Just reached k: sort in-place.
@@ -135,11 +134,11 @@ impl CubeMapGridScratch {
 
         // Replace worst, then rescan to find new worst (k is small: 12/24/48).
         if self.use_fixed {
-            self.candidates_fixed[k - 1] = (dist_sq, idx_u32);
+            self.candidates_fixed[k - 1] = (dist_sq, slot);
             let slice = &mut self.candidates_fixed[..k];
             slice.sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
         } else {
-            self.candidates_vec[k - 1] = (dist_sq, idx_u32);
+            self.candidates_vec[k - 1] = (dist_sq, slot);
             self.candidates_vec
                 .sort_unstable_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
         }
@@ -166,6 +165,28 @@ impl CubeMapGridScratch {
             }
         }
     }
+
+    #[inline]
+    fn copy_k_slots_into(&self, k: usize, out: &mut Vec<u32>) {
+        out.clear();
+
+        let k = if self.use_fixed {
+            k.min(self.candidates_len)
+        } else {
+            k.min(self.candidates_vec.len())
+        };
+
+        out.reserve(k);
+        if self.use_fixed {
+            for i in 0..k {
+                out.push(self.candidates_fixed[i].1);
+            }
+        } else {
+            for i in 0..k {
+                out.push(self.candidates_vec[i].1);
+            }
+        }
+    }
 }
 
 impl CubeMapGrid {
@@ -186,6 +207,18 @@ impl CubeMapGrid {
     #[inline]
     pub fn res(&self) -> usize {
         self.res
+    }
+
+    /// Get cell offsets array (length = num_cells + 1).
+    #[inline]
+    pub fn cell_offsets(&self) -> &[u32] {
+        &self.cell_offsets
+    }
+
+    /// Get point indices array (SOA layout, length = n).
+    #[inline]
+    pub fn point_indices(&self) -> &[u32] {
+        &self.point_indices
     }
 
     /// Get points in a cell.
@@ -248,15 +281,8 @@ impl CubeMapGrid {
     /// Non-resumable scratch-based k-NN query optimized for unit vectors:
     /// maintains an unsorted top-k by dot product and sorts once at the end.
 
-    /// Start a resumable k-NN query.
-    ///
-    /// Unlike `find_k_nearest_with_scratch_into`, this preserves scratch state so the query
-    /// can be resumed with `resume_k_nearest_into` to fetch additional neighbors.
-    ///
-    /// `track_limit` controls how many candidates we track internally. This bounds
-    /// how far we can resume: if track_limit=48, we can resume up to k=48 without
-    /// losing any neighbors.
-    pub fn find_k_nearest_resumable_into(
+    /// Resumable kNN query that returns slots (SOA indices) instead of global indices.
+    pub fn find_k_nearest_resumable_slots_into(
         &self,
         points: &[Vec3],
         query: Vec3,
@@ -264,7 +290,7 @@ impl CubeMapGrid {
         k: usize,
         track_limit: usize,
         scratch: &mut CubeMapGridScratch,
-        out_indices: &mut Vec<usize>,
+        out_slots: &mut Vec<u32>,
     ) -> KnnStatus {
         self.find_k_nearest_resumable_into_impl(
             points,
@@ -273,7 +299,8 @@ impl CubeMapGrid {
             k,
             track_limit,
             scratch,
-            out_indices,
+            None,
+            Some(out_slots),
         )
     }
 
@@ -309,7 +336,7 @@ impl CubeMapGrid {
                 continue;
             }
             let dist_sq = unit_vec_dist_sq_generic(*p, query);
-            scratch.try_add_neighbor(idx, dist_sq);
+            scratch.try_add_neighbor(idx as u32, dist_sq);
         }
         scratch.exhausted = true;
     }
@@ -343,7 +370,8 @@ impl CubeMapGrid {
             // Contiguous SoA access - should auto-vectorize well
             let dot = xs[i] * qx + ys[i] * qy + zs[i] * qz;
             let dist_sq = (2.0 - 2.0 * dot).max(0.0);
-            scratch.try_add_neighbor(pidx, dist_sq);
+            let slot = (start + i) as u32;
+            scratch.try_add_neighbor(slot, dist_sq);
         }
     }
 
@@ -376,6 +404,7 @@ impl CubeMapGrid {
         1
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn find_k_nearest_resumable_into_impl<P: UnitVec>(
         &self,
         points: &[P],
@@ -384,10 +413,12 @@ impl CubeMapGrid {
         k: usize,
         track_limit: usize,
         scratch: &mut CubeMapGridScratch,
-        out_indices: &mut Vec<usize>,
+        mut out_indices: Option<&mut Vec<usize>>,
+        mut out_slots: Option<&mut Vec<u32>>,
     ) -> KnnStatus {
         let n = points.len();
-        out_indices.clear();
+        out_indices.as_deref_mut().map(|v| v.clear());
+        out_slots.as_deref_mut().map(|v| v.clear());
 
         if k == 0 || n <= 1 {
             return KnnStatus::CanResume;
@@ -444,7 +475,30 @@ impl CubeMapGrid {
             self.bruteforce_fill_impl(points, query, query_idx, scratch);
         }
 
-        scratch.copy_k_indices_into(k, out_indices);
+        if let Some(out_indices) = out_indices {
+            scratch.copy_k_indices_into(k, out_indices);
+            if !scratch.exhausted {
+                // Convert slots back to global indices if we have slots
+                for idx in out_indices.iter_mut() {
+                    let slot = *idx;
+                    *idx = self.point_indices[slot] as usize;
+                }
+            }
+        }
+        if let Some(out_slots) = out_slots {
+            if !scratch.exhausted {
+                scratch.copy_k_slots_into(k, out_slots);
+            } else {
+                // Brute force used: we have globals, not slots. Return u32::MAX.
+                let count = if scratch.use_fixed {
+                    k.min(scratch.candidates_len)
+                } else {
+                    k.min(scratch.candidates_vec.len())
+                };
+                out_slots.clear();
+                out_slots.resize(count, u32::MAX);
+            }
+        }
 
         if scratch.exhausted {
             KnnStatus::Exhausted

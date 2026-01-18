@@ -9,11 +9,13 @@ use super::types::{BinId, LocalId};
 pub(super) struct BinAssignment {
     pub(super) generator_bin: Vec<BinId>,
     pub(super) global_to_local: Vec<LocalId>,
-    /// Packed gen_map: each entry is `(bin << local_shift) | local`.
+    /// Packed gen_map: each entry is `(bin << local_shift) | local`. Indexed by global.
     pub(super) gen_map: Vec<u32>,
-    /// Precomputed shift for extracting bin from packed gen_map.
+    /// Packed slot_gen_map: each entry is `(bin << local_shift) | local`. Indexed by slot (SOA index).
+    pub(super) slot_gen_map: Vec<u32>,
+    /// Precomputed shift for extracting bin from packed gen_map/slot_gen_map.
     pub(super) local_shift: u32,
-    /// Precomputed mask for extracting local from packed gen_map.
+    /// Precomputed mask for extracting local from packed gen_map/slot_gen_map.
     pub(super) local_mask: u32,
     pub(super) bin_generators: Vec<Vec<usize>>,
     pub(super) num_bins: usize,
@@ -100,6 +102,7 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
     let mut generator_bin: Vec<BinId> = vec![BinId::from(u8::MAX); n];
     let mut global_to_local: Vec<LocalId> = vec![LocalId::from(u32::MAX); n];
     let mut gen_map: Vec<u32> = vec![u32::MAX; n];
+    let mut slot_gen_map: Vec<u32> = vec![u32::MAX; n];
 
     let mut visited = 0usize;
     for cell in 0..num_cells {
@@ -149,10 +152,27 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
         "unassigned gen_map entries"
     );
 
+    // Build slot_gen_map: iterate cells in order, write packed (bin, local) at each slot position.
+    // Slots are the SOA indices: cell_offsets[cell]..cell_offsets[cell+1].
+    for cell in 0..num_cells {
+        let cell_start = grid.cell_offsets()[cell] as usize;
+        let cell_end = grid.cell_offsets()[cell + 1] as usize;
+        for slot in cell_start..cell_end {
+            let g = grid.point_indices()[slot] as usize;
+            slot_gen_map[slot] = gen_map[g];
+        }
+    }
+
+    debug_assert!(
+        !slot_gen_map.iter().any(|&m| m == u32::MAX),
+        "unassigned slot_gen_map entries"
+    );
+
     BinAssignment {
         generator_bin,
         global_to_local,
         gen_map,
+        slot_gen_map,
         local_shift,
         local_mask,
         bin_generators,

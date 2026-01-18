@@ -42,7 +42,8 @@ impl EdgeScratch {
         cell_idx: u32,
         local: LocalId,
         cell_vertices: &[VertexData],
-        edge_neighbors: &[u32],
+        edge_neighbor_slots: &[u32],
+        knn: &crate::knn_clipping::CubeMapGridKnn,
         assignment: &super::binning::BinAssignment,
         shard: &mut ShardState,
     ) {
@@ -53,7 +54,8 @@ impl EdgeScratch {
             cell_idx,
             local,
             cell_vertices,
-            edge_neighbors,
+            edge_neighbor_slots,
+            knn.grid().point_indices(),
             assignment,
             shard,
             &mut self.vertex_indices,
@@ -117,9 +119,9 @@ impl EdgeScratch {
 struct CellContext {
     builder: Topo2DBuilder,
     scratch: crate::cube_grid::CubeMapGridScratch,
-    neighbors: Vec<usize>,
+    neighbor_slots: Vec<u32>,
     cell_vertices: Vec<VertexData>,
-    edge_neighbors: Vec<u32>,
+    edge_neighbor_slots: Vec<u32>,
     edge_scratch: EdgeScratch,
 }
 
@@ -128,9 +130,9 @@ impl CellContext {
         Self {
             builder: Topo2DBuilder::new(0, Vec3::ZERO),
             scratch: knn.make_scratch(),
-            neighbors: Vec::with_capacity(crate::knn_clipping::KNN_RESTART_MAX),
+            neighbor_slots: Vec::with_capacity(crate::knn_clipping::KNN_RESTART_MAX),
             cell_vertices: Vec::new(),
-            edge_neighbors: Vec::new(),
+            edge_neighbor_slots: Vec::new(),
             edge_scratch: EdgeScratch::new(),
         }
     }
@@ -153,13 +155,13 @@ fn process_cell(
 ) {
     let builder = &mut ctx.builder;
     let scratch = &mut ctx.scratch;
-    let neighbors = &mut ctx.neighbors;
+    let neighbor_slots = &mut ctx.neighbor_slots;
     let cell_vertices = &mut ctx.cell_vertices;
-    let edge_neighbors = &mut ctx.edge_neighbors;
+    let edge_neighbor_slots = &mut ctx.edge_neighbor_slots;
     let edge_scratch = &mut ctx.edge_scratch;
 
     builder.reset(i, points[i]);
-    neighbors.clear();
+    neighbor_slots.clear();
 
     let cell_start = shard.output.cell_indices.len() as u32;
     shard.output.set_cell_start(local, cell_start);
@@ -191,8 +193,11 @@ fn process_cell(
 
         if packed_count > 0 {
             let t_clip = crate::knn_clipping::timing::Timer::start();
-            for (pos, &neighbor_idx) in seed.neighbors.iter().enumerate() {
-                let neighbor_idx = neighbor_idx as usize;
+            let grid = knn.grid();
+            let point_indices = grid.point_indices();
+            for (pos, &neighbor_slot) in seed.neighbors.iter().enumerate() {
+                // Convert slot to global index
+                let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
                 if neighbor_idx == i {
                     continue;
                 }
@@ -204,7 +209,10 @@ fn process_cell(
                     i
                 );
                 let neighbor = points[neighbor_idx];
-                if builder.clip(neighbor_idx, neighbor).is_err() {
+                if builder
+                    .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
+                    .is_err()
+                {
                     break;
                 }
                 cell_neighbors_processed += 1;
@@ -215,8 +223,8 @@ fn process_cell(
                     if termination.should_check(cell_neighbors_processed)
                         && builder.can_terminate({
                             let mut bound = worst_cos;
-                            for &next in seed.neighbors.iter().skip(pos + 1) {
-                                let next = next as usize;
+                            for &next_slot in seed.neighbors.iter().skip(pos + 1) {
+                                let next = point_indices[next_slot as usize] as usize;
                                 if next != i {
                                     bound = points[i].dot(points[next]);
                                     break;
@@ -249,16 +257,20 @@ fn process_cell(
     if !terminated && !knn_exhausted && !builder.is_failed() && resume_k > 0 {
         used_knn = true;
         max_k_requested = resume_k;
-        neighbors.clear();
+        neighbor_slots.clear();
         let t_knn = crate::knn_clipping::timing::Timer::start();
-        let status = knn.knn_resumable_into(points[i], i, resume_k, resume_k, scratch, neighbors);
+        let status =
+            knn.knn_resumable_slots_into(points[i], i, resume_k, resume_k, scratch, neighbor_slots);
         cell_sub.add_knn(t_knn.elapsed());
 
         // Track which resume stage we're at
         knn_stage = crate::knn_clipping::timing::KnnCellStage::Resume(resume_k);
 
         let t_clip = crate::knn_clipping::timing::Timer::start();
-        for (pos, &neighbor_idx) in neighbors.iter().enumerate() {
+        let grid = knn.grid();
+        let point_indices = grid.point_indices();
+        for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
+            let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
             if did_packed && builder.has_neighbor(neighbor_idx) {
                 continue;
             }
@@ -270,7 +282,10 @@ fn process_cell(
                 i
             );
             let neighbor = points[neighbor_idx];
-            if builder.clip(neighbor_idx, neighbor).is_err() {
+            if builder
+                .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
+                .is_err()
+            {
                 break;
             }
             cell_neighbors_processed += 1;
@@ -281,7 +296,8 @@ fn process_cell(
                 if termination.should_check(cell_neighbors_processed)
                     && builder.can_terminate({
                         let mut bound = worst_cos;
-                        for &next in neighbors.iter().skip(pos + 1) {
+                        for &next_slot in neighbor_slots.iter().skip(pos + 1) {
+                            let next = point_indices[next_slot as usize] as usize;
                             if next != i {
                                 bound = points[i].dot(points[next]);
                                 break;
@@ -312,22 +328,28 @@ fn process_cell(
             }
             used_knn = true;
             max_k_requested = k;
-            neighbors.clear();
+            neighbor_slots.clear();
 
             let t_knn = crate::knn_clipping::timing::Timer::start();
-            let status = knn.knn_resumable_into(points[i], i, k, k, scratch, neighbors);
+            let status = knn.knn_resumable_slots_into(points[i], i, k, k, scratch, neighbor_slots);
             cell_sub.add_knn(t_knn.elapsed());
 
             // Track which restart stage we're at
             knn_stage = crate::knn_clipping::timing::KnnCellStage::Restart(k_stage);
 
             let t_clip = crate::knn_clipping::timing::Timer::start();
-            for (pos, &neighbor_idx) in neighbors.iter().enumerate() {
+            let grid = knn.grid();
+            let point_indices = grid.point_indices();
+            for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
+                let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
                 if builder.has_neighbor(neighbor_idx) {
                     continue;
                 }
                 let neighbor = points[neighbor_idx];
-                if builder.clip(neighbor_idx, neighbor).is_err() {
+                if builder
+                    .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
+                    .is_err()
+                {
                     break;
                 }
                 cell_neighbors_processed += 1;
@@ -338,7 +360,8 @@ fn process_cell(
                     if termination.should_check(cell_neighbors_processed)
                         && builder.can_terminate({
                             let mut bound = worst_cos;
-                            for &next in neighbors.iter().skip(pos + 1) {
+                            for &next_slot in neighbor_slots.iter().skip(pos + 1) {
+                                let next = point_indices[next_slot as usize] as usize;
                                 if next != i {
                                     bound = points[i].dot(points[next]);
                                     break;
@@ -407,20 +430,27 @@ fn process_cell(
             }
 
             used_knn = true;
-            neighbors.clear();
+            neighbor_slots.clear();
 
             let t_knn = crate::knn_clipping::timing::Timer::start();
-            let status = knn.knn_resumable_into(points[i], i, next_k, next_k, scratch, neighbors);
+            let status =
+                knn.knn_resumable_slots_into(points[i], i, next_k, next_k, scratch, neighbor_slots);
             cell_sub.add_knn(t_knn.elapsed());
             knn_stage = crate::knn_clipping::timing::KnnCellStage::Restart(next_k);
 
             let t_clip = crate::knn_clipping::timing::Timer::start();
-            for (pos, &neighbor_idx) in neighbors.iter().enumerate() {
+            let grid = knn.grid();
+            let point_indices = grid.point_indices();
+            for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
+                let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
                 if builder.has_neighbor(neighbor_idx) {
                     continue;
                 }
                 let neighbor = points[neighbor_idx];
-                if builder.clip(neighbor_idx, neighbor).is_err() {
+                if builder
+                    .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
+                    .is_err()
+                {
                     break;
                 }
                 cell_neighbors_processed += 1;
@@ -430,7 +460,8 @@ fn process_cell(
                 if termination.should_check(cell_neighbors_processed)
                     && builder.can_terminate({
                         let mut bound = worst_cos;
-                        for &next in neighbors.iter().skip(pos + 1) {
+                        for &next_slot in neighbor_slots.iter().skip(pos + 1) {
+                            let next = point_indices[next_slot as usize] as usize;
                             if next != i {
                                 bound = points[i].dot(points[next]);
                                 break;
@@ -451,9 +482,12 @@ fn process_cell(
             // Conservative bound on unseen: the k-th neighbor dot.
             // (kNN results are sorted by distance; for unit vectors, distance order
             // matches dot order.)
-            let kth_dot = neighbors
+            let kth_dot = neighbor_slots
                 .last()
-                .map(|&j| points[i].dot(points[j]))
+                .map(|&slot| {
+                    let j = point_indices[slot as usize] as usize;
+                    points[i].dot(points[j])
+                })
                 .unwrap_or(worst_cos);
             if builder.can_terminate(kth_dot) {
                 terminated = true;
@@ -534,8 +568,8 @@ fn process_cell(
     // Phase 4: Extract vertices with triplet keys
     let t_cert = crate::knn_clipping::timing::Timer::start();
     builder
-        .to_vertex_data_with_edge_neighbors_into(cell_vertices, edge_neighbors)
-        .expect("to_vertex_data_with_edge_neighbors_into failed after bounded check");
+        .to_vertex_data_with_edge_neighbor_slots_into(cell_vertices, edge_neighbor_slots)
+        .expect("to_vertex_data_with_edge_neighbor_slots_into failed after bounded check");
     cell_sub.add_cert(t_cert.elapsed());
 
     let cell_idx = i as u32;
@@ -544,7 +578,8 @@ fn process_cell(
         cell_idx,
         local,
         cell_vertices,
-        edge_neighbors,
+        edge_neighbor_slots,
+        knn,
         assignment,
         shard,
     );

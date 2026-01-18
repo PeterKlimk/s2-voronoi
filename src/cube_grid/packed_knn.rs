@@ -397,10 +397,11 @@ pub fn packed_knn_cell_stream(
                     let query_idx = queries[qi];
                     while mask_bits != 0 {
                         let lane = mask_bits.trailing_zeros() as usize;
-                        let cand_global = grid.point_indices[center_soa_start + i + lane];
+                        let slot = (center_soa_start + i + lane) as u32;
+                        let cand_global = grid.point_indices[slot as usize];
                         if cand_global != query_idx {
                             let dot = dots_arr[lane];
-                            push_topk(qi, make_desc_key(dot, cand_global));
+                            push_topk(qi, make_desc_key(dot, slot));
                         }
                         mask_bits &= mask_bits - 1;
                     }
@@ -413,7 +414,8 @@ pub fn packed_knn_cell_stream(
             let cx = xs[i];
             let cy = ys[i];
             let cz = zs[i];
-            let cand_global = grid.point_indices[center_soa_start + i];
+            let slot = (center_soa_start + i) as u32;
+            let cand_global = grid.point_indices[slot as usize];
             for qi in 0..num_queries {
                 if cand_global == queries[qi] {
                     continue;
@@ -421,7 +423,7 @@ pub fn packed_knn_cell_stream(
                 let dot =
                     cx * scratch.query_x[qi] + cy * scratch.query_y[qi] + cz * scratch.query_z[qi];
                 if dot > scratch.security_thresholds[qi] {
-                    push_topk(qi, make_desc_key(dot, cand_global));
+                    push_topk(qi, make_desc_key(dot, slot));
                 }
             }
         }
@@ -456,10 +458,11 @@ pub fn packed_knn_cell_stream(
                         let query_idx = queries[qi];
                         while mask_bits != 0 {
                             let lane = mask_bits.trailing_zeros() as usize;
-                            let cand_global = grid.point_indices[soa_start + i + lane];
+                            let slot = (soa_start + i + lane) as u32;
+                            let cand_global = grid.point_indices[slot as usize];
                             if cand_global != query_idx {
                                 let dot = dots_arr[lane];
-                                push_topk(qi, make_desc_key(dot, cand_global));
+                                push_topk(qi, make_desc_key(dot, slot));
                             }
                             mask_bits &= mask_bits - 1;
                         }
@@ -472,7 +475,8 @@ pub fn packed_knn_cell_stream(
                 let cx = xs[i];
                 let cy = ys[i];
                 let cz = zs[i];
-                let cand_global = grid.point_indices[soa_start + i];
+                let slot = (soa_start + i) as u32;
+                let cand_global = grid.point_indices[slot as usize];
                 for qi in 0..num_queries {
                     if cand_global == queries[qi] {
                         continue;
@@ -481,7 +485,7 @@ pub fn packed_knn_cell_stream(
                         + cy * scratch.query_y[qi]
                         + cz * scratch.query_z[qi];
                     if dot > scratch.security_thresholds[qi] {
-                        push_topk(qi, make_desc_key(dot, cand_global));
+                        push_topk(qi, make_desc_key(dot, slot));
                     }
                 }
             }
@@ -560,11 +564,12 @@ pub fn packed_knn_cell_stream(
                 let query_idx = queries[qi];
                 while mask_bits != 0 {
                     let lane = mask_bits.trailing_zeros() as usize;
-                    let cand_global = grid.point_indices[center_soa_start + i + lane];
+                    let slot = (center_soa_start + i + lane) as u32;
+                    let cand_global = grid.point_indices[slot as usize];
                     if cand_global != query_idx {
                         let dot = dots_arr[lane];
                         let slab_idx = qi * stride + scratch.lens[qi];
-                        scratch.keys_slab[slab_idx].write(make_desc_key(dot, cand_global));
+                        scratch.keys_slab[slab_idx].write(make_desc_key(dot, slot));
                         scratch.lens[qi] += 1;
                         scratch.min_center_dot[qi] = scratch.min_center_dot[qi].min(dot);
                     }
@@ -579,7 +584,8 @@ pub fn packed_knn_cell_stream(
         let cx = xs[i];
         let cy = ys[i];
         let cz = zs[i];
-        let cand_global = grid.point_indices[center_soa_start + i];
+        let slot = (center_soa_start + i) as u32;
+        let cand_global = grid.point_indices[slot as usize];
         for qi in 0..num_queries {
             if cand_global == queries[qi] {
                 continue;
@@ -588,7 +594,7 @@ pub fn packed_knn_cell_stream(
                 cx * scratch.query_x[qi] + cy * scratch.query_y[qi] + cz * scratch.query_z[qi];
             if dot > scratch.security_thresholds[qi] {
                 let slab_idx = qi * stride + scratch.lens[qi];
-                scratch.keys_slab[slab_idx].write(make_desc_key(dot, cand_global));
+                scratch.keys_slab[slab_idx].write(make_desc_key(dot, slot));
                 scratch.lens[qi] += 1;
                 scratch.min_center_dot[qi] = scratch.min_center_dot[qi].min(dot);
             }
@@ -641,11 +647,12 @@ pub fn packed_knn_cell_stream(
                     let query_idx = queries[qi];
                     while mask_bits != 0 {
                         let lane = mask_bits.trailing_zeros() as usize;
-                        let cand_global = grid.point_indices[soa_start + i + lane];
+                        let slot = (soa_start + i + lane) as u32;
+                        let cand_global = grid.point_indices[slot as usize];
                         if cand_global != query_idx {
                             let dot = dots_arr[lane];
                             let slab_idx = qi * stride + scratch.lens[qi];
-                            scratch.keys_slab[slab_idx].write(make_desc_key(dot, cand_global));
+                            scratch.keys_slab[slab_idx].write(make_desc_key(dot, slot));
                             scratch.lens[qi] += 1;
                         }
                         mask_bits &= mask_bits - 1;
@@ -659,7 +666,8 @@ pub fn packed_knn_cell_stream(
             let cx = xs[i];
             let cy = ys[i];
             let cz = zs[i];
-            let cand_global = grid.point_indices[soa_start + i];
+            let slot = (soa_start + i) as u32;
+            let cand_global = grid.point_indices[slot as usize];
             for qi in 0..num_queries {
                 if cand_global == queries[qi] {
                     continue;
@@ -668,7 +676,7 @@ pub fn packed_knn_cell_stream(
                     cx * scratch.query_x[qi] + cy * scratch.query_y[qi] + cz * scratch.query_z[qi];
                 if dot > scratch.thresholds[qi] {
                     let slab_idx = qi * stride + scratch.lens[qi];
-                    scratch.keys_slab[slab_idx].write(make_desc_key(dot, cand_global));
+                    scratch.keys_slab[slab_idx].write(make_desc_key(dot, slot));
                     scratch.lens[qi] += 1;
                 }
             }
@@ -689,7 +697,8 @@ pub fn packed_knn_cell_stream(
                 let zs = &grid.cell_points_z[soa_start..soa_end];
 
                 for i in 0..range_len {
-                    let cand_global = grid.point_indices[soa_start + i];
+                    let slot = (soa_start + i) as u32;
+                    let cand_global = grid.point_indices[slot as usize];
                     if cand_global == queries[qi] {
                         continue;
                     }
@@ -698,7 +707,7 @@ pub fn packed_knn_cell_stream(
                         + zs[i] * scratch.query_z[qi];
                     if dot > scratch.security_thresholds[qi] {
                         let slab_idx = qi * stride + scratch.lens[qi];
-                        scratch.keys_slab[slab_idx].write(make_desc_key(dot, cand_global));
+                        scratch.keys_slab[slab_idx].write(make_desc_key(dot, slot));
                         scratch.lens[qi] += 1;
                     }
                 }
