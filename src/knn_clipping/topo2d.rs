@@ -202,13 +202,45 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
 
     // Explicit loop helps the compiler vectorize the dist calculation
     // loading from separate us/vs arrays.
-    for i in 0..n {
+    // Explicit loop with chunking to force auto-vectorization.
+    // We process 4 items at a time.
+    let mut i = 0;
+    while i + 3 < n {
+        // Load 4 values (compiler should turn this into packed loads)
+        let u0 = poly.us[i];
+        let v0 = poly.vs[i];
+        let u1 = poly.us[i + 1];
+        let v1 = poly.vs[i + 1];
+        let u2 = poly.us[i + 2];
+        let v2 = poly.vs[i + 2];
+        let u3 = poly.us[i + 3];
+        let v3 = poly.vs[i + 3];
+
+        // Compute distances
+        let d0 = hp.signed_dist(u0, v0);
+        let d1 = hp.signed_dist(u1, v1);
+        let d2 = hp.signed_dist(u2, v2);
+        let d3 = hp.signed_dist(u3, v3);
+
+        // Map to bits (compiler should use comparison + movemask)
+        let b0 = if d0 >= neg_eps { 1u64 } else { 0 };
+        let b1 = if d1 >= neg_eps { 2u64 } else { 0 };
+        let b2 = if d2 >= neg_eps { 4u64 } else { 0 };
+        let b3 = if d3 >= neg_eps { 8u64 } else { 0 };
+
+        mask |= (b0 | b1 | b2 | b3) << i;
+        i += 4;
+    }
+
+    // Handle remaining items (branchless)
+    while i < n {
         let u = poly.us[i];
         let v = poly.vs[i];
         let d = hp.signed_dist(u, v);
-        if d >= neg_eps {
-            mask |= 1 << i;
-        }
+        // Branchless set bit
+        let bit = if d >= neg_eps { 1u64 } else { 0 };
+        mask |= bit << i;
+        i += 1;
     }
 
     let inside_count = mask.count_ones() as usize;
