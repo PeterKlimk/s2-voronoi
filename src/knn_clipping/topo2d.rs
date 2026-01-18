@@ -12,7 +12,6 @@
 //! for the polygon buffer, double-buffer swap pattern.
 
 use glam::{DVec3, Vec3};
-use std::simd::{cmp::SimdPartialOrd, f64x4};
 
 use super::cell_builder::{CellFailure, VertexData, VertexKey};
 
@@ -207,43 +206,21 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
     // Explicit loop with chunking to force auto-vectorization.
     // Explicit loop helps the compiler vectorize the dist calculation
     // loading from separate us/vs arrays.
-    // Explicit loop with data parallelism using portable SIMD.
-    // We process 4 items at a time using 256-bit AVX vectors (f64x4).
-    let a_vec = f64x4::splat(hp.a);
-    let b_vec = f64x4::splat(hp.b);
-    let c_vec = f64x4::splat(hp.c);
-    let neg_eps_vec = f64x4::splat(neg_eps);
-
+    // Scalar branchless loop for mask generation.
+    // For small N (avg 6), SIMD setup overhead proves too costly.
+    // SoA layout is still used for efficient loading.
     let mut i = 0;
-    while i + 3 < n {
-        // Load packed vectors (unaligned loads)
-        // SAFETY: i + 3 < n <= MAX_POLY_VERTICES ensures access is within bounds.
-        // We use from_slice which handles unaligned pointers correctly.
-        let u_vec = f64x4::from_slice(&poly.us[i..i + 4]);
-        let v_vec = f64x4::from_slice(&poly.vs[i..i + 4]);
-
-        // Compute 4 distances: d = a*u + b*v + c
-        // Note: fma is available if the target feature is enabled, otherwise standard ops.
-        // We emulate a.mul_add(u, b.mul_add(v, c)) -> a*u + (b*v + c)
-        let d_vec = a_vec * u_vec + (b_vec * v_vec + c_vec);
-
-        // Comparison -> mask
-        let mask_vec = d_vec.simd_ge(neg_eps_vec);
-        // Extract 4 bits
-        let bitmask = mask_vec.to_bitmask();
-
-        mask |= bitmask << i;
-        i += 4;
-    }
-
-    // Handle remaining items (branchless)
     while i < n {
-        let u = poly.us[i];
-        let v = poly.vs[i];
-        let d = hp.signed_dist(u, v);
-        // Branchless set bit
-        let bit = if d >= neg_eps { 1u64 } else { 0 };
-        mask |= bit << i;
+        // SAFETY: i < n <= MAX_POLY_VERTICES
+        unsafe {
+            let u = *poly.us.get_unchecked(i);
+            let v = *poly.vs.get_unchecked(i);
+            let d = hp.signed_dist(u, v);
+
+            // Branchless bit set: if d >= neg_eps { 1 } else { 0 }
+            let bit = if d >= neg_eps { 1u64 } else { 0 };
+            mask |= bit << i;
+        }
         i += 1;
     }
 
