@@ -143,17 +143,65 @@ pub(super) fn assemble_sharded_live_dedup(
         total_vertices += shard.output.vertices.len();
     }
 
-    let mut all_vertices: Vec<Vec3> = Vec::with_capacity(total_vertices);
-    let mut all_vertex_keys: Vec<VertexKey> = Vec::with_capacity(total_vertices);
-    for shard in &finals {
-        debug_assert_eq!(
-            shard.output.vertices.len(),
-            shard.output.vertex_keys.len(),
-            "vertex keys out of sync with vertex positions"
-        );
-        all_vertices.extend_from_slice(&shard.output.vertices);
-        all_vertex_keys.extend_from_slice(&shard.output.vertex_keys);
-    }
+    #[cfg(feature = "parallel")]
+    let (all_vertices, all_vertex_keys) = {
+        let mut all_vertices = Vec::<Vec3>::with_capacity(total_vertices);
+        let mut all_vertex_keys = Vec::<VertexKey>::with_capacity(total_vertices);
+
+        // Safety: We will write to every element in the parallel loop below.
+        unsafe {
+            all_vertices.set_len(total_vertices);
+            all_vertex_keys.set_len(total_vertices);
+        }
+
+        let vertices_ptr = all_vertices.as_mut_ptr() as usize;
+        let keys_ptr = all_vertex_keys.as_mut_ptr() as usize;
+
+        finals
+            .par_iter()
+            .zip(vertex_offsets.par_iter())
+            .for_each(|(shard, &offset)| {
+                let count = shard.output.vertices.len();
+                debug_assert_eq!(
+                    count,
+                    shard.output.vertex_keys.len(),
+                    "vertex keys out of sync with vertex positions"
+                );
+
+                if count > 0 {
+                    let offset = offset as usize;
+                    unsafe {
+                        let v_dst = (vertices_ptr as *mut Vec3).add(offset);
+                        std::ptr::copy_nonoverlapping(shard.output.vertices.as_ptr(), v_dst, count);
+
+                        let k_dst = (keys_ptr as *mut VertexKey).add(offset);
+                        std::ptr::copy_nonoverlapping(
+                            shard.output.vertex_keys.as_ptr(),
+                            k_dst,
+                            count,
+                        );
+                    }
+                }
+            });
+
+        (all_vertices, all_vertex_keys)
+    };
+
+    #[cfg(not(feature = "parallel"))]
+    let (all_vertices, all_vertex_keys) = {
+        let mut all_vertices = Vec::with_capacity(total_vertices);
+        let mut all_vertex_keys = Vec::with_capacity(total_vertices);
+        for shard in &finals {
+            debug_assert_eq!(
+                shard.output.vertices.len(),
+                shard.output.vertex_keys.len(),
+                "vertex keys out of sync with vertex positions"
+            );
+            all_vertices.extend_from_slice(&shard.output.vertices);
+            all_vertex_keys.extend_from_slice(&shard.output.vertex_keys);
+        }
+        (all_vertices, all_vertex_keys)
+    };
 
     let num_cells = data.assignment.generator_bin.len();
     #[allow(unused_variables)]
