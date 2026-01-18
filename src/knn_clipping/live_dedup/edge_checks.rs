@@ -145,7 +145,7 @@ pub(super) fn collect_and_resolve_cell_edges(
         }
 
         // Derive global index from propagated array (sequential access)
-        let neighbor = edge_neighbor_globals[i] as u32;
+        let neighbor = edge_neighbor_globals[i];
         if neighbor == cell_idx {
             curr_key = next_key;
             continue;

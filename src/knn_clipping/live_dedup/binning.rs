@@ -147,24 +147,23 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
             .any(|&l| l == LocalId::from(u32::MAX)),
         "unassigned global_to_local entries"
     );
-    debug_assert!(
-        !gen_map.iter().any(|&m| m == u32::MAX),
-        "unassigned gen_map entries"
-    );
+    debug_assert!(!gen_map.contains(&u32::MAX), "unassigned gen_map entries");
 
     // Build slot_gen_map: iterate cells in order, write packed (bin, local) at each slot position.
     // Slots are the SOA indices: cell_offsets[cell]..cell_offsets[cell+1].
     for cell in 0..num_cells {
         let cell_start = grid.cell_offsets()[cell] as usize;
         let cell_end = grid.cell_offsets()[cell + 1] as usize;
-        for slot in cell_start..cell_end {
-            let g = grid.point_indices()[slot] as usize;
-            slot_gen_map[slot] = gen_map[g];
+        for (slot_val, &g) in slot_gen_map[cell_start..cell_end]
+            .iter_mut()
+            .zip(&grid.point_indices()[cell_start..cell_end])
+        {
+            *slot_val = gen_map[g as usize];
         }
     }
 
     debug_assert!(
-        !slot_gen_map.iter().any(|&m| m == u32::MAX),
+        !slot_gen_map.contains(&u32::MAX),
         "unassigned slot_gen_map entries"
     );
 

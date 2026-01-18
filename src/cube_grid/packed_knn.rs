@@ -753,8 +753,6 @@ pub fn packed_knn_cell_stream(
     PackedKnnCellStatus::Ok
 }
 
-/// PackedV4 batched k-NN (fast path, no stats instrumentation).
-
 #[inline(always)]
 fn f32_to_ordered_u32(val: f32) -> u32 {
     let b = val.to_bits();
