@@ -111,7 +111,7 @@ pub(super) fn collect_and_resolve_cell_edges(
     }
     let local_u32 = local.as_u32();
 
-    // Take incoming checks (now returns a Vec instead of linked list head)
+    // Take incoming checks.
     let incoming_checks = shard.dedup.take_edge_checks(local);
     let incoming_count = incoming_checks.len();
 
@@ -133,14 +133,9 @@ pub(super) fn collect_and_resolve_cell_edges(
     // Process all edges
     for i in 0..n {
         let j = if i + 1 == n { 0 } else { i + 1 };
-        // let key_i = cell_vertices[i].0; // Replaced by curr_key
         let next_key = cell_vertices[j].0;
         let key_i = curr_key;
         let key_j = next_key;
-
-        // Prepare next iteration
-        // Note: We need to set curr_key = next_key at the end,
-        // but we can borrow `next_key` for `key_j` here validly.
 
         let slot = edge_neighbor_slots[i];
 
@@ -274,6 +269,11 @@ pub(super) fn collect_and_resolve_cell_edges(
     }
 }
 
+/// Matches edge checks across shard boundaries.
+///
+/// Since cross-bin edges are emitted twice (once by each bin), we sort all overflow
+/// records and match them by edge key. This allows propagating vertex indices
+/// between bins without global communication during the main clipping phase.
 pub(super) fn resolve_edge_check_overflow(
     shards: &mut [ShardState],
     edge_check_overflow: &mut Vec<EdgeCheckOverflow>,

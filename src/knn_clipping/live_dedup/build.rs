@@ -164,7 +164,7 @@ fn process_cell(
     builder.reset(i, points[i]);
     neighbor_slots.clear();
 
-    // ... (skipping unchanged code)
+    // === Phase 1: Initialization ===
 
     let cell_start = shard.output.cell_indices.len() as u32;
     shard.output.set_cell_start(local, cell_start);
@@ -188,6 +188,7 @@ fn process_cell(
     let mut packed_security = 0.0f32;
     let mut packed_k_local = 0usize;
 
+    // === Phase 2: Packed kNN Seeds ===
     if let Some(seed) = packed {
         did_packed = true;
         packed_count = seed.count;
@@ -256,6 +257,7 @@ fn process_cell(
         }
     }
 
+    // === Phase 3: Resumable kNN Scan ===
     let resume_k = crate::knn_clipping::KNN_RESUME_K.min(max_neighbors);
     if !terminated && !knn_exhausted && !builder.is_failed() && resume_k > 0 {
         used_knn = true;
@@ -507,6 +509,7 @@ fn process_cell(
         }
     }
 
+    // === Phase 4: Full Scan Fallback ===
     // Full scan fallback if cell is not bounded after kNN
     // With Topo2DBuilder, we just need to keep adding neighbors until bounded
     if !builder.is_bounded() && !builder.is_failed() {
@@ -568,7 +571,7 @@ fn process_cell(
     };
     cell_sub.add_cell_stage(knn_stage, knn_exhausted, cell_neighbors_processed);
 
-    // Phase 4: Extract vertices with triplet keys
+    // === Phase 5: Output Extraction ===
     let t_cert = crate::knn_clipping::timing::Timer::start();
     builder
         .to_vertex_data_full(cell_vertices, edge_neighbor_globals, edge_neighbor_slots)
@@ -716,6 +719,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                     if packed_k > 0 {
                         let queries = &packed_queries_all[group_start..cursor];
 
+                        // Grouped queries by cell to improve cache locality during kNN.
                         // NOTE: `packed_knn_cell_stream` invokes the callback per query.
                         // The callback builds the Voronoi cell and is separately timed (clipping,
                         // certification, key_dedup, and any fallback knn work). If we time the whole

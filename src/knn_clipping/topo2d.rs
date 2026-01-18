@@ -144,8 +144,11 @@ impl PolyBuffer {
 
 /// Orthonormal tangent basis for gnomonic projection.
 pub struct TangentBasis {
+    /// First tangent vector in the generator's tangent plane.
     pub t1: DVec3,
+    /// Second tangent vector in the generator's tangent plane.
     pub t2: DVec3,
+    /// The generator unit vector itself (normal to the tangent plane).
     pub g: DVec3,
 }
 
@@ -193,47 +196,49 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
         return ClipResult::Changed;
     }
 
-    // Pass 1: classify vertices using bitset (autovectorized)
+    // Pass 1: classify vertices using bitset (autovectorized).
     let neg_eps = -hp.eps;
+
+    let us = poly.us.as_ptr();
+    let vs = poly.vs.as_ptr();
+
     // We use a u64 mask. If MAX_POLY_VERTICES > 64, this needs u128 or [u64; N].
     // Current MAX is 64, so u64 is sufficient.
     debug_assert!(n <= 64, "Polygon too large for u64 bitmask");
-    let mut mask = 0u64;
 
-    // Explicit loop helps the compiler vectorize the dist calculation
-    // loading from separate us/vs arrays.
-    // Explicit loop with chunking to force auto-vectorization.
-    // Scalar branchless loop for mask generation.
-    // For small N (avg 6), SIMD setup overhead proves too costly.
-    // SoA layout is still used for efficient loading.
-    let mut i = 0;
-    while i < n {
-        // SAFETY: i < n <= MAX_POLY_VERTICES
-        unsafe {
-            let u = *poly.us.get_unchecked(i);
-            let v = *poly.vs.get_unchecked(i);
+    let mut mask = 0u64;
+    let full_mask: u64 = if n == 64 { !0u64 } else { (1u64 << n) - 1 };
+
+    // SAFETY: i < n <= MAX_POLY_VERTICES
+    unsafe {
+        for i in 0..n {
+            let u = *us.add(i);
+            let v = *vs.add(i);
             let d = hp.signed_dist(u, v);
 
-            // Branchless bit set: if d >= neg_eps { 1 } else { 0 }
-            let bit = if d >= neg_eps { 1u64 } else { 0 };
-            mask |= bit << i;
+            // typically compiles to branchless setcc + shift/or
+            mask |= (u64::from(d >= neg_eps)) << i;
         }
-        i += 1;
-    }
-
-    let inside_count = mask.count_ones() as usize;
-
-    // Fast path: All inside
-    if inside_count == n {
-        return ClipResult::Unchanged;
     }
 
     // Fast path: All outside
-    if inside_count == 0 {
+    if mask == 0 {
         out.len = 0;
         out.max_r2 = 0.0;
         out.has_bounding_ref = false;
         return ClipResult::Changed;
+    }
+
+    // Fast path: All inside
+    if mask == full_mask {
+        return ClipResult::Unchanged;
+    }
+
+    // Only now do we need the count
+    let inside_count = mask.count_ones() as usize;
+
+    if inside_count + 2 > MAX_POLY_VERTICES {
+        return ClipResult::TooManyVertices;
     }
 
     // Mixed case: Find transitions.
@@ -285,20 +290,28 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
     let (entry_idx, entry_next_idx, entry_d0, entry_d1) = calc_transition(entry_next);
     let (exit_idx, exit_next_idx, exit_d0, exit_d1) = calc_transition(exit_next);
 
-    if inside_count + 2 > MAX_POLY_VERTICES {
-        return ClipResult::TooManyVertices;
-    }
-
     // Compute intersection points
     let t_entry = entry_d0 / (entry_d0 - entry_d1);
-    let entry_u = poly.us[entry_idx] + t_entry * (poly.us[entry_next_idx] - poly.us[entry_idx]);
-    let entry_v = poly.vs[entry_idx] + t_entry * (poly.vs[entry_next_idx] - poly.vs[entry_idx]);
+    let entry_u = t_entry.mul_add(
+        poly.us[entry_next_idx] - poly.us[entry_idx],
+        poly.us[entry_idx],
+    );
+    let entry_v = t_entry.mul_add(
+        poly.vs[entry_next_idx] - poly.vs[entry_idx],
+        poly.vs[entry_idx],
+    );
     let entry_pt = (entry_u, entry_v);
     let entry_edge_plane = poly.edge_planes[entry_idx];
 
     let t_exit = exit_d0 / (exit_d0 - exit_d1);
-    let exit_u = poly.us[exit_idx] + t_exit * (poly.us[exit_next_idx] - poly.us[exit_idx]);
-    let exit_v = poly.vs[exit_idx] + t_exit * (poly.vs[exit_next_idx] - poly.vs[exit_idx]);
+    let exit_u = t_exit.mul_add(
+        poly.us[exit_next_idx] - poly.us[exit_idx],
+        poly.us[exit_idx],
+    );
+    let exit_v = t_exit.mul_add(
+        poly.vs[exit_next_idx] - poly.vs[exit_idx],
+        poly.vs[exit_idx],
+    );
     let exit_pt = (exit_u, exit_v);
     let exit_edge_plane = poly.edge_planes[exit_idx];
 
@@ -362,7 +375,7 @@ fn build_output<const TRACK_BOUNDING: bool>(
 
     #[inline(always)]
     fn r2_of(v: (f64, f64)) -> f64 {
-        v.0 * v.0 + v.1 * v.1
+        v.0.mul_add(v.0, v.1 * v.1)
     }
 
     let mut max_r2 = 0.0f64;
@@ -436,7 +449,7 @@ fn build_output<const TRACK_BOUNDING: bool>(
 
 /// Incremental 2D topology builder for spherical Voronoi cells.
 ///
-/// Simpler algorithm that avoids O(p³) triplet seeding.
+/// Uses gnomonic projection to avoid expensive 3D triplet seeding.
 pub struct Topo2DBuilder {
     generator_idx: usize,
     generator: DVec3,
@@ -541,7 +554,7 @@ impl Topo2DBuilder {
         // For f32-normalized inputs, ε ≈ O(1e-7), so Taylor error is O(ε²) ≈ 1e-15.
         // If ε is large, the "neighbor was normalized" invariant is broken upstream.
         let len_sq = n_raw.length_squared();
-        let scale = 0.5 * (len_sq + 1.0);
+        let scale = len_sq.mul_add(0.5, 0.5);
 
         let g = self.generator;
         let normal_unnorm = DVec3::new(
@@ -647,8 +660,8 @@ impl Topo2DBuilder {
 
         // Same bound as the legacy termination logic: 2 * max_vertex_angle
         let sin_theta = (1.0 - min_cos * min_cos).max(0.0).sqrt();
-        let cos_theta_pad = min_cos * self.term_cos_pad - sin_theta * self.term_sin_pad;
-        let cos_2max = 2.0 * cos_theta_pad * cos_theta_pad - 1.0;
+        let cos_theta_pad = min_cos.mul_add(self.term_cos_pad, -sin_theta * self.term_sin_pad);
+        let cos_2max = (2.0 * cos_theta_pad).mul_add(cos_theta_pad, -1.0);
         let threshold = cos_2max - 3.0 * f32::EPSILON as f64;
 
         (max_unseen_dot_bound as f64) < threshold
@@ -714,13 +727,18 @@ impl Topo2DBuilder {
             let (plane_a, plane_b) = poly.vertex_planes[i];
 
             // Compute 3D vertex position from gnomonic (u, v).
-            let dir = self.basis.g + self.basis.t1 * u + self.basis.t2 * v;
+            let dir = DVec3::new(
+                u.mul_add(self.basis.t1.x, v.mul_add(self.basis.t2.x, self.basis.g.x)),
+                u.mul_add(self.basis.t1.y, v.mul_add(self.basis.t2.y, self.basis.g.y)),
+                u.mul_add(self.basis.t1.z, v.mul_add(self.basis.t2.z, self.basis.g.z)),
+            );
             // Check len² before sqrt to decouple branch from sqrt latency.
-            // Use scalar recip + packed mul instead of packed div (vmulpd >> vdivpd).
+            // (1e-28 corresponds to r ≈ 1e14, i.e., ~90° from generator).
             let len2 = dir.length_squared();
             if len2 < 1e-28 {
                 return Err(CellFailure::NoValidSeed);
             }
+            // Use scalar recip + packed mul instead of packed div for lower latency.
             let inv_len = len2.sqrt().recip();
             let v_pos = dir * inv_len;
             let pos = Vec3::new(v_pos.x as f32, v_pos.y as f32, v_pos.z as f32);
