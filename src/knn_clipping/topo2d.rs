@@ -668,15 +668,14 @@ impl Topo2DBuilder {
 
     /// Convert to vertex data, also returning the edge neighbor for each vertex->next edge.
 
-    /// Convert to vertex data, returning edge neighbor slots (SOA indices) instead of globals.
-    ///
-    /// The slots can be used with `slot_gen_map` for cache-friendly (bin, local) lookups.
-    pub fn to_vertex_data_with_edge_neighbor_slots_into(
+    /// Convert to vertex data, returning both global neighbor indices and slots.
+    pub fn to_vertex_data_full(
         &self,
         out: &mut Vec<VertexData>,
+        edge_neighbors: &mut Vec<u32>,
         edge_neighbor_slots: &mut Vec<u32>,
     ) -> Result<(), CellFailure> {
-        self.to_vertex_data_impl(out, None, Some(edge_neighbor_slots))
+        self.to_vertex_data_impl(out, Some(edge_neighbors), Some(edge_neighbor_slots))
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]

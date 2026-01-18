@@ -83,7 +83,7 @@ pub(super) fn collect_and_resolve_cell_edges(
     local: LocalId,
     cell_vertices: &[(VertexKey, Vec3)],
     edge_neighbor_slots: &[u32],
-    point_indices: &[u32],
+    edge_neighbor_globals: &[u32],
     assignment: &BinAssignment,
     shard: &mut ShardState,
     vertex_indices: &mut [u32],
@@ -95,6 +95,11 @@ pub(super) fn collect_and_resolve_cell_edges(
         edge_neighbor_slots.len(),
         n,
         "edge neighbor slot data out of sync"
+    );
+    debug_assert_eq!(
+        edge_neighbor_globals.len(),
+        n,
+        "edge neighbor global data out of sync"
     );
     edges_to_later.clear();
     edges_overflow.clear();
@@ -115,6 +120,11 @@ pub(super) fn collect_and_resolve_cell_edges(
 
     // Track which incoming checks we've matched (bitmask, supports up to 64)
     let mut matched: u64 = 0;
+    debug_assert!(incoming_count <= 64, "more than 64 incoming edge checks");
+    debug_assert!(
+        n <= 64,
+        "cell has more than 64 vertices, matched bitmask unsafe"
+    );
 
     // Process all edges
     for i in 0..n {
@@ -127,8 +137,8 @@ pub(super) fn collect_and_resolve_cell_edges(
             continue;
         }
 
-        // Derive global index from slot for edge key packing
-        let neighbor = point_indices[slot as usize];
+        // Derive global index from propagated array (sequential access)
+        let neighbor = edge_neighbor_globals[i] as u32;
         if neighbor == cell_idx {
             continue;
         }

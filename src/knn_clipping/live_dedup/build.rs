@@ -44,7 +44,7 @@ impl EdgeScratch {
         local: LocalId,
         cell_vertices: &[VertexData],
         edge_neighbor_slots: &[u32],
-        knn: &crate::knn_clipping::CubeMapGridKnn,
+        edge_neighbor_globals: &[u32],
         assignment: &super::binning::BinAssignment,
         shard: &mut ShardState,
     ) {
@@ -57,7 +57,7 @@ impl EdgeScratch {
             local,
             cell_vertices,
             edge_neighbor_slots,
-            knn.grid().point_indices(),
+            edge_neighbor_globals,
             assignment,
             shard,
             &mut self.vertex_indices,
@@ -124,6 +124,7 @@ struct CellContext {
     neighbor_slots: Vec<u32>,
     cell_vertices: Vec<VertexData>,
     edge_neighbor_slots: Vec<u32>,
+    edge_neighbor_globals: Vec<u32>,
     edge_scratch: EdgeScratch,
 }
 
@@ -135,6 +136,7 @@ impl CellContext {
             neighbor_slots: Vec::with_capacity(crate::knn_clipping::KNN_RESTART_MAX),
             cell_vertices: Vec::new(),
             edge_neighbor_slots: Vec::new(),
+            edge_neighbor_globals: Vec::new(),
             edge_scratch: EdgeScratch::new(),
         }
     }
@@ -160,10 +162,13 @@ fn process_cell(
     let neighbor_slots = &mut ctx.neighbor_slots;
     let cell_vertices = &mut ctx.cell_vertices;
     let edge_neighbor_slots = &mut ctx.edge_neighbor_slots;
+    let edge_neighbor_globals = &mut ctx.edge_neighbor_globals;
     let edge_scratch = &mut ctx.edge_scratch;
 
     builder.reset(i, points[i]);
     neighbor_slots.clear();
+
+    // ... (skipping unchanged code)
 
     let cell_start = shard.output.cell_indices.len() as u32;
     shard.output.set_cell_start(local, cell_start);
@@ -570,8 +575,8 @@ fn process_cell(
     // Phase 4: Extract vertices with triplet keys
     let t_cert = crate::knn_clipping::timing::Timer::start();
     builder
-        .to_vertex_data_with_edge_neighbor_slots_into(cell_vertices, edge_neighbor_slots)
-        .expect("to_vertex_data_with_edge_neighbor_slots_into failed after bounded check");
+        .to_vertex_data_full(cell_vertices, edge_neighbor_globals, edge_neighbor_slots)
+        .expect("to_vertex_data_full failed after bounded check");
     cell_sub.add_cert(t_cert.elapsed());
 
     let cell_idx = i as u32;
@@ -582,7 +587,7 @@ fn process_cell(
         local,
         cell_vertices,
         edge_neighbor_slots,
-        knn,
+        edge_neighbor_globals,
         assignment,
         shard,
     );
