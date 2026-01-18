@@ -1,4 +1,5 @@
 //! 2D topology builder using gnomonic projection.
+
 //!
 //! Projects spherical half-space constraints to 2D lines in the generator's tangent plane,
 //! performs half-plane intersection to determine the active constraint set and cyclic vertex
@@ -11,6 +12,7 @@
 //! for the polygon buffer, double-buffer swap pattern.
 
 use glam::{DVec3, Vec3};
+use std::simd::{cmp::SimdPartialOrd, f64x4};
 
 use super::cell_builder::{CellFailure, VertexData, VertexKey};
 
@@ -203,33 +205,34 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
     // Explicit loop helps the compiler vectorize the dist calculation
     // loading from separate us/vs arrays.
     // Explicit loop with chunking to force auto-vectorization.
-    // We process 4 items at a time.
+    // Explicit loop helps the compiler vectorize the dist calculation
+    // loading from separate us/vs arrays.
+    // Explicit loop with data parallelism using portable SIMD.
+    // We process 4 items at a time using 256-bit AVX vectors (f64x4).
+    let a_vec = f64x4::splat(hp.a);
+    let b_vec = f64x4::splat(hp.b);
+    let c_vec = f64x4::splat(hp.c);
+    let neg_eps_vec = f64x4::splat(neg_eps);
+
     let mut i = 0;
     while i + 3 < n {
-        // SAFETY: i + 3 < n <= MAX_POLY_VERTICES (64)
-        unsafe {
-            let u0 = *poly.us.get_unchecked(i);
-            let u1 = *poly.us.get_unchecked(i + 1);
-            let u2 = *poly.us.get_unchecked(i + 2);
-            let u3 = *poly.us.get_unchecked(i + 3);
+        // Load packed vectors (unaligned loads)
+        // SAFETY: i + 3 < n <= MAX_POLY_VERTICES ensures access is within bounds.
+        // We use from_slice which handles unaligned pointers correctly.
+        let u_vec = f64x4::from_slice(&poly.us[i..i + 4]);
+        let v_vec = f64x4::from_slice(&poly.vs[i..i + 4]);
 
-            let v0 = *poly.vs.get_unchecked(i);
-            let v1 = *poly.vs.get_unchecked(i + 1);
-            let v2 = *poly.vs.get_unchecked(i + 2);
-            let v3 = *poly.vs.get_unchecked(i + 3);
+        // Compute 4 distances: d = a*u + b*v + c
+        // Note: fma is available if the target feature is enabled, otherwise standard ops.
+        // We emulate a.mul_add(u, b.mul_add(v, c)) -> a*u + (b*v + c)
+        let d_vec = a_vec * u_vec + (b_vec * v_vec + c_vec);
 
-            let d0 = hp.signed_dist(u0, v0);
-            let d1 = hp.signed_dist(u1, v1);
-            let d2 = hp.signed_dist(u2, v2);
-            let d3 = hp.signed_dist(u3, v3);
+        // Comparison -> mask
+        let mask_vec = d_vec.simd_ge(neg_eps_vec);
+        // Extract 4 bits
+        let bitmask = mask_vec.to_bitmask();
 
-            let b0 = if d0 >= neg_eps { 1u64 } else { 0 };
-            let b1 = if d1 >= neg_eps { 2u64 } else { 0 };
-            let b2 = if d2 >= neg_eps { 4u64 } else { 0 };
-            let b3 = if d3 >= neg_eps { 8u64 } else { 0 };
-
-            mask |= (b0 | b1 | b2 | b3) << i;
-        }
+        mask |= bitmask << i;
         i += 4;
     }
 
