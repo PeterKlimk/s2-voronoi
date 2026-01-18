@@ -503,18 +503,28 @@ impl Topo2DBuilder {
             return Err(f);
         }
 
+        debug_assert!(
+            (neighbor.length_squared() - 1.0).abs() < 1e-5,
+            "neighbor not unit-normalized: |N|² = {}",
+            neighbor.length_squared()
+        );
+
         let n_raw = DVec3::new(neighbor.x as f64, neighbor.y as f64, neighbor.z as f64);
 
         // Bisector direction is G - unit(N). Instead of computing |N| via sqrt,
         // use first-order Taylor: |N| = √(1+ε) ≈ 1 + ε/2 where ε = |N|² - 1.
         //
-        // Bisector ≈ G·(1 + ε/2) - N = (G - N) + G·(ε/2)
+        // G*(1 + ε/2) - N = G*scale - N, where scale = 1 + 0.5*(s-1) = 0.5*(s+1)
         //
-        // For f32 inputs, ε ≈ O(1e-7), so Taylor error is O(ε²) ≈ 1e-15.
-        // If ε is large enough for this to matter, the neighbor is nearly
-        // coincident with the generator and clipping is ill-defined anyway.
-        let eps_half = (n_raw.length_squared() - 1.0) * 0.5;
-        let normal_unnorm = (self.generator - n_raw) + self.generator * eps_half;
+        // For f32-normalized inputs, ε ≈ O(1e-7), so Taylor error is O(ε²) ≈ 1e-15.
+        // If ε is large, the "neighbor was normalized" invariant is broken upstream.
+        let len_sq = n_raw.length_squared();
+        let scale = 0.5 * (len_sq + 1.0);
+        let normal_unnorm = DVec3::new(
+            self.generator.x.mul_add(scale, -n_raw.x),
+            self.generator.y.mul_add(scale, -n_raw.y),
+            self.generator.z.mul_add(scale, -n_raw.z),
+        );
 
         let (a, b, c) = self.basis.plane_to_line(normal_unnorm);
         let plane_idx = self.half_planes.len();
