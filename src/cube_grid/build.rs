@@ -85,87 +85,225 @@ impl CubeMapGrid {
             })
             .collect();
 
-        // Count points per cell (sequential - memory-bound, parallelizing adds overhead).
-        let mut cell_counts = vec![0u32; num_cells];
-        for &cell in &point_cells {
-            cell_counts[cell as usize] += 1;
-        }
+        // Step 2, 3, 4: Count, Prefix Sum, Scatter.
+        // These are distinct in implementation between parallel and sequential strategies.
 
-        #[cfg(feature = "timing")]
-        if let Some(timings) = timings.as_deref_mut() {
-            timings.count_cells += t.elapsed();
-        }
+        #[cfg(feature = "parallel")]
+        let (cell_offsets, point_indices, cell_points_x, cell_points_y, cell_points_z) = {
+            let num_threads = rayon::current_num_threads();
+            let chunk_size = ((points.len() + num_threads - 1) / num_threads).max(1);
 
-        // Step 2: Prefix sum to get offsets
-        #[cfg(feature = "timing")]
-        let t = std::time::Instant::now();
-        let mut cell_offsets = Vec::with_capacity(num_cells + 1);
-        cell_offsets.push(0);
-        let mut sum = 0u32;
-        for &count in &cell_counts {
-            sum += count;
-            cell_offsets.push(sum);
-        }
-        #[cfg(feature = "timing")]
-        if let Some(timings) = timings.as_deref_mut() {
-            timings.prefix_sum += t.elapsed();
-        }
+            // 2. Parallel Count: Compute histograms per chunk.
+            let chunk_counts: Vec<Vec<u32>> = point_cells
+                .par_chunks(chunk_size)
+                .map(|chunk| {
+                    let mut counts = vec![0u32; num_cells];
+                    for &cell in chunk {
+                        counts[cell as usize] += 1;
+                    }
+                    counts
+                })
+                .collect();
 
-        // Step 3: Scatter points into cells and build SoA layout (points stored contiguous by cell).
-        //
-        // This is a single pass that avoids an additional gather pass over a random permutation.
-        // Note: We tried a sort-based approach but O(n log n) sort with indirect key lookups
-        // was slower than O(n) random writes (spatial data has locality, modern CPUs have good
-        // write buffers).
-        #[cfg(feature = "timing")]
-        let t = std::time::Instant::now();
-        let n = points.len();
-        debug_assert_eq!(cell_offsets[num_cells] as usize, n, "prefix sum mismatch");
+            #[cfg(feature = "timing")]
+            if let Some(timings) = timings.as_deref_mut() {
+                timings.count_cells += t.elapsed();
+            }
 
-        let mut point_indices = Vec::<u32>::with_capacity(n);
-        let mut cell_points_x = Vec::<f32>::with_capacity(n);
-        let mut cell_points_y = Vec::<f32>::with_capacity(n);
-        let mut cell_points_z = Vec::<f32>::with_capacity(n);
+            #[cfg(feature = "timing")]
+            let t_prefix = std::time::Instant::now();
 
-        let indices_spare = point_indices.spare_capacity_mut();
-        let x_spare = cell_points_x.spare_capacity_mut();
-        let y_spare = cell_points_y.spare_capacity_mut();
-        let z_spare = cell_points_z.spare_capacity_mut();
+            // 3. Prefix Sum: compute global starts for each chunk/cell.
+            // Transpose the perspective: for each cell, sum across chunks.
+            //
+            // We want `chunk_starts[chunk][cell]` to be the global index where that chunk
+            // should start writing points for `cell`.
+            let mut cell_offsets = Vec::with_capacity(num_cells + 1);
+            cell_offsets.push(0);
 
-        let mut cell_cursors = cell_offsets[..num_cells].to_vec();
-        for (i, cell_u32) in point_cells.iter().copied().enumerate() {
-            let cell = cell_u32 as usize;
-            let pos = cell_cursors[cell] as usize;
-            let p = points[i];
+            // We'll reuse the memory structure for the cursors.
+            // chunk_cursors[chunk][cell]
+            let mut chunk_cursors: Vec<Vec<u32>> = vec![vec![0; num_cells]; chunk_counts.len()];
 
-            indices_spare[pos].write(i as u32);
-            x_spare[pos].write(p.x);
-            y_spare[pos].write(p.y);
-            z_spare[pos].write(p.z);
+            let mut global_sum = 0u32;
+            for cell_idx in 0..num_cells {
+                // For this cell, the chunks write sequentially in the global buffer.
+                // chunk 0 writes at global_sum
+                // chunk 1 writes at global_sum + count[0]
+                // ...
+                let mut current_pos = global_sum;
+                for (chunk_idx, counts) in chunk_counts.iter().enumerate() {
+                    let count = counts[cell_idx];
+                    chunk_cursors[chunk_idx][cell_idx] = current_pos;
+                    current_pos += count;
+                }
+                global_sum = current_pos; // This is the end of this cell
+                cell_offsets.push(global_sum);
+            }
 
-            cell_cursors[cell] += 1;
-        }
+            #[cfg(feature = "timing")]
+            if let Some(timings) = timings.as_deref_mut() {
+                timings.prefix_sum += t_prefix.elapsed();
+            }
 
-        debug_assert!(
-            cell_cursors
-                .iter()
-                .zip(cell_offsets.iter().skip(1))
-                .all(|(cursor, offset_end)| cursor == offset_end),
-            "scatter cursors did not reach cell end offsets"
-        );
+            #[cfg(feature = "timing")]
+            let t_scatter = std::time::Instant::now();
 
-        // SAFETY: The prefix-sum scatter visits each `pos` in `0..n` exactly once, so the first
-        // `n` elements of each vec's spare capacity have been fully initialized.
-        unsafe {
-            point_indices.set_len(n);
-            cell_points_x.set_len(n);
-            cell_points_y.set_len(n);
-            cell_points_z.set_len(n);
-        }
-        #[cfg(feature = "timing")]
-        if let Some(timings) = timings.as_deref_mut() {
-            timings.scatter_soa += t.elapsed();
-        }
+            // 4. Parallel Scatter
+            let n = points.len();
+            let mut point_indices = Vec::<u32>::with_capacity(n);
+            let mut cell_points_x = Vec::<f32>::with_capacity(n);
+            let mut cell_points_y = Vec::<f32>::with_capacity(n);
+            let mut cell_points_z = Vec::<f32>::with_capacity(n);
+
+            // Unsafe resize to allow parallel random writes.
+            unsafe {
+                point_indices.set_len(n);
+                cell_points_x.set_len(n);
+                cell_points_y.set_len(n);
+                cell_points_z.set_len(n);
+            }
+
+            let ptr_indices_addr = point_indices.as_mut_ptr() as usize;
+            let ptr_x_addr = cell_points_x.as_mut_ptr() as usize;
+            let ptr_y_addr = cell_points_y.as_mut_ptr() as usize;
+            let ptr_z_addr = cell_points_z.as_mut_ptr() as usize;
+
+            // Let's stick to the `zip` approach but fix the index issue.
+            // We can calculate the start index: zip with `(0..num_chunks)`.
+            points
+                .par_chunks(chunk_size)
+                .zip(point_cells.par_chunks(chunk_size))
+                .zip(chunk_cursors.into_par_iter())
+                .enumerate()
+                .for_each(
+                    move |(chunk_idx, ((points_chunk, cells_chunk), mut cursors))| {
+                        let indices_base = ptr_indices_addr as *mut u32;
+                        let x_base = ptr_x_addr as *mut f32;
+                        let y_base = ptr_y_addr as *mut f32;
+                        let z_base = ptr_z_addr as *mut f32;
+
+                        let global_offset = chunk_idx * chunk_size;
+
+                        unsafe {
+                            for i in 0..points_chunk.len() {
+                                let original_idx = global_offset + i;
+                                let cell = cells_chunk[i] as usize;
+                                let p = points_chunk[i];
+
+                                let pos = cursors[cell] as usize;
+                                // Increment cursor for next point in this cell
+                                cursors[cell] += 1;
+
+                                *indices_base.add(pos) = original_idx as u32;
+                                *x_base.add(pos) = p.x;
+                                *y_base.add(pos) = p.y;
+                                *z_base.add(pos) = p.z;
+                            }
+                        }
+                    },
+                );
+
+            #[cfg(feature = "timing")]
+            if let Some(timings) = timings.as_deref_mut() {
+                timings.scatter_soa += t_scatter.elapsed();
+            }
+
+            (
+                cell_offsets,
+                point_indices,
+                cell_points_x,
+                cell_points_y,
+                cell_points_z,
+            )
+        };
+
+        #[cfg(not(feature = "parallel"))]
+        let (cell_offsets, point_indices, cell_points_x, cell_points_y, cell_points_z) = {
+            // Step 2: Count
+            let mut cell_counts = vec![0u32; num_cells];
+            for &cell in &point_cells {
+                cell_counts[cell as usize] += 1;
+            }
+
+            #[cfg(feature = "timing")]
+            if let Some(timings) = timings.as_deref_mut() {
+                timings.count_cells += t.elapsed();
+            }
+
+            // Step 3: Prefix Sum
+            #[cfg(feature = "timing")]
+            let t = std::time::Instant::now();
+            let mut cell_offsets = Vec::with_capacity(num_cells + 1);
+            cell_offsets.push(0);
+            let mut sum = 0u32;
+            for &count in &cell_counts {
+                sum += count;
+                cell_offsets.push(sum);
+            }
+            #[cfg(feature = "timing")]
+            if let Some(timings) = timings.as_deref_mut() {
+                timings.prefix_sum += t.elapsed();
+            }
+
+            // Step 4: Scatter
+            #[cfg(feature = "timing")]
+            let t = std::time::Instant::now();
+            let n = points.len();
+            debug_assert_eq!(cell_offsets[num_cells] as usize, n, "prefix sum mismatch");
+
+            let mut point_indices = Vec::<u32>::with_capacity(n);
+            let mut cell_points_x = Vec::<f32>::with_capacity(n);
+            let mut cell_points_y = Vec::<f32>::with_capacity(n);
+            let mut cell_points_z = Vec::<f32>::with_capacity(n);
+
+            let indices_spare = point_indices.spare_capacity_mut();
+            let x_spare = cell_points_x.spare_capacity_mut();
+            let y_spare = cell_points_y.spare_capacity_mut();
+            let z_spare = cell_points_z.spare_capacity_mut();
+
+            let mut cell_cursors = cell_offsets[..num_cells].to_vec();
+            for (i, cell_u32) in point_cells.iter().copied().enumerate() {
+                let cell = cell_u32 as usize;
+                let pos = cell_cursors[cell] as usize;
+                let p = points[i];
+
+                indices_spare[pos].write(i as u32);
+                x_spare[pos].write(p.x);
+                y_spare[pos].write(p.y);
+                z_spare[pos].write(p.z);
+
+                cell_cursors[cell] += 1;
+            }
+
+            debug_assert!(
+                cell_cursors
+                    .iter()
+                    .zip(cell_offsets.iter().skip(1))
+                    .all(|(cursor, offset_end)| cursor == offset_end),
+                "scatter cursors did not reach cell end offsets"
+            );
+
+            // SAFETY: The prefix-sum scatter visits each `pos` in `0..n` exactly once
+            unsafe {
+                point_indices.set_len(n);
+                cell_points_x.set_len(n);
+                cell_points_y.set_len(n);
+                cell_points_z.set_len(n);
+            }
+            #[cfg(feature = "timing")]
+            if let Some(timings) = timings.as_deref_mut() {
+                timings.scatter_soa += t.elapsed();
+            }
+
+            (
+                cell_offsets,
+                point_indices,
+                cell_points_x,
+                cell_points_y,
+                cell_points_z,
+            )
+        };
 
         // Step 4: Precompute neighbors and ring-2 cells for each cell
         #[cfg(feature = "timing")]

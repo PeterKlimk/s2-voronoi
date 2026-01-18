@@ -198,14 +198,11 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
     // We use a u64 mask. If MAX_POLY_VERTICES > 64, this needs u128 or [u64; N].
     // Current MAX is 64, so u64 is sufficient.
     debug_assert!(n <= 64, "Polygon too large for u64 bitmask");
-
     let mut mask = 0u64;
 
     // Explicit loop helps the compiler vectorize the dist calculation
     // loading from separate us/vs arrays.
     // Explicit loop with chunking to force auto-vectorization.
-    // Explicit loop helps the compiler vectorize the dist calculation
-    // loading from separate us/vs arrays.
     // Scalar branchless loop for mask generation.
     // For small N (avg 6), SIMD setup overhead proves too costly.
     // SoA layout is still used for efficient loading.
