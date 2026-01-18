@@ -515,7 +515,6 @@ impl Topo2DBuilder {
     /// Add a neighbor and clip the cell, also storing the slot index.
     ///
     /// The slot is the SOA index from packed_knn. Use u32::MAX if not from packed_knn.
-    #[cfg_attr(feature = "profiling", inline(never))]
     pub fn clip_with_slot(
         &mut self,
         neighbor_idx: usize,
@@ -682,7 +681,6 @@ impl Topo2DBuilder {
         self.to_vertex_data_impl(out, Some(edge_neighbors), Some(edge_neighbor_slots))
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     fn to_vertex_data_impl(
         &self,
         out: &mut Vec<VertexData>,

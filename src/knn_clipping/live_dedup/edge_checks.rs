@@ -37,7 +37,6 @@ pub(super) fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> u32 {
 }
 
 impl ShardDedup {
-    #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn push_edge_check(&mut self, local: LocalId, check: EdgeCheck) {
         let local_idx = local.as_usize();
         debug_assert!(
@@ -55,7 +54,6 @@ impl ShardDedup {
         slot.push(check);
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn take_edge_checks(&mut self, local: LocalId) -> Vec<EdgeCheck> {
         let local_idx = local.as_usize();
         debug_assert!(
@@ -65,7 +63,6 @@ impl ShardDedup {
         mem::take(&mut self.edge_checks[local_idx])
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn recycle_edge_checks(&mut self, v: Vec<EdgeCheck>) {
         self.edge_check_pool.push(v);
     }

@@ -27,7 +27,6 @@ struct EdgeScratch {
 }
 
 impl EdgeScratch {
-    #[cfg_attr(feature = "profiling", inline(never))]
     fn new() -> Self {
         Self {
             edges_to_later: Vec::new(),
@@ -36,7 +35,6 @@ impl EdgeScratch {
         }
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     fn collect_and_resolve(
         &mut self,
         cell_idx: u32,
@@ -66,7 +64,6 @@ impl EdgeScratch {
         );
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     fn emit(
         &mut self,
         shard: &mut ShardState,
