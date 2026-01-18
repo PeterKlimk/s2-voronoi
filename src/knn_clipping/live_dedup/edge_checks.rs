@@ -276,7 +276,7 @@ pub(super) fn collect_and_resolve_cell_edges(
 /// between bins without global communication during the main clipping phase.
 pub(super) fn resolve_edge_check_overflow(
     shards: &mut [ShardState],
-    edge_check_overflow: &mut Vec<EdgeCheckOverflow>,
+    edge_check_overflow: &mut [EdgeCheckOverflow],
     bad_edges: &mut Vec<BadEdgeRecord>,
 ) -> (Duration, Duration) {
     let t_edge_sort = Timer::start();

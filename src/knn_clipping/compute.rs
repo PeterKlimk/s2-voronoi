@@ -44,6 +44,8 @@ pub(super) fn compute_voronoi_gpu_style_core(
     // Build cells using sharded live dedup
     let t = Timer::start();
     let sharded = live_dedup::build_cells_sharded_live_dedup(&effective_points, &knn, termination);
+
+    #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]
     tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
 
     let t = Timer::start();
@@ -115,8 +117,10 @@ pub fn compute_voronoi_gpu_style_with_config(
     points: &[Vec3],
     config: &VoronoiConfig,
 ) -> crate::SphericalVoronoi {
-    let mut termination = TerminationConfig::default();
-    termination.max_k_cap = config.termination_max_k;
+    let termination = TerminationConfig {
+        max_k_cap: config.termination_max_k,
+        ..Default::default()
+    };
     compute_voronoi_gpu_style_core(
         points,
         termination,

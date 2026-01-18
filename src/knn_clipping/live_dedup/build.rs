@@ -685,6 +685,11 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                 let grid = knn.grid();
                 let mut packed_scratch = PackedKnnCellScratch::new();
+
+                #[cfg_attr(
+                    not(feature = "timing"),
+                    allow(clippy::default_constructed_unit_structs)
+                )]
                 let mut packed_timings = PackedKnnTimings::default();
 
                 let packed_queries_all: Vec<u32> = my_generators

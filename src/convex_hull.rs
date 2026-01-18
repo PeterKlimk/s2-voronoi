@@ -158,7 +158,7 @@ pub fn compute_voronoi_qhull(points: &[Vec3]) -> SphericalVoronoi {
     let mut cells = Vec::with_capacity(points.len());
     let mut cell_indices: Vec<u32> = Vec::new();
 
-    for point_idx in 0..points.len() {
+    for (point_idx, point) in points.iter().enumerate() {
         let facet_indices = point_to_facets.get(&point_idx).cloned().unwrap_or_default();
         let ordered = order_vertices_ccw(points[point_idx], &facet_indices, &vertices);
 

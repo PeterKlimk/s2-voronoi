@@ -97,11 +97,11 @@ pub fn merge_close_points(points: &[Vec3], threshold: f32) -> MergeResult {
         if a_points.len() >= 2 {
             for i in 0..a_points.len() {
                 let ai = a_points[i] as usize;
-                for j in (i + 1)..a_points.len() {
-                    let aj = a_points[j] as usize;
+                for &aj_u32 in &a_points[(i + 1)..] {
+                    let aj = aj_u32 as usize;
                     let dist_sq = (points[ai] - points[aj]).length_squared();
                     if dist_sq < threshold_sq {
-                        let _ = dsu.union_keep_min(ai as u32, aj as u32);
+                        let _ = dsu.union_keep_min(ai as u32, aj_u32);
                     }
                 }
             }

@@ -257,7 +257,7 @@ fn validate_against_hull(points: &[Vec3], preprocess: bool) {
     let report = s2_voronoi::validation::validate(&s2_diagram);
 
     for i in 0..points.len() {
-        let hull_count = hull.diagram.cell(i).len();
+        let hull_count = hull.cell(i).len();
         let s2_count = s2_diagram.cell(i).len();
 
         if hull_count == s2_count {

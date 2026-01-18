@@ -474,14 +474,24 @@ pub fn packed_knn_cell_stream(
                 let cz = zs[i];
                 let slot = (soa_start + i) as u32;
                 let cand_global = grid.point_indices[slot as usize];
-                for qi in 0..num_queries {
-                    if cand_global == queries[qi] {
+
+                let it = queries
+                    .iter()
+                    .take(num_queries)
+                    .zip(scratch.query_x.iter())
+                    .zip(scratch.query_y.iter())
+                    .zip(scratch.query_z.iter())
+                    .zip(scratch.security_thresholds.iter())
+                    .map(|((((q, qx), qy), qz), thr)| (q, qx, qy, qz, thr));
+
+                for (qi, (q, qx, qy, qz, thr)) in it.enumerate() {
+                    if cand_global == *q {
                         continue;
                     }
-                    let dot = cx * scratch.query_x[qi]
-                        + cy * scratch.query_y[qi]
-                        + cz * scratch.query_z[qi];
-                    if dot > scratch.security_thresholds[qi] {
+
+                    let dot = cx * *qx + cy * *qy + cz * *qz;
+
+                    if dot > *thr {
                         push_topk(qi, make_desc_key(dot, slot));
                     }
                 }
@@ -731,8 +741,11 @@ pub fn packed_knn_cell_stream(
             keys_slice[..k_actual].sort_unstable();
 
             let out_start = qi * k;
-            for i in 0..k_actual {
-                scratch.neighbors[out_start + i] = key_to_idx(keys_slice[i]);
+            for (neighbor, key) in scratch.neighbors[out_start..out_start + k_actual]
+                .iter_mut()
+                .zip(keys_slice.iter())
+            {
+                *neighbor = key_to_idx(*key);
             }
             timings.add_select_sort(t_select.elapsed());
         }

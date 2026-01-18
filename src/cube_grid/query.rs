@@ -274,13 +274,6 @@ impl CubeMapGrid {
         2.0 - 2.0 * max_dot_upper
     }
 
-    /// Scratch-based k-NN query that writes results into `out_indices` (sorted closest-first).
-    ///
-    /// This is the preferred high-throughput API: it avoids per-query allocations.
-
-    /// Non-resumable scratch-based k-NN query optimized for unit vectors:
-    /// maintains an unsorted top-k by dot product and sorts once at the end.
-
     /// Resumable kNN query that returns slots (SOA indices) instead of global indices.
     pub fn find_k_nearest_resumable_slots_into(
         &self,
@@ -303,20 +296,6 @@ impl CubeMapGrid {
             Some(out_slots),
         )
     }
-
-    /// Resume a k-NN query to fetch additional neighbors.
-    ///
-    /// Call this after `find_k_nearest_resumable_into` when you need more neighbors.
-    /// `new_k` should be larger than the previous k but within the original `track_limit`.
-
-    /// Resume a k-NN query and append only the new neighbors to `out_indices`.
-    ///
-    /// `prev_k` is the number of neighbors previously produced into `out_indices` for this
-    /// same scratch/query state. On success, this appends indices for the range
-    /// `prev_k..new_k` (or less if exhausted).
-    ///
-    /// This is an optimization over `resume_k_nearest_into` when the caller wants to process
-    /// only the newly discovered neighbors.
 
     fn bruteforce_fill_impl<P: UnitVec>(
         &self,
@@ -417,8 +396,12 @@ impl CubeMapGrid {
         mut out_slots: Option<&mut Vec<u32>>,
     ) -> KnnStatus {
         let n = points.len();
-        out_indices.as_deref_mut().map(|v| v.clear());
-        out_slots.as_deref_mut().map(|v| v.clear());
+        if let Some(v) = out_indices.as_deref_mut() {
+            v.clear()
+        }
+        if let Some(v) = out_slots.as_deref_mut() {
+            v.clear()
+        }
 
         if k == 0 || n <= 1 {
             return KnnStatus::CanResume;
@@ -439,15 +422,10 @@ impl CubeMapGrid {
         let visited = self.seed_start_cell_impl(points, query, query_idx, start_cell, scratch);
 
         let mut visited = visited;
-        loop {
-            let (bound_dist_sq, _cell) = match scratch.peek_cell() {
-                Some(v) => v,
-                None => break,
-            };
-
+        while let Some((bound_dist_sq, _cell)) = scratch.peek_cell() {
             if scratch.have_k(k) && bound_dist_sq >= scratch.kth_dist_sq(k) {
                 break;
-            }
+            };
 
             let (_, cell) = scratch.pop_cell().expect("cell heap out of sync");
             self.scan_cell_points_impl(points, query, query_idx, cell as usize, scratch);
