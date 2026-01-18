@@ -139,7 +139,6 @@ impl CellContext {
     }
 }
 
-#[cfg_attr(feature = "profiling", inline(never))]
 fn process_cell(
     cell_sub: &mut crate::knn_clipping::timing::CellSubAccum,
     ctx: &mut CellContext,

@@ -63,7 +63,6 @@ impl CubeMapGrid {
         Self::new_impl(points, res, Some(timings))
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     fn new_impl(
         points: &[Vec3],
         res: usize,
@@ -348,7 +347,7 @@ impl CubeMapGrid {
     }
 
     /// Compute 3×3 neighborhood for all cells.
-    #[cfg_attr(feature = "profiling", inline(never))]
+
     fn compute_all_neighbors(res: usize) -> Vec<u32> {
         let num_cells = 6 * res * res;
 
@@ -430,7 +429,6 @@ impl CubeMapGrid {
         neighbors
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     fn compute_ring2(res: usize, neighbors: &[u32]) -> (Vec<[u32; RING2_MAX]>, Vec<u8>) {
         let num_cells = 6 * res * res;
 
@@ -552,7 +550,6 @@ impl CubeMapGrid {
         (ring2, ring2_lens)
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     fn compute_cell_bounds(res: usize) -> (Vec<Vec3>, Vec<f32>, Vec<f32>) {
         let num_cells = 6 * res * res;
 

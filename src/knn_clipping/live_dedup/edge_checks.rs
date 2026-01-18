@@ -73,7 +73,7 @@ impl ShardDedup {
 /// edges_to_later and edges_overflow for the emit phase.
 ///
 /// This eliminates the edges_to_earlier intermediate vec.
-#[cfg_attr(feature = "profiling", inline(never))]
+
 pub(super) fn collect_and_resolve_cell_edges(
     cell_idx: u32,
     bin: BinId,
@@ -274,7 +274,6 @@ pub(super) fn collect_and_resolve_cell_edges(
     }
 }
 
-#[cfg_attr(feature = "profiling", inline(never))]
 pub(super) fn resolve_edge_check_overflow(
     shards: &mut [ShardState],
     edge_check_overflow: &mut Vec<EdgeCheckOverflow>,

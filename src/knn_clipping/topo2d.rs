@@ -183,7 +183,7 @@ enum ClipResult {
 /// - `Unchanged` if all vertices are inside the half-plane. **`out` is not modified.**
 /// - `Changed` if the polygon was clipped (result written to `out`)
 /// - `TooManyVertices` if the result would exceed `MAX_POLY_VERTICES`
-#[cfg_attr(feature = "profiling", inline(never))]
+
 fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
     let n = poly.len;
     if n < 3 {
@@ -507,7 +507,7 @@ impl Topo2DBuilder {
     ///
     /// The caller is responsible for filtering duplicates and near-coincident neighbors.
     /// This method just clips—it doesn't check if the neighbor was already added.
-    #[cfg_attr(feature = "profiling", inline(never))]
+
     pub fn clip(&mut self, neighbor_idx: usize, neighbor: Vec3) -> Result<(), CellFailure> {
         self.clip_with_slot(neighbor_idx, u32::MAX, neighbor)
     }
