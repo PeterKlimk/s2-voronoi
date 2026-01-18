@@ -35,10 +35,12 @@ struct HalfPlane {
 }
 
 impl HalfPlane {
-    #[inline]
     fn new_unnormalized(a: f64, b: f64, c: f64, plane_idx: usize) -> Self {
-        let norm = (a * a + b * b).sqrt();
+        // f32 sqrt is ~2x faster; eps precision doesn't need f64
+        let n2: f64 = a.mul_add(a, b * b);
+        let norm = (n2 as f32).sqrt() as f64;
         let eps = EPS_INSIDE * norm;
+
         HalfPlane {
             a,
             b,
@@ -520,10 +522,12 @@ impl Topo2DBuilder {
         // If ε is large, the "neighbor was normalized" invariant is broken upstream.
         let len_sq = n_raw.length_squared();
         let scale = 0.5 * (len_sq + 1.0);
+
+        let g = self.generator;
         let normal_unnorm = DVec3::new(
-            self.generator.x.mul_add(scale, -n_raw.x),
-            self.generator.y.mul_add(scale, -n_raw.y),
-            self.generator.z.mul_add(scale, -n_raw.z),
+            g.x.mul_add(scale, -n_raw.x),
+            g.y.mul_add(scale, -n_raw.y),
+            g.z.mul_add(scale, -n_raw.z),
         );
 
         let (a, b, c) = self.basis.plane_to_line(normal_unnorm);
