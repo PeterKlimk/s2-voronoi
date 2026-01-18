@@ -90,7 +90,7 @@ impl CubeMapGrid {
         #[cfg(feature = "parallel")]
         let (cell_offsets, point_indices, cell_points_x, cell_points_y, cell_points_z) = {
             let num_threads = rayon::current_num_threads();
-            let chunk_size = ((points.len() + num_threads - 1) / num_threads).max(1);
+            let chunk_size = points.len().div_ceil(num_threads).max(1);
 
             // 2. Parallel Count: Compute histograms per chunk.
             let chunk_counts: Vec<Vec<u32>> = point_cells
@@ -347,7 +347,6 @@ impl CubeMapGrid {
     }
 
     /// Compute 3×3 neighborhood for all cells.
-
     fn compute_all_neighbors(res: usize) -> Vec<u32> {
         let num_cells = 6 * res * res;
 
@@ -594,8 +593,7 @@ impl CubeMapGrid {
         let mut u_planes: Vec<Vec3> = Vec::with_capacity(6 * line_count);
         let mut v_planes: Vec<Vec3> = Vec::with_capacity(6 * line_count);
         for face in 0..6 {
-            for i in 0..=res {
-                let uv = uv_lines[i];
+            for &uv in &uv_lines {
                 u_planes.push(plane_normal_u(face, uv));
                 v_planes.push(plane_normal_v(face, uv));
             }

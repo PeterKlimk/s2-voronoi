@@ -365,7 +365,7 @@ fn diagonal_from_edge_neighbors(center: u32, a: u32, b: u32, res: usize) -> u32 
         if cand == center || cand == a || cand == b {
             continue;
         }
-        if b_edges.iter().any(|&x| x == cand) {
+        if b_edges.contains(&cand) {
             if let Some(prev) = found {
                 if prev != cand {
                     return u32::MAX;

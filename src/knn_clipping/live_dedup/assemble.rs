@@ -64,9 +64,9 @@ pub(super) fn assemble_sharded_live_dedup(
     let mut edge_check_overflow: Vec<EdgeCheckOverflow> = Vec::new();
     let mut deferred_slots: Vec<DeferredSlot> = Vec::new();
     for shard in &mut data.shards {
-        bad_edges.extend(shard.output.bad_edges.drain(..));
-        edge_check_overflow.extend(shard.output.edge_check_overflow.drain(..));
-        deferred_slots.extend(shard.output.deferred.drain(..));
+        bad_edges.append(&mut shard.output.bad_edges);
+        edge_check_overflow.append(&mut shard.output.edge_check_overflow);
+        deferred_slots.append(&mut shard.output.deferred);
     }
 
     let (edge_checks_overflow_sort_time, edge_checks_overflow_match_time) =
@@ -118,7 +118,7 @@ pub(super) fn assemble_sharded_live_dedup(
     #[cfg(debug_assertions)]
     for shard in &data.shards {
         debug_assert!(
-            !shard.output.cell_indices.iter().any(|&x| x == DEFERRED),
+            !shard.output.cell_indices.contains(&DEFERRED),
             "unresolved deferred indices remain after overflow flush"
         );
     }
@@ -337,7 +337,7 @@ pub(super) fn assemble_sharded_live_dedup(
     #[cfg(debug_assertions)]
     {
         debug_assert!(
-            !cell_indices.iter().any(|&x| x == u32::MAX),
+            !cell_indices.contains(&u32::MAX),
             "unwritten cell indices remain after assembly"
         );
         debug_assert!(

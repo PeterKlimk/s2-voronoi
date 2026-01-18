@@ -223,23 +223,22 @@ fn process_cell(
                 let dot = points[i].dot(neighbor);
                 worst_cos = worst_cos.min(dot);
 
-                if builder.is_bounded() {
-                    if termination.should_check(cell_neighbors_processed)
-                        && builder.can_terminate({
-                            let mut bound = worst_cos;
-                            for &next_slot in seed.neighbors.iter().skip(pos + 1) {
-                                let next = point_indices[next_slot as usize] as usize;
-                                if next != i {
-                                    bound = points[i].dot(points[next]);
-                                    break;
-                                }
+                if builder.is_bounded()
+                    && termination.should_check(cell_neighbors_processed)
+                    && builder.can_terminate({
+                        let mut bound = worst_cos;
+                        for &next_slot in seed.neighbors.iter().skip(pos + 1) {
+                            let next = point_indices[next_slot as usize] as usize;
+                            if next != i {
+                                bound = points[i].dot(points[next]);
+                                break;
                             }
-                            bound
-                        })
-                    {
-                        terminated = true;
-                        break;
-                    }
+                        }
+                        bound
+                    })
+                {
+                    terminated = true;
+                    break;
                 }
             }
             cell_sub.add_clip(t_clip.elapsed());
@@ -297,23 +296,22 @@ fn process_cell(
             let dot = points[i].dot(neighbor);
             worst_cos = worst_cos.min(dot);
 
-            if builder.is_bounded() {
-                if termination.should_check(cell_neighbors_processed)
-                    && builder.can_terminate({
-                        let mut bound = worst_cos;
-                        for &next_slot in neighbor_slots.iter().skip(pos + 1) {
-                            let next = point_indices[next_slot as usize] as usize;
-                            if next != i {
-                                bound = points[i].dot(points[next]);
-                                break;
-                            }
+            if builder.is_bounded()
+                && termination.should_check(cell_neighbors_processed)
+                && builder.can_terminate({
+                    let mut bound = worst_cos;
+                    for &next_slot in neighbor_slots.iter().skip(pos + 1) {
+                        let next = point_indices[next_slot as usize] as usize;
+                        if next != i {
+                            bound = points[i].dot(points[next]);
+                            break;
                         }
-                        bound
-                    })
-                {
-                    terminated = true;
-                    break;
-                }
+                    }
+                    bound
+                })
+            {
+                terminated = true;
+                break;
             }
         }
         cell_sub.add_clip(t_clip.elapsed());
@@ -361,23 +359,22 @@ fn process_cell(
                 let dot = points[i].dot(neighbor);
                 worst_cos = worst_cos.min(dot);
 
-                if builder.is_bounded() {
-                    if termination.should_check(cell_neighbors_processed)
-                        && builder.can_terminate({
-                            let mut bound = worst_cos;
-                            for &next_slot in neighbor_slots.iter().skip(pos + 1) {
-                                let next = point_indices[next_slot as usize] as usize;
-                                if next != i {
-                                    bound = points[i].dot(points[next]);
-                                    break;
-                                }
+                if builder.is_bounded()
+                    && termination.should_check(cell_neighbors_processed)
+                    && builder.can_terminate({
+                        let mut bound = worst_cos;
+                        for &next_slot in neighbor_slots.iter().skip(pos + 1) {
+                            let next = point_indices[next_slot as usize] as usize;
+                            if next != i {
+                                bound = points[i].dot(points[next]);
+                                break;
                             }
-                            bound
-                        })
-                    {
-                        terminated = true;
-                        break;
-                    }
+                        }
+                        bound
+                    })
+                {
+                    terminated = true;
+                    break;
                 }
             }
             cell_sub.add_clip(t_clip.elapsed());
@@ -688,7 +685,7 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                 let grid = knn.grid();
                 let mut packed_scratch = PackedKnnCellScratch::new();
-                let mut packed_timings = PackedKnnTimings::default();
+                let mut packed_timings = PackedKnnTimings;
 
                 let packed_queries_all: Vec<u32> = my_generators
                     .iter()

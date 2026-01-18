@@ -87,8 +87,8 @@ impl SphericalVoronoi {
             cells: cells
                 .into_iter()
                 .map(|c| CellData {
-                    start: c.vertex_start as u32,
-                    len: c.vertex_count as u16,
+                    start: c.vertex_start,
+                    len: c.vertex_count,
                 })
                 .collect(),
             cell_indices,

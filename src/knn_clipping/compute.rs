@@ -32,7 +32,7 @@ pub(super) fn compute_voronoi_gpu_style_core(
         (pts, Some(result))
     };
     tb.set_preprocess(t.elapsed());
-    let needs_remap = merge_result.as_ref().map_or(false, |r| r.num_merged > 0);
+    let needs_remap = merge_result.as_ref().is_some_and(|r| r.num_merged > 0);
 
     // Build KNN on effective points (this is the timed grid build)
     let t = Timer::start();
@@ -44,7 +44,7 @@ pub(super) fn compute_voronoi_gpu_style_core(
     // Build cells using sharded live dedup
     let t = Timer::start();
     let sharded = live_dedup::build_cells_sharded_live_dedup(&effective_points, &knn, termination);
-    tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
+    tb.set_cell_construction(t.elapsed(), sharded.cell_sub.into_sub_phases());
 
     let t = Timer::start();
     let (all_vertices, all_vertex_keys, bad_edges, eff_cells, eff_cell_indices, dedup_sub) =

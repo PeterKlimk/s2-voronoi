@@ -162,9 +162,6 @@ const MAX_CANDIDATES_FAST: usize = 1024;
 const MAX_KEYS_SLAB_FAST: usize = 200_000;
 const MAX_CANDIDATES_HARD: usize = 65_536;
 
-/// Result of packed k-NN: for each point, the indices of its k nearest neighbors.
-/// Layout: [p0_n0, p0_n1, ..., p0_n(k-1), p1_n0, ...]
-
 /// Statistics from PackedV4 batched k-NN.
 #[derive(Clone, Debug, Default)]
 

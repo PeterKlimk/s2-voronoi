@@ -19,12 +19,9 @@ pub(super) fn shared_neighbor(cell_idx: u32, a: VertexKey, b: VertexKey) -> Opti
     if !key_contains(a, cell_idx) || !key_contains(b, cell_idx) {
         return None;
     }
-    for &candidate in &a {
-        if candidate != cell_idx && key_contains(b, candidate) {
-            return Some(candidate);
-        }
-    }
-    None
+    a.iter()
+        .find(|&&candidate| candidate != cell_idx && key_contains(b, candidate))
+        .copied()
 }
 
 pub(super) fn edge_segments_for_neighbor(
@@ -262,7 +259,7 @@ pub(super) fn repair_bad_edges(
         let mut seen: Vec<u32> = Vec::with_capacity(cell.vertex_count());
         for &vi in &cell_indices[start..end] {
             let rep = uf.find(vi);
-            if !seen.iter().any(|&x| x == rep) {
+            if !seen.contains(&rep) {
                 seen.push(rep);
                 new_indices.push(rep);
             }

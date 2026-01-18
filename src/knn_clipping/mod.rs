@@ -79,7 +79,7 @@ impl TerminationConfig {
     pub fn should_check(&self, neighbors_processed: usize) -> bool {
         self.check_step > 0
             && neighbors_processed >= self.check_start
-            && (neighbors_processed - self.check_start) % self.check_step == 0
+            && (neighbors_processed - self.check_start).is_multiple_of(self.check_step)
     }
 }
 

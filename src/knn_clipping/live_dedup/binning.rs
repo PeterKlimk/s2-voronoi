@@ -47,9 +47,9 @@ fn choose_bin_layout(grid_res: usize) -> BinLayout {
     let mut bin_res = target_per_face.sqrt().ceil() as usize;
     bin_res = bin_res.clamp(1, grid_res.max(1));
 
-    let mut bin_stride = (grid_res + bin_res - 1) / bin_res;
+    let mut bin_stride = grid_res.div_ceil(bin_res);
     bin_stride = bin_stride.max(1);
-    bin_res = (grid_res + bin_stride - 1) / bin_stride;
+    bin_res = grid_res.div_ceil(bin_stride);
 
     BinLayout {
         bin_res,

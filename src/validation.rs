@@ -60,7 +60,7 @@ impl ValidationReport {
         let degenerate_ratio = self.degenerate_cells as f64 / self.num_cells.max(1) as f64;
         let degenerate_ok = degenerate_ratio <= 0.01;
         let no_duplicates = self.cells_with_duplicates == 0;
-        let edges_consistent = self.total_unique_cell_vertices % 2 == 0;
+        let edges_consistent = self.total_unique_cell_vertices.is_multiple_of(2);
         let on_sphere = self.vertices_off_sphere == 0;
         let degree3_bad = (self.degree_counts[1] + self.degree_counts[2]) as f64;
         let degree3_ratio = degree3_bad / self.num_vertices.max(1) as f64;
@@ -83,7 +83,7 @@ impl ValidationReport {
         self.euler_characteristic == 2
             && self.degenerate_cells == 0
             && self.cells_with_duplicates == 0
-            && self.total_unique_cell_vertices % 2 == 0
+            && self.total_unique_cell_vertices.is_multiple_of(2)
             && self.vertices_off_sphere == 0
             && self.non_degree3_vertices == 0
     }
@@ -114,7 +114,7 @@ impl ValidationReport {
                 self.cells_with_duplicates
             ));
         }
-        if self.total_unique_cell_vertices % 2 != 0 {
+        if !self.total_unique_cell_vertices.is_multiple_of(2) {
             issues.push("odd total cell vertices (edge inconsistency)".to_string());
         }
         if self.vertices_off_sphere > 0 {
