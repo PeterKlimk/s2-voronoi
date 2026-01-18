@@ -79,6 +79,7 @@ impl ShardDedup {
 #[cfg_attr(feature = "profiling", inline(never))]
 pub(super) fn collect_and_resolve_cell_edges(
     cell_idx: u32,
+    bin: BinId,
     local: LocalId,
     cell_vertices: &[(VertexKey, Vec3)],
     edge_neighbor_slots: &[u32],
@@ -100,8 +101,12 @@ pub(super) fn collect_and_resolve_cell_edges(
 
     debug_assert!(n >= 2, "cell has fewer than 2 vertices");
 
-    let (bin_a, local_a) = assignment.unpack(assignment.gen_map[cell_idx as usize]);
-    debug_assert_eq!(local_a, local, "local index mismatch in edge checks");
+    #[cfg(debug_assertions)]
+    {
+        let (d_bin, d_local) = assignment.unpack(assignment.gen_map[cell_idx as usize]);
+        debug_assert_eq!(d_bin, bin, "bin index mismatch");
+        debug_assert_eq!(d_local, local, "local index mismatch");
+    }
     let local_u32 = local.as_u32();
 
     // Take incoming checks (now returns a Vec instead of linked list head)
@@ -150,7 +155,7 @@ pub(super) fn collect_and_resolve_cell_edges(
 
         let (bin_b, local_b) = assignment.unpack(neighbor_gen_maps[i]);
 
-        if bin_a != bin_b {
+        if bin != bin_b {
             // Cross-bin edge → overflow
             let side = if cell_idx <= neighbor { 0 } else { 1 };
             edges_overflow.push(EdgeOverflowLocal {

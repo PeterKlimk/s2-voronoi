@@ -40,6 +40,7 @@ impl EdgeScratch {
     fn collect_and_resolve(
         &mut self,
         cell_idx: u32,
+        bin: BinId,
         local: LocalId,
         cell_vertices: &[VertexData],
         edge_neighbor_slots: &[u32],
@@ -52,6 +53,7 @@ impl EdgeScratch {
             .resize(cell_vertices.len(), INVALID_INDEX);
         collect_and_resolve_cell_edges(
             cell_idx,
+            bin,
             local,
             cell_vertices,
             edge_neighbor_slots,
@@ -576,6 +578,7 @@ fn process_cell(
     let t_edge_collect = crate::knn_clipping::timing::Timer::start();
     edge_scratch.collect_and_resolve(
         cell_idx,
+        bin,
         local,
         cell_vertices,
         edge_neighbor_slots,
