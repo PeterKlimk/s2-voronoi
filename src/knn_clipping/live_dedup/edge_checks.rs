@@ -218,7 +218,12 @@ pub(super) fn collect_and_resolve_cell_edges(
     }
 
     // Fast path: if all incoming checks matched, skip the unmatched loop
-    let all_matched = incoming_count == 0 || matched == (1u64 << incoming_count) - 1;
+    let all_mask = if incoming_count >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << incoming_count) - 1
+    };
+    let all_matched = incoming_count == 0 || matched == all_mask;
 
     if !all_matched {
         for (idx, check) in incoming_checks.iter().enumerate() {

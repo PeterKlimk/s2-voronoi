@@ -505,11 +505,17 @@ impl Topo2DBuilder {
 
         let n_raw = DVec3::new(neighbor.x as f64, neighbor.y as f64, neighbor.z as f64);
 
-        // Optimization: Avoid expensive division in normalize().
-        // The bisector normal direction is G - unit(N).
-        // By scaling by |N|, we get H = G*|N| - N, which has the same direction.
-        // Since HalfPlane::new_unnormalized handles scale, this is valid and faster.
-        let normal_unnorm = self.generator * n_raw.length() - n_raw;
+        // Bisector direction is G - unit(N). Instead of computing |N| via sqrt,
+        // use first-order Taylor: |N| = √(1+ε) ≈ 1 + ε/2 where ε = |N|² - 1.
+        //
+        // Bisector ≈ G·(1 + ε/2) - N = (G - N) + G·(ε/2)
+        //
+        // For f32 inputs, ε ≈ O(1e-7), so Taylor error is O(ε²) ≈ 1e-15.
+        // If ε is large enough for this to matter, the neighbor is nearly
+        // coincident with the generator and clipping is ill-defined anyway.
+        let eps_half = (n_raw.length_squared() - 1.0) * 0.5;
+        let normal_unnorm = (self.generator - n_raw) + self.generator * eps_half;
+
         let (a, b, c) = self.basis.plane_to_line(normal_unnorm);
         let plane_idx = self.half_planes.len();
         let hp = HalfPlane::new_unnormalized(a, b, c, plane_idx);
