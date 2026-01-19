@@ -15,7 +15,7 @@ mod build;
 pub mod packed_knn;
 mod query;
 
-use glam::{Vec3, Vec3A};
+use glam::Vec3;
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 #[cfg(feature = "timing")]
@@ -51,40 +51,6 @@ impl CubeMapGridBuildTimings {
             + self.cell_bounds
             + self.security_3x3
     }
-}
-
-trait UnitVec: Copy {
-    fn dot(self, other: Self) -> f32;
-    fn to_vec3(self) -> Vec3;
-}
-
-impl UnitVec for Vec3 {
-    #[inline(always)]
-    fn dot(self, other: Self) -> f32 {
-        Vec3::dot(self, other)
-    }
-
-    #[inline(always)]
-    fn to_vec3(self) -> Vec3 {
-        self
-    }
-}
-
-impl UnitVec for Vec3A {
-    #[inline(always)]
-    fn dot(self, other: Self) -> f32 {
-        Vec3A::dot(self, other)
-    }
-
-    #[inline(always)]
-    fn to_vec3(self) -> Vec3 {
-        Vec3::from(self)
-    }
-}
-
-#[inline(always)]
-fn unit_vec_dist_sq_generic<P: UnitVec>(a: P, b: P) -> f32 {
-    (2.0 - 2.0 * a.dot(b)).max(0.0)
 }
 
 // Ring-2 size is 16 in a planar 3×3 neighborhood, but can be slightly larger on the stitched cube
@@ -184,6 +150,11 @@ pub struct CubeMapGrid {
     pub(super) cell_points_y: Vec<f32>,
     /// Z coordinates of points, ordered by cell.
     pub(super) cell_points_z: Vec<f32>,
+
+    /// Inverse mapping from point index to SOA slot index.
+    ///
+    /// `point_slots[point_idx]` gives the slot in `point_indices` / `cell_points_*`.
+    point_slots: Vec<u32>,
 }
 
 /// Map a point on unit sphere to (face, u, v) where u,v ∈ [-1, 1].

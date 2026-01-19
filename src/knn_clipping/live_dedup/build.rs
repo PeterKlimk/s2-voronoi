@@ -16,6 +16,7 @@ use super::ShardedCellsData;
 use crate::cube_grid::packed_knn::{
     packed_knn_cell_stream, PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings,
 };
+use crate::cube_grid::CubeMapGrid;
 use crate::knn_clipping::cell_builder::VertexData;
 use crate::knn_clipping::topo2d::Topo2DBuilder;
 use crate::knn_clipping::TerminationConfig;
@@ -126,10 +127,10 @@ struct CellContext {
 }
 
 impl CellContext {
-    fn new(knn: &crate::knn_clipping::CubeMapGridKnn) -> Self {
+    fn new(grid: &CubeMapGrid) -> Self {
         Self {
             builder: Topo2DBuilder::new(0, Vec3::ZERO),
-            scratch: knn.make_scratch(),
+            scratch: grid.make_scratch(),
             neighbor_slots: Vec::with_capacity(crate::knn_clipping::KNN_RESTART_MAX),
             cell_vertices: Vec::new(),
             edge_neighbor_slots: Vec::new(),
@@ -144,7 +145,7 @@ fn process_cell(
     ctx: &mut CellContext,
     shard: &mut ShardState,
     points: &[Vec3],
-    knn: &crate::knn_clipping::CubeMapGridKnn,
+    grid: &CubeMapGrid,
     assignment: &super::binning::BinAssignment,
     termination: TerminationConfig,
     termination_max_k_cap: Option<usize>,
@@ -197,7 +198,6 @@ fn process_cell(
 
         if packed_count > 0 {
             let t_clip = crate::knn_clipping::timing::Timer::start();
-            let grid = knn.grid();
             let point_indices = grid.point_indices();
             for (pos, &neighbor_slot) in seed.neighbors.iter().enumerate() {
                 // Convert slot to global index
@@ -263,15 +263,20 @@ fn process_cell(
         max_k_requested = resume_k;
         neighbor_slots.clear();
         let t_knn = crate::knn_clipping::timing::Timer::start();
-        let status =
-            knn.knn_resumable_slots_into(points[i], i, resume_k, resume_k, scratch, neighbor_slots);
+        let status = grid.find_k_nearest_resumable_slots_into(
+            points[i],
+            i,
+            resume_k,
+            resume_k,
+            scratch,
+            neighbor_slots,
+        );
         cell_sub.add_knn(t_knn.elapsed());
 
         // Track which resume stage we're at
         knn_stage = crate::knn_clipping::timing::KnnCellStage::Resume(resume_k);
 
         let t_clip = crate::knn_clipping::timing::Timer::start();
-        let grid = knn.grid();
         let point_indices = grid.point_indices();
         for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
             let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
@@ -334,14 +339,20 @@ fn process_cell(
             neighbor_slots.clear();
 
             let t_knn = crate::knn_clipping::timing::Timer::start();
-            let status = knn.knn_resumable_slots_into(points[i], i, k, k, scratch, neighbor_slots);
+            let status = grid.find_k_nearest_resumable_slots_into(
+                points[i],
+                i,
+                k,
+                k,
+                scratch,
+                neighbor_slots,
+            );
             cell_sub.add_knn(t_knn.elapsed());
 
             // Track which restart stage we're at
             knn_stage = crate::knn_clipping::timing::KnnCellStage::Restart(k_stage);
 
             let t_clip = crate::knn_clipping::timing::Timer::start();
-            let grid = knn.grid();
             let point_indices = grid.point_indices();
             for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
                 let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
@@ -435,13 +446,18 @@ fn process_cell(
             neighbor_slots.clear();
 
             let t_knn = crate::knn_clipping::timing::Timer::start();
-            let status =
-                knn.knn_resumable_slots_into(points[i], i, next_k, next_k, scratch, neighbor_slots);
+            let status = grid.find_k_nearest_resumable_slots_into(
+                points[i],
+                i,
+                next_k,
+                next_k,
+                scratch,
+                neighbor_slots,
+            );
             cell_sub.add_knn(t_knn.elapsed());
             knn_stage = crate::knn_clipping::timing::KnnCellStage::Restart(next_k);
 
             let t_clip = crate::knn_clipping::timing::Timer::start();
-            let grid = knn.grid();
             let point_indices = grid.point_indices();
             for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
                 let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
@@ -645,7 +661,7 @@ fn process_cell(
 
 pub(super) fn build_cells_sharded_live_dedup(
     points: &[Vec3],
-    knn: &crate::knn_clipping::CubeMapGridKnn,
+    grid: &CubeMapGrid,
     termination: TerminationConfig,
 ) -> ShardedCellsData {
     // If termination is enabled but not proven after the kNN schedule, we keep requesting
@@ -654,7 +670,7 @@ pub(super) fn build_cells_sharded_live_dedup(
     // This makes correctness independent of any fixed k cap.
     let termination_max_k_cap = termination.max_k_cap;
 
-    let assignment = assign_bins(points, knn.grid());
+    let assignment = assign_bins(points, grid);
     let num_bins = assignment.num_bins;
     let packed_k = crate::knn_clipping::KNN_RESUME_K.min(points.len().saturating_sub(1));
 
@@ -668,7 +684,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                 let mut shard = ShardState::new(my_generators.len());
 
                 let mut sub_accum = CellSubAccum::new();
-                let mut ctx = CellContext::new(knn);
+                let mut ctx = CellContext::new(grid);
                 let vertex_capacity = my_generators.len().saturating_mul(6);
                 shard.output.vertices.reserve(vertex_capacity);
                 shard.output.vertex_keys.reserve(vertex_capacity);
@@ -683,7 +699,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                     .support_data
                     .reserve(my_generators.len().saturating_mul(2));
 
-                let grid = knn.grid();
                 let mut packed_scratch = PackedKnnCellScratch::new();
 
                 #[cfg_attr(
@@ -694,7 +709,7 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                 let packed_queries_all: Vec<u32> = my_generators
                     .iter()
-                    .map(|&i| u32::try_from(i).expect("point index must fit in u32"))
+                    .map(|&i| grid.point_index_to_slot(i))
                     .collect();
 
                 #[cfg(debug_assertions)]
@@ -729,7 +744,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                         let t_packed = crate::knn_clipping::timing::Timer::start();
                         let status = packed_knn_cell_stream(
                             grid,
-                            points,
                             cell as usize,
                             queries,
                             packed_k,
@@ -748,7 +762,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                     &mut ctx,
                                     &mut shard,
                                     points,
-                                    knn,
+                                    grid,
                                     &assignment,
                                     termination,
                                     termination_max_k_cap,
@@ -772,7 +786,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                     &mut ctx,
                                     &mut shard,
                                     points,
-                                    knn,
+                                    grid,
                                     &assignment,
                                     termination,
                                     termination_max_k_cap,
@@ -820,7 +834,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                 &mut ctx,
                                 &mut shard,
                                 points,
-                                knn,
+                                grid,
                                 &assignment,
                                 termination,
                                 termination_max_k_cap,

@@ -329,6 +329,21 @@ impl CubeMapGrid {
             timings.cell_bounds += t.elapsed();
         }
 
+        // Inverse mapping: point index -> SOA slot (slot indexes into point_indices/cell_points_*).
+        let mut point_slots: Vec<u32> = vec![u32::MAX; points.len()];
+        for (slot, &global) in point_indices.iter().enumerate() {
+            let idx = global as usize;
+            debug_assert!(
+                idx < point_slots.len(),
+                "grid returned out-of-range point index"
+            );
+            point_slots[idx] = slot as u32;
+        }
+        debug_assert!(
+            !point_slots.contains(&u32::MAX),
+            "point_slots not fully initialized"
+        );
+
         CubeMapGrid {
             res,
             cell_offsets,
@@ -343,6 +358,7 @@ impl CubeMapGrid {
             cell_points_x,
             cell_points_y,
             cell_points_z,
+            point_slots,
         }
     }
 

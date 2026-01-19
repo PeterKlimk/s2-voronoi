@@ -5,7 +5,12 @@ use glam::Vec3;
 use super::edge_repair;
 use super::live_dedup;
 use super::timing::{Timer, TimingBuilder};
-use super::{constants, merge_close_points, CubeMapGridKnn, MergeResult, TerminationConfig};
+use super::{
+    constants, merge_close_points, MergeResult, TerminationConfig, KNN_GRID_TARGET_DENSITY,
+};
+use crate::cube_grid::CubeMapGrid;
+#[cfg(feature = "timing")]
+use crate::cube_grid::CubeMapGridBuildTimings;
 use crate::VoronoiConfig;
 
 pub(super) fn compute_voronoi_gpu_style_core(
@@ -34,16 +39,24 @@ pub(super) fn compute_voronoi_gpu_style_core(
     tb.set_preprocess(t.elapsed());
     let needs_remap = merge_result.as_ref().is_some_and(|r| r.num_merged > 0);
 
-    // Build KNN on effective points (this is the timed grid build)
+    // Build cube-map grid on effective points (this is the timed grid build).
     let t = Timer::start();
-    let knn = CubeMapGridKnn::new(&effective_points);
+    let n = effective_points.len();
+    let target = KNN_GRID_TARGET_DENSITY.max(1.0);
+    let res = ((n as f64 / (6.0 * target)).sqrt() as usize).max(4);
+    #[cfg(feature = "timing")]
+    let mut grid_build_timings = CubeMapGridBuildTimings::default();
+    #[cfg(feature = "timing")]
+    let grid = CubeMapGrid::new_with_build_timings(&effective_points, res, &mut grid_build_timings);
+    #[cfg(not(feature = "timing"))]
+    let grid = CubeMapGrid::new(&effective_points, res);
     tb.set_knn_build(t.elapsed());
     #[cfg(feature = "timing")]
-    tb.set_knn_build_sub(knn.grid_build_timings().clone());
+    tb.set_knn_build_sub(grid_build_timings.clone());
 
     // Build cells using sharded live dedup
     let t = Timer::start();
-    let sharded = live_dedup::build_cells_sharded_live_dedup(&effective_points, &knn, termination);
+    let sharded = live_dedup::build_cells_sharded_live_dedup(&effective_points, &grid, termination);
 
     #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]
     tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());

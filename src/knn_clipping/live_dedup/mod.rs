@@ -41,10 +41,10 @@ fn with_two_mut<T>(v: &mut [T], i: usize, j: usize) -> (&mut T, &mut T) {
 
 pub(super) fn build_cells_sharded_live_dedup(
     points: &[glam::Vec3],
-    knn: &crate::knn_clipping::CubeMapGridKnn,
+    grid: &crate::cube_grid::CubeMapGrid,
     termination: TerminationConfig,
 ) -> ShardedCellsData {
-    build::build_cells_sharded_live_dedup(points, knn, termination)
+    build::build_cells_sharded_live_dedup(points, grid, termination)
 }
 
 pub(super) fn assemble_sharded_live_dedup(

@@ -214,7 +214,6 @@ pub enum PackedKnnCellStatus {
 /// but may be a strict subset of that cell's points.
 pub fn packed_knn_cell_stream(
     grid: &CubeMapGrid,
-    points: &[Vec3],
     cell: usize,
     queries: &[u32],
     k: usize,
@@ -279,11 +278,11 @@ pub fn packed_knn_cell_stream(
     scratch.query_x.resize(num_queries, 0.0);
     scratch.query_y.resize(num_queries, 0.0);
     scratch.query_z.resize(num_queries, 0.0);
-    for (qi, &query_idx) in queries.iter().enumerate() {
-        let q = points[query_idx as usize];
-        scratch.query_x[qi] = q.x;
-        scratch.query_y[qi] = q.y;
-        scratch.query_z[qi] = q.z;
+    for (qi, &query_slot) in queries.iter().enumerate() {
+        let slot = query_slot as usize;
+        scratch.query_x[qi] = grid.cell_points_x[slot];
+        scratch.query_y[qi] = grid.cell_points_y[slot];
+        scratch.query_z[qi] = grid.cell_points_z[slot];
     }
     timings.add_query_cache(t_query_cache.elapsed());
 
@@ -391,12 +390,11 @@ pub fn packed_knn_cell_stream(
 
                 if mask_bits != 0 {
                     let dots_arr: [f32; 8] = dots.into();
-                    let query_idx = queries[qi];
+                    let query_slot = queries[qi];
                     while mask_bits != 0 {
                         let lane = mask_bits.trailing_zeros() as usize;
                         let slot = (center_soa_start + i + lane) as u32;
-                        let cand_global = grid.point_indices[slot as usize];
-                        if cand_global != query_idx {
+                        if slot != query_slot {
                             let dot = dots_arr[lane];
                             push_topk(qi, make_desc_key(dot, slot));
                         }
@@ -412,9 +410,8 @@ pub fn packed_knn_cell_stream(
             let cy = ys[i];
             let cz = zs[i];
             let slot = (center_soa_start + i) as u32;
-            let cand_global = grid.point_indices[slot as usize];
             for qi in 0..num_queries {
-                if cand_global == queries[qi] {
+                if slot == queries[qi] {
                     continue;
                 }
                 let dot =
@@ -452,12 +449,11 @@ pub fn packed_knn_cell_stream(
 
                     if mask_bits != 0 {
                         let dots_arr: [f32; 8] = dots.into();
-                        let query_idx = queries[qi];
+                        let query_slot = queries[qi];
                         while mask_bits != 0 {
                             let lane = mask_bits.trailing_zeros() as usize;
                             let slot = (soa_start + i + lane) as u32;
-                            let cand_global = grid.point_indices[slot as usize];
-                            if cand_global != query_idx {
+                            if slot != query_slot {
                                 let dot = dots_arr[lane];
                                 push_topk(qi, make_desc_key(dot, slot));
                             }
@@ -473,7 +469,6 @@ pub fn packed_knn_cell_stream(
                 let cy = ys[i];
                 let cz = zs[i];
                 let slot = (soa_start + i) as u32;
-                let cand_global = grid.point_indices[slot as usize];
 
                 let it = queries
                     .iter()
@@ -485,7 +480,7 @@ pub fn packed_knn_cell_stream(
                     .map(|((((q, qx), qy), qz), thr)| (q, qx, qy, qz, thr));
 
                 for (qi, (q, qx, qy, qz, thr)) in it.enumerate() {
-                    if cand_global == *q {
+                    if slot == *q {
                         continue;
                     }
 
@@ -502,11 +497,12 @@ pub fn packed_knn_cell_stream(
         let t_select_prep = PackedTimer::start();
         scratch.neighbors.resize(num_queries * k, u32::MAX);
         timings.add_select_sort(t_select_prep.elapsed());
-        for (qi, &query_idx) in queries.iter().enumerate() {
+        for (qi, &query_slot) in queries.iter().enumerate() {
+            let query_global = grid.point_indices[query_slot as usize];
             let m = scratch.lens[qi].min(k);
             if m == 0 {
                 let t_cb = PackedTimer::start();
-                on_query(qi, query_idx, &[], 0, scratch.security_thresholds[qi]);
+                on_query(qi, query_global, &[], 0, scratch.security_thresholds[qi]);
                 timings.add_callback(t_cb.elapsed());
                 continue;
             }
@@ -526,7 +522,7 @@ pub fn packed_knn_cell_stream(
             let t_cb = PackedTimer::start();
             on_query(
                 qi,
-                query_idx,
+                query_global,
                 &scratch.neighbors[out_start..out_start + m],
                 m,
                 scratch.security_thresholds[qi],
@@ -568,12 +564,11 @@ pub fn packed_knn_cell_stream(
 
             if mask_bits != 0 {
                 let dots_arr: [f32; 8] = dots.into();
-                let query_idx = queries[qi];
+                let query_slot = queries[qi];
                 while mask_bits != 0 {
                     let lane = mask_bits.trailing_zeros() as usize;
                     let slot = (center_soa_start + i + lane) as u32;
-                    let cand_global = grid.point_indices[slot as usize];
-                    if cand_global != query_idx {
+                    if slot != query_slot {
                         let dot = dots_arr[lane];
                         let slab_idx = qi * stride + scratch.lens[qi];
                         scratch.keys_slab[slab_idx].write(make_desc_key(dot, slot));
@@ -592,9 +587,8 @@ pub fn packed_knn_cell_stream(
         let cy = ys[i];
         let cz = zs[i];
         let slot = (center_soa_start + i) as u32;
-        let cand_global = grid.point_indices[slot as usize];
         for qi in 0..num_queries {
-            if cand_global == queries[qi] {
+            if slot == queries[qi] {
                 continue;
             }
             let dot =
@@ -651,12 +645,11 @@ pub fn packed_knn_cell_stream(
 
                 if mask_bits != 0 {
                     let dots_arr: [f32; 8] = dots.into();
-                    let query_idx = queries[qi];
+                    let query_slot = queries[qi];
                     while mask_bits != 0 {
                         let lane = mask_bits.trailing_zeros() as usize;
                         let slot = (soa_start + i + lane) as u32;
-                        let cand_global = grid.point_indices[slot as usize];
-                        if cand_global != query_idx {
+                        if slot != query_slot {
                             let dot = dots_arr[lane];
                             let slab_idx = qi * stride + scratch.lens[qi];
                             scratch.keys_slab[slab_idx].write(make_desc_key(dot, slot));
@@ -674,9 +667,8 @@ pub fn packed_knn_cell_stream(
             let cy = ys[i];
             let cz = zs[i];
             let slot = (soa_start + i) as u32;
-            let cand_global = grid.point_indices[slot as usize];
             for qi in 0..num_queries {
-                if cand_global == queries[qi] {
+                if slot == queries[qi] {
                     continue;
                 }
                 let dot =
@@ -705,8 +697,7 @@ pub fn packed_knn_cell_stream(
 
                 for i in 0..range_len {
                     let slot = (soa_start + i) as u32;
-                    let cand_global = grid.point_indices[slot as usize];
-                    if cand_global == queries[qi] {
+                    if slot == queries[qi] {
                         continue;
                     }
                     let dot = xs[i] * scratch.query_x[qi]
@@ -726,7 +717,8 @@ pub fn packed_knn_cell_stream(
     let t_select_prep = PackedTimer::start();
     scratch.neighbors.resize(num_queries * k, u32::MAX);
     timings.add_select_sort(t_select_prep.elapsed());
-    for (qi, &query_idx) in queries.iter().enumerate() {
+    for (qi, &query_slot) in queries.iter().enumerate() {
+        let query_global = grid.point_indices[query_slot as usize];
         let m = scratch.lens[qi];
         let keys_uninit = &mut scratch.keys_slab[qi * stride..qi * stride + m];
         let keys_slice =
@@ -755,7 +747,7 @@ pub fn packed_knn_cell_stream(
         let t_cb = PackedTimer::start();
         on_query(
             qi,
-            query_idx,
+            query_global,
             &scratch.neighbors[out_start..out_end],
             k_actual,
             scratch.security_thresholds[qi],

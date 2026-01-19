@@ -20,7 +20,6 @@ mod cell_builder;
 mod compute;
 mod constants;
 mod edge_repair;
-mod knn;
 mod live_dedup;
 mod preprocess;
 mod timing;
@@ -29,7 +28,6 @@ mod topo2d;
 // Re-exports (internal use)
 #[allow(unused_imports)]
 pub use compute::compute_voronoi_gpu_style_with_config;
-pub use knn::CubeMapGridKnn;
 pub use preprocess::merge_close_points;
 
 pub type MergeResult = preprocess::MergeResult;

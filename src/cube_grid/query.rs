@@ -4,8 +4,7 @@ use glam::Vec3;
 use std::cmp::Reverse;
 
 use super::{
-    face_uv_to_cell, point_to_face_uv, unit_vec_dist_sq_generic, CubeMapGrid, CubeMapGridScratch,
-    KnnStatus, OrdF32, UnitVec,
+    face_uv_to_cell, point_to_face_uv, CubeMapGrid, CubeMapGridScratch, KnnStatus, OrdF32,
 };
 
 impl CubeMapGridScratch {
@@ -145,28 +144,6 @@ impl CubeMapGridScratch {
     }
 
     #[inline]
-    fn copy_k_indices_into(&self, k: usize, out: &mut Vec<usize>) {
-        out.clear();
-
-        let k = if self.use_fixed {
-            k.min(self.candidates_len)
-        } else {
-            k.min(self.candidates_vec.len())
-        };
-
-        out.reserve(k);
-        if self.use_fixed {
-            for i in 0..k {
-                out.push(self.candidates_fixed[i].1 as usize);
-            }
-        } else {
-            for i in 0..k {
-                out.push(self.candidates_vec[i].1 as usize);
-            }
-        }
-    }
-
-    #[inline]
     fn copy_k_slots_into(&self, k: usize, out: &mut Vec<u32>) {
         out.clear();
 
@@ -201,6 +178,12 @@ impl CubeMapGrid {
     #[inline]
     pub fn point_index_to_cell(&self, idx: usize) -> usize {
         self.point_cells[idx] as usize
+    }
+
+    /// Get the SOA slot index for `points[idx]` used to build this grid.
+    #[inline]
+    pub fn point_index_to_slot(&self, idx: usize) -> u32 {
+        self.point_slots[idx]
     }
 
     /// Get grid resolution (cells per face).
@@ -276,7 +259,6 @@ impl CubeMapGrid {
     /// Resumable kNN query that returns slots (SOA indices) instead of global indices.
     pub fn find_k_nearest_resumable_slots_into(
         &self,
-        points: &[Vec3],
         query: Vec3,
         query_idx: usize,
         k: usize,
@@ -285,21 +267,18 @@ impl CubeMapGrid {
         out_slots: &mut Vec<u32>,
     ) -> KnnStatus {
         self.find_k_nearest_resumable_into_impl(
-            points,
             query,
             query_idx,
             k,
             track_limit,
             scratch,
-            None,
-            Some(out_slots),
+            out_slots,
         )
     }
 
-    fn bruteforce_fill_impl<P: UnitVec>(
+    fn bruteforce_fill_impl(
         &self,
-        points: &[P],
-        query: P,
+        query: Vec3,
         query_idx: usize,
         scratch: &mut CubeMapGridScratch,
     ) {
@@ -309,21 +288,26 @@ impl CubeMapGrid {
             scratch.candidates_vec.clear();
         }
 
-        for (idx, p) in points.iter().enumerate() {
-            if idx == query_idx {
+        let (qx, qy, qz) = (query.x, query.y, query.z);
+        let n = self.point_indices.len();
+        for slot in 0..n {
+            let global = self.point_indices[slot] as usize;
+            if global == query_idx {
                 continue;
             }
-            let dist_sq = unit_vec_dist_sq_generic(*p, query);
-            scratch.try_add_neighbor(idx as u32, dist_sq);
+            let dot = self.cell_points_x[slot] * qx
+                + self.cell_points_y[slot] * qy
+                + self.cell_points_z[slot] * qz;
+            let dist_sq = (2.0 - 2.0 * dot).max(0.0);
+            scratch.try_add_neighbor(slot as u32, dist_sq);
         }
         scratch.exhausted = true;
     }
 
     #[inline]
-    fn scan_cell_points_impl<P: UnitVec>(
+    fn scan_cell_points_impl(
         &self,
-        _points: &[P],
-        query: P,
+        query: Vec3,
         query_idx: usize,
         cell: usize,
         scratch: &mut CubeMapGridScratch,
@@ -337,8 +321,7 @@ impl CubeMapGrid {
         let zs = &self.cell_points_z[start..end];
         let indices = &self.point_indices[start..end];
 
-        let qv = query.to_vec3();
-        let (qx, qy, qz) = (qv.x, qv.y, qv.z);
+        let (qx, qy, qz) = (query.x, query.y, query.z);
 
         for i in 0..xs.len() {
             let pidx = indices[i] as usize;
@@ -354,18 +337,16 @@ impl CubeMapGrid {
     }
 
     #[inline]
-    fn seed_start_cell_impl<P: UnitVec>(
+    fn seed_start_cell_impl(
         &self,
-        points: &[P],
-        query: P,
+        query: Vec3,
         query_idx: usize,
         start_cell: u32,
         scratch: &mut CubeMapGridScratch,
     ) -> usize {
         scratch.mark_visited(start_cell);
-        self.scan_cell_points_impl(points, query, query_idx, start_cell as usize, scratch);
+        self.scan_cell_points_impl(query, query_idx, start_cell as usize, scratch);
 
-        let query_vec3 = query.to_vec3();
         let neighbors = self.cell_neighbors(start_cell as usize);
         for &ncell in neighbors.iter() {
             if ncell == u32::MAX || ncell == start_cell {
@@ -374,31 +355,24 @@ impl CubeMapGrid {
             if !scratch.mark_visited(ncell) {
                 continue;
             }
-            let bound = self.cell_min_dist_sq(query_vec3, ncell as usize);
+            let bound = self.cell_min_dist_sq(query, ncell as usize);
             scratch.push_cell(ncell, bound);
         }
 
         1
     }
 
-    fn find_k_nearest_resumable_into_impl<P: UnitVec>(
+    fn find_k_nearest_resumable_into_impl(
         &self,
-        points: &[P],
-        query: P,
+        query: Vec3,
         query_idx: usize,
         k: usize,
         track_limit: usize,
         scratch: &mut CubeMapGridScratch,
-        mut out_indices: Option<&mut Vec<usize>>,
-        mut out_slots: Option<&mut Vec<u32>>,
+        out_slots: &mut Vec<u32>,
     ) -> KnnStatus {
-        let n = points.len();
-        if let Some(v) = out_indices.as_deref_mut() {
-            v.clear()
-        }
-        if let Some(v) = out_slots.as_deref_mut() {
-            v.clear()
-        }
+        let n = self.point_indices.len();
+        out_slots.clear();
 
         if k == 0 || n <= 1 {
             return KnnStatus::CanResume;
@@ -406,17 +380,16 @@ impl CubeMapGrid {
         let k = k.min(n - 1);
         let track_limit = track_limit.min(n - 1).max(k);
 
-        let query_vec3 = query.to_vec3();
         let num_cells = 6 * self.res * self.res;
         scratch.begin_query(k, track_limit);
 
         let start_cell = if query_idx < self.point_cells.len() {
             self.point_cells[query_idx]
         } else {
-            self.point_to_cell(query_vec3) as u32
+            self.point_to_cell(query) as u32
         };
 
-        let visited = self.seed_start_cell_impl(points, query, query_idx, start_cell, scratch);
+        let visited = self.seed_start_cell_impl(query, query_idx, start_cell, scratch);
 
         let mut visited = visited;
         while let Some((bound_dist_sq, _cell)) = scratch.peek_cell() {
@@ -425,7 +398,7 @@ impl CubeMapGrid {
             };
 
             let (_, cell) = scratch.pop_cell().expect("cell heap out of sync");
-            self.scan_cell_points_impl(points, query, query_idx, cell as usize, scratch);
+            self.scan_cell_points_impl(query, query_idx, cell as usize, scratch);
 
             let neighbors = self.cell_neighbors(cell as usize);
             for &ncell in neighbors.iter() {
@@ -435,7 +408,7 @@ impl CubeMapGrid {
                 if !scratch.mark_visited(ncell) {
                     continue;
                 }
-                let bound = self.cell_min_dist_sq(query_vec3, ncell as usize);
+                let bound = self.cell_min_dist_sq(query, ncell as usize);
                 scratch.push_cell(ncell, bound);
             }
 
@@ -447,33 +420,10 @@ impl CubeMapGrid {
 
         if !scratch.have_k(k) {
             // Not enough results found; brute force remaining points
-            self.bruteforce_fill_impl(points, query, query_idx, scratch);
+            self.bruteforce_fill_impl(query, query_idx, scratch);
         }
 
-        if let Some(out_indices) = out_indices {
-            scratch.copy_k_indices_into(k, out_indices);
-            if !scratch.exhausted {
-                // Convert slots back to global indices if we have slots
-                for idx in out_indices.iter_mut() {
-                    let slot = *idx;
-                    *idx = self.point_indices[slot] as usize;
-                }
-            }
-        }
-        if let Some(out_slots) = out_slots {
-            if !scratch.exhausted {
-                scratch.copy_k_slots_into(k, out_slots);
-            } else {
-                // Brute force used: we have globals, not slots. Return u32::MAX.
-                let count = if scratch.use_fixed {
-                    k.min(scratch.candidates_len)
-                } else {
-                    k.min(scratch.candidates_vec.len())
-                };
-                out_slots.clear();
-                out_slots.resize(count, u32::MAX);
-            }
-        }
+        scratch.copy_k_slots_into(k, out_slots);
 
         if scratch.exhausted {
             KnnStatus::Exhausted
