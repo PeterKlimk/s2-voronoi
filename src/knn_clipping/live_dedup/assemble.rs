@@ -17,14 +17,7 @@ use crate::VoronoiCell;
 
 pub(super) fn assemble_sharded_live_dedup(
     mut data: ShardedCellsData,
-) -> (
-    Vec<Vec3>,
-    Vec<VertexKey>,
-    Vec<BadEdgeRecord>,
-    Vec<VoronoiCell>,
-    Vec<u32>,
-    DedupSubPhases,
-) {
+) -> super::AssembledLiveDedup {
     let t0 = Timer::start();
 
     let num_bins = data.assignment.num_bins;

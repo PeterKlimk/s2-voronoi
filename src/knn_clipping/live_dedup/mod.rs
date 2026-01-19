@@ -22,6 +22,15 @@ use types::BadEdgeRecord;
 
 pub(super) use types::EdgeRecord;
 
+pub(super) type AssembledLiveDedup = (
+    Vec<glam::Vec3>,
+    Vec<VertexKey>,
+    Vec<BadEdgeRecord>,
+    Vec<crate::VoronoiCell>,
+    Vec<u32>,
+    super::timing::DedupSubPhases,
+);
+
 pub(super) struct ShardedCellsData {
     assignment: BinAssignment,
     shards: Vec<ShardState>,
@@ -49,13 +58,6 @@ pub(super) fn build_cells_sharded_live_dedup(
 
 pub(super) fn assemble_sharded_live_dedup(
     data: ShardedCellsData,
-) -> (
-    Vec<glam::Vec3>,
-    Vec<VertexKey>,
-    Vec<BadEdgeRecord>,
-    Vec<crate::VoronoiCell>,
-    Vec<u32>,
-    super::timing::DedupSubPhases,
-) {
+) -> AssembledLiveDedup {
     assemble::assemble_sharded_live_dedup(data)
 }

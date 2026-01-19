@@ -104,7 +104,8 @@ pub(super) fn collect_and_resolve_cell_edges(
 
     #[cfg(debug_assertions)]
     {
-        let (d_bin, d_local) = assignment.unpack(assignment.gen_map[cell_idx as usize]);
+        let d_bin = assignment.generator_bin[cell_idx as usize];
+        let d_local = assignment.global_to_local[cell_idx as usize];
         debug_assert_eq!(d_bin, bin, "bin index mismatch");
         debug_assert_eq!(d_local, local, "local index mismatch");
     }

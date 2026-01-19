@@ -9,8 +9,6 @@ use super::types::{BinId, LocalId};
 pub(super) struct BinAssignment {
     pub(super) generator_bin: Vec<BinId>,
     pub(super) global_to_local: Vec<LocalId>,
-    /// Packed gen_map: each entry is `(bin << local_shift) | local`. Indexed by global.
-    pub(super) gen_map: Vec<u32>,
     /// Packed slot_gen_map: each entry is `(bin << local_shift) | local`. Indexed by slot (SOA index).
     pub(super) slot_gen_map: Vec<u32>,
     /// Precomputed shift for extracting bin from packed gen_map/slot_gen_map.
@@ -19,16 +17,6 @@ pub(super) struct BinAssignment {
     pub(super) local_mask: u32,
     pub(super) bin_generators: Vec<Vec<usize>>,
     pub(super) num_bins: usize,
-}
-
-impl BinAssignment {
-    /// Unpack a gen_map entry into (bin, local).
-    #[inline]
-    pub(super) fn unpack(&self, packed: u32) -> (BinId, LocalId) {
-        let bin = (packed >> self.local_shift) as u8;
-        let local = packed & self.local_mask;
-        (BinId::from(bin), LocalId::from(local))
-    }
 }
 
 struct BinLayout {
@@ -101,7 +89,6 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
 
     let mut generator_bin: Vec<BinId> = vec![BinId::from(u8::MAX); n];
     let mut global_to_local: Vec<LocalId> = vec![LocalId::from(u32::MAX); n];
-    let mut gen_map: Vec<u32> = vec![u32::MAX; n];
     let mut slot_gen_map: Vec<u32> = vec![u32::MAX; n];
 
     let mut visited = 0usize;
@@ -127,7 +114,6 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
                 local_shift,
                 local_mask
             );
-            gen_map[g] = (b_usize as u32) << local_shift | (local_usize as u32);
             visited += 1;
         }
     }
@@ -147,7 +133,6 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
             .any(|&l| l == LocalId::from(u32::MAX)),
         "unassigned global_to_local entries"
     );
-    debug_assert!(!gen_map.contains(&u32::MAX), "unassigned gen_map entries");
 
     // Build slot_gen_map: iterate cells in order, write packed (bin, local) at each slot position.
     // Slots are the SOA indices: cell_offsets[cell]..cell_offsets[cell+1].
@@ -158,7 +143,11 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
             .iter_mut()
             .zip(&grid.point_indices()[cell_start..cell_end])
         {
-            *slot_val = gen_map[g as usize];
+            let g_usize = g as usize;
+            let bin = generator_bin[g_usize].as_u8() as u32;
+            let local = global_to_local[g_usize].as_u32();
+            debug_assert!(local <= local_mask, "local id does not fit packed layout");
+            *slot_val = (bin << local_shift) | local;
         }
     }
 
@@ -170,7 +159,6 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
     BinAssignment {
         generator_bin,
         global_to_local,
-        gen_map,
         slot_gen_map,
         local_shift,
         local_mask,
