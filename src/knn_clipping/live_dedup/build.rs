@@ -816,10 +816,18 @@ pub(super) fn build_cells_sharded_live_dedup(
                                 .add_packed_knn_ring_thresholds(packed_timings.ring_thresholds);
                             sub_accum.add_packed_knn_ring_pass(packed_timings.ring_pass);
                             sub_accum.add_packed_knn_ring_fallback(packed_timings.ring_fallback);
+                            sub_accum.add_packed_knn_select_prep(packed_timings.select_prep);
+                            sub_accum
+                                .add_packed_knn_select_query_prep(packed_timings.select_query_prep);
+                            sub_accum
+                                .add_packed_knn_select_partition(packed_timings.select_partition);
                             sub_accum.add_packed_knn_select_sort(packed_timings.select_sort);
+                            sub_accum.add_packed_knn_select_scatter(packed_timings.select_scatter);
 
                             let measured = packed_timings.total();
-                            sub_accum.add_packed_knn_other(overhead_total.saturating_sub(measured));
+                            sub_accum.add_packed_knn_unaccounted(
+                                overhead_total.saturating_sub(measured),
+                            );
                         }
                         #[cfg(not(feature = "timing"))]
                         sub_accum.add_packed_knn(packed_elapsed);

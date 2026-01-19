@@ -47,8 +47,12 @@ pub struct CellSubPhases {
     pub packed_knn_ring_thresholds: Duration,
     pub packed_knn_ring_pass: Duration,
     pub packed_knn_ring_fallback: Duration,
+    pub packed_knn_select_prep: Duration,
+    pub packed_knn_select_query_prep: Duration,
+    pub packed_knn_select_partition: Duration,
     pub packed_knn_select_sort: Duration,
-    pub packed_knn_other: Duration,
+    pub packed_knn_select_scatter: Duration,
+    pub packed_knn_unaccounted: Duration,
     pub clipping: Duration,
     pub certification: Duration,
     /// Live-dedup: per-vertex ownership checks and shard-local dedup work during cell build.
@@ -82,8 +86,12 @@ impl Default for CellSubPhases {
             packed_knn_ring_thresholds: Duration::ZERO,
             packed_knn_ring_pass: Duration::ZERO,
             packed_knn_ring_fallback: Duration::ZERO,
+            packed_knn_select_prep: Duration::ZERO,
+            packed_knn_select_query_prep: Duration::ZERO,
+            packed_knn_select_partition: Duration::ZERO,
             packed_knn_select_sort: Duration::ZERO,
-            packed_knn_other: Duration::ZERO,
+            packed_knn_select_scatter: Duration::ZERO,
+            packed_knn_unaccounted: Duration::ZERO,
             clipping: Duration::ZERO,
             certification: Duration::ZERO,
             key_dedup: Duration::ZERO,
@@ -326,18 +334,46 @@ impl PhaseTimings {
                     pk_pct(self.cell_sub.packed_knn_ring_fallback)
                 );
             }
+            if self.cell_sub.packed_knn_select_prep.as_nanos() > 0 {
+                eprintln!(
+                    "      pk_sel_prep:  {:7.1}ms ({:4.1}%)",
+                    est_wall_ms(self.cell_sub.packed_knn_select_prep),
+                    pk_pct(self.cell_sub.packed_knn_select_prep)
+                );
+            }
+            if self.cell_sub.packed_knn_select_query_prep.as_nanos() > 0 {
+                eprintln!(
+                    "      pk_sel_qprep: {:7.1}ms ({:4.1}%)",
+                    est_wall_ms(self.cell_sub.packed_knn_select_query_prep),
+                    pk_pct(self.cell_sub.packed_knn_select_query_prep)
+                );
+            }
+            if self.cell_sub.packed_knn_select_partition.as_nanos() > 0 {
+                eprintln!(
+                    "      pk_partition:{:7.1}ms ({:4.1}%)",
+                    est_wall_ms(self.cell_sub.packed_knn_select_partition),
+                    pk_pct(self.cell_sub.packed_knn_select_partition)
+                );
+            }
             if self.cell_sub.packed_knn_select_sort.as_nanos() > 0 {
                 eprintln!(
-                    "      pk_select:    {:7.1}ms ({:4.1}%)",
+                    "      pk_sort:      {:7.1}ms ({:4.1}%)",
                     est_wall_ms(self.cell_sub.packed_knn_select_sort),
                     pk_pct(self.cell_sub.packed_knn_select_sort)
                 );
             }
-            if self.cell_sub.packed_knn_other.as_nanos() > 0 {
+            if self.cell_sub.packed_knn_select_scatter.as_nanos() > 0 {
                 eprintln!(
-                    "      pk_other:     {:7.1}ms ({:4.1}%)",
-                    est_wall_ms(self.cell_sub.packed_knn_other),
-                    pk_pct(self.cell_sub.packed_knn_other)
+                    "      pk_scatter:   {:7.1}ms ({:4.1}%)",
+                    est_wall_ms(self.cell_sub.packed_knn_select_scatter),
+                    pk_pct(self.cell_sub.packed_knn_select_scatter)
+                );
+            }
+            if self.cell_sub.packed_knn_unaccounted.as_nanos() > 0 {
+                eprintln!(
+                    "      pk_unaccount: {:7.1}ms ({:4.1}%)",
+                    est_wall_ms(self.cell_sub.packed_knn_unaccounted),
+                    pk_pct(self.cell_sub.packed_knn_unaccounted)
                 );
             }
         }
@@ -677,8 +713,12 @@ pub struct CellSubAccum {
     pub packed_knn_ring_thresholds: Duration,
     pub packed_knn_ring_pass: Duration,
     pub packed_knn_ring_fallback: Duration,
+    pub packed_knn_select_prep: Duration,
+    pub packed_knn_select_query_prep: Duration,
+    pub packed_knn_select_partition: Duration,
     pub packed_knn_select_sort: Duration,
-    pub packed_knn_other: Duration,
+    pub packed_knn_select_scatter: Duration,
+    pub packed_knn_unaccounted: Duration,
     pub clipping: Duration,
     pub certification: Duration,
     pub key_dedup: Duration,
@@ -704,8 +744,12 @@ impl Default for CellSubAccum {
             packed_knn_ring_thresholds: Duration::ZERO,
             packed_knn_ring_pass: Duration::ZERO,
             packed_knn_ring_fallback: Duration::ZERO,
+            packed_knn_select_prep: Duration::ZERO,
+            packed_knn_select_query_prep: Duration::ZERO,
+            packed_knn_select_partition: Duration::ZERO,
             packed_knn_select_sort: Duration::ZERO,
-            packed_knn_other: Duration::ZERO,
+            packed_knn_select_scatter: Duration::ZERO,
+            packed_knn_unaccounted: Duration::ZERO,
             clipping: Duration::ZERO,
             certification: Duration::ZERO,
             key_dedup: Duration::ZERO,
@@ -762,12 +806,28 @@ impl CellSubAccum {
         self.packed_knn_ring_fallback += d;
     }
 
+    pub fn add_packed_knn_select_prep(&mut self, d: Duration) {
+        self.packed_knn_select_prep += d;
+    }
+
+    pub fn add_packed_knn_select_query_prep(&mut self, d: Duration) {
+        self.packed_knn_select_query_prep += d;
+    }
+
+    pub fn add_packed_knn_select_partition(&mut self, d: Duration) {
+        self.packed_knn_select_partition += d;
+    }
+
     pub fn add_packed_knn_select_sort(&mut self, d: Duration) {
         self.packed_knn_select_sort += d;
     }
 
-    pub fn add_packed_knn_other(&mut self, d: Duration) {
-        self.packed_knn_other += d;
+    pub fn add_packed_knn_select_scatter(&mut self, d: Duration) {
+        self.packed_knn_select_scatter += d;
+    }
+
+    pub fn add_packed_knn_unaccounted(&mut self, d: Duration) {
+        self.packed_knn_unaccounted += d;
     }
 
     pub fn add_clip(&mut self, d: Duration) {
@@ -830,8 +890,12 @@ impl CellSubAccum {
         self.packed_knn_ring_thresholds += other.packed_knn_ring_thresholds;
         self.packed_knn_ring_pass += other.packed_knn_ring_pass;
         self.packed_knn_ring_fallback += other.packed_knn_ring_fallback;
+        self.packed_knn_select_prep += other.packed_knn_select_prep;
+        self.packed_knn_select_query_prep += other.packed_knn_select_query_prep;
+        self.packed_knn_select_partition += other.packed_knn_select_partition;
         self.packed_knn_select_sort += other.packed_knn_select_sort;
-        self.packed_knn_other += other.packed_knn_other;
+        self.packed_knn_select_scatter += other.packed_knn_select_scatter;
+        self.packed_knn_unaccounted += other.packed_knn_unaccounted;
         self.clipping += other.clipping;
         self.certification += other.certification;
         self.key_dedup += other.key_dedup;
@@ -859,8 +923,12 @@ impl CellSubAccum {
             packed_knn_ring_thresholds: self.packed_knn_ring_thresholds,
             packed_knn_ring_pass: self.packed_knn_ring_pass,
             packed_knn_ring_fallback: self.packed_knn_ring_fallback,
+            packed_knn_select_prep: self.packed_knn_select_prep,
+            packed_knn_select_query_prep: self.packed_knn_select_query_prep,
+            packed_knn_select_partition: self.packed_knn_select_partition,
             packed_knn_select_sort: self.packed_knn_select_sort,
-            packed_knn_other: self.packed_knn_other,
+            packed_knn_select_scatter: self.packed_knn_select_scatter,
+            packed_knn_unaccounted: self.packed_knn_unaccounted,
             clipping: self.clipping,
             certification: self.certification,
             key_dedup: self.key_dedup,

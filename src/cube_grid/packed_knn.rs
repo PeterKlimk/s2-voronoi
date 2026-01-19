@@ -54,7 +54,11 @@ pub struct PackedKnnTimings {
     pub ring_thresholds: Duration,
     pub ring_pass: Duration,
     pub ring_fallback: Duration,
+    pub select_prep: Duration,
+    pub select_query_prep: Duration,
+    pub select_partition: Duration,
     pub select_sort: Duration,
+    pub select_scatter: Duration,
     /// Time spent inside the per-query callback (`on_query`), excluded from `packed_knn` overhead.
     pub callback: Duration,
 }
@@ -107,8 +111,28 @@ impl PackedKnnTimings {
     }
 
     #[inline]
+    pub fn add_select_prep(&mut self, d: Duration) {
+        self.select_prep += d;
+    }
+
+    #[inline]
+    pub fn add_select_query_prep(&mut self, d: Duration) {
+        self.select_query_prep += d;
+    }
+
+    #[inline]
+    pub fn add_select_partition(&mut self, d: Duration) {
+        self.select_partition += d;
+    }
+
+    #[inline]
     pub fn add_select_sort(&mut self, d: Duration) {
         self.select_sort += d;
+    }
+
+    #[inline]
+    pub fn add_select_scatter(&mut self, d: Duration) {
+        self.select_scatter += d;
     }
 
     #[inline]
@@ -125,7 +149,11 @@ impl PackedKnnTimings {
             + self.ring_thresholds
             + self.ring_pass
             + self.ring_fallback
+            + self.select_prep
+            + self.select_query_prep
+            + self.select_partition
             + self.select_sort
+            + self.select_scatter
     }
 }
 
@@ -149,7 +177,15 @@ impl PackedKnnTimings {
     #[inline(always)]
     pub fn add_ring_fallback(&mut self, _d: Duration) {}
     #[inline(always)]
+    pub fn add_select_prep(&mut self, _d: Duration) {}
+    #[inline(always)]
+    pub fn add_select_query_prep(&mut self, _d: Duration) {}
+    #[inline(always)]
+    pub fn add_select_partition(&mut self, _d: Duration) {}
+    #[inline(always)]
     pub fn add_select_sort(&mut self, _d: Duration) {}
+    #[inline(always)]
+    pub fn add_select_scatter(&mut self, _d: Duration) {}
     #[inline(always)]
     pub fn add_callback(&mut self, _d: Duration) {}
 }
@@ -540,10 +576,12 @@ fn packed_knn_cell_stream_large(
 
     let t_select_prep = PackedTimer::start();
     scratch.neighbors.resize(num_queries * k, u32::MAX);
-    timings.add_select_sort(t_select_prep.elapsed());
+    timings.add_select_prep(t_select_prep.elapsed());
     for (qi, &query_slot) in queries.iter().enumerate() {
+        let t_qprep = PackedTimer::start();
         let query_global = grid.point_indices[query_slot as usize];
         let m = scratch.lens[qi].min(k);
+        timings.add_select_query_prep(t_qprep.elapsed());
         if m == 0 {
             let t_cb = PackedTimer::start();
             on_query(qi, query_global, &[], 0, scratch.security_thresholds[qi]);
@@ -551,20 +589,22 @@ fn packed_knn_cell_stream_large(
             continue;
         }
 
-        let t_select = PackedTimer::start();
         let keys_uninit = &mut scratch.keys_slab[qi * k..qi * k + m];
         let keys_slice =
             unsafe { std::slice::from_raw_parts_mut(keys_uninit.as_mut_ptr() as *mut u64, m) };
+        let t_sort = PackedTimer::start();
         keys_slice.sort_unstable();
+        timings.add_select_sort(t_sort.elapsed());
 
         let out_start = qi * k;
+        let t_scatter = PackedTimer::start();
         for (neighbor, key) in scratch.neighbors[out_start..out_start + m]
             .iter_mut()
             .zip(keys_slice.iter())
         {
             *neighbor = key_to_idx(*key);
         }
-        timings.add_select_sort(t_select.elapsed());
+        timings.add_select_scatter(t_scatter.elapsed());
 
         let t_cb = PackedTimer::start();
         on_query(
@@ -836,8 +876,9 @@ pub fn packed_knn_cell_stream(
 
     let t_select_prep = PackedTimer::start();
     scratch.neighbors.resize(num_queries * k, u32::MAX);
-    timings.add_select_sort(t_select_prep.elapsed());
+    timings.add_select_prep(t_select_prep.elapsed());
     for (qi, &query_slot) in queries.iter().enumerate() {
+        let t_qprep = PackedTimer::start();
         let query_global = grid.point_indices[query_slot as usize];
         let m = scratch.lens[qi];
         let keys_uninit = &mut scratch.keys_slab[qi * stride..qi * stride + m];
@@ -845,21 +886,26 @@ pub fn packed_knn_cell_stream(
             unsafe { std::slice::from_raw_parts_mut(keys_uninit.as_mut_ptr() as *mut u64, m) };
 
         let k_actual = k.min(m);
+        timings.add_select_query_prep(t_qprep.elapsed());
         if k_actual > 0 {
-            let t_select = PackedTimer::start();
             if m > k_actual {
+                let t_part = PackedTimer::start();
                 keys_slice.select_nth_unstable(k_actual - 1);
+                timings.add_select_partition(t_part.elapsed());
             }
+            let t_sort = PackedTimer::start();
             keys_slice[..k_actual].sort_unstable();
+            timings.add_select_sort(t_sort.elapsed());
 
             let out_start = qi * k;
+            let t_scatter = PackedTimer::start();
             for (neighbor, key) in scratch.neighbors[out_start..out_start + k_actual]
                 .iter_mut()
                 .zip(keys_slice.iter())
             {
                 *neighbor = key_to_idx(*key);
             }
-            timings.add_select_sort(t_select.elapsed());
+            timings.add_select_scatter(t_scatter.elapsed());
         }
 
         let out_start = qi * k;
