@@ -128,9 +128,8 @@ This has two major issues:
 Make packed-kNN the primary driver by expanding the packed query scope as needed, in a way that shares work across all queries in the same grid cell group:
 
 1. **Stage A (current):** packed 3×3 candidate collection + top-k selection.
-2. **Stage B (new):** adaptive **ring expansion** (increase candidate cell ranges beyond 3×3) when:
-   - `count < k`, or
-   - termination cannot be proven using the current “outside bound” (`security`)
+2. **Stage B (new):** adaptive **candidate / ring expansion** driven by the cell builder's
+   termination checks (see below).
 3. **Stage C (new):** keep packed behavior but switch internal algorithmic mode as needed:
    - dense slab for small candidate sets
    - streaming top-k for large candidate sets
@@ -140,6 +139,55 @@ Resumable kNN becomes optional:
 
 - either remove it entirely once packed expansion is robust, or
 - keep it behind a debug/feature flag as a correctness/perf backstop during rollout.
+
+### Clarification: expansion is driven by clipping/termination (not by "reach k")
+
+In Phase 3, `k` should be treated as a *heuristic emission/sorting budget* (how many neighbors we initially materialize and sort), not as a correctness target. 
+If we fail to produce `k`, we may as well try to clip first before doing expensive operations like expansion.
+
+The correctness driver is the cell builder's ability to prove termination:
+
+- Packed generates an initial candidate set and an "unseen bound" (`unseen_dot_bound`).
+- The cell builder clips incrementally and checks `can_terminate(unseen_dot_bound)`.
+- Only if termination cannot be proven do we request additional candidates from packed
+  (expanding the candidate set and/or the searched radius).
+
+This avoids doing extra packed work on uniform/"reasonable" inputs where most cells
+terminate after a small number of clips, and shifts expansion decisions onto the
+existing conservative termination model.
+
+### Proposed Phase 3 contract (sorted-first, 3×3-first)
+
+Pragmatically, we should always start from the 3×3 neighborhood (`r = 1`) because the
+existing security bookkeeping already provides a conservative "outside of 3×3" bound
+via the precomputed ring-2 cell caps.
+
+For each grid cell *group* (queries in the same center grid cell):
+
+1. **Fast emit (r = 1, 3×3):** emit a sorted candidate list using the existing heuristic
+   thresholding (e.g. ring candidates must beat the worst accepted center candidate),
+   up to an initial budget `k0`.
+2. **Clip + terminate check:** incrementally clip against emitted candidates and check
+   `can_terminate(unseen_dot_bound)` between steps.
+3. **Full emit (r = 1, 3×3):** if termination cannot be proven, expand *within the same
+   radius* and emit more candidates (down to the conservative `security` threshold),
+   producing a larger sorted list (budget `k1`, or "all > security" for r=1).
+4. **Radius expansion (r = 2, 3, …):** only after the r=1 candidate set has been fully
+   materialized do we expand the searched neighborhood and update the outside bound
+   (see "outside-of-radius bound" below). For the initial implementation, use "full emit"
+   after each radius expansion for simplicity.
+
+**Group-level reuse:** when any query in the group escalates (fast→full or r increases),
+retain that escalation state for subsequent queries in the same group, since failures are
+correlated. This avoids per-query thrash through the fast path.
+
+### Fast-path tuning (important)
+
+Despite the fallback hierarchy, we should tune grid density and initial budgets such that
+for relatively uniform inputs, the dominant behavior remains **3×3 fast emit** for nearly
+all cells. Higher point density generally implies smaller cells and can require more
+neighbor planes to prove termination, so `(grid target density, k0, max radius)` should be
+treated as a coupled configuration and tuned empirically.
 
 ### Why this fits termination behavior at large N
 
@@ -183,12 +231,22 @@ This keeps the dominant behavior compatible with later optimizations (bucketing,
 ### Instrumentation/metrics to guide tuning
 
 - Distribution of `packed_count` vs `k` per group and overall.
-- Distribution of required ring radius to reach `k` and/or to terminate.
+- Distribution of required ring radius and whether "full emit" was needed.
 - Fraction of cells that require escalation beyond the initial packed radius.
 - Total time share of:
   - packed setup / scanning / select
   - clipping
   - (any remaining) fallback paths
+
+### Future avenues (recorded, not required for Phase 3)
+
+- **Tick-tock expansion:** alternate between (fast→full) emission expansion and radius expansion
+  in a more granular loop, rather than "full after each radius increase".
+- **Sorted-chunk emission:** emit candidates in multiple sorted chunks (or partially sorted chunks)
+  to reduce selection/sort overhead when many cells terminate after ~8–12 clips.
+- **Unsorted-chunk emission with bounds:** emit unsorted batches together with conservative bounds
+  on any unseen candidate; enables early termination without a full sort, at the cost of more
+  complex bookkeeping.
 
 ## Heuristic: choosing grid resolution and initial k
 
@@ -216,7 +274,7 @@ This RFC does not lock in a specific formula; it calls for measurement-driven tu
    - Filter out same-bin `local_b < local` candidates when consuming packed seeds and any fallback candidates.
    - Add debug asserts to ensure edgecheck-derived neighbors are always included.
 3. **Phase 3: packed ring expansion**
-   - Implement adaptive packed expansion for groups that fail to reach `k` / termination.
+   - Implement adaptive packed expansion for groups that fail to reach termination.
    - Keep existing per-query fallback only as a cold escape hatch.
 4. **Phase 4: deprecate resumable**
    - Remove resumable from the dominant path, optionally feature-flag it.
