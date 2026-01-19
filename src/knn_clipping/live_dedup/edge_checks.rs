@@ -82,6 +82,7 @@ pub(super) fn collect_and_resolve_cell_edges(
     edge_neighbor_globals: &[u32],
     assignment: &BinAssignment,
     shard: &mut ShardState,
+    incoming_checks: Vec<EdgeCheck>,
     vertex_indices: &mut [u32],
     edges_to_later: &mut Vec<EdgeToLater>,
     edges_overflow: &mut Vec<EdgeOverflowLocal>,
@@ -111,8 +112,8 @@ pub(super) fn collect_and_resolve_cell_edges(
     }
     let local_u32 = local.as_u32();
 
-    // Take incoming checks.
-    let incoming_checks = shard.dedup.take_edge_checks(local);
+    // Incoming checks were taken earlier (e.g. for geometry seeding).
+    let incoming_checks = incoming_checks;
     let incoming_count = incoming_checks.len();
 
     // Track which incoming checks we've matched (bitmask, supports up to 64)

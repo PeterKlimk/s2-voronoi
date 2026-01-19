@@ -5,7 +5,7 @@ use glam::Vec3;
 use rayon::prelude::*;
 
 use super::binning::assign_bins;
-use super::edge_checks::collect_and_resolve_cell_edges;
+use super::edge_checks::{collect_and_resolve_cell_edges, unpack_edge_key};
 use super::packed::{pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::ShardState;
 use super::types::{
@@ -46,6 +46,7 @@ impl EdgeScratch {
         edge_neighbor_globals: &[u32],
         assignment: &super::binning::BinAssignment,
         shard: &mut ShardState,
+        incoming_checks: Vec<EdgeCheck>,
     ) {
         self.vertex_indices.clear();
         self.vertex_indices
@@ -59,6 +60,7 @@ impl EdgeScratch {
             edge_neighbor_globals,
             assignment,
             shard,
+            incoming_checks,
             &mut self.vertex_indices,
             &mut self.edges_to_later,
             &mut self.edges_overflow,
@@ -124,6 +126,7 @@ struct CellContext {
     edge_neighbor_slots: Vec<u32>,
     edge_neighbor_globals: Vec<u32>,
     edge_scratch: EdgeScratch,
+    attempted_neighbors: rustc_hash::FxHashSet<usize>,
 }
 
 impl CellContext {
@@ -136,6 +139,7 @@ impl CellContext {
             edge_neighbor_slots: Vec::new(),
             edge_neighbor_globals: Vec::new(),
             edge_scratch: EdgeScratch::new(),
+            attempted_neighbors: rustc_hash::FxHashSet::default(),
         }
     }
 }
@@ -161,8 +165,10 @@ fn process_cell(
     let edge_neighbor_slots = &mut ctx.edge_neighbor_slots;
     let edge_neighbor_globals = &mut ctx.edge_neighbor_globals;
     let edge_scratch = &mut ctx.edge_scratch;
+    let attempted_neighbors = &mut ctx.attempted_neighbors;
 
     builder.reset(i, points[i]);
+    attempted_neighbors.clear();
     neighbor_slots.clear();
 
     // === Phase 1: Initialization ===
@@ -189,7 +195,62 @@ fn process_cell(
     let mut packed_security = 0.0f32;
     let mut packed_k_local = 0usize;
 
-    // === Phase 2: Packed kNN Seeds ===
+    // Take incoming edge checks once. We'll use them both for geometry seeding and for
+    // resolving edges to earlier neighbors later in the pipeline.
+    let incoming_checks = shard.dedup.take_edge_checks(local);
+
+    // === Phase 2: Edgecheck Geometry Seeds ===
+    //
+    // Incoming edge checks encode (symmetric) edges where the earlier-local side already
+    // discovered adjacency. Treat them as mandatory earlier-neighbor candidates for clipping.
+    //
+    // Note: we do not attempt termination checks here; termination bounds come from kNN stages.
+    if !incoming_checks.is_empty() {
+        let cell_idx = u32::try_from(i).expect("cell index must fit in u32");
+        let t_clip = crate::knn_clipping::timing::Timer::start();
+        for check in &incoming_checks {
+            let (a, b) = unpack_edge_key(check.key);
+
+            debug_assert!(
+                a == cell_idx || b == cell_idx,
+                "incoming edge check does not reference current cell"
+            );
+
+            debug_assert!(a != b, "incoming edge check has identical endpoints");
+
+            let neighbor_idx = if a == cell_idx { b } else { a } as usize;
+
+            if !attempted_neighbors.insert(neighbor_idx) {
+                continue;
+            }
+
+            debug_assert_eq!(
+                assignment.generator_bin[neighbor_idx], bin,
+                "incoming edge check neighbor must be in same bin"
+            );
+
+            debug_assert!(
+                assignment.global_to_local[neighbor_idx].as_u32() < local.as_u32(),
+                "incoming edge check neighbor must be earlier-local"
+            );
+
+            // Important: do not update `worst_cos` here. These neighbors are not ordered
+            // (and may be arbitrarily far), so using their dot products as termination
+            // bounds would be unsound.
+            let neighbor_slot = grid.point_index_to_slot(neighbor_idx);
+            let neighbor = points[neighbor_idx];
+            if builder
+                .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
+                .is_err()
+            {
+                break;
+            }
+            cell_neighbors_processed += 1;
+        }
+        cell_sub.add_clip(t_clip.elapsed());
+    }
+
+    // === Phase 3: Packed kNN Seeds ===
     if let Some(seed) = packed {
         did_packed = true;
         packed_count = seed.count;
@@ -203,6 +264,9 @@ fn process_cell(
                 // Convert slot to global index
                 let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
                 if neighbor_idx == i {
+                    continue;
+                }
+                if !attempted_neighbors.insert(neighbor_idx) {
                     continue;
                 }
                 #[cfg(debug_assertions)]
@@ -256,7 +320,7 @@ fn process_cell(
         }
     }
 
-    // === Phase 3: Resumable kNN Scan ===
+    // === Phase 4: Resumable kNN Scan ===
     let resume_k = crate::knn_clipping::KNN_RESUME_K.min(max_neighbors);
     if !terminated && !knn_exhausted && !builder.is_failed() && resume_k > 0 {
         used_knn = true;
@@ -281,6 +345,9 @@ fn process_cell(
         for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
             let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
             if did_packed && builder.has_neighbor(neighbor_idx) {
+                continue;
+            }
+            if !attempted_neighbors.insert(neighbor_idx) {
                 continue;
             }
             #[cfg(debug_assertions)]
@@ -357,6 +424,9 @@ fn process_cell(
             for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
                 let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
                 if builder.has_neighbor(neighbor_idx) {
+                    continue;
+                }
+                if !attempted_neighbors.insert(neighbor_idx) {
                     continue;
                 }
                 let neighbor = points[neighbor_idx];
@@ -464,6 +534,9 @@ fn process_cell(
                 if builder.has_neighbor(neighbor_idx) {
                     continue;
                 }
+                if !attempted_neighbors.insert(neighbor_idx) {
+                    continue;
+                }
                 let neighbor = points[neighbor_idx];
                 if builder
                     .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
@@ -539,6 +612,9 @@ fn process_cell(
             db.partial_cmp(&da).unwrap()
         });
         for p_idx in sorted_indices {
+            if !attempted_neighbors.insert(p_idx) {
+                continue;
+            }
             if builder.clip(p_idx, points[p_idx]).is_err() {
                 break;
             }
@@ -602,6 +678,7 @@ fn process_cell(
         edge_neighbor_globals,
         assignment,
         shard,
+        incoming_checks,
     );
     let collect_resolve_time = t_edge_collect.elapsed();
     // Split time between collect and resolve for backward-compatible timing
