@@ -519,6 +519,7 @@ impl Topo2DBuilder {
     ///
     /// The caller is responsible for filtering duplicates and near-coincident neighbors.
     /// This method just clips—it doesn't check if the neighbor was already added.
+    #[allow(dead_code)]
     pub fn clip(&mut self, neighbor_idx: usize, neighbor: Vec3) -> Result<(), CellFailure> {
         self.clip_with_slot(neighbor_idx, u32::MAX, neighbor)
     }

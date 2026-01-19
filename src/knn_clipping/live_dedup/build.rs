@@ -14,7 +14,7 @@ use super::types::{
 };
 use super::ShardedCellsData;
 use crate::cube_grid::packed_knn::{
-    packed_knn_cell_stream, PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings,
+    packed_knn_cell_stream_directed, PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings,
 };
 use crate::cube_grid::CubeMapGrid;
 use crate::knn_clipping::cell_builder::VertexData;
@@ -327,13 +327,18 @@ fn process_cell(
         max_k_requested = resume_k;
         neighbor_slots.clear();
         let t_knn = crate::knn_clipping::timing::Timer::start();
-        let status = grid.find_k_nearest_resumable_slots_into(
+        let status = grid.find_k_nearest_resumable_slots_directed_into(
             points[i],
             i,
             resume_k,
             resume_k,
             scratch,
             neighbor_slots,
+            bin.as_u8(),
+            local.as_u32(),
+            &assignment.slot_gen_map,
+            assignment.local_shift,
+            assignment.local_mask,
         );
         cell_sub.add_knn(t_knn.elapsed());
 
@@ -406,13 +411,18 @@ fn process_cell(
             neighbor_slots.clear();
 
             let t_knn = crate::knn_clipping::timing::Timer::start();
-            let status = grid.find_k_nearest_resumable_slots_into(
+            let status = grid.find_k_nearest_resumable_slots_directed_into(
                 points[i],
                 i,
                 k,
                 k,
                 scratch,
                 neighbor_slots,
+                bin.as_u8(),
+                local.as_u32(),
+                &assignment.slot_gen_map,
+                assignment.local_shift,
+                assignment.local_mask,
             );
             cell_sub.add_knn(t_knn.elapsed());
 
@@ -516,13 +526,18 @@ fn process_cell(
             neighbor_slots.clear();
 
             let t_knn = crate::knn_clipping::timing::Timer::start();
-            let status = grid.find_k_nearest_resumable_slots_into(
+            let status = grid.find_k_nearest_resumable_slots_directed_into(
                 points[i],
                 i,
                 next_k,
                 next_k,
                 scratch,
                 neighbor_slots,
+                bin.as_u8(),
+                local.as_u32(),
+                &assignment.slot_gen_map,
+                assignment.local_shift,
+                assignment.local_mask,
             );
             cell_sub.add_knn(t_knn.elapsed());
             knn_stage = crate::knn_clipping::timing::KnnCellStage::Restart(next_k);
@@ -604,7 +619,19 @@ fn process_cell(
             builder.neighbor_indices_iter().collect();
         let gen = points[i];
         let mut sorted_indices: Vec<usize> = (0..points.len())
-            .filter(|&j| j != i && !already_clipped.contains(&j))
+            .filter(|&j| {
+                if j == i || already_clipped.contains(&j) {
+                    return false;
+                }
+                // Directed within-bin filtering: never consider earlier locals here.
+                // Earlier-local within-bin adjacency must come from incoming edgechecks.
+                if assignment.generator_bin[j] == bin
+                    && assignment.global_to_local[j].as_u32() < local.as_u32()
+                {
+                    return false;
+                }
+                true
+            })
             .collect();
         sorted_indices.sort_by(|&a, &b| {
             let da = gen.dot(points[a]);
@@ -615,7 +642,8 @@ fn process_cell(
             if !attempted_neighbors.insert(p_idx) {
                 continue;
             }
-            if builder.clip(p_idx, points[p_idx]).is_err() {
+            let slot = grid.point_index_to_slot(p_idx);
+            if builder.clip_with_slot(p_idx, slot, points[p_idx]).is_err() {
                 break;
             }
             cell_neighbors_processed += 1;
@@ -788,6 +816,9 @@ pub(super) fn build_cells_sharded_live_dedup(
                     .iter()
                     .map(|&i| grid.point_index_to_slot(i))
                     .collect();
+                let packed_query_locals_all: Vec<u32> = (0..my_generators.len())
+                    .map(|local_idx| u32::try_from(local_idx).expect("local id must fit in u32"))
+                    .collect();
 
                 #[cfg(debug_assertions)]
                 {
@@ -811,22 +842,28 @@ pub(super) fn build_cells_sharded_live_dedup(
                     let group_start = start;
 
                     if packed_k > 0 {
-                        let queries = &packed_queries_all[group_start..cursor];
+                let queries = &packed_queries_all[group_start..cursor];
+                let query_locals = &packed_query_locals_all[group_start..cursor];
 
-                        // Grouped queries by cell to improve cache locality during kNN.
-                        // NOTE: `packed_knn_cell_stream` invokes the callback per query.
-                        // The callback builds the Voronoi cell and is separately timed (clipping,
-                        // certification, key_dedup, and any fallback knn work). If we time the whole
-                        // call naively, we'd double-count that work under `packed_knn`.
-                        let t_packed = crate::knn_clipping::timing::Timer::start();
-                        let status = packed_knn_cell_stream(
-                            grid,
-                            cell as usize,
-                            queries,
-                            packed_k,
-                            &mut packed_scratch,
-                            &mut packed_timings,
-                            |qi, query_idx, neighbors, count, security| {
+                // Grouped queries by cell to improve cache locality during kNN.
+                // NOTE: `packed_knn_cell_stream` invokes the callback per query.
+                // The callback builds the Voronoi cell and is separately timed (clipping,
+                // certification, key_dedup, and any fallback knn work). If we time the whole
+                // call naively, we'd double-count that work under `packed_knn`.
+                let t_packed = crate::knn_clipping::timing::Timer::start();
+                let status = packed_knn_cell_stream_directed(
+                    grid,
+                    cell as usize,
+                    queries,
+                    query_locals,
+                    bin.as_u8(),
+                    &assignment.slot_gen_map,
+                    assignment.local_shift,
+                    assignment.local_mask,
+                    packed_k,
+                    &mut packed_scratch,
+                    &mut packed_timings,
+                    |qi, query_idx, neighbors, count, security| {
                                 let local = LocalId::from_usize(group_start + qi);
                                 let seed = PackedSeed {
                                     neighbors,
@@ -849,8 +886,8 @@ pub(super) fn build_cells_sharded_live_dedup(
                                     Some(seed),
                                 );
                             },
-                        );
-                        let packed_elapsed = t_packed.elapsed();
+                );
+                let packed_elapsed = t_packed.elapsed();
 
                         if status == PackedKnnCellStatus::SlowPath {
                             for (offset, &global) in
