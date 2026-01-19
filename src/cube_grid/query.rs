@@ -155,13 +155,9 @@ impl CubeMapGridScratch {
 
         out.reserve(k);
         if self.use_fixed {
-            for i in 0..k {
-                out.push(self.candidates_fixed[i].1);
-            }
+            out.extend(self.candidates_fixed[..k].iter().map(|&(_, slot)| slot));
         } else {
-            for i in 0..k {
-                out.push(self.candidates_vec[i].1);
-            }
+            out.extend(self.candidates_vec[..k].iter().map(|&(_, slot)| slot));
         }
     }
 }
@@ -290,14 +286,22 @@ impl CubeMapGrid {
 
         let (qx, qy, qz) = (query.x, query.y, query.z);
         let n = self.point_indices.len();
-        for slot in 0..n {
-            let global = self.point_indices[slot] as usize;
+
+        let indices = &self.point_indices[..n];
+        let xs = &self.cell_points_x[..n];
+        let ys = &self.cell_points_y[..n];
+        let zs = &self.cell_points_z[..n];
+
+        for (slot, (global, ((x, y), z))) in indices
+            .iter()
+            .zip(xs.iter().zip(ys.iter()).zip(zs.iter()))
+            .enumerate()
+        {
+            let global = *global as usize;
             if global == query_idx {
                 continue;
             }
-            let dot = self.cell_points_x[slot] * qx
-                + self.cell_points_y[slot] * qy
-                + self.cell_points_z[slot] * qz;
+            let dot = *x * qx + *y * qy + *z * qz;
             let dist_sq = (2.0 - 2.0 * dot).max(0.0);
             scratch.try_add_neighbor(slot as u32, dist_sq);
         }

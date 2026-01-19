@@ -289,15 +289,14 @@ pub fn packed_knn_cell_stream(
     let t_security = PackedTimer::start();
     scratch.security_thresholds.clear();
     scratch.security_thresholds.reserve(num_queries);
-    for qi in 0..num_queries {
-        scratch.security_thresholds.push(outside_max_dot_xyz(
-            scratch.query_x[qi],
-            scratch.query_y[qi],
-            scratch.query_z[qi],
-            ring2,
-            grid,
-        ));
-    }
+    scratch.security_thresholds.extend(
+        scratch
+            .query_x
+            .iter()
+            .zip(scratch.query_y.iter())
+            .zip(scratch.query_z.iter())
+            .map(|((&x, &y), &z)| outside_max_dot_xyz(x, y, z, ring2, grid)),
+    );
     timings.add_security_thresholds(t_security.elapsed());
 
     let stride = num_candidates;
@@ -378,7 +377,7 @@ pub fn packed_knn_cell_stream(
             let cy = f32x8::from_slice(&ys[i..]);
             let cz = f32x8::from_slice(&zs[i..]);
 
-            for qi in 0..num_queries {
+            for (qi, &query_slot) in queries.iter().enumerate() {
                 let qx = f32x8::splat(scratch.query_x[qi]);
                 let qy = f32x8::splat(scratch.query_y[qi]);
                 let qz = f32x8::splat(scratch.query_z[qi]);
@@ -390,7 +389,6 @@ pub fn packed_knn_cell_stream(
 
                 if mask_bits != 0 {
                     let dots_arr: [f32; 8] = dots.into();
-                    let query_slot = queries[qi];
                     while mask_bits != 0 {
                         let lane = mask_bits.trailing_zeros() as usize;
                         let slot = (center_soa_start + i + lane) as u32;
@@ -410,8 +408,8 @@ pub fn packed_knn_cell_stream(
             let cy = ys[i];
             let cz = zs[i];
             let slot = (center_soa_start + i) as u32;
-            for qi in 0..num_queries {
-                if slot == queries[qi] {
+            for (qi, &query_slot) in queries.iter().enumerate() {
+                if slot == query_slot {
                     continue;
                 }
                 let dot =
@@ -437,7 +435,7 @@ pub fn packed_knn_cell_stream(
                 let cy = f32x8::from_slice(&ys[i..]);
                 let cz = f32x8::from_slice(&zs[i..]);
 
-                for qi in 0..num_queries {
+                for (qi, &query_slot) in queries.iter().enumerate() {
                     let qx = f32x8::splat(scratch.query_x[qi]);
                     let qy = f32x8::splat(scratch.query_y[qi]);
                     let qz = f32x8::splat(scratch.query_z[qi]);
@@ -449,7 +447,6 @@ pub fn packed_knn_cell_stream(
 
                     if mask_bits != 0 {
                         let dots_arr: [f32; 8] = dots.into();
-                        let query_slot = queries[qi];
                         while mask_bits != 0 {
                             let lane = mask_bits.trailing_zeros() as usize;
                             let slot = (soa_start + i + lane) as u32;
@@ -514,8 +511,11 @@ pub fn packed_knn_cell_stream(
             keys_slice.sort_unstable();
 
             let out_start = qi * k;
-            for j in 0..m {
-                scratch.neighbors[out_start + j] = key_to_idx(keys_slice[j]);
+            for (neighbor, key) in scratch.neighbors[out_start..out_start + m]
+                .iter_mut()
+                .zip(keys_slice.iter())
+            {
+                *neighbor = key_to_idx(*key);
             }
             timings.add_select_sort(t_select.elapsed());
 
@@ -552,7 +552,7 @@ pub fn packed_knn_cell_stream(
         let cy = f32x8::from_slice(&ys[i..]);
         let cz = f32x8::from_slice(&zs[i..]);
 
-        for qi in 0..num_queries {
+        for (qi, &query_slot) in queries.iter().enumerate() {
             let qx = f32x8::splat(scratch.query_x[qi]);
             let qy = f32x8::splat(scratch.query_y[qi]);
             let qz = f32x8::splat(scratch.query_z[qi]);
@@ -564,7 +564,6 @@ pub fn packed_knn_cell_stream(
 
             if mask_bits != 0 {
                 let dots_arr: [f32; 8] = dots.into();
-                let query_slot = queries[qi];
                 while mask_bits != 0 {
                     let lane = mask_bits.trailing_zeros() as usize;
                     let slot = (center_soa_start + i + lane) as u32;
@@ -587,8 +586,8 @@ pub fn packed_knn_cell_stream(
         let cy = ys[i];
         let cz = zs[i];
         let slot = (center_soa_start + i) as u32;
-        for qi in 0..num_queries {
-            if slot == queries[qi] {
+        for (qi, &query_slot) in queries.iter().enumerate() {
+            if slot == query_slot {
                 continue;
             }
             let dot =
@@ -609,14 +608,20 @@ pub fn packed_knn_cell_stream(
     let t_thresholds = PackedTimer::start();
     scratch.thresholds.clear();
     scratch.thresholds.reserve(num_queries);
-    for qi in 0..num_queries {
-        let threshold = if scratch.center_lens[qi] > 0 {
-            scratch.security_thresholds[qi].max(scratch.min_center_dot[qi] - 1e-6)
-        } else {
-            scratch.security_thresholds[qi]
-        };
-        scratch.thresholds.push(threshold);
-    }
+    scratch.thresholds.extend(
+        scratch
+            .center_lens
+            .iter()
+            .zip(scratch.security_thresholds.iter())
+            .zip(scratch.min_center_dot.iter())
+            .map(|((&center_len, &security), &min_dot)| {
+                if center_len > 0 {
+                    security.max(min_dot - 1e-6)
+                } else {
+                    security
+                }
+            }),
+    );
     timings.add_ring_thresholds(t_thresholds.elapsed());
 
     let t_ring = PackedTimer::start();
@@ -633,7 +638,7 @@ pub fn packed_knn_cell_stream(
             let cy = f32x8::from_slice(&ys[i..]);
             let cz = f32x8::from_slice(&zs[i..]);
 
-            for qi in 0..num_queries {
+            for (qi, &query_slot) in queries.iter().enumerate() {
                 let qx = f32x8::splat(scratch.query_x[qi]);
                 let qy = f32x8::splat(scratch.query_y[qi]);
                 let qz = f32x8::splat(scratch.query_z[qi]);
@@ -645,7 +650,6 @@ pub fn packed_knn_cell_stream(
 
                 if mask_bits != 0 {
                     let dots_arr: [f32; 8] = dots.into();
-                    let query_slot = queries[qi];
                     while mask_bits != 0 {
                         let lane = mask_bits.trailing_zeros() as usize;
                         let slot = (soa_start + i + lane) as u32;
@@ -667,8 +671,8 @@ pub fn packed_knn_cell_stream(
             let cy = ys[i];
             let cz = zs[i];
             let slot = (soa_start + i) as u32;
-            for qi in 0..num_queries {
-                if slot == queries[qi] {
+            for (qi, &query_slot) in queries.iter().enumerate() {
+                if slot == query_slot {
                     continue;
                 }
                 let dot =
@@ -684,7 +688,7 @@ pub fn packed_knn_cell_stream(
     timings.add_ring_pass(t_ring.elapsed());
 
     let t_fallback = PackedTimer::start();
-    for qi in 0..num_queries {
+    for (qi, &query_slot) in queries.iter().enumerate() {
         let ring_added = scratch.lens[qi] - scratch.center_lens[qi];
         let need = k.saturating_sub(scratch.center_lens[qi]);
         if ring_added < need {
@@ -697,7 +701,7 @@ pub fn packed_knn_cell_stream(
 
                 for i in 0..range_len {
                     let slot = (soa_start + i) as u32;
-                    if slot == queries[qi] {
+                    if slot == query_slot {
                         continue;
                     }
                     let dot = xs[i] * scratch.query_x[qi]
