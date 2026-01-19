@@ -188,6 +188,14 @@ fn dense_scan_range<const UPDATE_MIN: bool>(
     debug_assert_eq!(queries.len(), min_center_dot.len());
     debug_assert!(keys_slab.len() >= queries.len() * stride);
 
+    let num_queries = queries.len();
+    let query_x = &query_x[..num_queries];
+    let query_y = &query_y[..num_queries];
+    let query_z = &query_z[..num_queries];
+    let thresholds = &thresholds[..num_queries];
+    let lens = &mut lens[..num_queries];
+    let min_center_dot = &mut min_center_dot[..num_queries];
+
     let range_len = xs.len();
     let full_chunks = range_len / 8;
     for chunk in 0..full_chunks {
@@ -196,13 +204,22 @@ fn dense_scan_range<const UPDATE_MIN: bool>(
         let cy = f32x8::from_slice(&ys[i..]);
         let cz = f32x8::from_slice(&zs[i..]);
 
-        for (qi, &query_slot) in queries.iter().enumerate() {
-            let qx = f32x8::splat(query_x[qi]);
-            let qy = f32x8::splat(query_y[qi]);
-            let qz = f32x8::splat(query_z[qi]);
+        let it = queries
+            .iter()
+            .zip(query_x.iter())
+            .zip(query_y.iter())
+            .zip(query_z.iter())
+            .zip(thresholds.iter())
+            .zip(lens.iter_mut())
+            .zip(min_center_dot.iter_mut());
+
+        for (qi, ((((((query_slot, qx), qy), qz), thr), len_ref), min_ref)) in it.enumerate() {
+            let qx = f32x8::splat(*qx);
+            let qy = f32x8::splat(*qy);
+            let qz = f32x8::splat(*qz);
             let dots = cx * qx + cy * qy + cz * qz;
 
-            let thresh_vec = f32x8::splat(thresholds[qi]);
+            let thresh_vec = f32x8::splat(*thr);
             let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
             let mut mask_bits = mask.to_bitmask() as u32;
 
@@ -211,13 +228,13 @@ fn dense_scan_range<const UPDATE_MIN: bool>(
                 while mask_bits != 0 {
                     let lane = mask_bits.trailing_zeros() as usize;
                     let slot = (soa_start + i + lane) as u32;
-                    if slot != query_slot {
+                    if slot != *query_slot {
                         let dot = dots_arr[lane];
-                        let slab_idx = qi * stride + lens[qi];
+                        let slab_idx = qi * stride + *len_ref;
                         keys_slab[slab_idx].write(make_desc_key(dot, slot));
-                        lens[qi] += 1;
+                        *len_ref += 1;
                         if UPDATE_MIN {
-                            min_center_dot[qi] = min_center_dot[qi].min(dot);
+                            *min_ref = (*min_ref).min(dot);
                         }
                     }
                     mask_bits &= mask_bits - 1;
@@ -232,17 +249,27 @@ fn dense_scan_range<const UPDATE_MIN: bool>(
         let cy = ys[i];
         let cz = zs[i];
         let slot = (soa_start + i) as u32;
-        for (qi, &query_slot) in queries.iter().enumerate() {
-            if slot == query_slot {
+
+        let it = queries
+            .iter()
+            .zip(query_x.iter())
+            .zip(query_y.iter())
+            .zip(query_z.iter())
+            .zip(thresholds.iter())
+            .zip(lens.iter_mut())
+            .zip(min_center_dot.iter_mut());
+
+        for (qi, ((((((query_slot, qx), qy), qz), thr), len_ref), min_ref)) in it.enumerate() {
+            if slot == *query_slot {
                 continue;
             }
-            let dot = cx * query_x[qi] + cy * query_y[qi] + cz * query_z[qi];
-            if dot > thresholds[qi] {
-                let slab_idx = qi * stride + lens[qi];
+            let dot = cx * *qx + cy * *qy + cz * *qz;
+            if dot > *thr {
+                let slab_idx = qi * stride + *len_ref;
                 keys_slab[slab_idx].write(make_desc_key(dot, slot));
-                lens[qi] += 1;
+                *len_ref += 1;
                 if UPDATE_MIN {
-                    min_center_dot[qi] = min_center_dot[qi].min(dot);
+                    *min_ref = (*min_ref).min(dot);
                 }
             }
         }
