@@ -213,7 +213,9 @@ fn dense_scan_range<const UPDATE_MIN: bool>(
             .zip(lens.iter_mut())
             .zip(min_center_dot.iter_mut());
 
-        for (qi, ((((((query_slot, qx), qy), qz), thr), len_ref), min_ref)) in it.enumerate() {
+        let mut slab_base = 0usize;
+        for ((((((query_slot, qx), qy), qz), thr), len_ref), min_ref) in it {
+            let slab_base_this = slab_base;
             let qx = f32x8::splat(*qx);
             let qy = f32x8::splat(*qy);
             let qz = f32x8::splat(*qz);
@@ -230,7 +232,7 @@ fn dense_scan_range<const UPDATE_MIN: bool>(
                     let slot = (soa_start + i + lane) as u32;
                     if slot != *query_slot {
                         let dot = dots_arr[lane];
-                        let slab_idx = qi * stride + *len_ref;
+                        let slab_idx = slab_base_this + *len_ref;
                         keys_slab[slab_idx].write(make_desc_key(dot, slot));
                         *len_ref += 1;
                         if UPDATE_MIN {
@@ -240,6 +242,8 @@ fn dense_scan_range<const UPDATE_MIN: bool>(
                     mask_bits &= mask_bits - 1;
                 }
             }
+
+            slab_base += stride;
         }
     }
 
@@ -259,19 +263,24 @@ fn dense_scan_range<const UPDATE_MIN: bool>(
             .zip(lens.iter_mut())
             .zip(min_center_dot.iter_mut());
 
-        for (qi, ((((((query_slot, qx), qy), qz), thr), len_ref), min_ref)) in it.enumerate() {
+        let mut slab_base = 0usize;
+        for ((((((query_slot, qx), qy), qz), thr), len_ref), min_ref) in it {
+            let slab_base_this = slab_base;
             if slot == *query_slot {
+                slab_base += stride;
                 continue;
             }
             let dot = cx * *qx + cy * *qy + cz * *qz;
             if dot > *thr {
-                let slab_idx = qi * stride + *len_ref;
+                let slab_idx = slab_base_this + *len_ref;
                 keys_slab[slab_idx].write(make_desc_key(dot, slot));
                 *len_ref += 1;
                 if UPDATE_MIN {
                     *min_ref = (*min_ref).min(dot);
                 }
             }
+
+            slab_base += stride;
         }
     }
 }
