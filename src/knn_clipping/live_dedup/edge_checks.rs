@@ -73,7 +73,6 @@ impl ShardDedup {
 /// edges_to_later and edges_overflow for the emit phase.
 ///
 /// This eliminates the edges_to_earlier intermediate vec.
-
 pub(super) fn collect_and_resolve_cell_edges(
     cell_idx: u32,
     bin: BinId,
@@ -210,8 +209,8 @@ pub(super) fn collect_and_resolve_cell_edges(
 
                 let endpoints_match = check.thirds == my_thirds;
                 if endpoints_match {
-                    for k in 0..2 {
-                        let local_idx = locals[k] as usize;
+                    for (k, &local) in locals.iter().enumerate() {
+                        let local_idx = local as usize;
                         debug_assert!(
                             vertex_indices[local_idx] == INVALID_INDEX
                                 || vertex_indices[local_idx] == check.indices[k],

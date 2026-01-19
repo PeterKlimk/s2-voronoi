@@ -245,7 +245,6 @@ impl CubeMapGrid {
 
     /// Get precomputed security_3x3 threshold for a cell.
     /// This is the max dot from any point in the cell to any ring-2 cell.
-
     /// Create a reusable scratch buffer for fast repeated queries.
     pub fn make_scratch(&self) -> CubeMapGridScratch {
         CubeMapGridScratch::new(6 * self.res * self.res)
@@ -355,7 +354,6 @@ impl CubeMapGrid {
     }
 
     #[inline]
-
     fn seed_start_cell_impl<P: UnitVec>(
         &self,
         points: &[P],
@@ -383,7 +381,6 @@ impl CubeMapGrid {
         1
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn find_k_nearest_resumable_into_impl<P: UnitVec>(
         &self,
         points: &[P],

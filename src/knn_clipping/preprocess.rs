@@ -138,13 +138,13 @@ pub fn merge_close_points(points: &[Vec3], threshold: f32) -> MergeResult {
     let mut effective_points = Vec::new();
     let mut original_to_effective = vec![0usize; n];
 
-    for i in 0..n {
+    for (i, slot) in original_to_effective.iter_mut().enumerate() {
         let rep = dsu.find(i as u32) as usize;
         if rep_to_effective[rep].is_none() {
             rep_to_effective[rep] = Some(effective_points.len());
             effective_points.push(points[rep]);
         }
-        original_to_effective[i] = rep_to_effective[rep].unwrap();
+        *slot = rep_to_effective[rep].unwrap();
     }
 
     let num_merged = n - effective_points.len();

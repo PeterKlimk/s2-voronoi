@@ -43,10 +43,10 @@ pub(super) fn assemble_sharded_live_dedup(
     let t1 = Timer::start();
 
     // Phase 3: overflow flush (V1: single-threaded)
-    for target_idx in 0..num_bins {
+    for (target_idx, support) in support_by_target.iter_mut().enumerate() {
         let target_bin = BinId::from_usize(target_idx);
         // Support sets
-        for entry in support_by_target[target_idx].drain(..) {
+        for entry in support.drain(..) {
             let source = entry.source_bin.as_usize();
             debug_assert_ne!(
                 entry.source_bin, target_bin,

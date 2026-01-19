@@ -762,8 +762,10 @@ pub(super) fn build_cells_sharded_live_dedup(
                         let packed_elapsed = t_packed.elapsed();
 
                         if status == PackedKnnCellStatus::SlowPath {
-                            for local_idx in group_start..cursor {
-                                let global = my_generators[local_idx];
+                            for (offset, &global) in
+                                my_generators[group_start..cursor].iter().enumerate()
+                            {
+                                let local_idx = group_start + offset;
                                 let local = LocalId::from_usize(local_idx);
                                 process_cell(
                                     &mut sub_accum,
@@ -808,8 +810,10 @@ pub(super) fn build_cells_sharded_live_dedup(
                         #[cfg(not(feature = "timing"))]
                         sub_accum.add_packed_knn(packed_elapsed);
                     } else {
-                        for local_idx in group_start..cursor {
-                            let global = my_generators[local_idx];
+                        for (offset, &global) in
+                            my_generators[group_start..cursor].iter().enumerate()
+                        {
+                            let local_idx = group_start + offset;
                             let local = LocalId::from_usize(local_idx);
                             process_cell(
                                 &mut sub_accum,
