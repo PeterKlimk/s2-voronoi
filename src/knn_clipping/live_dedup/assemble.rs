@@ -15,9 +15,7 @@ use crate::knn_clipping::cell_builder::VertexKey;
 use crate::knn_clipping::timing::{DedupSubPhases, Timer};
 use crate::VoronoiCell;
 
-pub(super) fn assemble_sharded_live_dedup(
-    mut data: ShardedCellsData,
-) -> super::AssembledLiveDedup {
+pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::AssembledLiveDedup {
     let t0 = Timer::start();
 
     let num_bins = data.assignment.num_bins;

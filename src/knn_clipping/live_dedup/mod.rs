@@ -56,8 +56,6 @@ pub(super) fn build_cells_sharded_live_dedup(
     build::build_cells_sharded_live_dedup(points, grid, termination)
 }
 
-pub(super) fn assemble_sharded_live_dedup(
-    data: ShardedCellsData,
-) -> AssembledLiveDedup {
+pub(super) fn assemble_sharded_live_dedup(data: ShardedCellsData) -> AssembledLiveDedup {
     assemble::assemble_sharded_live_dedup(data)
 }

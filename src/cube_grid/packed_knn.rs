@@ -162,6 +162,388 @@ const MAX_CANDIDATES_FAST: usize = 1024;
 const MAX_KEYS_SLAB_FAST: usize = 200_000;
 const MAX_CANDIDATES_HARD: usize = 65_536;
 
+#[inline(always)]
+fn dense_scan_range<const UPDATE_MIN: bool>(
+    stride: usize,
+    soa_start: usize,
+    xs: &[f32],
+    ys: &[f32],
+    zs: &[f32],
+    queries: &[u32],
+    query_x: &[f32],
+    query_y: &[f32],
+    query_z: &[f32],
+    thresholds: &[f32],
+    keys_slab: &mut [MaybeUninit<u64>],
+    lens: &mut [usize],
+    min_center_dot: &mut [f32],
+) {
+    debug_assert_eq!(xs.len(), ys.len());
+    debug_assert_eq!(xs.len(), zs.len());
+    debug_assert_eq!(queries.len(), lens.len());
+    debug_assert_eq!(queries.len(), thresholds.len());
+    debug_assert_eq!(queries.len(), query_x.len());
+    debug_assert_eq!(queries.len(), query_y.len());
+    debug_assert_eq!(queries.len(), query_z.len());
+    debug_assert_eq!(queries.len(), min_center_dot.len());
+    debug_assert!(keys_slab.len() >= queries.len() * stride);
+
+    let range_len = xs.len();
+    let full_chunks = range_len / 8;
+    for chunk in 0..full_chunks {
+        let i = chunk * 8;
+        let cx = f32x8::from_slice(&xs[i..]);
+        let cy = f32x8::from_slice(&ys[i..]);
+        let cz = f32x8::from_slice(&zs[i..]);
+
+        for (qi, &query_slot) in queries.iter().enumerate() {
+            let qx = f32x8::splat(query_x[qi]);
+            let qy = f32x8::splat(query_y[qi]);
+            let qz = f32x8::splat(query_z[qi]);
+            let dots = cx * qx + cy * qy + cz * qz;
+
+            let thresh_vec = f32x8::splat(thresholds[qi]);
+            let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
+            let mut mask_bits = mask.to_bitmask() as u32;
+
+            if mask_bits != 0 {
+                let dots_arr: [f32; 8] = dots.into();
+                while mask_bits != 0 {
+                    let lane = mask_bits.trailing_zeros() as usize;
+                    let slot = (soa_start + i + lane) as u32;
+                    if slot != query_slot {
+                        let dot = dots_arr[lane];
+                        let slab_idx = qi * stride + lens[qi];
+                        keys_slab[slab_idx].write(make_desc_key(dot, slot));
+                        lens[qi] += 1;
+                        if UPDATE_MIN {
+                            min_center_dot[qi] = min_center_dot[qi].min(dot);
+                        }
+                    }
+                    mask_bits &= mask_bits - 1;
+                }
+            }
+        }
+    }
+
+    let tail_start = full_chunks * 8;
+    for i in tail_start..range_len {
+        let cx = xs[i];
+        let cy = ys[i];
+        let cz = zs[i];
+        let slot = (soa_start + i) as u32;
+        for (qi, &query_slot) in queries.iter().enumerate() {
+            if slot == query_slot {
+                continue;
+            }
+            let dot = cx * query_x[qi] + cy * query_y[qi] + cz * query_z[qi];
+            if dot > thresholds[qi] {
+                let slab_idx = qi * stride + lens[qi];
+                keys_slab[slab_idx].write(make_desc_key(dot, slot));
+                lens[qi] += 1;
+                if UPDATE_MIN {
+                    min_center_dot[qi] = min_center_dot[qi].min(dot);
+                }
+            }
+        }
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn dense_ring_fallback(
+    grid: &CubeMapGrid,
+    queries: &[u32],
+    k: usize,
+    stride: usize,
+    ring_ranges: &[(usize, usize)],
+    query_x: &[f32],
+    query_y: &[f32],
+    query_z: &[f32],
+    security_thresholds: &[f32],
+    ring_thresholds: &[f32],
+    keys_slab: &mut [MaybeUninit<u64>],
+    lens: &mut [usize],
+    center_lens: &[usize],
+) {
+    for (qi, &query_slot) in queries.iter().enumerate() {
+        let ring_added = lens[qi].saturating_sub(center_lens[qi]);
+        let need = k.saturating_sub(center_lens[qi]);
+        if ring_added >= need {
+            continue;
+        }
+        if ring_thresholds[qi] <= security_thresholds[qi] {
+            continue;
+        }
+
+        lens[qi] = center_lens[qi];
+        let qx = query_x[qi];
+        let qy = query_y[qi];
+        let qz = query_z[qi];
+        let thr = security_thresholds[qi];
+
+        for &(soa_start, soa_end) in ring_ranges {
+            let range_len = soa_end - soa_start;
+            let xs = &grid.cell_points_x[soa_start..soa_end];
+            let ys = &grid.cell_points_y[soa_start..soa_end];
+            let zs = &grid.cell_points_z[soa_start..soa_end];
+
+            for i in 0..range_len {
+                let slot = (soa_start + i) as u32;
+                if slot == query_slot {
+                    continue;
+                }
+                let dot = xs[i] * qx + ys[i] * qy + zs[i] * qz;
+                if dot > thr {
+                    let slab_idx = qi * stride + lens[qi];
+                    keys_slab[slab_idx].write(make_desc_key(dot, slot));
+                    lens[qi] += 1;
+                }
+            }
+        }
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn packed_knn_cell_stream_large(
+    grid: &CubeMapGrid,
+    queries: &[u32],
+    k: usize,
+    scratch: &mut PackedKnnCellScratch,
+    timings: &mut PackedKnnTimings,
+    center_soa_start: usize,
+    center_soa_end: usize,
+    on_query: &mut dyn FnMut(usize, u32, &[u32], usize, f32),
+) -> PackedKnnCellStatus {
+    let num_queries = queries.len();
+
+    let t_setup = PackedTimer::start();
+    scratch.keys_slab.clear();
+    let topk_slab_size = num_queries * k;
+    if scratch.keys_slab.capacity() < topk_slab_size {
+        scratch
+            .keys_slab
+            .reserve(topk_slab_size.saturating_sub(scratch.keys_slab.len()));
+    }
+    unsafe { scratch.keys_slab.set_len(topk_slab_size) };
+    scratch.top_worst_key.resize(num_queries, 0);
+    scratch.top_worst_key.fill(0);
+    scratch.top_worst_pos.resize(num_queries, 0);
+    scratch.top_worst_pos.fill(0);
+    timings.add_setup(t_setup.elapsed());
+
+    let mut push_topk = |qi: usize, key: u64| {
+        let len = scratch.lens[qi];
+        let base = qi * k;
+        if len < k {
+            scratch.keys_slab[base + len].write(key);
+            let new_len = len + 1;
+            scratch.lens[qi] = new_len;
+            if new_len == k {
+                let mut worst_key = 0u64;
+                let mut worst_pos = 0usize;
+                for j in 0..k {
+                    let v = unsafe { scratch.keys_slab[base + j].assume_init() };
+                    if v > worst_key {
+                        worst_key = v;
+                        worst_pos = j;
+                    }
+                }
+                scratch.top_worst_key[qi] = worst_key;
+                scratch.top_worst_pos[qi] = worst_pos;
+            }
+            return;
+        }
+
+        let worst_key = scratch.top_worst_key[qi];
+        if key >= worst_key {
+            return;
+        }
+        let worst_pos = scratch.top_worst_pos[qi];
+        scratch.keys_slab[base + worst_pos].write(key);
+        let mut new_worst_key = 0u64;
+        let mut new_worst_pos = 0usize;
+        for j in 0..k {
+            let v = unsafe { scratch.keys_slab[base + j].assume_init() };
+            if v > new_worst_key {
+                new_worst_key = v;
+                new_worst_pos = j;
+            }
+        }
+        scratch.top_worst_key[qi] = new_worst_key;
+        scratch.top_worst_pos[qi] = new_worst_pos;
+    };
+
+    let center_len = center_soa_end - center_soa_start;
+    let xs = &grid.cell_points_x[center_soa_start..center_soa_end];
+    let ys = &grid.cell_points_y[center_soa_start..center_soa_end];
+    let zs = &grid.cell_points_z[center_soa_start..center_soa_end];
+
+    let t_center = PackedTimer::start();
+    let full_chunks = center_len / 8;
+    for chunk in 0..full_chunks {
+        let i = chunk * 8;
+        let cx = f32x8::from_slice(&xs[i..]);
+        let cy = f32x8::from_slice(&ys[i..]);
+        let cz = f32x8::from_slice(&zs[i..]);
+
+        for (qi, &query_slot) in queries.iter().enumerate() {
+            let qx = f32x8::splat(scratch.query_x[qi]);
+            let qy = f32x8::splat(scratch.query_y[qi]);
+            let qz = f32x8::splat(scratch.query_z[qi]);
+            let dots = cx * qx + cy * qy + cz * qz;
+
+            let thresh_vec = f32x8::splat(scratch.security_thresholds[qi]);
+            let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
+            let mut mask_bits = mask.to_bitmask() as u32;
+
+            if mask_bits != 0 {
+                let dots_arr: [f32; 8] = dots.into();
+                while mask_bits != 0 {
+                    let lane = mask_bits.trailing_zeros() as usize;
+                    let slot = (center_soa_start + i + lane) as u32;
+                    if slot != query_slot {
+                        let dot = dots_arr[lane];
+                        push_topk(qi, make_desc_key(dot, slot));
+                    }
+                    mask_bits &= mask_bits - 1;
+                }
+            }
+        }
+    }
+
+    let tail_start = full_chunks * 8;
+    for i in tail_start..center_len {
+        let cx = xs[i];
+        let cy = ys[i];
+        let cz = zs[i];
+        let slot = (center_soa_start + i) as u32;
+        for (qi, &query_slot) in queries.iter().enumerate() {
+            if slot == query_slot {
+                continue;
+            }
+            let dot =
+                cx * scratch.query_x[qi] + cy * scratch.query_y[qi] + cz * scratch.query_z[qi];
+            if dot > scratch.security_thresholds[qi] {
+                push_topk(qi, make_desc_key(dot, slot));
+            }
+        }
+    }
+    timings.add_center_pass(t_center.elapsed());
+
+    let t_ring = PackedTimer::start();
+    for &(soa_start, soa_end) in &scratch.cell_ranges[1..] {
+        let range_len = soa_end - soa_start;
+        let xs = &grid.cell_points_x[soa_start..soa_end];
+        let ys = &grid.cell_points_y[soa_start..soa_end];
+        let zs = &grid.cell_points_z[soa_start..soa_end];
+
+        let full_chunks = range_len / 8;
+        for chunk in 0..full_chunks {
+            let i = chunk * 8;
+            let cx = f32x8::from_slice(&xs[i..]);
+            let cy = f32x8::from_slice(&ys[i..]);
+            let cz = f32x8::from_slice(&zs[i..]);
+
+            for (qi, &query_slot) in queries.iter().enumerate() {
+                let qx = f32x8::splat(scratch.query_x[qi]);
+                let qy = f32x8::splat(scratch.query_y[qi]);
+                let qz = f32x8::splat(scratch.query_z[qi]);
+                let dots = cx * qx + cy * qy + cz * qz;
+
+                let thresh_vec = f32x8::splat(scratch.security_thresholds[qi]);
+                let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
+                let mut mask_bits = mask.to_bitmask() as u32;
+
+                if mask_bits != 0 {
+                    let dots_arr: [f32; 8] = dots.into();
+                    while mask_bits != 0 {
+                        let lane = mask_bits.trailing_zeros() as usize;
+                        let slot = (soa_start + i + lane) as u32;
+                        if slot != query_slot {
+                            let dot = dots_arr[lane];
+                            push_topk(qi, make_desc_key(dot, slot));
+                        }
+                        mask_bits &= mask_bits - 1;
+                    }
+                }
+            }
+        }
+
+        let tail_start = full_chunks * 8;
+        for i in tail_start..range_len {
+            let cx = xs[i];
+            let cy = ys[i];
+            let cz = zs[i];
+            let slot = (soa_start + i) as u32;
+
+            let it = queries
+                .iter()
+                .take(num_queries)
+                .zip(scratch.query_x.iter())
+                .zip(scratch.query_y.iter())
+                .zip(scratch.query_z.iter())
+                .zip(scratch.security_thresholds.iter())
+                .map(|((((q, qx), qy), qz), thr)| (q, qx, qy, qz, thr));
+
+            for (qi, (q, qx, qy, qz, thr)) in it.enumerate() {
+                if slot == *q {
+                    continue;
+                }
+
+                let dot = cx * *qx + cy * *qy + cz * *qz;
+
+                if dot > *thr {
+                    push_topk(qi, make_desc_key(dot, slot));
+                }
+            }
+        }
+    }
+    timings.add_ring_pass(t_ring.elapsed());
+
+    let t_select_prep = PackedTimer::start();
+    scratch.neighbors.resize(num_queries * k, u32::MAX);
+    timings.add_select_sort(t_select_prep.elapsed());
+    for (qi, &query_slot) in queries.iter().enumerate() {
+        let query_global = grid.point_indices[query_slot as usize];
+        let m = scratch.lens[qi].min(k);
+        if m == 0 {
+            let t_cb = PackedTimer::start();
+            on_query(qi, query_global, &[], 0, scratch.security_thresholds[qi]);
+            timings.add_callback(t_cb.elapsed());
+            continue;
+        }
+
+        let t_select = PackedTimer::start();
+        let keys_uninit = &mut scratch.keys_slab[qi * k..qi * k + m];
+        let keys_slice =
+            unsafe { std::slice::from_raw_parts_mut(keys_uninit.as_mut_ptr() as *mut u64, m) };
+        keys_slice.sort_unstable();
+
+        let out_start = qi * k;
+        for (neighbor, key) in scratch.neighbors[out_start..out_start + m]
+            .iter_mut()
+            .zip(keys_slice.iter())
+        {
+            *neighbor = key_to_idx(*key);
+        }
+        timings.add_select_sort(t_select.elapsed());
+
+        let t_cb = PackedTimer::start();
+        on_query(
+            qi,
+            query_global,
+            &scratch.neighbors[out_start..out_start + m],
+            m,
+            scratch.security_thresholds[qi],
+        );
+        timings.add_callback(t_cb.elapsed());
+    }
+
+    PackedKnnCellStatus::Ok
+}
+
 /// Statistics from PackedV4 batched k-NN.
 #[derive(Clone, Debug, Default)]
 
@@ -304,7 +686,6 @@ pub fn packed_knn_cell_stream(
     let use_dense = num_candidates <= MAX_CANDIDATES_FAST && dense_slab_size <= MAX_KEYS_SLAB_FAST;
 
     let (center_soa_start, center_soa_end) = scratch.cell_ranges[0];
-    let center_len = center_soa_end - center_soa_start;
     let xs = &grid.cell_points_x[center_soa_start..center_soa_end];
     let ys = &grid.cell_points_y[center_soa_start..center_soa_end];
     let zs = &grid.cell_points_z[center_soa_start..center_soa_end];
@@ -312,225 +693,17 @@ pub fn packed_knn_cell_stream(
     // === Large-candidate path: streaming top-k per query (O(num_queries*k) memory).
     // Keeps PackedV4 behavior (dot > security threshold), but avoids dense (q*c) slab.
     if !use_dense {
-        let t_setup = PackedTimer::start();
-        scratch.keys_slab.clear();
-        let topk_slab_size = num_queries * k;
-        if scratch.keys_slab.capacity() < topk_slab_size {
-            scratch
-                .keys_slab
-                .reserve(topk_slab_size.saturating_sub(scratch.keys_slab.len()));
-        }
-        unsafe { scratch.keys_slab.set_len(topk_slab_size) };
-        scratch.top_worst_key.resize(num_queries, 0);
-        scratch.top_worst_key.fill(0);
-        scratch.top_worst_pos.resize(num_queries, 0);
-        scratch.top_worst_pos.fill(0);
-        timings.add_setup(t_setup.elapsed());
-
-        let mut push_topk = |qi: usize, key: u64| {
-            let len = scratch.lens[qi];
-            let base = qi * k;
-            if len < k {
-                scratch.keys_slab[base + len].write(key);
-                let new_len = len + 1;
-                scratch.lens[qi] = new_len;
-                if new_len == k {
-                    let mut worst_key = 0u64;
-                    let mut worst_pos = 0usize;
-                    for j in 0..k {
-                        let v = unsafe { scratch.keys_slab[base + j].assume_init() };
-                        if v > worst_key {
-                            worst_key = v;
-                            worst_pos = j;
-                        }
-                    }
-                    scratch.top_worst_key[qi] = worst_key;
-                    scratch.top_worst_pos[qi] = worst_pos;
-                }
-                return;
-            }
-
-            let worst_key = scratch.top_worst_key[qi];
-            if key >= worst_key {
-                return;
-            }
-            let worst_pos = scratch.top_worst_pos[qi];
-            scratch.keys_slab[base + worst_pos].write(key);
-            let mut new_worst_key = 0u64;
-            let mut new_worst_pos = 0usize;
-            for j in 0..k {
-                let v = unsafe { scratch.keys_slab[base + j].assume_init() };
-                if v > new_worst_key {
-                    new_worst_key = v;
-                    new_worst_pos = j;
-                }
-            }
-            scratch.top_worst_key[qi] = new_worst_key;
-            scratch.top_worst_pos[qi] = new_worst_pos;
-        };
-
-        let t_center = PackedTimer::start();
-        let full_chunks = center_len / 8;
-        for chunk in 0..full_chunks {
-            let i = chunk * 8;
-            let cx = f32x8::from_slice(&xs[i..]);
-            let cy = f32x8::from_slice(&ys[i..]);
-            let cz = f32x8::from_slice(&zs[i..]);
-
-            for (qi, &query_slot) in queries.iter().enumerate() {
-                let qx = f32x8::splat(scratch.query_x[qi]);
-                let qy = f32x8::splat(scratch.query_y[qi]);
-                let qz = f32x8::splat(scratch.query_z[qi]);
-                let dots = cx * qx + cy * qy + cz * qz;
-
-                let thresh_vec = f32x8::splat(scratch.security_thresholds[qi]);
-                let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
-                let mut mask_bits = mask.to_bitmask() as u32;
-
-                if mask_bits != 0 {
-                    let dots_arr: [f32; 8] = dots.into();
-                    while mask_bits != 0 {
-                        let lane = mask_bits.trailing_zeros() as usize;
-                        let slot = (center_soa_start + i + lane) as u32;
-                        if slot != query_slot {
-                            let dot = dots_arr[lane];
-                            push_topk(qi, make_desc_key(dot, slot));
-                        }
-                        mask_bits &= mask_bits - 1;
-                    }
-                }
-            }
-        }
-
-        let tail_start = full_chunks * 8;
-        for i in tail_start..center_len {
-            let cx = xs[i];
-            let cy = ys[i];
-            let cz = zs[i];
-            let slot = (center_soa_start + i) as u32;
-            for (qi, &query_slot) in queries.iter().enumerate() {
-                if slot == query_slot {
-                    continue;
-                }
-                let dot =
-                    cx * scratch.query_x[qi] + cy * scratch.query_y[qi] + cz * scratch.query_z[qi];
-                if dot > scratch.security_thresholds[qi] {
-                    push_topk(qi, make_desc_key(dot, slot));
-                }
-            }
-        }
-        timings.add_center_pass(t_center.elapsed());
-
-        let t_ring = PackedTimer::start();
-        for &(soa_start, soa_end) in &scratch.cell_ranges[1..] {
-            let range_len = soa_end - soa_start;
-            let xs = &grid.cell_points_x[soa_start..soa_end];
-            let ys = &grid.cell_points_y[soa_start..soa_end];
-            let zs = &grid.cell_points_z[soa_start..soa_end];
-
-            let full_chunks = range_len / 8;
-            for chunk in 0..full_chunks {
-                let i = chunk * 8;
-                let cx = f32x8::from_slice(&xs[i..]);
-                let cy = f32x8::from_slice(&ys[i..]);
-                let cz = f32x8::from_slice(&zs[i..]);
-
-                for (qi, &query_slot) in queries.iter().enumerate() {
-                    let qx = f32x8::splat(scratch.query_x[qi]);
-                    let qy = f32x8::splat(scratch.query_y[qi]);
-                    let qz = f32x8::splat(scratch.query_z[qi]);
-                    let dots = cx * qx + cy * qy + cz * qz;
-
-                    let thresh_vec = f32x8::splat(scratch.security_thresholds[qi]);
-                    let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
-                    let mut mask_bits = mask.to_bitmask() as u32;
-
-                    if mask_bits != 0 {
-                        let dots_arr: [f32; 8] = dots.into();
-                        while mask_bits != 0 {
-                            let lane = mask_bits.trailing_zeros() as usize;
-                            let slot = (soa_start + i + lane) as u32;
-                            if slot != query_slot {
-                                let dot = dots_arr[lane];
-                                push_topk(qi, make_desc_key(dot, slot));
-                            }
-                            mask_bits &= mask_bits - 1;
-                        }
-                    }
-                }
-            }
-
-            let tail_start = full_chunks * 8;
-            for i in tail_start..range_len {
-                let cx = xs[i];
-                let cy = ys[i];
-                let cz = zs[i];
-                let slot = (soa_start + i) as u32;
-
-                let it = queries
-                    .iter()
-                    .take(num_queries)
-                    .zip(scratch.query_x.iter())
-                    .zip(scratch.query_y.iter())
-                    .zip(scratch.query_z.iter())
-                    .zip(scratch.security_thresholds.iter())
-                    .map(|((((q, qx), qy), qz), thr)| (q, qx, qy, qz, thr));
-
-                for (qi, (q, qx, qy, qz, thr)) in it.enumerate() {
-                    if slot == *q {
-                        continue;
-                    }
-
-                    let dot = cx * *qx + cy * *qy + cz * *qz;
-
-                    if dot > *thr {
-                        push_topk(qi, make_desc_key(dot, slot));
-                    }
-                }
-            }
-        }
-        timings.add_ring_pass(t_ring.elapsed());
-
-        let t_select_prep = PackedTimer::start();
-        scratch.neighbors.resize(num_queries * k, u32::MAX);
-        timings.add_select_sort(t_select_prep.elapsed());
-        for (qi, &query_slot) in queries.iter().enumerate() {
-            let query_global = grid.point_indices[query_slot as usize];
-            let m = scratch.lens[qi].min(k);
-            if m == 0 {
-                let t_cb = PackedTimer::start();
-                on_query(qi, query_global, &[], 0, scratch.security_thresholds[qi]);
-                timings.add_callback(t_cb.elapsed());
-                continue;
-            }
-
-            let t_select = PackedTimer::start();
-            let keys_uninit = &mut scratch.keys_slab[qi * k..qi * k + m];
-            let keys_slice =
-                unsafe { std::slice::from_raw_parts_mut(keys_uninit.as_mut_ptr() as *mut u64, m) };
-            keys_slice.sort_unstable();
-
-            let out_start = qi * k;
-            for (neighbor, key) in scratch.neighbors[out_start..out_start + m]
-                .iter_mut()
-                .zip(keys_slice.iter())
-            {
-                *neighbor = key_to_idx(*key);
-            }
-            timings.add_select_sort(t_select.elapsed());
-
-            let t_cb = PackedTimer::start();
-            on_query(
-                qi,
-                query_global,
-                &scratch.neighbors[out_start..out_start + m],
-                m,
-                scratch.security_thresholds[qi],
-            );
-            timings.add_callback(t_cb.elapsed());
-        }
-
-        return PackedKnnCellStatus::Ok;
+        let on_query = &mut on_query as &mut dyn FnMut(usize, u32, &[u32], usize, f32);
+        return packed_knn_cell_stream_large(
+            grid,
+            queries,
+            k,
+            scratch,
+            timings,
+            center_soa_start,
+            center_soa_end,
+            on_query,
+        );
     }
 
     // === Dense slab path (O(num_queries*num_candidates) memory) for small cells.
@@ -545,61 +718,21 @@ pub fn packed_knn_cell_stream(
     timings.add_setup(t_setup.elapsed());
 
     let t_center = PackedTimer::start();
-    let full_chunks = center_len / 8;
-    for chunk in 0..full_chunks {
-        let i = chunk * 8;
-        let cx = f32x8::from_slice(&xs[i..]);
-        let cy = f32x8::from_slice(&ys[i..]);
-        let cz = f32x8::from_slice(&zs[i..]);
-
-        for (qi, &query_slot) in queries.iter().enumerate() {
-            let qx = f32x8::splat(scratch.query_x[qi]);
-            let qy = f32x8::splat(scratch.query_y[qi]);
-            let qz = f32x8::splat(scratch.query_z[qi]);
-            let dots = cx * qx + cy * qy + cz * qz;
-
-            let thresh_vec = f32x8::splat(scratch.security_thresholds[qi]);
-            let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
-            let mut mask_bits = mask.to_bitmask() as u32;
-
-            if mask_bits != 0 {
-                let dots_arr: [f32; 8] = dots.into();
-                while mask_bits != 0 {
-                    let lane = mask_bits.trailing_zeros() as usize;
-                    let slot = (center_soa_start + i + lane) as u32;
-                    if slot != query_slot {
-                        let dot = dots_arr[lane];
-                        let slab_idx = qi * stride + scratch.lens[qi];
-                        scratch.keys_slab[slab_idx].write(make_desc_key(dot, slot));
-                        scratch.lens[qi] += 1;
-                        scratch.min_center_dot[qi] = scratch.min_center_dot[qi].min(dot);
-                    }
-                    mask_bits &= mask_bits - 1;
-                }
-            }
-        }
-    }
-
-    let tail_start = full_chunks * 8;
-    for i in tail_start..center_len {
-        let cx = xs[i];
-        let cy = ys[i];
-        let cz = zs[i];
-        let slot = (center_soa_start + i) as u32;
-        for (qi, &query_slot) in queries.iter().enumerate() {
-            if slot == query_slot {
-                continue;
-            }
-            let dot =
-                cx * scratch.query_x[qi] + cy * scratch.query_y[qi] + cz * scratch.query_z[qi];
-            if dot > scratch.security_thresholds[qi] {
-                let slab_idx = qi * stride + scratch.lens[qi];
-                scratch.keys_slab[slab_idx].write(make_desc_key(dot, slot));
-                scratch.lens[qi] += 1;
-                scratch.min_center_dot[qi] = scratch.min_center_dot[qi].min(dot);
-            }
-        }
-    }
+    dense_scan_range::<true>(
+        stride,
+        center_soa_start,
+        xs,
+        ys,
+        zs,
+        queries,
+        &scratch.query_x,
+        &scratch.query_y,
+        &scratch.query_z,
+        &scratch.security_thresholds,
+        &mut scratch.keys_slab,
+        &mut scratch.lens,
+        &mut scratch.min_center_dot,
+    );
     timings.add_center_pass(t_center.elapsed());
 
     scratch.center_lens.resize(num_queries, 0);
@@ -626,96 +759,43 @@ pub fn packed_knn_cell_stream(
 
     let t_ring = PackedTimer::start();
     for &(soa_start, soa_end) in &scratch.cell_ranges[1..] {
-        let range_len = soa_end - soa_start;
         let xs = &grid.cell_points_x[soa_start..soa_end];
         let ys = &grid.cell_points_y[soa_start..soa_end];
         let zs = &grid.cell_points_z[soa_start..soa_end];
-
-        let full_chunks = range_len / 8;
-        for chunk in 0..full_chunks {
-            let i = chunk * 8;
-            let cx = f32x8::from_slice(&xs[i..]);
-            let cy = f32x8::from_slice(&ys[i..]);
-            let cz = f32x8::from_slice(&zs[i..]);
-
-            for (qi, &query_slot) in queries.iter().enumerate() {
-                let qx = f32x8::splat(scratch.query_x[qi]);
-                let qy = f32x8::splat(scratch.query_y[qi]);
-                let qz = f32x8::splat(scratch.query_z[qi]);
-                let dots = cx * qx + cy * qy + cz * qz;
-
-                let thresh_vec = f32x8::splat(scratch.thresholds[qi]);
-                let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
-                let mut mask_bits = mask.to_bitmask() as u32;
-
-                if mask_bits != 0 {
-                    let dots_arr: [f32; 8] = dots.into();
-                    while mask_bits != 0 {
-                        let lane = mask_bits.trailing_zeros() as usize;
-                        let slot = (soa_start + i + lane) as u32;
-                        if slot != query_slot {
-                            let dot = dots_arr[lane];
-                            let slab_idx = qi * stride + scratch.lens[qi];
-                            scratch.keys_slab[slab_idx].write(make_desc_key(dot, slot));
-                            scratch.lens[qi] += 1;
-                        }
-                        mask_bits &= mask_bits - 1;
-                    }
-                }
-            }
-        }
-
-        let tail_start = full_chunks * 8;
-        for i in tail_start..range_len {
-            let cx = xs[i];
-            let cy = ys[i];
-            let cz = zs[i];
-            let slot = (soa_start + i) as u32;
-            for (qi, &query_slot) in queries.iter().enumerate() {
-                if slot == query_slot {
-                    continue;
-                }
-                let dot =
-                    cx * scratch.query_x[qi] + cy * scratch.query_y[qi] + cz * scratch.query_z[qi];
-                if dot > scratch.thresholds[qi] {
-                    let slab_idx = qi * stride + scratch.lens[qi];
-                    scratch.keys_slab[slab_idx].write(make_desc_key(dot, slot));
-                    scratch.lens[qi] += 1;
-                }
-            }
-        }
+        dense_scan_range::<false>(
+            stride,
+            soa_start,
+            xs,
+            ys,
+            zs,
+            queries,
+            &scratch.query_x,
+            &scratch.query_y,
+            &scratch.query_z,
+            &scratch.thresholds,
+            &mut scratch.keys_slab,
+            &mut scratch.lens,
+            &mut scratch.min_center_dot,
+        );
     }
     timings.add_ring_pass(t_ring.elapsed());
 
     let t_fallback = PackedTimer::start();
-    for (qi, &query_slot) in queries.iter().enumerate() {
-        let ring_added = scratch.lens[qi] - scratch.center_lens[qi];
-        let need = k.saturating_sub(scratch.center_lens[qi]);
-        if ring_added < need {
-            scratch.lens[qi] = scratch.center_lens[qi];
-            for &(soa_start, soa_end) in &scratch.cell_ranges[1..] {
-                let range_len = soa_end - soa_start;
-                let xs = &grid.cell_points_x[soa_start..soa_end];
-                let ys = &grid.cell_points_y[soa_start..soa_end];
-                let zs = &grid.cell_points_z[soa_start..soa_end];
-
-                for i in 0..range_len {
-                    let slot = (soa_start + i) as u32;
-                    if slot == query_slot {
-                        continue;
-                    }
-                    let dot = xs[i] * scratch.query_x[qi]
-                        + ys[i] * scratch.query_y[qi]
-                        + zs[i] * scratch.query_z[qi];
-                    if dot > scratch.security_thresholds[qi] {
-                        let slab_idx = qi * stride + scratch.lens[qi];
-                        scratch.keys_slab[slab_idx].write(make_desc_key(dot, slot));
-                        scratch.lens[qi] += 1;
-                    }
-                }
-            }
-        }
-    }
+    dense_ring_fallback(
+        grid,
+        queries,
+        k,
+        stride,
+        &scratch.cell_ranges[1..],
+        &scratch.query_x,
+        &scratch.query_y,
+        &scratch.query_z,
+        &scratch.security_thresholds,
+        &scratch.thresholds,
+        &mut scratch.keys_slab,
+        &mut scratch.lens,
+        &scratch.center_lens,
+    );
     timings.add_ring_fallback(t_fallback.elapsed());
 
     let t_select_prep = PackedTimer::start();
