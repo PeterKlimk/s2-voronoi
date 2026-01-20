@@ -143,6 +143,17 @@ pub struct CubeMapGrid {
     pub(super) cell_cos_radius: Vec<f32>,
     pub(super) cell_sin_radius: Vec<f32>,
 
+    /// Precomputed normalized u-grid-line plane normals, indexed by `face * (res+1) + line`.
+    ///
+    /// These are great-circle boundary planes `u = const` in the cube-map parameterization
+    /// used by `point_to_face_uv`.
+    pub(super) u_line_planes: Vec<Vec3>,
+    /// Precomputed normalized v-grid-line plane normals, indexed by `face * (res+1) + line`.
+    ///
+    /// These are great-circle boundary planes `v = const` in the cube-map parameterization
+    /// used by `point_to_face_uv`.
+    pub(super) v_line_planes: Vec<Vec3>,
+
     // === SoA layout: points stored contiguous by cell ===
     /// X coordinates of points, ordered by cell (use cell_offsets for ranges).
     pub(super) cell_points_x: Vec<f32>,
@@ -620,6 +631,91 @@ mod tests {
                     ring2_max,
                     diff
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn test_uv_line_planes_match_uv_rect_interior() {
+        use rand::{Rng, SeedableRng};
+        use rand_chacha::ChaCha8Rng;
+
+        // Pick a resolution with enough margin to sample "outside" points while staying
+        // strictly inside [-1, 1] UV bounds.
+        let res = 16usize;
+        let grid = CubeMapGrid::new(&[], res);
+        let mut rng = ChaCha8Rng::seed_from_u64(123);
+
+        // Pick a few comfortably interior cells per face (3×3 envelope stays on-face, and
+        // the 3×3 envelope doesn't touch the face boundary).
+        let samples = [(3usize, 4usize), (6, 6), (10, 9)];
+
+        for face in 0..6usize {
+            for &(iu, iv) in &samples {
+                let cell = face * res * res + iv * res + iu;
+                let center = grid.cell_centers[cell];
+
+                let mut planes = [
+                    grid.face_u_line_plane(face, iu - 1),
+                    grid.face_u_line_plane(face, iu + 2),
+                    grid.face_v_line_plane(face, iv - 1),
+                    grid.face_v_line_plane(face, iv + 2),
+                ];
+                for n in &mut planes {
+                    if n.dot(center) < 0.0 {
+                        *n = -*n;
+                    }
+                }
+
+                let umin = st_to_uv((iu - 1) as f32 / res as f32);
+                let umax = st_to_uv((iu + 2) as f32 / res as f32);
+                let vmin = st_to_uv((iv - 1) as f32 / res as f32);
+                let vmax = st_to_uv((iv + 2) as f32 / res as f32);
+
+                let eps = 5e-4f32;
+
+                // Inside points: must satisfy all plane halfspaces and map back to the same face.
+                for _ in 0..256 {
+                    let u = rng.gen_range((umin + eps)..(umax - eps));
+                    let v = rng.gen_range((vmin + eps)..(vmax - eps));
+                    let p = face_uv_to_3d(face, u, v);
+                    let (f2, u2, v2) = point_to_face_uv(p);
+                    assert_eq!(f2, face);
+                    assert!(u2 >= umin - 1e-5 && u2 <= umax + 1e-5);
+                    assert!(v2 >= vmin - 1e-5 && v2 <= vmax + 1e-5);
+
+                    for n in &planes {
+                        assert!(
+                            n.dot(p) >= -1e-5,
+                            "inside point violates plane: face={}, iu={}, iv={}, n·p={}",
+                            face,
+                            iu,
+                            iv,
+                            n.dot(p)
+                        );
+                    }
+                }
+
+                // Outside points on the same face: violate at least one boundary plane.
+                let delta = 2e-3f32;
+                for &(u, v) in &[
+                    (umin - delta, (vmin + vmax) * 0.5),
+                    (umax + delta, (vmin + vmax) * 0.5),
+                    ((umin + umax) * 0.5, vmin - delta),
+                    ((umin + umax) * 0.5, vmax + delta),
+                ] {
+                    assert!(u > -1.0 && u < 1.0 && v > -1.0 && v < 1.0);
+                    let p = face_uv_to_3d(face, u, v);
+                    let (f2, ..) = point_to_face_uv(p);
+                    assert_eq!(f2, face);
+
+                    let ok = planes.iter().all(|n| n.dot(p) >= -1e-6);
+                    assert!(
+                        !ok,
+                        "outside point unexpectedly inside: face={}, iu={}, iv={}, u={}, v={}",
+                        face, iu, iv, u, v
+                    );
+                }
             }
         }
     }

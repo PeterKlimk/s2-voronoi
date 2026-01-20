@@ -2,7 +2,7 @@
 //!
 //! Dominant mode: PackedV4 (batched, cell-local, SIMD dot products).
 
-use super::CubeMapGrid;
+use super::{cell_to_face_ij, CubeMapGrid};
 use glam::Vec3;
 use std::mem::MaybeUninit;
 use std::simd::f32x8;
@@ -1250,6 +1250,7 @@ impl PackedKnnCellScratch {
         timings.add_setup(t_setup.elapsed());
 
         let ring2 = grid.cell_ring2(cell);
+        let interior_planes = security_planes_3x3_interior(cell, grid);
 
         let t_query_cache = PackedTimer::start();
         self.query_x.resize(num_queries, 0.0);
@@ -1266,13 +1267,41 @@ impl PackedKnnCellScratch {
         let t_security = PackedTimer::start();
         self.security_thresholds.clear();
         self.security_thresholds.reserve(num_queries);
-        self.security_thresholds.extend(
-            self.query_x
-                .iter()
-                .zip(self.query_y.iter())
-                .zip(self.query_z.iter())
-                .map(|((&x, &y), &z)| outside_max_dot_xyz(x, y, z, ring2, grid)),
-        );
+        match interior_planes {
+            Some(planes) => {
+                for qi in 0..num_queries {
+                    let qx = self.query_x[qi];
+                    let qy = self.query_y[qi];
+                    let qz = self.query_z[qi];
+
+                    let mut s_min = 1.0f32;
+                    for n in &planes {
+                        s_min = s_min.min(n.x * qx + n.y * qy + n.z * qz);
+                    }
+
+                    // For the interior single-face case, the nearest outside point is reached
+                    // by crossing the closest boundary great circle. If we ever see a non-positive
+                    // signed distance (numerical issues), fall back to the existing cap bound.
+                    let security = if s_min > 0.0 && s_min.is_finite() {
+                        const PAD: f32 = 1e-6;
+                        let s = (s_min - PAD).clamp(0.0, 1.0);
+                        (1.0 - s * s).max(0.0).sqrt()
+                    } else {
+                        outside_max_dot_xyz(qx, qy, qz, ring2, grid)
+                    };
+                    self.security_thresholds.push(security);
+                }
+            }
+            None => {
+                self.security_thresholds.extend(
+                    self.query_x
+                        .iter()
+                        .zip(self.query_y.iter())
+                        .zip(self.query_z.iter())
+                        .map(|((&x, &y), &z)| outside_max_dot_xyz(x, y, z, ring2, grid)),
+                );
+            }
+        }
         timings.add_security_thresholds(t_security.elapsed());
 
         self.min_center_dot.resize(num_queries, f32::INFINITY);
@@ -1761,6 +1790,7 @@ pub fn packed_knn_cell_stream(
     }
 
     let ring2 = grid.cell_ring2(cell);
+    let interior_planes = security_planes_3x3_interior(cell, grid);
 
     scratch.lens.resize(num_queries, 0);
     scratch.lens.fill(0);
@@ -1784,14 +1814,39 @@ pub fn packed_knn_cell_stream(
     let t_security = PackedTimer::start();
     scratch.security_thresholds.clear();
     scratch.security_thresholds.reserve(num_queries);
-    scratch.security_thresholds.extend(
-        scratch
-            .query_x
-            .iter()
-            .zip(scratch.query_y.iter())
-            .zip(scratch.query_z.iter())
-            .map(|((&x, &y), &z)| outside_max_dot_xyz(x, y, z, ring2, grid)),
-    );
+    match interior_planes {
+        Some(planes) => {
+            for qi in 0..num_queries {
+                let qx = scratch.query_x[qi];
+                let qy = scratch.query_y[qi];
+                let qz = scratch.query_z[qi];
+
+                let mut s_min = 1.0f32;
+                for n in &planes {
+                    s_min = s_min.min(n.x * qx + n.y * qy + n.z * qz);
+                }
+
+                let security = if s_min > 0.0 && s_min.is_finite() {
+                    const PAD: f32 = 1e-6;
+                    let s = (s_min - PAD).clamp(0.0, 1.0);
+                    (1.0 - s * s).max(0.0).sqrt()
+                } else {
+                    outside_max_dot_xyz(qx, qy, qz, ring2, grid)
+                };
+                scratch.security_thresholds.push(security);
+            }
+        }
+        None => {
+            scratch.security_thresholds.extend(
+                scratch
+                    .query_x
+                    .iter()
+                    .zip(scratch.query_y.iter())
+                    .zip(scratch.query_z.iter())
+                    .map(|((&x, &y), &z)| outside_max_dot_xyz(x, y, z, ring2, grid)),
+            );
+        }
+    }
     timings.add_security_thresholds(t_security.elapsed());
 
     let stride = num_candidates;
@@ -2033,6 +2088,7 @@ pub fn packed_knn_cell_stream_directed(
     }
 
     let ring2 = grid.cell_ring2(cell);
+    let interior_planes = security_planes_3x3_interior(cell, grid);
 
     scratch.lens.resize(num_queries, 0);
     scratch.lens.fill(0);
@@ -2056,14 +2112,39 @@ pub fn packed_knn_cell_stream_directed(
     let t_security = PackedTimer::start();
     scratch.security_thresholds.clear();
     scratch.security_thresholds.reserve(num_queries);
-    scratch.security_thresholds.extend(
-        scratch
-            .query_x
-            .iter()
-            .zip(scratch.query_y.iter())
-            .zip(scratch.query_z.iter())
-            .map(|((&x, &y), &z)| outside_max_dot_xyz(x, y, z, ring2, grid)),
-    );
+    match interior_planes {
+        Some(planes) => {
+            for qi in 0..num_queries {
+                let qx = scratch.query_x[qi];
+                let qy = scratch.query_y[qi];
+                let qz = scratch.query_z[qi];
+
+                let mut s_min = 1.0f32;
+                for n in &planes {
+                    s_min = s_min.min(n.x * qx + n.y * qy + n.z * qz);
+                }
+
+                let security = if s_min > 0.0 && s_min.is_finite() {
+                    const PAD: f32 = 1e-6;
+                    let s = (s_min - PAD).clamp(0.0, 1.0);
+                    (1.0 - s * s).max(0.0).sqrt()
+                } else {
+                    outside_max_dot_xyz(qx, qy, qz, ring2, grid)
+                };
+                scratch.security_thresholds.push(security);
+            }
+        }
+        None => {
+            scratch.security_thresholds.extend(
+                scratch
+                    .query_x
+                    .iter()
+                    .zip(scratch.query_y.iter())
+                    .zip(scratch.query_z.iter())
+                    .map(|((&x, &y), &z)| outside_max_dot_xyz(x, y, z, ring2, grid)),
+            );
+        }
+    }
     timings.add_security_thresholds(t_security.elapsed());
 
     let stride = num_candidates;
@@ -2301,6 +2382,38 @@ fn max_dot_to_cap_xyz(qx: f32, qy: f32, qz: f32, center: Vec3, cos_r: f32, sin_r
 
     let sin_d = (1.0 - cos_d * cos_d).max(0.0).sqrt();
     (cos_d * cos_r + sin_d * sin_r).clamp(-1.0, 1.0)
+}
+
+#[inline]
+fn security_planes_3x3_interior(cell: usize, grid: &CubeMapGrid) -> Option<[Vec3; 4]> {
+    let res = grid.res;
+    if res < 3 {
+        return None;
+    }
+
+    // 3×3 neighborhood stays on a single face iff the center cell is not on the face boundary.
+    let (face, iu, iv) = cell_to_face_ij(cell, res);
+    if iu < 1 || iv < 1 || iu + 1 >= res || iv + 1 >= res {
+        return None;
+    }
+
+    // Outer boundaries for the 3×3 envelope: lines at (iu-1, iu+2) and (iv-1, iv+2).
+    let mut planes = [
+        grid.face_u_line_plane(face, iu - 1),
+        grid.face_u_line_plane(face, iu + 2),
+        grid.face_v_line_plane(face, iv - 1),
+        grid.face_v_line_plane(face, iv + 2),
+    ];
+
+    // Orient all planes so that the interior (containing the cell center) has `n·p >= 0`.
+    let center = grid.cell_centers[cell];
+    for n in &mut planes {
+        if n.dot(center) < 0.0 {
+            *n = -*n;
+        }
+    }
+
+    Some(planes)
 }
 
 #[inline]

@@ -903,6 +903,26 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                         match status {
                             PackedKnnCellStatus::Ok => {
+                                #[cfg(feature = "timing")]
+                                {
+                                    let planes_used = {
+                                        let res = grid.res();
+                                        if res < 3 {
+                                            false
+                                        } else {
+                                            let (_, iu, iv) = crate::cube_grid::cell_to_face_ij(
+                                                cell as usize,
+                                                res,
+                                            );
+                                            iu >= 1 && iv >= 1 && iu + 1 < res && iv + 1 < res
+                                        }
+                                    };
+                                    let q = u64::try_from(queries.len()).unwrap_or(0);
+                                    sub_accum.add_packed_security_queries(
+                                        if planes_used { q } else { 0 },
+                                        if planes_used { 0 } else { q },
+                                    );
+                                }
                                 for (offset, &global) in
                                     my_generators[group_start..cursor].iter().enumerate()
                                 {

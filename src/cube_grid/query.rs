@@ -222,6 +222,36 @@ impl CubeMapGrid {
         &self.ring2[cell][..len]
     }
 
+    /// Get the u-grid-line plane normal for a face at a given line index.
+    ///
+    /// Indexed by `face * (res + 1) + line`, where `line ∈ [0, res]`.
+    #[inline]
+    pub fn face_u_line_plane(&self, face: usize, line: usize) -> Vec3 {
+        debug_assert!(face < 6, "invalid face {}", face);
+        debug_assert!(
+            line <= self.res,
+            "invalid u line {} (res={})",
+            line,
+            self.res
+        );
+        self.u_line_planes[face * (self.res + 1) + line]
+    }
+
+    /// Get the v-grid-line plane normal for a face at a given line index.
+    ///
+    /// Indexed by `face * (res + 1) + line`, where `line ∈ [0, res]`.
+    #[inline]
+    pub fn face_v_line_plane(&self, face: usize, line: usize) -> Vec3 {
+        debug_assert!(face < 6, "invalid face {}", face);
+        debug_assert!(
+            line <= self.res,
+            "invalid v line {} (res={})",
+            line,
+            self.res
+        );
+        self.v_line_planes[face * (self.res + 1) + line]
+    }
+
     /// Get precomputed security_3x3 threshold for a cell.
     /// This is the max dot from any point in the cell to any ring-2 cell.
     /// Create a reusable scratch buffer for fast repeated queries.

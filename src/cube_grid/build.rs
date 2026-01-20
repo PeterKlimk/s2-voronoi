@@ -323,7 +323,8 @@ impl CubeMapGrid {
 
         #[cfg(feature = "timing")]
         let t = std::time::Instant::now();
-        let (cell_centers, cell_cos_radius, cell_sin_radius) = Self::compute_cell_bounds(res);
+        let (cell_centers, cell_cos_radius, cell_sin_radius, u_line_planes, v_line_planes) =
+            Self::compute_cell_bounds(res);
         #[cfg(feature = "timing")]
         if let Some(timings) = timings.as_deref_mut() {
             timings.cell_bounds += t.elapsed();
@@ -355,6 +356,8 @@ impl CubeMapGrid {
             cell_centers,
             cell_cos_radius,
             cell_sin_radius,
+            u_line_planes,
+            v_line_planes,
             cell_points_x,
             cell_points_y,
             cell_points_z,
@@ -565,7 +568,7 @@ impl CubeMapGrid {
         (ring2, ring2_lens)
     }
 
-    fn compute_cell_bounds(res: usize) -> (Vec<Vec3>, Vec<f32>, Vec<f32>) {
+    fn compute_cell_bounds(res: usize) -> (Vec<Vec3>, Vec<f32>, Vec<f32>, Vec<Vec3>, Vec<Vec3>) {
         let num_cells = 6 * res * res;
 
         // Precompute ST→UV transform for grid lines and cell centers.
@@ -736,6 +739,6 @@ impl CubeMapGrid {
             sin_r.push(sin);
         }
 
-        (centers, cos_r, sin_r)
+        (centers, cos_r, sin_r, u_planes, v_planes)
     }
 }

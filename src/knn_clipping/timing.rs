@@ -79,6 +79,10 @@ pub struct CellSubPhases {
     pub cells_packed_safe_exhausted: u64,
     /// Cells that executed any kNN query stage (resume/restart growth).
     pub cells_used_knn: u64,
+    /// Packed security mode usage (query count): interior u/v line planes.
+    pub packed_security_planes_queries: u64,
+    /// Packed security mode usage (query count): ring2 cap bound.
+    pub packed_security_cap_queries: u64,
     /// Histogram of neighbors processed at termination.
     pub neighbors_histogram: [u64; NEIGHBOR_HIST_BUCKETS],
 }
@@ -114,6 +118,8 @@ impl Default for CellSubPhases {
             cells_packed_tail_used: 0,
             cells_packed_safe_exhausted: 0,
             cells_used_knn: 0,
+            packed_security_planes_queries: 0,
+            packed_security_cap_queries: 0,
             neighbors_histogram: [0; NEIGHBOR_HIST_BUCKETS],
         }
     }
@@ -527,6 +533,18 @@ impl PhaseTimings {
             self.cell_sub.cells_packed_safe_exhausted,
             pct_cells(self.cell_sub.cells_packed_safe_exhausted)
         );
+        let sec_total = self.cell_sub.packed_security_planes_queries
+            + self.cell_sub.packed_security_cap_queries;
+        if sec_total > 0 {
+            let pct_q = |n: u64| (n as f64) / (sec_total as f64) * 100.0;
+            eprintln!(
+                "    pk_security: planes_q={} ({:.1}%) caps_q={} ({:.1}%)",
+                self.cell_sub.packed_security_planes_queries,
+                pct_q(self.cell_sub.packed_security_planes_queries),
+                self.cell_sub.packed_security_cap_queries,
+                pct_q(self.cell_sub.packed_security_cap_queries)
+            );
+        }
         eprintln!(
             "    knn: used={} ({:.1}%)",
             self.cell_sub.cells_used_knn,
@@ -783,6 +801,8 @@ pub struct CellSubAccum {
     pub cells_packed_tail_used: u64,
     pub cells_packed_safe_exhausted: u64,
     pub cells_used_knn: u64,
+    pub packed_security_planes_queries: u64,
+    pub packed_security_cap_queries: u64,
     pub neighbors_histogram: [u64; NEIGHBOR_HIST_BUCKETS],
 }
 
@@ -817,6 +837,8 @@ impl Default for CellSubAccum {
             cells_packed_tail_used: 0,
             cells_packed_safe_exhausted: 0,
             cells_used_knn: 0,
+            packed_security_planes_queries: 0,
+            packed_security_cap_queries: 0,
             neighbors_histogram: [0; NEIGHBOR_HIST_BUCKETS],
         }
     }
@@ -846,6 +868,11 @@ impl CellSubAccum {
 
     pub fn add_packed_knn_security_thresholds(&mut self, d: Duration) {
         self.packed_knn_security_thresholds += d;
+    }
+
+    pub fn add_packed_security_queries(&mut self, planes: u64, caps: u64) {
+        self.packed_security_planes_queries += planes;
+        self.packed_security_cap_queries += caps;
     }
 
     pub fn add_packed_knn_center_pass(&mut self, d: Duration) {
@@ -981,6 +1008,8 @@ impl CellSubAccum {
         self.cells_packed_tail_used += other.cells_packed_tail_used;
         self.cells_packed_safe_exhausted += other.cells_packed_safe_exhausted;
         self.cells_used_knn += other.cells_used_knn;
+        self.packed_security_planes_queries += other.packed_security_planes_queries;
+        self.packed_security_cap_queries += other.packed_security_cap_queries;
         for (i, &count) in other.neighbors_histogram.iter().enumerate() {
             self.neighbors_histogram[i] += count;
         }
@@ -1015,6 +1044,8 @@ impl CellSubAccum {
             cells_packed_tail_used: self.cells_packed_tail_used,
             cells_packed_safe_exhausted: self.cells_packed_safe_exhausted,
             cells_used_knn: self.cells_used_knn,
+            packed_security_planes_queries: self.packed_security_planes_queries,
+            packed_security_cap_queries: self.packed_security_cap_queries,
             neighbors_histogram: self.neighbors_histogram,
         }
     }
@@ -1035,6 +1066,9 @@ impl CellSubAccum {
     pub fn add_knn(&mut self, _d: Duration) {}
     #[inline(always)]
     pub fn add_packed_knn(&mut self, _d: Duration) {}
+    #[allow(dead_code)]
+    #[inline(always)]
+    pub fn add_packed_security_queries(&mut self, _planes: u64, _caps: u64) {}
     #[inline(always)]
     pub fn add_clip(&mut self, _d: Duration) {}
     #[inline(always)]
