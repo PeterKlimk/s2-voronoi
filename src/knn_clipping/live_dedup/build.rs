@@ -194,13 +194,13 @@ fn process_cell(
     let mut worst_cos = 1.0f32;
     let max_neighbors = points.len().saturating_sub(1);
     let mut max_k_requested = 0usize;
-    let mut knn_stage =
-        crate::knn_clipping::timing::KnnCellStage::Resume(crate::knn_clipping::KNN_RESUME_K);
+    let mut knn_stage = crate::knn_clipping::timing::KnnCellStage::Resume(0);
     let mut reached_schedule_max_k = false;
 
     let mut did_packed = false;
     let mut packed_security = 0.0f32;
     let mut packed_safe_exhausted = false;
+    let mut packed_tail_used = false;
 
     // Take incoming edge checks once. We'll use them both for geometry seeding and for
     // resolving edges to earlier neighbors later in the pipeline.
@@ -274,7 +274,9 @@ fn process_cell(
             packed_chunk.clear();
             packed_chunk.resize(k_cur, u32::MAX);
 
-            let Some(chunk) = packed_scratch.next_chunk(qi, stage, k_cur, packed_chunk) else {
+            let Some(chunk) =
+                packed_scratch.next_chunk(qi, stage, k_cur, packed_chunk, packed_timings)
+            else {
                 if stage == PackedStage::Chunk0 && packed_scratch.tail_possible(qi) {
                     packed_scratch.ensure_tail_directed(
                         grid,
@@ -284,6 +286,7 @@ fn process_cell(
                         packed_timings,
                     );
                     stage = PackedStage::Tail;
+                    packed_tail_used = true;
                     k_cur = k1;
                     continue;
                 }
@@ -701,12 +704,27 @@ fn process_cell(
         );
     }
 
-    let knn_stage = if did_full_scan_fallback {
+    let stage = if did_full_scan_fallback {
         crate::knn_clipping::timing::KnnCellStage::FullScanFallback
+    } else if used_knn {
+        knn_stage
+    } else if did_packed {
+        if packed_tail_used {
+            crate::knn_clipping::timing::KnnCellStage::PackedTail
+        } else {
+            crate::knn_clipping::timing::KnnCellStage::PackedChunk0
+        }
     } else {
         knn_stage
     };
-    cell_sub.add_cell_stage(knn_stage, knn_exhausted, cell_neighbors_processed);
+    cell_sub.add_cell_stage(
+        stage,
+        knn_exhausted,
+        cell_neighbors_processed,
+        packed_tail_used,
+        packed_safe_exhausted,
+        used_knn,
+    );
 
     // === Phase 5: Output Extraction ===
     let t_cert = crate::knn_clipping::timing::Timer::start();
@@ -878,6 +896,9 @@ pub(super) fn build_cells_sharded_live_dedup(
                             assignment.local_mask,
                             &mut packed_timings,
                         );
+                        #[cfg(feature = "timing")]
+                        let _packed_elapsed = t_packed.elapsed();
+                        #[cfg(not(feature = "timing"))]
                         let packed_elapsed = t_packed.elapsed();
 
                         match status {
@@ -935,8 +956,8 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                         #[cfg(feature = "timing")]
                         {
-                            let overhead_total = packed_elapsed;
-                            sub_accum.add_packed_knn(overhead_total);
+                            let total = packed_timings.total();
+                            sub_accum.add_packed_knn(total);
 
                             sub_accum.add_packed_knn_setup(packed_timings.setup);
                             sub_accum.add_packed_knn_query_cache(packed_timings.query_cache);
@@ -956,10 +977,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                             sub_accum.add_packed_knn_select_sort(packed_timings.select_sort);
                             sub_accum.add_packed_knn_select_scatter(packed_timings.select_scatter);
 
-                            let measured = packed_timings.total();
-                            sub_accum.add_packed_knn_unaccounted(
-                                overhead_total.saturating_sub(measured),
-                            );
+                            // `packed_knn` is defined as the sum of packed subcomponents.
                         }
                         #[cfg(not(feature = "timing"))]
                         sub_accum.add_packed_knn(packed_elapsed);

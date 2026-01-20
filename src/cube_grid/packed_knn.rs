@@ -1593,6 +1593,7 @@ impl PackedKnnCellScratch {
         stage: PackedStage,
         k: usize,
         out: &mut [u32],
+        timings: &mut PackedKnnTimings,
     ) -> Option<PackedChunk> {
         if k == 0 || out.is_empty() {
             return None;
@@ -1600,6 +1601,7 @@ impl PackedKnnCellScratch {
 
         match stage {
             PackedStage::Chunk0 => {
+                let t_qprep = PackedTimer::start();
                 let keys = &mut self.chunk0_keys.get_mut(qi)?;
                 let start = *self.chunk0_pos.get(qi)?;
                 if start >= keys.len() {
@@ -1610,13 +1612,20 @@ impl PackedKnnCellScratch {
                 if n == 0 {
                     return None;
                 }
+                timings.add_select_query_prep(t_qprep.elapsed());
                 if remaining.len() > n {
+                    let t_part = PackedTimer::start();
                     remaining.select_nth_unstable(n - 1);
+                    timings.add_select_partition(t_part.elapsed());
                 }
+                let t_sort = PackedTimer::start();
                 remaining[..n].sort_unstable();
+                timings.add_select_sort(t_sort.elapsed());
+                let t_scatter = PackedTimer::start();
                 for (dst, key) in out[..n].iter_mut().zip(remaining[..n].iter()) {
                     *dst = key_to_idx(*key);
                 }
+                timings.add_select_scatter(t_scatter.elapsed());
                 let last_dot = key_to_dot(remaining[n - 1]);
                 self.chunk0_pos[qi] = start + n;
                 let has_more = self.chunk0_pos[qi] < keys.len();
@@ -1631,6 +1640,7 @@ impl PackedKnnCellScratch {
             }
             PackedStage::Tail => {
                 debug_assert!(self.tail_ready, "tail stage requested before ensure_tail");
+                let t_qprep = PackedTimer::start();
                 let keys = &mut self.tail_keys.get_mut(qi)?;
                 let start = *self.tail_pos.get(qi)?;
                 if start >= keys.len() {
@@ -1641,13 +1651,20 @@ impl PackedKnnCellScratch {
                 if n == 0 {
                     return None;
                 }
+                timings.add_select_query_prep(t_qprep.elapsed());
                 if remaining.len() > n {
+                    let t_part = PackedTimer::start();
                     remaining.select_nth_unstable(n - 1);
+                    timings.add_select_partition(t_part.elapsed());
                 }
+                let t_sort = PackedTimer::start();
                 remaining[..n].sort_unstable();
+                timings.add_select_sort(t_sort.elapsed());
+                let t_scatter = PackedTimer::start();
                 for (dst, key) in out[..n].iter_mut().zip(remaining[..n].iter()) {
                     *dst = key_to_idx(*key);
                 }
+                timings.add_select_scatter(t_scatter.elapsed());
                 let last_dot = key_to_dot(remaining[n - 1]);
                 self.tail_pos[qi] = start + n;
                 let has_more = self.tail_pos[qi] < keys.len();

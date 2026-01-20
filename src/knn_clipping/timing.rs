@@ -26,6 +26,10 @@ pub const NEIGHBOR_HIST_BUCKETS: usize = 51;
 #[cfg(feature = "timing")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KnnCellStage {
+    /// Terminated during packed chunk0 (r=1).
+    PackedChunk0,
+    /// Terminated during packed tail (r=1, dot >= security).
+    PackedTail,
     /// Terminated during resume stage with given K value
     Resume(usize),
     /// Terminated during restart stage with given K value
@@ -69,6 +73,12 @@ pub struct CellSubPhases {
     pub stage_counts: FxHashMap<KnnCellStage, u64>,
     /// Cells where the k-NN search loop exhausted (typically means it hit brute force).
     pub cells_knn_exhausted: u64,
+    /// Cells that entered packed tail emission (even if they later fell back to kNN).
+    pub cells_packed_tail_used: u64,
+    /// Cells that exhausted all safe packed candidates in r=1 (even if they later fell back).
+    pub cells_packed_safe_exhausted: u64,
+    /// Cells that executed any kNN query stage (resume/restart growth).
+    pub cells_used_knn: u64,
     /// Histogram of neighbors processed at termination.
     pub neighbors_histogram: [u64; NEIGHBOR_HIST_BUCKETS],
 }
@@ -101,6 +111,9 @@ impl Default for CellSubPhases {
             edge_emit: Duration::ZERO,
             stage_counts: FxHashMap::default(),
             cells_knn_exhausted: 0,
+            cells_packed_tail_used: 0,
+            cells_packed_safe_exhausted: 0,
+            cells_used_knn: 0,
             neighbors_histogram: [0; NEIGHBOR_HIST_BUCKETS],
         }
     }
@@ -459,7 +472,34 @@ impl PhaseTimings {
             .unwrap_or(0);
 
         // Build output string
-        let mut stages_str = String::from("    knn_stages:");
+        let packed_chunk0 = self
+            .cell_sub
+            .stage_counts
+            .get(&KnnCellStage::PackedChunk0)
+            .copied()
+            .unwrap_or(0);
+        let packed_tail = self
+            .cell_sub
+            .stage_counts
+            .get(&KnnCellStage::PackedTail)
+            .copied()
+            .unwrap_or(0);
+
+        let mut stages_str = String::from("    cell_stages:");
+        if packed_chunk0 > 0 {
+            stages_str.push_str(&format!(
+                " pk0={} ({:.1}%)",
+                packed_chunk0,
+                pct_cells(packed_chunk0)
+            ));
+        }
+        if packed_tail > 0 {
+            stages_str.push_str(&format!(
+                " pk_tail={} ({:.1}%)",
+                packed_tail,
+                pct_cells(packed_tail)
+            ));
+        }
         for (k, count) in &resume_stages {
             stages_str.push_str(&format!(" k{}={} ({:.1}%)", k, count, pct_cells(*count)));
         }
@@ -480,6 +520,18 @@ impl PhaseTimings {
             pct_cells(self.cell_sub.cells_knn_exhausted)
         ));
         eprintln!("{}", stages_str);
+        eprintln!(
+            "    packed: tail_used={} ({:.1}%) safe_exhausted={} ({:.1}%)",
+            self.cell_sub.cells_packed_tail_used,
+            pct_cells(self.cell_sub.cells_packed_tail_used),
+            self.cell_sub.cells_packed_safe_exhausted,
+            pct_cells(self.cell_sub.cells_packed_safe_exhausted)
+        );
+        eprintln!(
+            "    knn: used={} ({:.1}%)",
+            self.cell_sub.cells_used_knn,
+            pct_cells(self.cell_sub.cells_used_knn)
+        );
 
         // Neighbor histogram: compute percentiles
         let hist = &self.cell_sub.neighbors_histogram;
@@ -728,6 +780,9 @@ pub struct CellSubAccum {
     pub edge_emit: Duration,
     pub stage_counts: FxHashMap<KnnCellStage, u64>,
     pub cells_knn_exhausted: u64,
+    pub cells_packed_tail_used: u64,
+    pub cells_packed_safe_exhausted: u64,
+    pub cells_used_knn: u64,
     pub neighbors_histogram: [u64; NEIGHBOR_HIST_BUCKETS],
 }
 
@@ -759,6 +814,9 @@ impl Default for CellSubAccum {
             edge_emit: Duration::ZERO,
             stage_counts: FxHashMap::default(),
             cells_knn_exhausted: 0,
+            cells_packed_tail_used: 0,
+            cells_packed_safe_exhausted: 0,
+            cells_used_knn: 0,
             neighbors_histogram: [0; NEIGHBOR_HIST_BUCKETS],
         }
     }
@@ -826,6 +884,7 @@ impl CellSubAccum {
         self.packed_knn_select_scatter += d;
     }
 
+    #[allow(dead_code)]
     pub fn add_packed_knn_unaccounted(&mut self, d: Duration) {
         self.packed_knn_unaccounted += d;
     }
@@ -862,10 +921,22 @@ impl CellSubAccum {
         stage: KnnCellStage,
         knn_exhausted: bool,
         neighbors_processed: usize,
+        packed_tail_used: bool,
+        packed_safe_exhausted: bool,
+        used_knn: bool,
     ) {
         *self.stage_counts.entry(stage).or_insert(0) += 1;
         if knn_exhausted {
             self.cells_knn_exhausted += 1;
+        }
+        if packed_tail_used {
+            self.cells_packed_tail_used += 1;
+        }
+        if packed_safe_exhausted {
+            self.cells_packed_safe_exhausted += 1;
+        }
+        if used_knn {
+            self.cells_used_knn += 1;
         }
         // Record histogram bucket
         let bucket = if neighbors_processed <= 48 {
@@ -907,6 +978,9 @@ impl CellSubAccum {
             *self.stage_counts.entry(stage).or_insert(0) += count;
         }
         self.cells_knn_exhausted += other.cells_knn_exhausted;
+        self.cells_packed_tail_used += other.cells_packed_tail_used;
+        self.cells_packed_safe_exhausted += other.cells_packed_safe_exhausted;
+        self.cells_used_knn += other.cells_used_knn;
         for (i, &count) in other.neighbors_histogram.iter().enumerate() {
             self.neighbors_histogram[i] += count;
         }
@@ -938,6 +1012,9 @@ impl CellSubAccum {
             edge_emit: self.edge_emit,
             stage_counts: self.stage_counts,
             cells_knn_exhausted: self.cells_knn_exhausted,
+            cells_packed_tail_used: self.cells_packed_tail_used,
+            cells_packed_safe_exhausted: self.cells_packed_safe_exhausted,
+            cells_used_knn: self.cells_used_knn,
             neighbors_histogram: self.neighbors_histogram,
         }
     }
@@ -976,6 +1053,9 @@ impl CellSubAccum {
         _stage: KnnCellStage,
         _knn_exhausted: bool,
         _neighbors_processed: usize,
+        _packed_tail_used: bool,
+        _packed_safe_exhausted: bool,
+        _used_knn: bool,
     ) {
     }
     #[inline(always)]
@@ -989,6 +1069,8 @@ impl CellSubAccum {
 #[cfg(not(feature = "timing"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KnnCellStage {
+    PackedChunk0,
+    PackedTail,
     /// Terminated during resume stage with given K value
     Resume(usize),
     /// Terminated during restart stage with given K value
