@@ -151,12 +151,4 @@ pub(super) struct SupportOverflow {
     pub(super) pos: Vec3,
 }
 
-/// Seed data from packed knn for cell construction.
-pub(super) struct PackedSeed<'a> {
-    /// Neighbor slots (SOA indices into point_indices/cell_points_x/y/z).
-    /// Use `grid.point_indices()[slot]` to get global index.
-    pub(super) neighbors: &'a [u32],
-    pub(super) count: usize,
-    pub(super) security: f32,
-    pub(super) k: usize,
-}
+// Packed-kNN data is handled via chunked emission from `cube_grid::packed_knn`.

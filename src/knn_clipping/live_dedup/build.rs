@@ -10,11 +10,10 @@ use super::packed::{pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::ShardState;
 use super::types::{
     BinId, DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeOverflowLocal, EdgeToLater, LocalId,
-    PackedSeed,
 };
 use super::ShardedCellsData;
 use crate::cube_grid::packed_knn::{
-    packed_knn_cell_stream_directed, PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings,
+    PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings, PackedStage,
 };
 use crate::cube_grid::CubeMapGrid;
 use crate::knn_clipping::cell_builder::VertexData;
@@ -122,6 +121,7 @@ struct CellContext {
     builder: Topo2DBuilder,
     scratch: crate::cube_grid::CubeMapGridScratch,
     neighbor_slots: Vec<u32>,
+    packed_chunk: Vec<u32>,
     cell_vertices: Vec<VertexData>,
     edge_neighbor_slots: Vec<u32>,
     edge_neighbor_globals: Vec<u32>,
@@ -135,6 +135,7 @@ impl CellContext {
             builder: Topo2DBuilder::new(0, Vec3::ZERO),
             scratch: grid.make_scratch(),
             neighbor_slots: Vec::with_capacity(crate::knn_clipping::KNN_RESTART_MAX),
+            packed_chunk: Vec::with_capacity(crate::knn_clipping::KNN_RESTART_MAX),
             cell_vertices: Vec::new(),
             edge_neighbor_slots: Vec::new(),
             edge_neighbor_globals: Vec::new(),
@@ -156,11 +157,18 @@ fn process_cell(
     bin: BinId,
     i: usize,
     local: LocalId,
-    packed: Option<PackedSeed<'_>>,
+    packed: Option<(
+        &mut PackedKnnCellScratch,
+        &mut PackedKnnTimings,
+        usize,
+        usize,
+        usize,
+    )>,
 ) {
     let builder = &mut ctx.builder;
     let scratch = &mut ctx.scratch;
     let neighbor_slots = &mut ctx.neighbor_slots;
+    let packed_chunk = &mut ctx.packed_chunk;
     let cell_vertices = &mut ctx.cell_vertices;
     let edge_neighbor_slots = &mut ctx.edge_neighbor_slots;
     let edge_neighbor_globals = &mut ctx.edge_neighbor_globals;
@@ -191,9 +199,8 @@ fn process_cell(
     let mut reached_schedule_max_k = false;
 
     let mut did_packed = false;
-    let mut packed_count = 0usize;
     let mut packed_security = 0.0f32;
-    let mut packed_k_local = 0usize;
+    let mut packed_safe_exhausted = false;
 
     // Take incoming edge checks once. We'll use them both for geometry seeding and for
     // resolving edges to earlier neighbors later in the pipeline.
@@ -251,17 +258,42 @@ fn process_cell(
     }
 
     // === Phase 3: Packed kNN Seeds ===
-    if let Some(seed) = packed {
+    if let Some((packed_scratch, packed_timings, qi, packed_k0_base, packed_k1)) = packed {
         did_packed = true;
-        packed_count = seed.count;
-        packed_security = seed.security;
-        packed_k_local = seed.k;
+        packed_security = packed_scratch.security(qi);
 
-        if packed_count > 0 {
+        let max_k0 = packed_k0_base.min(max_neighbors).max(1);
+        let k1 = packed_k1.min(max_neighbors).max(1);
+        let seed_clips = cell_neighbors_processed;
+        let mut k_cur = max_k0.saturating_sub(seed_clips).max(k1).min(max_k0);
+
+        let point_indices = grid.point_indices();
+        let mut stage = PackedStage::Chunk0;
+
+        loop {
+            packed_chunk.clear();
+            packed_chunk.resize(k_cur, u32::MAX);
+
+            let Some(chunk) = packed_scratch.next_chunk(qi, stage, k_cur, packed_chunk) else {
+                if stage == PackedStage::Chunk0 && packed_scratch.tail_possible(qi) {
+                    packed_scratch.ensure_tail_directed(
+                        grid,
+                        &assignment.slot_gen_map,
+                        assignment.local_shift,
+                        assignment.local_mask,
+                        packed_timings,
+                    );
+                    stage = PackedStage::Tail;
+                    k_cur = k1;
+                    continue;
+                }
+                packed_safe_exhausted = true;
+                break;
+            };
+
             let t_clip = crate::knn_clipping::timing::Timer::start();
-            let point_indices = grid.point_indices();
-            for (pos, &neighbor_slot) in seed.neighbors.iter().enumerate() {
-                // Convert slot to global index
+            for pos in 0..chunk.n {
+                let neighbor_slot = packed_chunk[pos];
                 let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
                 if neighbor_idx == i {
                     continue;
@@ -269,13 +301,7 @@ fn process_cell(
                 if !attempted_neighbors.insert(neighbor_idx) {
                     continue;
                 }
-                #[cfg(debug_assertions)]
-                debug_assert!(
-                    !builder.has_neighbor(neighbor_idx),
-                    "packed kNN returned duplicate neighbor {} for cell {}",
-                    neighbor_idx,
-                    i
-                );
+
                 let neighbor = points[neighbor_idx];
                 if builder
                     .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
@@ -289,34 +315,28 @@ fn process_cell(
 
                 if builder.is_bounded()
                     && termination.should_check(cell_neighbors_processed)
-                    && builder.can_terminate({
-                        let mut bound = worst_cos;
-                        for &next_slot in seed.neighbors.iter().skip(pos + 1) {
-                            let next = point_indices[next_slot as usize] as usize;
-                            if next != i {
-                                bound = points[i].dot(points[next]);
-                                break;
-                            }
-                        }
-                        bound
-                    })
+                    && pos + 1 < chunk.n
                 {
-                    terminated = true;
-                    break;
+                    let next_slot = packed_chunk[pos + 1];
+                    let next = point_indices[next_slot as usize] as usize;
+                    if next != i && builder.can_terminate(points[i].dot(points[next])) {
+                        terminated = true;
+                        break;
+                    }
                 }
             }
             cell_sub.add_clip(t_clip.elapsed());
-        }
 
-        if !terminated && builder.is_bounded() {
-            let bound = if packed_count == packed_k_local {
-                worst_cos
-            } else {
-                packed_security
-            };
-            if builder.can_terminate(bound) {
-                terminated = true;
+            if terminated || builder.is_failed() {
+                break;
             }
+
+            if builder.is_bounded() && builder.can_terminate(chunk.unseen_bound) {
+                terminated = true;
+                break;
+            }
+
+            k_cur = k1;
         }
     }
 
@@ -490,7 +510,7 @@ fn process_cell(
     if !terminated && builder.is_bounded() {
         let bound = if used_knn {
             worst_cos
-        } else if did_packed && packed_count < packed_k_local {
+        } else if did_packed && packed_safe_exhausted {
             packed_security
         } else {
             worst_cos
@@ -777,7 +797,8 @@ pub(super) fn build_cells_sharded_live_dedup(
 
     let assignment = assign_bins(points, grid);
     let num_bins = assignment.num_bins;
-    let packed_k = crate::knn_clipping::KNN_RESUME_K.min(points.len().saturating_sub(1));
+    let packed_k0_base = crate::knn_clipping::KNN_RESTART_KS[0].min(points.len().saturating_sub(1));
+    let packed_k1 = 8usize.min(points.len().saturating_sub(1));
 
     let per_bin: Vec<(ShardState, crate::knn_clipping::timing::CellSubAccum)> =
         maybe_par_into_iter!(0..num_bins)
@@ -841,83 +862,80 @@ pub(super) fn build_cells_sharded_live_dedup(
                     }
                     let group_start = start;
 
-                    if packed_k > 0 {
-                let queries = &packed_queries_all[group_start..cursor];
-                let query_locals = &packed_query_locals_all[group_start..cursor];
+                    if packed_k0_base > 0 {
+                        let queries = &packed_queries_all[group_start..cursor];
+                        let query_locals = &packed_query_locals_all[group_start..cursor];
 
-                // Grouped queries by cell to improve cache locality during kNN.
-                // NOTE: `packed_knn_cell_stream` invokes the callback per query.
-                // The callback builds the Voronoi cell and is separately timed (clipping,
-                // certification, key_dedup, and any fallback knn work). If we time the whole
-                // call naively, we'd double-count that work under `packed_knn`.
-                let t_packed = crate::knn_clipping::timing::Timer::start();
-                let status = packed_knn_cell_stream_directed(
-                    grid,
-                    cell as usize,
-                    queries,
-                    query_locals,
-                    bin.as_u8(),
-                    &assignment.slot_gen_map,
-                    assignment.local_shift,
-                    assignment.local_mask,
-                    packed_k,
-                    &mut packed_scratch,
-                    &mut packed_timings,
-                    |qi, query_idx, neighbors, count, security| {
-                                let local = LocalId::from_usize(group_start + qi);
-                                let seed = PackedSeed {
-                                    neighbors,
-                                    count,
-                                    security,
-                                    k: packed_k,
-                                };
-                                process_cell(
-                                    &mut sub_accum,
-                                    &mut ctx,
-                                    &mut shard,
-                                    points,
-                                    grid,
-                                    &assignment,
-                                    termination,
-                                    termination_max_k_cap,
-                                    bin,
-                                    query_idx as usize,
-                                    local,
-                                    Some(seed),
-                                );
-                            },
-                );
-                let packed_elapsed = t_packed.elapsed();
+                        let t_packed = crate::knn_clipping::timing::Timer::start();
+                        let status = packed_scratch.prepare_group_directed(
+                            grid,
+                            cell as usize,
+                            queries,
+                            query_locals,
+                            bin.as_u8(),
+                            &assignment.slot_gen_map,
+                            assignment.local_shift,
+                            assignment.local_mask,
+                            &mut packed_timings,
+                        );
+                        let packed_elapsed = t_packed.elapsed();
 
-                        if status == PackedKnnCellStatus::SlowPath {
-                            for (offset, &global) in
-                                my_generators[group_start..cursor].iter().enumerate()
-                            {
-                                let local_idx = group_start + offset;
-                                let local = LocalId::from_usize(local_idx);
-                                process_cell(
-                                    &mut sub_accum,
-                                    &mut ctx,
-                                    &mut shard,
-                                    points,
-                                    grid,
-                                    &assignment,
-                                    termination,
-                                    termination_max_k_cap,
-                                    bin,
-                                    global,
-                                    local,
-                                    None,
-                                );
+                        match status {
+                            PackedKnnCellStatus::Ok => {
+                                for (offset, &global) in
+                                    my_generators[group_start..cursor].iter().enumerate()
+                                {
+                                    let local_idx = group_start + offset;
+                                    let local = LocalId::from_usize(local_idx);
+                                    process_cell(
+                                        &mut sub_accum,
+                                        &mut ctx,
+                                        &mut shard,
+                                        points,
+                                        grid,
+                                        &assignment,
+                                        termination,
+                                        termination_max_k_cap,
+                                        bin,
+                                        global,
+                                        local,
+                                        Some((
+                                            &mut packed_scratch,
+                                            &mut packed_timings,
+                                            offset,
+                                            packed_k0_base,
+                                            packed_k1,
+                                        )),
+                                    );
+                                }
+                            }
+                            PackedKnnCellStatus::SlowPath => {
+                                for (offset, &global) in
+                                    my_generators[group_start..cursor].iter().enumerate()
+                                {
+                                    let local_idx = group_start + offset;
+                                    let local = LocalId::from_usize(local_idx);
+                                    process_cell(
+                                        &mut sub_accum,
+                                        &mut ctx,
+                                        &mut shard,
+                                        points,
+                                        grid,
+                                        &assignment,
+                                        termination,
+                                        termination_max_k_cap,
+                                        bin,
+                                        global,
+                                        local,
+                                        None,
+                                    );
+                                }
                             }
                         }
 
-                        // Attribute only the packed k-NN overhead to `packed_knn`, excluding the work
-                        // done inside `process_cell` (which has its own sub-phase timers).
                         #[cfg(feature = "timing")]
                         {
-                            let overhead_total =
-                                packed_elapsed.saturating_sub(packed_timings.callback);
+                            let overhead_total = packed_elapsed;
                             sub_accum.add_packed_knn(overhead_total);
 
                             sub_accum.add_packed_knn_setup(packed_timings.setup);
