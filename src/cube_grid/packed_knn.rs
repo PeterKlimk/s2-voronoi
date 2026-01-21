@@ -1348,161 +1348,99 @@ impl PackedKnnCellScratch {
         let zs = &grid.cell_points_z[center_soa_start..center_soa_end];
 
         let t_center = PackedTimer::start();
-        let queries_cover_center_cell = num_queries == center_len
-            && queries
-                .first()
-                .copied()
-                .is_some_and(|s| s as usize == center_soa_start)
-            && queries
-                .last()
-                .copied()
-                .is_some_and(|s| s as usize + 1 == center_soa_end)
-            && queries.windows(2).all(|w| w[1].wrapping_sub(w[0]) == 1);
+        debug_assert_eq!(
+            num_queries, center_len,
+            "directed packed group must cover the full center cell"
+        );
+        debug_assert!(
+            queries
+                .iter()
+                .enumerate()
+                .all(|(qi, &s)| s as usize == center_soa_start + qi),
+            "directed packed group queries must be the center cell in slot order"
+        );
+        debug_assert!(
+            query_locals.windows(2).all(|w| w[1] == w[0] + 1),
+            "directed packed group locals must be contiguous in slot order"
+        );
+        debug_assert!(
+            queries.iter().zip(query_locals.iter()).all(|(&slot, &ql)| {
+                let packed = slot_gen_map[slot as usize];
+                let (bin_b, local_b) = unpack_bin_local(packed, local_shift, local_mask);
+                bin_b == query_bin && local_b == ql
+            }),
+            "directed packed group (slot -> bin,local) mapping must match query inputs"
+        );
 
-        // Fast path: when queries are the entire center cell in slot order (the live_dedup case),
-        // the directed within-bin filter reduces to "skip earlier slots in this same cell".
-        //
-        // This avoids per-candidate bin/local unpacking and also avoids computing dots for chunks
-        // that are entirely earlier than a given query.
-        if queries_cover_center_cell {
-            let full_chunks = center_len / 8;
-            for chunk in 0..full_chunks {
-                let i = chunk * 8;
-                let cx = f32x8::from_slice(&xs[i..]);
-                let cy = f32x8::from_slice(&ys[i..]);
-                let cz = f32x8::from_slice(&zs[i..]);
+        // Directed center cell: since all points in a grid cell are in the same bin, the within-bin
+        // filter reduces to "skip earlier slots in this same cell".
+        let full_chunks = center_len / 8;
+        for chunk in 0..full_chunks {
+            let i = chunk * 8;
+            let cx = f32x8::from_slice(&xs[i..]);
+            let cy = f32x8::from_slice(&ys[i..]);
+            let cz = f32x8::from_slice(&zs[i..]);
 
-                // Candidate positions in this chunk are [i, i+7]. A query at position qi only
-                // needs to consider this chunk if qi <= i+7.
-                let qi_end = (i + 8).min(num_queries);
-                for qi in 0..qi_end {
-                    let qx = f32x8::splat(self.query_x[qi]);
-                    let qy = f32x8::splat(self.query_y[qi]);
-                    let qz = f32x8::splat(self.query_z[qi]);
-                    let dots = cx * qx + cy * qy + cz * qz;
+            // Candidate positions in this chunk are [i, i+7]. A query at position qi only
+            // needs to consider this chunk if qi <= i+7.
+            let qi_end = (i + 8).min(num_queries);
+            for qi in 0..qi_end {
+                let qx = f32x8::splat(self.query_x[qi]);
+                let qy = f32x8::splat(self.query_y[qi]);
+                let qz = f32x8::splat(self.query_z[qi]);
+                let dots = cx * qx + cy * qy + cz * qz;
 
-                    let thresh_vec = f32x8::splat(self.security_thresholds[qi]);
-                    let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
-                    let mut mask_bits = mask.to_bitmask() as u32;
+                let thresh_vec = f32x8::splat(self.security_thresholds[qi]);
+                let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
+                let mut mask_bits = mask.to_bitmask() as u32;
+                if mask_bits == 0 {
+                    continue;
+                }
+
+                // Directed intra-bin filter for center cell:
+                // allowed candidates are those with position >= qi, excluding self.
+                if qi >= i {
+                    let rel = qi - i;
+                    debug_assert!(rel < 8);
+                    if rel > 0 {
+                        mask_bits &= !((1u32 << rel) - 1);
+                    }
+                    mask_bits &= !(1u32 << rel);
                     if mask_bits == 0 {
                         continue;
                     }
+                }
 
-                    // Directed intra-bin filter for center cell:
-                    // allowed candidates are those with position >= qi, excluding self.
-                    if qi >= i {
-                        let rel = qi - i;
-                        debug_assert!(rel < 8);
-                        if rel > 0 {
-                            mask_bits &= !((1u32 << rel) - 1);
-                        }
-                        mask_bits &= !(1u32 << rel);
-                        if mask_bits == 0 {
-                            continue;
-                        }
-                    }
-
-                    let dots_arr: [f32; 8] = dots.into();
-                    while mask_bits != 0 {
-                        let lane = mask_bits.trailing_zeros() as usize;
-                        let slot = (center_soa_start + i + lane) as u32;
-                        let dot = dots_arr[lane];
-                        self.chunk0_keys[qi].push(make_desc_key(dot, slot));
-                        self.min_center_dot[qi] = self.min_center_dot[qi].min(dot);
-                        mask_bits &= mask_bits - 1;
-                    }
+                let dots_arr: [f32; 8] = dots.into();
+                while mask_bits != 0 {
+                    let lane = mask_bits.trailing_zeros() as usize;
+                    let slot = (center_soa_start + i + lane) as u32;
+                    let dot = dots_arr[lane];
+                    self.chunk0_keys[qi].push(make_desc_key(dot, slot));
+                    self.min_center_dot[qi] = self.min_center_dot[qi].min(dot);
+                    mask_bits &= mask_bits - 1;
                 }
             }
+        }
 
-            let tail_start = full_chunks * 8;
-            for pos in tail_start..center_len {
-                let cx = xs[pos];
-                let cy = ys[pos];
-                let cz = zs[pos];
-                let slot = (center_soa_start + pos) as u32;
+        let tail_start = full_chunks * 8;
+        for pos in tail_start..center_len {
+            let cx = xs[pos];
+            let cy = ys[pos];
+            let cz = zs[pos];
+            let slot = (center_soa_start + pos) as u32;
 
-                // Candidate position is `pos`. A query at position qi can only see this candidate
-                // if qi <= pos, excluding qi == pos (self).
-                let qi_end = (pos + 1).min(num_queries);
-                for qi in 0..qi_end {
-                    if qi == pos {
-                        continue;
-                    }
-                    let dot = cx * self.query_x[qi] + cy * self.query_y[qi] + cz * self.query_z[qi];
-                    if dot > self.security_thresholds[qi] {
-                        self.chunk0_keys[qi].push(make_desc_key(dot, slot));
-                        self.min_center_dot[qi] = self.min_center_dot[qi].min(dot);
-                    }
+            // Candidate position is `pos`. A query at position qi can only see this candidate
+            // if qi <= pos, excluding qi == pos (self).
+            let qi_end = (pos + 1).min(num_queries);
+            for qi in 0..qi_end {
+                if qi == pos {
+                    continue;
                 }
-            }
-        } else {
-            // Generic path: apply directed filter via packed (bin, local) decode.
-            let full_chunks = center_len / 8;
-            for chunk in 0..full_chunks {
-                let i = chunk * 8;
-                let cx = f32x8::from_slice(&xs[i..]);
-                let cy = f32x8::from_slice(&ys[i..]);
-                let cz = f32x8::from_slice(&zs[i..]);
-
-                for (qi, &query_slot) in queries.iter().enumerate() {
-                    let qx = f32x8::splat(self.query_x[qi]);
-                    let qy = f32x8::splat(self.query_y[qi]);
-                    let qz = f32x8::splat(self.query_z[qi]);
-                    let dots = cx * qx + cy * qy + cz * qz;
-
-                    let thresh_vec = f32x8::splat(self.security_thresholds[qi]);
-                    let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
-                    let mut mask_bits = mask.to_bitmask() as u32;
-                    if mask_bits == 0 {
-                        continue;
-                    }
-
-                    let dots_arr: [f32; 8] = dots.into();
-                    let query_local = query_locals[qi];
-                    while mask_bits != 0 {
-                        let lane = mask_bits.trailing_zeros() as usize;
-                        let slot = (center_soa_start + i + lane) as u32;
-                        if slot != query_slot {
-                            let packed = slot_gen_map[slot as usize];
-                            let (bin_b, local_b) =
-                                unpack_bin_local(packed, local_shift, local_mask);
-                            if bin_b == query_bin && local_b < query_local {
-                                mask_bits &= mask_bits - 1;
-                                continue;
-                            }
-
-                            let dot = dots_arr[lane];
-                            self.chunk0_keys[qi].push(make_desc_key(dot, slot));
-                            self.min_center_dot[qi] = self.min_center_dot[qi].min(dot);
-                        }
-                        mask_bits &= mask_bits - 1;
-                    }
-                }
-            }
-
-            let tail_start = full_chunks * 8;
-            for i in tail_start..center_len {
-                let cx = xs[i];
-                let cy = ys[i];
-                let cz = zs[i];
-                let slot = (center_soa_start + i) as u32;
-
-                for (qi, &query_slot) in queries.iter().enumerate() {
-                    if slot == query_slot {
-                        continue;
-                    }
-                    let query_local = query_locals[qi];
-                    let packed = slot_gen_map[slot as usize];
-                    let (bin_b, local_b) = unpack_bin_local(packed, local_shift, local_mask);
-                    if bin_b == query_bin && local_b < query_local {
-                        continue;
-                    }
-
-                    let dot = cx * self.query_x[qi] + cy * self.query_y[qi] + cz * self.query_z[qi];
-                    if dot > self.security_thresholds[qi] {
-                        self.chunk0_keys[qi].push(make_desc_key(dot, slot));
-                        self.min_center_dot[qi] = self.min_center_dot[qi].min(dot);
-                    }
+                let dot = cx * self.query_x[qi] + cy * self.query_y[qi] + cz * self.query_z[qi];
+                if dot > self.security_thresholds[qi] {
+                    self.chunk0_keys[qi].push(make_desc_key(dot, slot));
+                    self.min_center_dot[qi] = self.min_center_dot[qi].min(dot);
                 }
             }
         }
