@@ -23,34 +23,37 @@ pub struct PackedChunk {
 
 /// Timer that tracks elapsed time when timing is enabled.
 #[cfg(feature = "timing")]
-struct PackedTimer(std::time::Instant);
+struct PackedLapTimer(std::time::Instant);
 
 #[cfg(feature = "timing")]
-impl PackedTimer {
+impl PackedLapTimer {
     #[inline]
     pub fn start() -> Self {
         Self(std::time::Instant::now())
     }
 
     #[inline]
-    pub fn elapsed(&self) -> Duration {
-        self.0.elapsed()
+    pub fn lap(&mut self) -> Duration {
+        let now = std::time::Instant::now();
+        let d = now.duration_since(self.0);
+        self.0 = now;
+        d
     }
 }
 
 /// Dummy timer when feature is disabled (zero-sized).
 #[cfg(not(feature = "timing"))]
-struct PackedTimer;
+struct PackedLapTimer;
 
 #[cfg(not(feature = "timing"))]
-impl PackedTimer {
+impl PackedLapTimer {
     #[inline(always)]
     pub fn start() -> Self {
         Self
     }
 
     #[inline(always)]
-    pub fn elapsed(&self) -> Duration {
+    pub fn lap(&mut self) -> Duration {
         Duration::ZERO
     }
 }
@@ -284,7 +287,7 @@ impl PackedKnnCellScratch {
             return PackedKnnCellStatus::Ok;
         }
 
-        let t_setup = PackedTimer::start();
+        let mut t = PackedLapTimer::start();
         self.cell_ranges.clear();
 
         let q_start = grid.cell_offsets[cell] as usize;
@@ -308,15 +311,14 @@ impl PackedKnnCellScratch {
             num_candidates += end - start;
         }
         if num_candidates > MAX_CANDIDATES_HARD {
-            timings.add_setup(t_setup.elapsed());
+            timings.add_setup(t.lap());
             return PackedKnnCellStatus::SlowPath;
         }
-        timings.add_setup(t_setup.elapsed());
+        timings.add_setup(t.lap());
 
         let ring2 = grid.cell_ring2(cell);
         let interior_planes = security_planes_3x3_interior(cell, grid);
 
-        let t_query_cache = PackedTimer::start();
         self.query_x.resize(num_queries, 0.0);
         self.query_y.resize(num_queries, 0.0);
         self.query_z.resize(num_queries, 0.0);
@@ -326,9 +328,8 @@ impl PackedKnnCellScratch {
             self.query_y[qi] = grid.cell_points_y[slot];
             self.query_z[qi] = grid.cell_points_z[slot];
         }
-        timings.add_query_cache(t_query_cache.elapsed());
+        timings.add_query_cache(t.lap());
 
-        let t_security = PackedTimer::start();
         self.security_thresholds.clear();
         self.security_thresholds.reserve(num_queries);
         match interior_planes {
@@ -366,7 +367,7 @@ impl PackedKnnCellScratch {
                 );
             }
         }
-        timings.add_security_thresholds(t_security.elapsed());
+        timings.add_security_thresholds(t.lap());
 
         self.min_center_dot.resize(num_queries, f32::INFINITY);
         self.min_center_dot.fill(f32::INFINITY);
@@ -375,7 +376,6 @@ impl PackedKnnCellScratch {
         self.thresholds.resize(num_queries, 0.0);
         self.thresholds.fill(0.0);
 
-        let t_select_prep = PackedTimer::start();
         self.chunk0_keys.resize_with(num_queries, Vec::new);
         for v in &mut self.chunk0_keys[..num_queries] {
             v.clear();
@@ -394,7 +394,7 @@ impl PackedKnnCellScratch {
         self.tail_ready.resize(num_queries, false);
         self.tail_ready.fill(false);
         self.tail_built_any = false;
-        timings.add_select_prep(t_select_prep.elapsed());
+        timings.add_select_prep(t.lap());
 
         // === Center cell pass (directed triangular).
         let (center_soa_start, center_soa_end) = self.cell_ranges[0];
@@ -403,8 +403,7 @@ impl PackedKnnCellScratch {
         let ys = &grid.cell_points_y[center_soa_start..center_soa_end];
         let zs = &grid.cell_points_z[center_soa_start..center_soa_end];
 
-        let t_center = PackedTimer::start();
-
+        // Center pass is immediately after selection prep; continue lapping.
         // live_dedup invariant: groups are complete center-cell runs in slot order.
         debug_assert_eq!(
             num_queries, center_len,
@@ -502,13 +501,12 @@ impl PackedKnnCellScratch {
                 }
             }
         }
-        timings.add_center_pass(t_center.elapsed());
+        timings.add_center_pass(t.lap());
 
         for (qi, v) in self.chunk0_keys.iter().take(num_queries).enumerate() {
             self.center_lens[qi] = v.len();
         }
 
-        let t_thresholds = PackedTimer::start();
         for qi in 0..num_queries {
             let security = self.security_thresholds[qi];
             let center_len = self.center_lens[qi];
@@ -520,10 +518,9 @@ impl PackedKnnCellScratch {
             };
             self.tail_possible[qi] = self.thresholds[qi] > security;
         }
-        timings.add_ring_thresholds(t_thresholds.elapsed());
+        timings.add_ring_thresholds(t.lap());
 
         // === Ring pass: collect "hi" candidates into chunk0 (directed filter via bin/local).
-        let t_ring = PackedTimer::start();
         for &(soa_start, soa_end) in &self.cell_ranges[1..] {
             let range_len = soa_end - soa_start;
             let xs = &grid.cell_points_x[soa_start..soa_end];
@@ -598,7 +595,7 @@ impl PackedKnnCellScratch {
                 }
             }
         }
-        timings.add_ring_pass(t_ring.elapsed());
+        timings.add_ring_pass(t.lap());
 
         PackedKnnCellStatus::Ok
     }
@@ -628,7 +625,7 @@ impl PackedKnnCellScratch {
         self.tail_pos[qi] = 0;
         debug_assert!(self.tail_possible.get(qi).copied().unwrap_or(false));
 
-        let t_tail = PackedTimer::start();
+        let mut t_tail = PackedLapTimer::start();
         for &(soa_start, soa_end) in &self.cell_ranges[1..] {
             let range_len = soa_end - soa_start;
             let xs = &grid.cell_points_x[soa_start..soa_end];
@@ -706,7 +703,7 @@ impl PackedKnnCellScratch {
                 }
             }
         }
-        timings.add_ring_fallback(t_tail.elapsed());
+        timings.add_ring_fallback(t_tail.lap());
 
         if self.tail_keys[qi].is_empty() {
             self.tail_possible[qi] = false;
@@ -727,7 +724,7 @@ impl PackedKnnCellScratch {
 
         match stage {
             PackedStage::Chunk0 => {
-                let t_qprep = PackedTimer::start();
+                let mut t = PackedLapTimer::start();
                 let keys = &mut self.chunk0_keys.get_mut(qi)?;
                 let start = *self.chunk0_pos.get(qi)?;
                 if start >= keys.len() {
@@ -738,20 +735,17 @@ impl PackedKnnCellScratch {
                 if n == 0 {
                     return None;
                 }
-                timings.add_select_query_prep(t_qprep.elapsed());
+                timings.add_select_query_prep(t.lap());
                 if remaining.len() > n {
-                    let t_part = PackedTimer::start();
                     remaining.select_nth_unstable(n - 1);
-                    timings.add_select_partition(t_part.elapsed());
+                    timings.add_select_partition(t.lap());
                 }
-                let t_sort = PackedTimer::start();
                 remaining[..n].sort_unstable();
-                timings.add_select_sort(t_sort.elapsed());
-                let t_scatter = PackedTimer::start();
+                timings.add_select_sort(t.lap());
                 for (dst, key) in out[..n].iter_mut().zip(remaining[..n].iter()) {
                     *dst = key_to_idx(*key);
                 }
-                timings.add_select_scatter(t_scatter.elapsed());
+                timings.add_select_scatter(t.lap());
                 let last_dot = key_to_dot(remaining[n - 1]);
                 self.chunk0_pos[qi] = start + n;
                 let has_more = self.chunk0_pos[qi] < keys.len();
@@ -769,7 +763,7 @@ impl PackedKnnCellScratch {
                     self.tail_ready.get(qi).copied().unwrap_or(false),
                     "tail stage requested before ensure_tail"
                 );
-                let t_qprep = PackedTimer::start();
+                let mut t = PackedLapTimer::start();
                 let keys = &mut self.tail_keys.get_mut(qi)?;
                 let start = *self.tail_pos.get(qi)?;
                 if start >= keys.len() {
@@ -780,20 +774,17 @@ impl PackedKnnCellScratch {
                 if n == 0 {
                     return None;
                 }
-                timings.add_select_query_prep(t_qprep.elapsed());
+                timings.add_select_query_prep(t.lap());
                 if remaining.len() > n {
-                    let t_part = PackedTimer::start();
                     remaining.select_nth_unstable(n - 1);
-                    timings.add_select_partition(t_part.elapsed());
+                    timings.add_select_partition(t.lap());
                 }
-                let t_sort = PackedTimer::start();
                 remaining[..n].sort_unstable();
-                timings.add_select_sort(t_sort.elapsed());
-                let t_scatter = PackedTimer::start();
+                timings.add_select_sort(t.lap());
                 for (dst, key) in out[..n].iter_mut().zip(remaining[..n].iter()) {
                     *dst = key_to_idx(*key);
                 }
-                timings.add_select_scatter(t_scatter.elapsed());
+                timings.add_select_scatter(t.lap());
                 let last_dot = key_to_dot(remaining[n - 1]);
                 self.tail_pos[qi] = start + n;
                 let has_more = self.tail_pos[qi] < keys.len();

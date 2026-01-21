@@ -766,14 +766,15 @@ fn process_cell(
     );
 
     // === Phase 5: Output Extraction ===
-    let t_cert = crate::knn_clipping::timing::Timer::start();
+    //
+    // Sequential sub-phases: use a lap timer to reduce overhead (one `Instant::now()` per lap).
+    let mut t_post = crate::knn_clipping::timing::LapTimer::start();
     builder
         .to_vertex_data_full(cell_vertices, edge_neighbor_globals, edge_neighbor_slots)
         .expect("to_vertex_data_full failed after bounded check");
-    cell_sub.add_cert(t_cert.elapsed());
+    cell_sub.add_cert(t_post.lap());
 
     let cell_idx = i as u32;
-    let t_edge_collect = crate::knn_clipping::timing::Timer::start();
     edge_scratch.collect_and_resolve(
         cell_idx,
         bin,
@@ -785,7 +786,7 @@ fn process_cell(
         shard,
         incoming_checks,
     );
-    let collect_resolve_time = t_edge_collect.elapsed();
+    let collect_resolve_time = t_post.lap();
     // Split time between collect and resolve for backward-compatible timing
     cell_sub.add_edge_collect(collect_resolve_time / 2);
     cell_sub.add_edge_resolve(collect_resolve_time / 2);
@@ -796,7 +797,6 @@ fn process_cell(
         u8::try_from(count).expect("cell vertex count exceeds u8 capacity"),
     );
 
-    let t_keys = crate::knn_clipping::timing::Timer::start();
     {
         let vertex_indices = &mut edge_scratch.vertex_indices;
         for ((key, pos), vi) in cell_vertices.iter().copied().zip(vertex_indices.iter_mut()) {
@@ -828,11 +828,10 @@ fn process_cell(
             }
         }
     }
-    cell_sub.add_key_dedup(t_keys.elapsed());
+    cell_sub.add_key_dedup(t_post.lap());
 
-    let t_edge_emit = crate::knn_clipping::timing::Timer::start();
     edge_scratch.emit(shard, cell_vertices, cell_start, bin);
-    cell_sub.add_edge_emit(t_edge_emit.elapsed());
+    cell_sub.add_edge_emit(t_post.lap());
 
     debug_assert_eq!(
         shard.output.cell_indices.len() as u32 - cell_start,
@@ -923,6 +922,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                         let queries = &packed_queries_all[group_start..cursor];
                         let query_locals = &packed_query_locals_all[group_start..cursor];
 
+                        #[cfg(not(feature = "timing"))]
                         let t_packed = crate::knn_clipping::timing::Timer::start();
                         let status = packed_scratch.prepare_group_directed(
                             grid,
@@ -935,8 +935,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                             assignment.local_mask,
                             &mut packed_timings,
                         );
-                        #[cfg(feature = "timing")]
-                        let _packed_elapsed = t_packed.elapsed();
                         #[cfg(not(feature = "timing"))]
                         let packed_elapsed = t_packed.elapsed();
 

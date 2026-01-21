@@ -38,6 +38,102 @@ pub enum KnnCellStage {
     FullScanFallback,
 }
 
+/// Counts of which k-NN stage cells terminated at.
+///
+/// This is heavily performance-sensitive when timing is enabled: it is updated once per cell.
+/// We keep the common stages in fixed counters and only fall back to maps for rare K values.
+#[cfg(feature = "timing")]
+#[derive(Debug, Clone, Default)]
+pub struct StageCounts {
+    pub packed_chunk0: u64,
+    pub packed_tail: u64,
+    pub full_scan: u64,
+    pub resume_default: u64,
+    pub restart_k0: u64,
+    pub restart_kmax: u64,
+    pub resume_other: FxHashMap<usize, u64>,
+    pub restart_other: FxHashMap<usize, u64>,
+}
+
+#[cfg(feature = "timing")]
+impl StageCounts {
+    #[inline]
+    pub fn add(&mut self, stage: KnnCellStage) {
+        match stage {
+            KnnCellStage::PackedChunk0 => self.packed_chunk0 += 1,
+            KnnCellStage::PackedTail => self.packed_tail += 1,
+            KnnCellStage::FullScanFallback => self.full_scan += 1,
+            KnnCellStage::Resume(k) => {
+                if k == super::KNN_RESUME_K {
+                    self.resume_default += 1;
+                } else {
+                    *self.resume_other.entry(k).or_insert(0) += 1;
+                }
+            }
+            KnnCellStage::Restart(k) => {
+                if k == super::KNN_RESTART_KS[0] {
+                    self.restart_k0 += 1;
+                } else if k == super::KNN_RESTART_MAX {
+                    self.restart_kmax += 1;
+                } else {
+                    *self.restart_other.entry(k).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    #[inline]
+    pub fn total(&self) -> u64 {
+        let mut total = self.packed_chunk0
+            + self.packed_tail
+            + self.full_scan
+            + self.resume_default
+            + self.restart_k0
+            + self.restart_kmax;
+        total += self.resume_other.values().copied().sum::<u64>();
+        total += self.restart_other.values().copied().sum::<u64>();
+        total
+    }
+
+    pub fn iter_resume(&self) -> Vec<(usize, u64)> {
+        let mut v = Vec::with_capacity(1 + self.resume_other.len());
+        if self.resume_default > 0 {
+            v.push((super::KNN_RESUME_K, self.resume_default));
+        }
+        v.extend(self.resume_other.iter().map(|(&k, &c)| (k, c)));
+        v.sort_by_key(|(k, _)| *k);
+        v
+    }
+
+    pub fn iter_restart(&self) -> Vec<(usize, u64)> {
+        let mut v = Vec::with_capacity(2 + self.restart_other.len());
+        if self.restart_k0 > 0 {
+            v.push((super::KNN_RESTART_KS[0], self.restart_k0));
+        }
+        if self.restart_kmax > 0 {
+            v.push((super::KNN_RESTART_MAX, self.restart_kmax));
+        }
+        v.extend(self.restart_other.iter().map(|(&k, &c)| (k, c)));
+        v.sort_by_key(|(k, _)| *k);
+        v
+    }
+
+    pub fn merge(&mut self, other: &StageCounts) {
+        self.packed_chunk0 += other.packed_chunk0;
+        self.packed_tail += other.packed_tail;
+        self.full_scan += other.full_scan;
+        self.resume_default += other.resume_default;
+        self.restart_k0 += other.restart_k0;
+        self.restart_kmax += other.restart_kmax;
+        for (&k, &c) in &other.resume_other {
+            *self.resume_other.entry(k).or_insert(0) += c;
+        }
+        for (&k, &c) in &other.restart_other {
+            *self.restart_other.entry(k).or_insert(0) += c;
+        }
+    }
+}
+
 /// Sub-phase timings within cell construction.
 #[cfg(feature = "timing")]
 #[derive(Debug, Clone)]
@@ -70,7 +166,7 @@ pub struct CellSubPhases {
     /// Per-cell edge emission (pending + overflow).
     pub edge_emit: Duration,
     /// Per-cell k-NN stage distribution (final stage used per cell).
-    pub stage_counts: FxHashMap<KnnCellStage, u64>,
+    pub stage_counts: StageCounts,
     /// Cells where the k-NN search loop exhausted (typically means it hit brute force).
     pub cells_knn_exhausted: u64,
     /// Cells that entered packed tail emission (even if they later fell back to kNN).
@@ -121,7 +217,7 @@ impl Default for CellSubPhases {
             edge_collect: Duration::ZERO,
             edge_resolve: Duration::ZERO,
             edge_emit: Duration::ZERO,
-            stage_counts: FxHashMap::default(),
+            stage_counts: StageCounts::default(),
             cells_knn_exhausted: 0,
             cells_packed_tail_used: 0,
             cells_packed_safe_exhausted: 0,
@@ -456,52 +552,17 @@ impl PhaseTimings {
         eprintln!("    ({:.1}x parallelism)", parallelism);
 
         // Collect and sort stage counts for display
-        let total_cells: u64 = self.cell_sub.stage_counts.values().sum::<u64>().max(1);
+        let total_cells: u64 = self.cell_sub.stage_counts.total().max(1);
         let pct_cells = |c: u64| c as f64 / total_cells as f64 * 100.0;
 
-        // Separate resume, restart, and special stages
-        let mut resume_stages: Vec<_> = self
-            .cell_sub
-            .stage_counts
-            .iter()
-            .filter_map(|(k, &v)| match k {
-                KnnCellStage::Resume(n) => Some((*n, v)),
-                _ => None,
-            })
-            .collect();
-        resume_stages.sort_by_key(|(k, _)| *k);
+        let resume_stages = self.cell_sub.stage_counts.iter_resume();
+        let restart_stages = self.cell_sub.stage_counts.iter_restart();
 
-        let mut restart_stages: Vec<_> = self
-            .cell_sub
-            .stage_counts
-            .iter()
-            .filter_map(|(k, &v)| match k {
-                KnnCellStage::Restart(n) => Some((*n, v)),
-                _ => None,
-            })
-            .collect();
-        restart_stages.sort_by_key(|(k, _)| *k);
-
-        let full_scan = self
-            .cell_sub
-            .stage_counts
-            .get(&KnnCellStage::FullScanFallback)
-            .copied()
-            .unwrap_or(0);
+        let full_scan = self.cell_sub.stage_counts.full_scan;
 
         // Build output string
-        let packed_chunk0 = self
-            .cell_sub
-            .stage_counts
-            .get(&KnnCellStage::PackedChunk0)
-            .copied()
-            .unwrap_or(0);
-        let packed_tail = self
-            .cell_sub
-            .stage_counts
-            .get(&KnnCellStage::PackedTail)
-            .copied()
-            .unwrap_or(0);
+        let packed_chunk0 = self.cell_sub.stage_counts.packed_chunk0;
+        let packed_tail = self.cell_sub.stage_counts.packed_tail;
 
         let mut stages_str = String::from("    cell_stages:");
         if packed_chunk0 > 0 {
@@ -800,6 +861,43 @@ impl Timer {
     }
 }
 
+/// Timer optimized for sequential sub-phase timing: each `lap()` uses a single `Instant::now()`.
+#[cfg(feature = "timing")]
+pub struct LapTimer(std::time::Instant);
+
+#[cfg(feature = "timing")]
+impl LapTimer {
+    #[inline]
+    pub fn start() -> Self {
+        Self(std::time::Instant::now())
+    }
+
+    #[inline]
+    pub fn lap(&mut self) -> Duration {
+        let now = std::time::Instant::now();
+        let d = now.duration_since(self.0);
+        self.0 = now;
+        d
+    }
+}
+
+/// Dummy lap timer when feature is disabled (zero-sized).
+#[cfg(not(feature = "timing"))]
+pub struct LapTimer;
+
+#[cfg(not(feature = "timing"))]
+impl LapTimer {
+    #[inline(always)]
+    pub fn start() -> Self {
+        Self
+    }
+
+    #[inline(always)]
+    pub fn lap(&mut self) -> Duration {
+        Duration::ZERO
+    }
+}
+
 /// Accumulator for cell sub-phase timings (used per-chunk, then merged).
 #[cfg(feature = "timing")]
 #[derive(Clone)]
@@ -826,7 +924,7 @@ pub struct CellSubAccum {
     pub edge_collect: Duration,
     pub edge_resolve: Duration,
     pub edge_emit: Duration,
-    pub stage_counts: FxHashMap<KnnCellStage, u64>,
+    pub stage_counts: StageCounts,
     pub cells_knn_exhausted: u64,
     pub cells_packed_tail_used: u64,
     pub cells_packed_safe_exhausted: u64,
@@ -866,7 +964,7 @@ impl Default for CellSubAccum {
             edge_collect: Duration::ZERO,
             edge_resolve: Duration::ZERO,
             edge_emit: Duration::ZERO,
-            stage_counts: FxHashMap::default(),
+            stage_counts: StageCounts::default(),
             cells_knn_exhausted: 0,
             cells_packed_tail_used: 0,
             cells_packed_safe_exhausted: 0,
@@ -1007,7 +1105,7 @@ impl CellSubAccum {
         packed_safe_exhausted: bool,
         used_knn: bool,
     ) {
-        *self.stage_counts.entry(stage).or_insert(0) += 1;
+        self.stage_counts.add(stage);
         if knn_exhausted {
             self.cells_knn_exhausted += 1;
         }
@@ -1056,9 +1154,7 @@ impl CellSubAccum {
         self.edge_collect += other.edge_collect;
         self.edge_resolve += other.edge_resolve;
         self.edge_emit += other.edge_emit;
-        for (&stage, &count) in &other.stage_counts {
-            *self.stage_counts.entry(stage).or_insert(0) += count;
-        }
+        self.stage_counts.merge(&other.stage_counts);
         self.cells_knn_exhausted += other.cells_knn_exhausted;
         self.cells_packed_tail_used += other.cells_packed_tail_used;
         self.cells_packed_safe_exhausted += other.cells_packed_safe_exhausted;
