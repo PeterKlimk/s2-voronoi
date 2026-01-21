@@ -1158,7 +1158,8 @@ pub struct PackedKnnCellScratch {
     chunk0_pos: Vec<usize>,
     tail_pos: Vec<usize>,
     tail_possible: Vec<bool>,
-    tail_ready: bool,
+    tail_ready: Vec<bool>,
+    tail_built_any: bool,
     top_worst_key: Vec<u64>,
     top_worst_pos: Vec<usize>,
     security_thresholds: Vec<f32>,
@@ -1186,7 +1187,8 @@ impl PackedKnnCellScratch {
             chunk0_pos: Vec::new(),
             tail_pos: Vec::new(),
             tail_possible: Vec::new(),
-            tail_ready: false,
+            tail_ready: Vec::new(),
+            tail_built_any: false,
             top_worst_key: Vec::new(),
             top_worst_pos: Vec::new(),
             security_thresholds: Vec::new(),
@@ -1335,7 +1337,9 @@ impl PackedKnnCellScratch {
         self.tail_pos.fill(0);
         self.tail_possible.resize(num_queries, false);
         self.tail_possible.fill(false);
-        self.tail_ready = false;
+        self.tail_ready.resize(num_queries, false);
+        self.tail_ready.fill(false);
+        self.tail_built_any = false;
 
         let (center_soa_start, center_soa_end) = self.cell_ranges[0];
         let center_len = center_soa_end - center_soa_start;
@@ -1511,27 +1515,33 @@ impl PackedKnnCellScratch {
         PackedKnnCellStatus::Ok
     }
 
-    pub fn ensure_tail_directed(
+    pub fn ensure_tail_directed_for(
         &mut self,
+        qi: usize,
         grid: &CubeMapGrid,
         slot_gen_map: &[u32],
         local_shift: u32,
         local_mask: u32,
         timings: &mut PackedKnnTimings,
     ) {
-        if self.tail_ready {
+        let Some(tail_ready) = self.tail_ready.get(qi).copied() else {
+            return;
+        };
+        if tail_ready {
             return;
         }
-        self.tail_ready = true;
-        timings.inc_tail_builds();
+        if !self.tail_built_any {
+            self.tail_built_any = true;
+            timings.inc_tail_builds();
+        }
+        self.tail_ready[qi] = true;
 
         let num_queries = self.group_queries.len();
         debug_assert_eq!(num_queries, self.group_query_locals.len());
 
-        for (qi, v) in self.tail_keys.iter_mut().take(num_queries).enumerate() {
-            v.clear();
-            self.tail_pos[qi] = 0;
-        }
+        self.tail_keys[qi].clear();
+        self.tail_pos[qi] = 0;
+        debug_assert!(self.tail_possible.get(qi).copied().unwrap_or(false));
 
         let t_tail = PackedTimer::start();
         for &(soa_start, soa_end) in &self.cell_ranges[1..] {
@@ -1547,47 +1557,42 @@ impl PackedKnnCellScratch {
                 let cy = f32x8::from_slice(&ys[i..]);
                 let cz = f32x8::from_slice(&zs[i..]);
 
-                for (qi, &query_slot) in self.group_queries.iter().enumerate() {
-                    if !self.tail_possible[qi] {
-                        continue;
-                    }
+                let query_slot = self.group_queries[qi];
 
-                    let qx = f32x8::splat(self.query_x[qi]);
-                    let qy = f32x8::splat(self.query_y[qi]);
-                    let qz = f32x8::splat(self.query_z[qi]);
-                    let dots = cx * qx + cy * qy + cz * qz;
+                let qx = f32x8::splat(self.query_x[qi]);
+                let qy = f32x8::splat(self.query_y[qi]);
+                let qz = f32x8::splat(self.query_z[qi]);
+                let dots = cx * qx + cy * qy + cz * qz;
 
-                    let hi_vec = f32x8::splat(self.thresholds[qi]);
-                    let safe_vec = f32x8::splat(self.security_thresholds[qi]);
+                let hi_vec = f32x8::splat(self.thresholds[qi]);
+                let safe_vec = f32x8::splat(self.security_thresholds[qi]);
 
-                    let safe_mask: Mask<i32, 8> = dots.simd_gt(safe_vec);
-                    let hi_mask: Mask<i32, 8> = dots.simd_gt(hi_vec);
+                let safe_mask: Mask<i32, 8> = dots.simd_gt(safe_vec);
+                let hi_mask: Mask<i32, 8> = dots.simd_gt(hi_vec);
 
-                    let mut tail_bits =
-                        (safe_mask.to_bitmask() as u32) & !(hi_mask.to_bitmask() as u32);
-                    if tail_bits == 0 {
-                        continue;
-                    }
+                let mut tail_bits =
+                    (safe_mask.to_bitmask() as u32) & !(hi_mask.to_bitmask() as u32);
+                if tail_bits == 0 {
+                    continue;
+                }
 
-                    let dots_arr: [f32; 8] = dots.into();
-                    let query_local = self.group_query_locals[qi];
-                    while tail_bits != 0 {
-                        let lane = tail_bits.trailing_zeros() as usize;
-                        let slot = (soa_start + i + lane) as u32;
-                        if slot != query_slot {
-                            let packed = slot_gen_map[slot as usize];
-                            let (bin_b, local_b) =
-                                unpack_bin_local(packed, local_shift, local_mask);
-                            if bin_b == self.group_query_bin && local_b < query_local {
-                                tail_bits &= tail_bits - 1;
-                                continue;
-                            }
-
-                            let dot = dots_arr[lane];
-                            self.tail_keys[qi].push(make_desc_key(dot, slot));
+                let dots_arr: [f32; 8] = dots.into();
+                let query_local = self.group_query_locals[qi];
+                while tail_bits != 0 {
+                    let lane = tail_bits.trailing_zeros() as usize;
+                    let slot = (soa_start + i + lane) as u32;
+                    if slot != query_slot {
+                        let packed = slot_gen_map[slot as usize];
+                        let (bin_b, local_b) = unpack_bin_local(packed, local_shift, local_mask);
+                        if bin_b == self.group_query_bin && local_b < query_local {
+                            tail_bits &= tail_bits - 1;
+                            continue;
                         }
-                        tail_bits &= tail_bits - 1;
+
+                        let dot = dots_arr[lane];
+                        self.tail_keys[qi].push(make_desc_key(dot, slot));
                     }
+                    tail_bits &= tail_bits - 1;
                 }
             }
 
@@ -1598,31 +1603,28 @@ impl PackedKnnCellScratch {
                 let cz = zs[i];
                 let slot = (soa_start + i) as u32;
 
-                for (qi, &query_slot) in self.group_queries.iter().enumerate() {
-                    if !self.tail_possible[qi] || slot == query_slot {
-                        continue;
-                    }
+                let query_slot = self.group_queries[qi];
+                if slot == query_slot {
+                    continue;
+                }
 
-                    let query_local = self.group_query_locals[qi];
-                    let packed = slot_gen_map[slot as usize];
-                    let (bin_b, local_b) = unpack_bin_local(packed, local_shift, local_mask);
-                    if bin_b == self.group_query_bin && local_b < query_local {
-                        continue;
-                    }
+                let query_local = self.group_query_locals[qi];
+                let packed = slot_gen_map[slot as usize];
+                let (bin_b, local_b) = unpack_bin_local(packed, local_shift, local_mask);
+                if bin_b == self.group_query_bin && local_b < query_local {
+                    continue;
+                }
 
-                    let dot = cx * self.query_x[qi] + cy * self.query_y[qi] + cz * self.query_z[qi];
-                    if dot > self.security_thresholds[qi] && dot <= self.thresholds[qi] {
-                        self.tail_keys[qi].push(make_desc_key(dot, slot));
-                    }
+                let dot = cx * self.query_x[qi] + cy * self.query_y[qi] + cz * self.query_z[qi];
+                if dot > self.security_thresholds[qi] && dot <= self.thresholds[qi] {
+                    self.tail_keys[qi].push(make_desc_key(dot, slot));
                 }
             }
         }
         timings.add_ring_fallback(t_tail.elapsed());
 
-        for qi in 0..num_queries {
-            if self.tail_keys[qi].is_empty() {
-                self.tail_possible[qi] = false;
-            }
+        if self.tail_keys[qi].is_empty() {
+            self.tail_possible[qi] = false;
         }
     }
 
@@ -1678,7 +1680,10 @@ impl PackedKnnCellScratch {
                 Some(PackedChunk { n, unseen_bound })
             }
             PackedStage::Tail => {
-                debug_assert!(self.tail_ready, "tail stage requested before ensure_tail");
+                debug_assert!(
+                    self.tail_ready.get(qi).copied().unwrap_or(false),
+                    "tail stage requested before ensure_tail"
+                );
                 let t_qprep = PackedTimer::start();
                 let keys = &mut self.tail_keys.get_mut(qi)?;
                 let start = *self.tail_pos.get(qi)?;

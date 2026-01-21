@@ -278,7 +278,8 @@ fn process_cell(
                 packed_scratch.next_chunk(qi, stage, k_cur, packed_chunk, packed_timings)
             else {
                 if stage == PackedStage::Chunk0 && packed_scratch.tail_possible(qi) {
-                    packed_scratch.ensure_tail_directed(
+                    packed_scratch.ensure_tail_directed_for(
+                        qi,
                         grid,
                         &assignment.slot_gen_map,
                         assignment.local_shift,
