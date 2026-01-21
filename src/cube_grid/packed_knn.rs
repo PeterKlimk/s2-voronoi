@@ -256,6 +256,7 @@ impl PackedKnnCellScratch {
         }
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub fn prepare_group_directed(
         &mut self,
         grid: &CubeMapGrid,
@@ -600,6 +601,7 @@ impl PackedKnnCellScratch {
         PackedKnnCellStatus::Ok
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub fn ensure_tail_directed_for(
         &mut self,
         qi: usize,
@@ -710,6 +712,7 @@ impl PackedKnnCellScratch {
         }
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub fn next_chunk(
         &mut self,
         qi: usize,
