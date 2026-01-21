@@ -209,17 +209,24 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
     let full_mask: u64 = if n == 64 { !0u64 } else { (1u64 << n) - 1 };
 
     // SAFETY: i < n <= MAX_POLY_VERTICES
-    unsafe {
-        for i in 0..n {
-            let u = *us.add(i);
-            let v = *vs.add(i);
-            let d = hp.signed_dist(u, v);
+    // unsafe {
+    //     for i in 0..n {
+    //         let u = *us.add(i);
+    //         let v = *vs.add(i);
+    //         let d = hp.signed_dist(u, v);
 
-            // typically compiles to branchless setcc + shift/or
-            mask |= (u64::from(d >= neg_eps)) << i;
+    //         // typically compiles to branchless setcc + shift/or
+    //         mask |= (u64::from(d >= neg_eps)) << i;
+    //     }
+    // }
+
+    unsafe {
+        for i in (0..n).rev() {
+            let d = hp.signed_dist(*us.add(i), *vs.add(i));
+            mask = (mask << 1) | u64::from(d >= neg_eps);
         }
     }
-
+    
     // Fast path: All outside
     if mask == 0 {
         out.len = 0;
@@ -357,7 +364,6 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
 ///
 /// `TRACK_BOUNDING`: if true, tracks whether bounding refs survive (slow path).
 /// If false, assumes already bounded and skips sentinel checks (fast path).
-#[inline(always)]
 fn build_output<const TRACK_BOUNDING: bool>(
     poly: &PolyBuffer,
     out: &mut PolyBuffer,
