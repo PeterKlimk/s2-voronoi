@@ -117,6 +117,44 @@ impl EdgeScratch {
     }
 }
 
+#[cfg(debug_assertions)]
+struct AttemptedNeighbors {
+    set: rustc_hash::FxHashSet<usize>,
+}
+
+#[cfg(debug_assertions)]
+impl AttemptedNeighbors {
+    fn new() -> Self {
+        Self {
+            set: rustc_hash::FxHashSet::default(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.set.clear();
+    }
+
+    fn insert(&mut self, idx: usize) -> bool {
+        self.set.insert(idx)
+    }
+}
+
+#[cfg(not(debug_assertions))]
+struct AttemptedNeighbors;
+
+#[cfg(not(debug_assertions))]
+impl AttemptedNeighbors {
+    fn new() -> Self {
+        Self
+    }
+
+    fn clear(&mut self) {}
+
+    fn insert(&mut self, _idx: usize) -> bool {
+        true
+    }
+}
+
 struct CellContext {
     builder: Topo2DBuilder,
     scratch: crate::cube_grid::CubeMapGridScratch,
@@ -126,7 +164,7 @@ struct CellContext {
     edge_neighbor_slots: Vec<u32>,
     edge_neighbor_globals: Vec<u32>,
     edge_scratch: EdgeScratch,
-    attempted_neighbors: rustc_hash::FxHashSet<usize>,
+    attempted_neighbors: AttemptedNeighbors,
 }
 
 impl CellContext {
@@ -140,7 +178,7 @@ impl CellContext {
             edge_neighbor_slots: Vec::new(),
             edge_neighbor_globals: Vec::new(),
             edge_scratch: EdgeScratch::new(),
-            attempted_neighbors: rustc_hash::FxHashSet::default(),
+            attempted_neighbors: AttemptedNeighbors::new(),
         }
     }
 }
