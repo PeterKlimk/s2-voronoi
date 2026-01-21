@@ -73,6 +73,8 @@ pub struct PackedKnnTimings {
     pub select_scatter: Duration,
     /// Time spent inside the per-query callback (`on_query`), excluded from `packed_knn` overhead.
     pub callback: Duration,
+    /// Number of times tail candidates were built (group-level, since tail build is shared).
+    pub tail_builds: u64,
 }
 
 /// Dummy timings when feature is disabled (zero-sized).
@@ -153,6 +155,11 @@ impl PackedKnnTimings {
     }
 
     #[inline]
+    pub fn inc_tail_builds(&mut self) {
+        self.tail_builds += 1;
+    }
+
+    #[inline]
     pub fn total(&self) -> Duration {
         self.setup
             + self.query_cache
@@ -200,6 +207,8 @@ impl PackedKnnTimings {
     pub fn add_select_scatter(&mut self, _d: Duration) {}
     #[inline(always)]
     pub fn add_callback(&mut self, _d: Duration) {}
+    #[inline(always)]
+    pub fn inc_tail_builds(&mut self) {}
 }
 
 // Fast path stores candidate keys in a dense slab of size (num_queries * num_candidates).
@@ -1514,6 +1523,7 @@ impl PackedKnnCellScratch {
             return;
         }
         self.tail_ready = true;
+        timings.inc_tail_builds();
 
         let num_queries = self.group_queries.len();
         debug_assert_eq!(num_queries, self.group_query_locals.len());

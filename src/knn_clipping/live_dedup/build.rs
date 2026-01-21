@@ -922,6 +922,12 @@ pub(super) fn build_cells_sharded_live_dedup(
                                         if planes_used { q } else { 0 },
                                         if planes_used { 0 } else { q },
                                     );
+                                    let tail_possible = (0..queries.len())
+                                        .filter(|&qi| packed_scratch.tail_possible(qi))
+                                        .count()
+                                        as u64;
+                                    sub_accum.add_packed_tail_possible_queries(q, tail_possible);
+                                    sub_accum.add_packed_groups(1);
                                 }
                                 for (offset, &global) in
                                     my_generators[group_start..cursor].iter().enumerate()
@@ -989,6 +995,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                 .add_packed_knn_ring_thresholds(packed_timings.ring_thresholds);
                             sub_accum.add_packed_knn_ring_pass(packed_timings.ring_pass);
                             sub_accum.add_packed_knn_ring_fallback(packed_timings.ring_fallback);
+                            sub_accum.add_packed_tail_build_groups(packed_timings.tail_builds);
                             sub_accum.add_packed_knn_select_prep(packed_timings.select_prep);
                             sub_accum
                                 .add_packed_knn_select_query_prep(packed_timings.select_query_prep);

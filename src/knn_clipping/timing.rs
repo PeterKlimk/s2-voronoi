@@ -83,6 +83,14 @@ pub struct CellSubPhases {
     pub packed_security_planes_queries: u64,
     /// Packed security mode usage (query count): ring2 cap bound.
     pub packed_security_cap_queries: u64,
+    /// Packed queries (cells) processed via packed_knn.
+    pub packed_queries: u64,
+    /// Packed queries (cells) with `tail_possible` set after `prepare_group_*`.
+    pub packed_tail_possible_queries: u64,
+    /// Packed query groups prepared successfully (PackedKnnCellStatus::Ok).
+    pub packed_groups: u64,
+    /// Packed groups that built tail candidates at least once.
+    pub packed_tail_build_groups: u64,
     /// Histogram of neighbors processed at termination.
     pub neighbors_histogram: [u64; NEIGHBOR_HIST_BUCKETS],
 }
@@ -120,6 +128,10 @@ impl Default for CellSubPhases {
             cells_used_knn: 0,
             packed_security_planes_queries: 0,
             packed_security_cap_queries: 0,
+            packed_queries: 0,
+            packed_tail_possible_queries: 0,
+            packed_groups: 0,
+            packed_tail_build_groups: 0,
             neighbors_histogram: [0; NEIGHBOR_HIST_BUCKETS],
         }
     }
@@ -533,6 +545,24 @@ impl PhaseTimings {
             self.cell_sub.cells_packed_safe_exhausted,
             pct_cells(self.cell_sub.cells_packed_safe_exhausted)
         );
+        if self.cell_sub.packed_queries > 0 {
+            let pct = (self.cell_sub.packed_tail_possible_queries as f64)
+                / (self.cell_sub.packed_queries as f64)
+                * 100.0;
+            eprintln!(
+                "    pk_tail_possible: q={} ({:.1}%)",
+                self.cell_sub.packed_tail_possible_queries, pct
+            );
+        }
+        if self.cell_sub.packed_groups > 0 {
+            let pct = (self.cell_sub.packed_tail_build_groups as f64)
+                / (self.cell_sub.packed_groups as f64)
+                * 100.0;
+            eprintln!(
+                "    pk_tail_build: groups={} ({:.1}%)",
+                self.cell_sub.packed_tail_build_groups, pct
+            );
+        }
         let sec_total = self.cell_sub.packed_security_planes_queries
             + self.cell_sub.packed_security_cap_queries;
         if sec_total > 0 {
@@ -803,6 +833,10 @@ pub struct CellSubAccum {
     pub cells_used_knn: u64,
     pub packed_security_planes_queries: u64,
     pub packed_security_cap_queries: u64,
+    pub packed_queries: u64,
+    pub packed_tail_possible_queries: u64,
+    pub packed_groups: u64,
+    pub packed_tail_build_groups: u64,
     pub neighbors_histogram: [u64; NEIGHBOR_HIST_BUCKETS],
 }
 
@@ -839,6 +873,10 @@ impl Default for CellSubAccum {
             cells_used_knn: 0,
             packed_security_planes_queries: 0,
             packed_security_cap_queries: 0,
+            packed_queries: 0,
+            packed_tail_possible_queries: 0,
+            packed_groups: 0,
+            packed_tail_build_groups: 0,
             neighbors_histogram: [0; NEIGHBOR_HIST_BUCKETS],
         }
     }
@@ -873,6 +911,23 @@ impl CellSubAccum {
     pub fn add_packed_security_queries(&mut self, planes: u64, caps: u64) {
         self.packed_security_planes_queries += planes;
         self.packed_security_cap_queries += caps;
+    }
+
+    pub fn add_packed_tail_possible_queries(
+        &mut self,
+        total_packed_queries: u64,
+        tail_possible: u64,
+    ) {
+        self.packed_queries += total_packed_queries;
+        self.packed_tail_possible_queries += tail_possible;
+    }
+
+    pub fn add_packed_groups(&mut self, groups: u64) {
+        self.packed_groups += groups;
+    }
+
+    pub fn add_packed_tail_build_groups(&mut self, groups: u64) {
+        self.packed_tail_build_groups += groups;
     }
 
     pub fn add_packed_knn_center_pass(&mut self, d: Duration) {
@@ -1010,6 +1065,10 @@ impl CellSubAccum {
         self.cells_used_knn += other.cells_used_knn;
         self.packed_security_planes_queries += other.packed_security_planes_queries;
         self.packed_security_cap_queries += other.packed_security_cap_queries;
+        self.packed_queries += other.packed_queries;
+        self.packed_tail_possible_queries += other.packed_tail_possible_queries;
+        self.packed_groups += other.packed_groups;
+        self.packed_tail_build_groups += other.packed_tail_build_groups;
         for (i, &count) in other.neighbors_histogram.iter().enumerate() {
             self.neighbors_histogram[i] += count;
         }
@@ -1046,6 +1105,10 @@ impl CellSubAccum {
             cells_used_knn: self.cells_used_knn,
             packed_security_planes_queries: self.packed_security_planes_queries,
             packed_security_cap_queries: self.packed_security_cap_queries,
+            packed_queries: self.packed_queries,
+            packed_tail_possible_queries: self.packed_tail_possible_queries,
+            packed_groups: self.packed_groups,
+            packed_tail_build_groups: self.packed_tail_build_groups,
             neighbors_histogram: self.neighbors_histogram,
         }
     }
@@ -1069,6 +1132,17 @@ impl CellSubAccum {
     #[allow(dead_code)]
     #[inline(always)]
     pub fn add_packed_security_queries(&mut self, _planes: u64, _caps: u64) {}
+    #[inline(always)]
+    pub fn add_packed_tail_possible_queries(
+        &mut self,
+        _total_packed_queries: u64,
+        _tail_possible: u64,
+    ) {
+    }
+    #[inline(always)]
+    pub fn add_packed_groups(&mut self, _groups: u64) {}
+    #[inline(always)]
+    pub fn add_packed_tail_build_groups(&mut self, _groups: u64) {}
     #[inline(always)]
     pub fn add_clip(&mut self, _d: Duration) {}
     #[inline(always)]
