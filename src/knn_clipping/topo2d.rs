@@ -195,7 +195,7 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
         return ClipResult::Changed;
     }
 
-    // Pass 1: classify vertices using bitset (autovectorized).
+    // Pass 1: classify vertices using bitset
     let neg_eps = -hp.eps;
 
     let us = poly.us.as_ptr();
@@ -204,6 +204,11 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
     // We use a u64 mask. If MAX_POLY_VERTICES > 64, this needs u128 or [u64; N].
     // Current MAX is 64, so u64 is sufficient.
     debug_assert!(n <= 64, "Polygon too large for u64 bitmask");
+
+    // We want an uninitialized stack array without paying for a zero-fill.
+    // SAFETY: `[MaybeUninit<f64>; N]` is valid in an uninitialized state.
+    let mut dists: [core::mem::MaybeUninit<f64>; MAX_POLY_VERTICES] =
+        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
 
     let mut mask = 0u64;
     let full_mask: u64 = if n == 64 { !0u64 } else { (1u64 << n) - 1 };
@@ -220,17 +225,12 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
     //     }
     // }
 
-    // unsafe {
-    //     for i in (0..n).rev() {
-    //         let d = hp.signed_dist(*us.add(i), *vs.add(i));
-    //         mask = (mask << 1) | u64::from(d >= neg_eps);
-    //     }
-    // }
-
+    // SAFETY: i < n <= MAX_POLY_VERTICES
     unsafe {
         let mut bit = 1u64;
         for i in 0..n {
             let d = hp.signed_dist(*us.add(i), *vs.add(i));
+            dists.get_unchecked_mut(i).write(d);
             mask |= (0u64.wrapping_sub((d >= neg_eps) as u64)) & bit;
             bit <<= 1;
         }
@@ -301,14 +301,10 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
 
     let calc_transition = |next_idx: usize| -> (usize, usize, f64, f64) {
         let prev_idx = if next_idx == 0 { n - 1 } else { next_idx - 1 };
-        // SAFETY: prev_idx and next_idx are in 0..n, and us/vs are sliced to length n.
+        // SAFETY: prev_idx and next_idx are in 0..n; dists[0..n] were written in Pass 1.
         unsafe {
-            let u0 = *us.get_unchecked(prev_idx);
-            let v0 = *vs.get_unchecked(prev_idx);
-            let u1 = *us.get_unchecked(next_idx);
-            let v1 = *vs.get_unchecked(next_idx);
-            let d0 = hp.signed_dist(u0, v0);
-            let d1 = hp.signed_dist(u1, v1);
+            let d0 = dists.get_unchecked(prev_idx).assume_init_read();
+            let d1 = dists.get_unchecked(next_idx).assume_init_read();
             (prev_idx, next_idx, d0, d1)
         }
     };
