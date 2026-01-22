@@ -815,12 +815,12 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
         }
     }
     match n {
-        3 => clip_convex_small::<3>(poly, hp, out),
-        4 => clip_convex_small::<4>(poly, hp, out),
-        5 => clip_convex_small::<5>(poly, hp, out),
-        6 => clip_convex_small::<6>(poly, hp, out),
-        7 => clip_convex_small::<7>(poly, hp, out),
-        8 => clip_convex_small::<8>(poly, hp, out),
+        3 => clip_convex_small_bool::<3>(poly, hp, out),
+        4 => clip_convex_small_bool::<4>(poly, hp, out),
+        5 => clip_convex_small_bool::<5>(poly, hp, out),
+        6 => clip_convex_small_bool::<6>(poly, hp, out),
+        7 => clip_convex_small_bool::<7>(poly, hp, out),
+        8 => clip_convex_small_bool::<8>(poly, hp, out),
         _ => clip_convex_bitmask(poly, hp, out),
     }
 }
