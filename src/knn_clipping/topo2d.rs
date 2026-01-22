@@ -12,6 +12,7 @@
 //! for the polygon buffer, double-buffer swap pattern.
 
 use glam::{DVec3, Vec3};
+use std::simd::StdFloat;
 
 use super::cell_builder::{CellFailure, VertexData, VertexKey};
 
@@ -1109,12 +1110,12 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
         }
     }
     match n {
-        3 => clip_convex_tri(poly, hp, out),
-        4 => clip_convex_quad(poly, hp, out),
-        5 => clip_convex_pent(poly, hp, out),
-        6 => clip_convex_hex(poly, hp, out),
-        7 => clip_convex_hept(poly, hp, out),
-        8 => clip_convex_oct(poly, hp, out),
+        3 => clip_convex_simd_tri(poly, hp, out),
+        4 => clip_convex_simd_quad(poly, hp, out),
+        5 => clip_convex_simd_pent(poly, hp, out),
+        6 => clip_convex_simd_hex(poly, hp, out),
+        7 => clip_convex_simd_hept(poly, hp, out),
+        8 => clip_convex_simd_oct(poly, hp, out),
         _ => clip_convex_bitmask(poly, hp, out),
     }
 }
@@ -1924,6 +1925,69 @@ fn sort3(a: &mut u32, b: &mut u32, c: &mut u32) {
 mod tests {
     use super::*;
 
+    #[derive(Clone)]
+    struct XorShift64 {
+        state: u64,
+    }
+
+    impl XorShift64 {
+        fn new(seed: u64) -> Self {
+            Self { state: seed }
+        }
+
+        #[inline(always)]
+        fn next_u64(&mut self) -> u64 {
+            // xorshift64*
+            let mut x = self.state;
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            self.state = x;
+            x.wrapping_mul(0x2545F4914F6CDD1D)
+        }
+
+        #[inline(always)]
+        fn next_f64(&mut self) -> f64 {
+            // Uniform in [0,1)
+            let bits = self.next_u64() >> 11; // 53 bits
+            (bits as f64) * (1.0 / ((1u64 << 53) as f64))
+        }
+
+        #[inline(always)]
+        fn range_f64(&mut self, lo: f64, hi: f64) -> f64 {
+            lo + (hi - lo) * self.next_f64()
+        }
+
+        #[inline(always)]
+        fn range_usize(&mut self, hi: usize) -> usize {
+            debug_assert!(hi > 0);
+            (self.next_u64() as usize) % hi
+        }
+    }
+
+    fn clip_convex_simd_main(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+        let n = poly.len;
+        debug_assert!(n >= 3, "clip_convex expects poly.len >= 3, got {}", n);
+
+        let max_r2 = poly.max_r2;
+        if !poly.has_bounding_ref && max_r2 > 0.0 {
+            let t = hp.c + hp.eps;
+            if t >= 0.0 && t * t >= hp.ab2 * max_r2 {
+                return ClipResult::Unchanged;
+            }
+        }
+
+        match n {
+            3 => clip_convex_simd_tri(poly, hp, out),
+            4 => clip_convex_simd_quad(poly, hp, out),
+            5 => clip_convex_simd_pent(poly, hp, out),
+            6 => clip_convex_simd_hex(poly, hp, out),
+            7 => clip_convex_simd_hept(poly, hp, out),
+            8 => clip_convex_simd_oct(poly, hp, out),
+            _ => clip_convex_bitmask(poly, hp, out),
+        }
+    }
+
     fn fill_sentinel(out: &mut PolyBuffer) {
         out.len = 7;
         out.max_r2 = 123.0;
@@ -1983,6 +2047,91 @@ mod tests {
             p.max_r2 = p.max_r2.max(us[i] * us[i] + vs[i] * vs[i]);
         }
         p
+    }
+
+    fn random_half_plane_targeting_vertex(
+        rng: &mut XorShift64,
+        poly: &PolyBuffer,
+        plane_idx: usize,
+    ) -> HalfPlane {
+        let theta = rng.range_f64(0.0, core::f64::consts::TAU);
+        let scale = rng.range_f64(0.25, 4.0);
+        let a = scale * theta.cos();
+        let b = scale * theta.sin();
+
+        // Choose a vertex and place the boundary near it, within a few eps.
+        let i = rng.range_usize(poly.len.max(1));
+        let ui = poly.us[i];
+        let vi = poly.vs[i];
+        let ab2 = a.mul_add(a, b * b);
+        let norm = (ab2 as f32).sqrt() as f64;
+        let eps = EPS_INSIDE * norm;
+        let delta = rng.range_f64(-4.0 * eps, 4.0 * eps);
+        let c = -(a.mul_add(ui, b * vi)) + delta;
+
+        HalfPlane::new_unnormalized(a, b, c, plane_idx)
+    }
+
+    #[test]
+    fn test_simd_to_bitmask_lane_order() {
+        use std::simd::prelude::*;
+        use std::simd::f64x8;
+
+        let v = f64x8::from_array([-1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0]);
+        let m = v.simd_ge(f64x8::splat(0.0));
+        assert_eq!(m.to_bitmask(), 0b1111_0000);
+    }
+
+    #[test]
+    fn test_clip_convex_simd_matches_scalar_random_sequences() {
+        let mut rng = XorShift64::new(0xC0FFEE_1234_5678);
+
+        for case in 0..200usize {
+            let mut poly_scalar = PolyBuffer::new();
+            poly_scalar.init_bounding(1e6);
+            let mut poly_simd = poly_scalar.clone();
+
+            let mut out_scalar = PolyBuffer::new();
+            let mut out_simd = PolyBuffer::new();
+
+            for step in 0..64usize {
+                let hp = random_half_plane_targeting_vertex(&mut rng, &poly_scalar, step);
+
+                fill_sentinel(&mut out_scalar);
+                fill_sentinel(&mut out_simd);
+
+                let r_scalar = clip_convex(&poly_scalar, &hp, &mut out_scalar);
+                let r_simd = clip_convex_simd_main(&poly_simd, &hp, &mut out_simd);
+                assert_eq!(
+                    r_scalar, r_simd,
+                    "case={case} step={step} n={}",
+                    poly_scalar.len
+                );
+
+                match r_scalar {
+                    ClipResult::Unchanged => {
+                        // `out` must not be modified.
+                        assert!(out_scalar.us[0].is_nan());
+                        assert!(out_simd.us[0].is_nan());
+                    }
+                    ClipResult::TooManyVertices => unreachable!("not expected in this test"),
+                    ClipResult::Changed => {
+                        assert!(
+                            poly_eq_cyclic(&out_scalar, &out_simd),
+                            "case={case} step={step} polys diverged (n={})",
+                            poly_scalar.len
+                        );
+
+                        poly_scalar = out_scalar.clone();
+                        poly_simd = out_simd.clone();
+
+                        if poly_scalar.len < 3 {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

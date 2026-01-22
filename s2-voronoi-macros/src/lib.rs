@@ -90,18 +90,21 @@ fn impl_gen_clip_convex_ngon(input: TokenStream, simd: bool) -> TokenStream {
     // SAFETY: PolyBuffer has static size >= 8 (64 actually), so this load is always valid.
     let us_simd = f64x8::from_slice(&poly.us[0..8]);
     let vs_simd = f64x8::from_slice(&poly.vs[0..8]);
-    
+
     let a_simd = f64x8::splat(hp.a);
     let b_simd = f64x8::splat(hp.b);
     let c_simd = f64x8::splat(hp.c);
     let neg_eps_simd = f64x8::splat(-hp.eps);
 
-    let dists_vec = a_simd * us_simd + b_simd * vs_simd + c_simd;
+    // signed_dist(u, v) = a*u + b*v + c
+    // Use mul_add to encourage FMA and match scalar precision/rounding as closely as possible.
+    let dists_vec = a_simd.mul_add(us_simd, b_simd.mul_add(vs_simd, c_simd));
     let mask_simd = dists_vec.simd_ge(neg_eps_simd);
     let full_simd_mask = mask_simd.to_bitmask() as u8;
-    
-    // Mask off the bits beyond N
-    let mask = full_simd_mask & ((1u8 << {n}) - 1);
+
+    // Mask off the bits beyond N.
+    // Use u16 for the mask computation to avoid overflow when n == 8.
+    let mask = (full_simd_mask as u16 & ((1u16 << {n}) - 1)) as u8;
             "#
         )
     } else {
