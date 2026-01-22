@@ -13,6 +13,7 @@ parallel = ["rayon"]
 glam = []  # Enable UnitVec3Like impl for glam::Vec3
 timing = []  # Enable detailed timing instrumentation
 profiling = [] # Profiling helpers (e.g. disable inlining on hot functions)
+microbench = [] # Enable internal microbench harnesses (nightly `test` crate)
 qhull = ["qhull-enhanced"]  # Convex hull backend (test/bench only)
 
 [dependencies]
@@ -34,6 +35,11 @@ rayon = { version = "1.10", optional = true }
 qhull-enhanced = { version = "0.1", optional = true }
 
 [dev-dependencies]
+
+[[bin]]
+name = "microbench_clip"
+path = "src/bin/microbench_clip.rs"
+required-features = ["microbench"]
 
 [profile.checked]
 inherits = "release"

@@ -23,7 +23,7 @@ mod edge_repair;
 mod live_dedup;
 mod preprocess;
 mod timing;
-mod topo2d;
+pub(crate) mod topo2d;
 
 // Re-exports (internal use)
 #[allow(unused_imports)]

@@ -509,6 +509,47 @@ impl PhaseTimings {
             est_wall_ms(self.cell_sub.clipping),
             sub_pct(self.cell_sub.clipping)
         );
+        let clip_stats = super::topo2d::take_clip_convex_stats();
+        if clip_stats.calls > 0 {
+            let pct_hits = clip_stats.early_unchanged_hits as f64 / clip_stats.calls as f64 * 100.0;
+            let pct_hits_bounded =
+                clip_stats.early_unchanged_hits_bounded as f64 / clip_stats.calls as f64 * 100.0;
+            eprintln!(
+                "      clip_convex_early: {:>10}/{:<10} ({:5.1}%), bounded {:>10} ({:5.1}%)",
+                clip_stats.early_unchanged_hits,
+                clip_stats.calls,
+                pct_hits,
+                clip_stats.early_unchanged_hits_bounded,
+                pct_hits_bounded
+            );
+
+            let mut parts: Vec<String> = Vec::with_capacity(8);
+            for n in 3..=8 {
+                let calls_n = clip_stats.calls_by_n[n];
+                if calls_n == 0 {
+                    continue;
+                }
+                let hits_n = clip_stats.hits_by_n[n];
+                let pct_n = hits_n as f64 / calls_n as f64 * 100.0;
+                parts.push(format!("{n}:{hits_n}/{calls_n}({pct_n:.1}%)"));
+            }
+            let calls_9_16: u64 = clip_stats.calls_by_n[9..=16].iter().sum();
+            let hits_9_16: u64 = clip_stats.hits_by_n[9..=16].iter().sum();
+            if calls_9_16 > 0 {
+                let pct = hits_9_16 as f64 / calls_9_16 as f64 * 100.0;
+                parts.push(format!("9-16:{hits_9_16}/{calls_9_16}({pct:.1}%)"));
+            }
+            if clip_stats.calls_gt_16 > 0 {
+                let pct = clip_stats.hits_gt_16 as f64 / clip_stats.calls_gt_16 as f64 * 100.0;
+                parts.push(format!(
+                    ">16:{}/{}({:.1}%)",
+                    clip_stats.hits_gt_16, clip_stats.calls_gt_16, pct
+                ));
+            }
+            if !parts.is_empty() {
+                eprintln!("      clip_convex_early_by_n: {}", parts.join("  "));
+            }
+        }
         eprintln!(
             "    certification:   {:7.1}ms ({:4.1}%)",
             est_wall_ms(self.cell_sub.certification),

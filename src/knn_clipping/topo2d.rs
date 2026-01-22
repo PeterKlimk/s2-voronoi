@@ -17,6 +17,123 @@ use super::cell_builder::{CellFailure, VertexData, VertexKey};
 
 const EPS_INSIDE: f64 = 1e-12;
 
+#[cfg(feature = "timing")]
+pub(super) struct ClipConvexStatsSnapshot {
+    pub calls: u64,
+    pub early_unchanged_hits: u64,
+    pub early_unchanged_hits_bounded: u64,
+    // Buckets are indexed by n, for n in 0..=16. Larger n are accumulated in *_gt_16.
+    pub calls_by_n: [u64; 17],
+    pub hits_by_n: [u64; 17],
+    pub calls_gt_16: u64,
+    pub hits_gt_16: u64,
+}
+
+#[cfg(feature = "timing")]
+mod clip_convex_stats {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static CALLS: AtomicU64 = AtomicU64::new(0);
+    static EARLY_UNCHANGED_HITS: AtomicU64 = AtomicU64::new(0);
+    static EARLY_UNCHANGED_HITS_BOUNDED: AtomicU64 = AtomicU64::new(0);
+
+    static CALLS_GT_16: AtomicU64 = AtomicU64::new(0);
+    static HITS_GT_16: AtomicU64 = AtomicU64::new(0);
+
+    static CALLS_BY_N: [AtomicU64; 17] = [
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+    ];
+
+    static HITS_BY_N: [AtomicU64; 17] = [
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+    ];
+
+    #[inline(always)]
+    pub(super) fn record_call(n: usize) {
+        CALLS.fetch_add(1, Ordering::Relaxed);
+        if n <= 16 {
+            CALLS_BY_N[n].fetch_add(1, Ordering::Relaxed);
+        } else {
+            CALLS_GT_16.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn record_early_unchanged(n: usize, bounded: bool) {
+        EARLY_UNCHANGED_HITS.fetch_add(1, Ordering::Relaxed);
+        if bounded {
+            EARLY_UNCHANGED_HITS_BOUNDED.fetch_add(1, Ordering::Relaxed);
+        }
+        if n <= 16 {
+            HITS_BY_N[n].fetch_add(1, Ordering::Relaxed);
+        } else {
+            HITS_GT_16.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub(super) fn take() -> super::ClipConvexStatsSnapshot {
+        let calls = CALLS.swap(0, Ordering::Relaxed);
+        let early_unchanged_hits = EARLY_UNCHANGED_HITS.swap(0, Ordering::Relaxed);
+        let early_unchanged_hits_bounded = EARLY_UNCHANGED_HITS_BOUNDED.swap(0, Ordering::Relaxed);
+
+        let mut calls_by_n = [0u64; 17];
+        let mut hits_by_n = [0u64; 17];
+        for i in 0..=16 {
+            calls_by_n[i] = CALLS_BY_N[i].swap(0, Ordering::Relaxed);
+            hits_by_n[i] = HITS_BY_N[i].swap(0, Ordering::Relaxed);
+        }
+        let calls_gt_16 = CALLS_GT_16.swap(0, Ordering::Relaxed);
+        let hits_gt_16 = HITS_GT_16.swap(0, Ordering::Relaxed);
+
+        super::ClipConvexStatsSnapshot {
+            calls,
+            early_unchanged_hits,
+            early_unchanged_hits_bounded,
+            calls_by_n,
+            hits_by_n,
+            calls_gt_16,
+            hits_gt_16,
+        }
+    }
+}
+
+#[cfg(feature = "timing")]
+pub(super) fn take_clip_convex_stats() -> ClipConvexStatsSnapshot {
+    clip_convex_stats::take()
+}
+
 /// Maximum vertices in the polygon buffer.
 /// This is intentionally generous because we start with a bounding triangle.
 /// In practice, Voronoi cells rarely exceed 20 vertices.
@@ -31,6 +148,7 @@ struct HalfPlane {
     a: f64,
     b: f64,
     c: f64,
+    ab2: f64,
     plane_idx: usize,
     eps: f64,
 }
@@ -38,14 +156,15 @@ struct HalfPlane {
 impl HalfPlane {
     fn new_unnormalized(a: f64, b: f64, c: f64, plane_idx: usize) -> Self {
         // f32 sqrt is ~2x faster; eps precision doesn't need f64
-        let n2: f64 = a.mul_add(a, b * b);
-        let norm = (n2 as f32).sqrt() as f64;
+        let ab2: f64 = a.mul_add(a, b * b);
+        let norm = (ab2 as f32).sqrt() as f64;
         let eps = EPS_INSIDE * norm;
 
         HalfPlane {
             a,
             b,
             c,
+            ab2,
             plane_idx,
             eps,
         }
@@ -180,30 +299,190 @@ enum ClipResult {
     TooManyVertices,
 }
 
-/// Clip a convex polygon by a half-plane (standalone function to avoid borrow conflicts).
-///
-/// # Returns
-/// - `Unchanged` if all vertices are inside the half-plane. **`out` is not modified.**
-/// - `Changed` if the polygon was clipped (result written to `out`)
-/// - `TooManyVertices` if the result would exceed `MAX_POLY_VERTICES`
-fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
-    let n = poly.len;
-    if n < 3 {
+#[inline(always)]
+fn clip_convex_small<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+    debug_assert_eq!(poly.len, N);
+    debug_assert!(N >= 3 && N <= 8);
+
+    let neg_eps = -hp.eps;
+
+    // Output of clipping a convex N-gon by a half-plane has at most N+1 vertices.
+    // For N<=8, that's <=9.
+    const TMP_CAP: usize = 10;
+    debug_assert!(N + 1 <= TMP_CAP);
+
+    let mut tmp_us = [0.0f64; TMP_CAP];
+    let mut tmp_vs = [0.0f64; TMP_CAP];
+    let mut tmp_vps = [(0usize, 0usize); TMP_CAP];
+    let mut tmp_eps = [0usize; TMP_CAP];
+    let mut tmp_len = 0usize;
+
+    #[inline(always)]
+    fn r2_of(u: f64, v: f64) -> f64 {
+        u.mul_add(u, v * v)
+    }
+
+    let mut max_r2 = 0.0f64;
+    let mut has_bounding = false;
+    let track_bounding = poly.has_bounding_ref;
+
+    #[inline(always)]
+    unsafe fn push_tmp(
+        tmp_us: &mut [f64; TMP_CAP],
+        tmp_vs: &mut [f64; TMP_CAP],
+        tmp_vps: &mut [(usize, usize); TMP_CAP],
+        tmp_eps: &mut [usize; TMP_CAP],
+        tmp_len: &mut usize,
+        max_r2: &mut f64,
+        has_bounding: &mut bool,
+        track_bounding: bool,
+        u: f64,
+        v: f64,
+        vp: (usize, usize),
+        ep: usize,
+    ) {
+        let i = *tmp_len;
+        debug_assert!(i < TMP_CAP);
+        *tmp_us.get_unchecked_mut(i) = u;
+        *tmp_vs.get_unchecked_mut(i) = v;
+        *tmp_vps.get_unchecked_mut(i) = vp;
+        *tmp_eps.get_unchecked_mut(i) = ep;
+        *tmp_len = i + 1;
+
+        let r2 = r2_of(u, v);
+        if r2 > *max_r2 {
+            *max_r2 = r2;
+        }
+        if track_bounding {
+            *has_bounding |= vp.0 == usize::MAX;
+        }
+    }
+
+    // Track whether clipping changes anything without mutating `out` in the unchanged case.
+    let mut any_inside = false;
+    let mut all_inside = true;
+
+    // Start from edge (N-1 -> 0) to preserve cyclic behavior.
+    let us = poly.us.as_ptr();
+    let vs = poly.vs.as_ptr();
+
+    let mut prev_i = N - 1;
+    let mut prev_u = unsafe { *us.add(prev_i) };
+    let mut prev_v = unsafe { *vs.add(prev_i) };
+    let mut prev_d = hp.signed_dist(prev_u, prev_v);
+    let mut prev_inside = prev_d >= neg_eps;
+    any_inside |= prev_inside;
+    all_inside &= prev_inside;
+
+    for i in 0..N {
+        let cur_u = unsafe { *us.add(i) };
+        let cur_v = unsafe { *vs.add(i) };
+        let cur_d = hp.signed_dist(cur_u, cur_v);
+        let cur_inside = cur_d >= neg_eps;
+
+        any_inside |= cur_inside;
+        all_inside &= cur_inside;
+
+        if prev_inside != cur_inside {
+            // Intersection on edge (prev_i -> i).
+            let t = prev_d / (prev_d - cur_d);
+            let iu = t.mul_add(cur_u - prev_u, prev_u);
+            let iv = t.mul_add(cur_v - prev_v, prev_v);
+
+            let edge_plane = poly.edge_planes[prev_i];
+            let vp = (edge_plane, hp.plane_idx);
+            // Out->In: intersection followed by a segment on the original edge plane.
+            // In->Out: intersection followed by a segment on the new half-plane boundary.
+            let ep = if cur_inside { edge_plane } else { hp.plane_idx };
+
+            // SAFETY: tmp_len <= N+1 <= TMP_CAP
+            unsafe {
+                push_tmp(
+                    &mut tmp_us,
+                    &mut tmp_vs,
+                    &mut tmp_vps,
+                    &mut tmp_eps,
+                    &mut tmp_len,
+                    &mut max_r2,
+                    &mut has_bounding,
+                    track_bounding,
+                    iu,
+                    iv,
+                    vp,
+                    ep,
+                );
+            }
+        }
+
+        if cur_inside {
+            let vp = poly.vertex_planes[i];
+            let ep = poly.edge_planes[i];
+            // SAFETY: tmp_len <= N+1 <= TMP_CAP
+            unsafe {
+                push_tmp(
+                    &mut tmp_us,
+                    &mut tmp_vs,
+                    &mut tmp_vps,
+                    &mut tmp_eps,
+                    &mut tmp_len,
+                    &mut max_r2,
+                    &mut has_bounding,
+                    track_bounding,
+                    cur_u,
+                    cur_v,
+                    vp,
+                    ep,
+                );
+            }
+        }
+
+        prev_i = i;
+        prev_u = cur_u;
+        prev_v = cur_v;
+        prev_d = cur_d;
+        prev_inside = cur_inside;
+    }
+
+    if !any_inside {
         out.len = 0;
         out.max_r2 = 0.0;
         out.has_bounding_ref = false;
         return ClipResult::Changed;
     }
 
+    if all_inside {
+        return ClipResult::Unchanged;
+    }
+
+    // Write result into out (tmp_len <= N+1 <= 9).
+    out.len = 0;
+    for i in 0..tmp_len {
+        // SAFETY: i < tmp_len <= TMP_CAP
+        unsafe {
+            out.push_raw(
+                *tmp_us.get_unchecked(i),
+                *tmp_vs.get_unchecked(i),
+                *tmp_vps.get_unchecked(i),
+                *tmp_eps.get_unchecked(i),
+            );
+        }
+    }
+    out.max_r2 = max_r2;
+    out.has_bounding_ref = if track_bounding { has_bounding } else { false };
+
+    ClipResult::Changed
+}
+
+#[inline(always)]
+fn clip_convex_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+    let n = poly.len;
+    debug_assert!(n <= 64, "Polygon too large for u64 bitmask");
+
     // Pass 1: classify vertices using bitset
     let neg_eps = -hp.eps;
 
     let us = poly.us.as_ptr();
     let vs = poly.vs.as_ptr();
-
-    // We use a u64 mask. If MAX_POLY_VERTICES > 64, this needs u128 or [u64; N].
-    // Current MAX is 64, so u64 is sufficient.
-    debug_assert!(n <= 64, "Polygon too large for u64 bitmask");
 
     // We want an uninitialized stack array without paying for a zero-fill.
     // SAFETY: `[MaybeUninit<f64>; N]` is valid in an uninitialized state.
@@ -212,18 +491,6 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
 
     let mut mask = 0u64;
     let full_mask: u64 = if n == 64 { !0u64 } else { (1u64 << n) - 1 };
-
-    // SAFETY: i < n <= MAX_POLY_VERTICES
-    // unsafe {
-    //     for i in 0..n {
-    //         let u = *us.add(i);
-    //         let v = *vs.add(i);
-    //         let d = hp.signed_dist(u, v);
-
-    //         // typically compiles to branchless setcc + shift/or
-    //         mask |= (u64::from(d >= neg_eps)) << i;
-    //     }
-    // }
 
     // SAFETY: i < n <= MAX_POLY_VERTICES
     unsafe {
@@ -373,6 +640,52 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
     }
 
     ClipResult::Changed
+}
+
+/// Clip a convex polygon by a half-plane (standalone function to avoid borrow conflicts).
+///
+/// # Returns
+/// - `Unchanged` if all vertices are inside the half-plane. **`out` is not modified.**
+/// - `Changed` if the polygon was clipped (result written to `out`)
+/// - `TooManyVertices` if the result would exceed `MAX_POLY_VERTICES`
+fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+    let n = poly.len;
+    #[cfg(feature = "timing")]
+    clip_convex_stats::record_call(n);
+
+    debug_assert!(n >= 3, "clip_convex expects poly.len >= 3, got {}", n);
+
+    // O(1) redundant-plane early-out:
+    // If the entire polygon lies within the disk u²+v² <= max_r2, and that disk is fully inside
+    // the half-plane, then the half-plane cannot clip the polygon.
+    //
+    // For linear form d(u,v) = a*u + b*v + c, min over ||(u,v)|| <= r is c - ||(a,b)|| * r.
+    // We classify inside with d >= -eps, so require: c - ||(a,b)||*r >= -eps.
+    // Let t = c + eps; require t >= ||(a,b)|| * r. Avoid sqrt by squaring.
+    let max_r2 = poly.max_r2;
+    if !poly.has_bounding_ref && max_r2 > 0.0 {
+        let t = hp.c + hp.eps;
+        if t >= 0.0 {
+            if t * t >= hp.ab2 * max_r2 {
+                debug_assert!(
+                    (0..n).all(|i| hp.signed_dist(poly.us[i], poly.vs[i]) >= -hp.eps),
+                    "clip_convex early-out returned Unchanged, but a vertex was outside"
+                );
+                #[cfg(feature = "timing")]
+                clip_convex_stats::record_early_unchanged(n, !poly.has_bounding_ref);
+                return ClipResult::Unchanged;
+            }
+        }
+    }
+    match n {
+        3 => clip_convex_small::<3>(poly, hp, out),
+        4 => clip_convex_small::<4>(poly, hp, out),
+        5 => clip_convex_small::<5>(poly, hp, out),
+        6 => clip_convex_small::<6>(poly, hp, out),
+        7 => clip_convex_small::<7>(poly, hp, out),
+        8 => clip_convex_small::<8>(poly, hp, out),
+        _ => clip_convex_bitmask(poly, hp, out),
+    }
 }
 
 /// Build the output polygon from entry to exit.
@@ -817,6 +1130,214 @@ impl Topo2DBuilder {
     }
 }
 
+#[cfg(feature = "microbench")]
+pub(crate) fn run_clip_convex_microbench() {
+    use std::hint::black_box;
+    use std::time::{Duration, Instant};
+
+    let target_ms: u64 = std::env::var("S2_VORONOI_BENCH_TARGET_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(200)
+        .clamp(10, 10_000);
+    let samples: usize = std::env::var("S2_VORONOI_BENCH_SAMPLES")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(9)
+        .clamp(3, 101);
+
+    fn median(mut xs: Vec<f64>) -> f64 {
+        if xs.is_empty() {
+            return f64::NAN;
+        }
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        xs[xs.len() / 2]
+    }
+
+    fn make_regular_poly<const N: usize>(radius: f64) -> PolyBuffer {
+        let mut p = PolyBuffer::new();
+        p.len = N;
+        p.max_r2 = 0.0;
+        p.has_bounding_ref = false;
+        for i in 0..N {
+            let theta = std::f64::consts::TAU * (i as f64) / (N as f64);
+            let (s, c) = theta.sin_cos();
+            let u = radius * c;
+            let v = radius * s;
+            p.us[i] = u;
+            p.vs[i] = v;
+            p.vertex_planes[i] = (i, (i + 1) % N);
+            p.edge_planes[i] = i;
+            p.max_r2 = p.max_r2.max(u * u + v * v);
+        }
+        p
+    }
+
+    fn calibrate(target: Duration, mut f: impl FnMut(u64)) -> u64 {
+        let mut iters = 1u64;
+        loop {
+            let t0 = Instant::now();
+            f(iters);
+            let dt = t0.elapsed();
+            if dt >= target {
+                return iters;
+            }
+            iters = iters.saturating_mul(2);
+            if iters == 0 {
+                return u64::MAX;
+            }
+        }
+    }
+
+    fn bench_ns_per_call(
+        label: &str,
+        target: Duration,
+        samples: usize,
+        calls_per_iter: u64,
+        mut f: impl FnMut(u64),
+    ) -> (f64, f64) {
+        let mut runs = Vec::with_capacity(samples);
+
+        // Warmup.
+        f(10_000);
+
+        let iters = calibrate(target, |n| f(n));
+        for _ in 0..samples {
+            let t0 = Instant::now();
+            f(iters);
+            let dt = t0.elapsed();
+            let total_calls = (iters as f64) * (calls_per_iter as f64);
+            let ns = dt.as_secs_f64() * 1e9 / total_calls;
+            runs.push(ns);
+        }
+
+        let med = median(runs.clone());
+        let min = runs
+            .into_iter()
+            .fold(f64::INFINITY, |a, b| if b < a { b } else { a });
+        eprintln!("{label:<32} median {med:>10.2} ns/call  min {min:>10.2}");
+        (med, min)
+    }
+
+    fn run_for<const N: usize>(target: Duration, samples: usize) {
+        let poly = make_regular_poly::<N>(1.0);
+
+        // Mixed: alternate a small set of planes, ensuring work stays in the "changed" regime.
+        let hps = [
+            HalfPlane::new_unnormalized(1.0, 0.0, -0.2, 1_000_000),
+            HalfPlane::new_unnormalized(-1.0, 0.0, 0.2, 1_000_001),
+            HalfPlane::new_unnormalized(0.0, 1.0, -0.2, 1_000_002),
+            HalfPlane::new_unnormalized(0.0, -1.0, 0.2, 1_000_003),
+        ];
+        let hp_unchanged = HalfPlane::new_unnormalized(1.0, 0.0, 2.0, 1_000_004);
+
+        // Pre-allocate output buffers.
+        let mut out_a = PolyBuffer::new();
+        let mut out_b = PolyBuffer::new();
+
+        // Sanity: ensure the intended regimes.
+        assert!(matches!(
+            clip_convex_small::<N>(&poly, &hps[0], &mut out_a),
+            ClipResult::Changed
+        ));
+        assert!(matches!(
+            clip_convex_bitmask(&poly, &hps[0], &mut out_b),
+            ClipResult::Changed
+        ));
+        out_a.len = 13;
+        out_a.us[0] = 123.0;
+        out_b.len = 13;
+        out_b.us[0] = 123.0;
+        assert!(matches!(
+            clip_convex_small::<N>(&poly, &hp_unchanged, &mut out_a),
+            ClipResult::Unchanged
+        ));
+        assert!(matches!(
+            clip_convex_bitmask(&poly, &hp_unchanged, &mut out_b),
+            ClipResult::Unchanged
+        ));
+
+        eprintln!("\nclip_convex microbench (N={N})");
+
+        let (small_mixed, _) = bench_ns_per_call(
+            "small mixed",
+            target,
+            samples,
+            1,
+            |iters| {
+                let poly = black_box(&poly);
+                let hps = black_box(&hps);
+                let out = black_box(&mut out_a);
+                for i in 0..iters {
+                    let hp = &hps[(i as usize) & 3];
+                    let r = clip_convex_small::<N>(poly, hp, out);
+                    black_box(r);
+                }
+            },
+        );
+        let (mask_mixed, _) = bench_ns_per_call(
+            "bitmask mixed",
+            target,
+            samples,
+            1,
+            |iters| {
+                let poly = black_box(&poly);
+                let hps = black_box(&hps);
+                let out = black_box(&mut out_b);
+                for i in 0..iters {
+                    let hp = &hps[(i as usize) & 3];
+                    let r = clip_convex_bitmask(poly, hp, out);
+                    black_box(r);
+                }
+            },
+        );
+        eprintln!("mixed speedup:                    {:>10.3}x", mask_mixed / small_mixed);
+
+        let (small_unch, _) = bench_ns_per_call(
+            "small unchanged",
+            target,
+            samples,
+            1,
+            |iters| {
+                let poly = black_box(&poly);
+                let hp = black_box(&hp_unchanged);
+                let out = black_box(&mut out_a);
+                for _ in 0..iters {
+                    let r = clip_convex_small::<N>(poly, hp, out);
+                    black_box(r);
+                }
+            },
+        );
+        let (mask_unch, _) = bench_ns_per_call(
+            "bitmask unchanged",
+            target,
+            samples,
+            1,
+            |iters| {
+                let poly = black_box(&poly);
+                let hp = black_box(&hp_unchanged);
+                let out = black_box(&mut out_b);
+                for _ in 0..iters {
+                    let r = clip_convex_bitmask(poly, hp, out);
+                    black_box(r);
+                }
+            },
+        );
+        eprintln!(
+            "unchanged speedup:                 {:>10.3}x",
+            mask_unch / small_unch
+        );
+    }
+
+    let target = Duration::from_millis(target_ms);
+    run_for::<3>(target, samples);
+    run_for::<4>(target, samples);
+    run_for::<5>(target, samples);
+    run_for::<6>(target, samples);
+    run_for::<7>(target, samples);
+    run_for::<8>(target, samples);
+}
+
 #[inline]
 fn sort3(a: &mut u32, b: &mut u32, c: &mut u32) {
     if *a > *b {
@@ -833,6 +1354,133 @@ fn sort3(a: &mut u32, b: &mut u32, c: &mut u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fill_sentinel(out: &mut PolyBuffer) {
+        out.len = 7;
+        out.max_r2 = 123.0;
+        out.has_bounding_ref = true;
+        for i in 0..out.len {
+            out.us[i] = f64::NAN;
+            out.vs[i] = f64::NAN;
+            out.vertex_planes[i] = (999, 999);
+            out.edge_planes[i] = 999;
+        }
+}
+
+    fn approx(a: f64, b: f64) -> bool {
+        let d = (a - b).abs();
+        d <= 1e-10 || d <= 1e-10 * a.abs().max(b.abs())
+    }
+
+    fn poly_eq_cyclic(a: &PolyBuffer, b: &PolyBuffer) -> bool {
+        if a.len != b.len {
+            return false;
+        }
+        if a.len == 0 {
+            return approx(a.max_r2, b.max_r2) && a.has_bounding_ref == b.has_bounding_ref;
+        }
+        if !approx(a.max_r2, b.max_r2) || a.has_bounding_ref != b.has_bounding_ref {
+            return false;
+        }
+        let n = a.len;
+
+        'rot: for off in 0..n {
+            for i in 0..n {
+                let j = (i + off) % n;
+                if !approx(a.us[i], b.us[j])
+                    || !approx(a.vs[i], b.vs[j])
+                    || a.vertex_planes[i] != b.vertex_planes[j]
+                    || a.edge_planes[i] != b.edge_planes[j]
+                {
+                    continue 'rot;
+                }
+            }
+            return true;
+        }
+
+        false
+    }
+
+    fn make_poly<const N: usize>(us: [f64; N], vs: [f64; N]) -> PolyBuffer {
+        let mut p = PolyBuffer::new();
+        p.len = N;
+        p.max_r2 = 0.0;
+        p.has_bounding_ref = false;
+        for i in 0..N {
+            p.us[i] = us[i];
+            p.vs[i] = vs[i];
+            p.vertex_planes[i] = (i, (i + 1) % N);
+            p.edge_planes[i] = i;
+            p.max_r2 = p.max_r2.max(us[i] * us[i] + vs[i] * vs[i]);
+        }
+        p
+    }
+
+    #[test]
+    fn test_clip_convex_small_matches_bitmask_square() {
+        let poly = make_poly::<4>([0.0, 1.0, 1.0, 0.0], [0.0, 0.0, 1.0, 1.0]);
+        let hp = HalfPlane::new_unnormalized(1.0, 0.0, -0.5, 7);
+
+        // Mixed case
+        let mut out_small = PolyBuffer::new();
+        let mut out_mask = PolyBuffer::new();
+        assert_eq!(
+            clip_convex_small::<4>(&poly, &hp, &mut out_small),
+            ClipResult::Changed
+        );
+        assert_eq!(
+            clip_convex_bitmask(&poly, &hp, &mut out_mask),
+            ClipResult::Changed
+        );
+        assert!(poly_eq_cyclic(&out_small, &out_mask));
+
+        // All inside should not touch `out`
+        let hp_inside = HalfPlane::new_unnormalized(1.0, 0.0, 10.0, 7);
+        fill_sentinel(&mut out_small);
+        fill_sentinel(&mut out_mask);
+        assert_eq!(
+            clip_convex_small::<4>(&poly, &hp_inside, &mut out_small),
+            ClipResult::Unchanged
+        );
+        assert_eq!(
+            clip_convex_bitmask(&poly, &hp_inside, &mut out_mask),
+            ClipResult::Unchanged
+        );
+        assert_eq!(out_small.len, 7);
+        assert_eq!(out_mask.len, 7);
+
+        // All outside
+        let hp_outside = HalfPlane::new_unnormalized(1.0, 0.0, -10.0, 7);
+        assert_eq!(
+            clip_convex_small::<4>(&poly, &hp_outside, &mut out_small),
+            ClipResult::Changed
+        );
+        assert_eq!(
+            clip_convex_bitmask(&poly, &hp_outside, &mut out_mask),
+            ClipResult::Changed
+        );
+        assert_eq!(out_small.len, 0);
+        assert_eq!(out_mask.len, 0);
+    }
+
+    #[test]
+    fn test_clip_convex_small_matches_bitmask_bounding_triangle() {
+        let mut poly = PolyBuffer::new();
+        poly.init_bounding(10.0);
+        let hp = HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 12); // u >= 0
+
+        let mut out_small = PolyBuffer::new();
+        let mut out_mask = PolyBuffer::new();
+        assert_eq!(
+            clip_convex_small::<3>(&poly, &hp, &mut out_small),
+            ClipResult::Changed
+        );
+        assert_eq!(
+            clip_convex_bitmask(&poly, &hp, &mut out_mask),
+            ClipResult::Changed
+        );
+        assert!(poly_eq_cyclic(&out_small, &out_mask));
+    }
 
     #[test]
     fn test_tangent_basis() {

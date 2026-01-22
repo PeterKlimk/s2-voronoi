@@ -1,4 +1,5 @@
 #![feature(portable_simd)]
+#![cfg_attr(test, feature(test))]
 
 //! Spherical Voronoi diagrams on the unit sphere (S2).
 //!
@@ -32,6 +33,11 @@ pub mod validation;
 // Internal modules
 pub(crate) mod cube_grid;
 pub(crate) mod knn_clipping;
+
+#[cfg(feature = "microbench")]
+pub fn run_clip_convex_microbench() {
+    knn_clipping::topo2d::run_clip_convex_microbench();
+}
 
 // Optional qhull backend (test/benchmark only)
 #[cfg(feature = "qhull")]
