@@ -291,15 +291,26 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
         (idx2, idx1)
     };
 
+    let us = &poly.us[..n];
+    let vs = &poly.vs[..n];
+    let edge_planes = &poly.edge_planes[..n];
+
     // Calculate transition data only for the two intersection points
     // We need d0 (dist at i-1) and d1 (dist at i) for the intersection formula.
     // entry.next = entry_next. idx = entry_next - 1 (modulo n).
 
     let calc_transition = |next_idx: usize| -> (usize, usize, f64, f64) {
         let prev_idx = if next_idx == 0 { n - 1 } else { next_idx - 1 };
-        let d0 = hp.signed_dist(poly.us[prev_idx], poly.vs[prev_idx]);
-        let d1 = hp.signed_dist(poly.us[next_idx], poly.vs[next_idx]);
-        (prev_idx, next_idx, d0, d1)
+        // SAFETY: prev_idx and next_idx are in 0..n, and us/vs are sliced to length n.
+        unsafe {
+            let u0 = *us.get_unchecked(prev_idx);
+            let v0 = *vs.get_unchecked(prev_idx);
+            let u1 = *us.get_unchecked(next_idx);
+            let v1 = *vs.get_unchecked(next_idx);
+            let d0 = hp.signed_dist(u0, v0);
+            let d1 = hp.signed_dist(u1, v1);
+            (prev_idx, next_idx, d0, d1)
+        }
     };
 
     let (entry_idx, entry_next_idx, entry_d0, entry_d1) = calc_transition(entry_next);
@@ -307,28 +318,34 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
 
     // Compute intersection points
     let t_entry = entry_d0 / (entry_d0 - entry_d1);
-    let entry_u = t_entry.mul_add(
-        poly.us[entry_next_idx] - poly.us[entry_idx],
-        poly.us[entry_idx],
-    );
-    let entry_v = t_entry.mul_add(
-        poly.vs[entry_next_idx] - poly.vs[entry_idx],
-        poly.vs[entry_idx],
-    );
+    // SAFETY: entry_idx and entry_next_idx are in 0..n.
+    let (entry_u0, entry_u1, entry_v0, entry_v1, entry_edge_plane) = unsafe {
+        (
+            *us.get_unchecked(entry_idx),
+            *us.get_unchecked(entry_next_idx),
+            *vs.get_unchecked(entry_idx),
+            *vs.get_unchecked(entry_next_idx),
+            *edge_planes.get_unchecked(entry_idx),
+        )
+    };
+    let entry_u = t_entry.mul_add(entry_u1 - entry_u0, entry_u0);
+    let entry_v = t_entry.mul_add(entry_v1 - entry_v0, entry_v0);
     let entry_pt = (entry_u, entry_v);
-    let entry_edge_plane = poly.edge_planes[entry_idx];
 
     let t_exit = exit_d0 / (exit_d0 - exit_d1);
-    let exit_u = t_exit.mul_add(
-        poly.us[exit_next_idx] - poly.us[exit_idx],
-        poly.us[exit_idx],
-    );
-    let exit_v = t_exit.mul_add(
-        poly.vs[exit_next_idx] - poly.vs[exit_idx],
-        poly.vs[exit_idx],
-    );
+    // SAFETY: exit_idx and exit_next_idx are in 0..n.
+    let (exit_u0, exit_u1, exit_v0, exit_v1, exit_edge_plane) = unsafe {
+        (
+            *us.get_unchecked(exit_idx),
+            *us.get_unchecked(exit_next_idx),
+            *vs.get_unchecked(exit_idx),
+            *vs.get_unchecked(exit_next_idx),
+            *edge_planes.get_unchecked(exit_idx),
+        )
+    };
+    let exit_u = t_exit.mul_add(exit_u1 - exit_u0, exit_u0);
+    let exit_v = t_exit.mul_add(exit_v1 - exit_v0, exit_v0);
     let exit_pt = (exit_u, exit_v);
-    let exit_edge_plane = poly.edge_planes[exit_idx];
 
     // Pass 2: build output polygon
     if poly.has_bounding_ref {
@@ -357,13 +374,6 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
             exit_idx,
             hp.plane_idx,
         );
-    }
-
-    // The exit point's edge_planes was set to hp.plane_idx, but the vertex
-    // *before* exit (last surviving input vertex) should keep exit_edge_plane
-    // since its outgoing edge leads to the exit intersection point.
-    if out.len >= 2 {
-        out.edge_planes[out.len - 2] = exit_edge_plane;
     }
 
     ClipResult::Changed
@@ -421,31 +431,33 @@ fn build_output<const TRACK_BOUNDING: bool>(
     );
 
     // Surviving input vertices from entry_next to exit_idx (cyclic)
+    let us = &poly.us[..n];
+    let vs = &poly.vs[..n];
+    let vertex_planes = &poly.vertex_planes[..n];
+    let edge_planes = &poly.edge_planes[..n];
     if entry_next <= exit_idx {
-        for i in entry_next..=exit_idx {
-            push!(
-                poly.us[i],
-                poly.vs[i],
-                poly.vertex_planes[i],
-                poly.edge_planes[i]
-            );
+        let us_r = &us[entry_next..(exit_idx + 1)];
+        let vs_r = &vs[entry_next..(exit_idx + 1)];
+        let vps_r = &vertex_planes[entry_next..(exit_idx + 1)];
+        let eps_r = &edge_planes[entry_next..(exit_idx + 1)];
+        for (((&u, &v), &vp), &ep) in us_r.iter().zip(vs_r).zip(vps_r).zip(eps_r) {
+            push!(u, v, vp, ep);
         }
     } else {
-        for i in entry_next..n {
-            push!(
-                poly.us[i],
-                poly.vs[i],
-                poly.vertex_planes[i],
-                poly.edge_planes[i]
-            );
+        let us_r = &us[entry_next..n];
+        let vs_r = &vs[entry_next..n];
+        let vps_r = &vertex_planes[entry_next..n];
+        let eps_r = &edge_planes[entry_next..n];
+        for (((&u, &v), &vp), &ep) in us_r.iter().zip(vs_r).zip(vps_r).zip(eps_r) {
+            push!(u, v, vp, ep);
         }
-        for i in 0..=exit_idx {
-            push!(
-                poly.us[i],
-                poly.vs[i],
-                poly.vertex_planes[i],
-                poly.edge_planes[i]
-            );
+
+        let us_r = &us[0..(exit_idx + 1)];
+        let vs_r = &vs[0..(exit_idx + 1)];
+        let vps_r = &vertex_planes[0..(exit_idx + 1)];
+        let eps_r = &edge_planes[0..(exit_idx + 1)];
+        for (((&u, &v), &vp), &ep) in us_r.iter().zip(vs_r).zip(vps_r).zip(eps_r) {
+            push!(u, v, vp, ep);
         }
     }
 
