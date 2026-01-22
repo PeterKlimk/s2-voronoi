@@ -503,27 +503,25 @@ fn clip_convex_small_bool<const N: usize>(
     }
 
     // Mixed case: find the two transition indices (outside -> inside and inside -> outside)
-    let (entry_idx, entry_next) = 'find_entry: loop {
-        // Find first outside->inside transition
-        for i in 0..N {
-            let prev = if i == 0 { N - 1 } else { i - 1 };
-            if !inside[prev] && inside[i] {
-                break 'find_entry (prev, i);
-            }
-        }
-        unreachable!("convex polygon must have exactly 2 transitions");
-    };
+    // Single pass: find both transitions at once
+    let mut entry_idx = None;
+    let mut exit_idx = None;
 
-    let (exit_idx, exit_next) = 'find_exit: loop {
-        // Find first inside->outside transition (must be different from entry)
-        for i in 0..N {
-            let prev = if i == 0 { N - 1 } else { i - 1 };
-            if inside[prev] && !inside[i] {
-                break 'find_exit (prev, i);
-            }
+    for i in 0..N {
+        let prev = if i == 0 { N - 1 } else { i - 1 };
+        if entry_idx.is_none() && !inside[prev] && inside[i] {
+            entry_idx = Some((prev, i));
+        } else if exit_idx.is_none() && inside[prev] && !inside[i] {
+            exit_idx = Some((prev, i));
         }
-        unreachable!("convex polygon must have exactly 2 transitions");
-    };
+        // Early exit once both transitions are found
+        if entry_idx.is_some() && exit_idx.is_some() {
+            break;
+        }
+    }
+
+    let (entry_idx, entry_next) = entry_idx.expect("convex polygon must have entry transition");
+    let (exit_idx, exit_next) = exit_idx.expect("convex polygon must have exit transition");
 
     // Build output
     out.len = 0;
