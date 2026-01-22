@@ -220,13 +220,22 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
     //     }
     // }
 
+    // unsafe {
+    //     for i in (0..n).rev() {
+    //         let d = hp.signed_dist(*us.add(i), *vs.add(i));
+    //         mask = (mask << 1) | u64::from(d >= neg_eps);
+    //     }
+    // }
+
     unsafe {
-        for i in (0..n).rev() {
+        let mut bit = 1u64;
+        for i in 0..n {
             let d = hp.signed_dist(*us.add(i), *vs.add(i));
-            mask = (mask << 1) | u64::from(d >= neg_eps);
+            mask |= (0u64.wrapping_sub((d >= neg_eps) as u64)) & bit;
+            bit <<= 1;
         }
     }
-    
+
     // Fast path: All outside
     if mask == 0 {
         out.len = 0;
