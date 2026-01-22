@@ -308,13 +308,22 @@ fn clip_convex_small<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane, out: &mu
 
     // PASS 1: classify vertices and compute signed distances once.
     // Build a tiny inside bitmask so we can detect unchanged/all-outside without touching `out`.
-    let mut dists = [0.0f64; N];
+    // SAFETY: `[MaybeUninit<f64>; N]` is valid in an uninitialized state.
+    let mut dists: [core::mem::MaybeUninit<f64>; N] =
+        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+
+    let us = poly.us.as_ptr();
+    let vs = poly.vs.as_ptr();
+
     let mut inside_mask: u8 = 0;
 
-    for i in 0..N {
-        let d = hp.signed_dist(poly.us[i], poly.vs[i]);
-        dists[i] = d;
-        inside_mask |= ((d >= neg_eps) as u8) << i;
+    // SAFETY: i < N <= 8 <= MAX_POLY_VERTICES
+    unsafe {
+        for i in 0..N {
+            let d = hp.signed_dist(*us.add(i), *vs.add(i));
+            dists.get_unchecked_mut(i).write(d);
+            inside_mask |= ((d >= neg_eps) as u8) << i;
+        }
     }
 
     let full_mask: u8 = ((1u16 << N) - 1) as u8;
@@ -381,8 +390,13 @@ fn clip_convex_small<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane, out: &mu
     }
 
     // Entry intersection: edge (entry_idx -> entry_next) crosses out->in.
-    let d_entry = dists[entry_idx];
-    let d_entry_next = dists[entry_next];
+    // SAFETY: entry_idx and entry_next are in 0..N; dists[0..N] were written in Pass 1.
+    let (d_entry, d_entry_next) = unsafe {
+        (
+            dists.get_unchecked(entry_idx).assume_init_read(),
+            dists.get_unchecked(entry_next).assume_init_read(),
+        )
+    };
     let t_entry = d_entry / (d_entry - d_entry_next);
     let entry_u = t_entry.mul_add(poly.us[entry_next] - poly.us[entry_idx], poly.us[entry_idx]);
     let entry_v = t_entry.mul_add(poly.vs[entry_next] - poly.vs[entry_idx], poly.vs[entry_idx]);
@@ -420,8 +434,174 @@ fn clip_convex_small<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane, out: &mu
     }
 
     // Exit intersection: edge (exit_idx -> exit_next) crosses in->out.
-    let d_exit = dists[exit_idx];
-    let d_exit_next = dists[exit_next];
+    // SAFETY: exit_idx and exit_next are in 0..N; dists[0..N] were written in Pass 1.
+    let (d_exit, d_exit_next) = unsafe {
+        (
+            dists.get_unchecked(exit_idx).assume_init_read(),
+            dists.get_unchecked(exit_next).assume_init_read(),
+        )
+    };
+    let t_exit = d_exit / (d_exit - d_exit_next);
+    let exit_u = t_exit.mul_add(poly.us[exit_next] - poly.us[exit_idx], poly.us[exit_idx]);
+    let exit_v = t_exit.mul_add(poly.vs[exit_next] - poly.vs[exit_idx], poly.vs[exit_idx]);
+    let exit_ep = poly.edge_planes[exit_idx];
+    push!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
+
+    out.max_r2 = max_r2;
+    out.has_bounding_ref = if track_bounding { has_bounding } else { false };
+    ClipResult::Changed
+}
+
+/// Bool array variant: uses `[bool; N]` instead of bitmask for classification.
+/// Simpler logic, no bit manipulation - test if it's competitive for small N.
+#[cfg_attr(feature = "profiling", inline(never))]
+fn clip_convex_small_bool<const N: usize>(
+    poly: &PolyBuffer,
+    hp: &HalfPlane,
+    out: &mut PolyBuffer,
+) -> ClipResult {
+    debug_assert_eq!(poly.len, N);
+    debug_assert!(N >= 3 && N <= 8);
+
+    let neg_eps = -hp.eps;
+
+    // SAFETY: `[MaybeUninit<f64>; N]` is valid in an uninitialized state.
+    let mut dists: [core::mem::MaybeUninit<f64>; N] =
+        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+
+    let us = poly.us.as_ptr();
+    let vs = poly.vs.as_ptr();
+
+    // Pass 1: classify vertices, track any_inside/all_inside in one pass
+    let mut inside = [false; N];
+    let mut any_inside = false;
+    let mut all_inside = true;
+
+    // SAFETY: i < N <= 8 <= MAX_POLY_VERTICES
+    unsafe {
+        for i in 0..N {
+            let d = hp.signed_dist(*us.add(i), *vs.add(i));
+            dists.get_unchecked_mut(i).write(d);
+            let is_inside = d >= neg_eps;
+            inside[i] = is_inside;
+            any_inside |= is_inside;
+            all_inside &= is_inside;
+        }
+    }
+
+    // Fast path: all outside
+    if !any_inside {
+        out.len = 0;
+        out.max_r2 = 0.0;
+        out.has_bounding_ref = false;
+        return ClipResult::Changed;
+    }
+
+    // Fast path: all inside
+    if all_inside {
+        return ClipResult::Unchanged;
+    }
+
+    // Mixed case: find the two transition indices (outside -> inside and inside -> outside)
+    let (entry_idx, entry_next) = 'find_entry: loop {
+        // Find first outside->inside transition
+        for i in 0..N {
+            let prev = if i == 0 { N - 1 } else { i - 1 };
+            if !inside[prev] && inside[i] {
+                break 'find_entry (prev, i);
+            }
+        }
+        unreachable!("convex polygon must have exactly 2 transitions");
+    };
+
+    let (exit_idx, exit_next) = 'find_exit: loop {
+        // Find first inside->outside transition (must be different from entry)
+        for i in 0..N {
+            let prev = if i == 0 { N - 1 } else { i - 1 };
+            if inside[prev] && !inside[i] {
+                break 'find_exit (prev, i);
+            }
+        }
+        unreachable!("convex polygon must have exactly 2 transitions");
+    };
+
+    // Build output
+    out.len = 0;
+
+    #[inline(always)]
+    fn r2_of(u: f64, v: f64) -> f64 {
+        u.mul_add(u, v * v)
+    }
+
+    let mut max_r2 = 0.0f64;
+    let mut has_bounding = false;
+    let track_bounding = poly.has_bounding_ref;
+
+    macro_rules! push {
+        ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
+            let u = $u;
+            let v = $v;
+            let vp = $vp;
+            out.push_raw(u, v, vp, $ep);
+            let r2 = r2_of(u, v);
+            if r2 > max_r2 {
+                max_r2 = r2;
+            }
+            if track_bounding {
+                has_bounding |= vp.0 == usize::MAX;
+            }
+        }};
+    }
+
+    // Entry intersection: edge (entry_idx -> entry_next) crosses out->in
+    let (d_entry, d_entry_next) = unsafe {
+        (
+            dists.get_unchecked(entry_idx).assume_init_read(),
+            dists.get_unchecked(entry_next).assume_init_read(),
+        )
+    };
+    let t_entry = d_entry / (d_entry - d_entry_next);
+    let entry_u = t_entry.mul_add(poly.us[entry_next] - poly.us[entry_idx], poly.us[entry_idx]);
+    let entry_v = t_entry.mul_add(poly.vs[entry_next] - poly.vs[entry_idx], poly.vs[entry_idx]);
+    let entry_ep = poly.edge_planes[entry_idx];
+    push!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
+
+    // Surviving input vertices from entry_next to exit_idx (cyclic), inclusive
+    if entry_next <= exit_idx {
+        for i in entry_next..=exit_idx {
+            push!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+    } else {
+        for i in entry_next..N {
+            push!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+        for i in 0..=exit_idx {
+            push!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+    }
+
+    // Exit intersection: edge (exit_idx -> exit_next) crosses in->out
+    let (d_exit, d_exit_next) = unsafe {
+        (
+            dists.get_unchecked(exit_idx).assume_init_read(),
+            dists.get_unchecked(exit_next).assume_init_read(),
+        )
+    };
     let t_exit = d_exit / (d_exit - d_exit_next);
     let exit_u = t_exit.mul_add(poly.us[exit_next] - poly.us[exit_idx], poly.us[exit_idx]);
     let exit_v = t_exit.mul_add(poly.vs[exit_next] - poly.vs[exit_idx], poly.vs[exit_idx]);
@@ -1200,6 +1380,7 @@ pub(crate) fn run_clip_convex_microbench() {
         // Pre-allocate output buffers.
         let mut out_a = PolyBuffer::new();
         let mut out_b = PolyBuffer::new();
+        let mut out_c = PolyBuffer::new();
 
         // Sanity: ensure the intended regimes.
         assert!(matches!(
@@ -1210,16 +1391,26 @@ pub(crate) fn run_clip_convex_microbench() {
             clip_convex_bitmask(&poly, &hps[0], &mut out_b),
             ClipResult::Changed
         ));
+        assert!(matches!(
+            clip_convex_small_bool::<N>(&poly, &hps[0], &mut out_c),
+            ClipResult::Changed
+        ));
         out_a.len = 13;
         out_a.us[0] = 123.0;
         out_b.len = 13;
         out_b.us[0] = 123.0;
+        out_c.len = 13;
+        out_c.us[0] = 123.0;
         assert!(matches!(
             clip_convex_small::<N>(&poly, &hps_unchanged[0], &mut out_a),
             ClipResult::Unchanged
         ));
         assert!(matches!(
             clip_convex_bitmask(&poly, &hps_unchanged[0], &mut out_b),
+            ClipResult::Unchanged
+        ));
+        assert!(matches!(
+            clip_convex_small_bool::<N>(&poly, &hps_unchanged[0], &mut out_c),
             ClipResult::Unchanged
         ));
 
@@ -1253,6 +1444,22 @@ pub(crate) fn run_clip_convex_microbench() {
                 for i in 0..iters {
                     let hp = &hps[(i as usize) & 3];
                     let r = clip_convex_bitmask(poly, hp, out);
+                    black_box(r);
+                }
+            },
+        );
+        let (bool_mixed, _) = bench_ns_per_call(
+            "bool mixed",
+            target,
+            samples,
+            1,
+            |iters| {
+                let poly = black_box(&poly);
+                let hps = black_box(&hps);
+                let out = black_box(&mut out_c);
+                for i in 0..iters {
+                    let hp = &hps[(i as usize) & 3];
+                    let r = clip_convex_small_bool::<N>(poly, hp, out);
                     black_box(r);
                 }
             },
@@ -1291,9 +1498,33 @@ pub(crate) fn run_clip_convex_microbench() {
                 }
             },
         );
+        let (bool_unch, _) = bench_ns_per_call(
+            "bool unchanged",
+            target,
+            samples,
+            1,
+            |iters| {
+                let poly = black_box(&poly);
+                let hps = black_box(&hps_unchanged);
+                let out = black_box(&mut out_c);
+                for i in 0..iters {
+                    let hp = &hps[(i as usize) & 3];
+                    let r = clip_convex_small_bool::<N>(poly, hp, out);
+                    black_box(r);
+                }
+            },
+        );
         eprintln!(
             "unchanged speedup:                 {:>10.3}x",
             mask_unch / small_unch
+        );
+        eprintln!(
+            "bool vs small mixed:               {:>10.3}x",
+            bool_mixed / small_mixed
+        );
+        eprintln!(
+            "bool vs small unchanged:           {:>10.3}x",
+            bool_unch / small_unch
         );
     }
 
@@ -1448,6 +1679,53 @@ mod tests {
             ClipResult::Changed
         );
         assert!(poly_eq_cyclic(&out_small, &out_mask));
+    }
+
+    #[test]
+    fn test_clip_convex_bool_matches_bitmask_square() {
+        let poly = make_poly::<4>([0.0, 1.0, 1.0, 0.0], [0.0, 0.0, 1.0, 1.0]);
+        let hp = HalfPlane::new_unnormalized(1.0, 0.0, -0.5, 7);
+
+        // Mixed case
+        let mut out_bool = PolyBuffer::new();
+        let mut out_mask = PolyBuffer::new();
+        assert_eq!(
+            clip_convex_small_bool::<4>(&poly, &hp, &mut out_bool),
+            ClipResult::Changed
+        );
+        assert_eq!(
+            clip_convex_bitmask(&poly, &hp, &mut out_mask),
+            ClipResult::Changed
+        );
+        assert!(poly_eq_cyclic(&out_bool, &out_mask));
+
+        // All inside should not touch `out`
+        let hp_inside = HalfPlane::new_unnormalized(1.0, 0.0, 10.0, 7);
+        fill_sentinel(&mut out_bool);
+        fill_sentinel(&mut out_mask);
+        assert_eq!(
+            clip_convex_small_bool::<4>(&poly, &hp_inside, &mut out_bool),
+            ClipResult::Unchanged
+        );
+        assert_eq!(
+            clip_convex_bitmask(&poly, &hp_inside, &mut out_mask),
+            ClipResult::Unchanged
+        );
+        assert_eq!(out_bool.len, 7);
+        assert_eq!(out_mask.len, 7);
+
+        // All outside
+        let hp_outside = HalfPlane::new_unnormalized(1.0, 0.0, -10.0, 7);
+        assert_eq!(
+            clip_convex_small_bool::<4>(&poly, &hp_outside, &mut out_bool),
+            ClipResult::Changed
+        );
+        assert_eq!(
+            clip_convex_bitmask(&poly, &hp_outside, &mut out_mask),
+            ClipResult::Changed
+        );
+        assert_eq!(out_bool.len, 0);
+        assert_eq!(out_mask.len, 0);
     }
 
     #[test]
