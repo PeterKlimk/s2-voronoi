@@ -299,7 +299,7 @@ enum ClipResult {
     TooManyVertices,
 }
 
-use s2_voronoi_macros::gen_clip_convex_ngon;
+use s2_voronoi_macros::{gen_clip_convex_ngon, gen_clip_convex_simd_ngon};
 
 #[cfg_attr(feature = "profiling", inline(never))]
 #[cfg(any(test, feature = "microbench"))]
@@ -719,6 +719,30 @@ fn clip_convex_match_ngon<const N: usize>(
         clip_convex_oct(poly, hp, out)
     } else {
         unreachable!("clip_convex_match_ngon only supports N=3..=8")
+    }
+}
+gen_clip_convex_simd_ngon!(clip_convex_simd_tri, 3);
+gen_clip_convex_simd_ngon!(clip_convex_simd_quad, 4);
+gen_clip_convex_simd_ngon!(clip_convex_simd_pent, 5);
+gen_clip_convex_simd_ngon!(clip_convex_simd_hex, 6);
+gen_clip_convex_simd_ngon!(clip_convex_simd_hept, 7);
+gen_clip_convex_simd_ngon!(clip_convex_simd_oct, 8);
+
+#[inline(always)]
+#[cfg(any(test, feature = "microbench"))]
+fn clip_convex_simd<const N: usize>(
+    poly: &PolyBuffer,
+    hp: &HalfPlane,
+    out: &mut PolyBuffer,
+) -> ClipResult {
+    match N {
+        3 => clip_convex_simd_tri(poly, hp, out),
+        4 => clip_convex_simd_quad(poly, hp, out),
+        5 => clip_convex_simd_pent(poly, hp, out),
+        6 => clip_convex_simd_hex(poly, hp, out),
+        7 => clip_convex_simd_hept(poly, hp, out),
+        8 => clip_convex_simd_oct(poly, hp, out),
+        _ => unreachable!("clip_convex_simd only supports N=3..=8"),
     }
 }
 
@@ -1650,6 +1674,7 @@ pub(crate) fn run_clip_convex_microbench() {
         let mut out_b = PolyBuffer::new();
         let mut out_c = PolyBuffer::new();
         let mut out_d = PolyBuffer::new();
+        let mut out_s = PolyBuffer::new();
         let mut out_q = PolyBuffer::new();
 
         // Sanity: ensure the intended regimes.
@@ -1669,6 +1694,10 @@ pub(crate) fn run_clip_convex_microbench() {
             clip_convex_match_ngon::<N>(&poly, &hps[0], &mut out_d),
             ClipResult::Changed
         ));
+        assert!(matches!(
+            clip_convex_simd::<N>(&poly, &hps[0], &mut out_s),
+            ClipResult::Changed
+        ));
         if N == 4 {
             assert!(matches!(
                 clip_convex_quad(&poly, &hps[0], &mut out_q),
@@ -1683,6 +1712,8 @@ pub(crate) fn run_clip_convex_microbench() {
         out_c.us[0] = 123.0;
         out_d.len = 13;
         out_d.us[0] = 123.0;
+        out_s.len = 13;
+        out_s.us[0] = 123.0;
         out_q.len = 13;
         out_q.us[0] = 123.0;
         assert!(matches!(
@@ -1699,6 +1730,10 @@ pub(crate) fn run_clip_convex_microbench() {
         ));
         assert!(matches!(
             clip_convex_match_ngon::<N>(&poly, &hps_unchanged[0], &mut out_d),
+            ClipResult::Unchanged
+        ));
+        assert!(matches!(
+            clip_convex_simd::<N>(&poly, &hps_unchanged[0], &mut out_s),
             ClipResult::Unchanged
         ));
         if N == 4 {
@@ -1763,6 +1798,16 @@ pub(crate) fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
+        let (simd_mixed, _) = bench_ns_per_call("simd mixed", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(&hps);
+            let out = black_box(&mut out_s);
+            for i in 0..iters {
+                let hp = &hps[(i as usize) & 3];
+                let r = clip_convex_simd::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
         eprintln!(
             "mixed speedup:                    {:>10.3}x",
             mask_mixed / small_mixed
@@ -1821,6 +1866,16 @@ pub(crate) fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
+        let (simd_unch, _) = bench_ns_per_call("simd unchanged", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(&hps_unchanged);
+            let out = black_box(&mut out_s);
+            for i in 0..iters {
+                let hp = &hps[(i as usize) & 3];
+                let r = clip_convex_simd::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
         eprintln!(
             "unchanged speedup:                 {:>10.3}x",
             mask_unch / small_unch
@@ -1832,6 +1887,14 @@ pub(crate) fn run_clip_convex_microbench() {
         eprintln!(
             "bool vs small unchanged:           {:>10.3}x",
             bool_unch / small_unch
+        );
+        eprintln!(
+            "simd vs small mixed:               {:>10.3}x",
+            simd_mixed / small_mixed
+        );
+        eprintln!(
+            "simd vs small unchanged:           {:>10.3}x",
+            simd_unch / small_unch
         );
     }
 

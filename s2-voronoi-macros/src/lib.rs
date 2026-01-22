@@ -10,6 +10,21 @@ use proc_macro::{Delimiter, Group, Ident, Literal, Punct, Spacing, TokenStream, 
 /// - `clip_convex_small_bool::<N>(...)` as a cold fallback
 #[proc_macro]
 pub fn gen_clip_convex_ngon(input: TokenStream) -> TokenStream {
+    impl_gen_clip_convex_ngon(input, false)
+}
+
+/// Generates a SIMD-optimized `clip_convex_*` function for an N-gon.
+///
+/// Uses `std::simd::f64x8` for classification. Requires `N <= 8`.
+///
+/// Invocation:
+/// - `gen_clip_convex_simd_ngon!(clip_convex_pent_simd, 5);`
+#[proc_macro]
+pub fn gen_clip_convex_simd_ngon(input: TokenStream) -> TokenStream {
+    impl_gen_clip_convex_ngon(input, true)
+}
+
+fn impl_gen_clip_convex_ngon(input: TokenStream, simd: bool) -> TokenStream {
     let (fn_name, n) = match parse_ident_and_usize(input) {
         Ok(v) => v,
         Err(e) => return e,
@@ -66,12 +81,32 @@ pub fn gen_clip_convex_ngon(input: TokenStream) -> TokenStream {
         match_arms.push_str(&format!("0b{mask:0width$b} => {{ {body} }}\n", width = n));
     }
 
-    let expanded = format!(
-        r#"
-#[inline(always)]
-fn {fn_name}(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {{
-    debug_assert_eq!(poly.len, {n});
+    let classification_code = if simd {
+        format!(
+            r#"
+    use std::simd::prelude::*;
+    use std::simd::{{f64x8, num::SimdFloat}};
 
+    // SAFETY: PolyBuffer has static size >= 8 (64 actually), so this load is always valid.
+    let us_simd = f64x8::from_slice(&poly.us[0..8]);
+    let vs_simd = f64x8::from_slice(&poly.vs[0..8]);
+    
+    let a_simd = f64x8::splat(hp.a);
+    let b_simd = f64x8::splat(hp.b);
+    let c_simd = f64x8::splat(hp.c);
+    let neg_eps_simd = f64x8::splat(-hp.eps);
+
+    let dists_vec = a_simd * us_simd + b_simd * vs_simd + c_simd;
+    let mask_simd = dists_vec.simd_ge(neg_eps_simd);
+    let full_simd_mask = mask_simd.to_bitmask() as u8;
+    
+    // Mask off the bits beyond N
+    let mask = full_simd_mask & ((1u8 << {n}) - 1);
+            "#
+        )
+    } else {
+        format!(
+            r#"
     let neg_eps = -hp.eps;
 
     let mut dists = [0.0f64; {n}];
@@ -86,7 +121,13 @@ fn {fn_name}(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipRes
             mask |= ((d >= neg_eps) as u8) << i;
         }}
     }}
+            "#
+        )
+    };
 
+    let check_and_prepare_mixed = if simd {
+        format!(
+            r#"
     if mask == 0 {{
         out.len = 0;
         out.max_r2 = 0.0;
@@ -94,10 +135,43 @@ fn {fn_name}(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipRes
         return ClipResult::Changed;
     }}
 
-    let full_mask: u8 = ((1u16 << {n}) - 1) as u8;
-    if mask == full_mask {{
+    let full_mask_val: u8 = ((1u16 << {n}) - 1) as u8;
+    if mask == full_mask_val {{
         return ClipResult::Unchanged;
     }}
+    
+    // Mixed case: materialize distances to stack for the jump table accessors.
+    let mut dists = [0.0; 8];
+    dists_vec.copy_to_slice(&mut dists);
+            "#
+        )
+    } else {
+        format!(
+            r#"
+    if mask == 0 {{
+        out.len = 0;
+        out.max_r2 = 0.0;
+        out.has_bounding_ref = false;
+        return ClipResult::Changed;
+    }}
+
+    let full_mask_val: u8 = ((1u16 << {n}) - 1) as u8;
+    if mask == full_mask_val {{
+        return ClipResult::Unchanged;
+    }}
+            "#
+        )
+    };
+
+    let expanded = format!(
+        r#"
+#[inline(always)]
+fn {fn_name}(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {{
+    debug_assert_eq!(poly.len, {n});
+
+    {classification_code}
+
+    {check_and_prepare_mixed}
 
     out.len = 0;
     let mut max_r2 = 0.0f64;
