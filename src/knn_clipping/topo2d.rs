@@ -1229,7 +1229,14 @@ pub(crate) fn run_clip_convex_microbench() {
             HalfPlane::new_unnormalized(0.0, 1.0, -0.2, 1_000_002),
             HalfPlane::new_unnormalized(0.0, -1.0, 0.2, 1_000_003),
         ];
-        let hp_unchanged = HalfPlane::new_unnormalized(1.0, 0.0, 2.0, 1_000_004);
+        // Unchanged: vary planes to avoid the optimizer hoisting/eliminating work.
+        // All of these contain the unit-radius regular polygon comfortably.
+        let hps_unchanged = [
+            HalfPlane::new_unnormalized(1.0, 0.0, 2.0, 1_000_004),
+            HalfPlane::new_unnormalized(-1.0, 0.0, 2.0, 1_000_005),
+            HalfPlane::new_unnormalized(0.0, 1.0, 2.0, 1_000_006),
+            HalfPlane::new_unnormalized(0.0, -1.0, 2.0, 1_000_007),
+        ];
 
         // Pre-allocate output buffers.
         let mut out_a = PolyBuffer::new();
@@ -1249,11 +1256,11 @@ pub(crate) fn run_clip_convex_microbench() {
         out_b.len = 13;
         out_b.us[0] = 123.0;
         assert!(matches!(
-            clip_convex_small::<N>(&poly, &hp_unchanged, &mut out_a),
+            clip_convex_small::<N>(&poly, &hps_unchanged[0], &mut out_a),
             ClipResult::Unchanged
         ));
         assert!(matches!(
-            clip_convex_bitmask(&poly, &hp_unchanged, &mut out_b),
+            clip_convex_bitmask(&poly, &hps_unchanged[0], &mut out_b),
             ClipResult::Unchanged
         ));
 
@@ -1300,9 +1307,10 @@ pub(crate) fn run_clip_convex_microbench() {
             1,
             |iters| {
                 let poly = black_box(&poly);
-                let hp = black_box(&hp_unchanged);
+                let hps = black_box(&hps_unchanged);
                 let out = black_box(&mut out_a);
-                for _ in 0..iters {
+                for i in 0..iters {
+                    let hp = &hps[(i as usize) & 3];
                     let r = clip_convex_small::<N>(poly, hp, out);
                     black_box(r);
                 }
@@ -1315,9 +1323,10 @@ pub(crate) fn run_clip_convex_microbench() {
             1,
             |iters| {
                 let poly = black_box(&poly);
-                let hp = black_box(&hp_unchanged);
+                let hps = black_box(&hps_unchanged);
                 let out = black_box(&mut out_b);
-                for _ in 0..iters {
+                for i in 0..iters {
+                    let hp = &hps[(i as usize) & 3];
                     let r = clip_convex_bitmask(poly, hp, out);
                     black_box(r);
                 }
