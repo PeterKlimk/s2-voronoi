@@ -7,6 +7,9 @@ license = "MIT OR Apache-2.0"
 keywords = ["voronoi", "sphere", "geometry", "s2"]
 categories = ["algorithms", "mathematics", "science"]
 
+[workspace]
+members = ["s2-voronoi-macros"]
+
 [features]
 default = ["parallel"]
 parallel = ["rayon"]
@@ -27,6 +30,9 @@ bytemuck = { version = "1.19", features = ["derive"] }
 
 # Fast hashing for integer keys
 rustc-hash = "2"
+
+# Proc-macros for generating small-N clippers.
+s2-voronoi-macros = { path = "s2-voronoi-macros" }
 
 # Optional: parallelism
 rayon = { version = "1.10", optional = true }
