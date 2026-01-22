@@ -306,16 +306,52 @@ fn clip_convex_small<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane, out: &mu
 
     let neg_eps = -hp.eps;
 
-    // Output of clipping a convex N-gon by a half-plane has at most N+1 vertices.
-    // For N<=8, that's <=9.
-    const TMP_CAP: usize = 10;
-    debug_assert!(N + 1 <= TMP_CAP);
+    // PASS 1: classify vertices and compute signed distances once.
+    // Build a tiny inside bitmask so we can detect unchanged/all-outside without touching `out`.
+    let mut dists = [0.0f64; N];
+    let mut inside_mask: u8 = 0;
 
-    let mut tmp_us = [0.0f64; TMP_CAP];
-    let mut tmp_vs = [0.0f64; TMP_CAP];
-    let mut tmp_vps = [(0usize, 0usize); TMP_CAP];
-    let mut tmp_eps = [0usize; TMP_CAP];
-    let mut tmp_len = 0usize;
+    for i in 0..N {
+        let d = hp.signed_dist(poly.us[i], poly.vs[i]);
+        dists[i] = d;
+        inside_mask |= ((d >= neg_eps) as u8) << i;
+    }
+
+    let full_mask: u8 = ((1u16 << N) - 1) as u8;
+    if inside_mask == 0 {
+        out.len = 0;
+        out.max_r2 = 0.0;
+        out.has_bounding_ref = false;
+        return ClipResult::Changed;
+    }
+    if inside_mask == full_mask {
+        return ClipResult::Unchanged;
+    }
+
+    // Mixed case: find the two transition indices using bit tricks (like the u64 path).
+    let prev_mask: u8 = ((inside_mask << 1) | (inside_mask >> (N - 1))) & full_mask;
+    let trans_mask: u8 = (inside_mask ^ prev_mask) & full_mask;
+    debug_assert_eq!(
+        trans_mask.count_ones(),
+        2,
+        "Convex polygon should have exactly 2 transitions"
+    );
+
+    let idx1 = trans_mask.trailing_zeros() as usize;
+    let trans_mask_rem = trans_mask & !(1u8 << idx1);
+    let idx2 = trans_mask_rem.trailing_zeros() as usize;
+
+    let (entry_next, exit_next) = if (inside_mask & (1u8 << idx1)) != 0 {
+        (idx1, idx2)
+    } else {
+        (idx2, idx1)
+    };
+
+    let entry_idx = if entry_next == 0 { N - 1 } else { entry_next - 1 };
+    let exit_idx = if exit_next == 0 { N - 1 } else { exit_next - 1 };
+
+    // Build output directly into `out` (only in the mixed case).
+    out.len = 0;
 
     #[inline(always)]
     fn r2_of(u: f64, v: f64) -> f64 {
@@ -326,150 +362,72 @@ fn clip_convex_small<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane, out: &mu
     let mut has_bounding = false;
     let track_bounding = poly.has_bounding_ref;
 
-    #[inline(always)]
-    unsafe fn push_tmp(
-        tmp_us: &mut [f64; TMP_CAP],
-        tmp_vs: &mut [f64; TMP_CAP],
-        tmp_vps: &mut [(usize, usize); TMP_CAP],
-        tmp_eps: &mut [usize; TMP_CAP],
-        tmp_len: &mut usize,
-        max_r2: &mut f64,
-        has_bounding: &mut bool,
-        track_bounding: bool,
-        u: f64,
-        v: f64,
-        vp: (usize, usize),
-        ep: usize,
-    ) {
-        let i = *tmp_len;
-        debug_assert!(i < TMP_CAP);
-        *tmp_us.get_unchecked_mut(i) = u;
-        *tmp_vs.get_unchecked_mut(i) = v;
-        *tmp_vps.get_unchecked_mut(i) = vp;
-        *tmp_eps.get_unchecked_mut(i) = ep;
-        *tmp_len = i + 1;
-
-        let r2 = r2_of(u, v);
-        if r2 > *max_r2 {
-            *max_r2 = r2;
-        }
-        if track_bounding {
-            *has_bounding |= vp.0 == usize::MAX;
-        }
-    }
-
-    // Track whether clipping changes anything without mutating `out` in the unchanged case.
-    let mut any_inside = false;
-    let mut all_inside = true;
-
-    // Start from edge (N-1 -> 0) to preserve cyclic behavior.
-    let us = poly.us.as_ptr();
-    let vs = poly.vs.as_ptr();
-
-    let mut prev_i = N - 1;
-    let mut prev_u = unsafe { *us.add(prev_i) };
-    let mut prev_v = unsafe { *vs.add(prev_i) };
-    let mut prev_d = hp.signed_dist(prev_u, prev_v);
-    let mut prev_inside = prev_d >= neg_eps;
-    any_inside |= prev_inside;
-    all_inside &= prev_inside;
-
-    for i in 0..N {
-        let cur_u = unsafe { *us.add(i) };
-        let cur_v = unsafe { *vs.add(i) };
-        let cur_d = hp.signed_dist(cur_u, cur_v);
-        let cur_inside = cur_d >= neg_eps;
-
-        any_inside |= cur_inside;
-        all_inside &= cur_inside;
-
-        if prev_inside != cur_inside {
-            // Intersection on edge (prev_i -> i).
-            let t = prev_d / (prev_d - cur_d);
-            let iu = t.mul_add(cur_u - prev_u, prev_u);
-            let iv = t.mul_add(cur_v - prev_v, prev_v);
-
-            let edge_plane = poly.edge_planes[prev_i];
-            let vp = (edge_plane, hp.plane_idx);
-            // Out->In: intersection followed by a segment on the original edge plane.
-            // In->Out: intersection followed by a segment on the new half-plane boundary.
-            let ep = if cur_inside { edge_plane } else { hp.plane_idx };
-
-            // SAFETY: tmp_len <= N+1 <= TMP_CAP
-            unsafe {
-                push_tmp(
-                    &mut tmp_us,
-                    &mut tmp_vs,
-                    &mut tmp_vps,
-                    &mut tmp_eps,
-                    &mut tmp_len,
-                    &mut max_r2,
-                    &mut has_bounding,
-                    track_bounding,
-                    iu,
-                    iv,
-                    vp,
-                    ep,
-                );
+    macro_rules! push {
+        ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
+            let u = $u;
+            let v = $v;
+            let vp = $vp;
+            out.push_raw(u, v, vp, $ep);
+            let r2 = r2_of(u, v);
+            if r2 > max_r2 {
+                max_r2 = r2;
             }
-        }
-
-        if cur_inside {
-            let vp = poly.vertex_planes[i];
-            let ep = poly.edge_planes[i];
-            // SAFETY: tmp_len <= N+1 <= TMP_CAP
-            unsafe {
-                push_tmp(
-                    &mut tmp_us,
-                    &mut tmp_vs,
-                    &mut tmp_vps,
-                    &mut tmp_eps,
-                    &mut tmp_len,
-                    &mut max_r2,
-                    &mut has_bounding,
-                    track_bounding,
-                    cur_u,
-                    cur_v,
-                    vp,
-                    ep,
-                );
+            if track_bounding {
+                has_bounding |= vp.0 == usize::MAX;
             }
+        }};
+    }
+
+    // Entry intersection: edge (entry_idx -> entry_next) crosses out->in.
+    let d_entry = dists[entry_idx];
+    let d_entry_next = dists[entry_next];
+    let t_entry = d_entry / (d_entry - d_entry_next);
+    let entry_u = t_entry.mul_add(poly.us[entry_next] - poly.us[entry_idx], poly.us[entry_idx]);
+    let entry_v = t_entry.mul_add(poly.vs[entry_next] - poly.vs[entry_idx], poly.vs[entry_idx]);
+    let entry_ep = poly.edge_planes[entry_idx];
+    push!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
+
+    // Surviving input vertices from entry_next to exit_idx (cyclic), inclusive.
+    // This is the inside run, so we can push without re-checking inside bits.
+    if entry_next <= exit_idx {
+        for i in entry_next..=exit_idx {
+            push!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
         }
-
-        prev_i = i;
-        prev_u = cur_u;
-        prev_v = cur_v;
-        prev_d = cur_d;
-        prev_inside = cur_inside;
-    }
-
-    if !any_inside {
-        out.len = 0;
-        out.max_r2 = 0.0;
-        out.has_bounding_ref = false;
-        return ClipResult::Changed;
-    }
-
-    if all_inside {
-        return ClipResult::Unchanged;
-    }
-
-    // Write result into out (tmp_len <= N+1 <= 9).
-    out.len = 0;
-    for i in 0..tmp_len {
-        // SAFETY: i < tmp_len <= TMP_CAP
-        unsafe {
-            out.push_raw(
-                *tmp_us.get_unchecked(i),
-                *tmp_vs.get_unchecked(i),
-                *tmp_vps.get_unchecked(i),
-                *tmp_eps.get_unchecked(i),
+    } else {
+        for i in entry_next..N {
+            push!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+        for i in 0..=exit_idx {
+            push!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
             );
         }
     }
+
+    // Exit intersection: edge (exit_idx -> exit_next) crosses in->out.
+    let d_exit = dists[exit_idx];
+    let d_exit_next = dists[exit_next];
+    let t_exit = d_exit / (d_exit - d_exit_next);
+    let exit_u = t_exit.mul_add(poly.us[exit_next] - poly.us[exit_idx], poly.us[exit_idx]);
+    let exit_v = t_exit.mul_add(poly.vs[exit_next] - poly.vs[exit_idx], poly.vs[exit_idx]);
+    let exit_ep = poly.edge_planes[exit_idx];
+    push!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
+
     out.max_r2 = max_r2;
     out.has_bounding_ref = if track_bounding { has_bounding } else { false };
-
     ClipResult::Changed
 }
 
