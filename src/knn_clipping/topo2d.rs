@@ -300,85 +300,80 @@ enum ClipResult {
 }
 
 #[cfg_attr(feature = "profiling", inline(never))]
-fn clip_convex_small<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
-    debug_assert_eq!(poly.len, N);
-    debug_assert!(N >= 3 && N <= 8);
+fn clip_convex_small<const N: usize>(
+    poly: &PolyBuffer,
+    hp: &HalfPlane,
+    out: &mut PolyBuffer,
+) -> ClipResult {
+    // 1. CONST SPECIALIZATION
+    // This removes the "N=4" check at runtime because N is compile-time known.
+    if N == 4 {
+        return clip_convex_quad(poly, hp, out);
+    }
+
+    // Fallback for N=3, 5..8 (Logic is same as your original fast Bool Array version)
+    // ... (Your original bool array code goes here) ...
+    clip_convex_small_bool::<N>(poly, hp, out)
+}
+
+// specialized "hot path" for Quads
+#[inline(always)]
+fn clip_convex_quad(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+    debug_assert_eq!(poly.len, 4);
 
     let neg_eps = -hp.eps;
 
-    // PASS 1: classify vertices and compute signed distances once.
-    // Build a tiny inside bitmask so we can detect unchanged/all-outside without touching `out`.
-    // SAFETY: `[MaybeUninit<f64>; N]` is valid in an uninitialized state.
-    let mut dists: [core::mem::MaybeUninit<f64>; N] =
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
-
+    // Pass 1: compute signed distances and an inside bitmask.
+    //
+    // Note: building `mask` directly avoids storing/loading a separate `[bool; 4]`.
+    let mut dists = [0.0f64; 4];
+    let mut mask: u8 = 0;
     let us = poly.us.as_ptr();
     let vs = poly.vs.as_ptr();
-
-    let mut inside_mask: u8 = 0;
-
-    // SAFETY: i < N <= 8 <= MAX_POLY_VERTICES
     unsafe {
-        for i in 0..N {
+        for i in 0..4 {
             let d = hp.signed_dist(*us.add(i), *vs.add(i));
-            dists.get_unchecked_mut(i).write(d);
-            inside_mask |= ((d >= neg_eps) as u8) << i;
+            dists[i] = d;
+            mask |= ((d >= neg_eps) as u8) << i;
         }
     }
 
-    let full_mask: u8 = ((1u16 << N) - 1) as u8;
-    if inside_mask == 0 {
+    // Fast paths
+    if mask == 0 {
         out.len = 0;
         out.max_r2 = 0.0;
         out.has_bounding_ref = false;
         return ClipResult::Changed;
     }
-
-    if inside_mask == full_mask {
+    if mask == 0xF {
         return ClipResult::Unchanged;
     }
 
-    // Mixed case: find the two transition indices using bit tricks (like the u64 path).
-    let prev_mask: u8 = ((inside_mask << 1) | (inside_mask >> (N - 1))) & full_mask;
-    let trans_mask: u8 = (inside_mask ^ prev_mask) & full_mask;
-    
-    debug_assert_eq!(
-        trans_mask.count_ones(),
-        2,
-        "Convex polygon should have exactly 2 transitions"
-    );
-
-    let idx1 = trans_mask.trailing_zeros() as usize;
-    let trans_mask_rem = trans_mask & !(1u8 << idx1);
-    let idx2 = trans_mask_rem.trailing_zeros() as usize;
-
-    let (entry_next, exit_next) = if (inside_mask & (1u8 << idx1)) != 0 {
-        (idx1, idx2)
-    } else {
-        (idx2, idx1)
-    };
-
-    let entry_idx = if entry_next == 0 { N - 1 } else { entry_next - 1 };
-    let exit_idx = if exit_next == 0 { N - 1 } else { exit_next - 1 };
-
-    // Build output directly into `out` (only in the mixed case).
+    // Output via jump table.
     out.len = 0;
+    let mut max_r2 = 0.0f64;
+    let mut has_bounding = false;
+    let track_bounding = poly.has_bounding_ref;
 
     #[inline(always)]
     fn r2_of(u: f64, v: f64) -> f64 {
         u.mul_add(u, v * v)
     }
 
-    let mut max_r2 = 0.0f64;
-    let mut has_bounding = false;
-    let track_bounding = poly.has_bounding_ref;
+    // Helper to compute intersection parameter along segment `in -> out`.
+    #[inline(always)]
+    fn get_t(d_in: f64, d_out: f64) -> f64 {
+        d_in / (d_in - d_out)
+    }
 
-    macro_rules! push {
-        ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
-            let u = $u;
-            let v = $v;
-            let vp = $vp;
-            out.push_raw(u, v, vp, $ep);
+    // Macro to push a vertex by index
+    macro_rules! push_v {
+        ($idx:expr) => {{
+            let i = $idx;
+            let u = poly.us[i];
+            let v = poly.vs[i];
+            let vp = poly.vertex_planes[i];
+            out.push_raw(u, v, vp, poly.edge_planes[i]);
             let r2 = r2_of(u, v);
             if r2 > max_r2 {
                 max_r2 = r2;
@@ -389,64 +384,159 @@ fn clip_convex_small<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane, out: &mu
         }};
     }
 
-    // Entry intersection: edge (entry_idx -> entry_next) crosses out->in.
-    // SAFETY: entry_idx and entry_next are in 0..N; dists[0..N] were written in Pass 1.
-    let (d_entry, d_entry_next) = unsafe {
-        (
-            dists.get_unchecked(entry_idx).assume_init_read(),
-            dists.get_unchecked(entry_next).assume_init_read(),
-        )
-    };
-    let t_entry = d_entry / (d_entry - d_entry_next);
-    let entry_u = t_entry.mul_add(poly.us[entry_next] - poly.us[entry_idx], poly.us[entry_idx]);
-    let entry_v = t_entry.mul_add(poly.vs[entry_next] - poly.vs[entry_idx], poly.vs[entry_idx]);
-    let entry_ep = poly.edge_planes[entry_idx];
-    push!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
+    // Entry intersection: writes `edge_plane = poly.edge_planes[edge_idx]`.
+    macro_rules! push_entry {
+        ($in_idx:expr, $out_idx:expr, $ep_idx:expr) => {{
+            let d_in = dists[$in_idx];
+            let d_out = dists[$out_idx];
+            let t = get_t(d_in, d_out);
 
-    // Surviving input vertices from entry_next to exit_idx (cyclic), inclusive.
-    // This is the inside run, so we can push without re-checking inside bits.
-    if entry_next <= exit_idx {
-        for i in entry_next..=exit_idx {
-            push!(
-                poly.us[i],
-                poly.vs[i],
-                poly.vertex_planes[i],
-                poly.edge_planes[i]
-            );
-        }
-    } else {
-        for i in entry_next..N {
-            push!(
-                poly.us[i],
-                poly.vs[i],
-                poly.vertex_planes[i],
-                poly.edge_planes[i]
-            );
-        }
-        for i in 0..=exit_idx {
-            push!(
-                poly.us[i],
-                poly.vs[i],
-                poly.vertex_planes[i],
-                poly.edge_planes[i]
-            );
-        }
+            let u = t.mul_add(poly.us[$out_idx] - poly.us[$in_idx], poly.us[$in_idx]);
+            let v = t.mul_add(poly.vs[$out_idx] - poly.vs[$in_idx], poly.vs[$in_idx]);
+            let edge_plane = poly.edge_planes[$ep_idx];
+            let vp = (edge_plane, hp.plane_idx);
+
+            out.push_raw(u, v, vp, edge_plane);
+            let r2 = r2_of(u, v);
+            if r2 > max_r2 {
+                max_r2 = r2;
+            }
+            if track_bounding {
+                has_bounding |= edge_plane == usize::MAX;
+            }
+        }};
     }
 
-    // Exit intersection: edge (exit_idx -> exit_next) crosses in->out.
-    // SAFETY: exit_idx and exit_next are in 0..N; dists[0..N] were written in Pass 1.
-    let (d_exit, d_exit_next) = unsafe {
-        (
-            dists.get_unchecked(exit_idx).assume_init_read(),
-            dists.get_unchecked(exit_next).assume_init_read(),
-        )
-    };
-    let t_exit = d_exit / (d_exit - d_exit_next);
-    let exit_u = t_exit.mul_add(poly.us[exit_next] - poly.us[exit_idx], poly.us[exit_idx]);
-    let exit_v = t_exit.mul_add(poly.vs[exit_next] - poly.vs[exit_idx], poly.vs[exit_idx]);
-    let exit_ep = poly.edge_planes[exit_idx];
-    push!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
+    // Exit intersection: writes `edge_plane = hp.plane_idx`.
+    macro_rules! push_exit {
+        ($in_idx:expr, $out_idx:expr, $ep_idx:expr) => {{
+            let d_in = dists[$in_idx];
+            let d_out = dists[$out_idx];
+            let t = get_t(d_in, d_out);
 
+            let u = t.mul_add(poly.us[$out_idx] - poly.us[$in_idx], poly.us[$in_idx]);
+            let v = t.mul_add(poly.vs[$out_idx] - poly.vs[$in_idx], poly.vs[$in_idx]);
+            let edge_plane = poly.edge_planes[$ep_idx];
+            let vp = (edge_plane, hp.plane_idx);
+
+            out.push_raw(u, v, vp, hp.plane_idx);
+            let r2 = r2_of(u, v);
+            if r2 > max_r2 {
+                max_r2 = r2;
+            }
+            if track_bounding {
+                has_bounding |= edge_plane == usize::MAX;
+            }
+        }};
+    }
+
+    #[cold]
+    fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+        clip_convex_small_bool::<4>(poly, hp, out)
+    }
+
+    // THE JUMP TABLE
+    // This tells the compiler the exact control flow graph.
+    // It allows "Instruction Level Parallelism" (ILP).
+    // e.g. In case 0b0011, the CPU can divide d0/(d0-d3) AND d1/(d1-d2) at the same time.
+    match mask {
+        // 1 Vertex Inside
+        0b0001 => {
+            // V0 in
+            push_entry!(0, 3, 3); // Entry on edge 3->0
+            push_v!(0);
+            push_exit!(0, 1, 0); // Exit on edge 0->1
+        }
+        0b0010 => {
+            // V1 in
+            push_entry!(1, 0, 0);
+            push_v!(1);
+            push_exit!(1, 2, 1);
+        }
+        0b0100 => {
+            // V2 in
+            push_entry!(2, 1, 1);
+            push_v!(2);
+            push_exit!(2, 3, 2);
+        }
+        0b1000 => {
+            // V3 in
+            push_entry!(3, 2, 2);
+            push_v!(3);
+            push_exit!(3, 0, 3);
+        }
+
+        // 2 Vertices Inside (Sequential)
+        0b0011 => {
+            // V0, V1 in
+            push_entry!(0, 3, 3); // Entry from 3->0
+            push_v!(0);
+            push_v!(1);
+            push_exit!(1, 2, 1); // Exit to 1->2
+        }
+        0b0110 => {
+            // V1, V2 in
+            push_entry!(1, 0, 0);
+            push_v!(1);
+            push_v!(2);
+            push_exit!(2, 3, 2);
+        }
+        0b1100 => {
+            // V2, V3 in
+            push_entry!(2, 1, 1);
+            push_v!(2);
+            push_v!(3);
+            push_exit!(3, 0, 3);
+        }
+        0b1001 => {
+            // V3, V0 in
+            push_entry!(3, 2, 2);
+            push_v!(3);
+            push_v!(0);
+            push_exit!(0, 1, 0);
+        }
+
+        // 3 Vertices Inside
+        0b0111 => {
+            // V0, V1, V2 in (V3 out)
+            push_entry!(0, 3, 3);
+            push_v!(0);
+            push_v!(1);
+            push_v!(2);
+            push_exit!(2, 3, 2);
+        }
+        0b1110 => {
+            // V1, V2, V3 in (V0 out)
+            push_entry!(1, 0, 0);
+            push_v!(1);
+            push_v!(2);
+            push_v!(3);
+            push_exit!(3, 0, 3);
+        }
+        0b1101 => {
+            // V0, V2, V3 in (V1 out)
+            push_entry!(2, 1, 1);
+            push_v!(2);
+            push_v!(3);
+            push_v!(0);
+            push_exit!(0, 1, 0);
+        }
+        0b1011 => {
+            // V0, V1, V3 in (V2 out)
+            push_entry!(3, 2, 2);
+            push_v!(3);
+            push_v!(0);
+            push_v!(1);
+            push_exit!(1, 2, 1);
+        }
+
+        // Non-convex / Disconnected cases
+        // (e.g. 0101 - V0 and V2 in, V1 and V3 out)
+        // Mathematically impossible for a convex polygon clipped by a line.
+        _ => return fallback(poly, hp, out),
+    }
+
+    // Finalize
     out.max_r2 = max_r2;
     out.has_bounding_ref = if track_bounding { has_bounding } else { false };
     ClipResult::Changed
@@ -1414,104 +1504,71 @@ pub(crate) fn run_clip_convex_microbench() {
 
         eprintln!("\nclip_convex microbench (N={N})");
 
-        let (small_mixed, _) = bench_ns_per_call(
-            "small mixed",
-            target,
-            samples,
-            1,
-            |iters| {
-                let poly = black_box(&poly);
-                let hps = black_box(&hps);
-                let out = black_box(&mut out_a);
-                for i in 0..iters {
-                    let hp = &hps[(i as usize) & 3];
-                    let r = clip_convex_small::<N>(poly, hp, out);
-                    black_box(r);
-                }
-            },
+        let (small_mixed, _) = bench_ns_per_call("small mixed", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(&hps);
+            let out = black_box(&mut out_a);
+            for i in 0..iters {
+                let hp = &hps[(i as usize) & 3];
+                let r = clip_convex_small::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
+        let (mask_mixed, _) = bench_ns_per_call("bitmask mixed", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(&hps);
+            let out = black_box(&mut out_b);
+            for i in 0..iters {
+                let hp = &hps[(i as usize) & 3];
+                let r = clip_convex_bitmask(poly, hp, out);
+                black_box(r);
+            }
+        });
+        let (bool_mixed, _) = bench_ns_per_call("bool mixed", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(&hps);
+            let out = black_box(&mut out_c);
+            for i in 0..iters {
+                let hp = &hps[(i as usize) & 3];
+                let r = clip_convex_small_bool::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
+        eprintln!(
+            "mixed speedup:                    {:>10.3}x",
+            mask_mixed / small_mixed
         );
-        let (mask_mixed, _) = bench_ns_per_call(
-            "bitmask mixed",
-            target,
-            samples,
-            1,
-            |iters| {
-                let poly = black_box(&poly);
-                let hps = black_box(&hps);
-                let out = black_box(&mut out_b);
-                for i in 0..iters {
-                    let hp = &hps[(i as usize) & 3];
-                    let r = clip_convex_bitmask(poly, hp, out);
-                    black_box(r);
-                }
-            },
-        );
-        let (bool_mixed, _) = bench_ns_per_call(
-            "bool mixed",
-            target,
-            samples,
-            1,
-            |iters| {
-                let poly = black_box(&poly);
-                let hps = black_box(&hps);
-                let out = black_box(&mut out_c);
-                for i in 0..iters {
-                    let hp = &hps[(i as usize) & 3];
-                    let r = clip_convex_small_bool::<N>(poly, hp, out);
-                    black_box(r);
-                }
-            },
-        );
-        eprintln!("mixed speedup:                    {:>10.3}x", mask_mixed / small_mixed);
 
-        let (small_unch, _) = bench_ns_per_call(
-            "small unchanged",
-            target,
-            samples,
-            1,
-            |iters| {
-                let poly = black_box(&poly);
-                let hps = black_box(&hps_unchanged);
-                let out = black_box(&mut out_a);
-                for i in 0..iters {
-                    let hp = &hps[(i as usize) & 3];
-                    let r = clip_convex_small::<N>(poly, hp, out);
-                    black_box(r);
-                }
-            },
-        );
-        let (mask_unch, _) = bench_ns_per_call(
-            "bitmask unchanged",
-            target,
-            samples,
-            1,
-            |iters| {
-                let poly = black_box(&poly);
-                let hps = black_box(&hps_unchanged);
-                let out = black_box(&mut out_b);
-                for i in 0..iters {
-                    let hp = &hps[(i as usize) & 3];
-                    let r = clip_convex_bitmask(poly, hp, out);
-                    black_box(r);
-                }
-            },
-        );
-        let (bool_unch, _) = bench_ns_per_call(
-            "bool unchanged",
-            target,
-            samples,
-            1,
-            |iters| {
-                let poly = black_box(&poly);
-                let hps = black_box(&hps_unchanged);
-                let out = black_box(&mut out_c);
-                for i in 0..iters {
-                    let hp = &hps[(i as usize) & 3];
-                    let r = clip_convex_small_bool::<N>(poly, hp, out);
-                    black_box(r);
-                }
-            },
-        );
+        let (small_unch, _) = bench_ns_per_call("small unchanged", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(&hps_unchanged);
+            let out = black_box(&mut out_a);
+            for i in 0..iters {
+                let hp = &hps[(i as usize) & 3];
+                let r = clip_convex_small::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
+        let (mask_unch, _) = bench_ns_per_call("bitmask unchanged", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(&hps_unchanged);
+            let out = black_box(&mut out_b);
+            for i in 0..iters {
+                let hp = &hps[(i as usize) & 3];
+                let r = clip_convex_bitmask(poly, hp, out);
+                black_box(r);
+            }
+        });
+        let (bool_unch, _) = bench_ns_per_call("bool unchanged", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(&hps_unchanged);
+            let out = black_box(&mut out_c);
+            for i in 0..iters {
+                let hp = &hps[(i as usize) & 3];
+                let r = clip_convex_small_bool::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
         eprintln!(
             "unchanged speedup:                 {:>10.3}x",
             mask_unch / small_unch
@@ -1562,7 +1619,7 @@ mod tests {
             out.vertex_planes[i] = (999, 999);
             out.edge_planes[i] = 999;
         }
-}
+    }
 
     fn approx(a: f64, b: f64) -> bool {
         let d = (a - b).abs();
