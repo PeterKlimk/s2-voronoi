@@ -299,7 +299,7 @@ enum ClipResult {
     TooManyVertices,
 }
 
-#[inline(always)]
+#[cfg_attr(feature = "profiling", inline(never))]
 fn clip_convex_small<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
     debug_assert_eq!(poly.len, N);
     debug_assert!(N >= 3 && N <= 8);
@@ -324,6 +324,7 @@ fn clip_convex_small<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane, out: &mu
         out.has_bounding_ref = false;
         return ClipResult::Changed;
     }
+
     if inside_mask == full_mask {
         return ClipResult::Unchanged;
     }
@@ -331,6 +332,7 @@ fn clip_convex_small<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane, out: &mu
     // Mixed case: find the two transition indices using bit tricks (like the u64 path).
     let prev_mask: u8 = ((inside_mask << 1) | (inside_mask >> (N - 1))) & full_mask;
     let trans_mask: u8 = (inside_mask ^ prev_mask) & full_mask;
+    
     debug_assert_eq!(
         trans_mask.count_ones(),
         2,
@@ -431,7 +433,6 @@ fn clip_convex_small<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane, out: &mu
     ClipResult::Changed
 }
 
-#[inline(always)]
 fn clip_convex_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
     let n = poly.len;
     debug_assert!(n <= 64, "Polygon too large for u64 bitmask");
