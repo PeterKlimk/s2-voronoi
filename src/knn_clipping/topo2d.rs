@@ -722,11 +722,23 @@ fn clip_convex_match_ngon<const N: usize>(
         unreachable!("clip_convex_match_ngon only supports N=3..=8")
     }
 }
+
+#[cfg_attr(feature = "profiling", inline(never))]
 gen_clip_convex_simd_ngon!(clip_convex_simd_tri, 3);
+
+#[cfg_attr(feature = "profiling", inline(never))]
 gen_clip_convex_simd_ngon!(clip_convex_simd_quad, 4);
+
+#[cfg_attr(feature = "profiling", inline(never))]
 gen_clip_convex_simd_ngon!(clip_convex_simd_pent, 5);
+
+#[cfg_attr(feature = "profiling", inline(never))]
 gen_clip_convex_simd_ngon!(clip_convex_simd_hex, 6);
+
+#[cfg_attr(feature = "profiling", inline(never))]
 gen_clip_convex_simd_ngon!(clip_convex_simd_hept, 7);
+
+#[cfg_attr(feature = "profiling", inline(never))]
 gen_clip_convex_simd_ngon!(clip_convex_simd_oct, 8);
 
 #[inline(always)]
