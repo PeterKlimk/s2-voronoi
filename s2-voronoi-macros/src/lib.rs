@@ -168,7 +168,7 @@ fn impl_gen_clip_convex_ngon(input: TokenStream, simd: bool) -> TokenStream {
 
     let expanded = format!(
         r#"
-#[inline(always)]
+#[cfg_attr(not(feature = "profiling"), inline(always))]
 #[cfg_attr(feature = "profiling", inline(never))]
 fn {fn_name}(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {{
     debug_assert_eq!(poly.len, {n});
