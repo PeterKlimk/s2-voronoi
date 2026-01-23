@@ -724,11 +724,11 @@ impl<'a> ClipCtx<'a> {
     }
 
     #[inline(always)]
-    fn push_v(&mut self, idx: usize) {
-        let u = self.poly.us[idx];
-        let v = self.poly.vs[idx];
-        let vp = self.poly.vertex_planes[idx];
-        self.out.push_raw(u, v, vp, self.poly.edge_planes[idx]);
+    fn push_v<const IDX: usize>(&mut self) {
+        let u = self.poly.us[IDX];
+        let v = self.poly.vs[IDX];
+        let vp = self.poly.vertex_planes[IDX];
+        self.out.push_raw(u, v, vp, self.poly.edge_planes[IDX]);
         let r2 = Self::r2_of(u, v);
         if r2 > self.max_r2 {
             self.max_r2 = r2;
@@ -739,20 +739,23 @@ impl<'a> ClipCtx<'a> {
     }
 
     #[inline(always)]
-    fn push_entry(&mut self, dists: &[f64], in_idx: usize, out_idx: usize, edge_idx: usize) {
-        let d_in = dists[in_idx];
-        let d_out = dists[out_idx];
+    fn push_entry<const LANES: usize, const IN: usize, const OUT: usize, const EDGE: usize>(
+        &mut self,
+        dists: &[f64; LANES],
+    ) {
+        let d_in = dists[IN];
+        let d_out = dists[OUT];
         let t = Self::get_t(d_in, d_out);
 
         let u = t.mul_add(
-            self.poly.us[out_idx] - self.poly.us[in_idx],
-            self.poly.us[in_idx],
+            self.poly.us[OUT] - self.poly.us[IN],
+            self.poly.us[IN],
         );
         let v = t.mul_add(
-            self.poly.vs[out_idx] - self.poly.vs[in_idx],
-            self.poly.vs[in_idx],
+            self.poly.vs[OUT] - self.poly.vs[IN],
+            self.poly.vs[IN],
         );
-        let edge_plane = self.poly.edge_planes[edge_idx];
+        let edge_plane = self.poly.edge_planes[EDGE];
         let vp = (edge_plane, self.hp.plane_idx);
 
         self.out.push_raw(u, v, vp, edge_plane);
@@ -766,20 +769,23 @@ impl<'a> ClipCtx<'a> {
     }
 
     #[inline(always)]
-    fn push_exit(&mut self, dists: &[f64], in_idx: usize, out_idx: usize, edge_idx: usize) {
-        let d_in = dists[in_idx];
-        let d_out = dists[out_idx];
+    fn push_exit<const LANES: usize, const IN: usize, const OUT: usize, const EDGE: usize>(
+        &mut self,
+        dists: &[f64; LANES],
+    ) {
+        let d_in = dists[IN];
+        let d_out = dists[OUT];
         let t = Self::get_t(d_in, d_out);
 
         let u = t.mul_add(
-            self.poly.us[out_idx] - self.poly.us[in_idx],
-            self.poly.us[in_idx],
+            self.poly.us[OUT] - self.poly.us[IN],
+            self.poly.us[IN],
         );
         let v = t.mul_add(
-            self.poly.vs[out_idx] - self.poly.vs[in_idx],
-            self.poly.vs[in_idx],
+            self.poly.vs[OUT] - self.poly.vs[IN],
+            self.poly.vs[IN],
         );
-        let edge_plane = self.poly.edge_planes[edge_idx];
+        let edge_plane = self.poly.edge_planes[EDGE];
         let vp = (edge_plane, self.hp.plane_idx);
 
         self.out.push_raw(u, v, vp, self.hp.plane_idx);
@@ -806,8 +812,8 @@ impl<'a> ClipCtx<'a> {
 mod clip_jump_tables {
     use super::*;
 
-    pub(super) fn run_n3(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>) -> ClipResult {
-        debug_assert!(dists.len() >= 3);
+    #[inline(always)]
+    pub(super) fn run_n3(mask: u8, dists: &[f64; 4], ctx: &mut ClipCtx<'_>) -> ClipResult {
         #[cold]
         fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
             clip_convex_small_bool::<3>(poly, hp, out)
@@ -817,8 +823,8 @@ mod clip_jump_tables {
         ClipResult::Changed
     }
 
-    pub(super) fn run_n4(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>) -> ClipResult {
-        debug_assert!(dists.len() >= 4);
+    #[inline(always)]
+    pub(super) fn run_n4(mask: u8, dists: &[f64; 4], ctx: &mut ClipCtx<'_>) -> ClipResult {
         #[cold]
         fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
             clip_convex_small_bool::<4>(poly, hp, out)
@@ -828,8 +834,8 @@ mod clip_jump_tables {
         ClipResult::Changed
     }
 
-    pub(super) fn run_n5(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>) -> ClipResult {
-        debug_assert!(dists.len() >= 5);
+    #[inline(always)]
+    pub(super) fn run_n5(mask: u8, dists: &[f64; 8], ctx: &mut ClipCtx<'_>) -> ClipResult {
         #[cold]
         fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
             clip_convex_small_bool::<5>(poly, hp, out)
@@ -839,8 +845,8 @@ mod clip_jump_tables {
         ClipResult::Changed
     }
 
-    pub(super) fn run_n6(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>) -> ClipResult {
-        debug_assert!(dists.len() >= 6);
+    #[inline(always)]
+    pub(super) fn run_n6(mask: u8, dists: &[f64; 8], ctx: &mut ClipCtx<'_>) -> ClipResult {
         #[cold]
         fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
             clip_convex_small_bool::<6>(poly, hp, out)
@@ -850,8 +856,8 @@ mod clip_jump_tables {
         ClipResult::Changed
     }
 
-    pub(super) fn run_n7(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>) -> ClipResult {
-        debug_assert!(dists.len() >= 7);
+    #[inline(always)]
+    pub(super) fn run_n7(mask: u8, dists: &[f64; 8], ctx: &mut ClipCtx<'_>) -> ClipResult {
         #[cold]
         fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
             clip_convex_small_bool::<7>(poly, hp, out)
@@ -861,8 +867,8 @@ mod clip_jump_tables {
         ClipResult::Changed
     }
 
-    pub(super) fn run_n8(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>) -> ClipResult {
-        debug_assert!(dists.len() >= 8);
+    #[inline(always)]
+    pub(super) fn run_n8(mask: u8, dists: &[f64; 8], ctx: &mut ClipCtx<'_>) -> ClipResult {
         #[cold]
         fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
             clip_convex_small_bool::<8>(poly, hp, out)
@@ -874,12 +880,19 @@ mod clip_jump_tables {
 }
 
 #[inline(always)]
-fn run_jump_table<const N: usize>(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>) -> ClipResult {
+fn run_jump_table_4<const N: usize>(mask: u8, dists: &[f64; 4], ctx: &mut ClipCtx<'_>) -> ClipResult {
     if N == 3 {
         clip_jump_tables::run_n3(mask, dists, ctx)
     } else if N == 4 {
         clip_jump_tables::run_n4(mask, dists, ctx)
-    } else if N == 5 {
+    } else {
+        unreachable!("run_jump_table_4 only supports N=3 or N=4")
+    }
+}
+
+#[inline(always)]
+fn run_jump_table_8<const N: usize>(mask: u8, dists: &[f64; 8], ctx: &mut ClipCtx<'_>) -> ClipResult {
+    if N == 5 {
         clip_jump_tables::run_n5(mask, dists, ctx)
     } else if N == 6 {
         clip_jump_tables::run_n6(mask, dists, ctx)
@@ -888,7 +901,7 @@ fn run_jump_table<const N: usize>(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>
     } else if N == 8 {
         clip_jump_tables::run_n8(mask, dists, ctx)
     } else {
-        unreachable!("run_jump_table only supports N=3..=8")
+        unreachable!("run_jump_table_8 only supports N=5..=8")
     }
 }
 
@@ -902,34 +915,54 @@ fn clip_convex_match_ngon<const N: usize>(
     debug_assert_eq!(poly.len, N);
 
     let neg_eps = -hp.eps;
-
-    let mut dists = [0.0f64; N];
-    let mut mask: u8 = 0;
+    let full_mask_val: u8 = ((1u16 << N) - 1) as u8;
 
     let us = poly.us.as_ptr();
     let vs = poly.vs.as_ptr();
-    unsafe {
-        for i in 0..N {
-            let d = hp.signed_dist(*us.add(i), *vs.add(i));
-            dists[i] = d;
-            mask |= ((d >= neg_eps) as u8) << i;
+
+    if N == 3 || N == 4 {
+        let mut dists = [0.0f64; 4];
+        let mut mask: u8 = 0;
+        unsafe {
+            for i in 0..N {
+                let d = hp.signed_dist(*us.add(i), *vs.add(i));
+                *dists.get_unchecked_mut(i) = d;
+                mask |= ((d >= neg_eps) as u8) << i;
+            }
         }
+        if mask == 0 {
+            out.len = 0;
+            out.max_r2 = 0.0;
+            out.has_bounding_ref = false;
+            return ClipResult::Changed;
+        }
+        if mask == full_mask_val {
+            return ClipResult::Unchanged;
+        }
+        let mut ctx = ClipCtx::new(poly, hp, out);
+        run_jump_table_4::<N>(mask, &dists, &mut ctx)
+    } else {
+        let mut dists = [0.0f64; 8];
+        let mut mask: u8 = 0;
+        unsafe {
+            for i in 0..N {
+                let d = hp.signed_dist(*us.add(i), *vs.add(i));
+                *dists.get_unchecked_mut(i) = d;
+                mask |= ((d >= neg_eps) as u8) << i;
+            }
+        }
+        if mask == 0 {
+            out.len = 0;
+            out.max_r2 = 0.0;
+            out.has_bounding_ref = false;
+            return ClipResult::Changed;
+        }
+        if mask == full_mask_val {
+            return ClipResult::Unchanged;
+        }
+        let mut ctx = ClipCtx::new(poly, hp, out);
+        run_jump_table_8::<N>(mask, &dists, &mut ctx)
     }
-
-    if mask == 0 {
-        out.len = 0;
-        out.max_r2 = 0.0;
-        out.has_bounding_ref = false;
-        return ClipResult::Changed;
-    }
-
-    let full_mask_val: u8 = ((1u16 << N) - 1) as u8;
-    if mask == full_mask_val {
-        return ClipResult::Unchanged;
-    }
-
-    let mut ctx = ClipCtx::new(poly, hp, out);
-    run_jump_table::<N>(mask, &dists, &mut ctx)
 }
 
 #[inline(always)]
@@ -970,7 +1003,7 @@ fn clip_convex_simd_4lane<const N: usize>(
 
     let dists_arr = dists_vec.to_array();
     let mut ctx = ClipCtx::new(poly, hp, out);
-    run_jump_table::<N>(mask, &dists_arr[..N], &mut ctx)
+    run_jump_table_4::<N>(mask, &dists_arr, &mut ctx)
 }
 
 #[inline(always)]
@@ -1011,7 +1044,7 @@ fn clip_convex_simd_8lane<const N: usize>(
 
     let dists_arr = dists_vec.to_array();
     let mut ctx = ClipCtx::new(poly, hp, out);
-    run_jump_table::<N>(mask, &dists_arr[..N], &mut ctx)
+    run_jump_table_8::<N>(mask, &dists_arr, &mut ctx)
 }
 
 #[cfg_attr(feature = "profiling", inline(never))]
