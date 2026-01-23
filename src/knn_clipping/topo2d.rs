@@ -300,8 +300,6 @@ enum ClipResult {
     TooManyVertices,
 }
 
-use s2_voronoi_macros::{gen_clip_convex_ngon, gen_clip_convex_simd_ngon};
-
 #[cfg_attr(feature = "profiling", inline(never))]
 #[cfg(any(test, feature = "microbench"))]
 fn clip_convex_small<const N: usize>(
@@ -692,12 +690,207 @@ fn clip_convex_quad(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> 
     ClipResult::Changed
 }
 
-gen_clip_convex_ngon!(clip_convex_tri, 3);
-gen_clip_convex_ngon!(clip_convex_quad_ngon, 4);
-gen_clip_convex_ngon!(clip_convex_pent, 5);
-gen_clip_convex_ngon!(clip_convex_hex, 6);
-gen_clip_convex_ngon!(clip_convex_hept, 7);
-gen_clip_convex_ngon!(clip_convex_oct, 8);
+struct ClipCtx<'a> {
+    poly: &'a PolyBuffer,
+    hp: &'a HalfPlane,
+    out: &'a mut PolyBuffer,
+    max_r2: f64,
+    has_bounding: bool,
+    track_bounding: bool,
+}
+
+impl<'a> ClipCtx<'a> {
+    #[inline(always)]
+    fn new(poly: &'a PolyBuffer, hp: &'a HalfPlane, out: &'a mut PolyBuffer) -> Self {
+        out.len = 0;
+        Self {
+            poly,
+            hp,
+            out,
+            max_r2: 0.0,
+            has_bounding: false,
+            track_bounding: poly.has_bounding_ref,
+        }
+    }
+
+    #[inline(always)]
+    fn r2_of(u: f64, v: f64) -> f64 {
+        u.mul_add(u, v * v)
+    }
+
+    #[inline(always)]
+    fn get_t(d_in: f64, d_out: f64) -> f64 {
+        d_in / (d_in - d_out)
+    }
+
+    #[inline(always)]
+    fn push_v(&mut self, idx: usize) {
+        let u = self.poly.us[idx];
+        let v = self.poly.vs[idx];
+        let vp = self.poly.vertex_planes[idx];
+        self.out.push_raw(u, v, vp, self.poly.edge_planes[idx]);
+        let r2 = Self::r2_of(u, v);
+        if r2 > self.max_r2 {
+            self.max_r2 = r2;
+        }
+        if self.track_bounding {
+            self.has_bounding |= vp.0 == usize::MAX;
+        }
+    }
+
+    #[inline(always)]
+    fn push_entry(&mut self, dists: &[f64], in_idx: usize, out_idx: usize, edge_idx: usize) {
+        let d_in = dists[in_idx];
+        let d_out = dists[out_idx];
+        let t = Self::get_t(d_in, d_out);
+
+        let u = t.mul_add(
+            self.poly.us[out_idx] - self.poly.us[in_idx],
+            self.poly.us[in_idx],
+        );
+        let v = t.mul_add(
+            self.poly.vs[out_idx] - self.poly.vs[in_idx],
+            self.poly.vs[in_idx],
+        );
+        let edge_plane = self.poly.edge_planes[edge_idx];
+        let vp = (edge_plane, self.hp.plane_idx);
+
+        self.out.push_raw(u, v, vp, edge_plane);
+        let r2 = Self::r2_of(u, v);
+        if r2 > self.max_r2 {
+            self.max_r2 = r2;
+        }
+        if self.track_bounding {
+            self.has_bounding |= edge_plane == usize::MAX;
+        }
+    }
+
+    #[inline(always)]
+    fn push_exit(&mut self, dists: &[f64], in_idx: usize, out_idx: usize, edge_idx: usize) {
+        let d_in = dists[in_idx];
+        let d_out = dists[out_idx];
+        let t = Self::get_t(d_in, d_out);
+
+        let u = t.mul_add(
+            self.poly.us[out_idx] - self.poly.us[in_idx],
+            self.poly.us[in_idx],
+        );
+        let v = t.mul_add(
+            self.poly.vs[out_idx] - self.poly.vs[in_idx],
+            self.poly.vs[in_idx],
+        );
+        let edge_plane = self.poly.edge_planes[edge_idx];
+        let vp = (edge_plane, self.hp.plane_idx);
+
+        self.out.push_raw(u, v, vp, self.hp.plane_idx);
+        let r2 = Self::r2_of(u, v);
+        if r2 > self.max_r2 {
+            self.max_r2 = r2;
+        }
+        if self.track_bounding {
+            self.has_bounding |= edge_plane == usize::MAX;
+        }
+    }
+
+    #[inline(always)]
+    fn finish(&mut self) {
+        self.out.max_r2 = self.max_r2;
+        self.out.has_bounding_ref = if self.track_bounding {
+            self.has_bounding
+        } else {
+            false
+        };
+    }
+}
+
+mod clip_jump_tables {
+    use super::*;
+
+    pub(super) fn run_n3(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>) -> ClipResult {
+        debug_assert!(dists.len() >= 3);
+        #[cold]
+        fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+            clip_convex_small_bool::<3>(poly, hp, out)
+        }
+        include!("clip_tables/ngon_n3.rs");
+        ctx.finish();
+        ClipResult::Changed
+    }
+
+    pub(super) fn run_n4(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>) -> ClipResult {
+        debug_assert!(dists.len() >= 4);
+        #[cold]
+        fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+            clip_convex_small_bool::<4>(poly, hp, out)
+        }
+        include!("clip_tables/ngon_n4.rs");
+        ctx.finish();
+        ClipResult::Changed
+    }
+
+    pub(super) fn run_n5(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>) -> ClipResult {
+        debug_assert!(dists.len() >= 5);
+        #[cold]
+        fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+            clip_convex_small_bool::<5>(poly, hp, out)
+        }
+        include!("clip_tables/ngon_n5.rs");
+        ctx.finish();
+        ClipResult::Changed
+    }
+
+    pub(super) fn run_n6(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>) -> ClipResult {
+        debug_assert!(dists.len() >= 6);
+        #[cold]
+        fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+            clip_convex_small_bool::<6>(poly, hp, out)
+        }
+        include!("clip_tables/ngon_n6.rs");
+        ctx.finish();
+        ClipResult::Changed
+    }
+
+    pub(super) fn run_n7(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>) -> ClipResult {
+        debug_assert!(dists.len() >= 7);
+        #[cold]
+        fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+            clip_convex_small_bool::<7>(poly, hp, out)
+        }
+        include!("clip_tables/ngon_n7.rs");
+        ctx.finish();
+        ClipResult::Changed
+    }
+
+    pub(super) fn run_n8(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>) -> ClipResult {
+        debug_assert!(dists.len() >= 8);
+        #[cold]
+        fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+            clip_convex_small_bool::<8>(poly, hp, out)
+        }
+        include!("clip_tables/ngon_n8.rs");
+        ctx.finish();
+        ClipResult::Changed
+    }
+}
+
+#[inline(always)]
+fn run_jump_table<const N: usize>(mask: u8, dists: &[f64], ctx: &mut ClipCtx<'_>) -> ClipResult {
+    if N == 3 {
+        clip_jump_tables::run_n3(mask, dists, ctx)
+    } else if N == 4 {
+        clip_jump_tables::run_n4(mask, dists, ctx)
+    } else if N == 5 {
+        clip_jump_tables::run_n5(mask, dists, ctx)
+    } else if N == 6 {
+        clip_jump_tables::run_n6(mask, dists, ctx)
+    } else if N == 7 {
+        clip_jump_tables::run_n7(mask, dists, ctx)
+    } else if N == 8 {
+        clip_jump_tables::run_n8(mask, dists, ctx)
+    } else {
+        unreachable!("run_jump_table only supports N=3..=8")
+    }
+}
 
 #[inline(always)]
 #[cfg(any(test, feature = "microbench"))]
@@ -706,29 +899,150 @@ fn clip_convex_match_ngon<const N: usize>(
     hp: &HalfPlane,
     out: &mut PolyBuffer,
 ) -> ClipResult {
-    if N == 3 {
-        clip_convex_tri(poly, hp, out)
-    } else if N == 4 {
-        clip_convex_quad_ngon(poly, hp, out)
-    } else if N == 5 {
-        clip_convex_pent(poly, hp, out)
-    } else if N == 6 {
-        clip_convex_hex(poly, hp, out)
-    } else if N == 7 {
-        clip_convex_hept(poly, hp, out)
-    } else if N == 8 {
-        clip_convex_oct(poly, hp, out)
-    } else {
-        unreachable!("clip_convex_match_ngon only supports N=3..=8")
+    debug_assert_eq!(poly.len, N);
+
+    let neg_eps = -hp.eps;
+
+    let mut dists = [0.0f64; N];
+    let mut mask: u8 = 0;
+
+    let us = poly.us.as_ptr();
+    let vs = poly.vs.as_ptr();
+    unsafe {
+        for i in 0..N {
+            let d = hp.signed_dist(*us.add(i), *vs.add(i));
+            dists[i] = d;
+            mask |= ((d >= neg_eps) as u8) << i;
+        }
     }
+
+    if mask == 0 {
+        out.len = 0;
+        out.max_r2 = 0.0;
+        out.has_bounding_ref = false;
+        return ClipResult::Changed;
+    }
+
+    let full_mask_val: u8 = ((1u16 << N) - 1) as u8;
+    if mask == full_mask_val {
+        return ClipResult::Unchanged;
+    }
+
+    let mut ctx = ClipCtx::new(poly, hp, out);
+    run_jump_table::<N>(mask, &dists, &mut ctx)
 }
 
-gen_clip_convex_simd_ngon!(clip_convex_simd_tri, 3);
-gen_clip_convex_simd_ngon!(clip_convex_simd_quad, 4);
-gen_clip_convex_simd_ngon!(clip_convex_simd_pent, 5);
-gen_clip_convex_simd_ngon!(clip_convex_simd_hex, 6);
-gen_clip_convex_simd_ngon!(clip_convex_simd_hept, 7);
-gen_clip_convex_simd_ngon!(clip_convex_simd_oct, 8);
+#[inline(always)]
+fn clip_convex_simd_4lane<const N: usize>(
+    poly: &PolyBuffer,
+    hp: &HalfPlane,
+    out: &mut PolyBuffer,
+) -> ClipResult {
+    debug_assert!(N == 3 || N == 4);
+    debug_assert_eq!(poly.len, N);
+
+    use std::simd::prelude::*;
+    use std::simd::f64x4;
+
+    let us_simd = f64x4::from_slice(&poly.us[0..4]);
+    let vs_simd = f64x4::from_slice(&poly.vs[0..4]);
+
+    let a_simd = f64x4::splat(hp.a);
+    let b_simd = f64x4::splat(hp.b);
+    let c_simd = f64x4::splat(hp.c);
+    let neg_eps_simd = f64x4::splat(-hp.eps);
+
+    let dists_vec = a_simd.mul_add(us_simd, b_simd.mul_add(vs_simd, c_simd));
+    let mask_simd = dists_vec.simd_ge(neg_eps_simd);
+    let full_simd_mask = mask_simd.to_bitmask() as u8;
+    let full_mask_val: u8 = ((1u16 << N) - 1) as u8;
+    let mask = full_simd_mask & full_mask_val;
+
+    if mask == 0 {
+        out.len = 0;
+        out.max_r2 = 0.0;
+        out.has_bounding_ref = false;
+        return ClipResult::Changed;
+    }
+    if mask == full_mask_val {
+        return ClipResult::Unchanged;
+    }
+
+    let dists_arr = dists_vec.to_array();
+    let mut ctx = ClipCtx::new(poly, hp, out);
+    run_jump_table::<N>(mask, &dists_arr[..N], &mut ctx)
+}
+
+#[inline(always)]
+fn clip_convex_simd_8lane<const N: usize>(
+    poly: &PolyBuffer,
+    hp: &HalfPlane,
+    out: &mut PolyBuffer,
+) -> ClipResult {
+    debug_assert!((5..=8).contains(&N));
+    debug_assert_eq!(poly.len, N);
+
+    use std::simd::prelude::*;
+    use std::simd::f64x8;
+
+    let us_simd = f64x8::from_slice(&poly.us[0..8]);
+    let vs_simd = f64x8::from_slice(&poly.vs[0..8]);
+
+    let a_simd = f64x8::splat(hp.a);
+    let b_simd = f64x8::splat(hp.b);
+    let c_simd = f64x8::splat(hp.c);
+    let neg_eps_simd = f64x8::splat(-hp.eps);
+
+    let dists_vec = a_simd.mul_add(us_simd, b_simd.mul_add(vs_simd, c_simd));
+    let mask_simd = dists_vec.simd_ge(neg_eps_simd);
+    let full_simd_mask = mask_simd.to_bitmask() as u8;
+    let full_mask_val: u8 = ((1u16 << N) - 1) as u8;
+    let mask = full_simd_mask & full_mask_val;
+
+    if mask == 0 {
+        out.len = 0;
+        out.max_r2 = 0.0;
+        out.has_bounding_ref = false;
+        return ClipResult::Changed;
+    }
+    if mask == full_mask_val {
+        return ClipResult::Unchanged;
+    }
+
+    let dists_arr = dists_vec.to_array();
+    let mut ctx = ClipCtx::new(poly, hp, out);
+    run_jump_table::<N>(mask, &dists_arr[..N], &mut ctx)
+}
+
+#[cfg_attr(feature = "profiling", inline(never))]
+fn clip_convex_simd_tri(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+    clip_convex_simd_4lane::<3>(poly, hp, out)
+}
+
+#[cfg_attr(feature = "profiling", inline(never))]
+fn clip_convex_simd_quad(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+    clip_convex_simd_4lane::<4>(poly, hp, out)
+}
+
+#[cfg_attr(feature = "profiling", inline(never))]
+fn clip_convex_simd_pent(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+    clip_convex_simd_8lane::<5>(poly, hp, out)
+}
+
+#[cfg_attr(feature = "profiling", inline(never))]
+fn clip_convex_simd_hex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+    clip_convex_simd_8lane::<6>(poly, hp, out)
+}
+
+#[cfg_attr(feature = "profiling", inline(never))]
+fn clip_convex_simd_hept(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+    clip_convex_simd_8lane::<7>(poly, hp, out)
+}
+
+#[cfg_attr(feature = "profiling", inline(never))]
+fn clip_convex_simd_oct(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+    clip_convex_simd_8lane::<8>(poly, hp, out)
+}
 
 #[inline(always)]
 #[cfg(any(test, feature = "microbench"))]
@@ -1810,10 +2124,6 @@ pub(crate) fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
-        eprintln!(
-            "mixed speedup:                    {:>10.3}x",
-            mask_mixed / small_mixed
-        );
 
         if N == 4 {
             bench_ns_per_call("quad unchanged", target, samples, 1, |iters| {
@@ -1878,26 +2188,6 @@ pub(crate) fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
-        eprintln!(
-            "unchanged speedup:                 {:>10.3}x",
-            mask_unch / small_unch
-        );
-        eprintln!(
-            "bool vs small mixed:               {:>10.3}x",
-            bool_mixed / small_mixed
-        );
-        eprintln!(
-            "bool vs small unchanged:           {:>10.3}x",
-            bool_unch / small_unch
-        );
-        eprintln!(
-            "simd vs small mixed:               {:>10.3}x",
-            simd_mixed / small_mixed
-        );
-        eprintln!(
-            "simd vs small unchanged:           {:>10.3}x",
-            simd_unch / small_unch
-        );
     }
 
     let target = Duration::from_millis(target_ms);
