@@ -1939,6 +1939,455 @@ fn clip_convex_small_bool_b<const N: usize>(
     ClipResult::Changed
 }
 
+/// Bool variant with proper division hoisting: precompute ALL edge interpolation parameters
+/// before knowing which edges are transitions. This allows all divisions to be in flight
+/// simultaneously while we scan for transitions.
+#[cfg_attr(feature = "profiling", inline(never))]
+#[cfg(any(test, feature = "microbench"))]
+fn clip_convex_bool_c<const N: usize>(
+    poly: &PolyBuffer,
+    hp: &HalfPlane,
+    out: &mut PolyBuffer,
+) -> ClipResult {
+    debug_assert_eq!(poly.len, N);
+    debug_assert!(N >= 3 && N <= 8);
+
+    let neg_eps = -hp.eps;
+
+    let us = poly.us.as_ptr();
+    let vs = poly.vs.as_ptr();
+
+    // Pass 1: compute distances and classify vertices
+    let mut dists = [0.0f64; N];
+    let mut inside = [false; N];
+    let mut any_inside = false;
+    let mut all_inside = true;
+
+    // SAFETY: i < N <= 8 <= MAX_POLY_VERTICES
+    unsafe {
+        for i in 0..N {
+            let d = hp.signed_dist(*us.add(i), *vs.add(i));
+            dists[i] = d;
+            let is_inside = d >= neg_eps;
+            inside[i] = is_inside;
+            any_inside |= is_inside;
+            all_inside &= is_inside;
+        }
+    }
+
+    // Fast path: all outside
+    if !any_inside {
+        out.len = 0;
+        out.max_r2 = 0.0;
+        out.has_bounding_ref = false;
+        return ClipResult::Changed;
+    }
+
+    // Fast path: all inside
+    if all_inside {
+        return ClipResult::Unchanged;
+    }
+
+    // HOISTED: Precompute ALL N edge interpolation parameters.
+    // Even though only 2 edges are transitions, computing all lets the CPU
+    // pipeline all divisions in parallel while we search for transitions.
+    let mut t_vals = [0.0f64; N];
+    for i in 0..N {
+        let next = if i + 1 == N { 0 } else { i + 1 };
+        let d_i = dists[i];
+        let d_next = dists[next];
+        // t = d_i / (d_i - d_next)
+        // This division is valid even if (d_i - d_next) == 0 (same side - won't be used)
+        t_vals[i] = d_i / (d_i - d_next);
+    }
+
+    // Find the two transitions
+    let mut entry_idx = 0usize;
+    let mut entry_next = 0usize;
+    let mut exit_idx = 0usize;
+    let mut found_entry = false;
+
+    for i in 0..N {
+        let prev = if i == 0 { N - 1 } else { i - 1 };
+        if !inside[prev] && inside[i] {
+            entry_idx = prev;
+            entry_next = i;
+            found_entry = true;
+        } else if inside[prev] && !inside[i] {
+            exit_idx = prev;
+            if found_entry {
+                break;
+            }
+        }
+    }
+
+    // Build output
+    out.len = 0;
+
+    let mut max_r2 = 0.0f64;
+    let mut has_bounding = false;
+    let track_bounding = poly.has_bounding_ref;
+
+    #[inline(always)]
+    fn r2_of(u: f64, v: f64) -> f64 {
+        u.mul_add(u, v * v)
+    }
+
+    macro_rules! push {
+        ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
+            let u = $u;
+            let v = $v;
+            let vp = $vp;
+            out.push_raw(u, v, vp, $ep);
+            // Use .max() for branchless cmov
+            max_r2 = max_r2.max(r2_of(u, v));
+            if track_bounding {
+                has_bounding |= vp.0 == usize::MAX;
+            }
+        }};
+    }
+
+    // Entry intersection (use precomputed t_vals[entry_idx])
+    let t_entry = t_vals[entry_idx];
+    let entry_u = t_entry.mul_add(poly.us[entry_next] - poly.us[entry_idx], poly.us[entry_idx]);
+    let entry_v = t_entry.mul_add(poly.vs[entry_next] - poly.vs[entry_idx], poly.vs[entry_idx]);
+    let entry_ep = poly.edge_planes[entry_idx];
+    push!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
+
+    // Surviving input vertices from entry_next to exit_idx (cyclic), inclusive
+    if entry_next <= exit_idx {
+        for i in entry_next..=exit_idx {
+            push!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+    } else {
+        for i in entry_next..N {
+            push!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+        for i in 0..=exit_idx {
+            push!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+    }
+
+    // Exit intersection (use precomputed t_vals[exit_idx])
+    let exit_next = if exit_idx + 1 == N { 0 } else { exit_idx + 1 };
+    let t_exit = t_vals[exit_idx];
+    let exit_u = t_exit.mul_add(poly.us[exit_next] - poly.us[exit_idx], poly.us[exit_idx]);
+    let exit_v = t_exit.mul_add(poly.vs[exit_next] - poly.vs[exit_idx], poly.vs[exit_idx]);
+    let exit_ep = poly.edge_planes[exit_idx];
+    push!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
+
+    out.max_r2 = max_r2;
+    out.has_bounding_ref = if track_bounding { has_bounding } else { false };
+    ClipResult::Changed
+}
+
+/// Fully unrolled triangle clipping with match-based dispatch.
+/// For N=3, there are only 6 possible inside/outside configurations (excluding all-in/all-out).
+#[cfg_attr(feature = "profiling", inline(never))]
+#[cfg(any(test, feature = "microbench"))]
+fn clip_convex_tri_unrolled(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+    debug_assert_eq!(poly.len, 3);
+
+    let neg_eps = -hp.eps;
+
+    let d0 = hp.signed_dist(poly.us[0], poly.vs[0]);
+    let d1 = hp.signed_dist(poly.us[1], poly.vs[1]);
+    let d2 = hp.signed_dist(poly.us[2], poly.vs[2]);
+
+    let i0 = d0 >= neg_eps;
+    let i1 = d1 >= neg_eps;
+    let i2 = d2 >= neg_eps;
+
+    // Encode as 3-bit pattern: (i2 << 2) | (i1 << 1) | i0
+    let pattern = (i2 as u8) << 2 | (i1 as u8) << 1 | (i0 as u8);
+
+    match pattern {
+        0b111 => ClipResult::Unchanged, // All inside
+        0b000 => {
+            // All outside
+            out.len = 0;
+            out.max_r2 = 0.0;
+            out.has_bounding_ref = false;
+            ClipResult::Changed
+        }
+        _ => {
+            // Mixed case - precompute all 3 interpolation parameters
+            let t01 = d0 / (d0 - d1); // edge 0->1
+            let t12 = d1 / (d1 - d2); // edge 1->2
+            let t20 = d2 / (d2 - d0); // edge 2->0
+
+            out.len = 0;
+            let mut max_r2 = 0.0f64;
+            let mut has_bounding = false;
+            let track_bounding = poly.has_bounding_ref;
+
+            #[inline(always)]
+            fn interp(poly: &PolyBuffer, from: usize, to: usize, t: f64) -> (f64, f64) {
+                let u = t.mul_add(poly.us[to] - poly.us[from], poly.us[from]);
+                let v = t.mul_add(poly.vs[to] - poly.vs[from], poly.vs[from]);
+                (u, v)
+            }
+
+            macro_rules! emit_vertex {
+                ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
+                    let u = $u;
+                    let v = $v;
+                    let vp = $vp;
+                    out.push_raw(u, v, vp, $ep);
+                    max_r2 = max_r2.max(u.mul_add(u, v * v));
+                    if track_bounding {
+                        has_bounding |= vp.0 == usize::MAX;
+                    }
+                }};
+            }
+
+            macro_rules! emit_input {
+                ($i:expr) => {{
+                    emit_vertex!(
+                        poly.us[$i],
+                        poly.vs[$i],
+                        poly.vertex_planes[$i],
+                        poly.edge_planes[$i]
+                    );
+                }};
+            }
+
+            let hp_idx = hp.plane_idx;
+
+            match pattern {
+                // One vertex inside (3 output vertices)
+                0b001 => {
+                    // Only v0 inside: emit interp(2,0), v0, interp(0,1)
+                    let (eu, ev) = interp(poly, 2, 0, t20);
+                    emit_vertex!(eu, ev, (poly.edge_planes[2], hp_idx), poly.edge_planes[2]);
+                    emit_input!(0);
+                    let (xu, xv) = interp(poly, 0, 1, t01);
+                    emit_vertex!(xu, xv, (poly.edge_planes[0], hp_idx), hp_idx);
+                }
+                0b010 => {
+                    // Only v1 inside: emit interp(0,1), v1, interp(1,2)
+                    let (eu, ev) = interp(poly, 0, 1, t01);
+                    emit_vertex!(eu, ev, (poly.edge_planes[0], hp_idx), poly.edge_planes[0]);
+                    emit_input!(1);
+                    let (xu, xv) = interp(poly, 1, 2, t12);
+                    emit_vertex!(xu, xv, (poly.edge_planes[1], hp_idx), hp_idx);
+                }
+                0b100 => {
+                    // Only v2 inside: emit interp(1,2), v2, interp(2,0)
+                    let (eu, ev) = interp(poly, 1, 2, t12);
+                    emit_vertex!(eu, ev, (poly.edge_planes[1], hp_idx), poly.edge_planes[1]);
+                    emit_input!(2);
+                    let (xu, xv) = interp(poly, 2, 0, t20);
+                    emit_vertex!(xu, xv, (poly.edge_planes[2], hp_idx), hp_idx);
+                }
+                // Two vertices inside (4 output vertices)
+                0b011 => {
+                    // v0, v1 inside: emit interp(2,0), v0, v1, interp(1,2)
+                    let (eu, ev) = interp(poly, 2, 0, t20);
+                    emit_vertex!(eu, ev, (poly.edge_planes[2], hp_idx), poly.edge_planes[2]);
+                    emit_input!(0);
+                    emit_input!(1);
+                    let (xu, xv) = interp(poly, 1, 2, t12);
+                    emit_vertex!(xu, xv, (poly.edge_planes[1], hp_idx), hp_idx);
+                }
+                0b110 => {
+                    // v1, v2 inside: emit interp(0,1), v1, v2, interp(2,0)
+                    let (eu, ev) = interp(poly, 0, 1, t01);
+                    emit_vertex!(eu, ev, (poly.edge_planes[0], hp_idx), poly.edge_planes[0]);
+                    emit_input!(1);
+                    emit_input!(2);
+                    let (xu, xv) = interp(poly, 2, 0, t20);
+                    emit_vertex!(xu, xv, (poly.edge_planes[2], hp_idx), hp_idx);
+                }
+                0b101 => {
+                    // v0, v2 inside: emit interp(1,2), v2, v0, interp(0,1)
+                    let (eu, ev) = interp(poly, 1, 2, t12);
+                    emit_vertex!(eu, ev, (poly.edge_planes[1], hp_idx), poly.edge_planes[1]);
+                    emit_input!(2);
+                    emit_input!(0);
+                    let (xu, xv) = interp(poly, 0, 1, t01);
+                    emit_vertex!(xu, xv, (poly.edge_planes[0], hp_idx), hp_idx);
+                }
+                _ => unreachable!(),
+            }
+
+            out.max_r2 = max_r2;
+            out.has_bounding_ref = if track_bounding { has_bounding } else { false };
+            ClipResult::Changed
+        }
+    }
+}
+
+/// Bool variant using .max() for branchless max_r2 tracking.
+#[cfg_attr(feature = "profiling", inline(never))]
+#[cfg(any(test, feature = "microbench"))]
+fn clip_convex_bool_maxr2<const N: usize>(
+    poly: &PolyBuffer,
+    hp: &HalfPlane,
+    out: &mut PolyBuffer,
+) -> ClipResult {
+    debug_assert_eq!(poly.len, N);
+    debug_assert!(N >= 3 && N <= 8);
+
+    let neg_eps = -hp.eps;
+
+    // SAFETY: `[MaybeUninit<f64>; N]` is valid in an uninitialized state.
+    let mut dists: [core::mem::MaybeUninit<f64>; N] =
+        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+
+    let us = poly.us.as_ptr();
+    let vs = poly.vs.as_ptr();
+
+    // Pass 1: classify vertices, track any_inside/all_inside in one pass
+    let mut inside = [false; N];
+    let mut any_inside = false;
+    let mut all_inside = true;
+
+    // SAFETY: i < N <= 8 <= MAX_POLY_VERTICES
+    unsafe {
+        for i in 0..N {
+            let d = hp.signed_dist(*us.add(i), *vs.add(i));
+            dists.get_unchecked_mut(i).write(d);
+            let is_inside = d >= neg_eps;
+            inside[i] = is_inside;
+            any_inside |= is_inside;
+            all_inside &= is_inside;
+        }
+    }
+
+    // Fast path: all outside
+    if !any_inside {
+        out.len = 0;
+        out.max_r2 = 0.0;
+        out.has_bounding_ref = false;
+        return ClipResult::Changed;
+    }
+
+    // Fast path: all inside
+    if all_inside {
+        return ClipResult::Unchanged;
+    }
+
+    // Mixed case: find the two transition indices
+    let mut entry_idx = None;
+    let mut exit_idx = None;
+
+    for i in 0..N {
+        let prev = if i == 0 { N - 1 } else { i - 1 };
+        if entry_idx.is_none() && !inside[prev] && inside[i] {
+            entry_idx = Some((prev, i));
+        } else if exit_idx.is_none() && inside[prev] && !inside[i] {
+            exit_idx = Some((prev, i));
+        }
+        if entry_idx.is_some() && exit_idx.is_some() {
+            break;
+        }
+    }
+
+    let (entry_idx, entry_next) = entry_idx.expect("convex polygon must have entry transition");
+    let (exit_idx, exit_next) = exit_idx.expect("convex polygon must have exit transition");
+
+    // Build output
+    out.len = 0;
+
+    #[inline(always)]
+    fn r2_of(u: f64, v: f64) -> f64 {
+        u.mul_add(u, v * v)
+    }
+
+    let mut max_r2 = 0.0f64;
+    let mut has_bounding = false;
+    let track_bounding = poly.has_bounding_ref;
+
+    // Key difference: use .max() instead of if-branch for r2 tracking
+    macro_rules! push {
+        ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
+            let u = $u;
+            let v = $v;
+            let vp = $vp;
+            out.push_raw(u, v, vp, $ep);
+            max_r2 = max_r2.max(r2_of(u, v));
+            if track_bounding {
+                has_bounding |= vp.0 == usize::MAX;
+            }
+        }};
+    }
+
+    // Entry intersection
+    let (d_entry, d_entry_next) = unsafe {
+        (
+            dists.get_unchecked(entry_idx).assume_init_read(),
+            dists.get_unchecked(entry_next).assume_init_read(),
+        )
+    };
+    let t_entry = d_entry / (d_entry - d_entry_next);
+    let entry_u = t_entry.mul_add(poly.us[entry_next] - poly.us[entry_idx], poly.us[entry_idx]);
+    let entry_v = t_entry.mul_add(poly.vs[entry_next] - poly.vs[entry_idx], poly.vs[entry_idx]);
+    let entry_ep = poly.edge_planes[entry_idx];
+    push!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
+
+    // Surviving input vertices
+    if entry_next <= exit_idx {
+        for i in entry_next..=exit_idx {
+            push!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+    } else {
+        for i in entry_next..N {
+            push!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+        for i in 0..=exit_idx {
+            push!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+    }
+
+    // Exit intersection
+    let (d_exit, d_exit_next) = unsafe {
+        (
+            dists.get_unchecked(exit_idx).assume_init_read(),
+            dists.get_unchecked(exit_next).assume_init_read(),
+        )
+    };
+    let t_exit = d_exit / (d_exit - d_exit_next);
+    let exit_u = t_exit.mul_add(poly.us[exit_next] - poly.us[exit_idx], poly.us[exit_idx]);
+    let exit_v = t_exit.mul_add(poly.vs[exit_next] - poly.vs[exit_idx], poly.vs[exit_idx]);
+    let exit_ep = poly.edge_planes[exit_idx];
+    push!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
+
+    out.max_r2 = max_r2;
+    out.has_bounding_ref = if track_bounding { has_bounding } else { false };
+    ClipResult::Changed
+}
+
 /// Clip a convex polygon by a half-plane (standalone function to avoid borrow conflicts).
 ///
 /// # Returns
@@ -2632,6 +3081,9 @@ pub(crate) fn run_clip_convex_microbench() {
         let mut out_b = PolyBuffer::new();
         let mut out_c = PolyBuffer::new();
         let mut out_c_b = PolyBuffer::new();
+        let mut out_c_c = PolyBuffer::new();
+        let mut out_maxr2 = PolyBuffer::new();
+        let mut out_tri = PolyBuffer::new();
         let mut out_d = PolyBuffer::new();
         let mut out_s = PolyBuffer::new();
         let mut out_q = PolyBuffer::new();
@@ -2661,6 +3113,14 @@ pub(crate) fn run_clip_convex_microbench() {
             clip_convex_simd::<N>(&poly, &hps_changed[0], &mut out_s),
             ClipResult::Changed
         ));
+        assert!(matches!(
+            clip_convex_bool_c::<N>(&poly, &hps_changed[0], &mut out_c_c),
+            ClipResult::Changed
+        ));
+        assert!(matches!(
+            clip_convex_bool_maxr2::<N>(&poly, &hps_changed[0], &mut out_maxr2),
+            ClipResult::Changed
+        ));
         out_a.len = 13;
         out_a.us[0] = 123.0;
         out_b.len = 13;
@@ -2669,6 +3129,12 @@ pub(crate) fn run_clip_convex_microbench() {
         out_c.us[0] = 123.0;
         out_c_b.len = 13;
         out_c_b.us[0] = 123.0;
+        out_c_c.len = 13;
+        out_c_c.us[0] = 123.0;
+        out_maxr2.len = 13;
+        out_maxr2.us[0] = 123.0;
+        out_tri.len = 13;
+        out_tri.us[0] = 123.0;
         out_d.len = 13;
         out_d.us[0] = 123.0;
         out_s.len = 13;
@@ -2697,6 +3163,14 @@ pub(crate) fn run_clip_convex_microbench() {
         ));
         assert!(matches!(
             clip_convex_simd::<N>(&poly, &hps_unchanged[0], &mut out_s),
+            ClipResult::Unchanged
+        ));
+        assert!(matches!(
+            clip_convex_bool_c::<N>(&poly, &hps_unchanged[0], &mut out_c_c),
+            ClipResult::Unchanged
+        ));
+        assert!(matches!(
+            clip_convex_bool_maxr2::<N>(&poly, &hps_unchanged[0], &mut out_maxr2),
             ClipResult::Unchanged
         ));
 
@@ -2787,6 +3261,44 @@ pub(crate) fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
+        bench_ns_per_call("bool C mixed", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_changed.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_c_c);
+            let mut s = 0x1234_5678_9ABC_DEF0u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let r = clip_convex_bool_c::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
+        bench_ns_per_call("bool maxr2 mixed", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_changed.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_maxr2);
+            let mut s = 0x1234_5678_9ABC_DEF0u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let r = clip_convex_bool_maxr2::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
+        if N == 3 {
+            bench_ns_per_call("tri_unroll mixed", target, samples, 1, |iters| {
+                let poly = black_box(&poly);
+                let hps = black_box(hps_changed.as_slice());
+                let hp_mask = hps.len() - 1;
+                let out = black_box(&mut out_tri);
+                let mut s = 0x1234_5678_9ABC_DEF0u64;
+                for _ in 0..iters {
+                    let hp = &hps[next_idx(&mut s, hp_mask)];
+                    let r = clip_convex_tri_unrolled(poly, hp, out);
+                    black_box(r);
+                }
+            });
+        }
 
         let (_small_combo, _) = bench_ns_per_call("small combo", target, samples, 1, |iters| {
             let poly = black_box(&poly);
@@ -2873,6 +3385,44 @@ pub(crate) fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
+        bench_ns_per_call("bool C combo", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_combo.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_c_c);
+            let mut s = 0xF00D_F00D_CAFE_BEEFu64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let r = clip_convex_bool_c::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
+        bench_ns_per_call("bool maxr2 combo", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_combo.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_maxr2);
+            let mut s = 0xF00D_F00D_CAFE_BEEFu64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let r = clip_convex_bool_maxr2::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
+        if N == 3 {
+            bench_ns_per_call("tri_unroll combo", target, samples, 1, |iters| {
+                let poly = black_box(&poly);
+                let hps = black_box(hps_combo.as_slice());
+                let hp_mask = hps.len() - 1;
+                let out = black_box(&mut out_tri);
+                let mut s = 0xF00D_F00D_CAFE_BEEFu64;
+                for _ in 0..iters {
+                    let hp = &hps[next_idx(&mut s, hp_mask)];
+                    let r = clip_convex_tri_unrolled(poly, hp, out);
+                    black_box(r);
+                }
+            });
+        }
 
         let (_small_unch, _) = bench_ns_per_call("small unchanged", target, samples, 1, |iters| {
             let poly = black_box(&poly);
@@ -2970,6 +3520,44 @@ pub(crate) fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
+        bench_ns_per_call("bool C unchanged", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_unchanged.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_c_c);
+            let mut s = 0x0BAD_F00D_1234_5678u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let r = clip_convex_bool_c::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
+        bench_ns_per_call("bool maxr2 unchanged", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_unchanged.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_maxr2);
+            let mut s = 0x0BAD_F00D_1234_5678u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let r = clip_convex_bool_maxr2::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
+        if N == 3 {
+            bench_ns_per_call("tri_unroll unchanged", target, samples, 1, |iters| {
+                let poly = black_box(&poly);
+                let hps = black_box(hps_unchanged.as_slice());
+                let hp_mask = hps.len() - 1;
+                let out = black_box(&mut out_tri);
+                let mut s = 0x0BAD_F00D_1234_5678u64;
+                for _ in 0..iters {
+                    let hp = &hps[next_idx(&mut s, hp_mask)];
+                    let r = clip_convex_tri_unrolled(poly, hp, out);
+                    black_box(r);
+                }
+            });
+        }
     }
 
     let target = Duration::from_millis(target_ms);
