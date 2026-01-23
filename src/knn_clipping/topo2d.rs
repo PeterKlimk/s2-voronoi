@@ -2514,6 +2514,12 @@ pub(crate) fn run_clip_convex_microbench() {
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(9)
         .clamp(3, 101);
+    let hp_pool_len: usize = std::env::var("S2_VORONOI_BENCH_HP_POOL")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1024)
+        .clamp(32, 1 << 20)
+        .next_power_of_two();
 
     fn median(mut xs: Vec<f64>) -> f64 {
         if xs.is_empty() {
@@ -2588,24 +2594,109 @@ pub(crate) fn run_clip_convex_microbench() {
         (med, min)
     }
 
-    fn run_for<const N: usize>(target: Duration, samples: usize) {
+    #[inline(always)]
+    fn next_idx(state: &mut u64, mask: usize) -> usize {
+        // LCG: cheap per-iter indexing; generation quality is not important here.
+        *state = state
+            .wrapping_mul(6364136223846793005u64)
+            .wrapping_add(1442695040888963407u64);
+        (*state as usize) & mask
+    }
+
+    fn build_hp_pools<const N: usize>(
+        poly: &PolyBuffer,
+        pool_len: usize,
+    ) -> (Vec<HalfPlane>, Vec<HalfPlane>, Vec<HalfPlane>) {
+        debug_assert!(pool_len.is_power_of_two());
+        let full_mask_val: u8 = ((1u16 << N) - 1) as u8;
+        let half = pool_len / 2;
+
+        #[derive(Clone, Copy)]
+        struct Rng(u64);
+        impl Rng {
+            #[inline(always)]
+            fn next_u64(&mut self) -> u64 {
+                // xorshift64*
+                let mut x = self.0;
+                x ^= x >> 12;
+                x ^= x << 25;
+                x ^= x >> 27;
+                self.0 = x;
+                x.wrapping_mul(0x2545F4914F6CDD1D)
+            }
+            #[inline(always)]
+            fn next_f64(&mut self) -> f64 {
+                let bits = self.next_u64() >> 11; // 53 bits
+                (bits as f64) * (1.0 / ((1u64 << 53) as f64))
+            }
+            #[inline(always)]
+            fn range_f64(&mut self, lo: f64, hi: f64) -> f64 {
+                lo + (hi - lo) * self.next_f64()
+            }
+        }
+
+        #[inline(always)]
+        fn mask_for<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane) -> u8 {
+            let mut mask: u8 = 0;
+            let neg_eps = -hp.eps;
+            for i in 0..N {
+                let d = hp.signed_dist(poly.us[i], poly.vs[i]);
+                mask |= ((d >= neg_eps) as u8) << i;
+            }
+            mask
+        }
+
+        let mut rng = Rng(0xD1CE_B00C_A55E_D00Du64 ^ (N as u64));
+
+        // Changed pool: diverse masks (avoid all-in/all-out).
+        let mut changed = Vec::with_capacity(pool_len);
+        while changed.len() < pool_len {
+            let theta = rng.range_f64(0.0, std::f64::consts::TAU);
+            let scale = rng.range_f64(0.25, 4.0);
+            let (s, c) = theta.sin_cos();
+            let a = scale * c;
+            let b = scale * s;
+
+            // Bias toward cuts near the origin to get a good spread of masks.
+            let norm = ((a.mul_add(a, b * b)) as f32).sqrt() as f64;
+            let cc = rng.range_f64(-0.6 * norm, 0.6 * norm);
+            let hp = HalfPlane::new_unnormalized(a, b, cc, 1_000_000 + changed.len());
+            let m = mask_for::<N>(poly, &hp);
+            if m != 0 && m != full_mask_val {
+                changed.push(hp);
+            }
+        }
+
+        // Unchanged pool: full-mask, but with varying "margin to boundary".
+        let mut unchanged = Vec::with_capacity(pool_len);
+        while unchanged.len() < pool_len {
+            let theta = rng.range_f64(0.0, std::f64::consts::TAU);
+            let scale = rng.range_f64(0.25, 4.0);
+            let (s, c) = theta.sin_cos();
+            let a = scale * c;
+            let b = scale * s;
+            let norm = ((a.mul_add(a, b * b)) as f32).sqrt() as f64;
+
+            // Some very safe, some near-boundary-but-still-inside.
+            let cc = rng.range_f64(0.1 * norm, 2.5 * norm);
+            let hp = HalfPlane::new_unnormalized(a, b, cc, 2_000_000 + unchanged.len());
+            if mask_for::<N>(poly, &hp) == full_mask_val {
+                unchanged.push(hp);
+            }
+        }
+
+        // Combo pool: half changed, half unchanged (uniformly selectable).
+        let mut combo = Vec::with_capacity(pool_len);
+        combo.extend_from_slice(&changed[..half]);
+        combo.extend_from_slice(&unchanged[..half]);
+
+        (changed, unchanged, combo)
+    }
+
+    fn run_for<const N: usize>(target: Duration, samples: usize, hp_pool_len: usize) {
         let poly = make_regular_poly::<N>(1.0);
 
-        // Mixed: alternate a small set of planes, ensuring work stays in the "changed" regime.
-        let hps = [
-            HalfPlane::new_unnormalized(1.0, 0.0, -0.2, 1_000_000),
-            HalfPlane::new_unnormalized(-1.0, 0.0, 0.2, 1_000_001),
-            HalfPlane::new_unnormalized(0.0, 1.0, -0.2, 1_000_002),
-            HalfPlane::new_unnormalized(0.0, -1.0, 0.2, 1_000_003),
-        ];
-        // Unchanged: vary planes to avoid the optimizer hoisting/eliminating work.
-        // All of these contain the unit-radius regular polygon comfortably.
-        let hps_unchanged = [
-            HalfPlane::new_unnormalized(1.0, 0.0, 2.0, 1_000_004),
-            HalfPlane::new_unnormalized(-1.0, 0.0, 2.0, 1_000_005),
-            HalfPlane::new_unnormalized(0.0, 1.0, 2.0, 1_000_006),
-            HalfPlane::new_unnormalized(0.0, -1.0, 2.0, 1_000_007),
-        ];
+        let (hps_changed, hps_unchanged, hps_combo) = build_hp_pools::<N>(&poly, hp_pool_len);
 
         // Pre-allocate output buffers.
         let mut out_a = PolyBuffer::new();
@@ -2617,28 +2708,28 @@ pub(crate) fn run_clip_convex_microbench() {
 
         // Sanity: ensure the intended regimes.
         assert!(matches!(
-            clip_convex_small::<N>(&poly, &hps[0], &mut out_a),
+            clip_convex_small::<N>(&poly, &hps_changed[0], &mut out_a),
             ClipResult::Changed
         ));
         assert!(matches!(
-            clip_convex_bitmask(&poly, &hps[0], &mut out_b),
+            clip_convex_bitmask(&poly, &hps_changed[0], &mut out_b),
             ClipResult::Changed
         ));
         assert!(matches!(
-            clip_convex_small_bool::<N>(&poly, &hps[0], &mut out_c),
+            clip_convex_small_bool::<N>(&poly, &hps_changed[0], &mut out_c),
             ClipResult::Changed
         ));
         assert!(matches!(
-            clip_convex_match_ngon::<N>(&poly, &hps[0], &mut out_d),
+            clip_convex_match_ngon::<N>(&poly, &hps_changed[0], &mut out_d),
             ClipResult::Changed
         ));
         assert!(matches!(
-            clip_convex_simd::<N>(&poly, &hps[0], &mut out_s),
+            clip_convex_simd::<N>(&poly, &hps_changed[0], &mut out_s),
             ClipResult::Changed
         ));
         if N == 4 {
             assert!(matches!(
-                clip_convex_quad(&poly, &hps[0], &mut out_q),
+                clip_convex_quad(&poly, &hps_changed[0], &mut out_q),
                 ClipResult::Changed
             ));
         }
@@ -2686,72 +2777,123 @@ pub(crate) fn run_clip_convex_microbench() {
         if N == 4 {
             bench_ns_per_call("quad mixed", target, samples, 1, |iters| {
                 let poly = black_box(&poly);
-                let hps = black_box(&hps);
+                let hps = black_box(hps_changed.as_slice());
+                let hp_mask = hps.len() - 1;
                 let out = black_box(&mut out_q);
-                for i in 0..iters {
-                    let hp = &hps[(i as usize) & 3];
+                let mut s = 0x1234_5678_9ABC_DEF0u64;
+                for _ in 0..iters {
+                    let hp = &hps[next_idx(&mut s, hp_mask)];
                     let r = clip_convex_quad(poly, hp, out);
                     black_box(r);
                 }
             });
         }
 
-        let (small_mixed, _) = bench_ns_per_call("small mixed", target, samples, 1, |iters| {
+        let (_small_mixed, _) = bench_ns_per_call("small mixed", target, samples, 1, |iters| {
             let poly = black_box(&poly);
-            let hps = black_box(&hps);
+            let hps = black_box(hps_changed.as_slice());
+            let hp_mask = hps.len() - 1;
             let out = black_box(&mut out_a);
-            for i in 0..iters {
-                let hp = &hps[(i as usize) & 3];
+            let mut s = 0x1234_5678_9ABC_DEF0u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
                 let r = clip_convex_small::<N>(poly, hp, out);
                 black_box(r);
             }
         });
-        let (mask_mixed, _) = bench_ns_per_call("bitmask mixed", target, samples, 1, |iters| {
+        let (_mask_mixed, _) = bench_ns_per_call("bitmask mixed", target, samples, 1, |iters| {
             let poly = black_box(&poly);
-            let hps = black_box(&hps);
+            let hps = black_box(hps_changed.as_slice());
+            let hp_mask = hps.len() - 1;
             let out = black_box(&mut out_b);
-            for i in 0..iters {
-                let hp = &hps[(i as usize) & 3];
+            let mut s = 0x1234_5678_9ABC_DEF0u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
                 let r = clip_convex_bitmask(poly, hp, out);
                 black_box(r);
             }
         });
-        let (bool_mixed, _) = bench_ns_per_call("bool mixed", target, samples, 1, |iters| {
+        let (_bool_mixed, _) = bench_ns_per_call("bool mixed", target, samples, 1, |iters| {
             let poly = black_box(&poly);
-            let hps = black_box(&hps);
+            let hps = black_box(hps_changed.as_slice());
+            let hp_mask = hps.len() - 1;
             let out = black_box(&mut out_c);
-            for i in 0..iters {
-                let hp = &hps[(i as usize) & 3];
+            let mut s = 0x1234_5678_9ABC_DEF0u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
                 let r = clip_convex_small_bool::<N>(poly, hp, out);
                 black_box(r);
             }
         });
         bench_ns_per_call("match_ngon mixed", target, samples, 1, |iters| {
             let poly = black_box(&poly);
-            let hps = black_box(&hps);
+            let hps = black_box(hps_changed.as_slice());
+            let hp_mask = hps.len() - 1;
             let out = black_box(&mut out_d);
-            for i in 0..iters {
-                let hp = &hps[(i as usize) & 3];
+            let mut s = 0x1234_5678_9ABC_DEF0u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
                 let r = clip_convex_match_ngon::<N>(poly, hp, out);
                 black_box(r);
             }
         });
         bench_ns_per_call("table_ngon mixed", target, samples, 1, |iters| {
             let poly = black_box(&poly);
-            let hps = black_box(&hps);
+            let hps = black_box(hps_changed.as_slice());
+            let hp_mask = hps.len() - 1;
             let out = black_box(&mut out_d);
-            for i in 0..iters {
-                let hp = &hps[(i as usize) & 3];
+            let mut s = 0x1234_5678_9ABC_DEF0u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
                 let r = clip_convex_table_ngon::<N>(poly, hp, out);
                 black_box(r);
             }
         });
-        let (simd_mixed, _) = bench_ns_per_call("simd mixed", target, samples, 1, |iters| {
+        let (_simd_mixed, _) = bench_ns_per_call("simd mixed", target, samples, 1, |iters| {
             let poly = black_box(&poly);
-            let hps = black_box(&hps);
+            let hps = black_box(hps_changed.as_slice());
+            let hp_mask = hps.len() - 1;
             let out = black_box(&mut out_s);
-            for i in 0..iters {
-                let hp = &hps[(i as usize) & 3];
+            let mut s = 0x1234_5678_9ABC_DEF0u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let r = clip_convex_simd::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
+
+        bench_ns_per_call("match_ngon combo", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_combo.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_d);
+            let mut s = 0xF00D_F00D_CAFE_BEEFu64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let r = clip_convex_match_ngon::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
+        bench_ns_per_call("table_ngon combo", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_combo.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_d);
+            let mut s = 0xF00D_F00D_CAFE_BEEFu64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let r = clip_convex_table_ngon::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
+        bench_ns_per_call("simd combo", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_combo.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_s);
+            let mut s = 0xF00D_F00D_CAFE_BEEFu64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
                 let r = clip_convex_simd::<N>(poly, hp, out);
                 black_box(r);
             }
@@ -2760,72 +2902,86 @@ pub(crate) fn run_clip_convex_microbench() {
         if N == 4 {
             bench_ns_per_call("quad unchanged", target, samples, 1, |iters| {
                 let poly = black_box(&poly);
-                let hps = black_box(&hps_unchanged);
+                let hps = black_box(hps_unchanged.as_slice());
+                let hp_mask = hps.len() - 1;
                 let out = black_box(&mut out_q);
-                for i in 0..iters {
-                    let hp = &hps[(i as usize) & 3];
+                let mut s = 0x0BAD_F00D_1234_5678u64;
+                for _ in 0..iters {
+                    let hp = &hps[next_idx(&mut s, hp_mask)];
                     let r = clip_convex_quad(poly, hp, out);
                     black_box(r);
                 }
             });
         }
 
-        let (small_unch, _) = bench_ns_per_call("small unchanged", target, samples, 1, |iters| {
+        let (_small_unch, _) = bench_ns_per_call("small unchanged", target, samples, 1, |iters| {
             let poly = black_box(&poly);
-            let hps = black_box(&hps_unchanged);
+            let hps = black_box(hps_unchanged.as_slice());
+            let hp_mask = hps.len() - 1;
             let out = black_box(&mut out_a);
-            for i in 0..iters {
-                let hp = &hps[(i as usize) & 3];
+            let mut s = 0x0BAD_F00D_1234_5678u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
                 let r = clip_convex_small::<N>(poly, hp, out);
                 black_box(r);
             }
         });
-        let (mask_unch, _) = bench_ns_per_call("bitmask unchanged", target, samples, 1, |iters| {
+        let (_mask_unch, _) = bench_ns_per_call("bitmask unchanged", target, samples, 1, |iters| {
             let poly = black_box(&poly);
-            let hps = black_box(&hps_unchanged);
+            let hps = black_box(hps_unchanged.as_slice());
+            let hp_mask = hps.len() - 1;
             let out = black_box(&mut out_b);
-            for i in 0..iters {
-                let hp = &hps[(i as usize) & 3];
+            let mut s = 0x0BAD_F00D_1234_5678u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
                 let r = clip_convex_bitmask(poly, hp, out);
                 black_box(r);
             }
         });
-        let (bool_unch, _) = bench_ns_per_call("bool unchanged", target, samples, 1, |iters| {
+        let (_bool_unch, _) = bench_ns_per_call("bool unchanged", target, samples, 1, |iters| {
             let poly = black_box(&poly);
-            let hps = black_box(&hps_unchanged);
+            let hps = black_box(hps_unchanged.as_slice());
+            let hp_mask = hps.len() - 1;
             let out = black_box(&mut out_c);
-            for i in 0..iters {
-                let hp = &hps[(i as usize) & 3];
+            let mut s = 0x0BAD_F00D_1234_5678u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
                 let r = clip_convex_small_bool::<N>(poly, hp, out);
                 black_box(r);
             }
         });
         bench_ns_per_call("match_ngon unchanged", target, samples, 1, |iters| {
             let poly = black_box(&poly);
-            let hps = black_box(&hps_unchanged);
+            let hps = black_box(hps_unchanged.as_slice());
+            let hp_mask = hps.len() - 1;
             let out = black_box(&mut out_d);
-            for i in 0..iters {
-                let hp = &hps[(i as usize) & 3];
+            let mut s = 0x0BAD_F00D_1234_5678u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
                 let r = clip_convex_match_ngon::<N>(poly, hp, out);
                 black_box(r);
             }
         });
         bench_ns_per_call("table_ngon unchanged", target, samples, 1, |iters| {
             let poly = black_box(&poly);
-            let hps = black_box(&hps_unchanged);
+            let hps = black_box(hps_unchanged.as_slice());
+            let hp_mask = hps.len() - 1;
             let out = black_box(&mut out_d);
-            for i in 0..iters {
-                let hp = &hps[(i as usize) & 3];
+            let mut s = 0x0BAD_F00D_1234_5678u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
                 let r = clip_convex_table_ngon::<N>(poly, hp, out);
                 black_box(r);
             }
         });
-        let (simd_unch, _) = bench_ns_per_call("simd unchanged", target, samples, 1, |iters| {
+        let (_simd_unch, _) = bench_ns_per_call("simd unchanged", target, samples, 1, |iters| {
             let poly = black_box(&poly);
-            let hps = black_box(&hps_unchanged);
+            let hps = black_box(hps_unchanged.as_slice());
+            let hp_mask = hps.len() - 1;
             let out = black_box(&mut out_s);
-            for i in 0..iters {
-                let hp = &hps[(i as usize) & 3];
+            let mut s = 0x0BAD_F00D_1234_5678u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
                 let r = clip_convex_simd::<N>(poly, hp, out);
                 black_box(r);
             }
@@ -2833,12 +2989,12 @@ pub(crate) fn run_clip_convex_microbench() {
     }
 
     let target = Duration::from_millis(target_ms);
-    run_for::<3>(target, samples);
-    run_for::<4>(target, samples);
-    run_for::<5>(target, samples);
-    run_for::<6>(target, samples);
-    run_for::<7>(target, samples);
-    run_for::<8>(target, samples);
+    run_for::<3>(target, samples, hp_pool_len);
+    run_for::<4>(target, samples, hp_pool_len);
+    run_for::<5>(target, samples, hp_pool_len);
+    run_for::<6>(target, samples, hp_pool_len);
+    run_for::<7>(target, samples, hp_pool_len);
+    run_for::<8>(target, samples, hp_pool_len);
 }
 
 #[inline]
