@@ -747,14 +747,8 @@ impl<'a> ClipCtx<'a> {
         let d_out = dists[OUT];
         let t = Self::get_t(d_in, d_out);
 
-        let u = t.mul_add(
-            self.poly.us[OUT] - self.poly.us[IN],
-            self.poly.us[IN],
-        );
-        let v = t.mul_add(
-            self.poly.vs[OUT] - self.poly.vs[IN],
-            self.poly.vs[IN],
-        );
+        let u = t.mul_add(self.poly.us[OUT] - self.poly.us[IN], self.poly.us[IN]);
+        let v = t.mul_add(self.poly.vs[OUT] - self.poly.vs[IN], self.poly.vs[IN]);
         let edge_plane = self.poly.edge_planes[EDGE];
         let vp = (edge_plane, self.hp.plane_idx);
 
@@ -777,14 +771,8 @@ impl<'a> ClipCtx<'a> {
         let d_out = dists[OUT];
         let t = Self::get_t(d_in, d_out);
 
-        let u = t.mul_add(
-            self.poly.us[OUT] - self.poly.us[IN],
-            self.poly.us[IN],
-        );
-        let v = t.mul_add(
-            self.poly.vs[OUT] - self.poly.vs[IN],
-            self.poly.vs[IN],
-        );
+        let u = t.mul_add(self.poly.us[OUT] - self.poly.us[IN], self.poly.us[IN]);
+        let v = t.mul_add(self.poly.vs[OUT] - self.poly.vs[IN], self.poly.vs[IN]);
         let edge_plane = self.poly.edge_planes[EDGE];
         let vp = (edge_plane, self.hp.plane_idx);
 
@@ -1397,7 +1385,11 @@ mod clip_jump_tables {
 }
 
 #[inline(always)]
-fn run_jump_table_4<const N: usize>(mask: u8, dists: &[f64; 4], ctx: &mut ClipCtx<'_>) -> ClipResult {
+fn run_jump_table_4<const N: usize>(
+    mask: u8,
+    dists: &[f64; 4],
+    ctx: &mut ClipCtx<'_>,
+) -> ClipResult {
     if N == 3 {
         clip_jump_tables::run_n3(mask, dists, ctx)
     } else if N == 4 {
@@ -1408,7 +1400,11 @@ fn run_jump_table_4<const N: usize>(mask: u8, dists: &[f64; 4], ctx: &mut ClipCt
 }
 
 #[inline(always)]
-fn run_jump_table_8<const N: usize>(mask: u8, dists: &[f64; 8], ctx: &mut ClipCtx<'_>) -> ClipResult {
+fn run_jump_table_8<const N: usize>(
+    mask: u8,
+    dists: &[f64; 8],
+    ctx: &mut ClipCtx<'_>,
+) -> ClipResult {
     if N == 5 {
         clip_jump_tables::run_n5(mask, dists, ctx)
     } else if N == 6 {
@@ -1563,8 +1559,8 @@ fn clip_convex_simd_4lane<const N: usize>(
     debug_assert!(N == 3 || N == 4);
     debug_assert_eq!(poly.len, N);
 
-    use std::simd::prelude::*;
     use std::simd::f64x4;
+    use std::simd::prelude::*;
 
     let us_simd = f64x4::from_slice(&poly.us[0..4]);
     let vs_simd = f64x4::from_slice(&poly.vs[0..4]);
@@ -1604,8 +1600,8 @@ fn clip_convex_simd_8lane<const N: usize>(
     debug_assert!((5..=8).contains(&N));
     debug_assert_eq!(poly.len, N);
 
-    use std::simd::prelude::*;
     use std::simd::f64x8;
+    use std::simd::prelude::*;
 
     let us_simd = f64x8::from_slice(&poly.us[0..8]);
     let vs_simd = f64x8::from_slice(&poly.vs[0..8]);
@@ -2034,25 +2030,23 @@ fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipR
     let max_r2 = poly.max_r2;
     if !poly.has_bounding_ref && max_r2 > 0.0 {
         let t = hp.c + hp.eps;
-        if t >= 0.0 {
-            if t * t >= hp.ab2 * max_r2 {
-                debug_assert!(
-                    (0..n).all(|i| hp.signed_dist(poly.us[i], poly.vs[i]) >= -hp.eps),
-                    "clip_convex early-out returned Unchanged, but a vertex was outside"
-                );
-                #[cfg(feature = "timing")]
-                clip_convex_stats::record_early_unchanged(n, !poly.has_bounding_ref);
-                return ClipResult::Unchanged;
-            }
+        if t >= 0.0 && t * t >= hp.ab2 * max_r2 {
+            debug_assert!(
+                (0..n).all(|i| hp.signed_dist(poly.us[i], poly.vs[i]) >= -hp.eps),
+                "clip_convex early-out returned Unchanged, but a vertex was outside"
+            );
+            #[cfg(feature = "timing")]
+            clip_convex_stats::record_early_unchanged(n, !poly.has_bounding_ref);
+            return ClipResult::Unchanged;
         }
     }
     match n {
-        3 => clip_convex_simd_tri(poly, hp, out),
-        4 => clip_convex_simd_quad(poly, hp, out),
-        5 => clip_convex_simd_pent(poly, hp, out),
-        6 => clip_convex_simd_hex(poly, hp, out),
-        7 => clip_convex_simd_hept(poly, hp, out),
-        8 => clip_convex_simd_oct(poly, hp, out),
+        3 => clip_convex_small_bool::<3>(poly, hp, out),
+        4 => clip_convex_small_bool::<4>(poly, hp, out),
+        5 => clip_convex_small_bool::<5>(poly, hp, out),
+        6 => clip_convex_small_bool::<6>(poly, hp, out),
+        7 => clip_convex_small_bool::<7>(poly, hp, out),
+        8 => clip_convex_small_bool::<8>(poly, hp, out),
         _ => clip_convex_bitmask(poly, hp, out),
     }
 }
@@ -2609,7 +2603,6 @@ pub(crate) fn run_clip_convex_microbench() {
     ) -> (Vec<HalfPlane>, Vec<HalfPlane>, Vec<HalfPlane>) {
         debug_assert!(pool_len.is_power_of_two());
         let full_mask_val: u8 = ((1u16 << N) - 1) as u8;
-        let half = pool_len / 2;
 
         #[derive(Clone, Copy)]
         struct Rng(u64);
@@ -2685,10 +2678,14 @@ pub(crate) fn run_clip_convex_microbench() {
             }
         }
 
-        // Combo pool: half changed, half unchanged (uniformly selectable).
-        let mut combo = Vec::with_capacity(pool_len);
-        combo.extend_from_slice(&changed[..half]);
-        combo.extend_from_slice(&unchanged[..half]);
+        // Combo pool: alternate changed/unchanged and include *all* entries from both pools.
+        // This keeps the changed/unchanged mix stable (50/50) while avoiding "first half only"
+        // artifacts that can skew branch prediction and mask distributions.
+        let mut combo = Vec::with_capacity(pool_len * 2);
+        for i in 0..pool_len {
+            combo.push(changed[i]);
+            combo.push(unchanged[i]);
+        }
 
         (changed, unchanged, combo)
     }
@@ -2862,6 +2859,42 @@ pub(crate) fn run_clip_convex_microbench() {
             }
         });
 
+        let (_small_combo, _) = bench_ns_per_call("small combo", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_combo.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_a);
+            let mut s = 0xF00D_F00D_CAFE_BEEFu64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let r = clip_convex_small::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
+        let (_mask_combo, _) = bench_ns_per_call("bitmask combo", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_combo.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_b);
+            let mut s = 0xF00D_F00D_CAFE_BEEFu64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let r = clip_convex_bitmask(poly, hp, out);
+                black_box(r);
+            }
+        });
+        let (_bool_combo, _) = bench_ns_per_call("bool combo", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_combo.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_c);
+            let mut s = 0xF00D_F00D_CAFE_BEEFu64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let r = clip_convex_small_bool::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
         bench_ns_per_call("match_ngon combo", target, samples, 1, |iters| {
             let poly = black_box(&poly);
             let hps = black_box(hps_combo.as_slice());
@@ -3013,455 +3046,6 @@ fn sort3(a: &mut u32, b: &mut u32, c: &mut u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[derive(Clone)]
-    struct XorShift64 {
-        state: u64,
-    }
-
-    impl XorShift64 {
-        fn new(seed: u64) -> Self {
-            Self { state: seed }
-        }
-
-        #[inline(always)]
-        fn next_u64(&mut self) -> u64 {
-            // xorshift64*
-            let mut x = self.state;
-            x ^= x >> 12;
-            x ^= x << 25;
-            x ^= x >> 27;
-            self.state = x;
-            x.wrapping_mul(0x2545F4914F6CDD1D)
-        }
-
-        #[inline(always)]
-        fn next_f64(&mut self) -> f64 {
-            // Uniform in [0,1)
-            let bits = self.next_u64() >> 11; // 53 bits
-            (bits as f64) * (1.0 / ((1u64 << 53) as f64))
-        }
-
-        #[inline(always)]
-        fn range_f64(&mut self, lo: f64, hi: f64) -> f64 {
-            lo + (hi - lo) * self.next_f64()
-        }
-
-        #[inline(always)]
-        fn range_usize(&mut self, hi: usize) -> usize {
-            debug_assert!(hi > 0);
-            (self.next_u64() as usize) % hi
-        }
-    }
-
-    fn clip_convex_simd_main(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
-        let n = poly.len;
-        debug_assert!(n >= 3, "clip_convex expects poly.len >= 3, got {}", n);
-
-        let max_r2 = poly.max_r2;
-        if !poly.has_bounding_ref && max_r2 > 0.0 {
-            let t = hp.c + hp.eps;
-            if t >= 0.0 && t * t >= hp.ab2 * max_r2 {
-                return ClipResult::Unchanged;
-            }
-        }
-
-        match n {
-            3 => clip_convex_simd_tri(poly, hp, out),
-            4 => clip_convex_simd_quad(poly, hp, out),
-            5 => clip_convex_simd_pent(poly, hp, out),
-            6 => clip_convex_simd_hex(poly, hp, out),
-            7 => clip_convex_simd_hept(poly, hp, out),
-            8 => clip_convex_simd_oct(poly, hp, out),
-            _ => clip_convex_bitmask(poly, hp, out),
-        }
-    }
-
-    fn fill_sentinel(out: &mut PolyBuffer) {
-        out.len = 7;
-        out.max_r2 = 123.0;
-        out.has_bounding_ref = true;
-        for i in 0..out.len {
-            out.us[i] = f64::NAN;
-            out.vs[i] = f64::NAN;
-            out.vertex_planes[i] = (999, 999);
-            out.edge_planes[i] = 999;
-        }
-    }
-
-    fn approx(a: f64, b: f64) -> bool {
-        let d = (a - b).abs();
-        d <= 1e-10 || d <= 1e-10 * a.abs().max(b.abs())
-    }
-
-    fn approx_allow_nan(a: f64, b: f64) -> bool {
-        (a.is_nan() && b.is_nan()) || approx(a, b)
-    }
-
-    fn poly_eq_cyclic(a: &PolyBuffer, b: &PolyBuffer) -> bool {
-        if a.len != b.len {
-            return false;
-        }
-        if a.len == 0 {
-            return approx(a.max_r2, b.max_r2) && a.has_bounding_ref == b.has_bounding_ref;
-        }
-        if !approx(a.max_r2, b.max_r2) || a.has_bounding_ref != b.has_bounding_ref {
-            return false;
-        }
-        let n = a.len;
-
-        'rot: for off in 0..n {
-            for i in 0..n {
-                let j = (i + off) % n;
-                if !approx(a.us[i], b.us[j])
-                    || !approx(a.vs[i], b.vs[j])
-                    || a.vertex_planes[i] != b.vertex_planes[j]
-                    || a.edge_planes[i] != b.edge_planes[j]
-                {
-                    continue 'rot;
-                }
-            }
-            return true;
-        }
-
-        false
-    }
-
-    fn poly_eq_cyclic_allow_nan(a: &PolyBuffer, b: &PolyBuffer) -> bool {
-        if a.len != b.len {
-            return false;
-        }
-        if a.len == 0 {
-            return approx_allow_nan(a.max_r2, b.max_r2) && a.has_bounding_ref == b.has_bounding_ref;
-        }
-        if !approx_allow_nan(a.max_r2, b.max_r2) || a.has_bounding_ref != b.has_bounding_ref {
-            return false;
-        }
-        let n = a.len;
-
-        'rot: for off in 0..n {
-            for i in 0..n {
-                let j = (i + off) % n;
-                if !approx_allow_nan(a.us[i], b.us[j])
-                    || !approx_allow_nan(a.vs[i], b.vs[j])
-                    || a.vertex_planes[i] != b.vertex_planes[j]
-                    || a.edge_planes[i] != b.edge_planes[j]
-                {
-                    continue 'rot;
-                }
-            }
-            return true;
-        }
-
-        false
-    }
-
-    fn make_poly<const N: usize>(us: [f64; N], vs: [f64; N]) -> PolyBuffer {
-        let mut p = PolyBuffer::new();
-        p.len = N;
-        p.max_r2 = 0.0;
-        p.has_bounding_ref = false;
-        for i in 0..N {
-            p.us[i] = us[i];
-            p.vs[i] = vs[i];
-            p.vertex_planes[i] = (i, (i + 1) % N);
-            p.edge_planes[i] = i;
-            p.max_r2 = p.max_r2.max(us[i] * us[i] + vs[i] * vs[i]);
-        }
-        p
-    }
-
-    fn make_regular_poly<const N: usize>(radius: f64) -> PolyBuffer {
-        let mut p = PolyBuffer::new();
-        p.len = N;
-        p.max_r2 = 0.0;
-        p.has_bounding_ref = false;
-        for i in 0..N {
-            let theta = std::f64::consts::TAU * (i as f64) / (N as f64);
-            let (s, c) = theta.sin_cos();
-            let u = radius * c;
-            let v = radius * s;
-            p.us[i] = u;
-            p.vs[i] = v;
-            p.vertex_planes[i] = (i, (i + 1) % N);
-            p.edge_planes[i] = i;
-            p.max_r2 = p.max_r2.max(u * u + v * v);
-        }
-        p
-    }
-
-    fn random_half_plane_targeting_vertex(
-        rng: &mut XorShift64,
-        poly: &PolyBuffer,
-        plane_idx: usize,
-    ) -> HalfPlane {
-        let theta = rng.range_f64(0.0, core::f64::consts::TAU);
-        let scale = rng.range_f64(0.25, 4.0);
-        let a = scale * theta.cos();
-        let b = scale * theta.sin();
-
-        // Choose a vertex and place the boundary near it, within a few eps.
-        let i = rng.range_usize(poly.len.max(1));
-        let ui = poly.us[i];
-        let vi = poly.vs[i];
-        let ab2 = a.mul_add(a, b * b);
-        let norm = (ab2 as f32).sqrt() as f64;
-        let eps = EPS_INSIDE * norm;
-        let delta = rng.range_f64(-4.0 * eps, 4.0 * eps);
-        let c = -(a.mul_add(ui, b * vi)) + delta;
-
-        HalfPlane::new_unnormalized(a, b, c, plane_idx)
-    }
-
-    fn random_half_plane_generic(rng: &mut XorShift64, plane_idx: usize) -> HalfPlane {
-        let theta = rng.range_f64(0.0, core::f64::consts::TAU);
-        let scale = rng.range_f64(0.25, 4.0);
-        let a = scale * theta.cos();
-        let b = scale * theta.sin();
-        let c = rng.range_f64(-0.25, 0.25);
-        HalfPlane::new_unnormalized(a, b, c, plane_idx)
-    }
-
-    #[test]
-    fn test_simd_to_bitmask_lane_order() {
-        use std::simd::prelude::*;
-        use std::simd::f64x8;
-
-        let v = f64x8::from_array([-1.0, -1.0, -1.0, -1.0, 1.0, 1.0, 1.0, 1.0]);
-        let m = v.simd_ge(f64x8::splat(0.0));
-        assert_eq!(m.to_bitmask(), 0b1111_0000);
-    }
-
-    #[test]
-    fn test_clip_convex_simd_matches_scalar_random_sequences() {
-        let mut rng = XorShift64::new(0xC0FFEE_1234_5678);
-
-        for case in 0..200usize {
-            let mut poly_scalar = PolyBuffer::new();
-            poly_scalar.init_bounding(1e6);
-            let mut poly_simd = poly_scalar.clone();
-
-            let mut out_scalar = PolyBuffer::new();
-            let mut out_simd = PolyBuffer::new();
-
-            for step in 0..64usize {
-                let hp = random_half_plane_targeting_vertex(&mut rng, &poly_scalar, step);
-
-                fill_sentinel(&mut out_scalar);
-                fill_sentinel(&mut out_simd);
-
-                let r_scalar = clip_convex(&poly_scalar, &hp, &mut out_scalar);
-                let r_simd = clip_convex_simd_main(&poly_simd, &hp, &mut out_simd);
-                assert_eq!(
-                    r_scalar, r_simd,
-                    "case={case} step={step} n={}",
-                    poly_scalar.len
-                );
-
-                match r_scalar {
-                    ClipResult::Unchanged => {
-                        // `out` must not be modified.
-                        assert!(out_scalar.us[0].is_nan());
-                        assert!(out_simd.us[0].is_nan());
-                    }
-                    ClipResult::TooManyVertices => unreachable!("not expected in this test"),
-                    ClipResult::Changed => {
-                        assert!(
-                            poly_eq_cyclic(&out_scalar, &out_simd),
-                            "case={case} step={step} polys diverged (n={})",
-                            poly_scalar.len
-                        );
-
-                        poly_scalar = out_scalar.clone();
-                        poly_simd = out_simd.clone();
-
-                        if poly_scalar.len < 3 {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_clip_convex_table_ngon_matches_scalar_random_sequences() {
-        let mut rng = XorShift64::new(0xBADA55_1234_5678);
-
-        for case in 0..200usize {
-            let n = 3 + (case % 6);
-            let poly = match n {
-                3 => make_regular_poly::<3>(1.0),
-                4 => make_regular_poly::<4>(1.0),
-                5 => make_regular_poly::<5>(1.0),
-                6 => make_regular_poly::<6>(1.0),
-                7 => make_regular_poly::<7>(1.0),
-                8 => make_regular_poly::<8>(1.0),
-                _ => unreachable!(),
-            };
-
-            let mut poly_match = poly.clone();
-            let mut poly_table = poly.clone();
-            let mut out_match = PolyBuffer::new();
-            let mut out_table = PolyBuffer::new();
-
-            for step in 0..64usize {
-                let hp = random_half_plane_generic(&mut rng, step);
-                fill_sentinel(&mut out_match);
-                fill_sentinel(&mut out_table);
-
-                let r_match = match n {
-                    3 => clip_convex_match_ngon::<3>(&poly_match, &hp, &mut out_match),
-                    4 => clip_convex_match_ngon::<4>(&poly_match, &hp, &mut out_match),
-                    5 => clip_convex_match_ngon::<5>(&poly_match, &hp, &mut out_match),
-                    6 => clip_convex_match_ngon::<6>(&poly_match, &hp, &mut out_match),
-                    7 => clip_convex_match_ngon::<7>(&poly_match, &hp, &mut out_match),
-                    8 => clip_convex_match_ngon::<8>(&poly_match, &hp, &mut out_match),
-                    _ => unreachable!(),
-                };
-                let r_table = match n {
-                    3 => clip_convex_table_ngon::<3>(&poly_table, &hp, &mut out_table),
-                    4 => clip_convex_table_ngon::<4>(&poly_table, &hp, &mut out_table),
-                    5 => clip_convex_table_ngon::<5>(&poly_table, &hp, &mut out_table),
-                    6 => clip_convex_table_ngon::<6>(&poly_table, &hp, &mut out_table),
-                    7 => clip_convex_table_ngon::<7>(&poly_table, &hp, &mut out_table),
-                    8 => clip_convex_table_ngon::<8>(&poly_table, &hp, &mut out_table),
-                    _ => unreachable!(),
-                };
-
-                assert_eq!(matches!(r_table, ClipResult::TooManyVertices), false);
-                assert_eq!(
-                    matches!(r_match, ClipResult::Unchanged),
-                    matches!(r_table, ClipResult::Unchanged)
-                );
-
-                if matches!(r_match, ClipResult::Changed) {
-                    assert!(
-                        poly_eq_cyclic_allow_nan(&out_match, &out_table),
-                        "table_ngon mismatch: n={n} case={case} step={step}"
-                    );
-                    poly_match = out_match.clone();
-                    poly_table = out_table.clone();
-                }
-                if poly_match.len < 3 {
-                    break;
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_clip_convex_small_matches_bitmask_square() {
-        let poly = make_poly::<4>([0.0, 1.0, 1.0, 0.0], [0.0, 0.0, 1.0, 1.0]);
-        let hp = HalfPlane::new_unnormalized(1.0, 0.0, -0.5, 7);
-
-        // Mixed case
-        let mut out_small = PolyBuffer::new();
-        let mut out_mask = PolyBuffer::new();
-        assert_eq!(
-            clip_convex_small::<4>(&poly, &hp, &mut out_small),
-            ClipResult::Changed
-        );
-        assert_eq!(
-            clip_convex_bitmask(&poly, &hp, &mut out_mask),
-            ClipResult::Changed
-        );
-        assert!(poly_eq_cyclic(&out_small, &out_mask));
-
-        // All inside should not touch `out`
-        let hp_inside = HalfPlane::new_unnormalized(1.0, 0.0, 10.0, 7);
-        fill_sentinel(&mut out_small);
-        fill_sentinel(&mut out_mask);
-        assert_eq!(
-            clip_convex_small::<4>(&poly, &hp_inside, &mut out_small),
-            ClipResult::Unchanged
-        );
-        assert_eq!(
-            clip_convex_bitmask(&poly, &hp_inside, &mut out_mask),
-            ClipResult::Unchanged
-        );
-        assert_eq!(out_small.len, 7);
-        assert_eq!(out_mask.len, 7);
-
-        // All outside
-        let hp_outside = HalfPlane::new_unnormalized(1.0, 0.0, -10.0, 7);
-        assert_eq!(
-            clip_convex_small::<4>(&poly, &hp_outside, &mut out_small),
-            ClipResult::Changed
-        );
-        assert_eq!(
-            clip_convex_bitmask(&poly, &hp_outside, &mut out_mask),
-            ClipResult::Changed
-        );
-        assert_eq!(out_small.len, 0);
-        assert_eq!(out_mask.len, 0);
-    }
-
-    #[test]
-    fn test_clip_convex_small_matches_bitmask_bounding_triangle() {
-        let mut poly = PolyBuffer::new();
-        poly.init_bounding(10.0);
-        let hp = HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 12); // u >= 0
-
-        let mut out_small = PolyBuffer::new();
-        let mut out_mask = PolyBuffer::new();
-        assert_eq!(
-            clip_convex_small::<3>(&poly, &hp, &mut out_small),
-            ClipResult::Changed
-        );
-        assert_eq!(
-            clip_convex_bitmask(&poly, &hp, &mut out_mask),
-            ClipResult::Changed
-        );
-        assert!(poly_eq_cyclic(&out_small, &out_mask));
-    }
-
-    #[test]
-    fn test_clip_convex_bool_matches_bitmask_square() {
-        let poly = make_poly::<4>([0.0, 1.0, 1.0, 0.0], [0.0, 0.0, 1.0, 1.0]);
-        let hp = HalfPlane::new_unnormalized(1.0, 0.0, -0.5, 7);
-
-        // Mixed case
-        let mut out_bool = PolyBuffer::new();
-        let mut out_mask = PolyBuffer::new();
-        assert_eq!(
-            clip_convex_small_bool::<4>(&poly, &hp, &mut out_bool),
-            ClipResult::Changed
-        );
-        assert_eq!(
-            clip_convex_bitmask(&poly, &hp, &mut out_mask),
-            ClipResult::Changed
-        );
-        assert!(poly_eq_cyclic(&out_bool, &out_mask));
-
-        // All inside should not touch `out`
-        let hp_inside = HalfPlane::new_unnormalized(1.0, 0.0, 10.0, 7);
-        fill_sentinel(&mut out_bool);
-        fill_sentinel(&mut out_mask);
-        assert_eq!(
-            clip_convex_small_bool::<4>(&poly, &hp_inside, &mut out_bool),
-            ClipResult::Unchanged
-        );
-        assert_eq!(
-            clip_convex_bitmask(&poly, &hp_inside, &mut out_mask),
-            ClipResult::Unchanged
-        );
-        assert_eq!(out_bool.len, 7);
-        assert_eq!(out_mask.len, 7);
-
-        // All outside
-        let hp_outside = HalfPlane::new_unnormalized(1.0, 0.0, -10.0, 7);
-        assert_eq!(
-            clip_convex_small_bool::<4>(&poly, &hp_outside, &mut out_bool),
-            ClipResult::Changed
-        );
-        assert_eq!(
-            clip_convex_bitmask(&poly, &hp_outside, &mut out_mask),
-            ClipResult::Changed
-        );
-        assert_eq!(out_bool.len, 0);
-        assert_eq!(out_mask.len, 0);
-    }
 
     #[test]
     fn test_tangent_basis() {
