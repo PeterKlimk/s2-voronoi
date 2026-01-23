@@ -812,6 +812,15 @@ impl<'a> ClipCtx<'a> {
 mod clip_jump_tables {
     use super::*;
 
+    pub(super) mod tables {
+        include!("clip_tables/table_n3.rs");
+        include!("clip_tables/table_n4.rs");
+        include!("clip_tables/table_n5.rs");
+        include!("clip_tables/table_n6.rs");
+        include!("clip_tables/table_n7.rs");
+        include!("clip_tables/table_n8.rs");
+    }
+
     #[inline(always)]
     pub(super) fn run_n3(mask: u8, dists: &[f64; 4], ctx: &mut ClipCtx<'_>) -> ClipResult {
         #[cold]
@@ -820,6 +829,96 @@ mod clip_jump_tables {
         }
         include!("clip_tables/ngon_n3.rs");
         ctx.finish();
+        ClipResult::Changed
+    }
+
+    #[inline(always)]
+    pub(super) fn run_table_n3(
+        mask: u8,
+        dists: &[f64; 4],
+        poly: &PolyBuffer,
+        hp: &HalfPlane,
+        out: &mut PolyBuffer,
+    ) -> ClipResult {
+        debug_assert_eq!(poly.len, 3);
+        debug_assert!(mask != 0 && mask != 0b111);
+
+        let (start, len) = tables::TABLE_N3[mask as usize];
+        if len == 0 {
+            return clip_convex_small_bool::<3>(poly, hp, out);
+        }
+
+        // Layout:
+        // - entry intersection: prev(start) -> start
+        // - len vertices starting at start
+        // - exit intersection: last -> next(last)
+        let n = 3usize;
+        let start = start as usize;
+        let len = len as usize;
+
+        let prev = if start == 0 { n - 1 } else { start - 1 };
+        let last = (start + len - 1) % n;
+        let next = (last + 1) % n;
+
+        out.len = 0;
+        let mut max_r2 = 0.0f64;
+        let mut has_bounding = false;
+        let track_bounding = poly.has_bounding_ref;
+
+        #[inline(always)]
+        fn r2_of(u: f64, v: f64) -> f64 {
+            u.mul_add(u, v * v)
+        }
+
+        #[inline(always)]
+        fn get_t(d_in: f64, d_out: f64) -> f64 {
+            d_in / (d_in - d_out)
+        }
+
+        macro_rules! push_raw_track {
+            ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
+                let u = $u;
+                let v = $v;
+                let vp = $vp;
+                out.push_raw(u, v, vp, $ep);
+                let r2 = r2_of(u, v);
+                if r2 > max_r2 {
+                    max_r2 = r2;
+                }
+                if track_bounding {
+                    has_bounding |= vp.0 == usize::MAX;
+                }
+            }};
+        }
+
+        // Entry
+        // Match the jump-table entry parameterization: in=start (inside), out=prev (outside).
+        let t_entry = get_t(dists[start], dists[prev]);
+        let entry_u = t_entry.mul_add(poly.us[prev] - poly.us[start], poly.us[start]);
+        let entry_v = t_entry.mul_add(poly.vs[prev] - poly.vs[start], poly.vs[start]);
+        let entry_ep = poly.edge_planes[prev];
+        push_raw_track!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
+
+        // Vertices
+        for k in 0..len {
+            let i = (start + k) % n;
+            push_raw_track!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+
+        // Exit
+        let t_exit = get_t(dists[last], dists[next]);
+        let exit_u = t_exit.mul_add(poly.us[next] - poly.us[last], poly.us[last]);
+        let exit_v = t_exit.mul_add(poly.vs[next] - poly.vs[last], poly.vs[last]);
+        let exit_ep = poly.edge_planes[last];
+        push_raw_track!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
+
+        out.max_r2 = max_r2;
+        out.has_bounding_ref = if track_bounding { has_bounding } else { false };
         ClipResult::Changed
     }
 
@@ -835,6 +934,92 @@ mod clip_jump_tables {
     }
 
     #[inline(always)]
+    pub(super) fn run_table_n4(
+        mask: u8,
+        dists: &[f64; 4],
+        poly: &PolyBuffer,
+        hp: &HalfPlane,
+        out: &mut PolyBuffer,
+    ) -> ClipResult {
+        debug_assert_eq!(poly.len, 4);
+        debug_assert!(mask != 0 && mask != 0b1111);
+
+        let (start, len) = tables::TABLE_N4[mask as usize];
+        if len == 0 {
+            return clip_convex_small_bool::<4>(poly, hp, out);
+        }
+
+        let n = 4usize;
+        let start = start as usize;
+        let len = len as usize;
+
+        let prev = if start == 0 { n - 1 } else { start - 1 };
+        let last = (start + len - 1) % n;
+        let next = (last + 1) % n;
+
+        out.len = 0;
+        let mut max_r2 = 0.0f64;
+        let mut has_bounding = false;
+        let track_bounding = poly.has_bounding_ref;
+
+        #[inline(always)]
+        fn r2_of(u: f64, v: f64) -> f64 {
+            u.mul_add(u, v * v)
+        }
+
+        #[inline(always)]
+        fn get_t(d_in: f64, d_out: f64) -> f64 {
+            d_in / (d_in - d_out)
+        }
+
+        macro_rules! push_raw_track {
+            ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
+                let u = $u;
+                let v = $v;
+                let vp = $vp;
+                out.push_raw(u, v, vp, $ep);
+                let r2 = r2_of(u, v);
+                if r2 > max_r2 {
+                    max_r2 = r2;
+                }
+                if track_bounding {
+                    has_bounding |= vp.0 == usize::MAX;
+                }
+            }};
+        }
+
+        // Entry
+        // Match the jump-table entry parameterization: in=start (inside), out=prev (outside).
+        let t_entry = get_t(dists[start], dists[prev]);
+        let entry_u = t_entry.mul_add(poly.us[prev] - poly.us[start], poly.us[start]);
+        let entry_v = t_entry.mul_add(poly.vs[prev] - poly.vs[start], poly.vs[start]);
+        let entry_ep = poly.edge_planes[prev];
+        push_raw_track!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
+
+        // Vertices
+        for k in 0..len {
+            let i = (start + k) % n;
+            push_raw_track!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+
+        // Exit
+        let t_exit = get_t(dists[last], dists[next]);
+        let exit_u = t_exit.mul_add(poly.us[next] - poly.us[last], poly.us[last]);
+        let exit_v = t_exit.mul_add(poly.vs[next] - poly.vs[last], poly.vs[last]);
+        let exit_ep = poly.edge_planes[last];
+        push_raw_track!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
+
+        out.max_r2 = max_r2;
+        out.has_bounding_ref = if track_bounding { has_bounding } else { false };
+        ClipResult::Changed
+    }
+
+    #[inline(always)]
     pub(super) fn run_n5(mask: u8, dists: &[f64; 8], ctx: &mut ClipCtx<'_>) -> ClipResult {
         #[cold]
         fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
@@ -842,6 +1027,89 @@ mod clip_jump_tables {
         }
         include!("clip_tables/ngon_n5.rs");
         ctx.finish();
+        ClipResult::Changed
+    }
+
+    #[inline(always)]
+    pub(super) fn run_table_n5(
+        mask: u8,
+        dists: &[f64; 8],
+        poly: &PolyBuffer,
+        hp: &HalfPlane,
+        out: &mut PolyBuffer,
+    ) -> ClipResult {
+        debug_assert_eq!(poly.len, 5);
+        debug_assert!(mask != 0 && mask != 0b1_1111);
+
+        let (start, len) = tables::TABLE_N5[mask as usize];
+        if len == 0 {
+            return clip_convex_small_bool::<5>(poly, hp, out);
+        }
+
+        let n = 5usize;
+        let start = start as usize;
+        let len = len as usize;
+
+        let prev = if start == 0 { n - 1 } else { start - 1 };
+        let last = (start + len - 1) % n;
+        let next = (last + 1) % n;
+
+        out.len = 0;
+        let mut max_r2 = 0.0f64;
+        let mut has_bounding = false;
+        let track_bounding = poly.has_bounding_ref;
+
+        #[inline(always)]
+        fn r2_of(u: f64, v: f64) -> f64 {
+            u.mul_add(u, v * v)
+        }
+
+        #[inline(always)]
+        fn get_t(d_in: f64, d_out: f64) -> f64 {
+            d_in / (d_in - d_out)
+        }
+
+        macro_rules! push_raw_track {
+            ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
+                let u = $u;
+                let v = $v;
+                let vp = $vp;
+                out.push_raw(u, v, vp, $ep);
+                let r2 = r2_of(u, v);
+                if r2 > max_r2 {
+                    max_r2 = r2;
+                }
+                if track_bounding {
+                    has_bounding |= vp.0 == usize::MAX;
+                }
+            }};
+        }
+
+        // Match the jump-table entry parameterization: in=start (inside), out=prev (outside).
+        let t_entry = get_t(dists[start], dists[prev]);
+        let entry_u = t_entry.mul_add(poly.us[prev] - poly.us[start], poly.us[start]);
+        let entry_v = t_entry.mul_add(poly.vs[prev] - poly.vs[start], poly.vs[start]);
+        let entry_ep = poly.edge_planes[prev];
+        push_raw_track!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
+
+        for k in 0..len {
+            let i = (start + k) % n;
+            push_raw_track!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+
+        let t_exit = get_t(dists[last], dists[next]);
+        let exit_u = t_exit.mul_add(poly.us[next] - poly.us[last], poly.us[last]);
+        let exit_v = t_exit.mul_add(poly.vs[next] - poly.vs[last], poly.vs[last]);
+        let exit_ep = poly.edge_planes[last];
+        push_raw_track!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
+
+        out.max_r2 = max_r2;
+        out.has_bounding_ref = if track_bounding { has_bounding } else { false };
         ClipResult::Changed
     }
 
@@ -857,6 +1125,89 @@ mod clip_jump_tables {
     }
 
     #[inline(always)]
+    pub(super) fn run_table_n6(
+        mask: u8,
+        dists: &[f64; 8],
+        poly: &PolyBuffer,
+        hp: &HalfPlane,
+        out: &mut PolyBuffer,
+    ) -> ClipResult {
+        debug_assert_eq!(poly.len, 6);
+        debug_assert!(mask != 0 && mask != 0b11_1111);
+
+        let (start, len) = tables::TABLE_N6[mask as usize];
+        if len == 0 {
+            return clip_convex_small_bool::<6>(poly, hp, out);
+        }
+
+        let n = 6usize;
+        let start = start as usize;
+        let len = len as usize;
+
+        let prev = if start == 0 { n - 1 } else { start - 1 };
+        let last = (start + len - 1) % n;
+        let next = (last + 1) % n;
+
+        out.len = 0;
+        let mut max_r2 = 0.0f64;
+        let mut has_bounding = false;
+        let track_bounding = poly.has_bounding_ref;
+
+        #[inline(always)]
+        fn r2_of(u: f64, v: f64) -> f64 {
+            u.mul_add(u, v * v)
+        }
+
+        #[inline(always)]
+        fn get_t(d_in: f64, d_out: f64) -> f64 {
+            d_in / (d_in - d_out)
+        }
+
+        macro_rules! push_raw_track {
+            ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
+                let u = $u;
+                let v = $v;
+                let vp = $vp;
+                out.push_raw(u, v, vp, $ep);
+                let r2 = r2_of(u, v);
+                if r2 > max_r2 {
+                    max_r2 = r2;
+                }
+                if track_bounding {
+                    has_bounding |= vp.0 == usize::MAX;
+                }
+            }};
+        }
+
+        // Match the jump-table entry parameterization: in=start (inside), out=prev (outside).
+        let t_entry = get_t(dists[start], dists[prev]);
+        let entry_u = t_entry.mul_add(poly.us[prev] - poly.us[start], poly.us[start]);
+        let entry_v = t_entry.mul_add(poly.vs[prev] - poly.vs[start], poly.vs[start]);
+        let entry_ep = poly.edge_planes[prev];
+        push_raw_track!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
+
+        for k in 0..len {
+            let i = (start + k) % n;
+            push_raw_track!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+
+        let t_exit = get_t(dists[last], dists[next]);
+        let exit_u = t_exit.mul_add(poly.us[next] - poly.us[last], poly.us[last]);
+        let exit_v = t_exit.mul_add(poly.vs[next] - poly.vs[last], poly.vs[last]);
+        let exit_ep = poly.edge_planes[last];
+        push_raw_track!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
+
+        out.max_r2 = max_r2;
+        out.has_bounding_ref = if track_bounding { has_bounding } else { false };
+        ClipResult::Changed
+    }
+
+    #[inline(always)]
     pub(super) fn run_n7(mask: u8, dists: &[f64; 8], ctx: &mut ClipCtx<'_>) -> ClipResult {
         #[cold]
         fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
@@ -868,6 +1219,89 @@ mod clip_jump_tables {
     }
 
     #[inline(always)]
+    pub(super) fn run_table_n7(
+        mask: u8,
+        dists: &[f64; 8],
+        poly: &PolyBuffer,
+        hp: &HalfPlane,
+        out: &mut PolyBuffer,
+    ) -> ClipResult {
+        debug_assert_eq!(poly.len, 7);
+        debug_assert!(mask != 0 && mask != 0b111_1111);
+
+        let (start, len) = tables::TABLE_N7[mask as usize];
+        if len == 0 {
+            return clip_convex_small_bool::<7>(poly, hp, out);
+        }
+
+        let n = 7usize;
+        let start = start as usize;
+        let len = len as usize;
+
+        let prev = if start == 0 { n - 1 } else { start - 1 };
+        let last = (start + len - 1) % n;
+        let next = (last + 1) % n;
+
+        out.len = 0;
+        let mut max_r2 = 0.0f64;
+        let mut has_bounding = false;
+        let track_bounding = poly.has_bounding_ref;
+
+        #[inline(always)]
+        fn r2_of(u: f64, v: f64) -> f64 {
+            u.mul_add(u, v * v)
+        }
+
+        #[inline(always)]
+        fn get_t(d_in: f64, d_out: f64) -> f64 {
+            d_in / (d_in - d_out)
+        }
+
+        macro_rules! push_raw_track {
+            ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
+                let u = $u;
+                let v = $v;
+                let vp = $vp;
+                out.push_raw(u, v, vp, $ep);
+                let r2 = r2_of(u, v);
+                if r2 > max_r2 {
+                    max_r2 = r2;
+                }
+                if track_bounding {
+                    has_bounding |= vp.0 == usize::MAX;
+                }
+            }};
+        }
+
+        // Match the jump-table entry parameterization: in=start (inside), out=prev (outside).
+        let t_entry = get_t(dists[start], dists[prev]);
+        let entry_u = t_entry.mul_add(poly.us[prev] - poly.us[start], poly.us[start]);
+        let entry_v = t_entry.mul_add(poly.vs[prev] - poly.vs[start], poly.vs[start]);
+        let entry_ep = poly.edge_planes[prev];
+        push_raw_track!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
+
+        for k in 0..len {
+            let i = (start + k) % n;
+            push_raw_track!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+
+        let t_exit = get_t(dists[last], dists[next]);
+        let exit_u = t_exit.mul_add(poly.us[next] - poly.us[last], poly.us[last]);
+        let exit_v = t_exit.mul_add(poly.vs[next] - poly.vs[last], poly.vs[last]);
+        let exit_ep = poly.edge_planes[last];
+        push_raw_track!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
+
+        out.max_r2 = max_r2;
+        out.has_bounding_ref = if track_bounding { has_bounding } else { false };
+        ClipResult::Changed
+    }
+
+    #[inline(always)]
     pub(super) fn run_n8(mask: u8, dists: &[f64; 8], ctx: &mut ClipCtx<'_>) -> ClipResult {
         #[cold]
         fn fallback(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
@@ -875,6 +1309,89 @@ mod clip_jump_tables {
         }
         include!("clip_tables/ngon_n8.rs");
         ctx.finish();
+        ClipResult::Changed
+    }
+
+    #[inline(always)]
+    pub(super) fn run_table_n8(
+        mask: u8,
+        dists: &[f64; 8],
+        poly: &PolyBuffer,
+        hp: &HalfPlane,
+        out: &mut PolyBuffer,
+    ) -> ClipResult {
+        debug_assert_eq!(poly.len, 8);
+        debug_assert!(mask != 0 && mask != 0xFF);
+
+        let (start, len) = tables::TABLE_N8[mask as usize];
+        if len == 0 {
+            return clip_convex_small_bool::<8>(poly, hp, out);
+        }
+
+        let n = 8usize;
+        let start = start as usize;
+        let len = len as usize;
+
+        let prev = if start == 0 { n - 1 } else { start - 1 };
+        let last = (start + len - 1) % n;
+        let next = (last + 1) % n;
+
+        out.len = 0;
+        let mut max_r2 = 0.0f64;
+        let mut has_bounding = false;
+        let track_bounding = poly.has_bounding_ref;
+
+        #[inline(always)]
+        fn r2_of(u: f64, v: f64) -> f64 {
+            u.mul_add(u, v * v)
+        }
+
+        #[inline(always)]
+        fn get_t(d_in: f64, d_out: f64) -> f64 {
+            d_in / (d_in - d_out)
+        }
+
+        macro_rules! push_raw_track {
+            ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
+                let u = $u;
+                let v = $v;
+                let vp = $vp;
+                out.push_raw(u, v, vp, $ep);
+                let r2 = r2_of(u, v);
+                if r2 > max_r2 {
+                    max_r2 = r2;
+                }
+                if track_bounding {
+                    has_bounding |= vp.0 == usize::MAX;
+                }
+            }};
+        }
+
+        // Match the jump-table entry parameterization: in=start (inside), out=prev (outside).
+        let t_entry = get_t(dists[start], dists[prev]);
+        let entry_u = t_entry.mul_add(poly.us[prev] - poly.us[start], poly.us[start]);
+        let entry_v = t_entry.mul_add(poly.vs[prev] - poly.vs[start], poly.vs[start]);
+        let entry_ep = poly.edge_planes[prev];
+        push_raw_track!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
+
+        for k in 0..len {
+            let i = (start + k) % n;
+            push_raw_track!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+
+        let t_exit = get_t(dists[last], dists[next]);
+        let exit_u = t_exit.mul_add(poly.us[next] - poly.us[last], poly.us[last]);
+        let exit_v = t_exit.mul_add(poly.vs[next] - poly.vs[last], poly.vs[last]);
+        let exit_ep = poly.edge_planes[last];
+        push_raw_track!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
+
+        out.max_r2 = max_r2;
+        out.has_bounding_ref = if track_bounding { has_bounding } else { false };
         ClipResult::Changed
     }
 }
@@ -902,6 +1419,78 @@ fn run_jump_table_8<const N: usize>(mask: u8, dists: &[f64; 8], ctx: &mut ClipCt
         clip_jump_tables::run_n8(mask, dists, ctx)
     } else {
         unreachable!("run_jump_table_8 only supports N=5..=8")
+    }
+}
+
+#[inline(always)]
+#[cfg(any(test, feature = "microbench"))]
+fn clip_convex_table_ngon<const N: usize>(
+    poly: &PolyBuffer,
+    hp: &HalfPlane,
+    out: &mut PolyBuffer,
+) -> ClipResult {
+    debug_assert_eq!(poly.len, N);
+
+    let neg_eps = -hp.eps;
+    let full_mask_val: u8 = ((1u16 << N) - 1) as u8;
+
+    let us = poly.us.as_ptr();
+    let vs = poly.vs.as_ptr();
+
+    if N == 3 || N == 4 {
+        let mut dists = [0.0f64; 4];
+        let mut mask: u8 = 0;
+        unsafe {
+            for i in 0..N {
+                let d = hp.signed_dist(*us.add(i), *vs.add(i));
+                *dists.get_unchecked_mut(i) = d;
+                mask |= ((d >= neg_eps) as u8) << i;
+            }
+        }
+
+        if mask == 0 {
+            out.len = 0;
+            out.max_r2 = 0.0;
+            out.has_bounding_ref = false;
+            return ClipResult::Changed;
+        }
+        if mask == full_mask_val {
+            return ClipResult::Unchanged;
+        }
+
+        match N {
+            3 => clip_jump_tables::run_table_n3(mask, &dists, poly, hp, out),
+            4 => clip_jump_tables::run_table_n4(mask, &dists, poly, hp, out),
+            _ => unreachable!(),
+        }
+    } else {
+        let mut dists = [0.0f64; 8];
+        let mut mask: u8 = 0;
+        unsafe {
+            for i in 0..N {
+                let d = hp.signed_dist(*us.add(i), *vs.add(i));
+                *dists.get_unchecked_mut(i) = d;
+                mask |= ((d >= neg_eps) as u8) << i;
+            }
+        }
+
+        if mask == 0 {
+            out.len = 0;
+            out.max_r2 = 0.0;
+            out.has_bounding_ref = false;
+            return ClipResult::Changed;
+        }
+        if mask == full_mask_val {
+            return ClipResult::Unchanged;
+        }
+
+        match N {
+            5 => clip_jump_tables::run_table_n5(mask, &dists, poly, hp, out),
+            6 => clip_jump_tables::run_table_n6(mask, &dists, poly, hp, out),
+            7 => clip_jump_tables::run_table_n7(mask, &dists, poly, hp, out),
+            8 => clip_jump_tables::run_table_n8(mask, &dists, poly, hp, out),
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -2147,6 +2736,16 @@ pub(crate) fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
+        bench_ns_per_call("table_ngon mixed", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(&hps);
+            let out = black_box(&mut out_d);
+            for i in 0..iters {
+                let hp = &hps[(i as usize) & 3];
+                let r = clip_convex_table_ngon::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
         let (simd_mixed, _) = bench_ns_per_call("simd mixed", target, samples, 1, |iters| {
             let poly = black_box(&poly);
             let hps = black_box(&hps);
@@ -2208,6 +2807,16 @@ pub(crate) fn run_clip_convex_microbench() {
             for i in 0..iters {
                 let hp = &hps[(i as usize) & 3];
                 let r = clip_convex_match_ngon::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
+        bench_ns_per_call("table_ngon unchanged", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(&hps_unchanged);
+            let out = black_box(&mut out_d);
+            for i in 0..iters {
+                let hp = &hps[(i as usize) & 3];
+                let r = clip_convex_table_ngon::<N>(poly, hp, out);
                 black_box(r);
             }
         });
@@ -2329,6 +2938,10 @@ mod tests {
         d <= 1e-10 || d <= 1e-10 * a.abs().max(b.abs())
     }
 
+    fn approx_allow_nan(a: f64, b: f64) -> bool {
+        (a.is_nan() && b.is_nan()) || approx(a, b)
+    }
+
     fn poly_eq_cyclic(a: &PolyBuffer, b: &PolyBuffer) -> bool {
         if a.len != b.len {
             return false;
@@ -2358,6 +2971,35 @@ mod tests {
         false
     }
 
+    fn poly_eq_cyclic_allow_nan(a: &PolyBuffer, b: &PolyBuffer) -> bool {
+        if a.len != b.len {
+            return false;
+        }
+        if a.len == 0 {
+            return approx_allow_nan(a.max_r2, b.max_r2) && a.has_bounding_ref == b.has_bounding_ref;
+        }
+        if !approx_allow_nan(a.max_r2, b.max_r2) || a.has_bounding_ref != b.has_bounding_ref {
+            return false;
+        }
+        let n = a.len;
+
+        'rot: for off in 0..n {
+            for i in 0..n {
+                let j = (i + off) % n;
+                if !approx_allow_nan(a.us[i], b.us[j])
+                    || !approx_allow_nan(a.vs[i], b.vs[j])
+                    || a.vertex_planes[i] != b.vertex_planes[j]
+                    || a.edge_planes[i] != b.edge_planes[j]
+                {
+                    continue 'rot;
+                }
+            }
+            return true;
+        }
+
+        false
+    }
+
     fn make_poly<const N: usize>(us: [f64; N], vs: [f64; N]) -> PolyBuffer {
         let mut p = PolyBuffer::new();
         p.len = N;
@@ -2369,6 +3011,25 @@ mod tests {
             p.vertex_planes[i] = (i, (i + 1) % N);
             p.edge_planes[i] = i;
             p.max_r2 = p.max_r2.max(us[i] * us[i] + vs[i] * vs[i]);
+        }
+        p
+    }
+
+    fn make_regular_poly<const N: usize>(radius: f64) -> PolyBuffer {
+        let mut p = PolyBuffer::new();
+        p.len = N;
+        p.max_r2 = 0.0;
+        p.has_bounding_ref = false;
+        for i in 0..N {
+            let theta = std::f64::consts::TAU * (i as f64) / (N as f64);
+            let (s, c) = theta.sin_cos();
+            let u = radius * c;
+            let v = radius * s;
+            p.us[i] = u;
+            p.vs[i] = v;
+            p.vertex_planes[i] = (i, (i + 1) % N);
+            p.edge_planes[i] = i;
+            p.max_r2 = p.max_r2.max(u * u + v * v);
         }
         p
     }
@@ -2393,6 +3054,15 @@ mod tests {
         let delta = rng.range_f64(-4.0 * eps, 4.0 * eps);
         let c = -(a.mul_add(ui, b * vi)) + delta;
 
+        HalfPlane::new_unnormalized(a, b, c, plane_idx)
+    }
+
+    fn random_half_plane_generic(rng: &mut XorShift64, plane_idx: usize) -> HalfPlane {
+        let theta = rng.range_f64(0.0, core::f64::consts::TAU);
+        let scale = rng.range_f64(0.25, 4.0);
+        let a = scale * theta.cos();
+        let b = scale * theta.sin();
+        let c = rng.range_f64(-0.25, 0.25);
         HalfPlane::new_unnormalized(a, b, c, plane_idx)
     }
 
@@ -2453,6 +3123,72 @@ mod tests {
                             break;
                         }
                     }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_clip_convex_table_ngon_matches_scalar_random_sequences() {
+        let mut rng = XorShift64::new(0xBADA55_1234_5678);
+
+        for case in 0..200usize {
+            let n = 3 + (case % 6);
+            let poly = match n {
+                3 => make_regular_poly::<3>(1.0),
+                4 => make_regular_poly::<4>(1.0),
+                5 => make_regular_poly::<5>(1.0),
+                6 => make_regular_poly::<6>(1.0),
+                7 => make_regular_poly::<7>(1.0),
+                8 => make_regular_poly::<8>(1.0),
+                _ => unreachable!(),
+            };
+
+            let mut poly_match = poly.clone();
+            let mut poly_table = poly.clone();
+            let mut out_match = PolyBuffer::new();
+            let mut out_table = PolyBuffer::new();
+
+            for step in 0..64usize {
+                let hp = random_half_plane_generic(&mut rng, step);
+                fill_sentinel(&mut out_match);
+                fill_sentinel(&mut out_table);
+
+                let r_match = match n {
+                    3 => clip_convex_match_ngon::<3>(&poly_match, &hp, &mut out_match),
+                    4 => clip_convex_match_ngon::<4>(&poly_match, &hp, &mut out_match),
+                    5 => clip_convex_match_ngon::<5>(&poly_match, &hp, &mut out_match),
+                    6 => clip_convex_match_ngon::<6>(&poly_match, &hp, &mut out_match),
+                    7 => clip_convex_match_ngon::<7>(&poly_match, &hp, &mut out_match),
+                    8 => clip_convex_match_ngon::<8>(&poly_match, &hp, &mut out_match),
+                    _ => unreachable!(),
+                };
+                let r_table = match n {
+                    3 => clip_convex_table_ngon::<3>(&poly_table, &hp, &mut out_table),
+                    4 => clip_convex_table_ngon::<4>(&poly_table, &hp, &mut out_table),
+                    5 => clip_convex_table_ngon::<5>(&poly_table, &hp, &mut out_table),
+                    6 => clip_convex_table_ngon::<6>(&poly_table, &hp, &mut out_table),
+                    7 => clip_convex_table_ngon::<7>(&poly_table, &hp, &mut out_table),
+                    8 => clip_convex_table_ngon::<8>(&poly_table, &hp, &mut out_table),
+                    _ => unreachable!(),
+                };
+
+                assert_eq!(matches!(r_table, ClipResult::TooManyVertices), false);
+                assert_eq!(
+                    matches!(r_match, ClipResult::Unchanged),
+                    matches!(r_table, ClipResult::Unchanged)
+                );
+
+                if matches!(r_match, ClipResult::Changed) {
+                    assert!(
+                        poly_eq_cyclic_allow_nan(&out_match, &out_table),
+                        "table_ngon mismatch: n={n} case={case} step={step}"
+                    );
+                    poly_match = out_match.clone();
+                    poly_table = out_table.clone();
+                }
+                if poly_match.len < 3 {
+                    break;
                 }
             }
         }
