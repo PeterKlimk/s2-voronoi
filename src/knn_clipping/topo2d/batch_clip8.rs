@@ -29,6 +29,12 @@ pub struct HpBatch8 {
     pub ab2: f64x8,
     /// Per-lane epsilon values
     pub eps: f64x8,
+    /// Scalar copies for cheap lane access (avoid repeated `to_array()` in hot paths).
+    pub a_arr: [f64; 8],
+    pub b_arr: [f64; 8],
+    pub c_arr: [f64; 8],
+    pub ab2_arr: [f64; 8],
+    pub eps_arr: [f64; 8],
     /// Per-lane plane indices (stored as array for convenience)
     pub plane_idxs: [usize; 8],
     /// Number of active half-planes (1-8)
@@ -44,28 +50,33 @@ impl HpBatch8 {
     pub unsafe fn from_slice_unchecked(hps: &[HalfPlane]) -> Self {
         debug_assert!(hps.len() <= 8);
 
-        let mut a = [0.0f64; 8];
-        let mut b = [0.0f64; 8];
-        let mut c = [0.0f64; 8];
-        let mut ab2 = [0.0f64; 8];
-        let mut eps = [0.0f64; 8];
+        let mut a_arr = [0.0f64; 8];
+        let mut b_arr = [0.0f64; 8];
+        let mut c_arr = [0.0f64; 8];
+        let mut ab2_arr = [0.0f64; 8];
+        let mut eps_arr = [0.0f64; 8];
         let mut plane_idxs = [0usize; 8];
 
         for (i, hp) in hps.iter().enumerate() {
-            a[i] = hp.a;
-            b[i] = hp.b;
-            c[i] = hp.c;
-            ab2[i] = hp.ab2;
-            eps[i] = hp.eps;
+            a_arr[i] = hp.a;
+            b_arr[i] = hp.b;
+            c_arr[i] = hp.c;
+            ab2_arr[i] = hp.ab2;
+            eps_arr[i] = hp.eps;
             plane_idxs[i] = hp.plane_idx;
         }
 
         Self {
-            a: f64x8::from_array(a),
-            b: f64x8::from_array(b),
-            c: f64x8::from_array(c),
-            ab2: f64x8::from_array(ab2),
-            eps: f64x8::from_array(eps),
+            a: f64x8::from_array(a_arr),
+            b: f64x8::from_array(b_arr),
+            c: f64x8::from_array(c_arr),
+            ab2: f64x8::from_array(ab2_arr),
+            eps: f64x8::from_array(eps_arr),
+            a_arr,
+            b_arr,
+            c_arr,
+            ab2_arr,
+            eps_arr,
             plane_idxs,
             len: hps.len() as u8,
         }
@@ -81,18 +92,13 @@ impl HpBatch8 {
     #[inline]
     pub fn get(&self, i: usize) -> HalfPlane {
         debug_assert!(i < 8);
-        let a_arr = self.a.to_array();
-        let b_arr = self.b.to_array();
-        let c_arr = self.c.to_array();
-        let ab2_arr = self.ab2.to_array();
-        let eps_arr = self.eps.to_array();
         HalfPlane {
-            a: a_arr[i],
-            b: b_arr[i],
-            c: c_arr[i],
-            ab2: ab2_arr[i],
+            a: self.a_arr[i],
+            b: self.b_arr[i],
+            c: self.c_arr[i],
+            ab2: self.ab2_arr[i],
             plane_idx: self.plane_idxs[i],
-            eps: eps_arr[i],
+            eps: self.eps_arr[i],
         }
     }
 
@@ -191,6 +197,40 @@ fn classify_batch_with_lane_masks(poly: &PolyBuffer, batch: &HpBatch8) -> (Verte
     (vertex_masks, lane_masks)
 }
 
+#[inline]
+fn classify_lanes_only(poly: &PolyBuffer, batch: &HpBatch8) -> [u64; 8] {
+    let n = poly.len;
+    debug_assert!(n <= MAX_POLY_VERTICES);
+    debug_assert!(n <= 64, "lane bitmasks are stored in u64");
+
+    let mut lane_masks = [0u64; 8];
+
+    let a = batch.a;
+    let b = batch.b;
+    let c = batch.c;
+    let neg_eps = -batch.eps;
+
+    for i in 0..n {
+        let u_vec = f64x8::splat(poly.us[i]);
+        let v_vec = f64x8::splat(poly.vs[i]);
+
+        let dist = a * u_vec + b * v_vec + c;
+        let inside_mask = dist.simd_ge(neg_eps);
+        let bits = inside_mask.to_bitmask() as u8;
+
+        lane_masks[0] |= ((bits & 1) as u64) << i;
+        lane_masks[1] |= (((bits >> 1) & 1) as u64) << i;
+        lane_masks[2] |= (((bits >> 2) & 1) as u64) << i;
+        lane_masks[3] |= (((bits >> 3) & 1) as u64) << i;
+        lane_masks[4] |= (((bits >> 4) & 1) as u64) << i;
+        lane_masks[5] |= (((bits >> 5) & 1) as u64) << i;
+        lane_masks[6] |= (((bits >> 6) & 1) as u64) << i;
+        lane_masks[7] |= (((bits >> 7) & 1) as u64) << i;
+    }
+
+    lane_masks
+}
+
 /// Classify a single vertex against a subset of active half-planes.
 ///
 /// Returns an 8-bit mask indicating which half-planes the vertex is inside.
@@ -244,9 +284,31 @@ fn vertices_inside_lane_mask(vertex_masks: &VertexMasks, n: usize, lane: usize) 
 /// `ClipResult` indicating the outcome
 #[cfg_attr(feature = "profiling", inline(never))]
 pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch8, out: &mut PolyBuffer) -> ClipResult {
+    let mut scratch = PolyBuffer::new();
+    clip_batch_with_scratch(poly, batch, out, &mut scratch)
+}
+
+/// Clip a polygon against a batch of half-planes, reusing a caller-provided scratch buffer.
+///
+/// This avoids allocating/zeroing large `PolyBuffer`s on every call and is the intended
+/// fast path for benchmarking/experimentation.
+///
+/// # Safety / Aliasing
+/// `scratch` must not alias `out` or `poly`.
+#[cfg_attr(feature = "profiling", inline(never))]
+pub fn clip_batch_with_scratch(
+    poly: &PolyBuffer,
+    batch: &HpBatch8,
+    out: &mut PolyBuffer,
+    scratch: &mut PolyBuffer,
+) -> ClipResult {
     let n = poly.len;
     debug_assert!(n >= 3 && n <= MAX_POLY_VERTICES);
     debug_assert!(n <= 64, "lane bitmasks are stored in u64");
+    debug_assert!(
+        !std::ptr::eq(out, scratch),
+        "`out` and `scratch` must be distinct"
+    );
 
     // Track which lanes are still active.
     debug_assert!(batch.len <= 8);
@@ -288,24 +350,105 @@ pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch8, out: &mut PolyBuffer) -> 
 
     // Initial classification: all vertices against all half-planes.
     // (We still compute all 8 lanes, but lane_mask controls which lanes matter.)
+    if n <= 12 {
+        // Small-N fast path: avoid heavy per-vertex mask bookkeeping; just re-classify
+        // the current polygon against remaining lanes each time.
+        let mut cur_slot: u8 = 0; // 0=input `poly`, 1=`out`, 2=`scratch`
+        let mut any_changed = false;
+
+        while lane_mask != 0 {
+            let (cur_n, lane_vertex_masks) = match cur_slot {
+                0 => (poly.len, classify_lanes_only(poly, batch)),
+                1 => (out.len, classify_lanes_only(out, batch)),
+                2 => (scratch.len, classify_lanes_only(scratch, batch)),
+                _ => unreachable!(),
+            };
+            let full_mask = full_vertex_mask(cur_n);
+
+            let mut did_mixed = false;
+            for lane in 0..8 {
+                let lane_bit = 1u8 << lane;
+                if (lane_mask & lane_bit) == 0 {
+                    continue;
+                }
+
+                let inside_mask = lane_vertex_masks[lane] & full_mask;
+                if inside_mask == 0 {
+                    out.clear();
+                    return ClipResult::Changed;
+                }
+                if inside_mask == full_mask {
+                    lane_mask &= !lane_bit;
+                    continue;
+                }
+
+                // Mixed: clip and restart (masks are now stale).
+                let hp = HalfPlane {
+                    a: batch.a_arr[lane],
+                    b: batch.b_arr[lane],
+                    c: batch.c_arr[lane],
+                    ab2: batch.ab2_arr[lane],
+                    eps: batch.eps_arr[lane],
+                    plane_idx: batch.plane_idxs[lane],
+                };
+
+                match cur_slot {
+                    0 => {
+                        clip_one_lane_mixed_no_masks(poly, &hp, inside_mask, out);
+                        cur_slot = 1;
+                        if out.len == 0 {
+                            out.clear();
+                            return ClipResult::Changed;
+                        }
+                    }
+                    1 => {
+                        clip_one_lane_mixed_no_masks(out, &hp, inside_mask, scratch);
+                        cur_slot = 2;
+                        if scratch.len == 0 {
+                            out.clear();
+                            return ClipResult::Changed;
+                        }
+                    }
+                    2 => {
+                        clip_one_lane_mixed_no_masks(scratch, &hp, inside_mask, out);
+                        cur_slot = 1;
+                        if out.len == 0 {
+                            out.clear();
+                            return ClipResult::Changed;
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+
+                any_changed = true;
+                lane_mask &= !lane_bit;
+                did_mixed = true;
+                break;
+            }
+
+            if !did_mixed {
+                break;
+            }
+        }
+
+        if !any_changed {
+            return ClipResult::Unchanged;
+        }
+        if cur_slot == 2 {
+            std::mem::swap(out, scratch);
+        }
+        return ClipResult::Changed;
+    }
+
     let (mut current_masks, mut lane_vertex_masks) = classify_batch_with_lane_masks(poly, batch);
     let mut next_masks: VertexMasks = [0u16; MAX_POLY_VERTICES];
     let mut next_lane_vertex_masks: [u64; 8] = [0u64; 8];
 
-    // Scratch buffers for intermediate polygons.
-    let mut buf_a = PolyBuffer::new();
-    let mut buf_b = PolyBuffer::new();
-    // 0 = input `poly`, 1 = `buf_a`, 2 = `buf_b`.
+    // Ping-pong between `out` and `scratch` for intermediate polygons.
+    // 0 = input `poly`, 1 = `out`, 2 = `scratch`.
     let mut cur_slot: u8 = 0;
 
     let mut any_changed = false;
-
-    // Cache scalar coefficients for cheaper per-lane access.
-    let a_arr = batch.a.to_array();
-    let b_arr = batch.b.to_array();
-    let c_arr = batch.c.to_array();
-    let ab2_arr = batch.ab2.to_array();
-    let eps_arr = batch.eps.to_array();
 
     for lane in 0..8 {
         if (lane_mask & (1 << lane)) == 0 {
@@ -314,8 +457,8 @@ pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch8, out: &mut PolyBuffer) -> 
 
         let n = match cur_slot {
             0 => poly.len,
-            1 => buf_a.len,
-            2 => buf_b.len,
+            1 => out.len,
+            2 => scratch.len,
             _ => unreachable!(),
         };
         let full_mask = full_vertex_mask(n);
@@ -344,12 +487,12 @@ pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch8, out: &mut PolyBuffer) -> 
         let plane_idx = batch.plane_idxs[lane];
 
         let hp = HalfPlane {
-            a: a_arr[lane],
-            b: b_arr[lane],
-            c: c_arr[lane],
-            eps: eps_arr[lane],
+            a: batch.a_arr[lane],
+            b: batch.b_arr[lane],
+            c: batch.c_arr[lane],
+            eps: batch.eps_arr[lane],
             plane_idx,
-            ab2: ab2_arr[lane],
+            ab2: batch.ab2_arr[lane],
         };
 
         match cur_slot {
@@ -361,7 +504,7 @@ pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch8, out: &mut PolyBuffer) -> 
                     &hp,
                     rem_lane_mask,
                     inside_mask,
-                    &mut buf_a,
+                    out,
                     &mut next_masks,
                     &mut next_lane_vertex_masks,
                 );
@@ -369,13 +512,13 @@ pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch8, out: &mut PolyBuffer) -> 
             }
             1 => {
                 clip_one_lane_mixed(
-                    &buf_a,
+                    out,
                     &current_masks,
                     batch,
                     &hp,
                     rem_lane_mask,
                     inside_mask,
-                    &mut buf_b,
+                    scratch,
                     &mut next_masks,
                     &mut next_lane_vertex_masks,
                 );
@@ -383,13 +526,13 @@ pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch8, out: &mut PolyBuffer) -> 
             }
             2 => {
                 clip_one_lane_mixed(
-                    &buf_b,
+                    scratch,
                     &current_masks,
                     batch,
                     &hp,
                     rem_lane_mask,
                     inside_mask,
-                    &mut buf_a,
+                    out,
                     &mut next_masks,
                     &mut next_lane_vertex_masks,
                 );
@@ -402,8 +545,8 @@ pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch8, out: &mut PolyBuffer) -> 
         lane_mask &= !(1 << lane);
 
         let new_len = match cur_slot {
-            1 => buf_a.len,
-            2 => buf_b.len,
+            1 => out.len,
+            2 => scratch.len,
             _ => unreachable!(),
         };
         if new_len == 0 {
@@ -440,13 +583,9 @@ pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch8, out: &mut PolyBuffer) -> 
         return ClipResult::Unchanged;
     }
 
-    let final_poly: &PolyBuffer = match cur_slot {
-        0 => poly,
-        1 => &buf_a,
-        2 => &buf_b,
-        _ => unreachable!(),
-    };
-    out.clone_from(final_poly);
+    if cur_slot == 2 {
+        std::mem::swap(out, scratch);
+    }
     ClipResult::Changed
 }
 
@@ -632,6 +771,127 @@ fn clip_one_lane_mixed(
     out.has_bounding_ref = if track_bounding { has_bounding } else { false };
 }
 
+#[inline]
+fn clip_one_lane_mixed_no_masks(poly: &PolyBuffer, hp: &HalfPlane, inside_mask: u64, out: &mut PolyBuffer) {
+    let n = poly.len;
+    let full_mask = full_vertex_mask(n);
+
+    debug_assert!(inside_mask != 0);
+    debug_assert!(inside_mask != full_mask);
+
+    let prev_mask = (inside_mask << 1) | (inside_mask >> (n - 1));
+    let trans_mask = (inside_mask ^ prev_mask) & full_mask;
+
+    // In the common convex case there are exactly 2 transitions.
+    // If not, fall back to a simple scan (avoids panics on degenerate inputs).
+    let (entry_next, exit_next) = if trans_mask.count_ones() == 2 {
+        let idx1 = trans_mask.trailing_zeros() as usize;
+        let trans_mask_rem = trans_mask & !(1u64 << idx1);
+        let idx2 = trans_mask_rem.trailing_zeros() as usize;
+
+        if (inside_mask & (1u64 << idx1)) != 0 {
+            (idx1, idx2)
+        } else {
+            (idx2, idx1)
+        }
+    } else {
+        let mut entry_next = None;
+        let mut exit_next = None;
+        for i in 0..n {
+            let prev = if i == 0 { n - 1 } else { i - 1 };
+            let prev_inside = (inside_mask >> prev) & 1 != 0;
+            let cur_inside = (inside_mask >> i) & 1 != 0;
+            if entry_next.is_none() && !prev_inside && cur_inside {
+                entry_next = Some(i);
+            } else if exit_next.is_none() && prev_inside && !cur_inside {
+                exit_next = Some(i);
+            }
+            if entry_next.is_some() && exit_next.is_some() {
+                break;
+            }
+        }
+        (entry_next.expect("entry transition"), exit_next.expect("exit transition"))
+    };
+
+    let entry_idx = if entry_next == 0 { n - 1 } else { entry_next - 1 };
+    let exit_idx = if exit_next == 0 { n - 1 } else { exit_next - 1 };
+
+    #[inline(always)]
+    fn r2_of(u: f64, v: f64) -> f64 {
+        u.mul_add(u, v * v)
+    }
+
+    #[inline(always)]
+    fn signed_dist(hp: &HalfPlane, u: f64, v: f64) -> f64 {
+        hp.a.mul_add(u, hp.b.mul_add(v, hp.c))
+    }
+
+    let mut out_len: usize = 0;
+    let mut max_r2 = 0.0f64;
+    let mut has_bounding = false;
+    let track_bounding = poly.has_bounding_ref;
+
+    macro_rules! push_idx {
+        ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
+            let u = $u;
+            let v = $v;
+            let vp = $vp;
+            let ep = $ep;
+            unsafe {
+                *out.us.get_unchecked_mut(out_len) = u;
+                *out.vs.get_unchecked_mut(out_len) = v;
+                *out.vertex_planes.get_unchecked_mut(out_len) = vp;
+                *out.edge_planes.get_unchecked_mut(out_len) = ep;
+            }
+            out_len += 1;
+            let r2 = r2_of(u, v);
+            if r2 > max_r2 {
+                max_r2 = r2;
+            }
+            if track_bounding {
+                has_bounding |= vp.0 == usize::MAX;
+            }
+        }};
+    }
+
+    // Entry intersection.
+    let d_entry = signed_dist(hp, poly.us[entry_idx], poly.vs[entry_idx]);
+    let d_entry_next = signed_dist(hp, poly.us[entry_next], poly.vs[entry_next]);
+    let t_entry = d_entry / (d_entry - d_entry_next);
+    let entry_u = t_entry.mul_add(poly.us[entry_next] - poly.us[entry_idx], poly.us[entry_idx]);
+    let entry_v = t_entry.mul_add(poly.vs[entry_next] - poly.vs[entry_idx], poly.vs[entry_idx]);
+    let entry_ep = poly.edge_planes[entry_idx];
+    push_idx!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
+
+    // Walk original vertices between entry and exit.
+    let mut i = entry_next;
+    loop {
+        push_idx!(
+            poly.us[i],
+            poly.vs[i],
+            poly.vertex_planes[i],
+            poly.edge_planes[i]
+        );
+        if i == exit_idx {
+            break;
+        }
+        i = (i + 1) % n;
+    }
+
+    // Exit intersection.
+    let d_exit = signed_dist(hp, poly.us[exit_idx], poly.vs[exit_idx]);
+    let d_exit_next = signed_dist(hp, poly.us[exit_next], poly.vs[exit_next]);
+    let t_exit = d_exit / (d_exit - d_exit_next);
+    let exit_u = t_exit.mul_add(poly.us[exit_next] - poly.us[exit_idx], poly.us[exit_idx]);
+    let exit_v = t_exit.mul_add(poly.vs[exit_next] - poly.vs[exit_idx], poly.vs[exit_idx]);
+    let exit_ep = poly.edge_planes[exit_idx];
+    push_idx!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
+
+    out.len = out_len;
+    out.max_r2 = max_r2;
+    out.has_bounding_ref = if track_bounding { has_bounding } else { false };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -733,7 +993,8 @@ mod tests {
         // Batch application.
         let batch = HpBatch8::from_array(hps);
         let mut out = PolyBuffer::new();
-        let r = clip_batch(&poly, &batch, &mut out);
+        let mut scratch = PolyBuffer::new();
+        let r = clip_batch_with_scratch(&poly, &batch, &mut out, &mut scratch);
 
         match r {
             ClipResult::Unchanged => {

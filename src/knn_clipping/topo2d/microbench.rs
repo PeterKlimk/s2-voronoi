@@ -731,12 +731,63 @@ pub fn run_batch_clip_microbench() {
         med
     }
 
-    // Generate 64 half-planes with mixed results
-    fn build_hp_pool<const N: usize>(_poly: &PolyBuffer) -> Vec<HalfPlane> {
-        let mut hps = Vec::new();
-        let mut rng = 0x1234_5678_9ABC_DEF0u64;
+    #[derive(Clone, Copy, Debug)]
+    enum HpPoolMode {
+        /// Old behavior: random offset in roughly `[-norm, +norm]`.
+        ///
+        /// This often makes the polygon go empty after only a few planes (serial benefits
+        /// a lot from early-break; batch pays upfront classification cost).
+        Random,
+        /// Planes are guaranteed to include the origin (`c >= 0`), so the intersection
+        /// stays non-empty for polygons that contain the origin (the typical Voronoi use-case).
+        OriginInside,
+    }
 
-        for _ in 0..64 {
+    fn parse_hp_pool_mode() -> HpPoolMode {
+        match std::env::var("S2_VORONOI_BATCH_HP_MODE")
+            .ok()
+            .as_deref()
+            .unwrap_or("origin")
+        {
+            "random" => HpPoolMode::Random,
+            "origin" | "origin_inside" | "nonempty" => HpPoolMode::OriginInside,
+            other => {
+                eprintln!(
+                    "warning: unknown S2_VORONOI_BATCH_HP_MODE={other:?}; using \"origin\""
+                );
+                HpPoolMode::OriginInside
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn mask_for<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane) -> u8 {
+        let mut mask: u8 = 0;
+        let neg_eps = -hp.eps;
+        for i in 0..N {
+            let d = hp.signed_dist(poly.us[i], poly.vs[i]);
+            mask |= ((d >= neg_eps) as u8) << i;
+        }
+        mask
+    }
+
+    // Generate a pool of half-planes for the batch microbench.
+    fn build_hp_pool<const N: usize>(poly: &PolyBuffer, mode: HpPoolMode) -> Vec<HalfPlane> {
+        let full_mask_val: u8 = ((1u16 << N) - 1) as u8;
+
+        let mut hps = Vec::with_capacity(64);
+        let mut rng = 0x1234_5678_9ABC_DEF0u64 ^ (N as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+
+        // Rejection-sample to keep the pool "interesting" at the starting polygon:
+        // - avoid trivially unchanged planes
+        // - (for `origin`) ensure the intersection cannot go empty
+        let mut attempts: u32 = 0;
+        while hps.len() < 64 {
+            attempts += 1;
+            if attempts > 5_000_000 {
+                panic!("build_hp_pool: too many attempts (mode={mode:?}, N={N})");
+            }
+
             rng = rng
                 .wrapping_mul(6364136223846793005u64)
                 .wrapping_add(1442695040888963407u64);
@@ -747,13 +798,27 @@ pub fn run_batch_clip_microbench() {
             let a = scale * c;
             let b = scale * s;
             let norm = (a * a + b * b).sqrt();
+
             // Use only 16 bits for the offset term; shifting the full `u64` and dividing by
             // `u16::MAX` makes this enormous and causes nearly-every plane to be trivially
             // "unchanged" (bench becomes meaningless).
             let r16 = ((rng >> 16) & 0xFFFF) as u16;
-            let cc = ((r16 as f64) / (u16::MAX as f64) - 0.5) * norm * 2.0;
+            let t = (r16 as f64) / (u16::MAX as f64);
+            let cc = match mode {
+                HpPoolMode::Random => (t - 0.5) * norm * 2.0,
+                HpPoolMode::OriginInside => t * norm * 0.95,
+            };
 
             let hp = HalfPlane::new_unnormalized(a, b, cc, hps.len());
+            if matches!(mode, HpPoolMode::OriginInside) && hp.c < 0.0 {
+                continue;
+            }
+
+            let m = mask_for::<N>(poly, &hp);
+            if m == full_mask_val || m == 0 {
+                continue;
+            }
+
             hps.push(hp);
         }
 
@@ -761,29 +826,61 @@ pub fn run_batch_clip_microbench() {
     }
 
     eprintln!("\n=== Batch Clip Microbench ===\n");
+    let hp_mode = parse_hp_pool_mode();
+    eprintln!("hp_mode: {hp_mode:?}\n");
 
     for n in [3, 4, 5, 6, 7, 8] {
         eprintln!("\n--- N = {n} ---");
 
         match n {
-            3 => run_batch_bench::<3>(target_ms, samples),
-            4 => run_batch_bench::<4>(target_ms, samples),
-            5 => run_batch_bench::<5>(target_ms, samples),
-            6 => run_batch_bench::<6>(target_ms, samples),
-            7 => run_batch_bench::<7>(target_ms, samples),
-            8 => run_batch_bench::<8>(target_ms, samples),
+            3 => run_batch_bench::<3>(target_ms, samples, hp_mode),
+            4 => run_batch_bench::<4>(target_ms, samples, hp_mode),
+            5 => run_batch_bench::<5>(target_ms, samples, hp_mode),
+            6 => run_batch_bench::<6>(target_ms, samples, hp_mode),
+            7 => run_batch_bench::<7>(target_ms, samples, hp_mode),
+            8 => run_batch_bench::<8>(target_ms, samples, hp_mode),
             _ => unreachable!(),
         }
     }
 
     eprintln!("\n=== End Batch Clip Microbench ===\n");
 
-    fn run_batch_bench<const N: usize>(target_ms: u64, samples: usize) {
-        use super::batch_clip::{clip_batch as clip_batch4, HpBatch as HpBatch4};
-        use super::batch_clip8::{clip_batch as clip_batch8, HpBatch8};
+    fn run_batch_bench<const N: usize>(target_ms: u64, samples: usize, hp_mode: HpPoolMode) {
+        use super::batch_clip::{clip_batch_with_scratch as clip_batch4, HpBatch as HpBatch4};
+        use super::batch_clip8::{clip_batch_with_scratch as clip_batch8, HpBatch8};
 
         let poly = make_regular_poly::<N>(1.0);
-        let hp_pool = build_hp_pool::<N>(&poly);
+        let hp_pool = build_hp_pool::<N>(&poly, hp_mode);
+
+        // Prebuild batches so the benchmark measures `clip_batch` rather than the
+        // gather/construction cost.
+        let mut batches4_0: Vec<HpBatch4> = Vec::with_capacity(56);
+        let mut batches4_1: Vec<HpBatch4> = Vec::with_capacity(56);
+        let mut batches8: Vec<HpBatch8> = Vec::with_capacity(56);
+        for start in 0..56usize {
+            batches4_0.push(HpBatch4::from_array([
+                hp_pool[start],
+                hp_pool[start + 1],
+                hp_pool[start + 2],
+                hp_pool[start + 3],
+            ]));
+            batches4_1.push(HpBatch4::from_array([
+                hp_pool[start + 4],
+                hp_pool[start + 5],
+                hp_pool[start + 6],
+                hp_pool[start + 7],
+            ]));
+            batches8.push(HpBatch8::from_array([
+                hp_pool[start],
+                hp_pool[start + 1],
+                hp_pool[start + 2],
+                hp_pool[start + 3],
+                hp_pool[start + 4],
+                hp_pool[start + 5],
+                hp_pool[start + 6],
+                hp_pool[start + 7],
+            ]));
+        }
 
         let target = Duration::from_millis(target_ms);
 
@@ -867,8 +964,7 @@ pub fn run_batch_clip_microbench() {
                 }
 
                 // batch4
-                let b0 = HpBatch4::from_array([hps_slice[0], hps_slice[1], hps_slice[2], hps_slice[3]]);
-                let r0 = clip_batch4(&poly, &b0, &mut out2);
+                let r0 = clip_batch4(&poly, &batches4_0[start], &mut out2, &mut out1);
                 if matches!(r0, ClipResult::Unchanged) {
                     b4_r0_unchanged += 1;
                 }
@@ -877,8 +973,7 @@ pub fn run_batch_clip_microbench() {
                 } else {
                     b4_second_called += 1;
                     let input = if matches!(r0, ClipResult::Changed) { &out2 } else { &poly };
-                    let b1 = HpBatch4::from_array([hps_slice[4], hps_slice[5], hps_slice[6], hps_slice[7]]);
-                    let r1 = clip_batch4(input, &b1, &mut out3);
+                    let r1 = clip_batch4(input, &batches4_1[start], &mut out3, &mut out1);
                     if matches!(r1, ClipResult::Unchanged) {
                         b4_r1_unchanged += 1;
                     }
@@ -888,11 +983,7 @@ pub fn run_batch_clip_microbench() {
                 }
 
                 // batch8
-                let b = HpBatch8::from_array([
-                    hps_slice[0], hps_slice[1], hps_slice[2], hps_slice[3],
-                    hps_slice[4], hps_slice[5], hps_slice[6], hps_slice[7],
-                ]);
-                let r = clip_batch8(&poly, &b, &mut out2);
+                let r = clip_batch8(&poly, &batches8[start], &mut out2, &mut out1);
                 if matches!(r, ClipResult::Unchanged) {
                     b8_unchanged += 1;
                 }
@@ -988,7 +1079,9 @@ pub fn run_batch_clip_microbench() {
         // === Batch clipping with 4-lane batches (2 batches of 4) ===
         bench_ns_per_call("batch4 (2×4 at once)", target, samples, |iters| {
             let poly = black_box(&poly);
-            let hps = black_box(&hp_pool);
+            let batches4_0 = black_box(batches4_0.as_slice());
+            let batches4_1 = black_box(batches4_1.as_slice());
+            let scratch = black_box(&mut out1);
             let out2 = black_box(&mut out2);
             let out3 = black_box(&mut out3);
             let mut s = 0u64;
@@ -997,15 +1090,14 @@ pub fn run_batch_clip_microbench() {
                 s = s.wrapping_add(1);
                 let start = (s % 56) as usize; // Ensure we have room for 8
 
-                let batch0_hps = [hps[start], hps[start + 1], hps[start + 2], hps[start + 3]];
-                let batch0 = HpBatch4::from_array(batch0_hps);
+                let batch0 = &batches4_0[start];
 
                 // 0 = `poly`, 1 = `out2`, 2 = `out3`
                 let mut cur_slot: u8 = 0;
                 let mut current_poly = poly;
 
                 // First batch of 4
-                let r0 = clip_batch4(current_poly, &batch0, out2);
+                let r0 = clip_batch4(current_poly, &batch0, out2, scratch);
                 if matches!(r0, ClipResult::Changed) {
                     if out2.len == 0 {
                         black_box(r0);
@@ -1016,14 +1108,8 @@ pub fn run_batch_clip_microbench() {
                 }
 
                 // Second batch of 4
-                let batch1_hps = [
-                    hps[start + 4],
-                    hps[start + 5],
-                    hps[start + 6],
-                    hps[start + 7],
-                ];
-                let batch1 = HpBatch4::from_array(batch1_hps);
-                let r1 = clip_batch4(current_poly, &batch1, out3);
+                let batch1 = &batches4_1[start];
+                let r1 = clip_batch4(current_poly, batch1, out3, scratch);
                 if matches!(r1, ClipResult::Changed) {
                     cur_slot = 2;
                 }
@@ -1042,7 +1128,8 @@ pub fn run_batch_clip_microbench() {
         // === Batch clipping with 8-lane batch (1 batch of 8) ===
         bench_ns_per_call("batch8 (1×8 at once)", target, samples, |iters| {
             let poly = black_box(&poly);
-            let hps = black_box(&hp_pool);
+            let batches8 = black_box(batches8.as_slice());
+            let scratch = black_box(&mut out1);
             let out2 = black_box(&mut out2);
             let mut s = 0u64;
 
@@ -1050,19 +1137,7 @@ pub fn run_batch_clip_microbench() {
                 s = s.wrapping_add(1);
                 let start = (s % 56) as usize; // Ensure we have room for 8
 
-                let batch_hps = [
-                    hps[start],
-                    hps[start + 1],
-                    hps[start + 2],
-                    hps[start + 3],
-                    hps[start + 4],
-                    hps[start + 5],
-                    hps[start + 6],
-                    hps[start + 7],
-                ];
-                let batch = HpBatch8::from_array(batch_hps);
-
-                let r = clip_batch8(poly, &batch, out2);
+                let r = clip_batch8(poly, &batches8[start], out2, scratch);
                 black_box(r);
                 if matches!(r, ClipResult::Changed) {
                     consume_poly(out2);
