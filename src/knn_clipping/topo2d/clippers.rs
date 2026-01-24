@@ -161,6 +161,301 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
     ClipResult::Changed
 }
 
+/// Variant of `clip_convex_small_bool` that writes output vertices using a local index and
+/// unchecked stores (sets `out.len` once at the end).
+#[cfg(any(test, feature = "microbench"))]
+pub(crate) fn clip_convex_small_bool_out_idx<const N: usize>(
+    poly: &PolyBuffer,
+    hp: &HalfPlane,
+    out: &mut PolyBuffer,
+) -> ClipResult {
+    debug_assert_eq!(poly.len, N);
+    debug_assert!(N >= 3 && N <= 8);
+
+    let neg_eps = -hp.eps;
+
+    // SAFETY: `[MaybeUninit<f64>; N]` is valid in an uninitialized state.
+    let mut dists: [core::mem::MaybeUninit<f64>; N] =
+        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+
+    let us = poly.us.as_ptr();
+    let vs = poly.vs.as_ptr();
+
+    let mut inside = [false; N];
+    let mut any_inside = false;
+    let mut all_inside = true;
+
+    unsafe {
+        for i in 0..N {
+            let d = hp.signed_dist(*us.add(i), *vs.add(i));
+            dists.get_unchecked_mut(i).write(d);
+            let is_inside = d >= neg_eps;
+            inside[i] = is_inside;
+            any_inside |= is_inside;
+            all_inside &= is_inside;
+        }
+    }
+
+    if !any_inside {
+        out.len = 0;
+        out.max_r2 = 0.0;
+        out.has_bounding_ref = false;
+        return ClipResult::Changed;
+    }
+
+    if all_inside {
+        return ClipResult::Unchanged;
+    }
+
+    let mut entry_idx = None;
+    let mut exit_idx = None;
+
+    for i in 0..N {
+        let prev = if i == 0 { N - 1 } else { i - 1 };
+        if entry_idx.is_none() && !inside[prev] && inside[i] {
+            entry_idx = Some((prev, i));
+        } else if exit_idx.is_none() && inside[prev] && !inside[i] {
+            exit_idx = Some((prev, i));
+        }
+        if entry_idx.is_some() && exit_idx.is_some() {
+            break;
+        }
+    }
+
+    let (entry_idx, entry_next) = entry_idx.expect("convex polygon must have entry transition");
+    let (exit_idx, exit_next) = exit_idx.expect("convex polygon must have exit transition");
+
+    #[inline(always)]
+    fn r2_of(u: f64, v: f64) -> f64 {
+        u.mul_add(u, v * v)
+    }
+
+    let mut out_len: usize = 0;
+    let mut max_r2 = 0.0f64;
+    let mut has_bounding = false;
+    let track_bounding = poly.has_bounding_ref;
+
+    macro_rules! push_idx {
+        ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
+            let u = $u;
+            let v = $v;
+            let vp = $vp;
+            let ep = $ep;
+            unsafe {
+                *out.us.get_unchecked_mut(out_len) = u;
+                *out.vs.get_unchecked_mut(out_len) = v;
+                *out.vertex_planes.get_unchecked_mut(out_len) = vp;
+                *out.edge_planes.get_unchecked_mut(out_len) = ep;
+            }
+            out_len += 1;
+            let r2 = r2_of(u, v);
+            if r2 > max_r2 {
+                max_r2 = r2;
+            }
+            if track_bounding {
+                has_bounding |= vp.0 == usize::MAX;
+            }
+        }};
+    }
+
+    let (d_entry, d_entry_next) = unsafe {
+        (
+            dists.get_unchecked(entry_idx).assume_init_read(),
+            dists.get_unchecked(entry_next).assume_init_read(),
+        )
+    };
+    let t_entry = d_entry / (d_entry - d_entry_next);
+    let entry_u = t_entry.mul_add(poly.us[entry_next] - poly.us[entry_idx], poly.us[entry_idx]);
+    let entry_v = t_entry.mul_add(poly.vs[entry_next] - poly.vs[entry_idx], poly.vs[entry_idx]);
+    let entry_ep = poly.edge_planes[entry_idx];
+    push_idx!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
+
+    let mut i = entry_next;
+    loop {
+        push_idx!(
+            poly.us[i],
+            poly.vs[i],
+            poly.vertex_planes[i],
+            poly.edge_planes[i]
+        );
+        if i == exit_idx {
+            break;
+        }
+        i = (i + 1) % N;
+    }
+
+    let (d_exit, d_exit_next) = unsafe {
+        (
+            dists.get_unchecked(exit_idx).assume_init_read(),
+            dists.get_unchecked(exit_next).assume_init_read(),
+        )
+    };
+    let t_exit = d_exit / (d_exit - d_exit_next);
+    let exit_u = t_exit.mul_add(poly.us[exit_next] - poly.us[exit_idx], poly.us[exit_idx]);
+    let exit_v = t_exit.mul_add(poly.vs[exit_next] - poly.vs[exit_idx], poly.vs[exit_idx]);
+    let exit_ep = poly.edge_planes[exit_idx];
+    push_idx!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
+
+    out.len = out_len;
+    out.max_r2 = max_r2;
+    out.has_bounding_ref = if track_bounding { has_bounding } else { false };
+    ClipResult::Changed
+}
+
+/// Like `clip_convex_small_bool_out_idx`, but uses a modulo-free vertex copy (two linear ranges).
+#[cfg(any(test, feature = "microbench"))]
+pub(crate) fn clip_convex_small_bool_out_idx_range<const N: usize>(
+    poly: &PolyBuffer,
+    hp: &HalfPlane,
+    out: &mut PolyBuffer,
+) -> ClipResult {
+    debug_assert_eq!(poly.len, N);
+    debug_assert!(N >= 3 && N <= 8);
+
+    let neg_eps = -hp.eps;
+
+    // SAFETY: `[MaybeUninit<f64>; N]` is valid in an uninitialized state.
+    let mut dists: [core::mem::MaybeUninit<f64>; N] =
+        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+
+    let us = poly.us.as_ptr();
+    let vs = poly.vs.as_ptr();
+
+    let mut inside = [false; N];
+    let mut any_inside = false;
+    let mut all_inside = true;
+
+    unsafe {
+        for i in 0..N {
+            let d = hp.signed_dist(*us.add(i), *vs.add(i));
+            dists.get_unchecked_mut(i).write(d);
+            let is_inside = d >= neg_eps;
+            inside[i] = is_inside;
+            any_inside |= is_inside;
+            all_inside &= is_inside;
+        }
+    }
+
+    if !any_inside {
+        out.len = 0;
+        out.max_r2 = 0.0;
+        out.has_bounding_ref = false;
+        return ClipResult::Changed;
+    }
+
+    if all_inside {
+        return ClipResult::Unchanged;
+    }
+
+    let mut entry_idx = None;
+    let mut exit_idx = None;
+
+    for i in 0..N {
+        let prev = if i == 0 { N - 1 } else { i - 1 };
+        if entry_idx.is_none() && !inside[prev] && inside[i] {
+            entry_idx = Some((prev, i));
+        } else if exit_idx.is_none() && inside[prev] && !inside[i] {
+            exit_idx = Some((prev, i));
+        }
+        if entry_idx.is_some() && exit_idx.is_some() {
+            break;
+        }
+    }
+
+    let (entry_idx, entry_next) = entry_idx.expect("convex polygon must have entry transition");
+    let (exit_idx, exit_next) = exit_idx.expect("convex polygon must have exit transition");
+
+    #[inline(always)]
+    fn r2_of(u: f64, v: f64) -> f64 {
+        u.mul_add(u, v * v)
+    }
+
+    let mut out_len: usize = 0;
+    let mut max_r2 = 0.0f64;
+    let mut has_bounding = false;
+    let track_bounding = poly.has_bounding_ref;
+
+    macro_rules! push_idx {
+        ($u:expr, $v:expr, $vp:expr, $ep:expr) => {{
+            let u = $u;
+            let v = $v;
+            let vp = $vp;
+            let ep = $ep;
+            unsafe {
+                *out.us.get_unchecked_mut(out_len) = u;
+                *out.vs.get_unchecked_mut(out_len) = v;
+                *out.vertex_planes.get_unchecked_mut(out_len) = vp;
+                *out.edge_planes.get_unchecked_mut(out_len) = ep;
+            }
+            out_len += 1;
+            let r2 = r2_of(u, v);
+            if r2 > max_r2 {
+                max_r2 = r2;
+            }
+            if track_bounding {
+                has_bounding |= vp.0 == usize::MAX;
+            }
+        }};
+    }
+
+    let (d_entry, d_entry_next) = unsafe {
+        (
+            dists.get_unchecked(entry_idx).assume_init_read(),
+            dists.get_unchecked(entry_next).assume_init_read(),
+        )
+    };
+    let t_entry = d_entry / (d_entry - d_entry_next);
+    let entry_u = t_entry.mul_add(poly.us[entry_next] - poly.us[entry_idx], poly.us[entry_idx]);
+    let entry_v = t_entry.mul_add(poly.vs[entry_next] - poly.vs[entry_idx], poly.vs[entry_idx]);
+    let entry_ep = poly.edge_planes[entry_idx];
+    push_idx!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
+
+    if entry_next <= exit_idx {
+        for i in entry_next..=exit_idx {
+            push_idx!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+    } else {
+        for i in entry_next..N {
+            push_idx!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+        for i in 0..=exit_idx {
+            push_idx!(
+                poly.us[i],
+                poly.vs[i],
+                poly.vertex_planes[i],
+                poly.edge_planes[i]
+            );
+        }
+    }
+
+    let (d_exit, d_exit_next) = unsafe {
+        (
+            dists.get_unchecked(exit_idx).assume_init_read(),
+            dists.get_unchecked(exit_next).assume_init_read(),
+        )
+    };
+    let t_exit = d_exit / (d_exit - d_exit_next);
+    let exit_u = t_exit.mul_add(poly.us[exit_next] - poly.us[exit_idx], poly.us[exit_idx]);
+    let exit_v = t_exit.mul_add(poly.vs[exit_next] - poly.vs[exit_idx], poly.vs[exit_idx]);
+    let exit_ep = poly.edge_planes[exit_idx];
+    push_idx!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
+
+    out.len = out_len;
+    out.max_r2 = max_r2;
+    out.has_bounding_ref = if track_bounding { has_bounding } else { false };
+    ClipResult::Changed
+}
+
 pub(super) fn clip_convex_bitmask(
     poly: &PolyBuffer,
     hp: &HalfPlane,
