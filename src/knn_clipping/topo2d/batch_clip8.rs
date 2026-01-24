@@ -1,53 +1,55 @@
-//! Batch-oriented polygon clipping using SIMD (AVX2 f64x4).
+//! Batch-oriented polygon clipping using SIMD (AVX-512 f64x8 or AVX2 2×f64x4).
 //!
 //! This module implements a batch clipping approach where multiple half-planes are processed
 //! together using SIMD. The key idea is:
 //!
-//! 1. Classify all N vertices against all 4 half-planes in parallel using SIMD
+//! 1. Classify all N vertices against all 8 half-planes in parallel using SIMD
 //! 2. Filter out half-planes that are all-outside (discarded) or all-inside (unchanged)
 //! 3. Clip against remaining half-planes, maintaining per-vertex classification masks
 //! 4. Reclassify only new intersection vertices (not original vertices) after each clip
 //!
 //! This reduces redundant distance calculations and leverages SIMD parallelism.
+//!
+//! On AVX2 hardware, f64x8 operations are executed as two f64x4 operations.
 
 use super::types::{ClipResult, HalfPlane, PolyBuffer, MAX_POLY_VERTICES};
-use std::simd::f64x4;
+use std::simd::f64x8;
 use std::simd::cmp::SimdPartialOrd;
 
-type VertexMasks = [u8; MAX_POLY_VERTICES];
+type VertexMasks = [u16; MAX_POLY_VERTICES];
 
-/// Batch of 4 half-planes in SIMD-friendly layout.
+/// Batch of 8 half-planes in SIMD-friendly layout.
 #[derive(Clone, Copy)]
-pub struct HpBatch {
-    /// SIMD vectors of half-plane coefficients: [a0, a1, a2, a3], etc.
-    pub a: f64x4,
-    pub b: f64x4,
-    pub c: f64x4,
+pub struct HpBatch8 {
+    /// SIMD vectors of half-plane coefficients: [a0, a1, ..., a7], etc.
+    pub a: f64x8,
+    pub b: f64x8,
+    pub c: f64x8,
     /// Precomputed `a^2 + b^2` per lane.
-    pub ab2: f64x4,
+    pub ab2: f64x8,
     /// Per-lane epsilon values
-    pub eps: f64x4,
+    pub eps: f64x8,
     /// Per-lane plane indices (stored as array for convenience)
-    pub plane_idxs: [usize; 4],
-    /// Number of active half-planes (1-4)
+    pub plane_idxs: [usize; 8],
+    /// Number of active half-planes (1-8)
     pub len: u8,
 }
 
-impl HpBatch {
-    /// Create a batch from up to 4 half-planes.
+impl HpBatch8 {
+    /// Create a batch from up to 8 half-planes.
     ///
     /// # Safety
-    /// Caller must ensure `hps.len() <= 4`.
+    /// Caller must ensure `hps.len() <= 8`.
     #[inline]
     pub unsafe fn from_slice_unchecked(hps: &[HalfPlane]) -> Self {
-        debug_assert!(hps.len() <= 4);
+        debug_assert!(hps.len() <= 8);
 
-        let mut a = [0.0f64; 4];
-        let mut b = [0.0f64; 4];
-        let mut c = [0.0f64; 4];
-        let mut ab2 = [0.0f64; 4];
-        let mut eps = [0.0f64; 4];
-        let mut plane_idxs = [0usize; 4];
+        let mut a = [0.0f64; 8];
+        let mut b = [0.0f64; 8];
+        let mut c = [0.0f64; 8];
+        let mut ab2 = [0.0f64; 8];
+        let mut eps = [0.0f64; 8];
+        let mut plane_idxs = [0usize; 8];
 
         for (i, hp) in hps.iter().enumerate() {
             a[i] = hp.a;
@@ -59,26 +61,26 @@ impl HpBatch {
         }
 
         Self {
-            a: f64x4::from_array(a),
-            b: f64x4::from_array(b),
-            c: f64x4::from_array(c),
-            ab2: f64x4::from_array(ab2),
-            eps: f64x4::from_array(eps),
+            a: f64x8::from_array(a),
+            b: f64x8::from_array(b),
+            c: f64x8::from_array(c),
+            ab2: f64x8::from_array(ab2),
+            eps: f64x8::from_array(eps),
             plane_idxs,
             len: hps.len() as u8,
         }
     }
 
-    /// Create a batch from exactly 4 half-planes.
+    /// Create a batch from exactly 8 half-planes.
     #[inline]
-    pub fn from_array(hps: [HalfPlane; 4]) -> Self {
+    pub fn from_array(hps: [HalfPlane; 8]) -> Self {
         unsafe { Self::from_slice_unchecked(&hps) }
     }
 
     /// Get the i-th half-plane.
     #[inline]
     pub fn get(&self, i: usize) -> HalfPlane {
-        debug_assert!(i < 4);
+        debug_assert!(i < 8);
         let a_arr = self.a.to_array();
         let b_arr = self.b.to_array();
         let c_arr = self.c.to_array();
@@ -104,23 +106,23 @@ impl HpBatch {
 /// Classify all vertices of a polygon against all half-planes in a batch.
 ///
 /// Returns an array where each element is a bitmask of which half-planes the vertex is inside.
-/// For example, if vertex 0 is inside half-planes 0 and 2, the result[0] = 0b0101.
+/// For example, if vertex 0 is inside half-planes 0 and 2, the result[0] = 0b00000101.
 ///
 /// # Arguments
 /// * `poly` - The polygon to classify
 /// * `batch` - The batch of half-planes
 ///
 /// # Returns
-/// An array of `poly.len` u8 values, each containing a 4-bit mask.
+/// An array of `poly.len` u16 values, each containing an 8-bit mask.
 #[inline]
-pub fn classify_batch(poly: &PolyBuffer, batch: &HpBatch) -> VertexMasks {
+pub fn classify_batch(poly: &PolyBuffer, batch: &HpBatch8) -> VertexMasks {
     let n = poly.len;
     debug_assert!(
         n <= MAX_POLY_VERTICES,
         "poly.len exceeds MAX_POLY_VERTICES"
     );
 
-    let mut result = [0u8; MAX_POLY_VERTICES];
+    let mut result = [0u16; MAX_POLY_VERTICES];
 
     let a = batch.a;
     let b = batch.b;
@@ -131,16 +133,16 @@ pub fn classify_batch(poly: &PolyBuffer, batch: &HpBatch) -> VertexMasks {
         let u = poly.us[i];
         let v = poly.vs[i];
 
-        // SIMD: compute signed distances for all 4 half-planes
+        // SIMD: compute signed distances for all 8 half-planes
         // dist = a*u + b*v + c
-        let u_vec = f64x4::splat(u);
-        let v_vec = f64x4::splat(v);
+        let u_vec = f64x8::splat(u);
+        let v_vec = f64x8::splat(v);
 
         let dist = a * u_vec + b * v_vec + c;
 
         // Check if dist >= -eps for each lane
         let inside_mask = dist.simd_ge(neg_eps);
-        let bits = inside_mask.to_bitmask() as u8;
+        let bits = inside_mask.to_bitmask() as u16;
 
         result[i] = bits;
     }
@@ -149,7 +151,7 @@ pub fn classify_batch(poly: &PolyBuffer, batch: &HpBatch) -> VertexMasks {
 }
 
 #[inline]
-fn classify_batch_with_lane_masks(poly: &PolyBuffer, batch: &HpBatch) -> (VertexMasks, [u64; 4]) {
+fn classify_batch_with_lane_masks(poly: &PolyBuffer, batch: &HpBatch8) -> (VertexMasks, [u64; 8]) {
     let n = poly.len;
     debug_assert!(
         n <= MAX_POLY_VERTICES,
@@ -157,8 +159,8 @@ fn classify_batch_with_lane_masks(poly: &PolyBuffer, batch: &HpBatch) -> (Vertex
     );
     debug_assert!(n <= 64, "lane bitmasks are stored in u64");
 
-    let mut vertex_masks = [0u8; MAX_POLY_VERTICES];
-    let mut lane_masks = [0u64; 4];
+    let mut vertex_masks = [0u16; MAX_POLY_VERTICES];
+    let mut lane_masks = [0u64; 8];
 
     let a = batch.a;
     let b = batch.b;
@@ -166,12 +168,12 @@ fn classify_batch_with_lane_masks(poly: &PolyBuffer, batch: &HpBatch) -> (Vertex
     let neg_eps = -batch.eps;
 
     for i in 0..n {
-        let u_vec = f64x4::splat(poly.us[i]);
-        let v_vec = f64x4::splat(poly.vs[i]);
+        let u_vec = f64x8::splat(poly.us[i]);
+        let v_vec = f64x8::splat(poly.vs[i]);
 
         let dist = a * u_vec + b * v_vec + c;
         let inside_mask = dist.simd_ge(neg_eps);
-        let bits = inside_mask.to_bitmask() as u8;
+        let bits = inside_mask.to_bitmask() as u16;
 
         vertex_masks[i] = bits;
 
@@ -180,6 +182,10 @@ fn classify_batch_with_lane_masks(poly: &PolyBuffer, batch: &HpBatch) -> (Vertex
         lane_masks[1] |= (((bits >> 1) & 1) as u64) * bit;
         lane_masks[2] |= (((bits >> 2) & 1) as u64) * bit;
         lane_masks[3] |= (((bits >> 3) & 1) as u64) * bit;
+        lane_masks[4] |= (((bits >> 4) & 1) as u64) * bit;
+        lane_masks[5] |= (((bits >> 5) & 1) as u64) * bit;
+        lane_masks[6] |= (((bits >> 6) & 1) as u64) * bit;
+        lane_masks[7] |= (((bits >> 7) & 1) as u64) * bit;
     }
 
     (vertex_masks, lane_masks)
@@ -187,7 +193,7 @@ fn classify_batch_with_lane_masks(poly: &PolyBuffer, batch: &HpBatch) -> (Vertex
 
 /// Classify a single vertex against a subset of active half-planes.
 ///
-/// Returns a 4-bit mask indicating which half-planes the vertex is inside.
+/// Returns an 8-bit mask indicating which half-planes the vertex is inside.
 ///
 /// # Arguments
 /// * `u` - Vertex u coordinate
@@ -195,18 +201,18 @@ fn classify_batch_with_lane_masks(poly: &PolyBuffer, batch: &HpBatch) -> (Vertex
 /// * `batch` - The batch of half-planes
 /// * `lane_mask` - Bitmask of which lanes are active (only these bits are set in result)
 #[inline]
-pub fn classify_one_vertex(u: f64, v: f64, batch: &HpBatch, lane_mask: u8) -> u8 {
-    let u_vec = f64x4::splat(u);
-    let v_vec = f64x4::splat(v);
+pub fn classify_one_vertex(u: f64, v: f64, batch: &HpBatch8, lane_mask: u8) -> u16 {
+    let u_vec = f64x8::splat(u);
+    let v_vec = f64x8::splat(v);
 
     let dist = batch.a * u_vec + batch.b * v_vec + batch.c;
     let neg_eps = -batch.eps;
 
     let inside_mask = dist.simd_ge(neg_eps);
-    let mut bits = inside_mask.to_bitmask() as u8;
+    let mut bits = inside_mask.to_bitmask() as u16;
 
     // Mask out inactive lanes
-    bits &= lane_mask;
+    bits &= lane_mask as u16;
 
     bits
 }
@@ -219,7 +225,7 @@ fn full_vertex_mask(n: usize) -> u64 {
 
 #[inline]
 fn vertices_inside_lane_mask(vertex_masks: &VertexMasks, n: usize, lane: usize) -> u64 {
-    debug_assert!(lane < 4);
+    debug_assert!(lane < 8);
     let mut m = 0u64;
     for i in 0..n {
         m |= (((vertex_masks[i] >> lane) & 1) as u64) << i;
@@ -231,19 +237,19 @@ fn vertices_inside_lane_mask(vertex_masks: &VertexMasks, n: usize, lane: usize) 
 ///
 /// # Arguments
 /// * `poly` - Input polygon (>= 3 vertices)
-/// * `batch` - Batch of 1-4 half-planes
+/// * `batch` - Batch of 1-8 half-planes
 /// * `out` - Output polygon buffer
 ///
 /// # Returns
 /// `ClipResult` indicating the outcome
 #[cfg_attr(feature = "profiling", inline(never))]
-pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch, out: &mut PolyBuffer) -> ClipResult {
+pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch8, out: &mut PolyBuffer) -> ClipResult {
     let n = poly.len;
     debug_assert!(n >= 3 && n <= MAX_POLY_VERTICES);
     debug_assert!(n <= 64, "lane bitmasks are stored in u64");
 
     // Track which lanes are still active.
-    debug_assert!(batch.len <= 4);
+    debug_assert!(batch.len <= 8);
     let mut lane_mask: u8 = ((1u16 << batch.len) - 1) as u8;
 
     // Fast filter (disk bound): cheaply prove some lanes are all-inside (unchanged),
@@ -255,13 +261,13 @@ pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch, out: &mut PolyBuffer) -> C
     let max_r2 = poly.max_r2;
     if max_r2 > 0.0 {
         let s = batch.c + batch.eps;
-        let rhs = batch.ab2 * f64x4::splat(max_r2);
+        let rhs = batch.ab2 * f64x8::splat(max_r2);
         let s2 = s * s;
 
         let lanes_ge = s2.simd_ge(rhs).to_bitmask() as u8;
         if lanes_ge != 0 {
             // Early-empty: s <= 0 and |s| >= sqrt(ab2*max_r2) => max_dist <= -eps.
-            let lanes_le0 = s.simd_le(f64x4::splat(0.0)).to_bitmask() as u8;
+            let lanes_le0 = s.simd_le(f64x8::splat(0.0)).to_bitmask() as u8;
             let empty_lanes = lanes_ge & lanes_le0 & lane_mask;
             if empty_lanes != 0 {
                 out.clear();
@@ -270,7 +276,7 @@ pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch, out: &mut PolyBuffer) -> C
 
             // Early-unchanged: s >= 0 and s^2 >= ab2*max_r2 (bounded polys only).
             if !poly.has_bounding_ref {
-                let lanes_ge0 = s.simd_ge(f64x4::splat(0.0)).to_bitmask() as u8;
+                let lanes_ge0 = s.simd_ge(f64x8::splat(0.0)).to_bitmask() as u8;
                 let unchanged_lanes = lanes_ge & lanes_ge0 & lane_mask;
                 lane_mask &= !unchanged_lanes;
                 if lane_mask == 0 {
@@ -281,10 +287,10 @@ pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch, out: &mut PolyBuffer) -> C
     }
 
     // Initial classification: all vertices against all half-planes.
-    // (We still compute all 4 lanes, but lane_mask controls which lanes matter.)
+    // (We still compute all 8 lanes, but lane_mask controls which lanes matter.)
     let (mut current_masks, mut lane_vertex_masks) = classify_batch_with_lane_masks(poly, batch);
-    let mut next_masks: VertexMasks = [0u8; MAX_POLY_VERTICES];
-    let mut next_lane_vertex_masks: [u64; 4] = [0u64; 4];
+    let mut next_masks: VertexMasks = [0u16; MAX_POLY_VERTICES];
+    let mut next_lane_vertex_masks: [u64; 8] = [0u64; 8];
 
     // Scratch buffers for intermediate polygons.
     let mut buf_a = PolyBuffer::new();
@@ -301,7 +307,7 @@ pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch, out: &mut PolyBuffer) -> C
     let ab2_arr = batch.ab2.to_array();
     let eps_arr = batch.eps.to_array();
 
-    for lane in 0..4 {
+    for lane in 0..8 {
         if (lane_mask & (1 << lane)) == 0 {
             continue;
         }
@@ -408,7 +414,7 @@ pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch, out: &mut PolyBuffer) -> C
         // Post-clip lane filtering using the freshly-built lane masks.
         // This avoids scanning `current_masks` again for the remaining lanes.
         let new_full_mask = full_vertex_mask(new_len);
-        for rem_lane in 0..4 {
+        for rem_lane in 0..8 {
             if (lane_mask & (1 << rem_lane)) == 0 {
                 continue;
             }
@@ -448,13 +454,13 @@ pub fn clip_batch(poly: &PolyBuffer, batch: &HpBatch, out: &mut PolyBuffer) -> C
 fn clip_one_lane_mixed(
     poly: &PolyBuffer,
     poly_masks: &VertexMasks,
-    batch: &HpBatch,
+    batch: &HpBatch8,
     hp: &HalfPlane,
     rem_lane_mask: u8,
     inside_mask: u64,
     out: &mut PolyBuffer,
     out_masks: &mut VertexMasks,
-    out_lane_masks: &mut [u64; 4],
+    out_lane_masks: &mut [u64; 8],
 ) {
     out_lane_masks.fill(0);
     let n = poly.len;
@@ -521,7 +527,7 @@ fn clip_one_lane_mixed(
             let v = $v;
             let vp = $vp;
             let ep = $ep;
-            let mask = $mask & rem_lane_mask;
+            let mask = $mask & (rem_lane_mask as u16);
             unsafe {
                 *out.us.get_unchecked_mut(out_len) = u;
                 *out.vs.get_unchecked_mut(out_len) = v;
@@ -541,6 +547,18 @@ fn clip_one_lane_mixed(
             }
             if (mask & (1 << 3)) != 0 {
                 out_lane_masks[3] |= bit;
+            }
+            if (mask & (1 << 4)) != 0 {
+                out_lane_masks[4] |= bit;
+            }
+            if (mask & (1 << 5)) != 0 {
+                out_lane_masks[5] |= bit;
+            }
+            if (mask & (1 << 6)) != 0 {
+                out_lane_masks[6] |= bit;
+            }
+            if (mask & (1 << 7)) != 0 {
+                out_lane_masks[7] |= bit;
             }
             out_len += 1;
             let r2 = r2_of(u, v);
@@ -620,18 +638,22 @@ mod tests {
     use super::super::clip_convex;
 
     #[test]
-    fn test_hp_batch_creation() {
+    fn test_hp_batch8_creation() {
         let hps = [
             HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0),
             HalfPlane::new_unnormalized(0.0, 1.0, 0.0, 1),
             HalfPlane::new_unnormalized(-1.0, 0.0, 0.0, 2),
             HalfPlane::new_unnormalized(0.0, -1.0, 0.0, 3),
+            HalfPlane::new_unnormalized(1.0, 1.0, 0.0, 4),
+            HalfPlane::new_unnormalized(-1.0, 1.0, 0.0, 5),
+            HalfPlane::new_unnormalized(1.0, -1.0, 0.0, 6),
+            HalfPlane::new_unnormalized(-1.0, -1.0, 0.0, 7),
         ];
 
-        let batch = HpBatch::from_array(hps);
+        let batch = HpBatch8::from_array(hps);
 
-        assert_eq!(batch.len, 4);
-        assert_eq!(batch.plane_idxs, [0, 1, 2, 3]);
+        assert_eq!(batch.len, 8);
+        assert_eq!(batch.plane_idxs, [0, 1, 2, 3, 4, 5, 6, 7]);
     }
 
     #[test]
@@ -654,9 +676,13 @@ mod tests {
             HalfPlane::new_unnormalized(0.0, 1.0, 0.0, 1), // y >= 0
             HalfPlane::new_unnormalized(-1.0, 0.0, 0.0, 2), // -x >= 0 (x <= 0)
             HalfPlane::new_unnormalized(0.0, -1.0, 0.0, 3), // -y >= 0 (y <= 0)
+            HalfPlane::new_unnormalized(1.0, 1.0, 0.0, 4),
+            HalfPlane::new_unnormalized(-1.0, 1.0, 0.0, 5),
+            HalfPlane::new_unnormalized(1.0, -1.0, 0.0, 6),
+            HalfPlane::new_unnormalized(-1.0, -1.0, 0.0, 7),
         ];
 
-        let batch = HpBatch::from_array(hps);
+        let batch = HpBatch8::from_array(hps);
         let masks = classify_batch(&poly, &batch);
 
         // Vertex 0: (0.5, 0.5) is inside x>=0 and y>=0, outside x<=0 and y<=0.
@@ -684,6 +710,10 @@ mod tests {
             HalfPlane::new_unnormalized(0.0, 1.0, 0.0, 11), // y >= 0
             HalfPlane::new_unnormalized(-1.0, 0.0, 0.5, 12), // x <= 0.5
             HalfPlane::new_unnormalized(0.0, -1.0, 0.5, 13), // y <= 0.5
+            HalfPlane::new_unnormalized(1.0, 1.0, 0.0, 14),
+            HalfPlane::new_unnormalized(-1.0, 1.0, 0.5, 15),
+            HalfPlane::new_unnormalized(1.0, -1.0, 0.5, 16),
+            HalfPlane::new_unnormalized(-1.0, -1.0, 0.5, 17),
         ];
 
         // Sequential application.
@@ -701,7 +731,7 @@ mod tests {
         }
 
         // Batch application.
-        let batch = HpBatch::from_array(hps);
+        let batch = HpBatch8::from_array(hps);
         let mut out = PolyBuffer::new();
         let r = clip_batch(&poly, &batch, &mut out);
 
@@ -736,8 +766,18 @@ mod tests {
                 for i in 0..cur.len {
                     let du = (out.us[i] - cur.us[i]).abs();
                     let dv = (out.vs[i] - cur.vs[i]).abs();
-                    assert!(du < 1e-12, "u mismatch at {i}: {} vs {}", out.us[i], cur.us[i]);
-                    assert!(dv < 1e-12, "v mismatch at {i}: {} vs {}", out.vs[i], cur.vs[i]);
+                    assert!(
+                        du < 1e-12,
+                        "u mismatch at {i}: {} vs {}",
+                        out.us[i],
+                        cur.us[i]
+                    );
+                    assert!(
+                        dv < 1e-12,
+                        "v mismatch at {i}: {} vs {}",
+                        out.vs[i],
+                        cur.vs[i]
+                    );
                 }
             }
             ClipResult::TooManyVertices => panic!("unexpected TooManyVertices in test"),

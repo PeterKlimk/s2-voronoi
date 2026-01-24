@@ -3,6 +3,8 @@
 pub(crate) mod builder;
 #[cfg(any(test, feature = "microbench"))]
 pub mod batch_clip;
+#[cfg(any(test, feature = "microbench"))]
+pub mod batch_clip8;
 pub mod clip_stats;
 pub(crate) mod clippers;
 pub mod types;
