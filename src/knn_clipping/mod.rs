@@ -16,13 +16,13 @@ macro_rules! maybe_par_into_iter {
     }};
 }
 
-mod cell_builder;
-mod compute;
-mod constants;
-mod edge_repair;
-mod live_dedup;
-mod preprocess;
-mod timing;
+pub(crate) mod cell_builder;
+pub(crate) mod compute;
+pub(crate) mod constants;
+pub(crate) mod edge_repair;
+pub(crate) mod live_dedup;
+pub(crate) mod preprocess;
+pub(crate) mod timing;
 pub(crate) mod topo2d;
 
 // Re-exports (internal use)
