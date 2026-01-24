@@ -6,7 +6,7 @@
 #[cfg(feature = "microbench")]
 pub fn run_clip_convex_microbench() {
     use super::clippers::{
-        clip_convex_small_bool, clip_convex_small_bool_out_idx, clip_convex_small_bool_out_idx_range,
+        clip_convex_small_bool, clip_convex_small_bool_out_idx, clip_convex_small_bool_out_idx_ptr,
     };
     use super::{ClipResult, HalfPlane, PolyBuffer};
 
@@ -354,7 +354,7 @@ pub fn run_clip_convex_microbench() {
         // Pre-allocate output buffers.
         let mut out_base = PolyBuffer::new();
         let mut out_out_idx = PolyBuffer::new();
-        let mut out_out_idx_range = PolyBuffer::new();
+        let mut out_out_idx_ptr = PolyBuffer::new();
 
         // Sanity: ensure the intended regimes.
         assert!(matches!(
@@ -366,7 +366,7 @@ pub fn run_clip_convex_microbench() {
             ClipResult::Changed
         ));
         assert!(matches!(
-            clip_convex_small_bool_out_idx_range::<N>(&poly, &hps_changed[0], &mut out_out_idx_range),
+            clip_convex_small_bool_out_idx_ptr::<N>(&poly, &hps_changed[0], &mut out_out_idx_ptr),
             ClipResult::Changed
         ));
 
@@ -375,8 +375,8 @@ pub fn run_clip_convex_microbench() {
         out_base.us[0] = 123.0;
         out_out_idx.len = 13;
         out_out_idx.us[0] = 123.0;
-        out_out_idx_range.len = 13;
-        out_out_idx_range.us[0] = 123.0;
+        out_out_idx_ptr.len = 13;
+        out_out_idx_ptr.us[0] = 123.0;
 
         assert!(matches!(
             clip_convex_small_bool::<N>(&poly, &hps_unchanged[0], &mut out_base),
@@ -387,7 +387,7 @@ pub fn run_clip_convex_microbench() {
             ClipResult::Unchanged
         ));
         assert!(matches!(
-            clip_convex_small_bool_out_idx_range::<N>(&poly, &hps_unchanged[0], &mut out_out_idx_range),
+            clip_convex_small_bool_out_idx_ptr::<N>(&poly, &hps_unchanged[0], &mut out_out_idx_ptr),
             ClipResult::Unchanged
         ));
 
@@ -417,15 +417,15 @@ pub fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
-        bench_ns_per_call("out_idx_range mixed", target, samples, 1, |iters| {
+        bench_ns_per_call("out_idx_ptr mixed", target, samples, 1, |iters| {
             let poly = black_box(&poly);
             let hps = black_box(hps_changed.as_slice());
             let hp_mask = hps.len() - 1;
-            let out = black_box(&mut out_out_idx_range);
+            let out = black_box(&mut out_out_idx_ptr);
             let mut s = 0x1234_5678_9ABC_DEF0u64;
             for _ in 0..iters {
                 let hp = &hps[next_idx(&mut s, hp_mask)];
-                let r = clip_convex_small_bool_out_idx_range::<N>(poly, hp, out);
+                let r = clip_convex_small_bool_out_idx_ptr::<N>(poly, hp, out);
                 black_box(r);
             }
         });
@@ -457,15 +457,15 @@ pub fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
-        bench_ns_per_call("out_idx_range unchanged", target, samples, 1, |iters| {
+        bench_ns_per_call("out_idx_ptr unchanged", target, samples, 1, |iters| {
             let poly = black_box(&poly);
             let hps = black_box(hps_unchanged.as_slice());
             let hp_mask = hps.len() - 1;
-            let out = black_box(&mut out_out_idx_range);
+            let out = black_box(&mut out_out_idx_ptr);
             let mut s = 0x0BAD_F00D_1234_5678u64;
             for _ in 0..iters {
                 let hp = &hps[next_idx(&mut s, hp_mask)];
-                let r = clip_convex_small_bool_out_idx_range::<N>(poly, hp, out);
+                let r = clip_convex_small_bool_out_idx_ptr::<N>(poly, hp, out);
                 black_box(r);
             }
         });
@@ -477,7 +477,7 @@ pub fn run_clip_convex_microbench() {
 
         let mut out_u_base = PolyBuffer::new();
         let mut out_u_out_idx = PolyBuffer::new();
-        let mut out_u_out_idx_range = PolyBuffer::new();
+        let mut out_u_out_idx_ptr = PolyBuffer::new();
 
         assert!(matches!(
             clip_convex_small_bool::<N>(&poly_u, &hps_keep[0], &mut out_u_base),
@@ -488,7 +488,7 @@ pub fn run_clip_convex_microbench() {
             ClipResult::Changed
         ));
         assert!(matches!(
-            clip_convex_small_bool_out_idx_range::<N>(&poly_u, &hps_keep[0], &mut out_u_out_idx_range),
+            clip_convex_small_bool_out_idx_ptr::<N>(&poly_u, &hps_keep[0], &mut out_u_out_idx_ptr),
             ClipResult::Changed
         ));
 
@@ -496,8 +496,8 @@ pub fn run_clip_convex_microbench() {
         out_u_base.us[0] = 123.0;
         out_u_out_idx.len = 13;
         out_u_out_idx.us[0] = 123.0;
-        out_u_out_idx_range.len = 13;
-        out_u_out_idx_range.us[0] = 123.0;
+        out_u_out_idx_ptr.len = 13;
+        out_u_out_idx_ptr.us[0] = 123.0;
 
         assert!(matches!(
             clip_convex_small_bool::<N>(&poly_u, &hps_u_unchanged[0], &mut out_u_base),
@@ -508,7 +508,7 @@ pub fn run_clip_convex_microbench() {
             ClipResult::Unchanged
         ));
         assert!(matches!(
-            clip_convex_small_bool_out_idx_range::<N>(&poly_u, &hps_u_unchanged[0], &mut out_u_out_idx_range),
+            clip_convex_small_bool_out_idx_ptr::<N>(&poly_u, &hps_u_unchanged[0], &mut out_u_out_idx_ptr),
             ClipResult::Unchanged
         ));
 
@@ -538,15 +538,15 @@ pub fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
-        bench_ns_per_call("out_idx_range keep_bounding", target, samples, 1, |iters| {
+        bench_ns_per_call("out_idx_ptr keep_bounding", target, samples, 1, |iters| {
             let poly = black_box(&poly_u);
             let hps = black_box(hps_keep.as_slice());
             let hp_mask = hps.len() - 1;
-            let out = black_box(&mut out_u_out_idx_range);
+            let out = black_box(&mut out_u_out_idx_ptr);
             let mut s = 0xA11C_E11E_A11C_E11Eu64;
             for _ in 0..iters {
                 let hp = &hps[next_idx(&mut s, hp_mask)];
-                let r = clip_convex_small_bool_out_idx_range::<N>(poly, hp, out);
+                let r = clip_convex_small_bool_out_idx_ptr::<N>(poly, hp, out);
                 black_box(r);
             }
         });
@@ -575,15 +575,15 @@ pub fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
-        bench_ns_per_call("out_idx_range drop_bounding", target, samples, 1, |iters| {
+        bench_ns_per_call("out_idx_ptr drop_bounding", target, samples, 1, |iters| {
             let poly = black_box(&poly_u);
             let hps = black_box(hps_drop.as_slice());
             let hp_mask = hps.len() - 1;
-            let out = black_box(&mut out_u_out_idx_range);
+            let out = black_box(&mut out_u_out_idx_ptr);
             let mut s = 0xB055_1E55_B055_1E55u64;
             for _ in 0..iters {
                 let hp = &hps[next_idx(&mut s, hp_mask)];
-                let r = clip_convex_small_bool_out_idx_range::<N>(poly, hp, out);
+                let r = clip_convex_small_bool_out_idx_ptr::<N>(poly, hp, out);
                 black_box(r);
             }
         });
@@ -616,15 +616,15 @@ pub fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
-        bench_ns_per_call("out_idx_range unchanged", target, samples, 1, |iters| {
+        bench_ns_per_call("out_idx_ptr unchanged", target, samples, 1, |iters| {
             let poly = black_box(&poly_u);
             let hps = black_box(hps_u_unchanged.as_slice());
             let hp_mask = hps.len() - 1;
-            let out = black_box(&mut out_u_out_idx_range);
+            let out = black_box(&mut out_u_out_idx_ptr);
             let mut s = 0x0BAD_F00D_1234_5678u64;
             for _ in 0..iters {
                 let hp = &hps[next_idx(&mut s, hp_mask)];
-                let r = clip_convex_small_bool_out_idx_range::<N>(poly, hp, out);
+                let r = clip_convex_small_bool_out_idx_ptr::<N>(poly, hp, out);
                 black_box(r);
             }
         });
