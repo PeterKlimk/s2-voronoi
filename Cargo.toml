@@ -42,6 +42,11 @@ name = "microbench_clip"
 path = "src/bin/microbench_clip.rs"
 required-features = ["microbench"]
 
+[[bin]]
+name = "microbench_batch"
+path = "src/bin/microbench_batch.rs"
+required-features = ["microbench"]
+
 [profile.checked]
 inherits = "release"
 opt-level = 3

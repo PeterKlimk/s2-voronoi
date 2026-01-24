@@ -39,6 +39,11 @@ pub fn run_clip_convex_microbench() {
     knn_clipping::topo2d::run_clip_convex_microbench();
 }
 
+#[cfg(feature = "microbench")]
+pub fn run_batch_clip_microbench() {
+    knn_clipping::topo2d::run_batch_clip_microbench();
+}
+
 // Optional qhull backend (test/benchmark only)
 #[cfg(feature = "qhull")]
 pub mod convex_hull;

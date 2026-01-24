@@ -638,3 +638,237 @@ pub fn run_clip_convex_microbench() {
     run_for::<7>(target, samples, hp_pool_len);
     run_for::<8>(target, samples, hp_pool_len);
 }
+
+/// Batch clipping microbench: compare serial vs batched clip_convex.
+#[cfg(feature = "microbench")]
+pub fn run_batch_clip_microbench() {
+    use super::clippers::clip_convex;
+    use super::types::HalfPlane;
+    use super::{ClipResult, PolyBuffer};
+    use std::hint::black_box;
+    use std::time::{Duration, Instant};
+
+    let target_ms: u64 = std::env::var("S2_VORONOI_BENCH_TARGET_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(200)
+        .clamp(10, 10_000);
+    let samples: usize = std::env::var("S2_VORONOI_BENCH_SAMPLES")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(9)
+        .clamp(3, 101);
+
+    fn median(mut xs: Vec<f64>) -> f64 {
+        if xs.is_empty() {
+            return f64::NAN;
+        }
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        xs[xs.len() / 2]
+    }
+
+    fn make_regular_poly<const N: usize>(radius: f64) -> PolyBuffer {
+        let mut p = PolyBuffer::new();
+        p.len = N;
+        p.max_r2 = 0.0;
+        p.has_bounding_ref = false;
+        for i in 0..N {
+            let theta = std::f64::consts::TAU * (i as f64) / (N as f64);
+            let (s, c) = theta.sin_cos();
+            let u = radius * c;
+            let v = radius * s;
+            p.us[i] = u;
+            p.vs[i] = v;
+            p.vertex_planes[i] = (i, (i + 1) % N);
+            p.edge_planes[i] = i;
+            p.max_r2 = p.max_r2.max(u * u + v * v);
+        }
+        p
+    }
+
+    fn calibrate(target: Duration, mut f: impl FnMut(u64)) -> u64 {
+        let mut iters = 1u64;
+        loop {
+            let t0 = Instant::now();
+            f(iters);
+            let dt = t0.elapsed();
+            if dt >= target {
+                return iters;
+            }
+            iters = iters.saturating_mul(2);
+            if iters == 0 {
+                return u64::MAX;
+            }
+        }
+    }
+
+    fn bench_ns_per_call(
+        label: &str,
+        target: Duration,
+        samples: usize,
+        mut f: impl FnMut(u64),
+    ) -> f64 {
+        let mut runs = Vec::with_capacity(samples);
+
+        // Warmup.
+        f(1000);
+
+        let iters = calibrate(target, |n| f(n));
+        for _ in 0..samples {
+            let t0 = Instant::now();
+            f(iters);
+            let dt = t0.elapsed();
+            let ns = dt.as_secs_f64() * 1e9 / (iters as f64);
+            runs.push(ns);
+        }
+
+        let med = median(runs.clone());
+        eprintln!("{label:<40} median {med:>10.2} ns/call");
+        med
+    }
+
+    // Generate 32 half-planes with mixed results
+    fn build_hp_pool<const N: usize>(poly: &PolyBuffer) -> Vec<HalfPlane> {
+        let mut hps = Vec::new();
+        let mut rng = 0x1234_5678_9ABC_DEF0u64;
+
+        for _ in 0..32 {
+            rng = rng.wrapping_mul(6364136223846793005u64).wrapping_add(1442695040888963407u64);
+            let theta = (rng as f64) / (u64::MAX as f64) * std::f64::consts::TAU;
+            let scale = 0.5 + ((rng >> 32) as f64) / (u32::MAX as f64) * 2.0;
+
+            let (s, c) = theta.sin_cos();
+            let a = scale * c;
+            let b = scale * s;
+            let norm = (a * a + b * b).sqrt();
+            let cc = ((rng >> 16) as f64 / u16::MAX as f64 - 0.5) * norm * 2.0;
+
+            let hp = HalfPlane::new_unnormalized(a, b, cc, hps.len());
+            hps.push(hp);
+        }
+
+        hps
+    }
+
+    eprintln!("\n=== Batch Clip Microbench ===\n");
+
+    for n in [3, 4, 5, 6, 7, 8] {
+        eprintln!("\n--- N = {n} ---");
+
+        match n {
+            3 => run_batch_bench::<3>(target_ms, samples),
+            4 => run_batch_bench::<4>(target_ms, samples),
+            5 => run_batch_bench::<5>(target_ms, samples),
+            6 => run_batch_bench::<6>(target_ms, samples),
+            7 => run_batch_bench::<7>(target_ms, samples),
+            8 => run_batch_bench::<8>(target_ms, samples),
+            _ => unreachable!(),
+        }
+    }
+
+    eprintln!("\n=== End Batch Clip Microbench ===\n");
+
+    fn run_batch_bench<const N: usize>(target_ms: u64, samples: usize) {
+        use super::batch_clip::{clip_batch, HpBatch};
+
+        let poly = make_regular_poly::<N>(1.0);
+        let hp_pool = build_hp_pool::<N>(&poly);
+
+        let target = Duration::from_millis(target_ms);
+
+        // Pre-allocate buffers
+        let mut out1 = PolyBuffer::new();
+        let mut out2 = PolyBuffer::new();
+
+        // === Serial clipping (4 clips, one at a time) ===
+        bench_ns_per_call("serial (4 clips)", target, samples, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(&hp_pool);
+            let out1 = black_box(&mut out1);
+            let out2 = black_box(&mut out2);
+            let mut s = 0u64;
+
+            for _ in 0..iters {
+                s = s.wrapping_add(1);
+                let start = (s % 28) as usize; // Ensure we have room for 4
+                let hp0 = hps[start];
+                let hp1 = hps[start + 1];
+                let hp2 = hps[start + 2];
+                let hp3 = hps[start + 3];
+
+                // Avoid cloning `PolyBuffer` (it's a large fixed-size struct). Instead,
+                // treat the initial input as `poly` and then ping-pong between `out1/out2`.
+                //
+                // 0 = `poly`, 1 = `out1`, 2 = `out2`.
+                let mut cur_slot: u8 = 0;
+
+                for hp in [hp0, hp1, hp2, hp3] {
+                    match cur_slot {
+                        0 => {
+                            let r = clip_convex(poly, &hp, out1);
+                            if matches!(r, ClipResult::Changed) {
+                                cur_slot = 1;
+                                if out1.len == 0 {
+                                    break;
+                                }
+                            }
+                        }
+                        1 => {
+                            let r = clip_convex(out1, &hp, out2);
+                            if matches!(r, ClipResult::Changed) {
+                                cur_slot = 2;
+                                if out2.len == 0 {
+                                    break;
+                                }
+                            }
+                        }
+                        2 => {
+                            let r = clip_convex(out2, &hp, out1);
+                            if matches!(r, ClipResult::Changed) {
+                                cur_slot = 1;
+                                if out1.len == 0 {
+                                    break;
+                                }
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+
+                // Consume some output so the compiler can't DCE stores.
+                match cur_slot {
+                    0 => black_box(poly.len),
+                    1 => black_box(out1.len),
+                    2 => black_box(out2.len),
+                    _ => unreachable!(),
+                };
+            }
+        });
+
+        // === Batch clipping (4 clips at once) ===
+        bench_ns_per_call("batch (4 at once)", target, samples, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(&hp_pool);
+            let out2 = black_box(&mut out2);
+            let mut s = 0u64;
+
+            for _ in 0..iters {
+                s = s.wrapping_add(1);
+                let start = (s % 28) as usize; // Ensure we have room for 4
+
+                let batch_hps = [
+                    hps[start],
+                    hps[start + 1],
+                    hps[start + 2],
+                    hps[start + 3],
+                ];
+                let batch = HpBatch::from_array(batch_hps);
+
+                let r = clip_batch(poly, &batch, out2);
+                black_box(r);
+                black_box(out2.len);
+                black_box(out2.max_r2);
+            }
+        });
+    }
+}

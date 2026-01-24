@@ -1,6 +1,8 @@
 //! 2D topology builder using gnomonic projection.
 
 pub(crate) mod builder;
+#[cfg(any(test, feature = "microbench"))]
+pub mod batch_clip;
 pub mod clip_stats;
 pub(crate) mod clippers;
 pub mod types;
@@ -11,7 +13,7 @@ pub mod clip_variants;
 pub mod microbench;
 
 #[cfg(feature = "microbench")]
-pub use microbench::run_clip_convex_microbench;
+pub use microbench::{run_batch_clip_microbench, run_clip_convex_microbench};
 
 // Re-export core types and builder for external use within the crate
 pub use builder::{TangentBasis, Topo2DBuilder};
