@@ -747,7 +747,11 @@ pub fn run_batch_clip_microbench() {
             let a = scale * c;
             let b = scale * s;
             let norm = (a * a + b * b).sqrt();
-            let cc = ((rng >> 16) as f64 / u16::MAX as f64 - 0.5) * norm * 2.0;
+            // Use only 16 bits for the offset term; shifting the full `u64` and dividing by
+            // `u16::MAX` makes this enormous and causes nearly-every plane to be trivially
+            // "unchanged" (bench becomes meaningless).
+            let r16 = ((rng >> 16) & 0xFFFF) as u16;
+            let cc = ((r16 as f64) / (u16::MAX as f64) - 0.5) * norm * 2.0;
 
             let hp = HalfPlane::new_unnormalized(a, b, cc, hps.len());
             hps.push(hp);
@@ -792,6 +796,131 @@ pub fn run_batch_clip_microbench() {
         fn consume_poly(poly: &PolyBuffer) {
             black_box(poly.len);
             black_box(poly.max_r2);
+        }
+
+        // Quick workload characterization (not timed). This is useful because the
+        // relative performance is dominated by how often we hit "Unchanged" and how
+        // often polygons become empty before all planes are applied.
+        {
+            let iters = 20_000usize;
+
+            // ---- serial (up to 8 scalar clips, early-break on empty) ----
+            let mut serial_planes: u64 = 0;
+            let mut serial_unchanged: u64 = 0;
+            let mut serial_empty_iters: u64 = 0;
+
+            // ---- batch4 (two calls; second call skipped if empty) ----
+            let mut b4_second_called: u64 = 0;
+            let mut b4_r0_unchanged: u64 = 0;
+            let mut b4_r1_unchanged: u64 = 0;
+            let mut b4_empty_after_r0: u64 = 0;
+            let mut b4_empty_after_r1: u64 = 0;
+
+            // ---- batch8 (one call) ----
+            let mut b8_unchanged: u64 = 0;
+            let mut b8_empty: u64 = 0;
+
+            for iter in 0..iters {
+                let start = iter % 56;
+                let hps_slice = &hp_pool[start..start + 8];
+
+                // serial
+                let mut cur_slot: u8 = 0; // 0=poly,1=out1,2=out2
+                for hp in hps_slice {
+                    serial_planes += 1;
+                    match cur_slot {
+                        0 => match clip_convex(&poly, hp, &mut out1) {
+                            ClipResult::Unchanged => serial_unchanged += 1,
+                            ClipResult::Changed => {
+                                cur_slot = 1;
+                                if out1.len == 0 {
+                                    serial_empty_iters += 1;
+                                    break;
+                                }
+                            }
+                            ClipResult::TooManyVertices => {}
+                        },
+                        1 => match clip_convex(&out1, hp, &mut out2) {
+                            ClipResult::Unchanged => serial_unchanged += 1,
+                            ClipResult::Changed => {
+                                cur_slot = 2;
+                                if out2.len == 0 {
+                                    serial_empty_iters += 1;
+                                    break;
+                                }
+                            }
+                            ClipResult::TooManyVertices => {}
+                        },
+                        2 => match clip_convex(&out2, hp, &mut out1) {
+                            ClipResult::Unchanged => serial_unchanged += 1,
+                            ClipResult::Changed => {
+                                cur_slot = 1;
+                                if out1.len == 0 {
+                                    serial_empty_iters += 1;
+                                    break;
+                                }
+                            }
+                            ClipResult::TooManyVertices => {}
+                        },
+                        _ => unreachable!(),
+                    }
+                }
+
+                // batch4
+                let b0 = HpBatch4::from_array([hps_slice[0], hps_slice[1], hps_slice[2], hps_slice[3]]);
+                let r0 = clip_batch4(&poly, &b0, &mut out2);
+                if matches!(r0, ClipResult::Unchanged) {
+                    b4_r0_unchanged += 1;
+                }
+                if matches!(r0, ClipResult::Changed) && out2.len == 0 {
+                    b4_empty_after_r0 += 1;
+                } else {
+                    b4_second_called += 1;
+                    let input = if matches!(r0, ClipResult::Changed) { &out2 } else { &poly };
+                    let b1 = HpBatch4::from_array([hps_slice[4], hps_slice[5], hps_slice[6], hps_slice[7]]);
+                    let r1 = clip_batch4(input, &b1, &mut out3);
+                    if matches!(r1, ClipResult::Unchanged) {
+                        b4_r1_unchanged += 1;
+                    }
+                    if matches!(r1, ClipResult::Changed) && out3.len == 0 {
+                        b4_empty_after_r1 += 1;
+                    }
+                }
+
+                // batch8
+                let b = HpBatch8::from_array([
+                    hps_slice[0], hps_slice[1], hps_slice[2], hps_slice[3],
+                    hps_slice[4], hps_slice[5], hps_slice[6], hps_slice[7],
+                ]);
+                let r = clip_batch8(&poly, &b, &mut out2);
+                if matches!(r, ClipResult::Unchanged) {
+                    b8_unchanged += 1;
+                }
+                if matches!(r, ClipResult::Changed) && out2.len == 0 {
+                    b8_empty += 1;
+                }
+            }
+
+            let iters_f = iters as f64;
+            eprintln!(
+                "workload: serial avg_planes={:.2} empty={:.1}% unchanged/call={:.1}%",
+                (serial_planes as f64) / iters_f,
+                (serial_empty_iters as f64) * 100.0 / iters_f,
+                (serial_unchanged as f64) * 100.0 / (serial_planes as f64),
+            );
+            eprintln!(
+                "workload: batch4 second_call={:.1}% r0_unchanged={:.1}% r1_unchanged={:.1}% empty_after_r0={:.1}% empty_after_r1={:.1}%",
+                (b4_second_called as f64) * 100.0 / iters_f,
+                (b4_r0_unchanged as f64) * 100.0 / iters_f,
+                (b4_r1_unchanged as f64) * 100.0 / (b4_second_called as f64).max(1.0),
+                (b4_empty_after_r0 as f64) * 100.0 / iters_f,
+                (b4_empty_after_r1 as f64) * 100.0 / (b4_second_called as f64).max(1.0),
+            );
+            eprintln!(
+                "workload: batch8 unchanged={:.1}% empty={:.1}%",
+                (b8_unchanged as f64) * 100.0 / iters_f,
+                (b8_empty as f64) * 100.0 / iters_f,
+            );
         }
 
         // === Serial clipping (8 clips, one at a time) ===
