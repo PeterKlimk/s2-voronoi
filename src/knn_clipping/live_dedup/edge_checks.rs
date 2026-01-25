@@ -113,7 +113,6 @@ pub(super) fn collect_and_resolve_cell_edges(
     let local_u32 = local.as_u32();
 
     // Incoming checks were taken earlier (e.g. for geometry seeding).
-    let incoming_checks = incoming_checks;
     let incoming_count = incoming_checks.len();
 
     // Track which incoming checks we've matched (bitmask, supports up to 64)
