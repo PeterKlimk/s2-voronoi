@@ -90,11 +90,6 @@ impl Topo2DBuilder {
         self.failed = None;
     }
 
-    #[allow(dead_code)]
-    pub fn clip(&mut self, neighbor_idx: usize, neighbor: Vec3) -> Result<(), CellFailure> {
-        self.clip_with_slot(neighbor_idx, u32::MAX, neighbor)
-    }
-
     pub fn clip_with_slot(
         &mut self,
         neighbor_idx: usize,
@@ -219,13 +214,6 @@ impl Topo2DBuilder {
         edge_neighbor_slots: &mut Vec<u32>,
     ) -> Result<(), CellFailure> {
         self.to_vertex_data_impl(out, Some(edge_neighbors), Some(edge_neighbor_slots))
-    }
-
-    #[allow(dead_code)]
-    pub fn to_vertex_data(&self) -> Result<Vec<VertexData>, CellFailure> {
-        let mut out = Vec::new();
-        self.to_vertex_data_impl(&mut out, None, None)?;
-        Ok(out)
     }
 
     fn to_vertex_data_impl(
