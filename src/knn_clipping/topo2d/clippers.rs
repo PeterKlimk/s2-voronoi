@@ -1,5 +1,3 @@
-#[cfg(feature = "timing")]
-use super::clip_stats;
 use super::types::{ClipResult, HalfPlane, PolyBuffer, MAX_POLY_VERTICES};
 
 /// Clip a convex polygon by a half-plane.
