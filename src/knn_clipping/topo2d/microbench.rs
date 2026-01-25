@@ -6,8 +6,9 @@
 #[cfg(feature = "microbench")]
 pub fn run_clip_convex_microbench() {
     use super::clippers::{
-        clip_convex_small_bool, clip_convex_small_bool_out_idx_ptr, clip_convex_small_bool_out_idx_ptr_b,
-        clip_convex_small_bool_out_idx_ptr_c, clip_convex_small_bool_out_idx_ptr_d,
+        clip_convex_small_bool, clip_convex_small_bool_out_idx_ptr,
+        clip_convex_small_bool_out_idx_ptr_b, clip_convex_small_bool_out_idx_ptr_c,
+        clip_convex_small_bool_out_idx_ptr_d, clip_convex_small_bool_out_idx_ptr_range_d,
         clip_convex_small_bool_out_idx_range,
     };
     use super::{ClipResult, HalfPlane, PolyBuffer};
@@ -38,6 +39,62 @@ pub fn run_clip_convex_microbench() {
         }
         xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
         xs[xs.len() / 2]
+    }
+
+    #[inline(always)]
+    fn approx_eq_f64(a: f64, b: f64) -> bool {
+        if a == b {
+            return true;
+        }
+        let diff = (a - b).abs();
+        let scale = 1.0 + a.abs().max(b.abs());
+        diff <= 1e-12 * scale
+    }
+
+    fn assert_same_poly(label: &str, expected: &PolyBuffer, got: &PolyBuffer) {
+        assert_eq!(
+            expected.len, got.len,
+            "{label}: len mismatch (expected {}, got {})",
+            expected.len, got.len
+        );
+        assert!(
+            approx_eq_f64(expected.max_r2, got.max_r2),
+            "{label}: max_r2 mismatch (expected {}, got {})",
+            expected.max_r2,
+            got.max_r2
+        );
+        assert_eq!(
+            expected.has_bounding_ref, got.has_bounding_ref,
+            "{label}: has_bounding_ref mismatch (expected {}, got {})",
+            expected.has_bounding_ref, got.has_bounding_ref
+        );
+
+        for i in 0..expected.len {
+            assert!(
+                approx_eq_f64(expected.us[i], got.us[i]),
+                "{label}: us[{i}] mismatch (expected {}, got {})",
+                expected.us[i],
+                got.us[i]
+            );
+            assert!(
+                approx_eq_f64(expected.vs[i], got.vs[i]),
+                "{label}: vs[{i}] mismatch (expected {}, got {})",
+                expected.vs[i],
+                got.vs[i]
+            );
+            assert_eq!(
+                expected.vertex_planes[i], got.vertex_planes[i],
+                "{label}: vertex_planes[{i}] mismatch (expected {:?}, got {:?})",
+                expected.vertex_planes[i],
+                got.vertex_planes[i]
+            );
+            assert_eq!(
+                expected.edge_planes[i], got.edge_planes[i],
+                "{label}: edge_planes[{i}] mismatch (expected {}, got {})",
+                expected.edge_planes[i],
+                got.edge_planes[i]
+            );
+        }
     }
 
     fn make_regular_poly_bounded<const N: usize>(radius: f64) -> PolyBuffer {
@@ -360,6 +417,7 @@ pub fn run_clip_convex_microbench() {
         let mut out_out_idx_ptr_b = PolyBuffer::new();
         let mut out_out_idx_ptr_c = PolyBuffer::new();
         let mut out_out_idx_ptr_d = PolyBuffer::new();
+        let mut out_out_idx_ptr_range_d = PolyBuffer::new();
 
         // Sanity: ensure the intended regimes.
         assert!(matches!(
@@ -384,6 +442,14 @@ pub fn run_clip_convex_microbench() {
         ));
         assert!(matches!(
             clip_convex_small_bool_out_idx_ptr_d::<N>(&poly, &hps_changed[0], &mut out_out_idx_ptr_d),
+            ClipResult::Changed
+        ));
+        assert!(matches!(
+            clip_convex_small_bool_out_idx_ptr_range_d::<N>(
+                &poly,
+                &hps_changed[0],
+                &mut out_out_idx_ptr_range_d
+            ),
             ClipResult::Changed
         ));
 
@@ -425,6 +491,85 @@ pub fn run_clip_convex_microbench() {
             clip_convex_small_bool_out_idx_ptr_d::<N>(&poly, &hps_unchanged[0], &mut out_out_idx_ptr_d),
             ClipResult::Unchanged
         ));
+        assert!(matches!(
+            clip_convex_small_bool_out_idx_ptr_range_d::<N>(
+                &poly,
+                &hps_unchanged[0],
+                &mut out_out_idx_ptr_range_d
+            ),
+            ClipResult::Unchanged
+        ));
+
+        // Correctness: variants must match baseline output for changed half-planes.
+        for (i, hp) in hps_changed.iter().take(64).enumerate() {
+            assert!(
+                matches!(clip_convex_small_bool::<N>(&poly, hp, &mut out_base), ClipResult::Changed),
+                "baseline unexpectedly not Changed (N={N}, i={i})"
+            );
+            let baseline = &out_base;
+
+            assert!(
+                matches!(
+                    clip_convex_small_bool_out_idx_range::<N>(&poly, hp, &mut out_out_idx_range),
+                    ClipResult::Changed
+                ),
+                "out_idx_range unexpectedly not Changed (N={N}, i={i})"
+            );
+            assert_same_poly("out_idx_range", baseline, &out_out_idx_range);
+
+            assert!(
+                matches!(
+                    clip_convex_small_bool_out_idx_ptr::<N>(&poly, hp, &mut out_out_idx_ptr),
+                    ClipResult::Changed
+                ),
+                "out_idx_ptr unexpectedly not Changed (N={N}, i={i})"
+            );
+            assert_same_poly("out_idx_ptr", baseline, &out_out_idx_ptr);
+
+            assert!(
+                matches!(
+                    clip_convex_small_bool_out_idx_ptr_b::<N>(&poly, hp, &mut out_out_idx_ptr_b),
+                    ClipResult::Changed
+                ),
+                "out_idx_ptr_b unexpectedly not Changed (N={N}, i={i})"
+            );
+            assert_same_poly("out_idx_ptr_b", baseline, &out_out_idx_ptr_b);
+
+            assert!(
+                matches!(
+                    clip_convex_small_bool_out_idx_ptr_c::<N>(&poly, hp, &mut out_out_idx_ptr_c),
+                    ClipResult::Changed
+                ),
+                "out_idx_ptr_c unexpectedly not Changed (N={N}, i={i})"
+            );
+            assert_same_poly("out_idx_ptr_c", baseline, &out_out_idx_ptr_c);
+
+            assert!(
+                matches!(
+                    clip_convex_small_bool_out_idx_ptr_d::<N>(&poly, hp, &mut out_out_idx_ptr_d),
+                    ClipResult::Changed
+                ),
+                "out_idx_ptr_d unexpectedly not Changed (N={N}, i={i})"
+            );
+            assert_same_poly("out_idx_ptr_d", baseline, &out_out_idx_ptr_d);
+
+            assert!(
+                matches!(
+                    clip_convex_small_bool_out_idx_ptr_range_d::<N>(
+                        &poly,
+                        hp,
+                        &mut out_out_idx_ptr_range_d
+                    ),
+                    ClipResult::Changed
+                ),
+                "out_idx_ptr_range_d unexpectedly not Changed (N={N}, i={i})"
+            );
+            assert_same_poly(
+                "out_idx_ptr_range_d",
+                baseline,
+                &out_out_idx_ptr_range_d,
+            );
+        }
 
         eprintln!("\nclip_convex microbench (N={N})");
 
@@ -500,6 +645,18 @@ pub fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
+        bench_ns_per_call("out_idx_ptr_range_d mixed", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_changed.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_out_idx_ptr_range_d);
+            let mut s = 0x1234_5678_9ABC_DEF0u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let r = clip_convex_small_bool_out_idx_ptr_range_d::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
 
         // (Temporarily disabled) Alternating keep/cut can be misleading for batch-friendly ideas.
         let _ = hps_combo;
@@ -540,6 +697,18 @@ pub fn run_clip_convex_microbench() {
                 black_box(r);
             }
         });
+        bench_ns_per_call("out_idx_ptr_range_d unchanged", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_unchanged.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_out_idx_ptr_range_d);
+            let mut s = 0x0BAD_F00D_1234_5678u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let r = clip_convex_small_bool_out_idx_ptr_range_d::<N>(poly, hp, out);
+                black_box(r);
+            }
+        });
 
         let bounding_verts: usize = if N <= 4 { 2 } else { 3 };
         let poly_u = make_regular_poly_unbounded::<N>(1.0, bounding_verts);
@@ -549,6 +718,7 @@ pub fn run_clip_convex_microbench() {
         let mut out_u_base = PolyBuffer::new();
         let mut out_u_out_idx_range = PolyBuffer::new();
         let mut out_u_out_idx_ptr = PolyBuffer::new();
+        let mut out_u_out_idx_ptr_range_d = PolyBuffer::new();
 
         assert!(matches!(
             clip_convex_small_bool::<N>(&poly_u, &hps_keep[0], &mut out_u_base),
@@ -560,6 +730,14 @@ pub fn run_clip_convex_microbench() {
         ));
         assert!(matches!(
             clip_convex_small_bool_out_idx_ptr::<N>(&poly_u, &hps_keep[0], &mut out_u_out_idx_ptr),
+            ClipResult::Changed
+        ));
+        assert!(matches!(
+            clip_convex_small_bool_out_idx_ptr_range_d::<N>(
+                &poly_u,
+                &hps_keep[0],
+                &mut out_u_out_idx_ptr_range_d
+            ),
             ClipResult::Changed
         ));
 
@@ -586,6 +764,61 @@ pub fn run_clip_convex_microbench() {
             ),
             ClipResult::Unchanged
         ));
+        assert!(matches!(
+            clip_convex_small_bool_out_idx_ptr_range_d::<N>(
+                &poly_u,
+                &hps_u_unchanged[0],
+                &mut out_u_out_idx_ptr_range_d
+            ),
+            ClipResult::Unchanged
+        ));
+
+        // Correctness: unbounded variants must match baseline output for changed half-planes.
+        for (i, hp) in hps_keep.iter().take(64).enumerate() {
+            assert!(
+                matches!(
+                    clip_convex_small_bool::<N>(&poly_u, hp, &mut out_u_base),
+                    ClipResult::Changed
+                ),
+                "baseline unexpectedly not Changed (unbounded N={N}, i={i})"
+            );
+            let baseline = &out_u_base;
+
+            assert!(
+                matches!(
+                    clip_convex_small_bool_out_idx_range::<N>(&poly_u, hp, &mut out_u_out_idx_range),
+                    ClipResult::Changed
+                ),
+                "out_idx_range unexpectedly not Changed (unbounded N={N}, i={i})"
+            );
+            assert_same_poly("unbounded out_idx_range", baseline, &out_u_out_idx_range);
+
+            assert!(
+                matches!(
+                    clip_convex_small_bool_out_idx_ptr::<N>(&poly_u, hp, &mut out_u_out_idx_ptr),
+                    ClipResult::Changed
+                ),
+                "out_idx_ptr unexpectedly not Changed (unbounded N={N}, i={i})"
+            );
+            assert_same_poly("unbounded out_idx_ptr", baseline, &out_u_out_idx_ptr);
+
+            assert!(
+                matches!(
+                    clip_convex_small_bool_out_idx_ptr_range_d::<N>(
+                        &poly_u,
+                        hp,
+                        &mut out_u_out_idx_ptr_range_d
+                    ),
+                    ClipResult::Changed
+                ),
+                "out_idx_ptr_range_d unexpectedly not Changed (unbounded N={N}, i={i})"
+            );
+            assert_same_poly(
+                "unbounded out_idx_ptr_range_d",
+                baseline,
+                &out_u_out_idx_ptr_range_d,
+            );
+        }
 
         eprintln!("\nclip_convex microbench unbounded (N={N})");
 
