@@ -3,6 +3,7 @@ use super::clip_stats;
 use super::types::{ClipResult, HalfPlane, PolyBuffer, MAX_POLY_VERTICES};
 
 /// Clip a convex polygon by a half-plane.
+#[cfg_attr(feature = "profiling", inline(never))]
 pub(crate) fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
     let n = poly.len;
     #[cfg(feature = "timing")]
@@ -10,27 +11,66 @@ pub(crate) fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffe
 
     debug_assert!(n >= 3, "clip_convex expects poly.len >= 3, got {}", n);
 
+    let has_bounding_ref = poly.has_bounding_ref;
     let max_r2 = poly.max_r2;
-    if !poly.has_bounding_ref && max_r2 > 0.0 {
+    if !has_bounding_ref && max_r2 > 0.0 {
         let t = hp.c + hp.eps;
         if t >= 0.0 && t * t >= hp.ab2 * max_r2 {
             #[cfg(feature = "timing")]
-            clip_stats::record_early_unchanged(n, !poly.has_bounding_ref);
+            clip_stats::record_early_unchanged(n, !has_bounding_ref);
             return ClipResult::Unchanged;
         }
     }
+
+    // Dispatch strategy (x86_64):
+    // - N=4,8: `% N` is cheap (bitmask), so the plain ptr variant tends to win.
+    // - N=3,5,6,7: avoid `% N` in the hot loop via the ptr_d variant.
+    // We `match` on N first, then branch on bounded/unbounded per arm. This can improve branch
+    // prediction when `has_bounding_ref` correlates with N, while still allowing the inner push
+    // path to be specialized via `const TRACK_BOUNDING`.
     match n {
-        // Strategy (x86_64):
-        // - N=4,8: `% N` is cheap (bitmask), so the plain ptr variant tends to win.
-        // - N=3,5,6,7: avoid `% N` in the hot loop via the ptr_d variant.
-        // Both variants split bounded/unbounded at entry to remove per-push branching for
-        // tracking `has_bounding_ref`.
-        3 => clip_convex_small_bool_out_idx_ptr_d_split::<3>(poly, hp, out),
-        4 => clip_convex_small_bool_out_idx_ptr_split::<4>(poly, hp, out),
-        5 => clip_convex_small_bool_out_idx_ptr_d_split::<5>(poly, hp, out),
-        6 => clip_convex_small_bool_out_idx_ptr_d_split::<6>(poly, hp, out),
-        7 => clip_convex_small_bool_out_idx_ptr_d_split::<7>(poly, hp, out),
-        8 => clip_convex_small_bool_out_idx_ptr_split::<8>(poly, hp, out),
+        3 => {
+            if has_bounding_ref {
+                clip_convex_small_bool_out_idx_ptr_d_impl::<3, true>(poly, hp, out)
+            } else {
+                clip_convex_small_bool_out_idx_ptr_d_impl::<3, false>(poly, hp, out)
+            }
+        }
+        4 => {
+            if has_bounding_ref {
+                clip_convex_small_bool_out_idx_ptr_impl::<4, true>(poly, hp, out)
+            } else {
+                clip_convex_small_bool_out_idx_ptr_impl::<4, false>(poly, hp, out)
+            }
+        }
+        5 => {
+            if has_bounding_ref {
+                clip_convex_small_bool_out_idx_ptr_d_impl::<5, true>(poly, hp, out)
+            } else {
+                clip_convex_small_bool_out_idx_ptr_d_impl::<5, false>(poly, hp, out)
+            }
+        }
+        6 => {
+            if has_bounding_ref {
+                clip_convex_small_bool_out_idx_ptr_d_impl::<6, true>(poly, hp, out)
+            } else {
+                clip_convex_small_bool_out_idx_ptr_d_impl::<6, false>(poly, hp, out)
+            }
+        }
+        7 => {
+            if has_bounding_ref {
+                clip_convex_small_bool_out_idx_ptr_d_impl::<7, true>(poly, hp, out)
+            } else {
+                clip_convex_small_bool_out_idx_ptr_d_impl::<7, false>(poly, hp, out)
+            }
+        }
+        8 => {
+            if has_bounding_ref {
+                clip_convex_small_bool_out_idx_ptr_impl::<8, true>(poly, hp, out)
+            } else {
+                clip_convex_small_bool_out_idx_ptr_impl::<8, false>(poly, hp, out)
+            }
+        }
         _ => clip_convex_bitmask(poly, hp, out),
     }
 }
