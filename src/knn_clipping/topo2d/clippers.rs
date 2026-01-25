@@ -12,13 +12,18 @@ pub(crate) fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffe
     debug_assert!(n >= 3, "clip_convex expects poly.len >= 3, got {}", n);
 
     let has_bounding_ref = poly.has_bounding_ref;
-    let max_r2 = poly.max_r2;
-    if !has_bounding_ref && max_r2 > 0.0 {
-        let t = hp.c + hp.eps;
-        if t >= 0.0 && t * t >= hp.ab2 * max_r2 {
-            #[cfg(feature = "timing")]
-            clip_stats::record_early_unchanged(n, !has_bounding_ref);
-            return ClipResult::Unchanged;
+    // Early-unchanged is only relevant for bounded polys. Empirically, it is very rare for small N
+    // (e.g. triangles), so we skip the check below a small-N threshold to save overhead.
+    const EARLY_UNCHANGED_MIN_N: usize = 5;
+    if !has_bounding_ref && n >= EARLY_UNCHANGED_MIN_N {
+        let max_r2 = poly.max_r2;
+        if max_r2 > 0.0 {
+            let t = hp.c + hp.eps;
+            if t >= 0.0 && t * t >= hp.ab2 * max_r2 {
+                #[cfg(feature = "timing")]
+                clip_stats::record_early_unchanged(n, !has_bounding_ref);
+                return ClipResult::Unchanged;
+            }
         }
     }
 
