@@ -72,7 +72,8 @@ impl ShardDedup {
 /// edges to earlier neighbors against incoming checks while collecting
 /// edges_to_later and edges_overflow for the emit phase.
 ///
-/// This eliminates the edges_to_earlier intermediate vec.
+/// This eliminates the edges_to_earlier intermediate vec
+#[cfg_attr(feature = "profiling", inline(never))]
 pub(super) fn collect_and_resolve_cell_edges(
     cell_idx: u32,
     bin: BinId,
@@ -287,6 +288,8 @@ pub(super) fn collect_and_resolve_cell_edges(
 /// Since cross-bin edges are emitted twice (once by each bin), we sort all overflow
 /// records and match them by edge key. This allows propagating vertex indices
 /// between bins without global communication during the main clipping phase.
+/// 
+#[cfg_attr(feature = "profiling", inline(never))]
 pub(super) fn resolve_edge_check_overflow(
     shards: &mut [ShardState],
     edge_check_overflow: &mut [EdgeCheckOverflow],
