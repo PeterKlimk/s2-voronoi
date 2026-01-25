@@ -209,6 +209,9 @@ impl PackedKnnTimings {
 // Hard cap on total candidates in a 3×3 neighborhood to avoid pathological allocations.
 const MAX_CANDIDATES_HARD: usize = 65_536;
 
+/// Target initial chunk size (matches KNN_RESTART_KS[0] in knn_clipping).
+const TARGET_INITIAL_CHUNK_SIZE: usize = 24;
+
 /// Reusable scratch buffers for packed per-cell group queries.
 pub struct PackedKnnCellScratch {
     cell_ranges: Vec<(usize, usize)>,
@@ -756,11 +759,37 @@ impl PackedKnnCellScratch {
                     return None;
                 }
                 let remaining = &mut keys[start..];
-                let n = k.min(out.len()).min(remaining.len());
-                if n == 0 {
+                let n_target = k.min(out.len());
+                if remaining.len() == 0 {
                     return None;
                 }
                 timings.add_select_query_prep(t.lap());
+
+                // If remaining candidates are close to target size, skip partition
+                // and emit everything sorted.
+                if remaining.len() < 2 * TARGET_INITIAL_CHUNK_SIZE {
+                    let emit = remaining.len().min(n_target);
+                    remaining.sort_unstable();
+                    timings.add_select_sort(t.lap());
+                    for (dst, key) in out[..emit].iter_mut().zip(remaining.iter()) {
+                        *dst = key_to_idx(*key);
+                    }
+                    timings.add_select_scatter(t.lap());
+                    let last_dot = key_to_dot(remaining[emit - 1]);
+                    self.chunk0_pos[qi] = start + emit;
+                    let has_more = self.chunk0_pos[qi] < keys.len();
+                    let unseen_bound = if has_more {
+                        last_dot
+                    } else if self.tail_possible[qi] {
+                        self.thresholds[qi]
+                    } else {
+                        self.security_thresholds[qi]
+                    };
+                    return Some(PackedChunk { n: emit, unseen_bound });
+                }
+
+                // Large chunk: partition to extract top n, then sort those.
+                let n = n_target.min(remaining.len());
                 if remaining.len() > n {
                     remaining.select_nth_unstable(n - 1);
                     timings.add_select_partition(t.lap());
