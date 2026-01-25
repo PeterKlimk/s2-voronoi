@@ -81,8 +81,10 @@ fn main() {
     // Test various bins-per-thread ratios
     let bins_per_thread = vec![0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 6.0, 8.0];
 
-    println!("{:>10} {:>10} {:>12} {:>10} {:>10} {:>10}",
-        "Bins", "Bins/Thread", "Mean (ms)", "StdDev", "Min", "Max");
+    println!(
+        "{:>10} {:>10} {:>12} {:>10} {:>10} {:>10}",
+        "Bins", "Bins/Thread", "Mean (ms)", "StdDev", "Min", "Max"
+    );
     println!("{}", "-".repeat(70));
 
     let mut results = Vec::new();
@@ -95,18 +97,36 @@ fn main() {
         let effective_ratio = bin_count as f32 / num_threads as f32;
         let cells_per_sec = (n_points as f64) / (stats.mean / 1000.0);
 
-        println!("{:>10} {:>10.2} {:>10.1} ms {:>8.2} ms {:>8.1} ms {:>8.1} ms ({:.0}k cells/sec)",
-            bin_count, effective_ratio, stats.mean, stats.std_dev, stats.min, stats.max, cells_per_sec / 1000.0);
+        println!(
+            "{:>10} {:>10.2} {:>10.1} ms {:>8.2} ms {:>8.1} ms {:>8.1} ms ({:.0}k cells/sec)",
+            bin_count,
+            effective_ratio,
+            stats.mean,
+            stats.std_dev,
+            stats.min,
+            stats.max,
+            cells_per_sec / 1000.0
+        );
         results.push((bin_count, effective_ratio, stats, cells_per_sec));
     }
 
     println!();
     println!("Summary (by mean time):");
-    let fastest = results.iter().min_by(|a, b| a.2.mean.partial_cmp(&b.2.mean).unwrap()).unwrap();
-    println!("Fastest: {} bins ({:.2} bins/thread) - {:.1} ms (±{:.1})",
-        fastest.0, fastest.1, fastest.2.mean, fastest.2.std_dev);
+    let fastest = results
+        .iter()
+        .min_by(|a, b| a.2.mean.partial_cmp(&b.2.mean).unwrap())
+        .unwrap();
+    println!(
+        "Fastest: {} bins ({:.2} bins/thread) - {:.1} ms (±{:.1})",
+        fastest.0, fastest.1, fastest.2.mean, fastest.2.std_dev
+    );
 
-    let by_min = results.iter().min_by(|a, b| a.2.min.partial_cmp(&b.2.min).unwrap()).unwrap();
-    println!("Best single run: {} bins ({:.2} bins/thread) - {:.1} ms",
-        by_min.0, by_min.1, by_min.2.min);
+    let by_min = results
+        .iter()
+        .min_by(|a, b| a.2.min.partial_cmp(&b.2.min).unwrap())
+        .unwrap();
+    println!(
+        "Best single run: {} bins ({:.2} bins/thread) - {:.1} ms",
+        by_min.0, by_min.1, by_min.2.min
+    );
 }

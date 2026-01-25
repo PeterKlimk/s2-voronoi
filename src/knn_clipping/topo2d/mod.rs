@@ -13,10 +13,6 @@ pub use microbench::{run_batch_clip_microbench, run_clip_convex_microbench};
 // Re-export core types and builder for external use within the crate
 pub use builder::Topo2DBuilder;
 
-// Internal re-exports for sibling modules
-#[cfg(any(test, feature = "microbench"))]
-pub(crate) use clippers::clip_convex_small_bool;
-
 #[cfg(test)]
 mod tests {
     use super::*;

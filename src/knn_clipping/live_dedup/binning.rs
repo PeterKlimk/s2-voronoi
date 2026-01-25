@@ -36,7 +36,8 @@ fn choose_bin_layout(grid_res: usize) -> BinLayout {
         var.parse().unwrap_or(threads * 2)
     } else {
         threads * 2
-    }.clamp(6, 96);
+    }
+    .clamp(6, 96);
     let target_per_face = (target_bins as f64 / 6.0).max(1.0);
     let mut bin_res = target_per_face.sqrt().ceil() as usize;
     bin_res = bin_res.clamp(1, grid_res.max(1));

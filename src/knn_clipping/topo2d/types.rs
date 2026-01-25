@@ -1,3 +1,5 @@
+use crate::fp;
+
 pub const EPS_INSIDE: f64 = 1e-12;
 pub const MAX_POLY_VERTICES: usize = 64;
 
@@ -22,7 +24,7 @@ pub struct HalfPlane {
 
 impl HalfPlane {
     pub fn new_unnormalized(a: f64, b: f64, c: f64, plane_idx: usize) -> Self {
-        let ab2: f64 = a.mul_add(a, b * b);
+        let ab2: f64 = fp::fma_f64(a, a, b * b);
         let norm = (ab2 as f32).sqrt() as f64;
         let eps = EPS_INSIDE * norm;
 
@@ -38,7 +40,7 @@ impl HalfPlane {
 
     #[inline]
     pub fn signed_dist(&self, u: f64, v: f64) -> f64 {
-        self.a.mul_add(u, self.b.mul_add(v, self.c))
+        fp::fma_f64(self.a, u, fp::fma_f64(self.b, v, self.c))
     }
 }
 

@@ -1,5 +1,6 @@
 use super::clippers::clip_convex;
 use super::types::{ClipResult, HalfPlane, PolyBuffer};
+use crate::fp;
 use crate::knn_clipping::cell_builder::{CellFailure, VertexData};
 use glam::{DVec3, Vec3};
 
@@ -108,13 +109,13 @@ impl Topo2DBuilder {
 
         let n_raw = DVec3::new(neighbor.x as f64, neighbor.y as f64, neighbor.z as f64);
         let len_sq = n_raw.length_squared();
-        let scale = len_sq.mul_add(0.5, 0.5);
+        let scale = fp::fma_f64(len_sq, 0.5, 0.5);
 
         let g = self.generator;
         let normal_unnorm = DVec3::new(
-            g.x.mul_add(scale, -n_raw.x),
-            g.y.mul_add(scale, -n_raw.y),
-            g.z.mul_add(scale, -n_raw.z),
+            fp::fma_f64(g.x, scale, -n_raw.x),
+            fp::fma_f64(g.y, scale, -n_raw.y),
+            fp::fma_f64(g.z, scale, -n_raw.z),
         );
 
         let (a, b, c) = self.basis.plane_to_line(normal_unnorm);
@@ -200,8 +201,8 @@ impl Topo2DBuilder {
         }
 
         let sin_theta = (1.0 - min_cos * min_cos).max(0.0).sqrt();
-        let cos_theta_pad = min_cos.mul_add(self.term_cos_pad, -sin_theta * self.term_sin_pad);
-        let cos_2max = (2.0 * cos_theta_pad).mul_add(cos_theta_pad, -1.0);
+        let cos_theta_pad = fp::fma_f64(min_cos, self.term_cos_pad, -sin_theta * self.term_sin_pad);
+        let cos_2max = fp::fma_f64(2.0 * cos_theta_pad, cos_theta_pad, -1.0);
         let threshold = cos_2max - 3.0 * f32::EPSILON as f64;
 
         (max_unseen_dot_bound as f64) < threshold
@@ -249,9 +250,21 @@ impl Topo2DBuilder {
             let (plane_a, plane_b) = poly.vertex_planes[i];
 
             let dir = DVec3::new(
-                u.mul_add(self.basis.t1.x, v.mul_add(self.basis.t2.x, self.basis.g.x)),
-                u.mul_add(self.basis.t1.y, v.mul_add(self.basis.t2.y, self.basis.g.y)),
-                u.mul_add(self.basis.t1.z, v.mul_add(self.basis.t2.z, self.basis.g.z)),
+                fp::fma_f64(
+                    u,
+                    self.basis.t1.x,
+                    fp::fma_f64(v, self.basis.t2.x, self.basis.g.x),
+                ),
+                fp::fma_f64(
+                    u,
+                    self.basis.t1.y,
+                    fp::fma_f64(v, self.basis.t2.y, self.basis.g.y),
+                ),
+                fp::fma_f64(
+                    u,
+                    self.basis.t1.z,
+                    fp::fma_f64(v, self.basis.t2.z, self.basis.g.z),
+                ),
             );
             let len2 = dir.length_squared();
             if len2 < 1e-28 {

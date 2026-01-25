@@ -4,6 +4,7 @@
 //! directed live-dedup backend, so we keep the implementation focused on that use-case.
 
 use super::{cell_to_face_ij, CubeMapGrid};
+use crate::fp;
 use glam::Vec3;
 use std::simd::f32x8;
 use std::simd::{cmp::SimdPartialOrd, Mask};
@@ -342,7 +343,7 @@ impl PackedKnnCellScratch {
 
                     let mut s_min = 1.0f32;
                     for n in &planes {
-                        s_min = s_min.min(n.x * qx + n.y * qy + n.z * qz);
+                        s_min = s_min.min(fp::dot3_f32(n.x, n.y, n.z, qx, qy, qz));
                     }
 
                     // For the interior single-face case, the nearest outside point is reached
@@ -446,7 +447,7 @@ impl PackedKnnCellScratch {
                 let qx = f32x8::splat(self.query_x[qi]);
                 let qy = f32x8::splat(self.query_y[qi]);
                 let qz = f32x8::splat(self.query_z[qi]);
-                let dots = cx * qx + cy * qy + cz * qz;
+                let dots = fp::dot3_f32x8(cx, cy, cz, qx, qy, qz);
 
                 let thresh_vec = f32x8::splat(self.security_thresholds[qi]);
                 let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
@@ -495,7 +496,14 @@ impl PackedKnnCellScratch {
                 if qi == pos {
                     continue;
                 }
-                let dot = cx * self.query_x[qi] + cy * self.query_y[qi] + cz * self.query_z[qi];
+                let dot = fp::dot3_f32(
+                    cx,
+                    cy,
+                    cz,
+                    self.query_x[qi],
+                    self.query_y[qi],
+                    self.query_z[qi],
+                );
                 if dot > self.security_thresholds[qi] {
                     self.chunk0_keys[qi].push(make_desc_key(dot, slot));
                     self.min_center_dot[qi] = self.min_center_dot[qi].min(dot);
@@ -539,7 +547,7 @@ impl PackedKnnCellScratch {
                     let qx = f32x8::splat(self.query_x[qi]);
                     let qy = f32x8::splat(self.query_y[qi]);
                     let qz = f32x8::splat(self.query_z[qi]);
-                    let dots = cx * qx + cy * qy + cz * qz;
+                    let dots = fp::dot3_f32x8(cx, cy, cz, qx, qy, qz);
 
                     let thresh_vec = f32x8::splat(self.thresholds[qi]);
                     let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
@@ -589,7 +597,14 @@ impl PackedKnnCellScratch {
                         continue;
                     }
 
-                    let dot = cx * self.query_x[qi] + cy * self.query_y[qi] + cz * self.query_z[qi];
+                    let dot = fp::dot3_f32(
+                        cx,
+                        cy,
+                        cz,
+                        self.query_x[qi],
+                        self.query_y[qi],
+                        self.query_z[qi],
+                    );
                     if dot > self.thresholds[qi] {
                         self.chunk0_keys[qi].push(make_desc_key(dot, slot));
                     }
@@ -646,7 +661,7 @@ impl PackedKnnCellScratch {
                 let qx = f32x8::splat(self.query_x[qi]);
                 let qy = f32x8::splat(self.query_y[qi]);
                 let qz = f32x8::splat(self.query_z[qi]);
-                let dots = cx * qx + cy * qy + cz * qz;
+                let dots = fp::dot3_f32x8(cx, cy, cz, qx, qy, qz);
 
                 let hi_vec = f32x8::splat(self.thresholds[qi]);
                 let safe_vec = f32x8::splat(self.security_thresholds[qi]);
@@ -699,7 +714,14 @@ impl PackedKnnCellScratch {
                     continue;
                 }
 
-                let dot = cx * self.query_x[qi] + cy * self.query_y[qi] + cz * self.query_z[qi];
+                let dot = fp::dot3_f32(
+                    cx,
+                    cy,
+                    cz,
+                    self.query_x[qi],
+                    self.query_y[qi],
+                    self.query_z[qi],
+                );
                 if dot > self.security_thresholds[qi] && dot <= self.thresholds[qi] {
                     self.tail_keys[qi].push(make_desc_key(dot, slot));
                 }

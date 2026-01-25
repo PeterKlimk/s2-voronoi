@@ -1,4 +1,5 @@
 use super::types::{ClipResult, HalfPlane, PolyBuffer, MAX_POLY_VERTICES};
+use crate::fp;
 
 /// Clip a convex polygon by a half-plane.
 #[cfg_attr(feature = "profiling", inline(never))]
@@ -141,7 +142,7 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
 
     #[inline(always)]
     fn r2_of(u: f64, v: f64) -> f64 {
-        u.mul_add(u, v * v)
+        fp::fma_f64(u, u, v * v)
     }
 
     let mut max_r2 = 0.0f64;
@@ -171,8 +172,16 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
         )
     };
     let t_entry = d_entry / (d_entry - d_entry_next);
-    let entry_u = t_entry.mul_add(poly.us[entry_next] - poly.us[entry_idx], poly.us[entry_idx]);
-    let entry_v = t_entry.mul_add(poly.vs[entry_next] - poly.vs[entry_idx], poly.vs[entry_idx]);
+    let entry_u = fp::fma_f64(
+        t_entry,
+        poly.us[entry_next] - poly.us[entry_idx],
+        poly.us[entry_idx],
+    );
+    let entry_v = fp::fma_f64(
+        t_entry,
+        poly.vs[entry_next] - poly.vs[entry_idx],
+        poly.vs[entry_idx],
+    );
     let entry_ep = poly.edge_planes[entry_idx];
     push!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
 
@@ -197,8 +206,16 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
         )
     };
     let t_exit = d_exit / (d_exit - d_exit_next);
-    let exit_u = t_exit.mul_add(poly.us[exit_next] - poly.us[exit_idx], poly.us[exit_idx]);
-    let exit_v = t_exit.mul_add(poly.vs[exit_next] - poly.vs[exit_idx], poly.vs[exit_idx]);
+    let exit_u = fp::fma_f64(
+        t_exit,
+        poly.us[exit_next] - poly.us[exit_idx],
+        poly.us[exit_idx],
+    );
+    let exit_v = fp::fma_f64(
+        t_exit,
+        poly.vs[exit_next] - poly.vs[exit_idx],
+        poly.vs[exit_idx],
+    );
     let exit_ep = poly.edge_planes[exit_idx];
     push!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
 
@@ -274,7 +291,7 @@ fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
 
     #[inline(always)]
     fn r2_of(u: f64, v: f64) -> f64 {
-        u.mul_add(u, v * v)
+        fp::fma_f64(u, u, v * v)
     }
 
     let mut out_len: usize = 0;
@@ -308,8 +325,16 @@ fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
         let d_entry = dists.get_unchecked(entry_idx).assume_init_read();
         let d_entry_next = dists.get_unchecked(entry_next).assume_init_read();
         let t_entry = d_entry / (d_entry - d_entry_next);
-        let entry_u = t_entry.mul_add(*us.add(entry_next) - *us.add(entry_idx), *us.add(entry_idx));
-        let entry_v = t_entry.mul_add(*vs.add(entry_next) - *vs.add(entry_idx), *vs.add(entry_idx));
+        let entry_u = fp::fma_f64(
+            t_entry,
+            *us.add(entry_next) - *us.add(entry_idx),
+            *us.add(entry_idx),
+        );
+        let entry_v = fp::fma_f64(
+            t_entry,
+            *vs.add(entry_next) - *vs.add(entry_idx),
+            *vs.add(entry_idx),
+        );
         let entry_ep = *eps.add(entry_idx);
         push_idx!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
 
@@ -325,8 +350,16 @@ fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
         let d_exit = dists.get_unchecked(exit_idx).assume_init_read();
         let d_exit_next = dists.get_unchecked(exit_next).assume_init_read();
         let t_exit = d_exit / (d_exit - d_exit_next);
-        let exit_u = t_exit.mul_add(*us.add(exit_next) - *us.add(exit_idx), *us.add(exit_idx));
-        let exit_v = t_exit.mul_add(*vs.add(exit_next) - *vs.add(exit_idx), *vs.add(exit_idx));
+        let exit_u = fp::fma_f64(
+            t_exit,
+            *us.add(exit_next) - *us.add(exit_idx),
+            *us.add(exit_idx),
+        );
+        let exit_v = fp::fma_f64(
+            t_exit,
+            *vs.add(exit_next) - *vs.add(exit_idx),
+            *vs.add(exit_idx),
+        );
         let exit_ep = *eps.add(exit_idx);
         push_idx!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
     }
@@ -404,7 +437,7 @@ fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
 
     #[inline(always)]
     fn r2_of(u: f64, v: f64) -> f64 {
-        u.mul_add(u, v * v)
+        fp::fma_f64(u, u, v * v)
     }
 
     let mut out_len: usize = 0;
@@ -444,8 +477,16 @@ fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
         let t_entry = d_entry / (d_entry - d_entry_next);
         let t_exit = d_exit / (d_exit - d_exit_next);
 
-        let entry_u = t_entry.mul_add(*us.add(entry_next) - *us.add(entry_idx), *us.add(entry_idx));
-        let entry_v = t_entry.mul_add(*vs.add(entry_next) - *vs.add(entry_idx), *vs.add(entry_idx));
+        let entry_u = fp::fma_f64(
+            t_entry,
+            *us.add(entry_next) - *us.add(entry_idx),
+            *us.add(entry_idx),
+        );
+        let entry_v = fp::fma_f64(
+            t_entry,
+            *vs.add(entry_next) - *vs.add(entry_idx),
+            *vs.add(entry_idx),
+        );
         let entry_ep = *eps.add(entry_idx);
         push_idx!(entry_u, entry_v, (entry_ep, hp.plane_idx), entry_ep);
 
@@ -461,8 +502,16 @@ fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
             }
         }
 
-        let exit_u = t_exit.mul_add(*us.add(exit_next) - *us.add(exit_idx), *us.add(exit_idx));
-        let exit_v = t_exit.mul_add(*vs.add(exit_next) - *vs.add(exit_idx), *vs.add(exit_idx));
+        let exit_u = fp::fma_f64(
+            t_exit,
+            *us.add(exit_next) - *us.add(exit_idx),
+            *us.add(exit_idx),
+        );
+        let exit_v = fp::fma_f64(
+            t_exit,
+            *vs.add(exit_next) - *vs.add(exit_idx),
+            *vs.add(exit_idx),
+        );
         let exit_ep = *eps.add(exit_idx);
         push_idx!(exit_u, exit_v, (exit_ep, hp.plane_idx), hp.plane_idx);
     }
@@ -474,11 +523,7 @@ fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
 }
 
 /// General clipper for large polygons (N > 8) using u64 bitmask.
-fn clip_bitmask(
-    poly: &PolyBuffer,
-    hp: &HalfPlane,
-    out: &mut PolyBuffer,
-) -> ClipResult {
+fn clip_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
     let n = poly.len;
     debug_assert!(n <= 64, "Polygon too large for u64 bitmask");
 
@@ -546,22 +591,26 @@ fn clip_bitmask(
     let (exit_idx, exit_next_idx, exit_d0, exit_d1) = calc_transition(exit_next);
 
     let t_entry = entry_d0 / (entry_d0 - entry_d1);
-    let entry_u = t_entry.mul_add(
+    let entry_u = fp::fma_f64(
+        t_entry,
         poly.us[entry_next_idx] - poly.us[entry_idx],
         poly.us[entry_idx],
     );
-    let entry_v = t_entry.mul_add(
+    let entry_v = fp::fma_f64(
+        t_entry,
         poly.vs[entry_next_idx] - poly.vs[entry_idx],
         poly.vs[entry_idx],
     );
     let entry_edge_plane = poly.edge_planes[entry_idx];
 
     let t_exit = exit_d0 / (exit_d0 - exit_d1);
-    let exit_u = t_exit.mul_add(
+    let exit_u = fp::fma_f64(
+        t_exit,
         poly.us[exit_next_idx] - poly.us[exit_idx],
         poly.us[exit_idx],
     );
-    let exit_v = t_exit.mul_add(
+    let exit_v = fp::fma_f64(
+        t_exit,
         poly.vs[exit_next_idx] - poly.vs[exit_idx],
         poly.vs[exit_idx],
     );
@@ -606,7 +655,7 @@ fn build_output(
             let v = $v;
             let vp = $vp;
             out.push_raw(u, v, vp, $ep);
-            max_r2 = max_r2.max(u.mul_add(u, v * v));
+            max_r2 = max_r2.max(fp::fma_f64(u, u, v * v));
             if track_bounding {
                 has_bounding |= vp.0 == usize::MAX;
             }

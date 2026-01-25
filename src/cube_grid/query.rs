@@ -1,5 +1,6 @@
 //! Query helpers for CubeMapGrid.
 
+use crate::fp;
 use glam::Vec3;
 use std::cmp::Reverse;
 
@@ -265,7 +266,7 @@ impl CubeMapGrid {
     #[inline]
     fn cell_min_dist_sq(&self, query: Vec3, cell: usize) -> f32 {
         let center = self.cell_centers[cell];
-        let mut cos_d = query.dot(center);
+        let mut cos_d = fp::dot3_f32(query.x, query.y, query.z, center.x, center.y, center.z);
         cos_d = cos_d.clamp(-1.0, 1.0);
 
         let cos_r = self.cell_cos_radius[cell];
@@ -373,7 +374,7 @@ impl CubeMapGrid {
             if global == query_idx {
                 continue;
             }
-            let dot = *x * qx + *y * qy + *z * qz;
+            let dot = fp::dot3_f32(*x, *y, *z, qx, qy, qz);
             let dist_sq = (2.0 - 2.0 * dot).max(0.0);
             scratch.try_add_neighbor(slot as u32, dist_sq);
         }
@@ -426,7 +427,7 @@ impl CubeMapGrid {
                 continue;
             }
 
-            let dot = *x * qx + *y * qy + *z * qz;
+            let dot = fp::dot3_f32(*x, *y, *z, qx, qy, qz);
             let dist_sq = (2.0 - 2.0 * dot).max(0.0);
             scratch.try_add_neighbor(slot as u32, dist_sq);
         }
@@ -459,7 +460,7 @@ impl CubeMapGrid {
                 continue;
             }
             // Contiguous SoA access - should auto-vectorize well
-            let dot = xs[i] * qx + ys[i] * qy + zs[i] * qz;
+            let dot = fp::dot3_f32(xs[i], ys[i], zs[i], qx, qy, qz);
             let dist_sq = (2.0 - 2.0 * dot).max(0.0);
             let slot = (start + i) as u32;
             scratch.try_add_neighbor(slot, dist_sq);
@@ -502,7 +503,7 @@ impl CubeMapGrid {
                 continue;
             }
 
-            let dot = xs[i] * qx + ys[i] * qy + zs[i] * qz;
+            let dot = fp::dot3_f32(xs[i], ys[i], zs[i], qx, qy, qz);
             let dist_sq = (2.0 - 2.0 * dot).max(0.0);
             scratch.try_add_neighbor(slot, dist_sq);
         }

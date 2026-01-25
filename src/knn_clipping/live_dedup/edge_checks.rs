@@ -276,7 +276,7 @@ pub(super) fn collect_and_resolve_cell_edges(
 /// Since cross-bin edges are emitted twice (once by each bin), we sort all overflow
 /// records and match them by edge key. This allows propagating vertex indices
 /// between bins without global communication during the main clipping phase.
-/// 
+///
 #[cfg_attr(feature = "profiling", inline(never))]
 pub(super) fn resolve_edge_check_overflow(
     shards: &mut [ShardState],

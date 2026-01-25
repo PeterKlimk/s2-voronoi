@@ -27,6 +27,7 @@
 
 mod diagram;
 mod error;
+mod fp;
 mod types;
 pub mod validation;
 

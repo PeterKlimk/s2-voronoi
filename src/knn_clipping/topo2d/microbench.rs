@@ -80,14 +80,12 @@ pub fn run_clip_convex_microbench() {
             assert_eq!(
                 expected.vertex_planes[i], got.vertex_planes[i],
                 "{label}: vertex_planes[{i}] mismatch (expected {:?}, got {:?})",
-                expected.vertex_planes[i],
-                got.vertex_planes[i]
+                expected.vertex_planes[i], got.vertex_planes[i]
             );
             assert_eq!(
                 expected.edge_planes[i], got.edge_planes[i],
                 "{label}: edge_planes[{i}] mismatch (expected {}, got {})",
-                expected.edge_planes[i],
-                got.edge_planes[i]
+                expected.edge_planes[i], got.edge_planes[i]
             );
         }
     }
@@ -216,7 +214,7 @@ pub fn run_clip_convex_microbench() {
             let a = scale * c;
             let b = scale * s;
 
-            let norm = ((a.mul_add(a, b * b)) as f32).sqrt() as f64;
+            let norm = ((crate::fp::fma_f64(a, a, b * b)) as f32).sqrt() as f64;
             let cc = rng.range_f64(-0.6 * norm, 0.6 * norm);
             let hp = HalfPlane::new_unnormalized(a, b, cc, 1_000_000 + changed.len());
             let m = mask_for::<N>(poly, &hp);
@@ -232,7 +230,7 @@ pub fn run_clip_convex_microbench() {
             let (s, c) = theta.sin_cos();
             let a = scale * c;
             let b = scale * s;
-            let norm = ((a.mul_add(a, b * b)) as f32).sqrt() as f64;
+            let norm = ((crate::fp::fma_f64(a, a, b * b)) as f32).sqrt() as f64;
 
             let cc = rng.range_f64(0.1 * norm, 2.5 * norm);
             let hp = HalfPlane::new_unnormalized(a, b, cc, 2_000_000 + unchanged.len());
@@ -286,13 +284,19 @@ pub fn run_clip_convex_microbench() {
         // Correctness: dispatch must match baseline output for changed half-planes.
         for (i, hp) in hps_changed.iter().take(64).enumerate() {
             assert!(
-                matches!(clip_convex_small_bool::<N>(&poly, hp, &mut out_baseline), ClipResult::Changed),
+                matches!(
+                    clip_convex_small_bool::<N>(&poly, hp, &mut out_baseline),
+                    ClipResult::Changed
+                ),
                 "baseline unexpectedly not Changed (N={N}, i={i})"
             );
             let baseline = &out_baseline;
 
             assert!(
-                matches!(clip_convex(&poly, hp, &mut out_dispatch), ClipResult::Changed),
+                matches!(
+                    clip_convex(&poly, hp, &mut out_dispatch),
+                    ClipResult::Changed
+                ),
                 "dispatch unexpectedly not Changed (N={N}, i={i})"
             );
             assert_same_poly("dispatch", baseline, &out_dispatch);
