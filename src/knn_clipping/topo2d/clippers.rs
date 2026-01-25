@@ -790,7 +790,7 @@ pub(crate) fn clip_convex_small_bool_out_idx_ptr_split<const N: usize>(
     }
 }
 
-#[inline(always)]
+#[cfg_attr(feature = "profiling", inline(never))]
 fn clip_convex_small_bool_out_idx_ptr_impl<const N: usize, const TRACK_BOUNDING: bool>(
     poly: &PolyBuffer,
     hp: &HalfPlane,
@@ -1492,7 +1492,7 @@ pub(crate) fn clip_convex_small_bool_out_idx_ptr_d_split<const N: usize>(
     }
 }
 
-#[inline(always)]
+#[cfg_attr(feature = "profiling", inline(never))]
 fn clip_convex_small_bool_out_idx_ptr_d_impl<const N: usize, const TRACK_BOUNDING: bool>(
     poly: &PolyBuffer,
     hp: &HalfPlane,
