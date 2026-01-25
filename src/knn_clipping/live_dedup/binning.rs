@@ -30,7 +30,13 @@ fn choose_bin_layout(grid_res: usize) -> BinLayout {
     let threads = rayon::current_num_threads().max(1);
     #[cfg(not(feature = "parallel"))]
     let threads = 1;
-    let target_bins = (threads * 2).clamp(6, 96);
+
+    // Allow override via env var for benchmarking
+    let target_bins = if let Ok(var) = std::env::var("S2_BIN_COUNT") {
+        var.parse().unwrap_or(threads * 2)
+    } else {
+        threads * 2
+    }.clamp(6, 96);
     let target_per_face = (target_bins as f64 / 6.0).max(1.0);
     let mut bin_res = target_per_face.sqrt().ceil() as usize;
     bin_res = bin_res.clamp(1, grid_res.max(1));
