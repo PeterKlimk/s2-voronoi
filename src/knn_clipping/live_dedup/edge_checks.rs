@@ -151,11 +151,7 @@ pub(super) fn collect_and_resolve_cell_edges(
             continue;
         }
 
-        let locals = if key_i <= key_j {
-            [i as u8, j as u8]
-        } else {
-            [j as u8, i as u8]
-        };
+        let locals = [i as u8, j as u8];
         let edge_key = pack_edge(cell_idx, neighbor);
 
         // Manual unpack with hoisted constants
@@ -208,17 +204,34 @@ pub(super) fn collect_and_resolve_cell_edges(
                     third_for_edge_endpoint(cell_vertices[locals[1] as usize].0, a, b),
                 ];
 
-                let endpoints_match = check.thirds == my_thirds;
+                // Incoming check is form [OtherStart, OtherEnd]
+                // We are traversing in reverse.
+                // Match: MyStart (thirds[0]) == OtherEnd (check.thirds[1])
+                //        MyEnd   (thirds[1]) == OtherStart (check.thirds[0])
+                let endpoints_match =
+                    check.thirds[0] == my_thirds[1] && check.thirds[1] == my_thirds[0];
+
                 if endpoints_match {
-                    for (k, &local) in locals.iter().enumerate() {
-                        let local_idx = local as usize;
-                        debug_assert!(
-                            vertex_indices[local_idx] == INVALID_INDEX
-                                || vertex_indices[local_idx] == check.indices[k],
-                            "edge check index mismatch"
-                        );
-                        vertex_indices[local_idx] = check.indices[k];
-                    }
+                    // check.indices[0] is OtherStart -> matches MyEnd (locals[1])
+                    // check.indices[1] is OtherEnd   -> matches MyStart (locals[0])
+
+                    // 1. MyStart receives OtherEnd
+                    let local_idx_0 = locals[0] as usize;
+                    debug_assert!(
+                        vertex_indices[local_idx_0] == INVALID_INDEX
+                            || vertex_indices[local_idx_0] == check.indices[1],
+                        "edge check index mismatch (start)"
+                    );
+                    vertex_indices[local_idx_0] = check.indices[1];
+
+                    // 2. MyEnd receives OtherStart
+                    let local_idx_1 = locals[1] as usize;
+                    debug_assert!(
+                        vertex_indices[local_idx_1] == INVALID_INDEX
+                            || vertex_indices[local_idx_1] == check.indices[0],
+                        "edge check index mismatch (end)"
+                    );
+                    vertex_indices[local_idx_1] = check.indices[0];
                 } else {
                     // Partial match: search for any shared endpoint (may be in different slots)
                     for ck in 0..2 {
@@ -306,23 +319,50 @@ pub(super) fn resolve_edge_check_overflow(
                 let (a_shard, b_shard) =
                     with_two_mut(shards, a.source_bin.as_usize(), b.source_bin.as_usize());
 
-                if a.thirds == b.thirds {
-                    // Full match: direct slot correspondence
-                    for k in 0..2 {
-                        if a.indices[k] != INVALID_INDEX {
-                            patch_slot(
-                                &mut b_shard.output.cell_indices[b.slots[k] as usize],
-                                a.source_bin,
-                                a.indices[k],
-                            );
-                        }
-                        if b.indices[k] != INVALID_INDEX {
-                            patch_slot(
-                                &mut a_shard.output.cell_indices[a.slots[k] as usize],
-                                b.source_bin,
-                                b.indices[k],
-                            );
-                        }
+                // Match based on reverse winding:
+                // a (Side 0, Creator) traversing Start->End
+                // b (Side 1, User)    traversing End->Start (relative to a)
+                //
+                // So a.Start == b.End and a.End == b.Start
+                if a.thirds[0] == b.thirds[1] && a.thirds[1] == b.thirds[0] {
+                    // Full match:
+                    // a.indices[0] (a.Start) <-> b.indices[1] (b.End)
+                    // a.indices[1] (a.End)   <-> b.indices[0] (b.Start)
+
+                    // Patch b's slots (using a's indices)
+                    // b.slots[0] (b.Start) gets a.indices[1] (a.End)
+                    if a.indices[1] != INVALID_INDEX {
+                        patch_slot(
+                            &mut b_shard.output.cell_indices[b.slots[0] as usize],
+                            a.source_bin,
+                            a.indices[1],
+                        );
+                    }
+                    // b.slots[1] (b.End) gets a.indices[0] (a.Start)
+                    if a.indices[0] != INVALID_INDEX {
+                        patch_slot(
+                            &mut b_shard.output.cell_indices[b.slots[1] as usize],
+                            a.source_bin,
+                            a.indices[0],
+                        );
+                    }
+
+                    // Patch a's slots (using b's indices)
+                    // a.slots[0] (a.Start) gets b.indices[1] (b.End)
+                    if b.indices[1] != INVALID_INDEX {
+                        patch_slot(
+                            &mut a_shard.output.cell_indices[a.slots[0] as usize],
+                            b.source_bin,
+                            b.indices[1],
+                        );
+                    }
+                    // a.slots[1] (a.End) gets b.indices[0] (b.Start)
+                    if b.indices[0] != INVALID_INDEX {
+                        patch_slot(
+                            &mut a_shard.output.cell_indices[a.slots[1] as usize],
+                            b.source_bin,
+                            b.indices[0],
+                        );
                     }
                 } else {
                     // Partial match: cross-slot search for any shared endpoint
