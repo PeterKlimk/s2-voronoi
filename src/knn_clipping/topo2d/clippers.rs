@@ -20,12 +20,12 @@ pub(crate) fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffe
         }
     }
     match n {
-        3 => clip_convex_small_bool::<3>(poly, hp, out),
-        4 => clip_convex_small_bool::<4>(poly, hp, out),
-        5 => clip_convex_small_bool::<5>(poly, hp, out),
-        6 => clip_convex_small_bool::<6>(poly, hp, out),
-        7 => clip_convex_small_bool::<7>(poly, hp, out),
-        8 => clip_convex_small_bool::<8>(poly, hp, out),
+        3 => clip_convex_small_bool_out_idx_ptr::<3>(poly, hp, out),
+        4 => clip_convex_small_bool_out_idx_ptr::<4>(poly, hp, out),
+        5 => clip_convex_small_bool_out_idx_ptr::<5>(poly, hp, out),
+        6 => clip_convex_small_bool_out_idx_ptr::<6>(poly, hp, out),
+        7 => clip_convex_small_bool_out_idx_ptr::<7>(poly, hp, out),
+        8 => clip_convex_small_bool_out_idx_ptr::<8>(poly, hp, out),
         _ => clip_convex_bitmask(poly, hp, out),
     }
 }
@@ -458,7 +458,7 @@ pub(crate) fn clip_convex_small_bool_out_idx_range<const N: usize>(
 
 /// Like `clip_convex_small_bool_out_idx`, but uses raw pointers for all input reads in the mixed
 /// case (including intersection interpolation reads) to eliminate bounds checks on reads.
-#[cfg(any(test, feature = "microbench"))]
+#[cfg_attr(feature = "profiling", inline(never))]
 pub(crate) fn clip_convex_small_bool_out_idx_ptr<const N: usize>(
     poly: &PolyBuffer,
     hp: &HalfPlane,
