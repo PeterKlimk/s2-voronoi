@@ -128,27 +128,18 @@ pub(super) fn collect_and_resolve_cell_edges(
     let local_shift = assignment.local_shift;
     let local_mask = assignment.local_mask;
 
-    // Load first key to start the rotation
-    let mut curr_key = cell_vertices[0].0;
-
     // Process all edges
     for i in 0..n {
         let j = if i + 1 == n { 0 } else { i + 1 };
-        let next_key = cell_vertices[j].0;
-        let key_i = curr_key;
-        let key_j = next_key;
-
         let slot = edge_neighbor_slots[i];
 
         if slot == u32::MAX {
-            curr_key = next_key;
             continue;
         }
 
         // Derive global index from propagated array (sequential access)
         let neighbor = edge_neighbor_globals[i];
         if neighbor == cell_idx {
-            curr_key = next_key;
             continue;
         }
 
@@ -159,9 +150,6 @@ pub(super) fn collect_and_resolve_cell_edges(
         let packed = assignment.slot_gen_map[slot as usize];
         let bin_b = BinId::from((packed >> local_shift) as u8);
         let local_b = LocalId::from(packed & local_mask);
-
-        // Prepare for next iteration
-        curr_key = next_key;
 
         if bin != bin_b {
             // Cross-bin edge → overflow
