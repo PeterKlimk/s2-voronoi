@@ -214,7 +214,7 @@ const TARGET_INITIAL_CHUNK_SIZE: usize = 24;
 
 /// Reusable scratch buffers for packed per-cell group queries.
 pub struct PackedKnnCellScratch {
-    cell_ranges: Vec<(usize, usize)>,
+    cell_ranges: Vec<PackedCellRange>,
     center_lens: Vec<usize>,
     min_center_dot: Vec<f32>,
     group_queries: Vec<u32>,
@@ -233,6 +233,25 @@ pub struct PackedKnnCellScratch {
     query_x: Vec<f32>,
     query_y: Vec<f32>,
     query_z: Vec<f32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PackedCellRange {
+    soa_start: usize,
+    soa_end: usize,
+    kind: PackedCellRangeKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PackedCellRangeKind {
+    /// Neighbor cell is in a different bin than the queries (no directed filter needed).
+    CrossBin,
+    /// Neighbor cell is in the same bin and strictly earlier than the group cell
+    /// (all locals are < any query local; can skip the whole cell).
+    SameBinEarlier,
+    /// Neighbor cell is in the same bin and strictly later than the group cell
+    /// (no locals are < query local; no directed filter needed).
+    SameBinLater,
 }
 
 impl PackedKnnCellScratch {
@@ -297,7 +316,11 @@ impl PackedKnnCellScratch {
 
         let q_start = grid.cell_offsets[cell] as usize;
         let q_end = grid.cell_offsets[cell + 1] as usize;
-        self.cell_ranges.push((q_start, q_end));
+        self.cell_ranges.push(PackedCellRange {
+            soa_start: q_start,
+            soa_end: q_end,
+            kind: PackedCellRangeKind::CrossBin,
+        });
 
         for &ncell in grid.cell_neighbors(cell) {
             if ncell == u32::MAX || ncell == cell as u32 {
@@ -307,13 +330,37 @@ impl PackedKnnCellScratch {
             let n_start = grid.cell_offsets[nc] as usize;
             let n_end = grid.cell_offsets[nc + 1] as usize;
             if n_start < n_end {
-                self.cell_ranges.push((n_start, n_end));
+                // Bin/local ids are properties of the whole cell: all points in a grid cell share
+                // the same bin, and within a bin, locals are assigned in increasing cell order.
+                //
+                // This allows:
+                // - skipping same-bin neighbor cells strictly earlier than the center cell
+                // - avoiding per-point (bin,local) decoding for all other neighbor cells
+                let (bin_b, _) = unpack_bin_local(slot_gen_map[n_start], local_shift, local_mask);
+                let kind = if bin_b != query_bin {
+                    PackedCellRangeKind::CrossBin
+                } else if ncell < cell as u32 {
+                    PackedCellRangeKind::SameBinEarlier
+                } else {
+                    PackedCellRangeKind::SameBinLater
+                };
+
+                self.cell_ranges.push(PackedCellRange {
+                    soa_start: n_start,
+                    soa_end: n_end,
+                    kind,
+                });
             }
         }
 
         let mut num_candidates = 0usize;
-        for &(start, end) in &self.cell_ranges {
-            num_candidates += end - start;
+        for r in &self.cell_ranges {
+            // If this neighbor cell is earlier-local in the same bin, we never consider it for
+            // directed kNN (the earlier side already sent adjacency via edge checks).
+            if r.kind == PackedCellRangeKind::SameBinEarlier {
+                continue;
+            }
+            num_candidates += r.soa_end - r.soa_start;
         }
         if num_candidates > MAX_CANDIDATES_HARD {
             timings.add_setup(t.lap());
@@ -402,7 +449,11 @@ impl PackedKnnCellScratch {
         timings.add_select_prep(t.lap());
 
         // === Center cell pass (directed triangular).
-        let (center_soa_start, center_soa_end) = self.cell_ranges[0];
+        let PackedCellRange {
+            soa_start: center_soa_start,
+            soa_end: center_soa_end,
+            ..
+        } = self.cell_ranges[0];
         let center_len = center_soa_end - center_soa_start;
         let xs = &grid.cell_points_x[center_soa_start..center_soa_end];
         let ys = &grid.cell_points_y[center_soa_start..center_soa_end];
@@ -532,8 +583,14 @@ impl PackedKnnCellScratch {
         }
         timings.add_ring_thresholds(t.lap());
 
-        // === Ring pass: collect "hi" candidates into chunk0 (directed filter via bin/local).
-        for &(soa_start, soa_end) in &self.cell_ranges[1..] {
+        // === Ring pass: collect "hi" candidates into chunk0.
+        for r in &self.cell_ranges[1..] {
+            if r.kind == PackedCellRangeKind::SameBinEarlier {
+                continue;
+            }
+
+            let soa_start = r.soa_start;
+            let soa_end = r.soa_end;
             let range_len = soa_end - soa_start;
             let xs = &grid.cell_points_x[soa_start..soa_end];
             let ys = &grid.cell_points_y[soa_start..soa_end];
@@ -560,19 +617,10 @@ impl PackedKnnCellScratch {
                     }
 
                     let dots_arr: [f32; 8] = dots.into();
-                    let query_local = query_locals[qi];
                     while mask_bits != 0 {
                         let lane = mask_bits.trailing_zeros() as usize;
                         let slot = (soa_start + i + lane) as u32;
                         if slot != query_slot {
-                            let packed = slot_gen_map[slot as usize];
-                            let (bin_b, local_b) =
-                                unpack_bin_local(packed, local_shift, local_mask);
-                            if bin_b == query_bin && local_b < query_local {
-                                mask_bits &= mask_bits - 1;
-                                continue;
-                            }
-
                             let dot = dots_arr[lane];
                             self.chunk0_keys[qi].push(make_desc_key(dot, slot));
                         }
@@ -590,13 +638,6 @@ impl PackedKnnCellScratch {
 
                 for (qi, &query_slot) in queries.iter().enumerate() {
                     if slot == query_slot {
-                        continue;
-                    }
-
-                    let query_local = query_locals[qi];
-                    let packed = slot_gen_map[slot as usize];
-                    let (bin_b, local_b) = unpack_bin_local(packed, local_shift, local_mask);
-                    if bin_b == query_bin && local_b < query_local {
                         continue;
                     }
 
@@ -629,6 +670,10 @@ impl PackedKnnCellScratch {
         local_mask: u32,
         timings: &mut PackedKnnTimings,
     ) {
+        // Tail candidates have already been partitioned into (hi, tail, unsafe) buckets
+        // during `prepare_group_directed`. Bin/local decoding is only needed there.
+        let _ = (slot_gen_map, local_shift, local_mask);
+
         let Some(tail_ready) = self.tail_ready.get(qi).copied() else {
             return;
         };
@@ -646,7 +691,13 @@ impl PackedKnnCellScratch {
         debug_assert!(self.tail_possible.get(qi).copied().unwrap_or(false));
 
         let mut t_tail = PackedLapTimer::start();
-        for &(soa_start, soa_end) in &self.cell_ranges[1..] {
+        for r in &self.cell_ranges[1..] {
+            if r.kind == PackedCellRangeKind::SameBinEarlier {
+                continue;
+            }
+
+            let soa_start = r.soa_start;
+            let soa_end = r.soa_end;
             let range_len = soa_end - soa_start;
             let xs = &grid.cell_points_x[soa_start..soa_end];
             let ys = &grid.cell_points_y[soa_start..soa_end];
@@ -679,18 +730,10 @@ impl PackedKnnCellScratch {
                 }
 
                 let dots_arr: [f32; 8] = dots.into();
-                let query_local = self.group_query_locals[qi];
                 while tail_bits != 0 {
                     let lane = tail_bits.trailing_zeros() as usize;
                     let slot = (soa_start + i + lane) as u32;
                     if slot != query_slot {
-                        let packed = slot_gen_map[slot as usize];
-                        let (bin_b, local_b) = unpack_bin_local(packed, local_shift, local_mask);
-                        if bin_b == self.group_query_bin && local_b < query_local {
-                            tail_bits &= tail_bits - 1;
-                            continue;
-                        }
-
                         let dot = dots_arr[lane];
                         self.tail_keys[qi].push(make_desc_key(dot, slot));
                     }
@@ -707,13 +750,6 @@ impl PackedKnnCellScratch {
 
                 let query_slot = self.group_queries[qi];
                 if slot == query_slot {
-                    continue;
-                }
-
-                let query_local = self.group_query_locals[qi];
-                let packed = slot_gen_map[slot as usize];
-                let (bin_b, local_b) = unpack_bin_local(packed, local_shift, local_mask);
-                if bin_b == self.group_query_bin && local_b < query_local {
                     continue;
                 }
 
