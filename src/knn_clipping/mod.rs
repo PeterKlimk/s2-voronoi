@@ -46,10 +46,32 @@ pub struct TerminationConfig {
     pub max_k_cap: Option<usize>,
 }
 
-// Keep the k-NN schedule and the default termination cadence in one place.
+// Keep the kNN schedule and termination knobs in one place.
+//
+// Tuning notes:
+// - The "resumable kNN" schedule (`KNN_RESUME_K`, `KNN_RESTART_*`) is used for exact kNN queries.
+// - The packed schedule (`PACKED_*`) is used only for the fast r=1 packed-kNN path.
+// - If termination still isn't proven after `KNN_RESTART_MAX`, we grow k using
+//   `TERMINATION_GROW_*` until the (optional) cap.
 pub(super) const KNN_RESUME_K: usize = 18;
+pub(super) const KNN_RESTART_K0: usize = 24;
 pub(super) const KNN_RESTART_MAX: usize = 48;
-pub(super) const KNN_RESTART_KS: [usize; 2] = [24, KNN_RESTART_MAX];
+pub(super) const KNN_RESTART_KS: [usize; 2] = [KNN_RESTART_K0, KNN_RESTART_MAX];
+
+/// Packed-kNN initial `Chunk0` size (r=1).
+///
+/// This is intentionally separate from the resumable kNN schedule; it only affects the packed
+/// path. Defaults to the same value as `KNN_RESTART_K0`.
+pub(super) const PACKED_K0: usize = 12;
+
+/// Packed-kNN chunk size after `Chunk0` (and for tail emission).
+///
+/// Smaller reduces upfront packed work but may increase loop iterations and/or fallback to kNN.
+pub(super) const PACKED_K1: usize = 4;
+
+/// How aggressively to grow k when we have a bounded-but-unproven cell after the scheduled kNN.
+pub(super) const TERMINATION_GROW_MULTIPLIER: usize = 2;
+pub(super) const TERMINATION_GROW_MIN_STEP: usize = 32;
 
 /// Target points per cell for the cube-map KNN grid.
 /// Lower = more cells, faster scans, more heap overhead.

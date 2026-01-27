@@ -22,6 +22,23 @@ use rustc_hash::FxHashMap;
 #[cfg(feature = "timing")]
 pub const NEIGHBOR_HIST_BUCKETS: usize = 51;
 
+/// Buckets for "incoming edgechecks provided" when collecting termination stats.
+///
+/// Buckets 0-15: exact edgecheck counts (bucket i = i edgechecks).
+/// Bucket 16: 16+ edgechecks.
+#[cfg(feature = "timing")]
+pub const EDGECHECK_BUCKETS: usize = 17;
+
+/// Histogram buckets for "extra neighbors beyond edgecheck seeds".
+///
+/// Bucket 0: 0 neighbors
+/// Buckets 1-48: exact counts for 1-48 neighbors (bucket i = i neighbors)
+/// Bucket 49: 49-64 neighbors
+/// Bucket 50: 65-96 neighbors
+/// Bucket 51: 97+ neighbors
+#[cfg(feature = "timing")]
+pub const EXTRA_NEIGHBOR_HIST_BUCKETS: usize = 52;
+
 /// K-NN stage that a cell terminated at.
 #[cfg(feature = "timing")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -71,7 +88,7 @@ impl StageCounts {
                 }
             }
             KnnCellStage::Restart(k) => {
-                if k == super::KNN_RESTART_KS[0] {
+                if k == super::KNN_RESTART_K0 {
                     self.restart_k0 += 1;
                 } else if k == super::KNN_RESTART_MAX {
                     self.restart_kmax += 1;
@@ -108,7 +125,7 @@ impl StageCounts {
     pub fn iter_restart(&self) -> Vec<(usize, u64)> {
         let mut v = Vec::with_capacity(2 + self.restart_other.len());
         if self.restart_k0 > 0 {
-            v.push((super::KNN_RESTART_KS[0], self.restart_k0));
+            v.push((super::KNN_RESTART_K0, self.restart_k0));
         }
         if self.restart_kmax > 0 {
             v.push((super::KNN_RESTART_MAX, self.restart_kmax));
@@ -189,6 +206,14 @@ pub struct CellSubPhases {
     pub packed_tail_build_groups: u64,
     /// Histogram of neighbors processed at termination.
     pub neighbors_histogram: [u64; NEIGHBOR_HIST_BUCKETS],
+    /// Histogram of "extra neighbors beyond edgecheck seeds", bucketed by incoming edgecheck count.
+    pub edgecheck_extra_histogram: [[u64; EXTRA_NEIGHBOR_HIST_BUCKETS]; EDGECHECK_BUCKETS],
+    /// Per-edgecheck bucket cell counts.
+    pub edgecheck_bucket_counts: [u64; EDGECHECK_BUCKETS],
+    /// Per-edgecheck bucket sum of edgecheck seed clips actually used.
+    pub edgecheck_seed_used_sum: [u64; EDGECHECK_BUCKETS],
+    /// Per-edgecheck bucket sum of extra neighbors (for mean reporting).
+    pub edgecheck_extra_sum: [u64; EDGECHECK_BUCKETS],
 }
 
 #[cfg(feature = "timing")]
@@ -229,6 +254,10 @@ impl Default for CellSubPhases {
             packed_groups: 0,
             packed_tail_build_groups: 0,
             neighbors_histogram: [0; NEIGHBOR_HIST_BUCKETS],
+            edgecheck_extra_histogram: [[0; EXTRA_NEIGHBOR_HIST_BUCKETS]; EDGECHECK_BUCKETS],
+            edgecheck_bucket_counts: [0; EDGECHECK_BUCKETS],
+            edgecheck_seed_used_sum: [0; EDGECHECK_BUCKETS],
+            edgecheck_extra_sum: [0; EDGECHECK_BUCKETS],
         }
     }
 }
@@ -661,7 +690,8 @@ impl PhaseTimings {
 
             // Find percentiles by scanning cumulative distribution
             let find_percentile = |p: f64| -> usize {
-                let target = (hist_total as f64 * p) as u64;
+                // Use ceil to avoid a 0 target on small sample sizes.
+                let target = ((hist_total as f64 * p).ceil() as u64).max(1);
                 let mut cumulative = 0u64;
                 for (bucket, &count) in hist.iter().enumerate() {
                     cumulative += count;
@@ -700,6 +730,82 @@ impl PhaseTimings {
                 }
             }
             eprintln!("{}", detail);
+        }
+
+        // Extra neighbors needed (beyond edgecheck seed clips), bucketed by incoming edgechecks.
+        let by_edge = &self.cell_sub.edgecheck_extra_histogram;
+        let edge_counts = &self.cell_sub.edgecheck_bucket_counts;
+        if edge_counts.iter().any(|&c| c > 0) {
+            // Convert histogram bucket index to extra-neighbor count (reported as an upper bound
+            // for the wide buckets).
+            let bucket_to_extra_neighbors = |bucket: usize| -> usize {
+                if bucket == 0 {
+                    0
+                } else if bucket <= 48 {
+                    bucket // 1..=48 are exact
+                } else if bucket == 49 {
+                    64
+                } else if bucket == 50 {
+                    96
+                } else {
+                    97
+                }
+            };
+
+            let find_percentile =
+                |hist: &[u64; EXTRA_NEIGHBOR_HIST_BUCKETS], total: u64, p: f64| -> usize {
+                    // Use ceil to avoid a 0 target on small sample sizes.
+                    let target = ((total as f64 * p).ceil() as u64).max(1);
+                    let mut cumulative = 0u64;
+                    for (bucket, &count) in hist.iter().enumerate() {
+                        cumulative += count;
+                        if cumulative >= target {
+                            return bucket_to_extra_neighbors(bucket);
+                        }
+                    }
+                    bucket_to_extra_neighbors(EXTRA_NEIGHBOR_HIST_BUCKETS - 1)
+                };
+
+            eprintln!("    extra_neighbors_by_edgechecks:");
+            for edge_bucket in 0..EDGECHECK_BUCKETS {
+                let cells = edge_counts[edge_bucket];
+                if cells == 0 {
+                    continue;
+                }
+                let hist = &by_edge[edge_bucket];
+                let hist_total: u64 = hist.iter().sum();
+                if hist_total == 0 {
+                    continue;
+                }
+                let max_bucket = hist
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|(_, &c)| c > 0)
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                let max_extra = bucket_to_extra_neighbors(max_bucket);
+                let label = if edge_bucket == EDGECHECK_BUCKETS - 1 {
+                    "e>=16".to_string()
+                } else {
+                    format!("e={}", edge_bucket)
+                };
+                let seed_mean =
+                    (self.cell_sub.edgecheck_seed_used_sum[edge_bucket] as f64) / (cells as f64);
+                let extra_mean =
+                    (self.cell_sub.edgecheck_extra_sum[edge_bucket] as f64) / (cells as f64);
+                eprintln!(
+                    "      {:>5}: cells={} seed_mean={:.2} extra_mean={:.2} extra_p50={} extra_p90={} extra_p99={} extra_max={}",
+                    label,
+                    cells,
+                    seed_mean,
+                    extra_mean,
+                    find_percentile(hist, hist_total, 0.50),
+                    find_percentile(hist, hist_total, 0.90),
+                    find_percentile(hist, hist_total, 0.99),
+                    max_extra,
+                );
+            }
         }
 
         eprintln!(
@@ -936,6 +1042,10 @@ pub struct CellSubAccum {
     pub packed_groups: u64,
     pub packed_tail_build_groups: u64,
     pub neighbors_histogram: [u64; NEIGHBOR_HIST_BUCKETS],
+    pub edgecheck_extra_histogram: [[u64; EXTRA_NEIGHBOR_HIST_BUCKETS]; EDGECHECK_BUCKETS],
+    pub edgecheck_bucket_counts: [u64; EDGECHECK_BUCKETS],
+    pub edgecheck_seed_used_sum: [u64; EDGECHECK_BUCKETS],
+    pub edgecheck_extra_sum: [u64; EDGECHECK_BUCKETS],
 }
 
 #[cfg(feature = "timing")]
@@ -976,6 +1086,10 @@ impl Default for CellSubAccum {
             packed_groups: 0,
             packed_tail_build_groups: 0,
             neighbors_histogram: [0; NEIGHBOR_HIST_BUCKETS],
+            edgecheck_extra_histogram: [[0; EXTRA_NEIGHBOR_HIST_BUCKETS]; EDGECHECK_BUCKETS],
+            edgecheck_bucket_counts: [0; EDGECHECK_BUCKETS],
+            edgecheck_seed_used_sum: [0; EDGECHECK_BUCKETS],
+            edgecheck_extra_sum: [0; EDGECHECK_BUCKETS],
         }
     }
 }
@@ -1104,6 +1218,8 @@ impl CellSubAccum {
         packed_tail_used: bool,
         packed_safe_exhausted: bool,
         used_knn: bool,
+        incoming_edgechecks: usize,
+        edgecheck_seed_clips: usize,
     ) {
         self.stage_counts.add(stage);
         if knn_exhausted {
@@ -1129,6 +1245,25 @@ impl CellSubAccum {
             50
         };
         self.neighbors_histogram[bucket] += 1;
+
+        // Extra-neighbor histogram by incoming edgechecks.
+        let edge_bucket = incoming_edgechecks.min(EDGECHECK_BUCKETS - 1);
+        self.edgecheck_bucket_counts[edge_bucket] += 1;
+        self.edgecheck_seed_used_sum[edge_bucket] += edgecheck_seed_clips as u64;
+        let extra = neighbors_processed.saturating_sub(edgecheck_seed_clips);
+        self.edgecheck_extra_sum[edge_bucket] += extra as u64;
+        let extra_bucket = if extra == 0 {
+            0
+        } else if extra <= 48 {
+            extra
+        } else if extra <= 64 {
+            49
+        } else if extra <= 96 {
+            50
+        } else {
+            51
+        };
+        self.edgecheck_extra_histogram[edge_bucket][extra_bucket] += 1;
     }
 
     pub fn merge(&mut self, other: &CellSubAccum) {
@@ -1168,6 +1303,14 @@ impl CellSubAccum {
         for (i, &count) in other.neighbors_histogram.iter().enumerate() {
             self.neighbors_histogram[i] += count;
         }
+        for e in 0..EDGECHECK_BUCKETS {
+            self.edgecheck_bucket_counts[e] += other.edgecheck_bucket_counts[e];
+            self.edgecheck_seed_used_sum[e] += other.edgecheck_seed_used_sum[e];
+            self.edgecheck_extra_sum[e] += other.edgecheck_extra_sum[e];
+            for b in 0..EXTRA_NEIGHBOR_HIST_BUCKETS {
+                self.edgecheck_extra_histogram[e][b] += other.edgecheck_extra_histogram[e][b];
+            }
+        }
     }
 
     pub fn into_sub_phases(self) -> CellSubPhases {
@@ -1206,6 +1349,10 @@ impl CellSubAccum {
             packed_groups: self.packed_groups,
             packed_tail_build_groups: self.packed_tail_build_groups,
             neighbors_histogram: self.neighbors_histogram,
+            edgecheck_extra_histogram: self.edgecheck_extra_histogram,
+            edgecheck_bucket_counts: self.edgecheck_bucket_counts,
+            edgecheck_seed_used_sum: self.edgecheck_seed_used_sum,
+            edgecheck_extra_sum: self.edgecheck_extra_sum,
         }
     }
 }
@@ -1260,6 +1407,8 @@ impl CellSubAccum {
         _packed_tail_used: bool,
         _packed_safe_exhausted: bool,
         _used_knn: bool,
+        _incoming_edgechecks: usize,
+        _edgecheck_seed_clips: usize,
     ) {
     }
     #[inline(always)]

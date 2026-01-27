@@ -243,6 +243,7 @@ fn process_cell(
     // Take incoming edge checks once. We'll use them both for geometry seeding and for
     // resolving edges to earlier neighbors later in the pipeline.
     let incoming_checks = shard.dedup.take_edge_checks(local);
+    let incoming_edgechecks = incoming_checks.len();
 
     // === Phase 2: Edgecheck Geometry Seeds ===
     //
@@ -294,6 +295,7 @@ fn process_cell(
         }
         cell_sub.add_clip(t_clip.elapsed());
     }
+    let edgecheck_seed_clips = cell_neighbors_processed;
 
     // === Phase 3: Packed kNN Seeds ===
     if let Some((packed_scratch, packed_timings, qi, packed_k0_base, packed_k1)) = packed {
@@ -576,10 +578,10 @@ fn process_cell(
             .min(max_neighbors)
             .max(k);
 
-        const K_STEP_MIN: usize = 32;
-
         while !terminated && !builder.is_failed() && k < cap {
-            let next_k = (k.saturating_mul(2)).max(k + K_STEP_MIN).min(cap);
+            let next_k = (k.saturating_mul(crate::knn_clipping::TERMINATION_GROW_MULTIPLIER))
+                .max(k + crate::knn_clipping::TERMINATION_GROW_MIN_STEP)
+                .min(cap);
             if next_k <= k {
                 break;
             }
@@ -763,6 +765,8 @@ fn process_cell(
         packed_tail_used,
         packed_safe_exhausted,
         used_knn,
+        incoming_edgechecks,
+        edgecheck_seed_clips,
     );
 
     // === Phase 5: Output Extraction ===
@@ -853,8 +857,9 @@ pub(super) fn build_cells_sharded_live_dedup(
 
     let assignment = assign_bins(points, grid);
     let num_bins = assignment.num_bins;
-    let packed_k0_base = crate::knn_clipping::KNN_RESTART_KS[0].min(points.len().saturating_sub(1));
-    let packed_k1 = 8usize.min(points.len().saturating_sub(1));
+    // Packed-kNN uses a "big first chunk" (`packed_k0_base`) then fixed-size chunks (`packed_k1`).
+    let packed_k0_base = crate::knn_clipping::PACKED_K0.min(points.len().saturating_sub(1));
+    let packed_k1 = crate::knn_clipping::PACKED_K1.min(points.len().saturating_sub(1));
 
     let per_bin: Vec<(ShardState, crate::knn_clipping::timing::CellSubAccum)> =
         maybe_par_into_iter!(0..num_bins)
