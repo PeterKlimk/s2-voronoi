@@ -425,14 +425,20 @@ impl PackedKnnCellScratch {
         self.thresholds.resize(num_queries, 0.0);
         self.thresholds.fill(0.0);
 
-        self.chunk0_keys.resize_with(num_queries, Vec::new);
+        // Don't shrink `Vec<Vec<_>>` to avoid dropping inner buffers when group sizes vary.
+        if self.chunk0_keys.len() < num_queries {
+            self.chunk0_keys.resize_with(num_queries, Vec::new);
+        }
         for v in &mut self.chunk0_keys[..num_queries] {
             v.clear();
         }
         self.chunk0_pos.resize(num_queries, 0);
         self.chunk0_pos.fill(0);
 
-        self.tail_keys.resize_with(num_queries, Vec::new);
+        // Same rationale as `chunk0_keys` above.
+        if self.tail_keys.len() < num_queries {
+            self.tail_keys.resize_with(num_queries, Vec::new);
+        }
         for v in &mut self.tail_keys[..num_queries] {
             v.clear();
         }
@@ -484,6 +490,12 @@ impl PackedKnnCellScratch {
 
         // Directed center cell: since all points in a grid cell are in the same bin, the within-bin
         // filter reduces to "skip earlier slots in this same cell".
+        let query_x = &self.query_x[..num_queries];
+        let query_y = &self.query_y[..num_queries];
+        let query_z = &self.query_z[..num_queries];
+        let security_thresholds = &self.security_thresholds[..num_queries];
+        let chunk0_keys = &mut self.chunk0_keys[..num_queries];
+
         let full_chunks = center_len / 8;
         for chunk in 0..full_chunks {
             let i = chunk * 8;
@@ -495,12 +507,12 @@ impl PackedKnnCellScratch {
             // needs to consider this chunk if qi <= i+7.
             let qi_end = (i + 8).min(num_queries);
             for qi in 0..qi_end {
-                let qx = f32x8::splat(self.query_x[qi]);
-                let qy = f32x8::splat(self.query_y[qi]);
-                let qz = f32x8::splat(self.query_z[qi]);
+                let qx = f32x8::splat(query_x[qi]);
+                let qy = f32x8::splat(query_y[qi]);
+                let qz = f32x8::splat(query_z[qi]);
                 let dots = fp::dot3_f32x8(cx, cy, cz, qx, qy, qz);
 
-                let thresh_vec = f32x8::splat(self.security_thresholds[qi]);
+                let thresh_vec = f32x8::splat(security_thresholds[qi]);
                 let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
                 let mut mask_bits = mask.to_bitmask() as u32;
                 if mask_bits == 0 {
@@ -526,7 +538,7 @@ impl PackedKnnCellScratch {
                     let lane = mask_bits.trailing_zeros() as usize;
                     let slot = (center_soa_start + i + lane) as u32;
                     let dot = dots_arr[lane];
-                    self.chunk0_keys[qi].push(make_desc_key(dot, slot));
+                    chunk0_keys[qi].push(make_desc_key(dot, slot));
                     self.min_center_dot[qi] = self.min_center_dot[qi].min(dot);
                     mask_bits &= mask_bits - 1;
                 }
@@ -551,24 +563,24 @@ impl PackedKnnCellScratch {
                     cx,
                     cy,
                     cz,
-                    self.query_x[qi],
-                    self.query_y[qi],
-                    self.query_z[qi],
+                    query_x[qi],
+                    query_y[qi],
+                    query_z[qi],
                 );
-                if dot > self.security_thresholds[qi] {
-                    self.chunk0_keys[qi].push(make_desc_key(dot, slot));
+                if dot > security_thresholds[qi] {
+                    chunk0_keys[qi].push(make_desc_key(dot, slot));
                     self.min_center_dot[qi] = self.min_center_dot[qi].min(dot);
                 }
             }
         }
         timings.add_center_pass(t.lap());
 
-        for (qi, v) in self.chunk0_keys.iter().take(num_queries).enumerate() {
+        for (qi, v) in chunk0_keys.iter().enumerate() {
             self.center_lens[qi] = v.len();
         }
 
         for qi in 0..num_queries {
-            let security = self.security_thresholds[qi];
+            let security = security_thresholds[qi];
             let center_len = self.center_lens[qi];
             let min_dot = self.min_center_dot[qi];
             self.thresholds[qi] = if center_len > 0 {
@@ -581,6 +593,7 @@ impl PackedKnnCellScratch {
         timings.add_ring_thresholds(t.lap());
 
         // === Ring pass: collect "hi" candidates into chunk0.
+        let thresholds = &self.thresholds[..num_queries];
         for r in &self.cell_ranges[1..] {
             if r.kind == PackedCellRangeKind::SameBinEarlier {
                 continue;
@@ -601,12 +614,12 @@ impl PackedKnnCellScratch {
                 let cz = f32x8::from_slice(&zs[i..]);
 
                 for (qi, &query_slot) in queries.iter().enumerate() {
-                    let qx = f32x8::splat(self.query_x[qi]);
-                    let qy = f32x8::splat(self.query_y[qi]);
-                    let qz = f32x8::splat(self.query_z[qi]);
+                    let qx = f32x8::splat(query_x[qi]);
+                    let qy = f32x8::splat(query_y[qi]);
+                    let qz = f32x8::splat(query_z[qi]);
                     let dots = fp::dot3_f32x8(cx, cy, cz, qx, qy, qz);
 
-                    let thresh_vec = f32x8::splat(self.thresholds[qi]);
+                    let thresh_vec = f32x8::splat(thresholds[qi]);
                     let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
                     let mut mask_bits = mask.to_bitmask() as u32;
                     if mask_bits == 0 {
@@ -622,7 +635,7 @@ impl PackedKnnCellScratch {
                             "ring pass should never revisit the query slot"
                         );
                         let dot = dots_arr[lane];
-                        self.chunk0_keys[qi].push(make_desc_key(dot, slot));
+                        chunk0_keys[qi].push(make_desc_key(dot, slot));
                         mask_bits &= mask_bits - 1;
                     }
                 }
@@ -645,12 +658,12 @@ impl PackedKnnCellScratch {
                         cx,
                         cy,
                         cz,
-                        self.query_x[qi],
-                        self.query_y[qi],
-                        self.query_z[qi],
+                        query_x[qi],
+                        query_y[qi],
+                        query_z[qi],
                     );
-                    if dot > self.thresholds[qi] {
-                        self.chunk0_keys[qi].push(make_desc_key(dot, slot));
+                    if dot > thresholds[qi] {
+                        chunk0_keys[qi].push(make_desc_key(dot, slot));
                     }
                 }
             }
