@@ -215,7 +215,6 @@ pub struct PackedKnnCellScratch {
     center_lens: Vec<usize>,
     min_center_dot: Vec<f32>,
     group_queries: Vec<u32>,
-    group_query_locals: Vec<u32>,
     group_cell: usize,
     group_query_bin: u8,
     chunk0_keys: Vec<Vec<u64>>,
@@ -258,7 +257,6 @@ impl PackedKnnCellScratch {
             center_lens: Vec::new(),
             min_center_dot: Vec::new(),
             group_queries: Vec::new(),
-            group_query_locals: Vec::new(),
             group_cell: 0,
             group_query_bin: 0,
             chunk0_keys: Vec::new(),
@@ -300,8 +298,6 @@ impl PackedKnnCellScratch {
         self.group_query_bin = query_bin;
         self.group_queries.clear();
         self.group_queries.extend_from_slice(queries);
-        self.group_query_locals.clear();
-        self.group_query_locals.extend_from_slice(query_locals);
 
         let num_cells = 6 * grid.res * grid.res;
         if cell >= num_cells {
@@ -368,15 +364,23 @@ impl PackedKnnCellScratch {
         let ring2 = grid.cell_ring2(cell);
         let interior_planes = security_planes_3x3_interior(cell, grid);
 
-        self.query_x.resize(num_queries, 0.0);
-        self.query_y.resize(num_queries, 0.0);
-        self.query_z.resize(num_queries, 0.0);
-        for (qi, &query_slot) in queries.iter().enumerate() {
-            let slot = query_slot as usize;
-            self.query_x[qi] = grid.cell_points_x[slot];
-            self.query_y[qi] = grid.cell_points_y[slot];
-            self.query_z[qi] = grid.cell_points_z[slot];
-        }
+        // live_dedup invariant: groups are complete center-cell runs in slot order.
+        // Cache query coordinates via a contiguous slice copy (faster than per-slot gathers).
+        let qx_src = &grid.cell_points_x[q_start..q_end];
+        let qy_src = &grid.cell_points_y[q_start..q_end];
+        let qz_src = &grid.cell_points_z[q_start..q_end];
+        debug_assert_eq!(
+            num_queries,
+            qx_src.len(),
+            "directed packed group must cover the full center cell"
+        );
+
+        self.query_x.clear();
+        self.query_x.extend_from_slice(qx_src);
+        self.query_y.clear();
+        self.query_y.extend_from_slice(qy_src);
+        self.query_z.clear();
+        self.query_z.extend_from_slice(qz_src);
         timings.add_query_cache(t.lap());
 
         self.security_thresholds.clear();
@@ -559,14 +563,7 @@ impl PackedKnnCellScratch {
                 if qi == pos {
                     continue;
                 }
-                let dot = fp::dot3_f32(
-                    cx,
-                    cy,
-                    cz,
-                    query_x[qi],
-                    query_y[qi],
-                    query_z[qi],
-                );
+                let dot = fp::dot3_f32(cx, cy, cz, query_x[qi], query_y[qi], query_z[qi]);
                 if dot > security_thresholds[qi] {
                     chunk0_keys[qi].push(make_desc_key(dot, slot));
                     self.min_center_dot[qi] = self.min_center_dot[qi].min(dot);
@@ -654,14 +651,7 @@ impl PackedKnnCellScratch {
                         "ring pass should never revisit the query slot"
                     );
 
-                    let dot = fp::dot3_f32(
-                        cx,
-                        cy,
-                        cz,
-                        query_x[qi],
-                        query_y[qi],
-                        query_z[qi],
-                    );
+                    let dot = fp::dot3_f32(cx, cy, cz, query_x[qi], query_y[qi], query_z[qi]);
                     if dot > thresholds[qi] {
                         chunk0_keys[qi].push(make_desc_key(dot, slot));
                     }
