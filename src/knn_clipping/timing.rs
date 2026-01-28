@@ -421,6 +421,46 @@ impl PhaseTimings {
         };
         let est_wall_ms = |d: Duration| d.as_secs_f64() * cpu_to_wall * 1000.0;
 
+        // Optional machine-readable one-liner for scripts.
+        //
+        // Intentionally uses the same "estimated wall ms" convention as the human report for
+        // cell sub-phases, so comparisons match what you see printed (especially in parallel).
+        if std::env::var_os("S2_VORONOI_TIMING_KV").is_some() {
+            eprintln!(
+                concat!(
+                    "TIMING_KV n={n} ",
+                    "total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} ",
+                    "cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} ",
+                    "packed_knn_ms={pk:.3} pk_setup_ms={pks:.3} pk_queries_ms={pkq:.3} pk_security_ms={pksec:.3} ",
+                    "pk_center_ms={pkc:.3} pk_thresh_ms={pkt:.3} pk_ring_ms={pkr:.3} pk_fallback_ms={pkf:.3} ",
+                    "pk_sel_prep_ms={pksp:.3} pk_sel_qprep_ms={pksq:.3} pk_partition_ms={pkp:.3} pk_sort_ms={pksort:.3} ",
+                    "pk_scatter_ms={pksc:.3} pk_unaccounted_ms={pku:.3}"
+                ),
+                n = n,
+                total = total_ms,
+                pre = self.preprocess.as_secs_f64() * 1000.0,
+                kb = self.knn_build.as_secs_f64() * 1000.0,
+                cc = self.cell_construction.as_secs_f64() * 1000.0,
+                dd = self.dedup.as_secs_f64() * 1000.0,
+                er = self.edge_repair.as_secs_f64() * 1000.0,
+                asmb = self.assemble.as_secs_f64() * 1000.0,
+                pk = est_wall_ms(self.cell_sub.packed_knn),
+                pks = est_wall_ms(self.cell_sub.packed_knn_setup),
+                pkq = est_wall_ms(self.cell_sub.packed_knn_query_cache),
+                pksec = est_wall_ms(self.cell_sub.packed_knn_security_thresholds),
+                pkc = est_wall_ms(self.cell_sub.packed_knn_center_pass),
+                pkt = est_wall_ms(self.cell_sub.packed_knn_ring_thresholds),
+                pkr = est_wall_ms(self.cell_sub.packed_knn_ring_pass),
+                pkf = est_wall_ms(self.cell_sub.packed_knn_ring_fallback),
+                pksp = est_wall_ms(self.cell_sub.packed_knn_select_prep),
+                pksq = est_wall_ms(self.cell_sub.packed_knn_select_query_prep),
+                pkp = est_wall_ms(self.cell_sub.packed_knn_select_partition),
+                pksort = est_wall_ms(self.cell_sub.packed_knn_select_sort),
+                pksc = est_wall_ms(self.cell_sub.packed_knn_select_scatter),
+                pku = est_wall_ms(self.cell_sub.packed_knn_unaccounted),
+            );
+        }
+
         eprintln!(
             "    knn_query:       {:7.1}ms ({:4.1}%)",
             est_wall_ms(self.cell_sub.knn_query),

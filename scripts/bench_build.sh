@@ -9,11 +9,16 @@
 #   bench_build.sh --chain 5 main         # Last 5 commits from main
 #   bench_build.sh HEAD --chain 3 main    # Working tree + last 3 from main
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 TMP_DIR="/tmp/bench_compare"
+
+# Build config (recorded in manifest).
+USE_NATIVE=true
+FEATURES=""
+EXTRA_RUSTFLAGS=""
 
 # Parse arguments - collect commits and handle --chain
 COMMITS=()
@@ -22,6 +27,26 @@ CHAIN_BASE=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --features)
+            FEATURES="${2:-}"
+            shift 2
+            ;;
+        --timing)
+            FEATURES="${FEATURES:+$FEATURES,}timing"
+            shift
+            ;;
+        --no-native)
+            USE_NATIVE=false
+            shift
+            ;;
+        --native)
+            USE_NATIVE=true
+            shift
+            ;;
+        --rustflags)
+            EXTRA_RUSTFLAGS="${2:-}"
+            shift 2
+            ;;
         --chain)
             CHAIN_COUNT="$2"
             shift 2
@@ -51,6 +76,12 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --chain 5 main          # Last 5 commits from main"
             echo "  $0 HEAD --chain 3 main     # Working tree + last 3 from main"
             echo ""
+            echo "Build options:"
+            echo "  --native/--no-native       Toggle -C target-cpu=native (default: on)"
+            echo "  --features \"a,b\"           Cargo features to enable (default: none)"
+            echo "  --timing                   Shorthand for --features timing"
+            echo "  --rustflags \"...\"          Extra RUSTFLAGS (appended)"
+            echo ""
             echo "HEAD builds current working tree (including uncommitted changes)"
             exit 0
             ;;
@@ -70,6 +101,16 @@ fi
 mkdir -p "$TMP_DIR"
 
 cd "$PROJECT_DIR"
+
+# Use a consistent codegen baseline for perf comparisons.
+RUSTFLAGS_FINAL="${RUSTFLAGS:-}"
+if $USE_NATIVE; then
+    RUSTFLAGS_FINAL="${RUSTFLAGS_FINAL} -C target-cpu=native"
+fi
+if [[ -n "$EXTRA_RUSTFLAGS" ]]; then
+    RUSTFLAGS_FINAL="${RUSTFLAGS_FINAL} ${EXTRA_RUSTFLAGS}"
+fi
+export RUSTFLAGS="$RUSTFLAGS_FINAL"
 
 # Check if working tree is dirty
 DIRTY=false
@@ -103,6 +144,21 @@ echo ""
 
 # Clear old manifest
 > "$TMP_DIR/manifest.txt"
+{
+    echo "# project_dir=$PROJECT_DIR"
+    echo "# built_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+    echo "# rustc=$(rustc -V 2>/dev/null || true)"
+    echo "# cargo=$(cargo -V 2>/dev/null || true)"
+    echo "# features=${FEATURES:-<none>}"
+    echo "# use_native=$USE_NATIVE"
+    echo "# rustflags=${RUSTFLAGS:-<unset>}"
+} >> "$TMP_DIR/manifest.txt"
+echo "" >> "$TMP_DIR/manifest.txt"
+
+build_cmd=(cargo build --release --bin bench_voronoi)
+if [[ -n "${FEATURES}" ]]; then
+    build_cmd+=(--features "${FEATURES}")
+fi
 
 for i in "${!COMMITS[@]}"; do
     commit="${COMMITS[$i]}"
@@ -112,7 +168,7 @@ for i in "${!COMMITS[@]}"; do
         label="HEAD (dirty)"
         echo "[$((i+1))/${#COMMITS[@]}] Building $label (working tree with uncommitted changes)..."
         # Don't checkout, just build current state
-        cargo build --release --bin bench_voronoi 2>&1 | grep -E "(Compiling|Finished)" || true
+        "${build_cmd[@]}" 2>&1 | grep -E "(Compiling|Finished)" || true
         cp target/release/bench_voronoi "$TMP_DIR/bench_$i"
         echo "$i:$label" >> "$TMP_DIR/manifest.txt"
         continue
@@ -151,7 +207,7 @@ for i in "${!COMMITS[@]}"; do
 
     echo "[$((i+1))/${#COMMITS[@]}] Building $label..."
     git checkout "$commit" --quiet 2>/dev/null
-    cargo build --release --bin bench_voronoi 2>&1 | grep -E "(Compiling|Finished)" || true
+    "${build_cmd[@]}" 2>&1 | grep -E "(Compiling|Finished)" || true
     cp target/release/bench_voronoi "$TMP_DIR/bench_$i"
     echo "$i:$label" >> "$TMP_DIR/manifest.txt"
 done
@@ -159,7 +215,10 @@ done
 echo ""
 echo "=== Build complete ==="
 echo "Binaries:"
-while IFS=: read -r idx label; do
+while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^# ]] && continue
+    IFS=: read -r idx label <<< "$line"
     echo "  $TMP_DIR/bench_$idx  ($label)"
 done < "$TMP_DIR/manifest.txt"
 echo ""
