@@ -217,12 +217,13 @@ pub struct PackedKnnCellScratch {
     group_queries: Vec<u32>,
     group_cell: usize,
     group_query_bin: u8,
+    group_gen: u32,
     chunk0_keys: Vec<Vec<u64>>,
     tail_keys: Vec<Vec<u64>>,
     chunk0_pos: Vec<usize>,
     tail_pos: Vec<usize>,
     tail_possible: Vec<bool>,
-    tail_ready: Vec<bool>,
+    tail_ready_gen: Vec<u32>,
     tail_built_any: bool,
     security_thresholds: Vec<f32>,
     thresholds: Vec<f32>,
@@ -259,12 +260,13 @@ impl PackedKnnCellScratch {
             group_queries: Vec::new(),
             group_cell: 0,
             group_query_bin: 0,
+            group_gen: 1,
             chunk0_keys: Vec::new(),
             tail_keys: Vec::new(),
             chunk0_pos: Vec::new(),
             tail_pos: Vec::new(),
             tail_possible: Vec::new(),
-            tail_ready: Vec::new(),
+            tail_ready_gen: Vec::new(),
             tail_built_any: false,
             security_thresholds: Vec::new(),
             thresholds: Vec::new(),
@@ -298,6 +300,12 @@ impl PackedKnnCellScratch {
         self.group_query_bin = query_bin;
         self.group_queries.clear();
         self.group_queries.extend_from_slice(queries);
+        self.group_gen = self.group_gen.wrapping_add(1);
+        if self.group_gen == 0 {
+            // Reserve `0` as "never set"; on wrap, clear all generation stamps.
+            self.group_gen = 1;
+            self.tail_ready_gen.fill(0);
+        }
 
         let num_cells = 6 * grid.res * grid.res;
         if cell >= num_cells {
@@ -425,9 +433,7 @@ impl PackedKnnCellScratch {
         self.min_center_dot.resize(num_queries, f32::INFINITY);
         self.min_center_dot.fill(f32::INFINITY);
         self.center_lens.resize(num_queries, 0);
-        self.center_lens.fill(0);
         self.thresholds.resize(num_queries, 0.0);
-        self.thresholds.fill(0.0);
 
         // Don't shrink `Vec<Vec<_>>` to avoid dropping inner buffers when group sizes vary.
         if self.chunk0_keys.len() < num_queries {
@@ -449,9 +455,9 @@ impl PackedKnnCellScratch {
         self.tail_pos.resize(num_queries, 0);
         self.tail_pos.fill(0);
         self.tail_possible.resize(num_queries, false);
-        self.tail_possible.fill(false);
-        self.tail_ready.resize(num_queries, false);
-        self.tail_ready.fill(false);
+        if self.tail_ready_gen.len() < num_queries {
+            self.tail_ready_gen.resize(num_queries, 0);
+        }
         self.tail_built_any = false;
         timings.add_select_prep(t.lap());
 
@@ -702,17 +708,17 @@ impl PackedKnnCellScratch {
         // during `prepare_group_directed`. Bin/local decoding is only needed there.
         let _ = (slot_gen_map, local_shift, local_mask);
 
-        let Some(tail_ready) = self.tail_ready.get(qi).copied() else {
+        let Some(gen) = self.tail_ready_gen.get(qi).copied() else {
             return;
         };
-        if tail_ready {
+        if gen == self.group_gen {
             return;
         }
         if !self.tail_built_any {
             self.tail_built_any = true;
             timings.inc_tail_builds();
         }
-        self.tail_ready[qi] = true;
+        self.tail_ready_gen[qi] = self.group_gen;
 
         self.tail_keys[qi].clear();
         self.tail_pos[qi] = 0;
@@ -885,7 +891,7 @@ impl PackedKnnCellScratch {
             }
             PackedStage::Tail => {
                 debug_assert!(
-                    self.tail_ready.get(qi).copied().unwrap_or(false),
+                    self.tail_ready_gen.get(qi).copied().unwrap_or(0) == self.group_gen,
                     "tail stage requested before ensure_tail"
                 );
                 let mut t = PackedLapTimer::start();
