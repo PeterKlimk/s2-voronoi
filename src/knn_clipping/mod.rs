@@ -62,12 +62,12 @@ pub(super) const KNN_RESTART_KS: [usize; 2] = [KNN_RESTART_K0, KNN_RESTART_MAX];
 ///
 /// This is intentionally separate from the resumable kNN schedule; it only affects the packed
 /// path. Defaults to the same value as `KNN_RESTART_K0`.
-pub(super) const PACKED_K0: usize = 12;
+pub(super) const PACKED_K0: usize = 16;
 
 /// Packed-kNN chunk size after `Chunk0` (and for tail emission).
 ///
 /// Smaller reduces upfront packed work but may increase loop iterations and/or fallback to kNN.
-pub(super) const PACKED_K1: usize = 4;
+pub(super) const PACKED_K1: usize = 8;
 
 /// How aggressively to grow k when we have a bounded-but-unproven cell after the scheduled kNN.
 pub(super) const TERMINATION_GROW_MULTIPLIER: usize = 2;
