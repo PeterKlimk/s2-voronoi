@@ -638,22 +638,47 @@ impl PackedKnnCellScratch {
                 }
             }
 
-            let tail_start = full_chunks * 8;
-            for i in tail_start..range_len {
-                let cx = xs[i];
-                let cy = ys[i];
-                let cz = zs[i];
-                let slot = (soa_start + i) as u32;
+            let rem = range_len % 8;
+            if rem != 0 {
+                let i = full_chunks * 8;
+                debug_assert!(i < range_len);
+                let valid_bits = (1u32 << (rem as u32)) - 1;
+
+                let mut xbuf = [0.0f32; 8];
+                let mut ybuf = [0.0f32; 8];
+                let mut zbuf = [0.0f32; 8];
+                xbuf[..rem].copy_from_slice(&xs[i..]);
+                ybuf[..rem].copy_from_slice(&ys[i..]);
+                zbuf[..rem].copy_from_slice(&zs[i..]);
+
+                let cx = f32x8::from_array(xbuf);
+                let cy = f32x8::from_array(ybuf);
+                let cz = f32x8::from_array(zbuf);
 
                 for (qi, &query_slot) in queries.iter().enumerate() {
-                    debug_assert_ne!(
-                        slot, query_slot,
-                        "ring pass should never revisit the query slot"
-                    );
+                    let qx = f32x8::splat(query_x[qi]);
+                    let qy = f32x8::splat(query_y[qi]);
+                    let qz = f32x8::splat(query_z[qi]);
+                    let dots = fp::dot3_f32x8(cx, cy, cz, qx, qy, qz);
 
-                    let dot = fp::dot3_f32(cx, cy, cz, query_x[qi], query_y[qi], query_z[qi]);
-                    if dot > thresholds[qi] {
+                    let thresh_vec = f32x8::splat(thresholds[qi]);
+                    let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
+                    let mut mask_bits = (mask.to_bitmask() as u32) & valid_bits;
+                    if mask_bits == 0 {
+                        continue;
+                    }
+
+                    let dots_arr: [f32; 8] = dots.into();
+                    while mask_bits != 0 {
+                        let lane = mask_bits.trailing_zeros() as usize;
+                        let slot = (soa_start + i + lane) as u32;
+                        debug_assert_ne!(
+                            slot, query_slot,
+                            "ring pass should never revisit the query slot"
+                        );
+                        let dot = dots_arr[lane];
                         chunk0_keys[qi].push(make_desc_key(dot, slot));
+                        mask_bits &= mask_bits - 1;
                     }
                 }
             }
