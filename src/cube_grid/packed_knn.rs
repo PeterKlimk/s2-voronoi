@@ -227,9 +227,6 @@ pub struct PackedKnnCellScratch {
     tail_built_any: bool,
     security_thresholds: Vec<f32>,
     thresholds: Vec<f32>,
-    query_x: Vec<f32>,
-    query_y: Vec<f32>,
-    query_z: Vec<f32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -270,9 +267,6 @@ impl PackedKnnCellScratch {
             tail_built_any: false,
             security_thresholds: Vec::new(),
             thresholds: Vec::new(),
-            query_x: Vec::new(),
-            query_y: Vec::new(),
-            query_z: Vec::new(),
         }
     }
 
@@ -373,7 +367,8 @@ impl PackedKnnCellScratch {
         let interior_planes = security_planes_3x3_interior(cell, grid);
 
         // live_dedup invariant: groups are complete center-cell runs in slot order.
-        // Cache query coordinates via a contiguous slice copy (faster than per-slot gathers).
+        // Query coordinates are already stored in SoA order by slot; borrow the center-cell
+        // slices directly instead of copying into scratch.
         let qx_src = &grid.cell_points_x[q_start..q_end];
         let qy_src = &grid.cell_points_y[q_start..q_end];
         let qz_src = &grid.cell_points_z[q_start..q_end];
@@ -383,12 +378,6 @@ impl PackedKnnCellScratch {
             "directed packed group must cover the full center cell"
         );
 
-        self.query_x.clear();
-        self.query_x.extend_from_slice(qx_src);
-        self.query_y.clear();
-        self.query_y.extend_from_slice(qy_src);
-        self.query_z.clear();
-        self.query_z.extend_from_slice(qz_src);
         timings.add_query_cache(t.lap());
 
         self.security_thresholds.clear();
@@ -396,9 +385,9 @@ impl PackedKnnCellScratch {
         match interior_planes {
             Some(planes) => {
                 for qi in 0..num_queries {
-                    let qx = self.query_x[qi];
-                    let qy = self.query_y[qi];
-                    let qz = self.query_z[qi];
+                    let qx = qx_src[qi];
+                    let qy = qy_src[qi];
+                    let qz = qz_src[qi];
 
                     let mut s_min = 1.0f32;
                     for n in &planes {
@@ -420,10 +409,10 @@ impl PackedKnnCellScratch {
             }
             None => {
                 self.security_thresholds.extend(
-                    self.query_x
+                    qx_src
                         .iter()
-                        .zip(self.query_y.iter())
-                        .zip(self.query_z.iter())
+                        .zip(qy_src.iter())
+                        .zip(qz_src.iter())
                         .map(|((&x, &y), &z)| outside_max_dot_xyz(x, y, z, ring2, grid)),
                 );
             }
@@ -500,9 +489,9 @@ impl PackedKnnCellScratch {
 
         // Directed center cell: since all points in a grid cell are in the same bin, the within-bin
         // filter reduces to "skip earlier slots in this same cell".
-        let query_x = &self.query_x[..num_queries];
-        let query_y = &self.query_y[..num_queries];
-        let query_z = &self.query_z[..num_queries];
+        let query_x = qx_src;
+        let query_y = qy_src;
+        let query_z = qz_src;
         let security_thresholds = &self.security_thresholds[..num_queries];
         let chunk0_keys = &mut self.chunk0_keys[..num_queries];
 
@@ -737,6 +726,12 @@ impl PackedKnnCellScratch {
             let ys = &grid.cell_points_y[soa_start..soa_end];
             let zs = &grid.cell_points_z[soa_start..soa_end];
 
+            let query_slot = self.group_queries[qi];
+            let query_slot_usize = query_slot as usize;
+            let qx_s = grid.cell_points_x[query_slot_usize];
+            let qy_s = grid.cell_points_y[query_slot_usize];
+            let qz_s = grid.cell_points_z[query_slot_usize];
+
             let full_chunks = range_len / 8;
             for chunk in 0..full_chunks {
                 let i = chunk * 8;
@@ -744,11 +739,9 @@ impl PackedKnnCellScratch {
                 let cy = f32x8::from_slice(&ys[i..]);
                 let cz = f32x8::from_slice(&zs[i..]);
 
-                let query_slot = self.group_queries[qi];
-
-                let qx = f32x8::splat(self.query_x[qi]);
-                let qy = f32x8::splat(self.query_y[qi]);
-                let qz = f32x8::splat(self.query_z[qi]);
+                let qx = f32x8::splat(qx_s);
+                let qy = f32x8::splat(qy_s);
+                let qz = f32x8::splat(qz_s);
                 let dots = fp::dot3_f32x8(cx, cy, cz, qx, qy, qz);
 
                 let hi_vec = f32x8::splat(self.thresholds[qi]);
@@ -782,19 +775,11 @@ impl PackedKnnCellScratch {
                 let cz = zs[i];
                 let slot = (soa_start + i) as u32;
 
-                let query_slot = self.group_queries[qi];
                 if slot == query_slot {
                     continue;
                 }
 
-                let dot = fp::dot3_f32(
-                    cx,
-                    cy,
-                    cz,
-                    self.query_x[qi],
-                    self.query_y[qi],
-                    self.query_z[qi],
-                );
+                let dot = fp::dot3_f32(cx, cy, cz, qx_s, qy_s, qz_s);
                 if dot > self.security_thresholds[qi] && dot <= self.thresholds[qi] {
                     self.tail_keys[qi].push(make_desc_key(dot, slot));
                 }
