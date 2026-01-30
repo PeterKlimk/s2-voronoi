@@ -209,6 +209,13 @@ impl PackedKnnTimings {
 // Hard cap on total candidates in a 3×3 neighborhood to avoid pathological allocations.
 const MAX_CANDIDATES_HARD: usize = 65_536;
 
+// Target maximum size for the initial "hi" candidate list (`chunk0_keys`) per query.
+//
+// `next_chunk` avoids `select_nth_unstable` when `remaining.len() <= 2 * n_target`. With the
+// current packed schedule (`PACKED_K0` = 16), keeping the hi list around <= 32 tends to avoid the
+// expensive partition path.
+const HI_BUDGET: usize = 32;
+
 /// Reusable scratch buffers for packed per-cell group queries.
 pub struct PackedKnnCellScratch {
     cell_ranges: Vec<PackedCellRange>,
@@ -360,6 +367,13 @@ impl PackedKnnCellScratch {
         if num_candidates > MAX_CANDIDATES_HARD {
             timings.add_setup(t.lap());
             return PackedKnnCellStatus::SlowPath;
+        }
+        let mut ring_candidates = 0usize;
+        for r in &self.cell_ranges[1..] {
+            if r.kind == PackedCellRangeKind::SameBinEarlier {
+                continue;
+            }
+            ring_candidates += r.soa_end - r.soa_start;
         }
         timings.add_setup(t.lap());
 
@@ -571,16 +585,80 @@ impl PackedKnnCellScratch {
             self.center_lens[qi] = v.len();
         }
 
+        // === Threshold selection.
+        //
+        // The old threshold is derived from the worst (minimum) center dot, ensuring that all
+        // safe center candidates remain "hi" and that we can't miss any ring candidate that would
+        // outrank a kept center candidate.
+        //
+        // To reduce the cost of large ring candidate sets (and especially `select_nth_unstable`),
+        // we allow tightening the hi threshold above the worst center dot. Any safe center
+        // candidates below the tightened threshold get demoted into the tail set, preserving the
+        // ordering/correctness invariant: if we keep a candidate with dot d in "hi", we must not
+        // miss any other safe candidate with dot > d.
+        //
+        // We choose a heuristic tightened threshold based on counts: treat the eligible
+        // neighborhood size as `ring_candidates + (num_queries - qi - 1)` (directed center cell),
+        // and pick a dot threshold t in [security, 1] that targets ~HI_BUDGET candidates above t
+        // under a simple "uniform on [security, 1]" model. We never loosen below the old
+        // worst-center threshold.
         for qi in 0..num_queries {
             let security = security_thresholds[qi];
             let center_len = self.center_lens[qi];
             let min_dot = self.min_center_dot[qi];
-            self.thresholds[qi] = if center_len > 0 {
+            let old_t = if center_len > 0 {
                 security.max(min_dot - 1e-6)
             } else {
                 security
             };
-            self.tail_possible[qi] = self.thresholds[qi] > security;
+
+            let center_eligible = num_queries.saturating_sub(qi + 1);
+            let n_total = ring_candidates + center_eligible;
+            let t_count = if n_total == 0 {
+                security
+            } else {
+                let ratio = ((HI_BUDGET as f32) / (n_total as f32)).min(1.0);
+                let t = 1.0 - (1.0 - security) * ratio;
+                t.clamp(security, 1.0)
+            };
+
+            let t = old_t.max(t_count);
+            self.thresholds[qi] = t;
+            self.tail_possible[qi] = t > security;
+        }
+
+        // Demote center candidates at/below the tightened threshold into tail.
+        //
+        // This ensures that any candidate remaining in chunk0 ("hi") has dot > thresholds[qi],
+        // so the ring pass (which uses dot > thresholds[qi]) cannot miss a ring candidate that
+        // outranks a kept center candidate.
+        for qi in 0..num_queries {
+            let t = self.thresholds[qi];
+            let v = &mut chunk0_keys[qi];
+            if v.is_empty() {
+                continue;
+            }
+
+            let tail_v = &mut self.tail_keys[qi];
+            let mut write = 0usize;
+            let len = v.len();
+            for idx in 0..len {
+                let key = v[idx];
+                let dot = key_to_dot(key);
+                if dot > t {
+                    v[write] = key;
+                    write += 1;
+                } else {
+                    tail_v.push(key);
+                }
+            }
+            v.truncate(write);
+
+            // Tail may be needed either due to a tightened threshold or due to demoted center
+            // candidates. Keep the flag conservative.
+            if !tail_v.is_empty() {
+                self.tail_possible[qi] = true;
+            }
         }
         timings.add_ring_thresholds(t.lap());
 
@@ -709,7 +787,8 @@ impl PackedKnnCellScratch {
         }
         self.tail_ready_gen[qi] = self.group_gen;
 
-        self.tail_keys[qi].clear();
+        // Keep any precomputed center-tail candidates already stored in `tail_keys[qi]` and
+        // append ring-tail candidates here.
         self.tail_pos[qi] = 0;
         debug_assert!(self.tail_possible.get(qi).copied().unwrap_or(false));
 
