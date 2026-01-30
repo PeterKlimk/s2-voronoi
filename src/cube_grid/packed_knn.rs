@@ -216,6 +216,24 @@ const MAX_CANDIDATES_HARD: usize = 65_536;
 // expensive partition path.
 const HI_BUDGET: usize = 32;
 
+// Heuristic knobs for the count-based threshold.
+//
+// The count model is used to pick a "hi" threshold `t` in [security, 1] such that we expect only
+// ~HI_BUDGET candidates above `t`. This reduces the likelihood that `next_chunk` must run
+// `select_nth_unstable` on large vectors.
+//
+// If we account for directed eligibility in the center cell, late queries have smaller
+// `N_total` and thus a looser threshold (more candidates). Empirically this can be undesirable, so
+// we optionally ignore directed center eligibility for the estimate.
+const COUNT_MODEL_IGNORE_DIRECTED_CENTER: bool = false;
+
+// If true, include SameBinEarlier neighbor cell counts in the estimate.
+//
+// These cells are skipped for directed kNN (we never scan them), but including them increases the
+// estimated neighborhood size for later cells and tends to tighten the threshold, reducing
+// candidate growth. This is deliberately conservative: it may increase tail usage.
+const COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER: bool = false;
+
 /// Reusable scratch buffers for packed per-cell group queries.
 pub struct PackedKnnCellScratch {
     cell_ranges: Vec<PackedCellRange>,
@@ -368,12 +386,14 @@ impl PackedKnnCellScratch {
             timings.add_setup(t.lap());
             return PackedKnnCellStatus::SlowPath;
         }
-        let mut ring_candidates = 0usize;
+        let mut ring_candidates_eligible = 0usize;
+        let mut ring_candidates_all = 0usize;
         for r in &self.cell_ranges[1..] {
+            ring_candidates_all += r.soa_end - r.soa_start;
             if r.kind == PackedCellRangeKind::SameBinEarlier {
                 continue;
             }
-            ring_candidates += r.soa_end - r.soa_start;
+            ring_candidates_eligible += r.soa_end - r.soa_start;
         }
         timings.add_setup(t.lap());
 
@@ -602,18 +622,28 @@ impl PackedKnnCellScratch {
         // and pick a dot threshold t in [security, 1] that targets ~HI_BUDGET candidates above t
         // under a simple "uniform on [security, 1]" model. We never loosen below the old
         // worst-center threshold.
+        let ring_candidates_est = if COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER {
+            ring_candidates_all
+        } else {
+            ring_candidates_eligible
+        };
+
         for qi in 0..num_queries {
             let security = security_thresholds[qi];
             let center_len = self.center_lens[qi];
             let min_dot = self.min_center_dot[qi];
-            let old_t = if center_len > 0 {
+            let _old_t = if center_len > 0 {
                 security.max(min_dot - 1e-6)
             } else {
                 security
             };
 
-            let center_eligible = num_queries.saturating_sub(qi + 1);
-            let n_total = ring_candidates + center_eligible;
+            let center_eligible = if COUNT_MODEL_IGNORE_DIRECTED_CENTER {
+                num_queries.saturating_sub(1)
+            } else {
+                num_queries.saturating_sub(qi + 1)
+            };
+            let n_total = ring_candidates_est + center_eligible;
             let t_count = if n_total == 0 {
                 security
             } else {
@@ -622,9 +652,8 @@ impl PackedKnnCellScratch {
                 t.clamp(security, 1.0)
             };
 
-            let t = old_t.max(t_count);
-            self.thresholds[qi] = t;
-            self.tail_possible[qi] = t > security;
+            self.thresholds[qi] = t_count;
+            self.tail_possible[qi] = t_count > security;
         }
 
         // Demote center candidates at/below the tightened threshold into tail.
