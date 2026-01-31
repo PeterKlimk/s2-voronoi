@@ -28,6 +28,8 @@
 mod diagram;
 mod error;
 mod fp;
+pub mod sort;
+pub mod sort_nets;
 mod types;
 pub mod validation;
 

@@ -48,6 +48,10 @@ name = "microbench_batch"
 path = "src/bin/microbench_batch.rs"
 required-features = ["microbench"]
 
+[[bin]]
+name = "microbench_sort"
+path = "src/bin/microbench_sort.rs"
+
 [profile.checked]
 inherits = "release"
 opt-level = 3
