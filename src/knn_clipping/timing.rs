@@ -170,6 +170,16 @@ pub struct CellSubPhases {
     pub packed_knn_select_sort: Duration,
     pub packed_knn_select_scatter: Duration,
     pub packed_knn_unaccounted: Duration,
+    /// Packed-kNN sort-size histogram (call count, bucketed by n).
+    pub packed_knn_sort_len_counts: [u64; crate::cube_grid::packed_knn::PACKED_SORT_HIST_BINS],
+    /// Packed-kNN sort-size histogram (time, in nanoseconds, bucketed by n).
+    pub packed_knn_sort_len_nanos: [u64; crate::cube_grid::packed_knn::PACKED_SORT_HIST_BINS],
+    /// Packed-kNN sort-size histogram (call count, exact by n, capped + overflow).
+    pub packed_knn_sort_len_exact_counts:
+        [u64; crate::cube_grid::packed_knn::PACKED_SORT_LEN_MAX + 2],
+    /// Packed-kNN sort-size histogram (time, in nanoseconds, exact by n, capped + overflow).
+    pub packed_knn_sort_len_exact_nanos:
+        [u64; crate::cube_grid::packed_knn::PACKED_SORT_LEN_MAX + 2],
     pub clipping: Duration,
     pub certification: Duration,
     /// Live-dedup: per-vertex ownership checks and shard-local dedup work during cell build.
@@ -235,6 +245,12 @@ impl Default for CellSubPhases {
             packed_knn_select_sort: Duration::ZERO,
             packed_knn_select_scatter: Duration::ZERO,
             packed_knn_unaccounted: Duration::ZERO,
+            packed_knn_sort_len_counts: [0; crate::cube_grid::packed_knn::PACKED_SORT_HIST_BINS],
+            packed_knn_sort_len_nanos: [0; crate::cube_grid::packed_knn::PACKED_SORT_HIST_BINS],
+            packed_knn_sort_len_exact_counts: [0;
+                crate::cube_grid::packed_knn::PACKED_SORT_LEN_MAX + 2],
+            packed_knn_sort_len_exact_nanos: [0; crate::cube_grid::packed_knn::PACKED_SORT_LEN_MAX
+                + 2],
             clipping: Duration::ZERO,
             certification: Duration::ZERO,
             key_dedup: Duration::ZERO,
@@ -557,6 +573,96 @@ impl PhaseTimings {
                     est_wall_ms(self.cell_sub.packed_knn_select_sort),
                     pk_pct(self.cell_sub.packed_knn_select_sort)
                 );
+                if std::env::var_os("S2_VORONOI_TIMING_PK_SORT_HIST").is_some() {
+                    let nanos = &self.cell_sub.packed_knn_sort_len_nanos;
+                    let counts = &self.cell_sub.packed_knn_sort_len_counts;
+                    let total_nanos: u64 = nanos.iter().sum();
+                    if total_nanos > 0 {
+                        use std::cmp::Reverse;
+
+                        let bins = crate::cube_grid::packed_knn::PACKED_SORT_HIST_BINS;
+                        let label = |b: usize| -> String {
+                            if b == 0 {
+                                "n=0".to_string()
+                            } else if b == 1 {
+                                "n=1".to_string()
+                            } else if b == 2 {
+                                "n=2".to_string()
+                            } else {
+                                let lower = (1usize << (b - 2)) + 1;
+                                if b == bins - 1 {
+                                    format!("n>={}", lower)
+                                } else {
+                                    let upper = 1usize << (b - 1);
+                                    format!("{}-{}", lower, upper)
+                                }
+                            }
+                        };
+
+                        let mut v: Vec<(usize, u64, u64)> = nanos
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(b, &t)| {
+                                if t == 0 {
+                                    None
+                                } else {
+                                    Some((b, t, counts[b]))
+                                }
+                            })
+                            .collect();
+                        v.sort_by_key(|&(_, t, _)| Reverse(t));
+
+                        let mut detail = String::from("      pk_sort_hist:");
+                        for (b, t, c) in v.into_iter().take(6) {
+                            let ms = (t as f64) / 1e6;
+                            let pct = (t as f64) / (total_nanos as f64) * 100.0;
+                            detail.push_str(&format!(
+                                " {}={:.1}ms({:.1}%,c={})",
+                                label(b),
+                                ms,
+                                pct,
+                                c
+                            ));
+                        }
+                        eprintln!("{}", detail);
+                    }
+                }
+                if std::env::var_os("S2_VORONOI_TIMING_PK_SORT_PER_N").is_some() {
+                    let nanos = &self.cell_sub.packed_knn_sort_len_exact_nanos;
+                    let counts = &self.cell_sub.packed_knn_sort_len_exact_counts;
+                    let total_nanos: u64 = nanos.iter().sum();
+                    if total_nanos > 0 {
+                        use std::cmp::Reverse;
+
+                        let max_n = crate::cube_grid::packed_knn::PACKED_SORT_LEN_MAX;
+                        let mut v: Vec<(usize, u64, u64)> = nanos
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(n, &t)| {
+                                if t == 0 {
+                                    None
+                                } else {
+                                    Some((n, t, counts[n]))
+                                }
+                            })
+                            .collect();
+                        v.sort_by_key(|&(_, t, _)| Reverse(t));
+
+                        let mut detail = String::from("      pk_sort_per_n:");
+                        for (n, t, c) in v.into_iter().take(10) {
+                            let label = if n == max_n + 1 {
+                                format!("n>{}", max_n)
+                            } else {
+                                format!("n={}", n)
+                            };
+                            let ms = (t as f64) / 1e6;
+                            let pct = (t as f64) / (total_nanos as f64) * 100.0;
+                            detail
+                                .push_str(&format!(" {}={:.1}ms({:.1}%,c={})", label, ms, pct, c));
+                        }
+                        eprintln!("{}", detail);
+                    }
+                }
             }
             if self.cell_sub.packed_knn_select_scatter.as_nanos() > 0 {
                 eprintln!(
@@ -1063,6 +1169,12 @@ pub struct CellSubAccum {
     pub packed_knn_select_sort: Duration,
     pub packed_knn_select_scatter: Duration,
     pub packed_knn_unaccounted: Duration,
+    pub packed_knn_sort_len_counts: [u64; crate::cube_grid::packed_knn::PACKED_SORT_HIST_BINS],
+    pub packed_knn_sort_len_nanos: [u64; crate::cube_grid::packed_knn::PACKED_SORT_HIST_BINS],
+    pub packed_knn_sort_len_exact_counts:
+        [u64; crate::cube_grid::packed_knn::PACKED_SORT_LEN_MAX + 2],
+    pub packed_knn_sort_len_exact_nanos:
+        [u64; crate::cube_grid::packed_knn::PACKED_SORT_LEN_MAX + 2],
     pub clipping: Duration,
     pub certification: Duration,
     pub key_dedup: Duration,
@@ -1107,6 +1219,12 @@ impl Default for CellSubAccum {
             packed_knn_select_sort: Duration::ZERO,
             packed_knn_select_scatter: Duration::ZERO,
             packed_knn_unaccounted: Duration::ZERO,
+            packed_knn_sort_len_counts: [0; crate::cube_grid::packed_knn::PACKED_SORT_HIST_BINS],
+            packed_knn_sort_len_nanos: [0; crate::cube_grid::packed_knn::PACKED_SORT_HIST_BINS],
+            packed_knn_sort_len_exact_counts: [0;
+                crate::cube_grid::packed_knn::PACKED_SORT_LEN_MAX + 2],
+            packed_knn_sort_len_exact_nanos: [0; crate::cube_grid::packed_knn::PACKED_SORT_LEN_MAX
+                + 2],
             clipping: Duration::ZERO,
             certification: Duration::ZERO,
             key_dedup: Duration::ZERO,
@@ -1212,6 +1330,28 @@ impl CellSubAccum {
 
     pub fn add_packed_knn_select_sort(&mut self, d: Duration) {
         self.packed_knn_select_sort += d;
+    }
+
+    pub fn add_packed_knn_sort_len_hist(
+        &mut self,
+        counts: &[u64; crate::cube_grid::packed_knn::PACKED_SORT_HIST_BINS],
+        nanos: &[u64; crate::cube_grid::packed_knn::PACKED_SORT_HIST_BINS],
+    ) {
+        for i in 0..crate::cube_grid::packed_knn::PACKED_SORT_HIST_BINS {
+            self.packed_knn_sort_len_counts[i] += counts[i];
+            self.packed_knn_sort_len_nanos[i] += nanos[i];
+        }
+    }
+
+    pub fn add_packed_knn_sort_len_exact_hist(
+        &mut self,
+        counts: &[u64; crate::cube_grid::packed_knn::PACKED_SORT_LEN_MAX + 2],
+        nanos: &[u64; crate::cube_grid::packed_knn::PACKED_SORT_LEN_MAX + 2],
+    ) {
+        for i in 0..crate::cube_grid::packed_knn::PACKED_SORT_LEN_MAX + 2 {
+            self.packed_knn_sort_len_exact_counts[i] += counts[i];
+            self.packed_knn_sort_len_exact_nanos[i] += nanos[i];
+        }
     }
 
     pub fn add_packed_knn_select_scatter(&mut self, d: Duration) {
@@ -1322,6 +1462,14 @@ impl CellSubAccum {
         self.packed_knn_select_sort += other.packed_knn_select_sort;
         self.packed_knn_select_scatter += other.packed_knn_select_scatter;
         self.packed_knn_unaccounted += other.packed_knn_unaccounted;
+        for i in 0..crate::cube_grid::packed_knn::PACKED_SORT_HIST_BINS {
+            self.packed_knn_sort_len_counts[i] += other.packed_knn_sort_len_counts[i];
+            self.packed_knn_sort_len_nanos[i] += other.packed_knn_sort_len_nanos[i];
+        }
+        for i in 0..crate::cube_grid::packed_knn::PACKED_SORT_LEN_MAX + 2 {
+            self.packed_knn_sort_len_exact_counts[i] += other.packed_knn_sort_len_exact_counts[i];
+            self.packed_knn_sort_len_exact_nanos[i] += other.packed_knn_sort_len_exact_nanos[i];
+        }
         self.clipping += other.clipping;
         self.certification += other.certification;
         self.key_dedup += other.key_dedup;
@@ -1370,6 +1518,10 @@ impl CellSubAccum {
             packed_knn_select_sort: self.packed_knn_select_sort,
             packed_knn_select_scatter: self.packed_knn_select_scatter,
             packed_knn_unaccounted: self.packed_knn_unaccounted,
+            packed_knn_sort_len_counts: self.packed_knn_sort_len_counts,
+            packed_knn_sort_len_nanos: self.packed_knn_sort_len_nanos,
+            packed_knn_sort_len_exact_counts: self.packed_knn_sort_len_exact_counts,
+            packed_knn_sort_len_exact_nanos: self.packed_knn_sort_len_exact_nanos,
             clipping: self.clipping,
             certification: self.certification,
             key_dedup: self.key_dedup,

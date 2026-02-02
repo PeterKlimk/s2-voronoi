@@ -61,7 +61,18 @@ impl PackedLapTimer {
 
 /// Fine-grained timing breakdown for the packed-kNN per-cell-group flow.
 #[cfg(feature = "timing")]
-#[derive(Debug, Clone, Default)]
+pub const PACKED_SORT_HIST_BINS: usize = 16;
+
+/// Maximum exact sort length tracked for packed-kNN sort timing.
+///
+/// Sorting in the packed-kNN path is typically small (often <= 32). This cap keeps the timing
+/// struct compact while still providing actionable detail.
+#[cfg(feature = "timing")]
+pub const PACKED_SORT_LEN_MAX: usize = 64;
+
+/// Fine-grained timing breakdown for the packed-kNN per-cell-group flow.
+#[cfg(feature = "timing")]
+#[derive(Debug, Clone)]
 pub struct PackedKnnTimings {
     pub setup: Duration,
     pub query_cache: Duration,
@@ -75,8 +86,42 @@ pub struct PackedKnnTimings {
     pub select_partition: Duration,
     pub select_sort: Duration,
     pub select_scatter: Duration,
+    /// Histogram of sort sizes (count).
+    pub sort_len_counts: [u64; PACKED_SORT_HIST_BINS],
+    /// Histogram of sort sizes (time, in nanoseconds).
+    pub sort_len_nanos: [u64; PACKED_SORT_HIST_BINS],
+    /// Exact histogram by sort length (count), capped at `PACKED_SORT_LEN_MAX` with an overflow bin.
+    pub sort_len_exact_counts: [u64; PACKED_SORT_LEN_MAX + 2],
+    /// Exact histogram by sort length (time, in nanoseconds), capped at `PACKED_SORT_LEN_MAX`
+    /// with an overflow bin.
+    pub sort_len_exact_nanos: [u64; PACKED_SORT_LEN_MAX + 2],
     /// Number of times tail candidates were built (per query, but counted at most once per group).
     pub tail_builds: u64,
+}
+
+#[cfg(feature = "timing")]
+impl Default for PackedKnnTimings {
+    fn default() -> Self {
+        Self {
+            setup: Duration::ZERO,
+            query_cache: Duration::ZERO,
+            security_thresholds: Duration::ZERO,
+            center_pass: Duration::ZERO,
+            ring_thresholds: Duration::ZERO,
+            ring_pass: Duration::ZERO,
+            ring_fallback: Duration::ZERO,
+            select_prep: Duration::ZERO,
+            select_query_prep: Duration::ZERO,
+            select_partition: Duration::ZERO,
+            select_sort: Duration::ZERO,
+            select_scatter: Duration::ZERO,
+            sort_len_counts: [0; PACKED_SORT_HIST_BINS],
+            sort_len_nanos: [0; PACKED_SORT_HIST_BINS],
+            sort_len_exact_counts: [0; PACKED_SORT_LEN_MAX + 2],
+            sort_len_exact_nanos: [0; PACKED_SORT_LEN_MAX + 2],
+            tail_builds: 0,
+        }
+    }
 }
 
 /// Dummy timings when feature is disabled (zero-sized).
@@ -142,8 +187,19 @@ impl PackedKnnTimings {
     }
 
     #[inline]
-    pub fn add_select_sort(&mut self, d: Duration) {
+    pub fn add_select_sort_sized(&mut self, d: Duration, n: usize) {
         self.select_sort += d;
+        let b = sort_len_bucket(n);
+        self.sort_len_counts[b] += 1;
+        self.sort_len_nanos[b] += d.as_nanos() as u64;
+
+        let idx = if n <= PACKED_SORT_LEN_MAX {
+            n
+        } else {
+            PACKED_SORT_LEN_MAX + 1
+        };
+        self.sort_len_exact_counts[idx] += 1;
+        self.sort_len_exact_nanos[idx] += d.as_nanos() as u64;
     }
 
     #[inline]
@@ -173,6 +229,24 @@ impl PackedKnnTimings {
     }
 }
 
+#[cfg(feature = "timing")]
+#[inline]
+fn sort_len_bucket(n: usize) -> usize {
+    if n == 0 {
+        return 0;
+    }
+    if n == 1 {
+        return 1;
+    }
+    // Map n to power-of-two-ish buckets:
+    // 2 -> 2
+    // 3..=4 -> 3
+    // 5..=8 -> 4
+    // ...
+    let k = (usize::BITS - 1 - (n - 1).leading_zeros()) as usize; // floor(log2(n-1))
+    (k + 2).min(PACKED_SORT_HIST_BINS - 1)
+}
+
 #[cfg(not(feature = "timing"))]
 impl PackedKnnTimings {
     #[inline(always)]
@@ -199,7 +273,7 @@ impl PackedKnnTimings {
     #[inline(always)]
     pub fn add_select_partition(&mut self, _d: Duration) {}
     #[inline(always)]
-    pub fn add_select_sort(&mut self, _d: Duration) {}
+    pub fn add_select_sort_sized(&mut self, _d: Duration, _n: usize) {}
     #[inline(always)]
     pub fn add_select_scatter(&mut self, _d: Duration) {}
     #[inline(always)]
@@ -936,8 +1010,9 @@ impl PackedKnnCellScratch {
                 // for small k (e.g. k=8).
                 if remaining.len() <= 2 * n_target {
                     let emit = remaining.len().min(n_target);
+                    let sort_len = remaining.len();
                     remaining.sort_unstable();
-                    timings.add_select_sort(t.lap());
+                    timings.add_select_sort_sized(t.lap(), sort_len);
                     for (dst, key) in out[..emit].iter_mut().zip(remaining.iter()) {
                         *dst = key_to_idx(*key);
                     }
@@ -965,7 +1040,7 @@ impl PackedKnnCellScratch {
                     timings.add_select_partition(t.lap());
                 }
                 remaining[..n].sort_unstable();
-                timings.add_select_sort(t.lap());
+                timings.add_select_sort_sized(t.lap(), n);
                 for (dst, key) in out[..n].iter_mut().zip(remaining[..n].iter()) {
                     *dst = key_to_idx(*key);
                 }
@@ -1004,7 +1079,7 @@ impl PackedKnnCellScratch {
                     timings.add_select_partition(t.lap());
                 }
                 remaining[..n].sort_unstable();
-                timings.add_select_sort(t.lap());
+                timings.add_select_sort_sized(t.lap(), n);
                 for (dst, key) in out[..n].iter_mut().zip(remaining[..n].iter()) {
                     *dst = key_to_idx(*key);
                 }

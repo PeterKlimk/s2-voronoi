@@ -1056,6 +1056,14 @@ pub(super) fn build_cells_sharded_live_dedup(
                             sub_accum
                                 .add_packed_knn_select_partition(packed_timings.select_partition);
                             sub_accum.add_packed_knn_select_sort(packed_timings.select_sort);
+                            sub_accum.add_packed_knn_sort_len_hist(
+                                &packed_timings.sort_len_counts,
+                                &packed_timings.sort_len_nanos,
+                            );
+                            sub_accum.add_packed_knn_sort_len_exact_hist(
+                                &packed_timings.sort_len_exact_counts,
+                                &packed_timings.sort_len_exact_nanos,
+                            );
                             sub_accum.add_packed_knn_select_scatter(packed_timings.select_scatter);
 
                             // `packed_knn` is defined as the sum of packed subcomponents.

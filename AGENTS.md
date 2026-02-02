@@ -33,6 +33,8 @@ S2_VORONOI_TIMING_KV=1 cargo run --release --features timing --bin bench_voronoi
 - `RAYON_NUM_THREADS=1`: force single-threaded mode (useful for stable perf comparisons).
 - `S2_BIN_COUNT=<n>`: override sharded bin count (defaults to ~2x threads).
 - `S2_VORONOI_TIMING_KV=1`: emit machine-readable `TIMING_KV ...` output (requires `timing`).
+- `S2_VORONOI_TIMING_PK_SORT_HIST=1`: print a time-weighted histogram of packed-kNN sort sizes (`pk_sort`).
+- `S2_VORONOI_TIMING_PK_SORT_PER_N=1`: print a time-weighted histogram of packed-kNN sort sizes by exact `n`.
 
 ## Crate Overview
 
