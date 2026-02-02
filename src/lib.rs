@@ -6,6 +6,22 @@
 //! This crate computes Voronoi diagrams for points on the unit sphere using
 //! a kNN-driven half-space clipping algorithm.
 //!
+//! ## Requirements
+//!
+//! - Requires **nightly Rust** (`#![feature(portable_simd)]`).
+//! - Input points are **assumed** to be unit length (not normalized by the API).
+//! - At least 4 points are required to form a non-degenerate diagram.
+//!
+//! ## Output
+//!
+//! The result is a [`SphericalVoronoi`] containing:
+//! - `generators`: the input points (one per cell)
+//! - `vertices`: shared Voronoi vertices (unit vectors)
+//! - per-cell vertex index lists (accessible via [`SphericalVoronoi::cell`] / [`SphericalVoronoi::iter_cells`])
+//!
+//! For topological sanity checks and debugging numerical edge cases, use
+//! [`validation::validate`].
+//!
 //! # Example
 //!
 //! ```
@@ -110,7 +126,7 @@ pub fn compute_with<P: UnitVec3Like>(
         .collect();
 
     // Call knn_clipping backend
-    Ok(knn_clipping::compute_voronoi_gpu_style_with_config(
+    Ok(knn_clipping::compute_voronoi_knn_clipping_with_config(
         &vec3_points,
         &config,
     ))

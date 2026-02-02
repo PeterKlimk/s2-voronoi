@@ -3,6 +3,7 @@ name = "s2-voronoi"
 version = "0.1.0"
 edition = "2021"
 description = "Spherical Voronoi diagrams on the unit sphere (S2)"
+readme = "README.md"
 license = "MIT OR Apache-2.0"
 keywords = ["voronoi", "sphere", "geometry", "s2"]
 categories = ["algorithms", "mathematics", "science"]

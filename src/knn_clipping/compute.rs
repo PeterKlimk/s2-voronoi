@@ -1,4 +1,4 @@
-//! Compute entry points for GPU-style Voronoi construction.
+//! Compute entry points for the kNN + clipping Voronoi backend.
 
 use glam::Vec3;
 
@@ -13,7 +13,7 @@ use crate::cube_grid::CubeMapGrid;
 use crate::cube_grid::CubeMapGridBuildTimings;
 use crate::VoronoiConfig;
 
-pub(super) fn compute_voronoi_gpu_style_core(
+pub(super) fn compute_voronoi_knn_clipping_core(
     points: &[Vec3],
     termination: TerminationConfig,
     preprocess_threshold: Option<f32>,
@@ -126,7 +126,7 @@ pub(super) fn compute_voronoi_gpu_style_core(
     voronoi
 }
 
-pub fn compute_voronoi_gpu_style_with_config(
+pub fn compute_voronoi_knn_clipping_with_config(
     points: &[Vec3],
     config: &VoronoiConfig,
 ) -> crate::SphericalVoronoi {
@@ -134,7 +134,7 @@ pub fn compute_voronoi_gpu_style_with_config(
         max_k_cap: config.termination_max_k,
         ..Default::default()
     };
-    compute_voronoi_gpu_style_core(
+    compute_voronoi_knn_clipping_core(
         points,
         termination,
         config.preprocess_threshold,

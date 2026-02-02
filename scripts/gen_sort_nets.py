@@ -116,21 +116,43 @@ def emit_hybrid_sort_tail_out(networks, key, fn_name, num_slice, doc_slice_len):
     lines.append("/// - `out` must point to at least `tail_len` valid u64 elements")
     lines.append("/// - `tail_len <= 8`")
     lines.append("/// - Callers must ensure `u64::MAX` does not appear in the input values when using padding")
-    lines.append("#[inline(always)]")
+    # Keep this as an out-of-line function by default to avoid code-size bloat when
+    # used as a building block (e.g., inside larger routines).
     lines.append(f"pub unsafe fn {fn_name}(base: *mut u64, out: *mut u64, tail_len: usize) {{")
     lines.append("    debug_assert!(tail_len <= 8);")
     lines.append("")
-    lines.append("    // Fill registers with tail values + sentinels.")
-    lines.append("    let mut regs = [u64::MAX; 8];")
-    lines.append(f"    ptr::copy_nonoverlapping(base.add({doc_slice_len}), regs.as_mut_ptr(), tail_len);")
-    lines.append("    let mut r0 = regs[0];")
-    lines.append("    let mut r1 = regs[1];")
-    lines.append("    let mut r2 = regs[2];")
-    lines.append("    let mut r3 = regs[3];")
-    lines.append("    let mut r4 = regs[4];")
-    lines.append("    let mut r5 = regs[5];")
-    lines.append("    let mut r6 = regs[6];")
-    lines.append("    let mut r7 = regs[7];")
+    lines.append("    // Load tail registers (pad with sentinels).")
+    lines.append(f"    let tail = base.add({doc_slice_len});")
+    lines.append("    let mut r0 = u64::MAX;")
+    lines.append("    let mut r1 = u64::MAX;")
+    lines.append("    let mut r2 = u64::MAX;")
+    lines.append("    let mut r3 = u64::MAX;")
+    lines.append("    let mut r4 = u64::MAX;")
+    lines.append("    let mut r5 = u64::MAX;")
+    lines.append("    let mut r6 = u64::MAX;")
+    lines.append("    let mut r7 = u64::MAX;")
+    lines.append("    if tail_len == 8 {")
+    lines.append("        r0 = ptr::read(tail.add(0));")
+    lines.append("        r1 = ptr::read(tail.add(1));")
+    lines.append("        r2 = ptr::read(tail.add(2));")
+    lines.append("        r3 = ptr::read(tail.add(3));")
+    lines.append("        r4 = ptr::read(tail.add(4));")
+    lines.append("        r5 = ptr::read(tail.add(5));")
+    lines.append("        r6 = ptr::read(tail.add(6));")
+    lines.append("        r7 = ptr::read(tail.add(7));")
+    lines.append("    } else {")
+    lines.append("        match tail_len {")
+    lines.append("            0 => {}")
+    lines.append("            1 => { r0 = ptr::read(tail.add(0)); }")
+    lines.append("            2 => { r0 = ptr::read(tail.add(0)); r1 = ptr::read(tail.add(1)); }")
+    lines.append("            3 => { r0 = ptr::read(tail.add(0)); r1 = ptr::read(tail.add(1)); r2 = ptr::read(tail.add(2)); }")
+    lines.append("            4 => { r0 = ptr::read(tail.add(0)); r1 = ptr::read(tail.add(1)); r2 = ptr::read(tail.add(2)); r3 = ptr::read(tail.add(3)); }")
+    lines.append("            5 => { r0 = ptr::read(tail.add(0)); r1 = ptr::read(tail.add(1)); r2 = ptr::read(tail.add(2)); r3 = ptr::read(tail.add(3)); r4 = ptr::read(tail.add(4)); }")
+    lines.append("            6 => { r0 = ptr::read(tail.add(0)); r1 = ptr::read(tail.add(1)); r2 = ptr::read(tail.add(2)); r3 = ptr::read(tail.add(3)); r4 = ptr::read(tail.add(4)); r5 = ptr::read(tail.add(5)); }")
+    lines.append("            7 => { r0 = ptr::read(tail.add(0)); r1 = ptr::read(tail.add(1)); r2 = ptr::read(tail.add(2)); r3 = ptr::read(tail.add(3)); r4 = ptr::read(tail.add(4)); r5 = ptr::read(tail.add(5)); r6 = ptr::read(tail.add(6)); }")
+    lines.append("            _ => unreachable!(),")
+    lines.append("        }")
+    lines.append("    }")
     lines.append("")
 
     for i, j in comparators:
@@ -174,6 +196,84 @@ def emit_hybrid_sort_tail_out(networks, key, fn_name, num_slice, doc_slice_len):
     lines.append("}")
     return "\n".join(lines)
 
+def emit_hybrid_sort_tail_out_var_regs(networks, key, fn_name, num_slice, num_regs, vis="pub"):
+    """Like emit_hybrid_sort_tail_out, but supports a variable number of tail registers."""
+    data = networks[key]
+    comparators = data["comparators"]
+
+    n_total = int(key)
+    assert n_total == num_slice + num_regs
+    assert 1 <= num_regs <= 8
+
+    lines = [f"/// Sort {n_total} elements using a hybrid sorting network (tail regs = {num_regs})."]
+    lines.append(
+        f"/// First {num_slice} elements are in the slice at `base`, remaining up to {num_regs} are in `base[{num_slice}..]`."
+    )
+    lines.append("///")
+    lines.append(
+        f"/// Loads up to `tail_len` values from the tail, fills the remainder with the sentinel `u64::MAX`,"
+    )
+    lines.append("/// runs the sorting network, then stores only the first `tail_len` tail outputs into `out`.")
+    lines.append("///")
+    lines.append("/// This is intended for microbench experiments and is not part of the library API.")
+    lines.append("///")
+    lines.append("/// # Safety")
+    lines.append(f"/// - `base` must point to at least {num_slice} valid u64 elements")
+    lines.append("/// - `out` must point to at least `tail_len` valid u64 elements")
+    lines.append(f"/// - `tail_len <= {num_regs}`")
+    lines.append("/// - Callers must ensure `u64::MAX` does not appear in the input values when using padding")
+    lines.append(f"{vis} unsafe fn {fn_name}(base: *mut u64, out: *mut u64, tail_len: usize) {{")
+    lines.append(f"    debug_assert!(tail_len <= {num_regs});")
+    lines.append("")
+    lines.append("    // Load tail registers (pad with sentinels).")
+    lines.append(f"    let tail = base.add({num_slice});")
+
+    for i in range(num_regs):
+        lines.append(f"    let mut r{i} = u64::MAX;")
+
+    lines.append(f"    if tail_len == {num_regs} {{")
+    for i in range(num_regs):
+        lines.append(f"        r{i} = ptr::read(tail.add({i}));")
+    lines.append("    } else {")
+    lines.append("        match tail_len {")
+    lines.append("            0 => {}")
+    for tl in range(1, num_regs):
+        reads = " ".join([f"r{i} = ptr::read(tail.add({i}));" for i in range(tl)])
+        lines.append(f"            {tl} => {{ {reads} }}")
+    lines.append(f"            {num_regs} => unreachable!(),")
+    lines.append("            _ => unreachable!(),")
+    lines.append("        }")
+    lines.append("    }")
+    lines.append("")
+
+    # Map comparator indices into either base pointers or tail regs.
+    for i, j in comparators:
+        if i > j:
+            i, j = j, i
+
+        i_is_reg = i >= num_slice
+        j_is_reg = j >= num_slice
+
+        if i_is_reg and j_is_reg:
+            lines.append(f"    cswap_reg(&mut r{i - num_slice}, &mut r{j - num_slice});")
+        else:
+            if not j_is_reg:
+                lines.append(f"    cswap_ptr(base, {i}, {j});")
+            else:
+                lines.append(f"    cswap_reg_ptr(&mut r{j - num_slice}, base, {i});")
+
+    lines.append("")
+    lines.append("    match tail_len {")
+    lines.append("        0 => {}")
+    for tl in range(1, num_regs + 1):
+        stores = " ".join([f"*out.add({i}) = r{i};" for i in range(tl)])
+        lines.append(f"        {tl} => {{ {stores} }}")
+    lines.append("        _ => unreachable!(),")
+    lines.append("    }")
+    lines.append("}")
+
+    return "\n".join(lines)
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -186,6 +286,16 @@ def main():
         "--check",
         action="store_true",
         help="Exit non-zero if src/sort_nets.rs is out of date.",
+    )
+    parser.add_argument(
+        "--write-microbench-tail4",
+        action="store_true",
+        help="Write microbench-only tail4 variants to src/bin/sort_nets_tail4.rs.",
+    )
+    parser.add_argument(
+        "--check-microbench-tail4",
+        action="store_true",
+        help="Exit non-zero if src/bin/sort_nets_tail4.rs is out of date.",
     )
     args = parser.parse_args()
 
@@ -214,10 +324,34 @@ def main():
             doc_slice_len=16,
         )
     )
+    output.append("")
+    output.append("// Internal tail4 variants for pad-up ranges (to reduce live regs/spills).")
+    output.append(
+        emit_hybrid_sort_tail_out_var_regs(
+            networks,
+            key="16",
+            fn_name="sort16_tail_out_12_4",
+            num_slice=12,
+            num_regs=4,
+            vis="pub(crate)",
+        )
+    )
+    output.append("")
+    output.append(
+        emit_hybrid_sort_tail_out_var_regs(
+            networks,
+            key="24",
+            fn_name="sort24_tail_out_20_4",
+            num_slice=20,
+            num_regs=4,
+            vis="pub(crate)",
+        )
+    )
     output.append(emit_tests())
     rendered = "\n".join(output)
 
     out_path = Path(__file__).parent.parent / "src" / "sort_nets.rs"
+    mb_out_path = Path(__file__).parent.parent / "src" / "bin_support" / "sort_nets_tail4.rs"
 
     if args.check:
         existing = out_path.read_text()
@@ -225,6 +359,108 @@ def main():
             raise SystemExit(
                 "src/sort_nets.rs is out of date (run scripts/gen_sort_nets.py --write)"
             )
+        return
+
+    if args.check_microbench_tail4:
+        networks = load_networks()
+        mb_rendered = []
+        mb_rendered.append("// Auto-generated by scripts/gen_sort_nets.py")
+        mb_rendered.append("// Do not edit manually!")
+        mb_rendered.append("")
+        mb_rendered.append("use std::hint::select_unpredictable;")
+        mb_rendered.append("use std::ptr;")
+        mb_rendered.append("")
+        mb_rendered.append("/// Compare-swap two registers using cmov via `select_unpredictable`.")
+        mb_rendered.append("#[inline(always)]")
+        mb_rendered.append("fn cswap_reg(a: &mut u64, b: &mut u64) {")
+        mb_rendered.append("    let va = *a;")
+        mb_rendered.append("    let vb = *b;")
+        mb_rendered.append("    let cond = va <= vb;")
+        mb_rendered.append("    *a = select_unpredictable(cond, va, vb);")
+        mb_rendered.append("    *b = select_unpredictable(cond, vb, va);")
+        mb_rendered.append("}")
+        mb_rendered.append("")
+        mb_rendered.append("/// Compare-swap a register (higher index) with a pointer element (lower index).")
+        mb_rendered.append("#[inline(always)]")
+        mb_rendered.append("unsafe fn cswap_reg_ptr(reg: &mut u64, base: *mut u64, idx: usize) {")
+        mb_rendered.append("    let ptr = base.add(idx);")
+        mb_rendered.append("    let val = *ptr;")
+        mb_rendered.append("    let r = *reg;")
+        mb_rendered.append("    let cond = val <= r;")
+        mb_rendered.append("    *ptr = select_unpredictable(cond, val, r);")
+        mb_rendered.append("    *reg = select_unpredictable(cond, r, val);")
+        mb_rendered.append("}")
+        mb_rendered.append("")
+        mb_rendered.append("/// Compare-swap two pointer elements using cmov.")
+        mb_rendered.append("#[inline(always)]")
+        mb_rendered.append("unsafe fn cswap_ptr(base: *mut u64, i: usize, j: usize) {")
+        mb_rendered.append("    let pi = base.add(i);")
+        mb_rendered.append("    let pj = base.add(j);")
+        mb_rendered.append("    let a = *pi;")
+        mb_rendered.append("    let b = *pj;")
+        mb_rendered.append("    let cond = a <= b;")
+        mb_rendered.append("    *pi = select_unpredictable(cond, a, b);")
+        mb_rendered.append("    *pj = select_unpredictable(cond, b, a);")
+        mb_rendered.append("}")
+        mb_rendered.append("")
+        mb_rendered.append(emit_hybrid_sort_tail_out_var_regs(networks, key="16", fn_name="sort16_tail4", num_slice=12, num_regs=4, vis="pub"))
+        mb_rendered.append("")
+        mb_rendered.append(emit_hybrid_sort_tail_out_var_regs(networks, key="24", fn_name="sort24_tail4", num_slice=20, num_regs=4, vis="pub"))
+        mb_rendered_text = "\n".join(mb_rendered) + "\n"
+
+        existing = mb_out_path.read_text()
+        if existing != mb_rendered_text:
+            raise SystemExit(
+                "src/bin/sort_nets_tail4.rs is out of date (run scripts/gen_sort_nets.py --write-microbench-tail4)"
+            )
+        return
+
+    if args.write_microbench_tail4:
+        networks = load_networks()
+        mb_rendered = []
+        mb_rendered.append("// Auto-generated by scripts/gen_sort_nets.py")
+        mb_rendered.append("// Do not edit manually!")
+        mb_rendered.append("")
+        mb_rendered.append("use std::hint::select_unpredictable;")
+        mb_rendered.append("use std::ptr;")
+        mb_rendered.append("")
+        mb_rendered.append("/// Compare-swap two registers using cmov via `select_unpredictable`.")
+        mb_rendered.append("#[inline(always)]")
+        mb_rendered.append("fn cswap_reg(a: &mut u64, b: &mut u64) {")
+        mb_rendered.append("    let va = *a;")
+        mb_rendered.append("    let vb = *b;")
+        mb_rendered.append("    let cond = va <= vb;")
+        mb_rendered.append("    *a = select_unpredictable(cond, va, vb);")
+        mb_rendered.append("    *b = select_unpredictable(cond, vb, va);")
+        mb_rendered.append("}")
+        mb_rendered.append("")
+        mb_rendered.append("/// Compare-swap a register (higher index) with a pointer element (lower index).")
+        mb_rendered.append("#[inline(always)]")
+        mb_rendered.append("unsafe fn cswap_reg_ptr(reg: &mut u64, base: *mut u64, idx: usize) {")
+        mb_rendered.append("    let ptr = base.add(idx);")
+        mb_rendered.append("    let val = *ptr;")
+        mb_rendered.append("    let r = *reg;")
+        mb_rendered.append("    let cond = val <= r;")
+        mb_rendered.append("    *ptr = select_unpredictable(cond, val, r);")
+        mb_rendered.append("    *reg = select_unpredictable(cond, r, val);")
+        mb_rendered.append("}")
+        mb_rendered.append("")
+        mb_rendered.append("/// Compare-swap two pointer elements using cmov.")
+        mb_rendered.append("#[inline(always)]")
+        mb_rendered.append("unsafe fn cswap_ptr(base: *mut u64, i: usize, j: usize) {")
+        mb_rendered.append("    let pi = base.add(i);")
+        mb_rendered.append("    let pj = base.add(j);")
+        mb_rendered.append("    let a = *pi;")
+        mb_rendered.append("    let b = *pj;")
+        mb_rendered.append("    let cond = a <= b;")
+        mb_rendered.append("    *pi = select_unpredictable(cond, a, b);")
+        mb_rendered.append("    *pj = select_unpredictable(cond, b, a);")
+        mb_rendered.append("}")
+        mb_rendered.append("")
+        mb_rendered.append(emit_hybrid_sort_tail_out_var_regs(networks, key="16", fn_name="sort16_tail4", num_slice=12, num_regs=4, vis="pub"))
+        mb_rendered.append("")
+        mb_rendered.append(emit_hybrid_sort_tail_out_var_regs(networks, key="24", fn_name="sort24_tail4", num_slice=20, num_regs=4, vis="pub"))
+        mb_out_path.write_text("\n".join(mb_rendered) + "\n")
         return
 
     if args.write:

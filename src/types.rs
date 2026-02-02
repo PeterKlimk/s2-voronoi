@@ -4,7 +4,7 @@ use bytemuck::{Pod, Zeroable};
 
 /// A point on the unit sphere, represented as a 3D unit vector.
 ///
-/// This type provides a dependency-free representation for stable ABI.
+/// This type provides a small `#[repr(C)]` representation with a stable layout.
 /// Points are assumed to be on (or near) the unit sphere; the crate may
 /// debug-assert normalization but does not normalize inputs.
 #[repr(C)]

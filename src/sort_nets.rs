@@ -32,20 +32,26 @@ unsafe fn cswap_reg_ptr(reg: &mut u64, base: *mut u64, idx: usize) {
 unsafe fn cswap_ptr(base: *mut u64, i: usize, j: usize) {
     let pi = base.add(i);
     let pj = base.add(j);
-    let a = *pi;  // at lower index i
-    let b = *pj;  // at higher index j
-    // Smaller should go to lower index (i)
+    let a = *pi; // at lower index i
+    let b = *pj; // at higher index j
+                 // Smaller should go to lower index (i)
     let cond = a <= b;
-    *pi = select_unpredictable(cond, a, b);  // i gets min
-    *pj = select_unpredictable(cond, b, a);  // j gets max
+    *pi = select_unpredictable(cond, a, b); // i gets min
+    *pj = select_unpredictable(cond, b, a); // j gets max
 }
-
 
 /// Sort 8 elements using a sorting network (all in registers).
 /// Returns sorted array.
+#[inline(always)]
 pub fn sort8_net(
-    mut r0: u64, mut r1: u64, mut r2: u64, mut r3: u64,
-    mut r4: u64, mut r5: u64, mut r6: u64, mut r7: u64,
+    mut r0: u64,
+    mut r1: u64,
+    mut r2: u64,
+    mut r3: u64,
+    mut r4: u64,
+    mut r5: u64,
+    mut r6: u64,
+    mut r7: u64,
 ) -> [u64; 8] {
     cswap_reg(&mut r0, &mut r2);
     cswap_reg(&mut r1, &mut r3);
@@ -85,17 +91,73 @@ pub fn sort8_net(
 pub unsafe fn sort16_tail_out(base: *mut u64, out: *mut u64, tail_len: usize) {
     debug_assert!(tail_len <= 8);
 
-    // Fill registers with tail values + sentinels.
-    let mut regs = [u64::MAX; 8];
-    ptr::copy_nonoverlapping(base.add(8), regs.as_mut_ptr(), tail_len);
-    let mut r0 = regs[0];
-    let mut r1 = regs[1];
-    let mut r2 = regs[2];
-    let mut r3 = regs[3];
-    let mut r4 = regs[4];
-    let mut r5 = regs[5];
-    let mut r6 = regs[6];
-    let mut r7 = regs[7];
+    // Load tail registers (pad with sentinels).
+    let tail = base.add(8);
+    let mut r0 = u64::MAX;
+    let mut r1 = u64::MAX;
+    let mut r2 = u64::MAX;
+    let mut r3 = u64::MAX;
+    let mut r4 = u64::MAX;
+    let mut r5 = u64::MAX;
+    let mut r6 = u64::MAX;
+    let mut r7 = u64::MAX;
+    if tail_len == 8 {
+        r0 = ptr::read(tail.add(0));
+        r1 = ptr::read(tail.add(1));
+        r2 = ptr::read(tail.add(2));
+        r3 = ptr::read(tail.add(3));
+        r4 = ptr::read(tail.add(4));
+        r5 = ptr::read(tail.add(5));
+        r6 = ptr::read(tail.add(6));
+        r7 = ptr::read(tail.add(7));
+    } else {
+        match tail_len {
+            0 => {}
+            1 => {
+                r0 = ptr::read(tail.add(0));
+            }
+            2 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+            }
+            3 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+                r2 = ptr::read(tail.add(2));
+            }
+            4 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+                r2 = ptr::read(tail.add(2));
+                r3 = ptr::read(tail.add(3));
+            }
+            5 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+                r2 = ptr::read(tail.add(2));
+                r3 = ptr::read(tail.add(3));
+                r4 = ptr::read(tail.add(4));
+            }
+            6 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+                r2 = ptr::read(tail.add(2));
+                r3 = ptr::read(tail.add(3));
+                r4 = ptr::read(tail.add(4));
+                r5 = ptr::read(tail.add(5));
+            }
+            7 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+                r2 = ptr::read(tail.add(2));
+                r3 = ptr::read(tail.add(3));
+                r4 = ptr::read(tail.add(4));
+                r5 = ptr::read(tail.add(5));
+                r6 = ptr::read(tail.add(6));
+            }
+            _ => unreachable!(),
+        }
+    }
 
     cswap_reg_ptr(&mut r5, base, 0);
     cswap_reg_ptr(&mut r4, base, 1);
@@ -161,13 +223,55 @@ pub unsafe fn sort16_tail_out(base: *mut u64, out: *mut u64, tail_len: usize) {
     match tail_len {
         0 => {}
         1 => *out.add(0) = r0,
-        2 => { *out.add(0) = r0; *out.add(1) = r1; }
-        3 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; }
-        4 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; }
-        5 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; }
-        6 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; *out.add(5) = r5; }
-        7 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; *out.add(5) = r5; *out.add(6) = r6; }
-        8 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; *out.add(5) = r5; *out.add(6) = r6; *out.add(7) = r7; }
+        2 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+        }
+        3 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+        }
+        4 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+            *out.add(3) = r3;
+        }
+        5 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+            *out.add(3) = r3;
+            *out.add(4) = r4;
+        }
+        6 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+            *out.add(3) = r3;
+            *out.add(4) = r4;
+            *out.add(5) = r5;
+        }
+        7 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+            *out.add(3) = r3;
+            *out.add(4) = r4;
+            *out.add(5) = r5;
+            *out.add(6) = r6;
+        }
+        8 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+            *out.add(3) = r3;
+            *out.add(4) = r4;
+            *out.add(5) = r5;
+            *out.add(6) = r6;
+            *out.add(7) = r7;
+        }
         _ => unreachable!(),
     }
 }
@@ -188,17 +292,73 @@ pub unsafe fn sort16_tail_out(base: *mut u64, out: *mut u64, tail_len: usize) {
 pub unsafe fn sort24_tail_out(base: *mut u64, out: *mut u64, tail_len: usize) {
     debug_assert!(tail_len <= 8);
 
-    // Fill registers with tail values + sentinels.
-    let mut regs = [u64::MAX; 8];
-    ptr::copy_nonoverlapping(base.add(16), regs.as_mut_ptr(), tail_len);
-    let mut r0 = regs[0];
-    let mut r1 = regs[1];
-    let mut r2 = regs[2];
-    let mut r3 = regs[3];
-    let mut r4 = regs[4];
-    let mut r5 = regs[5];
-    let mut r6 = regs[6];
-    let mut r7 = regs[7];
+    // Load tail registers (pad with sentinels).
+    let tail = base.add(16);
+    let mut r0 = u64::MAX;
+    let mut r1 = u64::MAX;
+    let mut r2 = u64::MAX;
+    let mut r3 = u64::MAX;
+    let mut r4 = u64::MAX;
+    let mut r5 = u64::MAX;
+    let mut r6 = u64::MAX;
+    let mut r7 = u64::MAX;
+    if tail_len == 8 {
+        r0 = ptr::read(tail.add(0));
+        r1 = ptr::read(tail.add(1));
+        r2 = ptr::read(tail.add(2));
+        r3 = ptr::read(tail.add(3));
+        r4 = ptr::read(tail.add(4));
+        r5 = ptr::read(tail.add(5));
+        r6 = ptr::read(tail.add(6));
+        r7 = ptr::read(tail.add(7));
+    } else {
+        match tail_len {
+            0 => {}
+            1 => {
+                r0 = ptr::read(tail.add(0));
+            }
+            2 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+            }
+            3 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+                r2 = ptr::read(tail.add(2));
+            }
+            4 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+                r2 = ptr::read(tail.add(2));
+                r3 = ptr::read(tail.add(3));
+            }
+            5 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+                r2 = ptr::read(tail.add(2));
+                r3 = ptr::read(tail.add(3));
+                r4 = ptr::read(tail.add(4));
+            }
+            6 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+                r2 = ptr::read(tail.add(2));
+                r3 = ptr::read(tail.add(3));
+                r4 = ptr::read(tail.add(4));
+                r5 = ptr::read(tail.add(5));
+            }
+            7 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+                r2 = ptr::read(tail.add(2));
+                r3 = ptr::read(tail.add(3));
+                r4 = ptr::read(tail.add(4));
+                r5 = ptr::read(tail.add(5));
+                r6 = ptr::read(tail.add(6));
+            }
+            _ => unreachable!(),
+        }
+    }
 
     cswap_reg_ptr(&mut r4, base, 0);
     cswap_ptr(base, 1, 12);
@@ -324,17 +484,383 @@ pub unsafe fn sort24_tail_out(base: *mut u64, out: *mut u64, tail_len: usize) {
     match tail_len {
         0 => {}
         1 => *out.add(0) = r0,
-        2 => { *out.add(0) = r0; *out.add(1) = r1; }
-        3 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; }
-        4 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; }
-        5 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; }
-        6 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; *out.add(5) = r5; }
-        7 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; *out.add(5) = r5; *out.add(6) = r6; }
-        8 => { *out.add(0) = r0; *out.add(1) = r1; *out.add(2) = r2; *out.add(3) = r3; *out.add(4) = r4; *out.add(5) = r5; *out.add(6) = r6; *out.add(7) = r7; }
+        2 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+        }
+        3 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+        }
+        4 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+            *out.add(3) = r3;
+        }
+        5 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+            *out.add(3) = r3;
+            *out.add(4) = r4;
+        }
+        6 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+            *out.add(3) = r3;
+            *out.add(4) = r4;
+            *out.add(5) = r5;
+        }
+        7 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+            *out.add(3) = r3;
+            *out.add(4) = r4;
+            *out.add(5) = r5;
+            *out.add(6) = r6;
+        }
+        8 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+            *out.add(3) = r3;
+            *out.add(4) = r4;
+            *out.add(5) = r5;
+            *out.add(6) = r6;
+            *out.add(7) = r7;
+        }
         _ => unreachable!(),
     }
 }
 
+// Internal tail4 variants for pad-up ranges (to reduce live regs/spills).
+/// Sort 16 elements using a hybrid sorting network (tail regs = 4).
+/// First 12 elements are in the slice at `base`, remaining up to 4 are in `base[12..]`.
+///
+/// Loads up to `tail_len` values from the tail, fills the remainder with the sentinel `u64::MAX`,
+/// runs the sorting network, then stores only the first `tail_len` tail outputs into `out`.
+///
+/// This is intended for microbench experiments and is not part of the library API.
+///
+/// # Safety
+/// - `base` must point to at least 12 valid u64 elements
+/// - `out` must point to at least `tail_len` valid u64 elements
+/// - `tail_len <= 4`
+/// - Callers must ensure `u64::MAX` does not appear in the input values when using padding
+pub(crate) unsafe fn sort16_tail_out_12_4(base: *mut u64, out: *mut u64, tail_len: usize) {
+    debug_assert!(tail_len <= 4);
+
+    // Load tail registers (pad with sentinels).
+    let tail = base.add(12);
+    let mut r0 = u64::MAX;
+    let mut r1 = u64::MAX;
+    let mut r2 = u64::MAX;
+    let mut r3 = u64::MAX;
+    if tail_len == 4 {
+        r0 = ptr::read(tail.add(0));
+        r1 = ptr::read(tail.add(1));
+        r2 = ptr::read(tail.add(2));
+        r3 = ptr::read(tail.add(3));
+    } else {
+        match tail_len {
+            0 => {}
+            1 => {
+                r0 = ptr::read(tail.add(0));
+            }
+            2 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+            }
+            3 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+                r2 = ptr::read(tail.add(2));
+            }
+            4 => unreachable!(),
+            _ => unreachable!(),
+        }
+    }
+
+    cswap_reg_ptr(&mut r1, base, 0);
+    cswap_reg_ptr(&mut r0, base, 1);
+    cswap_reg_ptr(&mut r3, base, 2);
+    cswap_reg_ptr(&mut r2, base, 3);
+    cswap_ptr(base, 4, 8);
+    cswap_ptr(base, 5, 6);
+    cswap_ptr(base, 7, 11);
+    cswap_ptr(base, 9, 10);
+    cswap_ptr(base, 0, 5);
+    cswap_ptr(base, 1, 7);
+    cswap_ptr(base, 2, 9);
+    cswap_ptr(base, 3, 4);
+    cswap_reg_ptr(&mut r1, base, 6);
+    cswap_reg_ptr(&mut r2, base, 8);
+    cswap_reg_ptr(&mut r3, base, 10);
+    cswap_reg_ptr(&mut r0, base, 11);
+    cswap_ptr(base, 0, 1);
+    cswap_ptr(base, 2, 3);
+    cswap_ptr(base, 4, 5);
+    cswap_ptr(base, 6, 8);
+    cswap_ptr(base, 7, 9);
+    cswap_ptr(base, 10, 11);
+    cswap_reg(&mut r0, &mut r1);
+    cswap_reg(&mut r2, &mut r3);
+    cswap_ptr(base, 0, 2);
+    cswap_ptr(base, 1, 3);
+    cswap_ptr(base, 4, 10);
+    cswap_ptr(base, 5, 11);
+    cswap_ptr(base, 6, 7);
+    cswap_ptr(base, 8, 9);
+    cswap_reg(&mut r0, &mut r2);
+    cswap_reg(&mut r1, &mut r3);
+    cswap_ptr(base, 1, 2);
+    cswap_reg_ptr(&mut r0, base, 3);
+    cswap_ptr(base, 4, 6);
+    cswap_ptr(base, 5, 7);
+    cswap_ptr(base, 8, 10);
+    cswap_ptr(base, 9, 11);
+    cswap_reg(&mut r1, &mut r2);
+    cswap_ptr(base, 1, 4);
+    cswap_ptr(base, 2, 6);
+    cswap_ptr(base, 5, 8);
+    cswap_ptr(base, 7, 10);
+    cswap_reg_ptr(&mut r1, base, 9);
+    cswap_reg_ptr(&mut r2, base, 11);
+    cswap_ptr(base, 2, 4);
+    cswap_ptr(base, 3, 6);
+    cswap_reg_ptr(&mut r0, base, 9);
+    cswap_reg_ptr(&mut r1, base, 11);
+    cswap_ptr(base, 3, 5);
+    cswap_ptr(base, 6, 8);
+    cswap_ptr(base, 7, 9);
+    cswap_reg_ptr(&mut r0, base, 10);
+    cswap_ptr(base, 3, 4);
+    cswap_ptr(base, 5, 6);
+    cswap_ptr(base, 7, 8);
+    cswap_ptr(base, 9, 10);
+    cswap_reg_ptr(&mut r0, base, 11);
+    cswap_ptr(base, 6, 7);
+    cswap_ptr(base, 8, 9);
+
+    match tail_len {
+        0 => {}
+        1 => {
+            *out.add(0) = r0;
+        }
+        2 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+        }
+        3 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+        }
+        4 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+            *out.add(3) = r3;
+        }
+        _ => unreachable!(),
+    }
+}
+
+/// Sort 24 elements using a hybrid sorting network (tail regs = 4).
+/// First 20 elements are in the slice at `base`, remaining up to 4 are in `base[20..]`.
+///
+/// Loads up to `tail_len` values from the tail, fills the remainder with the sentinel `u64::MAX`,
+/// runs the sorting network, then stores only the first `tail_len` tail outputs into `out`.
+///
+/// This is intended for microbench experiments and is not part of the library API.
+///
+/// # Safety
+/// - `base` must point to at least 20 valid u64 elements
+/// - `out` must point to at least `tail_len` valid u64 elements
+/// - `tail_len <= 4`
+/// - Callers must ensure `u64::MAX` does not appear in the input values when using padding
+pub(crate) unsafe fn sort24_tail_out_20_4(base: *mut u64, out: *mut u64, tail_len: usize) {
+    debug_assert!(tail_len <= 4);
+
+    // Load tail registers (pad with sentinels).
+    let tail = base.add(20);
+    let mut r0 = u64::MAX;
+    let mut r1 = u64::MAX;
+    let mut r2 = u64::MAX;
+    let mut r3 = u64::MAX;
+    if tail_len == 4 {
+        r0 = ptr::read(tail.add(0));
+        r1 = ptr::read(tail.add(1));
+        r2 = ptr::read(tail.add(2));
+        r3 = ptr::read(tail.add(3));
+    } else {
+        match tail_len {
+            0 => {}
+            1 => {
+                r0 = ptr::read(tail.add(0));
+            }
+            2 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+            }
+            3 => {
+                r0 = ptr::read(tail.add(0));
+                r1 = ptr::read(tail.add(1));
+                r2 = ptr::read(tail.add(2));
+            }
+            4 => unreachable!(),
+            _ => unreachable!(),
+        }
+    }
+
+    cswap_reg_ptr(&mut r0, base, 0);
+    cswap_ptr(base, 1, 12);
+    cswap_ptr(base, 2, 16);
+    cswap_reg_ptr(&mut r3, base, 3);
+    cswap_ptr(base, 4, 6);
+    cswap_ptr(base, 5, 10);
+    cswap_reg_ptr(&mut r1, base, 7);
+    cswap_ptr(base, 8, 14);
+    cswap_ptr(base, 9, 15);
+    cswap_reg_ptr(&mut r2, base, 11);
+    cswap_ptr(base, 13, 18);
+    cswap_ptr(base, 17, 19);
+    cswap_ptr(base, 0, 3);
+    cswap_ptr(base, 1, 11);
+    cswap_ptr(base, 2, 7);
+    cswap_ptr(base, 4, 17);
+    cswap_ptr(base, 5, 13);
+    cswap_ptr(base, 6, 19);
+    cswap_ptr(base, 8, 9);
+    cswap_ptr(base, 10, 18);
+    cswap_reg_ptr(&mut r2, base, 12);
+    cswap_ptr(base, 14, 15);
+    cswap_reg_ptr(&mut r1, base, 16);
+    cswap_reg(&mut r0, &mut r3);
+    cswap_ptr(base, 0, 1);
+    cswap_ptr(base, 2, 4);
+    cswap_ptr(base, 3, 12);
+    cswap_ptr(base, 5, 8);
+    cswap_ptr(base, 6, 9);
+    cswap_ptr(base, 7, 10);
+    cswap_reg_ptr(&mut r0, base, 11);
+    cswap_ptr(base, 13, 16);
+    cswap_ptr(base, 14, 17);
+    cswap_ptr(base, 15, 18);
+    cswap_reg_ptr(&mut r1, base, 19);
+    cswap_reg(&mut r2, &mut r3);
+    cswap_ptr(base, 2, 5);
+    cswap_ptr(base, 4, 8);
+    cswap_ptr(base, 6, 11);
+    cswap_ptr(base, 7, 14);
+    cswap_ptr(base, 9, 16);
+    cswap_ptr(base, 12, 17);
+    cswap_ptr(base, 15, 19);
+    cswap_reg_ptr(&mut r1, base, 18);
+    cswap_ptr(base, 1, 8);
+    cswap_ptr(base, 3, 14);
+    cswap_ptr(base, 4, 7);
+    cswap_reg_ptr(&mut r0, base, 9);
+    cswap_ptr(base, 10, 12);
+    cswap_ptr(base, 11, 13);
+    cswap_reg_ptr(&mut r2, base, 15);
+    cswap_ptr(base, 16, 19);
+    cswap_ptr(base, 0, 7);
+    cswap_ptr(base, 1, 5);
+    cswap_ptr(base, 3, 4);
+    cswap_ptr(base, 6, 11);
+    cswap_ptr(base, 8, 15);
+    cswap_ptr(base, 9, 14);
+    cswap_ptr(base, 10, 13);
+    cswap_ptr(base, 12, 17);
+    cswap_reg_ptr(&mut r3, base, 16);
+    cswap_reg_ptr(&mut r2, base, 18);
+    cswap_reg_ptr(&mut r0, base, 19);
+    cswap_ptr(base, 0, 2);
+    cswap_ptr(base, 1, 6);
+    cswap_ptr(base, 4, 7);
+    cswap_ptr(base, 5, 9);
+    cswap_ptr(base, 8, 10);
+    cswap_ptr(base, 13, 15);
+    cswap_ptr(base, 14, 18);
+    cswap_ptr(base, 16, 19);
+    cswap_reg_ptr(&mut r2, base, 17);
+    cswap_reg(&mut r1, &mut r3);
+    cswap_ptr(base, 2, 3);
+    cswap_ptr(base, 4, 5);
+    cswap_ptr(base, 6, 8);
+    cswap_ptr(base, 7, 9);
+    cswap_ptr(base, 10, 11);
+    cswap_ptr(base, 12, 13);
+    cswap_ptr(base, 14, 16);
+    cswap_ptr(base, 15, 17);
+    cswap_ptr(base, 18, 19);
+    cswap_reg(&mut r0, &mut r1);
+    cswap_ptr(base, 1, 2);
+    cswap_ptr(base, 3, 6);
+    cswap_ptr(base, 4, 10);
+    cswap_ptr(base, 7, 8);
+    cswap_ptr(base, 9, 11);
+    cswap_ptr(base, 12, 14);
+    cswap_ptr(base, 13, 19);
+    cswap_ptr(base, 15, 16);
+    cswap_reg_ptr(&mut r0, base, 17);
+    cswap_reg(&mut r1, &mut r2);
+    cswap_ptr(base, 2, 3);
+    cswap_ptr(base, 5, 10);
+    cswap_ptr(base, 6, 7);
+    cswap_ptr(base, 8, 9);
+    cswap_ptr(base, 13, 18);
+    cswap_ptr(base, 14, 15);
+    cswap_ptr(base, 16, 17);
+    cswap_reg(&mut r0, &mut r1);
+    cswap_ptr(base, 3, 4);
+    cswap_ptr(base, 5, 7);
+    cswap_ptr(base, 10, 12);
+    cswap_ptr(base, 11, 13);
+    cswap_ptr(base, 16, 18);
+    cswap_reg_ptr(&mut r0, base, 19);
+    cswap_ptr(base, 4, 6);
+    cswap_ptr(base, 8, 10);
+    cswap_ptr(base, 9, 12);
+    cswap_ptr(base, 11, 14);
+    cswap_ptr(base, 13, 15);
+    cswap_ptr(base, 17, 19);
+    cswap_ptr(base, 5, 6);
+    cswap_ptr(base, 7, 8);
+    cswap_ptr(base, 9, 10);
+    cswap_ptr(base, 11, 12);
+    cswap_ptr(base, 13, 14);
+    cswap_ptr(base, 15, 16);
+    cswap_ptr(base, 17, 18);
+
+    match tail_len {
+        0 => {}
+        1 => {
+            *out.add(0) = r0;
+        }
+        2 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+        }
+        3 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+        }
+        4 => {
+            *out.add(0) = r0;
+            *out.add(1) = r1;
+            *out.add(2) = r2;
+            *out.add(3) = r3;
+        }
+        _ => unreachable!(),
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -371,15 +897,15 @@ mod tests {
     #[test]
     fn test_sort24_tail_out_exact() {
         let mut v = vec![
-            24u64, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4,
-            3, 2, 1,
+            24u64, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2,
+            1,
         ];
         unsafe { sort24_tail_out(v.as_mut_ptr(), v.as_mut_ptr().add(16), 8) };
         assert_eq!(
             v,
             vec![
-                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
-                22, 23, 24
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+                24
             ]
         );
     }

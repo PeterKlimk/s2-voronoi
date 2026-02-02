@@ -75,6 +75,67 @@ pub(crate) fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffe
     }
 }
 
+/// Clip a convex polygon by a half-plane, skipping the early-unchanged bounding check.
+///
+/// This is intended for edgecheck-derived seed constraints where we expect the half-plane to be
+/// active and want to avoid extra branchy prechecks.
+#[cfg_attr(feature = "profiling", inline(never))]
+pub(crate) fn clip_convex_edgecheck(
+    poly: &PolyBuffer,
+    hp: &HalfPlane,
+    out: &mut PolyBuffer,
+) -> ClipResult {
+    let n = poly.len;
+    debug_assert!(n >= 3, "clip_convex expects poly.len >= 3, got {}", n);
+
+    let has_bounding_ref = poly.has_bounding_ref;
+    match n {
+        3 => {
+            if has_bounding_ref {
+                clip_small_ptr_d::<3, true>(poly, hp, out)
+            } else {
+                clip_small_ptr_d::<3, false>(poly, hp, out)
+            }
+        }
+        4 => {
+            if has_bounding_ref {
+                clip_small_ptr::<4, true>(poly, hp, out)
+            } else {
+                clip_small_ptr::<4, false>(poly, hp, out)
+            }
+        }
+        5 => {
+            if has_bounding_ref {
+                clip_small_ptr_d::<5, true>(poly, hp, out)
+            } else {
+                clip_small_ptr_d::<5, false>(poly, hp, out)
+            }
+        }
+        6 => {
+            if has_bounding_ref {
+                clip_small_ptr_d::<6, true>(poly, hp, out)
+            } else {
+                clip_small_ptr_d::<6, false>(poly, hp, out)
+            }
+        }
+        7 => {
+            if has_bounding_ref {
+                clip_small_ptr_d::<7, true>(poly, hp, out)
+            } else {
+                clip_small_ptr_d::<7, false>(poly, hp, out)
+            }
+        }
+        8 => {
+            if has_bounding_ref {
+                clip_small_ptr::<8, true>(poly, hp, out)
+            } else {
+                clip_small_ptr::<8, false>(poly, hp, out)
+            }
+        }
+        _ => clip_bitmask(poly, hp, out),
+    }
+}
+
 /// Baseline small-N clipper for microbenchmark comparisons.
 #[cfg(any(test, feature = "microbench"))]
 pub(crate) fn clip_convex_small_bool<const N: usize>(

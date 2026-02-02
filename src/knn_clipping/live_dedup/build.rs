@@ -43,6 +43,7 @@ impl EdgeScratch {
         cell_vertices: &[VertexData],
         edge_neighbor_slots: &[u32],
         edge_neighbor_globals: &[u32],
+        edge_neighbor_eps: &[f32],
         assignment: &super::binning::BinAssignment,
         shard: &mut ShardState,
         incoming_checks: Vec<EdgeCheck>,
@@ -57,6 +58,7 @@ impl EdgeScratch {
             cell_vertices,
             edge_neighbor_slots,
             edge_neighbor_globals,
+            edge_neighbor_eps,
             assignment,
             shard,
             incoming_checks,
@@ -86,6 +88,7 @@ impl EdgeScratch {
                 entry.local_b,
                 EdgeCheck {
                     key: entry.key,
+                    hp_eps: entry.hp_eps,
                     thirds,
                     indices: [
                         self.vertex_indices[locals[0] as usize],
@@ -163,6 +166,7 @@ struct CellContext {
     cell_vertices: Vec<VertexData>,
     edge_neighbor_slots: Vec<u32>,
     edge_neighbor_globals: Vec<u32>,
+    edge_neighbor_eps: Vec<f32>,
     edge_scratch: EdgeScratch,
     attempted_neighbors: AttemptedNeighbors,
 }
@@ -177,6 +181,7 @@ impl CellContext {
             cell_vertices: Vec::new(),
             edge_neighbor_slots: Vec::new(),
             edge_neighbor_globals: Vec::new(),
+            edge_neighbor_eps: Vec::new(),
             edge_scratch: EdgeScratch::new(),
             attempted_neighbors: AttemptedNeighbors::new(),
         }
@@ -210,6 +215,7 @@ fn process_cell(
     let cell_vertices = &mut ctx.cell_vertices;
     let edge_neighbor_slots = &mut ctx.edge_neighbor_slots;
     let edge_neighbor_globals = &mut ctx.edge_neighbor_globals;
+    let edge_neighbor_eps = &mut ctx.edge_neighbor_eps;
     let edge_scratch = &mut ctx.edge_scratch;
     let attempted_neighbors = &mut ctx.attempted_neighbors;
 
@@ -286,7 +292,7 @@ fn process_cell(
             let neighbor_slot = grid.point_index_to_slot(neighbor_idx);
             let neighbor = points[neighbor_idx];
             if builder
-                .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
+                .clip_with_slot_edgecheck(neighbor_idx, neighbor_slot, neighbor, check.hp_eps)
                 .is_err()
             {
                 break;
@@ -774,7 +780,12 @@ fn process_cell(
     // Sequential sub-phases: use a lap timer to reduce overhead (one `Instant::now()` per lap).
     let mut t_post = crate::knn_clipping::timing::LapTimer::start();
     builder
-        .to_vertex_data_full(cell_vertices, edge_neighbor_globals, edge_neighbor_slots)
+        .to_vertex_data_full(
+            cell_vertices,
+            edge_neighbor_globals,
+            edge_neighbor_slots,
+            edge_neighbor_eps,
+        )
         .expect("to_vertex_data_full failed after bounded check");
     cell_sub.add_cert(t_post.lap());
 
@@ -786,6 +797,7 @@ fn process_cell(
         cell_vertices,
         edge_neighbor_slots,
         edge_neighbor_globals,
+        edge_neighbor_eps,
         assignment,
         shard,
         incoming_checks,

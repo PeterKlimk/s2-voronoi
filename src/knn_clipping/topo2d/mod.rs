@@ -109,8 +109,14 @@ mod tests {
         let mut vertices = Vec::new();
         let mut edge_neighbors = Vec::new();
         let mut edge_neighbor_slots = Vec::new();
+        let mut edge_neighbor_eps = Vec::new();
         builder
-            .to_vertex_data_full(&mut vertices, &mut edge_neighbors, &mut edge_neighbor_slots)
+            .to_vertex_data_full(
+                &mut vertices,
+                &mut edge_neighbors,
+                &mut edge_neighbor_slots,
+                &mut edge_neighbor_eps,
+            )
             .unwrap();
 
         assert_eq!(vertices.len(), 3);

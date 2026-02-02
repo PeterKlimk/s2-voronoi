@@ -38,6 +38,22 @@ impl HalfPlane {
         }
     }
 
+    /// Construct an unnormalized half-plane while supplying an external epsilon.
+    ///
+    /// This is intended for edgecheck-derived seed constraints where we want to reuse an
+    /// epsilon computed on the opposite side of the same undirected edge, avoiding an extra sqrt.
+    pub fn new_unnormalized_with_eps(a: f64, b: f64, c: f64, plane_idx: usize, eps: f64) -> Self {
+        let ab2: f64 = fp::fma_f64(a, a, b * b);
+        HalfPlane {
+            a,
+            b,
+            c,
+            ab2,
+            plane_idx,
+            eps,
+        }
+    }
+
     #[inline]
     pub fn signed_dist(&self, u: f64, v: f64) -> f64 {
         fp::fma_f64(self.a, u, fp::fma_f64(self.b, v, self.c))

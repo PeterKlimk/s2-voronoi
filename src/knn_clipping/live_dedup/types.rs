@@ -100,6 +100,12 @@ pub(in crate::knn_clipping) struct BadEdgeRecord {
 #[derive(Clone, Copy)]
 pub(super) struct EdgeCheck {
     pub(super) key: EdgeKey,
+    /// Half-plane epsilon to use when clipping this neighbor as an edgecheck-derived seed.
+    ///
+    /// This is stored to avoid recomputing a normalization-dependent epsilon (sqrt) in the hot
+    /// edgecheck seeding path. Tiny cross-side differences are not important; we only need a
+    /// stable tolerance scale.
+    pub(super) hp_eps: f32,
     /// For edge (A, B), each endpoint vertex key is (A, B, T).
     /// Store just the "third" generator T for each endpoint, in canonical order.
     pub(super) thirds: [u32; 2],
@@ -117,13 +123,16 @@ pub(super) struct EdgeCheckOverflow {
     pub(super) slots: [u32; 2],
 }
 
-/// Flattened for size: 16 bytes instead of 24.
-/// Layout: key (8) + local_b (4) + locals (2) + 2 padding = 16
+/// Edge record to later-local neighbors (emitted into their incoming edgecheck queues).
+///
+/// This is ephemeral (per-cell scratch) and optimized for cache-friendly iteration in the emit
+/// phase.
 #[derive(Clone, Copy)]
 pub(super) struct EdgeToLater {
     pub(super) key: EdgeKey,
     pub(super) local_b: LocalId,
     pub(super) locals: [u8; 2],
+    pub(super) hp_eps: f32,
 }
 
 /// Flattened for size: 16 bytes instead of 24.

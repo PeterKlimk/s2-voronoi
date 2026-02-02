@@ -6,7 +6,8 @@
 use std::hint::select_unpredictable;
 use std::ptr;
 
-use crate::sort_nets::{sort16_tail_out, sort24_tail_out, sort8_net};
+use crate::sort_nets::{sort16_tail_out, sort8_net};
+use crate::sort_nets::{sort16_tail_out_12_4, sort24_tail_out_20_4};
 
 #[inline(always)]
 fn cswap_unpredictable_u64(v: &mut [u64], i: usize, j: usize) {
@@ -173,16 +174,81 @@ where
 }
 
 #[inline(always)]
-unsafe fn merge_up<T, F: FnMut(&T, &T) -> bool>(
+unsafe fn merge_up_u64(
+    mut left_src: *const u64,
+    mut right_src: *const u64,
+    mut dst: *mut u64,
+) -> (*const u64, *const u64, *mut u64) {
+    let left_val = ptr::read(left_src);
+    let right_val = ptr::read(right_src);
+    let is_l = left_val <= right_val;
+    let val = select_unpredictable(is_l, left_val, right_val);
+    ptr::write(dst, val);
+    right_src = right_src.add((!is_l) as usize);
+    left_src = left_src.add(is_l as usize);
+    dst = dst.add(1);
+    (left_src, right_src, dst)
+}
+
+#[inline(always)]
+unsafe fn merge_down_u64(
+    mut left_src: *const u64,
+    mut right_src: *const u64,
+    mut dst: *mut u64,
+) -> (*const u64, *const u64, *mut u64) {
+    let left_val = ptr::read(left_src);
+    let right_val = ptr::read(right_src);
+    let is_l = left_val <= right_val;
+    let val = select_unpredictable(is_l, right_val, left_val);
+    ptr::write(dst, val);
+    right_src = right_src.wrapping_sub(is_l as usize);
+    left_src = left_src.wrapping_sub((!is_l) as usize);
+    dst = dst.sub(1);
+    (left_src, right_src, dst)
+}
+
+#[inline(always)]
+unsafe fn bidirectional_merge_u64(v: *const u64, len: usize, dst: *mut u64) {
+    debug_assert!(len >= 2);
+
+    let len_div_2 = len / 2;
+    debug_assert!(len_div_2 != 0);
+
+    let mut left = v;
+    let mut right = v.add(len_div_2);
+    let mut out = dst;
+
+    let mut left_rev = v.add(len_div_2 - 1);
+    let mut right_rev = v.add(len - 1);
+    let mut out_rev = dst.add(len - 1);
+
+    for _ in 0..len_div_2 {
+        (left, right, out) = merge_up_u64(left, right, out);
+        (left_rev, right_rev, out_rev) = merge_down_u64(left_rev, right_rev, out_rev);
+    }
+
+    if (len & 1) != 0 {
+        let left_end = left_rev.wrapping_add(1);
+        let left_nonempty = left < left_end;
+        let last_src = if left_nonempty { left } else { right };
+        ptr::copy_nonoverlapping(last_src, out, 1);
+    }
+}
+
+#[inline(always)]
+unsafe fn merge_up<T: Copy, F: FnMut(&T, &T) -> bool>(
     mut left_src: *const T,
     mut right_src: *const T,
     mut dst: *mut T,
     is_less: &mut F,
 ) -> (*const T, *const T, *mut T) {
     // Branchless merge step (min to the front).
-    let is_l = !is_less(&*right_src, &*left_src);
-    let src = select_unpredictable(is_l, left_src, right_src);
-    ptr::copy_nonoverlapping(src, dst, 1);
+    // Use ptr::read to avoid creating references that might alias with dst.
+    let left_val = ptr::read(left_src);
+    let right_val = ptr::read(right_src);
+    let is_l = !is_less(&right_val, &left_val);
+    let val = select_unpredictable(is_l, left_val, right_val);
+    ptr::write(dst, val);
     right_src = right_src.add(!is_l as usize);
     left_src = left_src.add(is_l as usize);
     dst = dst.add(1);
@@ -190,20 +256,64 @@ unsafe fn merge_up<T, F: FnMut(&T, &T) -> bool>(
 }
 
 #[inline(always)]
-unsafe fn merge_down<T, F: FnMut(&T, &T) -> bool>(
+unsafe fn merge_down<T: Copy, F: FnMut(&T, &T) -> bool>(
     mut left_src: *const T,
     mut right_src: *const T,
     mut dst: *mut T,
     is_less: &mut F,
 ) -> (*const T, *const T, *mut T) {
     // Branchless merge step (max to the back).
-    let is_l = !is_less(&*right_src, &*left_src);
-    let src = select_unpredictable(is_l, right_src, left_src);
-    ptr::copy_nonoverlapping(src, dst, 1);
+    // Use ptr::read to avoid creating references that might alias with dst.
+    let left_val = ptr::read(left_src);
+    let right_val = ptr::read(right_src);
+    let is_l = !is_less(&right_val, &left_val);
+    let val = select_unpredictable(is_l, right_val, left_val);
+    ptr::write(dst, val);
     right_src = right_src.wrapping_sub(is_l as usize);
     left_src = left_src.wrapping_sub(!is_l as usize);
     dst = dst.sub(1);
     (left_src, right_src, dst)
+}
+
+/// Bidirectional merge with raw pointers (allows src/dst overlap).
+///
+/// # Safety
+/// - left_src and right_src must point to len valid elements
+/// - dst must point to 2*len valid elements
+/// - dst may overlap with left_src (for in-place merge to start)
+#[inline(always)]
+unsafe fn bidirectional_same_size_merge_ptr<T: Copy, F>(
+    left_src: *const T,
+    right_src: *const T,
+    dst: *mut T,
+    len: usize,
+    is_less: &mut F,
+) where
+    F: FnMut(&T, &T) -> bool,
+{
+    if len == 0 {
+        return;
+    }
+
+    let mut left = left_src;
+    let mut right = right_src;
+    let mut out = dst;
+
+    let mut left_rev = left_src.add(len - 1);
+    let mut right_rev = right_src.add(len - 1);
+    let mut out_rev = dst.add(2 * len - 1);
+
+    for _ in 0..len {
+        (left, right, out) = merge_up(left, right, out, is_less);
+        (left_rev, right_rev, out_rev) = merge_down(left_rev, right_rev, out_rev, is_less);
+    }
+
+    let left_end = left_rev.wrapping_add(1);
+    let right_end = right_rev.wrapping_add(1);
+
+    if left != left_end || right != right_end {
+        panic_on_ord_violation();
+    }
 }
 
 #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold)]
@@ -212,6 +322,7 @@ fn panic_on_ord_violation() -> ! {
     panic!("user-provided comparison function does not correctly implement a total order");
 }
 
+#[allow(dead_code)]
 const SENTINEL: u64 = u64::MAX;
 
 /// Sort a small slice (N <= 35) using sorting networks + insertion sort.
@@ -245,18 +356,41 @@ pub fn sort_small(v: &mut [u64]) {
 
     unsafe {
         let base = v.as_mut_ptr();
-        let (tail_len, target) = select_unpredictable(rem <= 3, (8, down), (rem, down + 8));
 
-        match target {
-            8 => sort8_in_place(base),
-            16 => sort16_tail_out(base, base.add(8), tail_len),
-            24 => sort24_tail_out(base, base.add(16), tail_len),
-            32 => sort32_maybe_padded(base, std::cmp::min(n, 32)),
-            _ => unreachable!("unexpected down (must be 8,16,24,32): {target}"),
+        // Use the 4-tail-reg hybrids for all 16/24 sorting to reduce live registers/spills.
+        //
+        // Key detail: for pad-up, the tail starts at 12 (for 16) and 20 (for 24), so `tail_len`
+        // must be computed relative to those cut points to avoid out-of-bounds reads.
+        if rem == 0 {
+            match n {
+                8 => sort8_in_place(base),
+                16 => sort16_tail_out_12_4(base, base.add(12), 4),
+                24 => sort24_tail_out_20_4(base, base.add(20), 4),
+                32 => sort32_maybe_padded(base, 32),
+                _ => unreachable!("unexpected N (must be 8,16,24,32): {n}"),
+            }
+            return;
         }
 
-        if tail_len == 8 {
+        if rem <= 3 {
+            match down {
+                8 => sort8_in_place(base),
+                16 => sort16_tail_out_12_4(base, base.add(12), 4),
+                24 => sort24_tail_out_20_4(base, base.add(20), 4),
+                32 => sort32_maybe_padded(base, 32),
+                _ => unreachable!("unexpected down (must be 8,16,24,32): {down}"),
+            }
             insert_suffix(v, down, rem);
+            return;
+        }
+
+        // rem >= 4: pad up to the higher network by placing `u64::MAX` sentinels in tail regs.
+        let up = down + 8;
+        match up {
+            16 => sort16_tail_out_12_4(base, base.add(12), n - 12), // n in 12..=15 => 0..=3
+            24 => sort24_tail_out_20_4(base, base.add(20), n - 20), // n in 20..=23 => 0..=3
+            32 => sort32_maybe_padded(base, n),                     // n in 28..=31
+            _ => unreachable!("unexpected up (must be 16,24,32): {up}"),
         }
     }
 }
@@ -283,35 +417,80 @@ unsafe fn insert_suffix(v: &mut [u64], base: usize, rem: usize) {
         }
     }
 
-    for idx in base..base + rem {
-        // Equivalent to std's `insert_tail`, specialized for `u64` and `is_less = <`.
-        // Inserts `p[idx]` into the sorted prefix `p[..idx]`.
+    // rem=1: classic insertion is best (fast path hits often).
+    if rem == 1 {
+        let idx = base;
         debug_assert!(idx > 0);
 
         let tail = p.add(idx);
         let mut sift = tail.sub(1);
 
-        // Fast path: already >= predecessor (no work needed).
         if *tail >= *sift {
-            continue;
+            return;
         }
 
         let tmp = *tail;
         loop {
-            // Shift `*sift` into the gap at `sift+1`.
             ptr::copy_nonoverlapping(sift, sift.add(1), 1);
 
             if sift == p {
                 *p = tmp;
-                break;
+                return;
             }
 
             sift = sift.sub(1);
             if tmp >= *sift {
                 *sift.add(1) = tmp;
-                break;
+                return;
             }
         }
+    }
+
+    // rem=2/3: merge the tiny sorted suffix into the sorted prefix from the back.
+    // This moves each prefix element at most once (vs shifting the prefix up to `rem` times).
+    merge_sorted_suffix_back(p, base, rem);
+}
+
+#[inline(always)]
+unsafe fn merge_sorted_suffix_back(p: *mut u64, base: usize, rem: usize) {
+    debug_assert!(base > 0);
+    debug_assert!((2..=3).contains(&rem));
+
+    // Load suffix into registers first (merge writes into the suffix area).
+    let r0 = *p.add(base);
+    let r1 = *p.add(base + 1);
+    let mut r2 = 0u64;
+    if rem == 3 {
+        r2 = *p.add(base + 2);
+    }
+
+    let mut right_idx: isize = rem as isize - 1;
+    let mut left_idx: isize = base as isize - 1;
+    let mut out: isize = (base + rem - 1) as isize;
+
+    while right_idx >= 0 {
+        let rv = match right_idx {
+            0 => r0,
+            1 => r1,
+            2 => r2,
+            _ => unreachable!(),
+        };
+
+        if left_idx >= 0 {
+            let lv = *p.add(left_idx as usize);
+            if lv > rv {
+                *p.add(out as usize) = lv;
+                left_idx -= 1;
+            } else {
+                *p.add(out as usize) = rv;
+                right_idx -= 1;
+            }
+        } else {
+            *p.add(out as usize) = rv;
+            right_idx -= 1;
+        }
+
+        out -= 1;
     }
 }
 
@@ -338,29 +517,22 @@ unsafe fn sort8_in_place(base: *mut u64) {
 unsafe fn sort32_maybe_padded(base: *mut u64, n: usize) {
     debug_assert!((28..=32).contains(&n));
 
-    // Lower 16 is always fully present for n >= 28.
-    sort16_tail_out(base, base.add(8), 8);
+    // Sort both halves (len/2 and len-len/2) using sort16_tail_out padded to 16.
+    //
+    // This lines up with std's smallsort shape (sort two runs, then one merge) while
+    // avoiding a dedicated sort32 network and avoiding sorting padded sentinels.
+    let mid = n / 2; // 14..=16
+    debug_assert!((14..=16).contains(&mid));
+    let left_len = mid;
+    let right_len = n - mid; // 14..=16
+    debug_assert!((14..=16).contains(&right_len));
 
-    let upper_have = n - 16; // 12..=16
-    debug_assert!((12..=16).contains(&upper_have));
+    sort16_tail_out(base, base.add(8), left_len - 8);
+    sort16_tail_out(base.add(mid), base.add(mid + 8), right_len - 8);
 
-    let mut upper_tmp = [SENTINEL; 16];
-    let right: &[u64] = if upper_have == 16 {
-        // Exact 32: sort upper half in-place.
-        sort16_tail_out(base.add(16), base.add(24), 8);
-        std::slice::from_raw_parts(base.add(16), 16)
-    } else {
-        // Padded: sort upper half via temp buffer with sentinels.
-        for i in 0..upper_have {
-            upper_tmp[i] = *base.add(16 + i);
-        }
-        sort16_tail_out(upper_tmp.as_mut_ptr(), upper_tmp.as_mut_ptr().add(8), 8);
-        &upper_tmp[..]
-    };
-
+    // Merge (bidirectional) into tmp and copy back.
     let mut tmp = [0u64; 32];
-    let left = std::slice::from_raw_parts(base, 16);
-    bidirectional_same_size_merge(left, right, &mut tmp[..], &mut |a, b| a < b);
+    bidirectional_merge_u64(base, n, tmp.as_mut_ptr());
     ptr::copy_nonoverlapping(tmp.as_ptr(), base, n);
 }
 

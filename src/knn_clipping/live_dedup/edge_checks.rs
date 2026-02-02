@@ -81,6 +81,7 @@ pub(super) fn collect_and_resolve_cell_edges(
     cell_vertices: &[(VertexKey, Vec3)],
     edge_neighbor_slots: &[u32],
     edge_neighbor_globals: &[u32],
+    edge_neighbor_eps: &[f32],
     assignment: &BinAssignment,
     shard: &mut ShardState,
     incoming_checks: Vec<EdgeCheck>,
@@ -98,6 +99,11 @@ pub(super) fn collect_and_resolve_cell_edges(
         edge_neighbor_globals.len(),
         n,
         "edge neighbor global data out of sync"
+    );
+    debug_assert_eq!(
+        edge_neighbor_eps.len(),
+        n,
+        "edge neighbor eps data out of sync"
     );
     edges_to_later.clear();
     edges_overflow.clear();
@@ -145,6 +151,7 @@ pub(super) fn collect_and_resolve_cell_edges(
 
         let locals = [i as u8, j as u8];
         let edge_key = pack_edge(cell_idx, neighbor);
+        let hp_eps = edge_neighbor_eps[i];
 
         // Manual unpack with hoisted constants
         let packed = assignment.slot_gen_map[slot as usize];
@@ -165,6 +172,7 @@ pub(super) fn collect_and_resolve_cell_edges(
                 key: edge_key,
                 local_b,
                 locals,
+                hp_eps,
             });
         } else {
             // Edge to earlier neighbor → resolve immediately

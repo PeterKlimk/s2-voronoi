@@ -3,6 +3,8 @@
 This file provides context for LLM coding assistants working with the s2-voronoi crate.
 For hex3 app/workspace guidance, see `AGENTS.md` at the repo root.
 
+For user-facing crate docs, see `README.md` and `docs/`.
+
 ## Build & Test
 
 ```bash
@@ -12,6 +14,26 @@ cargo clippy
 cargo fmt
 ```
 
+## Benchmarking
+
+```bash
+# Large-scale benchmark driver
+cargo run --release --bin bench_voronoi -- 100k 500k 1m
+
+# Detailed sub-phase timing
+S2_VORONOI_TIMING_KV=1 cargo run --release --features timing --bin bench_voronoi -- 500k --no-preprocess
+
+# Inter-commit perf comparisons (build then run interleaved)
+./scripts/bench_build.sh --chain 6
+./scripts/bench_run.sh -s 500k -r 20 -m total
+```
+
+## Environment knobs
+
+- `RAYON_NUM_THREADS=1`: force single-threaded mode (useful for stable perf comparisons).
+- `S2_BIN_COUNT=<n>`: override sharded bin count (defaults to ~2x threads).
+- `S2_VORONOI_TIMING_KV=1`: emit machine-readable `TIMING_KV ...` output (requires `timing`).
+
 ## Crate Overview
 
 s2-voronoi computes spherical Voronoi diagrams on the unit sphere (S2) using kNN-driven half-space clipping.
@@ -19,6 +41,13 @@ s2-voronoi computes spherical Voronoi diagrams on the unit sphere (S2) using kNN
 **Algorithm:** For each generator point, find k nearest neighbors using a cube-map spatial index, construct bisector great-circle planes, and iteratively clip to produce the cell polygon. Vertices occur where 3+ bisector planes intersect. All cells are computed independently (embarrassingly parallel).
 
 The qhull backend (convex hull duality) is provided as ground truth for testing only.
+
+## Documentation map
+
+- `README.md`: user-facing overview, API summary, feature list.
+- `docs/architecture.md`: algorithm + module map + glossary.
+- `docs/performance.md`: benchmarking and perf knobs.
+- `docs/live_dedup.md`: live vertex dedup and edge checks.
 
 ## Module Structure
 
@@ -38,7 +67,11 @@ src/
 - `parallel` (default): rayon parallelism in cell construction
 - `glam`: public `UnitVec3Like` impl + conversions for `glam::Vec3`
 - `timing`: detailed timing instrumentation
+- `profiling`: profiling helpers (e.g. disable inlining on hot functions)
+- `microbench`: internal microbench harnesses (nightly `test` crate)
 - `qhull`: convex hull backend for tests/benchmarks only
+- `simd_clip`: use SIMD small-N clippers in the main clipper dispatch
+- `fma`: prefer fused multiply-add via mul_add (may change results; can be slow without HW FMA)
 
 Note: glam is always an internal dependency; the `glam` feature only gates the public API.
 

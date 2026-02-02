@@ -1,7 +1,8 @@
-//! GPU-friendly spherical Voronoi computation via half-space (great circle) clipping.
+//! Spherical Voronoi computation via half-space (great circle) clipping.
 //!
 //! This module implements a "meshless" approach where each Voronoi cell is computed
-//! independently from its k nearest neighbors. This enables massive parallelism on GPU.
+//! independently from its k nearest neighbors. This structure is friendly to data-parallel CPU
+//! implementations.
 
 macro_rules! maybe_par_into_iter {
     ($v:expr) => {{
@@ -27,7 +28,7 @@ pub(crate) mod topo2d;
 
 // Re-exports (internal use)
 #[allow(unused_imports)]
-pub use compute::compute_voronoi_gpu_style_with_config;
+pub use compute::compute_voronoi_knn_clipping_with_config;
 pub use preprocess::merge_close_points;
 
 pub type MergeResult = preprocess::MergeResult;
