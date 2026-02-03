@@ -3,6 +3,28 @@ use super::types::{ClipResult, HalfPlane, PolyBuffer};
 use crate::fp;
 use crate::knn_clipping::cell_builder::{CellFailure, VertexData};
 use glam::{DVec3, Vec3};
+use std::hint::select_unpredictable;
+
+#[inline(always)]
+fn cswap_u32(a: &mut u32, b: &mut u32) {
+    let va = *a;
+    let vb = *b;
+    let cond = va <= vb;
+    *a = select_unpredictable(cond, va, vb);
+    *b = select_unpredictable(cond, vb, va);
+}
+
+#[inline(always)]
+fn sort3_u32(a: u32, b: u32, c: u32) -> [u32; 3] {
+    // Sorting network (3 elements): (0,1) (1,2) (0,1)
+    let mut x0 = a;
+    let mut x1 = b;
+    let mut x2 = c;
+    cswap_u32(&mut x0, &mut x1);
+    cswap_u32(&mut x1, &mut x2);
+    cswap_u32(&mut x0, &mut x1);
+    [x0, x1, x2]
+}
 
 /// Orthonormal tangent basis for gnomonic projection.
 pub struct TangentBasis {
@@ -372,8 +394,7 @@ impl Topo2DBuilder {
             let n1 = self.neighbor_indices[plane_a] as u32;
             let n2 = self.neighbor_indices[plane_b] as u32;
 
-            let mut key = [gen_idx, n1, n2];
-            key.sort();
+            let key = sort3_u32(gen_idx, n1, n2);
 
             out.push((key, v_pos.as_vec3()));
 
