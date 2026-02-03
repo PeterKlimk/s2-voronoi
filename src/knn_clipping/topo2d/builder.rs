@@ -4,6 +4,7 @@ use crate::fp;
 use crate::knn_clipping::cell_builder::{CellFailure, VertexData};
 use glam::{DVec3, Vec3};
 use std::hint::select_unpredictable;
+use std::sync::OnceLock;
 
 #[inline(always)]
 fn cswap_u32(a: &mut u32, b: &mut u32) {
@@ -330,6 +331,85 @@ impl Topo2DBuilder {
         )
     }
 
+    /// Dedicated "full" extraction fast path.
+    ///
+    /// Enabled by setting `S2_VORONOI_CERT_FULL_DEDICATED=1` in the environment.
+    pub(in crate::knn_clipping) fn to_vertex_data_full_dedicated(
+        &self,
+        out: &mut Vec<VertexData>,
+        edge_neighbors: &mut Vec<u32>,
+        edge_neighbor_slots: &mut Vec<u32>,
+        edge_neighbor_eps: &mut Vec<f32>,
+    ) -> Result<(), CellFailure> {
+        if !self.is_bounded() {
+            return Err(CellFailure::NoValidSeed);
+        }
+
+        let poly = self.current_poly();
+        if poly.len < 3 {
+            return Err(CellFailure::NoValidSeed);
+        }
+
+        out.clear();
+        out.reserve(poly.len);
+
+        edge_neighbors.clear();
+        edge_neighbors.reserve(poly.len);
+        edge_neighbor_slots.clear();
+        edge_neighbor_slots.reserve(poly.len);
+        edge_neighbor_eps.clear();
+        edge_neighbor_eps.reserve(poly.len);
+
+        let gen_idx = self.generator_idx as u32;
+        for i in 0..poly.len {
+            let u = poly.us[i];
+            let v = poly.vs[i];
+            let (plane_a, plane_b) = poly.vertex_planes[i];
+
+            let dir = DVec3::new(
+                fp::fma_f64(
+                    u,
+                    self.basis.t1.x,
+                    fp::fma_f64(v, self.basis.t2.x, self.basis.g.x),
+                ),
+                fp::fma_f64(
+                    u,
+                    self.basis.t1.y,
+                    fp::fma_f64(v, self.basis.t2.y, self.basis.g.y),
+                ),
+                fp::fma_f64(
+                    u,
+                    self.basis.t1.z,
+                    fp::fma_f64(v, self.basis.t2.z, self.basis.g.z),
+                ),
+            );
+            let len2 = dir.length_squared();
+            if len2 < 1e-28 {
+                return Err(CellFailure::NoValidSeed);
+            }
+            let inv_len = len2.sqrt().recip();
+            let v_pos = dir * inv_len;
+
+            let n1 = self.neighbor_indices[plane_a] as u32;
+            let n2 = self.neighbor_indices[plane_b] as u32;
+            let key = sort3_u32(gen_idx, n1, n2);
+            out.push((key, v_pos.as_vec3()));
+
+            let edge_plane = poly.edge_planes[i];
+            if edge_plane == usize::MAX {
+                edge_neighbors.push(u32::MAX);
+                edge_neighbor_slots.push(u32::MAX);
+                edge_neighbor_eps.push(0.0);
+            } else {
+                edge_neighbors.push(self.neighbor_indices[edge_plane] as u32);
+                edge_neighbor_slots.push(self.neighbor_slots[edge_plane]);
+                edge_neighbor_eps.push(self.half_planes[edge_plane].eps as f32);
+            }
+        }
+
+        Ok(())
+    }
+
     fn to_vertex_data_impl(
         &self,
         out: &mut Vec<VertexData>,
@@ -447,4 +527,28 @@ impl Topo2DBuilder {
         let active_count = active.iter().filter(|&&x| x).count();
         (active_count, self.half_planes.len())
     }
+}
+
+pub(in crate::knn_clipping) fn use_dedicated_cert_full_env() -> bool {
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    if let Some(v) = FLAG.get() {
+        return *v;
+    }
+    init_dedicated_cert_full_env(&FLAG)
+}
+
+#[cold]
+fn init_dedicated_cert_full_env(flag: &OnceLock<bool>) -> bool {
+    let enabled = match std::env::var("S2_VORONOI_CERT_FULL_DEDICATED") {
+        Ok(v) => {
+            let v = v.trim();
+            !(v.is_empty()
+                || v == "0"
+                || v.eq_ignore_ascii_case("false")
+                || v.eq_ignore_ascii_case("no"))
+        }
+        Err(_) => false,
+    };
+    let _ = flag.set(enabled);
+    enabled
 }
