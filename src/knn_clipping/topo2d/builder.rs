@@ -5,8 +5,7 @@ use crate::knn_clipping::cell_builder::{CellFailure, VertexData};
 use glam::{DVec3, Vec3};
 use std::hint::select_unpredictable;
 
-#[cfg_attr(feature = "profiling", inline(never))]
-#[cfg_attr(not(feature = "profiling"), inline(always))]
+#[inline(always)]
 fn cswap_u32(a: &mut u32, b: &mut u32) {
     let va = *a;
     let vb = *b;
@@ -15,8 +14,7 @@ fn cswap_u32(a: &mut u32, b: &mut u32) {
     *b = select_unpredictable(cond, vb, va);
 }
 
-#[cfg_attr(feature = "profiling", inline(never))]
-#[cfg_attr(not(feature = "profiling"), inline(always))]
+#[inline(always)]
 fn sort3_u32(a: u32, b: u32, c: u32) -> [u32; 3] {
     // Sorting network (3 elements): (0,1) (1,2) (0,1)
     let mut x0 = a;
