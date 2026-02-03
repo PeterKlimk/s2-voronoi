@@ -370,17 +370,17 @@ impl Topo2DBuilder {
                     fp::fma_f64(v, self.basis.t2.z, self.basis.g.z),
                 ),
             );
+            let dir = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);
             let len2 = dir.length_squared();
             if len2 < 1e-28 {
                 return Err(CellFailure::NoValidSeed);
             }
-            let inv_len = len2.sqrt().recip();
-            let v_pos = dir * inv_len;
+            let v_pos = dir * len2.sqrt().recip();
 
             let n1 = self.neighbor_indices[plane_a] as u32;
             let n2 = self.neighbor_indices[plane_b] as u32;
             let key = sort3_u32(gen_idx, n1, n2);
-            out.push((key, v_pos.as_vec3()));
+            out.push((key, v_pos));
 
             let edge_plane = poly.edge_planes[i];
             if edge_plane == usize::MAX {
