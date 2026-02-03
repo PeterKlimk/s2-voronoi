@@ -197,7 +197,6 @@ fn process_cell(
     assignment: &super::binning::BinAssignment,
     termination: TerminationConfig,
     termination_max_k_cap: Option<usize>,
-    use_dedicated_cert_full: bool,
     bin: BinId,
     i: usize,
     local: LocalId,
@@ -848,25 +847,14 @@ fn process_cell(
     //
     // Sequential sub-phases: use a lap timer to reduce overhead (one `Instant::now()` per lap).
     let mut t_post = crate::knn_clipping::timing::LapTimer::start();
-    if use_dedicated_cert_full {
-        builder
-            .to_vertex_data_full_dedicated(
-                cell_vertices,
-                edge_neighbor_globals,
-                edge_neighbor_slots,
-                edge_neighbor_eps,
-            )
-            .expect("to_vertex_data_full_dedicated failed after bounded check");
-    } else {
-        builder
-            .to_vertex_data_full(
-                cell_vertices,
-                edge_neighbor_globals,
-                edge_neighbor_slots,
-                edge_neighbor_eps,
-            )
-            .expect("to_vertex_data_full failed after bounded check");
-    }
+    builder
+        .to_vertex_data_full(
+            cell_vertices,
+            edge_neighbor_globals,
+            edge_neighbor_slots,
+            edge_neighbor_eps,
+        )
+        .expect("to_vertex_data_full failed after bounded check");
     cell_sub.add_cert(t_post.lap());
 
     let cell_idx = i as u32;
@@ -959,8 +947,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                 use crate::knn_clipping::timing::CellSubAccum;
 
                 let bin = BinId::from_usize(bin_usize);
-                let use_dedicated_cert_full =
-                    crate::knn_clipping::topo2d::builder::use_dedicated_cert_full_env();
                 let my_generators = &assignment.bin_generators[bin_usize];
                 let mut shard = ShardState::new(my_generators.len());
 
@@ -1079,7 +1065,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                                         &assignment,
                                         termination,
                                         termination_max_k_cap,
-                                        use_dedicated_cert_full,
                                         bin,
                                         global,
                                         local,
@@ -1108,7 +1093,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                                         &assignment,
                                         termination,
                                         termination_max_k_cap,
-                                        use_dedicated_cert_full,
                                         bin,
                                         global,
                                         local,
@@ -1169,7 +1153,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                                 &assignment,
                                 termination,
                                 termination_max_k_cap,
-                                use_dedicated_cert_full,
                                 bin,
                                 global,
                                 local,
