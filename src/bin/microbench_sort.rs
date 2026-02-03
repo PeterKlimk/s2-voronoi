@@ -100,8 +100,12 @@ fn parse_args() -> Config {
             ("--warmup", Some(v)) => cfg.warmup_iters = v.parse().expect("invalid --warmup"),
             ("--iters", Some(v)) => cfg.iters = v.parse().expect("invalid --iters"),
             ("--repeats", Some(v)) => cfg.repeats = v.parse().expect("invalid --repeats"),
-            ("--warmup-ms", Some(v)) => cfg.warmup_ms = Some(v.parse().expect("invalid --warmup-ms")),
-            ("--target-ms", Some(v)) => cfg.target_ms = Some(v.parse().expect("invalid --target-ms")),
+            ("--warmup-ms", Some(v)) => {
+                cfg.warmup_ms = Some(v.parse().expect("invalid --warmup-ms"))
+            }
+            ("--target-ms", Some(v)) => {
+                cfg.target_ms = Some(v.parse().expect("invalid --target-ms"))
+            }
             ("--seed", Some(v)) => cfg.seed = v.parse().expect("invalid --seed"),
             ("--no-verify", None) => cfg.verify = false,
             ("--full", None) => cfg.full = true,
@@ -170,8 +174,7 @@ fn benchmark_cases_in_place(
     warmup: usize,
     iters: usize,
     repeats: usize,
-) -> Stats
-{
+) -> Stats {
     let num_cases = cases_flat.len() / len;
     assert!(num_cases > 0);
     assert_eq!(cases_flat.len(), num_cases * len);
@@ -226,8 +229,7 @@ fn benchmark_cases_in_place_timed(
     warmup_ms: u64,
     target_ms: u64,
     repeats: usize,
-) -> Stats
-{
+) -> Stats {
     let num_cases = cases_flat.len() / len;
     assert!(num_cases > 0);
     assert_eq!(cases_flat.len(), num_cases * len);
@@ -939,7 +941,7 @@ fn sort_run_up_to_16(v: &mut [u64]) {
         }
         4 => unsafe {
             sort_nets_microbench_reg::sort4_net(v.as_mut_ptr());
-        }
+        },
         5 => {
             unsafe { sort_nets_microbench_reg::sort4_net(v.as_mut_ptr()) };
             let x = v[4];
@@ -953,7 +955,7 @@ fn sort_run_up_to_16(v: &mut [u64]) {
         }
         8 => unsafe {
             sort_nets_microbench_reg::sort8_net(v.as_mut_ptr());
-        }
+        },
         9 => {
             unsafe { sort_nets_microbench_reg::sort8_net(v.as_mut_ptr()) };
             let x = v[8];
@@ -967,7 +969,7 @@ fn sort_run_up_to_16(v: &mut [u64]) {
         }
         12 => unsafe {
             sort_nets_microbench_reg::sort12_net(v.as_mut_ptr());
-        }
+        },
         13 => {
             unsafe { sort_nets_microbench_reg::sort12_net(v.as_mut_ptr()) };
             let x = v[12];
@@ -981,7 +983,7 @@ fn sort_run_up_to_16(v: &mut [u64]) {
         }
         16 => unsafe {
             sort_nets_microbench_reg::sort16_net(v.as_mut_ptr());
-        }
+        },
         _ => unreachable!("n must be 2..=16 (got {n})"),
     }
 }
@@ -1118,7 +1120,14 @@ fn main() {
         let (std_s, small_s) = if let Some(target_ms) = cfg.target_ms {
             let warmup_ms = cfg.warmup_ms.unwrap_or(200);
             (
-                benchmark_cases_in_place_timed(&cases, n, std_sort, warmup_ms, target_ms, cfg.repeats),
+                benchmark_cases_in_place_timed(
+                    &cases,
+                    n,
+                    std_sort,
+                    warmup_ms,
+                    target_ms,
+                    cfg.repeats,
+                ),
                 benchmark_cases_in_place_timed(
                     &cases,
                     n,
@@ -1130,7 +1139,14 @@ fn main() {
             )
         } else {
             (
-                benchmark_cases_in_place(&cases, n, std_sort, cfg.warmup_iters, cfg.iters, cfg.repeats),
+                benchmark_cases_in_place(
+                    &cases,
+                    n,
+                    std_sort,
+                    cfg.warmup_iters,
+                    cfg.iters,
+                    cfg.repeats,
+                ),
                 benchmark_cases_in_place(
                     &cases,
                     n,
@@ -1215,38 +1231,95 @@ fn main() {
                 pad32_s.jitter_pct(),
             );
         } else if cfg.full {
-            let (net_s, net_reg_s, weird_s, pad_s, stdins_s) = if let Some(target_ms) = cfg.target_ms {
-                let warmup_ms = cfg.warmup_ms.unwrap_or(200);
-                (
-                    benchmark_cases_in_place_timed(&cases, n, net_sort, warmup_ms, target_ms, cfg.repeats),
-                    benchmark_cases_in_place_timed(&cases, n, net_sort_reg, warmup_ms, target_ms, cfg.repeats),
-                    benchmark_cases_in_place_timed(&cases, n, weird_tail_sort, warmup_ms, target_ms, cfg.repeats),
-                    benchmark_cases_in_place_timed(&cases, n, sort_small_variant_pad_up, warmup_ms, target_ms, cfg.repeats),
-                    benchmark_cases_in_place_timed(
-                        &cases,
-                        n,
-                        sort_small_variant_std_insert,
-                        warmup_ms,
-                        target_ms,
-                        cfg.repeats,
-                    ),
-                )
-            } else {
-                (
-                    benchmark_cases_in_place(&cases, n, net_sort, cfg.warmup_iters, cfg.iters, cfg.repeats),
-                    benchmark_cases_in_place(&cases, n, net_sort_reg, cfg.warmup_iters, cfg.iters, cfg.repeats),
-                    benchmark_cases_in_place(&cases, n, weird_tail_sort, cfg.warmup_iters, cfg.iters, cfg.repeats),
-                    benchmark_cases_in_place(&cases, n, sort_small_variant_pad_up, cfg.warmup_iters, cfg.iters, cfg.repeats),
-                    benchmark_cases_in_place(
-                        &cases,
-                        n,
-                        sort_small_variant_std_insert,
-                        cfg.warmup_iters,
-                        cfg.iters,
-                        cfg.repeats,
-                    ),
-                )
-            };
+            let (net_s, net_reg_s, weird_s, pad_s, stdins_s) =
+                if let Some(target_ms) = cfg.target_ms {
+                    let warmup_ms = cfg.warmup_ms.unwrap_or(200);
+                    (
+                        benchmark_cases_in_place_timed(
+                            &cases,
+                            n,
+                            net_sort,
+                            warmup_ms,
+                            target_ms,
+                            cfg.repeats,
+                        ),
+                        benchmark_cases_in_place_timed(
+                            &cases,
+                            n,
+                            net_sort_reg,
+                            warmup_ms,
+                            target_ms,
+                            cfg.repeats,
+                        ),
+                        benchmark_cases_in_place_timed(
+                            &cases,
+                            n,
+                            weird_tail_sort,
+                            warmup_ms,
+                            target_ms,
+                            cfg.repeats,
+                        ),
+                        benchmark_cases_in_place_timed(
+                            &cases,
+                            n,
+                            sort_small_variant_pad_up,
+                            warmup_ms,
+                            target_ms,
+                            cfg.repeats,
+                        ),
+                        benchmark_cases_in_place_timed(
+                            &cases,
+                            n,
+                            sort_small_variant_std_insert,
+                            warmup_ms,
+                            target_ms,
+                            cfg.repeats,
+                        ),
+                    )
+                } else {
+                    (
+                        benchmark_cases_in_place(
+                            &cases,
+                            n,
+                            net_sort,
+                            cfg.warmup_iters,
+                            cfg.iters,
+                            cfg.repeats,
+                        ),
+                        benchmark_cases_in_place(
+                            &cases,
+                            n,
+                            net_sort_reg,
+                            cfg.warmup_iters,
+                            cfg.iters,
+                            cfg.repeats,
+                        ),
+                        benchmark_cases_in_place(
+                            &cases,
+                            n,
+                            weird_tail_sort,
+                            cfg.warmup_iters,
+                            cfg.iters,
+                            cfg.repeats,
+                        ),
+                        benchmark_cases_in_place(
+                            &cases,
+                            n,
+                            sort_small_variant_pad_up,
+                            cfg.warmup_iters,
+                            cfg.iters,
+                            cfg.repeats,
+                        ),
+                        benchmark_cases_in_place(
+                            &cases,
+                            n,
+                            sort_small_variant_std_insert,
+                            cfg.warmup_iters,
+                            cfg.iters,
+                            cfg.repeats,
+                        ),
+                    )
+                };
 
             println!(
                 "{:>4} {:>11.1} {:>7.1}% {:>11.1} {:>7.1}% {:>11.1} {:>7.1}% {:>11.1} {:>7.1}% {:>11.1} {:>7.1}% {:>11.1} {:>7.1}% {:>11.1} {:>7.1}%",

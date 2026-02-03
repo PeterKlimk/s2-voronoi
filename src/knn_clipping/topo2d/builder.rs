@@ -102,6 +102,16 @@ impl Topo2DBuilder {
         neighbor_slot: u32,
         neighbor: Vec3,
     ) -> Result<(), CellFailure> {
+        self.clip_with_slot_result(neighbor_idx, neighbor_slot, neighbor)
+            .map(|_| ())
+    }
+
+    pub fn clip_with_slot_result(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+    ) -> Result<ClipResult, CellFailure> {
         if let Some(f) = self.failed {
             return Err(f);
         }
@@ -154,7 +164,7 @@ impl Topo2DBuilder {
             return Err(CellFailure::ClippedAway);
         }
 
-        Ok(())
+        Ok(clip_result)
     }
 
     pub fn clip_with_slot_edgecheck(

@@ -317,12 +317,20 @@ fn process_cell(
         let mut stage = PackedStage::Chunk0;
         #[cfg(feature = "timing")]
         let mut recorded_chunk0_overfetch = false;
+        #[cfg(feature = "timing")]
+        let mut recorded_chunk0_term_excess = false;
+        #[cfg(feature = "timing")]
+        let mut chunk0_first_emitted = 0usize;
 
         loop {
             #[cfg(feature = "timing")]
             if !recorded_chunk0_overfetch && stage == PackedStage::Chunk0 {
                 let chunk0_len = packed_scratch.chunk0_len(qi);
-                cell_sub.add_packed_knn_chunk0_overfetch_sample(incoming_edgechecks, k_cur, chunk0_len);
+                cell_sub.add_packed_knn_chunk0_overfetch_sample(
+                    incoming_edgechecks,
+                    k_cur,
+                    chunk0_len,
+                );
                 recorded_chunk0_overfetch = true;
             }
 
@@ -350,8 +358,24 @@ fn process_cell(
                 break;
             };
 
+            #[cfg(feature = "timing")]
+            let is_first_chunk0 = stage == PackedStage::Chunk0 && !recorded_chunk0_term_excess;
+            #[cfg(feature = "timing")]
+            if is_first_chunk0 {
+                chunk0_first_emitted = chunk.n;
+            }
+
             let t_clip = crate::knn_clipping::timing::Timer::start();
+            #[cfg(feature = "timing")]
+            let mut used_slots_in_chunk = 0usize;
+            #[cfg(feature = "timing")]
+            let mut terminated_in_chunk = false;
+            let mut term_ready = false;
             for pos in 0..chunk.n {
+                #[cfg(feature = "timing")]
+                {
+                    used_slots_in_chunk = pos + 1;
+                }
                 let neighbor_slot = packed_chunk[pos];
                 let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
                 if neighbor_idx == i {
@@ -362,44 +386,70 @@ fn process_cell(
                 }
 
                 let neighbor = points[neighbor_idx];
-                if builder
-                    .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
-                    .is_err()
-                {
-                    break;
+                let clip_result =
+                    match builder.clip_with_slot_result(neighbor_idx, neighbor_slot, neighbor) {
+                        Ok(r) => r,
+                        Err(_) => {
+                            break;
+                        }
+                    };
+                match clip_result {
+                    crate::knn_clipping::topo2d::types::ClipResult::Unchanged => {
+                        term_ready = true;
+                    }
+                    crate::knn_clipping::topo2d::types::ClipResult::Changed => {
+                        term_ready = false;
+                    }
+                    crate::knn_clipping::topo2d::types::ClipResult::TooManyVertices => {
+                        // This should have returned an error already.
+                        term_ready = false;
+                    }
                 }
-                cell_neighbors_processed += 1;
-                let dot = points[i].dot(neighbor);
-                worst_cos = worst_cos.min(dot);
 
-                // Packed-kNN: candidates are already sorted by dot product, so we have a tight
-                // bound for "best unseen" at each step (next in the sorted list, or `unseen_bound`
-                // once we reach the end of the current chunk). This makes it cheap and effective
-                // to check termination eagerly once the polygon is bounded, without relying on the
-                // global cadence (`TerminationConfig`).
-                if builder.is_bounded() {
+                // Only run termination checks when the clip is unchanged. If the clip changed,
+                // the termination threshold needs to be recomputed (min_cos / sqrt), and doing
+                // that on every changed clip is often wasted work.
+                if builder.is_bounded()
+                    && clip_result == crate::knn_clipping::topo2d::types::ClipResult::Unchanged
+                {
                     let bound = if pos + 1 < chunk.n {
                         let next_slot = packed_chunk[pos + 1];
                         let next = point_indices[next_slot as usize] as usize;
-                        // Even if this is `i` (self) or a duplicate, its dot is still an upper
-                        // bound on any remaining candidate.
                         points[i].dot(points[next])
                     } else {
                         chunk.unseen_bound
                     };
                     if builder.can_terminate(bound) {
                         terminated = true;
+                        #[cfg(feature = "timing")]
+                        {
+                            terminated_in_chunk = true;
+                        }
                         break;
                     }
                 }
+                cell_neighbors_processed += 1;
+                let dot = points[i].dot(neighbor);
+                worst_cos = worst_cos.min(dot);
             }
             cell_sub.add_clip(t_clip.elapsed());
+
+            #[cfg(feature = "timing")]
+            if is_first_chunk0 {
+                cell_sub.add_packed_knn_chunk0_termination_excess_sample(
+                    incoming_edgechecks,
+                    chunk0_first_emitted,
+                    used_slots_in_chunk,
+                    terminated_in_chunk,
+                );
+                recorded_chunk0_term_excess = true;
+            }
 
             if terminated || builder.is_failed() {
                 break;
             }
 
-            if builder.is_bounded() && builder.can_terminate(chunk.unseen_bound) {
+            if builder.is_bounded() && term_ready && builder.can_terminate(chunk.unseen_bound) {
                 terminated = true;
                 break;
             }

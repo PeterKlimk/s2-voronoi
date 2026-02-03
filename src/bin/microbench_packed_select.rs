@@ -151,15 +151,21 @@ fn parse_args() -> Config {
                     "pivot" => AlgoKind::Pivot,
                     "pivot-min2" => AlgoKind::PivotMin2,
                     "sort-all" => AlgoKind::SortAll,
-                    _ => panic!("invalid --algo (use all|select8|select16|pivot|pivot-min2|sort-all)"),
+                    _ => panic!(
+                        "invalid --algo (use all|select8|select16|pivot|pivot-min2|sort-all)"
+                    ),
                 };
             }
             ("--cases", Some(v)) => cfg.cases = v.parse().expect("invalid --cases"),
             ("--warmup", Some(v)) => cfg.warmup_iters = v.parse().expect("invalid --warmup"),
             ("--iters", Some(v)) => cfg.iters = v.parse().expect("invalid --iters"),
             ("--repeats", Some(v)) => cfg.repeats = v.parse().expect("invalid --repeats"),
-            ("--warmup-ms", Some(v)) => cfg.warmup_ms = Some(v.parse().expect("invalid --warmup-ms")),
-            ("--target-ms", Some(v)) => cfg.target_ms = Some(v.parse().expect("invalid --target-ms")),
+            ("--warmup-ms", Some(v)) => {
+                cfg.warmup_ms = Some(v.parse().expect("invalid --warmup-ms"))
+            }
+            ("--target-ms", Some(v)) => {
+                cfg.target_ms = Some(v.parse().expect("invalid --target-ms"))
+            }
             ("--seed", Some(v)) => cfg.seed = v.parse().expect("invalid --seed"),
             ("--bucket", Some(v)) => cfg.bucket = v.parse().expect("invalid --bucket"),
             ("--lookahead", Some(v)) => cfg.lookahead = v.parse().expect("invalid --lookahead"),
@@ -202,7 +208,10 @@ fn parse_args() -> Config {
     assert!(cfg.iters > 0, "--iters must be > 0");
     assert!(cfg.repeats > 0, "--repeats must be > 0");
     assert!(cfg.bucket > 0, "--bucket must be > 0");
-    assert!(cfg.pivot_emit_max >= cfg.bucket, "--pivot-emit-max must be >= --bucket");
+    assert!(
+        cfg.pivot_emit_max >= cfg.bucket,
+        "--pivot-emit-max must be >= --bucket"
+    );
     if let Some(ms) = cfg.target_ms {
         assert!(ms > 0, "--target-ms must be > 0");
     }
@@ -343,7 +352,11 @@ fn sort_prefix(v: &mut [u64], counters: &mut Option<&mut Counters>) {
 }
 
 #[inline(always)]
-fn partition_pivot_idx_lt(v: &mut [u64], pivot_idx: usize, counters: &mut Option<&mut Counters>) -> usize {
+fn partition_pivot_idx_lt(
+    v: &mut [u64],
+    pivot_idx: usize,
+    counters: &mut Option<&mut Counters>,
+) -> usize {
     debug_assert!(!v.is_empty());
     let n = v.len();
     if n == 1 {
@@ -378,7 +391,11 @@ fn choose_pivot_idx_min2(v: &[u64]) -> usize {
     if v.len() < 2 {
         return 0;
     }
-    if v[0] <= v[1] { 0 } else { 1 }
+    if v[0] <= v[1] {
+        0
+    } else {
+        1
+    }
 }
 
 fn pivot_find_prefix_len(
@@ -402,7 +419,13 @@ fn pivot_find_prefix_len(
 
     // If the "< pivot" bucket is large, recurse into it.
     if left_len >= max_emit {
-        return pivot_find_prefix_len(&mut v[..left_len], min_emit, max_emit, counters, choose_pivot_idx);
+        return pivot_find_prefix_len(
+            &mut v[..left_len],
+            min_emit,
+            max_emit,
+            counters,
+            choose_pivot_idx,
+        );
     }
 
     // If "< pivot" is already enough and small-ish, emit it (overshoot allowed).
@@ -554,8 +577,8 @@ fn run_pivot(
         }
 
         let max_emit = emit_max.min(remaining.len());
-        let emit =
-            pivot_find_prefix_len(remaining, bucket, max_emit, counters, choose_pivot_idx).min(max_emit);
+        let emit = pivot_find_prefix_len(remaining, bucket, max_emit, counters, choose_pivot_idx)
+            .min(max_emit);
         sort_prefix(&mut remaining[..emit], counters);
         acc ^= remaining[0];
         acc ^= remaining[emit - 1];
@@ -720,12 +743,7 @@ where
     }
 }
 
-fn simulate_counts_for_algo<F>(
-    cases_flat: &[u64],
-    needs: &[u16],
-    len: usize,
-    mut f: F,
-) -> Counters
+fn simulate_counts_for_algo<F>(cases_flat: &[u64], needs: &[u16], len: usize, mut f: F) -> Counters
 where
     F: FnMut(&mut [u64], usize, &mut Counters) -> u64,
 {
@@ -814,15 +832,7 @@ fn main() {
             let mut none: Option<&mut Counters> = None;
             let fun = |buf: &mut [u64], need: usize| run_select8(buf, need, bucket, &mut none);
             s8 = if do_timed {
-                benchmark_cases_timed(
-                    &cases,
-                    &needs,
-                    len,
-                    fun,
-                    warmup_ms,
-                    target_ms,
-                    cfg.repeats,
-                )
+                benchmark_cases_timed(&cases, &needs, len, fun, warmup_ms, target_ms, cfg.repeats)
             } else {
                 benchmark_cases(
                     &cases,
@@ -841,15 +851,7 @@ fn main() {
             let mut none: Option<&mut Counters> = None;
             let fun = |buf: &mut [u64], need: usize| run_select16(buf, need, bucket, &mut none);
             s16 = if do_timed {
-                benchmark_cases_timed(
-                    &cases,
-                    &needs,
-                    len,
-                    fun,
-                    warmup_ms,
-                    target_ms,
-                    cfg.repeats,
-                )
+                benchmark_cases_timed(&cases, &needs, len, fun, warmup_ms, target_ms, cfg.repeats)
             } else {
                 benchmark_cases(
                     &cases,
@@ -867,18 +869,18 @@ fn main() {
             let bucket = cfg.bucket;
             let emit_max = cfg.pivot_emit_max;
             let mut none: Option<&mut Counters> = None;
-            let fun =
-                |buf: &mut [u64], need: usize| run_pivot(buf, need, bucket, emit_max, &mut none, choose_pivot_idx_first);
-            sp = if do_timed {
-                benchmark_cases_timed(
-                    &cases,
-                    &needs,
-                    len,
-                    fun,
-                    warmup_ms,
-                    target_ms,
-                    cfg.repeats,
+            let fun = |buf: &mut [u64], need: usize| {
+                run_pivot(
+                    buf,
+                    need,
+                    bucket,
+                    emit_max,
+                    &mut none,
+                    choose_pivot_idx_first,
                 )
+            };
+            sp = if do_timed {
+                benchmark_cases_timed(&cases, &needs, len, fun, warmup_ms, target_ms, cfg.repeats)
             } else {
                 benchmark_cases(
                     &cases,
@@ -897,18 +899,17 @@ fn main() {
             let emit_max = cfg.pivot_emit_max;
             let mut none: Option<&mut Counters> = None;
             let fun = |buf: &mut [u64], need: usize| {
-                run_pivot(buf, need, bucket, emit_max, &mut none, choose_pivot_idx_min2)
+                run_pivot(
+                    buf,
+                    need,
+                    bucket,
+                    emit_max,
+                    &mut none,
+                    choose_pivot_idx_min2,
+                )
             };
             sp2 = if do_timed {
-                benchmark_cases_timed(
-                    &cases,
-                    &needs,
-                    len,
-                    fun,
-                    warmup_ms,
-                    target_ms,
-                    cfg.repeats,
-                )
+                benchmark_cases_timed(&cases, &needs, len, fun, warmup_ms, target_ms, cfg.repeats)
             } else {
                 benchmark_cases(
                     &cases,
@@ -927,15 +928,7 @@ fn main() {
             let mut none: Option<&mut Counters> = None;
             let fun = |buf: &mut [u64], need: usize| run_sort_all(buf, need, bucket, &mut none);
             sa = if do_timed {
-                benchmark_cases_timed(
-                    &cases,
-                    &needs,
-                    len,
-                    fun,
-                    warmup_ms,
-                    target_ms,
-                    cfg.repeats,
-                )
+                benchmark_cases_timed(&cases, &needs, len, fun, warmup_ms, target_ms, cfg.repeats)
             } else {
                 benchmark_cases(
                     &cases,
