@@ -224,6 +224,26 @@ pub struct CellSubPhases {
     pub edgecheck_seed_used_sum: [u64; EDGECHECK_BUCKETS],
     /// Per-edgecheck bucket sum of extra neighbors (for mean reporting).
     pub edgecheck_extra_sum: [u64; EDGECHECK_BUCKETS],
+    /// Packed-kNN: chunk0 candidate count sampled per packed query, bucketed by incoming edgechecks.
+    pub packed_knn_chunk0_by_edgechecks_counts: [u64; EDGECHECK_BUCKETS],
+    /// Packed-kNN: sum(chunk0_len) by incoming edgecheck bucket.
+    pub packed_knn_chunk0_by_edgechecks_sum_chunk0: [u64; EDGECHECK_BUCKETS],
+    /// Packed-kNN: sum(k_needed at chunk0) by incoming edgecheck bucket.
+    pub packed_knn_chunk0_by_edgechecks_sum_needed: [u64; EDGECHECK_BUCKETS],
+    /// Packed-kNN: sum(max(chunk0_len - k_needed, 0)) by incoming edgecheck bucket.
+    pub packed_knn_chunk0_by_edgechecks_sum_excess: [u64; EDGECHECK_BUCKETS],
+    /// Packed-kNN correlation sample count.
+    pub packed_knn_chunk0_corr_n: u64,
+    /// Pearson sums for corr(chunk0_len, incoming_edgechecks).
+    pub packed_knn_chunk0_corr_sum_edge: f64,
+    pub packed_knn_chunk0_corr_sum_edge2: f64,
+    pub packed_knn_chunk0_corr_sum_chunk0: f64,
+    pub packed_knn_chunk0_corr_sum_chunk02: f64,
+    pub packed_knn_chunk0_corr_sum_chunk0_edge: f64,
+    /// Pearson sums for corr(excess, incoming_edgechecks).
+    pub packed_knn_chunk0_corr_sum_excess: f64,
+    pub packed_knn_chunk0_corr_sum_excess2: f64,
+    pub packed_knn_chunk0_corr_sum_excess_edge: f64,
 }
 
 #[cfg(feature = "timing")]
@@ -274,6 +294,19 @@ impl Default for CellSubPhases {
             edgecheck_bucket_counts: [0; EDGECHECK_BUCKETS],
             edgecheck_seed_used_sum: [0; EDGECHECK_BUCKETS],
             edgecheck_extra_sum: [0; EDGECHECK_BUCKETS],
+            packed_knn_chunk0_by_edgechecks_counts: [0; EDGECHECK_BUCKETS],
+            packed_knn_chunk0_by_edgechecks_sum_chunk0: [0; EDGECHECK_BUCKETS],
+            packed_knn_chunk0_by_edgechecks_sum_needed: [0; EDGECHECK_BUCKETS],
+            packed_knn_chunk0_by_edgechecks_sum_excess: [0; EDGECHECK_BUCKETS],
+            packed_knn_chunk0_corr_n: 0,
+            packed_knn_chunk0_corr_sum_edge: 0.0,
+            packed_knn_chunk0_corr_sum_edge2: 0.0,
+            packed_knn_chunk0_corr_sum_chunk0: 0.0,
+            packed_knn_chunk0_corr_sum_chunk02: 0.0,
+            packed_knn_chunk0_corr_sum_chunk0_edge: 0.0,
+            packed_knn_chunk0_corr_sum_excess: 0.0,
+            packed_knn_chunk0_corr_sum_excess2: 0.0,
+            packed_knn_chunk0_corr_sum_excess_edge: 0.0,
         }
     }
 }
@@ -954,6 +987,70 @@ impl PhaseTimings {
             }
         }
 
+        // Packed-kNN: chunk0 size / overfetch vs incoming edgechecks.
+        let pk_counts = &self.cell_sub.packed_knn_chunk0_by_edgechecks_counts;
+        if pk_counts.iter().any(|&c| c > 0) {
+            let pk_sum_chunk0 = &self.cell_sub.packed_knn_chunk0_by_edgechecks_sum_chunk0;
+            let pk_sum_needed = &self.cell_sub.packed_knn_chunk0_by_edgechecks_sum_needed;
+            let pk_sum_excess = &self.cell_sub.packed_knn_chunk0_by_edgechecks_sum_excess;
+
+            let pearson = |n: f64, sum_x: f64, sum_y: f64, sum_x2: f64, sum_y2: f64, sum_xy: f64| {
+                if n < 2.0 {
+                    return f64::NAN;
+                }
+                let num = n * sum_xy - sum_x * sum_y;
+                let den_x = n * sum_x2 - sum_x * sum_x;
+                let den_y = n * sum_y2 - sum_y * sum_y;
+                if den_x <= 0.0 || den_y <= 0.0 {
+                    return f64::NAN;
+                }
+                num / (den_x * den_y).sqrt()
+            };
+
+            let n = self.cell_sub.packed_knn_chunk0_corr_n as f64;
+            let corr_chunk0 = pearson(
+                n,
+                self.cell_sub.packed_knn_chunk0_corr_sum_edge,
+                self.cell_sub.packed_knn_chunk0_corr_sum_chunk0,
+                self.cell_sub.packed_knn_chunk0_corr_sum_edge2,
+                self.cell_sub.packed_knn_chunk0_corr_sum_chunk02,
+                self.cell_sub.packed_knn_chunk0_corr_sum_chunk0_edge,
+            );
+            let corr_excess = pearson(
+                n,
+                self.cell_sub.packed_knn_chunk0_corr_sum_edge,
+                self.cell_sub.packed_knn_chunk0_corr_sum_excess,
+                self.cell_sub.packed_knn_chunk0_corr_sum_edge2,
+                self.cell_sub.packed_knn_chunk0_corr_sum_excess2,
+                self.cell_sub.packed_knn_chunk0_corr_sum_excess_edge,
+            );
+
+            eprintln!("    packed_chunk0_by_edgechecks:");
+            for edge_bucket in 0..EDGECHECK_BUCKETS {
+                let cells = pk_counts[edge_bucket];
+                if cells == 0 {
+                    continue;
+                }
+                let label = if edge_bucket == EDGECHECK_BUCKETS - 1 {
+                    "e>=16".to_string()
+                } else {
+                    format!("e={}", edge_bucket)
+                };
+                let denom = cells as f64;
+                let mean_chunk0 = (pk_sum_chunk0[edge_bucket] as f64) / denom;
+                let mean_needed = (pk_sum_needed[edge_bucket] as f64) / denom;
+                let mean_excess = (pk_sum_excess[edge_bucket] as f64) / denom;
+                eprintln!(
+                    "      {:>5}: cells={} chunk0_mean={:.2} need_mean={:.2} excess_mean={:.2}",
+                    label, cells, mean_chunk0, mean_needed, mean_excess
+                );
+            }
+            eprintln!(
+                "      corr(chunk0_len, edgechecks)={:.3} corr(excess, edgechecks)={:.3} samples={}",
+                corr_chunk0, corr_excess, self.cell_sub.packed_knn_chunk0_corr_n
+            );
+        }
+
         eprintln!(
             "  dedup:             {:7.1}ms ({:4.1}%)",
             self.dedup.as_secs_f64() * 1000.0,
@@ -1198,6 +1295,19 @@ pub struct CellSubAccum {
     pub edgecheck_bucket_counts: [u64; EDGECHECK_BUCKETS],
     pub edgecheck_seed_used_sum: [u64; EDGECHECK_BUCKETS],
     pub edgecheck_extra_sum: [u64; EDGECHECK_BUCKETS],
+    pub packed_knn_chunk0_by_edgechecks_counts: [u64; EDGECHECK_BUCKETS],
+    pub packed_knn_chunk0_by_edgechecks_sum_chunk0: [u64; EDGECHECK_BUCKETS],
+    pub packed_knn_chunk0_by_edgechecks_sum_needed: [u64; EDGECHECK_BUCKETS],
+    pub packed_knn_chunk0_by_edgechecks_sum_excess: [u64; EDGECHECK_BUCKETS],
+    pub packed_knn_chunk0_corr_n: u64,
+    pub packed_knn_chunk0_corr_sum_edge: f64,
+    pub packed_knn_chunk0_corr_sum_edge2: f64,
+    pub packed_knn_chunk0_corr_sum_chunk0: f64,
+    pub packed_knn_chunk0_corr_sum_chunk02: f64,
+    pub packed_knn_chunk0_corr_sum_chunk0_edge: f64,
+    pub packed_knn_chunk0_corr_sum_excess: f64,
+    pub packed_knn_chunk0_corr_sum_excess2: f64,
+    pub packed_knn_chunk0_corr_sum_excess_edge: f64,
 }
 
 #[cfg(feature = "timing")]
@@ -1248,6 +1358,19 @@ impl Default for CellSubAccum {
             edgecheck_bucket_counts: [0; EDGECHECK_BUCKETS],
             edgecheck_seed_used_sum: [0; EDGECHECK_BUCKETS],
             edgecheck_extra_sum: [0; EDGECHECK_BUCKETS],
+            packed_knn_chunk0_by_edgechecks_counts: [0; EDGECHECK_BUCKETS],
+            packed_knn_chunk0_by_edgechecks_sum_chunk0: [0; EDGECHECK_BUCKETS],
+            packed_knn_chunk0_by_edgechecks_sum_needed: [0; EDGECHECK_BUCKETS],
+            packed_knn_chunk0_by_edgechecks_sum_excess: [0; EDGECHECK_BUCKETS],
+            packed_knn_chunk0_corr_n: 0,
+            packed_knn_chunk0_corr_sum_edge: 0.0,
+            packed_knn_chunk0_corr_sum_edge2: 0.0,
+            packed_knn_chunk0_corr_sum_chunk0: 0.0,
+            packed_knn_chunk0_corr_sum_chunk02: 0.0,
+            packed_knn_chunk0_corr_sum_chunk0_edge: 0.0,
+            packed_knn_chunk0_corr_sum_excess: 0.0,
+            packed_knn_chunk0_corr_sum_excess2: 0.0,
+            packed_knn_chunk0_corr_sum_excess_edge: 0.0,
         }
     }
 }
@@ -1356,6 +1479,34 @@ impl CellSubAccum {
 
     pub fn add_packed_knn_select_scatter(&mut self, d: Duration) {
         self.packed_knn_select_scatter += d;
+    }
+
+    #[inline]
+    pub fn add_packed_knn_chunk0_overfetch_sample(
+        &mut self,
+        incoming_edgechecks: usize,
+        k_needed: usize,
+        chunk0_len: usize,
+    ) {
+        let edge_bucket = incoming_edgechecks.min(EDGECHECK_BUCKETS - 1);
+        self.packed_knn_chunk0_by_edgechecks_counts[edge_bucket] += 1;
+        self.packed_knn_chunk0_by_edgechecks_sum_chunk0[edge_bucket] += chunk0_len as u64;
+        self.packed_knn_chunk0_by_edgechecks_sum_needed[edge_bucket] += k_needed as u64;
+        let excess = chunk0_len.saturating_sub(k_needed);
+        self.packed_knn_chunk0_by_edgechecks_sum_excess[edge_bucket] += excess as u64;
+
+        self.packed_knn_chunk0_corr_n += 1;
+        let e = incoming_edgechecks as f64;
+        let x = chunk0_len as f64;
+        let ex = excess as f64;
+        self.packed_knn_chunk0_corr_sum_edge += e;
+        self.packed_knn_chunk0_corr_sum_edge2 += e * e;
+        self.packed_knn_chunk0_corr_sum_chunk0 += x;
+        self.packed_knn_chunk0_corr_sum_chunk02 += x * x;
+        self.packed_knn_chunk0_corr_sum_chunk0_edge += x * e;
+        self.packed_knn_chunk0_corr_sum_excess += ex;
+        self.packed_knn_chunk0_corr_sum_excess2 += ex * ex;
+        self.packed_knn_chunk0_corr_sum_excess_edge += ex * e;
     }
 
     #[allow(dead_code)]
@@ -1495,10 +1646,27 @@ impl CellSubAccum {
             self.edgecheck_bucket_counts[e] += other.edgecheck_bucket_counts[e];
             self.edgecheck_seed_used_sum[e] += other.edgecheck_seed_used_sum[e];
             self.edgecheck_extra_sum[e] += other.edgecheck_extra_sum[e];
+            self.packed_knn_chunk0_by_edgechecks_counts[e] +=
+                other.packed_knn_chunk0_by_edgechecks_counts[e];
+            self.packed_knn_chunk0_by_edgechecks_sum_chunk0[e] +=
+                other.packed_knn_chunk0_by_edgechecks_sum_chunk0[e];
+            self.packed_knn_chunk0_by_edgechecks_sum_needed[e] +=
+                other.packed_knn_chunk0_by_edgechecks_sum_needed[e];
+            self.packed_knn_chunk0_by_edgechecks_sum_excess[e] +=
+                other.packed_knn_chunk0_by_edgechecks_sum_excess[e];
             for b in 0..EXTRA_NEIGHBOR_HIST_BUCKETS {
                 self.edgecheck_extra_histogram[e][b] += other.edgecheck_extra_histogram[e][b];
             }
         }
+        self.packed_knn_chunk0_corr_n += other.packed_knn_chunk0_corr_n;
+        self.packed_knn_chunk0_corr_sum_edge += other.packed_knn_chunk0_corr_sum_edge;
+        self.packed_knn_chunk0_corr_sum_edge2 += other.packed_knn_chunk0_corr_sum_edge2;
+        self.packed_knn_chunk0_corr_sum_chunk0 += other.packed_knn_chunk0_corr_sum_chunk0;
+        self.packed_knn_chunk0_corr_sum_chunk02 += other.packed_knn_chunk0_corr_sum_chunk02;
+        self.packed_knn_chunk0_corr_sum_chunk0_edge += other.packed_knn_chunk0_corr_sum_chunk0_edge;
+        self.packed_knn_chunk0_corr_sum_excess += other.packed_knn_chunk0_corr_sum_excess;
+        self.packed_knn_chunk0_corr_sum_excess2 += other.packed_knn_chunk0_corr_sum_excess2;
+        self.packed_knn_chunk0_corr_sum_excess_edge += other.packed_knn_chunk0_corr_sum_excess_edge;
     }
 
     pub fn into_sub_phases(self) -> CellSubPhases {
@@ -1545,6 +1713,19 @@ impl CellSubAccum {
             edgecheck_bucket_counts: self.edgecheck_bucket_counts,
             edgecheck_seed_used_sum: self.edgecheck_seed_used_sum,
             edgecheck_extra_sum: self.edgecheck_extra_sum,
+            packed_knn_chunk0_by_edgechecks_counts: self.packed_knn_chunk0_by_edgechecks_counts,
+            packed_knn_chunk0_by_edgechecks_sum_chunk0: self.packed_knn_chunk0_by_edgechecks_sum_chunk0,
+            packed_knn_chunk0_by_edgechecks_sum_needed: self.packed_knn_chunk0_by_edgechecks_sum_needed,
+            packed_knn_chunk0_by_edgechecks_sum_excess: self.packed_knn_chunk0_by_edgechecks_sum_excess,
+            packed_knn_chunk0_corr_n: self.packed_knn_chunk0_corr_n,
+            packed_knn_chunk0_corr_sum_edge: self.packed_knn_chunk0_corr_sum_edge,
+            packed_knn_chunk0_corr_sum_edge2: self.packed_knn_chunk0_corr_sum_edge2,
+            packed_knn_chunk0_corr_sum_chunk0: self.packed_knn_chunk0_corr_sum_chunk0,
+            packed_knn_chunk0_corr_sum_chunk02: self.packed_knn_chunk0_corr_sum_chunk02,
+            packed_knn_chunk0_corr_sum_chunk0_edge: self.packed_knn_chunk0_corr_sum_chunk0_edge,
+            packed_knn_chunk0_corr_sum_excess: self.packed_knn_chunk0_corr_sum_excess,
+            packed_knn_chunk0_corr_sum_excess2: self.packed_knn_chunk0_corr_sum_excess2,
+            packed_knn_chunk0_corr_sum_excess_edge: self.packed_knn_chunk0_corr_sum_excess_edge,
         }
     }
 }

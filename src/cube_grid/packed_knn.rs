@@ -1108,6 +1108,11 @@ impl PackedKnnCellScratch {
     pub fn tail_possible(&self, qi: usize) -> bool {
         self.tail_possible.get(qi).copied().unwrap_or(false)
     }
+
+    #[inline]
+    pub fn chunk0_len(&self, qi: usize) -> usize {
+        self.chunk0_keys.get(qi).map(|v| v.len()).unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

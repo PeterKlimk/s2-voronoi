@@ -47,6 +47,8 @@ pub struct Topo2DBuilder {
     failed: Option<CellFailure>,
     term_sin_pad: f64,
     term_cos_pad: f64,
+    term_threshold_cache: f64,
+    term_cache_valid: bool,
 }
 
 impl Topo2DBuilder {
@@ -73,6 +75,8 @@ impl Topo2DBuilder {
             failed: None,
             term_sin_pad,
             term_cos_pad,
+            term_threshold_cache: 0.0,
+            term_cache_valid: false,
         }
     }
 
@@ -89,6 +93,7 @@ impl Topo2DBuilder {
         self.poly_b.clear();
         self.use_a = true;
         self.failed = None;
+        self.term_cache_valid = false;
     }
 
     pub fn clip_with_slot(
@@ -138,6 +143,7 @@ impl Topo2DBuilder {
                 self.neighbor_indices.push(neighbor_idx);
                 self.neighbor_slots.push(neighbor_slot);
                 self.use_a = !self.use_a;
+                self.term_cache_valid = false;
             }
             ClipResult::Unchanged => {}
         }
@@ -202,6 +208,7 @@ impl Topo2DBuilder {
                 self.neighbor_indices.push(neighbor_idx);
                 self.neighbor_slots.push(neighbor_slot);
                 self.use_a = !self.use_a;
+                self.term_cache_valid = false;
             }
             ClipResult::Unchanged => {}
         }
@@ -259,17 +266,21 @@ impl Topo2DBuilder {
             return false;
         }
 
-        let min_cos = self.current_poly().min_cos();
-        if min_cos <= 0.0 || min_cos > 1.0 {
-            return false;
+        if !self.term_cache_valid {
+            let min_cos = self.current_poly().min_cos();
+            if min_cos <= 0.0 || min_cos > 1.0 {
+                return false;
+            }
+
+            let sin_theta = (1.0 - min_cos * min_cos).max(0.0).sqrt();
+            let cos_theta_pad =
+                fp::fma_f64(min_cos, self.term_cos_pad, -sin_theta * self.term_sin_pad);
+            let cos_2max = fp::fma_f64(2.0 * cos_theta_pad, cos_theta_pad, -1.0);
+            self.term_threshold_cache = cos_2max - 3.0 * f32::EPSILON as f64;
+            self.term_cache_valid = true;
         }
 
-        let sin_theta = (1.0 - min_cos * min_cos).max(0.0).sqrt();
-        let cos_theta_pad = fp::fma_f64(min_cos, self.term_cos_pad, -sin_theta * self.term_sin_pad);
-        let cos_2max = fp::fma_f64(2.0 * cos_theta_pad, cos_theta_pad, -1.0);
-        let threshold = cos_2max - 3.0 * f32::EPSILON as f64;
-
-        (max_unseen_dot_bound as f64) < threshold
+        (max_unseen_dot_bound as f64) < self.term_threshold_cache
     }
 
     pub fn to_vertex_data_full(

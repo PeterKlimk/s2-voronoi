@@ -315,8 +315,17 @@ fn process_cell(
 
         let point_indices = grid.point_indices();
         let mut stage = PackedStage::Chunk0;
+        #[cfg(feature = "timing")]
+        let mut recorded_chunk0_overfetch = false;
 
         loop {
+            #[cfg(feature = "timing")]
+            if !recorded_chunk0_overfetch && stage == PackedStage::Chunk0 {
+                let chunk0_len = packed_scratch.chunk0_len(qi);
+                cell_sub.add_packed_knn_chunk0_overfetch_sample(incoming_edgechecks, k_cur, chunk0_len);
+                recorded_chunk0_overfetch = true;
+            }
+
             packed_chunk.clear();
             packed_chunk.resize(k_cur, u32::MAX);
 
@@ -363,13 +372,22 @@ fn process_cell(
                 let dot = points[i].dot(neighbor);
                 worst_cos = worst_cos.min(dot);
 
-                if builder.is_bounded()
-                    && termination.should_check(cell_neighbors_processed)
-                    && pos + 1 < chunk.n
-                {
-                    let next_slot = packed_chunk[pos + 1];
-                    let next = point_indices[next_slot as usize] as usize;
-                    if next != i && builder.can_terminate(points[i].dot(points[next])) {
+                // Packed-kNN: candidates are already sorted by dot product, so we have a tight
+                // bound for "best unseen" at each step (next in the sorted list, or `unseen_bound`
+                // once we reach the end of the current chunk). This makes it cheap and effective
+                // to check termination eagerly once the polygon is bounded, without relying on the
+                // global cadence (`TerminationConfig`).
+                if builder.is_bounded() {
+                    let bound = if pos + 1 < chunk.n {
+                        let next_slot = packed_chunk[pos + 1];
+                        let next = point_indices[next_slot as usize] as usize;
+                        // Even if this is `i` (self) or a duplicate, its dot is still an upper
+                        // bound on any remaining candidate.
+                        points[i].dot(points[next])
+                    } else {
+                        chunk.unseen_bound
+                    };
+                    if builder.can_terminate(bound) {
                         terminated = true;
                         break;
                     }
