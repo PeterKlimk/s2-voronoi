@@ -5,7 +5,8 @@ use crate::knn_clipping::cell_builder::{CellFailure, VertexData};
 use glam::{DVec3, Vec3};
 use std::hint::select_unpredictable;
 
-#[inline(always)]
+#[cfg_attr(feature = "profiling", inline(never))]
+#[cfg_attr(not(feature = "profiling"), inline(always))]
 fn cswap_u32(a: &mut u32, b: &mut u32) {
     let va = *a;
     let vb = *b;
@@ -14,7 +15,8 @@ fn cswap_u32(a: &mut u32, b: &mut u32) {
     *b = select_unpredictable(cond, vb, va);
 }
 
-#[inline(always)]
+#[cfg_attr(feature = "profiling", inline(never))]
+#[cfg_attr(not(feature = "profiling"), inline(always))]
 fn sort3_u32(a: u32, b: u32, c: u32) -> [u32; 3] {
     // Sorting network (3 elements): (0,1) (1,2) (0,1)
     let mut x0 = a;
@@ -47,7 +49,8 @@ impl TangentBasis {
         TangentBasis { t1, t2, g }
     }
 
-    #[inline]
+    #[cfg_attr(feature = "profiling", inline(never))]
+    #[cfg_attr(not(feature = "profiling"), inline)]
     pub fn plane_to_line(&self, n: DVec3) -> (f64, f64, f64) {
         (n.dot(self.t1), n.dot(self.t2), n.dot(self.g))
     }
@@ -102,6 +105,7 @@ impl Topo2DBuilder {
         }
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub fn reset(&mut self, generator_idx: usize, generator: Vec3) {
         let gen64 =
             DVec3::new(generator.x as f64, generator.y as f64, generator.z as f64).normalize();
@@ -128,6 +132,7 @@ impl Topo2DBuilder {
             .map(|_| ())
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub fn clip_with_slot_result(
         &mut self,
         neighbor_idx: usize,
@@ -189,6 +194,7 @@ impl Topo2DBuilder {
         Ok(clip_result)
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub fn clip_with_slot_edgecheck(
         &mut self,
         neighbor_idx: usize,
@@ -293,6 +299,7 @@ impl Topo2DBuilder {
         self.neighbor_indices.iter().copied()
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
         if !self.is_bounded() || self.vertex_count() < 3 {
             return false;
@@ -315,6 +322,7 @@ impl Topo2DBuilder {
         (max_unseen_dot_bound as f64) < self.term_threshold_cache
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub fn to_vertex_data_full(
         &self,
         out: &mut Vec<VertexData>,

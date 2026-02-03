@@ -35,6 +35,7 @@ impl EdgeScratch {
         }
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     fn collect_and_resolve(
         &mut self,
         cell_idx: u32,
@@ -68,6 +69,7 @@ impl EdgeScratch {
         );
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
     fn emit(
         &mut self,
         shard: &mut ShardState,
