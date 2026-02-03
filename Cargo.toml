@@ -18,6 +18,7 @@ microbench = [] # Enable internal microbench harnesses (nightly `test` crate)
 qhull = ["qhull-enhanced"]  # Convex hull backend (test/bench only)
 simd_clip = [] # Use SIMD small-N clippers in main clipper dispatch
 fma = [] # Prefer fused multiply-add via mul_add (may change results; can be slow without HW FMA)
+packed_knn_sort_small = [] # Use crate::sort::sort_small for small packed-kNN sorts
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -52,6 +53,10 @@ required-features = ["microbench"]
 [[bin]]
 name = "microbench_sort"
 path = "src/bin/microbench_sort.rs"
+
+[[bin]]
+name = "microbench_packed_select"
+path = "src/bin/microbench_packed_select.rs"
 
 [profile.checked]
 inherits = "release"

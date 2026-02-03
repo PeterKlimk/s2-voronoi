@@ -5,6 +5,8 @@
 
 use super::{cell_to_face_ij, CubeMapGrid};
 use crate::fp;
+#[cfg(feature = "packed_knn_sort_small")]
+use crate::sort::sort_small as sort_small_u64;
 use glam::Vec3;
 use std::simd::f32x8;
 use std::simd::{cmp::SimdPartialOrd, Mask};
@@ -1011,7 +1013,7 @@ impl PackedKnnCellScratch {
                 if remaining.len() <= 2 * n_target {
                     let emit = remaining.len().min(n_target);
                     let sort_len = remaining.len();
-                    remaining.sort_unstable();
+                    sort_keys_u64(remaining);
                     timings.add_select_sort_sized(t.lap(), sort_len);
                     for (dst, key) in out[..emit].iter_mut().zip(remaining.iter()) {
                         *dst = key_to_idx(*key);
@@ -1039,7 +1041,7 @@ impl PackedKnnCellScratch {
                     remaining.select_nth_unstable(n - 1);
                     timings.add_select_partition(t.lap());
                 }
-                remaining[..n].sort_unstable();
+                sort_keys_u64(&mut remaining[..n]);
                 timings.add_select_sort_sized(t.lap(), n);
                 for (dst, key) in out[..n].iter_mut().zip(remaining[..n].iter()) {
                     *dst = key_to_idx(*key);
@@ -1078,7 +1080,7 @@ impl PackedKnnCellScratch {
                     remaining.select_nth_unstable(n - 1);
                     timings.add_select_partition(t.lap());
                 }
-                remaining[..n].sort_unstable();
+                sort_keys_u64(&mut remaining[..n]);
                 timings.add_select_sort_sized(t.lap(), n);
                 for (dst, key) in out[..n].iter_mut().zip(remaining[..n].iter()) {
                     *dst = key_to_idx(*key);
@@ -1133,10 +1135,26 @@ fn f32_to_ordered_u32(val: f32) -> u32 {
 
 #[inline(always)]
 fn make_desc_key(dot: f32, idx: u32) -> u64 {
+    // Sorting networks use `u64::MAX` as a padding sentinel (via `sort_small`). For finite floats,
+    // `f32_to_ordered_u32` is never 0, so `desc` is never all-ones and the full key can never be
+    // `u64::MAX` (even if `idx == u32::MAX`).
+    debug_assert!(dot.is_finite());
     // Bigger dot = smaller key, so ascending sort gives descending dot.
     let ord = f32_to_ordered_u32(dot);
     let desc = !ord;
     ((desc as u64) << 32) | (idx as u64)
+}
+
+#[inline(always)]
+fn sort_keys_u64(keys: &mut [u64]) {
+    #[cfg(feature = "packed_knn_sort_small")]
+    {
+        if keys.len() <= 35 {
+            sort_small_u64(keys);
+            return;
+        }
+    }
+    keys.sort_unstable();
 }
 
 #[inline(always)]
