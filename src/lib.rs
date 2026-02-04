@@ -126,8 +126,8 @@ pub fn compute_with<P: UnitVec3Like>(
         .collect();
 
     // Call knn_clipping backend
-    Ok(knn_clipping::compute_voronoi_knn_clipping_with_config(
-        &vec3_points,
+    Ok(knn_clipping::compute_voronoi_knn_clipping_with_config_owned(
+        vec3_points,
         &config,
     ))
 }

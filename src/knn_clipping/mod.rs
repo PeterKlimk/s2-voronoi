@@ -28,7 +28,7 @@ pub(crate) mod topo2d;
 
 // Re-exports (internal use)
 #[allow(unused_imports)]
-pub use compute::compute_voronoi_knn_clipping_with_config;
+pub use compute::compute_voronoi_knn_clipping_with_config_owned;
 pub use preprocess::merge_close_points;
 
 pub type MergeResult = preprocess::MergeResult;

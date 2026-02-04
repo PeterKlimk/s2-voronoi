@@ -13,8 +13,8 @@ use crate::cube_grid::CubeMapGrid;
 use crate::cube_grid::CubeMapGridBuildTimings;
 use crate::VoronoiConfig;
 
-pub(super) fn compute_voronoi_knn_clipping_core(
-    points: &[Vec3],
+pub(super) fn compute_voronoi_knn_clipping_owned_core(
+    points: Vec<Vec3>,
     termination: TerminationConfig,
     preprocess_threshold: Option<f32>,
     skip_preprocess: bool,
@@ -23,41 +23,48 @@ pub(super) fn compute_voronoi_knn_clipping_core(
 
     // Preprocessing: merge close points
     let t = Timer::start();
-    let (effective_points, merge_result): (Vec<Vec3>, Option<MergeResult>) = if skip_preprocess {
-        (points.to_vec(), None)
-    } else {
-        let threshold = preprocess_threshold
-            .unwrap_or_else(|| constants::merge_threshold_for_density(points.len()));
-        let mut result = merge_close_points(points, threshold);
-        if result.num_merged > 0 {
-            let pts = std::mem::take(&mut result.effective_points);
-            (pts, Some(result))
+    let (effective_points, merge_result): (Option<Vec<Vec3>>, Option<MergeResult>) =
+        if skip_preprocess {
+            (None, None)
         } else {
-            // No merges: reuse the computed points and drop the large merge result.
-            (result.effective_points, None)
-        }
-    };
+            let threshold = preprocess_threshold
+                .unwrap_or_else(|| constants::merge_threshold_for_density(points.len()));
+            let mut result = merge_close_points(&points, threshold);
+            if result.num_merged > 0 {
+                let pts = std::mem::take(&mut result.effective_points);
+                (Some(pts), Some(result))
+            } else {
+                // No merges: use the original owned points (avoid an extra full copy).
+                (None, None)
+            }
+        };
     tb.set_preprocess(t.elapsed());
     let needs_remap = merge_result.as_ref().is_some_and(|r| r.num_merged > 0);
 
+    let effective_points_ref: &[Vec3] = match &effective_points {
+        Some(v) => v.as_slice(),
+        None => points.as_slice(),
+    };
+
     // Build cube-map grid on effective points (this is the timed grid build).
     let t = Timer::start();
-    let n = effective_points.len();
+    let n = effective_points_ref.len();
     let target = KNN_GRID_TARGET_DENSITY.max(1.0);
     let res = ((n as f64 / (6.0 * target)).sqrt() as usize).max(4);
     #[cfg(feature = "timing")]
     let mut grid_build_timings = CubeMapGridBuildTimings::default();
     #[cfg(feature = "timing")]
-    let grid = CubeMapGrid::new_with_build_timings(&effective_points, res, &mut grid_build_timings);
+    let grid =
+        CubeMapGrid::new_with_build_timings(effective_points_ref, res, &mut grid_build_timings);
     #[cfg(not(feature = "timing"))]
-    let grid = CubeMapGrid::new(&effective_points, res);
+    let grid = CubeMapGrid::new(effective_points_ref, res);
     tb.set_knn_build(t.elapsed());
     #[cfg(feature = "timing")]
     tb.set_knn_build_sub(grid_build_timings.clone());
 
     // Build cells using sharded live dedup
     let t = Timer::start();
-    let sharded = live_dedup::build_cells_sharded_live_dedup(&effective_points, &grid, termination);
+    let sharded = live_dedup::build_cells_sharded_live_dedup(effective_points_ref, &grid, termination);
 
     #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]
     tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
@@ -116,26 +123,25 @@ pub(super) fn compute_voronoi_knn_clipping_core(
         (eff_cells, eff_cell_indices)
     };
 
-    let voronoi =
-        crate::SphericalVoronoi::from_raw_parts(points.to_vec(), all_vertices, cells, cell_indices);
+    let voronoi = crate::SphericalVoronoi::from_raw_parts(points, all_vertices, cells, cell_indices);
     tb.set_assemble(t.elapsed());
 
     // Report timing if feature enabled
     let timings = tb.finish();
-    timings.report(points.len());
+    timings.report(voronoi.num_cells());
 
     voronoi
 }
 
-pub fn compute_voronoi_knn_clipping_with_config(
-    points: &[Vec3],
+pub fn compute_voronoi_knn_clipping_with_config_owned(
+    points: Vec<Vec3>,
     config: &VoronoiConfig,
 ) -> crate::SphericalVoronoi {
     let termination = TerminationConfig {
         max_k_cap: config.termination_max_k,
         ..Default::default()
     };
-    compute_voronoi_knn_clipping_core(
+    compute_voronoi_knn_clipping_owned_core(
         points,
         termination,
         config.preprocess_threshold,
