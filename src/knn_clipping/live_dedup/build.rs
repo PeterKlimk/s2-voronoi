@@ -317,25 +317,8 @@ fn process_cell(
 
         let point_indices = grid.point_indices();
         let mut stage = PackedStage::Chunk0;
-        #[cfg(feature = "timing")]
-        let mut recorded_chunk0_overfetch = false;
-        #[cfg(feature = "timing")]
-        let mut recorded_chunk0_term_excess = false;
-        #[cfg(feature = "timing")]
-        let mut chunk0_first_emitted = 0usize;
 
         loop {
-            #[cfg(feature = "timing")]
-            if !recorded_chunk0_overfetch && stage == PackedStage::Chunk0 {
-                let chunk0_len = packed_scratch.chunk0_len(qi);
-                cell_sub.add_packed_knn_chunk0_overfetch_sample(
-                    incoming_edgechecks,
-                    k_cur,
-                    chunk0_len,
-                );
-                recorded_chunk0_overfetch = true;
-            }
-
             packed_chunk.clear();
             packed_chunk.resize(k_cur, u32::MAX);
 
@@ -360,24 +343,9 @@ fn process_cell(
                 break;
             };
 
-            #[cfg(feature = "timing")]
-            let is_first_chunk0 = stage == PackedStage::Chunk0 && !recorded_chunk0_term_excess;
-            #[cfg(feature = "timing")]
-            if is_first_chunk0 {
-                chunk0_first_emitted = chunk.n;
-            }
-
             let t_clip = crate::knn_clipping::timing::Timer::start();
-            #[cfg(feature = "timing")]
-            let mut used_slots_in_chunk = 0usize;
-            #[cfg(feature = "timing")]
-            let mut terminated_in_chunk = false;
             let mut term_ready = false;
             for pos in 0..chunk.n {
-                #[cfg(feature = "timing")]
-                {
-                    used_slots_in_chunk = pos + 1;
-                }
                 let neighbor_slot = packed_chunk[pos];
                 let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
                 if neighbor_idx == i {
@@ -423,10 +391,6 @@ fn process_cell(
                     };
                     if builder.can_terminate(bound) {
                         terminated = true;
-                        #[cfg(feature = "timing")]
-                        {
-                            terminated_in_chunk = true;
-                        }
                         break;
                     }
                 }
@@ -435,17 +399,6 @@ fn process_cell(
                 worst_cos = worst_cos.min(dot);
             }
             cell_sub.add_clip(t_clip.elapsed());
-
-            #[cfg(feature = "timing")]
-            if is_first_chunk0 {
-                cell_sub.add_packed_knn_chunk0_termination_excess_sample(
-                    incoming_edgechecks,
-                    chunk0_first_emitted,
-                    used_slots_in_chunk,
-                    terminated_in_chunk,
-                );
-                recorded_chunk0_term_excess = true;
-            }
 
             if terminated || builder.is_failed() {
                 break;
@@ -1027,32 +980,6 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                         match status {
                             PackedKnnCellStatus::Ok => {
-                                #[cfg(feature = "timing")]
-                                {
-                                    let planes_used = {
-                                        let res = grid.res();
-                                        if res < 3 {
-                                            false
-                                        } else {
-                                            let (_, iu, iv) = crate::cube_grid::cell_to_face_ij(
-                                                cell as usize,
-                                                res,
-                                            );
-                                            iu >= 1 && iv >= 1 && iu + 1 < res && iv + 1 < res
-                                        }
-                                    };
-                                    let q = u64::try_from(queries.len()).unwrap_or(0);
-                                    sub_accum.add_packed_security_queries(
-                                        if planes_used { q } else { 0 },
-                                        if planes_used { 0 } else { q },
-                                    );
-                                    let tail_possible = (0..queries.len())
-                                        .filter(|&qi| packed_scratch.tail_possible(qi))
-                                        .count()
-                                        as u64;
-                                    sub_accum.add_packed_tail_possible_queries(q, tail_possible);
-                                    sub_accum.add_packed_groups(1);
-                                }
                                 for (offset, &global) in
                                     my_generators[group_start..cursor].iter().enumerate()
                                 {
@@ -1106,37 +1033,7 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                         #[cfg(feature = "timing")]
                         {
-                            let total = packed_timings.total();
-                            sub_accum.add_packed_knn(total);
-
-                            sub_accum.add_packed_knn_setup(packed_timings.setup);
-                            sub_accum.add_packed_knn_query_cache(packed_timings.query_cache);
-                            sub_accum.add_packed_knn_security_thresholds(
-                                packed_timings.security_thresholds,
-                            );
-                            sub_accum.add_packed_knn_center_pass(packed_timings.center_pass);
-                            sub_accum
-                                .add_packed_knn_ring_thresholds(packed_timings.ring_thresholds);
-                            sub_accum.add_packed_knn_ring_pass(packed_timings.ring_pass);
-                            sub_accum.add_packed_knn_ring_fallback(packed_timings.ring_fallback);
-                            sub_accum.add_packed_tail_build_groups(packed_timings.tail_builds);
-                            sub_accum.add_packed_knn_select_prep(packed_timings.select_prep);
-                            sub_accum
-                                .add_packed_knn_select_query_prep(packed_timings.select_query_prep);
-                            sub_accum
-                                .add_packed_knn_select_partition(packed_timings.select_partition);
-                            sub_accum.add_packed_knn_select_sort(packed_timings.select_sort);
-                            sub_accum.add_packed_knn_sort_len_hist(
-                                &packed_timings.sort_len_counts,
-                                &packed_timings.sort_len_nanos,
-                            );
-                            sub_accum.add_packed_knn_sort_len_exact_hist(
-                                &packed_timings.sort_len_exact_counts,
-                                &packed_timings.sort_len_exact_nanos,
-                            );
-                            sub_accum.add_packed_knn_select_scatter(packed_timings.select_scatter);
-
-                            // `packed_knn` is defined as the sum of packed subcomponents.
+                            sub_accum.add_packed_knn(packed_timings.total());
                         }
                         #[cfg(not(feature = "timing"))]
                         sub_accum.add_packed_knn(packed_elapsed);

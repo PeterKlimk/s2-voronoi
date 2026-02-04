@@ -345,14 +345,6 @@ pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::
 
     #[cfg(feature = "timing")]
     let sub_phases = DedupSubPhases {
-        overflow_collect: overflow_collect_time,
-        overflow_flush: overflow_flush_time,
-        edge_checks_overflow: edge_checks_overflow_time,
-        edge_checks_overflow_sort: edge_checks_overflow_sort_time,
-        edge_checks_overflow_match: edge_checks_overflow_match_time,
-        deferred_fallback: deferred_fallback_time,
-        concat_vertices: concat_vertices_time,
-        emit_cells: emit_cells_time,
         triplet_keys: finals.iter().map(|s| s.triplet_keys).sum(),
         support_keys: finals.iter().map(|s| s.support_keys).sum(),
         bad_edges_count: bad_edges.len() as u64,

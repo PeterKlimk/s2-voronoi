@@ -18,8 +18,8 @@
 //!   pipeline we don't know the termination point.
 //!
 //! Run (example):
-//!   cargo run --release --bin microbench_packed_select -- --lens=18,20,22 --target-ms=500
-//!   cargo run --release --bin microbench_packed_select -- --algo=pivot --pivot-emit-max=16
+//!   cargo run --release --features microbench --bin microbench_packed_select -- --lens=18,20,22 --target-ms=500
+//!   cargo run --release --features microbench --bin microbench_packed_select -- --algo=pivot --pivot-emit-max=16
 
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;

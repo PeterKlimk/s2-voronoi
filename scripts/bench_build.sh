@@ -17,7 +17,7 @@ TMP_DIR="/tmp/bench_compare"
 
 # Build config (recorded in manifest).
 USE_NATIVE=true
-FEATURES=""
+FEATURES="tools"
 EXTRA_RUSTFLAGS=""
 
 # Parse arguments - collect commits and handle --chain
@@ -78,7 +78,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Build options:"
             echo "  --native/--no-native       Toggle -C target-cpu=native (default: on)"
-            echo "  --features \"a,b\"           Cargo features to enable (default: none)"
+            echo "  --features \"a,b\"           Cargo features to enable (default: tools)"
             echo "  --timing                   Shorthand for --features timing"
             echo "  --rustflags \"...\"          Extra RUSTFLAGS (appended)"
             echo ""
@@ -91,6 +91,12 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# bench_voronoi is behind the `tools` feature; keep scripts working even if a user passes
+# `--features timing` instead of `--timing`.
+if [[ -n "${FEATURES}" && "${FEATURES}" != *tools* ]]; then
+    FEATURES="${FEATURES},tools"
+fi
 
 # Default to HEAD if no commits specified
 if [[ ${#COMMITS[@]} -eq 0 ]]; then

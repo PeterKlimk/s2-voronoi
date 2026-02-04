@@ -14,17 +14,18 @@ parallel = ["rayon"]
 glam = []  # Enable UnitVec3Like impl for glam::Vec3
 timing = []  # Enable detailed timing instrumentation
 profiling = [] # Profiling helpers (e.g. disable inlining on hot functions)
-microbench = [] # Enable internal microbench harnesses (nightly `test` crate)
+microbench = ["dep:rand", "dep:rand_chacha"] # Enable internal microbench harnesses (nightly `test` crate)
 qhull = ["qhull-enhanced"]  # Convex hull backend (test/bench only)
 simd_clip = [] # Use SIMD small-N clippers in main clipper dispatch
 fma = [] # Prefer fused multiply-add via mul_add (may change results; can be slow without HW FMA)
 packed_knn_sort_small = [] # Use crate::sort::sort_small for small packed-kNN sorts
+tools = ["dep:clap", "dep:kiddo", "dep:rand", "dep:rand_chacha"] # Benchmark/utility binaries
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
-kiddo = "4"
-rand = "0.8"
-rand_chacha = "0.3"
+clap = { version = "4", features = ["derive"], optional = true }
+kiddo = { version = "4", optional = true }
+rand = { version = "0.8", optional = true }
+rand_chacha = { version = "0.3", optional = true }
 # Math (always internal dependency)
 glam = { version = "0.29", features = ["bytemuck"] }
 bytemuck = { version = "1.19", features = ["derive"] }
@@ -39,6 +40,18 @@ rayon = { version = "1.10", optional = true }
 qhull-enhanced = { version = "0.1", optional = true }
 
 [dev-dependencies]
+rand = "0.8"
+rand_chacha = "0.3"
+
+[[bin]]
+name = "bench_voronoi"
+path = "src/bin/bench_voronoi.rs"
+required-features = ["tools"]
+
+[[bin]]
+name = "bench_bins"
+path = "src/bin/bench_bins.rs"
+required-features = ["tools", "parallel"]
 
 [[bin]]
 name = "microbench_clip"
@@ -51,12 +64,9 @@ path = "src/bin/microbench_batch.rs"
 required-features = ["microbench"]
 
 [[bin]]
-name = "microbench_sort"
-path = "src/bin/microbench_sort.rs"
-
-[[bin]]
 name = "microbench_packed_select"
 path = "src/bin/microbench_packed_select.rs"
+required-features = ["microbench"]
 
 [profile.checked]
 inherits = "release"

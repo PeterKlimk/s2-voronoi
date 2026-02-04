@@ -18,10 +18,10 @@ cargo fmt
 
 ```bash
 # Large-scale benchmark driver
-cargo run --release --bin bench_voronoi -- 100k 500k 1m
+cargo run --release --features tools --bin bench_voronoi -- 100k 500k 1m
 
 # Detailed sub-phase timing
-S2_VORONOI_TIMING_KV=1 cargo run --release --features timing --bin bench_voronoi -- 500k --no-preprocess
+S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 500k --no-preprocess
 
 # Inter-commit perf comparisons (build then run interleaved)
 ./scripts/bench_build.sh --chain 6
@@ -33,8 +33,6 @@ S2_VORONOI_TIMING_KV=1 cargo run --release --features timing --bin bench_voronoi
 - `RAYON_NUM_THREADS=1`: force single-threaded mode (useful for stable perf comparisons).
 - `S2_BIN_COUNT=<n>`: override sharded bin count (defaults to ~2x threads).
 - `S2_VORONOI_TIMING_KV=1`: emit machine-readable `TIMING_KV ...` output (requires `timing`).
-- `S2_VORONOI_TIMING_PK_SORT_HIST=1`: print a time-weighted histogram of packed-kNN sort sizes (`pk_sort`).
-- `S2_VORONOI_TIMING_PK_SORT_PER_N=1`: print a time-weighted histogram of packed-kNN sort sizes by exact `n`.
 
 ## Crate Overview
 

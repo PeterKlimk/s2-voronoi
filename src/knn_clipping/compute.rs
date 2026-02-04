@@ -28,13 +28,14 @@ pub(super) fn compute_voronoi_knn_clipping_core(
     } else {
         let threshold = preprocess_threshold
             .unwrap_or_else(|| constants::merge_threshold_for_density(points.len()));
-        let result = merge_close_points(points, threshold);
-        let pts = if result.num_merged > 0 {
-            result.effective_points.clone()
+        let mut result = merge_close_points(points, threshold);
+        if result.num_merged > 0 {
+            let pts = std::mem::take(&mut result.effective_points);
+            (pts, Some(result))
         } else {
-            points.to_vec()
-        };
-        (pts, Some(result))
+            // No merges: reuse the computed points and drop the large merge result.
+            (result.effective_points, None)
+        }
     };
     tb.set_preprocess(t.elapsed());
     let needs_remap = merge_result.as_ref().is_some_and(|r| r.num_merged > 0);

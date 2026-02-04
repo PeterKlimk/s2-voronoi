@@ -1,6 +1,6 @@
 //! Benchmark s2-voronoi at large scales.
 //!
-//! Run with: cargo run --release --bin bench_voronoi
+//! Run with: cargo run --release --features tools --bin bench_voronoi
 //!
 //! Usage:
 //!   bench_voronoi              Run default size (100k)
@@ -8,7 +8,8 @@
 //!   bench_voronoi --lloyd      Use Lloyd-relaxed points
 //!   bench_voronoi -n 10        Run 10 iterations (for profiling)
 //!
-//! For detailed sub-phase timing, build with: cargo run --release --features timing --bin bench_voronoi
+//! For detailed sub-phase timing, build with:
+//!   cargo run --release --features tools,timing --bin bench_voronoi
 
 use clap::Parser;
 use glam::Vec3;

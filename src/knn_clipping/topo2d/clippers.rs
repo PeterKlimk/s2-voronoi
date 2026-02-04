@@ -365,12 +365,10 @@ fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
             let v = $v;
             let vp = $vp;
             let ep = $ep;
-            unsafe {
-                *out.us.get_unchecked_mut(out_len) = u;
-                *out.vs.get_unchecked_mut(out_len) = v;
-                *out.vertex_planes.get_unchecked_mut(out_len) = vp;
-                *out.edge_planes.get_unchecked_mut(out_len) = ep;
-            }
+            *out.us.get_unchecked_mut(out_len) = u;
+            *out.vs.get_unchecked_mut(out_len) = v;
+            *out.vertex_planes.get_unchecked_mut(out_len) = vp;
+            *out.edge_planes.get_unchecked_mut(out_len) = ep;
             out_len += 1;
             let r2 = r2_of(u, v);
             if r2 > max_r2 {
@@ -511,12 +509,10 @@ fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
             let v = $v;
             let vp = $vp;
             let ep = $ep;
-            unsafe {
-                *out.us.get_unchecked_mut(out_len) = u;
-                *out.vs.get_unchecked_mut(out_len) = v;
-                *out.vertex_planes.get_unchecked_mut(out_len) = vp;
-                *out.edge_planes.get_unchecked_mut(out_len) = ep;
-            }
+            *out.us.get_unchecked_mut(out_len) = u;
+            *out.vs.get_unchecked_mut(out_len) = v;
+            *out.vertex_planes.get_unchecked_mut(out_len) = vp;
+            *out.edge_planes.get_unchecked_mut(out_len) = ep;
             out_len += 1;
             let r2 = r2_of(u, v);
             if r2 > max_r2 {

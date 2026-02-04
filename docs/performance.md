@@ -10,20 +10,19 @@ coordination happens only during vertex deduplication.
 - `--features qhull`: enables the convex hull backend for comparisons (slow).
 - `--features simd_clip`: uses SIMD small-N clippers in the main dispatch.
 - `--features fma`: prefers `mul_add` (can change results; may be slower on some CPUs).
+- `--features tools`: enables benchmark/utility binaries (they are not built by default).
 
 ## Environment knobs
 
 - `RAYON_NUM_THREADS=1`: force single-threaded mode (useful for stable perf comparisons).
 - `S2_BIN_COUNT=<n>`: override bin/shard count (defaults to ~2x threads).
 - `S2_VORONOI_TIMING_KV=1`: enable `TIMING_KV ...` output (requires `timing` feature).
-- `S2_VORONOI_TIMING_PK_SORT_HIST=1`: print a time-weighted histogram of packed-kNN sort sizes (`pk_sort`).
-- `S2_VORONOI_TIMING_PK_SORT_PER_N=1`: print a time-weighted histogram of packed-kNN sort sizes by exact `n`.
 
 ## Bench binaries
 
-- `cargo run --release --bin bench_voronoi -- 100k 500k 1m`
-- `cargo run --release --features timing --bin bench_voronoi -- 500k --no-preprocess`
-- `cargo run --release --features qhull --bin bench_voronoi -- 50k --validate`
+- `cargo run --release --features tools --bin bench_voronoi -- 100k 500k 1m`
+- `cargo run --release --features tools,timing --bin bench_voronoi -- 500k --no-preprocess`
+- `cargo run --release --features tools,qhull --bin bench_voronoi -- 50k --validate`
 
 ## Comparison scripts
 
