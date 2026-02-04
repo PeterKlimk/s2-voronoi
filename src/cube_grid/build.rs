@@ -38,6 +38,14 @@ use super::{
     point_to_face_uv, st_to_uv, step_one, CubeMapGrid, CubeMapGridBuildTimings, EdgeDir, RING2_MAX,
 };
 
+struct CellBounds {
+    centers: Vec<Vec3>,
+    cos_radius: Vec<f32>,
+    sin_radius: Vec<f32>,
+    u_line_planes: Vec<Vec3>,
+    v_line_planes: Vec<Vec3>,
+}
+
 impl CubeMapGrid {
     /// Build a cube-map grid from points on unit sphere.
     ///
@@ -323,8 +331,7 @@ impl CubeMapGrid {
 
         #[cfg(feature = "timing")]
         let t = std::time::Instant::now();
-        let (cell_centers, cell_cos_radius, cell_sin_radius, u_line_planes, v_line_planes) =
-            Self::compute_cell_bounds(res);
+        let bounds = Self::compute_cell_bounds(res);
         #[cfg(feature = "timing")]
         if let Some(timings) = timings.as_deref_mut() {
             timings.cell_bounds += t.elapsed();
@@ -353,11 +360,11 @@ impl CubeMapGrid {
             neighbors,
             ring2,
             ring2_lens,
-            cell_centers,
-            cell_cos_radius,
-            cell_sin_radius,
-            u_line_planes,
-            v_line_planes,
+            cell_centers: bounds.centers,
+            cell_cos_radius: bounds.cos_radius,
+            cell_sin_radius: bounds.sin_radius,
+            u_line_planes: bounds.u_line_planes,
+            v_line_planes: bounds.v_line_planes,
             cell_points_x,
             cell_points_y,
             cell_points_z,
@@ -568,7 +575,7 @@ impl CubeMapGrid {
         (ring2, ring2_lens)
     }
 
-    fn compute_cell_bounds(res: usize) -> (Vec<Vec3>, Vec<f32>, Vec<f32>, Vec<Vec3>, Vec<Vec3>) {
+    fn compute_cell_bounds(res: usize) -> CellBounds {
         let num_cells = 6 * res * res;
 
         // Precompute ST→UV transform for grid lines and cell centers.
@@ -739,6 +746,12 @@ impl CubeMapGrid {
             sin_r.push(sin);
         }
 
-        (centers, cos_r, sin_r, u_planes, v_planes)
+        CellBounds {
+            centers,
+            cos_radius: cos_r,
+            sin_radius: sin_r,
+            u_line_planes: u_planes,
+            v_line_planes: v_planes,
+        }
     }
 }

@@ -15,6 +15,8 @@ mod build;
 pub mod packed_knn;
 mod query;
 
+pub(crate) use query::DirectedCtx;
+
 use glam::Vec3;
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
