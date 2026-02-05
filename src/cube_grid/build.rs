@@ -373,7 +373,7 @@ impl CubeMapGrid {
     }
 
     /// Compute 3×3 neighborhood for all cells.
-    fn compute_all_neighbors(res: usize) -> Vec<u32> {
+    fn compute_all_neighbors(res: usize) -> Vec<[u32; 9]> {
         let num_cells = 6 * res * res;
 
         // Compute each cell's 9 neighbors in parallel.
@@ -446,15 +446,13 @@ impl CubeMapGrid {
             })
             .collect();
 
-        // Flatten into contiguous Vec<u32>.
-        let mut neighbors = Vec::with_capacity(num_cells * 9);
-        for arr in results {
-            neighbors.extend_from_slice(&arr);
-        }
-        neighbors
+        results
     }
 
-    fn compute_ring2(res: usize, neighbors: &[u32]) -> (Vec<[u32; RING2_MAX]>, Vec<u8>) {
+    fn compute_ring2(
+        res: usize,
+        neighbors: &[[u32; 9]],
+    ) -> (Vec<[u32; RING2_MAX]>, Vec<u8>) {
         let num_cells = 6 * res * res;
 
         #[inline(always)]
@@ -472,9 +470,7 @@ impl CubeMapGrid {
         // Compute each cell's ring-2 in parallel.
         let results: Vec<([u32; RING2_MAX], u8)> = maybe_par_range!(0..num_cells)
             .map(|cell| {
-                let base = cell * 9;
-                let near = &neighbors[base..base + 9];
-                debug_assert_eq!(near.len(), 9);
+                let near = neighbors[cell];
 
                 // Interior cells (>=2 away from any edge) have a fixed ring-2 pattern on the face.
                 let (face, iu, iv) = cell_to_face_ij(cell, res);
@@ -519,14 +515,13 @@ impl CubeMapGrid {
 
                 let mut ring = [u32::MAX; RING2_MAX];
                 let mut ring_len = 0usize;
-                for &n1_cell in near {
+                for n1_cell in near {
                     if n1_cell == u32::MAX {
                         continue;
                     }
                     let n1_idx = n1_cell as usize;
-                    let b1 = n1_idx * 9;
-                    let near_of_n1 = &neighbors[b1..b1 + 9];
-                    for &cand in near_of_n1 {
+                    let near_of_n1 = neighbors[n1_idx];
+                    for &cand in &near_of_n1 {
                         if cand == u32::MAX {
                             continue;
                         }

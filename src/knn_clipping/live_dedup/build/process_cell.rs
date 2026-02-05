@@ -245,6 +245,14 @@ pub(super) fn process_cell(
             k_cur = k1;
         }
     }
+    // Packed path emits all "safe" candidates with dot > packed_security.
+    // When we hand off to resumable kNN, skip strictly-better dots and only
+    // allow equals to avoid tie-order dependence.
+    let packed_resume_dot_cutoff = if did_packed && packed_safe_exhausted {
+        Some(packed_security)
+    } else {
+        None
+    };
 
     // === Phase 4: Resumable kNN Scan ===
     let resume_k = crate::knn_clipping::KNN_RESUME_K.min(max_neighbors);
@@ -271,19 +279,15 @@ pub(super) fn process_cell(
         let point_indices = grid.point_indices();
         for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
             let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
-            if did_packed && builder.has_neighbor(neighbor_idx) {
-                continue;
+            let dot = points[i].dot(points[neighbor_idx]);
+            if let Some(cutoff) = packed_resume_dot_cutoff {
+                if dot > cutoff {
+                    continue;
+                }
             }
             if !attempted_neighbors.insert(neighbor_idx) {
                 continue;
             }
-            #[cfg(debug_assertions)]
-            debug_assert!(
-                !builder.has_neighbor(neighbor_idx),
-                "kNN resume returned duplicate neighbor {} for cell {}",
-                neighbor_idx,
-                i
-            );
             let neighbor = points[neighbor_idx];
             if builder
                 .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
@@ -292,7 +296,6 @@ pub(super) fn process_cell(
                 break;
             }
             cell_neighbors_processed += 1;
-            let dot = points[i].dot(neighbor);
             worst_cos = worst_cos.min(dot);
 
             if builder.is_bounded()
@@ -351,8 +354,11 @@ pub(super) fn process_cell(
             let point_indices = grid.point_indices();
             for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
                 let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
-                if builder.has_neighbor(neighbor_idx) {
-                    continue;
+                let dot = points[i].dot(points[neighbor_idx]);
+                if let Some(cutoff) = packed_resume_dot_cutoff {
+                    if dot > cutoff {
+                        continue;
+                    }
                 }
                 if !attempted_neighbors.insert(neighbor_idx) {
                     continue;
@@ -365,7 +371,6 @@ pub(super) fn process_cell(
                     break;
                 }
                 cell_neighbors_processed += 1;
-                let dot = points[i].dot(neighbor);
                 worst_cos = worst_cos.min(dot);
 
                 if builder.is_bounded()
@@ -460,8 +465,11 @@ pub(super) fn process_cell(
             let point_indices = grid.point_indices();
             for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
                 let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
-                if builder.has_neighbor(neighbor_idx) {
-                    continue;
+                let dot = points[i].dot(points[neighbor_idx]);
+                if let Some(cutoff) = packed_resume_dot_cutoff {
+                    if dot > cutoff {
+                        continue;
+                    }
                 }
                 if !attempted_neighbors.insert(neighbor_idx) {
                     continue;
@@ -474,7 +482,6 @@ pub(super) fn process_cell(
                     break;
                 }
                 cell_neighbors_processed += 1;
-                let dot = points[i].dot(neighbor);
                 worst_cos = worst_cos.min(dot);
 
                 if termination.should_check(cell_neighbors_processed)

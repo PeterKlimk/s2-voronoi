@@ -132,8 +132,8 @@ pub struct CubeMapGrid {
     point_cells: Vec<u32>,
     /// Precomputed 3×3 neighborhood for each cell.
     /// 9 entries per cell (self + 8 neighbors).
-    /// Length: 6 * res² * 9
-    neighbors: Vec<u32>,
+    /// Length: 6 * res²
+    neighbors: Vec<[u32; 9]>,
     /// Precomputed ring-2 (Chebyshev distance 2) cells for each cell.
     /// Entries are padded with u32::MAX past ring2_lens.
     ring2: Vec<[u32; RING2_MAX]>,

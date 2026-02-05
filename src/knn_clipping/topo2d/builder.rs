@@ -288,11 +288,6 @@ impl Topo2DBuilder {
     }
 
     #[inline]
-    pub fn has_neighbor(&self, neighbor_idx: usize) -> bool {
-        self.neighbor_indices.contains(&neighbor_idx)
-    }
-
-    #[inline]
     pub fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.neighbor_indices.iter().copied()
     }

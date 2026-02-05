@@ -123,40 +123,33 @@ impl EdgeScratch {
     }
 }
 
-#[cfg(debug_assertions)]
 struct AttemptedNeighbors {
-    set: rustc_hash::FxHashSet<usize>,
+    seen_stamp: Vec<u32>,
+    stamp: u32,
 }
 
-#[cfg(debug_assertions)]
 impl AttemptedNeighbors {
-    fn new() -> Self {
+    fn new(num_points: usize) -> Self {
         Self {
-            set: rustc_hash::FxHashSet::default(),
+            seen_stamp: vec![0; num_points],
+            stamp: 1,
         }
     }
 
     fn clear(&mut self) {
-        self.set.clear();
+        self.stamp = self.stamp.wrapping_add(1).max(1);
+        if self.stamp == u32::MAX {
+            self.seen_stamp.fill(0);
+            self.stamp = 1;
+        }
     }
 
     fn insert(&mut self, idx: usize) -> bool {
-        self.set.insert(idx)
-    }
-}
-
-#[cfg(not(debug_assertions))]
-struct AttemptedNeighbors;
-
-#[cfg(not(debug_assertions))]
-impl AttemptedNeighbors {
-    fn new() -> Self {
-        Self
-    }
-
-    fn clear(&mut self) {}
-
-    fn insert(&mut self, _idx: usize) -> bool {
+        debug_assert!(idx < self.seen_stamp.len(), "neighbor index out of bounds");
+        if self.seen_stamp[idx] == self.stamp {
+            return false;
+        }
+        self.seen_stamp[idx] = self.stamp;
         true
     }
 }
@@ -186,7 +179,7 @@ impl CellContext {
             edge_neighbor_globals: Vec::new(),
             edge_neighbor_eps: Vec::new(),
             edge_scratch: EdgeScratch::new(),
-            attempted_neighbors: AttemptedNeighbors::new(),
+            attempted_neighbors: AttemptedNeighbors::new(grid.point_indices().len()),
         }
     }
 }

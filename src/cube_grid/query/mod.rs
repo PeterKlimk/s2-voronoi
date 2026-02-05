@@ -60,8 +60,7 @@ impl CubeMapGrid {
     /// Get the 9 neighbor cells (including self) for a cell.
     #[inline]
     pub fn cell_neighbors(&self, cell: usize) -> &[u32; 9] {
-        let base = cell * 9;
-        self.neighbors[base..base + 9].try_into().unwrap()
+        &self.neighbors[cell]
     }
 
     /// Get the ring-2 cells (Chebyshev distance 2) for a cell.
