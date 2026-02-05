@@ -123,10 +123,12 @@ Primary integration tests in `tests/`:
 ## Git Workflow Policy For Agents
 
 - Agents may edit files in workspace as needed for requested tasks.
-- Agents may commit **only when explicitly asked in the current turn**.
+- Agents may commit without explicit per-turn approval when the requested change is complete, scoped, and validated.
+- Do not auto-commit exploratory, partial, or uncertain work; ask before committing in those cases.
 - For substantial work, prefer a topic branch like `agent/<short-topic>` unless user says otherwise.
 - Keep commits scoped to a single logical change.
 - Run relevant validation before commit and report what was run.
+- Report the commit hash and message after committing.
 - Do not push, force-push, amend, rebase, or reset unless explicitly requested.
 - Do not include unrelated file churn just to satisfy formatting/linting unless requested.
 
