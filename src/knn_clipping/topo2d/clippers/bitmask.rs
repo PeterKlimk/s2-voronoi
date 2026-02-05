@@ -109,4 +109,3 @@ pub(super) fn clip_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuff
 }
 use super::super::types::{ClipResult, HalfPlane, PolyBuffer, MAX_POLY_VERTICES};
 use crate::fp;
-

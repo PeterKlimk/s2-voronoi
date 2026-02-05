@@ -11,9 +11,7 @@ use super::binning::assign_bins;
 use super::edge_checks::collect_and_resolve_cell_edges;
 use super::packed::INVALID_INDEX;
 use super::shard::ShardState;
-use super::types::{
-    BinId, EdgeCheck, EdgeCheckOverflow, EdgeOverflowLocal, EdgeToLater, LocalId,
-};
+use super::types::{BinId, EdgeCheck, EdgeCheckOverflow, EdgeOverflowLocal, EdgeToLater, LocalId};
 use super::ShardedCellsData;
 use crate::cube_grid::packed_knn::{PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings};
 use crate::cube_grid::CubeMapGrid;
@@ -188,7 +186,6 @@ impl CellContext {
         }
     }
 }
-
 
 pub(super) fn build_cells_sharded_live_dedup(
     points: &[Vec3],

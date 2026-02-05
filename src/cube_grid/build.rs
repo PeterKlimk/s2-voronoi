@@ -449,10 +449,7 @@ impl CubeMapGrid {
         results
     }
 
-    fn compute_ring2(
-        res: usize,
-        neighbors: &[[u32; 9]],
-    ) -> (Vec<[u32; RING2_MAX]>, Vec<u8>) {
+    fn compute_ring2(res: usize, neighbors: &[[u32; 9]]) -> (Vec<[u32; RING2_MAX]>, Vec<u8>) {
         let num_cells = 6 * res * res;
 
         #[inline(always)]

@@ -204,4 +204,3 @@ impl PackedKnnTimings {
     #[inline(always)]
     pub fn inc_tail_builds(&mut self) {}
 }
-

@@ -261,19 +261,55 @@ impl PhaseTimings {
 
         eprintln!("timing n={}", n);
         if self.preprocess.as_nanos() > 0 {
-            eprintln!("  preprocess:        {:7.1}ms ({:4.1}%)", ms(self.preprocess), pct(self.preprocess));
+            eprintln!(
+                "  preprocess:        {:7.1}ms ({:4.1}%)",
+                ms(self.preprocess),
+                pct(self.preprocess)
+            );
         }
-        eprintln!("  knn_build:         {:7.1}ms ({:4.1}%)", ms(self.knn_build), pct(self.knn_build));
+        eprintln!(
+            "  knn_build:         {:7.1}ms ({:4.1}%)",
+            ms(self.knn_build),
+            pct(self.knn_build)
+        );
         if let Some(sub) = &self.knn_build_sub {
             if sub.total().as_nanos() > 0 && self.knn_build.as_nanos() > 0 {
                 let sub_pct = |d: Duration| d.as_secs_f64() / self.knn_build.as_secs_f64() * 100.0;
-                eprintln!("    grid_count:      {:7.1}ms ({:4.1}%)", ms(sub.count_cells), sub_pct(sub.count_cells));
-                eprintln!("    grid_prefix:     {:7.1}ms ({:4.1}%)", ms(sub.prefix_sum), sub_pct(sub.prefix_sum));
-                eprintln!("    grid_scatter:    {:7.1}ms ({:4.1}%)", ms(sub.scatter_soa), sub_pct(sub.scatter_soa));
-                eprintln!("    grid_neighbors:  {:7.1}ms ({:4.1}%)", ms(sub.neighbors), sub_pct(sub.neighbors));
-                eprintln!("    grid_ring2:      {:7.1}ms ({:4.1}%)", ms(sub.ring2), sub_pct(sub.ring2));
-                eprintln!("    grid_bounds:     {:7.1}ms ({:4.1}%)", ms(sub.cell_bounds), sub_pct(sub.cell_bounds));
-                eprintln!("    grid_security:   {:7.1}ms ({:4.1}%)", ms(sub.security_3x3), sub_pct(sub.security_3x3));
+                eprintln!(
+                    "    grid_count:      {:7.1}ms ({:4.1}%)",
+                    ms(sub.count_cells),
+                    sub_pct(sub.count_cells)
+                );
+                eprintln!(
+                    "    grid_prefix:     {:7.1}ms ({:4.1}%)",
+                    ms(sub.prefix_sum),
+                    sub_pct(sub.prefix_sum)
+                );
+                eprintln!(
+                    "    grid_scatter:    {:7.1}ms ({:4.1}%)",
+                    ms(sub.scatter_soa),
+                    sub_pct(sub.scatter_soa)
+                );
+                eprintln!(
+                    "    grid_neighbors:  {:7.1}ms ({:4.1}%)",
+                    ms(sub.neighbors),
+                    sub_pct(sub.neighbors)
+                );
+                eprintln!(
+                    "    grid_ring2:      {:7.1}ms ({:4.1}%)",
+                    ms(sub.ring2),
+                    sub_pct(sub.ring2)
+                );
+                eprintln!(
+                    "    grid_bounds:     {:7.1}ms ({:4.1}%)",
+                    ms(sub.cell_bounds),
+                    sub_pct(sub.cell_bounds)
+                );
+                eprintln!(
+                    "    grid_security:   {:7.1}ms ({:4.1}%)",
+                    ms(sub.security_3x3),
+                    sub_pct(sub.security_3x3)
+                );
             }
         }
 
@@ -294,21 +330,63 @@ impl PhaseTimings {
             + self.cell_sub.edge_emit;
         let cpu_total_secs = cpu_total.as_secs_f64();
         let wall_secs = self.cell_construction.as_secs_f64();
-        let cpu_to_wall = if cpu_total_secs > 0.0 { wall_secs / cpu_total_secs } else { 1.0 };
-        let sub_pct = |d: Duration| if cpu_total_secs > 0.0 { d.as_secs_f64() / cpu_total_secs * 100.0 } else { 0.0 };
+        let cpu_to_wall = if cpu_total_secs > 0.0 {
+            wall_secs / cpu_total_secs
+        } else {
+            1.0
+        };
+        let sub_pct = |d: Duration| {
+            if cpu_total_secs > 0.0 {
+                d.as_secs_f64() / cpu_total_secs * 100.0
+            } else {
+                0.0
+            }
+        };
         let est_wall_ms = |d: Duration| d.as_secs_f64() * cpu_to_wall * 1000.0;
 
         if cpu_total.as_nanos() > 0 {
-            eprintln!("    knn_query:       {:7.1}ms ({:4.1}%)", est_wall_ms(self.cell_sub.knn_query), sub_pct(self.cell_sub.knn_query));
+            eprintln!(
+                "    knn_query:       {:7.1}ms ({:4.1}%)",
+                est_wall_ms(self.cell_sub.knn_query),
+                sub_pct(self.cell_sub.knn_query)
+            );
             if self.cell_sub.packed_knn.as_nanos() > 0 {
-                eprintln!("    packed_knn:      {:7.1}ms ({:4.1}%)", est_wall_ms(self.cell_sub.packed_knn), sub_pct(self.cell_sub.packed_knn));
+                eprintln!(
+                    "    packed_knn:      {:7.1}ms ({:4.1}%)",
+                    est_wall_ms(self.cell_sub.packed_knn),
+                    sub_pct(self.cell_sub.packed_knn)
+                );
             }
-            eprintln!("    clipping:        {:7.1}ms ({:4.1}%)", est_wall_ms(self.cell_sub.clipping), sub_pct(self.cell_sub.clipping));
-            eprintln!("    certification:   {:7.1}ms ({:4.1}%)", est_wall_ms(self.cell_sub.certification), sub_pct(self.cell_sub.certification));
-            eprintln!("    key_dedup:       {:7.1}ms ({:4.1}%)", est_wall_ms(self.cell_sub.key_dedup), sub_pct(self.cell_sub.key_dedup));
-            eprintln!("    edge_collect:    {:7.1}ms ({:4.1}%)", est_wall_ms(self.cell_sub.edge_collect), sub_pct(self.cell_sub.edge_collect));
-            eprintln!("    edge_resolve:    {:7.1}ms ({:4.1}%)", est_wall_ms(self.cell_sub.edge_resolve), sub_pct(self.cell_sub.edge_resolve));
-            eprintln!("    edge_emit:       {:7.1}ms ({:4.1}%)", est_wall_ms(self.cell_sub.edge_emit), sub_pct(self.cell_sub.edge_emit));
+            eprintln!(
+                "    clipping:        {:7.1}ms ({:4.1}%)",
+                est_wall_ms(self.cell_sub.clipping),
+                sub_pct(self.cell_sub.clipping)
+            );
+            eprintln!(
+                "    certification:   {:7.1}ms ({:4.1}%)",
+                est_wall_ms(self.cell_sub.certification),
+                sub_pct(self.cell_sub.certification)
+            );
+            eprintln!(
+                "    key_dedup:       {:7.1}ms ({:4.1}%)",
+                est_wall_ms(self.cell_sub.key_dedup),
+                sub_pct(self.cell_sub.key_dedup)
+            );
+            eprintln!(
+                "    edge_collect:    {:7.1}ms ({:4.1}%)",
+                est_wall_ms(self.cell_sub.edge_collect),
+                sub_pct(self.cell_sub.edge_collect)
+            );
+            eprintln!(
+                "    edge_resolve:    {:7.1}ms ({:4.1}%)",
+                est_wall_ms(self.cell_sub.edge_resolve),
+                sub_pct(self.cell_sub.edge_resolve)
+            );
+            eprintln!(
+                "    edge_emit:       {:7.1}ms ({:4.1}%)",
+                est_wall_ms(self.cell_sub.edge_emit),
+                sub_pct(self.cell_sub.edge_emit)
+            );
             eprintln!(
                 "    cells: used_knn={} knn_exhausted={} packed_tail_used={} packed_safe_exhausted={}",
                 self.cell_sub.cells_used_knn,
@@ -325,7 +403,9 @@ impl PhaseTimings {
         );
         eprintln!(
             "    keys: triplet={} support={} bad_edges={}",
-            self.dedup_sub.triplet_keys, self.dedup_sub.support_keys, self.dedup_sub.bad_edges_count
+            self.dedup_sub.triplet_keys,
+            self.dedup_sub.support_keys,
+            self.dedup_sub.bad_edges_count
         );
         eprintln!(
             "  edge_repair:       {:7.1}ms ({:4.1}%)",

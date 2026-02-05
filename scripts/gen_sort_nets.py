@@ -280,12 +280,12 @@ def main():
     parser.add_argument(
         "--write",
         action="store_true",
-        help="Write generated code to src/sort_nets.rs instead of stdout.",
+        help="Write generated code to src/generated/sort_nets.rs instead of stdout.",
     )
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Exit non-zero if src/sort_nets.rs is out of date.",
+        help="Exit non-zero if src/generated/sort_nets.rs is out of date.",
     )
     args = parser.parse_args()
 
@@ -340,12 +340,12 @@ def main():
     output.append(emit_tests())
     rendered = "\n".join(output)
 
-    out_path = Path(__file__).parent.parent / "src" / "sort_nets.rs"
+    out_path = Path(__file__).parent.parent / "src" / "generated" / "sort_nets.rs"
     if args.check:
         existing = out_path.read_text()
         if existing != rendered:
             raise SystemExit(
-                "src/sort_nets.rs is out of date (run scripts/gen_sort_nets.py --write)"
+                "src/generated/sort_nets.rs is out of date (run scripts/gen_sort_nets.py --write)"
             )
         return
 

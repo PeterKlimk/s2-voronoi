@@ -20,4 +20,3 @@ pub struct PackedChunk {
     pub n: usize,
     pub unseen_bound: f32,
 }
-

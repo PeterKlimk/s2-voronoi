@@ -58,40 +58,6 @@ impl CubeMapGrid {
         )
     }
 
-    /// Resumable kNN query that returns slots (SOA indices), with directed within-bin filtering.
-    ///
-    /// Filters out any candidate slot where `(bin == query_bin && local < query_local)`.
-    /// Cross-bin candidates are always considered.
-    #[allow(dead_code)]
-    pub fn find_k_nearest_resumable_slots_directed_into(
-        &self,
-        query: Vec3,
-        query_idx: usize,
-        k: usize,
-        track_limit: usize,
-        scratch: &mut CubeMapGridScratch,
-        out_slots: &mut Vec<u32>,
-        query_bin: u8,
-        query_local: u32,
-        slot_gen_map: &[u32],
-        local_shift: u32,
-        local_mask: u32,
-    ) -> KnnStatus {
-        self.find_k_nearest_resumable_into_directed_impl(
-            query,
-            query_idx,
-            k,
-            track_limit,
-            scratch,
-            out_slots,
-            query_bin,
-            query_local,
-            slot_gen_map,
-            local_shift,
-            local_mask,
-        )
-    }
-
     #[inline(always)]
     fn unpack_bin_local(packed: u32, local_shift: u32, local_mask: u32) -> (u8, u32) {
         let bin = (packed >> local_shift) as u8;

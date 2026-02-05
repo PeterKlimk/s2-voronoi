@@ -1,7 +1,7 @@
 //! Packed-kNN scratch + implementation.
 
-use super::{PackedChunk, PackedKnnTimings, PackedStage};
 use super::timing::PackedLapTimer;
+use super::{PackedChunk, PackedKnnTimings, PackedStage};
 
 use super::super::{cell_to_face_ij, CubeMapGrid};
 
@@ -838,7 +838,6 @@ impl PackedKnnCellScratch {
     pub fn tail_possible(&self, qi: usize) -> bool {
         self.tail_possible.get(qi).copied().unwrap_or(false)
     }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

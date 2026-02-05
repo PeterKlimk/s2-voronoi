@@ -142,7 +142,6 @@ pub(crate) fn clip_convex_edgecheck(
     }
 }
 
-
 #[cfg(any(test, feature = "microbench"))]
 #[allow(unused_imports)]
 pub(crate) use small::clip_convex_small_bool;

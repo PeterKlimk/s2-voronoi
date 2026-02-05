@@ -4,9 +4,9 @@ use glam::Vec3;
 
 use crate::cube_grid::packed_knn::{PackedKnnCellScratch, PackedKnnTimings, PackedStage};
 use crate::cube_grid::CubeMapGrid;
-use crate::knn_clipping::TerminationConfig;
 use crate::knn_clipping::cell_builder::VertexData;
 use crate::knn_clipping::topo2d::Topo2DBuilder;
+use crate::knn_clipping::TerminationConfig;
 
 use super::super::edge_checks::unpack_edge_key;
 use super::super::packed::{pack_ref, DEFERRED, INVALID_INDEX};
@@ -267,40 +267,17 @@ pub(super) fn process_cell(
 
         let t_clip = crate::knn_clipping::timing::Timer::start();
         let point_indices = grid.point_indices();
-        for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
-            let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
-            if !attempted_neighbors.insert(neighbor_slot as usize) {
-                continue;
-            }
-            let neighbor = points[neighbor_idx];
-            if builder
-                .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
-                .is_err()
-            {
-                break;
-            }
-            cell_neighbors_processed += 1;
-            let dot = points[i].dot(neighbor);
-            worst_cos = worst_cos.min(dot);
-
-            if builder.is_bounded()
-                && termination.should_check(cell_neighbors_processed)
-                && builder.can_terminate({
-                    let mut bound = worst_cos;
-                    for &next_slot in neighbor_slots.iter().skip(pos + 1) {
-                        let next = point_indices[next_slot as usize] as usize;
-                        if next != i {
-                            bound = points[i].dot(points[next]);
-                            break;
-                        }
-                    }
-                    bound
-                })
-            {
-                terminated = true;
-                break;
-            }
-        }
+        terminated = clip_resumable_knn_neighbors(
+            builder,
+            attempted_neighbors,
+            points,
+            i,
+            neighbor_slots,
+            point_indices,
+            termination,
+            &mut cell_neighbors_processed,
+            &mut worst_cos,
+        );
         cell_sub.add_clip(t_clip.elapsed());
 
         if terminated {
@@ -337,40 +314,17 @@ pub(super) fn process_cell(
 
             let t_clip = crate::knn_clipping::timing::Timer::start();
             let point_indices = grid.point_indices();
-            for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
-                let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
-                if !attempted_neighbors.insert(neighbor_slot as usize) {
-                    continue;
-                }
-                let neighbor = points[neighbor_idx];
-                if builder
-                    .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
-                    .is_err()
-                {
-                    break;
-                }
-                cell_neighbors_processed += 1;
-                let dot = points[i].dot(neighbor);
-                worst_cos = worst_cos.min(dot);
-
-                if builder.is_bounded()
-                    && termination.should_check(cell_neighbors_processed)
-                    && builder.can_terminate({
-                        let mut bound = worst_cos;
-                        for &next_slot in neighbor_slots.iter().skip(pos + 1) {
-                            let next = point_indices[next_slot as usize] as usize;
-                            if next != i {
-                                bound = points[i].dot(points[next]);
-                                break;
-                            }
-                        }
-                        bound
-                    })
-                {
-                    terminated = true;
-                    break;
-                }
-            }
+            terminated = clip_resumable_knn_neighbors(
+                builder,
+                attempted_neighbors,
+                points,
+                i,
+                neighbor_slots,
+                point_indices,
+                termination,
+                &mut cell_neighbors_processed,
+                &mut worst_cos,
+            );
             cell_sub.add_clip(t_clip.elapsed());
 
             if terminated {
@@ -443,39 +397,17 @@ pub(super) fn process_cell(
 
             let t_clip = crate::knn_clipping::timing::Timer::start();
             let point_indices = grid.point_indices();
-            for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
-                let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
-                if !attempted_neighbors.insert(neighbor_slot as usize) {
-                    continue;
-                }
-                let neighbor = points[neighbor_idx];
-                if builder
-                    .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
-                    .is_err()
-                {
-                    break;
-                }
-                cell_neighbors_processed += 1;
-                let dot = points[i].dot(neighbor);
-                worst_cos = worst_cos.min(dot);
-
-                if termination.should_check(cell_neighbors_processed)
-                    && builder.can_terminate({
-                        let mut bound = worst_cos;
-                        for &next_slot in neighbor_slots.iter().skip(pos + 1) {
-                            let next = point_indices[next_slot as usize] as usize;
-                            if next != i {
-                                bound = points[i].dot(points[next]);
-                                break;
-                            }
-                        }
-                        bound
-                    })
-                {
-                    terminated = true;
-                    break;
-                }
-            }
+            terminated = clip_resumable_knn_neighbors(
+                builder,
+                attempted_neighbors,
+                points,
+                i,
+                neighbor_slots,
+                point_indices,
+                termination,
+                &mut cell_neighbors_processed,
+                &mut worst_cos,
+            );
             cell_sub.add_clip(t_clip.elapsed());
 
             knn_exhausted = status == crate::cube_grid::KnnStatus::Exhausted;
@@ -617,6 +549,57 @@ pub(super) fn process_cell(
         i,
         local,
     );
+}
+
+#[inline]
+fn clip_resumable_knn_neighbors(
+    builder: &mut Topo2DBuilder,
+    attempted_neighbors: &mut super::AttemptedNeighbors,
+    points: &[Vec3],
+    generator_idx: usize,
+    neighbor_slots: &[u32],
+    point_indices: &[u32],
+    termination: TerminationConfig,
+    cell_neighbors_processed: &mut usize,
+    worst_cos: &mut f32,
+) -> bool {
+    for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
+        let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
+        if !attempted_neighbors.insert(neighbor_slot as usize) {
+            continue;
+        }
+
+        let neighbor = points[neighbor_idx];
+        if builder
+            .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
+            .is_err()
+        {
+            break;
+        }
+
+        *cell_neighbors_processed += 1;
+        let dot = points[generator_idx].dot(neighbor);
+        *worst_cos = (*worst_cos).min(dot);
+
+        if builder.is_bounded()
+            && termination.should_check(*cell_neighbors_processed)
+            && builder.can_terminate({
+                let mut bound = *worst_cos;
+                for &next_slot in neighbor_slots.iter().skip(pos + 1) {
+                    let next = point_indices[next_slot as usize] as usize;
+                    if next != generator_idx {
+                        bound = points[generator_idx].dot(points[next]);
+                        break;
+                    }
+                }
+                bound
+            })
+        {
+            return true;
+        }
+    }
+
+    false
 }
 
 #[inline]

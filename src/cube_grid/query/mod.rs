@@ -2,7 +2,6 @@
 
 mod directed;
 mod scratch;
-mod undirected;
 
 pub(crate) use directed::DirectedCtx;
 

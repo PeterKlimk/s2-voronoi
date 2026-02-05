@@ -64,7 +64,8 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
 
     // Build cells using sharded live dedup
     let t = Timer::start();
-    let sharded = live_dedup::build_cells_sharded_live_dedup(effective_points_ref, &grid, termination);
+    let sharded =
+        live_dedup::build_cells_sharded_live_dedup(effective_points_ref, &grid, termination);
 
     #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]
     tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
@@ -123,7 +124,8 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         (eff_cells, eff_cell_indices)
     };
 
-    let voronoi = crate::SphericalVoronoi::from_raw_parts(points, all_vertices, cells, cell_indices);
+    let voronoi =
+        crate::SphericalVoronoi::from_raw_parts(points, all_vertices, cells, cell_indices);
     tb.set_assemble(t.elapsed());
 
     // Report timing if feature enabled

@@ -7,8 +7,8 @@ use std::hint::select_unpredictable;
 use std::mem::MaybeUninit;
 use std::ptr;
 
-use crate::sort_nets::{sort16_tail_out, sort8_net};
-use crate::sort_nets::{sort16_tail_out_12_4, sort24_tail_out, sort24_tail_out_20_4};
+use crate::generated::sort_nets::{sort16_tail_out, sort8_net};
+use crate::generated::sort_nets::{sort16_tail_out_12_4, sort24_tail_out, sort24_tail_out_20_4};
 
 #[inline(always)]
 fn cswap_unpredictable_u64(v: &mut [u64], i: usize, j: usize) {
@@ -28,6 +28,7 @@ fn cswap_unpredictable_u64(v: &mut [u64], i: usize, j: usize) {
     }
 }
 
+#[cfg(test)]
 /// Fast insertion sort that uses raw pointers internally.
 ///
 /// Based on the standard library's `insertion_sort` but keeps the loop in a
@@ -80,6 +81,7 @@ where
     }
 }
 
+#[cfg(test)]
 /// Bidirectional merge of two equal-sized sorted runs.
 ///
 /// Merges `left` and `right` (both sorted) into `dst`.
@@ -132,6 +134,7 @@ pub fn bidirectional_same_size_merge<T: Copy, F>(
     }
 }
 
+#[cfg(test)]
 /// Simple forward-only merge (fallback when bidirectional isn't beneficial).
 ///
 /// Merges sorted `left` and `right` into `dst`.
@@ -283,6 +286,7 @@ unsafe fn merge_down<T: Copy, F: FnMut(&T, &T) -> bool>(
 /// - dst must point to 2*len valid elements
 /// - dst may overlap with left_src (for in-place merge to start)
 #[inline(always)]
+#[allow(dead_code)]
 unsafe fn bidirectional_same_size_merge_ptr<T: Copy, F>(
     left_src: *const T,
     right_src: *const T,

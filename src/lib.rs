@@ -44,8 +44,10 @@
 mod diagram;
 mod error;
 mod fp;
-pub mod sort;
-pub mod sort_nets;
+#[cfg(any(test, feature = "packed_knn_sort_small"))]
+pub(crate) mod generated;
+#[cfg(any(test, feature = "packed_knn_sort_small"))]
+pub(crate) mod sort;
 mod types;
 pub mod validation;
 
@@ -126,8 +128,5 @@ pub fn compute_with<P: UnitVec3Like>(
         .collect();
 
     // Call knn_clipping backend
-    Ok(knn_clipping::compute_voronoi_knn_clipping_with_config_owned(
-        vec3_points,
-        &config,
-    ))
+    Ok(knn_clipping::compute_voronoi_knn_clipping_with_config_owned(vec3_points, &config))
 }
