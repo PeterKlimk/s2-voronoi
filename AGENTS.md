@@ -1,17 +1,33 @@
 # AGENTS.md
 
-This file provides context for LLM coding assistants working with the s2-voronoi crate.
-For hex3 app/workspace guidance, see `AGENTS.md` at the repo root.
+This file provides guidance for coding agents working in the `s2-voronoi` crate.
+For workspace-level guidance, see the repo-root `AGENTS.md`.
 
 For user-facing crate docs, see `README.md` and `docs/`.
+
+## Toolchain / Constraints
+
+- Nightly Rust is required (`#![feature(portable_simd)]`).
+- Run heavy checks in release mode where possible.
+- Input points are assumed to be unit-normalized.
 
 ## Build & Test
 
 ```bash
-cargo test --release   # Release mode recommended (debug is slow)
-cargo test --release --features qhull  # Include qhull comparison tests
+cargo test --release
+cargo test --release --features qhull
 cargo clippy
 cargo fmt
+```
+
+Useful targeted checks:
+
+```bash
+# Validate packed small-sort path compiles
+cargo check --release --features packed_knn_sort_small
+
+# API/correctness suites only
+cargo test --release --test api --test correctness
 ```
 
 ## Benchmarking
@@ -23,75 +39,107 @@ cargo run --release --features tools --bin bench_voronoi -- 100k 500k 1m
 # Detailed sub-phase timing
 S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 500k --no-preprocess
 
-# Inter-commit perf comparisons (build then run interleaved)
+# Inter-commit perf comparisons
 ./scripts/bench_build.sh --chain 6
 ./scripts/bench_run.sh -s 500k -r 20 -m total
 ```
 
-## Environment knobs
+## Environment Knobs
 
-- `RAYON_NUM_THREADS=1`: force single-threaded mode (useful for stable perf comparisons).
-- `S2_BIN_COUNT=<n>`: override sharded bin count (defaults to ~2x threads).
-- `S2_VORONOI_TIMING_KV=1`: emit machine-readable `TIMING_KV ...` output (requires `timing`).
+- `RAYON_NUM_THREADS=1`: force single-threaded mode (stable perf comparisons).
+- `S2_BIN_COUNT=<n>`: override sharded bin count (defaults to about 2x threads).
+- `S2_VORONOI_TIMING_KV=1`: emit machine-readable timing lines (`timing` feature).
 
 ## Crate Overview
 
-s2-voronoi computes spherical Voronoi diagrams on the unit sphere (S2) using kNN-driven half-space clipping.
+`s2-voronoi` computes spherical Voronoi diagrams on the unit sphere (S2) using kNN-driven half-space clipping.
 
-**Algorithm:** For each generator point, find k nearest neighbors using a cube-map spatial index, construct bisector great-circle planes, and iteratively clip to produce the cell polygon. Vertices occur where 3+ bisector planes intersect. All cells are computed independently (embarrassingly parallel).
+High-level flow per generator:
 
-The qhull backend (convex hull duality) is provided as ground truth for testing only.
+1. Find candidate neighbors via cube-map spatial index.
+2. Build bisector great-circle constraints.
+3. Clip cell in local gnomonic/topological 2D representation.
+4. Deduplicate/assemble shared vertices across cells.
 
-## Documentation map
+The `qhull` backend is for comparison/testing, not primary production path.
 
-- `README.md`: user-facing overview, API summary, feature list.
-- `docs/architecture.md`: algorithm + module map + glossary.
-- `docs/performance.md`: benchmarking and perf knobs.
-- `docs/live_dedup.md`: live vertex dedup and edge checks.
+## Documentation Map
 
-## Module Structure
+- `README.md`: user-facing overview and API summary.
+- `docs/architecture.md`: algorithm and module map.
+- `docs/performance.md`: benchmark guidance and perf knobs.
+- `docs/live_dedup.md`: live dedup and edge-check design.
 
-```
+## Module Map (Current)
+
+```text
 src/
-├── lib.rs            # Public API: compute(), validation::validate()
-├── types.rs          # UnitVec3, UnitVec3Like trait
-├── diagram.rs        # SphericalVoronoi, CellView diagram storage
-├── error.rs          # VoronoiError
-├── knn_clipping/     # kNN half-space clipping backend
-├── cube_grid/        # Cube-map spatial index for fast kNN queries
-└── convex_hull.rs    # qhull backend (feature: qhull)
+├── lib.rs                         # Public API and feature-gated internal exports
+├── types.rs                       # UnitVec3 / UnitVec3Like
+├── diagram.rs                     # SphericalVoronoi storage
+├── validation.rs                  # Topology/consistency checks
+├── error.rs                       # VoronoiError
+├── fp.rs                          # Numeric helper ops
+├── knn_clipping/                  # Main backend
+│   ├── compute.rs                 # End-to-end backend orchestration
+│   ├── preprocess.rs              # Near-coincident merge pass
+│   ├── edge_repair.rs             # Post-assembly edge repairs
+│   ├── live_dedup/                # Sharded dedup + assembly
+│   ├── topo2d/                    # Gnomonic/topological clipping
+│   └── timing/                    # Timing feature plumbing
+├── cube_grid/                     # Spatial index + query stack
+│   ├── build.rs                   # Grid construction
+│   ├── projection.rs              # Face/uv/st conversion helpers
+│   ├── query/                     # Directed resumable kNN query path
+│   └── packed_knn/                # Packed batched directed kNN
+├── generated/
+│   └── sort_nets.rs               # Auto-generated sorting network code
+├── sort.rs                        # Internal small-sort utilities (feature/test use)
+└── convex_hull.rs                 # qhull backend (feature: qhull)
 ```
 
 ## Features
 
-- `parallel` (default): rayon parallelism in cell construction
-- `glam`: public `UnitVec3Like` impl + conversions for `glam::Vec3`
-- `timing`: detailed timing instrumentation
-- `profiling`: profiling helpers (e.g. disable inlining on hot functions)
-- `microbench`: internal microbench harnesses (nightly `test` crate)
-- `qhull`: convex hull backend for tests/benchmarks only
-- `simd_clip`: use SIMD small-N clippers in the main clipper dispatch
-- `fma`: prefer fused multiply-add via mul_add (may change results; can be slow without HW FMA)
-
-Note: glam is always an internal dependency; the `glam` feature only gates the public API.
-
-## Public API
-
-- `UnitVec3`, `UnitVec3Like` - Input point types
-- `compute(&[P]) -> Result<SphericalVoronoi, VoronoiError>` - Main entry point
-- `compute_with(&[P], VoronoiConfig)` - Configured entry point
-- `validation::validate(&SphericalVoronoi) -> ValidationReport`
-- `SphericalVoronoi` - Diagram with `generators`, `vertices`, `iter_cells()`, `cell(i)`
-- `CellView` - Cell accessor with `vertex_indices`, `generator_index`, `len()`
+- `parallel` (default): rayon-based parallel cell construction.
+- `glam`: public `UnitVec3Like` impl/conversions for `glam::Vec3`.
+- `timing`: detailed timing instrumentation.
+- `profiling`: helpers for profiling runs (e.g. inline control).
+- `microbench`: internal microbench harnesses.
+- `qhull`: convex-hull backend for comparison tests/bench.
+- `simd_clip`: SIMD small-N clippers in clipper dispatch.
+- `fma`: prefer fused multiply-add (`mul_add`) where used.
+- `packed_knn_sort_small`: enable internal small-sort path in packed kNN.
+- `tools`: benchmark/utility binaries.
 
 ## Tests
 
-Integration tests in `tests/`:
-- `api.rs` - Public API tests (9 tests)
-- `correctness.rs` - Geometric invariants (8 tests)
+Primary integration tests in `tests/`:
+
+- `api.rs`: public API behavior.
+- `correctness.rs`: geometric/topological invariants.
+- `validation.rs`: validation report checks.
+- `adversarial.rs`: stress and pathological distributions.
+
+## Git Workflow Policy For Agents
+
+- Agents may edit files in workspace as needed for requested tasks.
+- Agents may commit **only when explicitly asked in the current turn**.
+- For substantial work, prefer a topic branch like `agent/<short-topic>` unless user says otherwise.
+- Keep commits scoped to a single logical change.
+- Run relevant validation before commit and report what was run.
+- Do not push, force-push, amend, rebase, or reset unless explicitly requested.
+- Do not include unrelated file churn just to satisfy formatting/linting unless requested.
+
+## Change Checklist (Recommended)
+
+1. Implement minimal coherent change.
+2. Run `cargo fmt`.
+3. Run focused tests/checks relevant to changed modules.
+4. If broad behavior changed, run `cargo test --release`.
+5. Summarize results and residual risks.
 
 ## Known Limitations
 
-- Requires nightly Rust (`#![feature(portable_simd)]`)
-- Inputs should be normalized to unit length (not enforced, but assumed)
-- Some cells may be degenerate near numerical edge cases; use `validation::validate`
+- Nightly Rust required.
+- Inputs should be unit-normalized.
+- Numerical edge cases can still produce degeneracies; use `validation::validate`.
