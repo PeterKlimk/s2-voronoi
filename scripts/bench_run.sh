@@ -1,15 +1,13 @@
 #!/bin/bash
-# Run interleaved benchmarks on pre-built binaries
-# First run bench_build.sh, let laptop cool, then run this
-#
-# Defaults to pinned (core 0) + single-threaded for consistent results
+# Run interleaved benchmarks for binaries built by `bench_build.sh`.
+# Defaults favor reproducibility (single-threaded + optional CPU pinning).
 
 set -euo pipefail
 
 TMP_DIR="/tmp/bench_compare"
 MANIFEST="$TMP_DIR/manifest.txt"
 
-# Defaults: pinned + single-threaded
+# Defaults.
 ROUNDS=5
 SIZE="100k"
 COOLDOWN=5
@@ -83,7 +81,7 @@ for idx in "${INDICES[@]}"; do
     fi
 done
 
-# Build taskset prefix if pinning requested
+# Build taskset prefix if pinning is requested.
 TASKSET=""
 if [[ -n "$CPU_PIN" ]]; then
     if command -v taskset &> /dev/null; then
@@ -93,7 +91,7 @@ if [[ -n "$CPU_PIN" ]]; then
     fi
 fi
 
-# Set single-threaded mode
+# Configure single-threaded mode.
 if $SINGLE_THREAD; then
     export RAYON_NUM_THREADS=1
 fi
@@ -167,6 +165,14 @@ extract_metric_ms() {
     }'
 }
 
+float_gt() {
+    awk -v a="$1" -v b="$2" 'BEGIN { exit !(a > b) }'
+}
+
+float_lt() {
+    awk -v a="$1" -v b="$2" 'BEGIN { exit !(a < b) }'
+}
+
 echo "=== Interleaved Benchmark ==="
 echo "Versions: $NUM_VERSIONS"
 echo "Rounds: $ROUNDS, Size: $SIZE, Cooldown: ${COOLDOWN}s"
@@ -181,19 +187,19 @@ for i in "${!INDICES[@]}"; do
 done
 echo ""
 
-# Create result files
+# Create result files.
 for idx in "${INDICES[@]}"; do
     > "$TMP_DIR/times_${METRIC}_$idx.txt"
 done
 
-# Run interleaved with rotating start position
+# Run interleaved with rotating start position.
 for round in $(seq 1 $ROUNDS); do
     echo "--- Round $round/$ROUNDS ---"
 
-    # Rotate starting position each round to avoid order bias
+    # Rotate starting position each round to reduce order bias.
     start=$(( (round - 1) % NUM_VERSIONS ))
 
-    # Warmup run (discarded) - use the first binary in rotation
+    # Warmup run (discarded) using the first binary in rotation.
     warmup_idx="${INDICES[$start]}"
     warmup_output=$($TASKSET "$TMP_DIR/bench_$warmup_idx" "${bench_args[@]}" 2>&1)
     if warmup_ms="$(extract_metric_ms "$warmup_output" "$METRIC")"; then
@@ -241,19 +247,20 @@ calc_stats() {
     }'
 }
 
-# Find max label length for formatting
+# Find max label length for formatting.
 max_len=7  # minimum "Version"
 for label in "${LABELS[@]}"; do
     len=${#label}
     (( len > max_len )) && max_len=$len
 done
 
-# Print header
+# Print header.
 printf "%-${max_len}s %10s %10s %10s %10s %10s\n" "Version" "Min" "Median" "Avg" "Max" "Spread"
 printf "%-${max_len}s %10s %10s %10s %10s %10s\n" "$(printf '%*s' $max_len '' | tr ' ' '-')" "---" "------" "---" "---" "------"
 
-# Store mins for comparison
+# Store per-version metrics for comparison.
 declare -A MINS
+declare -A MEDIANS
 
 for i in "${!INDICES[@]}"; do
     idx="${INDICES[$i]}"
@@ -261,7 +268,8 @@ for i in "${!INDICES[@]}"; do
     stats=$(calc_stats "$TMP_DIR/times_${METRIC}_$idx.txt")
     read -r min median avg max <<< "$stats"
     MINS[$idx]="$min"
-    if (( $(echo "$min > 0" | bc -l) )); then
+    MEDIANS[$idx]="$median"
+    if float_gt "$min" "0"; then
         spread=$(echo "$max $min" | awk '{printf "%.1f%%", ($1 - $2) / $2 * 100}')
     else
         spread="N/A"
@@ -270,17 +278,17 @@ for i in "${!INDICES[@]}"; do
 done
 
 echo ""
-echo "=== Relative Performance (min times, lower is better) ==="
+echo "=== Relative Performance (median times, lower is better) ==="
 echo ""
 
-# Find the fastest (lowest min)
+# Find the fastest (lowest median).
 best_idx=""
-best_min=999999999
+best_median=999999999
 for i in "${!INDICES[@]}"; do
     idx="${INDICES[$i]}"
-    min="${MINS[$idx]}"
-    if (( $(echo "$min > 0 && $min < $best_min" | bc -l) )); then
-        best_min="$min"
+    median="${MEDIANS[$idx]}"
+    if float_gt "$median" "0" && float_lt "$median" "$best_median"; then
+        best_median="$median"
         best_idx="$idx"
     fi
 done
@@ -289,12 +297,12 @@ if [[ -n "$best_idx" ]]; then
     for i in "${!INDICES[@]}"; do
         idx="${INDICES[$i]}"
         label="${LABELS[$i]}"
-        min="${MINS[$idx]}"
-        if [[ -n "$min" && "$min" != "0" ]]; then
-            pct=$(echo "$min $best_min" | awk '{printf "%.1f", ($1 / $2 - 1) * 100}')
+        median="${MEDIANS[$idx]}"
+        if [[ -n "$median" && "$median" != "0" ]]; then
+            pct=$(echo "$median $best_median" | awk '{printf "%.1f", ($1 / $2 - 1) * 100}')
             if [[ "$idx" == "$best_idx" ]]; then
                 verdict="FASTEST"
-            elif (( $(echo "$pct > 0.5" | bc -l) )); then
+            elif float_gt "$pct" "0.5"; then
                 verdict="+${pct}%"
             else
                 verdict="~same"
