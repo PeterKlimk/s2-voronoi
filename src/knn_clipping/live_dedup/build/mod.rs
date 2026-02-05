@@ -144,13 +144,18 @@ impl AttemptedNeighbors {
         }
     }
 
-    fn insert(&mut self, idx: usize) -> bool {
-        debug_assert!(idx < self.seen_stamp.len(), "neighbor index out of bounds");
-        if self.seen_stamp[idx] == self.stamp {
+    fn insert(&mut self, slot: usize) -> bool {
+        debug_assert!(slot < self.seen_stamp.len(), "neighbor slot out of bounds");
+        if self.seen_stamp[slot] == self.stamp {
             return false;
         }
-        self.seen_stamp[idx] = self.stamp;
+        self.seen_stamp[slot] = self.stamp;
         true
+    }
+
+    fn mark(&mut self, slot: usize) {
+        debug_assert!(slot < self.seen_stamp.len(), "neighbor slot out of bounds");
+        self.seen_stamp[slot] = self.stamp;
     }
 }
 
