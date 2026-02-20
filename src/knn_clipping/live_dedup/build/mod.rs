@@ -15,7 +15,7 @@ use super::types::{BinId, EdgeCheck, EdgeCheckOverflow, EdgeOverflowLocal, EdgeT
 use super::ShardedCellsData;
 use crate::cube_grid::packed_knn::{PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings};
 use crate::cube_grid::CubeMapGrid;
-use crate::knn_clipping::cell_builder::VertexData;
+use crate::knn_clipping::cell_builder::{CellOutputBuffer, VertexData};
 use crate::knn_clipping::topo2d::Topo2DBuilder;
 use crate::knn_clipping::TerminationConfig;
 
@@ -38,29 +38,19 @@ impl EdgeScratch {
     fn collect_and_resolve(
         &mut self,
         cell_idx: u32,
-        bin: BinId,
-        local: LocalId,
-        cell_vertices: &[VertexData],
-        edge_neighbor_slots: &[u32],
-        edge_neighbor_globals: &[u32],
-        edge_neighbor_eps: &[f32],
+        shard_ctx: &mut ShardContext<'_>,
+        output_buffer: &CellOutputBuffer,
         assignment: &super::binning::BinAssignment,
-        shard: &mut ShardState,
         incoming_checks: Vec<EdgeCheck>,
     ) {
         self.vertex_indices.clear();
         self.vertex_indices
-            .resize(cell_vertices.len(), INVALID_INDEX);
+            .resize(output_buffer.vertices.len(), INVALID_INDEX);
         collect_and_resolve_cell_edges(
             cell_idx,
-            bin,
-            local,
-            cell_vertices,
-            edge_neighbor_slots,
-            edge_neighbor_globals,
-            edge_neighbor_eps,
+            shard_ctx,
+            output_buffer,
             assignment,
-            shard,
             incoming_checks,
             &mut self.vertex_indices,
             &mut self.edges_to_later,
@@ -157,15 +147,24 @@ impl AttemptedNeighbors {
     }
 }
 
+pub(super) struct GridContext<'a> {
+    pub(super) points: &'a [Vec3],
+    pub(super) grid: &'a CubeMapGrid,
+    pub(super) assignment: &'a super::binning::BinAssignment,
+}
+
+pub(super) struct ShardContext<'a> {
+    pub(super) shard: &'a mut ShardState,
+    pub(super) bin: BinId,
+    pub(super) local: LocalId,
+}
+
 struct CellContext {
     builder: Topo2DBuilder,
     scratch: crate::cube_grid::CubeMapGridScratch,
     neighbor_slots: Vec<u32>,
     packed_chunk: Vec<u32>,
-    cell_vertices: Vec<VertexData>,
-    edge_neighbor_slots: Vec<u32>,
-    edge_neighbor_globals: Vec<u32>,
-    edge_neighbor_eps: Vec<f32>,
+    output_buffer: CellOutputBuffer,
     edge_scratch: EdgeScratch,
     attempted_neighbors: AttemptedNeighbors,
 }
@@ -177,10 +176,7 @@ impl CellContext {
             scratch: grid.make_scratch(),
             neighbor_slots: Vec::with_capacity(crate::knn_clipping::KNN_RESTART_MAX),
             packed_chunk: Vec::with_capacity(crate::knn_clipping::KNN_RESTART_MAX),
-            cell_vertices: Vec::new(),
-            edge_neighbor_slots: Vec::new(),
-            edge_neighbor_globals: Vec::new(),
-            edge_neighbor_eps: Vec::new(),
+            output_buffer: CellOutputBuffer::default(),
             edge_scratch: EdgeScratch::new(),
             attempted_neighbors: AttemptedNeighbors::new(grid.point_indices().len()),
         }
@@ -255,6 +251,12 @@ pub(super) fn build_cells_sharded_live_dedup(
                     }
                 }
 
+                let grid_ctx = GridContext {
+                    points,
+                    grid,
+                    assignment: &assignment,
+                };
+
                 let mut cursor = 0usize;
                 while cursor < my_generators.len() {
                     let cell = grid.point_index_to_cell(my_generators[cursor]) as u32;
@@ -293,18 +295,19 @@ pub(super) fn build_cells_sharded_live_dedup(
                                 {
                                     let local_idx = group_start + offset;
                                     let local = LocalId::from_usize(local_idx);
+                                    let mut shard_ctx = ShardContext {
+                                        shard: &mut shard,
+                                        bin,
+                                        local,
+                                    };
                                     process_cell(
                                         &mut sub_accum,
                                         &mut ctx,
-                                        &mut shard,
-                                        points,
-                                        grid,
-                                        &assignment,
+                                        &mut shard_ctx,
+                                        &grid_ctx,
                                         termination,
                                         termination_max_k_cap,
-                                        bin,
                                         global,
-                                        local,
                                         Some((
                                             &mut packed_scratch,
                                             &mut packed_timings,
@@ -321,18 +324,19 @@ pub(super) fn build_cells_sharded_live_dedup(
                                 {
                                     let local_idx = group_start + offset;
                                     let local = LocalId::from_usize(local_idx);
+                                    let mut shard_ctx = ShardContext {
+                                        shard: &mut shard,
+                                        bin,
+                                        local,
+                                    };
                                     process_cell(
                                         &mut sub_accum,
                                         &mut ctx,
-                                        &mut shard,
-                                        points,
-                                        grid,
-                                        &assignment,
+                                        &mut shard_ctx,
+                                        &grid_ctx,
                                         termination,
                                         termination_max_k_cap,
-                                        bin,
                                         global,
-                                        local,
                                         None,
                                     );
                                 }
@@ -351,18 +355,19 @@ pub(super) fn build_cells_sharded_live_dedup(
                         {
                             let local_idx = group_start + offset;
                             let local = LocalId::from_usize(local_idx);
+                            let mut shard_ctx = ShardContext {
+                                shard: &mut shard,
+                                bin,
+                                local,
+                            };
                             process_cell(
                                 &mut sub_accum,
                                 &mut ctx,
-                                &mut shard,
-                                points,
-                                grid,
-                                &assignment,
+                                &mut shard_ctx,
+                                &grid_ctx,
                                 termination,
                                 termination_max_k_cap,
-                                bin,
                                 global,
-                                local,
                                 None,
                             );
                         }

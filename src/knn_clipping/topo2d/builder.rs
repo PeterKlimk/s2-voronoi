@@ -1,7 +1,7 @@
 use super::clippers::{clip_convex, clip_convex_edgecheck};
 use super::types::{ClipResult, HalfPlane, PolyBuffer};
 use crate::fp;
-use crate::knn_clipping::cell_builder::{CellFailure, VertexData};
+use crate::knn_clipping::cell_builder::{CellFailure, CellOutputBuffer};
 use glam::{DVec3, Vec3};
 use std::hint::select_unpredictable;
 
@@ -316,13 +316,7 @@ impl Topo2DBuilder {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn to_vertex_data_full(
-        &self,
-        out: &mut Vec<VertexData>,
-        edge_neighbors: &mut Vec<u32>,
-        edge_neighbor_slots: &mut Vec<u32>,
-        edge_neighbor_eps: &mut Vec<f32>,
-    ) -> Result<(), CellFailure> {
+    pub fn to_vertex_data_full(&self, buffer: &mut CellOutputBuffer) -> Result<(), CellFailure> {
         if !self.is_bounded() {
             return Err(CellFailure::NoValidSeed);
         }
@@ -332,15 +326,11 @@ impl Topo2DBuilder {
             return Err(CellFailure::NoValidSeed);
         }
 
-        out.clear();
-        out.reserve(poly.len);
-
-        edge_neighbors.clear();
-        edge_neighbors.reserve(poly.len);
-        edge_neighbor_slots.clear();
-        edge_neighbor_slots.reserve(poly.len);
-        edge_neighbor_eps.clear();
-        edge_neighbor_eps.reserve(poly.len);
+        buffer.clear();
+        buffer.vertices.reserve(poly.len);
+        buffer.edge_neighbor_globals.reserve(poly.len);
+        buffer.edge_neighbor_slots.reserve(poly.len);
+        buffer.edge_neighbor_eps.reserve(poly.len);
 
         let gen_idx = self.generator_idx as u32;
         for i in 0..poly.len {
@@ -375,17 +365,23 @@ impl Topo2DBuilder {
             let n1 = self.neighbor_indices[plane_a] as u32;
             let n2 = self.neighbor_indices[plane_b] as u32;
             let key = sort3_u32(gen_idx, n1, n2);
-            out.push((key, v_pos));
+            buffer.vertices.push((key, v_pos));
 
             let edge_plane = poly.edge_planes[i];
             if edge_plane == usize::MAX {
-                edge_neighbors.push(u32::MAX);
-                edge_neighbor_slots.push(u32::MAX);
-                edge_neighbor_eps.push(0.0);
+                buffer.edge_neighbor_globals.push(u32::MAX);
+                buffer.edge_neighbor_slots.push(u32::MAX);
+                buffer.edge_neighbor_eps.push(0.0);
             } else {
-                edge_neighbors.push(self.neighbor_indices[edge_plane] as u32);
-                edge_neighbor_slots.push(self.neighbor_slots[edge_plane]);
-                edge_neighbor_eps.push(self.half_planes[edge_plane].eps as f32);
+                buffer
+                    .edge_neighbor_globals
+                    .push(self.neighbor_indices[edge_plane] as u32);
+                buffer
+                    .edge_neighbor_slots
+                    .push(self.neighbor_slots[edge_plane]);
+                buffer
+                    .edge_neighbor_eps
+                    .push(self.half_planes[edge_plane].eps as f32);
             }
         }
 

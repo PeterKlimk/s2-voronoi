@@ -106,21 +106,11 @@ mod tests {
         builder.clip_with_slot(2, u32::MAX, h2).unwrap();
         builder.clip_with_slot(3, u32::MAX, h3).unwrap();
 
-        let mut vertices = Vec::new();
-        let mut edge_neighbors = Vec::new();
-        let mut edge_neighbor_slots = Vec::new();
-        let mut edge_neighbor_eps = Vec::new();
-        builder
-            .to_vertex_data_full(
-                &mut vertices,
-                &mut edge_neighbors,
-                &mut edge_neighbor_slots,
-                &mut edge_neighbor_eps,
-            )
-            .unwrap();
+        let mut buffer = crate::knn_clipping::cell_builder::CellOutputBuffer::default();
+        builder.to_vertex_data_full(&mut buffer).unwrap();
 
-        assert_eq!(vertices.len(), 3);
-        for (_key, pos) in &vertices {
+        assert_eq!(buffer.vertices.len(), 3);
+        for (_key, pos) in &buffer.vertices {
             let len = pos.length();
             assert!(
                 (len - 1.0).abs() < 1e-5,

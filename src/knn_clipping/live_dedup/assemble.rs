@@ -15,7 +15,7 @@ use crate::knn_clipping::cell_builder::VertexKey;
 use crate::knn_clipping::timing::{DedupSubPhases, Timer};
 use crate::VoronoiCell;
 
-pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::AssembledLiveDedup {
+pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::AssemblyResult {
     let t0 = Timer::start();
 
     let num_bins = data.assignment.num_bins;
@@ -60,11 +60,10 @@ pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::
         deferred_slots.append(&mut shard.output.deferred);
     }
 
-    let (edge_checks_overflow_sort_time, edge_checks_overflow_match_time) =
+    let overflow_timing =
         resolve_edge_check_overflow(&mut data.shards, &mut edge_check_overflow, &mut bad_edges);
     #[allow(unused_variables)]
-    let edge_checks_overflow_time =
-        edge_checks_overflow_sort_time + edge_checks_overflow_match_time;
+    let edge_checks_overflow_time = overflow_timing.sort + overflow_timing.match_;
 
     let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| {
         let packed = pack_ref(owner_bin, idx);
@@ -353,12 +352,12 @@ pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::
     #[cfg(not(feature = "timing"))]
     let sub_phases = DedupSubPhases;
 
-    (
-        all_vertices,
-        all_vertex_keys,
+    super::AssemblyResult {
+        vertices: all_vertices,
+        vertex_keys: all_vertex_keys,
         bad_edges,
         cells,
         cell_indices,
-        sub_phases,
-    )
+        dedup_sub: sub_phases,
+    }
 }

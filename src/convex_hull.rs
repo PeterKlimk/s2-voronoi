@@ -167,7 +167,7 @@ pub fn compute_voronoi_qhull(points: &[Vec3]) -> SphericalVoronoi {
             cell_indices.push(*idx as u32);
         }
         let count = ordered.len() as u16;
-        cells.push((start, count));
+        cells.push(VoronoiCell::new(start, count));
     }
 
     SphericalVoronoi::from_parts(generators, voronoi_vertices, cells, cell_indices)

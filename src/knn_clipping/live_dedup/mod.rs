@@ -22,14 +22,21 @@ use types::BadEdgeRecord;
 
 pub(super) use types::EdgeRecord;
 
-pub(super) type AssembledLiveDedup = (
-    Vec<glam::Vec3>,
-    Vec<VertexKey>,
-    Vec<BadEdgeRecord>,
-    Vec<crate::VoronoiCell>,
-    Vec<u32>,
-    super::timing::DedupSubPhases,
-);
+/// Result of assembling sharded live-dedup data into global arrays.
+pub(super) struct AssemblyResult {
+    /// All Voronoi vertex positions (global, concatenated from shards).
+    pub vertices: Vec<glam::Vec3>,
+    /// Vertex keys (triplet of generator indices), parallel to `vertices`.
+    pub vertex_keys: Vec<VertexKey>,
+    /// Edges that could not be fully resolved during dedup.
+    pub bad_edges: Vec<BadEdgeRecord>,
+    /// Per-cell storage (one per generator).
+    pub cells: Vec<crate::VoronoiCell>,
+    /// Flattened vertex indices for all cells.
+    pub cell_indices: Vec<u32>,
+    /// Timing sub-phases for the dedup stage.
+    pub dedup_sub: super::timing::DedupSubPhases,
+}
 
 pub(super) struct ShardedCellsData {
     assignment: BinAssignment,
@@ -56,6 +63,6 @@ pub(super) fn build_cells_sharded_live_dedup(
     build::build_cells_sharded_live_dedup(points, grid, termination)
 }
 
-pub(super) fn assemble_sharded_live_dedup(data: ShardedCellsData) -> AssembledLiveDedup {
+pub(super) fn assemble_sharded_live_dedup(data: ShardedCellsData) -> AssemblyResult {
     assemble::assemble_sharded_live_dedup(data)
 }

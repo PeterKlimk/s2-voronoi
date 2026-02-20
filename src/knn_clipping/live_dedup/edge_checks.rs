@@ -1,6 +1,5 @@
 //! Edge-check bookkeeping helpers for live dedup.
 
-use glam::Vec3;
 use std::mem;
 
 use super::binning::BinAssignment;
@@ -76,19 +75,23 @@ impl ShardDedup {
 #[cfg_attr(feature = "profiling", inline(never))]
 pub(super) fn collect_and_resolve_cell_edges(
     cell_idx: u32,
-    bin: BinId,
-    local: LocalId,
-    cell_vertices: &[(VertexKey, Vec3)],
-    edge_neighbor_slots: &[u32],
-    edge_neighbor_globals: &[u32],
-    edge_neighbor_eps: &[f32],
+    shard_ctx: &mut super::build::ShardContext<'_>,
+    output_buffer: &crate::knn_clipping::cell_builder::CellOutputBuffer,
     assignment: &BinAssignment,
-    shard: &mut ShardState,
     incoming_checks: Vec<EdgeCheck>,
     vertex_indices: &mut [u32],
     edges_to_later: &mut Vec<EdgeToLater>,
     edges_overflow: &mut Vec<EdgeOverflowLocal>,
 ) {
+    let shard = &mut *shard_ctx.shard;
+    let local = shard_ctx.local;
+    let bin = shard_ctx.bin;
+
+    let cell_vertices = &output_buffer.vertices;
+    let edge_neighbor_slots = &output_buffer.edge_neighbor_slots;
+    let edge_neighbor_globals = &output_buffer.edge_neighbor_globals;
+    let edge_neighbor_eps = &output_buffer.edge_neighbor_eps;
+
     let n = cell_vertices.len();
     debug_assert_eq!(
         edge_neighbor_slots.len(),
@@ -279,6 +282,12 @@ pub(super) fn collect_and_resolve_cell_edges(
     }
 }
 
+/// Timing breakdown for the overflow resolution phase.
+pub(super) struct OverflowResolveTiming {
+    pub sort: Duration,
+    pub match_: Duration,
+}
+
 /// Matches edge checks across shard boundaries.
 ///
 /// Since cross-bin edges are emitted twice (once by each bin), we sort all overflow
@@ -290,7 +299,7 @@ pub(super) fn resolve_edge_check_overflow(
     shards: &mut [ShardState],
     edge_check_overflow: &mut [EdgeCheckOverflow],
     bad_edges: &mut Vec<BadEdgeRecord>,
-) -> (Duration, Duration) {
+) -> OverflowResolveTiming {
     let t_edge_sort = Timer::start();
     edge_check_overflow.sort_unstable_by_key(|entry| (entry.key, entry.side));
     let edge_checks_overflow_sort_time = t_edge_sort.elapsed();
@@ -399,8 +408,8 @@ pub(super) fn resolve_edge_check_overflow(
     }
 
     let edge_checks_overflow_match_time = t_edge_match.elapsed();
-    (
-        edge_checks_overflow_sort_time,
-        edge_checks_overflow_match_time,
-    )
+    OverflowResolveTiming {
+        sort: edge_checks_overflow_sort_time,
+        match_: edge_checks_overflow_match_time,
+    }
 }

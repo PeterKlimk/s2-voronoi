@@ -19,3 +19,21 @@ pub enum CellFailure {
     /// Failed to construct a valid seed polygon.
     NoValidSeed,
 }
+
+/// A buffer to hold the output of clipping a cell.
+#[derive(Default)]
+pub struct CellOutputBuffer {
+    pub vertices: Vec<VertexData>,
+    pub edge_neighbor_globals: Vec<u32>,
+    pub edge_neighbor_slots: Vec<u32>,
+    pub edge_neighbor_eps: Vec<f32>,
+}
+
+impl CellOutputBuffer {
+    pub fn clear(&mut self) {
+        self.vertices.clear();
+        self.edge_neighbor_globals.clear();
+        self.edge_neighbor_slots.clear();
+        self.edge_neighbor_eps.clear();
+    }
+}

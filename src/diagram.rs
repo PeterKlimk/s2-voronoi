@@ -47,13 +47,13 @@ impl SphericalVoronoi {
         }
     }
 
-    /// Create a diagram from raw parts (tuple format).
+    /// Create a diagram from raw parts.
     ///
     /// This is used by the computation backends to construct the final diagram.
     pub fn from_parts(
         generators: Vec<UnitVec3>,
         vertices: Vec<UnitVec3>,
-        cells: Vec<(u32, u16)>,
+        cells: Vec<VoronoiCell>,
         cell_indices: Vec<u32>,
     ) -> Self {
         Self {
@@ -61,7 +61,10 @@ impl SphericalVoronoi {
             vertices,
             cells: cells
                 .into_iter()
-                .map(|(start, len)| CellData { start, len })
+                .map(|c| CellData {
+                    start: c.vertex_start,
+                    len: c.vertex_count,
+                })
                 .collect(),
             cell_indices,
         }
@@ -217,7 +220,7 @@ mod tests {
             UnitVec3::new(0.0, 0.0, -1.0),
         ];
         // Cell 0 uses vertices 0,2,1,3; Cell 1 uses same but different order
-        let cells = vec![(0, 4), (4, 4)];
+        let cells = vec![VoronoiCell::new(0, 4), VoronoiCell::new(4, 4)];
         let cell_indices = vec![0, 2, 1, 3, 0, 3, 1, 2];
 
         let diagram = SphericalVoronoi::from_parts(generators, vertices, cells, cell_indices);

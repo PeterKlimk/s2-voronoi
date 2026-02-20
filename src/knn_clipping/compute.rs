@@ -71,28 +71,27 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
 
     let t = Timer::start();
-    let (all_vertices, all_vertex_keys, bad_edges, eff_cells, eff_cell_indices, dedup_sub) =
-        live_dedup::assemble_sharded_live_dedup(sharded);
-    tb.set_dedup(t.elapsed(), dedup_sub);
+    let assembled = live_dedup::assemble_sharded_live_dedup(sharded);
+    tb.set_dedup(t.elapsed(), assembled.dedup_sub);
 
-    let repair_edges_storage: Vec<live_dedup::EdgeRecord> = bad_edges
+    let repair_edges_storage: Vec<live_dedup::EdgeRecord> = assembled
+        .bad_edges
         .iter()
         .map(|b| live_dedup::EdgeRecord { key: b.key })
         .collect();
 
     let t = Timer::start();
-    let (eff_cells, eff_cell_indices) = if let Some((cells, indices)) =
-        edge_repair::repair_bad_edges(
-            &repair_edges_storage,
-            &all_vertices,
-            &eff_cells,
-            &eff_cell_indices,
-            &all_vertex_keys,
-        ) {
-        (cells, indices)
-    } else {
-        (eff_cells, eff_cell_indices)
-    };
+    let (mut eff_cells, mut eff_cell_indices) = (assembled.cells, assembled.cell_indices);
+    if let Some((cells, indices)) = edge_repair::repair_bad_edges(
+        &repair_edges_storage,
+        &assembled.vertices,
+        &eff_cells,
+        &eff_cell_indices,
+        &assembled.vertex_keys,
+    ) {
+        eff_cells = cells;
+        eff_cell_indices = indices;
+    }
     tb.set_edge_repair(t.elapsed());
 
     // Remap cells back to original point indices if we merged
@@ -125,7 +124,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     };
 
     let voronoi =
-        crate::SphericalVoronoi::from_raw_parts(points, all_vertices, cells, cell_indices);
+        crate::SphericalVoronoi::from_raw_parts(points, assembled.vertices, cells, cell_indices);
     tb.set_assemble(t.elapsed());
 
     // Report timing if feature enabled
