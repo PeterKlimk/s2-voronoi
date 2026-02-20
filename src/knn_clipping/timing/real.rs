@@ -40,12 +40,7 @@ impl LapTimer {
 struct StageCounts {
     packed_chunk0: u64,
     packed_tail: u64,
-    full_scan: u64,
-    resume_default: u64,
-    resume_other: u64,
-    restart_k0: u64,
-    restart_kmax: u64,
-    restart_other: u64,
+    directed_cursor: u64,
 }
 
 impl StageCounts {
@@ -54,23 +49,7 @@ impl StageCounts {
         match stage {
             KnnCellStage::PackedChunk0 => self.packed_chunk0 += 1,
             KnnCellStage::PackedTail => self.packed_tail += 1,
-            KnnCellStage::FullScanFallback => self.full_scan += 1,
-            KnnCellStage::Resume(k) => {
-                if k == super::super::KNN_RESUME_K {
-                    self.resume_default += 1;
-                } else {
-                    self.resume_other += 1;
-                }
-            }
-            KnnCellStage::Restart(k) => {
-                if k == super::super::KNN_RESTART_K0 {
-                    self.restart_k0 += 1;
-                } else if k == super::super::KNN_RESTART_MAX {
-                    self.restart_kmax += 1;
-                } else {
-                    self.restart_other += 1;
-                }
-            }
+            KnnCellStage::DirectedCursor => self.directed_cursor += 1,
         }
     }
 
@@ -78,12 +57,7 @@ impl StageCounts {
     fn merge(&mut self, other: &StageCounts) {
         self.packed_chunk0 += other.packed_chunk0;
         self.packed_tail += other.packed_tail;
-        self.full_scan += other.full_scan;
-        self.resume_default += other.resume_default;
-        self.resume_other += other.resume_other;
-        self.restart_k0 += other.restart_k0;
-        self.restart_kmax += other.restart_kmax;
-        self.restart_other += other.restart_other;
+        self.directed_cursor += other.directed_cursor;
     }
 }
 

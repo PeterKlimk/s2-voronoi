@@ -1,7 +1,7 @@
 //! Spherical Voronoi computation via half-space (great circle) clipping.
 //!
 //! This module implements a "meshless" approach where each Voronoi cell is computed
-//! independently from its k nearest neighbors. This structure is friendly to data-parallel CPU
+//! independently from nearby neighbors. This structure is friendly to data-parallel CPU
 //! implementations.
 
 pub(crate) mod cell_builder;
@@ -23,53 +23,27 @@ pub type MergeResult = preprocess::MergeResult;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TerminationConfig {
-    /// Enables adaptive k-NN + early termination checks.
-    ///
-    /// When disabled, the builder will still run the initial k-NN pass but will not
-    /// attempt to terminate early; the k-NN schedule still runs to ensure
-    /// correctness (so this should generally remain enabled for performance).
+    /// Enables adaptive early termination checks.
     pub check_start: usize,
     pub check_step: usize,
-    /// Optional cap on k if termination keeps requesting more neighbors.
-    /// None means unbounded.
+    /// Legacy compatibility field retained in the public config.
+    /// The directed cursor fallback is no-K and ignores this cap.
     pub max_k_cap: Option<usize>,
 }
 
-// Keep the kNN schedule and termination knobs in one place.
-//
-// Tuning notes:
-// - The "resumable kNN" schedule (`KNN_RESUME_K`, `KNN_RESTART_*`) is used for exact kNN queries.
-// - The packed schedule (`PACKED_*`) is used only for the fast r=1 packed-kNN path.
-// - If termination still isn't proven after `KNN_RESTART_MAX`, we grow k using
-//   `TERMINATION_GROW_*` until the (optional) cap.
-pub(super) const KNN_RESUME_K: usize = 18;
-pub(super) const KNN_RESTART_K0: usize = 24;
-pub(super) const KNN_RESTART_MAX: usize = 48;
-pub(super) const KNN_RESTART_KS: [usize; 2] = [KNN_RESTART_K0, KNN_RESTART_MAX];
-
 /// Packed-kNN initial `Chunk0` size (r=1).
-///
-/// This is intentionally separate from the resumable kNN schedule; it only affects the packed
-/// path. Defaults to the same value as `KNN_RESTART_K0`.
 pub(super) const PACKED_K0: usize = 16;
 
 /// Packed-kNN chunk size after `Chunk0` (and for tail emission).
-///
-/// Smaller reduces upfront packed work but may increase loop iterations and/or fallback to kNN.
+/// Smaller reduces upfront packed work but may increase fallback iterations.
 pub(super) const PACKED_K1: usize = 8;
-
-/// How aggressively to grow k when we have a bounded-but-unproven cell after the scheduled kNN.
-pub(super) const TERMINATION_GROW_MULTIPLIER: usize = 2;
-pub(super) const TERMINATION_GROW_MIN_STEP: usize = 32;
 
 /// Target points per cell for the cube-map KNN grid.
 /// Lower = more cells, faster scans, more heap overhead.
 /// Higher = fewer cells, longer scans, less overhead.
 pub(super) const KNN_GRID_TARGET_DENSITY: f64 = 16.0;
 
-// Default termination cadence:
-// - start near the end of the initial k pass
-// - then check roughly twice per initial-k window
+// Default termination cadence.
 const DEFAULT_TERMINATION_CHECK_START: usize = 8;
 const DEFAULT_TERMINATION_CHECK_STEP: usize = 1;
 

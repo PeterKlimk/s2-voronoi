@@ -1,7 +1,8 @@
 use crate::fp;
 use glam::Vec3;
+use std::cmp::Reverse;
 
-use super::super::{CubeMapGrid, CubeMapGridScratch, KnnStatus};
+use super::super::{CubeMapGrid, CubeMapGridScratch, OrdF32};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DirectedCtx<'a> {
@@ -31,31 +32,244 @@ impl<'a> DirectedCtx<'a> {
     }
 }
 
-impl CubeMapGrid {
-    #[inline]
-    pub(crate) fn find_k_nearest_resumable_slots_directed_ctx_into(
-        &self,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectedCellMode {
+    TransitOnly,
+    EmitAll,
+    EmitCenterDirected,
+}
+
+pub(crate) struct DirectedNoKCursor<'a, 'b> {
+    grid: &'a CubeMapGrid,
+    scratch: &'a mut CubeMapGridScratch,
+    query: Vec3,
+    query_idx: usize,
+    start_cell: u32,
+    query_bin: u8,
+    query_local: u32,
+    slot_gen_map: &'b [u32],
+    local_shift: u32,
+    local_mask: u32,
+    exhausted: bool,
+}
+
+impl<'a, 'b> DirectedNoKCursor<'a, 'b> {
+    fn new(
+        grid: &'a CubeMapGrid,
         query: Vec3,
         query_idx: usize,
-        k: usize,
-        track_limit: usize,
-        scratch: &mut CubeMapGridScratch,
-        out_slots: &mut Vec<u32>,
-        ctx: DirectedCtx<'_>,
-    ) -> KnnStatus {
-        self.find_k_nearest_resumable_into_directed_impl(
+        scratch: &'a mut CubeMapGridScratch,
+        ctx: DirectedCtx<'b>,
+    ) -> Self {
+        let start_cell = if query_idx < grid.point_cells.len() {
+            grid.point_cells[query_idx]
+        } else {
+            grid.point_to_cell(query) as u32
+        };
+
+        scratch.cell_heap.clear();
+        scratch.point_heap.clear();
+        scratch.exhausted = false;
+        scratch.stamp = scratch.stamp.wrapping_add(1).max(1);
+        if scratch.stamp == u32::MAX {
+            scratch.visited_stamp.fill(0);
+            scratch.stamp = 1;
+        }
+        scratch.mark_visited(start_cell);
+        scratch.push_cell(start_cell, 0.0);
+
+        Self {
+            grid,
+            scratch,
             query,
             query_idx,
-            k,
-            track_limit,
-            scratch,
-            out_slots,
-            ctx.query_bin,
-            ctx.query_local,
-            ctx.slot_gen_map,
-            ctx.local_shift,
-            ctx.local_mask,
-        )
+            start_cell,
+            query_bin: ctx.query_bin,
+            query_local: ctx.query_local,
+            slot_gen_map: ctx.slot_gen_map,
+            local_shift: ctx.local_shift,
+            local_mask: ctx.local_mask,
+            exhausted: false,
+        }
+    }
+
+    #[inline]
+    fn cell_mode(&self, cell: usize) -> DirectedCellMode {
+        let start = self.grid.cell_offsets[cell] as usize;
+        let end = self.grid.cell_offsets[cell + 1] as usize;
+        if start >= end {
+            return DirectedCellMode::TransitOnly;
+        }
+
+        let packed = self.slot_gen_map[start];
+        let (bin_b, _) = CubeMapGrid::unpack_bin_local(packed, self.local_shift, self.local_mask);
+        if bin_b != self.query_bin {
+            return DirectedCellMode::EmitAll;
+        }
+
+        let cell_u32 = cell as u32;
+        if cell_u32 < self.start_cell {
+            DirectedCellMode::TransitOnly
+        } else if cell_u32 == self.start_cell {
+            DirectedCellMode::EmitCenterDirected
+        } else {
+            DirectedCellMode::EmitAll
+        }
+    }
+
+    #[inline]
+    fn push_neighbors(&mut self, cell: usize) {
+        for &ncell in self.grid.cell_neighbors(cell) {
+            if ncell == u32::MAX {
+                continue;
+            }
+            if !self.scratch.mark_visited(ncell) {
+                continue;
+            }
+            let bound = self.grid.cell_min_dist_sq(self.query, ncell as usize);
+            self.scratch.push_cell(ncell, bound);
+        }
+    }
+
+    #[inline]
+    fn push_point_slot_dist(&mut self, slot: u32, dist_sq: f32) {
+        self.scratch
+            .point_heap
+            .push(Reverse((OrdF32::new(dist_sq), slot)));
+    }
+
+    fn scan_emit_points(&mut self, cell: usize, mode: DirectedCellMode) {
+        if mode == DirectedCellMode::TransitOnly {
+            return;
+        }
+
+        let start = self.grid.cell_offsets[cell] as usize;
+        let end = self.grid.cell_offsets[cell + 1] as usize;
+        if start >= end {
+            return;
+        }
+
+        let xs = &self.grid.cell_points_x[start..end];
+        let ys = &self.grid.cell_points_y[start..end];
+        let zs = &self.grid.cell_points_z[start..end];
+        let indices = &self.grid.point_indices[start..end];
+        let (qx, qy, qz) = (self.query.x, self.query.y, self.query.z);
+
+        for i in 0..xs.len() {
+            let global = indices[i] as usize;
+            if global == self.query_idx {
+                continue;
+            }
+            let slot = (start + i) as u32;
+
+            if mode == DirectedCellMode::EmitCenterDirected {
+                let packed = self.slot_gen_map[slot as usize];
+                let (bin_b, local_b) =
+                    CubeMapGrid::unpack_bin_local(packed, self.local_shift, self.local_mask);
+                if bin_b == self.query_bin && local_b < self.query_local {
+                    continue;
+                }
+            }
+
+            let dot = fp::dot3_f32(xs[i], ys[i], zs[i], qx, qy, qz);
+            let dist_sq = (2.0 - 2.0 * dot).max(0.0);
+            self.push_point_slot_dist(slot, dist_sq);
+        }
+    }
+
+    fn expand_cell(&mut self, cell: usize) {
+        let mode = self.cell_mode(cell);
+        self.scan_emit_points(cell, mode);
+        self.push_neighbors(cell);
+    }
+
+    fn peel_to_emit_bound_sq(&mut self) -> Option<f32> {
+        loop {
+            let (bound, cell) = self.scratch.peek_cell()?;
+            if self.cell_mode(cell as usize) != DirectedCellMode::TransitOnly {
+                return Some(bound);
+            }
+            let (_, transit_cell) = self.scratch.pop_cell().expect("cell heap out of sync");
+            self.expand_cell(transit_cell as usize);
+        }
+    }
+
+    #[inline]
+    fn pop_best_point_slot(&mut self) -> Option<u32> {
+        self.scratch.point_heap.pop().map(|Reverse((_, slot))| slot)
+    }
+
+    #[inline]
+    fn best_point_dist_sq(&self) -> Option<f32> {
+        self.scratch
+            .point_heap
+            .peek()
+            .map(|Reverse((dist, _))| dist.get())
+    }
+
+    pub(crate) fn pop_next_proven_slot(&mut self) -> Option<u32> {
+        if self.exhausted {
+            return self.pop_best_point_slot();
+        }
+
+        loop {
+            let emit_bound = self.peel_to_emit_bound_sq();
+            if let Some(best_dist_sq) = self.best_point_dist_sq() {
+                let proven = match emit_bound {
+                    Some(bound_sq) => best_dist_sq <= bound_sq,
+                    None => true,
+                };
+                if proven {
+                    return self.pop_best_point_slot();
+                }
+            }
+
+            let Some((_, cell)) = self.scratch.pop_cell() else {
+                self.exhausted = true;
+                self.scratch.exhausted = true;
+                return self.pop_best_point_slot();
+            };
+            self.expand_cell(cell as usize);
+        }
+    }
+
+    pub(crate) fn unseen_dot_upper_bound(&mut self) -> f32 {
+        match self.peel_to_emit_bound_sq() {
+            Some(min_dist_sq) => (1.0 - 0.5 * min_dist_sq).clamp(-1.0, 1.0),
+            None => -1.0,
+        }
+    }
+
+    #[inline]
+    fn queued_dot_upper_bound(&self) -> f32 {
+        match self.best_point_dist_sq() {
+            Some(min_dist_sq) => (1.0 - 0.5 * min_dist_sq).clamp(-1.0, 1.0),
+            None => -1.0,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn remaining_dot_upper_bound(&mut self) -> f32 {
+        self.unseen_dot_upper_bound()
+            .max(self.queued_dot_upper_bound())
+    }
+
+    #[inline]
+    pub(crate) fn is_exhausted(&self) -> bool {
+        self.exhausted
+    }
+}
+
+impl CubeMapGrid {
+    #[inline]
+    pub(crate) fn directed_no_k_cursor<'a, 'b>(
+        &'a self,
+        query: Vec3,
+        query_idx: usize,
+        scratch: &'a mut CubeMapGridScratch,
+        ctx: DirectedCtx<'b>,
+    ) -> DirectedNoKCursor<'a, 'b> {
+        DirectedNoKCursor::new(self, query, query_idx, scratch, ctx)
     }
 
     #[inline(always)]
@@ -64,250 +278,8 @@ impl CubeMapGrid {
         let local = packed & local_mask;
         (bin, local)
     }
-
-    fn bruteforce_fill_directed_impl(
-        &self,
-        query: Vec3,
-        query_idx: usize,
-        scratch: &mut CubeMapGridScratch,
-        query_bin: u8,
-        query_local: u32,
-        slot_gen_map: &[u32],
-        local_shift: u32,
-        local_mask: u32,
-    ) {
-        if scratch.use_fixed {
-            scratch.candidates_len = 0;
-        } else {
-            scratch.candidates_vec.clear();
-        }
-
-        let (qx, qy, qz) = (query.x, query.y, query.z);
-        let n = self.point_indices.len();
-        debug_assert_eq!(
-            slot_gen_map.len(),
-            n,
-            "slot_gen_map must match point_indices length"
-        );
-
-        let indices = &self.point_indices[..n];
-        let xs = &self.cell_points_x[..n];
-        let ys = &self.cell_points_y[..n];
-        let zs = &self.cell_points_z[..n];
-
-        for (slot, (global, ((x, y), z))) in indices
-            .iter()
-            .zip(xs.iter().zip(ys.iter()).zip(zs.iter()))
-            .enumerate()
-        {
-            let global = *global as usize;
-            if global == query_idx {
-                continue;
-            }
-
-            let packed = slot_gen_map[slot];
-            let (bin_b, local_b) = Self::unpack_bin_local(packed, local_shift, local_mask);
-            if bin_b == query_bin && local_b < query_local {
-                continue;
-            }
-
-            let dot = fp::dot3_f32(*x, *y, *z, qx, qy, qz);
-            let dist_sq = (2.0 - 2.0 * dot).max(0.0);
-            scratch.try_add_neighbor(slot as u32, dist_sq);
-        }
-        scratch.exhausted = true;
-    }
-
-    #[inline]
-    fn scan_cell_points_directed_impl(
-        &self,
-        query: Vec3,
-        query_idx: usize,
-        cell: usize,
-        scratch: &mut CubeMapGridScratch,
-        query_bin: u8,
-        query_local: u32,
-        slot_gen_map: &[u32],
-        local_shift: u32,
-        local_mask: u32,
-    ) {
-        let start = self.cell_offsets[cell] as usize;
-        let end = self.cell_offsets[cell + 1] as usize;
-
-        // Use SoA layout for contiguous memory access
-        let xs = &self.cell_points_x[start..end];
-        let ys = &self.cell_points_y[start..end];
-        let zs = &self.cell_points_z[start..end];
-        let indices = &self.point_indices[start..end];
-
-        let (qx, qy, qz) = (query.x, query.y, query.z);
-
-        for i in 0..xs.len() {
-            let pidx = indices[i] as usize;
-            if pidx == query_idx {
-                continue;
-            }
-            let slot = (start + i) as u32;
-            let packed = slot_gen_map[slot as usize];
-            let (bin_b, local_b) = Self::unpack_bin_local(packed, local_shift, local_mask);
-            if bin_b == query_bin && local_b < query_local {
-                continue;
-            }
-
-            let dot = fp::dot3_f32(xs[i], ys[i], zs[i], qx, qy, qz);
-            let dist_sq = (2.0 - 2.0 * dot).max(0.0);
-            scratch.try_add_neighbor(slot, dist_sq);
-        }
-    }
-
-    #[inline]
-    fn seed_start_cell_directed_impl(
-        &self,
-        query: Vec3,
-        query_idx: usize,
-        start_cell: u32,
-        scratch: &mut CubeMapGridScratch,
-        query_bin: u8,
-        query_local: u32,
-        slot_gen_map: &[u32],
-        local_shift: u32,
-        local_mask: u32,
-    ) -> usize {
-        scratch.mark_visited(start_cell);
-        self.scan_cell_points_directed_impl(
-            query,
-            query_idx,
-            start_cell as usize,
-            scratch,
-            query_bin,
-            query_local,
-            slot_gen_map,
-            local_shift,
-            local_mask,
-        );
-
-        let neighbors = self.cell_neighbors(start_cell as usize);
-        for &ncell in neighbors.iter() {
-            if ncell == u32::MAX || ncell == start_cell {
-                continue;
-            }
-            if !scratch.mark_visited(ncell) {
-                continue;
-            }
-            let bound = self.cell_min_dist_sq(query, ncell as usize);
-            scratch.push_cell(ncell, bound);
-        }
-
-        1
-    }
-
-    fn find_k_nearest_resumable_into_directed_impl(
-        &self,
-        query: Vec3,
-        query_idx: usize,
-        k: usize,
-        track_limit: usize,
-        scratch: &mut CubeMapGridScratch,
-        out_slots: &mut Vec<u32>,
-        query_bin: u8,
-        query_local: u32,
-        slot_gen_map: &[u32],
-        local_shift: u32,
-        local_mask: u32,
-    ) -> KnnStatus {
-        let n = self.point_indices.len();
-        out_slots.clear();
-
-        if k == 0 || n <= 1 {
-            return KnnStatus::CanResume;
-        }
-        debug_assert_eq!(
-            slot_gen_map.len(),
-            n,
-            "slot_gen_map must match point_indices length"
-        );
-
-        let k = k.min(n - 1);
-        let track_limit = track_limit.min(n - 1).max(k);
-
-        let num_cells = 6 * self.res * self.res;
-        scratch.begin_query(k, track_limit);
-
-        let start_cell = if query_idx < self.point_cells.len() {
-            self.point_cells[query_idx]
-        } else {
-            self.point_to_cell(query) as u32
-        };
-
-        let visited = self.seed_start_cell_directed_impl(
-            query,
-            query_idx,
-            start_cell,
-            scratch,
-            query_bin,
-            query_local,
-            slot_gen_map,
-            local_shift,
-            local_mask,
-        );
-
-        let mut visited = visited;
-        while let Some((bound_dist_sq, _cell)) = scratch.peek_cell() {
-            if scratch.have_k(k) && bound_dist_sq >= scratch.kth_dist_sq(k) {
-                break;
-            };
-
-            let (_, cell) = scratch.pop_cell().expect("cell heap out of sync");
-            self.scan_cell_points_directed_impl(
-                query,
-                query_idx,
-                cell as usize,
-                scratch,
-                query_bin,
-                query_local,
-                slot_gen_map,
-                local_shift,
-                local_mask,
-            );
-
-            let neighbors = self.cell_neighbors(cell as usize);
-            for &ncell in neighbors.iter() {
-                if ncell == u32::MAX {
-                    continue;
-                }
-                if !scratch.mark_visited(ncell) {
-                    continue;
-                }
-                let bound = self.cell_min_dist_sq(query, ncell as usize);
-                scratch.push_cell(ncell, bound);
-            }
-
-            visited += 1;
-            if visited >= num_cells {
-                break;
-            }
-        }
-
-        if !scratch.have_k(k) {
-            // Not enough results found; brute force remaining points
-            self.bruteforce_fill_directed_impl(
-                query,
-                query_idx,
-                scratch,
-                query_bin,
-                query_local,
-                slot_gen_map,
-                local_shift,
-                local_mask,
-            );
-        }
-
-        scratch.copy_k_slots_into(k, out_slots);
-
-        if scratch.exhausted {
-            KnnStatus::Exhausted
-        } else {
-            KnnStatus::CanResume
-        }
-    }
 }
+
+#[cfg(test)]
+#[path = "directed_tests.rs"]
+mod directed_tests;

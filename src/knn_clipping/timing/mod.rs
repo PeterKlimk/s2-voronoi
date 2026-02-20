@@ -12,12 +12,8 @@ pub enum KnnCellStage {
     PackedChunk0,
     /// Terminated during packed tail (r=1, dot >= security).
     PackedTail,
-    /// Terminated during resume stage with given K value.
-    Resume(usize),
-    /// Terminated during restart stage with given K value.
-    Restart(usize),
-    /// Ran full scan as fallback.
-    FullScanFallback,
+    /// Ran directed no-K cursor fallback.
+    DirectedCursor,
 }
 
 #[cfg(feature = "timing")]

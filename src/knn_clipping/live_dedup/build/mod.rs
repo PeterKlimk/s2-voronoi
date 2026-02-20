@@ -162,7 +162,6 @@ pub(super) struct ShardContext<'a> {
 struct CellContext {
     builder: Topo2DBuilder,
     scratch: crate::cube_grid::CubeMapGridScratch,
-    neighbor_slots: Vec<u32>,
     packed_chunk: Vec<u32>,
     output_buffer: CellOutputBuffer,
     edge_scratch: EdgeScratch,
@@ -174,8 +173,9 @@ impl CellContext {
         Self {
             builder: Topo2DBuilder::new(0, Vec3::ZERO),
             scratch: grid.make_scratch(),
-            neighbor_slots: Vec::with_capacity(crate::knn_clipping::KNN_RESTART_MAX),
-            packed_chunk: Vec::with_capacity(crate::knn_clipping::KNN_RESTART_MAX),
+            packed_chunk: Vec::with_capacity(
+                crate::knn_clipping::PACKED_K0.max(crate::knn_clipping::PACKED_K1),
+            ),
             output_buffer: CellOutputBuffer::default(),
             edge_scratch: EdgeScratch::new(),
             attempted_neighbors: AttemptedNeighbors::new(grid.point_indices().len()),
@@ -188,11 +188,8 @@ pub(super) fn build_cells_sharded_live_dedup(
     grid: &CubeMapGrid,
     termination: TerminationConfig,
 ) -> ShardedCellsData {
-    // If termination is enabled but not proven after the kNN schedule, we keep requesting
-    // more neighbors until the termination check succeeds.
-    //
-    // This makes correctness independent of any fixed k cap.
-    let termination_max_k_cap = termination.max_k_cap;
+    // Legacy config compatibility: no-k fallback ignores this cap.
+    let _ = termination.max_k_cap;
 
     let assignment = assign_bins(points, grid);
     let num_bins = assignment.num_bins;
@@ -306,7 +303,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                                         &mut shard_ctx,
                                         &grid_ctx,
                                         termination,
-                                        termination_max_k_cap,
                                         global,
                                         Some((
                                             &mut packed_scratch,
@@ -335,7 +331,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                                         &mut shard_ctx,
                                         &grid_ctx,
                                         termination,
-                                        termination_max_k_cap,
                                         global,
                                         None,
                                     );
@@ -366,7 +361,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                                 &mut shard_ctx,
                                 &grid_ctx,
                                 termination,
-                                termination_max_k_cap,
                                 global,
                                 None,
                             );
