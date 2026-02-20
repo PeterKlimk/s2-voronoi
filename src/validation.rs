@@ -65,17 +65,8 @@ impl ValidationReport {
         let degree3_bad = (self.degree_counts[1] + self.degree_counts[2]) as f64;
         let degree3_ratio = degree3_bad / self.num_vertices.max(1) as f64;
         let degree3_ok = degree3_ratio <= 0.01;
-        // Duplicate cells are allowed if they result from merged generators
-        // But we should verify they are consistent
-        let duplicate_cells_ok = true;
 
-        euler_ok
-            && degenerate_ok
-            && no_duplicates
-            && edges_consistent
-            && on_sphere
-            && degree3_ok
-            && duplicate_cells_ok
+        euler_ok && degenerate_ok && no_duplicates && edges_consistent && on_sphere && degree3_ok
     }
 
     /// Strict check: exact Euler characteristic, no degenerates, perfect structure.

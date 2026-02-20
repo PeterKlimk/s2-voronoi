@@ -62,53 +62,7 @@ fn dist_sq(a: Vec3, b: Vec3) -> f32 {
     d.length_squared()
 }
 
-#[derive(Debug)]
-struct UnionFind {
-    parent: Vec<u32>,
-    rank: Vec<u8>,
-}
-
-impl UnionFind {
-    fn new(n: usize) -> Self {
-        let mut parent = Vec::with_capacity(n);
-        for i in 0..n {
-            parent.push(i as u32);
-        }
-        Self {
-            parent,
-            rank: vec![0; n],
-        }
-    }
-
-    fn find(&mut self, x: u32) -> u32 {
-        let idx = x as usize;
-        let p = self.parent[idx];
-        if p != x {
-            let root = self.find(p);
-            self.parent[idx] = root;
-        }
-        self.parent[idx]
-    }
-
-    fn union(&mut self, a: u32, b: u32) -> bool {
-        let ra = self.find(a);
-        let rb = self.find(b);
-        if ra == rb {
-            return false;
-        }
-        let ra_idx = ra as usize;
-        let rb_idx = rb as usize;
-        if self.rank[ra_idx] < self.rank[rb_idx] {
-            self.parent[ra_idx] = rb;
-        } else if self.rank[ra_idx] > self.rank[rb_idx] {
-            self.parent[rb_idx] = ra;
-        } else {
-            self.parent[rb_idx] = ra;
-            self.rank[ra_idx] = self.rank[ra_idx].saturating_add(1);
-        }
-        true
-    }
-}
+use super::union_find::UnionFind;
 
 pub(super) fn repair_bad_edges(
     edge_records: &[EdgeRecord],
@@ -135,7 +89,6 @@ pub(super) fn repair_bad_edges(
             //
             // If we detect an essentially zero-length edge on the emitting side, collapse it
             // (and, if possible, merge it onto an exactly coincident vertex in the neighbor cell).
-            let mut handled_degenerate = false;
             if (seg_a.len() == 1 && seg_b.is_empty()) || (seg_b.len() == 1 && seg_a.is_empty()) {
                 let (_emit_cell, other_cell, emit_seg) = if seg_a.len() == 1 {
                     (a, b, seg_a[0])
@@ -148,7 +101,6 @@ pub(super) fn repair_bad_edges(
                 if v0_usize < vertices.len() && v1_usize < vertices.len() {
                     let len_sq = dist_sq(vertices[v0_usize], vertices[v1_usize]);
                     if len_sq <= DEGENERATE_LEN_EPS_SQ {
-                        handled_degenerate = true;
                         if uf.union(v0, v1) {
                             merged += 1;
                         }
@@ -194,10 +146,6 @@ pub(super) fn repair_bad_edges(
                     }
                 }
             }
-            if handled_degenerate {
-                continue;
-            }
-
             continue;
         }
         let (a0, a1) = seg_a[0];

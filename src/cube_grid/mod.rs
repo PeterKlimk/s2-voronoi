@@ -304,11 +304,6 @@ pub struct CubeMapGridScratch {
     use_fixed: bool,
     candidates_vec: Vec<(f32, u32)>,
 
-    /// Dot-product top-k buffer for non-resumable queries (unsorted).
-    /// Stored as (dot, point_idx), where larger dot = closer for unit vectors.
-    candidates_dot: Vec<(f32, u32)>,
-    // worst_dot: f32, // Unused
-    // worst_dot_pos: usize, // Unused
     /// If true, we've done a brute-force scan and have an exhaustive candidate set
     /// (up to `track_limit`).
     exhausted: bool,

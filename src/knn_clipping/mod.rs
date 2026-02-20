@@ -4,19 +4,6 @@
 //! independently from its k nearest neighbors. This structure is friendly to data-parallel CPU
 //! implementations.
 
-macro_rules! maybe_par_into_iter {
-    ($v:expr) => {{
-        #[cfg(feature = "parallel")]
-        {
-            $v.into_par_iter()
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            $v.into_iter()
-        }
-    }};
-}
-
 pub(crate) mod cell_builder;
 pub(crate) mod compute;
 pub(crate) mod constants;
@@ -25,6 +12,7 @@ pub(crate) mod live_dedup;
 pub(crate) mod preprocess;
 pub(crate) mod timing;
 pub(crate) mod topo2d;
+pub(crate) mod union_find;
 
 // Re-exports (internal use)
 #[allow(unused_imports)]

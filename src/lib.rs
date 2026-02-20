@@ -51,6 +51,37 @@ pub(crate) mod sort;
 mod types;
 pub mod validation;
 
+// Conditionally-parallel iteration macros, used by cube_grid and knn_clipping.
+// Note: call sites must have `use rayon::prelude::*` in scope when `parallel` is enabled.
+
+/// Conditionally parallel `into_iter` over an owned collection or range.
+macro_rules! maybe_par_into_iter {
+    ($v:expr) => {{
+        #[cfg(feature = "parallel")]
+        {
+            $v.into_par_iter()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            $v.into_iter()
+        }
+    }};
+}
+
+/// Conditionally parallel `iter` over a slice reference.
+macro_rules! maybe_par_iter {
+    ($slice:expr) => {{
+        #[cfg(feature = "parallel")]
+        {
+            $slice.par_iter()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            $slice.iter()
+        }
+    }};
+}
+
 // Internal modules
 pub(crate) mod cube_grid;
 pub(crate) mod knn_clipping;

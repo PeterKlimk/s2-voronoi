@@ -25,8 +25,7 @@ pub fn coincident_distance() -> f32 {
 /// numerical issues where different triplets produce the same f32 vertex
 /// position. We merge generators that are within a fraction of the mean spacing.
 ///
-/// Returns (fixed_threshold, density_fraction)
-/// The actual threshold used is: max(fixed_threshold, mean_spacing * density_fraction)
+/// Returns `max(coincident_distance, mean_spacing * 0.01)`.
 #[inline]
 pub fn merge_threshold_for_density(num_points: usize) -> f32 {
     // Mean angular spacing on unit sphere: sqrt(4π / n)

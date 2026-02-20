@@ -39,7 +39,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
             }
         };
     tb.set_preprocess(t.elapsed());
-    let needs_remap = merge_result.as_ref().is_some_and(|r| r.num_merged > 0);
+    let needs_remap = merge_result.is_some();
 
     let effective_points_ref: &[Vec3] = match &effective_points {
         Some(v) => v.as_slice(),

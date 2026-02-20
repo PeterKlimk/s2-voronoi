@@ -54,43 +54,7 @@ pub fn merge_close_points(points: &[Vec3], threshold: f32) -> MergeResult {
     let grid = crate::cube_grid::CubeMapGrid::new(points, res);
     let num_cells = 6 * res * res;
 
-    struct MergeDsu {
-        parent: Vec<u32>,
-    }
-
-    impl MergeDsu {
-        fn new(n: usize) -> Self {
-            let mut parent = Vec::with_capacity(n);
-            for i in 0..n {
-                parent.push(i as u32);
-            }
-            Self { parent }
-        }
-
-        fn find(&mut self, x: u32) -> u32 {
-            let idx = x as usize;
-            let p = self.parent[idx];
-            if p != x {
-                let root = self.find(p);
-                self.parent[idx] = root;
-            }
-            self.parent[idx]
-        }
-
-        // Order-dependent merge: keep the smaller representative as the parent.
-        fn union_keep_min(&mut self, a: u32, b: u32) -> bool {
-            let ra = self.find(a);
-            let rb = self.find(b);
-            if ra == rb {
-                return false;
-            }
-            let (min, max) = if ra <= rb { (ra, rb) } else { (rb, ra) };
-            self.parent[max as usize] = min;
-            true
-        }
-    }
-
-    let mut dsu = MergeDsu::new(n);
+    let mut dsu = super::union_find::UnionFind::new(n);
 
     for cell in 0..num_cells {
         let a_points = grid.cell_points(cell);

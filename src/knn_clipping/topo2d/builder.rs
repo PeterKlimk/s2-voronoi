@@ -130,17 +130,9 @@ impl Topo2DBuilder {
             .map(|_| ())
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn clip_with_slot_result(
-        &mut self,
-        neighbor_idx: usize,
-        neighbor_slot: u32,
-        neighbor: Vec3,
-    ) -> Result<ClipResult, CellFailure> {
-        if let Some(f) = self.failed {
-            return Err(f);
-        }
-
+    /// Compute the bisector half-plane coefficients (a, b, c) for a neighbor.
+    #[inline]
+    fn bisector_coefficients(&self, neighbor: Vec3) -> (f64, f64, f64) {
         debug_assert!(
             (neighbor.length_squared() - 1.0).abs() < 1e-5,
             "neighbor not unit-normalized: |N|² = {}",
@@ -158,16 +150,17 @@ impl Topo2DBuilder {
             fp::fma_f64(g.z, scale, -n_raw.z),
         );
 
-        let (a, b, c) = self.basis.plane_to_line(normal_unnorm);
-        let plane_idx = self.half_planes.len();
-        let hp = HalfPlane::new_unnormalized(a, b, c, plane_idx);
+        self.basis.plane_to_line(normal_unnorm)
+    }
 
-        let clip_result = if self.use_a {
-            clip_convex(&self.poly_a, &hp, &mut self.poly_b)
-        } else {
-            clip_convex(&self.poly_b, &hp, &mut self.poly_a)
-        };
-
+    /// Commit a clip result: update state on Changed, set failure on TooManyVertices/ClippedAway.
+    fn commit_clip(
+        &mut self,
+        clip_result: ClipResult,
+        hp: HalfPlane,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+    ) -> Result<ClipResult, CellFailure> {
         match clip_result {
             ClipResult::TooManyVertices => {
                 self.failed = Some(CellFailure::TooManyVertices);
@@ -193,6 +186,30 @@ impl Topo2DBuilder {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
+    pub fn clip_with_slot_result(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+    ) -> Result<ClipResult, CellFailure> {
+        if let Some(f) = self.failed {
+            return Err(f);
+        }
+
+        let (a, b, c) = self.bisector_coefficients(neighbor);
+        let plane_idx = self.half_planes.len();
+        let hp = HalfPlane::new_unnormalized(a, b, c, plane_idx);
+
+        let clip_result = if self.use_a {
+            clip_convex(&self.poly_a, &hp, &mut self.poly_b)
+        } else {
+            clip_convex(&self.poly_b, &hp, &mut self.poly_a)
+        };
+
+        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)
+    }
+
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub fn clip_with_slot_edgecheck(
         &mut self,
         neighbor_idx: usize,
@@ -207,24 +224,7 @@ impl Topo2DBuilder {
             return Err(f);
         }
 
-        debug_assert!(
-            (neighbor.length_squared() - 1.0).abs() < 1e-5,
-            "neighbor not unit-normalized: |N|² = {}",
-            neighbor.length_squared()
-        );
-
-        let n_raw = DVec3::new(neighbor.x as f64, neighbor.y as f64, neighbor.z as f64);
-        let len_sq = n_raw.length_squared();
-        let scale = fp::fma_f64(len_sq, 0.5, 0.5);
-
-        let g = self.generator;
-        let normal_unnorm = DVec3::new(
-            fp::fma_f64(g.x, scale, -n_raw.x),
-            fp::fma_f64(g.y, scale, -n_raw.y),
-            fp::fma_f64(g.z, scale, -n_raw.z),
-        );
-
-        let (a, b, c) = self.basis.plane_to_line(normal_unnorm);
+        let (a, b, c) = self.bisector_coefficients(neighbor);
         let plane_idx = self.half_planes.len();
         let hp = HalfPlane::new_unnormalized_with_eps(a, b, c, plane_idx, hp_eps as f64);
 
@@ -234,27 +234,7 @@ impl Topo2DBuilder {
             clip_convex_edgecheck(&self.poly_b, &hp, &mut self.poly_a)
         };
 
-        match clip_result {
-            ClipResult::TooManyVertices => {
-                self.failed = Some(CellFailure::TooManyVertices);
-                return Err(CellFailure::TooManyVertices);
-            }
-            ClipResult::Changed => {
-                self.half_planes.push(hp);
-                self.neighbor_indices.push(neighbor_idx);
-                self.neighbor_slots.push(neighbor_slot);
-                self.use_a = !self.use_a;
-                self.term_cache_valid = false;
-            }
-            ClipResult::Unchanged => {}
-        }
-
-        let poly = self.current_poly();
-        if poly.len < 3 {
-            self.failed = Some(CellFailure::ClippedAway);
-            return Err(CellFailure::ClippedAway);
-        }
-
+        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)?;
         Ok(())
     }
 

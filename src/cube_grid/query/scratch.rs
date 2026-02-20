@@ -15,7 +15,6 @@ impl CubeMapGridScratch {
             candidates_len: 0,
             use_fixed: true,
             candidates_vec: Vec::new(),
-            candidates_dot: Vec::new(),
             exhausted: false,
         }
     }
@@ -28,7 +27,6 @@ impl CubeMapGridScratch {
         self.candidates_len = 0;
         self.use_fixed = track_limit <= Self::MAX_TRACK;
         self.candidates_vec.clear();
-        self.candidates_dot.clear();
         if !self.use_fixed {
             let reserve = track_limit.max(k);
             if self.candidates_vec.capacity() < reserve {

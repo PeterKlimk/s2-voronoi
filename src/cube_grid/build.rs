@@ -5,34 +5,6 @@ use glam::Vec3;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-/// Conditionally parallel iterator over a range.
-macro_rules! maybe_par_range {
-    ($range:expr) => {{
-        #[cfg(feature = "parallel")]
-        {
-            ($range).into_par_iter()
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            $range
-        }
-    }};
-}
-
-/// Conditionally parallel iterator over a slice.
-macro_rules! maybe_par_iter {
-    ($slice:expr) => {{
-        #[cfg(feature = "parallel")]
-        {
-            $slice.par_iter()
-        }
-        #[cfg(not(feature = "parallel"))]
-        {
-            $slice.iter()
-        }
-    }};
-}
-
 use super::{
     cell_to_face_ij, diagonal_from_edge_neighbors, face_uv_to_3d, face_uv_to_cell,
     point_to_face_uv, st_to_uv, step_one, CubeMapGrid, CubeMapGridBuildTimings, EdgeDir, RING2_MAX,
@@ -377,7 +349,7 @@ impl CubeMapGrid {
         let num_cells = 6 * res * res;
 
         // Compute each cell's 9 neighbors in parallel.
-        let results: Vec<[u32; 9]> = maybe_par_range!(0..num_cells)
+        let results: Vec<[u32; 9]> = maybe_par_into_iter!(0..num_cells)
             .map(|cell| {
                 let (face, iu, iv) = cell_to_face_ij(cell, res);
 
@@ -465,7 +437,7 @@ impl CubeMapGrid {
         }
 
         // Compute each cell's ring-2 in parallel.
-        let results: Vec<([u32; RING2_MAX], u8)> = maybe_par_range!(0..num_cells)
+        let results: Vec<([u32; RING2_MAX], u8)> = maybe_par_into_iter!(0..num_cells)
             .map(|cell| {
                 let near = neighbors[cell];
 
@@ -629,7 +601,7 @@ impl CubeMapGrid {
         }
 
         // Compute cell bounds in parallel (each cell is independent).
-        let results: Vec<(Vec3, f32, f32)> = maybe_par_range!(0..num_cells)
+        let results: Vec<(Vec3, f32, f32)> = maybe_par_into_iter!(0..num_cells)
             .map(|cell| {
                 let (face, iu, iv) = cell_to_face_ij(cell, res);
 
