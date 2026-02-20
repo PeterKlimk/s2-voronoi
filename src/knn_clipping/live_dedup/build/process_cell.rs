@@ -142,7 +142,7 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
             let neighbor_idx = if a == cell_idx { b } else { a } as usize;
             let neighbor_slot = self.grid_ctx.grid.point_index_to_slot(neighbor_idx);
 
-            if !self.ctx.attempted_neighbors.insert(neighbor_slot as usize) {
+            if !self.ctx.attempted_neighbors.insert(neighbor_idx) {
                 continue;
             }
 
@@ -225,7 +225,7 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
                     continue;
                 }
 
-                self.ctx.attempted_neighbors.mark(neighbor_slot as usize);
+                self.ctx.attempted_neighbors.mark(neighbor_idx);
 
                 let neighbor = self.grid_ctx.points[neighbor_idx];
                 let clip_result = match self.ctx.builder.clip_with_slot_result(
@@ -508,10 +508,10 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
                 db.partial_cmp(&da).unwrap()
             });
             for p_idx in sorted_indices {
-                let slot = self.grid_ctx.grid.point_index_to_slot(p_idx);
-                if !self.ctx.attempted_neighbors.insert(slot as usize) {
+                if !self.ctx.attempted_neighbors.insert(p_idx) {
                     continue;
                 }
+                let slot = self.grid_ctx.grid.point_index_to_slot(p_idx);
                 if self
                     .ctx
                     .builder
@@ -708,7 +708,7 @@ fn clip_resumable_knn_neighbors(
 ) -> bool {
     for (pos, &neighbor_slot) in neighbor_slots.iter().enumerate() {
         let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
-        if !attempted_neighbors.insert(neighbor_slot as usize) {
+        if !attempted_neighbors.insert(neighbor_idx) {
             continue;
         }
 
