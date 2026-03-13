@@ -2,8 +2,10 @@
 
 mod directed;
 mod scratch;
+mod stream;
 
 pub(crate) use directed::DirectedCtx;
+pub(crate) use stream::{DirectedNeighborBatchSource, DirectedNeighborStream, PackedQuery};
 
 use crate::fp;
 use glam::Vec3;

@@ -13,8 +13,10 @@ use super::packed::INVALID_INDEX;
 use super::shard::ShardState;
 use super::types::{BinId, EdgeCheck, EdgeCheckOverflow, EdgeOverflowLocal, EdgeToLater, LocalId};
 use super::ShardedCellsData;
-use crate::cube_grid::packed_knn::{PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings};
-use crate::cube_grid::CubeMapGrid;
+use crate::cube_grid::packed_knn::{
+    DirectedCellGroup, PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings,
+};
+use crate::cube_grid::{CubeMapGrid, PackedQuery};
 use crate::knn_clipping::cell_builder::{CellOutputBuffer, VertexData};
 use crate::knn_clipping::topo2d::Topo2DBuilder;
 use crate::knn_clipping::TerminationConfig;
@@ -268,20 +270,20 @@ pub(super) fn build_cells_sharded_live_dedup(
                     if packed_k0_base > 0 {
                         let queries = &packed_queries_all[group_start..cursor];
                         let query_locals = &packed_query_locals_all[group_start..cursor];
-
-                        #[cfg(not(feature = "timing"))]
-                        let t_packed = crate::knn_clipping::timing::Timer::start();
-                        let status = packed_scratch.prepare_group_directed(
-                            grid,
+                        let group = DirectedCellGroup::new(
                             cell as usize,
+                            bin.as_u8(),
                             queries,
                             query_locals,
-                            bin.as_u8(),
                             &assignment.slot_gen_map,
                             assignment.local_shift,
                             assignment.local_mask,
-                            &mut packed_timings,
                         );
+
+                        #[cfg(not(feature = "timing"))]
+                        let t_packed = crate::knn_clipping::timing::Timer::start();
+                        let status =
+                            packed_scratch.prepare_group_directed(grid, group, &mut packed_timings);
                         #[cfg(not(feature = "timing"))]
                         let packed_elapsed = t_packed.elapsed();
 
@@ -304,9 +306,10 @@ pub(super) fn build_cells_sharded_live_dedup(
                                         &grid_ctx,
                                         termination,
                                         global,
-                                        Some((
+                                        Some(PackedQuery::new(
                                             &mut packed_scratch,
                                             &mut packed_timings,
+                                            group,
                                             offset,
                                             packed_k0_base,
                                             packed_k1,

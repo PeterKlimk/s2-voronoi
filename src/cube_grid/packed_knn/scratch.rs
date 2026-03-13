@@ -1,7 +1,7 @@
 //! Packed-kNN scratch + implementation.
 
 use super::timing::PackedLapTimer;
-use super::{PackedChunk, PackedKnnTimings, PackedStage};
+use super::{DirectedCellGroup, PackedChunk, PackedKnnTimings, PackedStage};
 
 use super::super::{cell_to_face_ij, CubeMapGrid};
 
@@ -105,17 +105,19 @@ impl PackedKnnCellScratch {
     pub fn prepare_group_directed(
         &mut self,
         grid: &CubeMapGrid,
-        cell: usize,
-        queries: &[u32],
-        query_locals: &[u32],
-        query_bin: u8,
-        slot_gen_map: &[u32],
-        local_shift: u32,
-        local_mask: u32,
+        group: DirectedCellGroup<'_>,
         timings: &mut PackedKnnTimings,
     ) -> PackedKnnCellStatus {
         timings.clear();
 
+        group.debug_assert_matches_grid(grid);
+
+        let cell = group.cell();
+        let queries = group.queries();
+        let query_bin = group.query_bin();
+        let slot_gen_map = group.slot_gen_map();
+        let local_shift = group.local_shift();
+        let local_mask = group.local_mask();
         let num_queries = queries.len();
         if num_queries == 0 {
             return PackedKnnCellStatus::Ok;
@@ -212,12 +214,6 @@ impl PackedKnnCellScratch {
         let qx_src = &grid.cell_points_x[q_start..q_end];
         let qy_src = &grid.cell_points_y[q_start..q_end];
         let qz_src = &grid.cell_points_z[q_start..q_end];
-        debug_assert_eq!(
-            num_queries,
-            qx_src.len(),
-            "directed packed group must cover the full center cell"
-        );
-
         timings.add_query_cache(t.lap());
 
         self.security_thresholds.clear();
@@ -303,29 +299,7 @@ impl PackedKnnCellScratch {
 
         // Center pass is immediately after selection prep; continue lapping.
         // live_dedup invariant: groups are complete center-cell runs in slot order.
-        debug_assert_eq!(
-            num_queries, center_len,
-            "directed packed group must cover the full center cell"
-        );
-        debug_assert!(
-            queries
-                .iter()
-                .enumerate()
-                .all(|(qi, &s)| s as usize == center_soa_start + qi),
-            "directed packed group queries must be the center cell in slot order"
-        );
-        debug_assert!(
-            query_locals.windows(2).all(|w| w[1] == w[0] + 1),
-            "directed packed group locals must be contiguous in slot order"
-        );
-        debug_assert!(
-            queries.iter().zip(query_locals.iter()).all(|(&slot, &ql)| {
-                let packed = slot_gen_map[slot as usize];
-                let (bin_b, local_b) = unpack_bin_local(packed, local_shift, local_mask);
-                bin_b == query_bin && local_b == ql
-            }),
-            "directed packed group (slot -> bin,local) mapping must match query inputs"
-        );
+        debug_assert_eq!(num_queries, center_len, "center-cell query length mismatch");
 
         // Directed center cell: since all points in a grid cell are in the same bin, the within-bin
         // filter reduces to "skip earlier slots in this same cell".
@@ -970,4 +944,166 @@ fn outside_max_dot_xyz(qx: f32, qy: f32, qz: f32, ring2: &[u32], grid: &CubeMapG
         }
     }
     max_dot
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
+
+    const QUERY_BIN: u8 = 0;
+    const LOCAL_SHIFT: u32 = 24;
+    const LOCAL_MASK: u32 = (1u32 << LOCAL_SHIFT) - 1;
+
+    fn random_unit_points(n: usize, seed: u64) -> Vec<Vec3> {
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let mut points = Vec::with_capacity(n);
+        while points.len() < n {
+            let p = Vec3::new(
+                rng.gen_range(-1.0f32..1.0f32),
+                rng.gen_range(-1.0f32..1.0f32),
+                rng.gen_range(-1.0f32..1.0f32),
+            );
+            let len_sq = p.length_squared();
+            if len_sq <= 1e-12 {
+                continue;
+            }
+            points.push(p / len_sq.sqrt());
+        }
+        points
+    }
+
+    fn fullest_cell(grid: &CubeMapGrid) -> usize {
+        let mut best_cell = 0usize;
+        let mut best_len = 0usize;
+        for cell in 0..(grid.cell_offsets().len() - 1) {
+            let len = grid.cell_points(cell).len();
+            if len > best_len {
+                best_len = len;
+                best_cell = cell;
+            }
+        }
+        assert!(best_len > 0, "expected at least one non-empty cell");
+        best_cell
+    }
+
+    fn expected_safe_slots(
+        grid: &CubeMapGrid,
+        points: &[Vec3],
+        query_idx: usize,
+        query_local: u32,
+        security: f32,
+    ) -> Vec<u32> {
+        let query = points[query_idx];
+        let mut candidates = Vec::new();
+        for (slot, &neighbor_idx_u32) in grid.point_indices().iter().enumerate() {
+            let neighbor_idx = neighbor_idx_u32 as usize;
+            if neighbor_idx == query_idx {
+                continue;
+            }
+            if (slot as u32) < query_local {
+                continue;
+            }
+            let dot = query.dot(points[neighbor_idx]);
+            if dot > security {
+                candidates.push((dot, slot as u32));
+            }
+        }
+        candidates.sort_unstable_by(|&(da, sa), &(db, sb)| db.total_cmp(&da).then(sa.cmp(&sb)));
+        candidates.into_iter().map(|(_, slot)| slot).collect()
+    }
+
+    #[test]
+    fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
+        const N: usize = 384;
+        const RES: usize = 10;
+        const EPS: f32 = 1e-5;
+
+        for &seed in &[11u64, 37] {
+            let points = random_unit_points(N, seed);
+            let grid = CubeMapGrid::new(&points, RES);
+            let cell = fullest_cell(&grid);
+            let start = grid.cell_offsets()[cell] as usize;
+            let end = grid.cell_offsets()[cell + 1] as usize;
+            let queries: Vec<u32> = (start..end).map(|slot| slot as u32).collect();
+            let query_locals = queries.clone();
+            let mut slot_gen_map = vec![0u32; points.len()];
+            for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
+                *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
+            }
+
+            let group = DirectedCellGroup::new(
+                cell,
+                QUERY_BIN,
+                &queries,
+                &query_locals,
+                &slot_gen_map,
+                LOCAL_SHIFT,
+                LOCAL_MASK,
+            );
+            let mut scratch = PackedKnnCellScratch::new();
+            let mut timings = PackedKnnTimings::default();
+            assert_eq!(
+                scratch.prepare_group_directed(&grid, group, &mut timings),
+                PackedKnnCellStatus::Ok
+            );
+
+            for qi in 0..queries.len() {
+                let query_slot = queries[qi];
+                let query_idx = grid.point_indices()[query_slot as usize] as usize;
+                let security = scratch.security(qi);
+                let expected =
+                    expected_safe_slots(&grid, &points, query_idx, query_locals[qi], security);
+                let mut emitted = Vec::new();
+                let mut prev_bound = 1.0f32;
+                let mut stage = PackedStage::Chunk0;
+
+                loop {
+                    let k = match stage {
+                        PackedStage::Chunk0 => 16,
+                        PackedStage::Tail => 8,
+                    };
+                    let mut out = vec![u32::MAX; k];
+                    let chunk = scratch.next_chunk(qi, stage, k, &mut out, &mut timings);
+                    match chunk {
+                        Some(chunk) => {
+                            assert!(
+                                chunk.unseen_bound <= prev_bound + EPS,
+                                "unseen bound increased for seed={seed}, qi={qi}"
+                            );
+                            prev_bound = chunk.unseen_bound;
+                            emitted.extend_from_slice(&out[..chunk.n]);
+
+                            if let Some(&next_slot) = expected.get(emitted.len()) {
+                                let next_idx = grid.point_indices()[next_slot as usize] as usize;
+                                let next_dot = points[query_idx].dot(points[next_idx]);
+                                assert!(
+                                    next_dot <= chunk.unseen_bound + EPS,
+                                    "unseen bound was not conservative for seed={seed}, qi={qi}"
+                                );
+                            }
+                        }
+                        None if stage == PackedStage::Chunk0 && scratch.tail_possible(qi) => {
+                            scratch.ensure_tail_directed_for(
+                                qi,
+                                &grid,
+                                group.slot_gen_map(),
+                                group.local_shift(),
+                                group.local_mask(),
+                                &mut timings,
+                            );
+                            stage = PackedStage::Tail;
+                        }
+                        None => break,
+                    }
+                }
+
+                assert_eq!(
+                    emitted, expected,
+                    "safe packed order mismatch for seed={seed}, qi={qi}"
+                );
+            }
+        }
+    }
 }

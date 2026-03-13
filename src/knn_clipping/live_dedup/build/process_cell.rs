@@ -1,6 +1,6 @@
 //! `process_cell` implementation for live-dedup cell building.
 
-use crate::cube_grid::packed_knn::{PackedKnnCellScratch, PackedKnnTimings, PackedStage};
+use crate::cube_grid::{DirectedNeighborBatchSource, DirectedNeighborStream, PackedQuery};
 
 use crate::knn_clipping::TerminationConfig;
 
@@ -27,7 +27,6 @@ struct CellOrchestrator<'a, 'b, 'c> {
     knn_stage: crate::knn_clipping::timing::KnnCellStage,
 
     did_packed: bool,
-    packed_security: f32,
     packed_safe_exhausted: bool,
     packed_tail_used: bool,
 
@@ -69,7 +68,6 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
             worst_cos: 1.0,
             knn_stage: crate::knn_clipping::timing::KnnCellStage::DirectedCursor,
             did_packed: false,
-            packed_security: 0.0,
             packed_safe_exhausted: false,
             packed_tail_used: false,
             directed_ctx,
@@ -80,22 +78,12 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
         }
     }
 
-    fn run(
-        mut self,
-        packed: Option<(
-            &mut PackedKnnCellScratch,
-            &mut PackedKnnTimings,
-            usize,
-            usize,
-            usize,
-        )>,
-    ) {
+    fn run(mut self, packed: Option<PackedQuery<'_, 'c>>) {
         self.phase_1_init();
         self.phase_2_edgecheck_seeds();
-        self.phase_3_packed_knn_seeds(packed);
-        self.phase_4_directed_cursor_fallback();
-        self.phase_5_validate_success();
-        self.phase_6_extract_output();
+        self.phase_3_neighbor_stream(packed);
+        self.phase_4_validate_success();
+        self.phase_5_extract_output();
     }
 
     fn phase_1_init(&mut self) {
@@ -148,206 +136,124 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
         self.edgecheck_seed_clips = self.cell_neighbors_processed;
     }
 
-    fn phase_3_packed_knn_seeds(
-        &mut self,
-        packed: Option<(
-            &mut PackedKnnCellScratch,
-            &mut PackedKnnTimings,
-            usize,
-            usize,
-            usize,
-        )>,
-    ) {
-        let Some((packed_scratch, packed_timings, qi, packed_k0_base, packed_k1)) = packed else {
-            return;
-        };
-
-        self.did_packed = true;
-        self.packed_security = packed_scratch.security(qi);
-
-        let max_neighbors = self.grid_ctx.points.len().saturating_sub(1);
-        let max_k0 = packed_k0_base.min(max_neighbors).max(1);
-        let k1 = packed_k1.min(max_neighbors).max(1);
-        let seed_clips = self.cell_neighbors_processed;
-        let mut k_cur = max_k0.saturating_sub(seed_clips).max(k1).min(max_k0);
-
-        let point_indices = self.grid_ctx.grid.point_indices();
-        let mut stage = PackedStage::Chunk0;
-
-        loop {
-            self.ctx.packed_chunk.clear();
-            self.ctx.packed_chunk.resize(k_cur, u32::MAX);
-
-            let Some(chunk) = packed_scratch.next_chunk(
-                qi,
-                stage,
-                k_cur,
-                &mut self.ctx.packed_chunk,
-                packed_timings,
-            ) else {
-                if stage == PackedStage::Chunk0 && packed_scratch.tail_possible(qi) {
-                    packed_scratch.ensure_tail_directed_for(
-                        qi,
-                        self.grid_ctx.grid,
-                        &self.grid_ctx.assignment.slot_gen_map,
-                        self.grid_ctx.assignment.local_shift,
-                        self.grid_ctx.assignment.local_mask,
-                        packed_timings,
-                    );
-                    stage = PackedStage::Tail;
-                    self.packed_tail_used = true;
-                    k_cur = k1;
-                    continue;
-                }
-                self.packed_safe_exhausted = true;
-                break;
-            };
-
-            let t_clip = crate::knn_clipping::timing::Timer::start();
-            let mut term_ready = false;
-            for pos in 0..chunk.n {
-                let neighbor_slot = self.ctx.packed_chunk[pos];
-                let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
-                if neighbor_idx == self.i {
-                    continue;
-                }
-
-                self.ctx.attempted_neighbors.mark(neighbor_idx);
-
-                let neighbor = self.grid_ctx.points[neighbor_idx];
-                let clip_result = match self.ctx.builder.clip_with_slot_result(
-                    neighbor_idx,
-                    neighbor_slot,
-                    neighbor,
-                ) {
-                    Ok(r) => r,
-                    Err(_) => break,
-                };
-                match clip_result {
-                    crate::knn_clipping::topo2d::types::ClipResult::Unchanged => {
-                        term_ready = true;
-                    }
-                    _ => {
-                        term_ready = false;
-                    }
-                }
-
-                if self.ctx.builder.is_bounded()
-                    && clip_result == crate::knn_clipping::topo2d::types::ClipResult::Unchanged
-                {
-                    let bound = if pos + 1 < chunk.n {
-                        let next_slot = self.ctx.packed_chunk[pos + 1];
-                        let next = point_indices[next_slot as usize] as usize;
-                        self.grid_ctx.points[self.i].dot(self.grid_ctx.points[next])
-                    } else {
-                        chunk.unseen_bound
-                    };
-                    if self.ctx.builder.can_terminate(bound) {
-                        self.terminated = true;
-                        break;
-                    }
-                }
-                self.cell_neighbors_processed += 1;
-                let dot = self.grid_ctx.points[self.i].dot(neighbor);
-                self.worst_cos = self.worst_cos.min(dot);
-            }
-            self.cell_sub.add_clip(t_clip.elapsed());
-
-            if self.terminated || self.ctx.builder.is_failed() {
-                break;
-            }
-
-            if self.ctx.builder.is_bounded()
-                && term_ready
-                && self.ctx.builder.can_terminate(chunk.unseen_bound)
-            {
-                self.terminated = true;
-                break;
-            }
-
-            k_cur = k1;
-        }
-    }
-
-    fn phase_4_directed_cursor_fallback(&mut self) {
-        if self.terminated || self.ctx.builder.is_failed() {
-            return;
-        }
-
-        if self.ctx.builder.is_bounded() {
-            let bound = if self.did_packed && self.packed_safe_exhausted {
-                self.packed_security
-            } else {
-                self.worst_cos
-            };
-            if self.ctx.builder.can_terminate(bound) {
-                self.terminated = true;
-                return;
-            }
-        }
-
-        self.used_knn = true;
-        self.knn_stage = crate::knn_clipping::timing::KnnCellStage::DirectedCursor;
-
+    fn phase_3_neighbor_stream<'p>(&mut self, packed: Option<PackedQuery<'p, 'c>>) {
         let grid = self.grid_ctx.grid;
         let points = self.grid_ctx.points;
         let i = self.i;
         let point_indices = grid.point_indices();
         let termination = self.termination;
         let directed_ctx = self.directed_ctx;
-        let (builder, attempted_neighbors, scratch) = {
+        let (builder, attempted_neighbors, scratch, batch_buffer) = {
             let ctx = &mut self.ctx;
             (
                 &mut ctx.builder,
                 &mut ctx.attempted_neighbors,
                 &mut ctx.scratch,
+                &mut ctx.packed_chunk,
             )
         };
 
-        let mut cursor = grid.directed_no_k_cursor(points[i], i, scratch, directed_ctx);
+        let mut stream =
+            DirectedNeighborStream::new(grid, points, i, scratch, directed_ctx, packed);
+
         while !self.terminated && !builder.is_failed() {
             let t_knn = crate::knn_clipping::timing::Timer::start();
-            let Some(neighbor_slot) = cursor.pop_next_proven_slot() else {
-                self.knn_exhausted = cursor.is_exhausted();
+            let Some(batch) = stream.next_batch(batch_buffer) else {
                 break;
             };
-            self.cell_sub.add_knn(t_knn.elapsed());
+
+            match batch.source {
+                DirectedNeighborBatchSource::DirectedCursor => {
+                    self.used_knn = true;
+                    self.knn_stage = crate::knn_clipping::timing::KnnCellStage::DirectedCursor;
+                    self.cell_sub.add_knn(t_knn.elapsed());
+                }
+                DirectedNeighborBatchSource::PackedExhausted => {
+                    if builder.is_bounded() && builder.can_terminate(batch.unseen_bound) {
+                        self.terminated = true;
+                    }
+                    continue;
+                }
+                DirectedNeighborBatchSource::PackedChunk0
+                | DirectedNeighborBatchSource::PackedTail => {}
+            }
 
             let t_clip = crate::knn_clipping::timing::Timer::start();
-            let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
-            if attempted_neighbors.insert(neighbor_idx) {
-                let neighbor = points[neighbor_idx];
-                if builder
-                    .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
-                    .is_err()
-                {
-                    self.cell_sub.add_clip(t_clip.elapsed());
-                    break;
+            for pos in 0..batch.n {
+                let neighbor_slot = batch_buffer[pos];
+                let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
+                if neighbor_idx == i {
+                    continue;
                 }
+
+                let should_clip = match batch.source {
+                    DirectedNeighborBatchSource::DirectedCursor => {
+                        attempted_neighbors.insert(neighbor_idx)
+                    }
+                    DirectedNeighborBatchSource::PackedChunk0
+                    | DirectedNeighborBatchSource::PackedTail => {
+                        attempted_neighbors.mark(neighbor_idx);
+                        true
+                    }
+                    DirectedNeighborBatchSource::PackedExhausted => unreachable!(),
+                };
+                if !should_clip {
+                    continue;
+                }
+
+                let neighbor = points[neighbor_idx];
+                let clip_result =
+                    match builder.clip_with_slot_result(neighbor_idx, neighbor_slot, neighbor) {
+                        Ok(result) => result,
+                        Err(_) => break,
+                    };
 
                 self.cell_neighbors_processed += 1;
                 let dot = points[i].dot(neighbor);
                 self.worst_cos = self.worst_cos.min(dot);
 
-                if builder.is_bounded()
-                    && termination.should_check(self.cell_neighbors_processed)
-                    && builder.can_terminate(cursor.remaining_dot_upper_bound())
-                {
-                    self.terminated = true;
+                match batch.source {
+                    DirectedNeighborBatchSource::DirectedCursor => {
+                        if builder.is_bounded()
+                            && termination.should_check(self.cell_neighbors_processed)
+                            && builder.can_terminate(batch.unseen_bound)
+                        {
+                            self.terminated = true;
+                            break;
+                        }
+                    }
+                    DirectedNeighborBatchSource::PackedChunk0
+                    | DirectedNeighborBatchSource::PackedTail => {
+                        if builder.is_bounded()
+                            && clip_result
+                                == crate::knn_clipping::topo2d::types::ClipResult::Unchanged
+                        {
+                            let bound = if pos + 1 < batch.n {
+                                let next_slot = batch_buffer[pos + 1];
+                                let next = point_indices[next_slot as usize] as usize;
+                                points[i].dot(points[next])
+                            } else {
+                                batch.unseen_bound
+                            };
+                            if builder.can_terminate(bound) {
+                                self.terminated = true;
+                                break;
+                            }
+                        }
+                    }
+                    DirectedNeighborBatchSource::PackedExhausted => unreachable!(),
                 }
             }
             self.cell_sub.add_clip(t_clip.elapsed());
         }
 
-        self.knn_exhausted |= cursor.is_exhausted();
-        if !self.terminated && !builder.is_failed() && builder.is_bounded() {
-            if builder.can_terminate(cursor.remaining_dot_upper_bound()) {
-                self.terminated = true;
-            }
-        }
+        self.did_packed |= stream.did_packed();
+        self.packed_tail_used |= stream.packed_tail_used();
+        self.packed_safe_exhausted |= stream.packed_safe_exhausted();
+        self.knn_exhausted |= stream.knn_exhausted();
     }
 
-    fn phase_5_validate_success(&mut self) {
+    fn phase_4_validate_success(&mut self) {
         if !self.ctx.builder.is_bounded() || self.ctx.builder.is_failed() {
             let (active, total) = self.ctx.builder.count_active_planes();
             let gen = self.grid_ctx.points[self.i];
@@ -374,7 +280,7 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
         }
     }
 
-    fn phase_6_extract_output(&mut self) {
+    fn phase_5_extract_output(&mut self) {
         let stage = if self.used_knn {
             self.knn_stage
         } else if self.did_packed {
@@ -491,13 +397,7 @@ pub(super) fn process_cell<'a, 'b, 'c>(
     grid_ctx: &'a super::GridContext<'c>,
     termination: TerminationConfig,
     i: usize,
-    packed: Option<(
-        &mut PackedKnnCellScratch,
-        &mut PackedKnnTimings,
-        usize,
-        usize,
-        usize,
-    )>,
+    packed: Option<PackedQuery<'_, 'c>>,
 ) {
     let orchestrator = CellOrchestrator::new(cell_sub, ctx, shard_ctx, grid_ctx, termination, i);
     orchestrator.run(packed);
