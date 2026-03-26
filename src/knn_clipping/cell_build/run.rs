@@ -353,6 +353,22 @@ impl<'a, 'm, 'p, 's> CellBuildRunner<'a, 'm, 'p, 's> {
                 }
             }
             self.clipping_time += t_clip.elapsed();
+
+            if !self.terminated && !self.ctx.builder.is_failed() && self.ctx.builder.is_bounded() {
+                match batch.source {
+                    DirectedNeighborBatchSource::PackedChunk0
+                    | DirectedNeighborBatchSource::PackedTail
+                    | DirectedNeighborBatchSource::PackedExpandR2 => {
+                        let frontier_bound =
+                            stream.frontier_dot_upper_bound().unwrap_or(batch.unseen_bound);
+                        if self.ctx.builder.can_terminate(frontier_bound) {
+                            self.terminated = true;
+                        }
+                    }
+                    DirectedNeighborBatchSource::PackedExhausted
+                    | DirectedNeighborBatchSource::DirectedCursor => {}
+                }
+            }
         }
 
         self.did_packed |= stream.did_packed();

@@ -63,6 +63,7 @@ pub(crate) struct DirectedNeighborStream<'a, 'm, 'p> {
     cursor: DirectedNoKCursor<'a, 'm>,
     packed: Option<PackedQuery<'p, 'm>>,
     stage: StreamStage,
+    frontier_bound: Option<f32>,
     did_packed: bool,
     packed_tail_used: bool,
     packed_expand_r2_used: bool,
@@ -93,6 +94,7 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
             cursor,
             packed,
             stage,
+            frontier_bound: None,
             did_packed,
             packed_tail_used: false,
             packed_expand_r2_used: false,
@@ -140,6 +142,7 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
                             .next_chunk(packed.query_index, stage, k, out, packed.timings)
                     {
                         out.truncate(chunk.n);
+                        self.frontier_bound = Some(chunk.unseen_bound);
                         return Some(DirectedNeighborBatch {
                             n: chunk.n,
                             unseen_bound: chunk.unseen_bound,
@@ -181,25 +184,30 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
 
                     self.packed_safe_exhausted = true;
                     self.stage = StreamStage::Cursor;
+                    let unseen_bound = packed.scratch.resume_security(packed.query_index);
+                    self.frontier_bound = Some(unseen_bound);
                     return Some(DirectedNeighborBatch {
                         n: 0,
-                        unseen_bound: packed.scratch.resume_security(packed.query_index),
+                        unseen_bound,
                         source: DirectedNeighborBatchSource::PackedExhausted,
                     });
                 }
                 StreamStage::Cursor => {
                     self.used_cursor = true;
                     if let Some(slot) = self.cursor.pop_next_proven_slot() {
+                        let unseen_bound = self.cursor.remaining_dot_upper_bound();
+                        self.frontier_bound = Some(unseen_bound);
                         out.push(slot);
                         return Some(DirectedNeighborBatch {
                             n: 1,
-                            unseen_bound: self.cursor.remaining_dot_upper_bound(),
+                            unseen_bound,
                             source: DirectedNeighborBatchSource::DirectedCursor,
                         });
                     }
 
                     self.knn_exhausted = self.cursor.is_exhausted();
                     self.stage = StreamStage::Done;
+                    self.frontier_bound = None;
                     return None;
                 }
                 StreamStage::Done => return None,
@@ -230,6 +238,11 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
     #[inline]
     pub(crate) fn knn_exhausted(&self) -> bool {
         self.knn_exhausted
+    }
+
+    #[inline]
+    pub(crate) fn frontier_dot_upper_bound(&self) -> Option<f32> {
+        self.frontier_bound
     }
 }
 
@@ -399,5 +412,70 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn frontier_bound_matches_last_batch_without_advancing_stage() {
+        const N: usize = 320;
+        const RES: usize = 10;
+
+        let points = random_unit_points(N, 29);
+        let grid = CubeMapGrid::new(&points, RES);
+        let cell = fullest_cell(&grid);
+        let start = grid.cell_offsets()[cell] as usize;
+        let end = grid.cell_offsets()[cell + 1] as usize;
+        let queries: Vec<u32> = (start..end).map(|slot| slot as u32).collect();
+        let query_locals = queries.clone();
+        let mut slot_gen_map = vec![0u32; points.len()];
+        for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
+            *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
+        }
+
+        let group = DirectedCellGroup::new(
+            cell,
+            QUERY_BIN,
+            &queries,
+            &query_locals,
+            &slot_gen_map,
+            LOCAL_SHIFT,
+            LOCAL_MASK,
+        );
+        let mut packed_scratch = PackedKnnCellScratch::new();
+        let mut packed_timings = PackedKnnTimings::default();
+        assert_eq!(
+            packed_scratch.prepare_group_directed(&grid, group, &mut packed_timings),
+            PackedKnnCellStatus::Ok
+        );
+
+        let qi = 0usize;
+        let query_slot = queries[qi];
+        let query_idx = grid.point_indices()[query_slot as usize] as usize;
+        let ctx = DirectedCtx::new(
+            QUERY_BIN,
+            query_locals[qi],
+            &slot_gen_map,
+            LOCAL_SHIFT,
+            LOCAL_MASK,
+        );
+        let mut grid_scratch = grid.make_scratch();
+        let packed = PackedQuery::new(
+            &mut packed_scratch,
+            &mut packed_timings,
+            group,
+            qi,
+            PackedNeighborPolicy::for_point_count(points.len(), true),
+        );
+        let mut stream =
+            DirectedNeighborStream::new(&grid, &points, query_idx, &mut grid_scratch, ctx, Some(packed));
+
+        let mut batch = Vec::new();
+        let result = stream
+            .next_batch(&mut batch)
+            .expect("expected first packed batch");
+        assert_eq!(
+            stream.frontier_dot_upper_bound(),
+            Some(result.unseen_bound),
+            "frontier bound should be available without advancing the stream"
+        );
     }
 }
