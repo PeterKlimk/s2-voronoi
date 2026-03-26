@@ -92,7 +92,7 @@ pub struct CellSubPhases {
 pub struct DedupSubPhases {
     pub triplet_keys: u64,
     pub support_keys: u64,
-    pub bad_edges_count: u64,
+    pub unresolved_edges_count: u64,
 }
 
 /// Accumulator for cell sub-phase timings (used per-bin, then merged).
@@ -254,7 +254,7 @@ pub struct PhaseTimings {
     pub cell_sub: CellSubPhases,
     pub dedup: Duration,
     pub dedup_sub: DedupSubPhases,
-    pub edge_repair: Duration,
+    pub edge_reconcile: Duration,
     pub assemble: Duration,
 }
 
@@ -435,15 +435,15 @@ impl PhaseTimings {
             pct(self.dedup)
         );
         eprintln!(
-            "    keys: triplet={} support={} bad_edges={}",
+            "    keys: triplet={} support={} unresolved_edges={}",
             self.dedup_sub.triplet_keys,
             self.dedup_sub.support_keys,
-            self.dedup_sub.bad_edges_count
+            self.dedup_sub.unresolved_edges_count
         );
         eprintln!(
-            "  edge_repair:       {:7.1}ms ({:4.1}%)",
-            ms(self.edge_repair),
-            pct(self.edge_repair)
+            "  edge_reconcile:    {:7.1}ms ({:4.1}%)",
+            ms(self.edge_reconcile),
+            pct(self.edge_reconcile)
         );
         eprintln!(
             "  assemble:          {:7.1}ms ({:4.1}%)",
@@ -453,14 +453,14 @@ impl PhaseTimings {
 
         if std::env::var_os("S2_VORONOI_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} cells_packed_expand_r2_used={cpe} packed_tail_builds={ptb} packed_expand_r2_builds={prb} packed_expand_r2_cap_skips={pcs} packed_expand_r2_scan_ms={prs:.3} packed_expand_r2_select_ms={prel:.3}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} cells_packed_expand_r2_used={cpe} packed_tail_builds={ptb} packed_expand_r2_builds={prb} packed_expand_r2_cap_skips={pcs} packed_expand_r2_scan_ms={prs:.3} packed_expand_r2_select_ms={prel:.3}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
                 kb = ms(self.knn_build),
                 cc = ms(self.cell_construction),
                 dd = ms(self.dedup),
-                er = ms(self.edge_repair),
+                er = ms(self.edge_reconcile),
                 asmb = ms(self.assemble),
                 cuk = self.cell_sub.cells_used_knn,
                 cpt = self.cell_sub.cells_packed_tail_used,
@@ -485,7 +485,7 @@ pub struct TimingBuilder {
     cell_sub: CellSubPhases,
     dedup: Duration,
     dedup_sub: DedupSubPhases,
-    edge_repair: Duration,
+    edge_reconcile: Duration,
     assemble: Duration,
 }
 
@@ -500,7 +500,7 @@ impl TimingBuilder {
             cell_sub: CellSubPhases::default(),
             dedup: Duration::ZERO,
             dedup_sub: DedupSubPhases::default(),
-            edge_repair: Duration::ZERO,
+            edge_reconcile: Duration::ZERO,
             assemble: Duration::ZERO,
         }
     }
@@ -527,8 +527,8 @@ impl TimingBuilder {
         self.dedup_sub = sub;
     }
 
-    pub fn set_edge_repair(&mut self, d: Duration) {
-        self.edge_repair = d;
+    pub fn set_edge_reconcile(&mut self, d: Duration) {
+        self.edge_reconcile = d;
     }
 
     pub fn set_assemble(&mut self, d: Duration) {
@@ -545,7 +545,7 @@ impl TimingBuilder {
             cell_sub: self.cell_sub,
             dedup: self.dedup,
             dedup_sub: self.dedup_sub,
-            edge_repair: self.edge_repair,
+            edge_reconcile: self.edge_reconcile,
             assemble: self.assemble,
         }
     }

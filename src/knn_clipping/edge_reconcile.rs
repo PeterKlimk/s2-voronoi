@@ -74,7 +74,7 @@ fn dist_sq(a: Vec3, b: Vec3) -> f32 {
 
 use super::union_find::UnionFind;
 
-pub(super) fn repair_bad_edges(
+pub(super) fn reconcile_unresolved_edges(
     edge_records: &[EdgeRecord],
     vertices: &[Vec3],
     cells: &[VoronoiCell],
@@ -263,7 +263,7 @@ mod tests {
         let cells = vec![VoronoiCell::new(0, 3), VoronoiCell::new(3, 3)];
         let cell_indices = vec![0, 1, 2, 3, 4, 5];
 
-        let repaired = repair_bad_edges(
+        let repaired = reconcile_unresolved_edges(
             &[edge_record(0, 1)],
             &vertices,
             &cells,
@@ -317,7 +317,7 @@ mod tests {
             "fixture must start with mismatched shared-edge endpoint ids"
         );
 
-        let repaired = repair_bad_edges(
+        let repaired = reconcile_unresolved_edges(
             &[edge_record(0, 1)],
             &vertices,
             &cells,

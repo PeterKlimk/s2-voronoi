@@ -6,8 +6,8 @@ use super::binning::BinAssignment;
 use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
 use super::types::{
-    BadEdgeRecord, BinId, EdgeCheck, EdgeCheckOverflow, EdgeKey, EdgeOverflowLocal, EdgeToLater,
-    LocalId,
+    BinId, EdgeCheck, EdgeCheckOverflow, EdgeKey, EdgeOverflowLocal, EdgeToLater, LocalId,
+    UnresolvedEdgeMismatch,
 };
 use super::with_two_mut;
 use crate::knn_clipping::cell_builder::VertexKey;
@@ -249,11 +249,17 @@ pub(super) fn collect_and_resolve_cell_edges(
                         }
                     }
                     // Endpoint mismatch
-                    shard.output.bad_edges.push(BadEdgeRecord { key: edge_key });
+                    shard
+                        .output
+                        .unresolved_edges
+                        .push(UnresolvedEdgeMismatch { key: edge_key });
                 }
             } else {
                 // Missing side - earlier neighbor didn't emit check
-                shard.output.bad_edges.push(BadEdgeRecord { key: edge_key });
+                shard
+                    .output
+                    .unresolved_edges
+                    .push(UnresolvedEdgeMismatch { key: edge_key });
             }
         }
     }
@@ -271,8 +277,8 @@ pub(super) fn collect_and_resolve_cell_edges(
             if matched & (1u64 << idx) == 0 {
                 shard
                     .output
-                    .bad_edges
-                    .push(BadEdgeRecord { key: check.key });
+                    .unresolved_edges
+                    .push(UnresolvedEdgeMismatch { key: check.key });
             }
         }
     }
@@ -298,7 +304,7 @@ pub(super) struct OverflowResolveTiming {
 pub(super) fn resolve_edge_check_overflow(
     shards: &mut [ShardState],
     edge_check_overflow: &mut [EdgeCheckOverflow],
-    bad_edges: &mut Vec<BadEdgeRecord>,
+    unresolved_edges: &mut Vec<UnresolvedEdgeMismatch>,
 ) -> OverflowResolveTiming {
     let t_edge_sort = Timer::start();
     edge_check_overflow.sort_unstable_by_key(|entry| (entry.key, entry.side));
@@ -322,7 +328,7 @@ pub(super) fn resolve_edge_check_overflow(
             let b = edge_check_overflow[i + 1];
             if a.side == b.side {
                 debug_assert!(false, "edge check overflow duplicate side");
-                bad_edges.push(BadEdgeRecord { key: a.key });
+                unresolved_edges.push(UnresolvedEdgeMismatch { key: a.key });
             } else {
                 let (a_shard, b_shard) =
                     with_two_mut(shards, a.source_bin.as_usize(), b.source_bin.as_usize());
@@ -395,12 +401,12 @@ pub(super) fn resolve_edge_check_overflow(
                         }
                     }
                     // Endpoint mismatch
-                    bad_edges.push(BadEdgeRecord { key: a.key });
+                    unresolved_edges.push(UnresolvedEdgeMismatch { key: a.key });
                 }
             }
             i += 2;
         } else {
-            bad_edges.push(BadEdgeRecord {
+            unresolved_edges.push(UnresolvedEdgeMismatch {
                 key: edge_check_overflow[i].key,
             });
             i += 1;

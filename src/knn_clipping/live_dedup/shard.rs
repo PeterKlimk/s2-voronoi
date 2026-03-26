@@ -4,7 +4,7 @@ use glam::Vec3;
 use rustc_hash::FxHashMap;
 
 use super::types::{
-    BadEdgeRecord, DeferredSlot, EdgeCheck, EdgeCheckOverflow, LocalId, SupportOverflow,
+    DeferredSlot, EdgeCheck, EdgeCheckOverflow, LocalId, SupportOverflow, UnresolvedEdgeMismatch,
 };
 use crate::knn_clipping::cell_builder::VertexKey;
 
@@ -35,7 +35,7 @@ impl ShardDedup {
 pub(super) struct ShardOutput {
     pub(super) vertices: Vec<Vec3>,
     pub(super) vertex_keys: Vec<VertexKey>,
-    pub(super) bad_edges: Vec<BadEdgeRecord>,
+    pub(super) unresolved_edges: Vec<UnresolvedEdgeMismatch>,
     pub(super) edge_check_overflow: Vec<EdgeCheckOverflow>,
     pub(super) deferred: Vec<DeferredSlot>,
     pub(super) cell_indices: Vec<u64>,
@@ -48,7 +48,7 @@ impl ShardOutput {
         Self {
             vertices: Vec::new(),
             vertex_keys: Vec::new(),
-            bad_edges: Vec::new(),
+            unresolved_edges: Vec::new(),
             edge_check_overflow: Vec::new(),
             deferred: Vec::new(),
             cell_indices: Vec::new(),

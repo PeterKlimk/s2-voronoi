@@ -96,9 +96,9 @@ pub(in crate::knn_clipping) struct EdgeRecord {
 ///
 /// These are produced by edge-check matching when the two sides of an undirected edge cannot be
 /// reconciled during live dedup. They are the only inputs to the narrow post-pass
-/// reconciliation in `edge_repair.rs`.
+/// reconciliation in `edge_reconcile.rs`.
 #[derive(Clone, Copy, Debug)]
-pub(in crate::knn_clipping) struct BadEdgeRecord {
+pub(in crate::knn_clipping) struct UnresolvedEdgeMismatch {
     pub(in crate::knn_clipping) key: EdgeKey,
 }
 

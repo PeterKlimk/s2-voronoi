@@ -8,7 +8,9 @@ use rustc_hash::FxHashMap;
 use super::edge_checks::resolve_edge_check_overflow;
 use super::packed::{pack_ref, unpack_ref, DEFERRED};
 use super::shard::ShardFinal;
-use super::types::{BadEdgeRecord, BinId, DeferredSlot, EdgeCheckOverflow, SupportOverflow};
+use super::types::{
+    BinId, DeferredSlot, EdgeCheckOverflow, SupportOverflow, UnresolvedEdgeMismatch,
+};
 use super::with_two_mut;
 use super::ShardedCellsData;
 use crate::knn_clipping::cell_builder::VertexKey;
@@ -51,17 +53,20 @@ pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::
         }
     }
 
-    let mut bad_edges: Vec<BadEdgeRecord> = Vec::new();
+    let mut unresolved_edges: Vec<UnresolvedEdgeMismatch> = Vec::new();
     let mut edge_check_overflow: Vec<EdgeCheckOverflow> = Vec::new();
     let mut deferred_slots: Vec<DeferredSlot> = Vec::new();
     for shard in &mut data.shards {
-        bad_edges.append(&mut shard.output.bad_edges);
+        unresolved_edges.append(&mut shard.output.unresolved_edges);
         edge_check_overflow.append(&mut shard.output.edge_check_overflow);
         deferred_slots.append(&mut shard.output.deferred);
     }
 
-    let overflow_timing =
-        resolve_edge_check_overflow(&mut data.shards, &mut edge_check_overflow, &mut bad_edges);
+    let overflow_timing = resolve_edge_check_overflow(
+        &mut data.shards,
+        &mut edge_check_overflow,
+        &mut unresolved_edges,
+    );
     #[allow(unused_variables)]
     let edge_checks_overflow_time = overflow_timing.sort + overflow_timing.match_;
 
@@ -346,7 +351,7 @@ pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::
     let sub_phases = DedupSubPhases {
         triplet_keys: finals.iter().map(|s| s.triplet_keys).sum(),
         support_keys: finals.iter().map(|s| s.support_keys).sum(),
-        bad_edges_count: bad_edges.len() as u64,
+        unresolved_edges_count: unresolved_edges.len() as u64,
     };
 
     #[cfg(not(feature = "timing"))]
@@ -355,7 +360,7 @@ pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::
     super::AssemblyResult {
         vertices: all_vertices,
         vertex_keys: all_vertex_keys,
-        bad_edges,
+        unresolved_edges,
         cells,
         cell_indices,
         dedup_sub: sub_phases,

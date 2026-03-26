@@ -2,7 +2,7 @@
 
 use glam::Vec3;
 
-use super::edge_repair;
+use super::edge_reconcile;
 use super::live_dedup;
 use super::timing::{Timer, TimingBuilder};
 use super::{
@@ -75,14 +75,14 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     tb.set_dedup(t.elapsed(), assembled.dedup_sub);
 
     let repair_edges_storage: Vec<live_dedup::EdgeRecord> = assembled
-        .bad_edges
+        .unresolved_edges
         .iter()
         .map(|b| live_dedup::EdgeRecord { key: b.key })
         .collect();
 
     let t = Timer::start();
     let (mut eff_cells, mut eff_cell_indices) = (assembled.cells, assembled.cell_indices);
-    if let Some((cells, indices)) = edge_repair::repair_bad_edges(
+    if let Some((cells, indices)) = edge_reconcile::reconcile_unresolved_edges(
         &repair_edges_storage,
         &assembled.vertices,
         &eff_cells,
@@ -92,7 +92,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         eff_cells = cells;
         eff_cell_indices = indices;
     }
-    tb.set_edge_repair(t.elapsed());
+    tb.set_edge_reconcile(t.elapsed());
 
     // Remap cells back to original point indices if we merged
     let t = Timer::start();

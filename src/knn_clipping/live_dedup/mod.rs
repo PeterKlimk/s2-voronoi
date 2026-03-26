@@ -18,7 +18,7 @@ mod types;
 
 use binning::BinAssignment;
 use shard::ShardState;
-use types::BadEdgeRecord;
+use types::UnresolvedEdgeMismatch;
 
 pub(super) use types::EdgeRecord;
 
@@ -30,9 +30,9 @@ pub(super) struct AssemblyResult {
     pub vertex_keys: Vec<VertexKey>,
     /// Historical name: unresolved shared-edge mismatches that survived live dedup.
     ///
-    /// These feed the narrow post-pass reconciliation in `edge_repair.rs`; they are not a
+    /// These feed the narrow post-pass reconciliation in `edge_reconcile.rs`; they are not a
     /// generic record of arbitrary topology failures.
-    pub bad_edges: Vec<BadEdgeRecord>,
+    pub unresolved_edges: Vec<UnresolvedEdgeMismatch>,
     /// Per-cell storage (one per generator).
     pub cells: Vec<crate::VoronoiCell>,
     /// Flattened vertex indices for all cells.

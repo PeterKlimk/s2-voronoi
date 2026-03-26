@@ -7,7 +7,7 @@
 pub(crate) mod cell_builder;
 pub(crate) mod compute;
 pub(crate) mod constants;
-pub(crate) mod edge_repair;
+pub(crate) mod edge_reconcile;
 pub(crate) mod live_dedup;
 pub(crate) mod preprocess;
 pub(crate) mod timing;

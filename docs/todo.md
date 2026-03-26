@@ -10,7 +10,7 @@
 
 ## Reconciliation
 
-- Consider moving some current `edge_repair` reconciliation into the live dedup/assembly path.
+- Consider moving some current `edge_reconcile` reconciliation into the live dedup/assembly path.
   The current post-pass is intentionally narrow and handles unresolved shared-edge mismatches after
   assembly. A future design pass can explore doing some of that agreement earlier, but only if the
   extra hot-path complexity remains clearly justified.

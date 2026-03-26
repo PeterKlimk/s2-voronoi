@@ -45,7 +45,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-pin        Disable CPU pinning"
             echo "  -1, --single    Force single-threaded (default)"
             echo "  --multi         Allow multi-threaded"
-            echo "  -m, --metric    Metric to record: total, timing_total, preprocess, knn_build, cell_construction, dedup, edge_repair, assemble (default: total)"
+            echo "  -m, --metric    Metric to record: total, timing_total, preprocess, knn_build, cell_construction, dedup, edge_reconcile, assemble (default: total)"
             echo "  --no-preprocess Pass --no-preprocess to bench_voronoi (default)"
             echo "  --preprocess    Don't pass --no-preprocess"
             echo "  --              Forward remaining args directly to bench_voronoi"
