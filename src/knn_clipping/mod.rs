@@ -26,6 +26,8 @@ pub struct TerminationConfig {
     /// Enables adaptive early termination checks.
     pub check_start: usize,
     pub check_step: usize,
+    /// Enable a cold packed r=2 expansion stage before directed cursor fallback.
+    pub packed_expand_r2: bool,
     /// Legacy compatibility field retained in the public config.
     /// The directed cursor fallback is no-K and ignores this cap.
     pub max_k_cap: Option<usize>,
@@ -52,6 +54,7 @@ impl Default for TerminationConfig {
         Self {
             check_start: DEFAULT_TERMINATION_CHECK_START,
             check_step: DEFAULT_TERMINATION_CHECK_STEP,
+            packed_expand_r2: false,
             max_k_cap: None,
         }
     }

@@ -313,6 +313,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                             offset,
                                             packed_k0_base,
                                             packed_k1,
+                                            termination.packed_expand_r2,
                                         )),
                                     );
                                 }

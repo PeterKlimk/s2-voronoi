@@ -130,6 +130,7 @@ impl<'a> DirectedCellGroup<'a> {
 pub enum PackedStage {
     Chunk0,
     Tail,
+    ExpandR2,
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -139,6 +139,7 @@ pub fn compute_voronoi_knn_clipping_with_config_owned(
     config: &VoronoiConfig,
 ) -> crate::SphericalVoronoi {
     let termination = TerminationConfig {
+        packed_expand_r2: config.packed_knn_expand_r2,
         max_k_cap: config.termination_max_k,
         ..Default::default()
     };

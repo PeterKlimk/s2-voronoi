@@ -2,8 +2,8 @@
 
   ## Summary
 
-  Add an optional, cold-path packed-kNN ring expansion that runs only when a query exhausts the existing packed r=1 (3x3) candidates and clipping is still unproven, before falling back to per-query resumable kNN. The expansion is a single additional band that covers
-  the full radius-2 neighborhood (3x3 + ring2 cells) and emits candidates in a dot range that preserves the packed ordering and unseen_bound correctness contract.
+Add an optional, cold-path packed-kNN ring expansion that runs only when a query exhausts the existing packed r=1 (3x3) candidates and clipping is still unproven, before falling back to per-query resumable kNN. The expansion is a single additional band that covers
+ the full radius-2 neighborhood (3x3 + ring2 cells) and emits candidates in a dot range that preserves the packed ordering and unseen_bound correctness contract. Stage progression belongs to the unified neighbor stream, not to `process_cell`.
 
   Default behavior stays identical unless the new runtime knob is enabled, and the expansion is triggered.
 
@@ -146,24 +146,27 @@
           - If more keys remain: last_dot
           - Else: security2[qi]
 
-  ### 6) Integrate stage progression in cell building
+### 6) Integrate stage progression in the unified stream
 
-  File: src/knn_clipping/live_dedup/build/process_cell.rs
+Files:
+- `src/cube_grid/query/stream.rs`
+- `src/knn_clipping/live_dedup/build/process_cell.rs`
 
-  Modify phase_3_packed_knn_seeds loop:
+Modify `DirectedNeighborStream`:
 
-      1. Run Chunk0 as today.
-      3. If Tail exhausted (or tail not possible) and still not terminated:
-          - If packed_knn_expand_r2 is true:
-              - Call ensure_expand_r2_band_directed_for(qi, ...).
-              - If it returns true and there are candidates, switch stage = ExpandR2Band, set k_cur = packed_k1.
-              - If it returns false (cap exceeded / couldn’t compute security2), do not expand and proceed to resumable kNN.
-      4. When ExpandR2Band exhausts successfully, set packed_safe_exhausted = true and store packed_security_final = security2 for this query.
+    1. Run Chunk0 as today.
+    2. If Tail is possible, build and emit Tail as today.
+    3. If Tail exhausts (or is not needed) and `packed_knn_expand_r2` is true:
+          - Call `ensure_expand_r2_band_directed_for(qi, ...)`.
+          - If it returns true, switch to `PackedStage::ExpandR2`.
+          - If it returns false (cap exceeded), skip expansion and fall through to the directed cursor.
+    4. When `PackedStage::ExpandR2` exhausts successfully, emit the packed-exhausted boundary with `security2`. If expansion was skipped, keep the old `security1` resume bound.
 
-  Also update the later termination bound choice in phase_4_resumable_knn:
+`process_cell` should remain simple:
 
-  - Today it uses packed_security when packed exhausted.
-  - Change to use packed_security_final (security2 if expansion ran and exhausted; else security1 as before).
+- consume `PackedChunk0`, `PackedTail`, `PackedExpandR2`, `PackedExhausted`, and `DirectedCursor`
+- keep termination logic based on the batch’s unseen bound
+- avoid owning stage progression directly
 
   ### 7) Timing/Instrumentation (optional but recommended)
 

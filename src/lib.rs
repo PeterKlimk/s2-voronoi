@@ -121,6 +121,12 @@ pub struct VoronoiConfig {
     pub preprocess_threshold: Option<f32>,
     /// Optional cap on k during termination fallback (None = no cap).
     pub termination_max_k: Option<usize>,
+    /// Enable a cold-path packed r=2 expansion band before falling back to directed cursor kNN.
+    ///
+    /// Default is `false` to preserve the common-path cost profile. When enabled, the expansion is
+    /// only built for queries that exhaust the existing packed r=1 path without proving
+    /// termination.
+    pub packed_knn_expand_r2: bool,
 }
 
 impl Default for VoronoiConfig {
@@ -129,6 +135,7 @@ impl Default for VoronoiConfig {
             preprocess: true,
             preprocess_threshold: None,
             termination_max_k: None,
+            packed_knn_expand_r2: false,
         }
     }
 }

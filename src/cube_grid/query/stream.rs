@@ -10,6 +10,7 @@ use glam::Vec3;
 pub(crate) enum DirectedNeighborBatchSource {
     PackedChunk0,
     PackedTail,
+    PackedExpandR2,
     PackedExhausted,
     DirectedCursor,
 }
@@ -28,6 +29,7 @@ pub(crate) struct PackedQuery<'a, 'g> {
     query_index: usize,
     chunk0_size: usize,
     chunk_size: usize,
+    expand_r2_enabled: bool,
 }
 
 impl<'a, 'g> PackedQuery<'a, 'g> {
@@ -38,6 +40,7 @@ impl<'a, 'g> PackedQuery<'a, 'g> {
         query_index: usize,
         chunk0_size: usize,
         chunk_size: usize,
+        expand_r2_enabled: bool,
     ) -> Self {
         Self {
             scratch,
@@ -46,6 +49,7 @@ impl<'a, 'g> PackedQuery<'a, 'g> {
             query_index,
             chunk0_size,
             chunk_size,
+            expand_r2_enabled,
         }
     }
 }
@@ -54,6 +58,7 @@ impl<'a, 'g> PackedQuery<'a, 'g> {
 enum StreamStage {
     PackedChunk0,
     PackedTail,
+    PackedExpandR2,
     Cursor,
     Done,
 }
@@ -65,6 +70,7 @@ pub(crate) struct DirectedNeighborStream<'a, 'm, 'p> {
     stage: StreamStage,
     did_packed: bool,
     packed_tail_used: bool,
+    packed_expand_r2_used: bool,
     packed_safe_exhausted: bool,
     used_cursor: bool,
     knn_exhausted: bool,
@@ -94,6 +100,7 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
             stage,
             did_packed,
             packed_tail_used: false,
+            packed_expand_r2_used: false,
             packed_safe_exhausted: false,
             used_cursor: false,
             knn_exhausted: false,
@@ -105,7 +112,9 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
 
         loop {
             match self.stage {
-                StreamStage::PackedChunk0 | StreamStage::PackedTail => {
+                StreamStage::PackedChunk0
+                | StreamStage::PackedTail
+                | StreamStage::PackedExpandR2 => {
                     let packed = self
                         .packed
                         .as_mut()
@@ -119,6 +128,11 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
                         StreamStage::PackedTail => (
                             PackedStage::Tail,
                             DirectedNeighborBatchSource::PackedTail,
+                            packed.chunk_size,
+                        ),
+                        StreamStage::PackedExpandR2 => (
+                            PackedStage::ExpandR2,
+                            DirectedNeighborBatchSource::PackedExpandR2,
                             packed.chunk_size,
                         ),
                         _ => unreachable!("unexpected packed stage"),
@@ -154,11 +168,27 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
                         continue;
                     }
 
+                    if self.stage != StreamStage::PackedExpandR2
+                        && packed.expand_r2_enabled
+                        && packed.scratch.ensure_expand_r2_band_directed_for(
+                            packed.query_index,
+                            self.grid,
+                            packed.group.slot_gen_map(),
+                            packed.group.local_shift(),
+                            packed.group.local_mask(),
+                            packed.timings,
+                        )
+                    {
+                        self.stage = StreamStage::PackedExpandR2;
+                        self.packed_expand_r2_used = true;
+                        continue;
+                    }
+
                     self.packed_safe_exhausted = true;
                     self.stage = StreamStage::Cursor;
                     return Some(DirectedNeighborBatch {
                         n: 0,
-                        unseen_bound: packed.scratch.security(packed.query_index),
+                        unseen_bound: packed.scratch.resume_security(packed.query_index),
                         source: DirectedNeighborBatchSource::PackedExhausted,
                     });
                 }
@@ -190,6 +220,11 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
     #[inline]
     pub(crate) fn packed_tail_used(&self) -> bool {
         self.packed_tail_used
+    }
+
+    #[inline]
+    pub(crate) fn packed_expand_r2_used(&self) -> bool {
+        self.packed_expand_r2_used
     }
 
     #[inline]
@@ -297,66 +332,77 @@ mod tests {
                 LOCAL_SHIFT,
                 LOCAL_MASK,
             );
-            let mut packed_scratch = PackedKnnCellScratch::new();
-            let mut packed_timings = PackedKnnTimings::default();
-            assert_eq!(
-                packed_scratch.prepare_group_directed(&grid, group, &mut packed_timings),
-                PackedKnnCellStatus::Ok
-            );
-
-            for qi in 0..queries.len() {
-                let query_slot = queries[qi];
-                let query_idx = grid.point_indices()[query_slot as usize] as usize;
-                let query_local = query_locals[qi];
-                let ctx = DirectedCtx::new(
-                    QUERY_BIN,
-                    query_local,
-                    &slot_gen_map,
-                    LOCAL_SHIFT,
-                    LOCAL_MASK,
-                );
-                let mut grid_scratch = grid.make_scratch();
-                let packed =
-                    PackedQuery::new(&mut packed_scratch, &mut packed_timings, group, qi, 16, 8);
-                let mut stream = DirectedNeighborStream::new(
-                    &grid,
-                    &points,
-                    query_idx,
-                    &mut grid_scratch,
-                    ctx,
-                    Some(packed),
+            for &expand_r2_enabled in &[false, true] {
+                let mut packed_scratch = PackedKnnCellScratch::new();
+                let mut packed_timings = PackedKnnTimings::default();
+                assert_eq!(
+                    packed_scratch.prepare_group_directed(&grid, group, &mut packed_timings),
+                    PackedKnnCellStatus::Ok
                 );
 
-                let mut batch = Vec::new();
-                let mut emitted = Vec::with_capacity(points.len().saturating_sub(1));
-                let mut seen = vec![false; points.len()];
-                while let Some(result) = stream.next_batch(&mut batch) {
-                    for &slot in &batch[..result.n] {
-                        let neighbor_idx = grid.point_indices()[slot as usize] as usize;
-                        let should_emit = match result.source {
-                            DirectedNeighborBatchSource::DirectedCursor => {
-                                let fresh = !seen[neighbor_idx];
-                                seen[neighbor_idx] = true;
-                                fresh
+                for qi in 0..queries.len() {
+                    let query_slot = queries[qi];
+                    let query_idx = grid.point_indices()[query_slot as usize] as usize;
+                    let query_local = query_locals[qi];
+                    let ctx = DirectedCtx::new(
+                        QUERY_BIN,
+                        query_local,
+                        &slot_gen_map,
+                        LOCAL_SHIFT,
+                        LOCAL_MASK,
+                    );
+                    let mut grid_scratch = grid.make_scratch();
+                    let packed = PackedQuery::new(
+                        &mut packed_scratch,
+                        &mut packed_timings,
+                        group,
+                        qi,
+                        16,
+                        8,
+                        expand_r2_enabled,
+                    );
+                    let mut stream = DirectedNeighborStream::new(
+                        &grid,
+                        &points,
+                        query_idx,
+                        &mut grid_scratch,
+                        ctx,
+                        Some(packed),
+                    );
+
+                    let mut batch = Vec::new();
+                    let mut emitted = Vec::with_capacity(points.len().saturating_sub(1));
+                    let mut seen = vec![false; points.len()];
+                    while let Some(result) = stream.next_batch(&mut batch) {
+                        for &slot in &batch[..result.n] {
+                            let neighbor_idx = grid.point_indices()[slot as usize] as usize;
+                            let should_emit = match result.source {
+                                DirectedNeighborBatchSource::DirectedCursor => {
+                                    let fresh = !seen[neighbor_idx];
+                                    seen[neighbor_idx] = true;
+                                    fresh
+                                }
+                                DirectedNeighborBatchSource::PackedChunk0
+                                | DirectedNeighborBatchSource::PackedTail
+                                | DirectedNeighborBatchSource::PackedExpandR2 => {
+                                    seen[neighbor_idx] = true;
+                                    true
+                                }
+                                DirectedNeighborBatchSource::PackedExhausted => false,
+                            };
+                            if should_emit {
+                                emitted.push(slot);
                             }
-                            DirectedNeighborBatchSource::PackedChunk0
-                            | DirectedNeighborBatchSource::PackedTail => {
-                                seen[neighbor_idx] = true;
-                                true
-                            }
-                            DirectedNeighborBatchSource::PackedExhausted => false,
-                        };
-                        if should_emit {
-                            emitted.push(slot);
                         }
                     }
-                }
 
-                let expected = directed_bruteforce_slots(&grid, &points, query_idx, query_local);
-                assert_eq!(
-                    emitted, expected,
-                    "stream order mismatch for seed={seed}, qi={qi}"
-                );
+                    let expected =
+                        directed_bruteforce_slots(&grid, &points, query_idx, query_local);
+                    assert_eq!(
+                        emitted, expected,
+                        "stream order mismatch for seed={seed}, qi={qi}, expand_r2_enabled={expand_r2_enabled}"
+                    );
+                }
             }
         }
     }

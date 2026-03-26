@@ -29,6 +29,7 @@ struct CellOrchestrator<'a, 'b, 'c> {
     did_packed: bool,
     packed_safe_exhausted: bool,
     packed_tail_used: bool,
+    packed_expand_r2_used: bool,
 
     directed_ctx: crate::cube_grid::DirectedCtx<'c>,
     incoming_checks: Vec<EdgeCheck>,
@@ -70,6 +71,7 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
             did_packed: false,
             packed_safe_exhausted: false,
             packed_tail_used: false,
+            packed_expand_r2_used: false,
             directed_ctx,
             incoming_checks: Vec::new(),
             incoming_edgechecks: 0,
@@ -168,6 +170,9 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
                     self.knn_stage = crate::knn_clipping::timing::KnnCellStage::DirectedCursor;
                     self.cell_sub.add_knn(t_knn.elapsed());
                 }
+                DirectedNeighborBatchSource::PackedExpandR2 => {
+                    self.knn_stage = crate::knn_clipping::timing::KnnCellStage::PackedExpandR2;
+                }
                 DirectedNeighborBatchSource::PackedExhausted => {
                     if builder.is_bounded() && builder.can_terminate(batch.unseen_bound) {
                         self.terminated = true;
@@ -191,7 +196,8 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
                         attempted_neighbors.insert(neighbor_idx)
                     }
                     DirectedNeighborBatchSource::PackedChunk0
-                    | DirectedNeighborBatchSource::PackedTail => {
+                    | DirectedNeighborBatchSource::PackedTail
+                    | DirectedNeighborBatchSource::PackedExpandR2 => {
                         attempted_neighbors.mark(neighbor_idx);
                         true
                     }
@@ -223,7 +229,8 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
                         }
                     }
                     DirectedNeighborBatchSource::PackedChunk0
-                    | DirectedNeighborBatchSource::PackedTail => {
+                    | DirectedNeighborBatchSource::PackedTail
+                    | DirectedNeighborBatchSource::PackedExpandR2 => {
                         if builder.is_bounded()
                             && clip_result
                                 == crate::knn_clipping::topo2d::types::ClipResult::Unchanged
@@ -249,6 +256,7 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
 
         self.did_packed |= stream.did_packed();
         self.packed_tail_used |= stream.packed_tail_used();
+        self.packed_expand_r2_used |= stream.packed_expand_r2_used();
         self.packed_safe_exhausted |= stream.packed_safe_exhausted();
         self.knn_exhausted |= stream.knn_exhausted();
     }
@@ -284,7 +292,9 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
         let stage = if self.used_knn {
             self.knn_stage
         } else if self.did_packed {
-            if self.packed_tail_used {
+            if self.packed_expand_r2_used {
+                crate::knn_clipping::timing::KnnCellStage::PackedExpandR2
+            } else if self.packed_tail_used {
                 crate::knn_clipping::timing::KnnCellStage::PackedTail
             } else {
                 crate::knn_clipping::timing::KnnCellStage::PackedChunk0
