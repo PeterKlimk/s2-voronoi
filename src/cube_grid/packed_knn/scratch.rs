@@ -6,6 +6,10 @@ use super::{DirectedCellGroup, PackedChunk, PackedKnnTimings, PackedStage};
 use super::super::{cell_to_face_ij, CubeMapGrid};
 
 use crate::fp;
+use crate::policy::{
+    PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER, PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER,
+    PACKED_HI_BUDGET, PACKED_MAX_EXPAND_R2_CANDIDATES_PER_QUERY,
+};
 #[cfg(feature = "packed_knn_sort_small")]
 use crate::sort::sort_small as sort_small_u64;
 use glam::Vec3;
@@ -19,30 +23,8 @@ const MAX_CANDIDATES_HARD: usize = 65_536;
 // Target maximum size for the initial "hi" candidate list (`chunk0_keys`) per query.
 //
 // `next_chunk` avoids `select_nth_unstable` when `remaining.len() <= 2 * n_target`. With the
-// current packed schedule (`PACKED_K0` = 16), keeping the hi list around <= 32 tends to avoid the
+// current packed schedule (`chunk0` = 16), keeping the hi list around <= 32 tends to avoid the
 // expensive partition path.
-const HI_BUDGET: usize = 32;
-
-// Heuristic knobs for the count-based threshold.
-//
-// The count model is used to pick a "hi" threshold `t` in [security, 1] such that we expect only
-// ~HI_BUDGET candidates above `t`. This reduces the likelihood that `next_chunk` must run
-// `select_nth_unstable` on large vectors.
-//
-// If we account for directed eligibility in the center cell, late queries have smaller
-// `N_total` and thus a looser threshold (more candidates). Empirically this can be undesirable, so
-// we optionally ignore directed center eligibility for the estimate.
-const COUNT_MODEL_IGNORE_DIRECTED_CENTER: bool = false;
-
-// If true, include SameBinEarlier neighbor cell counts in the estimate.
-//
-// These cells are skipped for directed kNN (we never scan them), but including them increases the
-// estimated neighborhood size for later cells and tends to tighten the threshold, reducing
-// candidate growth. This is deliberately conservative: it may increase tail usage.
-const COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER: bool = false;
-
-// Hard cap for cold-path r=2 expansion storage per query.
-const MAX_EXPAND_R2_CANDIDATES_PER_QUERY: usize = 8_192;
 
 /// Reusable scratch buffers for packed per-cell group queries.
 pub struct PackedKnnCellScratch {
@@ -345,7 +327,7 @@ impl PackedKnnCellScratch {
                 );
                 if dot > security2 && dot <= security1 {
                     keys.push(make_desc_key(dot, slot_u32));
-                    if keys.len() > MAX_EXPAND_R2_CANDIDATES_PER_QUERY {
+                    if keys.len() > PACKED_MAX_EXPAND_R2_CANDIDATES_PER_QUERY {
                         keys.clear();
                         timings.inc_expand_r2_cap_skips();
                         return false;
@@ -661,10 +643,10 @@ impl PackedKnnCellScratch {
         //
         // We choose a heuristic tightened threshold based on counts: treat the eligible
         // neighborhood size as `ring_candidates + (num_queries - qi - 1)` (directed center cell),
-        // and pick a dot threshold t in [security, 1] that targets ~HI_BUDGET candidates above t
+        // and pick a dot threshold t in [security, 1] that targets ~PACKED_HI_BUDGET candidates above t
         // under a simple "uniform on [security, 1]" model. We never loosen below the old
         // worst-center threshold.
-        let ring_candidates_est = if COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER {
+        let ring_candidates_est = if PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER {
             ring_candidates_all
         } else {
             ring_candidates_eligible
@@ -680,7 +662,7 @@ impl PackedKnnCellScratch {
                 security
             };
 
-            let center_eligible = if COUNT_MODEL_IGNORE_DIRECTED_CENTER {
+            let center_eligible = if PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER {
                 num_queries.saturating_sub(1)
             } else {
                 num_queries.saturating_sub(qi + 1)
@@ -689,7 +671,7 @@ impl PackedKnnCellScratch {
             let t_count = if n_total == 0 {
                 security
             } else {
-                let ratio = ((HI_BUDGET as f32) / (n_total as f32)).min(1.0);
+                let ratio = ((PACKED_HI_BUDGET as f32) / (n_total as f32)).min(1.0);
                 let t = 1.0 - (1.0 - security) * ratio;
                 t.clamp(security, 1.0)
             };

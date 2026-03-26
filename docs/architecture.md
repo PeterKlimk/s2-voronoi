@@ -15,8 +15,8 @@ For each generator point `g`:
    cells (“live dedup”) to build the global vertex list and per-cell index lists
    (`knn_clipping/live_dedup/`).
 
-Cells are computed independently; “global” work is limited to dedup/overflow handling and optional
-edge repair.
+Cells are computed independently; “global” work is limited to dedup/overflow handling and narrow
+post-pass edge reconciliation.
 
 ## Why gnomonic projection?
 
@@ -31,6 +31,7 @@ be shared between cells, even when an underlying 3D plane is shared.
 
 - `src/lib.rs`: public API (`compute`, `compute_with`, `validation`).
 - `src/diagram.rs`: storage (`SphericalVoronoi`, `CellView`).
+- `src/policy.rs`: internal packed/termination policy and heuristic decisions.
 - `src/types.rs`: `UnitVec3`, `UnitVec3Like`.
 - `src/knn_clipping/`: kNN + clipping backend.
   - `topo2d/`: gnomonic projection, half-planes, and convex clipping.

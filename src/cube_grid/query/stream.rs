@@ -1,6 +1,7 @@
 use crate::cube_grid::packed_knn::{
     DirectedCellGroup, PackedKnnCellScratch, PackedKnnTimings, PackedStage,
 };
+use crate::policy::PackedNeighborPolicy;
 
 use super::directed::DirectedNoKCursor;
 use super::{CubeMapGrid, CubeMapGridScratch, DirectedCtx};
@@ -27,9 +28,7 @@ pub(crate) struct PackedQuery<'a, 'g> {
     timings: &'a mut PackedKnnTimings,
     group: DirectedCellGroup<'g>,
     query_index: usize,
-    chunk0_size: usize,
-    chunk_size: usize,
-    expand_r2_enabled: bool,
+    policy: PackedNeighborPolicy,
 }
 
 impl<'a, 'g> PackedQuery<'a, 'g> {
@@ -38,18 +37,14 @@ impl<'a, 'g> PackedQuery<'a, 'g> {
         timings: &'a mut PackedKnnTimings,
         group: DirectedCellGroup<'g>,
         query_index: usize,
-        chunk0_size: usize,
-        chunk_size: usize,
-        expand_r2_enabled: bool,
+        policy: PackedNeighborPolicy,
     ) -> Self {
         Self {
             scratch,
             timings,
             group,
             query_index,
-            chunk0_size,
-            chunk_size,
-            expand_r2_enabled,
+            policy,
         }
     }
 }
@@ -123,17 +118,17 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
                         StreamStage::PackedChunk0 => (
                             PackedStage::Chunk0,
                             DirectedNeighborBatchSource::PackedChunk0,
-                            packed.chunk0_size,
+                            packed.policy.chunk0_size(),
                         ),
                         StreamStage::PackedTail => (
                             PackedStage::Tail,
                             DirectedNeighborBatchSource::PackedTail,
-                            packed.chunk_size,
+                            packed.policy.chunk_size(),
                         ),
                         StreamStage::PackedExpandR2 => (
                             PackedStage::ExpandR2,
                             DirectedNeighborBatchSource::PackedExpandR2,
-                            packed.chunk_size,
+                            packed.policy.chunk_size(),
                         ),
                         _ => unreachable!("unexpected packed stage"),
                     };
@@ -169,7 +164,7 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
                     }
 
                     if self.stage != StreamStage::PackedExpandR2
-                        && packed.expand_r2_enabled
+                        && packed.policy.expand_r2_enabled()
                         && packed.scratch.ensure_expand_r2_band_directed_for(
                             packed.query_index,
                             self.grid,
@@ -242,6 +237,7 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
 mod tests {
     use super::*;
     use crate::cube_grid::packed_knn::{DirectedCellGroup, PackedKnnCellStatus};
+    use crate::policy::PackedNeighborPolicy;
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
@@ -357,9 +353,7 @@ mod tests {
                         &mut packed_timings,
                         group,
                         qi,
-                        16,
-                        8,
-                        expand_r2_enabled,
+                        PackedNeighborPolicy::for_point_count(points.len(), expand_r2_enabled),
                     );
                     let mut stream = DirectedNeighborStream::new(
                         &grid,

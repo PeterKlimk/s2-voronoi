@@ -2,7 +2,7 @@
 
 use crate::cube_grid::{DirectedNeighborBatchSource, DirectedNeighborStream, PackedQuery};
 
-use crate::knn_clipping::TerminationConfig;
+use crate::policy::TerminationPolicy;
 
 use super::super::edge_checks::unpack_edge_key;
 use super::super::packed::{pack_ref, DEFERRED, INVALID_INDEX};
@@ -15,7 +15,7 @@ struct CellOrchestrator<'a, 'b, 'c> {
     ctx: &'a mut CellContext,
     shard_ctx: &'a mut super::ShardContext<'b>,
     grid_ctx: &'a super::GridContext<'c>,
-    termination: TerminationConfig,
+    termination: TerminationPolicy,
     i: usize,
 
     cell_neighbors_processed: usize,
@@ -44,7 +44,7 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
         ctx: &'a mut CellContext,
         shard_ctx: &'a mut super::ShardContext<'b>,
         grid_ctx: &'a super::GridContext<'c>,
-        termination: TerminationConfig,
+        termination: TerminationPolicy,
         i: usize,
     ) -> Self {
         let directed_ctx = crate::cube_grid::DirectedCtx::new(
@@ -406,7 +406,7 @@ pub(super) fn process_cell<'a, 'b, 'c>(
     ctx: &'a mut CellContext,
     shard_ctx: &'a mut super::ShardContext<'b>,
     grid_ctx: &'a super::GridContext<'c>,
-    termination: TerminationConfig,
+    termination: TerminationPolicy,
     i: usize,
     packed: Option<PackedQuery<'_, 'c>>,
 ) {

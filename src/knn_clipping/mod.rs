@@ -4,6 +4,10 @@
 //! independently from nearby neighbors. This structure is friendly to data-parallel CPU
 //! implementations.
 
+use crate::policy::{
+    KnnPolicy, TerminationPolicy, DEFAULT_TERMINATION_CHECK_START, DEFAULT_TERMINATION_CHECK_STEP,
+};
+
 pub(crate) mod cell_builder;
 pub(crate) mod compute;
 pub(crate) mod constants;
@@ -33,21 +37,10 @@ pub struct TerminationConfig {
     pub max_k_cap: Option<usize>,
 }
 
-/// Packed-kNN initial `Chunk0` size (r=1).
-pub(super) const PACKED_K0: usize = 16;
-
-/// Packed-kNN chunk size after `Chunk0` (and for tail emission).
-/// Smaller reduces upfront packed work but may increase fallback iterations.
-pub(super) const PACKED_K1: usize = 8;
-
 /// Target points per cell for the cube-map KNN grid.
 /// Lower = more cells, faster scans, more heap overhead.
 /// Higher = fewer cells, longer scans, less overhead.
 pub(super) const KNN_GRID_TARGET_DENSITY: f64 = 16.0;
-
-// Default termination cadence.
-const DEFAULT_TERMINATION_CHECK_START: usize = 8;
-const DEFAULT_TERMINATION_CHECK_STEP: usize = 1;
 
 impl Default for TerminationConfig {
     fn default() -> Self {
@@ -62,10 +55,13 @@ impl Default for TerminationConfig {
 
 impl TerminationConfig {
     #[inline]
-    pub fn should_check(&self, neighbors_processed: usize) -> bool {
-        self.check_step > 0
-            && neighbors_processed >= self.check_start
-            && (neighbors_processed - self.check_start).is_multiple_of(self.check_step)
+    pub(crate) fn termination_policy(&self) -> TerminationPolicy {
+        TerminationPolicy::new(self.check_start, self.check_step, self.max_k_cap)
+    }
+
+    #[inline]
+    pub(crate) fn knn_policy(&self, num_points: usize) -> KnnPolicy {
+        KnnPolicy::for_point_count(num_points, self.termination_policy(), self.packed_expand_r2)
     }
 }
 

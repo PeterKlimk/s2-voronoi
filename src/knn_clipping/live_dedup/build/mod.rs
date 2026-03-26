@@ -20,6 +20,7 @@ use crate::cube_grid::{CubeMapGrid, PackedQuery};
 use crate::knn_clipping::cell_builder::{CellOutputBuffer, VertexData};
 use crate::knn_clipping::topo2d::Topo2DBuilder;
 use crate::knn_clipping::TerminationConfig;
+use crate::policy::KnnPolicy;
 
 struct EdgeScratch {
     edges_to_later: Vec<EdgeToLater>,
@@ -171,13 +172,11 @@ struct CellContext {
 }
 
 impl CellContext {
-    fn new(grid: &CubeMapGrid) -> Self {
+    fn new(grid: &CubeMapGrid, policy: KnnPolicy) -> Self {
         Self {
             builder: Topo2DBuilder::new(0, Vec3::ZERO),
             scratch: grid.make_scratch(),
-            packed_chunk: Vec::with_capacity(
-                crate::knn_clipping::PACKED_K0.max(crate::knn_clipping::PACKED_K1),
-            ),
+            packed_chunk: Vec::with_capacity(policy.packed().scratch_chunk_capacity()),
             output_buffer: CellOutputBuffer::default(),
             edge_scratch: EdgeScratch::new(),
             attempted_neighbors: AttemptedNeighbors::new(grid.point_indices().len()),
@@ -190,14 +189,14 @@ pub(super) fn build_cells_sharded_live_dedup(
     grid: &CubeMapGrid,
     termination: TerminationConfig,
 ) -> ShardedCellsData {
+    let policy = termination.knn_policy(points.len());
     // Legacy config compatibility: no-k fallback ignores this cap.
-    let _ = termination.max_k_cap;
+    let _ = policy.termination().max_k_cap();
 
     let assignment = assign_bins(points, grid);
     let num_bins = assignment.num_bins;
-    // Packed-kNN uses a "big first chunk" (`packed_k0_base`) then fixed-size chunks (`packed_k1`).
-    let packed_k0_base = crate::knn_clipping::PACKED_K0.min(points.len().saturating_sub(1));
-    let packed_k1 = crate::knn_clipping::PACKED_K1.min(points.len().saturating_sub(1));
+    let packed_policy = policy.packed();
+    let termination_policy = policy.termination();
 
     let per_bin: Vec<(ShardState, crate::knn_clipping::timing::CellSubAccum)> =
         maybe_par_into_iter!(0..num_bins)
@@ -209,7 +208,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                 let mut shard = ShardState::new(my_generators.len());
 
                 let mut sub_accum = CellSubAccum::new();
-                let mut ctx = CellContext::new(grid);
+                let mut ctx = CellContext::new(grid, policy);
                 let vertex_capacity = my_generators.len().saturating_mul(6);
                 shard.output.vertices.reserve(vertex_capacity);
                 shard.output.vertex_keys.reserve(vertex_capacity);
@@ -267,7 +266,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                     }
                     let group_start = start;
 
-                    if packed_k0_base > 0 {
+                    if packed_policy.enabled() {
                         let queries = &packed_queries_all[group_start..cursor];
                         let query_locals = &packed_query_locals_all[group_start..cursor];
                         let group = DirectedCellGroup::new(
@@ -304,16 +303,14 @@ pub(super) fn build_cells_sharded_live_dedup(
                                         &mut ctx,
                                         &mut shard_ctx,
                                         &grid_ctx,
-                                        termination,
+                                        termination_policy,
                                         global,
                                         Some(PackedQuery::new(
                                             &mut packed_scratch,
                                             &mut packed_timings,
                                             group,
                                             offset,
-                                            packed_k0_base,
-                                            packed_k1,
-                                            termination.packed_expand_r2,
+                                            packed_policy,
                                         )),
                                     );
                                 }
@@ -334,7 +331,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                         &mut ctx,
                                         &mut shard_ctx,
                                         &grid_ctx,
-                                        termination,
+                                        termination_policy,
                                         global,
                                         None,
                                     );
@@ -365,7 +362,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                 &mut ctx,
                                 &mut shard_ctx,
                                 &grid_ctx,
-                                termination,
+                                termination_policy,
                                 global,
                                 None,
                             );
