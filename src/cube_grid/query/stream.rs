@@ -311,22 +311,6 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
         self.stage = StreamStage::Cursor;
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn next_batch(&mut self, out: &mut Vec<u32>) -> Option<DirectedNeighborBatch> {
-        loop {
-            match self.frontier(out) {
-                DirectedNeighborFrontier::ExactBatch(batch) => {
-                    self.advance_frontier();
-                    return Some(batch);
-                }
-                DirectedNeighborFrontier::UnknownButBounded { .. } => {
-                    self.advance_frontier();
-                }
-                DirectedNeighborFrontier::Exhausted => return None,
-            }
-        }
-    }
-
     #[inline]
     pub(crate) fn did_packed(&self) -> bool {
         self.did_packed
@@ -492,25 +476,34 @@ mod tests {
                     let mut batch = Vec::new();
                     let mut emitted = Vec::with_capacity(points.len().saturating_sub(1));
                     let mut seen = vec![false; points.len()];
-                    while let Some(result) = stream.next_batch(&mut batch) {
-                        for &slot in &batch[..result.n] {
-                            let neighbor_idx = grid.point_indices()[slot as usize] as usize;
-                            let should_emit = match result.source {
-                                DirectedNeighborBatchSource::DirectedCursor => {
-                                    let fresh = !seen[neighbor_idx];
-                                    seen[neighbor_idx] = true;
-                                    fresh
+                    loop {
+                        match stream.frontier(&mut batch) {
+                            DirectedNeighborFrontier::ExactBatch(result) => {
+                                for &slot in &batch[..result.n] {
+                                    let neighbor_idx = grid.point_indices()[slot as usize] as usize;
+                                    let should_emit = match result.source {
+                                        DirectedNeighborBatchSource::DirectedCursor => {
+                                            let fresh = !seen[neighbor_idx];
+                                            seen[neighbor_idx] = true;
+                                            fresh
+                                        }
+                                        DirectedNeighborBatchSource::PackedChunk0
+                                        | DirectedNeighborBatchSource::PackedTail
+                                        | DirectedNeighborBatchSource::PackedExpandR2 => {
+                                            seen[neighbor_idx] = true;
+                                            true
+                                        }
+                                    };
+                                    if should_emit {
+                                        emitted.push(slot);
+                                    }
                                 }
-                                DirectedNeighborBatchSource::PackedChunk0
-                                | DirectedNeighborBatchSource::PackedTail
-                                | DirectedNeighborBatchSource::PackedExpandR2 => {
-                                    seen[neighbor_idx] = true;
-                                    true
-                                }
-                            };
-                            if should_emit {
-                                emitted.push(slot);
+                                stream.advance_frontier();
                             }
+                            DirectedNeighborFrontier::UnknownButBounded { .. } => {
+                                stream.advance_frontier();
+                            }
+                            DirectedNeighborFrontier::Exhausted => break,
                         }
                     }
 

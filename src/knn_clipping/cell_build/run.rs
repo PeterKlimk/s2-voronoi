@@ -316,35 +316,29 @@ impl<'a, 'm, 'p, 's> CellBuildRunner<'a, 'm, 'p, 's> {
 
                         self.neighbors_processed += 1;
 
-                        match batch.source {
+                        let should_check_termination = match batch.source {
                             DirectedNeighborBatchSource::DirectedCursor => {
-                                if self.ctx.builder.is_bounded()
-                                    && termination.should_check(self.neighbors_processed)
-                                    && self.ctx.builder.can_terminate(batch.unseen_bound)
-                                {
-                                    self.terminated = true;
-                                    break;
-                                }
+                                termination.should_check(self.neighbors_processed)
                             }
                             DirectedNeighborBatchSource::PackedChunk0
                             | DirectedNeighborBatchSource::PackedTail
                             | DirectedNeighborBatchSource::PackedExpandR2 => {
-                                if self.ctx.builder.is_bounded()
-                                    && clip_result
-                                        == crate::knn_clipping::topo2d::types::ClipResult::Unchanged
-                                {
-                                    let bound = if pos + 1 < batch.n {
-                                        let next_slot = self.ctx.packed_chunk[pos + 1];
-                                        let next = point_indices[next_slot as usize] as usize;
-                                        points[i].dot(points[next])
-                                    } else {
-                                        batch.unseen_bound
-                                    };
-                                    if self.ctx.builder.can_terminate(bound) {
-                                        self.terminated = true;
-                                        break;
-                                    }
-                                }
+                                clip_result
+                                    == crate::knn_clipping::topo2d::types::ClipResult::Unchanged
+                            }
+                        };
+
+                        if self.ctx.builder.is_bounded() && should_check_termination {
+                            let bound = if pos + 1 < batch.n {
+                                let next_slot = self.ctx.packed_chunk[pos + 1];
+                                let next = point_indices[next_slot as usize] as usize;
+                                points[i].dot(points[next])
+                            } else {
+                                batch.unseen_bound
+                            };
+                            if self.ctx.builder.can_terminate(bound) {
+                                self.terminated = true;
+                                break;
                             }
                         }
                     }
