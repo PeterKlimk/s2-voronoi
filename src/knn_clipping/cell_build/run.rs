@@ -45,6 +45,63 @@ impl AttemptedNeighbors {
     }
 }
 
+fn probe_frontier<'a, 'm, 'p>(
+    stream: &mut DirectedNeighborStream<'a, 'm, 'p>,
+    packed_chunk: &mut Vec<u32>,
+    used_knn: &mut bool,
+    knn_stage: &mut crate::knn_clipping::timing::KnnCellStage,
+    knn_query_time: &mut Duration,
+) -> DirectedNeighborFrontier {
+    let t_knn = crate::knn_clipping::timing::Timer::start();
+    let cursor_stage_before = stream.is_cursor_stage();
+    let frontier = stream.frontier(packed_chunk);
+    let frontier_is_cursor = match frontier {
+        DirectedNeighborFrontier::ExactBatch(batch) => {
+            batch.source == DirectedNeighborBatchSource::DirectedCursor
+        }
+        DirectedNeighborFrontier::UnknownButBounded { .. }
+        | DirectedNeighborFrontier::Exhausted => cursor_stage_before,
+    };
+    if frontier_is_cursor {
+        *used_knn = true;
+        *knn_stage = crate::knn_clipping::timing::KnnCellStage::DirectedCursor;
+        *knn_query_time += t_knn.elapsed();
+    }
+    frontier
+}
+
+fn maybe_terminate_or_advance_frontier<'a, 'm, 'p>(
+    stream: &mut DirectedNeighborStream<'a, 'm, 'p>,
+    packed_chunk: &mut Vec<u32>,
+    builder: &mut crate::knn_clipping::topo2d::Topo2DBuilder,
+    termination: TerminationPolicy,
+    neighbors_processed: usize,
+    used_knn: &mut bool,
+    knn_stage: &mut crate::knn_clipping::timing::KnnCellStage,
+    knn_query_time: &mut Duration,
+) -> bool {
+    let frontier = probe_frontier(stream, packed_chunk, used_knn, knn_stage, knn_query_time);
+    let can_check_cursor = termination.should_check(neighbors_processed);
+
+    match frontier {
+        DirectedNeighborFrontier::ExactBatch(batch) => {
+            let can_check =
+                batch.source != DirectedNeighborBatchSource::DirectedCursor || can_check_cursor;
+            can_check && builder.can_terminate(batch.first_dot)
+        }
+        DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
+            let can_check = !stream.is_cursor_stage() || can_check_cursor;
+            if can_check && builder.can_terminate(dot_upper_bound) {
+                true
+            } else {
+                stream.advance_frontier();
+                false
+            }
+        }
+        DirectedNeighborFrontier::Exhausted => true,
+    }
+}
+
 pub(crate) struct CellBuildContext {
     builder: crate::knn_clipping::topo2d::Topo2DBuilder,
     scratch: crate::cube_grid::CubeMapGridScratch,
@@ -254,21 +311,13 @@ impl<'a, 'm, 'p, 's> CellBuildRunner<'a, 'm, 'p, 's> {
         );
 
         while !self.terminated && !self.ctx.builder.is_failed() {
-            let t_knn = crate::knn_clipping::timing::Timer::start();
-            let cursor_stage_before = stream.is_cursor_stage();
-            let frontier = stream.frontier(&mut self.ctx.packed_chunk);
-            let frontier_is_cursor = match frontier {
-                DirectedNeighborFrontier::ExactBatch(batch) => {
-                    batch.source == DirectedNeighborBatchSource::DirectedCursor
-                }
-                DirectedNeighborFrontier::UnknownButBounded { .. }
-                | DirectedNeighborFrontier::Exhausted => cursor_stage_before,
-            };
-            if frontier_is_cursor {
-                self.used_knn = true;
-                self.knn_stage = crate::knn_clipping::timing::KnnCellStage::DirectedCursor;
-                self.knn_query_time += t_knn.elapsed();
-            }
+            let frontier = probe_frontier(
+                &mut stream,
+                &mut self.ctx.packed_chunk,
+                &mut self.used_knn,
+                &mut self.knn_stage,
+                &mut self.knn_query_time,
+            );
 
             match frontier {
                 DirectedNeighborFrontier::ExactBatch(batch) => {
@@ -349,48 +398,16 @@ impl<'a, 'm, 'p, 's> CellBuildRunner<'a, 'm, 'p, 's> {
                         && !self.ctx.builder.is_failed()
                         && self.ctx.builder.is_bounded()
                     {
-                        let can_check_cursor = self
-                            .request
-                            .termination
-                            .should_check(self.neighbors_processed);
-                        let t_knn = crate::knn_clipping::timing::Timer::start();
-                        let cursor_stage_before = stream.is_cursor_stage();
-                        let frontier = stream.frontier(&mut self.ctx.packed_chunk);
-                        let frontier_is_cursor = match frontier {
-                            DirectedNeighborFrontier::ExactBatch(batch) => {
-                                batch.source == DirectedNeighborBatchSource::DirectedCursor
-                            }
-                            DirectedNeighborFrontier::UnknownButBounded { .. }
-                            | DirectedNeighborFrontier::Exhausted => cursor_stage_before,
-                        };
-                        if frontier_is_cursor {
-                            self.used_knn = true;
-                            self.knn_stage =
-                                crate::knn_clipping::timing::KnnCellStage::DirectedCursor;
-                            self.knn_query_time += t_knn.elapsed();
-                        }
-
-                        match frontier {
-                            DirectedNeighborFrontier::ExactBatch(batch) => {
-                                let can_check = batch.source
-                                    != DirectedNeighborBatchSource::DirectedCursor
-                                    || can_check_cursor;
-                                if can_check && self.ctx.builder.can_terminate(batch.first_dot) {
-                                    self.terminated = true;
-                                }
-                            }
-                            DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
-                                let can_check = !stream.is_cursor_stage() || can_check_cursor;
-                                if can_check && self.ctx.builder.can_terminate(dot_upper_bound) {
-                                    self.terminated = true;
-                                } else {
-                                    stream.advance_frontier();
-                                }
-                            }
-                            DirectedNeighborFrontier::Exhausted => {
-                                self.terminated = true;
-                            }
-                        }
+                        self.terminated = maybe_terminate_or_advance_frontier(
+                            &mut stream,
+                            &mut self.ctx.packed_chunk,
+                            &mut self.ctx.builder,
+                            self.request.termination,
+                            self.neighbors_processed,
+                            &mut self.used_knn,
+                            &mut self.knn_stage,
+                            &mut self.knn_query_time,
+                        );
                     }
                 }
                 DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
