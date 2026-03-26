@@ -92,6 +92,11 @@ pub(in crate::knn_clipping) struct EdgeRecord {
     pub(in crate::knn_clipping) key: EdgeKey,
 }
 
+/// Historical name: this records an unresolved shared-edge reconciliation mismatch.
+///
+/// These are produced by edge-check matching when the two sides of an undirected edge cannot be
+/// reconciled during live dedup. They are the only inputs to the narrow post-pass
+/// reconciliation in `edge_repair.rs`.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::knn_clipping) struct BadEdgeRecord {
     pub(in crate::knn_clipping) key: EdgeKey,

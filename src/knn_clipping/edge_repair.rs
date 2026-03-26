@@ -1,4 +1,14 @@
-//! Edge repair helpers for post-processing.
+//! Narrow shared-edge reconciliation helpers for post-processing.
+//!
+//! This pass is intentionally limited. It is not a generic recovery layer for arbitrary
+//! topology failures; it only reconciles unresolved shared-edge mismatches that survive
+//! live dedup.
+//!
+//! The two supported anomaly classes are:
+//! - one-sided epsilon edges, where one polygon emits a tiny boundary edge and the other side
+//!   collapses it away
+//! - shared-edge endpoint identity mismatches, typically from near-degenerate vertex ownership
+//!   choices where adjacent polygons pick different generator triplets for the same corner
 
 use glam::Vec3;
 
@@ -219,4 +229,114 @@ pub(super) fn repair_bad_edges(
     }
 
     Some((new_cells, new_indices))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn edge_record(a: u32, b: u32) -> EdgeRecord {
+        EdgeRecord {
+            key: (((b as u64) << 32) | a as u64).into(),
+        }
+    }
+
+    #[test]
+    fn repair_collapses_one_sided_epsilon_edge() {
+        let vertices = vec![
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(5.0e-8, 0.0, 1.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+        ];
+        let vertex_keys = vec![
+            [0, 1, 2],
+            [0, 1, 3],
+            [0, 2, 3],
+            [1, 2, 4],
+            [1, 4, 5],
+            [1, 2, 5],
+        ];
+        let cells = vec![VoronoiCell::new(0, 3), VoronoiCell::new(3, 3)];
+        let cell_indices = vec![0, 1, 2, 3, 4, 5];
+
+        let repaired = repair_bad_edges(
+            &[edge_record(0, 1)],
+            &vertices,
+            &cells,
+            &cell_indices,
+            &vertex_keys,
+        )
+        .expect("expected one-sided epsilon edge to be reconciled");
+
+        let (new_cells, new_indices) = repaired;
+        assert_eq!(
+            new_cells[0].vertex_count(),
+            2,
+            "epsilon edge should collapse"
+        );
+        assert_eq!(
+            new_indices.len(),
+            5,
+            "collapsing the epsilon edge should remove one per-cell index"
+        );
+    }
+
+    #[test]
+    fn repair_reconciles_mismatched_shared_edge_endpoints() {
+        let vertices = vec![
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(1.0 + 1.0e-5, 2.0e-6, 0.0),
+            Vec3::new(2.0e-6, 1.0 + 1.0e-5, 0.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+        ];
+        let vertex_keys = vec![
+            [0, 1, 2],
+            [0, 1, 3],
+            [0, 2, 3],
+            [0, 1, 4],
+            [0, 1, 5],
+            [1, 4, 5],
+        ];
+        let cells = vec![VoronoiCell::new(0, 3), VoronoiCell::new(3, 3)];
+        let cell_indices = vec![0, 1, 2, 3, 4, 5];
+
+        let seg_a_before = edge_segments_for_neighbor(0, 1, &cells, &cell_indices, &vertex_keys);
+        let seg_b_before = edge_segments_for_neighbor(1, 0, &cells, &cell_indices, &vertex_keys);
+        assert_eq!(seg_a_before.len(), 1);
+        assert_eq!(seg_b_before.len(), 1);
+        let before_a = BTreeSet::from([seg_a_before[0].0, seg_a_before[0].1]);
+        let before_b = BTreeSet::from([seg_b_before[0].0, seg_b_before[0].1]);
+        assert_ne!(
+            before_a, before_b,
+            "fixture must start with mismatched shared-edge endpoint ids"
+        );
+
+        let repaired = repair_bad_edges(
+            &[edge_record(0, 1)],
+            &vertices,
+            &cells,
+            &cell_indices,
+            &vertex_keys,
+        )
+        .expect("expected mismatched shared-edge endpoints to be reconciled");
+
+        let (new_cells, new_indices) = repaired;
+        let seg_a = edge_segments_for_neighbor(0, 1, &new_cells, &new_indices, &vertex_keys);
+        let seg_b = edge_segments_for_neighbor(1, 0, &new_cells, &new_indices, &vertex_keys);
+        assert_eq!(seg_a.len(), 1, "cell 0 should still expose one shared edge");
+        assert_eq!(seg_b.len(), 1, "cell 1 should still expose one shared edge");
+
+        let set_a = BTreeSet::from([seg_a[0].0, seg_a[0].1]);
+        let set_b = BTreeSet::from([seg_b[0].0, seg_b[0].1]);
+        assert_eq!(
+            set_a, set_b,
+            "reconciled shared edge should use the same endpoint ids on both sides"
+        );
+    }
 }

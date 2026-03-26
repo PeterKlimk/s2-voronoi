@@ -28,7 +28,10 @@ pub(super) struct AssemblyResult {
     pub vertices: Vec<glam::Vec3>,
     /// Vertex keys (triplet of generator indices), parallel to `vertices`.
     pub vertex_keys: Vec<VertexKey>,
-    /// Edges that could not be fully resolved during dedup.
+    /// Historical name: unresolved shared-edge mismatches that survived live dedup.
+    ///
+    /// These feed the narrow post-pass reconciliation in `edge_repair.rs`; they are not a
+    /// generic record of arbitrary topology failures.
     pub bad_edges: Vec<BadEdgeRecord>,
     /// Per-cell storage (one per generator).
     pub cells: Vec<crate::VoronoiCell>,

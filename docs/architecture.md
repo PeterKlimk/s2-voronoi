@@ -35,7 +35,7 @@ be shared between cells, even when an underlying 3D plane is shared.
 - `src/knn_clipping/`: kNN + clipping backend.
   - `topo2d/`: gnomonic projection, half-planes, and convex clipping.
   - `live_dedup/`: sharded vertex ownership + edge-check propagation.
-  - `edge_repair.rs`: best-effort repairs for missing/mismatched edges.
+  - `edge_repair.rs`: narrow post-pass reconciliation for unresolved shared-edge mismatches.
   - `preprocess.rs`: merge near-coincident points.
   - `timing.rs`: optional timing + histograms.
 - `src/cube_grid/`: cube-map spatial index + packed-kNN helpers.
