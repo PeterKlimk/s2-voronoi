@@ -2,7 +2,7 @@
 
 use glam::Vec3;
 
-use crate::knn_clipping::cell_builder::VertexKey;
+use crate::knn_clipping::cell_build::VertexKey;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

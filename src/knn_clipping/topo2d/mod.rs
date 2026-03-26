@@ -106,7 +106,7 @@ mod tests {
         builder.clip_with_slot(2, u32::MAX, h2).unwrap();
         builder.clip_with_slot(3, u32::MAX, h3).unwrap();
 
-        let mut buffer = crate::knn_clipping::cell_builder::CellOutputBuffer::default();
+        let mut buffer = crate::knn_clipping::cell_build::CellOutputBuffer::default();
         builder.to_vertex_data_full(&mut buffer).unwrap();
 
         assert_eq!(buffer.vertices.len(), 3);

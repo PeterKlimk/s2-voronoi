@@ -4,23 +4,23 @@ use glam::Vec3;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-mod process_cell;
-use process_cell::process_cell;
-
 use super::binning::assign_bins;
-use super::edge_checks::collect_and_resolve_cell_edges;
-use super::packed::INVALID_INDEX;
+use super::edge_checks::{collect_and_resolve_cell_edges, unpack_edge_key};
+use super::packed::{pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::ShardState;
-use super::types::{BinId, EdgeCheck, EdgeCheckOverflow, EdgeOverflowLocal, EdgeToLater, LocalId};
+use super::types::{
+    BinId, DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeOverflowLocal, EdgeToLater, LocalId,
+};
 use super::ShardedCellsData;
 use crate::cube_grid::packed_knn::{
     DirectedCellGroup, PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings,
 };
 use crate::cube_grid::{CubeMapGrid, PackedQuery};
-use crate::knn_clipping::cell_builder::{CellBuildError, CellOutputBuffer, VertexData};
-use crate::knn_clipping::topo2d::Topo2DBuilder;
+use crate::knn_clipping::cell_build::{
+    build_cell_into, CellBuildContext, CellBuildError, CellBuildRequest, CellOutputBuffer,
+    SeedNeighbor, VertexData,
+};
 use crate::knn_clipping::TerminationConfig;
-use crate::policy::KnnPolicy;
 
 struct EdgeScratch {
     edges_to_later: Vec<EdgeToLater>,
@@ -114,39 +114,17 @@ impl EdgeScratch {
     }
 }
 
-struct AttemptedNeighbors {
-    seen_stamp: Vec<u32>,
-    stamp: u32,
+struct LiveDedupCellScratch {
+    edge_scratch: EdgeScratch,
+    seed_neighbors: Vec<SeedNeighbor>,
 }
 
-impl AttemptedNeighbors {
+impl LiveDedupCellScratch {
     fn new(num_points: usize) -> Self {
         Self {
-            seen_stamp: vec![0; num_points],
-            stamp: 1,
+            edge_scratch: EdgeScratch::new(),
+            seed_neighbors: Vec::with_capacity(num_points.min(16)),
         }
-    }
-
-    fn clear(&mut self) {
-        self.stamp = self.stamp.wrapping_add(1).max(1);
-        if self.stamp == u32::MAX {
-            self.seen_stamp.fill(0);
-            self.stamp = 1;
-        }
-    }
-
-    fn insert(&mut self, id: usize) -> bool {
-        debug_assert!(id < self.seen_stamp.len(), "neighbor id out of bounds");
-        if self.seen_stamp[id] == self.stamp {
-            return false;
-        }
-        self.seen_stamp[id] = self.stamp;
-        true
-    }
-
-    fn mark(&mut self, id: usize) {
-        debug_assert!(id < self.seen_stamp.len(), "neighbor id out of bounds");
-        self.seen_stamp[id] = self.stamp;
     }
 }
 
@@ -160,28 +138,6 @@ pub(super) struct ShardContext<'a> {
     pub(super) shard: &'a mut ShardState,
     pub(super) bin: BinId,
     pub(super) local: LocalId,
-}
-
-struct CellContext {
-    builder: Topo2DBuilder,
-    scratch: crate::cube_grid::CubeMapGridScratch,
-    packed_chunk: Vec<u32>,
-    output_buffer: CellOutputBuffer,
-    edge_scratch: EdgeScratch,
-    attempted_neighbors: AttemptedNeighbors,
-}
-
-impl CellContext {
-    fn new(grid: &CubeMapGrid, policy: KnnPolicy) -> Self {
-        Self {
-            builder: Topo2DBuilder::new(0, Vec3::ZERO),
-            scratch: grid.make_scratch(),
-            packed_chunk: Vec::with_capacity(policy.packed().scratch_chunk_capacity()),
-            output_buffer: CellOutputBuffer::default(),
-            edge_scratch: EdgeScratch::new(),
-            attempted_neighbors: AttemptedNeighbors::new(grid.point_indices().len()),
-        }
-    }
 }
 
 pub(super) fn build_cells_sharded_live_dedup(
@@ -210,7 +166,8 @@ pub(super) fn build_cells_sharded_live_dedup(
             let mut shard = ShardState::new(my_generators.len());
 
             let mut sub_accum = CellSubAccum::new();
-            let mut ctx = CellContext::new(grid, policy);
+            let mut build_ctx = CellBuildContext::new(grid, policy);
+            let mut live_ctx = LiveDedupCellScratch::new(grid.point_indices().len());
             let vertex_capacity = my_generators.len().saturating_mul(6);
             shard.output.vertices.reserve(vertex_capacity);
             shard.output.vertex_keys.reserve(vertex_capacity);
@@ -296,9 +253,10 @@ pub(super) fn build_cells_sharded_live_dedup(
                                     bin,
                                     local,
                                 };
-                                process_cell(
+                                build_and_emit_cell(
                                     &mut sub_accum,
-                                    &mut ctx,
+                                    &mut build_ctx,
+                                    &mut live_ctx,
                                     &mut shard_ctx,
                                     &grid_ctx,
                                     termination_policy,
@@ -324,9 +282,10 @@ pub(super) fn build_cells_sharded_live_dedup(
                                     bin,
                                     local,
                                 };
-                                process_cell(
+                                build_and_emit_cell(
                                     &mut sub_accum,
-                                    &mut ctx,
+                                    &mut build_ctx,
+                                    &mut live_ctx,
                                     &mut shard_ctx,
                                     &grid_ctx,
                                     termination_policy,
@@ -353,9 +312,10 @@ pub(super) fn build_cells_sharded_live_dedup(
                             bin,
                             local,
                         };
-                        process_cell(
+                        build_and_emit_cell(
                             &mut sub_accum,
-                            &mut ctx,
+                            &mut build_ctx,
+                            &mut live_ctx,
                             &mut shard_ctx,
                             &grid_ctx,
                             termination_policy,
@@ -383,4 +343,131 @@ pub(super) fn build_cells_sharded_live_dedup(
         shards,
         cell_sub: merged_sub,
     })
+}
+
+fn build_and_emit_cell<'a, 'b, 'c>(
+    cell_sub: &'a mut crate::knn_clipping::timing::CellSubAccum,
+    build_ctx: &'a mut CellBuildContext,
+    live_ctx: &'a mut LiveDedupCellScratch,
+    shard_ctx: &'a mut ShardContext<'b>,
+    grid_ctx: &'a GridContext<'c>,
+    termination: crate::policy::TerminationPolicy,
+    generator_idx: usize,
+    packed: Option<PackedQuery<'_, 'c>>,
+) -> Result<(), CellBuildError> {
+    let cell_start = shard_ctx.shard.output.cell_indices.len() as u32;
+    shard_ctx
+        .shard
+        .output
+        .set_cell_start(shard_ctx.local, cell_start);
+
+    let incoming_checks = shard_ctx.shard.dedup.take_edge_checks(shard_ctx.local);
+    live_ctx.seed_neighbors.clear();
+    let cell_idx = u32::try_from(generator_idx).expect("cell index must fit in u32");
+    for check in &incoming_checks {
+        let (a, b) = unpack_edge_key(check.key);
+        let neighbor_idx = if a == cell_idx { b } else { a } as usize;
+        let neighbor_slot = grid_ctx.grid.point_index_to_slot(neighbor_idx);
+        live_ctx.seed_neighbors.push(SeedNeighbor {
+            neighbor_idx,
+            neighbor_slot,
+            hp_eps: check.hp_eps,
+        });
+    }
+
+    let directed_ctx = crate::cube_grid::DirectedCtx::new(
+        shard_ctx.bin.as_u8(),
+        shard_ctx.local.as_u32(),
+        &grid_ctx.assignment.slot_gen_map,
+        grid_ctx.assignment.local_shift,
+        grid_ctx.assignment.local_mask,
+    );
+
+    let stats = build_cell_into(
+        build_ctx,
+        CellBuildRequest {
+            points: grid_ctx.points,
+            grid: grid_ctx.grid,
+            generator_idx,
+            directed_ctx,
+            termination,
+            packed,
+            seed_neighbors: &live_ctx.seed_neighbors,
+        },
+    )?;
+    stats.record_into(cell_sub);
+
+    let mut t_post = crate::knn_clipping::timing::LapTimer::start();
+    let output_buffer = build_ctx.output_buffer();
+    live_ctx.edge_scratch.collect_and_resolve(
+        cell_idx,
+        shard_ctx,
+        output_buffer,
+        grid_ctx.assignment,
+        incoming_checks,
+    );
+    let collect_resolve_time = t_post.lap();
+    cell_sub.add_edge_collect(collect_resolve_time / 2);
+    cell_sub.add_edge_resolve(collect_resolve_time / 2);
+
+    let count = output_buffer.vertices.len();
+    let shard = &mut *shard_ctx.shard;
+    let local = shard_ctx.local;
+    let bin = shard_ctx.bin;
+
+    shard.output.set_cell_count(
+        local,
+        u8::try_from(count).expect("cell vertex count exceeds u8 capacity"),
+    );
+
+    {
+        let vertex_indices = &mut live_ctx.edge_scratch.vertex_indices;
+        for ((key, pos), vi) in output_buffer
+            .vertices
+            .iter()
+            .copied()
+            .zip(vertex_indices.iter_mut())
+        {
+            #[cfg(feature = "timing")]
+            {
+                shard.triplet_keys += 1;
+            }
+            let owner_bin = grid_ctx.assignment.generator_bin[key[0] as usize];
+            if owner_bin == bin {
+                if *vi == INVALID_INDEX {
+                    let new_idx = shard.output.vertices.len() as u32;
+                    shard.output.vertices.push(pos);
+                    shard.output.vertex_keys.push(key);
+                    *vi = new_idx;
+                }
+                let v_idx = *vi;
+                debug_assert!(v_idx != INVALID_INDEX, "missing on-shard vertex index");
+                shard.output.cell_indices.push(pack_ref(bin, v_idx));
+            } else {
+                debug_assert_eq!(*vi, INVALID_INDEX, "received index for off-shard owner");
+                let source_slot = shard.output.cell_indices.len() as u32;
+                shard.output.cell_indices.push(DEFERRED);
+                shard.output.deferred_slots.push(DeferredSlot {
+                    key,
+                    pos,
+                    source_bin: bin,
+                    source_slot,
+                });
+            }
+        }
+    }
+    cell_sub.add_key_dedup(t_post.lap());
+
+    live_ctx
+        .edge_scratch
+        .emit(shard, &output_buffer.vertices, cell_start, bin);
+    cell_sub.add_edge_emit(t_post.lap());
+
+    debug_assert_eq!(
+        shard.output.cell_indices.len() as u32 - cell_start,
+        count as u32,
+        "cell index stream mismatch"
+    );
+
+    Ok(())
 }

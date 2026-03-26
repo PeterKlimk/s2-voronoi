@@ -1,7 +1,7 @@
 use super::clippers::{clip_convex, clip_convex_edgecheck};
 use super::types::{ClipResult, HalfPlane, PolyBuffer};
 use crate::fp;
-use crate::knn_clipping::cell_builder::{CellFailure, CellOutputBuffer};
+use crate::knn_clipping::cell_build::{CellFailure, CellOutputBuffer};
 use glam::{DVec3, Vec3};
 use std::hint::select_unpredictable;
 

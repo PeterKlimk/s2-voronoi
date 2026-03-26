@@ -34,8 +34,9 @@ be shared between cells, even when an underlying 3D plane is shared.
 - `src/policy.rs`: internal packed/termination policy and heuristic decisions.
 - `src/types.rs`: `UnitVec3`, `UnitVec3Like`.
 - `src/knn_clipping/`: kNN + clipping backend.
+  - `cell_build/`: single-cell neighbor seeding, stream consumption, clipping, and extraction.
   - `topo2d/`: gnomonic projection, half-planes, and convex clipping.
-  - `live_dedup/`: sharded vertex ownership + edge-check propagation.
+  - `live_dedup/`: sharded vertex ownership, deferred-slot patching, and edge-check propagation.
   - `edge_reconcile.rs`: narrow post-pass reconciliation for unresolved shared-edge mismatches.
   - `preprocess.rs`: merge near-coincident points.
   - `timing.rs`: optional timing + histograms.
@@ -55,7 +56,7 @@ That layer currently owns:
 
 If a future change adds dynamic heuristic activation, it should be expressed through this policy
 layer and the neighbor-source boundary, not by reintroducing local fallback logic into
-`process_cell`.
+single-cell build orchestration.
 
 See `docs/policy.md`.
 

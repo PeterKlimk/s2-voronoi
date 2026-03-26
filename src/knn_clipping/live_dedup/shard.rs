@@ -1,7 +1,7 @@
 //! Shard-local state for live dedup.
 
 use super::types::{DeferredSlot, EdgeCheck, EdgeCheckOverflow, LocalId, UnresolvedEdgeMismatch};
-use crate::knn_clipping::cell_builder::VertexKey;
+use crate::knn_clipping::cell_build::VertexKey;
 use glam::Vec3;
 
 /// Data only needed during vertex deduplication (dropped after overflow flush).

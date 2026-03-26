@@ -10,7 +10,7 @@ use super::types::{
     UnresolvedEdgeMismatch,
 };
 use super::with_two_mut;
-use crate::knn_clipping::cell_builder::VertexKey;
+use crate::knn_clipping::cell_build::VertexKey;
 use crate::knn_clipping::timing::Timer;
 use std::time::Duration;
 
@@ -76,7 +76,7 @@ impl ShardDedup {
 pub(super) fn collect_and_resolve_cell_edges(
     cell_idx: u32,
     shard_ctx: &mut super::build::ShardContext<'_>,
-    output_buffer: &crate::knn_clipping::cell_builder::CellOutputBuffer,
+    output_buffer: &crate::knn_clipping::cell_build::CellOutputBuffer,
     assignment: &BinAssignment,
     incoming_checks: Vec<EdgeCheck>,
     vertex_indices: &mut [u32],

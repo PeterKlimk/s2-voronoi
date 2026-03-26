@@ -6,7 +6,7 @@ use super::edge_reconcile;
 use super::live_dedup;
 use super::timing::{Timer, TimingBuilder};
 use super::{
-    cell_builder::{CellBuildError, CellFailure},
+    cell_build::{CellBuildError, CellFailure},
     constants, merge_close_points, MergeResult, TerminationConfig, KNN_GRID_TARGET_DENSITY,
 };
 use crate::cube_grid::CubeMapGrid;
@@ -22,111 +22,45 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     let mut tb = TimingBuilder::new();
 
-    // Preprocessing: merge close points
     let t = Timer::start();
-    let (effective_points, merge_result): (Option<Vec<Vec3>>, Option<MergeResult>) =
-        if skip_preprocess {
-            (None, None)
-        } else {
-            let threshold = preprocess_threshold
-                .unwrap_or_else(|| constants::merge_threshold_for_density(points.len()));
-            let mut result = merge_close_points(&points, threshold);
-            if result.num_merged > 0 {
-                let pts = std::mem::take(&mut result.effective_points);
-                (Some(pts), Some(result))
-            } else {
-                // No merges: use the original owned points (avoid an extra full copy).
-                (None, None)
-            }
-        };
+    let (effective_points, merge_result) =
+        preprocess_effective_points(&points, preprocess_threshold, skip_preprocess);
     tb.set_preprocess(t.elapsed());
-    let needs_remap = merge_result.is_some();
 
     let effective_points_ref: &[Vec3] = match &effective_points {
         Some(v) => v.as_slice(),
         None => points.as_slice(),
     };
 
-    // Build cube-map grid on effective points (this is the timed grid build).
-    let t = Timer::start();
-    let n = effective_points_ref.len();
-    let target = KNN_GRID_TARGET_DENSITY.max(1.0);
-    let res = ((n as f64 / (6.0 * target)).sqrt() as usize).max(4);
-    #[cfg(feature = "timing")]
-    let mut grid_build_timings = CubeMapGridBuildTimings::default();
-    #[cfg(feature = "timing")]
-    let grid =
-        CubeMapGrid::new_with_build_timings(effective_points_ref, res, &mut grid_build_timings);
-    #[cfg(not(feature = "timing"))]
-    let grid = CubeMapGrid::new(effective_points_ref, res);
-    tb.set_knn_build(t.elapsed());
-    #[cfg(feature = "timing")]
-    tb.set_knn_build_sub(grid_build_timings.clone());
-
-    // Build cells using sharded live dedup
-    let t = Timer::start();
-    let sharded =
-        live_dedup::build_cells_sharded_live_dedup(effective_points_ref, &grid, termination)
-            .map_err(map_cell_build_error)?;
-
-    #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]
-    tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
+    let grid = build_query_grid(effective_points_ref, &mut tb);
+    let sharded = construct_cell_shards(effective_points_ref, &grid, termination, &mut tb)?;
+    let assembled = assemble_shards(sharded, &mut tb);
+    let live_dedup::AssemblyResult {
+        vertices,
+        vertex_keys,
+        unresolved_edges,
+        cells,
+        cell_indices,
+        dedup_sub: _,
+    } = assembled;
+    let (eff_cells, eff_cell_indices) = reconcile_edges(
+        &vertices,
+        &vertex_keys,
+        &unresolved_edges,
+        cells,
+        cell_indices,
+        &mut tb,
+    );
 
     let t = Timer::start();
-    let assembled = live_dedup::assemble_sharded_live_dedup(sharded);
-    tb.set_dedup(t.elapsed(), assembled.dedup_sub);
+    let (cells, cell_indices) = remap_cells_to_original_indices(
+        &points,
+        merge_result.as_ref(),
+        eff_cells,
+        eff_cell_indices,
+    );
 
-    let repair_edges_storage: Vec<live_dedup::EdgeRecord> = assembled
-        .unresolved_edges
-        .iter()
-        .map(|b| live_dedup::EdgeRecord { key: b.key })
-        .collect();
-
-    let t = Timer::start();
-    let (mut eff_cells, mut eff_cell_indices) = (assembled.cells, assembled.cell_indices);
-    if let Some((cells, indices)) = edge_reconcile::reconcile_unresolved_edges(
-        &repair_edges_storage,
-        &assembled.vertices,
-        &eff_cells,
-        &eff_cell_indices,
-        &assembled.vertex_keys,
-    ) {
-        eff_cells = cells;
-        eff_cell_indices = indices;
-    }
-    tb.set_edge_reconcile(t.elapsed());
-
-    // Remap cells back to original point indices if we merged
-    let t = Timer::start();
-    let (cells, cell_indices) = if needs_remap {
-        use crate::VoronoiCell;
-        let merge_result = merge_result.as_ref().unwrap();
-
-        // Each original point maps to an effective point's cell
-        let mut new_cells = Vec::with_capacity(points.len());
-        let mut new_cell_indices: Vec<u32> = Vec::new();
-
-        for orig_idx in 0..points.len() {
-            let eff_idx = merge_result.original_to_effective[orig_idx];
-            let eff_cell = &eff_cells[eff_idx];
-
-            let start = u32::try_from(new_cell_indices.len())
-                .expect("cell index buffer exceeds u32 capacity");
-            let eff_start = eff_cell.vertex_start();
-            let eff_end = eff_start + eff_cell.vertex_count();
-            new_cell_indices.extend_from_slice(&eff_cell_indices[eff_start..eff_end]);
-
-            let count_u16 =
-                u16::try_from(eff_cell.vertex_count()).expect("cell vertex count exceeds u16");
-            new_cells.push(VoronoiCell::new(start, count_u16));
-        }
-        (new_cells, new_cell_indices)
-    } else {
-        (eff_cells, eff_cell_indices)
-    };
-
-    let voronoi =
-        crate::SphericalVoronoi::from_raw_parts(points, assembled.vertices, cells, cell_indices);
+    let voronoi = crate::SphericalVoronoi::from_raw_parts(points, vertices, cells, cell_indices);
     tb.set_assemble(t.elapsed());
 
     // Report timing if feature enabled
@@ -161,12 +95,10 @@ fn map_cell_build_error(err: CellBuildError) -> crate::VoronoiError {
                 "cell extends to the generator hemisphere boundary; gnomonic projection is invalid"
                     .to_string(),
         },
-        CellFailure::UnboundedAfterExhaustion => crate::VoronoiError::ComputationFailed(
-            format!(
-                "cell {} exhausted the neighbor stream before reaching a bounded polygon",
-                err.generator_idx
-            ),
-        ),
+        CellFailure::UnboundedAfterExhaustion => crate::VoronoiError::ComputationFailed(format!(
+            "cell {} exhausted the neighbor stream before reaching a bounded polygon",
+            err.generator_idx
+        )),
         CellFailure::TooManyVertices => crate::VoronoiError::ComputationFailed(format!(
             "cell {} exceeded the clipping vertex budget",
             err.generator_idx
@@ -178,10 +110,134 @@ fn map_cell_build_error(err: CellBuildError) -> crate::VoronoiError {
     }
 }
 
+fn preprocess_effective_points(
+    points: &[Vec3],
+    preprocess_threshold: Option<f32>,
+    skip_preprocess: bool,
+) -> (Option<Vec<Vec3>>, Option<MergeResult>) {
+    if skip_preprocess {
+        return (None, None);
+    }
+
+    let threshold = preprocess_threshold
+        .unwrap_or_else(|| constants::merge_threshold_for_density(points.len()));
+    let mut result = merge_close_points(points, threshold);
+    if result.num_merged > 0 {
+        let pts = std::mem::take(&mut result.effective_points);
+        (Some(pts), Some(result))
+    } else {
+        (None, None)
+    }
+}
+
+fn build_query_grid(
+    effective_points: &[Vec3],
+    tb: &mut TimingBuilder,
+) -> crate::cube_grid::CubeMapGrid {
+    let t = Timer::start();
+    let n = effective_points.len();
+    let target = KNN_GRID_TARGET_DENSITY.max(1.0);
+    let res = ((n as f64 / (6.0 * target)).sqrt() as usize).max(4);
+    #[cfg(feature = "timing")]
+    let mut grid_build_timings = CubeMapGridBuildTimings::default();
+    #[cfg(feature = "timing")]
+    let grid = CubeMapGrid::new_with_build_timings(effective_points, res, &mut grid_build_timings);
+    #[cfg(not(feature = "timing"))]
+    let grid = CubeMapGrid::new(effective_points, res);
+    tb.set_knn_build(t.elapsed());
+    #[cfg(feature = "timing")]
+    tb.set_knn_build_sub(grid_build_timings.clone());
+    grid
+}
+
+fn construct_cell_shards(
+    effective_points: &[Vec3],
+    grid: &CubeMapGrid,
+    termination: TerminationConfig,
+    tb: &mut TimingBuilder,
+) -> Result<live_dedup::ShardedCellsData, crate::VoronoiError> {
+    let t = Timer::start();
+    let sharded = live_dedup::build_cells_sharded_live_dedup(effective_points, grid, termination)
+        .map_err(map_cell_build_error)?;
+    #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]
+    tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
+    Ok(sharded)
+}
+
+fn assemble_shards(
+    sharded: live_dedup::ShardedCellsData,
+    tb: &mut TimingBuilder,
+) -> live_dedup::AssemblyResult {
+    let t = Timer::start();
+    let assembled = live_dedup::assemble_sharded_live_dedup(sharded);
+    tb.set_dedup(t.elapsed(), assembled.dedup_sub);
+    assembled
+}
+
+fn reconcile_edges(
+    vertices: &[Vec3],
+    vertex_keys: &[crate::knn_clipping::cell_build::VertexKey],
+    unresolved_edges: &[live_dedup::UnresolvedEdgeMismatch],
+    mut cells: Vec<crate::VoronoiCell>,
+    mut cell_indices: Vec<u32>,
+    tb: &mut TimingBuilder,
+) -> (Vec<crate::VoronoiCell>, Vec<u32>) {
+    let repair_edges_storage: Vec<live_dedup::EdgeRecord> = unresolved_edges
+        .iter()
+        .map(|b| live_dedup::EdgeRecord { key: b.key })
+        .collect();
+
+    let t = Timer::start();
+    if let Some((reconciled_cells, reconciled_indices)) = edge_reconcile::reconcile_unresolved_edges(
+        &repair_edges_storage,
+        vertices,
+        &cells,
+        &cell_indices,
+        vertex_keys,
+    ) {
+        cells = reconciled_cells;
+        cell_indices = reconciled_indices;
+    }
+    tb.set_edge_reconcile(t.elapsed());
+    (cells, cell_indices)
+}
+
+fn remap_cells_to_original_indices(
+    points: &[Vec3],
+    merge_result: Option<&MergeResult>,
+    eff_cells: Vec<crate::VoronoiCell>,
+    eff_cell_indices: Vec<u32>,
+) -> (Vec<crate::VoronoiCell>, Vec<u32>) {
+    if let Some(merge_result) = merge_result {
+        use crate::VoronoiCell;
+
+        let mut new_cells = Vec::with_capacity(points.len());
+        let mut new_cell_indices: Vec<u32> = Vec::new();
+
+        for orig_idx in 0..points.len() {
+            let eff_idx = merge_result.original_to_effective[orig_idx];
+            let eff_cell = &eff_cells[eff_idx];
+
+            let start = u32::try_from(new_cell_indices.len())
+                .expect("cell index buffer exceeds u32 capacity");
+            let eff_start = eff_cell.vertex_start();
+            let eff_end = eff_start + eff_cell.vertex_count();
+            new_cell_indices.extend_from_slice(&eff_cell_indices[eff_start..eff_end]);
+
+            let count_u16 =
+                u16::try_from(eff_cell.vertex_count()).expect("cell vertex count exceeds u16");
+            new_cells.push(VoronoiCell::new(start, count_u16));
+        }
+        (new_cells, new_cell_indices)
+    } else {
+        (eff_cells, eff_cell_indices)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::map_cell_build_error;
-    use crate::knn_clipping::cell_builder::{CellBuildError, CellFailure};
+    use crate::knn_clipping::cell_build::{CellBuildError, CellFailure};
     use crate::VoronoiError;
 
     #[test]

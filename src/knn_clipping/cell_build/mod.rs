@@ -1,12 +1,19 @@
-//! Shared cell-building types for spherical Voronoi computation.
+//! Single-cell construction for the kNN + clipping backend.
+//!
+//! This phase owns neighbor seeding, directed neighbor-stream consumption,
+//! clipping, terminal failure classification, and final vertex extraction.
+//! Downstream live dedup consumes the extracted cell output and handles shard
+//! ownership, deferred slots, and edge-check propagation.
 
 use glam::Vec3;
 
+mod run;
+
 /// Vertex key for deduplication: sorted triplet of generator indices.
-/// The triplet (A, B, C) represents the circumcenter of generators A, B, C.
+/// The triplet `(A, B, C)` represents the circumcenter of generators `A, B, C`.
 pub type VertexKey = [u32; 3];
 
-/// Vertex data: (key, position). Uses u32 indices to save space.
+/// Vertex data: `(key, position)`. Uses `u32` indices to save space.
 pub type VertexData = (VertexKey, Vec3);
 
 /// Reasons a cell build can terminate unsuccessfully.
@@ -35,7 +42,7 @@ pub struct CellBuildError {
     pub failure: CellFailure,
 }
 
-/// A buffer to hold the output of clipping a cell.
+/// A reusable buffer to hold the extracted output of clipping a cell.
 #[derive(Default)]
 pub struct CellOutputBuffer {
     pub vertices: Vec<VertexData>,
@@ -52,3 +59,5 @@ impl CellOutputBuffer {
         self.edge_neighbor_eps.clear();
     }
 }
+
+pub(crate) use run::{build_cell_into, CellBuildContext, CellBuildRequest, SeedNeighbor};

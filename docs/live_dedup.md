@@ -1,7 +1,8 @@
 # Live vertex deduplication and edge checks
 
-During cell construction, multiple cells discover the same Voronoi vertices. The live-dedup path
-deduplicates these vertices without requiring a global concurrent hash map in the hot path.
+After single-cell construction extracts each clipped cell, multiple cells discover the same
+Voronoi vertices. The live-dedup path deduplicates these vertices without requiring a global
+concurrent hash map in the hot path.
 
 ## Sharded ownership
 
@@ -29,7 +30,9 @@ An edge check for an undirected cell edge `(A, B)` stores:
 - the (possibly deferred) global vertex indices for those endpoints
 
 The earlier-local side emits the check to the later-local neighbor; the later side consumes it to
-seed adjacency and to fill in any vertex indices it can prove consistent.
+seed adjacency and to fill in any vertex indices it can prove consistent. The actual clipping and
+neighbor-stream logic now lives in `knn_clipping/cell_build`; live dedup consumes the extracted
+cell output plus these edge-check records.
 
 ## Overflow matching
 

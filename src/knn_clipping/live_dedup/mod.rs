@@ -5,8 +5,8 @@
 //! - Single-threaded overflow flush (simplifies correctness)
 //! - Per-cell duplicate index checks handled by validation (not in hot path)
 
-use super::cell_builder::CellBuildError;
-use super::cell_builder::VertexKey;
+use super::cell_build::CellBuildError;
+use super::cell_build::VertexKey;
 use super::TerminationConfig;
 
 mod assemble;
@@ -19,9 +19,7 @@ mod types;
 
 use binning::BinAssignment;
 use shard::ShardState;
-use types::UnresolvedEdgeMismatch;
-
-pub(super) use types::EdgeRecord;
+pub(super) use types::{EdgeRecord, UnresolvedEdgeMismatch};
 
 /// Result of assembling sharded live-dedup data into global arrays.
 pub(super) struct AssemblyResult {

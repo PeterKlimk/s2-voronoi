@@ -8,7 +8,7 @@ use crate::policy::{
     KnnPolicy, TerminationPolicy, DEFAULT_TERMINATION_CHECK_START, DEFAULT_TERMINATION_CHECK_STEP,
 };
 
-pub(crate) mod cell_builder;
+pub(crate) mod cell_build;
 pub(crate) mod compute;
 pub(crate) mod constants;
 pub(crate) mod edge_reconcile;
