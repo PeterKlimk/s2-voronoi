@@ -17,6 +17,49 @@ use crate::knn_clipping::cell_builder::VertexKey;
 use crate::knn_clipping::timing::{DedupSubPhases, Timer};
 use crate::VoronoiCell;
 
+fn patch_deferred_slots_with_fallback(
+    shards: &mut [super::shard::ShardState],
+    generator_bin: &[BinId],
+    deferred_slots: Vec<DeferredSlot>,
+) {
+    let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| {
+        let packed = pack_ref(owner_bin, idx);
+        if *slot == DEFERRED {
+            *slot = packed;
+        } else {
+            debug_assert_eq!(*slot, packed, "edge check index mismatch");
+        }
+    };
+
+    let mut fallback_map: FxHashMap<VertexKey, (BinId, u32)> = FxHashMap::default();
+    for entry in deferred_slots {
+        let source_bin = entry.source_bin.as_usize();
+        let source_slot = entry.source_slot as usize;
+        if shards[source_bin].output.cell_indices[source_slot] != DEFERRED {
+            continue;
+        }
+
+        let owner_bin = generator_bin[entry.key[0] as usize];
+        let idx = if let Some(&(bin, idx)) = fallback_map.get(&entry.key) {
+            debug_assert_eq!(bin, owner_bin, "fallback owner bin mismatch");
+            idx
+        } else {
+            let new_idx = {
+                let owner_shard = &mut shards[owner_bin.as_usize()];
+                let new_idx = owner_shard.output.vertices.len() as u32;
+                owner_shard.output.vertices.push(entry.pos);
+                owner_shard.output.vertex_keys.push(entry.key);
+                new_idx
+            };
+            fallback_map.insert(entry.key, (owner_bin, new_idx));
+            new_idx
+        };
+
+        let slot = &mut shards[source_bin].output.cell_indices[source_slot];
+        patch_slot(slot, owner_bin, idx);
+    }
+}
+
 pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::AssemblyResult {
     let t0 = Timer::start();
 
@@ -70,43 +113,12 @@ pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::
     #[allow(unused_variables)]
     let edge_checks_overflow_time = overflow_timing.sort + overflow_timing.match_;
 
-    let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| {
-        let packed = pack_ref(owner_bin, idx);
-        if *slot == DEFERRED {
-            *slot = packed;
-        } else {
-            debug_assert_eq!(*slot, packed, "edge check index mismatch");
-        }
-    };
-
     let t_deferred = Timer::start();
-    let mut fallback_map: FxHashMap<VertexKey, (BinId, u32)> = FxHashMap::default();
-    for entry in deferred_slots {
-        let source_bin = entry.source_bin.as_usize();
-        let source_slot = entry.source_slot as usize;
-        if data.shards[source_bin].output.cell_indices[source_slot] != DEFERRED {
-            continue;
-        }
-
-        let owner_bin = data.assignment.generator_bin[entry.key[0] as usize];
-        let idx = if let Some(&(bin, idx)) = fallback_map.get(&entry.key) {
-            debug_assert_eq!(bin, owner_bin, "fallback owner bin mismatch");
-            idx
-        } else {
-            let new_idx = {
-                let owner_shard = &mut data.shards[owner_bin.as_usize()];
-                let new_idx = owner_shard.output.vertices.len() as u32;
-                owner_shard.output.vertices.push(entry.pos);
-                owner_shard.output.vertex_keys.push(entry.key);
-                new_idx
-            };
-            fallback_map.insert(entry.key, (owner_bin, new_idx));
-            new_idx
-        };
-
-        let slot = &mut data.shards[source_bin].output.cell_indices[source_slot];
-        patch_slot(slot, owner_bin, idx);
-    }
+    patch_deferred_slots_with_fallback(
+        &mut data.shards,
+        &data.assignment.generator_bin,
+        deferred_slots,
+    );
     #[allow(unused_variables)]
     let deferred_fallback_time = t_deferred.elapsed();
 
@@ -364,5 +376,119 @@ pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::
         cells,
         cell_indices,
         dedup_sub: sub_phases,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::knn_clipping::live_dedup::packed::pack_edge;
+    use crate::knn_clipping::live_dedup::shard::ShardState;
+    use crate::knn_clipping::live_dedup::types::EdgeCheckOverflow;
+
+    fn bin(value: usize) -> BinId {
+        BinId::from_usize(value)
+    }
+
+    #[test]
+    fn deferred_fallback_allocates_once_per_owner_key() {
+        let mut shards = vec![ShardState::new(1), ShardState::new(1)];
+        shards[0].output.cell_indices = vec![DEFERRED, DEFERRED];
+        let generator_bin = vec![bin(1), bin(0), bin(0)];
+        let key = [0, 1, 2];
+        let pos = Vec3::new(0.0, 0.0, 1.0);
+
+        patch_deferred_slots_with_fallback(
+            &mut shards,
+            &generator_bin,
+            vec![
+                DeferredSlot {
+                    key,
+                    pos,
+                    source_bin: bin(0),
+                    source_slot: 0,
+                },
+                DeferredSlot {
+                    key,
+                    pos,
+                    source_bin: bin(0),
+                    source_slot: 1,
+                },
+            ],
+        );
+
+        assert_eq!(shards[1].output.vertices.len(), 1);
+        assert_eq!(shards[1].output.vertex_keys, vec![key]);
+        assert_eq!(shards[0].output.cell_indices[0], pack_ref(bin(1), 0));
+        assert_eq!(shards[0].output.cell_indices[1], pack_ref(bin(1), 0));
+    }
+
+    #[test]
+    fn overflow_matching_patches_cross_bin_slots_before_fallback() {
+        let mut shards = vec![ShardState::new(1), ShardState::new(1)];
+        shards[0].output.cell_indices = vec![DEFERRED, DEFERRED];
+        shards[1].output.cell_indices = vec![DEFERRED, DEFERRED];
+
+        let edge_key = pack_edge(0, 1);
+        let mut unresolved = Vec::new();
+        let mut overflow = vec![
+            EdgeCheckOverflow {
+                key: edge_key,
+                side: 0,
+                source_bin: bin(0),
+                thirds: [2, 3],
+                indices: [10, 11],
+                slots: [0, 1],
+            },
+            EdgeCheckOverflow {
+                key: edge_key,
+                side: 1,
+                source_bin: bin(1),
+                thirds: [3, 2],
+                indices: [20, 21],
+                slots: [0, 1],
+            },
+        ];
+
+        resolve_edge_check_overflow(&mut shards, &mut overflow, &mut unresolved);
+
+        assert!(
+            unresolved.is_empty(),
+            "full reverse-winding match should not remain unresolved"
+        );
+        assert_eq!(shards[0].output.cell_indices[0], pack_ref(bin(1), 21));
+        assert_eq!(shards[0].output.cell_indices[1], pack_ref(bin(1), 20));
+        assert_eq!(shards[1].output.cell_indices[0], pack_ref(bin(0), 11));
+        assert_eq!(shards[1].output.cell_indices[1], pack_ref(bin(0), 10));
+    }
+
+    #[test]
+    fn overflow_mismatch_is_reported_unresolved() {
+        let mut shards = vec![ShardState::new(1), ShardState::new(1)];
+        let edge_key = pack_edge(0, 1);
+        let mut unresolved = Vec::new();
+        let mut overflow = vec![
+            EdgeCheckOverflow {
+                key: edge_key,
+                side: 0,
+                source_bin: bin(0),
+                thirds: [2, 3],
+                indices: [10, 11],
+                slots: [0, 1],
+            },
+            EdgeCheckOverflow {
+                key: edge_key,
+                side: 1,
+                source_bin: bin(1),
+                thirds: [9, 8],
+                indices: [20, 21],
+                slots: [0, 1],
+            },
+        ];
+
+        resolve_edge_check_overflow(&mut shards, &mut overflow, &mut unresolved);
+
+        assert_eq!(unresolved.len(), 1);
+        assert_eq!(unresolved[0].key, edge_key);
     }
 }

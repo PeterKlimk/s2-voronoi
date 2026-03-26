@@ -33,8 +33,18 @@ If the adjacent cells are in different bins, both sides emit an overflow record.
 construction completes, the overflow records are sorted by edge key and matched, allowing the two
 bins to patch each other’s deferred slots without global synchronization during the hot loop.
 
+This assembly boundary has a narrow contract:
+
+- cross-bin edge checks are matched first and patch any slots that can be reconciled exactly
+- any still-deferred vertex slots are then patched via fallback ownership by canonical vertex key
+- if an edge still cannot be reconciled cleanly, it is emitted as an unresolved shared-edge
+  mismatch for the later `edge_reconcile` pass
+
+So assembly is not a generic repair stage. It performs exact cross-bin agreement first, then a
+key-based fallback for unresolved vertex ownership, and only carries forward the narrow edge
+mismatches that survive those two steps.
+
 See:
 
 - `src/knn_clipping/live_dedup/edge_checks.rs`
 - `src/knn_clipping/live_dedup/assemble.rs`
-
