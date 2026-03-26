@@ -125,8 +125,16 @@ fn test_compute_with_report_surfaces_preprocess_outcome() {
         "effective validation should only be present when preprocessing changes the generator set"
     );
     assert!(
+        output.effective_diagram.is_none(),
+        "effective diagram should only be present when preprocessing changes the generator set"
+    );
+    assert!(
         output.report.preferred_validation().is_strictly_valid(),
         "preferred validation should agree with returned validation when no merges occur"
+    );
+    assert_eq!(
+        output.preferred_diagram().num_cells(),
+        output.diagram.num_cells()
     );
 }
 
@@ -167,7 +175,60 @@ fn test_clustered_cap_tight_report_keeps_default_preprocessing_nonintrusive() {
         "returned validation should stay strict-valid when no remap collapse occurs"
     );
     assert!(output.report.effective_validation.is_none());
+    assert!(output.effective_diagram.is_none());
     assert!(output.report.preferred_validation().is_strictly_valid());
+    assert_eq!(
+        output.preferred_diagram().num_cells(),
+        output.diagram.num_cells()
+    );
+}
+
+#[test]
+fn test_compute_with_report_exposes_effective_diagram_when_merges_occur() {
+    let points = vec![
+        UnitVec3::new(1.0, 0.0, 0.0),
+        UnitVec3::new(0.999_999_94, 0.0003, 0.0),
+        UnitVec3::new(-1.0, 0.0, 0.0),
+        UnitVec3::new(0.0, 1.0, 0.0),
+        UnitVec3::new(0.0, -1.0, 0.0),
+        UnitVec3::new(0.0, 0.0, 1.0),
+        UnitVec3::new(0.0, 0.0, -1.0),
+    ];
+
+    let output = compute_with_report(
+        &points,
+        VoronoiConfig {
+            preprocess_mode: PreprocessMode::MergeWithin(0.001),
+            ..VoronoiConfig::default()
+        },
+    )
+    .expect("explicit merge preprocessing should still compute");
+
+    assert!(output.report.preprocess.did_merge());
+    assert_eq!(output.diagram.num_cells(), points.len());
+
+    let effective_diagram = output
+        .effective_diagram
+        .as_ref()
+        .expect("merged preprocessing should expose the effective solved diagram");
+    assert_eq!(
+        effective_diagram.num_cells(),
+        output.report.preprocess.effective_points
+    );
+    assert_eq!(effective_diagram.num_cells(), points.len() - 1);
+    assert!(
+        output
+            .report
+            .effective_validation
+            .as_ref()
+            .expect("merged preprocessing should surface effective validation")
+            .is_strictly_valid(),
+        "effective merged diagram should validate strictly"
+    );
+    assert_eq!(
+        output.preferred_diagram().num_cells(),
+        effective_diagram.num_cells()
+    );
 }
 
 #[test]

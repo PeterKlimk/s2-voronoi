@@ -61,9 +61,11 @@ for cell in diagram.iter_cells() {
 - strict validation of the returned diagram
 - when preprocessing changed the solved generator set, strict validation of the effective diagram
   actually solved by the backend
+- when preprocessing changed the solved generator set, the `effective_diagram` itself
 
 If preprocessing is enabled and merges occur, `report.preferred_validation()` is usually the
-validation result you want first; it selects effective validation when available.
+validation result you want first; it selects effective validation when available. Likewise,
+`output.preferred_diagram()` selects the effective diagram when available.
 
 ## Features
 

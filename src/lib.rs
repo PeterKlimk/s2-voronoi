@@ -177,7 +177,22 @@ impl ComputeReport {
 #[derive(Debug, Clone)]
 pub struct ComputeOutput {
     pub diagram: SphericalVoronoi,
+    /// Effective diagram actually solved by the backend after preprocessing, if
+    /// preprocessing merged generators.
+    pub effective_diagram: Option<SphericalVoronoi>,
     pub report: ComputeReport,
+}
+
+impl ComputeOutput {
+    /// Preferred diagram view for this computation.
+    ///
+    /// When preprocessing merged generators, this returns the effective
+    /// preprocessed diagram actually solved by the backend. Otherwise it
+    /// returns the public remapped diagram.
+    #[inline]
+    pub fn preferred_diagram(&self) -> &SphericalVoronoi {
+        self.effective_diagram.as_ref().unwrap_or(&self.diagram)
+    }
 }
 
 /// Configuration for Voronoi computation.

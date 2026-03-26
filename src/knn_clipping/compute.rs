@@ -131,17 +131,17 @@ fn compute_voronoi_knn_clipping_report_core(
         &mut tb,
     );
 
-    let effective_validation = if merge_result.is_some() {
-        let effective_diagram = crate::SphericalVoronoi::from_raw_parts(
+    let effective_diagram = if merge_result.is_some() {
+        Some(crate::SphericalVoronoi::from_raw_parts(
             effective_points_ref.to_vec(),
             vertices.clone(),
             eff_cells.clone(),
             eff_cell_indices.clone(),
-        );
-        Some(crate::validation::validate(&effective_diagram))
+        ))
     } else {
         None
     };
+    let effective_validation = effective_diagram.as_ref().map(crate::validation::validate);
 
     let t = Timer::start();
     let (cells, cell_indices) = remap_cells_to_original_indices(
@@ -160,6 +160,7 @@ fn compute_voronoi_knn_clipping_report_core(
 
     Ok(ComputeOutput {
         diagram,
+        effective_diagram,
         report: ComputeReport {
             preprocess: preprocess_report,
             returned_validation,
