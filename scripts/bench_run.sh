@@ -15,6 +15,7 @@ CPU_PIN="0"
 SINGLE_THREAD=true
 METRIC="total"
 NO_PREPROCESS=true
+EXTRA_BENCH_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -28,8 +29,13 @@ while [[ $# -gt 0 ]]; do
         -m|--metric) METRIC="$2"; shift 2 ;;
         --no-preprocess) NO_PREPROCESS=true; shift ;;
         --preprocess) NO_PREPROCESS=false; shift ;;
+        --)
+            shift
+            EXTRA_BENCH_ARGS+=("$@")
+            break
+            ;;
         -h|--help)
-            echo "Usage: $0 [-r rounds] [-s size] [-c cooldown] [-p cpu] [--no-pin] [--multi] [-m metric]"
+            echo "Usage: $0 [-r rounds] [-s size] [-c cooldown] [-p cpu] [--no-pin] [--multi] [-m metric] [-- bench_voronoi_args...]"
             echo ""
             echo "Options:"
             echo "  -r, --rounds    Number of rounds (default: 5)"
@@ -42,6 +48,7 @@ while [[ $# -gt 0 ]]; do
             echo "  -m, --metric    Metric to record: total, timing_total, preprocess, knn_build, cell_construction, dedup, edge_repair, assemble (default: total)"
             echo "  --no-preprocess Pass --no-preprocess to bench_voronoi (default)"
             echo "  --preprocess    Don't pass --no-preprocess"
+            echo "  --              Forward remaining args directly to bench_voronoi"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -100,6 +107,7 @@ bench_args=("$SIZE")
 if $NO_PREPROCESS; then
     bench_args+=("--no-preprocess")
 fi
+bench_args+=("${EXTRA_BENCH_ARGS[@]}")
 
 extract_metric_ms() {
     local output="$1"
@@ -178,7 +186,11 @@ echo "Versions: $NUM_VERSIONS"
 echo "Rounds: $ROUNDS, Size: $SIZE, Cooldown: ${COOLDOWN}s"
 [[ -n "$CPU_PIN" ]] && echo "CPU pin: core $CPU_PIN"
 $SINGLE_THREAD && echo "Mode: single-threaded"
-$NO_PREPROCESS && echo "Args: --no-preprocess"
+if [[ ${#bench_args[@]} -gt 1 ]]; then
+    echo "Args: ${bench_args[*]:1}"
+elif $NO_PREPROCESS; then
+    echo "Args: --no-preprocess"
+fi
 echo "Metric: $METRIC"
 echo ""
 echo "Testing:"
