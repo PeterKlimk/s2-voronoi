@@ -131,11 +131,11 @@ fn test_clustered_cap_extreme() {
 #[test]
 #[ignore = "compare behavior with preprocessing disabled"]
 fn test_clustered_cap_small_no_preprocess() {
-    use s2_voronoi::{compute_with, VoronoiConfig};
+    use s2_voronoi::{compute_with, PreprocessMode, VoronoiConfig};
 
     let points = clustered_cap_points(100, 0.087, 42);
     let config = VoronoiConfig {
-        preprocess: false,
+        preprocess_mode: PreprocessMode::Disabled,
         ..Default::default()
     };
     let result = compute_with(&points, config);
@@ -155,11 +155,11 @@ fn test_clustered_cap_small_no_preprocess() {
 #[test]
 #[ignore = "compare behavior with preprocessing disabled"]
 fn test_clustered_cap_tight_no_preprocess() {
-    use s2_voronoi::{compute_with, VoronoiConfig};
+    use s2_voronoi::{compute_with, PreprocessMode, VoronoiConfig};
 
     let points = clustered_cap_points(100, 0.0175, 42);
     let config = VoronoiConfig {
-        preprocess: false,
+        preprocess_mode: PreprocessMode::Disabled,
         ..Default::default()
     };
     let result = compute_with(&points, config);
@@ -178,11 +178,11 @@ fn test_clustered_cap_tight_no_preprocess() {
 #[test]
 #[ignore = "compare behavior with preprocessing disabled"]
 fn test_cocircular_tight_no_preprocess() {
-    use s2_voronoi::{compute_with, VoronoiConfig};
+    use s2_voronoi::{compute_with, PreprocessMode, VoronoiConfig};
 
     let points = near_cocircular_stress_points(25, 0.001, 42);
     let config = VoronoiConfig {
-        preprocess: false,
+        preprocess_mode: PreprocessMode::Disabled,
         ..Default::default()
     };
     let result = compute_with(&points, config);

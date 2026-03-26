@@ -48,8 +48,11 @@ for cell in diagram.iter_cells() {
 
 `VoronoiConfig` controls preprocessing and (optional) termination fallback:
 
-- `preprocess`: merges near-coincident generators for robustness (adds overhead).
-- `preprocess_threshold`: override merge distance threshold (otherwise density-based default).
+- `preprocess_mode`: explicit preprocessing contract:
+  - `PreprocessMode::MergeDensity` (default): merge near-coincident generators using a
+    density-based threshold
+  - `PreprocessMode::MergeWithin(threshold)`: merge using an explicit threshold
+  - `PreprocessMode::Disabled`: do not merge
 - `termination_max_k`: cap k growth if termination fallback keeps requesting neighbors.
 
 ## Features

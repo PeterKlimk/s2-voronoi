@@ -2,7 +2,7 @@
 
 mod support;
 
-use s2_voronoi::{compute, UnitVec3, VoronoiError};
+use s2_voronoi::{compute, compute_with, PreprocessMode, UnitVec3, VoronoiConfig, VoronoiError};
 use support::points::{fibonacci_sphere_points, hemisphere_points, random_sphere_points};
 
 #[test]
@@ -60,6 +60,31 @@ fn test_compute_various_sizes() {
         let diagram = compute(&points).unwrap_or_else(|_| panic!("n={} should work", n));
         assert_eq!(diagram.num_cells(), n);
     }
+}
+
+#[test]
+fn test_compute_with_explicit_preprocess_modes() {
+    let points = random_sphere_points(50, 13579);
+
+    let density = compute_with(
+        &points,
+        VoronoiConfig {
+            preprocess_mode: PreprocessMode::MergeDensity,
+            ..VoronoiConfig::default()
+        },
+    )
+    .expect("density-based preprocessing should succeed");
+    assert_eq!(density.num_cells(), 50);
+
+    let disabled = compute_with(
+        &points,
+        VoronoiConfig {
+            preprocess_mode: PreprocessMode::Disabled,
+            ..VoronoiConfig::default()
+        },
+    )
+    .expect("disabled preprocessing should succeed");
+    assert_eq!(disabled.num_cells(), 50);
 }
 
 #[test]
@@ -131,8 +156,7 @@ fn test_compute_reports_hemisphere_limit_as_error() {
     assert!(
         matches!(
             result,
-            Err(VoronoiError::UnsupportedGeometry { .. })
-                | Err(VoronoiError::ComputationFailed(_))
+            Err(VoronoiError::UnsupportedGeometry { .. }) | Err(VoronoiError::ComputationFailed(_))
         ),
         "hemisphere-limited inputs should fail cleanly, got {:?}",
         result

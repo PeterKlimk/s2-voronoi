@@ -12,19 +12,17 @@ use super::{
 use crate::cube_grid::CubeMapGrid;
 #[cfg(feature = "timing")]
 use crate::cube_grid::CubeMapGridBuildTimings;
-use crate::VoronoiConfig;
+use crate::{PreprocessMode, VoronoiConfig};
 
 pub(super) fn compute_voronoi_knn_clipping_owned_core(
     points: Vec<Vec3>,
     termination: TerminationConfig,
-    preprocess_threshold: Option<f32>,
-    skip_preprocess: bool,
+    preprocess_mode: PreprocessMode,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     let mut tb = TimingBuilder::new();
 
     let t = Timer::start();
-    let (effective_points, merge_result) =
-        preprocess_effective_points(&points, preprocess_threshold, skip_preprocess);
+    let (effective_points, merge_result) = preprocess_effective_points(&points, preprocess_mode);
     tb.set_preprocess(t.elapsed());
 
     let effective_points_ref: &[Vec3] = match &effective_points {
@@ -79,12 +77,7 @@ pub fn compute_voronoi_knn_clipping_with_config_owned(
         max_k_cap: config.termination_max_k,
         ..Default::default()
     };
-    compute_voronoi_knn_clipping_owned_core(
-        points,
-        termination,
-        config.preprocess_threshold,
-        !config.preprocess,
-    )
+    compute_voronoi_knn_clipping_owned_core(points, termination, config.preprocess_mode)
 }
 
 fn map_cell_build_error(err: CellBuildError) -> crate::VoronoiError {
@@ -112,15 +105,13 @@ fn map_cell_build_error(err: CellBuildError) -> crate::VoronoiError {
 
 fn preprocess_effective_points(
     points: &[Vec3],
-    preprocess_threshold: Option<f32>,
-    skip_preprocess: bool,
+    preprocess_mode: PreprocessMode,
 ) -> (Option<Vec<Vec3>>, Option<MergeResult>) {
-    if skip_preprocess {
-        return (None, None);
-    }
-
-    let threshold = preprocess_threshold
-        .unwrap_or_else(|| constants::merge_threshold_for_density(points.len()));
+    let threshold = match preprocess_mode {
+        PreprocessMode::Disabled => return (None, None),
+        PreprocessMode::MergeDensity => constants::merge_threshold_for_density(points.len()),
+        PreprocessMode::MergeWithin(threshold) => threshold,
+    };
     let mut result = merge_close_points(points, threshold);
     if result.num_merged > 0 {
         let pts = std::mem::take(&mut result.effective_points);

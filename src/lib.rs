@@ -110,18 +110,26 @@ pub use types::{UnitVec3, UnitVec3Like};
 #[cfg(feature = "qhull")]
 pub use convex_hull::compute_voronoi_qhull;
 
+/// Preprocessing mode applied before Voronoi computation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PreprocessMode {
+    /// Do not merge near-coincident generators.
+    Disabled,
+    /// Merge near-coincident generators using the density-based default threshold.
+    MergeDensity,
+    /// Merge near-coincident generators using an explicit Euclidean threshold.
+    MergeWithin(f32),
+}
+
 /// Configuration for Voronoi computation.
 #[derive(Debug, Clone)]
 pub struct VoronoiConfig {
-    /// If true, run a preprocessing pass to merge near-coincident generators.
+    /// Preprocessing applied before Voronoi computation.
     ///
-    /// This improves robustness for pathological inputs with duplicates/near-duplicates,
-    /// but adds overhead for large point sets. For benchmarking or when inputs are known
-    /// to be well-spaced, disabling this can substantially improve performance.
-    pub preprocess: bool,
-    /// Optional override for the merge threshold used during preprocessing.
-    /// When None, uses a density-based default.
-    pub preprocess_threshold: Option<f32>,
+    /// The default merges near-coincident generators using a density-based threshold, which
+    /// changes the problem being solved but materially improves robustness on duplicate or
+    /// near-duplicate inputs.
+    pub preprocess_mode: PreprocessMode,
     /// Optional cap on k during termination fallback (None = no cap).
     pub termination_max_k: Option<usize>,
     /// Enable a cold-path packed r=2 expansion band before falling back to directed cursor kNN.
@@ -135,8 +143,7 @@ pub struct VoronoiConfig {
 impl Default for VoronoiConfig {
     fn default() -> Self {
         Self {
-            preprocess: true,
-            preprocess_threshold: None,
+            preprocess_mode: PreprocessMode::MergeDensity,
             termination_max_k: None,
             packed_knn_expand_r2: true,
         }

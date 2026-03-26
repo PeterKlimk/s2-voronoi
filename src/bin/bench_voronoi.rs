@@ -16,7 +16,7 @@ use glam::Vec3;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use s2_voronoi::{UnitVec3, VoronoiConfig};
+use s2_voronoi::{PreprocessMode, UnitVec3, VoronoiConfig};
 use std::io::{self, Write};
 use std::time::Instant;
 
@@ -251,7 +251,11 @@ fn validate_against_hull(points: &[Vec3], preprocess: bool) {
     let s2_diagram = s2_voronoi::compute_with(
         &unit_points,
         VoronoiConfig {
-            preprocess,
+            preprocess_mode: if preprocess {
+                PreprocessMode::MergeDensity
+            } else {
+                PreprocessMode::Disabled
+            },
             ..VoronoiConfig::default()
         },
     )
@@ -385,7 +389,11 @@ fn main() {
         let mut last_result: Option<BenchResult> = None;
 
         let config = VoronoiConfig {
-            preprocess: !args.no_preprocess,
+            preprocess_mode: if args.no_preprocess {
+                PreprocessMode::Disabled
+            } else {
+                PreprocessMode::MergeDensity
+            },
             packed_knn_expand_r2: args.packed_expand_r2,
             ..VoronoiConfig::default()
         };
