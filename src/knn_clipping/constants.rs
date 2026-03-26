@@ -47,3 +47,37 @@ pub fn merge_threshold_for_density(num_points: usize) -> f32 {
     // Use the larger of fixed (duplicate) threshold and density threshold
     coincident_distance().max(density_threshold)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{coincident_distance, merge_threshold_for_density};
+
+    #[test]
+    fn merge_threshold_decreases_with_point_count() {
+        let coarse = merge_threshold_for_density(100);
+        let medium = merge_threshold_for_density(10_000);
+        let dense = merge_threshold_for_density(1_000_000);
+
+        assert!(coarse > medium, "{coarse} should exceed {medium}");
+        assert!(medium > dense, "{medium} should exceed {dense}");
+    }
+
+    #[test]
+    fn merge_threshold_stays_above_coincident_floor_at_high_density() {
+        let threshold = merge_threshold_for_density(4_000_000);
+        assert!(
+            threshold > coincident_distance(),
+            "expected density threshold {threshold} to stay above coincident floor {}",
+            coincident_distance()
+        );
+    }
+
+    #[test]
+    fn merge_threshold_is_conservative_but_small_on_low_count_inputs() {
+        let threshold = merge_threshold_for_density(100);
+        assert!(
+            (3.0e-4..4.0e-4).contains(&threshold),
+            "expected n=100 threshold to stay in the conservative low-count band, got {threshold}"
+        );
+    }
+}
