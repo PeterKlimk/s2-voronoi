@@ -275,28 +275,7 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
                     failure,
                 });
             }
-            let (active, total) = self.ctx.builder.count_active_planes();
-            let gen = self.grid_ctx.points[self.i];
-            let neighbor_indices: Vec<usize> = self.ctx.builder.neighbor_indices_iter().collect();
-
-            panic!(
-                "Cell {} construction failed: bounded={}, failure={:?}, \
-                 planes={}, active={}, vertices={}, \
-                 did_packed={}, did_cursor_fallback={}, knn_exhausted={}\n\
-                 Generator pos: {:?}\n\
-                 First 10 neighbor indices: {:?}",
-                self.i,
-                self.ctx.builder.is_bounded(),
-                self.ctx.builder.failure(),
-                total,
-                active,
-                self.ctx.builder.vertex_count(),
-                self.did_packed,
-                self.used_knn,
-                self.knn_exhausted,
-                gen,
-                &neighbor_indices[..neighbor_indices.len().min(10)],
-            );
+            self.panic_unexpected_failure("validation", self.ctx.builder.failure());
         }
         Ok(())
     }
@@ -329,10 +308,13 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
         );
 
         let mut t_post = crate::knn_clipping::timing::LapTimer::start();
-        self.ctx
+        if let Err(failure) = self
+            .ctx
             .builder
             .to_vertex_data_full(&mut self.ctx.output_buffer)
-            .expect("to_vertex_data_full failed after bounded check");
+        {
+            self.panic_unexpected_failure("vertex extraction", Some(failure));
+        }
         self.cell_sub.add_cert(t_post.lap());
 
         let cell_idx = self.i as u32;
@@ -410,6 +392,34 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
             shard.output.cell_indices.len() as u32 - self.cell_start,
             count as u32,
             "cell index stream mismatch"
+        );
+    }
+
+    fn panic_unexpected_failure(&self, context: &str, explicit_failure: Option<CellFailure>) -> ! {
+        let (active, total) = self.ctx.builder.count_active_planes();
+        let gen = self.grid_ctx.points[self.i];
+        let neighbor_indices: Vec<usize> = self.ctx.builder.neighbor_indices_iter().collect();
+        let failure = explicit_failure.or(self.ctx.builder.failure());
+
+        panic!(
+            "Cell {} unexpected {} failure: bounded={}, failure={:?}, \
+             planes={}, active={}, vertices={}, neighbors_processed={}, \
+             did_packed={}, did_cursor_fallback={}, knn_exhausted={}\n\
+             Generator pos: {:?}\n\
+             First 10 neighbor indices: {:?}",
+            self.i,
+            context,
+            self.ctx.builder.is_bounded(),
+            failure,
+            total,
+            active,
+            self.ctx.builder.vertex_count(),
+            self.cell_neighbors_processed,
+            self.did_packed,
+            self.used_knn,
+            self.knn_exhausted,
+            gen,
+            &neighbor_indices[..neighbor_indices.len().min(10)],
         );
     }
 }
