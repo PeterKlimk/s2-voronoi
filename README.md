@@ -68,8 +68,8 @@ for cell in diagram.iter_cells() {
 - Design / algorithm notes: `docs/architecture.md`
 - Performance + benchmarking: `docs/performance.md`
 - Live vertex dedup and edge checks: `docs/live_dedup.md`
+- Active engineering issues / roadmap findings: `docs/engineering-findings.md`
 
 ## License
 
 MIT OR Apache-2.0
-
