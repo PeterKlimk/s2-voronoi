@@ -74,6 +74,10 @@ pub struct Topo2DBuilder {
     term_cache_valid: bool,
 }
 
+// Conservative lower bound on g · x for a vertex in the current gnomonic model.
+// Below this, the feasible region is effectively at the generator hemisphere boundary.
+const MIN_PROJECTION_COS: f64 = 8.0 * f32::EPSILON as f64;
+
 impl Topo2DBuilder {
     pub fn new(generator_idx: usize, generator: Vec3) -> Self {
         let angle_pad = 8.0 * f32::EPSILON as f64;
@@ -180,6 +184,13 @@ impl Topo2DBuilder {
         if poly.len < 3 {
             self.failed = Some(CellFailure::ClippedAway);
             return Err(CellFailure::ClippedAway);
+        }
+        if !poly.has_bounding_ref() {
+            let min_cos = poly.min_cos();
+            if !min_cos.is_finite() || min_cos <= MIN_PROJECTION_COS {
+                self.failed = Some(CellFailure::ProjectionInvalid);
+                return Err(CellFailure::ProjectionInvalid);
+            }
         }
 
         Ok(clip_result)
@@ -384,5 +395,50 @@ impl Topo2DBuilder {
 
         let active_count = active.iter().filter(|&&x| x).count();
         (active_count, self.half_planes.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn changed_clip_fails_when_bounded_polygon_reaches_projection_limit() {
+        let mut builder = Topo2DBuilder::new(0, Vec3::Z);
+        builder.poly_b.clear();
+        builder.poly_b.len = 3;
+        builder.poly_b.has_bounding_ref = false;
+        let invalid_min_cos = MIN_PROJECTION_COS * 0.5;
+        builder.poly_b.max_r2 = (1.0 / (invalid_min_cos * invalid_min_cos)) - 1.0;
+
+        let err = builder
+            .commit_clip(
+                ClipResult::Changed,
+                HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0),
+                1,
+                u32::MAX,
+            )
+            .expect_err("expected projection-invalid bounded cell to fail");
+        assert_eq!(err, CellFailure::ProjectionInvalid);
+        assert_eq!(builder.failure(), Some(CellFailure::ProjectionInvalid));
+    }
+
+    #[test]
+    fn changed_clip_allows_bounded_polygon_inside_projection_limit() {
+        let mut builder = Topo2DBuilder::new(0, Vec3::Z);
+        builder.poly_b.clear();
+        builder.poly_b.len = 3;
+        builder.poly_b.has_bounding_ref = false;
+        let valid_min_cos = MIN_PROJECTION_COS * 2.0;
+        builder.poly_b.max_r2 = (1.0 / (valid_min_cos * valid_min_cos)) - 1.0;
+
+        let result = builder.commit_clip(
+            ClipResult::Changed,
+            HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0),
+            1,
+            u32::MAX,
+        );
+        assert_eq!(result, Ok(ClipResult::Changed));
+        assert_eq!(builder.failure(), None);
     }
 }

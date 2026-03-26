@@ -3,7 +3,7 @@
 mod support;
 
 use s2_voronoi::{compute, UnitVec3, VoronoiError};
-use support::points::{fibonacci_sphere_points, random_sphere_points};
+use support::points::{fibonacci_sphere_points, hemisphere_points, random_sphere_points};
 
 #[test]
 fn test_compute_basic() {
@@ -122,6 +122,16 @@ fn test_input_types() {
     let tuple_points: Vec<(f32, f32, f32)> = base_points.iter().map(|p| (p.x, p.y, p.z)).collect();
     let diagram = compute(&tuple_points).expect("tuple input should work");
     assert_eq!(diagram.num_cells(), 50);
+}
+
+#[test]
+fn test_compute_reports_projection_limit_as_error() {
+    let points = hemisphere_points(100, 42);
+    let result = compute(&points);
+    assert!(matches!(
+        result,
+        Err(VoronoiError::UnsupportedGeometry { .. })
+    ));
 }
 
 #[test]

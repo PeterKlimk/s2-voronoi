@@ -17,7 +17,7 @@ use crate::cube_grid::packed_knn::{
     DirectedCellGroup, PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings,
 };
 use crate::cube_grid::{CubeMapGrid, PackedQuery};
-use crate::knn_clipping::cell_builder::{CellOutputBuffer, VertexData};
+use crate::knn_clipping::cell_builder::{CellBuildError, CellOutputBuffer, VertexData};
 use crate::knn_clipping::topo2d::Topo2DBuilder;
 use crate::knn_clipping::TerminationConfig;
 use crate::policy::KnnPolicy;
@@ -188,7 +188,7 @@ pub(super) fn build_cells_sharded_live_dedup(
     points: &[Vec3],
     grid: &CubeMapGrid,
     termination: TerminationConfig,
-) -> ShardedCellsData {
+) -> Result<ShardedCellsData, CellBuildError> {
     let policy = termination.knn_policy(points.len());
     // Legacy config compatibility: no-k fallback ignores this cap.
     let _ = policy.termination().max_k_cap();
@@ -198,177 +198,178 @@ pub(super) fn build_cells_sharded_live_dedup(
     let packed_policy = policy.packed();
     let termination_policy = policy.termination();
 
-    let per_bin: Vec<(ShardState, crate::knn_clipping::timing::CellSubAccum)> =
-        maybe_par_into_iter!(0..num_bins)
-            .map(|bin_usize| {
-                use crate::knn_clipping::timing::CellSubAccum;
+    let per_bin: Result<
+        Vec<(ShardState, crate::knn_clipping::timing::CellSubAccum)>,
+        CellBuildError,
+    > = maybe_par_into_iter!(0..num_bins)
+        .map(|bin_usize| {
+            use crate::knn_clipping::timing::CellSubAccum;
 
-                let bin = BinId::from_usize(bin_usize);
-                let my_generators = &assignment.bin_generators[bin_usize];
-                let mut shard = ShardState::new(my_generators.len());
+            let bin = BinId::from_usize(bin_usize);
+            let my_generators = &assignment.bin_generators[bin_usize];
+            let mut shard = ShardState::new(my_generators.len());
 
-                let mut sub_accum = CellSubAccum::new();
-                let mut ctx = CellContext::new(grid, policy);
-                let vertex_capacity = my_generators.len().saturating_mul(6);
-                shard.output.vertices.reserve(vertex_capacity);
-                shard.output.vertex_keys.reserve(vertex_capacity);
-                shard
-                    .output
-                    .cell_indices
-                    .reserve(my_generators.len().saturating_mul(6));
-                // Conservative estimate for off-shard vertices.
-                shard.output.deferred_slots.reserve(my_generators.len());
+            let mut sub_accum = CellSubAccum::new();
+            let mut ctx = CellContext::new(grid, policy);
+            let vertex_capacity = my_generators.len().saturating_mul(6);
+            shard.output.vertices.reserve(vertex_capacity);
+            shard.output.vertex_keys.reserve(vertex_capacity);
+            shard
+                .output
+                .cell_indices
+                .reserve(my_generators.len().saturating_mul(6));
+            // Conservative estimate for off-shard vertices.
+            shard.output.deferred_slots.reserve(my_generators.len());
 
-                let mut packed_scratch = PackedKnnCellScratch::new();
+            let mut packed_scratch = PackedKnnCellScratch::new();
 
-                #[cfg_attr(
-                    not(feature = "timing"),
-                    allow(clippy::default_constructed_unit_structs)
-                )]
-                let mut packed_timings = PackedKnnTimings::default();
+            #[cfg_attr(
+                not(feature = "timing"),
+                allow(clippy::default_constructed_unit_structs)
+            )]
+            let mut packed_timings = PackedKnnTimings::default();
 
-                let packed_queries_all: Vec<u32> = my_generators
-                    .iter()
-                    .map(|&i| grid.point_index_to_slot(i))
-                    .collect();
-                let packed_query_locals_all: Vec<u32> = (0..my_generators.len())
-                    .map(|local_idx| u32::try_from(local_idx).expect("local id must fit in u32"))
-                    .collect();
+            let packed_queries_all: Vec<u32> = my_generators
+                .iter()
+                .map(|&i| grid.point_index_to_slot(i))
+                .collect();
+            let packed_query_locals_all: Vec<u32> = (0..my_generators.len())
+                .map(|local_idx| u32::try_from(local_idx).expect("local id must fit in u32"))
+                .collect();
 
-                #[cfg(debug_assertions)]
+            #[cfg(debug_assertions)]
+            {
+                for &i in my_generators {
+                    debug_assert_eq!(
+                        assignment.generator_bin[i], bin,
+                        "cell assigned to wrong bin"
+                    );
+                }
+            }
+
+            let grid_ctx = GridContext {
+                points,
+                grid,
+                assignment: &assignment,
+            };
+
+            let mut cursor = 0usize;
+            while cursor < my_generators.len() {
+                let cell = grid.point_index_to_cell(my_generators[cursor]) as u32;
+                let start = cursor;
+                while cursor < my_generators.len()
+                    && grid.point_index_to_cell(my_generators[cursor]) as u32 == cell
                 {
-                    for &i in my_generators {
-                        debug_assert_eq!(
-                            assignment.generator_bin[i], bin,
-                            "cell assigned to wrong bin"
-                        );
-                    }
+                    cursor += 1;
                 }
+                let group_start = start;
 
-                let grid_ctx = GridContext {
-                    points,
-                    grid,
-                    assignment: &assignment,
-                };
+                if packed_policy.enabled() {
+                    let queries = &packed_queries_all[group_start..cursor];
+                    let query_locals = &packed_query_locals_all[group_start..cursor];
+                    let group = DirectedCellGroup::new(
+                        cell as usize,
+                        bin.as_u8(),
+                        queries,
+                        query_locals,
+                        &assignment.slot_gen_map,
+                        assignment.local_shift,
+                        assignment.local_mask,
+                    );
 
-                let mut cursor = 0usize;
-                while cursor < my_generators.len() {
-                    let cell = grid.point_index_to_cell(my_generators[cursor]) as u32;
-                    let start = cursor;
-                    while cursor < my_generators.len()
-                        && grid.point_index_to_cell(my_generators[cursor]) as u32 == cell
+                    #[cfg(not(feature = "timing"))]
+                    let t_packed = crate::knn_clipping::timing::Timer::start();
+                    let status =
+                        packed_scratch.prepare_group_directed(grid, group, &mut packed_timings);
+                    #[cfg(not(feature = "timing"))]
+                    let packed_elapsed = t_packed.elapsed();
+
+                    match status {
+                        PackedKnnCellStatus::Ok => {
+                            for (offset, &global) in
+                                my_generators[group_start..cursor].iter().enumerate()
+                            {
+                                let local_idx = group_start + offset;
+                                let local = LocalId::from_usize(local_idx);
+                                let mut shard_ctx = ShardContext {
+                                    shard: &mut shard,
+                                    bin,
+                                    local,
+                                };
+                                process_cell(
+                                    &mut sub_accum,
+                                    &mut ctx,
+                                    &mut shard_ctx,
+                                    &grid_ctx,
+                                    termination_policy,
+                                    global,
+                                    Some(PackedQuery::new(
+                                        &mut packed_scratch,
+                                        &mut packed_timings,
+                                        group,
+                                        offset,
+                                        packed_policy,
+                                    )),
+                                )?;
+                            }
+                        }
+                        PackedKnnCellStatus::SlowPath => {
+                            for (offset, &global) in
+                                my_generators[group_start..cursor].iter().enumerate()
+                            {
+                                let local_idx = group_start + offset;
+                                let local = LocalId::from_usize(local_idx);
+                                let mut shard_ctx = ShardContext {
+                                    shard: &mut shard,
+                                    bin,
+                                    local,
+                                };
+                                process_cell(
+                                    &mut sub_accum,
+                                    &mut ctx,
+                                    &mut shard_ctx,
+                                    &grid_ctx,
+                                    termination_policy,
+                                    global,
+                                    None,
+                                )?;
+                            }
+                        }
+                    }
+
+                    #[cfg(feature = "timing")]
                     {
-                        cursor += 1;
+                        sub_accum.add_packed_knn(packed_timings.total());
+                        sub_accum.add_packed_knn_breakdown(&packed_timings);
                     }
-                    let group_start = start;
-
-                    if packed_policy.enabled() {
-                        let queries = &packed_queries_all[group_start..cursor];
-                        let query_locals = &packed_query_locals_all[group_start..cursor];
-                        let group = DirectedCellGroup::new(
-                            cell as usize,
-                            bin.as_u8(),
-                            queries,
-                            query_locals,
-                            &assignment.slot_gen_map,
-                            assignment.local_shift,
-                            assignment.local_mask,
-                        );
-
-                        #[cfg(not(feature = "timing"))]
-                        let t_packed = crate::knn_clipping::timing::Timer::start();
-                        let status =
-                            packed_scratch.prepare_group_directed(grid, group, &mut packed_timings);
-                        #[cfg(not(feature = "timing"))]
-                        let packed_elapsed = t_packed.elapsed();
-
-                        match status {
-                            PackedKnnCellStatus::Ok => {
-                                for (offset, &global) in
-                                    my_generators[group_start..cursor].iter().enumerate()
-                                {
-                                    let local_idx = group_start + offset;
-                                    let local = LocalId::from_usize(local_idx);
-                                    let mut shard_ctx = ShardContext {
-                                        shard: &mut shard,
-                                        bin,
-                                        local,
-                                    };
-                                    process_cell(
-                                        &mut sub_accum,
-                                        &mut ctx,
-                                        &mut shard_ctx,
-                                        &grid_ctx,
-                                        termination_policy,
-                                        global,
-                                        Some(PackedQuery::new(
-                                            &mut packed_scratch,
-                                            &mut packed_timings,
-                                            group,
-                                            offset,
-                                            packed_policy,
-                                        )),
-                                    );
-                                }
-                            }
-                            PackedKnnCellStatus::SlowPath => {
-                                for (offset, &global) in
-                                    my_generators[group_start..cursor].iter().enumerate()
-                                {
-                                    let local_idx = group_start + offset;
-                                    let local = LocalId::from_usize(local_idx);
-                                    let mut shard_ctx = ShardContext {
-                                        shard: &mut shard,
-                                        bin,
-                                        local,
-                                    };
-                                    process_cell(
-                                        &mut sub_accum,
-                                        &mut ctx,
-                                        &mut shard_ctx,
-                                        &grid_ctx,
-                                        termination_policy,
-                                        global,
-                                        None,
-                                    );
-                                }
-                            }
-                        }
-
-                        #[cfg(feature = "timing")]
-                        {
-                            sub_accum.add_packed_knn(packed_timings.total());
-                            sub_accum.add_packed_knn_breakdown(&packed_timings);
-                        }
-                        #[cfg(not(feature = "timing"))]
-                        sub_accum.add_packed_knn(packed_elapsed);
-                    } else {
-                        for (offset, &global) in
-                            my_generators[group_start..cursor].iter().enumerate()
-                        {
-                            let local_idx = group_start + offset;
-                            let local = LocalId::from_usize(local_idx);
-                            let mut shard_ctx = ShardContext {
-                                shard: &mut shard,
-                                bin,
-                                local,
-                            };
-                            process_cell(
-                                &mut sub_accum,
-                                &mut ctx,
-                                &mut shard_ctx,
-                                &grid_ctx,
-                                termination_policy,
-                                global,
-                                None,
-                            );
-                        }
+                    #[cfg(not(feature = "timing"))]
+                    sub_accum.add_packed_knn(packed_elapsed);
+                } else {
+                    for (offset, &global) in my_generators[group_start..cursor].iter().enumerate() {
+                        let local_idx = group_start + offset;
+                        let local = LocalId::from_usize(local_idx);
+                        let mut shard_ctx = ShardContext {
+                            shard: &mut shard,
+                            bin,
+                            local,
+                        };
+                        process_cell(
+                            &mut sub_accum,
+                            &mut ctx,
+                            &mut shard_ctx,
+                            &grid_ctx,
+                            termination_policy,
+                            global,
+                            None,
+                        )?;
                     }
                 }
+            }
 
-                (shard, sub_accum)
-            })
-            .collect();
+            Ok((shard, sub_accum))
+        })
+        .collect();
+    let per_bin = per_bin?;
 
     let mut shards: Vec<ShardState> = Vec::with_capacity(num_bins);
     let mut merged_sub = crate::knn_clipping::timing::CellSubAccum::new();
@@ -377,9 +378,9 @@ pub(super) fn build_cells_sharded_live_dedup(
         shards.push(shard);
     }
 
-    ShardedCellsData {
+    Ok(ShardedCellsData {
         assignment,
         shards,
         cell_sub: merged_sub,
-    }
+    })
 }

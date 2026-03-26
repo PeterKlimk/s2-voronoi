@@ -16,8 +16,17 @@ pub enum CellFailure {
     TooManyVertices,
     /// Cell was completely clipped away (all vertices outside a plane).
     ClippedAway,
+    /// The clipped cell reaches the generator hemisphere boundary, so gnomonic projection
+    /// is no longer a valid model for the current feasible region.
+    ProjectionInvalid,
     /// Failed to construct a valid seed polygon.
     NoValidSeed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CellBuildError {
+    pub generator_idx: usize,
+    pub failure: CellFailure,
 }
 
 /// A buffer to hold the output of clipping a cell.

@@ -6,6 +6,7 @@ use super::edge_reconcile;
 use super::live_dedup;
 use super::timing::{Timer, TimingBuilder};
 use super::{
+    cell_builder::{CellBuildError, CellFailure},
     constants, merge_close_points, MergeResult, TerminationConfig, KNN_GRID_TARGET_DENSITY,
 };
 use crate::cube_grid::CubeMapGrid;
@@ -18,7 +19,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     termination: TerminationConfig,
     preprocess_threshold: Option<f32>,
     skip_preprocess: bool,
-) -> crate::SphericalVoronoi {
+) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     let mut tb = TimingBuilder::new();
 
     // Preprocessing: merge close points
@@ -65,7 +66,8 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     // Build cells using sharded live dedup
     let t = Timer::start();
     let sharded =
-        live_dedup::build_cells_sharded_live_dedup(effective_points_ref, &grid, termination);
+        live_dedup::build_cells_sharded_live_dedup(effective_points_ref, &grid, termination)
+            .map_err(map_cell_build_error)?;
 
     #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]
     tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
@@ -131,13 +133,13 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     let timings = tb.finish();
     timings.report(voronoi.num_cells());
 
-    voronoi
+    Ok(voronoi)
 }
 
 pub fn compute_voronoi_knn_clipping_with_config_owned(
     points: Vec<Vec3>,
     config: &VoronoiConfig,
-) -> crate::SphericalVoronoi {
+) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     let termination = TerminationConfig {
         packed_expand_r2: config.packed_knn_expand_r2,
         max_k_cap: config.termination_max_k,
@@ -149,4 +151,19 @@ pub fn compute_voronoi_knn_clipping_with_config_owned(
         config.preprocess_threshold,
         !config.preprocess,
     )
+}
+
+fn map_cell_build_error(err: CellBuildError) -> crate::VoronoiError {
+    match err.failure {
+        CellFailure::ProjectionInvalid => crate::VoronoiError::UnsupportedGeometry {
+            generator_index: err.generator_idx,
+            message:
+                "cell extends to the generator hemisphere boundary; gnomonic projection is invalid"
+                    .to_string(),
+        },
+        other => crate::VoronoiError::ComputationFailed(format!(
+            "cell {} failed during construction with {:?}",
+            err.generator_idx, other
+        )),
+    }
 }

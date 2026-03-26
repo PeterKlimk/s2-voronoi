@@ -143,8 +143,8 @@ impl Default for VoronoiConfig {
 
 /// Compute a spherical Voronoi diagram with default settings.
 ///
-/// Errors are reserved for invalid inputs (e.g., insufficient points) or
-/// unrecoverable internal failures.
+/// Errors are returned for invalid inputs, unsupported geometry in the current
+/// clipping model, or unrecoverable internal failures.
 pub fn compute<P: UnitVec3Like>(points: &[P]) -> Result<SphericalVoronoi, VoronoiError> {
     compute_with(points, VoronoiConfig::default())
 }
@@ -167,5 +167,5 @@ pub fn compute_with<P: UnitVec3Like>(
         .collect();
 
     // Call knn_clipping backend
-    Ok(knn_clipping::compute_voronoi_knn_clipping_with_config_owned(vec3_points, &config))
+    knn_clipping::compute_voronoi_knn_clipping_with_config_owned(vec3_points, &config)
 }

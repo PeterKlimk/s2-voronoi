@@ -2,6 +2,7 @@
 
 use crate::cube_grid::{DirectedNeighborBatchSource, DirectedNeighborStream, PackedQuery};
 
+use crate::knn_clipping::cell_builder::{CellBuildError, CellFailure};
 use crate::policy::TerminationPolicy;
 
 use super::super::edge_checks::unpack_edge_key;
@@ -80,12 +81,13 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
         }
     }
 
-    fn run(mut self, packed: Option<PackedQuery<'_, 'c>>) {
+    fn run(mut self, packed: Option<PackedQuery<'_, 'c>>) -> Result<(), CellBuildError> {
         self.phase_1_init();
         self.phase_2_edgecheck_seeds();
         self.phase_3_neighbor_stream(packed);
-        self.phase_4_validate_success();
+        self.phase_4_validate_success()?;
         self.phase_5_extract_output();
+        Ok(())
     }
 
     fn phase_1_init(&mut self) {
@@ -261,8 +263,16 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
         self.knn_exhausted |= stream.knn_exhausted();
     }
 
-    fn phase_4_validate_success(&mut self) {
+    fn phase_4_validate_success(&mut self) -> Result<(), CellBuildError> {
         if !self.ctx.builder.is_bounded() || self.ctx.builder.is_failed() {
+            if self.ctx.builder.failure() == Some(CellFailure::ProjectionInvalid)
+                || (!self.ctx.builder.is_bounded() && self.knn_exhausted)
+            {
+                return Err(CellBuildError {
+                    generator_idx: self.i,
+                    failure: CellFailure::ProjectionInvalid,
+                });
+            }
             let (active, total) = self.ctx.builder.count_active_planes();
             let gen = self.grid_ctx.points[self.i];
             let neighbor_indices: Vec<usize> = self.ctx.builder.neighbor_indices_iter().collect();
@@ -286,6 +296,7 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
                 &neighbor_indices[..neighbor_indices.len().min(10)],
             );
         }
+        Ok(())
     }
 
     fn phase_5_extract_output(&mut self) {
@@ -409,7 +420,7 @@ pub(super) fn process_cell<'a, 'b, 'c>(
     termination: TerminationPolicy,
     i: usize,
     packed: Option<PackedQuery<'_, 'c>>,
-) {
+) -> Result<(), CellBuildError> {
     let orchestrator = CellOrchestrator::new(cell_sub, ctx, shard_ctx, grid_ctx, termination, i);
-    orchestrator.run(packed);
+    orchestrator.run(packed)
 }

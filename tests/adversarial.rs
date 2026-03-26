@@ -6,7 +6,7 @@
 
 mod support;
 
-use s2_voronoi::{compute, validation::validate};
+use s2_voronoi::{compute, validation::validate, VoronoiError};
 use support::points::*;
 
 // =============================================================================
@@ -275,41 +275,29 @@ fn test_cocircular_extreme() {
 // =============================================================================
 
 #[test]
-#[ignore = "gnomonic projection cannot handle cells spanning >90° - awaiting fallback"]
 fn test_hemisphere_basic() {
     // 100 points on upper hemisphere
     let points = hemisphere_points(100, 42);
     let result = compute(&points);
 
-    // May fail due to cells spanning >90° from generator
-    match result {
-        Ok(diagram) => {
-            let report = validate(&diagram);
-            eprintln!("hemisphere_basic: {}", report.summary());
-            assert_eq!(diagram.num_cells(), 100);
-        }
-        Err(e) => {
-            eprintln!("hemisphere_basic failed (gnomonic limit): {:?}", e);
-        }
-    }
+    assert!(
+        matches!(result, Err(VoronoiError::UnsupportedGeometry { .. })),
+        "hemisphere_basic should fail cleanly with unsupported geometry, got {:?}",
+        result
+    );
 }
 
 #[test]
-#[ignore = "gnomonic projection cannot handle cells spanning >90° - awaiting fallback"]
 fn test_hemisphere_dense() {
     // 500 points on upper hemisphere - likely to create cells >90°
     let points = hemisphere_points(500, 42);
     let result = compute(&points);
 
-    match result {
-        Ok(diagram) => {
-            let report = validate(&diagram);
-            eprintln!("hemisphere_dense: {}", report.summary());
-        }
-        Err(e) => {
-            eprintln!("hemisphere_dense failed (expected): {:?}", e);
-        }
-    }
+    assert!(
+        matches!(result, Err(VoronoiError::UnsupportedGeometry { .. })),
+        "hemisphere_dense should fail cleanly with unsupported geometry, got {:?}",
+        result
+    );
 }
 
 // =============================================================================

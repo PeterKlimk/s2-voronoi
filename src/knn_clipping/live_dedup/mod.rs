@@ -5,6 +5,7 @@
 //! - Single-threaded overflow flush (simplifies correctness)
 //! - Per-cell duplicate index checks handled by validation (not in hot path)
 
+use super::cell_builder::CellBuildError;
 use super::cell_builder::VertexKey;
 use super::TerminationConfig;
 
@@ -63,7 +64,7 @@ pub(super) fn build_cells_sharded_live_dedup(
     points: &[glam::Vec3],
     grid: &crate::cube_grid::CubeMapGrid,
     termination: TerminationConfig,
-) -> ShardedCellsData {
+) -> Result<ShardedCellsData, CellBuildError> {
     build::build_cells_sharded_live_dedup(points, grid, termination)
 }
 

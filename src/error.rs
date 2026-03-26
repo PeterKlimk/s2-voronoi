@@ -9,6 +9,15 @@ pub enum VoronoiError {
     /// Need at least 4 points for a non-degenerate result.
     InsufficientPoints(usize),
 
+    /// The input induced geometry outside the currently supported clipping model.
+    ///
+    /// This is used for expected algorithm boundaries such as cells that extend beyond the
+    /// generator hemisphere in the current gnomonic projection model.
+    UnsupportedGeometry {
+        generator_index: usize,
+        message: String,
+    },
+
     /// Too many coincident (or near-coincident) point pairs in the input.
     /// This indicates the input is degenerate and cannot be reliably computed.
     DegenerateInput {
@@ -26,6 +35,16 @@ impl fmt::Display for VoronoiError {
         match self {
             VoronoiError::InsufficientPoints(n) => {
                 write!(f, "insufficient points: need at least 4, got {}", n)
+            }
+            VoronoiError::UnsupportedGeometry {
+                generator_index,
+                message,
+            } => {
+                write!(
+                    f,
+                    "unsupported geometry at generator {}: {}",
+                    generator_index, message
+                )
             }
             VoronoiError::DegenerateInput {
                 coincident_pairs,
