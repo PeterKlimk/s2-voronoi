@@ -1,7 +1,7 @@
 use super::KnnCellStage;
 use std::time::Duration;
 
-use crate::cube_grid::CubeMapGridBuildTimings;
+use crate::cube_grid::{packed_knn::PackedKnnTimings, CubeMapGridBuildTimings};
 
 /// Timer that tracks elapsed time when timing is enabled.
 pub struct Timer(std::time::Instant);
@@ -69,6 +69,8 @@ impl StageCounts {
 pub struct CellSubPhases {
     pub knn_query: Duration,
     pub packed_knn: Duration,
+    pub packed_expand_r2_scan: Duration,
+    pub packed_expand_r2_select: Duration,
     pub clipping: Duration,
     pub certification: Duration,
     pub key_dedup: Duration,
@@ -77,8 +79,12 @@ pub struct CellSubPhases {
     pub edge_emit: Duration,
     pub cells_knn_exhausted: u64,
     pub cells_packed_tail_used: u64,
+    pub cells_packed_expand_r2_used: u64,
     pub cells_packed_safe_exhausted: u64,
     pub cells_used_knn: u64,
+    pub packed_tail_builds: u64,
+    pub packed_expand_r2_builds: u64,
+    pub packed_expand_r2_cap_skips: u64,
 }
 
 /// Fine-grained dedup timing and a few size counters.
@@ -94,6 +100,8 @@ pub struct DedupSubPhases {
 pub struct CellSubAccum {
     knn_query: Duration,
     packed_knn: Duration,
+    packed_expand_r2_scan: Duration,
+    packed_expand_r2_select: Duration,
     clipping: Duration,
     certification: Duration,
     key_dedup: Duration,
@@ -103,8 +111,12 @@ pub struct CellSubAccum {
     stage_counts: StageCounts,
     cells_knn_exhausted: u64,
     cells_packed_tail_used: u64,
+    cells_packed_expand_r2_used: u64,
     cells_packed_safe_exhausted: u64,
     cells_used_knn: u64,
+    packed_tail_builds: u64,
+    packed_expand_r2_builds: u64,
+    packed_expand_r2_cap_skips: u64,
 }
 
 impl CellSubAccum {
@@ -121,6 +133,15 @@ impl CellSubAccum {
     #[inline]
     pub fn add_packed_knn(&mut self, d: Duration) {
         self.packed_knn += d;
+    }
+
+    #[inline]
+    pub fn add_packed_knn_breakdown(&mut self, timings: &PackedKnnTimings) {
+        self.packed_expand_r2_scan += timings.expand_r2_scan;
+        self.packed_expand_r2_select += timings.expand_r2_select;
+        self.packed_tail_builds += timings.tail_builds;
+        self.packed_expand_r2_builds += timings.expand_r2_builds;
+        self.packed_expand_r2_cap_skips += timings.expand_r2_cap_skips;
     }
 
     #[inline]
@@ -160,6 +181,7 @@ impl CellSubAccum {
         knn_exhausted: bool,
         _neighbors_processed: usize,
         packed_tail_used: bool,
+        packed_expand_r2_used: bool,
         packed_safe_exhausted: bool,
         used_knn: bool,
         _incoming_edgechecks: usize,
@@ -168,6 +190,7 @@ impl CellSubAccum {
         self.stage_counts.add(stage);
         self.cells_knn_exhausted += knn_exhausted as u64;
         self.cells_packed_tail_used += packed_tail_used as u64;
+        self.cells_packed_expand_r2_used += packed_expand_r2_used as u64;
         self.cells_packed_safe_exhausted += packed_safe_exhausted as u64;
         self.cells_used_knn += used_knn as u64;
     }
@@ -176,6 +199,8 @@ impl CellSubAccum {
     pub fn merge(&mut self, other: &CellSubAccum) {
         self.knn_query += other.knn_query;
         self.packed_knn += other.packed_knn;
+        self.packed_expand_r2_scan += other.packed_expand_r2_scan;
+        self.packed_expand_r2_select += other.packed_expand_r2_select;
         self.clipping += other.clipping;
         self.certification += other.certification;
         self.key_dedup += other.key_dedup;
@@ -185,8 +210,12 @@ impl CellSubAccum {
         self.stage_counts.merge(&other.stage_counts);
         self.cells_knn_exhausted += other.cells_knn_exhausted;
         self.cells_packed_tail_used += other.cells_packed_tail_used;
+        self.cells_packed_expand_r2_used += other.cells_packed_expand_r2_used;
         self.cells_packed_safe_exhausted += other.cells_packed_safe_exhausted;
         self.cells_used_knn += other.cells_used_knn;
+        self.packed_tail_builds += other.packed_tail_builds;
+        self.packed_expand_r2_builds += other.packed_expand_r2_builds;
+        self.packed_expand_r2_cap_skips += other.packed_expand_r2_cap_skips;
     }
 
     #[inline]
@@ -194,6 +223,8 @@ impl CellSubAccum {
         CellSubPhases {
             knn_query: self.knn_query,
             packed_knn: self.packed_knn,
+            packed_expand_r2_scan: self.packed_expand_r2_scan,
+            packed_expand_r2_select: self.packed_expand_r2_select,
             clipping: self.clipping,
             certification: self.certification,
             key_dedup: self.key_dedup,
@@ -202,8 +233,12 @@ impl CellSubAccum {
             edge_emit: self.edge_emit,
             cells_knn_exhausted: self.cells_knn_exhausted,
             cells_packed_tail_used: self.cells_packed_tail_used,
+            cells_packed_expand_r2_used: self.cells_packed_expand_r2_used,
             cells_packed_safe_exhausted: self.cells_packed_safe_exhausted,
             cells_used_knn: self.cells_used_knn,
+            packed_tail_builds: self.packed_tail_builds,
+            packed_expand_r2_builds: self.packed_expand_r2_builds,
+            packed_expand_r2_cap_skips: self.packed_expand_r2_cap_skips,
         }
     }
 }
@@ -333,6 +368,26 @@ impl PhaseTimings {
                     est_wall_ms(self.cell_sub.packed_knn),
                     sub_pct(self.cell_sub.packed_knn)
                 );
+                if self.cell_sub.packed_expand_r2_scan.as_nanos() > 0
+                    || self.cell_sub.packed_expand_r2_select.as_nanos() > 0
+                    || self.cell_sub.packed_expand_r2_builds > 0
+                    || self.cell_sub.packed_expand_r2_cap_skips > 0
+                {
+                    eprintln!(
+                        "      expand_r2_scan:   {:7.1}ms",
+                        est_wall_ms(self.cell_sub.packed_expand_r2_scan)
+                    );
+                    eprintln!(
+                        "      expand_r2_select: {:7.1}ms",
+                        est_wall_ms(self.cell_sub.packed_expand_r2_select)
+                    );
+                    eprintln!(
+                        "      packed_builds: tail={} expand_r2={} expand_r2_cap_skips={}",
+                        self.cell_sub.packed_tail_builds,
+                        self.cell_sub.packed_expand_r2_builds,
+                        self.cell_sub.packed_expand_r2_cap_skips
+                    );
+                }
             }
             eprintln!(
                 "    clipping:        {:7.1}ms ({:4.1}%)",
@@ -365,10 +420,11 @@ impl PhaseTimings {
                 sub_pct(self.cell_sub.edge_emit)
             );
             eprintln!(
-                "    cells: used_knn={} knn_exhausted={} packed_tail_used={} packed_safe_exhausted={}",
+                "    cells: used_knn={} knn_exhausted={} packed_tail_used={} packed_expand_r2_used={} packed_safe_exhausted={}",
                 self.cell_sub.cells_used_knn,
                 self.cell_sub.cells_knn_exhausted,
                 self.cell_sub.cells_packed_tail_used,
+                self.cell_sub.cells_packed_expand_r2_used,
                 self.cell_sub.cells_packed_safe_exhausted
             );
         }
@@ -397,7 +453,7 @@ impl PhaseTimings {
 
         if std::env::var_os("S2_VORONOI_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} cells_packed_expand_r2_used={cpe} packed_tail_builds={ptb} packed_expand_r2_builds={prb} packed_expand_r2_cap_skips={pcs} packed_expand_r2_scan_ms={prs:.3} packed_expand_r2_select_ms={prel:.3}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -406,6 +462,14 @@ impl PhaseTimings {
                 dd = ms(self.dedup),
                 er = ms(self.edge_repair),
                 asmb = ms(self.assemble),
+                cuk = self.cell_sub.cells_used_knn,
+                cpt = self.cell_sub.cells_packed_tail_used,
+                cpe = self.cell_sub.cells_packed_expand_r2_used,
+                ptb = self.cell_sub.packed_tail_builds,
+                prb = self.cell_sub.packed_expand_r2_builds,
+                pcs = self.cell_sub.packed_expand_r2_cap_skips,
+                prs = ms(self.cell_sub.packed_expand_r2_scan),
+                prel = ms(self.cell_sub.packed_expand_r2_select),
             );
         }
     }

@@ -48,6 +48,8 @@ pub struct PackedKnnTimings {
     pub ring_thresholds: Duration,
     pub ring_pass: Duration,
     pub ring_fallback: Duration,
+    pub expand_r2_scan: Duration,
+    pub expand_r2_select: Duration,
     pub select_prep: Duration,
     pub select_query_prep: Duration,
     pub select_partition: Duration,
@@ -55,6 +57,10 @@ pub struct PackedKnnTimings {
     pub select_scatter: Duration,
     /// Number of times tail candidates were built (per query, but counted at most once per group).
     pub tail_builds: u64,
+    /// Number of times the cold r=2 expansion band was built for a query.
+    pub expand_r2_builds: u64,
+    /// Number of times the cold r=2 expansion band was skipped because it exceeded the cap.
+    pub expand_r2_cap_skips: u64,
 }
 
 #[cfg(feature = "timing")]
@@ -68,12 +74,16 @@ impl Default for PackedKnnTimings {
             ring_thresholds: Duration::ZERO,
             ring_pass: Duration::ZERO,
             ring_fallback: Duration::ZERO,
+            expand_r2_scan: Duration::ZERO,
+            expand_r2_select: Duration::ZERO,
             select_prep: Duration::ZERO,
             select_query_prep: Duration::ZERO,
             select_partition: Duration::ZERO,
             select_sort: Duration::ZERO,
             select_scatter: Duration::ZERO,
             tail_builds: 0,
+            expand_r2_builds: 0,
+            expand_r2_cap_skips: 0,
         }
     }
 }
@@ -126,6 +136,16 @@ impl PackedKnnTimings {
     }
 
     #[inline]
+    pub fn add_expand_r2_scan(&mut self, d: Duration) {
+        self.expand_r2_scan += d;
+    }
+
+    #[inline]
+    pub fn add_expand_r2_select(&mut self, d: Duration) {
+        self.expand_r2_select += d;
+    }
+
+    #[inline]
     pub fn add_select_prep(&mut self, d: Duration) {
         self.select_prep += d;
     }
@@ -156,6 +176,16 @@ impl PackedKnnTimings {
     }
 
     #[inline]
+    pub fn inc_expand_r2_builds(&mut self) {
+        self.expand_r2_builds += 1;
+    }
+
+    #[inline]
+    pub fn inc_expand_r2_cap_skips(&mut self) {
+        self.expand_r2_cap_skips += 1;
+    }
+
+    #[inline]
     pub fn total(&self) -> Duration {
         self.setup
             + self.query_cache
@@ -164,6 +194,8 @@ impl PackedKnnTimings {
             + self.ring_thresholds
             + self.ring_pass
             + self.ring_fallback
+            + self.expand_r2_scan
+            + self.expand_r2_select
             + self.select_prep
             + self.select_query_prep
             + self.select_partition
@@ -192,6 +224,10 @@ impl PackedKnnTimings {
     #[inline(always)]
     pub fn add_ring_fallback(&mut self, _d: Duration) {}
     #[inline(always)]
+    pub fn add_expand_r2_scan(&mut self, _d: Duration) {}
+    #[inline(always)]
+    pub fn add_expand_r2_select(&mut self, _d: Duration) {}
+    #[inline(always)]
     pub fn add_select_prep(&mut self, _d: Duration) {}
     #[inline(always)]
     pub fn add_select_query_prep(&mut self, _d: Duration) {}
@@ -203,4 +239,8 @@ impl PackedKnnTimings {
     pub fn add_select_scatter(&mut self, _d: Duration) {}
     #[inline(always)]
     pub fn inc_tail_builds(&mut self) {}
+    #[inline(always)]
+    pub fn inc_expand_r2_builds(&mut self) {}
+    #[inline(always)]
+    pub fn inc_expand_r2_cap_skips(&mut self) {}
 }

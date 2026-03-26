@@ -308,6 +308,7 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
             self.knn_exhausted,
             self.cell_neighbors_processed,
             self.packed_tail_used,
+            self.packed_expand_r2_used,
             self.packed_safe_exhausted,
             self.used_knn,
             self.incoming_edgechecks,

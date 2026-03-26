@@ -190,6 +190,10 @@ struct Args {
     #[arg(long)]
     no_preprocess: bool,
 
+    /// Enable the cold packed r=2 expansion stage before cursor fallback.
+    #[arg(long)]
+    packed_expand_r2: bool,
+
     /// Number of iterations to run (useful for profiling)
     #[arg(short = 'n', long, default_value_t = 1)]
     repeat: usize,
@@ -360,6 +364,9 @@ fn main() {
     if args.no_preprocess {
         println!("  preprocess = disabled (no point merging)");
     }
+    if args.packed_expand_r2 {
+        println!("  packed_expand_r2 = enabled");
+    }
     if args.repeat > 1 {
         println!("  repeat = {}", args.repeat);
     }
@@ -388,6 +395,7 @@ fn main() {
 
         let config = VoronoiConfig {
             preprocess: !args.no_preprocess,
+            packed_knn_expand_r2: args.packed_expand_r2,
             ..VoronoiConfig::default()
         };
 

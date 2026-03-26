@@ -345,6 +345,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                         #[cfg(feature = "timing")]
                         {
                             sub_accum.add_packed_knn(packed_timings.total());
+                            sub_accum.add_packed_knn_breakdown(&packed_timings);
                         }
                         #[cfg(not(feature = "timing"))]
                         sub_accum.add_packed_knn(packed_elapsed);

@@ -315,6 +315,7 @@ impl PackedKnnCellScratch {
         let keys = &mut self.expand2_keys[qi];
         keys.clear();
         self.expand2_pos[qi] = 0;
+        timings.inc_expand_r2_builds();
 
         let mut t = PackedLapTimer::start();
         for range in &self.expand_r2_cells {
@@ -346,12 +347,13 @@ impl PackedKnnCellScratch {
                     keys.push(make_desc_key(dot, slot_u32));
                     if keys.len() > MAX_EXPAND_R2_CANDIDATES_PER_QUERY {
                         keys.clear();
+                        timings.inc_expand_r2_cap_skips();
                         return false;
                     }
                 }
             }
         }
-        timings.add_ring_fallback(t.lap());
+        timings.add_expand_r2_scan(t.lap());
 
         self.expand2_ready_gen[qi] = self.group_gen;
         true
@@ -1065,6 +1067,7 @@ impl PackedKnnCellScratch {
                     self.expand2_ready_gen.get(qi).copied().unwrap_or(0) == self.group_gen,
                     "expand_r2 stage requested before ensure_expand_r2"
                 );
+                let mut t_stage = PackedLapTimer::start();
                 let mut t = PackedLapTimer::start();
                 let keys = &mut self.expand2_keys.get_mut(qi)?;
                 let start = *self.expand2_pos.get(qi)?;
@@ -1095,6 +1098,7 @@ impl PackedKnnCellScratch {
                 } else {
                     self.security2[qi]
                 };
+                timings.add_expand_r2_select(t_stage.lap());
                 Some(PackedChunk { n, unseen_bound })
             }
         }
