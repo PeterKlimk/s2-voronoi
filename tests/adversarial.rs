@@ -1,27 +1,52 @@
 //! Adversarial geometry tests.
 //!
 //! Tests using degenerate or stress-inducing point distributions to verify
-//! robustness. These tests document expected behavior (success, graceful
-//! degradation, or defined error) rather than asserting perfect results.
+//! robustness. Contract tests assert stable expected outcomes. Known-stress
+//! diagnostics keep reporting validation quality without pinning current
+//! invalidity as a desired outcome.
 
 mod support;
 
 use s2_voronoi::{compute, validation::validate, VoronoiError};
 use support::points::*;
 
+fn expect_strict_success(name: &str, result: Result<s2_voronoi::SphericalVoronoi, VoronoiError>) {
+    let diagram = result.unwrap_or_else(|err| panic!("{name} should succeed, got {err:?}"));
+    let report = validate(&diagram);
+    assert!(
+        report.is_strictly_valid(),
+        "{name} should be strictly valid, got {}",
+        report.headline()
+    );
+}
+
+fn expect_defined_failure(
+    name: &str,
+    result: Result<s2_voronoi::SphericalVoronoi, VoronoiError>,
+) {
+    assert!(
+        matches!(
+            result,
+            Err(VoronoiError::UnsupportedGeometry { .. }) | Err(VoronoiError::ComputationFailed(_))
+        ),
+        "{name} should fail cleanly with an explicit error, got {:?}",
+        result
+    );
+}
+
 // =============================================================================
 // Great Circle Tests (All Coplanar)
 //
 // NOTE: Pure great circle configurations are beyond the algorithm's design.
 // Gnomonic projection fails for cells spanning >90° from the generator, and
-// coplanar points create cells that wrap around the sphere. Tests with
-// insufficient jitter are marked #[ignore].
+// coplanar points create cells that wrap around the sphere.
 // =============================================================================
 
 #[test]
 fn test_great_circle_with_jitter() {
     // Great circle with significant jitter to break coplanarity
-    // The jitter creates enough 3D spread that cells stay bounded
+    // This currently succeeds but does not yet reliably produce a strict
+    // subdivision on this seed.
     let points = great_circle_points(50, 0.2, 42);
     let result = compute(&points);
 
@@ -34,40 +59,19 @@ fn test_great_circle_with_jitter() {
 }
 
 #[test]
-#[ignore = "gnomonic projection cannot handle cells spanning >90° from generator"]
 fn test_great_circle_small_jitter() {
-    // Small jitter - may or may not work depending on luck
+    // Small jitter is still enough to break the coplanar failure mode for this
+    // fixed test distribution.
     let points = great_circle_points(20, 0.01, 42);
-    let result = compute(&points);
-
-    match result {
-        Ok(diagram) => {
-            let report = validate(&diagram);
-            eprintln!("great_circle_small_jitter: {}", report.headline());
-        }
-        Err(e) => {
-            eprintln!("great_circle_small_jitter failed: {:?}", e);
-        }
-    }
+    expect_strict_success("great_circle_small_jitter", compute(&points));
 }
 
 #[test]
-#[ignore = "gnomonic projection cannot handle cells spanning >90° from generator"]
 fn test_great_circle_pure_degenerate() {
     // Pure great circle with no jitter - maximally degenerate
     // This CANNOT work with current algorithm - cells span 180°
     let points = great_circle_points(50, 0.0, 42);
-    let result = compute(&points);
-
-    match result {
-        Ok(diagram) => {
-            let report = validate(&diagram);
-            eprintln!("pure great circle: {}", report.headline());
-        }
-        Err(e) => {
-            eprintln!("pure great circle failed (expected): {:?}", e);
-        }
-    }
+    expect_defined_failure("great_circle_pure_degenerate", compute(&points));
 }
 
 // =============================================================================
@@ -129,7 +133,6 @@ fn test_clustered_cap_extreme() {
 // =============================================================================
 
 #[test]
-#[ignore = "compare behavior with preprocessing disabled"]
 fn test_clustered_cap_small_no_preprocess() {
     use s2_voronoi::{compute_with, PreprocessMode, VoronoiConfig};
 
@@ -138,22 +141,10 @@ fn test_clustered_cap_small_no_preprocess() {
         preprocess_mode: PreprocessMode::Disabled,
         ..Default::default()
     };
-    let result = compute_with(&points, config);
-
-    match result {
-        Ok(diagram) => {
-            let report = validate(&diagram);
-            eprintln!("clustered_cap_small (no preprocess): {}", report.headline());
-            assert_eq!(diagram.num_cells(), 100);
-        }
-        Err(e) => {
-            eprintln!("clustered_cap_small (no preprocess) failed: {:?}", e);
-        }
-    }
+    expect_strict_success("clustered_cap_small_no_preprocess", compute_with(&points, config));
 }
 
 #[test]
-#[ignore = "compare behavior with preprocessing disabled"]
 fn test_clustered_cap_tight_no_preprocess() {
     use s2_voronoi::{compute_with, PreprocessMode, VoronoiConfig};
 
@@ -162,21 +153,10 @@ fn test_clustered_cap_tight_no_preprocess() {
         preprocess_mode: PreprocessMode::Disabled,
         ..Default::default()
     };
-    let result = compute_with(&points, config);
-
-    match result {
-        Ok(diagram) => {
-            let report = validate(&diagram);
-            eprintln!("clustered_cap_tight (no preprocess): {}", report.headline());
-        }
-        Err(e) => {
-            eprintln!("clustered_cap_tight (no preprocess) failed: {:?}", e);
-        }
-    }
+    expect_strict_success("clustered_cap_tight_no_preprocess", compute_with(&points, config));
 }
 
 #[test]
-#[ignore = "compare behavior with preprocessing disabled"]
 fn test_cocircular_tight_no_preprocess() {
     use s2_voronoi::{compute_with, PreprocessMode, VoronoiConfig};
 
@@ -185,17 +165,7 @@ fn test_cocircular_tight_no_preprocess() {
         preprocess_mode: PreprocessMode::Disabled,
         ..Default::default()
     };
-    let result = compute_with(&points, config);
-
-    match result {
-        Ok(diagram) => {
-            let report = validate(&diagram);
-            eprintln!("cocircular_tight (no preprocess): {}", report.headline());
-        }
-        Err(e) => {
-            eprintln!("cocircular_tight (no preprocess) failed: {:?}", e);
-        }
-    }
+    expect_strict_success("cocircular_tight_no_preprocess", compute_with(&points, config));
 }
 
 // =============================================================================
@@ -345,7 +315,7 @@ fn test_bimodal_extreme() {
 // =============================================================================
 
 #[test]
-#[ignore = "some distributions create cells spanning >90° - awaiting fallback"]
+#[ignore = "manual stress scan across mixed valid, invalid, and unsupported distributions"]
 fn test_multi_distribution_robustness() {
     // Run through all adversarial distributions and verify no panics
     let test_cases: Vec<(&str, Vec<_>)> = vec![
