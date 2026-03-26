@@ -432,8 +432,10 @@ fn classify_terminal_failure(
     failure: Option<CellFailure>,
     knn_exhausted: bool,
 ) -> Option<CellFailure> {
-    if failure == Some(CellFailure::ProjectionInvalid) {
-        return Some(CellFailure::ProjectionInvalid);
+    match failure {
+        Some(CellFailure::ProjectionInvalid) => return Some(CellFailure::ProjectionInvalid),
+        Some(CellFailure::TooManyVertices) => return Some(CellFailure::TooManyVertices),
+        _ => {}
     }
     if !bounded && knn_exhausted {
         return Some(CellFailure::UnboundedAfterExhaustion);
@@ -455,6 +457,14 @@ mod tests {
         assert_eq!(
             classify_terminal_failure(false, None, true),
             Some(CellFailure::UnboundedAfterExhaustion)
+        );
+    }
+
+    #[test]
+    fn too_many_vertices_is_a_structured_failure() {
+        assert_eq!(
+            classify_terminal_failure(true, Some(CellFailure::TooManyVertices), false),
+            Some(CellFailure::TooManyVertices)
         );
     }
 

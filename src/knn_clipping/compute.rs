@@ -167,6 +167,10 @@ fn map_cell_build_error(err: CellBuildError) -> crate::VoronoiError {
                 err.generator_idx
             ),
         ),
+        CellFailure::TooManyVertices => crate::VoronoiError::ComputationFailed(format!(
+            "cell {} exceeded the clipping vertex budget",
+            err.generator_idx
+        )),
         other => crate::VoronoiError::ComputationFailed(format!(
             "cell {} failed during construction with {:?}",
             err.generator_idx, other
@@ -205,6 +209,21 @@ mod tests {
             VoronoiError::ComputationFailed(msg) => {
                 assert!(msg.contains("11"));
                 assert!(msg.contains("bounded polygon"));
+            }
+            other => panic!("expected ComputationFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn map_too_many_vertices_to_computation_failed() {
+        let err = map_cell_build_error(CellBuildError {
+            generator_idx: 13,
+            failure: CellFailure::TooManyVertices,
+        });
+        match err {
+            VoronoiError::ComputationFailed(msg) => {
+                assert!(msg.contains("13"));
+                assert!(msg.contains("vertex budget"));
             }
             other => panic!("expected ComputationFailed, got {:?}", other),
         }

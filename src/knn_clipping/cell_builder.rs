@@ -9,7 +9,7 @@ pub type VertexKey = [u32; 3];
 /// Vertex data: (key, position). Uses u32 indices to save space.
 pub type VertexData = (VertexKey, Vec3);
 
-/// Reasons a cell build can fail, requiring fallback to a different algorithm.
+/// Reasons a cell build can terminate unsuccessfully.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellFailure {
     /// Exceeded vertex budget during clipping.
