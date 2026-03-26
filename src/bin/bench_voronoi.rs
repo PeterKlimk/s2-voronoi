@@ -326,7 +326,7 @@ fn run_benchmark_with_config(points: &[UnitVec3], config: VoronoiConfig) -> Benc
     BenchResult {
         n,
         time_ms,
-        num_vertices: diagram.vertices.len(),
+        num_vertices: diagram.num_vertices(),
         num_cells: diagram.num_cells(),
     }
 }

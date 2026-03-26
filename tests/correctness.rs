@@ -15,7 +15,7 @@ fn test_vertices_on_unit_sphere() {
     let points = fibonacci_sphere_points(500, 0.1, 12345);
     let diagram = compute(&points).unwrap();
 
-    for (i, v) in diagram.vertices.iter().enumerate() {
+    for (i, v) in diagram.vertices().iter().enumerate() {
         let len = (v.x * v.x + v.y * v.y + v.z * v.z).sqrt();
         assert!(
             (len - 1.0).abs() < 1e-5,
@@ -162,7 +162,7 @@ fn test_reproducibility() {
     assert_eq!(diagram1.num_vertices(), diagram2.num_vertices());
 
     // Compare vertex positions
-    for (v1, v2) in diagram1.vertices.iter().zip(diagram2.vertices.iter()) {
+    for (v1, v2) in diagram1.vertices().iter().zip(diagram2.vertices().iter()) {
         let diff = ((v1.x - v2.x).powi(2) + (v1.y - v2.y).powi(2) + (v1.z - v2.z).powi(2)).sqrt();
         assert!(diff < 1e-6, "vertices should be identical");
     }

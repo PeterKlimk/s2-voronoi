@@ -247,6 +247,7 @@ impl DisjointSet {
 pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
     let num_cells = diagram.num_cells();
     let num_vertices = diagram.num_vertices();
+    let vertices = diagram.vertices();
 
     let mut unique_cell_signatures = HashSet::new();
     let mut duplicate_cells_count = 0usize;
@@ -403,7 +404,7 @@ pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
     let euler_characteristic = used_vertices as i32 - num_edges as i32 + num_cells as i32;
 
     let mut vertices_off_sphere = 0usize;
-    for v in &diagram.vertices {
+    for v in vertices {
         let len_sq = v.x * v.x + v.y * v.y + v.z * v.z;
         if (len_sq - 1.0).abs() > VERTEX_ON_SPHERE_EPS {
             vertices_off_sphere += 1;

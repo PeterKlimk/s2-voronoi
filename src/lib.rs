@@ -15,9 +15,9 @@
 //! ## Output
 //!
 //! The result is a [`SphericalVoronoi`] containing:
-//! - `generators`: the input points (one per cell)
-//! - `vertices`: shared Voronoi vertices (unit vectors)
-//! - per-cell vertex index lists (accessible via [`SphericalVoronoi::cell`] / [`SphericalVoronoi::iter_cells`])
+//! - generator points, accessible via [`SphericalVoronoi::generators`] / [`SphericalVoronoi::generator`]
+//! - shared Voronoi vertices, accessible via [`SphericalVoronoi::vertices`] / [`SphericalVoronoi::vertex`]
+//! - per-cell vertex index lists, accessible via [`SphericalVoronoi::cell`] / [`SphericalVoronoi::iter_cells`]
 //!
 //! For strict subdivision and exact-invariant checks on computed output, use
 //! [`validation::validate`].
@@ -103,7 +103,7 @@ pub fn run_batch_clip_microbench() {
 #[cfg(feature = "qhull")]
 pub mod convex_hull;
 
-pub use diagram::{CellView, SphericalVoronoi, VoronoiCell};
+pub use diagram::{CellView, SphericalVoronoi};
 pub use error::VoronoiError;
 pub use types::{UnitVec3, UnitVec3Like};
 

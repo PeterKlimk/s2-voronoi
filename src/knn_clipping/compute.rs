@@ -12,6 +12,7 @@ use super::{
 use crate::cube_grid::CubeMapGrid;
 #[cfg(feature = "timing")]
 use crate::cube_grid::CubeMapGridBuildTimings;
+use crate::diagram::VoronoiCell;
 use crate::{ComputeOutput, ComputeReport, PreprocessMode, PreprocessReport, VoronoiConfig};
 
 pub(super) fn compute_voronoi_knn_clipping_owned_core(
@@ -194,10 +195,10 @@ fn reconcile_edges(
     vertices: &[Vec3],
     vertex_keys: &[crate::knn_clipping::cell_build::VertexKey],
     unresolved_edges: &[live_dedup::UnresolvedEdgeMismatch],
-    mut cells: Vec<crate::VoronoiCell>,
+    mut cells: Vec<VoronoiCell>,
     mut cell_indices: Vec<u32>,
     tb: &mut TimingBuilder,
-) -> (Vec<crate::VoronoiCell>, Vec<u32>) {
+) -> (Vec<VoronoiCell>, Vec<u32>) {
     let repair_edges_storage: Vec<live_dedup::EdgeRecord> = unresolved_edges
         .iter()
         .map(|b| live_dedup::EdgeRecord { key: b.key })
@@ -221,12 +222,10 @@ fn reconcile_edges(
 fn remap_cells_to_original_indices(
     points: &[Vec3],
     merge_result: Option<&MergeResult>,
-    eff_cells: Vec<crate::VoronoiCell>,
+    eff_cells: Vec<VoronoiCell>,
     eff_cell_indices: Vec<u32>,
-) -> (Vec<crate::VoronoiCell>, Vec<u32>) {
+) -> (Vec<VoronoiCell>, Vec<u32>) {
     if let Some(merge_result) = merge_result {
-        use crate::VoronoiCell;
-
         let mut new_cells = Vec::with_capacity(points.len());
         let mut new_cell_indices: Vec<u32> = Vec::new();
 

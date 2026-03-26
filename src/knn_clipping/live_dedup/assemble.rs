@@ -10,9 +10,9 @@ use super::packed::{pack_ref, unpack_ref, DEFERRED};
 use super::shard::ShardFinal;
 use super::types::{BinId, DeferredSlot, EdgeCheckOverflow, UnresolvedEdgeMismatch};
 use super::ShardedCellsData;
+use crate::diagram::VoronoiCell;
 use crate::knn_clipping::cell_build::VertexKey;
 use crate::knn_clipping::timing::{DedupSubPhases, Timer};
-use crate::VoronoiCell;
 
 fn patch_deferred_slots_with_fallback(
     shards: &mut [super::shard::ShardState],

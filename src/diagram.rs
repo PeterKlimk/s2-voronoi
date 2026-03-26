@@ -14,10 +14,10 @@ use glam::Vec3;
 #[derive(Debug, Clone)]
 pub struct SphericalVoronoi {
     /// Generator points (input), one per cell.
-    pub generators: Vec<UnitVec3>,
+    generators: Vec<UnitVec3>,
 
     /// Voronoi vertices (shared between cells).
-    pub vertices: Vec<UnitVec3>,
+    vertices: Vec<UnitVec3>,
 
     /// Per-cell data: (start_index, vertex_count) into cell_indices.
     cells: Vec<CellData>,
@@ -47,24 +47,22 @@ impl SphericalVoronoi {
         }
     }
 
-    /// Create a diagram from raw parts.
-    ///
-    /// This is used by the computation backends to construct the final diagram.
-    pub fn from_parts(
+    #[cfg_attr(not(feature = "qhull"), allow(dead_code))]
+    pub(crate) fn from_cells_and_indices(
         generators: Vec<UnitVec3>,
         vertices: Vec<UnitVec3>,
-        cells: Vec<VoronoiCell>,
+        cell_starts: Vec<u32>,
+        cell_counts: Vec<u16>,
         cell_indices: Vec<u32>,
     ) -> Self {
+        debug_assert_eq!(cell_starts.len(), cell_counts.len());
         Self {
             generators,
             vertices,
-            cells: cells
+            cells: cell_starts
                 .into_iter()
-                .map(|c| CellData {
-                    start: c.vertex_start,
-                    len: c.vertex_count,
-                })
+                .zip(cell_counts)
+                .map(|(start, len)| CellData { start, len })
                 .collect(),
             cell_indices,
         }
@@ -105,10 +103,22 @@ impl SphericalVoronoi {
         self.generators.len()
     }
 
+    /// Borrow all generator points.
+    #[inline]
+    pub fn generators(&self) -> &[UnitVec3] {
+        &self.generators
+    }
+
     /// Number of vertices.
     #[inline]
     pub fn num_vertices(&self) -> usize {
         self.vertices.len()
+    }
+
+    /// Borrow all Voronoi vertices.
+    #[inline]
+    pub fn vertices(&self) -> &[UnitVec3] {
+        &self.vertices
     }
 
     /// Get a view of a specific cell.
@@ -167,7 +177,7 @@ impl<'a> CellView<'a> {
 
 /// Internal cell storage (used by backends during construction).
 #[derive(Debug, Clone, Copy)]
-pub struct VoronoiCell {
+pub(crate) struct VoronoiCell {
     vertex_start: u32,
     vertex_count: u16,
 }
@@ -175,7 +185,7 @@ pub struct VoronoiCell {
 impl VoronoiCell {
     /// Create a new VoronoiCell.
     #[inline]
-    pub fn new(vertex_start: u32, vertex_count: u16) -> Self {
+    pub(crate) fn new(vertex_start: u32, vertex_count: u16) -> Self {
         Self {
             vertex_start,
             vertex_count,
@@ -184,13 +194,13 @@ impl VoronoiCell {
 
     /// Start index into the flat cell_indices buffer.
     #[inline]
-    pub fn vertex_start(&self) -> usize {
+    pub(crate) fn vertex_start(&self) -> usize {
         self.vertex_start as usize
     }
 
     /// Number of vertices for this cell.
     #[inline]
-    pub fn vertex_count(&self) -> usize {
+    pub(crate) fn vertex_count(&self) -> usize {
         self.vertex_count as usize
     }
 }
@@ -220,10 +230,17 @@ mod tests {
             UnitVec3::new(0.0, 0.0, -1.0),
         ];
         // Cell 0 uses vertices 0,2,1,3; Cell 1 uses same but different order
-        let cells = vec![VoronoiCell::new(0, 4), VoronoiCell::new(4, 4)];
+        let cell_starts = vec![0, 4];
+        let cell_counts = vec![4, 4];
         let cell_indices = vec![0, 2, 1, 3, 0, 3, 1, 2];
 
-        let diagram = SphericalVoronoi::from_parts(generators, vertices, cells, cell_indices);
+        let diagram = SphericalVoronoi::from_cells_and_indices(
+            generators,
+            vertices,
+            cell_starts,
+            cell_counts,
+            cell_indices,
+        );
 
         assert_eq!(diagram.num_cells(), 2);
         assert_eq!(diagram.num_vertices(), 4);

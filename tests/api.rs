@@ -153,8 +153,8 @@ fn test_generators_preserved() {
     let diagram = compute(&points).unwrap();
 
     // Generators should match input points
-    assert_eq!(diagram.generators.len(), points.len());
-    for (i, (gen, orig)) in diagram.generators.iter().zip(points.iter()).enumerate() {
+    assert_eq!(diagram.generators().len(), points.len());
+    for (i, (gen, orig)) in diagram.generators().iter().zip(points.iter()).enumerate() {
         let diff =
             ((gen.x - orig.x).powi(2) + (gen.y - orig.y).powi(2) + (gen.z - orig.z).powi(2)).sqrt();
         assert!(diff < 1e-6, "generator {} differs from input: {}", i, diff);

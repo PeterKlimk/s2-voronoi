@@ -8,6 +8,7 @@
 use super::cell_build::CellBuildError;
 use super::cell_build::VertexKey;
 use super::TerminationConfig;
+use crate::diagram::VoronoiCell;
 
 mod assemble;
 mod binning;
@@ -34,7 +35,7 @@ pub(super) struct AssemblyResult {
     /// `edge_reconcile.rs`; they are not a generic record of arbitrary topology failures.
     pub unresolved_edges: Vec<UnresolvedEdgeMismatch>,
     /// Per-cell storage (one per generator).
-    pub cells: Vec<crate::VoronoiCell>,
+    pub cells: Vec<VoronoiCell>,
     /// Flattened vertex indices for all cells.
     pub cell_indices: Vec<u32>,
     /// Timing sub-phases for the dedup stage.

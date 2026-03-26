@@ -110,12 +110,12 @@ pub fn assess(diagram: &SphericalVoronoi) -> QualityReport {
 
 pub fn assess_with_config(diagram: &SphericalVoronoi, config: QualityConfig) -> QualityReport {
     let generators: Vec<Vec3> = diagram
-        .generators
+        .generators()
         .iter()
         .map(|g| Vec3::new(g.x, g.y, g.z))
         .collect();
     let vertices: Vec<Vec3> = diagram
-        .vertices
+        .vertices()
         .iter()
         .map(|v| Vec3::new(v.x, v.y, v.z))
         .collect();
@@ -337,6 +337,7 @@ fn assess_edge_residuals(
 
 fn analyze_low_degree_vertices(diagram: &SphericalVoronoi) -> LowDegreeQualityStats {
     let num_vertices = diagram.num_vertices();
+    let diagram_vertices = diagram.vertices();
     if num_vertices == 0 {
         return LowDegreeQualityStats::default();
     }
@@ -371,7 +372,7 @@ fn analyze_low_degree_vertices(diagram: &SphericalVoronoi) -> LowDegreeQualitySt
     };
 
     let mut grid: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
-    for (i, v) in diagram.vertices.iter().enumerate() {
+    for (i, v) in diagram_vertices.iter().enumerate() {
         grid.entry(grid_key(v)).or_default().push(i);
     }
 
@@ -379,7 +380,7 @@ fn analyze_low_degree_vertices(diagram: &SphericalVoronoi) -> LowDegreeQualitySt
     let mut min_neighbor_distance = f32::MAX;
 
     for idx in low_degree {
-        let v = &diagram.vertices[idx];
+        let v = &diagram_vertices[idx];
         let (gx, gy, gz) = grid_key(v);
         let mut min_dist_sq = f32::MAX;
 
@@ -391,7 +392,7 @@ fn analyze_low_degree_vertices(diagram: &SphericalVoronoi) -> LowDegreeQualitySt
                             if j == idx {
                                 continue;
                             }
-                            let other = &diagram.vertices[j];
+                            let other = &diagram_vertices[j];
                             let d = (v.x - other.x).powi(2)
                                 + (v.y - other.y).powi(2)
                                 + (v.z - other.z).powi(2);

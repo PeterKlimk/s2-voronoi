@@ -6,7 +6,7 @@
 use glam::Vec3;
 use qhull_enhanced::Qh;
 
-use crate::{SphericalVoronoi, UnitVec3, VoronoiCell};
+use crate::{SphericalVoronoi, UnitVec3};
 use std::collections::HashMap;
 
 /// A triangular facet of the convex hull, with indices into the original point array.
@@ -155,10 +155,11 @@ pub fn compute_voronoi_qhull(points: &[Vec3]) -> SphericalVoronoi {
         .map(|&v| UnitVec3::new(v.x, v.y, v.z))
         .collect();
 
-    let mut cells = Vec::with_capacity(points.len());
     let mut cell_indices: Vec<u32> = Vec::new();
+    let mut cell_starts = Vec::with_capacity(points.len());
+    let mut cell_counts = Vec::with_capacity(points.len());
 
-    for (point_idx, point) in points.iter().enumerate() {
+    for point_idx in 0..points.len() {
         let facet_indices = point_to_facets.get(&point_idx).cloned().unwrap_or_default();
         let ordered = order_vertices_ccw(points[point_idx], &facet_indices, &vertices);
 
@@ -167,10 +168,17 @@ pub fn compute_voronoi_qhull(points: &[Vec3]) -> SphericalVoronoi {
             cell_indices.push(*idx as u32);
         }
         let count = ordered.len() as u16;
-        cells.push(VoronoiCell::new(start, count));
+        cell_starts.push(start);
+        cell_counts.push(count);
     }
 
-    SphericalVoronoi::from_parts(generators, voronoi_vertices, cells, cell_indices)
+    SphericalVoronoi::from_cells_and_indices(
+        generators,
+        voronoi_vertices,
+        cell_starts,
+        cell_counts,
+        cell_indices,
+    )
 }
 
 #[cfg(test)]

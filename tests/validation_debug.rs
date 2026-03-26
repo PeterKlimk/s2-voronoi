@@ -8,6 +8,8 @@ use std::collections::{HashMap, HashSet};
 fn analyze_missing_neighbor_edges(diagram: &SphericalVoronoi) {
     let num_vertices = diagram.num_vertices();
     let num_cells = diagram.num_cells();
+    let vertices = diagram.vertices();
+    let generators = diagram.generators();
 
     // Count vertex degrees
     let mut vertex_degree: Vec<u32> = vec![0; num_vertices];
@@ -26,11 +28,10 @@ fn analyze_missing_neighbor_edges(diagram: &SphericalVoronoi) {
 
     for (cell_idx, cell) in diagram.iter_cells().enumerate() {
         for &vi in cell.vertex_indices {
-            let v = diagram.vertices[vi as usize];
+            let v = vertices[vi as usize];
 
             // Find generators closest to this vertex (should be ~3 equidistant)
-            let mut dists: Vec<(usize, f32)> = diagram
-                .generators
+            let mut dists: Vec<(usize, f32)> = generators
                 .iter()
                 .enumerate()
                 .map(|(i, g)| {
@@ -63,11 +64,10 @@ fn analyze_missing_neighbor_edges(diagram: &SphericalVoronoi) {
             }
             d1_total += 1;
 
-            let v = diagram.vertices[vi as usize];
+            let v = vertices[vi as usize];
 
             // Find the 3 closest generators (the triplet A, B, C)
-            let mut dists: Vec<(usize, f32)> = diagram
-                .generators
+            let mut dists: Vec<(usize, f32)> = generators
                 .iter()
                 .enumerate()
                 .map(|(i, g)| {
@@ -119,6 +119,7 @@ fn analyze_missing_neighbor_edges(diagram: &SphericalVoronoi) {
 fn analyze_bad_vertex_edges(diagram: &SphericalVoronoi) {
     let num_vertices = diagram.num_vertices();
     let num_cells = diagram.num_cells();
+    let vertices = diagram.vertices();
 
     // Count how many cells each vertex appears in
     let mut vertex_degree: Vec<u32> = vec![0; num_vertices];
@@ -144,7 +145,7 @@ fn analyze_bad_vertex_edges(diagram: &SphericalVoronoi) {
             continue;
         }
 
-        let v = diagram.vertices[vi];
+        let v = vertices[vi];
         let mut min_edge_len = f32::MAX;
 
         for &cell_idx in &vertex_cells[vi] {
@@ -165,13 +166,13 @@ fn analyze_bad_vertex_edges(diagram: &SphericalVoronoi) {
             let prev_vi = cell.vertex_indices[(pos + n - 1) % n] as usize;
             let next_vi = cell.vertex_indices[(pos + 1) % n] as usize;
 
-            let prev_v = diagram.vertices[prev_vi];
+            let prev_v = vertices[prev_vi];
             let dist_prev =
                 ((v.x - prev_v.x).powi(2) + (v.y - prev_v.y).powi(2) + (v.z - prev_v.z).powi(2))
                     .sqrt();
             min_edge_len = min_edge_len.min(dist_prev);
 
-            let next_v = diagram.vertices[next_vi];
+            let next_v = vertices[next_vi];
             let dist_next =
                 ((v.x - next_v.x).powi(2) + (v.y - next_v.y).powi(2) + (v.z - next_v.z).powi(2))
                     .sqrt();
@@ -224,6 +225,7 @@ fn analyze_bad_vertex_edges(diagram: &SphericalVoronoi) {
 /// Tests multiple epsilon values and prints results.
 fn analyze_position_duplicates(diagram: &SphericalVoronoi) -> (usize, usize, usize, usize) {
     let num_vertices = diagram.num_vertices();
+    let vertices = diagram.vertices();
 
     // Count how many cells each vertex appears in
     let mut vertex_degree: Vec<u32> = vec![0; num_vertices];
@@ -260,7 +262,7 @@ fn analyze_position_duplicates(diagram: &SphericalVoronoi) -> (usize, usize, usi
     };
 
     let mut grid: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
-    for (i, v) in diagram.vertices.iter().enumerate() {
+    for (i, v) in vertices.iter().enumerate() {
         grid.entry(grid_key(v)).or_default().push(i);
     }
 
@@ -268,7 +270,7 @@ fn analyze_position_duplicates(diagram: &SphericalVoronoi) -> (usize, usize, usi
     let mut min_dists: Vec<(usize, u32, f32)> = Vec::with_capacity(low_degree.len());
 
     for &(idx, deg) in &low_degree {
-        let v = &diagram.vertices[idx];
+        let v = &vertices[idx];
         let (gx, gy, gz) = grid_key(v);
 
         let mut min_dist_sq = f32::MAX;
@@ -282,7 +284,7 @@ fn analyze_position_duplicates(diagram: &SphericalVoronoi) -> (usize, usize, usi
                             if j == idx {
                                 continue;
                             }
-                            let other = &diagram.vertices[j];
+                            let other = &vertices[j];
                             let d = (v.x - other.x).powi(2)
                                 + (v.y - other.y).powi(2)
                                 + (v.z - other.z).powi(2);

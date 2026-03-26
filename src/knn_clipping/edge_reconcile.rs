@@ -13,8 +13,8 @@
 use glam::Vec3;
 
 use super::live_dedup::EdgeRecord;
+use crate::diagram::VoronoiCell;
 use crate::knn_clipping::cell_build::VertexKey;
-use crate::VoronoiCell;
 
 #[inline]
 pub(super) fn unpack_edge(key: u64) -> (u32, u32) {
