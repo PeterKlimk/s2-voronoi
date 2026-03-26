@@ -3,10 +3,12 @@
 mod support;
 
 use s2_voronoi::{
-    compute, compute_with, compute_with_report, PreprocessMode, UnitVec3, VoronoiConfig,
-    VoronoiError,
+    compute, compute_with, compute_with_report, validation::validate, PreprocessMode, UnitVec3,
+    VoronoiConfig, VoronoiError,
 };
-use support::points::{fibonacci_sphere_points, hemisphere_points, random_sphere_points};
+use support::points::{
+    clustered_cap_points, fibonacci_sphere_points, hemisphere_points, random_sphere_points,
+};
 
 #[test]
 fn test_compute_basic() {
@@ -114,6 +116,44 @@ fn test_compute_with_report_surfaces_preprocess_outcome() {
         50
     );
     assert!(output.report.preprocess.threshold_used.is_some());
+}
+
+#[test]
+fn test_clustered_cap_tight_report_shows_default_preprocessing_merges_points() {
+    let points = clustered_cap_points(100, 0.0175, 42);
+
+    let output = compute_with_report(
+        &points,
+        VoronoiConfig {
+            preprocess_mode: PreprocessMode::MergeDensity,
+            ..VoronoiConfig::default()
+        },
+    )
+    .expect("clustered cap should still compute with default preprocessing");
+
+    assert_eq!(
+        output.report.preprocess.requested_mode,
+        PreprocessMode::MergeDensity
+    );
+    assert!(
+        output.report.preprocess.did_merge(),
+        "expected default preprocessing to merge close clustered-cap generators"
+    );
+    assert!(
+        output.report.preprocess.num_merged > 0,
+        "expected a nonzero clustered-cap merge count"
+    );
+    assert!(
+        output.report.preprocess.threshold_used.is_some(),
+        "expected density-based preprocessing to record a threshold"
+    );
+
+    let report = validate(&output.diagram);
+    assert!(
+        !report.is_strictly_valid(),
+        "current clustered-cap collapse regression should still be surfaced as invalid: {}",
+        report.headline()
+    );
 }
 
 #[test]

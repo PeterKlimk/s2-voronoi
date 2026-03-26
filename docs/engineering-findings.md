@@ -106,6 +106,33 @@ Desired direction:
   - near-degenerate shared-edge disagreement
   - panic-vs-error behavior
 
+### 6. Density-based preprocessing can degrade tight clustered-cap inputs that otherwise validate
+
+The default density-based preprocessing merges near-coincident generators before cell
+construction. On tight clustered-cap fixtures, that merge step can turn an otherwise strictly valid
+diagram into one with duplicate-cell collapse and related subdivision failures.
+
+Current evidence:
+
+- `tests/validation.rs::test_validation_rejects_duplicate_cell_collapse`
+- `tests/validation.rs::test_validation_clustered_cap_tight_without_preprocess_is_strictly_valid`
+- `tests/api.rs::test_clustered_cap_tight_report_shows_default_preprocessing_merges_points`
+
+Why this matters:
+
+- the default "robust" mode is not just changing the solved problem abstractly; it can materially
+  worsen structural validity on some clustered inputs
+- callers need observability and documentation around this tradeoff
+- future preprocessing heuristics should be judged against strict validation, not just successful
+  completion
+
+Desired direction:
+
+- keep preprocessing effects observable
+- revisit the density-based merge policy so it does not dominate small clustered regions so easily
+- treat preprocessing as a separate policy surface with its own correctness tradeoffs, not as a
+  transparent robustness improvement
+
 ## Working rules for new findings
 
 When adding a new item here:
