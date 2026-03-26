@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use crate::cube_grid::{DirectedNeighborBatchSource, DirectedNeighborStream, PackedQuery};
+use crate::cube_grid::{
+    DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream, PackedQuery,
+};
 use crate::policy::{KnnPolicy, TerminationPolicy};
 
 use super::{CellBuildError, CellFailure, CellOutputBuffer};
@@ -253,121 +255,163 @@ impl<'a, 'm, 'p, 's> CellBuildRunner<'a, 'm, 'p, 's> {
 
         while !self.terminated && !self.ctx.builder.is_failed() {
             let t_knn = crate::knn_clipping::timing::Timer::start();
-            let Some(batch) = stream.next_batch(&mut self.ctx.packed_chunk) else {
-                break;
+            let cursor_stage_before = stream.is_cursor_stage();
+            let frontier = stream.frontier(&mut self.ctx.packed_chunk);
+            let frontier_is_cursor = match frontier {
+                DirectedNeighborFrontier::ExactBatch(batch) => {
+                    batch.source == DirectedNeighborBatchSource::DirectedCursor
+                }
+                DirectedNeighborFrontier::UnknownButBounded { .. }
+                | DirectedNeighborFrontier::Exhausted => cursor_stage_before,
             };
-
-            match batch.source {
-                DirectedNeighborBatchSource::DirectedCursor => {
-                    self.used_knn = true;
-                    self.knn_stage = crate::knn_clipping::timing::KnnCellStage::DirectedCursor;
-                    self.knn_query_time += t_knn.elapsed();
-                }
-                DirectedNeighborBatchSource::PackedExpandR2 => {
-                    self.knn_stage = crate::knn_clipping::timing::KnnCellStage::PackedExpandR2;
-                }
-                DirectedNeighborBatchSource::PackedExhausted => {
-                    if self.ctx.builder.is_bounded()
-                        && self.ctx.builder.can_terminate(batch.unseen_bound)
-                    {
-                        self.terminated = true;
-                    }
-                    continue;
-                }
-                DirectedNeighborBatchSource::PackedChunk0
-                | DirectedNeighborBatchSource::PackedTail => {}
+            if frontier_is_cursor {
+                self.used_knn = true;
+                self.knn_stage = crate::knn_clipping::timing::KnnCellStage::DirectedCursor;
+                self.knn_query_time += t_knn.elapsed();
             }
 
-            let t_clip = crate::knn_clipping::timing::Timer::start();
-            for pos in 0..batch.n {
-                let neighbor_slot = self.ctx.packed_chunk[pos];
-                let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
-                if neighbor_idx == i {
-                    continue;
-                }
-
-                let should_clip = match batch.source {
-                    DirectedNeighborBatchSource::DirectedCursor => {
-                        self.ctx.attempted_neighbors.insert(neighbor_idx)
+            match frontier {
+                DirectedNeighborFrontier::ExactBatch(batch) => {
+                    if batch.source == DirectedNeighborBatchSource::PackedExpandR2 {
+                        self.knn_stage = crate::knn_clipping::timing::KnnCellStage::PackedExpandR2;
                     }
-                    DirectedNeighborBatchSource::PackedChunk0
-                    | DirectedNeighborBatchSource::PackedTail
-                    | DirectedNeighborBatchSource::PackedExpandR2 => {
-                        self.ctx.attempted_neighbors.mark(neighbor_idx);
-                        true
-                    }
-                    DirectedNeighborBatchSource::PackedExhausted => unreachable!(),
-                };
-                if !should_clip {
-                    continue;
-                }
 
-                self.last_neighbor_idx = Some(neighbor_idx);
-                self.last_neighbor_slot = Some(neighbor_slot);
-                self.last_batch_source = Some(batch.source);
-                self.last_clip_phase = "stream";
-
-                let neighbor = points[neighbor_idx];
-                let clip_result = match self.ctx.builder.clip_with_slot_result(
-                    neighbor_idx,
-                    neighbor_slot,
-                    neighbor,
-                ) {
-                    Ok(result) => result,
-                    Err(_) => break,
-                };
-
-                self.neighbors_processed += 1;
-
-                match batch.source {
-                    DirectedNeighborBatchSource::DirectedCursor => {
-                        if self.ctx.builder.is_bounded()
-                            && termination.should_check(self.neighbors_processed)
-                            && self.ctx.builder.can_terminate(batch.unseen_bound)
-                        {
-                            self.terminated = true;
-                            break;
+                    let t_clip = crate::knn_clipping::timing::Timer::start();
+                    for pos in 0..batch.n {
+                        let neighbor_slot = self.ctx.packed_chunk[pos];
+                        let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
+                        if neighbor_idx == i {
+                            continue;
                         }
-                    }
-                    DirectedNeighborBatchSource::PackedChunk0
-                    | DirectedNeighborBatchSource::PackedTail
-                    | DirectedNeighborBatchSource::PackedExpandR2 => {
-                        if self.ctx.builder.is_bounded()
-                            && clip_result
-                                == crate::knn_clipping::topo2d::types::ClipResult::Unchanged
-                        {
-                            let bound = if pos + 1 < batch.n {
-                                let next_slot = self.ctx.packed_chunk[pos + 1];
-                                let next = point_indices[next_slot as usize] as usize;
-                                points[i].dot(points[next])
-                            } else {
-                                batch.unseen_bound
-                            };
-                            if self.ctx.builder.can_terminate(bound) {
-                                self.terminated = true;
-                                break;
+
+                        let should_clip = match batch.source {
+                            DirectedNeighborBatchSource::DirectedCursor => {
+                                self.ctx.attempted_neighbors.insert(neighbor_idx)
+                            }
+                            DirectedNeighborBatchSource::PackedChunk0
+                            | DirectedNeighborBatchSource::PackedTail
+                            | DirectedNeighborBatchSource::PackedExpandR2 => {
+                                self.ctx.attempted_neighbors.mark(neighbor_idx);
+                                true
+                            }
+                        };
+                        if !should_clip {
+                            continue;
+                        }
+
+                        self.last_neighbor_idx = Some(neighbor_idx);
+                        self.last_neighbor_slot = Some(neighbor_slot);
+                        self.last_batch_source = Some(batch.source);
+                        self.last_clip_phase = "stream";
+
+                        let neighbor = points[neighbor_idx];
+                        let clip_result = match self.ctx.builder.clip_with_slot_result(
+                            neighbor_idx,
+                            neighbor_slot,
+                            neighbor,
+                        ) {
+                            Ok(result) => result,
+                            Err(_) => break,
+                        };
+
+                        self.neighbors_processed += 1;
+
+                        match batch.source {
+                            DirectedNeighborBatchSource::DirectedCursor => {
+                                if self.ctx.builder.is_bounded()
+                                    && termination.should_check(self.neighbors_processed)
+                                    && self.ctx.builder.can_terminate(batch.unseen_bound)
+                                {
+                                    self.terminated = true;
+                                    break;
+                                }
+                            }
+                            DirectedNeighborBatchSource::PackedChunk0
+                            | DirectedNeighborBatchSource::PackedTail
+                            | DirectedNeighborBatchSource::PackedExpandR2 => {
+                                if self.ctx.builder.is_bounded()
+                                    && clip_result
+                                        == crate::knn_clipping::topo2d::types::ClipResult::Unchanged
+                                {
+                                    let bound = if pos + 1 < batch.n {
+                                        let next_slot = self.ctx.packed_chunk[pos + 1];
+                                        let next = point_indices[next_slot as usize] as usize;
+                                        points[i].dot(points[next])
+                                    } else {
+                                        batch.unseen_bound
+                                    };
+                                    if self.ctx.builder.can_terminate(bound) {
+                                        self.terminated = true;
+                                        break;
+                                    }
+                                }
                             }
                         }
                     }
-                    DirectedNeighborBatchSource::PackedExhausted => unreachable!(),
-                }
-            }
-            self.clipping_time += t_clip.elapsed();
+                    self.clipping_time += t_clip.elapsed();
+                    stream.advance_frontier();
 
-            if !self.terminated && !self.ctx.builder.is_failed() && self.ctx.builder.is_bounded() {
-                match batch.source {
-                    DirectedNeighborBatchSource::PackedChunk0
-                    | DirectedNeighborBatchSource::PackedTail
-                    | DirectedNeighborBatchSource::PackedExpandR2 => {
-                        let frontier_bound =
-                            stream.frontier_dot_upper_bound().unwrap_or(batch.unseen_bound);
-                        if self.ctx.builder.can_terminate(frontier_bound) {
-                            self.terminated = true;
+                    if !self.terminated
+                        && !self.ctx.builder.is_failed()
+                        && self.ctx.builder.is_bounded()
+                    {
+                        let can_check_cursor = self
+                            .request
+                            .termination
+                            .should_check(self.neighbors_processed);
+                        let t_knn = crate::knn_clipping::timing::Timer::start();
+                        let cursor_stage_before = stream.is_cursor_stage();
+                        let frontier = stream.frontier(&mut self.ctx.packed_chunk);
+                        let frontier_is_cursor = match frontier {
+                            DirectedNeighborFrontier::ExactBatch(batch) => {
+                                batch.source == DirectedNeighborBatchSource::DirectedCursor
+                            }
+                            DirectedNeighborFrontier::UnknownButBounded { .. }
+                            | DirectedNeighborFrontier::Exhausted => cursor_stage_before,
+                        };
+                        if frontier_is_cursor {
+                            self.used_knn = true;
+                            self.knn_stage =
+                                crate::knn_clipping::timing::KnnCellStage::DirectedCursor;
+                            self.knn_query_time += t_knn.elapsed();
+                        }
+
+                        match frontier {
+                            DirectedNeighborFrontier::ExactBatch(batch) => {
+                                let can_check = batch.source
+                                    != DirectedNeighborBatchSource::DirectedCursor
+                                    || can_check_cursor;
+                                if can_check && self.ctx.builder.can_terminate(batch.first_dot) {
+                                    self.terminated = true;
+                                }
+                            }
+                            DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
+                                let can_check = !stream.is_cursor_stage() || can_check_cursor;
+                                if can_check && self.ctx.builder.can_terminate(dot_upper_bound) {
+                                    self.terminated = true;
+                                } else {
+                                    stream.advance_frontier();
+                                }
+                            }
+                            DirectedNeighborFrontier::Exhausted => {
+                                self.terminated = true;
+                            }
                         }
                     }
-                    DirectedNeighborBatchSource::PackedExhausted
-                    | DirectedNeighborBatchSource::DirectedCursor => {}
                 }
+                DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
+                    let can_check = !stream.is_cursor_stage()
+                        || termination.should_check(self.neighbors_processed);
+                    if self.ctx.builder.is_bounded()
+                        && can_check
+                        && self.ctx.builder.can_terminate(dot_upper_bound)
+                    {
+                        self.terminated = true;
+                    } else {
+                        stream.advance_frontier();
+                    }
+                }
+                DirectedNeighborFrontier::Exhausted => break,
             }
         }
 

@@ -12,15 +12,34 @@ pub(crate) enum DirectedNeighborBatchSource {
     PackedChunk0,
     PackedTail,
     PackedExpandR2,
-    PackedExhausted,
     DirectedCursor,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DirectedNeighborBatch {
     pub(crate) n: usize,
+    pub(crate) first_dot: f32,
     pub(crate) unseen_bound: f32,
     pub(crate) source: DirectedNeighborBatchSource,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum DirectedNeighborFrontier {
+    ExactBatch(DirectedNeighborBatch),
+    UnknownButBounded { dot_upper_bound: f32 },
+    Exhausted,
+}
+
+#[derive(Debug, Clone)]
+enum CachedFrontier {
+    ExactBatch {
+        batch: DirectedNeighborBatch,
+        slots: Vec<u32>,
+    },
+    UnknownButBounded {
+        dot_upper_bound: f32,
+    },
+    Exhausted,
 }
 
 pub(crate) struct PackedQuery<'a, 'g> {
@@ -60,10 +79,11 @@ enum StreamStage {
 
 pub(crate) struct DirectedNeighborStream<'a, 'm, 'p> {
     grid: &'a CubeMapGrid,
+    query: Vec3,
     cursor: DirectedNoKCursor<'a, 'm>,
     packed: Option<PackedQuery<'p, 'm>>,
     stage: StreamStage,
-    frontier_bound: Option<f32>,
+    cached_frontier: Option<CachedFrontier>,
     did_packed: bool,
     packed_tail_used: bool,
     packed_expand_r2_used: bool,
@@ -73,6 +93,14 @@ pub(crate) struct DirectedNeighborStream<'a, 'm, 'p> {
 }
 
 impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
+    #[inline]
+    fn slot_dot(&self, slot: u32) -> f32 {
+        let slot = slot as usize;
+        self.query.x * self.grid.cell_points_x[slot]
+            + self.query.y * self.grid.cell_points_y[slot]
+            + self.query.z * self.grid.cell_points_z[slot]
+    }
+
     pub(crate) fn new(
         grid: &'a CubeMapGrid,
         points: &'a [Vec3],
@@ -91,10 +119,11 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
 
         Self {
             grid,
+            query: points[query_idx],
             cursor,
             packed,
             stage,
-            frontier_bound: None,
+            cached_frontier: None,
             did_packed,
             packed_tail_used: false,
             packed_expand_r2_used: false,
@@ -104,8 +133,23 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
         }
     }
 
-    pub(crate) fn next_batch(&mut self, out: &mut Vec<u32>) -> Option<DirectedNeighborBatch> {
+    pub(crate) fn frontier(&mut self, out: &mut Vec<u32>) -> DirectedNeighborFrontier {
         out.clear();
+
+        if let Some(cached) = &self.cached_frontier {
+            match cached {
+                CachedFrontier::ExactBatch { batch, slots } => {
+                    out.extend_from_slice(slots);
+                    return DirectedNeighborFrontier::ExactBatch(*batch);
+                }
+                CachedFrontier::UnknownButBounded { dot_upper_bound } => {
+                    return DirectedNeighborFrontier::UnknownButBounded {
+                        dot_upper_bound: *dot_upper_bound,
+                    };
+                }
+                CachedFrontier::Exhausted => return DirectedNeighborFrontier::Exhausted,
+            }
+        }
 
         loop {
             match self.stage {
@@ -142,75 +186,143 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
                             .next_chunk(packed.query_index, stage, k, out, packed.timings)
                     {
                         out.truncate(chunk.n);
-                        self.frontier_bound = Some(chunk.unseen_bound);
-                        return Some(DirectedNeighborBatch {
+                        let first_dot = if chunk.n > 0 {
+                            self.slot_dot(out[0])
+                        } else {
+                            -1.0
+                        };
+                        let batch = DirectedNeighborBatch {
                             n: chunk.n,
+                            first_dot,
                             unseen_bound: chunk.unseen_bound,
                             source,
+                        };
+                        self.cached_frontier = Some(CachedFrontier::ExactBatch {
+                            batch,
+                            slots: out.clone(),
                         });
+                        return DirectedNeighborFrontier::ExactBatch(batch);
                     }
 
-                    if self.stage == StreamStage::PackedChunk0
+                    let dot_upper_bound = if self.stage == StreamStage::PackedChunk0
                         && packed.scratch.tail_possible(packed.query_index)
                     {
-                        packed.scratch.ensure_tail_directed_for(
-                            packed.query_index,
-                            self.grid,
-                            packed.group.slot_gen_map(),
-                            packed.group.local_shift(),
-                            packed.group.local_mask(),
-                            packed.timings,
-                        );
-                        self.stage = StreamStage::PackedTail;
-                        self.packed_tail_used = true;
-                        continue;
-                    }
-
-                    if self.stage != StreamStage::PackedExpandR2
-                        && packed.policy.expand_r2_enabled()
-                        && packed.scratch.ensure_expand_r2_band_directed_for(
-                            packed.query_index,
-                            self.grid,
-                            packed.group.slot_gen_map(),
-                            packed.group.local_shift(),
-                            packed.group.local_mask(),
-                            packed.timings,
-                        )
-                    {
-                        self.stage = StreamStage::PackedExpandR2;
-                        self.packed_expand_r2_used = true;
-                        continue;
-                    }
-
-                    self.packed_safe_exhausted = true;
-                    self.stage = StreamStage::Cursor;
-                    let unseen_bound = packed.scratch.resume_security(packed.query_index);
-                    self.frontier_bound = Some(unseen_bound);
-                    return Some(DirectedNeighborBatch {
-                        n: 0,
-                        unseen_bound,
-                        source: DirectedNeighborBatchSource::PackedExhausted,
-                    });
+                        packed.scratch.tail_upper_bound(packed.query_index)
+                    } else {
+                        packed.scratch.resume_security(packed.query_index)
+                    };
+                    self.cached_frontier =
+                        Some(CachedFrontier::UnknownButBounded { dot_upper_bound });
+                    return DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound };
                 }
                 StreamStage::Cursor => {
                     self.used_cursor = true;
                     if let Some(slot) = self.cursor.pop_next_proven_slot() {
                         let unseen_bound = self.cursor.remaining_dot_upper_bound();
-                        self.frontier_bound = Some(unseen_bound);
                         out.push(slot);
-                        return Some(DirectedNeighborBatch {
+                        let batch = DirectedNeighborBatch {
                             n: 1,
+                            first_dot: self.slot_dot(slot),
                             unseen_bound,
                             source: DirectedNeighborBatchSource::DirectedCursor,
+                        };
+                        self.cached_frontier = Some(CachedFrontier::ExactBatch {
+                            batch,
+                            slots: vec![slot],
                         });
+                        return DirectedNeighborFrontier::ExactBatch(batch);
                     }
 
                     self.knn_exhausted = self.cursor.is_exhausted();
-                    self.stage = StreamStage::Done;
-                    self.frontier_bound = None;
-                    return None;
+                    if self.knn_exhausted {
+                        self.stage = StreamStage::Done;
+                        self.cached_frontier = Some(CachedFrontier::Exhausted);
+                        return DirectedNeighborFrontier::Exhausted;
+                    }
+
+                    let dot_upper_bound = self.cursor.remaining_dot_upper_bound();
+                    self.cached_frontier =
+                        Some(CachedFrontier::UnknownButBounded { dot_upper_bound });
+                    return DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound };
                 }
-                StreamStage::Done => return None,
+                StreamStage::Done => {
+                    self.cached_frontier = Some(CachedFrontier::Exhausted);
+                    return DirectedNeighborFrontier::Exhausted;
+                }
+            }
+        }
+    }
+
+    pub(crate) fn advance_frontier(&mut self) {
+        let cached = self.cached_frontier.take();
+        match cached {
+            Some(CachedFrontier::ExactBatch { .. }) => {}
+            Some(CachedFrontier::UnknownButBounded { .. }) => match self.stage {
+                StreamStage::PackedChunk0
+                | StreamStage::PackedTail
+                | StreamStage::PackedExpandR2 => {
+                    self.advance_packed_stage();
+                }
+                StreamStage::Cursor | StreamStage::Done => {}
+            },
+            Some(CachedFrontier::Exhausted) | None => {}
+        }
+    }
+
+    fn advance_packed_stage(&mut self) {
+        let packed = self
+            .packed
+            .as_mut()
+            .expect("packed stage requires packed query state");
+
+        if self.stage == StreamStage::PackedChunk0
+            && packed.scratch.tail_possible(packed.query_index)
+        {
+            packed.scratch.ensure_tail_directed_for(
+                packed.query_index,
+                self.grid,
+                packed.group.slot_gen_map(),
+                packed.group.local_shift(),
+                packed.group.local_mask(),
+                packed.timings,
+            );
+            self.stage = StreamStage::PackedTail;
+            self.packed_tail_used = true;
+            return;
+        }
+
+        if self.stage != StreamStage::PackedExpandR2
+            && packed.policy.expand_r2_enabled()
+            && packed.scratch.ensure_expand_r2_band_directed_for(
+                packed.query_index,
+                self.grid,
+                packed.group.slot_gen_map(),
+                packed.group.local_shift(),
+                packed.group.local_mask(),
+                packed.timings,
+            )
+        {
+            self.stage = StreamStage::PackedExpandR2;
+            self.packed_expand_r2_used = true;
+            return;
+        }
+
+        self.packed_safe_exhausted = true;
+        self.stage = StreamStage::Cursor;
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn next_batch(&mut self, out: &mut Vec<u32>) -> Option<DirectedNeighborBatch> {
+        loop {
+            match self.frontier(out) {
+                DirectedNeighborFrontier::ExactBatch(batch) => {
+                    self.advance_frontier();
+                    return Some(batch);
+                }
+                DirectedNeighborFrontier::UnknownButBounded { .. } => {
+                    self.advance_frontier();
+                }
+                DirectedNeighborFrontier::Exhausted => return None,
             }
         }
     }
@@ -241,8 +353,8 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
     }
 
     #[inline]
-    pub(crate) fn frontier_dot_upper_bound(&self) -> Option<f32> {
-        self.frontier_bound
+    pub(crate) fn is_cursor_stage(&self) -> bool {
+        self.stage == StreamStage::Cursor
     }
 }
 
@@ -395,7 +507,6 @@ mod tests {
                                     seen[neighbor_idx] = true;
                                     true
                                 }
-                                DirectedNeighborBatchSource::PackedExhausted => false,
                             };
                             if should_emit {
                                 emitted.push(slot);
@@ -415,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn frontier_bound_matches_last_batch_without_advancing_stage() {
+    fn repeated_frontier_calls_do_not_advance_stage() {
         const N: usize = 320;
         const RES: usize = 10;
 
@@ -465,17 +576,172 @@ mod tests {
             qi,
             PackedNeighborPolicy::for_point_count(points.len(), true),
         );
-        let mut stream =
-            DirectedNeighborStream::new(&grid, &points, query_idx, &mut grid_scratch, ctx, Some(packed));
+        let mut stream = DirectedNeighborStream::new(
+            &grid,
+            &points,
+            query_idx,
+            &mut grid_scratch,
+            ctx,
+            Some(packed),
+        );
 
         let mut batch = Vec::new();
-        let result = stream
-            .next_batch(&mut batch)
-            .expect("expected first packed batch");
+        let first = stream.frontier(&mut batch);
+        let first_slots = batch.clone();
+        let second = stream.frontier(&mut batch);
         assert_eq!(
-            stream.frontier_dot_upper_bound(),
-            Some(result.unseen_bound),
-            "frontier bound should be available without advancing the stream"
+            std::mem::discriminant(&first),
+            std::mem::discriminant(&second),
+            "repeated frontier call should return the same frontier kind without advancing"
         );
+        assert_eq!(
+            batch, first_slots,
+            "repeated frontier call should return the same exact batch without advancing"
+        );
+
+        stream.advance_frontier();
+        let third = stream.frontier(&mut batch);
+        match (first, third) {
+            (
+                DirectedNeighborFrontier::ExactBatch(first_batch),
+                DirectedNeighborFrontier::ExactBatch(third_batch),
+            ) => {
+                assert!(
+                    third_batch.first_dot <= first_batch.unseen_bound + 1e-6,
+                    "advanced frontier exact batch should not outrank previous unseen bound"
+                );
+            }
+            (
+                DirectedNeighborFrontier::ExactBatch(first_batch),
+                DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound },
+            ) => {
+                assert!(
+                    dot_upper_bound <= first_batch.unseen_bound + 1e-6,
+                    "advanced frontier bound should not exceed previous unseen bound"
+                );
+            }
+            (DirectedNeighborFrontier::ExactBatch(_), DirectedNeighborFrontier::Exhausted) => {}
+            _ => panic!("expected initial frontier to be an exact batch"),
+        }
+    }
+
+    #[test]
+    fn frontier_certificates_remain_conservative_against_bruteforce() {
+        const N: usize = 320;
+        const RES: usize = 10;
+
+        for &seed in &[5u64, 29, 777] {
+            let points = random_unit_points(N, seed);
+            let grid = CubeMapGrid::new(&points, RES);
+            let cell = fullest_cell(&grid);
+            let start = grid.cell_offsets()[cell] as usize;
+            let end = grid.cell_offsets()[cell + 1] as usize;
+            let queries: Vec<u32> = (start..end).map(|slot| slot as u32).collect();
+            let query_locals = queries.clone();
+            let mut slot_gen_map = vec![0u32; points.len()];
+            for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
+                *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
+            }
+
+            let group = DirectedCellGroup::new(
+                cell,
+                QUERY_BIN,
+                &queries,
+                &query_locals,
+                &slot_gen_map,
+                LOCAL_SHIFT,
+                LOCAL_MASK,
+            );
+            for &expand_r2_enabled in &[false, true] {
+                let mut packed_scratch = PackedKnnCellScratch::new();
+                let mut packed_timings = PackedKnnTimings::default();
+                assert_eq!(
+                    packed_scratch.prepare_group_directed(&grid, group, &mut packed_timings),
+                    PackedKnnCellStatus::Ok
+                );
+
+                for qi in 0..queries.len() {
+                    let query_slot = queries[qi];
+                    let query_idx = grid.point_indices()[query_slot as usize] as usize;
+                    let query_local = query_locals[qi];
+                    let ctx = DirectedCtx::new(
+                        QUERY_BIN,
+                        query_local,
+                        &slot_gen_map,
+                        LOCAL_SHIFT,
+                        LOCAL_MASK,
+                    );
+                    let mut grid_scratch = grid.make_scratch();
+                    let packed = PackedQuery::new(
+                        &mut packed_scratch,
+                        &mut packed_timings,
+                        group,
+                        qi,
+                        PackedNeighborPolicy::for_point_count(points.len(), expand_r2_enabled),
+                    );
+                    let mut stream = DirectedNeighborStream::new(
+                        &grid,
+                        &points,
+                        query_idx,
+                        &mut grid_scratch,
+                        ctx,
+                        Some(packed),
+                    );
+
+                    let expected =
+                        directed_bruteforce_slots(&grid, &points, query_idx, query_local);
+                    let mut seen = vec![false; points.len()];
+                    let mut batch = Vec::new();
+
+                    loop {
+                        let best_unseen_dot = expected
+                            .iter()
+                            .find_map(|&slot| {
+                                let neighbor_idx = grid.point_indices()[slot as usize] as usize;
+                                (!seen[neighbor_idx])
+                                    .then(|| points[query_idx].dot(points[neighbor_idx]))
+                            })
+                            .unwrap_or(-1.0);
+                        match stream.frontier(&mut batch) {
+                            DirectedNeighborFrontier::ExactBatch(result) => {
+                                assert!(
+                                    result.first_dot + 1e-6 >= best_unseen_dot,
+                                    "frontier exact batch first dot should cover the best unseen neighbor"
+                                );
+                                for &slot in &batch[..result.n] {
+                                    let neighbor_idx = grid.point_indices()[slot as usize] as usize;
+                                    match result.source {
+                                        DirectedNeighborBatchSource::DirectedCursor => {
+                                            seen[neighbor_idx] = true;
+                                        }
+                                        DirectedNeighborBatchSource::PackedChunk0
+                                        | DirectedNeighborBatchSource::PackedTail
+                                        | DirectedNeighborBatchSource::PackedExpandR2 => {
+                                            seen[neighbor_idx] = true;
+                                        }
+                                    }
+                                }
+                                stream.advance_frontier();
+                            }
+                            DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
+                                assert!(
+                                    best_unseen_dot <= dot_upper_bound + 1e-6,
+                                    "frontier bound underestimated best unseen neighbor for seed={seed}, qi={qi}, expand_r2_enabled={expand_r2_enabled}"
+                                );
+                                stream.advance_frontier();
+                            }
+                            DirectedNeighborFrontier::Exhausted => {
+                                assert_eq!(
+                                    seen.iter().filter(|seen| **seen).count(),
+                                    expected.len(),
+                                    "frontier exhausted before emitting all neighbors for seed={seed}, qi={qi}, expand_r2_enabled={expand_r2_enabled}"
+                                );
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

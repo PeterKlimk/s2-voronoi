@@ -1105,6 +1105,11 @@ impl PackedKnnCellScratch {
     pub fn tail_possible(&self, qi: usize) -> bool {
         self.tail_possible.get(qi).copied().unwrap_or(false)
     }
+
+    #[inline]
+    pub fn tail_upper_bound(&self, qi: usize) -> f32 {
+        self.thresholds[qi]
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
