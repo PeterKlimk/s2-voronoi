@@ -54,7 +54,7 @@ impl Default for TerminationConfig {
         Self {
             check_start: DEFAULT_TERMINATION_CHECK_START,
             check_step: DEFAULT_TERMINATION_CHECK_STEP,
-            packed_expand_r2: false,
+            packed_expand_r2: true,
             max_k_cap: None,
         }
     }

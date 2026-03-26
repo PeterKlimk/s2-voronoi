@@ -26,7 +26,7 @@ Add an optional, cold-path packed-kNN ring expansion that runs only when a query
 
   ### Public knob (runtime)
 
-  - Add to VoronoiConfig (default false):
+  - Add to VoronoiConfig (default true):
       - packed_knn_expand_r2: bool
   - Wire it into knn_clipping build path by extending internal TerminationConfig (still internal to crate since knn_clipping is pub(crate)), or by passing a separate internal flag down into live_dedup::build_cells_sharded_live_dedup.
 
@@ -209,7 +209,7 @@ Modify `DirectedNeighborStream`:
       - Total time
       - Packed timings + count of expansions
       - Resumable kNN time reduction
-  - Ship with default packed_knn_expand_r2 = false.
+  - Ship with default packed_knn_expand_r2 = true.
   - If results are positive, consider a follow-up plan:
       - Group-triggered expansion when multiple queries in a cell fail r=1, to amortize the build.
 
@@ -217,5 +217,5 @@ Modify `DirectedNeighborStream`:
 
   - First implementation is only r=2 band expansion.
   - Trigger is per-query only, and only after r=1 packed is exhausted and clipping is still unproven.
-  - Controlled via a runtime knob on VoronoiConfig, default false.
+  - Controlled via a runtime knob on VoronoiConfig, default true.
   - If any expansion step becomes “too big” (candidate cap exceeded or security2 unavailable), the system falls back to resumable kNN; correctness does not depend on expansion.
