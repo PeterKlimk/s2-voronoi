@@ -382,9 +382,15 @@ pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::knn_clipping::edge_reconcile::{
+        edge_segments_for_neighbor, reconcile_unresolved_edges,
+    };
+    use crate::knn_clipping::live_dedup::binning::BinAssignment;
     use crate::knn_clipping::live_dedup::packed::pack_edge;
     use crate::knn_clipping::live_dedup::shard::ShardState;
-    use crate::knn_clipping::live_dedup::types::EdgeCheckOverflow;
+    use crate::knn_clipping::live_dedup::types::{EdgeCheckOverflow, LocalId};
+    use crate::knn_clipping::live_dedup::{EdgeRecord, ShardedCellsData};
+    use std::collections::BTreeSet;
 
     fn bin(value: usize) -> BinId {
         BinId::from_usize(value)
@@ -490,5 +496,120 @@ mod tests {
 
         assert_eq!(unresolved.len(), 1);
         assert_eq!(unresolved[0].key, edge_key);
+    }
+
+    #[test]
+    fn assembly_then_reconcile_handles_overflow_fallback_and_unresolved_edge() {
+        let mut shard0 = ShardState::new(3);
+        let mut shard1 = ShardState::new(3);
+
+        shard0.output.vertices = vec![
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ];
+        shard0.output.vertex_keys = vec![[0, 1, 2], [0, 1, 3], [0, 2, 3]];
+        shard0.output.cell_indices = vec![
+            pack_ref(bin(0), 0),
+            pack_ref(bin(0), 1),
+            pack_ref(bin(0), 2),
+        ];
+        shard0.output.set_cell_start(LocalId::from_usize(0), 0);
+        shard0.output.set_cell_count(LocalId::from_usize(0), 3);
+
+        shard1.output.vertices = vec![
+            Vec3::new(1.0 + 1.0e-5, 2.0e-6, 0.0),
+            Vec3::new(2.0e-6, 1.0 + 1.0e-5, 0.0),
+        ];
+        shard1.output.vertex_keys = vec![[0, 1, 4], [0, 1, 5]];
+        shard1.output.cell_indices = vec![pack_ref(bin(1), 0), pack_ref(bin(1), 1), DEFERRED];
+        shard1.output.set_cell_start(LocalId::from_usize(0), 0);
+        shard1.output.set_cell_count(LocalId::from_usize(0), 3);
+        shard1.output.deferred.push(DeferredSlot {
+            key: [0, 4, 5],
+            pos: Vec3::new(-1.0, 0.0, 0.0),
+            source_bin: bin(1),
+            source_slot: 2,
+        });
+        let edge_key = pack_edge(0, 1);
+        shard0.output.edge_check_overflow.push(EdgeCheckOverflow {
+            key: edge_key,
+            side: 0,
+            source_bin: bin(0),
+            thirds: [2, 3],
+            indices: [0, 1],
+            slots: [0, 1],
+        });
+        shard1.output.edge_check_overflow.push(EdgeCheckOverflow {
+            key: edge_key,
+            side: 1,
+            source_bin: bin(1),
+            thirds: [9, 8],
+            indices: [0, 1],
+            slots: [0, 1],
+        });
+
+        let assignment = BinAssignment {
+            generator_bin: vec![bin(0), bin(1), bin(0), bin(0), bin(1), bin(1)],
+            global_to_local: vec![
+                LocalId::from_usize(0),
+                LocalId::from_usize(0),
+                LocalId::from_usize(1),
+                LocalId::from_usize(2),
+                LocalId::from_usize(1),
+                LocalId::from_usize(2),
+            ],
+            slot_gen_map: Vec::new(),
+            local_shift: 0,
+            local_mask: 0,
+            bin_generators: vec![vec![0, 2, 3], vec![1, 4, 5]],
+            num_bins: 2,
+        };
+        let sharded = ShardedCellsData {
+            assignment,
+            shards: vec![shard0, shard1],
+            cell_sub: crate::knn_clipping::timing::CellSubAccum::new(),
+        };
+
+        let assembled = assemble_sharded_live_dedup(sharded);
+        assert_eq!(assembled.unresolved_edges.len(), 1);
+        assert_eq!(assembled.unresolved_edges[0].key, edge_key);
+        assert_eq!(assembled.cells.len(), 6);
+        assert_eq!(assembled.cells[0].vertex_count(), 3);
+        assert_eq!(assembled.cells[1].vertex_count(), 3);
+
+        let cell1_start = assembled.cells[1].vertex_start();
+        let cell1_indices = &assembled.cell_indices[cell1_start..cell1_start + 3];
+        let fallback_global = cell1_indices[2] as usize;
+        assert_eq!(
+            assembled.vertex_keys[fallback_global],
+            [0, 4, 5],
+            "deferred slot should be patched through fallback ownership before reconciliation"
+        );
+
+        let reconcile_input: Vec<EdgeRecord> = assembled
+            .unresolved_edges
+            .iter()
+            .map(|edge| EdgeRecord { key: edge.key })
+            .collect();
+        let (cells, cell_indices) = reconcile_unresolved_edges(
+            &reconcile_input,
+            &assembled.vertices,
+            &assembled.cells,
+            &assembled.cell_indices,
+            &assembled.vertex_keys,
+        )
+        .expect("expected unresolved shared-edge mismatch to be reconciled");
+
+        let seg_a = edge_segments_for_neighbor(0, 1, &cells, &cell_indices, &assembled.vertex_keys);
+        let seg_b = edge_segments_for_neighbor(1, 0, &cells, &cell_indices, &assembled.vertex_keys);
+        assert_eq!(seg_a.len(), 1);
+        assert_eq!(seg_b.len(), 1);
+        let set_a = BTreeSet::from([seg_a[0].0, seg_a[0].1]);
+        let set_b = BTreeSet::from([seg_b[0].0, seg_b[0].1]);
+        assert_eq!(
+            set_a, set_b,
+            "post-assembly reconciliation should make both cells share the same edge endpoints"
+        );
     }
 }
