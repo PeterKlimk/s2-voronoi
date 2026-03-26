@@ -149,9 +149,28 @@ impl PreprocessReport {
 }
 
 /// Observable per-run report for Voronoi computation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ComputeReport {
     pub preprocess: PreprocessReport,
+    /// Strict validation of the returned public diagram.
+    pub returned_validation: validation::ValidationReport,
+    /// Strict validation of the effective preprocessed diagram, when preprocessing
+    /// changed the solved generator set.
+    pub effective_validation: Option<validation::ValidationReport>,
+}
+
+impl ComputeReport {
+    /// Preferred strict validation view for this computation.
+    ///
+    /// When preprocessing merged generators, this returns the validation result
+    /// for the effective diagram actually solved by the backend. Otherwise it
+    /// returns the validation result for the returned diagram.
+    #[inline]
+    pub fn preferred_validation(&self) -> &validation::ValidationReport {
+        self.effective_validation
+            .as_ref()
+            .unwrap_or(&self.returned_validation)
+    }
 }
 
 /// Output of `compute_with_report`.
@@ -203,10 +222,22 @@ pub fn compute_with<P: UnitVec3Like>(
     points: &[P],
     config: VoronoiConfig,
 ) -> Result<SphericalVoronoi, VoronoiError> {
-    Ok(compute_with_report(points, config)?.diagram)
+    use glam::Vec3;
+
+    if points.len() < 4 {
+        return Err(VoronoiError::InsufficientPoints(points.len()));
+    }
+
+    let vec3_points: Vec<Vec3> = points
+        .iter()
+        .map(|p| Vec3::new(p.x(), p.y(), p.z()))
+        .collect();
+
+    knn_clipping::compute_voronoi_knn_clipping_with_config_owned(vec3_points, &config)
 }
 
-/// Compute a spherical Voronoi diagram and return observable preprocessing metadata.
+/// Compute a spherical Voronoi diagram and return observable preprocessing and
+/// validation metadata.
 pub fn compute_with_report<P: UnitVec3Like>(
     points: &[P],
     config: VoronoiConfig,
@@ -224,5 +255,5 @@ pub fn compute_with_report<P: UnitVec3Like>(
         .collect();
 
     // Call knn_clipping backend
-    knn_clipping::compute_voronoi_knn_clipping_with_config_owned(vec3_points, &config)
+    knn_clipping::compute_voronoi_knn_clipping_with_report_owned(vec3_points, &config)
 }

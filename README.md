@@ -56,7 +56,14 @@ for cell in diagram.iter_cells() {
   - `PreprocessMode::Disabled`: do not merge
 - `termination_max_k`: cap k growth if termination fallback keeps requesting neighbors.
 
-`compute_with_report` exposes whether preprocessing actually merged generators and remapped cells.
+`compute_with_report` exposes:
+- whether preprocessing actually merged generators and remapped cells
+- strict validation of the returned diagram
+- when preprocessing changed the solved generator set, strict validation of the effective diagram
+  actually solved by the backend
+
+If preprocessing is enabled and merges occur, `report.preferred_validation()` is usually the
+validation result you want first; it selects effective validation when available.
 
 ## Features
 

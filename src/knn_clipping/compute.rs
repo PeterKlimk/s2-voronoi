@@ -19,11 +19,11 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     points: Vec<Vec3>,
     termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
-) -> Result<ComputeOutput, crate::VoronoiError> {
+) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     let mut tb = TimingBuilder::new();
 
     let t = Timer::start();
-    let (effective_points, merge_result, preprocess_report) =
+    let (effective_points, merge_result, _preprocess_report) =
         preprocess_effective_points(&points, preprocess_mode);
     tb.set_preprocess(t.elapsed());
 
@@ -67,15 +67,22 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     let timings = tb.finish();
     timings.report(diagram.num_cells());
 
-    Ok(ComputeOutput {
-        diagram,
-        report: ComputeReport {
-            preprocess: preprocess_report,
-        },
-    })
+    Ok(diagram)
 }
 
 pub fn compute_voronoi_knn_clipping_with_config_owned(
+    points: Vec<Vec3>,
+    config: &VoronoiConfig,
+) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
+    let termination = TerminationConfig {
+        packed_expand_r2: config.packed_knn_expand_r2,
+        max_k_cap: config.termination_max_k,
+        ..Default::default()
+    };
+    compute_voronoi_knn_clipping_owned_core(points, termination, config.preprocess_mode)
+}
+
+pub fn compute_voronoi_knn_clipping_with_report_owned(
     points: Vec<Vec3>,
     config: &VoronoiConfig,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
@@ -84,7 +91,81 @@ pub fn compute_voronoi_knn_clipping_with_config_owned(
         max_k_cap: config.termination_max_k,
         ..Default::default()
     };
-    compute_voronoi_knn_clipping_owned_core(points, termination, config.preprocess_mode)
+    compute_voronoi_knn_clipping_report_core(points, termination, config.preprocess_mode)
+}
+
+fn compute_voronoi_knn_clipping_report_core(
+    points: Vec<Vec3>,
+    termination: TerminationConfig,
+    preprocess_mode: PreprocessMode,
+) -> Result<ComputeOutput, crate::VoronoiError> {
+    let mut tb = TimingBuilder::new();
+
+    let t = Timer::start();
+    let (effective_points, merge_result, preprocess_report) =
+        preprocess_effective_points(&points, preprocess_mode);
+    tb.set_preprocess(t.elapsed());
+
+    let effective_points_ref: &[Vec3] = match &effective_points {
+        Some(v) => v.as_slice(),
+        None => points.as_slice(),
+    };
+
+    let grid = build_query_grid(effective_points_ref, &mut tb);
+    let sharded = construct_cell_shards(effective_points_ref, &grid, termination, &mut tb)?;
+    let assembled = assemble_shards(sharded, &mut tb);
+    let live_dedup::AssemblyResult {
+        vertices,
+        vertex_keys,
+        unresolved_edges,
+        cells,
+        cell_indices,
+        dedup_sub: _,
+    } = assembled;
+    let (eff_cells, eff_cell_indices) = reconcile_edges(
+        &vertices,
+        &vertex_keys,
+        &unresolved_edges,
+        cells,
+        cell_indices,
+        &mut tb,
+    );
+
+    let effective_validation = if merge_result.is_some() {
+        let effective_diagram = crate::SphericalVoronoi::from_raw_parts(
+            effective_points_ref.to_vec(),
+            vertices.clone(),
+            eff_cells.clone(),
+            eff_cell_indices.clone(),
+        );
+        Some(crate::validation::validate(&effective_diagram))
+    } else {
+        None
+    };
+
+    let t = Timer::start();
+    let (cells, cell_indices) = remap_cells_to_original_indices(
+        &points,
+        merge_result.as_ref(),
+        eff_cells,
+        eff_cell_indices,
+    );
+
+    let diagram = crate::SphericalVoronoi::from_raw_parts(points, vertices, cells, cell_indices);
+    let returned_validation = crate::validation::validate(&diagram);
+    tb.set_assemble(t.elapsed());
+
+    let timings = tb.finish();
+    timings.report(diagram.num_cells());
+
+    Ok(ComputeOutput {
+        diagram,
+        report: ComputeReport {
+            preprocess: preprocess_report,
+            returned_validation,
+            effective_validation,
+        },
+    })
 }
 
 fn map_cell_build_error(err: CellBuildError) -> crate::VoronoiError {

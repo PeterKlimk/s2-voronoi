@@ -116,6 +116,18 @@ fn test_compute_with_report_surfaces_preprocess_outcome() {
         50
     );
     assert!(output.report.preprocess.threshold_used.is_some());
+    assert!(
+        output.report.returned_validation.is_strictly_valid(),
+        "expected random-sphere output to validate strictly"
+    );
+    assert!(
+        output.report.effective_validation.is_none(),
+        "effective validation should only be present when preprocessing changes the generator set"
+    );
+    assert!(
+        output.report.preferred_validation().is_strictly_valid(),
+        "preferred validation should agree with returned validation when no merges occur"
+    );
 }
 
 #[test]
@@ -153,6 +165,24 @@ fn test_clustered_cap_tight_report_shows_default_preprocessing_merges_points() {
         !report.is_strictly_valid(),
         "current clustered-cap collapse regression should still be surfaced as invalid: {}",
         report.headline()
+    );
+    assert!(
+        !output.report.returned_validation.is_strictly_valid(),
+        "returned diagram validation should surface the remapped duplicate-cell collapse"
+    );
+    let effective_validation = output
+        .report
+        .effective_validation
+        .as_ref()
+        .expect("merged preprocessing should surface effective validation");
+    assert!(
+        effective_validation.is_strictly_valid(),
+        "effective preprocessed diagram should remain strictly valid: {}",
+        effective_validation.headline()
+    );
+    assert!(
+        output.report.preferred_validation().is_strictly_valid(),
+        "preferred validation should use the effective merged problem when preprocessing changes the solved set"
     );
 }
 
