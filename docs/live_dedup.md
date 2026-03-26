@@ -10,7 +10,7 @@ parallel across bins).
 
 Vertices (triplets of generators) are assigned an “owner bin” derived from a canonicalized triplet
 key. If the owner is local, the bin can allocate/deduplicate the vertex immediately; otherwise, the
-cell records a deferred slot to be patched later.
+cell records a deferred vertex slot to be patched later.
 
 ## Why edge checks exist
 

@@ -374,7 +374,7 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
                     debug_assert_eq!(*vi, INVALID_INDEX, "received index for off-shard owner");
                     let source_slot = shard.output.cell_indices.len() as u32;
                     shard.output.cell_indices.push(DEFERRED);
-                    shard.output.deferred.push(DeferredSlot {
+                    shard.output.deferred_slots.push(DeferredSlot {
                         key,
                         pos,
                         source_bin: bin,

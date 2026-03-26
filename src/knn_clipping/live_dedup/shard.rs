@@ -4,15 +4,17 @@ use glam::Vec3;
 use rustc_hash::FxHashMap;
 
 use super::types::{
-    DeferredSlot, EdgeCheck, EdgeCheckOverflow, LocalId, SupportOverflow, UnresolvedEdgeMismatch,
+    DeferredSlot, EdgeCheck, EdgeCheckOverflow, LocalId, RemoteSupportVertexWrite,
+    UnresolvedEdgeMismatch,
 };
 use crate::knn_clipping::cell_builder::VertexKey;
 
 /// Data only needed during vertex deduplication (dropped after overflow flush).
 pub(super) struct ShardDedup {
-    pub(super) support_map: FxHashMap<Vec<u32>, u32>,
-    pub(super) support_data: Vec<u32>,
-    pub(super) support_overflow: Vec<SupportOverflow>,
+    /// Support-set-owned vertices keyed by their canonical support set.
+    pub(super) support_vertex_map: FxHashMap<Vec<u32>, u32>,
+    /// Cross-bin patch records for support-set-owned vertices.
+    pub(super) remote_support_writes: Vec<RemoteSupportVertexWrite>,
     /// Per-local edge checks (Vec-based for cache locality)
     pub(super) edge_checks: Vec<Vec<EdgeCheck>>,
     /// Pool of reusable Vecs with existing capacity
@@ -22,9 +24,8 @@ pub(super) struct ShardDedup {
 impl ShardDedup {
     pub(super) fn new(num_local_generators: usize) -> Self {
         Self {
-            support_map: FxHashMap::default(),
-            support_data: Vec::new(),
-            support_overflow: Vec::new(),
+            support_vertex_map: FxHashMap::default(),
+            remote_support_writes: Vec::new(),
             edge_checks: (0..num_local_generators).map(|_| Vec::new()).collect(),
             edge_check_pool: Vec::new(),
         }
@@ -37,7 +38,8 @@ pub(super) struct ShardOutput {
     pub(super) vertex_keys: Vec<VertexKey>,
     pub(super) unresolved_edges: Vec<UnresolvedEdgeMismatch>,
     pub(super) edge_check_overflow: Vec<EdgeCheckOverflow>,
-    pub(super) deferred: Vec<DeferredSlot>,
+    /// Cell slots whose owner bin is off-shard and must be patched during assembly.
+    pub(super) deferred_slots: Vec<DeferredSlot>,
     pub(super) cell_indices: Vec<u64>,
     pub(super) cell_starts: Vec<u32>,
     pub(super) cell_counts: Vec<u8>,
@@ -50,7 +52,7 @@ impl ShardOutput {
             vertex_keys: Vec::new(),
             unresolved_edges: Vec::new(),
             edge_check_overflow: Vec::new(),
-            deferred: Vec::new(),
+            deferred_slots: Vec::new(),
             cell_indices: Vec::new(),
             cell_starts: vec![0; num_local_generators],
             cell_counts: vec![0; num_local_generators],
@@ -101,13 +103,13 @@ impl ShardState {
     }
 
     #[inline(always)]
-    pub(super) fn dedup_support_owned(&mut self, support: Vec<u32>, pos: Vec3) -> u32 {
-        if let Some(&idx) = self.dedup.support_map.get(support.as_slice()) {
+    pub(super) fn dedup_owned_support_vertex(&mut self, support: Vec<u32>, pos: Vec3) -> u32 {
+        if let Some(&idx) = self.dedup.support_vertex_map.get(support.as_slice()) {
             return idx;
         }
         let idx = self.output.vertices.len() as u32;
         self.output.vertices.push(pos);
-        self.dedup.support_map.insert(support, idx);
+        self.dedup.support_vertex_map.insert(support, idx);
         idx
     }
 

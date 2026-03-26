@@ -151,13 +151,19 @@ pub(super) struct EdgeOverflowLocal {
 
 #[derive(Clone, Copy)]
 pub(super) struct DeferredSlot {
+    /// Canonical vertex key that identifies the eventual owner bin.
     pub(super) key: VertexKey,
     pub(super) pos: Vec3,
+    /// Bin/cell slot that still needs to be patched once ownership is resolved.
     pub(super) source_bin: BinId,
     pub(super) source_slot: u32,
 }
 
-pub(super) struct SupportOverflow {
+/// Cross-bin write-back for a support-set-owned vertex.
+///
+/// Unlike `DeferredSlot`, this path already knows the owner bin up front; assembly only needs to
+/// materialize/deduplicate the support vertex in the owner shard and patch the source slot.
+pub(super) struct RemoteSupportVertexWrite {
     pub(super) source_bin: BinId,
     pub(super) target_bin: BinId,
     pub(super) source_slot: u32,

@@ -30,7 +30,7 @@ pub(super) struct AssemblyResult {
     pub vertex_keys: Vec<VertexKey>,
     /// Unresolved shared-edge mismatches that survived live dedup assembly.
     ///
-    /// Assembly first tries to reconcile cross-bin edge checks and patch deferred references.
+    /// Assembly first tries to reconcile cross-bin edge checks and patch deferred vertex slots.
     /// Entries that remain here feed the narrow post-pass reconciliation in
     /// `edge_reconcile.rs`; they are not a generic record of arbitrary topology failures.
     pub unresolved_edges: Vec<UnresolvedEdgeMismatch>,

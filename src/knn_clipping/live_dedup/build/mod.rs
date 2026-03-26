@@ -216,12 +216,8 @@ pub(super) fn build_cells_sharded_live_dedup(
                     .output
                     .cell_indices
                     .reserve(my_generators.len().saturating_mul(6));
-                // Conservative estimate for off-shard vertices
-                shard.output.deferred.reserve(my_generators.len());
-                shard
-                    .dedup
-                    .support_data
-                    .reserve(my_generators.len().saturating_mul(2));
+                // Conservative estimate for off-shard vertices.
+                shard.output.deferred_slots.reserve(my_generators.len());
 
                 let mut packed_scratch = PackedKnnCellScratch::new();
 
