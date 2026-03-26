@@ -32,3 +32,28 @@ For inter-commit comparisons:
 - `./scripts/bench_run.sh -s 500k -r 20 -m total`
 
 The scripts default to pinned + single-threaded runs where possible.
+
+## Policy profiling
+
+When evaluating heuristic changes, do not rely only on total time. Prefer timing-enabled runs that
+also show how work moved between packed stages and directed cursor fallback.
+
+Useful commands:
+
+- `S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 100k --no-preprocess`
+- `S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 100k --no-preprocess --packed-expand-r2`
+- `./scripts/bench_build.sh --timing HEAD`
+- `./scripts/bench_run.sh -s 100k -r 5 -c 1 -m total -- --packed-expand-r2`
+
+Counters to watch:
+
+- `cells_used_knn`
+- `cells_packed_tail_used`
+- `cells_packed_expand_r2_used`
+- `packed_tail_builds`
+- `packed_expand_r2_builds`
+- `packed_expand_r2_cap_skips`
+- `packed_expand_r2_scan_ms`
+- `packed_expand_r2_select_ms`
+
+For the current policy surface and change rules, see `docs/policy.md`.

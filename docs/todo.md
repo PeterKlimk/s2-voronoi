@@ -8,6 +8,15 @@
 - Consolidate other heuristic decisions in one place.
   There are now multiple heuristic knobs across packed kNN, termination cadence, and fallback behavior. Future work should track these together rather than adding one-off local rules.
 
+- Add explicit policy profiling baselines for common benchmark distributions.
+  The code now has a policy layer and timing counters, but we do not yet keep a small documented
+  matrix of expected structural outcomes across `fibonacci+jitter`, `--lloyd`, and any future
+  adversarial distributions. That would make future heuristic changes easier to review.
+
+- Consider policy-level tests for timing-surface stability.
+  Not benchmark assertions in CI, but small tests that pin which counters/stages are expected to be
+  exposed when policy changes are made intentionally.
+
 ## Reconciliation
 
 - Consider moving some current `edge_reconcile` reconciliation into the live dedup/assembly path.

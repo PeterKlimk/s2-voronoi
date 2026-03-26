@@ -42,6 +42,23 @@ be shared between cells, even when an underlying 3D plane is shared.
 - `src/cube_grid/`: cube-map spatial index + packed-kNN helpers.
 - `src/convex_hull.rs` (`qhull` feature): convex-hull dual backend (tests/bench comparisons).
 
+## Policy layer
+
+The current heuristic and tuning decisions are intentionally centralized in `src/policy.rs`.
+
+That layer currently owns:
+
+- packed chunk sizing
+- packed `r=2` enablement
+- termination cadence
+- packed count-model constants
+
+If a future change adds dynamic heuristic activation, it should be expressed through this policy
+layer and the neighbor-source boundary, not by reintroducing local fallback logic into
+`process_cell`.
+
+See `docs/policy.md`.
+
 ## Glossary
 
 - **Generator**: input point that owns one Voronoi cell.

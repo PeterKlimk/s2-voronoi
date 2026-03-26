@@ -9,11 +9,16 @@ pub(crate) const DEFAULT_PACKED_CHUNK_SIZE: usize = 8;
 pub(crate) const DEFAULT_TERMINATION_CHECK_START: usize = 8;
 pub(crate) const DEFAULT_TERMINATION_CHECK_STEP: usize = 1;
 
+/// Target size for the packed "hi" candidate list before selection gets expensive.
 pub(crate) const PACKED_HI_BUDGET: usize = 32;
+/// Count-model knob: ignore directed center eligibility when tightening packed thresholds.
 pub(crate) const PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER: bool = false;
+/// Count-model knob: include same-bin-earlier cells when estimating packed candidate pressure.
 pub(crate) const PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER: bool = false;
+/// Hard cold-path cap for packed `r=2` expansion storage per query.
 pub(crate) const PACKED_MAX_EXPAND_R2_CANDIDATES_PER_QUERY: usize = 8_192;
 
+/// Policy decisions that affect packed neighbor sourcing before directed cursor fallback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PackedNeighborPolicy {
     chunk0_size: usize,
@@ -58,6 +63,7 @@ impl PackedNeighborPolicy {
     }
 }
 
+/// Policy decisions for directed termination cadence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TerminationPolicy {
     check_start: usize,
@@ -98,6 +104,7 @@ impl TerminationPolicy {
     }
 }
 
+/// Combined neighbor-query policy derived from public/internal config.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct KnnPolicy {
     packed: PackedNeighborPolicy,
@@ -139,6 +146,7 @@ impl KnnPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{knn_clipping::TerminationConfig, VoronoiConfig};
 
     #[test]
     fn packed_policy_clamps_to_available_neighbors() {
@@ -189,5 +197,25 @@ mod tests {
         assert!(policy.termination().should_check(12));
         assert!(policy.termination().should_check(14));
         assert!(!policy.termination().should_check(13));
+    }
+
+    #[test]
+    fn policy_defaults_match_public_and_internal_config_defaults() {
+        let public = VoronoiConfig::default();
+        let internal = TerminationConfig::default();
+        let policy = KnnPolicy::for_point_count(
+            100,
+            internal.termination_policy(),
+            public.packed_knn_expand_r2,
+        );
+
+        assert!(public.packed_knn_expand_r2);
+        assert!(policy.packed().expand_r2_enabled());
+        assert_eq!(policy.packed().chunk0_size(), DEFAULT_PACKED_CHUNK0_SIZE);
+        assert_eq!(policy.packed().chunk_size(), DEFAULT_PACKED_CHUNK_SIZE);
+        assert!(policy
+            .termination()
+            .should_check(DEFAULT_TERMINATION_CHECK_START));
+        assert_eq!(policy.termination().max_k_cap(), None);
     }
 }
