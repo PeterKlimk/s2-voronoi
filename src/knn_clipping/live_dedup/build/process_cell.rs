@@ -265,12 +265,14 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
 
     fn phase_4_validate_success(&mut self) -> Result<(), CellBuildError> {
         if !self.ctx.builder.is_bounded() || self.ctx.builder.is_failed() {
-            if self.ctx.builder.failure() == Some(CellFailure::ProjectionInvalid)
-                || (!self.ctx.builder.is_bounded() && self.knn_exhausted)
-            {
+            if let Some(failure) = classify_terminal_failure(
+                self.ctx.builder.is_bounded(),
+                self.ctx.builder.failure(),
+                self.knn_exhausted,
+            ) {
                 return Err(CellBuildError {
                     generator_idx: self.i,
-                    failure: CellFailure::ProjectionInvalid,
+                    failure,
                 });
             }
             let (active, total) = self.ctx.builder.count_active_planes();
@@ -423,4 +425,42 @@ pub(super) fn process_cell<'a, 'b, 'c>(
 ) -> Result<(), CellBuildError> {
     let orchestrator = CellOrchestrator::new(cell_sub, ctx, shard_ctx, grid_ctx, termination, i);
     orchestrator.run(packed)
+}
+
+fn classify_terminal_failure(
+    bounded: bool,
+    failure: Option<CellFailure>,
+    knn_exhausted: bool,
+) -> Option<CellFailure> {
+    if failure == Some(CellFailure::ProjectionInvalid) {
+        return Some(CellFailure::ProjectionInvalid);
+    }
+    if !bounded && knn_exhausted {
+        return Some(CellFailure::UnboundedAfterExhaustion);
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_terminal_failure;
+    use crate::knn_clipping::cell_builder::CellFailure;
+
+    #[test]
+    fn projection_invalid_stays_distinct_from_exhausted_unbounded() {
+        assert_eq!(
+            classify_terminal_failure(false, Some(CellFailure::ProjectionInvalid), true),
+            Some(CellFailure::ProjectionInvalid)
+        );
+        assert_eq!(
+            classify_terminal_failure(false, None, true),
+            Some(CellFailure::UnboundedAfterExhaustion)
+        );
+    }
+
+    #[test]
+    fn bounded_nonfailed_cell_has_no_terminal_failure() {
+        assert_eq!(classify_terminal_failure(true, None, true), None);
+        assert_eq!(classify_terminal_failure(true, None, false), None);
+    }
 }

@@ -125,13 +125,18 @@ fn test_input_types() {
 }
 
 #[test]
-fn test_compute_reports_projection_limit_as_error() {
+fn test_compute_reports_hemisphere_limit_as_error() {
     let points = hemisphere_points(100, 42);
     let result = compute(&points);
-    assert!(matches!(
-        result,
-        Err(VoronoiError::UnsupportedGeometry { .. })
-    ));
+    assert!(
+        matches!(
+            result,
+            Err(VoronoiError::UnsupportedGeometry { .. })
+                | Err(VoronoiError::ComputationFailed(_))
+        ),
+        "hemisphere-limited inputs should fail cleanly, got {:?}",
+        result
+    );
 }
 
 #[test]

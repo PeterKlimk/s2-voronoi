@@ -161,9 +161,52 @@ fn map_cell_build_error(err: CellBuildError) -> crate::VoronoiError {
                 "cell extends to the generator hemisphere boundary; gnomonic projection is invalid"
                     .to_string(),
         },
+        CellFailure::UnboundedAfterExhaustion => crate::VoronoiError::ComputationFailed(
+            format!(
+                "cell {} exhausted the neighbor stream before reaching a bounded polygon",
+                err.generator_idx
+            ),
+        ),
         other => crate::VoronoiError::ComputationFailed(format!(
             "cell {} failed during construction with {:?}",
             err.generator_idx, other
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_cell_build_error;
+    use crate::knn_clipping::cell_builder::{CellBuildError, CellFailure};
+    use crate::VoronoiError;
+
+    #[test]
+    fn map_projection_invalid_to_unsupported_geometry() {
+        let err = map_cell_build_error(CellBuildError {
+            generator_idx: 7,
+            failure: CellFailure::ProjectionInvalid,
+        });
+        assert!(matches!(
+            err,
+            VoronoiError::UnsupportedGeometry {
+                generator_index: 7,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn map_unbounded_after_exhaustion_to_computation_failed() {
+        let err = map_cell_build_error(CellBuildError {
+            generator_idx: 11,
+            failure: CellFailure::UnboundedAfterExhaustion,
+        });
+        match err {
+            VoronoiError::ComputationFailed(msg) => {
+                assert!(msg.contains("11"));
+                assert!(msg.contains("bounded polygon"));
+            }
+            other => panic!("expected ComputationFailed, got {:?}", other),
+        }
     }
 }

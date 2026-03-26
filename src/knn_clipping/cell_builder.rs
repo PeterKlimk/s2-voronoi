@@ -19,6 +19,12 @@ pub enum CellFailure {
     /// The clipped cell reaches the generator hemisphere boundary, so gnomonic projection
     /// is no longer a valid model for the current feasible region.
     ProjectionInvalid,
+    /// The neighbor stream was exhausted before the cell ever became bounded.
+    ///
+    /// This is not the same thing as a proven projection failure. It indicates we ended
+    /// cell construction without a valid bounded polygon and should be classified separately
+    /// from mathematically established unsupported geometry.
+    UnboundedAfterExhaustion,
     /// Failed to construct a valid seed polygon.
     NoValidSeed,
 }

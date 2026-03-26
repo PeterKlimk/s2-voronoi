@@ -281,8 +281,12 @@ fn test_hemisphere_basic() {
     let result = compute(&points);
 
     assert!(
-        matches!(result, Err(VoronoiError::UnsupportedGeometry { .. })),
-        "hemisphere_basic should fail cleanly with unsupported geometry, got {:?}",
+        matches!(
+            result,
+            Err(VoronoiError::UnsupportedGeometry { .. })
+                | Err(VoronoiError::ComputationFailed(_))
+        ),
+        "hemisphere_basic should fail cleanly with an explicit error, got {:?}",
         result
     );
 }
@@ -294,8 +298,12 @@ fn test_hemisphere_dense() {
     let result = compute(&points);
 
     assert!(
-        matches!(result, Err(VoronoiError::UnsupportedGeometry { .. })),
-        "hemisphere_dense should fail cleanly with unsupported geometry, got {:?}",
+        matches!(
+            result,
+            Err(VoronoiError::UnsupportedGeometry { .. })
+                | Err(VoronoiError::ComputationFailed(_))
+        ),
+        "hemisphere_dense should fail cleanly with an explicit error, got {:?}",
         result
     );
 }
