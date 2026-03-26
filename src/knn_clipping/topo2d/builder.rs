@@ -401,6 +401,44 @@ impl Topo2DBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cmp::Ordering;
+
+    fn generic_sphere_points(n: usize) -> Vec<Vec3> {
+        let golden_angle = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
+        (0..n)
+            .map(|i| {
+                let y = 1.0 - (2.0 * i as f32 + 1.0) / n as f32;
+                let radius = (1.0 - y * y).sqrt();
+                let theta = golden_angle * i as f32;
+                let jitter_x = (((i * 37 + 11) as f32) * 0.12345).sin() * 0.002;
+                let jitter_z = (((i * 53 + 7) as f32) * 0.23456).cos() * 0.002;
+                let x = radius * theta.cos() + jitter_x;
+                let z = radius * theta.sin() + jitter_z;
+                Vec3::new(x, y, z).normalize()
+            })
+            .collect()
+    }
+
+    fn clip_all_neighbors(builder: &mut Topo2DBuilder, points: &[Vec3], i: usize) {
+        let mut neighbors: Vec<usize> = (0..points.len()).filter(|&j| j != i).collect();
+        neighbors.sort_by(|&a, &b| {
+            points[i]
+                .dot(points[b])
+                .partial_cmp(&points[i].dot(points[a]))
+                .unwrap_or(Ordering::Equal)
+        });
+
+        for &j in &neighbors {
+            let result = builder.clip_with_slot_result(j, j as u32, points[j]);
+            assert!(
+                result.is_ok(),
+                "cell {} clipping against neighbor {} failed with {:?}",
+                i,
+                j,
+                result
+            );
+        }
+    }
 
     #[test]
     fn changed_clip_fails_when_bounded_polygon_reaches_projection_limit() {
@@ -440,5 +478,62 @@ mod tests {
         );
         assert_eq!(result, Ok(ClipResult::Changed));
         assert_eq!(builder.failure(), None);
+    }
+
+    #[test]
+    fn generic_full_sphere_cells_do_not_clip_away() {
+        let points = generic_sphere_points(24);
+
+        for i in 0..points.len() {
+            let mut builder = Topo2DBuilder::new(i, points[i]);
+            clip_all_neighbors(&mut builder, &points, i);
+            assert!(
+                builder.is_bounded(),
+                "cell {} should be bounded after clipping against all neighbors",
+                i
+            );
+            assert_eq!(
+                builder.failure(),
+                None,
+                "cell {} should not fail after clipping against all neighbors",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn valid_bounded_cells_reconstruct_vertices_with_healthy_norm() {
+        let points = generic_sphere_points(24);
+
+        for i in 0..points.len() {
+            let mut builder = Topo2DBuilder::new(i, points[i]);
+            clip_all_neighbors(&mut builder, &points, i);
+            assert!(builder.is_bounded(), "cell {} should be bounded", i);
+
+            let poly = builder.current_poly();
+            for v in 0..poly.len {
+                let u = poly.us[v];
+                let w = poly.vs[v];
+                let dir = builder.basis.g + builder.basis.t1 * u + builder.basis.t2 * w;
+                let len2 = dir.length_squared();
+                assert!(
+                    len2.is_finite() && len2 > 0.5,
+                    "cell {} vertex {} reconstructed direction has suspicious len2={}",
+                    i,
+                    v,
+                    len2
+                );
+            }
+
+            let mut buffer = CellOutputBuffer::default();
+            builder
+                .to_vertex_data_full(&mut buffer)
+                .expect("valid bounded cell should extract vertex data");
+            assert!(
+                !buffer.vertices.is_empty(),
+                "cell {} should produce at least one vertex",
+                i
+            );
+        }
     }
 }

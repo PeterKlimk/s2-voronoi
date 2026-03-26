@@ -37,6 +37,10 @@ struct CellOrchestrator<'a, 'b, 'c> {
     incoming_edgechecks: usize,
     edgecheck_seed_clips: usize,
     cell_start: u32,
+    last_neighbor_idx: Option<usize>,
+    last_neighbor_slot: Option<u32>,
+    last_batch_source: Option<DirectedNeighborBatchSource>,
+    last_clip_phase: &'static str,
 }
 
 impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
@@ -78,6 +82,10 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
             incoming_edgechecks: 0,
             edgecheck_seed_clips: 0,
             cell_start: 0,
+            last_neighbor_idx: None,
+            last_neighbor_slot: None,
+            last_batch_source: None,
+            last_clip_phase: "none",
         }
     }
 
@@ -120,6 +128,10 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
             let (a, b) = unpack_edge_key(check.key);
             let neighbor_idx = if a == cell_idx { b } else { a } as usize;
             let neighbor_slot = self.grid_ctx.grid.point_index_to_slot(neighbor_idx);
+            self.last_neighbor_idx = Some(neighbor_idx);
+            self.last_neighbor_slot = Some(neighbor_slot);
+            self.last_batch_source = None;
+            self.last_clip_phase = "edgecheck_seed";
 
             if !self.ctx.attempted_neighbors.insert(neighbor_idx) {
                 continue;
@@ -208,6 +220,11 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
                 if !should_clip {
                     continue;
                 }
+
+                self.last_neighbor_idx = Some(neighbor_idx);
+                self.last_neighbor_slot = Some(neighbor_slot);
+                self.last_batch_source = Some(batch.source);
+                self.last_clip_phase = "stream";
 
                 let neighbor = points[neighbor_idx];
                 let clip_result =
@@ -404,7 +421,8 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
         panic!(
             "Cell {} unexpected {} failure: bounded={}, failure={:?}, \
              planes={}, active={}, vertices={}, neighbors_processed={}, \
-             did_packed={}, did_cursor_fallback={}, knn_exhausted={}\n\
+             did_packed={}, did_cursor_fallback={}, knn_exhausted={}, \
+             last_clip_phase={}, last_batch_source={:?}, last_neighbor_idx={:?}, last_neighbor_slot={:?}\n\
              Generator pos: {:?}\n\
              First 10 neighbor indices: {:?}",
             self.i,
@@ -418,6 +436,10 @@ impl<'a, 'b, 'c> CellOrchestrator<'a, 'b, 'c> {
             self.did_packed,
             self.used_knn,
             self.knn_exhausted,
+            self.last_clip_phase,
+            self.last_batch_source,
+            self.last_neighbor_idx,
+            self.last_neighbor_slot,
             gen,
             &neighbor_indices[..neighbor_indices.len().min(10)],
         );
