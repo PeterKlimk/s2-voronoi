@@ -19,7 +19,7 @@
 //! - `vertices`: shared Voronoi vertices (unit vectors)
 //! - per-cell vertex index lists (accessible via [`SphericalVoronoi::cell`] / [`SphericalVoronoi::iter_cells`])
 //!
-//! For topological sanity checks and debugging numerical edge cases, use
+//! For strict subdivision and exact-invariant checks on computed output, use
 //! [`validation::validate`].
 //!
 //! # Example

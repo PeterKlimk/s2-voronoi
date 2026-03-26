@@ -30,7 +30,7 @@ fn test_great_circle_with_jitter() {
     assert_eq!(diagram.num_cells(), 50);
 
     let report = validate(&diagram);
-    eprintln!("great_circle_with_jitter: {}", report.summary());
+    eprintln!("great_circle_with_jitter: {}", report.headline());
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn test_great_circle_small_jitter() {
     match result {
         Ok(diagram) => {
             let report = validate(&diagram);
-            eprintln!("great_circle_small_jitter: {}", report.summary());
+            eprintln!("great_circle_small_jitter: {}", report.headline());
         }
         Err(e) => {
             eprintln!("great_circle_small_jitter failed: {:?}", e);
@@ -62,7 +62,7 @@ fn test_great_circle_pure_degenerate() {
     match result {
         Ok(diagram) => {
             let report = validate(&diagram);
-            eprintln!("pure great circle: {}", report.summary());
+            eprintln!("pure great circle: {}", report.headline());
         }
         Err(e) => {
             eprintln!("pure great circle failed (expected): {:?}", e);
@@ -97,7 +97,7 @@ fn test_clustered_cap_tight() {
     assert!(result.is_ok(), "clustered cap tight should not panic");
     let diagram = result.unwrap();
     let report = validate(&diagram);
-    eprintln!("clustered_cap_tight: {}", report.summary());
+    eprintln!("clustered_cap_tight: {}", report.headline());
     eprintln!(
         "  cells={}, vertices={}, total_cell_vertices={}, unique_cells={}, duplicates={}",
         report.num_cells,
@@ -118,7 +118,7 @@ fn test_clustered_cap_extreme() {
     assert!(result.is_ok(), "clustered cap extreme should not panic");
     let diagram = result.unwrap();
     let report = validate(&diagram);
-    eprintln!("clustered_cap_extreme: {}", report.summary());
+    eprintln!("clustered_cap_extreme: {}", report.headline());
 }
 
 // =============================================================================
@@ -143,7 +143,7 @@ fn test_clustered_cap_small_no_preprocess() {
     match result {
         Ok(diagram) => {
             let report = validate(&diagram);
-            eprintln!("clustered_cap_small (no preprocess): {}", report.summary());
+            eprintln!("clustered_cap_small (no preprocess): {}", report.headline());
             assert_eq!(diagram.num_cells(), 100);
         }
         Err(e) => {
@@ -167,7 +167,7 @@ fn test_clustered_cap_tight_no_preprocess() {
     match result {
         Ok(diagram) => {
             let report = validate(&diagram);
-            eprintln!("clustered_cap_tight (no preprocess): {}", report.summary());
+            eprintln!("clustered_cap_tight (no preprocess): {}", report.headline());
         }
         Err(e) => {
             eprintln!("clustered_cap_tight (no preprocess) failed: {:?}", e);
@@ -190,7 +190,7 @@ fn test_cocircular_tight_no_preprocess() {
     match result {
         Ok(diagram) => {
             let report = validate(&diagram);
-            eprintln!("cocircular_tight (no preprocess): {}", report.summary());
+            eprintln!("cocircular_tight (no preprocess): {}", report.headline());
         }
         Err(e) => {
             eprintln!("cocircular_tight (no preprocess) failed: {:?}", e);
@@ -222,7 +222,7 @@ fn test_cube_vertices_tight() {
     assert!(result.is_ok(), "cube vertices tight should not panic");
     let diagram = result.unwrap();
     let report = validate(&diagram);
-    eprintln!("cube_vertices_tight: {}", report.summary());
+    eprintln!("cube_vertices_tight: {}", report.headline());
 }
 
 // =============================================================================
@@ -249,7 +249,7 @@ fn test_cocircular_tight() {
     assert!(result.is_ok(), "cocircular tight should not panic");
     let diagram = result.unwrap();
     let report = validate(&diagram);
-    eprintln!("cocircular_tight: {}", report.summary());
+    eprintln!("cocircular_tight: {}", report.headline());
 }
 
 #[test]
@@ -261,7 +261,7 @@ fn test_cocircular_extreme() {
     match result {
         Ok(diagram) => {
             let report = validate(&diagram);
-            eprintln!("cocircular_extreme: {}", report.summary());
+            eprintln!("cocircular_extreme: {}", report.headline());
             // Likely has non-degree-3 vertices or other issues
         }
         Err(e) => {
@@ -283,8 +283,7 @@ fn test_hemisphere_basic() {
     assert!(
         matches!(
             result,
-            Err(VoronoiError::UnsupportedGeometry { .. })
-                | Err(VoronoiError::ComputationFailed(_))
+            Err(VoronoiError::UnsupportedGeometry { .. }) | Err(VoronoiError::ComputationFailed(_))
         ),
         "hemisphere_basic should fail cleanly with an explicit error, got {:?}",
         result
@@ -300,8 +299,7 @@ fn test_hemisphere_dense() {
     assert!(
         matches!(
             result,
-            Err(VoronoiError::UnsupportedGeometry { .. })
-                | Err(VoronoiError::ComputationFailed(_))
+            Err(VoronoiError::UnsupportedGeometry { .. }) | Err(VoronoiError::ComputationFailed(_))
         ),
         "hemisphere_dense should fail cleanly with an explicit error, got {:?}",
         result
@@ -334,7 +332,7 @@ fn test_bimodal_extreme() {
     match result {
         Ok(diagram) => {
             let report = validate(&diagram);
-            eprintln!("bimodal_extreme: {}", report.summary());
+            eprintln!("bimodal_extreme: {}", report.headline());
         }
         Err(e) => {
             eprintln!("bimodal_extreme failed (expected): {:?}", e);
@@ -368,7 +366,7 @@ fn test_multi_distribution_robustness() {
                     "{}: {} cells, {}",
                     name,
                     diagram.num_cells(),
-                    report.summary()
+                    report.headline()
                 );
             }
             Err(e) => {
@@ -400,12 +398,16 @@ fn test_fuzz_2m_random_seeds() {
         match result {
             Ok(diagram) => {
                 let report = validate(&diagram);
-                let status = if report.is_valid() { "VALID" } else { "ISSUES" };
+                let status = if report.is_strictly_valid() {
+                    "STRICT_VALID"
+                } else {
+                    "INVALID"
+                };
                 eprintln!(
                     "fuzz_2m seed={}: {} cells, {} - {}",
                     seed,
                     diagram.num_cells(),
-                    report.summary(),
+                    report.headline(),
                     status
                 );
             }
@@ -430,12 +432,16 @@ fn test_fuzz_3m_random_seeds() {
         match result {
             Ok(diagram) => {
                 let report = validate(&diagram);
-                let status = if report.is_valid() { "VALID" } else { "ISSUES" };
+                let status = if report.is_strictly_valid() {
+                    "STRICT_VALID"
+                } else {
+                    "INVALID"
+                };
                 eprintln!(
                     "fuzz_3m seed={}: {} cells, {} - {}",
                     seed,
                     diagram.num_cells(),
-                    report.summary(),
+                    report.headline(),
                     status
                 );
             }
@@ -460,12 +466,16 @@ fn test_fuzz_4m_random_seeds() {
         match result {
             Ok(diagram) => {
                 let report = validate(&diagram);
-                let status = if report.is_valid() { "VALID" } else { "ISSUES" };
+                let status = if report.is_strictly_valid() {
+                    "STRICT_VALID"
+                } else {
+                    "INVALID"
+                };
                 eprintln!(
                     "fuzz_4m seed={}: {} cells, {} - {}",
                     seed,
                     diagram.num_cells(),
-                    report.summary(),
+                    report.headline(),
                     status
                 );
             }
@@ -492,12 +502,16 @@ fn test_fuzz_sweep_sizes() {
         match result {
             Ok(diagram) => {
                 let report = validate(&diagram);
-                let status = if report.is_valid() { "VALID" } else { "ISSUES" };
+                let status = if report.is_strictly_valid() {
+                    "STRICT_VALID"
+                } else {
+                    "INVALID"
+                };
                 eprintln!(
                     "fuzz_sweep n={}: {} cells, {} - {}",
                     n,
                     diagram.num_cells(),
-                    report.summary(),
+                    report.headline(),
                     status
                 );
             }

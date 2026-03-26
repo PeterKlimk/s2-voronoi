@@ -10,8 +10,7 @@ sharded “live” vertex deduplication.
 
 - **Nightly Rust required** (`#![feature(portable_simd)]`).
 - Inputs are **assumed** to be unit-normalized (not enforced; may debug-assert in hot paths).
-- Some degenerate cells can occur for near-coincident points or numerical edge cases; use
-  `validation::validate`.
+- For strict subdivision/invariant checks on computed output, use `validation::validate`.
 
 ## Quickstart
 
@@ -41,6 +40,7 @@ for cell in diagram.iter_cells() {
 - `compute(&[P]) -> Result<SphericalVoronoi, VoronoiError>`
 - `compute_with(&[P], VoronoiConfig)`
 - `validation::validate(&SphericalVoronoi) -> ValidationReport`
+  Use `ValidationReport::is_strictly_valid()` and the explicit issue summaries.
 - `SphericalVoronoi`: `generators`, `vertices`, `iter_cells()`, `cell(i)`
 - `CellView`: `vertex_indices`, `generator_index`, `len()`
 

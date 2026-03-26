@@ -321,7 +321,7 @@ fn run_benchmark_with_config(points: &[UnitVec3], config: VoronoiConfig) -> Benc
     {
         use s2_voronoi::validation::validate;
         let report = validate(&diagram);
-        if !report.is_perfect() {
+        if !report.is_strictly_valid() {
             eprintln!("WARNING: Validation failed for n={}: {}", n, report);
         } else {
             println!("Validation passed for n={}", n);
