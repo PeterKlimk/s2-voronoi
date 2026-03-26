@@ -1,20 +1,11 @@
 //! Shard-local state for live dedup.
 
-use glam::Vec3;
-use rustc_hash::FxHashMap;
-
-use super::types::{
-    DeferredSlot, EdgeCheck, EdgeCheckOverflow, LocalId, RemoteSupportVertexWrite,
-    UnresolvedEdgeMismatch,
-};
+use super::types::{DeferredSlot, EdgeCheck, EdgeCheckOverflow, LocalId, UnresolvedEdgeMismatch};
 use crate::knn_clipping::cell_builder::VertexKey;
+use glam::Vec3;
 
 /// Data only needed during vertex deduplication (dropped after overflow flush).
 pub(super) struct ShardDedup {
-    /// Support-set-owned vertices keyed by their canonical support set.
-    pub(super) support_vertex_map: FxHashMap<Vec<u32>, u32>,
-    /// Cross-bin patch records for support-set-owned vertices.
-    pub(super) remote_support_writes: Vec<RemoteSupportVertexWrite>,
     /// Per-local edge checks (Vec-based for cache locality)
     pub(super) edge_checks: Vec<Vec<EdgeCheck>>,
     /// Pool of reusable Vecs with existing capacity
@@ -24,8 +15,6 @@ pub(super) struct ShardDedup {
 impl ShardDedup {
     pub(super) fn new(num_local_generators: usize) -> Self {
         Self {
-            support_vertex_map: FxHashMap::default(),
-            remote_support_writes: Vec::new(),
             edge_checks: (0..num_local_generators).map(|_| Vec::new()).collect(),
             edge_check_pool: Vec::new(),
         }
@@ -86,8 +75,6 @@ pub(super) struct ShardState {
     pub(super) output: ShardOutput,
     #[cfg(feature = "timing")]
     pub(super) triplet_keys: u64,
-    #[cfg(feature = "timing")]
-    pub(super) support_keys: u64,
 }
 
 impl ShardState {
@@ -97,20 +84,7 @@ impl ShardState {
             output: ShardOutput::new(num_local_generators),
             #[cfg(feature = "timing")]
             triplet_keys: 0,
-            #[cfg(feature = "timing")]
-            support_keys: 0,
         }
-    }
-
-    #[inline(always)]
-    pub(super) fn dedup_owned_support_vertex(&mut self, support: Vec<u32>, pos: Vec3) -> u32 {
-        if let Some(&idx) = self.dedup.support_vertex_map.get(support.as_slice()) {
-            return idx;
-        }
-        let idx = self.output.vertices.len() as u32;
-        self.output.vertices.push(pos);
-        self.dedup.support_vertex_map.insert(support, idx);
-        idx
     }
 
     pub(super) fn into_final(self) -> ShardFinal {
@@ -118,8 +92,6 @@ impl ShardState {
             output: self.output,
             #[cfg(feature = "timing")]
             triplet_keys: self.triplet_keys,
-            #[cfg(feature = "timing")]
-            support_keys: self.support_keys,
         }
         // self.dedup dropped here automatically
     }
@@ -130,6 +102,4 @@ pub(super) struct ShardFinal {
     pub(super) output: ShardOutput,
     #[cfg(feature = "timing")]
     pub(super) triplet_keys: u64,
-    #[cfg(feature = "timing")]
-    pub(super) support_keys: u64,
 }

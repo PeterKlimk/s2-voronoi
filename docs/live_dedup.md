@@ -12,6 +12,10 @@ Vertices (triplets of generators) are assigned an “owner bin” derived from a
 key. If the owner is local, the bin can allocate/deduplicate the vertex immediately; otherwise, the
 cell records a deferred vertex slot to be patched later.
 
+The current live path is triplet-key only. Near-degenerate multi-generator disagreements are not
+materialized as a separate vertex-owner class; they are carried forward as unresolved shared-edge
+mismatches for `edge_reconcile`.
+
 ## Why edge checks exist
 
 Even with triplet-key ownership, adjacent cells need to agree on which global vertex index appears

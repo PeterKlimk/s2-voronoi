@@ -8,10 +8,7 @@ use rustc_hash::FxHashMap;
 use super::edge_checks::resolve_edge_check_overflow;
 use super::packed::{pack_ref, unpack_ref, DEFERRED};
 use super::shard::ShardFinal;
-use super::types::{
-    BinId, DeferredSlot, EdgeCheckOverflow, RemoteSupportVertexWrite, UnresolvedEdgeMismatch,
-};
-use super::with_two_mut;
+use super::types::{BinId, DeferredSlot, EdgeCheckOverflow, UnresolvedEdgeMismatch};
 use super::ShardedCellsData;
 use crate::knn_clipping::cell_builder::VertexKey;
 use crate::knn_clipping::timing::{DedupSubPhases, Timer};
@@ -65,35 +62,9 @@ pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::
 
     let num_bins = data.assignment.num_bins;
 
-    // Phase 3: collect overflow by target bin
-    let mut remote_supports_by_target: Vec<Vec<RemoteSupportVertexWrite>> =
-        (0..num_bins).map(|_| Vec::new()).collect();
-    for shard in &mut data.shards {
-        for entry in shard.dedup.remote_support_writes.drain(..) {
-            remote_supports_by_target[entry.target_bin.as_usize()].push(entry);
-        }
-    }
-
     #[allow(unused_variables)]
     let overflow_collect_time = t0.elapsed();
     let t1 = Timer::start();
-
-    // Phase 3: overflow flush (V1: single-threaded)
-    for (target_idx, remote_supports) in remote_supports_by_target.iter_mut().enumerate() {
-        let target_bin = BinId::from_usize(target_idx);
-        for entry in remote_supports.drain(..) {
-            let source = entry.source_bin.as_usize();
-            debug_assert_ne!(
-                entry.source_bin, target_bin,
-                "remote support write should not target same bin"
-            );
-            let (source_shard, target_shard) = with_two_mut(&mut data.shards, source, target_idx);
-
-            let idx = target_shard.dedup_owned_support_vertex(entry.support, entry.pos);
-            source_shard.output.cell_indices[entry.source_slot as usize] =
-                pack_ref(target_bin, idx);
-        }
-    }
 
     let mut unresolved_edges: Vec<UnresolvedEdgeMismatch> = Vec::new();
     let mut edge_check_overflow: Vec<EdgeCheckOverflow> = Vec::new();
@@ -361,7 +332,6 @@ pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::
     #[cfg(feature = "timing")]
     let sub_phases = DedupSubPhases {
         triplet_keys: finals.iter().map(|s| s.triplet_keys).sum(),
-        support_keys: finals.iter().map(|s| s.support_keys).sum(),
         unresolved_edges_count: unresolved_edges.len() as u64,
     };
 

@@ -91,7 +91,6 @@ pub struct CellSubPhases {
 #[derive(Debug, Clone, Default)]
 pub struct DedupSubPhases {
     pub triplet_keys: u64,
-    pub support_keys: u64,
     pub unresolved_edges_count: u64,
 }
 
@@ -435,10 +434,8 @@ impl PhaseTimings {
             pct(self.dedup)
         );
         eprintln!(
-            "    keys: triplet={} support={} unresolved_edges={}",
-            self.dedup_sub.triplet_keys,
-            self.dedup_sub.support_keys,
-            self.dedup_sub.unresolved_edges_count
+            "    keys: triplet={} unresolved_edges={}",
+            self.dedup_sub.triplet_keys, self.dedup_sub.unresolved_edges_count
         );
         eprintln!(
             "  edge_reconcile:    {:7.1}ms ({:4.1}%)",

@@ -159,16 +159,4 @@ pub(super) struct DeferredSlot {
     pub(super) source_slot: u32,
 }
 
-/// Cross-bin write-back for a support-set-owned vertex.
-///
-/// Unlike `DeferredSlot`, this path already knows the owner bin up front; assembly only needs to
-/// materialize/deduplicate the support vertex in the owner shard and patch the source slot.
-pub(super) struct RemoteSupportVertexWrite {
-    pub(super) source_bin: BinId,
-    pub(super) target_bin: BinId,
-    pub(super) source_slot: u32,
-    pub(super) support: Vec<u32>,
-    pub(super) pos: Vec3,
-}
-
 // Packed-kNN data is handled via chunked emission from `cube_grid::packed_knn`.
