@@ -25,7 +25,7 @@ pub fn coincident_distance() -> f32 {
 /// numerical issues where different triplets produce the same f32 vertex
 /// position. We merge generators that are within a fraction of the mean spacing.
 ///
-/// Returns `max(coincident_distance, mean_spacing * 0.01)`.
+/// Returns `max(coincident_distance, mean_spacing * 0.001)`.
 #[inline]
 pub fn merge_threshold_for_density(num_points: usize) -> f32 {
     // Mean angular spacing on unit sphere: sqrt(4π / n)
@@ -36,9 +36,13 @@ pub fn merge_threshold_for_density(num_points: usize) -> f32 {
     // This fraction is chosen so that merged points don't significantly
     // affect the diagram quality, but prevents numerical degeneracies.
     //
-    // At 4M points: mean_spacing ≈ 0.00177, threshold ≈ 1.8e-5
-    // At 1M points: mean_spacing ≈ 0.00354, threshold ≈ 3.5e-5
-    let density_threshold = mean_spacing * 0.01;
+    // At 4M points: mean_spacing ≈ 0.00177, threshold ≈ 1.8e-6
+    // At 1M points: mean_spacing ≈ 0.00354, threshold ≈ 3.5e-6
+    //
+    // A larger fraction was too aggressive on low-count clustered inputs,
+    // where preprocessing changed the solved problem enough to induce
+    // duplicate-cell collapse after remap.
+    let density_threshold = mean_spacing * 0.001;
 
     // Use the larger of fixed (duplicate) threshold and density threshold
     coincident_distance().max(density_threshold)

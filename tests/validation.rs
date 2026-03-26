@@ -1,7 +1,7 @@
 mod support;
 
-use s2_voronoi::{compute, compute_with, PreprocessMode, VoronoiConfig};
 use s2_voronoi::validation::validate;
+use s2_voronoi::{compute, compute_with, PreprocessMode, VoronoiConfig};
 use support::points::{clustered_cap_points, fibonacci_sphere_points};
 
 #[test]
@@ -34,19 +34,14 @@ fn test_validation_larger() {
 }
 
 #[test]
-fn test_validation_rejects_duplicate_cell_collapse() {
+fn test_validation_clustered_cap_tight_with_default_preprocessing_is_strictly_valid() {
     let points = clustered_cap_points(100, 0.0175, 42);
-    let diagram = compute(&points).expect("clustered cap should still compute");
+    let diagram = compute(&points).expect("clustered cap should compute");
     let report = validate(&diagram);
 
     assert!(
-        !report.is_strictly_valid(),
-        "Expected clustered duplicate-cell collapse to be invalid: {}",
-        report
-    );
-    assert!(
-        report.duplicate_cells_count > 0,
-        "Expected duplicate-cell collapse to be surfaced: {}",
+        report.is_strictly_valid(),
+        "Expected clustered cap to remain strictly valid under the default preprocessing policy: {}",
         report
     );
 }

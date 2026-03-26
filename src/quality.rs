@@ -538,17 +538,7 @@ mod tests {
     }
 
     #[test]
-    fn clustered_cap_quality_is_worse_than_well_spaced_input() {
-        let healthy_points = fibonacci_sphere_points(100, 0.01);
-        let healthy = compute(&healthy_points).expect("healthy compute should succeed");
-        let healthy_report = assess_with_config(
-            &healthy,
-            QualityConfig {
-                max_sampled_cells: 64,
-                edge_samples_per_edge: 3,
-            },
-        );
-
+    fn clustered_cap_quality_stays_bounded_under_default_preprocessing() {
         let stressed_points = clustered_cap_points(100, 0.0175);
         let stressed = compute(&stressed_points).expect("clustered cap should compute");
         let stressed_report = assess_with_config(
@@ -559,16 +549,20 @@ mod tests {
             },
         );
 
+        assert_eq!(
+            stressed_report.ownership.mismatches,
+            0,
+            "{}",
+            stressed_report.headline()
+        );
         assert!(
-            stressed_report.ownership.mismatches > healthy_report.ownership.mismatches
-                || stressed_report.vertex_dot_residuals.max_abs
-                    > healthy_report.vertex_dot_residuals.max_abs
-                || stressed_report.edge_dot_residuals.max_abs
-                    > healthy_report.edge_dot_residuals.max_abs
-                || stressed_report.low_degree.near_duplicate_vertices
-                    > healthy_report.low_degree.near_duplicate_vertices,
-            "expected stressed quality report to show worse metrics\nhealthy={}\nstressed={}",
-            healthy_report.headline(),
+            stressed_report.vertex_dot_residuals.max_abs < 1e-3,
+            "{}",
+            stressed_report.headline()
+        );
+        assert!(
+            stressed_report.edge_dot_residuals.max_abs < 1e-3,
+            "{}",
             stressed_report.headline()
         );
     }

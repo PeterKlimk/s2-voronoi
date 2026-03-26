@@ -112,19 +112,26 @@ The default density-based preprocessing merges near-coincident generators before
 construction. On tight clustered-cap fixtures, that merge step can turn an otherwise strictly valid
 diagram into one with duplicate-cell collapse and related subdivision failures.
 
-Current evidence:
+Historical evidence:
 
-- `tests/validation.rs::test_validation_rejects_duplicate_cell_collapse`
+- `tests/validation.rs::test_validation_clustered_cap_tight_with_default_preprocessing_is_strictly_valid`
 - `tests/validation.rs::test_validation_clustered_cap_tight_without_preprocess_is_strictly_valid`
-- `tests/api.rs::test_clustered_cap_tight_report_shows_default_preprocessing_merges_points`
+- older revisions before the merge-policy reduction regressed this fixture by merging clustered points
 
 Why this matters:
 
-- the default "robust" mode is not just changing the solved problem abstractly; it can materially
-  worsen structural validity on some clustered inputs
+- the default "robust" mode is not just changing the solved problem abstractly; an overly
+  aggressive threshold can materially worsen structural validity on some clustered inputs
 - callers need observability and documentation around this tradeoff
 - future preprocessing heuristics should be judged against strict validation, not just successful
   completion
+
+Current status:
+
+- the density-based merge fraction was reduced so this clustered-cap regression no longer triggers
+  at low point counts
+- preprocess-aware report validation still exists to surface effective-vs-returned validity when
+  merges do happen
 
 Desired direction:
 

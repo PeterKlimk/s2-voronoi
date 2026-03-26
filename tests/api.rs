@@ -131,7 +131,7 @@ fn test_compute_with_report_surfaces_preprocess_outcome() {
 }
 
 #[test]
-fn test_clustered_cap_tight_report_shows_default_preprocessing_merges_points() {
+fn test_clustered_cap_tight_report_keeps_default_preprocessing_nonintrusive() {
     let points = clustered_cap_points(100, 0.0175, 42);
 
     let output = compute_with_report(
@@ -148,12 +148,8 @@ fn test_clustered_cap_tight_report_shows_default_preprocessing_merges_points() {
         PreprocessMode::MergeDensity
     );
     assert!(
-        output.report.preprocess.did_merge(),
-        "expected default preprocessing to merge close clustered-cap generators"
-    );
-    assert!(
-        output.report.preprocess.num_merged > 0,
-        "expected a nonzero clustered-cap merge count"
+        !output.report.preprocess.did_merge(),
+        "default density preprocessing should stay non-intrusive on this clustered-cap fixture"
     );
     assert!(
         output.report.preprocess.threshold_used.is_some(),
@@ -162,28 +158,16 @@ fn test_clustered_cap_tight_report_shows_default_preprocessing_merges_points() {
 
     let report = validate(&output.diagram);
     assert!(
-        !report.is_strictly_valid(),
-        "current clustered-cap collapse regression should still be surfaced as invalid: {}",
+        report.is_strictly_valid(),
+        "clustered-cap output should remain strictly valid under the less aggressive default merge policy: {}",
         report.headline()
     );
     assert!(
-        !output.report.returned_validation.is_strictly_valid(),
-        "returned diagram validation should surface the remapped duplicate-cell collapse"
+        output.report.returned_validation.is_strictly_valid(),
+        "returned validation should stay strict-valid when no remap collapse occurs"
     );
-    let effective_validation = output
-        .report
-        .effective_validation
-        .as_ref()
-        .expect("merged preprocessing should surface effective validation");
-    assert!(
-        effective_validation.is_strictly_valid(),
-        "effective preprocessed diagram should remain strictly valid: {}",
-        effective_validation.headline()
-    );
-    assert!(
-        output.report.preferred_validation().is_strictly_valid(),
-        "preferred validation should use the effective merged problem when preprocessing changes the solved set"
-    );
+    assert!(output.report.effective_validation.is_none());
+    assert!(output.report.preferred_validation().is_strictly_valid());
 }
 
 #[test]
