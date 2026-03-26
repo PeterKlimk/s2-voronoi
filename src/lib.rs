@@ -47,6 +47,8 @@ mod fp;
 #[cfg(any(test, feature = "packed_knn_sort_small"))]
 pub(crate) mod generated;
 pub(crate) mod policy;
+#[doc(hidden)]
+pub mod quality;
 #[cfg(any(test, feature = "packed_knn_sort_small"))]
 pub(crate) mod sort;
 mod types;

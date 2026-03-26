@@ -257,20 +257,9 @@ fn validate_against_hull(points: &[Vec3], preprocess: bool) {
     )
     .expect("s2-voronoi should succeed");
     let s2_time = t1.elapsed().as_secs_f64() * 1000.0;
-
-    let mut exact_match = 0usize;
     let report = s2_voronoi::validation::validate(&s2_diagram);
-
-    for i in 0..points.len() {
-        let hull_count = hull.cell(i).len();
-        let s2_count = s2_diagram.cell(i).len();
-
-        if hull_count == s2_count {
-            exact_match += 1;
-        }
-    }
-
-    let match_pct = exact_match as f64 / points.len() as f64 * 100.0;
+    let quality = s2_voronoi::quality::assess(&s2_diagram);
+    let comparison = s2_voronoi::quality::compare_cell_vertex_counts(&s2_diagram, &hull);
 
     println!("  Convex hull time: {:>8.1}ms", hull_time);
     println!(
@@ -280,20 +269,22 @@ fn validate_against_hull(points: &[Vec3], preprocess: bool) {
     );
     println!(
         "  Exact matches:    {:>8} / {} ({:.2}%)",
-        exact_match,
-        points.len(),
-        match_pct
+        comparison.matching_cell_vertex_counts,
+        comparison.total_cells,
+        comparison.match_ratio as f64 * 100.0
     );
+    println!("  Validation:       {}", report.headline());
+    println!("  Quality:          {}", quality.headline());
     if report.degenerate_cells > 0 {
         println!(
             "  Invalid cells:    {:>8} (< 3 vertices)",
             report.degenerate_cells
         );
     }
-    if report.cells_with_duplicates > 0 {
+    if report.cells_with_duplicate_vertices > 0 {
         println!(
             "  Duplicate verts:  {:>8} cells",
-            report.cells_with_duplicates
+            report.cells_with_duplicate_vertices
         );
     }
 }

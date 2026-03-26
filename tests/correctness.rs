@@ -173,6 +173,7 @@ fn test_reproducibility() {
 fn test_knn_matches_qhull_structure() {
     use glam::Vec3;
     use s2_voronoi::compute_voronoi_qhull;
+    use s2_voronoi::quality::compare_cell_vertex_counts;
 
     // For well-spaced points, knn_clipping should produce similar structure to qhull
     let points = fibonacci_sphere_points(100, 0.05, 44444);
@@ -181,23 +182,11 @@ fn test_knn_matches_qhull_structure() {
     let knn_diagram = compute(&points).unwrap();
     let qhull_output = compute_voronoi_qhull(&vec3_points);
 
-    // Same number of cells
     assert_eq!(knn_diagram.num_cells(), qhull_output.num_cells());
-
-    // Vertex counts should be similar for most cells
-    let mut matching_vertex_counts = 0;
-    for i in 0..knn_diagram.num_cells() {
-        let knn_cell = knn_diagram.cell(i);
-        let qhull_cell = qhull_output.cell(i);
-        if knn_cell.len() == qhull_cell.len() {
-            matching_vertex_counts += 1;
-        }
-    }
-
-    let match_ratio = matching_vertex_counts as f32 / knn_diagram.num_cells() as f32;
+    let comparison = compare_cell_vertex_counts(&knn_diagram, &qhull_output);
     assert!(
-        match_ratio > 0.95,
+        comparison.match_ratio > 0.95,
         "at least 95% of cells should have matching vertex counts with qhull, got {:.1}%",
-        match_ratio * 100.0
+        comparison.match_ratio * 100.0
     );
 }
