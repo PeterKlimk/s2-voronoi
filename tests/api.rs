@@ -2,7 +2,10 @@
 
 mod support;
 
-use s2_voronoi::{compute, compute_with, PreprocessMode, UnitVec3, VoronoiConfig, VoronoiError};
+use s2_voronoi::{
+    compute, compute_with, compute_with_report, PreprocessMode, UnitVec3, VoronoiConfig,
+    VoronoiError,
+};
 use support::points::{fibonacci_sphere_points, hemisphere_points, random_sphere_points};
 
 #[test]
@@ -85,6 +88,32 @@ fn test_compute_with_explicit_preprocess_modes() {
     )
     .expect("disabled preprocessing should succeed");
     assert_eq!(disabled.num_cells(), 50);
+}
+
+#[test]
+fn test_compute_with_report_surfaces_preprocess_outcome() {
+    let points = random_sphere_points(50, 24680);
+
+    let output = compute_with_report(
+        &points,
+        VoronoiConfig {
+            preprocess_mode: PreprocessMode::MergeDensity,
+            ..VoronoiConfig::default()
+        },
+    )
+    .expect("compute_with_report should succeed");
+
+    assert_eq!(output.diagram.num_cells(), 50);
+    assert_eq!(
+        output.report.preprocess.requested_mode,
+        PreprocessMode::MergeDensity
+    );
+    assert_eq!(output.report.preprocess.original_points, 50);
+    assert_eq!(
+        output.report.preprocess.effective_points + output.report.preprocess.num_merged,
+        50
+    );
+    assert!(output.report.preprocess.threshold_used.is_some());
 }
 
 #[test]

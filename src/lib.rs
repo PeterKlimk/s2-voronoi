@@ -121,6 +121,46 @@ pub enum PreprocessMode {
     MergeWithin(f32),
 }
 
+/// Observable preprocessing outcome for a computation run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreprocessReport {
+    /// Requested preprocessing mode.
+    pub requested_mode: PreprocessMode,
+    /// Threshold actually used for merging, if preprocessing ran.
+    pub threshold_used: Option<f32>,
+    /// Number of generators passed into the computation.
+    pub original_points: usize,
+    /// Number of effective generators after preprocessing.
+    pub effective_points: usize,
+    /// Number of generators merged away before cell construction.
+    pub num_merged: usize,
+}
+
+impl PreprocessReport {
+    #[inline]
+    pub fn did_merge(&self) -> bool {
+        self.num_merged > 0
+    }
+
+    #[inline]
+    pub fn did_remap_cells(&self) -> bool {
+        self.did_merge()
+    }
+}
+
+/// Observable per-run report for Voronoi computation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComputeReport {
+    pub preprocess: PreprocessReport,
+}
+
+/// Output of `compute_with_report`.
+#[derive(Debug, Clone)]
+pub struct ComputeOutput {
+    pub diagram: SphericalVoronoi,
+    pub report: ComputeReport,
+}
+
 /// Configuration for Voronoi computation.
 #[derive(Debug, Clone)]
 pub struct VoronoiConfig {
@@ -163,6 +203,14 @@ pub fn compute_with<P: UnitVec3Like>(
     points: &[P],
     config: VoronoiConfig,
 ) -> Result<SphericalVoronoi, VoronoiError> {
+    Ok(compute_with_report(points, config)?.diagram)
+}
+
+/// Compute a spherical Voronoi diagram and return observable preprocessing metadata.
+pub fn compute_with_report<P: UnitVec3Like>(
+    points: &[P],
+    config: VoronoiConfig,
+) -> Result<ComputeOutput, VoronoiError> {
     use glam::Vec3;
 
     if points.len() < 4 {

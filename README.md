@@ -39,6 +39,7 @@ for cell in diagram.iter_cells() {
 
 - `compute(&[P]) -> Result<SphericalVoronoi, VoronoiError>`
 - `compute_with(&[P], VoronoiConfig)`
+- `compute_with_report(&[P], VoronoiConfig) -> Result<ComputeOutput, VoronoiError>`
 - `validation::validate(&SphericalVoronoi) -> ValidationReport`
   Use `ValidationReport::is_strictly_valid()` and the explicit issue summaries.
 - `SphericalVoronoi`: `generators`, `vertices`, `iter_cells()`, `cell(i)`
@@ -54,6 +55,8 @@ for cell in diagram.iter_cells() {
   - `PreprocessMode::MergeWithin(threshold)`: merge using an explicit threshold
   - `PreprocessMode::Disabled`: do not merge
 - `termination_max_k`: cap k growth if termination fallback keeps requesting neighbors.
+
+`compute_with_report` exposes whether preprocessing actually merged generators and remapped cells.
 
 ## Features
 

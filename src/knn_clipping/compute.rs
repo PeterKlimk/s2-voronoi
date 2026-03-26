@@ -12,17 +12,18 @@ use super::{
 use crate::cube_grid::CubeMapGrid;
 #[cfg(feature = "timing")]
 use crate::cube_grid::CubeMapGridBuildTimings;
-use crate::{PreprocessMode, VoronoiConfig};
+use crate::{ComputeOutput, ComputeReport, PreprocessMode, PreprocessReport, VoronoiConfig};
 
 pub(super) fn compute_voronoi_knn_clipping_owned_core(
     points: Vec<Vec3>,
     termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
-) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
+) -> Result<ComputeOutput, crate::VoronoiError> {
     let mut tb = TimingBuilder::new();
 
     let t = Timer::start();
-    let (effective_points, merge_result) = preprocess_effective_points(&points, preprocess_mode);
+    let (effective_points, merge_result, preprocess_report) =
+        preprocess_effective_points(&points, preprocess_mode);
     tb.set_preprocess(t.elapsed());
 
     let effective_points_ref: &[Vec3] = match &effective_points {
@@ -58,20 +59,25 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         eff_cell_indices,
     );
 
-    let voronoi = crate::SphericalVoronoi::from_raw_parts(points, vertices, cells, cell_indices);
+    let diagram = crate::SphericalVoronoi::from_raw_parts(points, vertices, cells, cell_indices);
     tb.set_assemble(t.elapsed());
 
     // Report timing if feature enabled
     let timings = tb.finish();
-    timings.report(voronoi.num_cells());
+    timings.report(diagram.num_cells());
 
-    Ok(voronoi)
+    Ok(ComputeOutput {
+        diagram,
+        report: ComputeReport {
+            preprocess: preprocess_report,
+        },
+    })
 }
 
 pub fn compute_voronoi_knn_clipping_with_config_owned(
     points: Vec<Vec3>,
     config: &VoronoiConfig,
-) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
+) -> Result<ComputeOutput, crate::VoronoiError> {
     let termination = TerminationConfig {
         packed_expand_r2: config.packed_knn_expand_r2,
         max_k_cap: config.termination_max_k,
@@ -106,18 +112,37 @@ fn map_cell_build_error(err: CellBuildError) -> crate::VoronoiError {
 fn preprocess_effective_points(
     points: &[Vec3],
     preprocess_mode: PreprocessMode,
-) -> (Option<Vec<Vec3>>, Option<MergeResult>) {
+) -> (Option<Vec<Vec3>>, Option<MergeResult>, PreprocessReport) {
     let threshold = match preprocess_mode {
-        PreprocessMode::Disabled => return (None, None),
+        PreprocessMode::Disabled => {
+            return (
+                None,
+                None,
+                PreprocessReport {
+                    requested_mode: preprocess_mode,
+                    threshold_used: None,
+                    original_points: points.len(),
+                    effective_points: points.len(),
+                    num_merged: 0,
+                },
+            );
+        }
         PreprocessMode::MergeDensity => constants::merge_threshold_for_density(points.len()),
         PreprocessMode::MergeWithin(threshold) => threshold,
     };
     let mut result = merge_close_points(points, threshold);
+    let report = PreprocessReport {
+        requested_mode: preprocess_mode,
+        threshold_used: Some(threshold),
+        original_points: points.len(),
+        effective_points: result.effective_points.len(),
+        num_merged: result.num_merged,
+    };
     if result.num_merged > 0 {
         let pts = std::mem::take(&mut result.effective_points);
-        (Some(pts), Some(result))
+        (Some(pts), Some(result), report)
     } else {
-        (None, None)
+        (None, None, report)
     }
 }
 
