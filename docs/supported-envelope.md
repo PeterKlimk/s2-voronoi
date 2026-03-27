@@ -1,0 +1,165 @@
+# Supported Envelope
+
+This document defines the current computation contract for the primary kNN + clipping backend.
+
+It is intentionally narrower than "all spherical Voronoi diagrams". The implementation supports a
+large practical subset of inputs, but it still has explicit geometric and representation limits.
+
+## Outcome Classes
+
+The backend currently has four distinct outcome classes.
+
+### 1. Supported Success
+
+The computation returns a diagram and the result is within the currently supported model.
+
+Expected properties:
+
+- `compute` / `compute_with` / `compute_with_report` return `Ok(...)`
+- with preprocessing disabled, the returned diagram should be a strictly valid S2 subdivision
+- with preprocessing enabled and no merges, the same should hold
+- with preprocessing enabled and merges occurring, the **effective** diagram actually solved by the
+  backend should be strictly valid
+
+This is the normal successful contract.
+
+### 2. Supported Failure
+
+The computation returns a defined `Err(...)` for an input class or limit that the backend
+recognizes explicitly.
+
+Current public failure classes:
+
+- `VoronoiError::UnsupportedGeometry`
+  - used for proven geometric/model limits, not generic failure
+  - current example: a cell reaches the generator hemisphere boundary, so the gnomonic model is no
+    longer valid
+- `VoronoiError::RepresentationLimit`
+  - used for concrete storage/layout/indexing limits
+  - current examples:
+    - packed `(bin, local)` layout overflow
+    - global assembled/remapped/reconciled index-buffer overflow
+    - total generator count exceeding the backend's `u32`-backed identifier model
+- `VoronoiError::ComputationFailed`
+  - used for terminal failure states that are understood operationally but are not yet promoted to
+    a narrower public class
+  - current examples:
+    - unbounded-after-exhaustion
+    - clipping vertex-budget exhaustion
+
+These are considered part of the supported contract. They should fail cleanly without panic.
+
+### 3. Preprocessing-Altered Solved Problem
+
+When preprocessing merges near-coincident generators, the backend solves a different effective
+generator set and may then remap the result back to the original input count.
+
+This is not the same contract as a strict Voronoi solve over the original input set.
+
+Current behavior:
+
+- `compute` returns the remapped/original-count diagram
+- `compute_with_report` also exposes:
+  - `effective_diagram`
+  - `returned_validation`
+  - `effective_validation`
+  - `preferred_diagram()`
+  - `preferred_validation()`
+
+Interpretation:
+
+- if merges did not occur, returned and effective views coincide
+- if merges occurred, the effective view is the one the backend actually solved
+- strict validity of the returned remapped diagram is not guaranteed to mean the same thing as
+  strict validity of the effective solved problem
+
+This is an intentional robustness tradeoff, not a hidden invariant.
+
+### 4. Invariant Failure / Bug
+
+Some internal states are still treated as bugs rather than supported input outcomes.
+
+Examples:
+
+- `ClippedAway`
+- `NoValidSeed`
+- internal stream-state contradictions
+- internal clipper assumptions that should hold if the algorithm's invariants are respected
+
+These cases may still panic. They are not considered part of the supported public failure
+contract.
+
+## Current Supported Geometry Envelope
+
+### Inputs expected to succeed
+
+The backend is intended to support:
+
+- unit-length finite input points on `S²`
+- non-degenerate point sets large enough to form a Voronoi subdivision
+- many practical near-degenerate configurations, including:
+  - small-jitter great-circle-like inputs
+  - clustered-cap inputs with reasonable anchoring
+  - many near-cocircular and edge-reconciliation cases
+
+This is reflected in the always-on contract tests in [`tests/adversarial.rs`](/home/pkzmbk/code/s2-voronoi/tests/adversarial.rs).
+
+### Inputs expected to fail cleanly
+
+The backend is expected to return a defined `Err(...)` for:
+
+- cells that require the clipped feasible region to reach or exceed the generator hemisphere
+  boundary in the current gnomonic model
+- extreme scale/layout cases exceeding current packed/indexing capacity
+- some terminal construction failures that are recognized but not yet classified more precisely
+
+Pure great-circle / coplanar cases are the clearest current example of supported failure rather
+than supported success.
+
+### Inputs still treated as outside the explicit contract
+
+Some stress inputs are still exploratory rather than pinned as contract success/failure.
+
+These remain in the adversarial suite as diagnostics or ignored stress runs rather than stable
+regression-oracle cases.
+
+## Validation Semantics
+
+Strict validation and fidelity are intentionally separate.
+
+- [`validation::validate`](/home/pkzmbk/code/s2-voronoi/src/validation.rs) checks strict
+  subdivision validity plus exact invariants of the produced object
+- [`quality`](/home/pkzmbk/code/s2-voronoi/src/quality.rs) tracks fidelity/quality metrics and is
+  not part of strict validity
+
+Important consequence:
+
+- with preprocessing disabled, strict validation of the returned diagram is the primary success
+  check
+- with preprocessing merges, strict validation of the **effective** diagram is usually the right
+  correctness view for the solved problem
+
+## Current Failure Taxonomy
+
+The current intended split is:
+
+- `UnsupportedGeometry`
+  - only for proven unsupported geometric/model boundaries
+- `RepresentationLimit`
+  - only for concrete implementation/storage/layout limits
+- `ComputationFailed`
+  - for known terminal failure states that are still broader than the two classes above
+- panic
+  - only for internal contradictions still believed to indicate a bug
+
+This split is intentionally conservative. The crate should not broaden `Result` classifications
+unless it can state the failure reason honestly and specifically.
+
+## Near-Term Follow-Ups
+
+The most likely future refinements to this contract are:
+
+- tightening which adversarial families are pinned as expected success vs expected failure
+- clarifying whether `UnboundedAfterExhaustion` can be narrowed beyond `ComputationFailed`
+- adding fallback strategies for currently unsupported geometry/workspace limits rather than only
+  failing cleanly

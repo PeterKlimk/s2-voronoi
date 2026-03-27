@@ -83,6 +83,7 @@ validation result you want first; it selects effective validation when available
 - Design / algorithm notes: `docs/architecture.md`
 - Performance + benchmarking: `docs/performance.md`
 - Live vertex dedup and edge checks: `docs/live_dedup.md`
+- Supported input / failure contract: `docs/supported-envelope.md`
 - Active engineering issues / roadmap findings: `docs/engineering-findings.md`
 
 ## License

@@ -151,3 +151,16 @@ Why this matters:
 This does not look like a "start over" project.
 
 The algorithmic core appears worth preserving. The main work ahead is to make the library honest about its current limits and robust in how it communicates failure.
+
+## Follow-Up
+
+Some of the highest-priority findings above have since been addressed in code and tests:
+
+- the public `Result` contract now covers several explicit unsupported-geometry and
+  representation-limit paths
+- strict validation semantics were redesigned
+- preprocessing is now explicit and observable
+- the public diagram surface has been tightened
+
+The current supported-success / supported-failure / preprocessing / invariant-failure split is
+documented in [`docs/supported-envelope.md`](/home/pkzmbk/code/s2-voronoi/docs/supported-envelope.md).
