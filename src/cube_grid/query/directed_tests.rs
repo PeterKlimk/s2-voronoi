@@ -77,7 +77,7 @@ fn assert_cursor_matches_bruteforce_for_map(
         let query_packed = slot_gen_map[query_slot];
         let query_bin = (query_packed >> local_shift) as u8;
         let query_local = query_packed & local_mask;
-        let ctx = DirectedCtx::new(
+        let ctx = DirectedEligibility::new(
             query_bin,
             query_local,
             slot_gen_map,

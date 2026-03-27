@@ -143,7 +143,7 @@ pub(crate) struct CellBuildRequest<'a, 'm, 'p, 's> {
     pub(crate) points: &'a [Vec3],
     pub(crate) grid: &'a crate::cube_grid::CubeMapGrid,
     pub(crate) generator_idx: usize,
-    pub(crate) directed_ctx: crate::cube_grid::DirectedCtx<'m>,
+    pub(crate) directed_ctx: crate::cube_grid::DirectedEligibility<'m>,
     pub(crate) termination: TerminationPolicy,
     pub(crate) packed: Option<PackedQuery<'p, 'm>>,
     pub(crate) seed_neighbors: &'s [SeedNeighbor],
@@ -522,7 +522,7 @@ fn panic_unexpected_failure(
 #[cfg(test)]
 mod tests {
     use super::{build_cell_into, classify_terminal_failure, CellBuildContext, CellBuildRequest};
-    use crate::cube_grid::{CubeMapGrid, DirectedCtx};
+    use crate::cube_grid::{CubeMapGrid, DirectedEligibility};
     use crate::knn_clipping::cell_build::CellFailure;
     use crate::knn_clipping::TerminationConfig;
     use glam::Vec3;
@@ -564,7 +564,7 @@ mod tests {
         let policy = TerminationConfig::default().knn_policy(points.len());
         let mut ctx = CellBuildContext::new(&grid, policy);
         let fake_slot_map = vec![0u32; points.len()];
-        let directed_ctx = DirectedCtx::new(u8::MAX, 0, &fake_slot_map, 0, 0);
+        let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
 
         let stats = build_cell_into(
             &mut ctx,

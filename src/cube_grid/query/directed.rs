@@ -5,15 +5,47 @@ use std::cmp::Reverse;
 use super::super::{CubeMapGrid, CubeMapGridScratch, OrdF32};
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct DirectedCtx<'a> {
-    query_bin: u8,
-    query_local: u32,
+struct PackedSlotOwnership<'a> {
     slot_gen_map: &'a [u32],
     local_shift: u32,
     local_mask: u32,
 }
 
-impl<'a> DirectedCtx<'a> {
+impl<'a> PackedSlotOwnership<'a> {
+    #[inline]
+    fn new(slot_gen_map: &'a [u32], local_shift: u32, local_mask: u32) -> Self {
+        Self {
+            slot_gen_map,
+            local_shift,
+            local_mask,
+        }
+    }
+
+    #[inline]
+    fn bin_local(self, slot: u32) -> (u8, u32) {
+        let packed = self.slot_gen_map[slot as usize];
+        CubeMapGrid::unpack_bin_local(packed, self.local_shift, self.local_mask)
+    }
+
+    #[inline]
+    fn cell_bin(self, grid: &CubeMapGrid, cell: usize) -> Option<u8> {
+        let start = grid.cell_offsets[cell] as usize;
+        let end = grid.cell_offsets[cell + 1] as usize;
+        if start >= end {
+            return None;
+        }
+        Some(self.bin_local(start as u32).0)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DirectedEligibility<'a> {
+    query_bin: u8,
+    query_local: u32,
+    ownership: PackedSlotOwnership<'a>,
+}
+
+impl<'a> DirectedEligibility<'a> {
     #[inline]
     pub(crate) fn new(
         query_bin: u8,
@@ -25,10 +57,33 @@ impl<'a> DirectedCtx<'a> {
         Self {
             query_bin,
             query_local,
-            slot_gen_map,
-            local_shift,
-            local_mask,
+            ownership: PackedSlotOwnership::new(slot_gen_map, local_shift, local_mask),
         }
+    }
+
+    #[inline]
+    fn cell_mode(self, grid: &CubeMapGrid, start_cell: u32, cell: usize) -> DirectedCellMode {
+        let Some(bin_b) = self.ownership.cell_bin(grid, cell) else {
+            return DirectedCellMode::TransitOnly;
+        };
+        if bin_b != self.query_bin {
+            return DirectedCellMode::EmitAll;
+        }
+
+        let cell_u32 = cell as u32;
+        if cell_u32 < start_cell {
+            DirectedCellMode::TransitOnly
+        } else if cell_u32 == start_cell {
+            DirectedCellMode::EmitCenterDirected
+        } else {
+            DirectedCellMode::EmitAll
+        }
+    }
+
+    #[inline]
+    fn allows_center_slot(self, slot: u32) -> bool {
+        let (bin_b, local_b) = self.ownership.bin_local(slot);
+        bin_b != self.query_bin || local_b >= self.query_local
     }
 }
 
@@ -45,11 +100,7 @@ pub(crate) struct DirectedNoKCursor<'a, 'b> {
     query: Vec3,
     query_idx: usize,
     start_cell: u32,
-    query_bin: u8,
-    query_local: u32,
-    slot_gen_map: &'b [u32],
-    local_shift: u32,
-    local_mask: u32,
+    eligibility: DirectedEligibility<'b>,
     exhausted: bool,
 }
 
@@ -59,7 +110,7 @@ impl<'a, 'b> DirectedNoKCursor<'a, 'b> {
         query: Vec3,
         query_idx: usize,
         scratch: &'a mut CubeMapGridScratch,
-        ctx: DirectedCtx<'b>,
+        eligibility: DirectedEligibility<'b>,
     ) -> Self {
         let start_cell = if query_idx < grid.point_cells.len() {
             grid.point_cells[query_idx]
@@ -84,37 +135,14 @@ impl<'a, 'b> DirectedNoKCursor<'a, 'b> {
             query,
             query_idx,
             start_cell,
-            query_bin: ctx.query_bin,
-            query_local: ctx.query_local,
-            slot_gen_map: ctx.slot_gen_map,
-            local_shift: ctx.local_shift,
-            local_mask: ctx.local_mask,
+            eligibility,
             exhausted: false,
         }
     }
 
     #[inline]
     fn cell_mode(&self, cell: usize) -> DirectedCellMode {
-        let start = self.grid.cell_offsets[cell] as usize;
-        let end = self.grid.cell_offsets[cell + 1] as usize;
-        if start >= end {
-            return DirectedCellMode::TransitOnly;
-        }
-
-        let packed = self.slot_gen_map[start];
-        let (bin_b, _) = CubeMapGrid::unpack_bin_local(packed, self.local_shift, self.local_mask);
-        if bin_b != self.query_bin {
-            return DirectedCellMode::EmitAll;
-        }
-
-        let cell_u32 = cell as u32;
-        if cell_u32 < self.start_cell {
-            DirectedCellMode::TransitOnly
-        } else if cell_u32 == self.start_cell {
-            DirectedCellMode::EmitCenterDirected
-        } else {
-            DirectedCellMode::EmitAll
-        }
+        self.eligibility.cell_mode(self.grid, self.start_cell, cell)
     }
 
     #[inline]
@@ -162,13 +190,10 @@ impl<'a, 'b> DirectedNoKCursor<'a, 'b> {
             }
             let slot = (start + i) as u32;
 
-            if mode == DirectedCellMode::EmitCenterDirected {
-                let packed = self.slot_gen_map[slot as usize];
-                let (bin_b, local_b) =
-                    CubeMapGrid::unpack_bin_local(packed, self.local_shift, self.local_mask);
-                if bin_b == self.query_bin && local_b < self.query_local {
-                    continue;
-                }
+            if mode == DirectedCellMode::EmitCenterDirected
+                && !self.eligibility.allows_center_slot(slot)
+            {
+                continue;
             }
 
             let dot = fp::dot3_f32(xs[i], ys[i], zs[i], qx, qy, qz);
@@ -267,9 +292,9 @@ impl CubeMapGrid {
         query: Vec3,
         query_idx: usize,
         scratch: &'a mut CubeMapGridScratch,
-        ctx: DirectedCtx<'b>,
+        eligibility: DirectedEligibility<'b>,
     ) -> DirectedNoKCursor<'a, 'b> {
-        DirectedNoKCursor::new(self, query, query_idx, scratch, ctx)
+        DirectedNoKCursor::new(self, query, query_idx, scratch, eligibility)
     }
 
     #[inline(always)]

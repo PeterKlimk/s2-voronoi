@@ -3,7 +3,7 @@ use crate::cube_grid::packed_knn::{
 };
 
 use super::directed::DirectedNoKCursor;
-use super::{CubeMapGrid, CubeMapGridScratch, DirectedCtx};
+use super::{CubeMapGrid, CubeMapGridScratch, DirectedEligibility};
 use glam::Vec3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +80,7 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
         points: &'a [Vec3],
         query_idx: usize,
         scratch: &'a mut CubeMapGridScratch,
-        directed_ctx: DirectedCtx<'m>,
+        directed_ctx: DirectedEligibility<'m>,
         packed: Option<PackedQuery<'p, 'm>>,
     ) -> Self {
         let cursor = grid.directed_no_k_cursor(points[query_idx], query_idx, scratch, directed_ctx);
@@ -373,7 +373,7 @@ mod tests {
                     let query_slot = queries[qi];
                     let query_idx = grid.point_indices()[query_slot as usize] as usize;
                     let query_local = query_locals[qi];
-                    let ctx = DirectedCtx::new(
+                    let ctx = DirectedEligibility::new(
                         QUERY_BIN,
                         query_local,
                         &slot_gen_map,
@@ -478,7 +478,7 @@ mod tests {
         let qi = 0usize;
         let query_slot = queries[qi];
         let query_idx = grid.point_indices()[query_slot as usize] as usize;
-        let ctx = DirectedCtx::new(
+        let ctx = DirectedEligibility::new(
             QUERY_BIN,
             query_locals[qi],
             &slot_gen_map,
@@ -585,7 +585,7 @@ mod tests {
                     let query_slot = queries[qi];
                     let query_idx = grid.point_indices()[query_slot as usize] as usize;
                     let query_local = query_locals[qi];
-                    let ctx = DirectedCtx::new(
+                    let ctx = DirectedEligibility::new(
                         QUERY_BIN,
                         query_local,
                         &slot_gen_map,

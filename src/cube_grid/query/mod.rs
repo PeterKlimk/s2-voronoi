@@ -4,7 +4,7 @@ mod directed;
 mod scratch;
 mod stream;
 
-pub(crate) use directed::DirectedCtx;
+pub(crate) use directed::DirectedEligibility;
 pub(crate) use stream::{
     DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream,
 };

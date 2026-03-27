@@ -4,7 +4,7 @@
 //! It reports sampled ownership consistency and Voronoi residuals, but does not
 //! define pass/fail correctness.
 
-use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch, DirectedCtx};
+use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch, DirectedEligibility};
 use crate::SphericalVoronoi;
 use glam::Vec3;
 use std::collections::{HashMap, HashSet};
@@ -217,7 +217,7 @@ fn assess_sampled_ownership(
 
     let grid = build_generator_grid(generators);
     let fake_slot_map = vec![0u32; generators.len()];
-    let ctx = DirectedCtx::new(u8::MAX, 0, &fake_slot_map, 0, 0);
+    let ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
     let mut scratch = grid.make_scratch();
 
     let mut samples = 0usize;
@@ -457,7 +457,7 @@ fn nearest_generator_index(
     grid: &CubeMapGrid,
     generators: &[Vec3],
     scratch: &mut CubeMapGridScratch,
-    ctx: DirectedCtx<'_>,
+    ctx: DirectedEligibility<'_>,
     query: Vec3,
 ) -> Option<usize> {
     let mut cursor = grid.directed_no_k_cursor(query, generators.len(), scratch, ctx);

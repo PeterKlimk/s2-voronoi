@@ -378,7 +378,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
         });
     }
 
-    let directed_ctx = crate::cube_grid::DirectedCtx::new(
+    let directed_ctx = crate::cube_grid::DirectedEligibility::new(
         shard_ctx.bin.as_u8(),
         shard_ctx.local.as_u32(),
         &grid_ctx.assignment.slot_gen_map,
