@@ -235,22 +235,12 @@ fn test_bimodal_basic() {
 }
 
 #[test]
-#[ignore = "gnomonic projection cannot handle cells spanning >90° - awaiting fallback"]
 fn test_bimodal_extreme() {
-    // 200 points: 100 in 2-degree cluster + 100 sparse
-    // Sparse points may create cells that span >90°
+    // 200 points: 100 in 2-degree cluster + 100 sparse.
+    // The sparse half anchors the geometry enough that this fixed seed is now
+    // a supported strict-success case.
     let points = bimodal_density_points(200, 0.035, 42);
-    let result = compute(&points);
-
-    match result {
-        Ok(diagram) => {
-            let report = validate(&diagram);
-            eprintln!("bimodal_extreme: {}", report.headline());
-        }
-        Err(e) => {
-            eprintln!("bimodal_extreme failed (expected): {:?}", e);
-        }
-    }
+    expect_strict_success("bimodal_extreme", compute(&points));
 }
 
 // =============================================================================

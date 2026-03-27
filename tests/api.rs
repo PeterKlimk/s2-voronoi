@@ -184,6 +184,45 @@ fn test_clustered_cap_tight_report_keeps_default_preprocessing_nonintrusive() {
 }
 
 #[test]
+fn test_clustered_cap_extreme_report_prefers_effective_strict_validation() {
+    let points = clustered_cap_points(50, 0.00175, 42);
+
+    let output = compute_with_report(
+        &points,
+        VoronoiConfig {
+            preprocess_mode: PreprocessMode::MergeDensity,
+            ..VoronoiConfig::default()
+        },
+    )
+    .expect("clustered_cap_extreme should still compute under default preprocessing");
+
+    assert_eq!(
+        output.report.preprocess.requested_mode,
+        PreprocessMode::MergeDensity
+    );
+    assert!(
+        output.report.preprocess.did_merge(),
+        "extreme clustered-cap fixture should exercise the preprocessing-altered contract"
+    );
+    assert!(
+        output.effective_diagram.is_some(),
+        "merged preprocessing should expose the effective solved diagram"
+    );
+    assert!(
+        output.report.effective_validation.is_some(),
+        "merged preprocessing should surface effective validation"
+    );
+    assert!(
+        output.report.preferred_validation().is_strictly_valid(),
+        "preferred validation should point at the effective strict-valid solve"
+    );
+    assert_eq!(
+        output.preferred_diagram().num_cells(),
+        output.report.preprocess.effective_points
+    );
+}
+
+#[test]
 fn test_compute_with_report_exposes_effective_diagram_when_merges_occur() {
     let points = vec![
         UnitVec3::new(1.0, 0.0, 0.0),
