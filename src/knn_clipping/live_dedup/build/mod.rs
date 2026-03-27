@@ -13,7 +13,7 @@ use super::types::{
 };
 use super::{BuildCellsError, ShardedCellsData};
 use crate::cube_grid::packed_knn::{
-    DirectedCellGroup, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroupStatus,
+    PackedGroupInput, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroupStatus,
 };
 use crate::cube_grid::{CubeMapGrid, PackedQuery};
 use crate::knn_clipping::cell_build::{
@@ -190,10 +190,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                 .iter()
                 .map(|&i| grid.point_index_to_slot(i))
                 .collect();
-            let packed_query_locals_all: Vec<u32> = (0..my_generators.len())
-                .map(|local_idx| u32::try_from(local_idx).expect("local id must fit in u32"))
-                .collect();
-
             #[cfg(debug_assertions)]
             {
                 for &i in my_generators {
@@ -223,12 +219,13 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                 if packed_policy.enabled() {
                     let queries = &packed_queries_all[group_start..cursor];
-                    let query_locals = &packed_query_locals_all[group_start..cursor];
-                    let group = DirectedCellGroup::new(
+                    let query_local_start =
+                        u32::try_from(group_start).expect("local id must fit in u32");
+                    let group = PackedGroupInput::new(
                         cell as usize,
                         bin.as_u8(),
                         queries,
-                        query_locals,
+                        query_local_start,
                         &assignment.slot_gen_map,
                         assignment.local_shift,
                         assignment.local_mask,

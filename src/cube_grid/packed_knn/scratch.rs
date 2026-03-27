@@ -1,7 +1,7 @@
 //! Packed-kNN scratch + implementation.
 
 use super::timing::PackedLapTimer;
-use super::{DirectedCellGroup, PackedChunk, PackedKnnTimings, PackedStage};
+use super::{PackedChunk, PackedGroupInput, PackedKnnTimings, PackedStage};
 
 use super::super::{cell_to_face_ij, CubeMapGrid};
 
@@ -72,7 +72,7 @@ enum PackedCellRangeKind {
 
 pub(crate) struct PreparedPackedGroup<'a, 'g> {
     scratch: &'a mut PackedKnnCellScratch,
-    group: DirectedCellGroup<'g>,
+    group: PackedGroupInput<'g>,
     group_gen: u32,
     tail_built_any: bool,
 }
@@ -84,7 +84,7 @@ pub(crate) enum PreparedPackedGroupStatus<'a, 'g> {
 
 impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
     #[inline]
-    pub(super) fn group(&self) -> DirectedCellGroup<'g> {
+    pub(super) fn group(&self) -> PackedGroupInput<'g> {
         self.group
     }
 
@@ -225,7 +225,7 @@ impl PackedKnnCellScratch {
         &self,
         grid: &CubeMapGrid,
         cell: usize,
-        group: DirectedCellGroup<'_>,
+        group: PackedGroupInput<'_>,
         slot_gen_map: &[u32],
         local_shift: u32,
         local_mask: u32,
@@ -259,7 +259,7 @@ impl PackedKnnCellScratch {
     fn ensure_expand_r2_cells(
         &mut self,
         grid: &CubeMapGrid,
-        group: DirectedCellGroup<'_>,
+        group: PackedGroupInput<'_>,
         group_gen: u32,
         slot_gen_map: &[u32],
         local_shift: u32,
@@ -339,7 +339,7 @@ impl PackedKnnCellScratch {
     fn ensure_security2_for(
         &mut self,
         qi: usize,
-        group: DirectedCellGroup<'_>,
+        group: PackedGroupInput<'_>,
         group_gen: u32,
         grid: &CubeMapGrid,
         timings: &mut PackedKnnTimings,
@@ -374,7 +374,7 @@ impl PackedKnnCellScratch {
     pub(super) fn ensure_expand_r2_band_directed_for(
         &mut self,
         qi: usize,
-        group: DirectedCellGroup<'_>,
+        group: PackedGroupInput<'_>,
         group_gen: u32,
         grid: &CubeMapGrid,
         slot_gen_map: &[u32],
@@ -455,7 +455,7 @@ impl PackedKnnCellScratch {
     pub(crate) fn prepare_group_directed<'a, 'g>(
         &'a mut self,
         grid: &CubeMapGrid,
-        group: DirectedCellGroup<'g>,
+        group: PackedGroupInput<'g>,
         timings: &mut PackedKnnTimings,
     ) -> PreparedPackedGroupStatus<'a, 'g> {
         timings.clear();
@@ -1463,17 +1463,16 @@ mod tests {
             let start = grid.cell_offsets()[cell] as usize;
             let end = grid.cell_offsets()[cell + 1] as usize;
             let queries: Vec<u32> = (start..end).map(|slot| slot as u32).collect();
-            let query_locals = queries.clone();
             let mut slot_gen_map = vec![0u32; points.len()];
             for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
                 *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
             }
 
-            let group = DirectedCellGroup::new(
+            let group = PackedGroupInput::new(
                 cell,
                 QUERY_BIN,
                 &queries,
-                &query_locals,
+                start as u32,
                 &slot_gen_map,
                 LOCAL_SHIFT,
                 LOCAL_MASK,
@@ -1491,7 +1490,7 @@ mod tests {
                 let query_idx = grid.point_indices()[query_slot as usize] as usize;
                 let security = prepared.security(qi);
                 let expected =
-                    expected_safe_slots(&grid, &points, query_idx, query_locals[qi], security);
+                    expected_safe_slots(&grid, &points, query_idx, queries[qi], security);
                 let mut emitted = Vec::new();
                 let mut prev_bound = 1.0f32;
                 let mut stage = PackedStage::Chunk0;
@@ -1551,17 +1550,16 @@ mod tests {
             let start = grid.cell_offsets()[cell] as usize;
             let end = grid.cell_offsets()[cell + 1] as usize;
             let queries: Vec<u32> = (start..end).map(|slot| slot as u32).collect();
-            let query_locals = queries.clone();
             let mut slot_gen_map = vec![0u32; points.len()];
             for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
                 *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
             }
 
-            let group = DirectedCellGroup::new(
+            let group = PackedGroupInput::new(
                 cell,
                 QUERY_BIN,
                 &queries,
-                &query_locals,
+                start as u32,
                 &slot_gen_map,
                 LOCAL_SHIFT,
                 LOCAL_MASK,
@@ -1612,17 +1610,16 @@ mod tests {
             let start = grid.cell_offsets()[cell] as usize;
             let end = grid.cell_offsets()[cell + 1] as usize;
             let queries: Vec<u32> = (start..end).map(|slot| slot as u32).collect();
-            let query_locals = queries.clone();
             let mut slot_gen_map = vec![0u32; points.len()];
             for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
                 *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
             }
 
-            let group = DirectedCellGroup::new(
+            let group = PackedGroupInput::new(
                 cell,
                 QUERY_BIN,
                 &queries,
-                &query_locals,
+                start as u32,
                 &slot_gen_map,
                 LOCAL_SHIFT,
                 LOCAL_MASK,
@@ -1645,7 +1642,7 @@ mod tests {
 
                 let security2 = prepared.resume_security(qi);
                 let expected =
-                    expected_safe_slots(&grid, &points, query_idx, query_locals[qi], security2);
+                    expected_safe_slots(&grid, &points, query_idx, queries[qi], security2);
                 let mut emitted = Vec::new();
                 let mut prev_bound = 1.0f32;
                 let mut stage = PackedStage::Chunk0;

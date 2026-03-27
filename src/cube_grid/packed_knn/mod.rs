@@ -14,24 +14,64 @@ pub(crate) use scratch::{PreparedPackedGroup, PreparedPackedGroupStatus};
 pub use timing::PackedKnnTimings;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct DirectedCellGroup<'a> {
-    cell: usize,
-    query_bin: u8,
-    queries: &'a [u32],
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    query_locals: &'a [u32],
+struct PackedSlotLayout<'a> {
     slot_gen_map: &'a [u32],
     local_shift: u32,
     local_mask: u32,
 }
 
-impl<'a> DirectedCellGroup<'a> {
+impl<'a> PackedSlotLayout<'a> {
+    #[inline]
+    fn new(slot_gen_map: &'a [u32], local_shift: u32, local_mask: u32) -> Self {
+        Self {
+            slot_gen_map,
+            local_shift,
+            local_mask,
+        }
+    }
+
+    #[inline]
+    fn slot_gen_map(self) -> &'a [u32] {
+        self.slot_gen_map
+    }
+
+    #[inline]
+    fn local_shift(self) -> u32 {
+        self.local_shift
+    }
+
+    #[inline]
+    fn local_mask(self) -> u32 {
+        self.local_mask
+    }
+
+    #[inline]
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    fn unpack_bin_local(self, slot: u32) -> (u8, u32) {
+        let packed = self.slot_gen_map[slot as usize];
+        let bin = (packed >> self.local_shift) as u8;
+        let local = packed & self.local_mask;
+        (bin, local)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PackedGroupInput<'a> {
+    cell: usize,
+    query_bin: u8,
+    queries: &'a [u32],
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    query_local_start: u32,
+    layout: PackedSlotLayout<'a>,
+}
+
+impl<'a> PackedGroupInput<'a> {
     #[inline]
     pub(crate) fn new(
         cell: usize,
         query_bin: u8,
         queries: &'a [u32],
-        query_locals: &'a [u32],
+        query_local_start: u32,
         slot_gen_map: &'a [u32],
         local_shift: u32,
         local_mask: u32,
@@ -40,10 +80,8 @@ impl<'a> DirectedCellGroup<'a> {
             cell,
             query_bin,
             queries,
-            query_locals,
-            slot_gen_map,
-            local_shift,
-            local_mask,
+            query_local_start,
+            layout: PackedSlotLayout::new(slot_gen_map, local_shift, local_mask),
         }
     }
 
@@ -64,33 +102,27 @@ impl<'a> DirectedCellGroup<'a> {
 
     #[inline]
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    pub(crate) fn query_locals(self) -> &'a [u32] {
-        self.query_locals
+    pub(crate) fn query_local(self, query_index: usize) -> u32 {
+        self.query_local_start + query_index as u32
     }
 
     #[inline]
     pub(crate) fn slot_gen_map(self) -> &'a [u32] {
-        self.slot_gen_map
+        self.layout.slot_gen_map()
     }
 
     #[inline]
     pub(crate) fn local_shift(self) -> u32 {
-        self.local_shift
+        self.layout.local_shift()
     }
 
     #[inline]
     pub(crate) fn local_mask(self) -> u32 {
-        self.local_mask
+        self.layout.local_mask()
     }
 
     #[cfg(debug_assertions)]
     pub(crate) fn debug_assert_matches_grid(self, grid: &CubeMapGrid) {
-        debug_assert_eq!(
-            self.queries.len(),
-            self.query_locals.len(),
-            "directed packed group queries/locals length mismatch"
-        );
-
         let start = grid.cell_offsets()[self.cell] as usize;
         let end = grid.cell_offsets()[self.cell + 1] as usize;
         debug_assert_eq!(
@@ -106,19 +138,18 @@ impl<'a> DirectedCellGroup<'a> {
             "directed packed group queries must be the center cell in slot order"
         );
         debug_assert!(
-            self.query_locals.windows(2).all(|w| w[1] == w[0] + 1),
+            self.queries
+                .iter()
+                .enumerate()
+                .all(|(offset, _)| self.query_local(offset)
+                    == self.query_local_start + offset as u32),
             "directed packed group locals must be contiguous in slot order"
         );
         debug_assert!(
-            self.queries
-                .iter()
-                .zip(self.query_locals.iter())
-                .all(|(&slot, &ql)| {
-                    let packed = self.slot_gen_map[slot as usize];
-                    let bin = (packed >> self.local_shift) as u8;
-                    let local = packed & self.local_mask;
-                    bin == self.query_bin && local == ql
-                }),
+            self.queries.iter().enumerate().all(|(offset, &slot)| {
+                let (bin, local) = self.layout.unpack_bin_local(slot);
+                bin == self.query_bin && local == self.query_local(offset)
+            }),
             "directed packed group (slot -> bin,local) mapping must match query inputs"
         );
     }

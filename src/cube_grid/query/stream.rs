@@ -268,7 +268,7 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
 mod tests {
     use super::*;
     use crate::cube_grid::packed_knn::{
-        DirectedCellGroup, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroupStatus,
+        PackedGroupInput, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroupStatus,
     };
     use crate::policy::PackedNeighborPolicy;
     use rand::{Rng, SeedableRng};
@@ -346,17 +346,16 @@ mod tests {
             let start = grid.cell_offsets()[cell] as usize;
             let end = grid.cell_offsets()[cell + 1] as usize;
             let queries: Vec<u32> = (start..end).map(|slot| slot as u32).collect();
-            let query_locals = queries.clone();
             let mut slot_gen_map = vec![0u32; points.len()];
             for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
                 *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
             }
 
-            let group = DirectedCellGroup::new(
+            let group = PackedGroupInput::new(
                 cell,
                 QUERY_BIN,
                 &queries,
-                &query_locals,
+                start as u32,
                 &slot_gen_map,
                 LOCAL_SHIFT,
                 LOCAL_MASK,
@@ -373,7 +372,7 @@ mod tests {
                 for qi in 0..queries.len() {
                     let query_slot = queries[qi];
                     let query_idx = grid.point_indices()[query_slot as usize] as usize;
-                    let query_local = query_locals[qi];
+                    let query_local = queries[qi];
                     let ctx = DirectedEligibility::new(
                         QUERY_BIN,
                         query_local,
@@ -453,17 +452,16 @@ mod tests {
         let start = grid.cell_offsets()[cell] as usize;
         let end = grid.cell_offsets()[cell + 1] as usize;
         let queries: Vec<u32> = (start..end).map(|slot| slot as u32).collect();
-        let query_locals = queries.clone();
         let mut slot_gen_map = vec![0u32; points.len()];
         for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
             *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
         }
 
-        let group = DirectedCellGroup::new(
+        let group = PackedGroupInput::new(
             cell,
             QUERY_BIN,
             &queries,
-            &query_locals,
+            start as u32,
             &slot_gen_map,
             LOCAL_SHIFT,
             LOCAL_MASK,
@@ -481,7 +479,7 @@ mod tests {
         let query_idx = grid.point_indices()[query_slot as usize] as usize;
         let ctx = DirectedEligibility::new(
             QUERY_BIN,
-            query_locals[qi],
+            queries[qi],
             &slot_gen_map,
             LOCAL_SHIFT,
             LOCAL_MASK,
@@ -558,17 +556,16 @@ mod tests {
             let start = grid.cell_offsets()[cell] as usize;
             let end = grid.cell_offsets()[cell + 1] as usize;
             let queries: Vec<u32> = (start..end).map(|slot| slot as u32).collect();
-            let query_locals = queries.clone();
             let mut slot_gen_map = vec![0u32; points.len()];
             for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
                 *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
             }
 
-            let group = DirectedCellGroup::new(
+            let group = PackedGroupInput::new(
                 cell,
                 QUERY_BIN,
                 &queries,
-                &query_locals,
+                start as u32,
                 &slot_gen_map,
                 LOCAL_SHIFT,
                 LOCAL_MASK,
@@ -585,7 +582,7 @@ mod tests {
                 for qi in 0..queries.len() {
                     let query_slot = queries[qi];
                     let query_idx = grid.point_indices()[query_slot as usize] as usize;
-                    let query_local = query_locals[qi];
+                    let query_local = queries[qi];
                     let ctx = DirectedEligibility::new(
                         QUERY_BIN,
                         query_local,
