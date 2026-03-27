@@ -7,6 +7,7 @@ mod scratch;
 mod timing;
 
 use super::CubeMapGrid;
+use crate::policy::PackedNeighborPolicy;
 
 pub use scratch::{PackedKnnCellScratch, PackedKnnCellStatus};
 pub use timing::PackedKnnTimings;
@@ -127,14 +128,249 @@ impl<'a> DirectedCellGroup<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PackedStage {
+enum PackedStage {
     Chunk0,
     Tail,
     ExpandR2,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct PackedChunk {
-    pub n: usize,
-    pub unseen_bound: f32,
+struct PackedChunk {
+    n: usize,
+    unseen_bound: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PackedNeighborBatchSource {
+    Chunk0,
+    Tail,
+    ExpandR2,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PackedNeighborBatch {
+    pub(crate) n: usize,
+    pub(crate) first_dot: f32,
+    pub(crate) unseen_bound: f32,
+    pub(crate) source: PackedNeighborBatchSource,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum PackedNeighborFrontier {
+    ExactBatch(PackedNeighborBatch),
+    UnknownButBounded { dot_upper_bound: f32 },
+    Exhausted,
+}
+
+#[derive(Debug, Clone)]
+enum CachedFrontier {
+    ExactBatch {
+        batch: PackedNeighborBatch,
+        slots: Vec<u32>,
+    },
+    UnknownButBounded {
+        dot_upper_bound: f32,
+    },
+    Exhausted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PackedQueryStage {
+    Chunk0,
+    Tail,
+    ExpandR2,
+    Exhausted,
+}
+
+pub(crate) struct PackedQuery<'a, 'g> {
+    scratch: &'a mut PackedKnnCellScratch,
+    timings: &'a mut PackedKnnTimings,
+    group: DirectedCellGroup<'g>,
+    query_index: usize,
+    policy: PackedNeighborPolicy,
+    stage: PackedQueryStage,
+    cached_frontier: Option<CachedFrontier>,
+    tail_used: bool,
+    expand_r2_used: bool,
+    safe_exhausted: bool,
+}
+
+impl<'a, 'g> PackedQuery<'a, 'g> {
+    pub(crate) fn new(
+        scratch: &'a mut PackedKnnCellScratch,
+        timings: &'a mut PackedKnnTimings,
+        group: DirectedCellGroup<'g>,
+        query_index: usize,
+        policy: PackedNeighborPolicy,
+    ) -> Self {
+        Self {
+            scratch,
+            timings,
+            group,
+            query_index,
+            policy,
+            stage: PackedQueryStage::Chunk0,
+            cached_frontier: None,
+            tail_used: false,
+            expand_r2_used: false,
+            safe_exhausted: false,
+        }
+    }
+
+    #[inline]
+    fn slot_dot(&self, grid: &CubeMapGrid, slot: u32) -> f32 {
+        let slot = slot as usize;
+        let query_slot = self.group.queries()[self.query_index] as usize;
+        crate::fp::dot3_f32(
+            grid.cell_points_x[query_slot],
+            grid.cell_points_y[query_slot],
+            grid.cell_points_z[query_slot],
+            grid.cell_points_x[slot],
+            grid.cell_points_y[slot],
+            grid.cell_points_z[slot],
+        )
+    }
+
+    pub(crate) fn frontier(
+        &mut self,
+        grid: &CubeMapGrid,
+        out: &mut Vec<u32>,
+    ) -> PackedNeighborFrontier {
+        out.clear();
+
+        if let Some(cached) = &self.cached_frontier {
+            match cached {
+                CachedFrontier::ExactBatch { batch, slots } => {
+                    out.extend_from_slice(slots);
+                    return PackedNeighborFrontier::ExactBatch(*batch);
+                }
+                CachedFrontier::UnknownButBounded { dot_upper_bound } => {
+                    return PackedNeighborFrontier::UnknownButBounded {
+                        dot_upper_bound: *dot_upper_bound,
+                    };
+                }
+                CachedFrontier::Exhausted => return PackedNeighborFrontier::Exhausted,
+            }
+        }
+
+        let (stage, source, k) = match self.stage {
+            PackedQueryStage::Chunk0 => (
+                PackedStage::Chunk0,
+                PackedNeighborBatchSource::Chunk0,
+                self.policy.chunk0_size(),
+            ),
+            PackedQueryStage::Tail => (
+                PackedStage::Tail,
+                PackedNeighborBatchSource::Tail,
+                self.policy.chunk_size(),
+            ),
+            PackedQueryStage::ExpandR2 => (
+                PackedStage::ExpandR2,
+                PackedNeighborBatchSource::ExpandR2,
+                self.policy.chunk_size(),
+            ),
+            PackedQueryStage::Exhausted => {
+                self.cached_frontier = Some(CachedFrontier::Exhausted);
+                return PackedNeighborFrontier::Exhausted;
+            }
+        };
+
+        out.resize(k, u32::MAX);
+        if let Some(chunk) = self
+            .scratch
+            .next_chunk(self.query_index, stage, k, out, self.timings)
+        {
+            out.truncate(chunk.n);
+            let first_dot = if chunk.n > 0 {
+                self.slot_dot(grid, out[0])
+            } else {
+                -1.0
+            };
+            let batch = PackedNeighborBatch {
+                n: chunk.n,
+                first_dot,
+                unseen_bound: chunk.unseen_bound,
+                source,
+            };
+            self.cached_frontier = Some(CachedFrontier::ExactBatch {
+                batch,
+                slots: out.clone(),
+            });
+            return PackedNeighborFrontier::ExactBatch(batch);
+        }
+
+        let dot_upper_bound = if self.stage == PackedQueryStage::Chunk0
+            && self.scratch.tail_possible(self.query_index)
+        {
+            self.scratch.tail_upper_bound(self.query_index)
+        } else {
+            self.scratch.resume_security(self.query_index)
+        };
+        self.cached_frontier = Some(CachedFrontier::UnknownButBounded { dot_upper_bound });
+        PackedNeighborFrontier::UnknownButBounded { dot_upper_bound }
+    }
+
+    pub(crate) fn advance_frontier(&mut self, grid: &CubeMapGrid) {
+        let cached = self.cached_frontier.take();
+        match cached {
+            Some(CachedFrontier::ExactBatch { .. }) => {}
+            Some(CachedFrontier::UnknownButBounded { .. }) => self.advance_stage(grid),
+            Some(CachedFrontier::Exhausted) | None => {}
+        }
+    }
+
+    fn advance_stage(&mut self, grid: &CubeMapGrid) {
+        if self.stage == PackedQueryStage::Chunk0 && self.scratch.tail_possible(self.query_index) {
+            self.scratch.ensure_tail_directed_for(
+                self.query_index,
+                grid,
+                self.group.slot_gen_map(),
+                self.group.local_shift(),
+                self.group.local_mask(),
+                self.timings,
+            );
+            self.stage = PackedQueryStage::Tail;
+            self.tail_used = true;
+            return;
+        }
+
+        if self.stage != PackedQueryStage::ExpandR2
+            && self.policy.expand_r2_enabled()
+            && self.scratch.ensure_expand_r2_band_directed_for(
+                self.query_index,
+                grid,
+                self.group.slot_gen_map(),
+                self.group.local_shift(),
+                self.group.local_mask(),
+                self.timings,
+            )
+        {
+            self.stage = PackedQueryStage::ExpandR2;
+            self.expand_r2_used = true;
+            return;
+        }
+
+        self.safe_exhausted = true;
+        self.stage = PackedQueryStage::Exhausted;
+    }
+
+    #[inline]
+    pub(crate) fn tail_used(&self) -> bool {
+        self.tail_used
+    }
+
+    #[inline]
+    pub(crate) fn expand_r2_used(&self) -> bool {
+        self.expand_r2_used
+    }
+
+    #[inline]
+    pub(crate) fn safe_exhausted(&self) -> bool {
+        self.safe_exhausted
+    }
+
+    #[inline]
+    pub(crate) fn is_exhausted(&self) -> bool {
+        self.stage == PackedQueryStage::Exhausted
+    }
 }

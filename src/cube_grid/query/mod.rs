@@ -6,7 +6,7 @@ mod stream;
 
 pub(crate) use directed::DirectedCtx;
 pub(crate) use stream::{
-    DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream, PackedQuery,
+    DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream,
 };
 
 use crate::fp;

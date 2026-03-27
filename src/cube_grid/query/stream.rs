@@ -1,7 +1,6 @@
 use crate::cube_grid::packed_knn::{
-    DirectedCellGroup, PackedKnnCellScratch, PackedKnnTimings, PackedStage,
+    PackedNeighborBatchSource, PackedNeighborFrontier, PackedQuery,
 };
-use crate::policy::PackedNeighborPolicy;
 
 use super::directed::DirectedNoKCursor;
 use super::{CubeMapGrid, CubeMapGridScratch, DirectedCtx};
@@ -30,6 +29,13 @@ pub(crate) enum DirectedNeighborFrontier {
     Exhausted,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamStage {
+    Packed,
+    Cursor,
+    Done,
+}
+
 #[derive(Debug, Clone)]
 enum CachedFrontier {
     ExactBatch {
@@ -42,41 +48,6 @@ enum CachedFrontier {
     Exhausted,
 }
 
-pub(crate) struct PackedQuery<'a, 'g> {
-    scratch: &'a mut PackedKnnCellScratch,
-    timings: &'a mut PackedKnnTimings,
-    group: DirectedCellGroup<'g>,
-    query_index: usize,
-    policy: PackedNeighborPolicy,
-}
-
-impl<'a, 'g> PackedQuery<'a, 'g> {
-    pub(crate) fn new(
-        scratch: &'a mut PackedKnnCellScratch,
-        timings: &'a mut PackedKnnTimings,
-        group: DirectedCellGroup<'g>,
-        query_index: usize,
-        policy: PackedNeighborPolicy,
-    ) -> Self {
-        Self {
-            scratch,
-            timings,
-            group,
-            query_index,
-            policy,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StreamStage {
-    PackedChunk0,
-    PackedTail,
-    PackedExpandR2,
-    Cursor,
-    Done,
-}
-
 pub(crate) struct DirectedNeighborStream<'a, 'm, 'p> {
     grid: &'a CubeMapGrid,
     query: Vec3,
@@ -85,8 +56,6 @@ pub(crate) struct DirectedNeighborStream<'a, 'm, 'p> {
     stage: StreamStage,
     cached_frontier: Option<CachedFrontier>,
     did_packed: bool,
-    packed_tail_used: bool,
-    packed_expand_r2_used: bool,
     packed_safe_exhausted: bool,
     used_cursor: bool,
     knn_exhausted: bool,
@@ -96,9 +65,14 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
     #[inline]
     fn slot_dot(&self, slot: u32) -> f32 {
         let slot = slot as usize;
-        self.query.x * self.grid.cell_points_x[slot]
-            + self.query.y * self.grid.cell_points_y[slot]
-            + self.query.z * self.grid.cell_points_z[slot]
+        crate::fp::dot3_f32(
+            self.query.x,
+            self.query.y,
+            self.query.z,
+            self.grid.cell_points_x[slot],
+            self.grid.cell_points_y[slot],
+            self.grid.cell_points_z[slot],
+        )
     }
 
     pub(crate) fn new(
@@ -112,7 +86,7 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
         let cursor = grid.directed_no_k_cursor(points[query_idx], query_idx, scratch, directed_ctx);
         let did_packed = packed.is_some();
         let stage = if did_packed {
-            StreamStage::PackedChunk0
+            StreamStage::Packed
         } else {
             StreamStage::Cursor
         };
@@ -125,8 +99,6 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
             stage,
             cached_frontier: None,
             did_packed,
-            packed_tail_used: false,
-            packed_expand_r2_used: false,
             packed_safe_exhausted: false,
             used_cursor: false,
             knn_exhausted: false,
@@ -153,67 +125,47 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
 
         loop {
             match self.stage {
-                StreamStage::PackedChunk0
-                | StreamStage::PackedTail
-                | StreamStage::PackedExpandR2 => {
+                StreamStage::Packed => {
                     let packed = self
                         .packed
                         .as_mut()
                         .expect("packed stage requires packed query state");
-                    let (stage, source, k) = match self.stage {
-                        StreamStage::PackedChunk0 => (
-                            PackedStage::Chunk0,
-                            DirectedNeighborBatchSource::PackedChunk0,
-                            packed.policy.chunk0_size(),
-                        ),
-                        StreamStage::PackedTail => (
-                            PackedStage::Tail,
-                            DirectedNeighborBatchSource::PackedTail,
-                            packed.policy.chunk_size(),
-                        ),
-                        StreamStage::PackedExpandR2 => (
-                            PackedStage::ExpandR2,
-                            DirectedNeighborBatchSource::PackedExpandR2,
-                            packed.policy.chunk_size(),
-                        ),
-                        _ => unreachable!("unexpected packed stage"),
-                    };
-
-                    out.resize(k, u32::MAX);
-                    if let Some(chunk) =
-                        packed
-                            .scratch
-                            .next_chunk(packed.query_index, stage, k, out, packed.timings)
-                    {
-                        out.truncate(chunk.n);
-                        let first_dot = if chunk.n > 0 {
-                            self.slot_dot(out[0])
-                        } else {
-                            -1.0
-                        };
-                        let batch = DirectedNeighborBatch {
-                            n: chunk.n,
-                            first_dot,
-                            unseen_bound: chunk.unseen_bound,
-                            source,
-                        };
-                        self.cached_frontier = Some(CachedFrontier::ExactBatch {
-                            batch,
-                            slots: out.clone(),
-                        });
-                        return DirectedNeighborFrontier::ExactBatch(batch);
+                    match packed.frontier(self.grid, out) {
+                        PackedNeighborFrontier::ExactBatch(batch) => {
+                            let source = match batch.source {
+                                PackedNeighborBatchSource::Chunk0 => {
+                                    DirectedNeighborBatchSource::PackedChunk0
+                                }
+                                PackedNeighborBatchSource::Tail => {
+                                    DirectedNeighborBatchSource::PackedTail
+                                }
+                                PackedNeighborBatchSource::ExpandR2 => {
+                                    DirectedNeighborBatchSource::PackedExpandR2
+                                }
+                            };
+                            let batch = DirectedNeighborBatch {
+                                n: batch.n,
+                                first_dot: batch.first_dot,
+                                unseen_bound: batch.unseen_bound,
+                                source,
+                            };
+                            self.cached_frontier = Some(CachedFrontier::ExactBatch {
+                                batch,
+                                slots: out.clone(),
+                            });
+                            return DirectedNeighborFrontier::ExactBatch(batch);
+                        }
+                        PackedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
+                            self.cached_frontier =
+                                Some(CachedFrontier::UnknownButBounded { dot_upper_bound });
+                            return DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound };
+                        }
+                        PackedNeighborFrontier::Exhausted => {
+                            self.packed_safe_exhausted |= packed.safe_exhausted();
+                            self.stage = StreamStage::Cursor;
+                            continue;
+                        }
                     }
-
-                    let dot_upper_bound = if self.stage == StreamStage::PackedChunk0
-                        && packed.scratch.tail_possible(packed.query_index)
-                    {
-                        packed.scratch.tail_upper_bound(packed.query_index)
-                    } else {
-                        packed.scratch.resume_security(packed.query_index)
-                    };
-                    self.cached_frontier =
-                        Some(CachedFrontier::UnknownButBounded { dot_upper_bound });
-                    return DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound };
                 }
                 StreamStage::Cursor => {
                     self.used_cursor = true;
@@ -256,59 +208,23 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
     pub(crate) fn advance_frontier(&mut self) {
         let cached = self.cached_frontier.take();
         match cached {
-            Some(CachedFrontier::ExactBatch { .. }) => {}
-            Some(CachedFrontier::UnknownButBounded { .. }) => match self.stage {
-                StreamStage::PackedChunk0
-                | StreamStage::PackedTail
-                | StreamStage::PackedExpandR2 => {
-                    self.advance_packed_stage();
+            Some(CachedFrontier::ExactBatch { .. })
+            | Some(CachedFrontier::UnknownButBounded { .. }) => match self.stage {
+                StreamStage::Packed => {
+                    let packed = self
+                        .packed
+                        .as_mut()
+                        .expect("packed stage requires packed query state");
+                    packed.advance_frontier(self.grid);
+                    if packed.is_exhausted() {
+                        self.packed_safe_exhausted |= packed.safe_exhausted();
+                        self.stage = StreamStage::Cursor;
+                    }
                 }
                 StreamStage::Cursor | StreamStage::Done => {}
             },
             Some(CachedFrontier::Exhausted) | None => {}
         }
-    }
-
-    fn advance_packed_stage(&mut self) {
-        let packed = self
-            .packed
-            .as_mut()
-            .expect("packed stage requires packed query state");
-
-        if self.stage == StreamStage::PackedChunk0
-            && packed.scratch.tail_possible(packed.query_index)
-        {
-            packed.scratch.ensure_tail_directed_for(
-                packed.query_index,
-                self.grid,
-                packed.group.slot_gen_map(),
-                packed.group.local_shift(),
-                packed.group.local_mask(),
-                packed.timings,
-            );
-            self.stage = StreamStage::PackedTail;
-            self.packed_tail_used = true;
-            return;
-        }
-
-        if self.stage != StreamStage::PackedExpandR2
-            && packed.policy.expand_r2_enabled()
-            && packed.scratch.ensure_expand_r2_band_directed_for(
-                packed.query_index,
-                self.grid,
-                packed.group.slot_gen_map(),
-                packed.group.local_shift(),
-                packed.group.local_mask(),
-                packed.timings,
-            )
-        {
-            self.stage = StreamStage::PackedExpandR2;
-            self.packed_expand_r2_used = true;
-            return;
-        }
-
-        self.packed_safe_exhausted = true;
-        self.stage = StreamStage::Cursor;
     }
 
     #[inline]
@@ -318,12 +234,18 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
 
     #[inline]
     pub(crate) fn packed_tail_used(&self) -> bool {
-        self.packed_tail_used
+        self.packed
+            .as_ref()
+            .map(|packed| packed.tail_used())
+            .unwrap_or(false)
     }
 
     #[inline]
     pub(crate) fn packed_expand_r2_used(&self) -> bool {
-        self.packed_expand_r2_used
+        self.packed
+            .as_ref()
+            .map(|packed| packed.expand_r2_used())
+            .unwrap_or(false)
     }
 
     #[inline]
@@ -345,7 +267,9 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cube_grid::packed_knn::{DirectedCellGroup, PackedKnnCellStatus};
+    use crate::cube_grid::packed_knn::{
+        DirectedCellGroup, PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings,
+    };
     use crate::policy::PackedNeighborPolicy;
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
@@ -601,7 +525,9 @@ mod tests {
             ) => {
                 assert!(
                     third_batch.first_dot <= first_batch.unseen_bound + 1e-6,
-                    "advanced frontier exact batch should not outrank previous unseen bound"
+                    "advanced frontier exact batch should not outrank previous unseen bound: first={:?}, third={:?}",
+                    first_batch,
+                    third_batch,
                 );
             }
             (
@@ -610,7 +536,9 @@ mod tests {
             ) => {
                 assert!(
                     dot_upper_bound <= first_batch.unseen_bound + 1e-6,
-                    "advanced frontier bound should not exceed previous unseen bound"
+                    "advanced frontier bound should not exceed previous unseen bound: first={:?}, bound={}",
+                    first_batch,
+                    dot_upper_bound,
                 );
             }
             (DirectedNeighborFrontier::ExactBatch(_), DirectedNeighborFrontier::Exhausted) => {}

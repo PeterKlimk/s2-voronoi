@@ -270,7 +270,7 @@ impl PackedKnnCellScratch {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn ensure_expand_r2_band_directed_for(
+    pub(super) fn ensure_expand_r2_band_directed_for(
         &mut self,
         qi: usize,
         grid: &CubeMapGrid,
@@ -815,7 +815,7 @@ impl PackedKnnCellScratch {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn ensure_tail_directed_for(
+    pub(super) fn ensure_tail_directed_for(
         &mut self,
         qi: usize,
         grid: &CubeMapGrid,
@@ -925,7 +925,7 @@ impl PackedKnnCellScratch {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn next_chunk(
+    pub(super) fn next_chunk(
         &mut self,
         qi: usize,
         stage: PackedStage,
@@ -1093,7 +1093,7 @@ impl PackedKnnCellScratch {
     }
 
     #[inline]
-    pub fn resume_security(&self, qi: usize) -> f32 {
+    pub(super) fn resume_security(&self, qi: usize) -> f32 {
         if self.expand2_ready_gen.get(qi).copied().unwrap_or(0) == self.group_gen {
             self.security2[qi]
         } else {
@@ -1102,12 +1102,12 @@ impl PackedKnnCellScratch {
     }
 
     #[inline]
-    pub fn tail_possible(&self, qi: usize) -> bool {
+    pub(super) fn tail_possible(&self, qi: usize) -> bool {
         self.tail_possible.get(qi).copied().unwrap_or(false)
     }
 
     #[inline]
-    pub fn tail_upper_bound(&self, qi: usize) -> f32 {
+    pub(super) fn tail_upper_bound(&self, qi: usize) -> f32 {
         self.thresholds[qi]
     }
 }
