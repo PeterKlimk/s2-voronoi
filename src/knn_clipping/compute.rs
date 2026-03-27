@@ -281,7 +281,7 @@ fn assemble_shards(
 ) -> Result<live_dedup::AssemblyResult, crate::VoronoiError> {
     let t = Timer::start();
     let assembled = live_dedup::assemble_sharded_live_dedup(sharded)?;
-    tb.set_dedup(t.elapsed(), assembled.dedup_sub);
+    tb.set_dedup(t.elapsed(), assembled.dedup_sub.clone());
     Ok(assembled)
 }
 

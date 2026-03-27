@@ -15,6 +15,7 @@ struct AttemptedNeighbors {
 }
 
 impl AttemptedNeighbors {
+    #[inline]
     fn new(num_points: usize) -> Self {
         Self {
             seen_stamp: vec![0; num_points],
@@ -22,6 +23,7 @@ impl AttemptedNeighbors {
         }
     }
 
+    #[inline]
     fn clear(&mut self) {
         self.stamp = self.stamp.wrapping_add(1).max(1);
         if self.stamp == u32::MAX {
@@ -30,6 +32,7 @@ impl AttemptedNeighbors {
         }
     }
 
+    #[inline]
     fn insert(&mut self, id: usize) -> bool {
         debug_assert!(id < self.seen_stamp.len(), "neighbor id out of bounds");
         if self.seen_stamp[id] == self.stamp {
@@ -39,12 +42,14 @@ impl AttemptedNeighbors {
         true
     }
 
+    #[inline]
     fn mark(&mut self, id: usize) {
         debug_assert!(id < self.seen_stamp.len(), "neighbor id out of bounds");
         self.seen_stamp[id] = self.stamp;
     }
 }
 
+#[inline]
 fn probe_frontier<'a, 'm, 'p>(
     stream: &mut DirectedNeighborStream<'a, 'm, 'p>,
     packed_chunk: &mut Vec<u32>,
@@ -70,6 +75,7 @@ fn probe_frontier<'a, 'm, 'p>(
     frontier
 }
 
+#[inline]
 fn maybe_terminate_or_advance_frontier<'a, 'm, 'p>(
     stream: &mut DirectedNeighborStream<'a, 'm, 'p>,
     packed_chunk: &mut Vec<u32>,
@@ -161,6 +167,7 @@ pub(crate) struct CellBuildStats {
 }
 
 impl CellBuildStats {
+    #[inline]
     pub(crate) fn record_into(&self, cell_sub: &mut crate::knn_clipping::timing::CellSubAccum) {
         cell_sub.add_knn(self.knn_query);
         cell_sub.add_clip(self.clipping);
@@ -194,89 +201,52 @@ impl CellBuildStats {
     }
 }
 
-struct CellBuildRunner<'a, 'm, 'p, 's> {
+pub(crate) fn build_cell_into<'a, 'm, 'p, 's>(
     ctx: &'a mut CellBuildContext,
-    request: CellBuildRequest<'a, 'm, 'p, 's>,
-    neighbors_processed: usize,
-    terminated: bool,
-    knn_exhausted: bool,
-    used_knn: bool,
-    knn_stage: crate::knn_clipping::timing::KnnCellStage,
-    did_packed: bool,
-    packed_safe_exhausted: bool,
-    packed_tail_used: bool,
-    packed_expand_r2_used: bool,
-    last_neighbor_idx: Option<usize>,
-    last_neighbor_slot: Option<u32>,
-    last_batch_source: Option<DirectedNeighborBatchSource>,
-    last_clip_phase: &'static str,
-    edgecheck_seed_clips: usize,
-    knn_query_time: Duration,
-    clipping_time: Duration,
-    certification_time: Duration,
-}
+    mut request: CellBuildRequest<'a, 'm, 'p, 's>,
+) -> Result<CellBuildStats, CellBuildError> {
+    let points = request.points;
+    let grid = request.grid;
+    let generator_idx = request.generator_idx;
+    let point_indices = grid.point_indices();
+    let termination = request.termination;
 
-impl<'a, 'm, 'p, 's> CellBuildRunner<'a, 'm, 'p, 's> {
-    fn new(ctx: &'a mut CellBuildContext, request: CellBuildRequest<'a, 'm, 'p, 's>) -> Self {
-        Self {
-            ctx,
-            request,
-            neighbors_processed: 0,
-            terminated: false,
-            knn_exhausted: false,
-            used_knn: false,
-            knn_stage: crate::knn_clipping::timing::KnnCellStage::DirectedCursor,
-            did_packed: false,
-            packed_safe_exhausted: false,
-            packed_tail_used: false,
-            packed_expand_r2_used: false,
-            last_neighbor_idx: None,
-            last_neighbor_slot: None,
-            last_batch_source: None,
-            last_clip_phase: "none",
-            edgecheck_seed_clips: 0,
-            knn_query_time: Duration::ZERO,
-            clipping_time: Duration::ZERO,
-            certification_time: Duration::ZERO,
-        }
-    }
+    let mut neighbors_processed = 0usize;
+    let mut terminated = false;
+    let mut knn_exhausted = false;
+    let mut used_knn = false;
+    let mut knn_stage = crate::knn_clipping::timing::KnnCellStage::DirectedCursor;
+    let mut did_packed = false;
+    let mut packed_safe_exhausted = false;
+    let mut packed_tail_used = false;
+    let mut packed_expand_r2_used = false;
+    let mut edgecheck_seed_clips = 0usize;
+    let mut knn_query_time = Duration::ZERO;
+    let mut clipping_time = Duration::ZERO;
+    let mut certification_time = Duration::ZERO;
+    let mut last_neighbor_idx: Option<usize> = None;
+    let mut last_neighbor_slot: Option<u32> = None;
+    let mut last_batch_source: Option<DirectedNeighborBatchSource> = None;
+    let mut last_clip_phase = "none";
 
-    fn run(mut self) -> Result<CellBuildStats, CellBuildError> {
-        self.phase_1_init();
-        self.phase_2_seed_neighbors();
-        self.phase_3_neighbor_stream();
-        self.phase_4_validate_success()?;
-        self.phase_5_extract_output();
-        Ok(self.into_stats())
-    }
+    ctx.builder.reset(generator_idx, points[generator_idx]);
+    ctx.attempted_neighbors.clear();
+    ctx.output_buffer.clear();
 
-    fn phase_1_init(&mut self) {
-        let i = self.request.generator_idx;
-        let points = self.request.points;
-        self.ctx.builder.reset(i, points[i]);
-        self.ctx.attempted_neighbors.clear();
-        self.ctx.output_buffer.clear();
-    }
-
-    fn phase_2_seed_neighbors(&mut self) {
-        if self.request.seed_neighbors.is_empty() {
-            return;
-        }
-
+    if !request.seed_neighbors.is_empty() {
         let t_clip = crate::knn_clipping::timing::Timer::start();
-        for seed in self.request.seed_neighbors {
-            self.last_neighbor_idx = Some(seed.neighbor_idx);
-            self.last_neighbor_slot = Some(seed.neighbor_slot);
-            self.last_batch_source = None;
-            self.last_clip_phase = "edgecheck_seed";
+        for seed in request.seed_neighbors {
+            last_neighbor_idx = Some(seed.neighbor_idx);
+            last_neighbor_slot = Some(seed.neighbor_slot);
+            last_batch_source = None;
+            last_clip_phase = "edgecheck_seed";
 
-            if !self.ctx.attempted_neighbors.insert(seed.neighbor_idx) {
+            if !ctx.attempted_neighbors.insert(seed.neighbor_idx) {
                 continue;
             }
 
-            let neighbor = self.request.points[seed.neighbor_idx];
-            if self
-                .ctx
+            let neighbor = points[seed.neighbor_idx];
+            if ctx
                 .builder
                 .clip_with_slot_edgecheck(
                     seed.neighbor_idx,
@@ -288,237 +258,202 @@ impl<'a, 'm, 'p, 's> CellBuildRunner<'a, 'm, 'p, 's> {
             {
                 break;
             }
-            self.neighbors_processed += 1;
+            neighbors_processed += 1;
         }
-        self.clipping_time += t_clip.elapsed();
-        self.edgecheck_seed_clips = self.neighbors_processed;
+        clipping_time += t_clip.elapsed();
+        edgecheck_seed_clips = neighbors_processed;
     }
 
-    fn phase_3_neighbor_stream(&mut self) {
-        let grid = self.request.grid;
-        let points = self.request.points;
-        let i = self.request.generator_idx;
-        let point_indices = grid.point_indices();
-        let termination = self.request.termination;
+    let mut stream = DirectedNeighborStream::new(
+        grid,
+        points,
+        generator_idx,
+        &mut ctx.scratch,
+        request.directed_ctx,
+        request.packed.take(),
+    );
 
-        let mut stream = DirectedNeighborStream::new(
-            grid,
-            points,
-            i,
-            &mut self.ctx.scratch,
-            self.request.directed_ctx,
-            self.request.packed.take(),
+    while !terminated && !ctx.builder.is_failed() {
+        let frontier = probe_frontier(
+            &mut stream,
+            &mut ctx.packed_chunk,
+            &mut used_knn,
+            &mut knn_stage,
+            &mut knn_query_time,
         );
 
-        while !self.terminated && !self.ctx.builder.is_failed() {
-            let frontier = probe_frontier(
-                &mut stream,
-                &mut self.ctx.packed_chunk,
-                &mut self.used_knn,
-                &mut self.knn_stage,
-                &mut self.knn_query_time,
-            );
+        match frontier {
+            DirectedNeighborFrontier::ExactBatch(batch) => {
+                if batch.source == DirectedNeighborBatchSource::PackedExpandR2 {
+                    knn_stage = crate::knn_clipping::timing::KnnCellStage::PackedExpandR2;
+                }
 
-            match frontier {
-                DirectedNeighborFrontier::ExactBatch(batch) => {
-                    if batch.source == DirectedNeighborBatchSource::PackedExpandR2 {
-                        self.knn_stage = crate::knn_clipping::timing::KnnCellStage::PackedExpandR2;
+                let t_clip = crate::knn_clipping::timing::Timer::start();
+                for pos in 0..batch.n {
+                    let neighbor_slot = ctx.packed_chunk[pos];
+                    let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
+                    if neighbor_idx == generator_idx {
+                        continue;
                     }
 
-                    let t_clip = crate::knn_clipping::timing::Timer::start();
-                    for pos in 0..batch.n {
-                        let neighbor_slot = self.ctx.packed_chunk[pos];
-                        let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
-                        if neighbor_idx == i {
-                            continue;
+                    let should_clip = match batch.source {
+                        DirectedNeighborBatchSource::DirectedCursor => {
+                            ctx.attempted_neighbors.insert(neighbor_idx)
                         }
-
-                        let should_clip = match batch.source {
-                            DirectedNeighborBatchSource::DirectedCursor => {
-                                self.ctx.attempted_neighbors.insert(neighbor_idx)
-                            }
-                            DirectedNeighborBatchSource::PackedChunk0
-                            | DirectedNeighborBatchSource::PackedTail
-                            | DirectedNeighborBatchSource::PackedExpandR2 => {
-                                self.ctx.attempted_neighbors.mark(neighbor_idx);
-                                true
-                            }
-                        };
-                        if !should_clip {
-                            continue;
+                        DirectedNeighborBatchSource::PackedChunk0
+                        | DirectedNeighborBatchSource::PackedTail
+                        | DirectedNeighborBatchSource::PackedExpandR2 => {
+                            ctx.attempted_neighbors.mark(neighbor_idx);
+                            true
                         }
+                    };
+                    if !should_clip {
+                        continue;
+                    }
 
-                        self.last_neighbor_idx = Some(neighbor_idx);
-                        self.last_neighbor_slot = Some(neighbor_slot);
-                        self.last_batch_source = Some(batch.source);
-                        self.last_clip_phase = "stream";
+                    last_neighbor_idx = Some(neighbor_idx);
+                    last_neighbor_slot = Some(neighbor_slot);
+                    last_batch_source = Some(batch.source);
+                    last_clip_phase = "stream";
 
-                        let neighbor = points[neighbor_idx];
-                        let clip_result = match self.ctx.builder.clip_with_slot_result(
-                            neighbor_idx,
-                            neighbor_slot,
-                            neighbor,
-                        ) {
-                            Ok(result) => result,
-                            Err(_) => break,
+                    let neighbor = points[neighbor_idx];
+                    let clip_result = match ctx.builder.clip_with_slot_result(
+                        neighbor_idx,
+                        neighbor_slot,
+                        neighbor,
+                    ) {
+                        Ok(result) => result,
+                        Err(_) => break,
+                    };
+
+                    neighbors_processed += 1;
+
+                    let should_check_termination = match batch.source {
+                        DirectedNeighborBatchSource::DirectedCursor => {
+                            termination.should_check(neighbors_processed)
+                        }
+                        DirectedNeighborBatchSource::PackedChunk0
+                        | DirectedNeighborBatchSource::PackedTail
+                        | DirectedNeighborBatchSource::PackedExpandR2 => {
+                            clip_result == crate::knn_clipping::topo2d::types::ClipResult::Unchanged
+                        }
+                    };
+
+                    if ctx.builder.is_bounded() && should_check_termination {
+                        let bound = if pos + 1 < batch.n {
+                            let next_slot = ctx.packed_chunk[pos + 1];
+                            let next = point_indices[next_slot as usize] as usize;
+                            points[generator_idx].dot(points[next])
+                        } else {
+                            batch.unseen_bound
                         };
-
-                        self.neighbors_processed += 1;
-
-                        let should_check_termination = match batch.source {
-                            DirectedNeighborBatchSource::DirectedCursor => {
-                                termination.should_check(self.neighbors_processed)
-                            }
-                            DirectedNeighborBatchSource::PackedChunk0
-                            | DirectedNeighborBatchSource::PackedTail
-                            | DirectedNeighborBatchSource::PackedExpandR2 => {
-                                clip_result
-                                    == crate::knn_clipping::topo2d::types::ClipResult::Unchanged
-                            }
-                        };
-
-                        if self.ctx.builder.is_bounded() && should_check_termination {
-                            let bound = if pos + 1 < batch.n {
-                                let next_slot = self.ctx.packed_chunk[pos + 1];
-                                let next = point_indices[next_slot as usize] as usize;
-                                points[i].dot(points[next])
-                            } else {
-                                batch.unseen_bound
-                            };
-                            if self.ctx.builder.can_terminate(bound) {
-                                self.terminated = true;
-                                break;
-                            }
+                        if ctx.builder.can_terminate(bound) {
+                            terminated = true;
+                            break;
                         }
                     }
-                    self.clipping_time += t_clip.elapsed();
+                }
+                clipping_time += t_clip.elapsed();
+                stream.advance_frontier();
+
+                if !terminated && !ctx.builder.is_failed() && ctx.builder.is_bounded() {
+                    terminated = maybe_terminate_or_advance_frontier(
+                        &mut stream,
+                        &mut ctx.packed_chunk,
+                        &mut ctx.builder,
+                        termination,
+                        neighbors_processed,
+                        &mut used_knn,
+                        &mut knn_stage,
+                        &mut knn_query_time,
+                    );
+                }
+            }
+            DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
+                let can_check =
+                    !stream.is_cursor_stage() || termination.should_check(neighbors_processed);
+                if ctx.builder.is_bounded()
+                    && can_check
+                    && ctx.builder.can_terminate(dot_upper_bound)
+                {
+                    terminated = true;
+                } else {
                     stream.advance_frontier();
-
-                    if !self.terminated
-                        && !self.ctx.builder.is_failed()
-                        && self.ctx.builder.is_bounded()
-                    {
-                        self.terminated = maybe_terminate_or_advance_frontier(
-                            &mut stream,
-                            &mut self.ctx.packed_chunk,
-                            &mut self.ctx.builder,
-                            self.request.termination,
-                            self.neighbors_processed,
-                            &mut self.used_knn,
-                            &mut self.knn_stage,
-                            &mut self.knn_query_time,
-                        );
-                    }
                 }
-                DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
-                    let can_check = !stream.is_cursor_stage()
-                        || termination.should_check(self.neighbors_processed);
-                    if self.ctx.builder.is_bounded()
-                        && can_check
-                        && self.ctx.builder.can_terminate(dot_upper_bound)
-                    {
-                        self.terminated = true;
-                    } else {
-                        stream.advance_frontier();
-                    }
-                }
-                DirectedNeighborFrontier::Exhausted => break,
             }
-        }
-
-        self.did_packed |= stream.did_packed();
-        self.packed_tail_used |= stream.packed_tail_used();
-        self.packed_expand_r2_used |= stream.packed_expand_r2_used();
-        self.packed_safe_exhausted |= stream.packed_safe_exhausted();
-        self.knn_exhausted |= stream.knn_exhausted();
-    }
-
-    fn phase_4_validate_success(&mut self) -> Result<(), CellBuildError> {
-        if !self.ctx.builder.is_bounded() || self.ctx.builder.is_failed() {
-            if let Some(failure) = classify_terminal_failure(
-                self.ctx.builder.is_bounded(),
-                self.ctx.builder.failure(),
-                self.knn_exhausted,
-            ) {
-                return Err(CellBuildError {
-                    generator_idx: self.request.generator_idx,
-                    failure,
-                });
-            }
-            self.panic_unexpected_failure("validation", self.ctx.builder.failure());
-        }
-        Ok(())
-    }
-
-    fn phase_5_extract_output(&mut self) {
-        let t_cert = crate::knn_clipping::timing::Timer::start();
-        if let Err(failure) = self
-            .ctx
-            .builder
-            .to_vertex_data_full(&mut self.ctx.output_buffer)
-        {
-            self.panic_unexpected_failure("vertex extraction", Some(failure));
-        }
-        self.certification_time += t_cert.elapsed();
-    }
-
-    fn into_stats(self) -> CellBuildStats {
-        CellBuildStats {
-            knn_query: self.knn_query_time,
-            clipping: self.clipping_time,
-            certification: self.certification_time,
-            neighbors_processed: self.neighbors_processed,
-            incoming_seed_neighbors: self.request.seed_neighbors.len(),
-            edgecheck_seed_clips: self.edgecheck_seed_clips,
-            knn_exhausted: self.knn_exhausted,
-            used_knn: self.used_knn,
-            did_packed: self.did_packed,
-            packed_tail_used: self.packed_tail_used,
-            packed_expand_r2_used: self.packed_expand_r2_used,
-            packed_safe_exhausted: self.packed_safe_exhausted,
-            knn_stage: self.knn_stage,
+            DirectedNeighborFrontier::Exhausted => break,
         }
     }
 
-    fn panic_unexpected_failure(&self, context: &str, explicit_failure: Option<CellFailure>) -> ! {
-        let (active, total) = self.ctx.builder.count_active_planes();
-        let gen = self.request.points[self.request.generator_idx];
-        let neighbor_indices: Vec<usize> = self.ctx.builder.neighbor_indices_iter().collect();
-        let failure = explicit_failure.or(self.ctx.builder.failure());
+    did_packed |= stream.did_packed();
+    packed_tail_used |= stream.packed_tail_used();
+    packed_expand_r2_used |= stream.packed_expand_r2_used();
+    packed_safe_exhausted |= stream.packed_safe_exhausted();
+    knn_exhausted |= stream.knn_exhausted();
 
-        panic!(
-            "Cell {} unexpected {} failure: bounded={}, failure={:?}, \
-             planes={}, active={}, vertices={}, neighbors_processed={}, \
-             did_packed={}, did_cursor_fallback={}, knn_exhausted={}, \
-             last_clip_phase={}, last_batch_source={:?}, last_neighbor_idx={:?}, last_neighbor_slot={:?}\n\
-             Generator pos: {:?}\n\
-             First 10 neighbor indices: {:?}",
-            self.request.generator_idx,
-            context,
-            self.ctx.builder.is_bounded(),
-            failure,
-            total,
-            active,
-            self.ctx.builder.vertex_count(),
-            self.neighbors_processed,
-            self.did_packed,
-            self.used_knn,
-            self.knn_exhausted,
-            self.last_clip_phase,
-            self.last_batch_source,
-            self.last_neighbor_idx,
-            self.last_neighbor_slot,
-            gen,
-            &neighbor_indices[..neighbor_indices.len().min(10)],
+    if !ctx.builder.is_bounded() || ctx.builder.is_failed() {
+        if let Some(failure) = classify_terminal_failure(
+            ctx.builder.is_bounded(),
+            ctx.builder.failure(),
+            knn_exhausted,
+        ) {
+            return Err(CellBuildError {
+                generator_idx,
+                failure,
+            });
+        }
+        panic_unexpected_failure(
+            ctx,
+            points,
+            generator_idx,
+            neighbors_processed,
+            did_packed,
+            used_knn,
+            knn_exhausted,
+            last_clip_phase,
+            last_batch_source,
+            last_neighbor_idx,
+            last_neighbor_slot,
+            "validation",
+            ctx.builder.failure(),
         );
     }
-}
 
-pub(crate) fn build_cell_into<'a, 'm, 'p, 's>(
-    ctx: &'a mut CellBuildContext,
-    request: CellBuildRequest<'a, 'm, 'p, 's>,
-) -> Result<CellBuildStats, CellBuildError> {
-    CellBuildRunner::new(ctx, request).run()
+    let t_cert = crate::knn_clipping::timing::Timer::start();
+    if let Err(failure) = ctx.builder.to_vertex_data_full(&mut ctx.output_buffer) {
+        panic_unexpected_failure(
+            ctx,
+            points,
+            generator_idx,
+            neighbors_processed,
+            did_packed,
+            used_knn,
+            knn_exhausted,
+            last_clip_phase,
+            last_batch_source,
+            last_neighbor_idx,
+            last_neighbor_slot,
+            "vertex extraction",
+            Some(failure),
+        );
+    }
+    certification_time += t_cert.elapsed();
+
+    Ok(CellBuildStats {
+        knn_query: knn_query_time,
+        clipping: clipping_time,
+        certification: certification_time,
+        neighbors_processed,
+        incoming_seed_neighbors: request.seed_neighbors.len(),
+        edgecheck_seed_clips,
+        knn_exhausted,
+        used_knn,
+        did_packed,
+        packed_tail_used,
+        packed_expand_r2_used,
+        packed_safe_exhausted,
+        knn_stage,
+    })
 }
 
 fn classify_terminal_failure(
@@ -535,6 +470,53 @@ fn classify_terminal_failure(
         return Some(CellFailure::UnboundedAfterExhaustion);
     }
     None
+}
+
+fn panic_unexpected_failure(
+    ctx: &CellBuildContext,
+    points: &[Vec3],
+    generator_idx: usize,
+    neighbors_processed: usize,
+    did_packed: bool,
+    used_knn: bool,
+    knn_exhausted: bool,
+    last_clip_phase: &str,
+    last_batch_source: Option<DirectedNeighborBatchSource>,
+    last_neighbor_idx: Option<usize>,
+    last_neighbor_slot: Option<u32>,
+    context: &str,
+    explicit_failure: Option<CellFailure>,
+) -> ! {
+    let (active, total) = ctx.builder.count_active_planes();
+    let gen = points[generator_idx];
+    let neighbor_indices: Vec<usize> = ctx.builder.neighbor_indices_iter().collect();
+    let failure = explicit_failure.or(ctx.builder.failure());
+
+    panic!(
+        "Cell {} unexpected {} failure: bounded={}, failure={:?}, \
+         planes={}, active={}, vertices={}, neighbors_processed={}, \
+         did_packed={}, did_cursor_fallback={}, knn_exhausted={}, \
+         last_clip_phase={}, last_batch_source={:?}, last_neighbor_idx={:?}, last_neighbor_slot={:?}\n\
+         Generator pos: {:?}\n\
+         First 10 neighbor indices: {:?}",
+        generator_idx,
+        context,
+        ctx.builder.is_bounded(),
+        failure,
+        total,
+        active,
+        ctx.builder.vertex_count(),
+        neighbors_processed,
+        did_packed,
+        used_knn,
+        knn_exhausted,
+        last_clip_phase,
+        last_batch_source,
+        last_neighbor_idx,
+        last_neighbor_slot,
+        gen,
+        &neighbor_indices[..neighbor_indices.len().min(10)],
+    );
 }
 
 #[cfg(test)]
