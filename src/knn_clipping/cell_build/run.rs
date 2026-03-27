@@ -488,24 +488,32 @@ fn panic_unexpected_failure(
     explicit_failure: Option<CellFailure>,
 ) -> ! {
     let (active, total) = ctx.builder.count_active_planes();
+    let builder = ctx.builder.debug_state();
     let gen = points[generator_idx];
     let neighbor_indices: Vec<usize> = ctx.builder.neighbor_indices_iter().collect();
     let failure = explicit_failure.or(ctx.builder.failure());
 
     panic!(
         "Cell {} unexpected {} failure: bounded={}, failure={:?}, \
-         planes={}, active={}, vertices={}, neighbors_processed={}, \
+         planes={}, active={}, vertices={}, poly_len={}, has_bounding_ref={}, min_cos={:?}, \
+         half_plane_count={}, neighbor_index_count={}, neighbor_slot_count={}, neighbors_processed={}, \
          did_packed={}, did_cursor_fallback={}, knn_exhausted={}, \
          last_clip_phase={}, last_batch_source={:?}, last_neighbor_idx={:?}, last_neighbor_slot={:?}\n\
          Generator pos: {:?}\n\
          First 10 neighbor indices: {:?}",
         generator_idx,
         context,
-        ctx.builder.is_bounded(),
+        builder.bounded,
         failure,
         total,
         active,
         ctx.builder.vertex_count(),
+        builder.poly_len,
+        builder.has_bounding_ref,
+        builder.min_cos,
+        builder.half_plane_count,
+        builder.neighbor_index_count,
+        builder.neighbor_slot_count,
         neighbors_processed,
         did_packed,
         used_knn,

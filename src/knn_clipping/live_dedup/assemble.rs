@@ -18,7 +18,7 @@ fn patch_deferred_slots_with_fallback(
     shards: &mut [super::shard::ShardState],
     generator_bin: &[BinId],
     deferred_slots: Vec<DeferredSlot>,
-) {
+) -> Result<(), crate::VoronoiError> {
     let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| {
         let packed = pack_ref(owner_bin, idx);
         if *slot == DEFERRED {
@@ -43,7 +43,11 @@ fn patch_deferred_slots_with_fallback(
         } else {
             let new_idx = {
                 let owner_shard = &mut shards[owner_bin.as_usize()];
-                let new_idx = owner_shard.output.vertices.len() as u32;
+                let new_idx = u32::try_from(owner_shard.output.vertices.len()).map_err(|_| {
+                    crate::VoronoiError::RepresentationLimit(
+                        "deferred fallback vertex index exceeds u32 capacity".to_string(),
+                    )
+                })?;
                 owner_shard.output.vertices.push(entry.pos);
                 owner_shard.output.vertex_keys.push(entry.key);
                 new_idx
@@ -55,6 +59,7 @@ fn patch_deferred_slots_with_fallback(
         let slot = &mut shards[source_bin].output.cell_indices[source_slot];
         patch_slot(slot, owner_bin, idx);
     }
+    Ok(())
 }
 
 pub(super) fn assemble_sharded_live_dedup(
@@ -90,7 +95,7 @@ pub(super) fn assemble_sharded_live_dedup(
         &mut data.shards,
         &data.assignment.generator_bin,
         deferred_slots,
-    );
+    )?;
     #[allow(unused_variables)]
     let deferred_fallback_time = t_deferred.elapsed();
 
@@ -122,7 +127,18 @@ pub(super) fn assemble_sharded_live_dedup(
                 "assembled vertex offsets exceed u32 capacity".to_string(),
             )
         })?;
-        total_vertices += shard.output.vertices.len();
+        total_vertices = total_vertices
+            .checked_add(shard.output.vertices.len())
+            .ok_or_else(|| {
+                crate::VoronoiError::RepresentationLimit(
+                    "assembled vertex buffer exceeds usize capacity".to_string(),
+                )
+            })?;
+    }
+    if total_vertices > u32::MAX as usize {
+        return Err(crate::VoronoiError::RepresentationLimit(
+            "assembled vertex buffer exceeds u32 capacity".to_string(),
+        ));
     }
 
     #[cfg(feature = "parallel")]
@@ -397,7 +413,8 @@ mod tests {
                     source_slot: 1,
                 },
             ],
-        );
+        )
+        .expect("fallback patching should succeed without capacity overflow");
 
         assert_eq!(shards[1].output.vertices.len(), 1);
         assert_eq!(shards[1].output.vertex_keys, vec![key]);
@@ -578,8 +595,10 @@ mod tests {
         .expect("reconciliation should succeed without capacity overflow")
         .expect("expected unresolved shared-edge mismatch to be reconciled");
 
-        let seg_a = edge_segments_for_neighbor(0, 1, &cells, &cell_indices, &assembled.vertex_keys);
-        let seg_b = edge_segments_for_neighbor(1, 0, &cells, &cell_indices, &assembled.vertex_keys);
+        let seg_a = edge_segments_for_neighbor(0, 1, &cells, &cell_indices, &assembled.vertex_keys)
+            .expect("edge segments should resolve after reconciliation");
+        let seg_b = edge_segments_for_neighbor(1, 0, &cells, &cell_indices, &assembled.vertex_keys)
+            .expect("edge segments should resolve after reconciliation");
         assert_eq!(seg_a.len(), 1);
         assert_eq!(seg_b.len(), 1);
         let set_a = BTreeSet::from([seg_a[0].0, seg_a[0].1]);

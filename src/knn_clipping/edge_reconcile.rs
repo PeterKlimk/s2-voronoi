@@ -16,6 +16,10 @@ use super::live_dedup::EdgeRecord;
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::cell_build::VertexKey;
 
+fn reconcile_state_error(message: impl Into<String>) -> crate::VoronoiError {
+    crate::VoronoiError::ComputationFailed(message.into())
+}
+
 #[inline]
 pub(super) fn unpack_edge(key: u64) -> (u32, u32) {
     (key as u32, (key >> 32) as u32)
@@ -34,42 +38,85 @@ pub(super) fn shared_neighbor(cell_idx: u32, a: VertexKey, b: VertexKey) -> Opti
         .copied()
 }
 
+fn cell_vertex_slice<'a>(
+    cell_idx: u32,
+    cells: &[VoronoiCell],
+    cell_indices: &'a [u32],
+) -> Result<&'a [u32], crate::VoronoiError> {
+    let cell_idx_usize = cell_idx as usize;
+    if cell_idx_usize >= cells.len() {
+        return Err(reconcile_state_error(format!(
+            "edge reconciliation referenced out-of-range cell {} (cells={})",
+            cell_idx_usize,
+            cells.len()
+        )));
+    }
+    let cell = &cells[cell_idx_usize];
+    let start = cell.vertex_start();
+    let end = start + cell.vertex_count();
+    if end > cell_indices.len() {
+        return Err(reconcile_state_error(format!(
+            "edge reconciliation cell {} span [{}..{}) exceeds cell index buffer len {}",
+            cell_idx_usize,
+            start,
+            end,
+            cell_indices.len()
+        )));
+    }
+    Ok(&cell_indices[start..end])
+}
+
 pub(super) fn edge_segments_for_neighbor(
     cell_idx: u32,
     neighbor: u32,
     cells: &[VoronoiCell],
     cell_indices: &[u32],
     vertex_keys: &[VertexKey],
-) -> Vec<(u32, u32)> {
-    let cell_idx_usize = cell_idx as usize;
-    if cell_idx_usize >= cells.len() {
-        return Vec::new();
-    }
-    let cell = &cells[cell_idx_usize];
-    let start = cell.vertex_start();
-    let end = start + cell.vertex_count();
-    let slice = &cell_indices[start..end];
+) -> Result<Vec<(u32, u32)>, crate::VoronoiError> {
+    let slice = cell_vertex_slice(cell_idx, cells, cell_indices)?;
     let n = slice.len();
     if n < 2 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let mut out = Vec::new();
     for i in 0..n {
         let vi = slice[i];
         let vj = slice[(i + 1) % n];
-        let ki = vertex_keys[vi as usize];
-        let kj = vertex_keys[vj as usize];
+        let ki = *vertex_keys.get(vi as usize).ok_or_else(|| {
+            reconcile_state_error(format!(
+                "edge reconciliation vertex id {} out of range for vertex_keys len {}",
+                vi,
+                vertex_keys.len()
+            ))
+        })?;
+        let kj = *vertex_keys.get(vj as usize).ok_or_else(|| {
+            reconcile_state_error(format!(
+                "edge reconciliation vertex id {} out of range for vertex_keys len {}",
+                vj,
+                vertex_keys.len()
+            ))
+        })?;
         if shared_neighbor(cell_idx, ki, kj) == Some(neighbor) {
             out.push((vi, vj));
         }
     }
-    out
+    Ok(out)
 }
 
 fn dist_sq(a: Vec3, b: Vec3) -> f32 {
     let d = a - b;
     d.length_squared()
+}
+
+fn vertex_pos(vertices: &[Vec3], vertex_id: u32) -> Result<Vec3, crate::VoronoiError> {
+    vertices.get(vertex_id as usize).copied().ok_or_else(|| {
+        reconcile_state_error(format!(
+            "edge reconciliation vertex id {} out of range for vertex buffer len {}",
+            vertex_id,
+            vertices.len()
+        ))
+    })
 }
 
 use super::union_find::UnionFind;
@@ -88,8 +135,8 @@ pub(super) fn reconcile_unresolved_edges(
 
     for record in edge_records {
         let (a, b) = unpack_edge(record.key.as_u64());
-        let seg_a = edge_segments_for_neighbor(a, b, cells, cell_indices, vertex_keys);
-        let seg_b = edge_segments_for_neighbor(b, a, cells, cell_indices, vertex_keys);
+        let seg_a = edge_segments_for_neighbor(a, b, cells, cell_indices, vertex_keys)?;
+        let seg_b = edge_segments_for_neighbor(b, a, cells, cell_indices, vertex_keys)?;
         if seg_a.len() != 1 || seg_b.len() != 1 {
             // Special-case: one-sided, zero-length boundary edge.
             //
@@ -106,50 +153,36 @@ pub(super) fn reconcile_unresolved_edges(
                     (b, a, seg_b[0])
                 };
                 let (v0, v1) = emit_seg;
-                let v0_usize = v0 as usize;
-                let v1_usize = v1 as usize;
-                if v0_usize < vertices.len() && v1_usize < vertices.len() {
-                    let len_sq = dist_sq(vertices[v0_usize], vertices[v1_usize]);
-                    if len_sq <= DEGENERATE_LEN_EPS_SQ {
-                        if uf.union(v0, v1) {
-                            merged += 1;
-                        }
+                let len_sq = dist_sq(vertex_pos(vertices, v0)?, vertex_pos(vertices, v1)?);
+                if len_sq <= DEGENERATE_LEN_EPS_SQ {
+                    if uf.union(v0, v1) {
+                        merged += 1;
+                    }
 
-                        // If the neighbor cell contains an exactly coincident vertex, merge onto it
-                        // to improve global consistency across cells.
-                        let other_cell = other_cell as usize;
-                        if other_cell < cells.len() {
-                            let cell = &cells[other_cell];
-                            let start = cell.vertex_start();
-                            let end = start + cell.vertex_count();
-                            let slice = &cell_indices[start..end];
-                            for &vi in [v0, v1].iter() {
-                                let vi_usize = vi as usize;
-                                if vi_usize >= vertices.len() {
-                                    continue;
-                                }
-                                let mut best: Option<(u32, f32)> = None;
-                                for &vj in slice {
-                                    let vj_usize = vj as usize;
-                                    if vj_usize >= vertices.len() {
-                                        continue;
-                                    }
-                                    let d = dist_sq(vertices[vi_usize], vertices[vj_usize]);
-                                    best = Some(match best {
-                                        None => (vj, d),
-                                        Some((best_vj, best_d)) => {
-                                            if d < best_d {
-                                                (vj, d)
-                                            } else {
-                                                (best_vj, best_d)
-                                            }
+                    // If the neighbor cell contains an exactly coincident vertex, merge onto it
+                    // to improve global consistency across cells.
+                    let other_cell = other_cell as usize;
+                    if other_cell < cells.len() {
+                        let slice = cell_vertex_slice(other_cell as u32, cells, cell_indices)?;
+                        for &vi in [v0, v1].iter() {
+                            let vi_pos = vertex_pos(vertices, vi)?;
+                            let mut best: Option<(u32, f32)> = None;
+                            for &vj in slice {
+                                let d = dist_sq(vi_pos, vertex_pos(vertices, vj)?);
+                                best = Some(match best {
+                                    None => (vj, d),
+                                    Some((best_vj, best_d)) => {
+                                        if d < best_d {
+                                            (vj, d)
+                                        } else {
+                                            (best_vj, best_d)
                                         }
-                                    });
-                                }
-                                if let Some((vj, best_d)) = best {
-                                    if best_d <= DEGENERATE_LEN_EPS_SQ && uf.union(vi, vj) {
-                                        merged += 1;
                                     }
+                                });
+                            }
+                            if let Some((vj, best_d)) = best {
+                                if best_d <= DEGENERATE_LEN_EPS_SQ && uf.union(vi, vj) {
+                                    merged += 1;
                                 }
                             }
                         }
@@ -182,10 +215,10 @@ pub(super) fn reconcile_unresolved_edges(
             continue;
         }
 
-        let d00 = dist_sq(vertices[a0 as usize], vertices[b0 as usize])
-            + dist_sq(vertices[a1 as usize], vertices[b1 as usize]);
-        let d01 = dist_sq(vertices[a0 as usize], vertices[b1 as usize])
-            + dist_sq(vertices[a1 as usize], vertices[b0 as usize]);
+        let d00 = dist_sq(vertex_pos(vertices, a0)?, vertex_pos(vertices, b0)?)
+            + dist_sq(vertex_pos(vertices, a1)?, vertex_pos(vertices, b1)?);
+        let d01 = dist_sq(vertex_pos(vertices, a0)?, vertex_pos(vertices, b1)?)
+            + dist_sq(vertex_pos(vertices, a1)?, vertex_pos(vertices, b0)?);
         if d00 <= d01 {
             if uf.union(a0, b0) {
                 merged += 1;
@@ -210,12 +243,10 @@ pub(super) fn reconcile_unresolved_edges(
     let mut new_cells: Vec<VoronoiCell> = Vec::with_capacity(cells.len());
     let mut new_indices: Vec<u32> = Vec::with_capacity(cell_indices.len());
 
-    for cell in cells {
-        let start = cell.vertex_start();
-        let end = start + cell.vertex_count();
+    for (cell_idx, cell) in cells.iter().enumerate() {
         let base = new_indices.len();
         let mut seen: Vec<u32> = Vec::with_capacity(cell.vertex_count());
-        for &vi in &cell_indices[start..end] {
+        for &vi in cell_vertex_slice(cell_idx as u32, cells, cell_indices)? {
             let rep = uf.find(vi);
             if !seen.contains(&rep) {
                 seen.push(rep);
@@ -315,8 +346,10 @@ mod tests {
         let cells = vec![VoronoiCell::new(0, 3), VoronoiCell::new(3, 3)];
         let cell_indices = vec![0, 1, 2, 3, 4, 5];
 
-        let seg_a_before = edge_segments_for_neighbor(0, 1, &cells, &cell_indices, &vertex_keys);
-        let seg_b_before = edge_segments_for_neighbor(1, 0, &cells, &cell_indices, &vertex_keys);
+        let seg_a_before =
+            edge_segments_for_neighbor(0, 1, &cells, &cell_indices, &vertex_keys).unwrap();
+        let seg_b_before =
+            edge_segments_for_neighbor(1, 0, &cells, &cell_indices, &vertex_keys).unwrap();
         assert_eq!(seg_a_before.len(), 1);
         assert_eq!(seg_b_before.len(), 1);
         let before_a = BTreeSet::from([seg_a_before[0].0, seg_a_before[0].1]);
@@ -337,8 +370,10 @@ mod tests {
         .expect("expected mismatched shared-edge endpoints to be reconciled");
 
         let (new_cells, new_indices) = repaired;
-        let seg_a = edge_segments_for_neighbor(0, 1, &new_cells, &new_indices, &vertex_keys);
-        let seg_b = edge_segments_for_neighbor(1, 0, &new_cells, &new_indices, &vertex_keys);
+        let seg_a =
+            edge_segments_for_neighbor(0, 1, &new_cells, &new_indices, &vertex_keys).unwrap();
+        let seg_b =
+            edge_segments_for_neighbor(1, 0, &new_cells, &new_indices, &vertex_keys).unwrap();
         assert_eq!(seg_a.len(), 1, "cell 0 should still expose one shared edge");
         assert_eq!(seg_b.len(), 1, "cell 1 should still expose one shared edge");
 

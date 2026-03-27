@@ -74,6 +74,17 @@ pub struct Topo2DBuilder {
     term_cache_valid: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BuilderDebugState {
+    pub(crate) bounded: bool,
+    pub(crate) poly_len: usize,
+    pub(crate) has_bounding_ref: bool,
+    pub(crate) min_cos: f64,
+    pub(crate) half_plane_count: usize,
+    pub(crate) neighbor_index_count: usize,
+    pub(crate) neighbor_slot_count: usize,
+}
+
 // Conservative lower bound on g · x for a vertex in the current gnomonic model.
 // Below this, the feasible region is effectively at the generator hemisphere boundary.
 const MIN_PROJECTION_COS: f64 = 8.0 * f32::EPSILON as f64;
@@ -395,6 +406,19 @@ impl Topo2DBuilder {
 
         let active_count = active.iter().filter(|&&x| x).count();
         (active_count, self.half_planes.len())
+    }
+
+    pub(crate) fn debug_state(&self) -> BuilderDebugState {
+        let poly = self.current_poly();
+        BuilderDebugState {
+            bounded: !poly.has_bounding_ref(),
+            poly_len: poly.len,
+            has_bounding_ref: poly.has_bounding_ref(),
+            min_cos: poly.min_cos(),
+            half_plane_count: self.half_planes.len(),
+            neighbor_index_count: self.neighbor_indices.len(),
+            neighbor_slot_count: self.neighbor_slots.len(),
+        }
     }
 }
 
