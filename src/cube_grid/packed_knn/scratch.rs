@@ -1357,6 +1357,7 @@ fn outside_max_dot_xyz(qx: f32, qy: f32, qz: f32, ring2: &[u32], grid: &CubeMapG
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::packed_layout::PackedSlotLayout;
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
@@ -1467,16 +1468,9 @@ mod tests {
             for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
                 *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
             }
+            let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
 
-            let group = PackedGroupInput::new(
-                cell,
-                QUERY_BIN,
-                &queries,
-                start as u32,
-                &slot_gen_map,
-                LOCAL_SHIFT,
-                LOCAL_MASK,
-            );
+            let group = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
             let mut scratch = PackedKnnCellScratch::new();
             let mut timings = PackedKnnTimings::default();
             let PreparedPackedGroupStatus::Ready(mut prepared) =
@@ -1554,16 +1548,9 @@ mod tests {
             for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
                 *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
             }
+            let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
 
-            let group = PackedGroupInput::new(
-                cell,
-                QUERY_BIN,
-                &queries,
-                start as u32,
-                &slot_gen_map,
-                LOCAL_SHIFT,
-                LOCAL_MASK,
-            );
+            let group = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
             let mut scratch = PackedKnnCellScratch::new();
             let mut timings = PackedKnnTimings::default();
             let PreparedPackedGroupStatus::Ready(mut prepared) =
@@ -1614,16 +1601,9 @@ mod tests {
             for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
                 *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
             }
+            let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
 
-            let group = PackedGroupInput::new(
-                cell,
-                QUERY_BIN,
-                &queries,
-                start as u32,
-                &slot_gen_map,
-                LOCAL_SHIFT,
-                LOCAL_MASK,
-            );
+            let group = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
             let mut scratch = PackedKnnCellScratch::new();
             let mut timings = PackedKnnTimings::default();
             let PreparedPackedGroupStatus::Ready(mut prepared) =

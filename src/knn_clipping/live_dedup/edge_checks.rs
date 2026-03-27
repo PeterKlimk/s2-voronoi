@@ -12,6 +12,7 @@ use super::types::{
 use super::with_two_mut;
 use crate::knn_clipping::cell_build::VertexKey;
 use crate::knn_clipping::timing::Timer;
+use crate::packed_layout::PackedSlotLayout;
 use std::time::Duration;
 
 #[inline]
@@ -133,9 +134,11 @@ pub(super) fn collect_and_resolve_cell_edges(
         "cell has more than 64 vertices, matched bitmask unsafe"
     );
 
-    // Hoist constants to registers (avoid struct/stack indirection)
-    let local_shift = assignment.local_shift;
-    let local_mask = assignment.local_mask;
+    let layout = PackedSlotLayout::new(
+        &assignment.slot_gen_map,
+        assignment.local_shift,
+        assignment.local_mask,
+    );
 
     // Process all edges
     for i in 0..n {
@@ -156,10 +159,9 @@ pub(super) fn collect_and_resolve_cell_edges(
         let edge_key = pack_edge(cell_idx, neighbor);
         let hp_eps = edge_neighbor_eps[i];
 
-        // Manual unpack with hoisted constants
-        let packed = assignment.slot_gen_map[slot as usize];
-        let bin_b = BinId::from((packed >> local_shift) as u8);
-        let local_b = LocalId::from(packed & local_mask);
+        let (bin_b, local_b) = layout.bin_local(slot);
+        let bin_b = BinId::from(bin_b);
+        let local_b = LocalId::from(local_b);
 
         if bin != bin_b {
             // Cross-bin edge → overflow

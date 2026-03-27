@@ -270,6 +270,7 @@ mod tests {
     use crate::cube_grid::packed_knn::{
         PackedGroupInput, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroupStatus,
     };
+    use crate::packed_layout::PackedSlotLayout;
     use crate::policy::PackedNeighborPolicy;
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
@@ -350,16 +351,9 @@ mod tests {
             for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
                 *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
             }
+            let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
 
-            let group = PackedGroupInput::new(
-                cell,
-                QUERY_BIN,
-                &queries,
-                start as u32,
-                &slot_gen_map,
-                LOCAL_SHIFT,
-                LOCAL_MASK,
-            );
+            let group = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
             for &expand_r2_enabled in &[false, true] {
                 let mut packed_scratch = PackedKnnCellScratch::new();
                 let mut packed_timings = PackedKnnTimings::default();
@@ -373,13 +367,7 @@ mod tests {
                     let query_slot = queries[qi];
                     let query_idx = grid.point_indices()[query_slot as usize] as usize;
                     let query_local = queries[qi];
-                    let ctx = DirectedEligibility::new(
-                        QUERY_BIN,
-                        query_local,
-                        &slot_gen_map,
-                        LOCAL_SHIFT,
-                        LOCAL_MASK,
-                    );
+                    let ctx = DirectedEligibility::from_layout(QUERY_BIN, query_local, layout);
                     let mut grid_scratch = grid.make_scratch();
                     let packed = PackedQuery::new(
                         &mut prepared,
@@ -456,16 +444,9 @@ mod tests {
         for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
             *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
         }
+        let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
 
-        let group = PackedGroupInput::new(
-            cell,
-            QUERY_BIN,
-            &queries,
-            start as u32,
-            &slot_gen_map,
-            LOCAL_SHIFT,
-            LOCAL_MASK,
-        );
+        let group = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
         let mut packed_scratch = PackedKnnCellScratch::new();
         let mut packed_timings = PackedKnnTimings::default();
         let PreparedPackedGroupStatus::Ready(mut prepared) =
@@ -477,13 +458,7 @@ mod tests {
         let qi = 0usize;
         let query_slot = queries[qi];
         let query_idx = grid.point_indices()[query_slot as usize] as usize;
-        let ctx = DirectedEligibility::new(
-            QUERY_BIN,
-            queries[qi],
-            &slot_gen_map,
-            LOCAL_SHIFT,
-            LOCAL_MASK,
-        );
+        let ctx = DirectedEligibility::from_layout(QUERY_BIN, queries[qi], layout);
         let mut grid_scratch = grid.make_scratch();
         let packed = PackedQuery::new(
             &mut prepared,
@@ -560,16 +535,9 @@ mod tests {
             for (slot, packed) in slot_gen_map.iter_mut().enumerate() {
                 *packed = ((QUERY_BIN as u32) << LOCAL_SHIFT) | slot as u32;
             }
+            let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
 
-            let group = PackedGroupInput::new(
-                cell,
-                QUERY_BIN,
-                &queries,
-                start as u32,
-                &slot_gen_map,
-                LOCAL_SHIFT,
-                LOCAL_MASK,
-            );
+            let group = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
             for &expand_r2_enabled in &[false, true] {
                 let mut packed_scratch = PackedKnnCellScratch::new();
                 let mut packed_timings = PackedKnnTimings::default();
@@ -583,13 +551,7 @@ mod tests {
                     let query_slot = queries[qi];
                     let query_idx = grid.point_indices()[query_slot as usize] as usize;
                     let query_local = queries[qi];
-                    let ctx = DirectedEligibility::new(
-                        QUERY_BIN,
-                        query_local,
-                        &slot_gen_map,
-                        LOCAL_SHIFT,
-                        LOCAL_MASK,
-                    );
+                    let ctx = DirectedEligibility::from_layout(QUERY_BIN, query_local, layout);
                     let mut grid_scratch = grid.make_scratch();
                     let packed = PackedQuery::new(
                         &mut prepared,

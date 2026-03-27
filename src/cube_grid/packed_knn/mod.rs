@@ -7,53 +7,12 @@ mod scratch;
 mod timing;
 
 use super::CubeMapGrid;
+use crate::packed_layout::PackedSlotLayout;
 use crate::policy::PackedNeighborPolicy;
 
 pub use scratch::PackedKnnCellScratch;
 pub(crate) use scratch::{PreparedPackedGroup, PreparedPackedGroupStatus};
 pub use timing::PackedKnnTimings;
-
-#[derive(Debug, Clone, Copy)]
-struct PackedSlotLayout<'a> {
-    slot_gen_map: &'a [u32],
-    local_shift: u32,
-    local_mask: u32,
-}
-
-impl<'a> PackedSlotLayout<'a> {
-    #[inline]
-    fn new(slot_gen_map: &'a [u32], local_shift: u32, local_mask: u32) -> Self {
-        Self {
-            slot_gen_map,
-            local_shift,
-            local_mask,
-        }
-    }
-
-    #[inline]
-    fn slot_gen_map(self) -> &'a [u32] {
-        self.slot_gen_map
-    }
-
-    #[inline]
-    fn local_shift(self) -> u32 {
-        self.local_shift
-    }
-
-    #[inline]
-    fn local_mask(self) -> u32 {
-        self.local_mask
-    }
-
-    #[inline]
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
-    fn unpack_bin_local(self, slot: u32) -> (u8, u32) {
-        let packed = self.slot_gen_map[slot as usize];
-        let bin = (packed >> self.local_shift) as u8;
-        let local = packed & self.local_mask;
-        (bin, local)
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PackedGroupInput<'a> {
@@ -72,16 +31,14 @@ impl<'a> PackedGroupInput<'a> {
         query_bin: u8,
         queries: &'a [u32],
         query_local_start: u32,
-        slot_gen_map: &'a [u32],
-        local_shift: u32,
-        local_mask: u32,
+        layout: PackedSlotLayout<'a>,
     ) -> Self {
         Self {
             cell,
             query_bin,
             queries,
             query_local_start,
-            layout: PackedSlotLayout::new(slot_gen_map, local_shift, local_mask),
+            layout,
         }
     }
 

@@ -21,6 +21,7 @@ use crate::knn_clipping::cell_build::{
     SeedNeighbor, VertexData,
 };
 use crate::knn_clipping::TerminationConfig;
+use crate::packed_layout::PackedSlotLayout;
 
 struct EdgeScratch {
     edges_to_later: Vec<EdgeToLater>,
@@ -205,6 +206,11 @@ pub(super) fn build_cells_sharded_live_dedup(
                 grid,
                 assignment: &assignment,
             };
+            let packed_layout = PackedSlotLayout::new(
+                &assignment.slot_gen_map,
+                assignment.local_shift,
+                assignment.local_mask,
+            );
 
             let mut cursor = 0usize;
             while cursor < my_generators.len() {
@@ -226,9 +232,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                         bin.as_u8(),
                         queries,
                         query_local_start,
-                        &assignment.slot_gen_map,
-                        assignment.local_shift,
-                        assignment.local_mask,
+                        packed_layout,
                     );
 
                     #[cfg(not(feature = "timing"))]
@@ -374,14 +378,15 @@ fn build_and_emit_cell<'a, 'b, 'c>(
         });
     }
 
-    let directed_ctx = crate::cube_grid::DirectedEligibility::new(
+    let directed_ctx = crate::cube_grid::DirectedEligibility::from_layout(
         shard_ctx.bin.as_u8(),
         shard_ctx.local.as_u32(),
-        &grid_ctx.assignment.slot_gen_map,
-        grid_ctx.assignment.local_shift,
-        grid_ctx.assignment.local_mask,
+        PackedSlotLayout::new(
+            &grid_ctx.assignment.slot_gen_map,
+            grid_ctx.assignment.local_shift,
+            grid_ctx.assignment.local_mask,
+        ),
     );
-
     let stats = build_cell_into(
         build_ctx,
         CellBuildRequest {

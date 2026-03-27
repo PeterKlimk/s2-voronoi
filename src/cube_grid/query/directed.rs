@@ -1,48 +1,15 @@
 use crate::fp;
+use crate::packed_layout::PackedSlotLayout;
 use glam::Vec3;
 use std::cmp::Reverse;
 
 use super::super::{CubeMapGrid, CubeMapGridScratch, OrdF32};
 
 #[derive(Debug, Clone, Copy)]
-struct PackedSlotOwnership<'a> {
-    slot_gen_map: &'a [u32],
-    local_shift: u32,
-    local_mask: u32,
-}
-
-impl<'a> PackedSlotOwnership<'a> {
-    #[inline]
-    fn new(slot_gen_map: &'a [u32], local_shift: u32, local_mask: u32) -> Self {
-        Self {
-            slot_gen_map,
-            local_shift,
-            local_mask,
-        }
-    }
-
-    #[inline]
-    fn bin_local(self, slot: u32) -> (u8, u32) {
-        let packed = self.slot_gen_map[slot as usize];
-        CubeMapGrid::unpack_bin_local(packed, self.local_shift, self.local_mask)
-    }
-
-    #[inline]
-    fn cell_bin(self, grid: &CubeMapGrid, cell: usize) -> Option<u8> {
-        let start = grid.cell_offsets[cell] as usize;
-        let end = grid.cell_offsets[cell + 1] as usize;
-        if start >= end {
-            return None;
-        }
-        Some(self.bin_local(start as u32).0)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
 pub(crate) struct DirectedEligibility<'a> {
     query_bin: u8,
     query_local: u32,
-    ownership: PackedSlotOwnership<'a>,
+    layout: PackedSlotLayout<'a>,
 }
 
 impl<'a> DirectedEligibility<'a> {
@@ -54,16 +21,29 @@ impl<'a> DirectedEligibility<'a> {
         local_shift: u32,
         local_mask: u32,
     ) -> Self {
+        Self::from_layout(
+            query_bin,
+            query_local,
+            PackedSlotLayout::new(slot_gen_map, local_shift, local_mask),
+        )
+    }
+
+    #[inline]
+    pub(crate) fn from_layout(
+        query_bin: u8,
+        query_local: u32,
+        layout: PackedSlotLayout<'a>,
+    ) -> Self {
         Self {
             query_bin,
             query_local,
-            ownership: PackedSlotOwnership::new(slot_gen_map, local_shift, local_mask),
+            layout,
         }
     }
 
     #[inline]
     fn cell_mode(self, grid: &CubeMapGrid, start_cell: u32, cell: usize) -> DirectedCellMode {
-        let Some(bin_b) = self.ownership.cell_bin(grid, cell) else {
+        let Some(bin_b) = self.layout.cell_bin(grid, cell) else {
             return DirectedCellMode::TransitOnly;
         };
         if bin_b != self.query_bin {
@@ -82,7 +62,7 @@ impl<'a> DirectedEligibility<'a> {
 
     #[inline]
     fn allows_center_slot(self, slot: u32) -> bool {
-        let (bin_b, local_b) = self.ownership.bin_local(slot);
+        let (bin_b, local_b) = self.layout.bin_local(slot);
         bin_b != self.query_bin || local_b >= self.query_local
     }
 }
@@ -295,13 +275,6 @@ impl CubeMapGrid {
         eligibility: DirectedEligibility<'b>,
     ) -> DirectedNoKCursor<'a, 'b> {
         DirectedNoKCursor::new(self, query, query_idx, scratch, eligibility)
-    }
-
-    #[inline(always)]
-    fn unpack_bin_local(packed: u32, local_shift: u32, local_mask: u32) -> (u8, u32) {
-        let bin = (packed >> local_shift) as u8;
-        let local = packed & local_mask;
-        (bin, local)
     }
 }
 

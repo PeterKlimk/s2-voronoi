@@ -46,6 +46,7 @@ mod error;
 mod fp;
 #[cfg(any(test, feature = "packed_knn_sort_small"))]
 pub(crate) mod generated;
+mod packed_layout;
 pub(crate) mod policy;
 #[doc(hidden)]
 pub mod quality;
