@@ -192,6 +192,18 @@ fn map_cell_build_error(err: CellBuildError) -> crate::VoronoiError {
     }
 }
 
+fn map_build_cells_error(err: live_dedup::BuildCellsError) -> crate::VoronoiError {
+    match err {
+        live_dedup::BuildCellsError::CellBuild(err) => map_cell_build_error(err),
+        live_dedup::BuildCellsError::PackedLayoutCapacity(err) => {
+            crate::VoronoiError::RepresentationLimit(format!(
+                "packed bin/local layout capacity exceeded in bin {}: population {} exceeds local mask {} (num_bins={}, local_shift={})",
+                err.bin, err.local_population, err.local_mask, err.num_bins, err.local_shift
+            ))
+        }
+    }
+}
+
 fn preprocess_effective_points(
     points: &[Vec3],
     preprocess_mode: PreprocessMode,
@@ -257,7 +269,7 @@ fn construct_cell_shards(
 ) -> Result<live_dedup::ShardedCellsData, crate::VoronoiError> {
     let t = Timer::start();
     let sharded = live_dedup::build_cells_sharded_live_dedup(effective_points, grid, termination)
-        .map_err(map_cell_build_error)?;
+        .map_err(map_build_cells_error)?;
     #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]
     tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
     Ok(sharded)
@@ -333,8 +345,9 @@ fn remap_cells_to_original_indices(
 
 #[cfg(test)]
 mod tests {
-    use super::map_cell_build_error;
+    use super::{map_build_cells_error, map_cell_build_error};
     use crate::knn_clipping::cell_build::{CellBuildError, CellFailure};
+    use crate::knn_clipping::live_dedup::{BuildCellsError, PackedLayoutCapacityError};
     use crate::VoronoiError;
 
     #[test]
@@ -379,6 +392,28 @@ mod tests {
                 assert!(msg.contains("vertex budget"));
             }
             other => panic!("expected ComputationFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn map_packed_layout_capacity_to_representation_limit() {
+        let err = map_build_cells_error(BuildCellsError::PackedLayoutCapacity(
+            PackedLayoutCapacityError {
+                bin: 5,
+                local_population: 4096,
+                num_bins: 96,
+                local_shift: 8,
+                local_mask: 255,
+            },
+        ));
+        match err {
+            VoronoiError::RepresentationLimit(msg) => {
+                assert!(msg.contains("bin 5"));
+                assert!(msg.contains("4096"));
+                assert!(msg.contains("255"));
+                assert!(msg.contains("96"));
+            }
+            other => panic!("expected RepresentationLimit, got {:?}", other),
         }
     }
 }

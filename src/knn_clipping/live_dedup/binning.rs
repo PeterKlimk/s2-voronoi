@@ -19,6 +19,15 @@ pub(super) struct BinAssignment {
     pub(super) num_bins: usize,
 }
 
+#[derive(Debug, Clone)]
+pub(in crate::knn_clipping) struct PackedLayoutCapacityError {
+    pub(in crate::knn_clipping) bin: usize,
+    pub(in crate::knn_clipping) local_population: usize,
+    pub(in crate::knn_clipping) num_bins: usize,
+    pub(in crate::knn_clipping) local_shift: u32,
+    pub(in crate::knn_clipping) local_mask: u32,
+}
+
 struct BinLayout {
     bin_res: usize,
     bin_stride: usize,
@@ -53,7 +62,29 @@ fn choose_bin_layout(grid_res: usize) -> BinLayout {
     }
 }
 
-pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment {
+fn validate_local_capacity(
+    bin: usize,
+    local_population: usize,
+    num_bins: usize,
+    local_shift: u32,
+    local_mask: u32,
+) -> Result<(), PackedLayoutCapacityError> {
+    if (local_population as u32) <= local_mask {
+        return Ok(());
+    }
+    Err(PackedLayoutCapacityError {
+        bin,
+        local_population,
+        num_bins,
+        local_shift,
+        local_mask,
+    })
+}
+
+pub(super) fn assign_bins(
+    points: &[Vec3],
+    grid: &CubeMapGrid,
+) -> Result<BinAssignment, PackedLayoutCapacityError> {
     let n = points.len();
     let layout = choose_bin_layout(grid.res());
     let num_bins = layout.num_bins;
@@ -107,6 +138,7 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
             debug_assert!(g < n, "grid returned out-of-range point index");
 
             let local_usize = bin_generators[b_usize].len();
+            validate_local_capacity(b_usize, local_usize, num_bins, local_shift, local_mask)?;
             let local = LocalId::from_usize(local_usize);
             bin_generators[b_usize].push(g);
 
@@ -163,7 +195,7 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
         "unassigned slot_gen_map entries"
     );
 
-    BinAssignment {
+    Ok(BinAssignment {
         generator_bin,
         global_to_local,
         slot_gen_map,
@@ -171,5 +203,25 @@ pub(super) fn assign_bins(points: &[Vec3], grid: &CubeMapGrid) -> BinAssignment 
         local_mask,
         bin_generators,
         num_bins,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_local_capacity;
+
+    #[test]
+    fn packed_local_capacity_accepts_values_within_mask() {
+        assert!(validate_local_capacity(3, 255, 96, 8, 255).is_ok());
+    }
+
+    #[test]
+    fn packed_local_capacity_rejects_values_above_mask() {
+        let err = validate_local_capacity(7, 256, 96, 8, 255).unwrap_err();
+        assert_eq!(err.bin, 7);
+        assert_eq!(err.local_population, 256);
+        assert_eq!(err.num_bins, 96);
+        assert_eq!(err.local_shift, 8);
+        assert_eq!(err.local_mask, 255);
     }
 }

@@ -19,6 +19,7 @@ mod shard;
 mod types;
 
 use binning::BinAssignment;
+pub(super) use binning::PackedLayoutCapacityError;
 use shard::ShardState;
 pub(super) use types::{EdgeRecord, UnresolvedEdgeMismatch};
 
@@ -48,6 +49,11 @@ pub(super) struct ShardedCellsData {
     pub(super) cell_sub: super::timing::CellSubAccum,
 }
 
+pub(super) enum BuildCellsError {
+    CellBuild(CellBuildError),
+    PackedLayoutCapacity(PackedLayoutCapacityError),
+}
+
 fn with_two_mut<T>(v: &mut [T], i: usize, j: usize) -> (&mut T, &mut T) {
     assert!(i != j);
     if i < j {
@@ -63,7 +69,7 @@ pub(super) fn build_cells_sharded_live_dedup(
     points: &[glam::Vec3],
     grid: &crate::cube_grid::CubeMapGrid,
     termination: TerminationConfig,
-) -> Result<ShardedCellsData, CellBuildError> {
+) -> Result<ShardedCellsData, BuildCellsError> {
     build::build_cells_sharded_live_dedup(points, grid, termination)
 }
 

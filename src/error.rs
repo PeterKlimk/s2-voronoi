@@ -25,8 +25,13 @@ pub enum VoronoiError {
         message: String,
     },
 
-    /// Internal computation failure.
-    /// This should not happen with valid input and indicates a bug.
+    /// Computation exceeded a concrete representation or packing limit.
+    ///
+    /// This is not necessarily a logic bug; it means the current internal
+    /// storage/layout could not represent the requested computation.
+    RepresentationLimit(String),
+
+    /// Internal or otherwise unclassified computation failure.
     ComputationFailed(String),
 }
 
@@ -55,6 +60,9 @@ impl fmt::Display for VoronoiError {
                     "degenerate input: {} coincident point pairs ({})",
                     coincident_pairs, message
                 )
+            }
+            VoronoiError::RepresentationLimit(msg) => {
+                write!(f, "representation limit exceeded: {}", msg)
             }
             VoronoiError::ComputationFailed(msg) => {
                 write!(f, "computation failed: {}", msg)

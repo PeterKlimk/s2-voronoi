@@ -11,7 +11,7 @@ use super::shard::ShardState;
 use super::types::{
     BinId, DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeOverflowLocal, EdgeToLater, LocalId,
 };
-use super::ShardedCellsData;
+use super::{BuildCellsError, ShardedCellsData};
 use crate::cube_grid::packed_knn::{
     DirectedCellGroup, PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings,
 };
@@ -144,19 +144,19 @@ pub(super) fn build_cells_sharded_live_dedup(
     points: &[Vec3],
     grid: &CubeMapGrid,
     termination: TerminationConfig,
-) -> Result<ShardedCellsData, CellBuildError> {
+) -> Result<ShardedCellsData, BuildCellsError> {
     let policy = termination.knn_policy(points.len());
     // Legacy config compatibility: no-k fallback ignores this cap.
     let _ = policy.termination().max_k_cap();
 
-    let assignment = assign_bins(points, grid);
+    let assignment = assign_bins(points, grid).map_err(BuildCellsError::PackedLayoutCapacity)?;
     let num_bins = assignment.num_bins;
     let packed_policy = policy.packed();
     let termination_policy = policy.termination();
 
     let per_bin: Result<
         Vec<(ShardState, crate::knn_clipping::timing::CellSubAccum)>,
-        CellBuildError,
+        BuildCellsError,
     > = maybe_par_into_iter!(0..num_bins)
         .map(|bin_usize| {
             use crate::knn_clipping::timing::CellSubAccum;
@@ -268,7 +268,8 @@ pub(super) fn build_cells_sharded_live_dedup(
                                         offset,
                                         packed_policy,
                                     )),
-                                )?;
+                                )
+                                .map_err(BuildCellsError::CellBuild)?;
                             }
                         }
                         PackedKnnCellStatus::SlowPath => {
@@ -291,7 +292,8 @@ pub(super) fn build_cells_sharded_live_dedup(
                                     termination_policy,
                                     global,
                                     None,
-                                )?;
+                                )
+                                .map_err(BuildCellsError::CellBuild)?;
                             }
                         }
                     }
@@ -321,7 +323,8 @@ pub(super) fn build_cells_sharded_live_dedup(
                             termination_policy,
                             global,
                             None,
-                        )?;
+                        )
+                        .map_err(BuildCellsError::CellBuild)?;
                     }
                 }
             }
