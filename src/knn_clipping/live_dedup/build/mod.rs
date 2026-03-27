@@ -13,7 +13,7 @@ use super::types::{
 };
 use super::{BuildCellsError, ShardedCellsData};
 use crate::cube_grid::packed_knn::{
-    DirectedCellGroup, PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings,
+    DirectedCellGroup, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroupStatus,
 };
 use crate::cube_grid::{CubeMapGrid, PackedQuery};
 use crate::knn_clipping::cell_build::{
@@ -236,13 +236,13 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                     #[cfg(not(feature = "timing"))]
                     let t_packed = crate::knn_clipping::timing::Timer::start();
-                    let status =
+                    let prepared =
                         packed_scratch.prepare_group_directed(grid, group, &mut packed_timings);
                     #[cfg(not(feature = "timing"))]
                     let packed_elapsed = t_packed.elapsed();
 
-                    match status {
-                        PackedKnnCellStatus::Ok => {
+                    match prepared {
+                        PreparedPackedGroupStatus::Ready(mut prepared) => {
                             for (offset, &global) in
                                 my_generators[group_start..cursor].iter().enumerate()
                             {
@@ -262,9 +262,8 @@ pub(super) fn build_cells_sharded_live_dedup(
                                     termination_policy,
                                     global,
                                     Some(PackedQuery::new(
-                                        &mut packed_scratch,
+                                        &mut prepared,
                                         &mut packed_timings,
-                                        group,
                                         offset,
                                         packed_policy,
                                     )),
@@ -272,7 +271,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                 .map_err(BuildCellsError::CellBuild)?;
                             }
                         }
-                        PackedKnnCellStatus::SlowPath => {
+                        PreparedPackedGroupStatus::SlowPath => {
                             for (offset, &global) in
                                 my_generators[group_start..cursor].iter().enumerate()
                             {
@@ -356,7 +355,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
     grid_ctx: &'a GridContext<'c>,
     termination: crate::policy::TerminationPolicy,
     generator_idx: usize,
-    packed: Option<PackedQuery<'_, 'c>>,
+    packed: Option<PackedQuery<'_, '_, 'c>>,
 ) -> Result<(), CellBuildError> {
     let cell_start = shard_ctx.shard.output.cell_indices.len() as u32;
     shard_ctx

@@ -31,17 +31,13 @@ pub struct PackedKnnCellScratch {
     cell_ranges: Vec<PackedCellRange>,
     center_lens: Vec<usize>,
     min_center_dot: Vec<f32>,
-    group_queries: Vec<u32>,
-    group_cell: usize,
-    group_query_bin: u8,
-    group_gen: u32,
+    next_group_gen: u32,
     chunk0_keys: Vec<Vec<u64>>,
     tail_keys: Vec<Vec<u64>>,
     chunk0_pos: Vec<usize>,
     tail_pos: Vec<usize>,
     tail_possible: Vec<bool>,
     tail_ready_gen: Vec<u32>,
-    tail_built_any: bool,
     security_thresholds: Vec<f32>,
     thresholds: Vec<f32>,
     expand_r2_cells: Vec<PackedCellRange>,
@@ -74,23 +70,123 @@ enum PackedCellRangeKind {
     SameBinLater,
 }
 
+pub(crate) struct PreparedPackedGroup<'a, 'g> {
+    scratch: &'a mut PackedKnnCellScratch,
+    group: DirectedCellGroup<'g>,
+    group_gen: u32,
+    tail_built_any: bool,
+}
+
+pub(crate) enum PreparedPackedGroupStatus<'a, 'g> {
+    Ready(PreparedPackedGroup<'a, 'g>),
+    SlowPath,
+}
+
+impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
+    #[inline]
+    pub(super) fn group(&self) -> DirectedCellGroup<'g> {
+        self.group
+    }
+
+    #[inline]
+    #[cfg(test)]
+    pub(crate) fn security(&self, qi: usize) -> f32 {
+        self.scratch.security(qi)
+    }
+
+    #[inline]
+    pub(super) fn next_chunk(
+        &mut self,
+        qi: usize,
+        stage: PackedStage,
+        k: usize,
+        out: &mut [u32],
+        timings: &mut PackedKnnTimings,
+    ) -> Option<PackedChunk> {
+        self.scratch
+            .next_chunk(qi, self.group_gen, stage, k, out, timings)
+    }
+
+    #[inline]
+    pub(super) fn ensure_tail_directed_for(
+        &mut self,
+        qi: usize,
+        grid: &CubeMapGrid,
+        timings: &mut PackedKnnTimings,
+    ) {
+        self.scratch.ensure_tail_directed_for(
+            qi,
+            self.group.queries(),
+            self.group_gen,
+            &mut self.tail_built_any,
+            grid,
+            self.group.slot_gen_map(),
+            self.group.local_shift(),
+            self.group.local_mask(),
+            timings,
+        );
+    }
+
+    #[inline]
+    pub(super) fn ensure_expand_r2_band_directed_for(
+        &mut self,
+        qi: usize,
+        grid: &CubeMapGrid,
+        timings: &mut PackedKnnTimings,
+    ) -> bool {
+        self.scratch.ensure_expand_r2_band_directed_for(
+            qi,
+            self.group,
+            self.group_gen,
+            grid,
+            self.group.slot_gen_map(),
+            self.group.local_shift(),
+            self.group.local_mask(),
+            timings,
+        )
+    }
+
+    #[inline]
+    pub(super) fn resume_security(&self, qi: usize) -> f32 {
+        self.scratch.resume_security(qi, self.group_gen)
+    }
+
+    #[inline]
+    pub(super) fn tail_possible(&self, qi: usize) -> bool {
+        self.scratch.tail_possible(qi)
+    }
+
+    #[inline]
+    pub(super) fn tail_upper_bound(&self, qi: usize) -> f32 {
+        self.scratch.tail_upper_bound(qi)
+    }
+
+    #[inline]
+    #[cfg(test)]
+    pub(crate) fn ensure_security2_for(
+        &mut self,
+        qi: usize,
+        grid: &CubeMapGrid,
+        timings: &mut PackedKnnTimings,
+    ) -> f32 {
+        self.scratch
+            .ensure_security2_for(qi, self.group, self.group_gen, grid, timings)
+    }
+}
+
 impl PackedKnnCellScratch {
     pub fn new() -> Self {
         Self {
             cell_ranges: Vec::with_capacity(9),
             center_lens: Vec::new(),
             min_center_dot: Vec::new(),
-            group_queries: Vec::new(),
-            group_cell: 0,
-            group_query_bin: 0,
-            group_gen: 1,
+            next_group_gen: 1,
             chunk0_keys: Vec::new(),
             tail_keys: Vec::new(),
             chunk0_pos: Vec::new(),
             tail_pos: Vec::new(),
             tail_possible: Vec::new(),
             tail_ready_gen: Vec::new(),
-            tail_built_any: false,
             security_thresholds: Vec::new(),
             thresholds: Vec::new(),
             expand_r2_cells: Vec::new(),
@@ -129,6 +225,7 @@ impl PackedKnnCellScratch {
         &self,
         grid: &CubeMapGrid,
         cell: usize,
+        group: DirectedCellGroup<'_>,
         slot_gen_map: &[u32],
         local_shift: u32,
         local_mask: u32,
@@ -139,13 +236,13 @@ impl PackedKnnCellScratch {
             return None;
         }
 
-        let kind = if cell == self.group_cell {
+        let kind = if cell == group.cell() {
             PackedCellRangeKind::CrossBin
         } else {
             let (bin_b, _) = unpack_bin_local(slot_gen_map[start], local_shift, local_mask);
-            if bin_b != self.group_query_bin {
+            if bin_b != group.query_bin() {
                 PackedCellRangeKind::CrossBin
-            } else if cell < self.group_cell {
+            } else if cell < group.cell() {
                 PackedCellRangeKind::SameBinEarlier
             } else {
                 PackedCellRangeKind::SameBinLater
@@ -162,16 +259,18 @@ impl PackedKnnCellScratch {
     fn ensure_expand_r2_cells(
         &mut self,
         grid: &CubeMapGrid,
+        group: DirectedCellGroup<'_>,
+        group_gen: u32,
         slot_gen_map: &[u32],
         local_shift: u32,
         local_mask: u32,
     ) {
-        if self.expand_r2_cells_gen == self.group_gen {
+        if self.expand_r2_cells_gen == group_gen {
             return;
         }
 
         self.expand_r2_cells.clear();
-        self.expand_r2_cells_gen = self.group_gen;
+        self.expand_r2_cells_gen = group_gen;
 
         let num_cells = grid.cell_offsets().len() - 1;
         let mut seen = vec![false; num_cells];
@@ -181,36 +280,36 @@ impl PackedKnnCellScratch {
             }
             seen[cell] = true;
             if let Some(range) =
-                this.classify_cell_range(grid, cell, slot_gen_map, local_shift, local_mask)
+                this.classify_cell_range(grid, cell, group, slot_gen_map, local_shift, local_mask)
             {
                 this.expand_r2_cells.push(range);
             }
         };
 
-        push_cell(self, self.group_cell);
-        for &ncell in grid.cell_neighbors(self.group_cell) {
+        push_cell(self, group.cell());
+        for &ncell in grid.cell_neighbors(group.cell()) {
             if ncell != u32::MAX {
                 push_cell(self, ncell as usize);
             }
         }
-        for &cell in grid.cell_ring2(self.group_cell) {
+        for &cell in grid.cell_ring2(group.cell()) {
             push_cell(self, cell as usize);
         }
     }
 
-    fn ensure_ring3_cells(&mut self, grid: &CubeMapGrid) {
-        if self.ring3_cells_gen == self.group_gen {
+    fn ensure_ring3_cells(&mut self, grid: &CubeMapGrid, group_cell: usize, group_gen: u32) {
+        if self.ring3_cells_gen == group_gen {
             return;
         }
 
         self.ring3_cells.clear();
-        self.ring3_cells_gen = self.group_gen;
+        self.ring3_cells_gen = group_gen;
 
         let num_cells = grid.cell_offsets().len() - 1;
         let mut depth = vec![u8::MAX; num_cells];
         let mut queue = VecDeque::new();
-        depth[self.group_cell] = 0;
-        queue.push_back(self.group_cell);
+        depth[group_cell] = 0;
+        queue.push_back(group_cell);
 
         while let Some(cell) = queue.pop_front() {
             let d = depth[cell];
@@ -240,17 +339,19 @@ impl PackedKnnCellScratch {
     fn ensure_security2_for(
         &mut self,
         qi: usize,
+        group: DirectedCellGroup<'_>,
+        group_gen: u32,
         grid: &CubeMapGrid,
         timings: &mut PackedKnnTimings,
     ) -> f32 {
-        self.ensure_cold_query_storage(self.group_queries.len());
-        if self.security2_ready_gen[qi] == self.group_gen {
+        self.ensure_cold_query_storage(group.queries().len());
+        if self.security2_ready_gen[qi] == group_gen {
             return self.security2[qi];
         }
 
         let mut t = PackedLapTimer::start();
-        self.ensure_ring3_cells(grid);
-        let query_slot = self.group_queries[qi] as usize;
+        self.ensure_ring3_cells(grid, group.cell(), group_gen);
+        let query_slot = group.queries()[qi] as usize;
         let security = if self.ring3_cells.is_empty() {
             -1.0
         } else {
@@ -265,7 +366,7 @@ impl PackedKnnCellScratch {
         timings.add_ring_thresholds(t.lap());
 
         self.security2[qi] = security;
-        self.security2_ready_gen[qi] = self.group_gen;
+        self.security2_ready_gen[qi] = group_gen;
         security
     }
 
@@ -273,21 +374,30 @@ impl PackedKnnCellScratch {
     pub(super) fn ensure_expand_r2_band_directed_for(
         &mut self,
         qi: usize,
+        group: DirectedCellGroup<'_>,
+        group_gen: u32,
         grid: &CubeMapGrid,
         slot_gen_map: &[u32],
         local_shift: u32,
         local_mask: u32,
         timings: &mut PackedKnnTimings,
     ) -> bool {
-        self.ensure_cold_query_storage(self.group_queries.len());
-        if self.expand2_ready_gen[qi] == self.group_gen {
+        self.ensure_cold_query_storage(group.queries().len());
+        if self.expand2_ready_gen[qi] == group_gen {
             return true;
         }
 
-        let security2 = self.ensure_security2_for(qi, grid, timings);
-        self.ensure_expand_r2_cells(grid, slot_gen_map, local_shift, local_mask);
+        let security2 = self.ensure_security2_for(qi, group, group_gen, grid, timings);
+        self.ensure_expand_r2_cells(
+            grid,
+            group,
+            group_gen,
+            slot_gen_map,
+            local_shift,
+            local_mask,
+        );
 
-        let query_slot = self.group_queries[qi];
+        let query_slot = group.queries()[qi];
         let query_slot_usize = query_slot as usize;
         let qx = grid.cell_points_x[query_slot_usize];
         let qy = grid.cell_points_y[query_slot_usize];
@@ -337,17 +447,17 @@ impl PackedKnnCellScratch {
         }
         timings.add_expand_r2_scan(t.lap());
 
-        self.expand2_ready_gen[qi] = self.group_gen;
+        self.expand2_ready_gen[qi] = group_gen;
         true
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn prepare_group_directed(
-        &mut self,
+    pub(crate) fn prepare_group_directed<'a, 'g>(
+        &'a mut self,
         grid: &CubeMapGrid,
-        group: DirectedCellGroup<'_>,
+        group: DirectedCellGroup<'g>,
         timings: &mut PackedKnnTimings,
-    ) -> PackedKnnCellStatus {
+    ) -> PreparedPackedGroupStatus<'a, 'g> {
         timings.clear();
 
         group.debug_assert_matches_grid(grid);
@@ -359,28 +469,26 @@ impl PackedKnnCellScratch {
         let local_shift = group.local_shift();
         let local_mask = group.local_mask();
         let num_queries = queries.len();
-        if num_queries == 0 {
-            return PackedKnnCellStatus::Ok;
-        }
-
-        self.group_cell = cell;
-        self.group_query_bin = query_bin;
-        self.group_queries.clear();
-        self.group_queries.extend_from_slice(queries);
-        self.group_gen = self.group_gen.wrapping_add(1);
-        if self.group_gen == 0 {
+        let mut group_gen = self.next_group_gen.wrapping_add(1).max(1);
+        if group_gen == u32::MAX {
             // Reserve `0` as "never set"; on wrap, clear all generation stamps.
-            self.group_gen = 1;
+            group_gen = 1;
             self.tail_ready_gen.fill(0);
             self.expand_r2_cells_gen = 0;
             self.ring3_cells_gen = 0;
             self.expand2_ready_gen.fill(0);
             self.security2_ready_gen.fill(0);
         }
+        self.next_group_gen = group_gen;
 
         let num_cells = 6 * grid.res * grid.res;
         if cell >= num_cells {
-            return PackedKnnCellStatus::Ok;
+            return PreparedPackedGroupStatus::Ready(PreparedPackedGroup {
+                scratch: self,
+                group,
+                group_gen,
+                tail_built_any: false,
+            });
         }
 
         let mut t = PackedLapTimer::start();
@@ -436,7 +544,7 @@ impl PackedKnnCellScratch {
         }
         if num_candidates > MAX_CANDIDATES_HARD {
             timings.add_setup(t.lap());
-            return PackedKnnCellStatus::SlowPath;
+            return PreparedPackedGroupStatus::SlowPath;
         }
         let mut ring_candidates_eligible = 0usize;
         let mut ring_candidates_all = 0usize;
@@ -527,7 +635,6 @@ impl PackedKnnCellScratch {
         if self.tail_ready_gen.len() < num_queries {
             self.tail_ready_gen.resize(num_queries, 0);
         }
-        self.tail_built_any = false;
         timings.add_select_prep(t.lap());
 
         // === Center cell pass (directed triangular).
@@ -811,13 +918,21 @@ impl PackedKnnCellScratch {
         }
         timings.add_ring_pass(t.lap());
 
-        PackedKnnCellStatus::Ok
+        PreparedPackedGroupStatus::Ready(PreparedPackedGroup {
+            scratch: self,
+            group,
+            group_gen,
+            tail_built_any: false,
+        })
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn ensure_tail_directed_for(
         &mut self,
         qi: usize,
+        group_queries: &[u32],
+        group_gen: u32,
+        tail_built_any: &mut bool,
         grid: &CubeMapGrid,
         slot_gen_map: &[u32],
         local_shift: u32,
@@ -831,14 +946,14 @@ impl PackedKnnCellScratch {
         let Some(gen) = self.tail_ready_gen.get(qi).copied() else {
             return;
         };
-        if gen == self.group_gen {
+        if gen == group_gen {
             return;
         }
-        if !self.tail_built_any {
-            self.tail_built_any = true;
+        if !*tail_built_any {
+            *tail_built_any = true;
             timings.inc_tail_builds();
         }
-        self.tail_ready_gen[qi] = self.group_gen;
+        self.tail_ready_gen[qi] = group_gen;
 
         // Keep any precomputed center-tail candidates already stored in `tail_keys[qi]` and
         // append ring-tail candidates here.
@@ -858,7 +973,7 @@ impl PackedKnnCellScratch {
             let ys = &grid.cell_points_y[soa_start..soa_end];
             let zs = &grid.cell_points_z[soa_start..soa_end];
 
-            let query_slot = self.group_queries[qi];
+            let query_slot = group_queries[qi];
             let query_slot_usize = query_slot as usize;
             let qx_s = grid.cell_points_x[query_slot_usize];
             let qy_s = grid.cell_points_y[query_slot_usize];
@@ -928,6 +1043,7 @@ impl PackedKnnCellScratch {
     pub(super) fn next_chunk(
         &mut self,
         qi: usize,
+        group_gen: u32,
         stage: PackedStage,
         k: usize,
         out: &mut [u32],
@@ -1009,7 +1125,7 @@ impl PackedKnnCellScratch {
             }
             PackedStage::Tail => {
                 debug_assert!(
-                    self.tail_ready_gen.get(qi).copied().unwrap_or(0) == self.group_gen,
+                    self.tail_ready_gen.get(qi).copied().unwrap_or(0) == group_gen,
                     "tail stage requested before ensure_tail"
                 );
                 let mut t = PackedLapTimer::start();
@@ -1046,7 +1162,7 @@ impl PackedKnnCellScratch {
             }
             PackedStage::ExpandR2 => {
                 debug_assert!(
-                    self.expand2_ready_gen.get(qi).copied().unwrap_or(0) == self.group_gen,
+                    self.expand2_ready_gen.get(qi).copied().unwrap_or(0) == group_gen,
                     "expand_r2 stage requested before ensure_expand_r2"
                 );
                 let mut t_stage = PackedLapTimer::start();
@@ -1093,8 +1209,8 @@ impl PackedKnnCellScratch {
     }
 
     #[inline]
-    pub(super) fn resume_security(&self, qi: usize) -> f32 {
-        if self.expand2_ready_gen.get(qi).copied().unwrap_or(0) == self.group_gen {
+    pub(super) fn resume_security(&self, qi: usize, group_gen: u32) -> f32 {
+        if self.expand2_ready_gen.get(qi).copied().unwrap_or(0) == group_gen {
             self.security2[qi]
         } else {
             self.security_thresholds[qi]
@@ -1110,12 +1226,6 @@ impl PackedKnnCellScratch {
     pub(super) fn tail_upper_bound(&self, qi: usize) -> f32 {
         self.thresholds[qi]
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PackedKnnCellStatus {
-    Ok,
-    SlowPath,
 }
 
 #[inline(always)]
@@ -1370,15 +1480,16 @@ mod tests {
             );
             let mut scratch = PackedKnnCellScratch::new();
             let mut timings = PackedKnnTimings::default();
-            assert_eq!(
-                scratch.prepare_group_directed(&grid, group, &mut timings),
-                PackedKnnCellStatus::Ok
-            );
+            let PreparedPackedGroupStatus::Ready(mut prepared) =
+                scratch.prepare_group_directed(&grid, group, &mut timings)
+            else {
+                panic!("packed prepare unexpectedly fell back to slow path");
+            };
 
             for qi in 0..queries.len() {
                 let query_slot = queries[qi];
                 let query_idx = grid.point_indices()[query_slot as usize] as usize;
-                let security = scratch.security(qi);
+                let security = prepared.security(qi);
                 let expected =
                     expected_safe_slots(&grid, &points, query_idx, query_locals[qi], security);
                 let mut emitted = Vec::new();
@@ -1392,7 +1503,7 @@ mod tests {
                         PackedStage::ExpandR2 => 8,
                     };
                     let mut out = vec![u32::MAX; k];
-                    let chunk = scratch.next_chunk(qi, stage, k, &mut out, &mut timings);
+                    let chunk = prepared.next_chunk(qi, stage, k, &mut out, &mut timings);
                     match chunk {
                         Some(chunk) => {
                             assert!(
@@ -1411,15 +1522,8 @@ mod tests {
                                 );
                             }
                         }
-                        None if stage == PackedStage::Chunk0 && scratch.tail_possible(qi) => {
-                            scratch.ensure_tail_directed_for(
-                                qi,
-                                &grid,
-                                group.slot_gen_map(),
-                                group.local_shift(),
-                                group.local_mask(),
-                                &mut timings,
-                            );
+                        None if stage == PackedStage::Chunk0 && prepared.tail_possible(qi) => {
+                            prepared.ensure_tail_directed_for(qi, &grid, &mut timings);
                             stage = PackedStage::Tail;
                         }
                         None => break,
@@ -1464,16 +1568,17 @@ mod tests {
             );
             let mut scratch = PackedKnnCellScratch::new();
             let mut timings = PackedKnnTimings::default();
-            assert_eq!(
-                scratch.prepare_group_directed(&grid, group, &mut timings),
-                PackedKnnCellStatus::Ok
-            );
+            let PreparedPackedGroupStatus::Ready(mut prepared) =
+                scratch.prepare_group_directed(&grid, group, &mut timings)
+            else {
+                panic!("packed prepare unexpectedly fell back to slow path");
+            };
 
             let depth = cell_neighbor_depths(&grid, cell, 3);
             for qi in 0..queries.len() {
                 let query_slot = queries[qi] as usize;
                 let query_idx = grid.point_indices()[query_slot] as usize;
-                let security2 = scratch.ensure_security2_for(qi, &grid, &mut timings);
+                let security2 = prepared.ensure_security2_for(qi, &grid, &mut timings);
 
                 let mut brute_max = f32::NEG_INFINITY;
                 for &neighbor_idx_u32 in grid.point_indices() {
@@ -1524,27 +1629,21 @@ mod tests {
             );
             let mut scratch = PackedKnnCellScratch::new();
             let mut timings = PackedKnnTimings::default();
-            assert_eq!(
-                scratch.prepare_group_directed(&grid, group, &mut timings),
-                PackedKnnCellStatus::Ok
-            );
+            let PreparedPackedGroupStatus::Ready(mut prepared) =
+                scratch.prepare_group_directed(&grid, group, &mut timings)
+            else {
+                panic!("packed prepare unexpectedly fell back to slow path");
+            };
 
             for qi in 0..queries.len() {
                 let query_slot = queries[qi];
                 let query_idx = grid.point_indices()[query_slot as usize] as usize;
                 assert!(
-                    scratch.ensure_expand_r2_band_directed_for(
-                        qi,
-                        &grid,
-                        group.slot_gen_map(),
-                        group.local_shift(),
-                        group.local_mask(),
-                        &mut timings,
-                    ),
+                    prepared.ensure_expand_r2_band_directed_for(qi, &grid, &mut timings),
                     "cold r=2 expansion unexpectedly exceeded cap for seed={seed}, qi={qi}"
                 );
 
-                let security2 = scratch.resume_security(qi);
+                let security2 = prepared.resume_security(qi);
                 let expected =
                     expected_safe_slots(&grid, &points, query_idx, query_locals[qi], security2);
                 let mut emitted = Vec::new();
@@ -1558,7 +1657,7 @@ mod tests {
                         PackedStage::ExpandR2 => 8,
                     };
                     let mut out = vec![u32::MAX; k];
-                    let chunk = scratch.next_chunk(qi, stage, k, &mut out, &mut timings);
+                    let chunk = prepared.next_chunk(qi, stage, k, &mut out, &mut timings);
                     match chunk {
                         Some(chunk) => {
                             assert!(
@@ -1577,15 +1676,8 @@ mod tests {
                                 );
                             }
                         }
-                        None if stage == PackedStage::Chunk0 && scratch.tail_possible(qi) => {
-                            scratch.ensure_tail_directed_for(
-                                qi,
-                                &grid,
-                                group.slot_gen_map(),
-                                group.local_shift(),
-                                group.local_mask(),
-                                &mut timings,
-                            );
+                        None if stage == PackedStage::Chunk0 && prepared.tail_possible(qi) => {
+                            prepared.ensure_tail_directed_for(qi, &grid, &mut timings);
                             stage = PackedStage::Tail;
                         }
                         None if stage != PackedStage::ExpandR2 => {

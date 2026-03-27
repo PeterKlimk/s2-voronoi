@@ -48,11 +48,11 @@ enum CachedFrontier {
     Exhausted,
 }
 
-pub(crate) struct DirectedNeighborStream<'a, 'm, 'p> {
+pub(crate) struct DirectedNeighborStream<'a, 'm, 'p, 'g> {
     grid: &'a CubeMapGrid,
     query: Vec3,
     cursor: DirectedNoKCursor<'a, 'm>,
-    packed: Option<PackedQuery<'p, 'm>>,
+    packed: Option<PackedQuery<'p, 'g, 'm>>,
     stage: StreamStage,
     cached_frontier: Option<CachedFrontier>,
     did_packed: bool,
@@ -61,7 +61,7 @@ pub(crate) struct DirectedNeighborStream<'a, 'm, 'p> {
     knn_exhausted: bool,
 }
 
-impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
+impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
     #[inline]
     fn slot_dot(&self, slot: u32) -> f32 {
         let slot = slot as usize;
@@ -81,7 +81,7 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
         query_idx: usize,
         scratch: &'a mut CubeMapGridScratch,
         directed_ctx: DirectedEligibility<'m>,
-        packed: Option<PackedQuery<'p, 'm>>,
+        packed: Option<PackedQuery<'p, 'g, 'm>>,
     ) -> Self {
         let cursor = grid.directed_no_k_cursor(points[query_idx], query_idx, scratch, directed_ctx);
         let did_packed = packed.is_some();
@@ -268,7 +268,7 @@ impl<'a, 'm, 'p> DirectedNeighborStream<'a, 'm, 'p> {
 mod tests {
     use super::*;
     use crate::cube_grid::packed_knn::{
-        DirectedCellGroup, PackedKnnCellScratch, PackedKnnCellStatus, PackedKnnTimings,
+        DirectedCellGroup, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroupStatus,
     };
     use crate::policy::PackedNeighborPolicy;
     use rand::{Rng, SeedableRng};
@@ -364,10 +364,11 @@ mod tests {
             for &expand_r2_enabled in &[false, true] {
                 let mut packed_scratch = PackedKnnCellScratch::new();
                 let mut packed_timings = PackedKnnTimings::default();
-                assert_eq!(
-                    packed_scratch.prepare_group_directed(&grid, group, &mut packed_timings),
-                    PackedKnnCellStatus::Ok
-                );
+                let PreparedPackedGroupStatus::Ready(mut prepared) =
+                    packed_scratch.prepare_group_directed(&grid, group, &mut packed_timings)
+                else {
+                    panic!("packed prepare unexpectedly fell back to slow path");
+                };
 
                 for qi in 0..queries.len() {
                     let query_slot = queries[qi];
@@ -382,9 +383,8 @@ mod tests {
                     );
                     let mut grid_scratch = grid.make_scratch();
                     let packed = PackedQuery::new(
-                        &mut packed_scratch,
+                        &mut prepared,
                         &mut packed_timings,
-                        group,
                         qi,
                         PackedNeighborPolicy::for_point_count(points.len(), expand_r2_enabled),
                     );
@@ -470,10 +470,11 @@ mod tests {
         );
         let mut packed_scratch = PackedKnnCellScratch::new();
         let mut packed_timings = PackedKnnTimings::default();
-        assert_eq!(
-            packed_scratch.prepare_group_directed(&grid, group, &mut packed_timings),
-            PackedKnnCellStatus::Ok
-        );
+        let PreparedPackedGroupStatus::Ready(mut prepared) =
+            packed_scratch.prepare_group_directed(&grid, group, &mut packed_timings)
+        else {
+            panic!("packed prepare unexpectedly fell back to slow path");
+        };
 
         let qi = 0usize;
         let query_slot = queries[qi];
@@ -487,9 +488,8 @@ mod tests {
         );
         let mut grid_scratch = grid.make_scratch();
         let packed = PackedQuery::new(
-            &mut packed_scratch,
+            &mut prepared,
             &mut packed_timings,
-            group,
             qi,
             PackedNeighborPolicy::for_point_count(points.len(), true),
         );
@@ -576,10 +576,11 @@ mod tests {
             for &expand_r2_enabled in &[false, true] {
                 let mut packed_scratch = PackedKnnCellScratch::new();
                 let mut packed_timings = PackedKnnTimings::default();
-                assert_eq!(
-                    packed_scratch.prepare_group_directed(&grid, group, &mut packed_timings),
-                    PackedKnnCellStatus::Ok
-                );
+                let PreparedPackedGroupStatus::Ready(mut prepared) =
+                    packed_scratch.prepare_group_directed(&grid, group, &mut packed_timings)
+                else {
+                    panic!("packed prepare unexpectedly fell back to slow path");
+                };
 
                 for qi in 0..queries.len() {
                     let query_slot = queries[qi];
@@ -594,9 +595,8 @@ mod tests {
                     );
                     let mut grid_scratch = grid.make_scratch();
                     let packed = PackedQuery::new(
-                        &mut packed_scratch,
+                        &mut prepared,
                         &mut packed_timings,
-                        group,
                         qi,
                         PackedNeighborPolicy::for_point_count(points.len(), expand_r2_enabled),
                     );

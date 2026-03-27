@@ -50,8 +50,8 @@ impl AttemptedNeighbors {
 }
 
 #[inline]
-fn probe_frontier<'a, 'm, 'p>(
-    stream: &mut DirectedNeighborStream<'a, 'm, 'p>,
+fn probe_frontier<'a, 'm, 'p, 'g>(
+    stream: &mut DirectedNeighborStream<'a, 'm, 'p, 'g>,
     packed_chunk: &mut Vec<u32>,
     used_knn: &mut bool,
     knn_stage: &mut crate::knn_clipping::timing::KnnCellStage,
@@ -76,8 +76,8 @@ fn probe_frontier<'a, 'm, 'p>(
 }
 
 #[inline]
-fn maybe_terminate_or_advance_frontier<'a, 'm, 'p>(
-    stream: &mut DirectedNeighborStream<'a, 'm, 'p>,
+fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
+    stream: &mut DirectedNeighborStream<'a, 'm, 'p, 'g>,
     packed_chunk: &mut Vec<u32>,
     builder: &mut crate::knn_clipping::topo2d::Topo2DBuilder,
     termination: TerminationPolicy,
@@ -139,13 +139,13 @@ pub(crate) struct SeedNeighbor {
     pub(crate) hp_eps: f32,
 }
 
-pub(crate) struct CellBuildRequest<'a, 'm, 'p, 's> {
+pub(crate) struct CellBuildRequest<'a, 'm, 'p, 'g, 's> {
     pub(crate) points: &'a [Vec3],
     pub(crate) grid: &'a crate::cube_grid::CubeMapGrid,
     pub(crate) generator_idx: usize,
     pub(crate) directed_ctx: crate::cube_grid::DirectedEligibility<'m>,
     pub(crate) termination: TerminationPolicy,
-    pub(crate) packed: Option<PackedQuery<'p, 'm>>,
+    pub(crate) packed: Option<PackedQuery<'p, 'g, 'm>>,
     pub(crate) seed_neighbors: &'s [SeedNeighbor],
 }
 
@@ -201,9 +201,9 @@ impl CellBuildStats {
     }
 }
 
-pub(crate) fn build_cell_into<'a, 'm, 'p, 's>(
+pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     ctx: &'a mut CellBuildContext,
-    mut request: CellBuildRequest<'a, 'm, 'p, 's>,
+    mut request: CellBuildRequest<'a, 'm, 'p, 'g, 's>,
 ) -> Result<CellBuildStats, CellBuildError> {
     let points = request.points;
     let grid = request.grid;

@@ -9,7 +9,8 @@ mod timing;
 use super::CubeMapGrid;
 use crate::policy::PackedNeighborPolicy;
 
-pub use scratch::{PackedKnnCellScratch, PackedKnnCellStatus};
+pub use scratch::PackedKnnCellScratch;
+pub(crate) use scratch::{PreparedPackedGroup, PreparedPackedGroupStatus};
 pub use timing::PackedKnnTimings;
 
 #[derive(Debug, Clone, Copy)]
@@ -182,10 +183,9 @@ enum PackedQueryStage {
     Exhausted,
 }
 
-pub(crate) struct PackedQuery<'a, 'g> {
-    scratch: &'a mut PackedKnnCellScratch,
+pub(crate) struct PackedQuery<'a, 'p, 'g> {
+    prepared: &'a mut PreparedPackedGroup<'p, 'g>,
     timings: &'a mut PackedKnnTimings,
-    group: DirectedCellGroup<'g>,
     query_index: usize,
     policy: PackedNeighborPolicy,
     stage: PackedQueryStage,
@@ -195,18 +195,16 @@ pub(crate) struct PackedQuery<'a, 'g> {
     safe_exhausted: bool,
 }
 
-impl<'a, 'g> PackedQuery<'a, 'g> {
+impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
     pub(crate) fn new(
-        scratch: &'a mut PackedKnnCellScratch,
+        prepared: &'a mut PreparedPackedGroup<'p, 'g>,
         timings: &'a mut PackedKnnTimings,
-        group: DirectedCellGroup<'g>,
         query_index: usize,
         policy: PackedNeighborPolicy,
     ) -> Self {
         Self {
-            scratch,
+            prepared,
             timings,
-            group,
             query_index,
             policy,
             stage: PackedQueryStage::Chunk0,
@@ -220,7 +218,7 @@ impl<'a, 'g> PackedQuery<'a, 'g> {
     #[inline]
     fn slot_dot(&self, grid: &CubeMapGrid, slot: u32) -> f32 {
         let slot = slot as usize;
-        let query_slot = self.group.queries()[self.query_index] as usize;
+        let query_slot = self.prepared.group().queries()[self.query_index] as usize;
         crate::fp::dot3_f32(
             grid.cell_points_x[query_slot],
             grid.cell_points_y[query_slot],
@@ -277,7 +275,7 @@ impl<'a, 'g> PackedQuery<'a, 'g> {
 
         out.resize(k, u32::MAX);
         if let Some(chunk) = self
-            .scratch
+            .prepared
             .next_chunk(self.query_index, stage, k, out, self.timings)
         {
             out.truncate(chunk.n);
@@ -300,11 +298,11 @@ impl<'a, 'g> PackedQuery<'a, 'g> {
         }
 
         let dot_upper_bound = if self.stage == PackedQueryStage::Chunk0
-            && self.scratch.tail_possible(self.query_index)
+            && self.prepared.tail_possible(self.query_index)
         {
-            self.scratch.tail_upper_bound(self.query_index)
+            self.prepared.tail_upper_bound(self.query_index)
         } else {
-            self.scratch.resume_security(self.query_index)
+            self.prepared.resume_security(self.query_index)
         };
         self.cached_frontier = Some(CachedFrontier::UnknownButBounded { dot_upper_bound });
         PackedNeighborFrontier::UnknownButBounded { dot_upper_bound }
@@ -320,15 +318,9 @@ impl<'a, 'g> PackedQuery<'a, 'g> {
     }
 
     fn advance_stage(&mut self, grid: &CubeMapGrid) {
-        if self.stage == PackedQueryStage::Chunk0 && self.scratch.tail_possible(self.query_index) {
-            self.scratch.ensure_tail_directed_for(
-                self.query_index,
-                grid,
-                self.group.slot_gen_map(),
-                self.group.local_shift(),
-                self.group.local_mask(),
-                self.timings,
-            );
+        if self.stage == PackedQueryStage::Chunk0 && self.prepared.tail_possible(self.query_index) {
+            self.prepared
+                .ensure_tail_directed_for(self.query_index, grid, self.timings);
             self.stage = PackedQueryStage::Tail;
             self.tail_used = true;
             return;
@@ -336,12 +328,9 @@ impl<'a, 'g> PackedQuery<'a, 'g> {
 
         if self.stage != PackedQueryStage::ExpandR2
             && self.policy.expand_r2_enabled()
-            && self.scratch.ensure_expand_r2_band_directed_for(
+            && self.prepared.ensure_expand_r2_band_directed_for(
                 self.query_index,
                 grid,
-                self.group.slot_gen_map(),
-                self.group.local_shift(),
-                self.group.local_mask(),
                 self.timings,
             )
         {
