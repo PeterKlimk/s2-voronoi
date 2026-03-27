@@ -34,7 +34,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
 
     let grid = build_query_grid(effective_points_ref, &mut tb);
     let sharded = construct_cell_shards(effective_points_ref, &grid, termination, &mut tb)?;
-    let assembled = assemble_shards(sharded, &mut tb);
+    let assembled = assemble_shards(sharded, &mut tb)?;
     let live_dedup::AssemblyResult {
         vertices,
         vertex_keys,
@@ -50,7 +50,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         cells,
         cell_indices,
         &mut tb,
-    );
+    )?;
 
     let t = Timer::start();
     let (cells, cell_indices) = remap_cells_to_original_indices(
@@ -58,7 +58,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         merge_result.as_ref(),
         eff_cells,
         eff_cell_indices,
-    );
+    )?;
 
     let diagram = crate::SphericalVoronoi::from_raw_parts(points, vertices, cells, cell_indices);
     tb.set_assemble(t.elapsed());
@@ -113,7 +113,7 @@ fn compute_voronoi_knn_clipping_report_core(
 
     let grid = build_query_grid(effective_points_ref, &mut tb);
     let sharded = construct_cell_shards(effective_points_ref, &grid, termination, &mut tb)?;
-    let assembled = assemble_shards(sharded, &mut tb);
+    let assembled = assemble_shards(sharded, &mut tb)?;
     let live_dedup::AssemblyResult {
         vertices,
         vertex_keys,
@@ -129,7 +129,7 @@ fn compute_voronoi_knn_clipping_report_core(
         cells,
         cell_indices,
         &mut tb,
-    );
+    )?;
 
     let effective_diagram = if merge_result.is_some() {
         Some(crate::SphericalVoronoi::from_raw_parts(
@@ -149,7 +149,7 @@ fn compute_voronoi_knn_clipping_report_core(
         merge_result.as_ref(),
         eff_cells,
         eff_cell_indices,
-    );
+    )?;
 
     let diagram = crate::SphericalVoronoi::from_raw_parts(points, vertices, cells, cell_indices);
     let returned_validation = crate::validation::validate(&diagram);
@@ -278,11 +278,11 @@ fn construct_cell_shards(
 fn assemble_shards(
     sharded: live_dedup::ShardedCellsData,
     tb: &mut TimingBuilder,
-) -> live_dedup::AssemblyResult {
+) -> Result<live_dedup::AssemblyResult, crate::VoronoiError> {
     let t = Timer::start();
-    let assembled = live_dedup::assemble_sharded_live_dedup(sharded);
+    let assembled = live_dedup::assemble_sharded_live_dedup(sharded)?;
     tb.set_dedup(t.elapsed(), assembled.dedup_sub);
-    assembled
+    Ok(assembled)
 }
 
 fn reconcile_edges(
@@ -292,25 +292,27 @@ fn reconcile_edges(
     mut cells: Vec<VoronoiCell>,
     mut cell_indices: Vec<u32>,
     tb: &mut TimingBuilder,
-) -> (Vec<VoronoiCell>, Vec<u32>) {
+) -> Result<(Vec<VoronoiCell>, Vec<u32>), crate::VoronoiError> {
     let repair_edges_storage: Vec<live_dedup::EdgeRecord> = unresolved_edges
         .iter()
         .map(|b| live_dedup::EdgeRecord { key: b.key })
         .collect();
 
     let t = Timer::start();
-    if let Some((reconciled_cells, reconciled_indices)) = edge_reconcile::reconcile_unresolved_edges(
-        &repair_edges_storage,
-        vertices,
-        &cells,
-        &cell_indices,
-        vertex_keys,
-    ) {
+    if let Some((reconciled_cells, reconciled_indices)) =
+        edge_reconcile::reconcile_unresolved_edges(
+            &repair_edges_storage,
+            vertices,
+            &cells,
+            &cell_indices,
+            vertex_keys,
+        )?
+    {
         cells = reconciled_cells;
         cell_indices = reconciled_indices;
     }
     tb.set_edge_reconcile(t.elapsed());
-    (cells, cell_indices)
+    Ok((cells, cell_indices))
 }
 
 fn remap_cells_to_original_indices(
@@ -318,7 +320,7 @@ fn remap_cells_to_original_indices(
     merge_result: Option<&MergeResult>,
     eff_cells: Vec<VoronoiCell>,
     eff_cell_indices: Vec<u32>,
-) -> (Vec<VoronoiCell>, Vec<u32>) {
+) -> Result<(Vec<VoronoiCell>, Vec<u32>), crate::VoronoiError> {
     if let Some(merge_result) = merge_result {
         let mut new_cells = Vec::with_capacity(points.len());
         let mut new_cell_indices: Vec<u32> = Vec::new();
@@ -327,19 +329,25 @@ fn remap_cells_to_original_indices(
             let eff_idx = merge_result.original_to_effective[orig_idx];
             let eff_cell = &eff_cells[eff_idx];
 
-            let start = u32::try_from(new_cell_indices.len())
-                .expect("cell index buffer exceeds u32 capacity");
+            let start = u32::try_from(new_cell_indices.len()).map_err(|_| {
+                crate::VoronoiError::RepresentationLimit(
+                    "remapped cell index buffer exceeds u32 capacity".to_string(),
+                )
+            })?;
             let eff_start = eff_cell.vertex_start();
             let eff_end = eff_start + eff_cell.vertex_count();
             new_cell_indices.extend_from_slice(&eff_cell_indices[eff_start..eff_end]);
 
-            let count_u16 =
-                u16::try_from(eff_cell.vertex_count()).expect("cell vertex count exceeds u16");
+            let count_u16 = u16::try_from(eff_cell.vertex_count()).map_err(|_| {
+                crate::VoronoiError::RepresentationLimit(
+                    "remapped cell vertex count exceeds u16 capacity".to_string(),
+                )
+            })?;
             new_cells.push(VoronoiCell::new(start, count_u16));
         }
-        (new_cells, new_cell_indices)
+        Ok((new_cells, new_cell_indices))
     } else {
-        (eff_cells, eff_cell_indices)
+        Ok((eff_cells, eff_cell_indices))
     }
 }
 

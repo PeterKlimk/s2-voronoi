@@ -80,7 +80,7 @@ pub(super) fn reconcile_unresolved_edges(
     cells: &[VoronoiCell],
     cell_indices: &[u32],
     vertex_keys: &[VertexKey],
-) -> Option<(Vec<VoronoiCell>, Vec<u32>)> {
+) -> Result<Option<(Vec<VoronoiCell>, Vec<u32>)>, crate::VoronoiError> {
     let mut uf = UnionFind::new(vertices.len());
     let mut merged = 0usize;
     const DEGENERATE_LEN_EPS: f32 = 1e-6;
@@ -204,7 +204,7 @@ pub(super) fn reconcile_unresolved_edges(
     }
 
     if merged == 0 {
-        return None;
+        return Ok(None);
     }
 
     let mut new_cells: Vec<VoronoiCell> = Vec::with_capacity(cells.len());
@@ -223,12 +223,20 @@ pub(super) fn reconcile_unresolved_edges(
             }
         }
         let count = new_indices.len() - base;
-        let count_u16 = u16::try_from(count).expect("cell vertex count exceeds u16 capacity");
-        let start_u32 = u32::try_from(base).expect("cell index buffer exceeds u32 capacity");
+        let count_u16 = u16::try_from(count).map_err(|_| {
+            crate::VoronoiError::RepresentationLimit(
+                "reconciled cell vertex count exceeds u16 capacity".to_string(),
+            )
+        })?;
+        let start_u32 = u32::try_from(base).map_err(|_| {
+            crate::VoronoiError::RepresentationLimit(
+                "reconciled cell index buffer exceeds u32 capacity".to_string(),
+            )
+        })?;
         new_cells.push(VoronoiCell::new(start_u32, count_u16));
     }
 
-    Some((new_cells, new_indices))
+    Ok(Some((new_cells, new_indices)))
 }
 
 #[cfg(test)]
@@ -270,6 +278,7 @@ mod tests {
             &cell_indices,
             &vertex_keys,
         )
+        .expect("reconciliation should succeed without capacity overflow")
         .expect("expected one-sided epsilon edge to be reconciled");
 
         let (new_cells, new_indices) = repaired;
@@ -324,6 +333,7 @@ mod tests {
             &cell_indices,
             &vertex_keys,
         )
+        .expect("reconciliation should succeed without capacity overflow")
         .expect("expected mismatched shared-edge endpoints to be reconciled");
 
         let (new_cells, new_indices) = repaired;

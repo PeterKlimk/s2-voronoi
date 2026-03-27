@@ -57,7 +57,9 @@ fn patch_deferred_slots_with_fallback(
     }
 }
 
-pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::AssemblyResult {
+pub(super) fn assemble_sharded_live_dedup(
+    mut data: ShardedCellsData,
+) -> Result<super::AssemblyResult, crate::VoronoiError> {
     let t0 = Timer::start();
 
     let num_bins = data.assignment.num_bins;
@@ -115,8 +117,11 @@ pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::
     let mut vertex_offsets: Vec<u32> = vec![0; num_bins];
     let mut total_vertices = 0usize;
     for (bin, shard) in finals.iter().enumerate() {
-        vertex_offsets[bin] =
-            u32::try_from(total_vertices).expect("total vertex count exceeds u32 capacity");
+        vertex_offsets[bin] = u32::try_from(total_vertices).map_err(|_| {
+            crate::VoronoiError::RepresentationLimit(
+                "assembled vertex offsets exceed u32 capacity".to_string(),
+            )
+        })?;
         total_vertices += shard.output.vertices.len();
     }
 
@@ -192,9 +197,11 @@ pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::
         let bin = data.assignment.generator_bin[gen_idx].as_usize();
         let local = data.assignment.global_to_local[gen_idx];
         let count = finals[bin].output.cell_count(local) as u32;
-        total_cell_indices = total_cell_indices
-            .checked_add(count)
-            .expect("cell index buffer exceeds u32 capacity");
+        total_cell_indices = total_cell_indices.checked_add(count).ok_or_else(|| {
+            crate::VoronoiError::RepresentationLimit(
+                "assembled cell index buffer exceeds u32 capacity".to_string(),
+            )
+        })?;
         cell_starts_global[gen_idx + 1] = total_cell_indices;
     }
 
@@ -338,14 +345,14 @@ pub(super) fn assemble_sharded_live_dedup(mut data: ShardedCellsData) -> super::
     #[cfg(not(feature = "timing"))]
     let sub_phases = DedupSubPhases;
 
-    super::AssemblyResult {
+    Ok(super::AssemblyResult {
         vertices: all_vertices,
         vertex_keys: all_vertex_keys,
         unresolved_edges,
         cells,
         cell_indices,
         dedup_sub: sub_phases,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -540,7 +547,7 @@ mod tests {
             cell_sub: crate::knn_clipping::timing::CellSubAccum::new(),
         };
 
-        let assembled = assemble_sharded_live_dedup(sharded);
+        let assembled = assemble_sharded_live_dedup(sharded).expect("assembly should succeed");
         assert_eq!(assembled.unresolved_edges.len(), 1);
         assert_eq!(assembled.unresolved_edges[0].key, edge_key);
         assert_eq!(assembled.cells.len(), 6);
@@ -568,6 +575,7 @@ mod tests {
             &assembled.cell_indices,
             &assembled.vertex_keys,
         )
+        .expect("reconciliation should succeed without capacity overflow")
         .expect("expected unresolved shared-edge mismatch to be reconciled");
 
         let seg_a = edge_segments_for_neighbor(0, 1, &cells, &cell_indices, &assembled.vertex_keys);
