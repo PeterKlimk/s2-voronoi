@@ -20,6 +20,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
+    validate_generator_capacity(points.len())?;
     let mut tb = TimingBuilder::new();
 
     let t = Timer::start();
@@ -99,6 +100,7 @@ fn compute_voronoi_knn_clipping_report_core(
     termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
+    validate_generator_capacity(points.len())?;
     let mut tb = TimingBuilder::new();
 
     let t = Timer::start();
@@ -202,6 +204,16 @@ fn map_build_cells_error(err: live_dedup::BuildCellsError) -> crate::VoronoiErro
             ))
         }
     }
+}
+
+fn validate_generator_capacity(num_points: usize) -> Result<(), crate::VoronoiError> {
+    if u32::try_from(num_points).is_ok() {
+        return Ok(());
+    }
+    Err(crate::VoronoiError::RepresentationLimit(format!(
+        "generator count {} exceeds u32-backed index capacity",
+        num_points
+    )))
 }
 
 fn preprocess_effective_points(
@@ -353,7 +365,7 @@ fn remap_cells_to_original_indices(
 
 #[cfg(test)]
 mod tests {
-    use super::{map_build_cells_error, map_cell_build_error};
+    use super::{map_build_cells_error, map_cell_build_error, validate_generator_capacity};
     use crate::knn_clipping::cell_build::{CellBuildError, CellFailure};
     use crate::knn_clipping::live_dedup::{BuildCellsError, PackedLayoutCapacityError};
     use crate::VoronoiError;
@@ -420,6 +432,20 @@ mod tests {
                 assert!(msg.contains("4096"));
                 assert!(msg.contains("255"));
                 assert!(msg.contains("96"));
+            }
+            other => panic!("expected RepresentationLimit, got {:?}", other),
+        }
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn reject_generator_counts_above_u32_capacity() {
+        let err = validate_generator_capacity((u32::MAX as usize) + 1)
+            .expect_err("generator count above u32::MAX should fail");
+        match err {
+            VoronoiError::RepresentationLimit(msg) => {
+                assert!(msg.contains("generator count"));
+                assert!(msg.contains("u32"));
             }
             other => panic!("expected RepresentationLimit, got {:?}", other),
         }
