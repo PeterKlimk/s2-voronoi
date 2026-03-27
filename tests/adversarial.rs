@@ -44,18 +44,9 @@ fn expect_defined_failure(
 
 #[test]
 fn test_great_circle_with_jitter() {
-    // Great circle with significant jitter to break coplanarity
-    // This currently succeeds but does not yet reliably produce a strict
-    // subdivision on this seed.
+    // Great circle with significant jitter to break coplanarity.
     let points = great_circle_points(50, 0.2, 42);
-    let result = compute(&points);
-
-    assert!(result.is_ok(), "great circle with jitter should work");
-    let diagram = result.unwrap();
-    assert_eq!(diagram.num_cells(), 50);
-
-    let report = validate(&diagram);
-    eprintln!("great_circle_with_jitter: {}", report.headline());
+    expect_strict_success("great_circle_with_jitter", compute(&points));
 }
 
 #[test]
@@ -83,33 +74,18 @@ fn test_great_circle_pure_degenerate() {
 
 #[test]
 fn test_clustered_cap_small() {
-    // 100 points total: 6 anchors + 94 in 5-degree cap
+    // 100 points total: 6 anchors + 94 in 5-degree cap.
     let points = clustered_cap_points(100, 0.087, 42); // ~5 degrees
-    let result = compute(&points);
-
-    assert!(result.is_ok(), "clustered cap small should not panic");
-    let diagram = result.unwrap();
-    assert_eq!(diagram.num_cells(), 100);
+    expect_strict_success("clustered_cap_small", compute(&points));
 }
 
 #[test]
 fn test_clustered_cap_tight() {
-    // 100 points total: 6 anchors + 94 in 1-degree cap - very close together
+    // 100 points total: 6 anchors + 94 in 1-degree cap - very close together.
     let points = clustered_cap_points(100, 0.0175, 42); // ~1 degree
     let result = compute(&points);
 
-    assert!(result.is_ok(), "clustered cap tight should not panic");
-    let diagram = result.unwrap();
-    let report = validate(&diagram);
-    eprintln!("clustered_cap_tight: {}", report.headline());
-    eprintln!(
-        "  cells={}, vertices={}, total_cell_vertices={}, unique_cells={}, duplicates={}",
-        report.num_cells,
-        report.num_vertices,
-        report.total_cell_vertices,
-        report.unique_cells,
-        report.duplicate_cells_count
-    );
+    expect_strict_success("clustered_cap_tight", result);
 }
 
 #[test]
@@ -176,23 +152,14 @@ fn test_cocircular_tight_no_preprocess() {
 fn test_cube_vertices_basic() {
     // 80 points near cube corners (10 per corner)
     let points = cube_vertex_stress_points(80, 0.1, 42);
-    let result = compute(&points);
-
-    assert!(result.is_ok(), "cube vertices basic should not panic");
-    let diagram = result.unwrap();
-    assert_eq!(diagram.num_cells(), 80);
+    expect_strict_success("cube_vertices_basic", compute(&points));
 }
 
 #[test]
 fn test_cube_vertices_tight() {
     // 160 points very close to cube corners
     let points = cube_vertex_stress_points(160, 0.02, 42);
-    let result = compute(&points);
-
-    assert!(result.is_ok(), "cube vertices tight should not panic");
-    let diagram = result.unwrap();
-    let report = validate(&diagram);
-    eprintln!("cube_vertices_tight: {}", report.headline());
+    expect_strict_success("cube_vertices_tight", compute(&points));
 }
 
 // =============================================================================
@@ -203,41 +170,21 @@ fn test_cube_vertices_tight() {
 fn test_cocircular_basic() {
     // 25 groups of 4 = 100 points with moderate perturbation
     let points = near_cocircular_stress_points(25, 0.01, 42);
-    let result = compute(&points);
-
-    assert!(result.is_ok(), "cocircular basic should not panic");
-    let diagram = result.unwrap();
-    assert_eq!(diagram.num_cells(), 100);
+    expect_strict_success("cocircular_basic", compute(&points));
 }
 
 #[test]
 fn test_cocircular_tight() {
-    // 25 groups with very small perturbation - likely to trigger bad edges
+    // 25 groups with very small perturbation - near-degenerate but currently stable.
     let points = near_cocircular_stress_points(25, 0.001, 42);
-    let result = compute(&points);
-
-    assert!(result.is_ok(), "cocircular tight should not panic");
-    let diagram = result.unwrap();
-    let report = validate(&diagram);
-    eprintln!("cocircular_tight: {}", report.headline());
+    expect_strict_success("cocircular_tight", compute(&points));
 }
 
 #[test]
 fn test_cocircular_extreme() {
-    // Near-perfect cocircular groups - maximally unstable vertices
+    // Near-perfect cocircular groups - still a supported success on this fixed seed.
     let points = near_cocircular_stress_points(25, 0.0001, 42);
-    let result = compute(&points);
-
-    match result {
-        Ok(diagram) => {
-            let report = validate(&diagram);
-            eprintln!("cocircular_extreme: {}", report.headline());
-            // Likely has non-degree-3 vertices or other issues
-        }
-        Err(e) => {
-            eprintln!("cocircular_extreme failed (acceptable): {:?}", e);
-        }
-    }
+    expect_strict_success("cocircular_extreme", compute(&points));
 }
 
 // =============================================================================
@@ -284,11 +231,7 @@ fn test_hemisphere_dense() {
 fn test_bimodal_basic() {
     // 100 points: 50 clustered + 50 sparse
     let points = bimodal_density_points(100, 0.1, 42); // 10-degree cluster
-    let result = compute(&points);
-
-    assert!(result.is_ok(), "bimodal basic should not panic");
-    let diagram = result.unwrap();
-    assert_eq!(diagram.num_cells(), 100);
+    expect_strict_success("bimodal_basic", compute(&points));
 }
 
 #[test]
