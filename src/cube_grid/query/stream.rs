@@ -75,6 +75,20 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
         )
     }
 
+    #[inline(always)]
+    fn packed_mut(&mut self, context: &str) -> &mut PackedQuery<'p, 'g, 'm> {
+        match self.packed.as_mut() {
+            Some(packed) => packed,
+            None => panic!(
+                "directed neighbor stream invariant failure: stage={:?} requires packed query state during {} (cached_frontier_present={}, did_packed={})",
+                self.stage,
+                context,
+                self.cached_frontier.is_some(),
+                self.did_packed,
+            ),
+        }
+    }
+
     pub(crate) fn new(
         grid: &'a CubeMapGrid,
         points: &'a [Vec3],
@@ -126,11 +140,9 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
         loop {
             match self.stage {
                 StreamStage::Packed => {
-                    let packed = self
-                        .packed
-                        .as_mut()
-                        .expect("packed stage requires packed query state");
-                    match packed.frontier(self.grid, out) {
+                    let grid = self.grid;
+                    let packed = self.packed_mut("frontier");
+                    match packed.frontier(grid, out) {
                         PackedNeighborFrontier::ExactBatch(batch) => {
                             let source = match batch.source {
                                 PackedNeighborBatchSource::Chunk0 => {
@@ -211,11 +223,9 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
             Some(CachedFrontier::ExactBatch { .. })
             | Some(CachedFrontier::UnknownButBounded { .. }) => match self.stage {
                 StreamStage::Packed => {
-                    let packed = self
-                        .packed
-                        .as_mut()
-                        .expect("packed stage requires packed query state");
-                    packed.advance_frontier(self.grid);
+                    let grid = self.grid;
+                    let packed = self.packed_mut("advance_frontier");
+                    packed.advance_frontier(grid);
                     if packed.is_exhausted() {
                         self.packed_safe_exhausted |= packed.safe_exhausted();
                         self.stage = StreamStage::Cursor;

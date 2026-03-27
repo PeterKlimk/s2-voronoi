@@ -17,18 +17,10 @@
   Not benchmark assertions in CI, but small tests that pin which counters/stages are expected to be
   exposed when policy changes are made intentionally.
 
-- Rework the neighbor-stream frontier API around "exact next or conservative bound".
-  Termination is fundamentally based on the best possible unseen neighbor, not on the neighbor that
-  was just clipped. Inside a materialized batch we often know the exact next neighbor, but across a
-  stage boundary we may only know an upper bound until we expand `r=2` or enter directed cursor
-  fallback. The stream should expose that directly so cell construction can terminate against the
-  frontier bound before paying expansion/fallback costs.
-
-- Avoid forced expansion when the frontier bound already proves termination.
-  Today the stream can still eagerly materialize `r=2` or deeper fallback work in cases where the
-  builder could already stop based on a conservative unseen bound. After the frontier API cleanup,
-  revisit stage progression so expansion only happens when the current frontier bound is not enough
-  to terminate.
+- Benchmark the current frontier-certificate stream contract before further query-path cleanup.
+  The stream now exposes "exact batch / conservative bound / exhausted" directly, and cell
+  construction terminates against that contract. Future work here should be driven by measured
+  regressions or simplification wins, not by another abstraction pass for its own sake.
 
 ## Reconciliation
 
@@ -49,3 +41,12 @@
   The hemisphere / >90 degree case is the clearest current example, but the broader goal is to
   separate unsupported geometry from internal bugs. Expected unsupported/pathological outcomes
   should become explicit internal failure states and eventually surface as defined errors.
+
+- Audit remaining panic-only invariant paths now that the phase/query boundaries are cleaner.
+  The main current hotspots are:
+  - `topo2d/clippers/small.rs`
+  - `cube_grid/query/directed.rs`
+  - `cube_grid/query/stream.rs`
+  - `cell_build/run.rs`
+  The goal is to keep true bug-only invariants as panics, but make diagnostics sharper and avoid
+  leaving obviously user-reachable states in the panic bucket by accident.

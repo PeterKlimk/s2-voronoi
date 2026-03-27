@@ -188,13 +188,27 @@ impl<'a, 'b> DirectedNoKCursor<'a, 'b> {
         self.push_neighbors(cell);
     }
 
+    #[inline(never)]
+    fn panic_cell_heap_out_of_sync(&self) -> ! {
+        panic!(
+            "directed cursor invariant failure: peeked transit-only cell but pop_cell returned None (cell_heap_len={}, point_heap_len={}, exhausted={}, start_cell={})",
+            self.scratch.cell_heap.len(),
+            self.scratch.point_heap.len(),
+            self.exhausted,
+            self.start_cell,
+        );
+    }
+
     fn peel_to_emit_bound_sq(&mut self) -> Option<f32> {
         loop {
             let (bound, cell) = self.scratch.peek_cell()?;
             if self.cell_mode(cell as usize) != DirectedCellMode::TransitOnly {
                 return Some(bound);
             }
-            let (_, transit_cell) = self.scratch.pop_cell().expect("cell heap out of sync");
+            let (_, transit_cell) = self
+                .scratch
+                .pop_cell()
+                .unwrap_or_else(|| self.panic_cell_heap_out_of_sync());
             self.expand_cell(transit_cell as usize);
         }
     }

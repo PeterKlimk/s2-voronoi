@@ -1,3 +1,31 @@
+#[inline(always)]
+fn find_entry_exit_transitions<const N: usize>(
+    inside: &[bool; N],
+) -> ((usize, usize), (usize, usize)) {
+    let mut entry_idx = None;
+    let mut exit_idx = None;
+
+    for i in 0..N {
+        let prev = if i == 0 { N - 1 } else { i - 1 };
+        if entry_idx.is_none() && !inside[prev] && inside[i] {
+            entry_idx = Some((prev, i));
+        } else if exit_idx.is_none() && inside[prev] && !inside[i] {
+            exit_idx = Some((prev, i));
+        }
+        if entry_idx.is_some() && exit_idx.is_some() {
+            break;
+        }
+    }
+
+    match (entry_idx, exit_idx) {
+        (Some(entry), Some(exit)) => (entry, exit),
+        _ => panic!(
+            "small clipper invariant failure: partially clipped convex polygon must have one entry and one exit transition (N={}, inside={:?})",
+            N, inside
+        ),
+    }
+}
+
 /// Baseline small-N clipper for microbenchmark comparisons.
 #[cfg(any(test, feature = "microbench"))]
 #[allow(dead_code)]
@@ -44,23 +72,7 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
         return ClipResult::Unchanged;
     }
 
-    let mut entry_idx = None;
-    let mut exit_idx = None;
-
-    for i in 0..N {
-        let prev = if i == 0 { N - 1 } else { i - 1 };
-        if entry_idx.is_none() && !inside[prev] && inside[i] {
-            entry_idx = Some((prev, i));
-        } else if exit_idx.is_none() && inside[prev] && !inside[i] {
-            exit_idx = Some((prev, i));
-        }
-        if entry_idx.is_some() && exit_idx.is_some() {
-            break;
-        }
-    }
-
-    let (entry_idx, entry_next) = entry_idx.expect("convex polygon must have entry transition");
-    let (exit_idx, exit_next) = exit_idx.expect("convex polygon must have exit transition");
+    let ((entry_idx, entry_next), (exit_idx, exit_next)) = find_entry_exit_transitions(&inside);
 
     out.len = 0;
 
@@ -195,23 +207,7 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
         return ClipResult::Unchanged;
     }
 
-    let mut entry_idx = None;
-    let mut exit_idx = None;
-
-    for i in 0..N {
-        let prev = if i == 0 { N - 1 } else { i - 1 };
-        if entry_idx.is_none() && !inside[prev] && inside[i] {
-            entry_idx = Some((prev, i));
-        } else if exit_idx.is_none() && inside[prev] && !inside[i] {
-            exit_idx = Some((prev, i));
-        }
-        if entry_idx.is_some() && exit_idx.is_some() {
-            break;
-        }
-    }
-
-    let (entry_idx, entry_next) = entry_idx.expect("convex polygon must have entry transition");
-    let (exit_idx, exit_next) = exit_idx.expect("convex polygon must have exit transition");
+    let ((entry_idx, entry_next), (exit_idx, exit_next)) = find_entry_exit_transitions(&inside);
 
     #[inline(always)]
     fn r2_of(u: f64, v: f64) -> f64 {
@@ -339,23 +335,7 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
         return ClipResult::Unchanged;
     }
 
-    let mut entry_idx = None;
-    let mut exit_idx = None;
-
-    for i in 0..N {
-        let prev = if i == 0 { N - 1 } else { i - 1 };
-        if entry_idx.is_none() && !inside[prev] && inside[i] {
-            entry_idx = Some((prev, i));
-        } else if exit_idx.is_none() && inside[prev] && !inside[i] {
-            exit_idx = Some((prev, i));
-        }
-        if entry_idx.is_some() && exit_idx.is_some() {
-            break;
-        }
-    }
-
-    let (entry_idx, entry_next) = entry_idx.expect("convex polygon must have entry transition");
-    let (exit_idx, exit_next) = exit_idx.expect("convex polygon must have exit transition");
+    let ((entry_idx, entry_next), (exit_idx, exit_next)) = find_entry_exit_transitions(&inside);
 
     #[inline(always)]
     fn r2_of(u: f64, v: f64) -> f64 {
