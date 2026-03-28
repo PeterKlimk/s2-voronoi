@@ -161,6 +161,12 @@ Some of the highest-priority findings above have since been addressed in code an
 - strict validation semantics were redesigned
 - preprocessing is now explicit and observable
 - the public diagram surface has been tightened
+- `compute_with_report` now exposes the effective diagram and prefers effective validation when
+  preprocessing changes the solved generator set
+- many adversarial cases are now pinned as explicit success/failure contract tests instead of
+  loose exploratory checks
+- reconciliation, assembly, and extraction invariants now fail with clearer structure-limit or
+  bug-only diagnostics rather than broad unchecked assumptions
 
 The current supported-success / supported-failure / preprocessing / invariant-failure split is
 documented in [`docs/supported-envelope.md`](/home/pkzmbk/code/s2-voronoi/docs/supported-envelope.md).

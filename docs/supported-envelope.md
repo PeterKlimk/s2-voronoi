@@ -39,6 +39,7 @@ Current public failure classes:
   - current examples:
     - packed `(bin, local)` layout overflow
     - global assembled/remapped/reconciled index-buffer overflow
+    - assembled/deferred-fallback vertex-id overflow in the `u32`-backed diagram model
     - total generator count exceeding the backend's `u32`-backed identifier model
 - `VoronoiError::ComputationFailed`
   - used for terminal failure states that are understood operationally but are not yet promoted to
@@ -70,6 +71,8 @@ Interpretation:
 
 - if merges did not occur, returned and effective views coincide
 - if merges occurred, the effective view is the one the backend actually solved
+- the returned remapped diagram is still useful as an original-input convenience view, but it is
+  not the primary correctness view for the solved problem once merges occur
 - strict validity of the returned remapped diagram is not guaranteed to mean the same thing as
   strict validity of the effective solved problem
 
@@ -83,6 +86,7 @@ Examples:
 
 - `ClippedAway`
 - `NoValidSeed`
+- extraction metadata / reconstruction invariant failures inside `topo2d::builder`
 - internal stream-state contradictions
 - internal clipper assumptions that should hold if the algorithm's invariants are respected
 
@@ -138,6 +142,9 @@ Important consequence:
   check
 - with preprocessing merges, strict validation of the **effective** diagram is usually the right
   correctness view for the solved problem
+- when using `compute_with_report`, `output.preferred_diagram()` and
+  `report.preferred_validation()` are the intended "check this first" entry points after a merged
+  solve
 
 ## Current Failure Taxonomy
 
@@ -163,3 +170,5 @@ The most likely future refinements to this contract are:
 - clarifying whether `UnboundedAfterExhaustion` can be narrowed beyond `ComputationFailed`
 - adding fallback strategies for currently unsupported geometry/workspace limits rather than only
   failing cleanly
+- tightening the remaining bug-only extraction/reconciliation invariants without broadening the
+  public error taxonomy prematurely

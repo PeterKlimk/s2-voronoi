@@ -33,20 +33,19 @@
 
 - Tighten behavior for cells that extend beyond the generator hemisphere.
   The current clipping path relies on a gnomonic projection centered at the generator, so cells that
-  extend past 90 degrees are outside the model. This should not remain an accidental failure mode.
-  Detect the boundary explicitly, then either fail cleanly with a real error or route to a fallback
-  that uses a projection/model that can represent the cell.
+  extend past 90 degrees are outside the model. The explicit failure boundary now exists; the
+  remaining work is to decide whether to keep that as a clean error only or add a fallback
+  projection/model that can represent the cell.
 
-- Make unsupported geometry a real contract boundary instead of a panic path.
-  The hemisphere / >90 degree case is the clearest current example, but the broader goal is to
-  separate unsupported geometry from internal bugs. Expected unsupported/pathological outcomes
-  should become explicit internal failure states and eventually surface as defined errors.
+- Continue narrowing ambiguous terminal failures where repro evidence exists.
+  The broad supported-failure taxonomy is in place, but cases like
+  `UnboundedAfterExhaustion` remain deliberately conservative. If a reproducible family appears,
+  tighten it from `ComputationFailed` into a sharper classification rather than leaving it vague.
 
 - Audit remaining panic-only invariant paths now that the phase/query boundaries are cleaner.
   The main current hotspots are:
-  - `topo2d/clippers/small.rs`
-  - `cube_grid/query/directed.rs`
-  - `cube_grid/query/stream.rs`
-  - `cell_build/run.rs`
+  - `topo2d/builder.rs`
+  - `edge_reconcile.rs`
+  - any residual unchecked layout/index assumptions in live-dedup assembly
   The goal is to keep true bug-only invariants as panics, but make diagnostics sharper and avoid
   leaving obviously user-reachable states in the panic bucket by accident.
