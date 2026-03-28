@@ -85,6 +85,41 @@ pub(crate) struct BuilderDebugState {
     pub(crate) neighbor_slot_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum ExtractionInvariantFailure {
+    UnboundedPolygon,
+    TooFewVertices {
+        poly_len: usize,
+    },
+    MetadataLengthMismatch {
+        half_plane_count: usize,
+        neighbor_index_count: usize,
+        neighbor_slot_count: usize,
+    },
+    NonFiniteProjectedVertex {
+        vertex: usize,
+        u: f64,
+        v: f64,
+    },
+    InvalidVertexPlane {
+        vertex: usize,
+        plane_a: usize,
+        plane_b: usize,
+        neighbor_index_count: usize,
+    },
+    DegenerateDirection {
+        vertex: usize,
+        len2: f32,
+    },
+    InvalidEdgePlane {
+        vertex: usize,
+        edge_plane: usize,
+        half_plane_count: usize,
+        neighbor_index_count: usize,
+        neighbor_slot_count: usize,
+    },
+}
+
 // Conservative lower bound on g · x for a vertex in the current gnomonic model.
 // Below this, the feasible region is effectively at the generator hemisphere boundary.
 const MIN_PROJECTION_COS: f64 = 8.0 * f32::EPSILON as f64;
@@ -319,12 +354,8 @@ impl Topo2DBuilder {
 
     #[cfg_attr(feature = "profiling", inline(never))]
     pub fn to_vertex_data_full(&self, buffer: &mut CellOutputBuffer) -> Result<(), CellFailure> {
-        if !self.is_bounded() {
-            return Err(CellFailure::NoValidSeed);
-        }
-
         let poly = self.current_poly();
-        if poly.len < 3 {
+        if self.debug_extraction_failure().is_some() {
             return Err(CellFailure::NoValidSeed);
         }
 
@@ -419,6 +450,90 @@ impl Topo2DBuilder {
             neighbor_index_count: self.neighbor_indices.len(),
             neighbor_slot_count: self.neighbor_slots.len(),
         }
+    }
+
+    pub(crate) fn debug_extraction_failure(&self) -> Option<ExtractionInvariantFailure> {
+        if !self.is_bounded() {
+            return Some(ExtractionInvariantFailure::UnboundedPolygon);
+        }
+
+        let poly = self.current_poly();
+        if poly.len < 3 {
+            return Some(ExtractionInvariantFailure::TooFewVertices { poly_len: poly.len });
+        }
+
+        let half_plane_count = self.half_planes.len();
+        let neighbor_index_count = self.neighbor_indices.len();
+        let neighbor_slot_count = self.neighbor_slots.len();
+        if half_plane_count != neighbor_index_count || half_plane_count != neighbor_slot_count {
+            return Some(ExtractionInvariantFailure::MetadataLengthMismatch {
+                half_plane_count,
+                neighbor_index_count,
+                neighbor_slot_count,
+            });
+        }
+
+        for i in 0..poly.len {
+            let u = poly.us[i];
+            let v = poly.vs[i];
+            if !u.is_finite() || !v.is_finite() {
+                return Some(ExtractionInvariantFailure::NonFiniteProjectedVertex {
+                    vertex: i,
+                    u,
+                    v,
+                });
+            }
+
+            let (plane_a, plane_b) = poly.vertex_planes[i];
+            if plane_a >= neighbor_index_count || plane_b >= neighbor_index_count {
+                return Some(ExtractionInvariantFailure::InvalidVertexPlane {
+                    vertex: i,
+                    plane_a,
+                    plane_b,
+                    neighbor_index_count,
+                });
+            }
+
+            let dir = DVec3::new(
+                fp::fma_f64(
+                    u,
+                    self.basis.t1.x,
+                    fp::fma_f64(v, self.basis.t2.x, self.basis.g.x),
+                ),
+                fp::fma_f64(
+                    u,
+                    self.basis.t1.y,
+                    fp::fma_f64(v, self.basis.t2.y, self.basis.g.y),
+                ),
+                fp::fma_f64(
+                    u,
+                    self.basis.t1.z,
+                    fp::fma_f64(v, self.basis.t2.z, self.basis.g.z),
+                ),
+            );
+            let dir = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);
+            let len2 = dir.length_squared();
+            if !len2.is_finite() || len2 < 1e-28 {
+                return Some(ExtractionInvariantFailure::DegenerateDirection { vertex: i, len2 });
+            }
+
+            let edge_plane = poly.edge_planes[i];
+            if edge_plane != usize::MAX
+                && (edge_plane >= half_plane_count
+                    || edge_plane >= neighbor_index_count
+                    || edge_plane >= neighbor_slot_count)
+            {
+                return Some(ExtractionInvariantFailure::InvalidEdgePlane {
+                    vertex: i,
+                    edge_plane,
+                    half_plane_count,
+                    neighbor_index_count,
+                    neighbor_slot_count,
+                });
+            }
+        }
+
+        None
     }
 }
 
@@ -559,5 +674,37 @@ mod tests {
                 i
             );
         }
+    }
+
+    #[test]
+    fn extraction_failure_reports_invalid_vertex_plane_metadata() {
+        let mut builder = Topo2DBuilder::new(0, Vec3::Z);
+        builder.poly_b.clear();
+        builder.poly_b.len = 3;
+        builder.poly_b.has_bounding_ref = false;
+        builder.poly_b.max_r2 = 1.0;
+        builder.poly_b.us[0] = 0.0;
+        builder.poly_b.vs[0] = 0.0;
+        builder.poly_b.us[1] = 0.5;
+        builder.poly_b.vs[1] = 0.0;
+        builder.poly_b.us[2] = 0.0;
+        builder.poly_b.vs[2] = 0.5;
+        builder.poly_b.vertex_planes[0] = (7, 8);
+        builder.poly_b.vertex_planes[1] = (7, 8);
+        builder.poly_b.vertex_planes[2] = (7, 8);
+        builder.poly_b.edge_planes[0] = usize::MAX;
+        builder.poly_b.edge_planes[1] = usize::MAX;
+        builder.poly_b.edge_planes[2] = usize::MAX;
+        builder.use_a = false;
+
+        assert_eq!(
+            builder.debug_extraction_failure(),
+            Some(ExtractionInvariantFailure::InvalidVertexPlane {
+                vertex: 0,
+                plane_a: 7,
+                plane_b: 8,
+                neighbor_index_count: 0,
+            })
+        );
     }
 }

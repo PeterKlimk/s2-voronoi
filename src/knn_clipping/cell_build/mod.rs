@@ -32,7 +32,7 @@ pub enum CellFailure {
     /// cell construction without a valid bounded polygon and should be classified separately
     /// from mathematically established unsupported geometry.
     UnboundedAfterExhaustion,
-    /// Failed to construct a valid seed polygon.
+    /// Extraction invariants failed despite a supposedly valid bounded polygon.
     NoValidSeed,
 }
 
