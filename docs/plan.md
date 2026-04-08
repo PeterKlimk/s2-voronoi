@@ -1,4 +1,9 @@
- # Packed kNN Ring-Expansion (r=2 Band) With Zero Hot-Path Cost
+# Packed kNN Ring-Expansion (r=2 Band) With Zero Hot-Path Cost
+
+This document is now a narrow design note for the packed `r=2` expansion work.
+
+For the active project-wide roadmap, see `docs/todo.md`. This file should not
+be treated as the primary "what next?" document anymore.
 
   ## Summary
 

@@ -81,10 +81,12 @@ validation result you want first; it selects effective validation when available
 ## Documentation
 
 - Design / algorithm notes: `docs/architecture.md`
+- Active roadmap / prioritized next steps: `docs/todo.md`
 - Performance + benchmarking: `docs/performance.md`
 - Live vertex dedup and edge checks: `docs/live_dedup.md`
 - Supported input / failure contract: `docs/supported-envelope.md`
-- Active engineering issues / roadmap findings: `docs/engineering-findings.md`
+- Active engineering issues / findings log: `docs/engineering-findings.md`
+- Narrow packed `r=2` expansion design note: `docs/plan.md`
 
 ## License
 
