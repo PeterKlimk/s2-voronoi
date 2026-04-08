@@ -17,8 +17,8 @@ use crate::cube_grid::packed_knn::{
 };
 use crate::cube_grid::{CubeMapGrid, PackedQuery};
 use crate::knn_clipping::cell_build::{
-    build_cell_into, CellBuildContext, CellBuildError, CellBuildRequest, CellOutputBuffer,
-    SeedNeighbor, VertexData,
+    build_cell_into, CellBuildContext, CellBuildRequest, CellOutputBuffer, SeedNeighbor,
+    VertexData,
 };
 use crate::knn_clipping::TerminationConfig;
 use crate::packed_layout::PackedSlotLayout;
@@ -141,6 +141,27 @@ pub(super) struct ShardContext<'a> {
     pub(super) local: LocalId,
 }
 
+#[inline]
+fn representation_limit(message: impl Into<String>) -> BuildCellsError {
+    BuildCellsError::RepresentationLimit(message.into())
+}
+
+#[inline]
+fn checked_u32(value: usize, context: &str) -> Result<u32, BuildCellsError> {
+    u32::try_from(value)
+        .map_err(|_| representation_limit(format!("{context} exceeds u32 capacity")))
+}
+
+#[inline]
+fn checked_u8(value: usize, context: &str) -> Result<u8, BuildCellsError> {
+    u8::try_from(value).map_err(|_| representation_limit(format!("{context} exceeds u8 capacity")))
+}
+
+#[inline]
+fn checked_local_id(value: usize, context: &str) -> Result<LocalId, BuildCellsError> {
+    checked_u32(value, context).map(LocalId::from)
+}
+
 pub(super) fn build_cells_sharded_live_dedup(
     points: &[Vec3],
     grid: &CubeMapGrid,
@@ -226,7 +247,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                 if packed_policy.enabled() {
                     let queries = &packed_queries_all[group_start..cursor];
                     let query_local_start =
-                        u32::try_from(group_start).expect("local id must fit in u32");
+                        checked_u32(group_start, "packed query local start")?;
                     let group = PackedGroupInput::new(
                         cell as usize,
                         bin.as_u8(),
@@ -248,7 +269,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                 my_generators[group_start..cursor].iter().enumerate()
                             {
                                 let local_idx = group_start + offset;
-                                let local = LocalId::from_usize(local_idx);
+                                let local = checked_local_id(local_idx, "shard-local generator index")?;
                                 let mut shard_ctx = ShardContext {
                                     shard: &mut shard,
                                     bin,
@@ -269,7 +290,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                         packed_policy,
                                     )),
                                 )
-                                .map_err(BuildCellsError::CellBuild)?;
+                                ?;
                             }
                         }
                         PreparedPackedGroupStatus::SlowPath => {
@@ -277,7 +298,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                 my_generators[group_start..cursor].iter().enumerate()
                             {
                                 let local_idx = group_start + offset;
-                                let local = LocalId::from_usize(local_idx);
+                                let local = checked_local_id(local_idx, "shard-local generator index")?;
                                 let mut shard_ctx = ShardContext {
                                     shard: &mut shard,
                                     bin,
@@ -293,7 +314,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                     global,
                                     None,
                                 )
-                                .map_err(BuildCellsError::CellBuild)?;
+                                ?;
                             }
                         }
                     }
@@ -308,7 +329,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                 } else {
                     for (offset, &global) in my_generators[group_start..cursor].iter().enumerate() {
                         let local_idx = group_start + offset;
-                        let local = LocalId::from_usize(local_idx);
+                        let local = checked_local_id(local_idx, "shard-local generator index")?;
                         let mut shard_ctx = ShardContext {
                             shard: &mut shard,
                             bin,
@@ -324,7 +345,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                             global,
                             None,
                         )
-                        .map_err(BuildCellsError::CellBuild)?;
+                        ?;
                     }
                 }
             }
@@ -357,8 +378,11 @@ fn build_and_emit_cell<'a, 'b, 'c>(
     termination: crate::policy::TerminationPolicy,
     generator_idx: usize,
     packed: Option<PackedQuery<'_, '_, 'c>>,
-) -> Result<(), CellBuildError> {
-    let cell_start = shard_ctx.shard.output.cell_indices.len() as u32;
+) -> Result<(), BuildCellsError> {
+    let cell_start = checked_u32(
+        shard_ctx.shard.output.cell_indices.len(),
+        "cell index start",
+    )?;
     shard_ctx
         .shard
         .output
@@ -366,7 +390,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
 
     let incoming_checks = shard_ctx.shard.dedup.take_edge_checks(shard_ctx.local);
     live_ctx.seed_neighbors.clear();
-    let cell_idx = u32::try_from(generator_idx).expect("cell index must fit in u32");
+    let cell_idx = checked_u32(generator_idx, "generator index")?;
     for check in &incoming_checks {
         let (a, b) = unpack_edge_key(check.key);
         let neighbor_idx = if a == cell_idx { b } else { a } as usize;
@@ -398,7 +422,8 @@ fn build_and_emit_cell<'a, 'b, 'c>(
             packed,
             seed_neighbors: &live_ctx.seed_neighbors,
         },
-    )?;
+    )
+    .map_err(BuildCellsError::CellBuild)?;
     stats.record_into(cell_sub);
 
     let mut t_post = crate::knn_clipping::timing::LapTimer::start();
@@ -419,10 +444,8 @@ fn build_and_emit_cell<'a, 'b, 'c>(
     let local = shard_ctx.local;
     let bin = shard_ctx.bin;
 
-    shard.output.set_cell_count(
-        local,
-        u8::try_from(count).expect("cell vertex count exceeds u8 capacity"),
-    );
+    let cell_count = checked_u8(count, "cell vertex count")?;
+    shard.output.set_cell_count(local, cell_count);
 
     {
         let vertex_indices = &mut live_ctx.edge_scratch.vertex_indices;
@@ -439,7 +462,8 @@ fn build_and_emit_cell<'a, 'b, 'c>(
             let owner_bin = grid_ctx.assignment.generator_bin[key[0] as usize];
             if owner_bin == bin {
                 if *vi == INVALID_INDEX {
-                    let new_idx = shard.output.vertices.len() as u32;
+                    let new_idx =
+                        checked_u32(shard.output.vertices.len(), "shard vertex index")?;
                     shard.output.vertices.push(pos);
                     shard.output.vertex_keys.push(key);
                     *vi = new_idx;
@@ -449,7 +473,8 @@ fn build_and_emit_cell<'a, 'b, 'c>(
                 shard.output.cell_indices.push(pack_ref(bin, v_idx));
             } else {
                 debug_assert_eq!(*vi, INVALID_INDEX, "received index for off-shard owner");
-                let source_slot = shard.output.cell_indices.len() as u32;
+                let source_slot =
+                    checked_u32(shard.output.cell_indices.len(), "deferred source slot")?;
                 shard.output.cell_indices.push(DEFERRED);
                 shard.output.deferred_slots.push(DeferredSlot {
                     key,
@@ -474,4 +499,50 @@ fn build_and_emit_cell<'a, 'b, 'c>(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{checked_local_id, checked_u32, checked_u8, BuildCellsError};
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn checked_u32_reports_representation_limit() {
+        let err = checked_u32((u32::MAX as usize) + 1, "generator index")
+            .expect_err("value above u32::MAX should fail");
+        match err {
+            BuildCellsError::RepresentationLimit(msg) => {
+                assert!(msg.contains("generator index"));
+                assert!(msg.contains("u32"));
+            }
+            _ => panic!("expected representation limit"),
+        }
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn checked_local_id_reports_representation_limit() {
+        let err = checked_local_id((u32::MAX as usize) + 1, "shard-local generator index")
+            .expect_err("local id above u32::MAX should fail");
+        match err {
+            BuildCellsError::RepresentationLimit(msg) => {
+                assert!(msg.contains("shard-local generator index"));
+                assert!(msg.contains("u32"));
+            }
+            _ => panic!("expected representation limit"),
+        }
+    }
+
+    #[test]
+    fn checked_u8_reports_representation_limit() {
+        let err = checked_u8(256, "cell vertex count")
+            .expect_err("value above u8::MAX should fail");
+        match err {
+            BuildCellsError::RepresentationLimit(msg) => {
+                assert!(msg.contains("cell vertex count"));
+                assert!(msg.contains("u8"));
+            }
+            _ => panic!("expected representation limit"),
+        }
+    }
 }

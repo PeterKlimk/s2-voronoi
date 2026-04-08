@@ -52,6 +52,7 @@ pub(super) struct ShardedCellsData {
 pub(super) enum BuildCellsError {
     CellBuild(CellBuildError),
     PackedLayoutCapacity(PackedLayoutCapacityError),
+    RepresentationLimit(String),
 }
 
 fn with_two_mut<T>(v: &mut [T], i: usize, j: usize) -> (&mut T, &mut T) {

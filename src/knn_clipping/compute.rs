@@ -210,6 +210,9 @@ fn map_build_cells_error(err: live_dedup::BuildCellsError) -> crate::VoronoiErro
                 err.bin, err.local_population, err.local_mask, err.num_bins, err.local_shift
             ))
         }
+        live_dedup::BuildCellsError::RepresentationLimit(message) => {
+            crate::VoronoiError::RepresentationLimit(message)
+        }
     }
 }
 
@@ -459,6 +462,20 @@ mod tests {
                 assert!(msg.contains("4096"));
                 assert!(msg.contains("255"));
                 assert!(msg.contains("96"));
+            }
+            other => panic!("expected RepresentationLimit, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn map_build_cells_representation_limit_to_public_representation_limit() {
+        let err = map_build_cells_error(BuildCellsError::RepresentationLimit(
+            "cell vertex count exceeds u8 capacity".to_string(),
+        ));
+        match err {
+            VoronoiError::RepresentationLimit(msg) => {
+                assert!(msg.contains("cell vertex count"));
+                assert!(msg.contains("u8"));
             }
             other => panic!("expected RepresentationLimit, got {:?}", other),
         }
