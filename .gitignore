@@ -3,3 +3,5 @@
 profiling.txt
 scripts/**/__pycache__/
 scripts/**/*.py[cod]
+.codex
+.claude/
