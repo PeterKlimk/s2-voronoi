@@ -172,24 +172,31 @@ fn compute_voronoi_knn_clipping_report_core(
 }
 
 fn map_cell_build_error(err: CellBuildError) -> crate::VoronoiError {
+    let detail_suffix = err
+        .detail
+        .as_deref()
+        .map(|detail| format!(" ({detail})"))
+        .unwrap_or_default();
+
     match err.failure {
         CellFailure::ProjectionInvalid => crate::VoronoiError::UnsupportedGeometry {
             generator_index: err.generator_idx,
-            message:
-                "cell extends to the generator hemisphere boundary; gnomonic projection is invalid"
-                    .to_string(),
+            message: format!(
+                "cell extends to the generator hemisphere boundary; gnomonic projection is invalid{}",
+                detail_suffix
+            ),
         },
         CellFailure::UnboundedAfterExhaustion => crate::VoronoiError::ComputationFailed(format!(
-            "cell {} exhausted the neighbor stream before reaching a bounded polygon",
-            err.generator_idx
+            "cell {} exhausted the neighbor stream before reaching a bounded polygon{}",
+            err.generator_idx, detail_suffix
         )),
         CellFailure::TooManyVertices => crate::VoronoiError::ComputationFailed(format!(
-            "cell {} exceeded the clipping vertex budget",
-            err.generator_idx
+            "cell {} exceeded the clipping vertex budget{}",
+            err.generator_idx, detail_suffix
         )),
         other => crate::VoronoiError::ComputationFailed(format!(
-            "cell {} failed during construction with {:?}",
-            err.generator_idx, other
+            "cell {} failed during construction with {:?}{}",
+            err.generator_idx, other, detail_suffix
         )),
     }
 }
@@ -375,6 +382,7 @@ mod tests {
         let err = map_cell_build_error(CellBuildError {
             generator_idx: 7,
             failure: CellFailure::ProjectionInvalid,
+            detail: None,
         });
         assert!(matches!(
             err,
@@ -390,6 +398,7 @@ mod tests {
         let err = map_cell_build_error(CellBuildError {
             generator_idx: 11,
             failure: CellFailure::UnboundedAfterExhaustion,
+            detail: None,
         });
         match err {
             VoronoiError::ComputationFailed(msg) => {
@@ -405,11 +414,29 @@ mod tests {
         let err = map_cell_build_error(CellBuildError {
             generator_idx: 13,
             failure: CellFailure::TooManyVertices,
+            detail: None,
         });
         match err {
             VoronoiError::ComputationFailed(msg) => {
                 assert!(msg.contains("13"));
                 assert!(msg.contains("vertex budget"));
+            }
+            other => panic!("expected ComputationFailed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn map_cell_build_error_appends_detail_when_present() {
+        let err = map_cell_build_error(CellBuildError {
+            generator_idx: 17,
+            failure: CellFailure::NoValidSeed,
+            detail: Some("unexpected vertex extraction failure".to_string()),
+        });
+        match err {
+            VoronoiError::ComputationFailed(msg) => {
+                assert!(msg.contains("17"));
+                assert!(msg.contains("NoValidSeed"));
+                assert!(msg.contains("unexpected vertex extraction failure"));
             }
             other => panic!("expected ComputationFailed, got {:?}", other),
         }

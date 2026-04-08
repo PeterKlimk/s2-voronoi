@@ -36,10 +36,11 @@ pub enum CellFailure {
     NoValidSeed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CellBuildError {
     pub generator_idx: usize,
     pub failure: CellFailure,
+    pub detail: Option<String>,
 }
 
 /// A reusable buffer to hold the extracted output of clipping a cell.

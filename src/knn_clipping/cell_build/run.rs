@@ -400,9 +400,10 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
             return Err(CellBuildError {
                 generator_idx,
                 failure,
+                detail: None,
             });
         }
-        panic_unexpected_failure(
+        return Err(unexpected_failure_error(
             ctx,
             points,
             generator_idx,
@@ -416,12 +417,12 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
             last_neighbor_slot,
             "validation",
             ctx.builder.failure(),
-        );
+        ));
     }
 
     let t_cert = crate::knn_clipping::timing::Timer::start();
     if let Err(failure) = ctx.builder.to_vertex_data_full(&mut ctx.output_buffer) {
-        panic_unexpected_failure(
+        return Err(unexpected_failure_error(
             ctx,
             points,
             generator_idx,
@@ -435,7 +436,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
             last_neighbor_slot,
             "vertex extraction",
             Some(failure),
-        );
+        ));
     }
     certification_time += t_cert.elapsed();
 
@@ -472,7 +473,7 @@ fn classify_terminal_failure(
     None
 }
 
-fn panic_unexpected_failure(
+fn unexpected_failure_error(
     ctx: &CellBuildContext,
     points: &[Vec3],
     generator_idx: usize,
@@ -486,47 +487,50 @@ fn panic_unexpected_failure(
     last_neighbor_slot: Option<u32>,
     context: &str,
     explicit_failure: Option<CellFailure>,
-) -> ! {
+) -> CellBuildError {
     let (active, total) = ctx.builder.count_active_planes();
     let builder = ctx.builder.debug_state();
     let extraction_failure = ctx.builder.debug_extraction_failure();
     let gen = points[generator_idx];
     let neighbor_indices: Vec<usize> = ctx.builder.neighbor_indices_iter().collect();
     let failure = explicit_failure.or(ctx.builder.failure());
+    let failure = failure.unwrap_or(CellFailure::NoValidSeed);
 
-    panic!(
-        "Cell {} unexpected {} failure: bounded={}, failure={:?}, \
-         planes={}, active={}, vertices={}, poly_len={}, has_bounding_ref={}, min_cos={:?}, \
-         half_plane_count={}, neighbor_index_count={}, neighbor_slot_count={}, extraction_failure={:?}, neighbors_processed={}, \
-         did_packed={}, did_cursor_fallback={}, knn_exhausted={}, \
-         last_clip_phase={}, last_batch_source={:?}, last_neighbor_idx={:?}, last_neighbor_slot={:?}\n\
-         Generator pos: {:?}\n\
-         First 10 neighbor indices: {:?}",
+    CellBuildError {
         generator_idx,
-        context,
-        builder.bounded,
         failure,
-        total,
-        active,
-        ctx.builder.vertex_count(),
-        builder.poly_len,
-        builder.has_bounding_ref,
-        builder.min_cos,
-        builder.half_plane_count,
-        builder.neighbor_index_count,
-        builder.neighbor_slot_count,
-        extraction_failure,
-        neighbors_processed,
-        did_packed,
-        used_knn,
-        knn_exhausted,
-        last_clip_phase,
-        last_batch_source,
-        last_neighbor_idx,
-        last_neighbor_slot,
-        gen,
-        &neighbor_indices[..neighbor_indices.len().min(10)],
-    );
+        detail: Some(format!(
+            "unexpected {} failure: bounded={}, failure={:?}, \
+             planes={}, active={}, vertices={}, poly_len={}, has_bounding_ref={}, min_cos={:?}, \
+             half_plane_count={}, neighbor_index_count={}, neighbor_slot_count={}, extraction_failure={:?}, neighbors_processed={}, \
+             did_packed={}, did_cursor_fallback={}, knn_exhausted={}, \
+             last_clip_phase={}, last_batch_source={:?}, last_neighbor_idx={:?}, last_neighbor_slot={:?}; \
+             generator_pos={:?}; first_10_neighbor_indices={:?}",
+            context,
+            builder.bounded,
+            failure,
+            total,
+            active,
+            ctx.builder.vertex_count(),
+            builder.poly_len,
+            builder.has_bounding_ref,
+            builder.min_cos,
+            builder.half_plane_count,
+            builder.neighbor_index_count,
+            builder.neighbor_slot_count,
+            extraction_failure,
+            neighbors_processed,
+            did_packed,
+            used_knn,
+            knn_exhausted,
+            last_clip_phase,
+            last_batch_source,
+            last_neighbor_idx,
+            last_neighbor_slot,
+            gen,
+            &neighbor_indices[..neighbor_indices.len().min(10)],
+        )),
+    }
 }
 
 #[cfg(test)]
