@@ -59,6 +59,7 @@ fn changed_clip_fails_when_bounded_polygon_reaches_projection_limit() {
             HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0),
             1,
             u32::MAX,
+            None,
         )
         .expect_err("expected projection-invalid bounded cell to fail");
     assert_eq!(
@@ -86,6 +87,7 @@ fn changed_clip_allows_bounded_polygon_inside_projection_limit() {
         HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0),
         1,
         u32::MAX,
+        None,
     );
     assert_eq!(result, Ok(ClipResult::Changed));
     assert_eq!(builder.failure(), None);
@@ -201,5 +203,51 @@ fn too_many_vertices_remains_terminal_in_policy_api() {
             crate::knn_clipping::cell_build::CellFailure::TooManyVertices,
         )),
         Err(crate::knn_clipping::cell_build::CellFailure::TooManyVertices)
+    );
+}
+
+#[test]
+fn replay_plan_preserves_edgecheck_eps_and_order() {
+    let g = Vec3::new(0.0, 0.0, 1.0);
+    let mut builder = Topo2DBuilder::new(0, g);
+
+    let h1 = Vec3::new(1.0, 0.0, 0.5).normalize();
+    let h2 = Vec3::new(-0.5, 0.866, 0.5).normalize();
+    let h3 = Vec3::new(-0.5, -0.866, 0.5).normalize();
+
+    assert_eq!(
+        builder.clip_with_slot_edgecheck_policy(11, 21, h1, 0.125),
+        Ok(BuilderStepOutcome::Applied)
+    );
+    assert_eq!(
+        builder.clip_with_slot_policy(12, 22, h2),
+        Ok(BuilderStepOutcome::Applied)
+    );
+    assert_eq!(
+        builder.clip_with_slot_policy(13, 23, h3),
+        Ok(BuilderStepOutcome::Applied)
+    );
+
+    let replay = builder.fallback_replay_plan();
+    assert_eq!(replay.generator_idx, 0);
+    assert_eq!(
+        replay.accepted_neighbors,
+        &[
+            BuilderReplayNeighbor {
+                neighbor_idx: 11,
+                neighbor_slot: 21,
+                hp_eps: Some(0.125),
+            },
+            BuilderReplayNeighbor {
+                neighbor_idx: 12,
+                neighbor_slot: 22,
+                hp_eps: None,
+            },
+            BuilderReplayNeighbor {
+                neighbor_idx: 13,
+                neighbor_slot: 23,
+                hp_eps: None,
+            },
+        ]
     );
 }

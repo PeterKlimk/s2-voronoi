@@ -50,6 +50,19 @@ pub(crate) enum BuilderClipOutcome {
     NeedsFallback(BuilderFallbackRequest),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct BuilderReplayNeighbor {
+    pub(crate) neighbor_idx: usize,
+    pub(crate) neighbor_slot: u32,
+    pub(crate) hp_eps: Option<f32>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BuilderReplayPlan<'a> {
+    pub(crate) generator_idx: usize,
+    pub(crate) accepted_neighbors: &'a [BuilderReplayNeighbor],
+}
+
 pub(crate) struct GnomonicBuilder {
     pub(crate) generator_idx: usize,
     pub(crate) generator: DVec3,
@@ -58,6 +71,7 @@ pub(crate) struct GnomonicBuilder {
     half_planes: Vec<HalfPlane>,
     neighbor_indices: Vec<usize>,
     neighbor_slots: Vec<u32>,
+    replay_neighbors: Vec<BuilderReplayNeighbor>,
 
     poly_a: PolyBuffer,
     poly_b: PolyBuffer,

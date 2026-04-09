@@ -1,4 +1,4 @@
-use super::{GnomonicBuilder, PolyBuffer, Topo2DBuilder};
+use super::{BuilderReplayPlan, GnomonicBuilder, PolyBuffer, Topo2DBuilder};
 use crate::fp;
 use glam::{DVec3, Vec3};
 use std::hint::select_unpredictable;
@@ -74,6 +74,7 @@ impl GnomonicBuilder {
             half_planes: Vec::with_capacity(32),
             neighbor_indices: Vec::with_capacity(32),
             neighbor_slots: Vec::with_capacity(32),
+            replay_neighbors: Vec::with_capacity(32),
             poly_a,
             poly_b: PolyBuffer::new(),
             use_a: true,
@@ -95,6 +96,7 @@ impl GnomonicBuilder {
         self.half_planes.clear();
         self.neighbor_indices.clear();
         self.neighbor_slots.clear();
+        self.replay_neighbors.clear();
         self.poly_a.init_bounding(1e6);
         self.poly_b.clear();
         self.use_a = true;
@@ -159,6 +161,14 @@ impl GnomonicBuilder {
         self.neighbor_indices.iter().copied()
     }
 
+    #[inline]
+    pub(super) fn fallback_replay_plan(&self) -> BuilderReplayPlan<'_> {
+        BuilderReplayPlan {
+            generator_idx: self.generator_idx,
+            accepted_neighbors: &self.replay_neighbors,
+        }
+    }
+
     #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
         if !self.is_bounded() || self.vertex_count() < 3 {
@@ -218,6 +228,11 @@ impl Topo2DBuilder {
     #[inline]
     pub fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.gnomonic().neighbor_indices_iter()
+    }
+
+    #[inline]
+    pub(crate) fn fallback_replay_plan(&self) -> BuilderReplayPlan<'_> {
+        self.gnomonic().fallback_replay_plan()
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]

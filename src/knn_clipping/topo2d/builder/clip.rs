@@ -1,5 +1,7 @@
 use super::projection::MIN_PROJECTION_COS;
-use super::{BuilderClipOutcome, BuilderStepOutcome, GnomonicBuilder, Topo2DBuilder};
+use super::{
+    BuilderClipOutcome, BuilderReplayNeighbor, BuilderStepOutcome, GnomonicBuilder, Topo2DBuilder,
+};
 use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck};
 use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane};
@@ -23,6 +25,7 @@ impl GnomonicBuilder {
         hp: HalfPlane,
         neighbor_idx: usize,
         neighbor_slot: u32,
+        replay_hp_eps: Option<f32>,
     ) -> Result<ClipResult, CellFailure> {
         match clip_result {
             ClipResult::TooManyVertices => {
@@ -33,6 +36,11 @@ impl GnomonicBuilder {
                 self.half_planes.push(hp);
                 self.neighbor_indices.push(neighbor_idx);
                 self.neighbor_slots.push(neighbor_slot);
+                self.replay_neighbors.push(BuilderReplayNeighbor {
+                    neighbor_idx,
+                    neighbor_slot,
+                    hp_eps: replay_hp_eps,
+                });
                 self.use_a = !self.use_a;
                 self.term_cache_valid = false;
             }
@@ -76,7 +84,7 @@ impl GnomonicBuilder {
             clip_convex(&self.poly_b, &hp, &mut self.poly_a)
         };
 
-        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)
+        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot, None)
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -104,7 +112,7 @@ impl GnomonicBuilder {
             clip_convex_edgecheck(&self.poly_b, &hp, &mut self.poly_a)
         };
 
-        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)?;
+        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot, Some(hp_eps))?;
         Ok(())
     }
 }

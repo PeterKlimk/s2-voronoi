@@ -8,10 +8,10 @@ use std::time::Duration;
 use crate::cube_grid::{
     DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream, PackedQuery,
 };
-use crate::knn_clipping::topo2d::{BuilderClipOutcome, BuilderStepOutcome};
+use crate::knn_clipping::topo2d::{BuilderClipOutcome, BuilderFallbackRequest, BuilderStepOutcome};
 use crate::policy::{KnnPolicy, TerminationPolicy};
 
-use super::{CellBuildError, CellOutputBuffer};
+use super::{CellBuildError, CellFailure, CellOutputBuffer};
 use failure::{classify_terminal_failure, unexpected_failure_error};
 use frontier::{maybe_terminate_or_advance_frontier, probe_frontier};
 
@@ -150,6 +150,26 @@ impl CellBuildStats {
     }
 }
 
+fn fallback_detail(
+    builder: &crate::knn_clipping::topo2d::Topo2DBuilder,
+    failure: CellFailure,
+    fallback_request: Option<BuilderFallbackRequest>,
+) -> Option<String> {
+    fallback_request
+        .or_else(|| {
+            crate::knn_clipping::topo2d::Topo2DBuilder::fallback_request_for_failure(failure)
+        })
+        .map(|request| {
+            let replay = builder.fallback_replay_plan();
+            format!(
+                "fallback trigger={:?}, replay_constraints={}, replay_generator_idx={}",
+                request.trigger,
+                replay.accepted_neighbors.len(),
+                replay.generator_idx
+            )
+        })
+}
+
 pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     ctx: &'a mut CellBuildContext,
     mut request: CellBuildRequest<'a, 'm, 'p, 'g, 's>,
@@ -177,6 +197,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     let mut last_neighbor_slot: Option<u32> = None;
     let mut last_batch_source: Option<DirectedNeighborBatchSource> = None;
     let mut last_clip_phase = "none";
+    let mut fallback_request = None;
 
     ctx.builder.reset(generator_idx, points[generator_idx]);
     ctx.attempted_neighbors.clear();
@@ -202,7 +223,11 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                 seed.hp_eps,
             ) {
                 Ok(BuilderStepOutcome::Applied) => {}
-                Ok(BuilderStepOutcome::NeedsFallback(_)) | Err(_) => break,
+                Ok(BuilderStepOutcome::NeedsFallback(request)) => {
+                    fallback_request = Some(request);
+                    break;
+                }
+                Err(_) => break,
             }
             neighbors_processed += 1;
         }
@@ -269,7 +294,11 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                         neighbor,
                     ) {
                         Ok(BuilderClipOutcome::Applied(result)) => result,
-                        Ok(BuilderClipOutcome::NeedsFallback(_)) | Err(_) => break,
+                        Ok(BuilderClipOutcome::NeedsFallback(request)) => {
+                            fallback_request = Some(request);
+                            break;
+                        }
+                        Err(_) => break,
                     };
 
                     neighbors_processed += 1;
@@ -346,7 +375,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
             return Err(CellBuildError {
                 generator_idx,
                 failure,
-                detail: None,
+                detail: fallback_detail(&ctx.builder, failure, fallback_request),
             });
         }
         return Err(unexpected_failure_error(

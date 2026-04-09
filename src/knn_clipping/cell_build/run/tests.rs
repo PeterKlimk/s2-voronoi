@@ -1,7 +1,9 @@
 use super::failure::classify_terminal_failure;
+use super::fallback_detail;
 use super::{build_cell_into, CellBuildContext, CellBuildRequest};
 use crate::cube_grid::{CubeMapGrid, DirectedEligibility};
 use crate::knn_clipping::cell_build::CellFailure;
+use crate::knn_clipping::topo2d::Topo2DBuilder;
 use crate::knn_clipping::TerminationConfig;
 use glam::Vec3;
 
@@ -60,4 +62,35 @@ fn direct_cursor_builds_normal_cell() {
 
     assert!(ctx.output_buffer().vertices.len() >= 3);
     assert!(!stats.knn_exhausted || !stats.did_packed);
+}
+
+#[test]
+fn projection_invalid_detail_includes_replay_payload_summary() {
+    let g = Vec3::new(0.0, 0.0, 1.0);
+    let mut builder = Topo2DBuilder::new(17, g);
+
+    let h1 = Vec3::new(1.0, 0.0, 0.5).normalize();
+    let h2 = Vec3::new(-0.5, 0.866, 0.5).normalize();
+    let h3 = Vec3::new(-0.5, -0.866, 0.5).normalize();
+
+    builder
+        .clip_with_slot_edgecheck_policy(11, 21, h1, 0.125)
+        .expect("edgecheck clip should apply");
+    builder
+        .clip_with_slot_policy(12, 22, h2)
+        .expect("normal clip should apply");
+    builder
+        .clip_with_slot_policy(13, 23, h3)
+        .expect("normal clip should apply");
+
+    let detail = fallback_detail(
+        &builder,
+        CellFailure::ProjectionInvalid,
+        Topo2DBuilder::fallback_request_for_failure(CellFailure::ProjectionInvalid),
+    )
+    .expect("projection invalid should produce fallback detail");
+
+    assert!(detail.contains("ProjectionLimit"));
+    assert!(detail.contains("replay_constraints=3"));
+    assert!(detail.contains("replay_generator_idx=17"));
 }
