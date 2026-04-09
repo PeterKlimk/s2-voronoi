@@ -10,7 +10,15 @@ use glam::DVec3;
 
 pub use projection::TangentBasis;
 
+enum BuilderImpl {
+    Gnomonic(GnomonicBuilder),
+}
+
 pub struct Topo2DBuilder {
+    inner: BuilderImpl,
+}
+
+pub(crate) struct GnomonicBuilder {
     pub(crate) generator_idx: usize,
     pub(crate) generator: DVec3,
     pub(crate) basis: TangentBasis,
@@ -74,4 +82,32 @@ pub(crate) enum ExtractionInvariantFailure {
         neighbor_index_count: usize,
         neighbor_slot_count: usize,
     },
+}
+
+impl Topo2DBuilder {
+    #[inline]
+    pub(crate) fn gnomonic(&self) -> &GnomonicBuilder {
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn gnomonic_mut(&mut self) -> &mut GnomonicBuilder {
+        match &mut self.inner {
+            BuilderImpl::Gnomonic(builder) => builder,
+        }
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn as_gnomonic(&self) -> &GnomonicBuilder {
+        self.gnomonic()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn as_gnomonic_mut(&mut self) -> &mut GnomonicBuilder {
+        self.gnomonic_mut()
+    }
 }

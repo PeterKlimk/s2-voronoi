@@ -45,13 +45,15 @@ fn clip_all_neighbors(builder: &mut Topo2DBuilder, points: &[Vec3], i: usize) {
 #[test]
 fn changed_clip_fails_when_bounded_polygon_reaches_projection_limit() {
     let mut builder = Topo2DBuilder::new(0, Vec3::Z);
-    builder.poly_b.clear();
-    builder.poly_b.len = 3;
-    builder.poly_b.has_bounding_ref = false;
+    let gnomonic = builder.as_gnomonic_mut();
+    gnomonic.poly_b.clear();
+    gnomonic.poly_b.len = 3;
+    gnomonic.poly_b.has_bounding_ref = false;
     let invalid_min_cos = MIN_PROJECTION_COS * 0.5;
-    builder.poly_b.max_r2 = (1.0 / (invalid_min_cos * invalid_min_cos)) - 1.0;
+    gnomonic.poly_b.max_r2 = (1.0 / (invalid_min_cos * invalid_min_cos)) - 1.0;
 
     let err = builder
+        .as_gnomonic_mut()
         .commit_clip(
             ClipResult::Changed,
             HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0),
@@ -72,13 +74,14 @@ fn changed_clip_fails_when_bounded_polygon_reaches_projection_limit() {
 #[test]
 fn changed_clip_allows_bounded_polygon_inside_projection_limit() {
     let mut builder = Topo2DBuilder::new(0, Vec3::Z);
-    builder.poly_b.clear();
-    builder.poly_b.len = 3;
-    builder.poly_b.has_bounding_ref = false;
+    let gnomonic = builder.as_gnomonic_mut();
+    gnomonic.poly_b.clear();
+    gnomonic.poly_b.len = 3;
+    gnomonic.poly_b.has_bounding_ref = false;
     let valid_min_cos = MIN_PROJECTION_COS * 2.0;
-    builder.poly_b.max_r2 = (1.0 / (valid_min_cos * valid_min_cos)) - 1.0;
+    gnomonic.poly_b.max_r2 = (1.0 / (valid_min_cos * valid_min_cos)) - 1.0;
 
-    let result = builder.commit_clip(
+    let result = builder.as_gnomonic_mut().commit_clip(
         ClipResult::Changed,
         HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0),
         1,
@@ -118,11 +121,12 @@ fn valid_bounded_cells_reconstruct_vertices_with_healthy_norm() {
         clip_all_neighbors(&mut builder, &points, i);
         assert!(builder.is_bounded(), "cell {} should be bounded", i);
 
-        let poly = builder.current_poly();
+        let poly = builder.as_gnomonic().current_poly();
+        let basis = &builder.as_gnomonic().basis;
         for v in 0..poly.len {
             let u = poly.us[v];
             let w = poly.vs[v];
-            let dir = builder.basis.g + builder.basis.t1 * u + builder.basis.t2 * w;
+            let dir = basis.g + basis.t1 * u + basis.t2 * w;
             let len2 = dir.length_squared();
             assert!(
                 len2.is_finite() && len2 > 0.5,
@@ -148,23 +152,24 @@ fn valid_bounded_cells_reconstruct_vertices_with_healthy_norm() {
 #[test]
 fn extraction_failure_reports_invalid_vertex_plane_metadata() {
     let mut builder = Topo2DBuilder::new(0, Vec3::Z);
-    builder.poly_b.clear();
-    builder.poly_b.len = 3;
-    builder.poly_b.has_bounding_ref = false;
-    builder.poly_b.max_r2 = 1.0;
-    builder.poly_b.us[0] = 0.0;
-    builder.poly_b.vs[0] = 0.0;
-    builder.poly_b.us[1] = 0.5;
-    builder.poly_b.vs[1] = 0.0;
-    builder.poly_b.us[2] = 0.0;
-    builder.poly_b.vs[2] = 0.5;
-    builder.poly_b.vertex_planes[0] = (7, 8);
-    builder.poly_b.vertex_planes[1] = (7, 8);
-    builder.poly_b.vertex_planes[2] = (7, 8);
-    builder.poly_b.edge_planes[0] = usize::MAX;
-    builder.poly_b.edge_planes[1] = usize::MAX;
-    builder.poly_b.edge_planes[2] = usize::MAX;
-    builder.use_a = false;
+    let gnomonic = builder.as_gnomonic_mut();
+    gnomonic.poly_b.clear();
+    gnomonic.poly_b.len = 3;
+    gnomonic.poly_b.has_bounding_ref = false;
+    gnomonic.poly_b.max_r2 = 1.0;
+    gnomonic.poly_b.us[0] = 0.0;
+    gnomonic.poly_b.vs[0] = 0.0;
+    gnomonic.poly_b.us[1] = 0.5;
+    gnomonic.poly_b.vs[1] = 0.0;
+    gnomonic.poly_b.us[2] = 0.0;
+    gnomonic.poly_b.vs[2] = 0.5;
+    gnomonic.poly_b.vertex_planes[0] = (7, 8);
+    gnomonic.poly_b.vertex_planes[1] = (7, 8);
+    gnomonic.poly_b.vertex_planes[2] = (7, 8);
+    gnomonic.poly_b.edge_planes[0] = usize::MAX;
+    gnomonic.poly_b.edge_planes[1] = usize::MAX;
+    gnomonic.poly_b.edge_planes[2] = usize::MAX;
+    gnomonic.use_a = false;
 
     assert_eq!(
         builder.debug_extraction_failure(),

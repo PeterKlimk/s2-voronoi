@@ -1,12 +1,12 @@
 use super::projection::MIN_PROJECTION_COS;
-use super::Topo2DBuilder;
+use super::{GnomonicBuilder, Topo2DBuilder};
 use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck};
 use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane};
 use glam::Vec3;
 
-impl Topo2DBuilder {
-    pub fn clip_with_slot(
+impl GnomonicBuilder {
+    pub(super) fn clip_with_slot(
         &mut self,
         neighbor_idx: usize,
         neighbor_slot: u32,
@@ -56,7 +56,7 @@ impl Topo2DBuilder {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn clip_with_slot_result(
+    pub(super) fn clip_with_slot_result(
         &mut self,
         neighbor_idx: usize,
         neighbor_slot: u32,
@@ -80,7 +80,7 @@ impl Topo2DBuilder {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn clip_with_slot_edgecheck(
+    pub(super) fn clip_with_slot_edgecheck(
         &mut self,
         neighbor_idx: usize,
         neighbor_slot: u32,
@@ -106,5 +106,40 @@ impl Topo2DBuilder {
 
         self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)?;
         Ok(())
+    }
+}
+
+impl Topo2DBuilder {
+    pub fn clip_with_slot(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+    ) -> Result<(), CellFailure> {
+        self.gnomonic_mut()
+            .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
+    }
+
+    #[cfg_attr(feature = "profiling", inline(never))]
+    pub fn clip_with_slot_result(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+    ) -> Result<ClipResult, CellFailure> {
+        self.gnomonic_mut()
+            .clip_with_slot_result(neighbor_idx, neighbor_slot, neighbor)
+    }
+
+    #[cfg_attr(feature = "profiling", inline(never))]
+    pub fn clip_with_slot_edgecheck(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+        hp_eps: f32,
+    ) -> Result<(), CellFailure> {
+        self.gnomonic_mut()
+            .clip_with_slot_edgecheck(neighbor_idx, neighbor_slot, neighbor, hp_eps)
     }
 }

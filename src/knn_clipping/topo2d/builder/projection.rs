@@ -1,4 +1,4 @@
-use super::{PolyBuffer, Topo2DBuilder};
+use super::{GnomonicBuilder, PolyBuffer, Topo2DBuilder};
 use crate::fp;
 use glam::{DVec3, Vec3};
 use std::hint::select_unpredictable;
@@ -56,8 +56,8 @@ impl TangentBasis {
 // Below this, the feasible region is effectively at the generator hemisphere boundary.
 pub(super) const MIN_PROJECTION_COS: f64 = 8.0 * f32::EPSILON as f64;
 
-impl Topo2DBuilder {
-    pub fn new(generator_idx: usize, generator: Vec3) -> Self {
+impl GnomonicBuilder {
+    pub(super) fn new(generator_idx: usize, generator: Vec3) -> Self {
         let angle_pad = 8.0 * f32::EPSILON as f64;
         let (term_sin_pad, term_cos_pad) = angle_pad.sin_cos();
         let gen64 =
@@ -86,7 +86,7 @@ impl Topo2DBuilder {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn reset(&mut self, generator_idx: usize, generator: Vec3) {
+    pub(super) fn reset(&mut self, generator_idx: usize, generator: Vec3) {
         let gen64 =
             DVec3::new(generator.x as f64, generator.y as f64, generator.z as f64).normalize();
         self.generator_idx = generator_idx;
@@ -135,32 +135,32 @@ impl Topo2DBuilder {
     }
 
     #[inline]
-    pub fn is_bounded(&self) -> bool {
+    pub(super) fn is_bounded(&self) -> bool {
         !self.current_poly().has_bounding_ref()
     }
 
     #[inline]
-    pub fn is_failed(&self) -> bool {
+    pub(super) fn is_failed(&self) -> bool {
         self.failed.is_some()
     }
 
     #[inline]
-    pub fn failure(&self) -> Option<crate::knn_clipping::cell_build::CellFailure> {
+    pub(super) fn failure(&self) -> Option<crate::knn_clipping::cell_build::CellFailure> {
         self.failed
     }
 
     #[inline]
-    pub fn vertex_count(&self) -> usize {
+    pub(super) fn vertex_count(&self) -> usize {
         self.current_poly().len
     }
 
     #[inline]
-    pub fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
+    pub(super) fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.neighbor_indices.iter().copied()
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
+    pub(super) fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
         if !self.is_bounded() || self.vertex_count() < 3 {
             return false;
         }
@@ -180,5 +180,48 @@ impl Topo2DBuilder {
         }
 
         (max_unseen_dot_bound as f64) < self.term_threshold_cache
+    }
+}
+
+impl Topo2DBuilder {
+    pub fn new(generator_idx: usize, generator: Vec3) -> Self {
+        Self {
+            inner: super::BuilderImpl::Gnomonic(GnomonicBuilder::new(generator_idx, generator)),
+        }
+    }
+
+    #[cfg_attr(feature = "profiling", inline(never))]
+    pub fn reset(&mut self, generator_idx: usize, generator: Vec3) {
+        self.gnomonic_mut().reset(generator_idx, generator);
+    }
+
+    #[inline]
+    pub fn is_bounded(&self) -> bool {
+        self.gnomonic().is_bounded()
+    }
+
+    #[inline]
+    pub fn is_failed(&self) -> bool {
+        self.gnomonic().is_failed()
+    }
+
+    #[inline]
+    pub fn failure(&self) -> Option<crate::knn_clipping::cell_build::CellFailure> {
+        self.gnomonic().failure()
+    }
+
+    #[inline]
+    pub fn vertex_count(&self) -> usize {
+        self.gnomonic().vertex_count()
+    }
+
+    #[inline]
+    pub fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.gnomonic().neighbor_indices_iter()
+    }
+
+    #[cfg_attr(feature = "profiling", inline(never))]
+    pub fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
+        self.gnomonic_mut().can_terminate(max_unseen_dot_bound)
     }
 }

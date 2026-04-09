@@ -1,12 +1,15 @@
 use super::projection::sort3_u32;
-use super::{BuilderDebugState, ExtractionInvariantFailure, Topo2DBuilder};
+use super::{BuilderDebugState, ExtractionInvariantFailure, GnomonicBuilder, Topo2DBuilder};
 use crate::fp;
 use crate::knn_clipping::cell_build::{CellFailure, CellOutputBuffer};
 use glam::{DVec3, Vec3};
 
-impl Topo2DBuilder {
+impl GnomonicBuilder {
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn to_vertex_data_full(&self, buffer: &mut CellOutputBuffer) -> Result<(), CellFailure> {
+    pub(super) fn to_vertex_data_full(
+        &self,
+        buffer: &mut CellOutputBuffer,
+    ) -> Result<(), CellFailure> {
         let poly = self.current_poly();
         if self.debug_extraction_failure().is_some() {
             return Err(CellFailure::NoValidSeed);
@@ -74,7 +77,7 @@ impl Topo2DBuilder {
         Ok(())
     }
 
-    pub fn count_active_planes(&self) -> (usize, usize) {
+    pub(super) fn count_active_planes(&self) -> (usize, usize) {
         let poly = self.current_poly();
         let mut active = vec![false; self.half_planes.len()];
 
@@ -187,5 +190,24 @@ impl Topo2DBuilder {
         }
 
         None
+    }
+}
+
+impl Topo2DBuilder {
+    #[cfg_attr(feature = "profiling", inline(never))]
+    pub fn to_vertex_data_full(&self, buffer: &mut CellOutputBuffer) -> Result<(), CellFailure> {
+        self.gnomonic().to_vertex_data_full(buffer)
+    }
+
+    pub fn count_active_planes(&self) -> (usize, usize) {
+        self.gnomonic().count_active_planes()
+    }
+
+    pub(crate) fn debug_state(&self) -> BuilderDebugState {
+        self.gnomonic().debug_state()
+    }
+
+    pub(crate) fn debug_extraction_failure(&self) -> Option<ExtractionInvariantFailure> {
+        self.gnomonic().debug_extraction_failure()
     }
 }
