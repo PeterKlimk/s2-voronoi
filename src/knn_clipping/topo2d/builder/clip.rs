@@ -1,6 +1,7 @@
 use super::projection::MIN_PROJECTION_COS;
 use super::{
-    BuilderClipOutcome, BuilderReplayNeighbor, BuilderStepOutcome, GnomonicBuilder, Topo2DBuilder,
+    BuilderClipOutcome, BuilderImpl, BuilderReplayNeighbor, BuilderStepOutcome, FallbackBuilder,
+    GnomonicBuilder, Topo2DBuilder,
 };
 use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck};
@@ -117,7 +118,68 @@ impl GnomonicBuilder {
     }
 }
 
+impl FallbackBuilder {
+    #[inline]
+    pub(super) fn clip_with_slot(
+        &mut self,
+        _neighbor_idx: usize,
+        _neighbor_slot: u32,
+        _neighbor: Vec3,
+    ) -> Result<(), CellFailure> {
+        Err(self.failure)
+    }
+
+    #[inline]
+    pub(super) fn clip_with_slot_result(
+        &mut self,
+        _neighbor_idx: usize,
+        _neighbor_slot: u32,
+        _neighbor: Vec3,
+    ) -> Result<ClipResult, CellFailure> {
+        Err(self.failure)
+    }
+
+    #[inline]
+    pub(super) fn clip_with_slot_edgecheck(
+        &mut self,
+        _neighbor_idx: usize,
+        _neighbor_slot: u32,
+        _neighbor: Vec3,
+        _hp_eps: f32,
+    ) -> Result<(), CellFailure> {
+        Err(self.failure)
+    }
+}
+
 impl Topo2DBuilder {
+    pub(crate) fn handle_step_result(
+        &mut self,
+        result: Result<(), CellFailure>,
+    ) -> Result<BuilderStepOutcome, CellFailure> {
+        match Self::classify_step_result(result)? {
+            BuilderStepOutcome::Applied => Ok(BuilderStepOutcome::Applied),
+            BuilderStepOutcome::NeedsFallback(request) => {
+                self.enter_fallback(request);
+                Ok(BuilderStepOutcome::NeedsFallback(request))
+            }
+        }
+    }
+
+    pub(crate) fn handle_clip_result(
+        &mut self,
+        result: Result<ClipResult, CellFailure>,
+    ) -> Result<BuilderClipOutcome, CellFailure> {
+        match Self::classify_clip_result(result)? {
+            BuilderClipOutcome::Applied(clip_result) => {
+                Ok(BuilderClipOutcome::Applied(clip_result))
+            }
+            BuilderClipOutcome::NeedsFallback(request) => {
+                self.enter_fallback(request);
+                Ok(BuilderClipOutcome::NeedsFallback(request))
+            }
+        }
+    }
+
     #[inline]
     pub(crate) fn clip_with_slot_policy(
         &mut self,
@@ -125,11 +187,15 @@ impl Topo2DBuilder {
         neighbor_slot: u32,
         neighbor: Vec3,
     ) -> Result<BuilderStepOutcome, CellFailure> {
-        Self::classify_step_result(self.gnomonic_mut().clip_with_slot(
-            neighbor_idx,
-            neighbor_slot,
-            neighbor,
-        ))
+        let result = match &mut self.inner {
+            BuilderImpl::Gnomonic(builder) => {
+                builder.clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
+            }
+            BuilderImpl::Fallback(builder) => {
+                builder.clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
+            }
+        };
+        self.handle_step_result(result)
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -139,11 +205,15 @@ impl Topo2DBuilder {
         neighbor_slot: u32,
         neighbor: Vec3,
     ) -> Result<BuilderClipOutcome, CellFailure> {
-        Self::classify_clip_result(self.gnomonic_mut().clip_with_slot_result(
-            neighbor_idx,
-            neighbor_slot,
-            neighbor,
-        ))
+        let result = match &mut self.inner {
+            BuilderImpl::Gnomonic(builder) => {
+                builder.clip_with_slot_result(neighbor_idx, neighbor_slot, neighbor)
+            }
+            BuilderImpl::Fallback(builder) => {
+                builder.clip_with_slot_result(neighbor_idx, neighbor_slot, neighbor)
+            }
+        };
+        self.handle_clip_result(result)
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -154,12 +224,15 @@ impl Topo2DBuilder {
         neighbor: Vec3,
         hp_eps: f32,
     ) -> Result<BuilderStepOutcome, CellFailure> {
-        Self::classify_step_result(self.gnomonic_mut().clip_with_slot_edgecheck(
-            neighbor_idx,
-            neighbor_slot,
-            neighbor,
-            hp_eps,
-        ))
+        let result = match &mut self.inner {
+            BuilderImpl::Gnomonic(builder) => {
+                builder.clip_with_slot_edgecheck(neighbor_idx, neighbor_slot, neighbor, hp_eps)
+            }
+            BuilderImpl::Fallback(builder) => {
+                builder.clip_with_slot_edgecheck(neighbor_idx, neighbor_slot, neighbor, hp_eps)
+            }
+        };
+        self.handle_step_result(result)
     }
 
     pub fn clip_with_slot(

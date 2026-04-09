@@ -1,5 +1,8 @@
-use super::{BuilderReplayPlan, GnomonicBuilder, PolyBuffer, Topo2DBuilder};
+use super::{
+    BuilderImpl, BuilderReplayPlan, FallbackBuilder, GnomonicBuilder, PolyBuffer, Topo2DBuilder,
+};
 use crate::fp;
+use crate::knn_clipping::cell_build::CellFailure;
 use glam::{DVec3, Vec3};
 use std::hint::select_unpredictable;
 
@@ -193,50 +196,111 @@ impl GnomonicBuilder {
     }
 }
 
+impl FallbackBuilder {
+    #[inline]
+    pub(super) fn is_bounded(&self) -> bool {
+        false
+    }
+
+    #[inline]
+    pub(super) fn is_failed(&self) -> bool {
+        true
+    }
+
+    #[inline]
+    pub(super) fn failure(&self) -> Option<CellFailure> {
+        Some(self.failure)
+    }
+
+    #[inline]
+    pub(super) fn vertex_count(&self) -> usize {
+        0
+    }
+
+    #[inline]
+    pub(super) fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.replay_neighbors
+            .iter()
+            .map(|neighbor| neighbor.neighbor_idx)
+    }
+
+    #[inline]
+    pub(super) fn can_terminate(&mut self, _max_unseen_dot_bound: f32) -> bool {
+        false
+    }
+}
+
 impl Topo2DBuilder {
     pub fn new(generator_idx: usize, generator: Vec3) -> Self {
         Self {
-            inner: super::BuilderImpl::Gnomonic(GnomonicBuilder::new(generator_idx, generator)),
+            inner: BuilderImpl::Gnomonic(GnomonicBuilder::new(generator_idx, generator)),
         }
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
     pub fn reset(&mut self, generator_idx: usize, generator: Vec3) {
-        self.gnomonic_mut().reset(generator_idx, generator);
+        match &mut self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.reset(generator_idx, generator),
+            BuilderImpl::Fallback(_) => {
+                self.inner = BuilderImpl::Gnomonic(GnomonicBuilder::new(generator_idx, generator));
+            }
+        }
     }
 
     #[inline]
     pub fn is_bounded(&self) -> bool {
-        self.gnomonic().is_bounded()
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.is_bounded(),
+            BuilderImpl::Fallback(builder) => builder.is_bounded(),
+        }
     }
 
     #[inline]
     pub fn is_failed(&self) -> bool {
-        self.gnomonic().is_failed()
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.is_failed(),
+            BuilderImpl::Fallback(builder) => builder.is_failed(),
+        }
     }
 
     #[inline]
     pub fn failure(&self) -> Option<crate::knn_clipping::cell_build::CellFailure> {
-        self.gnomonic().failure()
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.failure(),
+            BuilderImpl::Fallback(builder) => builder.failure(),
+        }
     }
 
     #[inline]
     pub fn vertex_count(&self) -> usize {
-        self.gnomonic().vertex_count()
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.vertex_count(),
+            BuilderImpl::Fallback(builder) => builder.vertex_count(),
+        }
     }
 
     #[inline]
     pub fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
-        self.gnomonic().neighbor_indices_iter()
+        let iter: Box<dyn Iterator<Item = usize> + '_> = match &self.inner {
+            BuilderImpl::Gnomonic(builder) => Box::new(builder.neighbor_indices_iter()),
+            BuilderImpl::Fallback(builder) => Box::new(builder.neighbor_indices_iter()),
+        };
+        iter
     }
 
     #[inline]
     pub(crate) fn fallback_replay_plan(&self) -> BuilderReplayPlan<'_> {
-        self.gnomonic().fallback_replay_plan()
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.fallback_replay_plan(),
+            BuilderImpl::Fallback(builder) => builder.fallback_replay_plan(),
+        }
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
     pub fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
-        self.gnomonic_mut().can_terminate(max_unseen_dot_bound)
+        match &mut self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.can_terminate(max_unseen_dot_bound),
+            BuilderImpl::Fallback(builder) => builder.can_terminate(max_unseen_dot_bound),
+        }
     }
 }

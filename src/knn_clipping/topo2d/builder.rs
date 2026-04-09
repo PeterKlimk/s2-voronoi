@@ -13,6 +13,7 @@ pub use projection::TangentBasis;
 
 enum BuilderImpl {
     Gnomonic(GnomonicBuilder),
+    Fallback(FallbackBuilder),
 }
 
 pub struct Topo2DBuilder {
@@ -32,9 +33,7 @@ pub(crate) struct BuilderFallbackRequest {
 impl BuilderFallbackRequest {
     #[inline]
     pub(crate) fn as_cell_failure(self) -> CellFailure {
-        match self.trigger {
-            BuilderFallbackTrigger::ProjectionLimit => CellFailure::ProjectionInvalid,
-        }
+        self.trigger.as_cell_failure()
     }
 }
 
@@ -82,6 +81,14 @@ pub(crate) struct GnomonicBuilder {
     term_cos_pad: f64,
     term_threshold_cache: f64,
     term_cache_valid: bool,
+}
+
+pub(crate) struct FallbackBuilder {
+    pub(crate) generator_idx: usize,
+    pub(crate) generator: DVec3,
+    replay_neighbors: Vec<BuilderReplayNeighbor>,
+    trigger: BuilderFallbackTrigger,
+    failure: CellFailure,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -172,10 +179,25 @@ impl Topo2DBuilder {
         }
     }
 
+    pub(crate) fn enter_fallback(&mut self, request: BuilderFallbackRequest) {
+        let fallback = match &self.inner {
+            BuilderImpl::Gnomonic(builder) => {
+                FallbackBuilder::from_gnomonic(builder, request.trigger)
+            }
+            BuilderImpl::Fallback(builder) => {
+                FallbackBuilder::from_fallback(builder, request.trigger)
+            }
+        };
+        self.inner = BuilderImpl::Fallback(fallback);
+    }
+
     #[inline]
     pub(crate) fn gnomonic(&self) -> &GnomonicBuilder {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder,
+            BuilderImpl::Fallback(_) => {
+                panic!("attempted to access gnomonic builder after fallback handoff")
+            }
         }
     }
 
@@ -183,6 +205,9 @@ impl Topo2DBuilder {
     pub(crate) fn gnomonic_mut(&mut self) -> &mut GnomonicBuilder {
         match &mut self.inner {
             BuilderImpl::Gnomonic(builder) => builder,
+            BuilderImpl::Fallback(_) => {
+                panic!("attempted to mutably access gnomonic builder after fallback handoff")
+            }
         }
     }
 
@@ -196,5 +221,53 @@ impl Topo2DBuilder {
     #[inline]
     pub(crate) fn as_gnomonic_mut(&mut self) -> &mut GnomonicBuilder {
         self.gnomonic_mut()
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn as_fallback(&self) -> &FallbackBuilder {
+        match &self.inner {
+            BuilderImpl::Fallback(builder) => builder,
+            BuilderImpl::Gnomonic(_) => panic!("expected fallback builder"),
+        }
+    }
+}
+
+impl FallbackBuilder {
+    fn from_gnomonic(builder: &GnomonicBuilder, trigger: BuilderFallbackTrigger) -> Self {
+        Self {
+            generator_idx: builder.generator_idx,
+            generator: builder.generator,
+            replay_neighbors: builder.replay_neighbors.clone(),
+            trigger,
+            failure: trigger.as_cell_failure(),
+        }
+    }
+
+    fn from_fallback(builder: &FallbackBuilder, trigger: BuilderFallbackTrigger) -> Self {
+        Self {
+            generator_idx: builder.generator_idx,
+            generator: builder.generator,
+            replay_neighbors: builder.replay_neighbors.clone(),
+            trigger,
+            failure: trigger.as_cell_failure(),
+        }
+    }
+
+    #[inline]
+    fn fallback_replay_plan(&self) -> BuilderReplayPlan<'_> {
+        BuilderReplayPlan {
+            generator_idx: self.generator_idx,
+            accepted_neighbors: &self.replay_neighbors,
+        }
+    }
+}
+
+impl BuilderFallbackTrigger {
+    #[inline]
+    fn as_cell_failure(self) -> CellFailure {
+        match self {
+            BuilderFallbackTrigger::ProjectionLimit => CellFailure::ProjectionInvalid,
+        }
     }
 }

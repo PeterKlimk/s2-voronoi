@@ -17,6 +17,14 @@ Today there is only one implementation:
 
 - `GnomonicBuilder`
 
+There is now also a minimal fallback stub behind the wrapper:
+
+- `FallbackBuilder`
+
+The stub does not implement alternate geometry yet. Its current purpose is to prove that wrapper
+handoff can switch implementations, preserve replay state, and keep the rest of `cell_build/`
+decoupled from gnomonic internals.
+
 The wrapper also owns the first version of handoff policy:
 
 - normal clip progress stays in the current builder
@@ -121,6 +129,9 @@ Recommended constraints:
 - entered only from explicit wrapper handoff
 - no attempt to share live clip state with `GnomonicBuilder`
 - deterministic replay of accepted neighbors before consuming new neighbors
+
+The current stub only covers the handoff/replay portion of that plan. It still reports the same
+terminal `ProjectionInvalid` outcome after handoff.
 
 ## Open design questions
 

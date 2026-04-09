@@ -207,6 +207,69 @@ fn too_many_vertices_remains_terminal_in_policy_api() {
 }
 
 #[test]
+fn fallback_handoff_switches_builder_variant_and_replays_constraints() {
+    let g = Vec3::new(0.0, 0.0, 1.0);
+    let mut builder = Topo2DBuilder::new(17, g);
+
+    let h1 = Vec3::new(1.0, 0.0, 0.5).normalize();
+    let h2 = Vec3::new(-0.5, 0.866, 0.5).normalize();
+    let h3 = Vec3::new(-0.5, -0.866, 0.5).normalize();
+
+    builder
+        .clip_with_slot_edgecheck_policy(11, 21, h1, 0.125)
+        .expect("edgecheck clip should apply");
+    builder
+        .clip_with_slot_policy(12, 22, h2)
+        .expect("normal clip should apply");
+    builder
+        .clip_with_slot_policy(13, 23, h3)
+        .expect("normal clip should apply");
+
+    let outcome = builder
+        .handle_clip_result(Err(
+            crate::knn_clipping::cell_build::CellFailure::ProjectionInvalid,
+        ))
+        .expect("projection invalid should be converted to a fallback handoff");
+
+    assert_eq!(
+        outcome,
+        BuilderClipOutcome::NeedsFallback(BuilderFallbackRequest {
+            trigger: BuilderFallbackTrigger::ProjectionLimit,
+        })
+    );
+    assert!(builder.is_failed());
+    assert!(!builder.is_bounded());
+    assert_eq!(
+        builder.failure(),
+        Some(crate::knn_clipping::cell_build::CellFailure::ProjectionInvalid)
+    );
+    assert_eq!(
+        builder.as_fallback().trigger,
+        BuilderFallbackTrigger::ProjectionLimit
+    );
+    assert_eq!(
+        builder.fallback_replay_plan().accepted_neighbors,
+        &[
+            BuilderReplayNeighbor {
+                neighbor_idx: 11,
+                neighbor_slot: 21,
+                hp_eps: Some(0.125),
+            },
+            BuilderReplayNeighbor {
+                neighbor_idx: 12,
+                neighbor_slot: 22,
+                hp_eps: None,
+            },
+            BuilderReplayNeighbor {
+                neighbor_idx: 13,
+                neighbor_slot: 23,
+                hp_eps: None,
+            },
+        ]
+    );
+}
+
+#[test]
 fn replay_plan_preserves_edgecheck_eps_and_order() {
     let g = Vec3::new(0.0, 0.0, 1.0);
     let mut builder = Topo2DBuilder::new(0, g);

@@ -1,5 +1,8 @@
 use super::projection::sort3_u32;
-use super::{BuilderDebugState, ExtractionInvariantFailure, GnomonicBuilder, Topo2DBuilder};
+use super::{
+    BuilderDebugState, BuilderImpl, ExtractionInvariantFailure, FallbackBuilder, GnomonicBuilder,
+    Topo2DBuilder,
+};
 use crate::fp;
 use crate::knn_clipping::cell_build::{CellFailure, CellOutputBuffer};
 use glam::{DVec3, Vec3};
@@ -193,21 +196,63 @@ impl GnomonicBuilder {
     }
 }
 
-impl Topo2DBuilder {
+impl FallbackBuilder {
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn to_vertex_data_full(&self, buffer: &mut CellOutputBuffer) -> Result<(), CellFailure> {
-        self.gnomonic().to_vertex_data_full(buffer)
+    pub(super) fn to_vertex_data_full(
+        &self,
+        _buffer: &mut CellOutputBuffer,
+    ) -> Result<(), CellFailure> {
+        Err(self.failure)
     }
 
-    pub fn count_active_planes(&self) -> (usize, usize) {
-        self.gnomonic().count_active_planes()
+    pub(super) fn count_active_planes(&self) -> (usize, usize) {
+        (self.replay_neighbors.len(), self.replay_neighbors.len())
     }
 
     pub(crate) fn debug_state(&self) -> BuilderDebugState {
-        self.gnomonic().debug_state()
+        BuilderDebugState {
+            bounded: false,
+            poly_len: 0,
+            has_bounding_ref: false,
+            min_cos: f64::NAN,
+            half_plane_count: self.replay_neighbors.len(),
+            neighbor_index_count: self.replay_neighbors.len(),
+            neighbor_slot_count: self.replay_neighbors.len(),
+        }
     }
 
     pub(crate) fn debug_extraction_failure(&self) -> Option<ExtractionInvariantFailure> {
-        self.gnomonic().debug_extraction_failure()
+        Some(ExtractionInvariantFailure::UnboundedPolygon)
+    }
+}
+
+impl Topo2DBuilder {
+    #[cfg_attr(feature = "profiling", inline(never))]
+    pub fn to_vertex_data_full(&self, buffer: &mut CellOutputBuffer) -> Result<(), CellFailure> {
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.to_vertex_data_full(buffer),
+            BuilderImpl::Fallback(builder) => builder.to_vertex_data_full(buffer),
+        }
+    }
+
+    pub fn count_active_planes(&self) -> (usize, usize) {
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.count_active_planes(),
+            BuilderImpl::Fallback(builder) => builder.count_active_planes(),
+        }
+    }
+
+    pub(crate) fn debug_state(&self) -> BuilderDebugState {
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.debug_state(),
+            BuilderImpl::Fallback(builder) => builder.debug_state(),
+        }
+    }
+
+    pub(crate) fn debug_extraction_failure(&self) -> Option<ExtractionInvariantFailure> {
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.debug_extraction_failure(),
+            BuilderImpl::Fallback(builder) => builder.debug_extraction_failure(),
+        }
     }
 }
