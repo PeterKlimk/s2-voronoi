@@ -1,0 +1,184 @@
+use super::{PolyBuffer, Topo2DBuilder};
+use crate::fp;
+use glam::{DVec3, Vec3};
+use std::hint::select_unpredictable;
+
+#[inline(always)]
+fn cswap_u32(a: &mut u32, b: &mut u32) {
+    let va = *a;
+    let vb = *b;
+    let cond = va <= vb;
+    *a = select_unpredictable(cond, va, vb);
+    *b = select_unpredictable(cond, vb, va);
+}
+
+#[inline(always)]
+pub(super) fn sort3_u32(a: u32, b: u32, c: u32) -> [u32; 3] {
+    // Sorting network (3 elements): (0,1) (1,2) (0,1)
+    let mut x0 = a;
+    let mut x1 = b;
+    let mut x2 = c;
+    cswap_u32(&mut x0, &mut x1);
+    cswap_u32(&mut x1, &mut x2);
+    cswap_u32(&mut x0, &mut x1);
+    [x0, x1, x2]
+}
+
+/// Orthonormal tangent basis for gnomonic projection.
+pub struct TangentBasis {
+    pub t1: DVec3,
+    pub t2: DVec3,
+    pub g: DVec3,
+}
+
+impl TangentBasis {
+    pub fn new(g: DVec3) -> Self {
+        let arbitrary = if g.x.abs() <= g.y.abs() && g.x.abs() <= g.z.abs() {
+            DVec3::X
+        } else if g.y.abs() <= g.z.abs() {
+            DVec3::Y
+        } else {
+            DVec3::Z
+        };
+        let t1 = g.cross(arbitrary).normalize();
+        let t2 = g.cross(t1);
+        TangentBasis { t1, t2, g }
+    }
+
+    #[cfg_attr(feature = "profiling", inline(never))]
+    #[cfg_attr(not(feature = "profiling"), inline)]
+    pub fn plane_to_line(&self, n: DVec3) -> (f64, f64, f64) {
+        (n.dot(self.t1), n.dot(self.t2), n.dot(self.g))
+    }
+}
+
+// Conservative lower bound on g · x for a vertex in the current gnomonic model.
+// Below this, the feasible region is effectively at the generator hemisphere boundary.
+pub(super) const MIN_PROJECTION_COS: f64 = 8.0 * f32::EPSILON as f64;
+
+impl Topo2DBuilder {
+    pub fn new(generator_idx: usize, generator: Vec3) -> Self {
+        let angle_pad = 8.0 * f32::EPSILON as f64;
+        let (term_sin_pad, term_cos_pad) = angle_pad.sin_cos();
+        let gen64 =
+            DVec3::new(generator.x as f64, generator.y as f64, generator.z as f64).normalize();
+        let basis = TangentBasis::new(gen64);
+
+        let mut poly_a = PolyBuffer::new();
+        poly_a.init_bounding(1e6);
+
+        Self {
+            generator_idx,
+            generator: gen64,
+            basis,
+            half_planes: Vec::with_capacity(32),
+            neighbor_indices: Vec::with_capacity(32),
+            neighbor_slots: Vec::with_capacity(32),
+            poly_a,
+            poly_b: PolyBuffer::new(),
+            use_a: true,
+            failed: None,
+            term_sin_pad,
+            term_cos_pad,
+            term_threshold_cache: 0.0,
+            term_cache_valid: false,
+        }
+    }
+
+    #[cfg_attr(feature = "profiling", inline(never))]
+    pub fn reset(&mut self, generator_idx: usize, generator: Vec3) {
+        let gen64 =
+            DVec3::new(generator.x as f64, generator.y as f64, generator.z as f64).normalize();
+        self.generator_idx = generator_idx;
+        self.generator = gen64;
+        self.basis = TangentBasis::new(gen64);
+        self.half_planes.clear();
+        self.neighbor_indices.clear();
+        self.neighbor_slots.clear();
+        self.poly_a.init_bounding(1e6);
+        self.poly_b.clear();
+        self.use_a = true;
+        self.failed = None;
+        self.term_cache_valid = false;
+    }
+
+    /// Compute the bisector half-plane coefficients (a, b, c) for a neighbor.
+    #[inline]
+    pub(super) fn bisector_coefficients(&self, neighbor: Vec3) -> (f64, f64, f64) {
+        debug_assert!(
+            (neighbor.length_squared() - 1.0).abs() < 1e-5,
+            "neighbor not unit-normalized: |N|² = {}",
+            neighbor.length_squared()
+        );
+
+        let n_raw = DVec3::new(neighbor.x as f64, neighbor.y as f64, neighbor.z as f64);
+        let len_sq = n_raw.length_squared();
+        let scale = fp::fma_f64(len_sq, 0.5, 0.5);
+
+        let g = self.generator;
+        let normal_unnorm = DVec3::new(
+            fp::fma_f64(g.x, scale, -n_raw.x),
+            fp::fma_f64(g.y, scale, -n_raw.y),
+            fp::fma_f64(g.z, scale, -n_raw.z),
+        );
+
+        self.basis.plane_to_line(normal_unnorm)
+    }
+
+    #[inline]
+    pub(super) fn current_poly(&self) -> &PolyBuffer {
+        if self.use_a {
+            &self.poly_a
+        } else {
+            &self.poly_b
+        }
+    }
+
+    #[inline]
+    pub fn is_bounded(&self) -> bool {
+        !self.current_poly().has_bounding_ref()
+    }
+
+    #[inline]
+    pub fn is_failed(&self) -> bool {
+        self.failed.is_some()
+    }
+
+    #[inline]
+    pub fn failure(&self) -> Option<crate::knn_clipping::cell_build::CellFailure> {
+        self.failed
+    }
+
+    #[inline]
+    pub fn vertex_count(&self) -> usize {
+        self.current_poly().len
+    }
+
+    #[inline]
+    pub fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.neighbor_indices.iter().copied()
+    }
+
+    #[cfg_attr(feature = "profiling", inline(never))]
+    pub fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
+        if !self.is_bounded() || self.vertex_count() < 3 {
+            return false;
+        }
+
+        if !self.term_cache_valid {
+            let min_cos = self.current_poly().min_cos();
+            if min_cos <= 0.0 || min_cos > 1.0 {
+                return false;
+            }
+
+            let sin_theta = (1.0 - min_cos * min_cos).max(0.0).sqrt();
+            let cos_theta_pad =
+                fp::fma_f64(min_cos, self.term_cos_pad, -sin_theta * self.term_sin_pad);
+            let cos_2max = fp::fma_f64(2.0 * cos_theta_pad, cos_theta_pad, -1.0);
+            self.term_threshold_cache = cos_2max - 3.0 * f32::EPSILON as f64;
+            self.term_cache_valid = true;
+        }
+
+        (max_unseen_dot_bound as f64) < self.term_threshold_cache
+    }
+}
