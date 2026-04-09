@@ -6,6 +6,7 @@ mod tests;
 
 use super::types::{HalfPlane, PolyBuffer};
 use crate::knn_clipping::cell_build::CellFailure;
+use crate::knn_clipping::topo2d::types::ClipResult;
 use glam::DVec3;
 
 pub use projection::TangentBasis;
@@ -16,6 +17,37 @@ enum BuilderImpl {
 
 pub struct Topo2DBuilder {
     inner: BuilderImpl,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BuilderFallbackTrigger {
+    ProjectionLimit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BuilderFallbackRequest {
+    pub(crate) trigger: BuilderFallbackTrigger,
+}
+
+impl BuilderFallbackRequest {
+    #[inline]
+    pub(crate) fn as_cell_failure(self) -> CellFailure {
+        match self.trigger {
+            BuilderFallbackTrigger::ProjectionLimit => CellFailure::ProjectionInvalid,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BuilderStepOutcome {
+    Applied,
+    NeedsFallback(BuilderFallbackRequest),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BuilderClipOutcome {
+    Applied(ClipResult),
+    NeedsFallback(BuilderFallbackRequest),
 }
 
 pub(crate) struct GnomonicBuilder {
@@ -85,6 +117,47 @@ pub(crate) enum ExtractionInvariantFailure {
 }
 
 impl Topo2DBuilder {
+    #[inline]
+    pub(crate) fn fallback_request_for_failure(
+        failure: CellFailure,
+    ) -> Option<BuilderFallbackRequest> {
+        match failure {
+            CellFailure::ProjectionInvalid => Some(BuilderFallbackRequest {
+                trigger: BuilderFallbackTrigger::ProjectionLimit,
+            }),
+            CellFailure::TooManyVertices
+            | CellFailure::ClippedAway
+            | CellFailure::UnboundedAfterExhaustion
+            | CellFailure::NoValidSeed => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn classify_step_result(
+        result: Result<(), CellFailure>,
+    ) -> Result<BuilderStepOutcome, CellFailure> {
+        match result {
+            Ok(()) => Ok(BuilderStepOutcome::Applied),
+            Err(failure) => match Self::fallback_request_for_failure(failure) {
+                Some(request) => Ok(BuilderStepOutcome::NeedsFallback(request)),
+                None => Err(failure),
+            },
+        }
+    }
+
+    #[inline]
+    pub(crate) fn classify_clip_result(
+        result: Result<ClipResult, CellFailure>,
+    ) -> Result<BuilderClipOutcome, CellFailure> {
+        match result {
+            Ok(clip_result) => Ok(BuilderClipOutcome::Applied(clip_result)),
+            Err(failure) => match Self::fallback_request_for_failure(failure) {
+                Some(request) => Ok(BuilderClipOutcome::NeedsFallback(request)),
+                None => Err(failure),
+            },
+        }
+    }
+
     #[inline]
     pub(crate) fn gnomonic(&self) -> &GnomonicBuilder {
         match &self.inner {

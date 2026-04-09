@@ -181,3 +181,25 @@ fn extraction_failure_reports_invalid_vertex_plane_metadata() {
         })
     );
 }
+
+#[test]
+fn projection_invalid_is_classified_as_fallback_handoff() {
+    assert_eq!(
+        Topo2DBuilder::classify_clip_result(Err(
+            crate::knn_clipping::cell_build::CellFailure::ProjectionInvalid,
+        )),
+        Ok(BuilderClipOutcome::NeedsFallback(BuilderFallbackRequest {
+            trigger: BuilderFallbackTrigger::ProjectionLimit,
+        }))
+    );
+}
+
+#[test]
+fn too_many_vertices_remains_terminal_in_policy_api() {
+    assert_eq!(
+        Topo2DBuilder::classify_clip_result(Err(
+            crate::knn_clipping::cell_build::CellFailure::TooManyVertices,
+        )),
+        Err(crate::knn_clipping::cell_build::CellFailure::TooManyVertices)
+    );
+}

@@ -27,6 +27,10 @@ reduces to repeated convex polygon clipping by half-planes in 2D.
 This projection is **different per generator**, which is why most 2D geometric quantities cannot
 be shared between cells, even when an underlying 3D plane is shared.
 
+The current `topo2d` builder now has an internal wrapper seam around the gnomonic implementation
+so future non-hemispheric handling can be introduced as an alternate builder rather than as
+special-case logic in `cell_build/`. See `docs/fallback_builder.md`.
+
 ## Module map
 
 - `src/lib.rs`: public API (`compute`, `compute_with`, `validation`).
@@ -59,6 +63,21 @@ layer and the neighbor-source boundary, not by reintroducing local fallback logi
 single-cell build orchestration.
 
 See `docs/policy.md`.
+
+## Fallback builder seam
+
+`src/knn_clipping/topo2d/builder.rs` owns the builder-implementation seam.
+
+Today:
+
+- `Topo2DBuilder` dispatches to `GnomonicBuilder`
+- projection-limit failure is classified as a fallback handoff request internally
+- `cell_build/` only sees builder outcomes, not gnomonic projection details
+
+That seam is intentionally small so a future non-hemispheric fallback builder can slot in without
+re-entangling clip representation, stream consumption, and terminal-failure classification.
+
+See `docs/fallback_builder.md`.
 
 ## Glossary
 

@@ -8,6 +8,7 @@ use std::time::Duration;
 use crate::cube_grid::{
     DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream, PackedQuery,
 };
+use crate::knn_clipping::topo2d::{BuilderClipOutcome, BuilderStepOutcome};
 use crate::policy::{KnnPolicy, TerminationPolicy};
 
 use super::{CellBuildError, CellOutputBuffer};
@@ -194,17 +195,14 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
             }
 
             let neighbor = points[seed.neighbor_idx];
-            if ctx
-                .builder
-                .clip_with_slot_edgecheck(
-                    seed.neighbor_idx,
-                    seed.neighbor_slot,
-                    neighbor,
-                    seed.hp_eps,
-                )
-                .is_err()
-            {
-                break;
+            match ctx.builder.clip_with_slot_edgecheck_policy(
+                seed.neighbor_idx,
+                seed.neighbor_slot,
+                neighbor,
+                seed.hp_eps,
+            ) {
+                Ok(BuilderStepOutcome::Applied) => {}
+                Ok(BuilderStepOutcome::NeedsFallback(_)) | Err(_) => break,
             }
             neighbors_processed += 1;
         }
@@ -265,13 +263,13 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                     last_clip_phase = "stream";
 
                     let neighbor = points[neighbor_idx];
-                    let clip_result = match ctx.builder.clip_with_slot_result(
+                    let clip_result = match ctx.builder.clip_with_slot_result_policy(
                         neighbor_idx,
                         neighbor_slot,
                         neighbor,
                     ) {
-                        Ok(result) => result,
-                        Err(_) => break,
+                        Ok(BuilderClipOutcome::Applied(result)) => result,
+                        Ok(BuilderClipOutcome::NeedsFallback(_)) | Err(_) => break,
                     };
 
                     neighbors_processed += 1;

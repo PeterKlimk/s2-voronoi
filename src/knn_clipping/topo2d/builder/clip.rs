@@ -1,5 +1,5 @@
 use super::projection::MIN_PROJECTION_COS;
-use super::{GnomonicBuilder, Topo2DBuilder};
+use super::{BuilderClipOutcome, BuilderStepOutcome, GnomonicBuilder, Topo2DBuilder};
 use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck};
 use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane};
@@ -110,14 +110,60 @@ impl GnomonicBuilder {
 }
 
 impl Topo2DBuilder {
+    #[inline]
+    pub(crate) fn clip_with_slot_policy(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+    ) -> Result<BuilderStepOutcome, CellFailure> {
+        Self::classify_step_result(self.gnomonic_mut().clip_with_slot(
+            neighbor_idx,
+            neighbor_slot,
+            neighbor,
+        ))
+    }
+
+    #[cfg_attr(feature = "profiling", inline(never))]
+    pub(crate) fn clip_with_slot_result_policy(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+    ) -> Result<BuilderClipOutcome, CellFailure> {
+        Self::classify_clip_result(self.gnomonic_mut().clip_with_slot_result(
+            neighbor_idx,
+            neighbor_slot,
+            neighbor,
+        ))
+    }
+
+    #[cfg_attr(feature = "profiling", inline(never))]
+    pub(crate) fn clip_with_slot_edgecheck_policy(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+        hp_eps: f32,
+    ) -> Result<BuilderStepOutcome, CellFailure> {
+        Self::classify_step_result(self.gnomonic_mut().clip_with_slot_edgecheck(
+            neighbor_idx,
+            neighbor_slot,
+            neighbor,
+            hp_eps,
+        ))
+    }
+
     pub fn clip_with_slot(
         &mut self,
         neighbor_idx: usize,
         neighbor_slot: u32,
         neighbor: Vec3,
     ) -> Result<(), CellFailure> {
-        self.gnomonic_mut()
-            .clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
+        match self.clip_with_slot_policy(neighbor_idx, neighbor_slot, neighbor)? {
+            BuilderStepOutcome::Applied => Ok(()),
+            BuilderStepOutcome::NeedsFallback(request) => Err(request.as_cell_failure()),
+        }
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -127,19 +173,9 @@ impl Topo2DBuilder {
         neighbor_slot: u32,
         neighbor: Vec3,
     ) -> Result<ClipResult, CellFailure> {
-        self.gnomonic_mut()
-            .clip_with_slot_result(neighbor_idx, neighbor_slot, neighbor)
-    }
-
-    #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn clip_with_slot_edgecheck(
-        &mut self,
-        neighbor_idx: usize,
-        neighbor_slot: u32,
-        neighbor: Vec3,
-        hp_eps: f32,
-    ) -> Result<(), CellFailure> {
-        self.gnomonic_mut()
-            .clip_with_slot_edgecheck(neighbor_idx, neighbor_slot, neighbor, hp_eps)
+        match self.clip_with_slot_result_policy(neighbor_idx, neighbor_slot, neighbor)? {
+            BuilderClipOutcome::Applied(clip_result) => Ok(clip_result),
+            BuilderClipOutcome::NeedsFallback(request) => Err(request.as_cell_failure()),
+        }
     }
 }
