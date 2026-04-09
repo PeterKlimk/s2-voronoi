@@ -1,3 +1,8 @@
+mod failure;
+mod frontier;
+#[cfg(test)]
+mod tests;
+
 use std::time::Duration;
 
 use crate::cube_grid::{
@@ -5,7 +10,9 @@ use crate::cube_grid::{
 };
 use crate::policy::{KnnPolicy, TerminationPolicy};
 
-use super::{CellBuildError, CellFailure, CellOutputBuffer};
+use super::{CellBuildError, CellOutputBuffer};
+use failure::{classify_terminal_failure, unexpected_failure_error};
+use frontier::{maybe_terminate_or_advance_frontier, probe_frontier};
 
 use glam::Vec3;
 
@@ -46,65 +53,6 @@ impl AttemptedNeighbors {
     fn mark(&mut self, id: usize) {
         debug_assert!(id < self.seen_stamp.len(), "neighbor id out of bounds");
         self.seen_stamp[id] = self.stamp;
-    }
-}
-
-#[inline]
-fn probe_frontier<'a, 'm, 'p, 'g>(
-    stream: &mut DirectedNeighborStream<'a, 'm, 'p, 'g>,
-    packed_chunk: &mut Vec<u32>,
-    used_knn: &mut bool,
-    knn_stage: &mut crate::knn_clipping::timing::KnnCellStage,
-    knn_query_time: &mut Duration,
-) -> DirectedNeighborFrontier {
-    let t_knn = crate::knn_clipping::timing::Timer::start();
-    let cursor_stage_before = stream.is_cursor_stage();
-    let frontier = stream.frontier(packed_chunk);
-    let frontier_is_cursor = match frontier {
-        DirectedNeighborFrontier::ExactBatch(batch) => {
-            batch.source == DirectedNeighborBatchSource::DirectedCursor
-        }
-        DirectedNeighborFrontier::UnknownButBounded { .. }
-        | DirectedNeighborFrontier::Exhausted => cursor_stage_before,
-    };
-    if frontier_is_cursor {
-        *used_knn = true;
-        *knn_stage = crate::knn_clipping::timing::KnnCellStage::DirectedCursor;
-        *knn_query_time += t_knn.elapsed();
-    }
-    frontier
-}
-
-#[inline]
-fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
-    stream: &mut DirectedNeighborStream<'a, 'm, 'p, 'g>,
-    packed_chunk: &mut Vec<u32>,
-    builder: &mut crate::knn_clipping::topo2d::Topo2DBuilder,
-    termination: TerminationPolicy,
-    neighbors_processed: usize,
-    used_knn: &mut bool,
-    knn_stage: &mut crate::knn_clipping::timing::KnnCellStage,
-    knn_query_time: &mut Duration,
-) -> bool {
-    let frontier = probe_frontier(stream, packed_chunk, used_knn, knn_stage, knn_query_time);
-    let can_check_cursor = termination.should_check(neighbors_processed);
-
-    match frontier {
-        DirectedNeighborFrontier::ExactBatch(batch) => {
-            let can_check =
-                batch.source != DirectedNeighborBatchSource::DirectedCursor || can_check_cursor;
-            can_check && builder.can_terminate(batch.first_dot)
-        }
-        DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
-            let can_check = !stream.is_cursor_stage() || can_check_cursor;
-            if can_check && builder.can_terminate(dot_upper_bound) {
-                true
-            } else {
-                stream.advance_frontier();
-                false
-            }
-        }
-        DirectedNeighborFrontier::Exhausted => true,
     }
 }
 
@@ -455,146 +403,4 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         packed_safe_exhausted,
         knn_stage,
     })
-}
-
-fn classify_terminal_failure(
-    bounded: bool,
-    failure: Option<CellFailure>,
-    knn_exhausted: bool,
-) -> Option<CellFailure> {
-    match failure {
-        Some(CellFailure::ProjectionInvalid) => return Some(CellFailure::ProjectionInvalid),
-        Some(CellFailure::TooManyVertices) => return Some(CellFailure::TooManyVertices),
-        _ => {}
-    }
-    if !bounded && knn_exhausted {
-        return Some(CellFailure::UnboundedAfterExhaustion);
-    }
-    None
-}
-
-fn unexpected_failure_error(
-    ctx: &CellBuildContext,
-    points: &[Vec3],
-    generator_idx: usize,
-    neighbors_processed: usize,
-    did_packed: bool,
-    used_knn: bool,
-    knn_exhausted: bool,
-    last_clip_phase: &str,
-    last_batch_source: Option<DirectedNeighborBatchSource>,
-    last_neighbor_idx: Option<usize>,
-    last_neighbor_slot: Option<u32>,
-    context: &str,
-    explicit_failure: Option<CellFailure>,
-) -> CellBuildError {
-    let (active, total) = ctx.builder.count_active_planes();
-    let builder = ctx.builder.debug_state();
-    let extraction_failure = ctx.builder.debug_extraction_failure();
-    let gen = points[generator_idx];
-    let neighbor_indices: Vec<usize> = ctx.builder.neighbor_indices_iter().collect();
-    let failure = explicit_failure.or(ctx.builder.failure());
-    let failure = failure.unwrap_or(CellFailure::NoValidSeed);
-
-    CellBuildError {
-        generator_idx,
-        failure,
-        detail: Some(format!(
-            "unexpected {} failure: bounded={}, failure={:?}, \
-             planes={}, active={}, vertices={}, poly_len={}, has_bounding_ref={}, min_cos={:?}, \
-             half_plane_count={}, neighbor_index_count={}, neighbor_slot_count={}, extraction_failure={:?}, neighbors_processed={}, \
-             did_packed={}, did_cursor_fallback={}, knn_exhausted={}, \
-             last_clip_phase={}, last_batch_source={:?}, last_neighbor_idx={:?}, last_neighbor_slot={:?}; \
-             generator_pos={:?}; first_10_neighbor_indices={:?}",
-            context,
-            builder.bounded,
-            failure,
-            total,
-            active,
-            ctx.builder.vertex_count(),
-            builder.poly_len,
-            builder.has_bounding_ref,
-            builder.min_cos,
-            builder.half_plane_count,
-            builder.neighbor_index_count,
-            builder.neighbor_slot_count,
-            extraction_failure,
-            neighbors_processed,
-            did_packed,
-            used_knn,
-            knn_exhausted,
-            last_clip_phase,
-            last_batch_source,
-            last_neighbor_idx,
-            last_neighbor_slot,
-            gen,
-            &neighbor_indices[..neighbor_indices.len().min(10)],
-        )),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{build_cell_into, classify_terminal_failure, CellBuildContext, CellBuildRequest};
-    use crate::cube_grid::{CubeMapGrid, DirectedEligibility};
-    use crate::knn_clipping::cell_build::CellFailure;
-    use crate::knn_clipping::TerminationConfig;
-    use glam::Vec3;
-
-    fn octahedron_points() -> Vec<Vec3> {
-        vec![Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z]
-    }
-
-    #[test]
-    fn projection_invalid_stays_distinct_from_exhausted_unbounded() {
-        assert_eq!(
-            classify_terminal_failure(false, Some(CellFailure::ProjectionInvalid), true),
-            Some(CellFailure::ProjectionInvalid)
-        );
-        assert_eq!(
-            classify_terminal_failure(false, None, true),
-            Some(CellFailure::UnboundedAfterExhaustion)
-        );
-    }
-
-    #[test]
-    fn too_many_vertices_is_a_structured_failure() {
-        assert_eq!(
-            classify_terminal_failure(true, Some(CellFailure::TooManyVertices), false),
-            Some(CellFailure::TooManyVertices)
-        );
-    }
-
-    #[test]
-    fn bounded_nonfailed_cell_has_no_terminal_failure() {
-        assert_eq!(classify_terminal_failure(true, None, true), None);
-        assert_eq!(classify_terminal_failure(true, None, false), None);
-    }
-
-    #[test]
-    fn direct_cursor_builds_normal_cell() {
-        let points = octahedron_points();
-        let grid = CubeMapGrid::new(&points, 4);
-        let policy = TerminationConfig::default().knn_policy(points.len());
-        let mut ctx = CellBuildContext::new(&grid, policy);
-        let fake_slot_map = vec![0u32; points.len()];
-        let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
-
-        let stats = build_cell_into(
-            &mut ctx,
-            CellBuildRequest {
-                points: &points,
-                grid: &grid,
-                generator_idx: 0,
-                directed_ctx,
-                termination: policy.termination(),
-                packed: None,
-                seed_neighbors: &[],
-            },
-        )
-        .expect("cell build should succeed");
-
-        assert!(ctx.output_buffer().vertices.len() >= 3);
-        assert!(!stats.knn_exhausted || !stats.did_packed);
-    }
 }
