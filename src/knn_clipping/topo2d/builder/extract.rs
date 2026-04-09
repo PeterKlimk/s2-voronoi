@@ -1,11 +1,23 @@
 use super::projection::sort3_u32;
 use super::{
     BuilderDebugState, BuilderImpl, ExtractionInvariantFailure, FallbackBuilder, GnomonicBuilder,
-    Topo2DBuilder,
+    TangentBasis, Topo2DBuilder,
 };
 use crate::fp;
 use crate::knn_clipping::cell_build::{CellFailure, CellOutputBuffer};
 use glam::{DVec3, Vec3};
+use std::cmp::Ordering;
+
+const FALLBACK_PLANE_TOL: f64 = 1e-9;
+const FALLBACK_DEDUP_DOT: f32 = 1.0 - 1e-5;
+
+#[derive(Clone, Copy)]
+struct FallbackVertex {
+    position: Vec3,
+    plane_a: usize,
+    plane_b: usize,
+    angle: f64,
+}
 
 impl GnomonicBuilder {
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -197,32 +209,179 @@ impl GnomonicBuilder {
 }
 
 impl FallbackBuilder {
+    pub(super) fn computed_vertex_count(&self) -> usize {
+        self.computed_vertices().len()
+    }
+
+    fn satisfies_all_constraints(&self, dir: DVec3) -> bool {
+        self.constraints
+            .iter()
+            .all(|constraint| constraint.normal.dot(dir) >= -FALLBACK_PLANE_TOL)
+    }
+
+    fn shared_edge_constraint(&self, a: FallbackVertex, b: FallbackVertex) -> Option<usize> {
+        for plane in [a.plane_a, a.plane_b] {
+            if plane == b.plane_a || plane == b.plane_b {
+                return Some(plane);
+            }
+        }
+
+        self.constraints
+            .iter()
+            .enumerate()
+            .find_map(|(idx, constraint)| {
+                let normal = constraint.normal;
+                let pos_a = DVec3::new(
+                    a.position.x as f64,
+                    a.position.y as f64,
+                    a.position.z as f64,
+                );
+                let pos_b = DVec3::new(
+                    b.position.x as f64,
+                    b.position.y as f64,
+                    b.position.z as f64,
+                );
+                if normal.dot(pos_a).abs() <= FALLBACK_PLANE_TOL
+                    && normal.dot(pos_b).abs() <= FALLBACK_PLANE_TOL
+                {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+    }
+
+    fn computed_vertices(&self) -> Vec<FallbackVertex> {
+        if self.constraints.len() < 3 {
+            return Vec::new();
+        }
+
+        let basis = TangentBasis::new(self.generator);
+        let mut vertices = Vec::new();
+
+        for plane_a in 0..self.constraints.len() {
+            for plane_b in plane_a + 1..self.constraints.len() {
+                let cross = self.constraints[plane_a]
+                    .normal
+                    .cross(self.constraints[plane_b].normal);
+                let len2 = cross.length_squared();
+                if !len2.is_finite() || len2 <= 1e-24 {
+                    continue;
+                }
+
+                let inv_len = len2.sqrt().recip();
+                for sign in [1.0, -1.0] {
+                    let dir = cross * (sign * inv_len);
+                    if !self.satisfies_all_constraints(dir) {
+                        continue;
+                    }
+
+                    let dir32 = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32).normalize();
+                    if vertices.iter().any(|vertex: &FallbackVertex| {
+                        vertex.position.dot(dir32) >= FALLBACK_DEDUP_DOT
+                    }) {
+                        continue;
+                    }
+
+                    let angle = dir.dot(basis.t2).atan2(dir.dot(basis.t1));
+                    vertices.push(FallbackVertex {
+                        position: dir32,
+                        plane_a,
+                        plane_b,
+                        angle,
+                    });
+                }
+            }
+        }
+
+        vertices.sort_by(|a, b| a.angle.partial_cmp(&b.angle).unwrap_or(Ordering::Equal));
+        vertices
+    }
+
     #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn to_vertex_data_full(
         &self,
-        _buffer: &mut CellOutputBuffer,
+        buffer: &mut CellOutputBuffer,
     ) -> Result<(), CellFailure> {
-        Err(self.failure)
+        let vertices = self.computed_vertices();
+        if vertices.len() < 3 {
+            return Err(CellFailure::NoValidSeed);
+        }
+
+        buffer.clear();
+        buffer.vertices.reserve(vertices.len());
+        buffer.edge_neighbor_globals.reserve(vertices.len());
+        buffer.edge_neighbor_slots.reserve(vertices.len());
+        buffer.edge_neighbor_eps.reserve(vertices.len());
+
+        let gen_idx = self.generator_idx as u32;
+        for (i, vertex) in vertices.iter().copied().enumerate() {
+            let plane_a = &self.constraints[vertex.plane_a];
+            let plane_b = &self.constraints[vertex.plane_b];
+            let key = sort3_u32(
+                gen_idx,
+                plane_a.neighbor_idx as u32,
+                plane_b.neighbor_idx as u32,
+            );
+            buffer.vertices.push((key, vertex.position));
+
+            let next = vertices[(i + 1) % vertices.len()];
+            let Some(edge_plane) = self.shared_edge_constraint(vertex, next) else {
+                return Err(CellFailure::NoValidSeed);
+            };
+            let edge = &self.constraints[edge_plane];
+            buffer.edge_neighbor_globals.push(edge.neighbor_idx as u32);
+            buffer.edge_neighbor_slots.push(edge.neighbor_slot);
+            buffer.edge_neighbor_eps.push(edge.hp_eps.unwrap_or(0.0));
+        }
+
+        Ok(())
     }
 
     pub(super) fn count_active_planes(&self) -> (usize, usize) {
-        (self.replay_neighbors.len(), self.replay_neighbors.len())
+        let vertices = self.computed_vertices();
+        let mut active = vec![false; self.constraints.len()];
+        for vertex in vertices {
+            active[vertex.plane_a] = true;
+            active[vertex.plane_b] = true;
+        }
+        let active_count = active.iter().filter(|&&x| x).count();
+        (active_count, self.constraints.len())
     }
 
     pub(crate) fn debug_state(&self) -> BuilderDebugState {
+        let vertices = self.computed_vertices();
         BuilderDebugState {
-            bounded: false,
-            poly_len: 0,
+            bounded: vertices.len() >= 3,
+            poly_len: vertices.len(),
             has_bounding_ref: false,
             min_cos: f64::NAN,
-            half_plane_count: self.replay_neighbors.len(),
-            neighbor_index_count: self.replay_neighbors.len(),
-            neighbor_slot_count: self.replay_neighbors.len(),
+            half_plane_count: self.constraints.len(),
+            neighbor_index_count: self.constraints.len(),
+            neighbor_slot_count: self.constraints.len(),
         }
     }
 
     pub(crate) fn debug_extraction_failure(&self) -> Option<ExtractionInvariantFailure> {
-        Some(ExtractionInvariantFailure::UnboundedPolygon)
+        let vertices = self.computed_vertices();
+        if vertices.len() < 3 {
+            return Some(ExtractionInvariantFailure::UnboundedPolygon);
+        }
+
+        for i in 0..vertices.len() {
+            let next = vertices[(i + 1) % vertices.len()];
+            if self.shared_edge_constraint(vertices[i], next).is_none() {
+                return Some(ExtractionInvariantFailure::InvalidEdgePlane {
+                    vertex: i,
+                    edge_plane: usize::MAX,
+                    half_plane_count: self.constraints.len(),
+                    neighbor_index_count: self.constraints.len(),
+                    neighbor_slot_count: self.constraints.len(),
+                });
+            }
+        }
+
+        None
     }
 }
 

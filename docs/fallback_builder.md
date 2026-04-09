@@ -37,7 +37,7 @@ future switch point is one explicit builder-owned decision instead of generic er
 The first replay-transfer contract also exists now:
 
 - `Topo2DBuilder::fallback_replay_plan()` returns accepted replay constraints in builder order
-- each replay entry carries `neighbor_idx`, `neighbor_slot`, and optional `hp_eps`
+- each replay entry carries `neighbor_idx`, `neighbor_slot`, optional `hp_eps`, and the neighbor direction
 - edgecheck-seeded constraints preserve their incoming epsilon for later deterministic replay
 
 ## Handoff trigger

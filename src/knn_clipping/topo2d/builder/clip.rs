@@ -26,6 +26,7 @@ impl GnomonicBuilder {
         hp: HalfPlane,
         neighbor_idx: usize,
         neighbor_slot: u32,
+        neighbor: Vec3,
         replay_hp_eps: Option<f32>,
     ) -> Result<ClipResult, CellFailure> {
         match clip_result {
@@ -41,6 +42,7 @@ impl GnomonicBuilder {
                     neighbor_idx,
                     neighbor_slot,
                     hp_eps: replay_hp_eps,
+                    neighbor,
                 });
                 self.use_a = !self.use_a;
                 self.term_cache_valid = false;
@@ -85,7 +87,7 @@ impl GnomonicBuilder {
             clip_convex(&self.poly_b, &hp, &mut self.poly_a)
         };
 
-        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot, None)
+        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot, neighbor, None)
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -113,41 +115,77 @@ impl GnomonicBuilder {
             clip_convex_edgecheck(&self.poly_b, &hp, &mut self.poly_a)
         };
 
-        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot, Some(hp_eps))?;
+        self.commit_clip(
+            clip_result,
+            hp,
+            neighbor_idx,
+            neighbor_slot,
+            neighbor,
+            Some(hp_eps),
+        )?;
         Ok(())
     }
 }
 
 impl FallbackBuilder {
+    fn push_constraint(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+        hp_eps: Option<f32>,
+    ) {
+        let replay = BuilderReplayNeighbor {
+            neighbor_idx,
+            neighbor_slot,
+            hp_eps,
+            neighbor,
+        };
+        self.replay_neighbors.push(replay);
+        self.constraints
+            .push(super::FallbackConstraint::from_replay(
+                self.generator,
+                replay,
+            ));
+    }
+
     #[inline]
     pub(super) fn clip_with_slot(
         &mut self,
-        _neighbor_idx: usize,
-        _neighbor_slot: u32,
-        _neighbor: Vec3,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
     ) -> Result<(), CellFailure> {
-        Err(self.failure)
+        self.clip_with_slot_result(neighbor_idx, neighbor_slot, neighbor)
+            .map(|_| ())
     }
 
-    #[inline]
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn clip_with_slot_result(
         &mut self,
-        _neighbor_idx: usize,
-        _neighbor_slot: u32,
-        _neighbor: Vec3,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
     ) -> Result<ClipResult, CellFailure> {
-        Err(self.failure)
+        self.push_constraint(neighbor_idx, neighbor_slot, neighbor, None);
+        Ok(ClipResult::Changed)
     }
 
-    #[inline]
+    #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn clip_with_slot_edgecheck(
         &mut self,
-        _neighbor_idx: usize,
-        _neighbor_slot: u32,
-        _neighbor: Vec3,
-        _hp_eps: f32,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+        hp_eps: f32,
     ) -> Result<(), CellFailure> {
-        Err(self.failure)
+        let replay_hp_eps = if hp_eps.is_finite() && hp_eps > 0.0 {
+            Some(hp_eps)
+        } else {
+            None
+        };
+        self.push_constraint(neighbor_idx, neighbor_slot, neighbor, replay_hp_eps);
+        Ok(())
     }
 }
 

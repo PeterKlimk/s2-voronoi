@@ -225,7 +225,6 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                 Ok(BuilderStepOutcome::Applied) => {}
                 Ok(BuilderStepOutcome::NeedsFallback(request)) => {
                     fallback_request = Some(request);
-                    break;
                 }
                 Err(_) => break,
             }
@@ -296,7 +295,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                         Ok(BuilderClipOutcome::Applied(result)) => result,
                         Ok(BuilderClipOutcome::NeedsFallback(request)) => {
                             fallback_request = Some(request);
-                            break;
+                            crate::knn_clipping::topo2d::types::ClipResult::Changed
                         }
                         Err(_) => break,
                     };

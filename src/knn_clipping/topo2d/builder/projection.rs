@@ -1,5 +1,6 @@
 use super::{
-    BuilderImpl, BuilderReplayPlan, FallbackBuilder, GnomonicBuilder, PolyBuffer, Topo2DBuilder,
+    BuilderImpl, BuilderReplayPlan, FallbackBuilder, FallbackConstraint, GnomonicBuilder,
+    PolyBuffer, Topo2DBuilder,
 };
 use crate::fp;
 use crate::knn_clipping::cell_build::CellFailure;
@@ -58,6 +59,24 @@ impl TangentBasis {
 // Conservative lower bound on g · x for a vertex in the current gnomonic model.
 // Below this, the feasible region is effectively at the generator hemisphere boundary.
 pub(super) const MIN_PROJECTION_COS: f64 = 8.0 * f32::EPSILON as f64;
+
+impl FallbackConstraint {
+    #[inline]
+    pub(super) fn from_replay(generator: DVec3, replay: super::BuilderReplayNeighbor) -> Self {
+        let neighbor = DVec3::new(
+            replay.neighbor.x as f64,
+            replay.neighbor.y as f64,
+            replay.neighbor.z as f64,
+        )
+        .normalize();
+        Self {
+            normal: generator - neighbor,
+            neighbor_idx: replay.neighbor_idx,
+            neighbor_slot: replay.neighbor_slot,
+            hp_eps: replay.hp_eps,
+        }
+    }
+}
 
 impl GnomonicBuilder {
     pub(super) fn new(generator_idx: usize, generator: Vec3) -> Self {
@@ -199,22 +218,22 @@ impl GnomonicBuilder {
 impl FallbackBuilder {
     #[inline]
     pub(super) fn is_bounded(&self) -> bool {
-        false
+        self.computed_vertex_count() >= 3
     }
 
     #[inline]
     pub(super) fn is_failed(&self) -> bool {
-        true
+        false
     }
 
     #[inline]
     pub(super) fn failure(&self) -> Option<CellFailure> {
-        Some(self.failure)
+        None
     }
 
     #[inline]
     pub(super) fn vertex_count(&self) -> usize {
-        0
+        self.computed_vertex_count()
     }
 
     #[inline]

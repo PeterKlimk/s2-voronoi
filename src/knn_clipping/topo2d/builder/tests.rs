@@ -59,6 +59,7 @@ fn changed_clip_fails_when_bounded_polygon_reaches_projection_limit() {
             HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0),
             1,
             u32::MAX,
+            Vec3::X,
             None,
         )
         .expect_err("expected projection-invalid bounded cell to fail");
@@ -87,6 +88,7 @@ fn changed_clip_allows_bounded_polygon_inside_projection_limit() {
         HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0),
         1,
         u32::MAX,
+        Vec3::X,
         None,
     );
     assert_eq!(result, Ok(ClipResult::Changed));
@@ -237,12 +239,9 @@ fn fallback_handoff_switches_builder_variant_and_replays_constraints() {
             trigger: BuilderFallbackTrigger::ProjectionLimit,
         })
     );
-    assert!(builder.is_failed());
-    assert!(!builder.is_bounded());
-    assert_eq!(
-        builder.failure(),
-        Some(crate::knn_clipping::cell_build::CellFailure::ProjectionInvalid)
-    );
+    assert!(!builder.is_failed());
+    assert!(builder.is_bounded());
+    assert_eq!(builder.failure(), None);
     assert_eq!(
         builder.as_fallback().trigger,
         BuilderFallbackTrigger::ProjectionLimit
@@ -254,19 +253,28 @@ fn fallback_handoff_switches_builder_variant_and_replays_constraints() {
                 neighbor_idx: 11,
                 neighbor_slot: 21,
                 hp_eps: Some(0.125),
+                neighbor: h1,
             },
             BuilderReplayNeighbor {
                 neighbor_idx: 12,
                 neighbor_slot: 22,
                 hp_eps: None,
+                neighbor: h2,
             },
             BuilderReplayNeighbor {
                 neighbor_idx: 13,
                 neighbor_slot: 23,
                 hp_eps: None,
+                neighbor: h3,
             },
         ]
     );
+
+    let mut buffer = CellOutputBuffer::default();
+    builder
+        .to_vertex_data_full(&mut buffer)
+        .expect("fallback replay should produce extractable vertices");
+    assert_eq!(buffer.vertices.len(), 3);
 }
 
 #[test]
@@ -300,16 +308,19 @@ fn replay_plan_preserves_edgecheck_eps_and_order() {
                 neighbor_idx: 11,
                 neighbor_slot: 21,
                 hp_eps: Some(0.125),
+                neighbor: h1,
             },
             BuilderReplayNeighbor {
                 neighbor_idx: 12,
                 neighbor_slot: 22,
                 hp_eps: None,
+                neighbor: h2,
             },
             BuilderReplayNeighbor {
                 neighbor_idx: 13,
                 neighbor_slot: 23,
                 hp_eps: None,
+                neighbor: h3,
             },
         ]
     );
