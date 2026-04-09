@@ -160,12 +160,11 @@ fn fallback_detail(
             crate::knn_clipping::topo2d::Topo2DBuilder::fallback_request_for_failure(failure)
         })
         .map(|request| {
-            let replay = builder.fallback_replay_plan();
             format!(
                 "fallback trigger={:?}, replay_constraints={}, replay_generator_idx={}",
                 request.trigger,
-                replay.accepted_neighbors.len(),
-                replay.generator_idx
+                builder.accepted_constraint_count(),
+                builder.generator_idx()
             )
         })
 }
@@ -225,6 +224,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                 Ok(BuilderStepOutcome::Applied) => {}
                 Ok(BuilderStepOutcome::NeedsFallback(request)) => {
                     fallback_request = Some(request);
+                    ctx.builder.enter_fallback(points, request);
                 }
                 Err(_) => break,
             }
@@ -295,6 +295,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                         Ok(BuilderClipOutcome::Applied(result)) => result,
                         Ok(BuilderClipOutcome::NeedsFallback(request)) => {
                             fallback_request = Some(request);
+                            ctx.builder.enter_fallback(points, request);
                             crate::knn_clipping::topo2d::types::ClipResult::Changed
                         }
                         Err(_) => break,

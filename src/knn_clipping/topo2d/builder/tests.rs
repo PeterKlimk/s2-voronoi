@@ -42,6 +42,15 @@ fn clip_all_neighbors(builder: &mut Topo2DBuilder, points: &[Vec3], i: usize) {
     }
 }
 
+fn fallback_points(g: Vec3, h1: Vec3, h2: Vec3, h3: Vec3) -> Vec<Vec3> {
+    let mut points = vec![Vec3::ZERO; 14];
+    points[0] = g;
+    points[11] = h1;
+    points[12] = h2;
+    points[13] = h3;
+    points
+}
+
 #[test]
 fn changed_clip_fails_when_bounded_polygon_reaches_projection_limit() {
     let mut builder = Topo2DBuilder::new(0, Vec3::Z);
@@ -59,8 +68,6 @@ fn changed_clip_fails_when_bounded_polygon_reaches_projection_limit() {
             HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0),
             1,
             u32::MAX,
-            Vec3::X,
-            None,
         )
         .expect_err("expected projection-invalid bounded cell to fail");
     assert_eq!(
@@ -88,8 +95,6 @@ fn changed_clip_allows_bounded_polygon_inside_projection_limit() {
         HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0),
         1,
         u32::MAX,
-        Vec3::X,
-        None,
     );
     assert_eq!(result, Ok(ClipResult::Changed));
     assert_eq!(builder.failure(), None);
@@ -227,11 +232,17 @@ fn fallback_handoff_switches_builder_variant_and_replays_constraints() {
         .clip_with_slot_policy(13, 23, h3)
         .expect("normal clip should apply");
 
-    let outcome = builder
-        .handle_clip_result(Err(
-            crate::knn_clipping::cell_build::CellFailure::ProjectionInvalid,
-        ))
-        .expect("projection invalid should be converted to a fallback handoff");
+    let outcome = Topo2DBuilder::handle_clip_result(Err(
+        crate::knn_clipping::cell_build::CellFailure::ProjectionInvalid,
+    ))
+    .expect("projection invalid should be converted to a fallback handoff");
+    let points = fallback_points(g, h1, h2, h3);
+    builder.enter_fallback(
+        &points,
+        BuilderFallbackRequest {
+            trigger: BuilderFallbackTrigger::ProjectionLimit,
+        },
+    );
 
     assert_eq!(
         outcome,
@@ -246,29 +257,12 @@ fn fallback_handoff_switches_builder_variant_and_replays_constraints() {
         builder.as_fallback().trigger,
         BuilderFallbackTrigger::ProjectionLimit
     );
-    assert_eq!(
-        builder.fallback_replay_plan().accepted_neighbors,
-        &[
-            BuilderReplayNeighbor {
-                neighbor_idx: 11,
-                neighbor_slot: 21,
-                hp_eps: Some(0.125),
-                neighbor: h1,
-            },
-            BuilderReplayNeighbor {
-                neighbor_idx: 12,
-                neighbor_slot: 22,
-                hp_eps: None,
-                neighbor: h2,
-            },
-            BuilderReplayNeighbor {
-                neighbor_idx: 13,
-                neighbor_slot: 23,
-                hp_eps: None,
-                neighbor: h3,
-            },
-        ]
-    );
+    assert_eq!(builder.as_fallback().constraints.len(), 3);
+    assert_eq!(builder.as_fallback().constraints[0].neighbor_idx, 11);
+    assert_eq!(builder.as_fallback().constraints[0].neighbor_slot, 21);
+    assert_eq!(builder.as_fallback().constraints[0].hp_eps, Some(0.125));
+    assert_eq!(builder.as_fallback().constraints[1].neighbor_idx, 12);
+    assert_eq!(builder.as_fallback().constraints[2].neighbor_idx, 13);
 
     let mut buffer = CellOutputBuffer::default();
     builder
@@ -278,7 +272,7 @@ fn fallback_handoff_switches_builder_variant_and_replays_constraints() {
 }
 
 #[test]
-fn replay_plan_preserves_edgecheck_eps_and_order() {
+fn fallback_reconstruction_preserves_constraint_order_and_eps() {
     let g = Vec3::new(0.0, 0.0, 1.0);
     let mut builder = Topo2DBuilder::new(0, g);
 
@@ -299,29 +293,31 @@ fn replay_plan_preserves_edgecheck_eps_and_order() {
         Ok(BuilderStepOutcome::Applied)
     );
 
-    let replay = builder.fallback_replay_plan();
-    assert_eq!(replay.generator_idx, 0);
-    assert_eq!(
-        replay.accepted_neighbors,
-        &[
-            BuilderReplayNeighbor {
-                neighbor_idx: 11,
-                neighbor_slot: 21,
-                hp_eps: Some(0.125),
-                neighbor: h1,
-            },
-            BuilderReplayNeighbor {
-                neighbor_idx: 12,
-                neighbor_slot: 22,
-                hp_eps: None,
-                neighbor: h2,
-            },
-            BuilderReplayNeighbor {
-                neighbor_idx: 13,
-                neighbor_slot: 23,
-                hp_eps: None,
-                neighbor: h3,
-            },
-        ]
+    let points = fallback_points(g, h1, h2, h3);
+    builder.enter_fallback(
+        &points,
+        BuilderFallbackRequest {
+            trigger: BuilderFallbackTrigger::ProjectionLimit,
+        },
+    );
+
+    assert_eq!(builder.as_fallback().generator_idx, 0);
+    assert_eq!(builder.as_fallback().constraints.len(), 3);
+    assert_eq!(builder.as_fallback().constraints[0].neighbor_idx, 11);
+    assert_eq!(builder.as_fallback().constraints[0].neighbor_slot, 21);
+    assert_eq!(builder.as_fallback().constraints[0].hp_eps, Some(0.125));
+    assert_eq!(builder.as_fallback().constraints[1].neighbor_idx, 12);
+    assert_eq!(builder.as_fallback().constraints[1].neighbor_slot, 22);
+    assert!(
+        builder.as_fallback().constraints[1]
+            .hp_eps
+            .is_some_and(|eps| eps.is_finite() && eps > 0.0)
+    );
+    assert_eq!(builder.as_fallback().constraints[2].neighbor_idx, 13);
+    assert_eq!(builder.as_fallback().constraints[2].neighbor_slot, 23);
+    assert!(
+        builder.as_fallback().constraints[2]
+            .hp_eps
+            .is_some_and(|eps| eps.is_finite() && eps > 0.0)
     );
 }

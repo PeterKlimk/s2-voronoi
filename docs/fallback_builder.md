@@ -34,11 +34,11 @@ The wrapper also owns the first version of handoff policy:
 That policy is exposed internally through `BuilderClipOutcome` / `BuilderStepOutcome`, so the
 future switch point is one explicit builder-owned decision instead of generic error bubbling.
 
-The first replay-transfer contract also exists now:
+The first handoff-transfer contract also exists now:
 
-- `Topo2DBuilder::fallback_replay_plan()` returns accepted replay constraints in builder order
-- each replay entry carries `neighbor_idx`, `neighbor_slot`, optional `hp_eps`, and the neighbor direction
-- edgecheck-seeded constraints preserve their incoming epsilon for later deterministic replay
+- fallback reconstructs accepted constraints from the current gnomonic accepted-plane state
+- it uses accepted neighbor order, neighbor slots, and stored half-plane epsilon
+- neighbor directions are recovered on demand from the current point set during handoff
 
 ## Handoff trigger
 
@@ -99,7 +99,8 @@ Potential replay inputs:
 - accepted neighbor slots
 - optional edge-check epsilon when the accepted neighbor came from seeded edge checks
 
-The current internal replay payload is intentionally limited to exactly that data.
+The current internal transfer is intentionally on-demand rather than persistently duplicated in the
+steady-state gnomonic builder.
 
 If replay cost becomes material, a later optimization can add a more compact transfer record.
 

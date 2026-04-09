@@ -1,6 +1,5 @@
 use super::{
-    BuilderImpl, BuilderReplayPlan, FallbackBuilder, FallbackConstraint, GnomonicBuilder,
-    PolyBuffer, Topo2DBuilder,
+    BuilderImpl, FallbackBuilder, FallbackConstraint, GnomonicBuilder, PolyBuffer, Topo2DBuilder,
 };
 use crate::fp;
 use crate::knn_clipping::cell_build::CellFailure;
@@ -62,18 +61,20 @@ pub(super) const MIN_PROJECTION_COS: f64 = 8.0 * f32::EPSILON as f64;
 
 impl FallbackConstraint {
     #[inline]
-    pub(super) fn from_replay(generator: DVec3, replay: super::BuilderReplayNeighbor) -> Self {
-        let neighbor = DVec3::new(
-            replay.neighbor.x as f64,
-            replay.neighbor.y as f64,
-            replay.neighbor.z as f64,
-        )
-        .normalize();
+    pub(super) fn from_neighbor(
+        generator: DVec3,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        hp_eps: Option<f32>,
+        neighbor: Vec3,
+    ) -> Self {
+        let neighbor =
+            DVec3::new(neighbor.x as f64, neighbor.y as f64, neighbor.z as f64).normalize();
         Self {
             normal: generator - neighbor,
-            neighbor_idx: replay.neighbor_idx,
-            neighbor_slot: replay.neighbor_slot,
-            hp_eps: replay.hp_eps,
+            neighbor_idx,
+            neighbor_slot,
+            hp_eps,
         }
     }
 }
@@ -96,7 +97,6 @@ impl GnomonicBuilder {
             half_planes: Vec::with_capacity(32),
             neighbor_indices: Vec::with_capacity(32),
             neighbor_slots: Vec::with_capacity(32),
-            replay_neighbors: Vec::with_capacity(32),
             poly_a,
             poly_b: PolyBuffer::new(),
             use_a: true,
@@ -118,7 +118,6 @@ impl GnomonicBuilder {
         self.half_planes.clear();
         self.neighbor_indices.clear();
         self.neighbor_slots.clear();
-        self.replay_neighbors.clear();
         self.poly_a.init_bounding(1e6);
         self.poly_b.clear();
         self.use_a = true;
@@ -183,14 +182,6 @@ impl GnomonicBuilder {
         self.neighbor_indices.iter().copied()
     }
 
-    #[inline]
-    pub(super) fn fallback_replay_plan(&self) -> BuilderReplayPlan<'_> {
-        BuilderReplayPlan {
-            generator_idx: self.generator_idx,
-            accepted_neighbors: &self.replay_neighbors,
-        }
-    }
-
     #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
         if !self.is_bounded() || self.vertex_count() < 3 {
@@ -238,9 +229,9 @@ impl FallbackBuilder {
 
     #[inline]
     pub(super) fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
-        self.replay_neighbors
+        self.constraints
             .iter()
-            .map(|neighbor| neighbor.neighbor_idx)
+            .map(|constraint| constraint.neighbor_idx)
     }
 
     #[inline]
@@ -305,14 +296,6 @@ impl Topo2DBuilder {
             BuilderImpl::Fallback(builder) => Box::new(builder.neighbor_indices_iter()),
         };
         iter
-    }
-
-    #[inline]
-    pub(crate) fn fallback_replay_plan(&self) -> BuilderReplayPlan<'_> {
-        match &self.inner {
-            BuilderImpl::Gnomonic(builder) => builder.fallback_replay_plan(),
-            BuilderImpl::Fallback(builder) => builder.fallback_replay_plan(),
-        }
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]

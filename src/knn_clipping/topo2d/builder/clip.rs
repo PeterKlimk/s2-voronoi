@@ -1,7 +1,7 @@
 use super::projection::MIN_PROJECTION_COS;
 use super::{
-    BuilderClipOutcome, BuilderImpl, BuilderReplayNeighbor, BuilderStepOutcome, FallbackBuilder,
-    GnomonicBuilder, Topo2DBuilder,
+    BuilderClipOutcome, BuilderImpl, BuilderStepOutcome, FallbackBuilder, GnomonicBuilder,
+    Topo2DBuilder,
 };
 use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck};
@@ -26,8 +26,6 @@ impl GnomonicBuilder {
         hp: HalfPlane,
         neighbor_idx: usize,
         neighbor_slot: u32,
-        neighbor: Vec3,
-        replay_hp_eps: Option<f32>,
     ) -> Result<ClipResult, CellFailure> {
         match clip_result {
             ClipResult::TooManyVertices => {
@@ -38,12 +36,6 @@ impl GnomonicBuilder {
                 self.half_planes.push(hp);
                 self.neighbor_indices.push(neighbor_idx);
                 self.neighbor_slots.push(neighbor_slot);
-                self.replay_neighbors.push(BuilderReplayNeighbor {
-                    neighbor_idx,
-                    neighbor_slot,
-                    hp_eps: replay_hp_eps,
-                    neighbor,
-                });
                 self.use_a = !self.use_a;
                 self.term_cache_valid = false;
             }
@@ -87,7 +79,7 @@ impl GnomonicBuilder {
             clip_convex(&self.poly_b, &hp, &mut self.poly_a)
         };
 
-        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot, neighbor, None)
+        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -115,14 +107,7 @@ impl GnomonicBuilder {
             clip_convex_edgecheck(&self.poly_b, &hp, &mut self.poly_a)
         };
 
-        self.commit_clip(
-            clip_result,
-            hp,
-            neighbor_idx,
-            neighbor_slot,
-            neighbor,
-            Some(hp_eps),
-        )?;
+        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)?;
         Ok(())
     }
 }
@@ -135,17 +120,13 @@ impl FallbackBuilder {
         neighbor: Vec3,
         hp_eps: Option<f32>,
     ) {
-        let replay = BuilderReplayNeighbor {
-            neighbor_idx,
-            neighbor_slot,
-            hp_eps,
-            neighbor,
-        };
-        self.replay_neighbors.push(replay);
         self.constraints
-            .push(super::FallbackConstraint::from_replay(
+            .push(super::FallbackConstraint::from_neighbor(
                 self.generator,
-                replay,
+                neighbor_idx,
+                neighbor_slot,
+                hp_eps,
+                neighbor,
             ));
     }
 
@@ -191,31 +172,15 @@ impl FallbackBuilder {
 
 impl Topo2DBuilder {
     pub(crate) fn handle_step_result(
-        &mut self,
         result: Result<(), CellFailure>,
     ) -> Result<BuilderStepOutcome, CellFailure> {
-        match Self::classify_step_result(result)? {
-            BuilderStepOutcome::Applied => Ok(BuilderStepOutcome::Applied),
-            BuilderStepOutcome::NeedsFallback(request) => {
-                self.enter_fallback(request);
-                Ok(BuilderStepOutcome::NeedsFallback(request))
-            }
-        }
+        Self::classify_step_result(result)
     }
 
     pub(crate) fn handle_clip_result(
-        &mut self,
         result: Result<ClipResult, CellFailure>,
     ) -> Result<BuilderClipOutcome, CellFailure> {
-        match Self::classify_clip_result(result)? {
-            BuilderClipOutcome::Applied(clip_result) => {
-                Ok(BuilderClipOutcome::Applied(clip_result))
-            }
-            BuilderClipOutcome::NeedsFallback(request) => {
-                self.enter_fallback(request);
-                Ok(BuilderClipOutcome::NeedsFallback(request))
-            }
-        }
+        Self::classify_clip_result(result)
     }
 
     #[inline]
@@ -233,7 +198,7 @@ impl Topo2DBuilder {
                 builder.clip_with_slot(neighbor_idx, neighbor_slot, neighbor)
             }
         };
-        self.handle_step_result(result)
+        Self::handle_step_result(result)
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -251,7 +216,7 @@ impl Topo2DBuilder {
                 builder.clip_with_slot_result(neighbor_idx, neighbor_slot, neighbor)
             }
         };
-        self.handle_clip_result(result)
+        Self::handle_clip_result(result)
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -270,7 +235,7 @@ impl Topo2DBuilder {
                 builder.clip_with_slot_edgecheck(neighbor_idx, neighbor_slot, neighbor, hp_eps)
             }
         };
-        self.handle_step_result(result)
+        Self::handle_step_result(result)
     }
 
     pub fn clip_with_slot(

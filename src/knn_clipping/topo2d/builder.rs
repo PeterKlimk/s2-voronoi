@@ -7,7 +7,7 @@ mod tests;
 use super::types::{HalfPlane, PolyBuffer};
 use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::types::ClipResult;
-use glam::{DVec3, Vec3};
+use glam::DVec3;
 
 pub use projection::TangentBasis;
 
@@ -49,20 +49,6 @@ pub(crate) enum BuilderClipOutcome {
     NeedsFallback(BuilderFallbackRequest),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct BuilderReplayNeighbor {
-    pub(crate) neighbor_idx: usize,
-    pub(crate) neighbor_slot: u32,
-    pub(crate) hp_eps: Option<f32>,
-    pub(crate) neighbor: Vec3,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct BuilderReplayPlan<'a> {
-    pub(crate) generator_idx: usize,
-    pub(crate) accepted_neighbors: &'a [BuilderReplayNeighbor],
-}
-
 pub(crate) struct GnomonicBuilder {
     pub(crate) generator_idx: usize,
     pub(crate) generator: DVec3,
@@ -71,7 +57,6 @@ pub(crate) struct GnomonicBuilder {
     half_planes: Vec<HalfPlane>,
     neighbor_indices: Vec<usize>,
     neighbor_slots: Vec<u32>,
-    replay_neighbors: Vec<BuilderReplayNeighbor>,
 
     poly_a: PolyBuffer,
     poly_b: PolyBuffer,
@@ -88,7 +73,6 @@ pub(crate) struct FallbackBuilder {
     pub(crate) generator_idx: usize,
     pub(crate) generator: DVec3,
     constraints: Vec<FallbackConstraint>,
-    replay_neighbors: Vec<BuilderReplayNeighbor>,
     trigger: BuilderFallbackTrigger,
 }
 
@@ -188,16 +172,36 @@ impl Topo2DBuilder {
         }
     }
 
-    pub(crate) fn enter_fallback(&mut self, request: BuilderFallbackRequest) {
+    pub(crate) fn enter_fallback(
+        &mut self,
+        points: &[glam::Vec3],
+        request: BuilderFallbackRequest,
+    ) {
         let fallback = match &self.inner {
             BuilderImpl::Gnomonic(builder) => {
-                FallbackBuilder::from_gnomonic(builder, request.trigger)
+                FallbackBuilder::from_gnomonic(builder, points, request.trigger)
             }
             BuilderImpl::Fallback(builder) => {
                 FallbackBuilder::from_fallback(builder, request.trigger)
             }
         };
         self.inner = BuilderImpl::Fallback(fallback);
+    }
+
+    #[inline]
+    pub(crate) fn generator_idx(&self) -> usize {
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.generator_idx,
+            BuilderImpl::Fallback(builder) => builder.generator_idx,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn accepted_constraint_count(&self) -> usize {
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.neighbor_indices.len(),
+            BuilderImpl::Fallback(builder) => builder.constraints.len(),
+        }
     }
 
     #[inline]
@@ -243,16 +247,34 @@ impl Topo2DBuilder {
 }
 
 impl FallbackBuilder {
-    fn from_gnomonic(builder: &GnomonicBuilder, trigger: BuilderFallbackTrigger) -> Self {
-        let mut fallback = Self {
+    fn from_gnomonic(
+        builder: &GnomonicBuilder,
+        points: &[glam::Vec3],
+        trigger: BuilderFallbackTrigger,
+    ) -> Self {
+        let constraints = builder
+            .neighbor_indices
+            .iter()
+            .copied()
+            .zip(builder.neighbor_slots.iter().copied())
+            .zip(builder.half_planes.iter())
+            .map(|((neighbor_idx, neighbor_slot), plane)| {
+                FallbackConstraint::from_neighbor(
+                    builder.generator,
+                    neighbor_idx,
+                    neighbor_slot,
+                    Some(plane.eps as f32),
+                    points[neighbor_idx],
+                )
+            })
+            .collect();
+
+        Self {
             generator_idx: builder.generator_idx,
             generator: builder.generator,
-            constraints: Vec::with_capacity(builder.replay_neighbors.len()),
-            replay_neighbors: builder.replay_neighbors.clone(),
+            constraints,
             trigger,
-        };
-        fallback.rebuild_constraints();
-        fallback
+        }
     }
 
     fn from_fallback(builder: &FallbackBuilder, trigger: BuilderFallbackTrigger) -> Self {
@@ -260,25 +282,7 @@ impl FallbackBuilder {
             generator_idx: builder.generator_idx,
             generator: builder.generator,
             constraints: builder.constraints.clone(),
-            replay_neighbors: builder.replay_neighbors.clone(),
             trigger,
-        }
-    }
-
-    #[inline]
-    fn fallback_replay_plan(&self) -> BuilderReplayPlan<'_> {
-        BuilderReplayPlan {
-            generator_idx: self.generator_idx,
-            accepted_neighbors: &self.replay_neighbors,
-        }
-    }
-
-    fn rebuild_constraints(&mut self) {
-        self.constraints.clear();
-        self.constraints.reserve(self.replay_neighbors.len());
-        for replay in &self.replay_neighbors {
-            self.constraints
-                .push(FallbackConstraint::from_replay(self.generator, *replay));
         }
     }
 }
