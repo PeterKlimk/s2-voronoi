@@ -244,6 +244,12 @@ impl Topo2DBuilder {
             BuilderImpl::Gnomonic(_) => panic!("expected fallback builder"),
         }
     }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn is_fallback(&self) -> bool {
+        matches!(self.inner, BuilderImpl::Fallback(_))
+    }
 }
 
 impl FallbackBuilder {

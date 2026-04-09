@@ -63,6 +63,8 @@ pub(crate) struct CellBuildContext {
     packed_chunk: Vec<u32>,
     output_buffer: CellOutputBuffer,
     attempted_neighbors: AttemptedNeighbors,
+    #[cfg(test)]
+    force_fallback_after_neighbors_processed: Option<usize>,
 }
 
 impl CellBuildContext {
@@ -73,12 +75,40 @@ impl CellBuildContext {
             packed_chunk: Vec::with_capacity(policy.packed().scratch_chunk_capacity()),
             output_buffer: CellOutputBuffer::default(),
             attempted_neighbors: AttemptedNeighbors::new(grid.point_indices().len()),
+            #[cfg(test)]
+            force_fallback_after_neighbors_processed: None,
         }
     }
 
     pub(crate) fn output_buffer(&self) -> &CellOutputBuffer {
         &self.output_buffer
     }
+}
+
+#[cfg(test)]
+fn maybe_force_fallback(
+    builder: &mut crate::knn_clipping::topo2d::Topo2DBuilder,
+    force_fallback_after_neighbors_processed: &mut Option<usize>,
+    points: &[Vec3],
+    neighbors_processed: usize,
+    fallback_request: &mut Option<BuilderFallbackRequest>,
+) {
+    if builder.is_fallback() {
+        return;
+    }
+    let Some(target) = *force_fallback_after_neighbors_processed else {
+        return;
+    };
+    if neighbors_processed < target {
+        return;
+    }
+
+    let request = BuilderFallbackRequest {
+        trigger: crate::knn_clipping::topo2d::builder::BuilderFallbackTrigger::ProjectionLimit,
+    };
+    *fallback_request = Some(request);
+    builder.enter_fallback(points, request);
+    *force_fallback_after_neighbors_processed = None;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -229,6 +259,14 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                 Err(_) => break,
             }
             neighbors_processed += 1;
+            #[cfg(test)]
+            maybe_force_fallback(
+                &mut ctx.builder,
+                &mut ctx.force_fallback_after_neighbors_processed,
+                points,
+                neighbors_processed,
+                &mut fallback_request,
+            );
         }
         clipping_time += t_clip.elapsed();
         edgecheck_seed_clips = neighbors_processed;
@@ -302,6 +340,14 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                     };
 
                     neighbors_processed += 1;
+                    #[cfg(test)]
+                    maybe_force_fallback(
+                        &mut ctx.builder,
+                        &mut ctx.force_fallback_after_neighbors_processed,
+                        points,
+                        neighbors_processed,
+                        &mut fallback_request,
+                    );
 
                     let should_check_termination = match batch.source {
                         DirectedNeighborBatchSource::DirectedCursor => {

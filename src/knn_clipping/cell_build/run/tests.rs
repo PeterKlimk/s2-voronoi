@@ -94,3 +94,44 @@ fn projection_invalid_detail_includes_replay_payload_summary() {
     assert!(detail.contains("replay_constraints=3"));
     assert!(detail.contains("replay_generator_idx=17"));
 }
+
+#[test]
+fn forced_handoff_mid_build_still_finishes_the_cell() {
+    let points = octahedron_points();
+    let grid = CubeMapGrid::new(&points, 4);
+    let policy = TerminationConfig::default().knn_policy(points.len());
+    let fake_slot_map = vec![0u32; points.len()];
+    let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
+    let mut ctx = CellBuildContext::new(&grid, policy);
+    ctx.force_fallback_after_neighbors_processed = Some(2);
+
+    let stats = build_cell_into(
+        &mut ctx,
+        CellBuildRequest {
+            points: &points,
+            grid: &grid,
+            generator_idx: 0,
+            directed_ctx,
+            termination: policy.termination(),
+            packed: None,
+            seed_neighbors: &[],
+        },
+    )
+    .expect("cell build should succeed even after forced mid-build fallback");
+
+    assert!(
+        ctx.builder.is_fallback(),
+        "builder should have handed off to fallback"
+    );
+    assert!(
+        ctx.builder.is_bounded(),
+        "fallback-built cell should be bounded"
+    );
+    assert_eq!(ctx.builder.failure(), None);
+    assert!(
+        ctx.output_buffer().vertices.len() >= 3,
+        "fallback-built cell should extract vertices",
+    );
+    assert!(ctx.builder.accepted_constraint_count() >= 3);
+    assert!(!stats.knn_exhausted || !stats.did_packed);
+}
