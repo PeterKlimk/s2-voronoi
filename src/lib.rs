@@ -114,11 +114,20 @@ pub use convex_hull::compute_voronoi_qhull;
 /// Preprocessing mode applied before Voronoi computation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PreprocessMode {
-    /// Do not merge near-coincident generators.
+    /// Do not weld near-coincident generators.
+    ///
+    /// Only safe when the caller certifies that no generators are closer than
+    /// the weld radius; sub-radius clusters can otherwise fail construction.
+    /// See `docs/correctness-contract.md`.
     Disabled,
-    /// Merge near-coincident generators using the density-based default threshold.
-    MergeDensity,
-    /// Merge near-coincident generators using an explicit Euclidean threshold.
+    /// Weld generators within the library's fixed weld radius (default).
+    ///
+    /// The radius (~1.4e-6 chord distance) is derived from f32 input rounding
+    /// with a measured safety margin; welding below it is required for graph
+    /// validity, not input hygiene. Welded generators share one cell in the
+    /// returned diagram (see [`SphericalVoronoi::weld_map`]).
+    Weld,
+    /// Weld generators within an explicit Euclidean (chord) threshold.
     MergeWithin(f32),
 }
 
@@ -201,9 +210,10 @@ impl ComputeOutput {
 pub struct VoronoiConfig {
     /// Preprocessing applied before Voronoi computation.
     ///
-    /// The default merges near-coincident generators using a density-based threshold, which
-    /// changes the problem being solved but materially improves robustness on duplicate or
-    /// near-duplicate inputs.
+    /// The default welds generators within a fixed sub-resolvability radius
+    /// (~1.4e-6 chord). Welded input indices share one cell in the returned
+    /// diagram rather than receiving duplicated boundaries, so strict
+    /// validation passes whether or not welds occur.
     pub preprocess_mode: PreprocessMode,
     /// Optional cap on k during termination fallback (None = no cap).
     pub termination_max_k: Option<usize>,
@@ -218,7 +228,7 @@ pub struct VoronoiConfig {
 impl Default for VoronoiConfig {
     fn default() -> Self {
         Self {
-            preprocess_mode: PreprocessMode::MergeDensity,
+            preprocess_mode: PreprocessMode::Weld,
             termination_max_k: None,
             packed_knn_expand_r2: true,
         }

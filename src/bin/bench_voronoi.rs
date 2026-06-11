@@ -252,7 +252,7 @@ fn validate_against_hull(points: &[Vec3], preprocess: bool) {
         &unit_points,
         VoronoiConfig {
             preprocess_mode: if preprocess {
-                PreprocessMode::MergeDensity
+                PreprocessMode::Weld
             } else {
                 PreprocessMode::Disabled
             },
@@ -392,7 +392,7 @@ fn main() {
             preprocess_mode: if args.no_preprocess {
                 PreprocessMode::Disabled
             } else {
-                PreprocessMode::MergeDensity
+                PreprocessMode::Weld
             },
             packed_knn_expand_r2: args.packed_expand_r2,
             ..VoronoiConfig::default()

@@ -74,7 +74,7 @@ fn test_compute_with_explicit_preprocess_modes() {
     let density = compute_with(
         &points,
         VoronoiConfig {
-            preprocess_mode: PreprocessMode::MergeDensity,
+            preprocess_mode: PreprocessMode::Weld,
             ..VoronoiConfig::default()
         },
     )
@@ -99,7 +99,7 @@ fn test_compute_with_report_surfaces_preprocess_outcome() {
     let output = compute_with_report(
         &points,
         VoronoiConfig {
-            preprocess_mode: PreprocessMode::MergeDensity,
+            preprocess_mode: PreprocessMode::Weld,
             ..VoronoiConfig::default()
         },
     )
@@ -108,7 +108,7 @@ fn test_compute_with_report_surfaces_preprocess_outcome() {
     assert_eq!(output.diagram.num_cells(), 50);
     assert_eq!(
         output.report.preprocess.requested_mode,
-        PreprocessMode::MergeDensity
+        PreprocessMode::Weld
     );
     assert_eq!(output.report.preprocess.original_points, 50);
     assert_eq!(
@@ -145,7 +145,7 @@ fn test_clustered_cap_tight_report_keeps_default_preprocessing_nonintrusive() {
     let output = compute_with_report(
         &points,
         VoronoiConfig {
-            preprocess_mode: PreprocessMode::MergeDensity,
+            preprocess_mode: PreprocessMode::Weld,
             ..VoronoiConfig::default()
         },
     )
@@ -153,7 +153,7 @@ fn test_clustered_cap_tight_report_keeps_default_preprocessing_nonintrusive() {
 
     assert_eq!(
         output.report.preprocess.requested_mode,
-        PreprocessMode::MergeDensity
+        PreprocessMode::Weld
     );
     assert!(
         !output.report.preprocess.did_merge(),
@@ -184,42 +184,75 @@ fn test_clustered_cap_tight_report_keeps_default_preprocessing_nonintrusive() {
 }
 
 #[test]
-fn test_clustered_cap_extreme_report_prefers_effective_strict_validation() {
+fn test_clustered_cap_extreme_weld_keeps_returned_diagram_strictly_valid() {
     let points = clustered_cap_points(50, 0.00175, 42);
 
+    // Coarse explicit threshold that forces welds on this tight fixture
+    // (the default weld radius is far below its point spacing).
     let output = compute_with_report(
         &points,
         VoronoiConfig {
-            preprocess_mode: PreprocessMode::MergeDensity,
+            preprocess_mode: PreprocessMode::MergeWithin(3.5e-4),
             ..VoronoiConfig::default()
         },
     )
-    .expect("clustered_cap_extreme should still compute under default preprocessing");
+    .expect("clustered_cap_extreme should compute under coarse welding");
 
-    assert_eq!(
-        output.report.preprocess.requested_mode,
-        PreprocessMode::MergeDensity
-    );
     assert!(
         output.report.preprocess.did_merge(),
-        "extreme clustered-cap fixture should exercise the preprocessing-altered contract"
+        "coarse threshold should exercise the weld-altered contract on this fixture"
     );
     assert!(
         output.effective_diagram.is_some(),
-        "merged preprocessing should expose the effective solved diagram"
+        "welding should expose the effective solved diagram"
     );
     assert!(
-        output.report.effective_validation.is_some(),
-        "merged preprocessing should surface effective validation"
+        output
+            .report
+            .effective_validation
+            .as_ref()
+            .expect("welding should surface effective validation")
+            .is_strictly_valid(),
+        "effective solved diagram should validate strictly"
     );
+    // The strengthened contract: the returned diagram is also strictly valid,
+    // with welded twins sharing their canonical cell instead of duplicating it.
     assert!(
-        output.report.preferred_validation().is_strictly_valid(),
-        "preferred validation should point at the effective strict-valid solve"
+        output.report.returned_validation.is_strictly_valid(),
+        "returned diagram with welds should validate strictly: {}",
+        output.report.returned_validation.headline()
     );
     assert_eq!(
-        output.preferred_diagram().num_cells(),
-        output.report.preprocess.effective_points
+        output.report.returned_validation.welded_twin_cells,
+        output.report.preprocess.num_merged
     );
+
+    let weld_map = output
+        .diagram
+        .weld_map()
+        .expect("welds occurred, weld map should be present");
+    assert_eq!(weld_map.len(), points.len());
+    assert_eq!(
+        output.diagram.welded_twin_count(),
+        output.report.preprocess.num_merged
+    );
+    for i in 0..points.len() {
+        let canonical = output.diagram.canonical_cell_index(i);
+        assert_eq!(
+            output.diagram.canonical_cell_index(canonical),
+            canonical,
+            "canonical cells must map to themselves"
+        );
+        assert!(
+            canonical <= i,
+            "canonical index is the smallest input index in the weld class"
+        );
+        assert_eq!(
+            output.diagram.cell(i).vertex_indices,
+            output.diagram.cell(canonical).vertex_indices,
+            "welded twins must alias their canonical cell's boundary"
+        );
+    }
 }
 
 #[test]
@@ -267,6 +300,17 @@ fn test_compute_with_report_exposes_effective_diagram_when_merges_occur() {
     assert_eq!(
         output.preferred_diagram().num_cells(),
         effective_diagram.num_cells()
+    );
+    assert!(
+        output.report.returned_validation.is_strictly_valid(),
+        "returned diagram with welds should validate strictly: {}",
+        output.report.returned_validation.headline()
+    );
+    // Points 0 and 1 are the welded pair; 0 is the canonical index.
+    assert_eq!(output.diagram.canonical_cell_index(1), 0);
+    assert_eq!(
+        output.diagram.cell(1).vertex_indices,
+        output.diagram.cell(0).vertex_indices
     );
 }
 

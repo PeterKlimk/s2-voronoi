@@ -54,14 +54,15 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     )?;
 
     let t = Timer::start();
-    let (cells, cell_indices) = remap_cells_to_original_indices(
+    let (cells, cell_indices, weld_map) = remap_cells_to_original_indices(
         &points,
         merge_result.as_ref(),
         eff_cells,
         eff_cell_indices,
-    )?;
+    );
 
-    let diagram = crate::SphericalVoronoi::from_raw_parts(points, vertices, cells, cell_indices);
+    let diagram =
+        crate::SphericalVoronoi::from_raw_parts(points, vertices, cells, cell_indices, weld_map);
     tb.set_assemble(t.elapsed());
 
     // Report timing if feature enabled
@@ -139,6 +140,7 @@ fn compute_voronoi_knn_clipping_report_core(
             vertices.clone(),
             eff_cells.clone(),
             eff_cell_indices.clone(),
+            None,
         ))
     } else {
         None
@@ -146,14 +148,15 @@ fn compute_voronoi_knn_clipping_report_core(
     let effective_validation = effective_diagram.as_ref().map(crate::validation::validate);
 
     let t = Timer::start();
-    let (cells, cell_indices) = remap_cells_to_original_indices(
+    let (cells, cell_indices, weld_map) = remap_cells_to_original_indices(
         &points,
         merge_result.as_ref(),
         eff_cells,
         eff_cell_indices,
-    )?;
+    );
 
-    let diagram = crate::SphericalVoronoi::from_raw_parts(points, vertices, cells, cell_indices);
+    let diagram =
+        crate::SphericalVoronoi::from_raw_parts(points, vertices, cells, cell_indices, weld_map);
     let returned_validation = crate::validation::validate(&diagram);
     tb.set_assemble(t.elapsed());
 
@@ -244,7 +247,7 @@ fn preprocess_effective_points(
                 },
             );
         }
-        PreprocessMode::MergeDensity => constants::merge_threshold_for_density(points.len()),
+        PreprocessMode::Weld => constants::weld_radius(),
         PreprocessMode::MergeWithin(threshold) => threshold,
     };
     let mut result = merge_close_points(points, threshold);
@@ -337,39 +340,34 @@ fn reconcile_edges(
     Ok((cells, cell_indices))
 }
 
+/// Map effective cells back to original input indices.
+///
+/// Welded twins alias their canonical cell's `(start, len)` range in the
+/// shared index buffer rather than receiving copied boundaries, and the weld
+/// map records the canonical (smallest) original index per cell so consumers
+/// and validation can account for shared cells explicitly.
 fn remap_cells_to_original_indices(
     points: &[Vec3],
     merge_result: Option<&MergeResult>,
     eff_cells: Vec<VoronoiCell>,
     eff_cell_indices: Vec<u32>,
-) -> Result<(Vec<VoronoiCell>, Vec<u32>), crate::VoronoiError> {
+) -> (Vec<VoronoiCell>, Vec<u32>, Option<Vec<u32>>) {
     if let Some(merge_result) = merge_result {
+        let mut eff_to_canonical: Vec<u32> = vec![u32::MAX; eff_cells.len()];
         let mut new_cells = Vec::with_capacity(points.len());
-        let mut new_cell_indices: Vec<u32> = Vec::new();
+        let mut weld_map = Vec::with_capacity(points.len());
 
         for orig_idx in 0..points.len() {
             let eff_idx = merge_result.original_to_effective[orig_idx];
-            let eff_cell = &eff_cells[eff_idx];
-
-            let start = u32::try_from(new_cell_indices.len()).map_err(|_| {
-                crate::VoronoiError::RepresentationLimit(
-                    "remapped cell index buffer exceeds u32 capacity".to_string(),
-                )
-            })?;
-            let eff_start = eff_cell.vertex_start();
-            let eff_end = eff_start + eff_cell.vertex_count();
-            new_cell_indices.extend_from_slice(&eff_cell_indices[eff_start..eff_end]);
-
-            let count_u16 = u16::try_from(eff_cell.vertex_count()).map_err(|_| {
-                crate::VoronoiError::RepresentationLimit(
-                    "remapped cell vertex count exceeds u16 capacity".to_string(),
-                )
-            })?;
-            new_cells.push(VoronoiCell::new(start, count_u16));
+            if eff_to_canonical[eff_idx] == u32::MAX {
+                eff_to_canonical[eff_idx] = orig_idx as u32;
+            }
+            weld_map.push(eff_to_canonical[eff_idx]);
+            new_cells.push(eff_cells[eff_idx]);
         }
-        Ok((new_cells, new_cell_indices))
+        (new_cells, eff_cell_indices, Some(weld_map))
     } else {
-        Ok((eff_cells, eff_cell_indices))
+        (eff_cells, eff_cell_indices, None)
     }
 }
 

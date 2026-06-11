@@ -282,8 +282,12 @@ fn test_multi_distribution_robustness() {
 // =============================================================================
 // High-Volume Fuzz Tests
 //
-// Tests at large point counts (2-4M) where bad edges have been observed.
-// These are marked #[ignore] since they take several seconds each.
+// Diagnostic validation sweeps at large point counts (2-4M). Historical
+// "bad edges" in this range were the pre-weld merge remap duplicating cells
+// (docs/engineering-findings.md #7); with weld semantics these runs validate
+// strictly, modulo intentional orphan vertices on some seeds (finding #9).
+// Marked #[ignore] for runtime; promote to scheduled CI asserting
+// STRICT_VALID once the orphan policy (todo P0.2) lands.
 // Run with: cargo test --test adversarial fuzz -- --ignored --nocapture
 // =============================================================================
 
@@ -324,7 +328,7 @@ fn test_fuzz_2m_random_seeds() {
 #[test]
 #[ignore = "high-volume fuzz test - run manually"]
 fn test_fuzz_3m_random_seeds() {
-    // 3M points with 5 different seeds - in the range where bad edges occur
+    // 3M points with 5 different seeds
     const N: usize = 3_000_000;
     let seeds: [u64; 5] = [42, 123, 456, 789, 1001];
 
@@ -423,4 +427,97 @@ fn test_fuzz_sweep_sizes() {
             }
         }
     }
+}
+
+// =============================================================================
+// Coincident-Input Weld Contract
+//
+// Sub-weld-radius configurations that break the raw pipeline (see
+// docs/correctness-contract.md margin data) must produce strictly valid
+// diagrams under the default config, with welded twins sharing one cell.
+// =============================================================================
+
+#[test]
+fn test_weld_exact_duplicate_pair_strictly_valid_by_default() {
+    let mut points = random_sphere_points(2_000, 7);
+    points.push(points[123]);
+
+    let diagram = compute(&points).expect("exact duplicate should weld, not fail");
+    let report = validate(&diagram);
+    assert!(
+        report.is_strictly_valid(),
+        "welded exact duplicate should validate strictly: {}",
+        report.headline()
+    );
+    assert_eq!(report.welded_twin_cells, 1);
+    assert_eq!(diagram.canonical_cell_index(2_000), 123);
+    assert_eq!(
+        diagram.cell(2_000).vertex_indices,
+        diagram.cell(123).vertex_indices
+    );
+}
+
+#[test]
+fn test_weld_ulp_cluster_strictly_valid_by_default() {
+    // A 5-point cluster within ~1 ulp hard-fails construction (ClippedAway on
+    // the enclosed micro-cell) without welding; the default weld absorbs it.
+    let mut points = random_sphere_points(2_000, 11);
+    let p = points[500];
+    points.push(s2_voronoi::UnitVec3::new(p.x.next_up(), p.y, p.z));
+    points.push(s2_voronoi::UnitVec3::new(p.x, p.y.next_up(), p.z));
+    points.push(s2_voronoi::UnitVec3::new(p.x, p.y, p.z.next_up()));
+    points.push(s2_voronoi::UnitVec3::new(p.x.next_down(), p.y.next_up(), p.z));
+
+    let diagram = compute(&points).expect("ulp cluster should weld, not fail");
+    let report = validate(&diagram);
+    assert!(
+        report.is_strictly_valid(),
+        "welded ulp cluster should validate strictly: {}",
+        report.headline()
+    );
+    assert_eq!(report.welded_twin_cells, 4);
+    for twin in 2_000..2_004 {
+        assert_eq!(diagram.canonical_cell_index(twin), 500);
+    }
+}
+
+#[test]
+fn test_weld_seam_ulp_pairs_strictly_valid_by_default() {
+    // Ulp pairs at exactly symmetric positions (cube corners, axis poles, 45
+    // degree points) are the worst known aligned regime without welding.
+    let mut points = random_sphere_points(2_000, 13);
+    let inv3 = 1.0f32 / 3.0f32.sqrt();
+    let inv2 = 1.0f32 / 2.0f32.sqrt();
+    let mut seam_points: Vec<s2_voronoi::UnitVec3> = Vec::new();
+    for sx in [-1.0f32, 1.0] {
+        for sy in [-1.0f32, 1.0] {
+            for sz in [-1.0f32, 1.0] {
+                seam_points.push(s2_voronoi::UnitVec3::new(sx * inv3, sy * inv3, sz * inv3));
+            }
+        }
+    }
+    for s in [-1.0f32, 1.0] {
+        seam_points.push(s2_voronoi::UnitVec3::new(s * inv2, s * inv2, 0.0));
+        seam_points.push(s2_voronoi::UnitVec3::new(s, 0.0, 0.0));
+        seam_points.push(s2_voronoi::UnitVec3::new(0.0, 0.0, s));
+    }
+    let num_pairs = seam_points.len();
+    for p in seam_points {
+        let twin = s2_voronoi::UnitVec3::new(
+            if p.x.abs() > 0.5 { p.x.next_up() } else { p.x },
+            if p.y.abs() > 0.5 { p.y.next_up() } else { p.y },
+            if p.z.abs() > 0.5 { p.z.next_up() } else { p.z },
+        );
+        points.push(p);
+        points.push(twin);
+    }
+
+    let diagram = compute(&points).expect("seam ulp pairs should weld, not fail");
+    let report = validate(&diagram);
+    assert!(
+        report.is_strictly_valid(),
+        "welded seam pairs should validate strictly: {}",
+        report.headline()
+    );
+    assert_eq!(report.welded_twin_cells, num_pairs);
 }

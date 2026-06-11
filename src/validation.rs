@@ -35,10 +35,19 @@ pub struct ValidationReport {
     pub cells_with_invalid_references: usize,
     /// Total number of out-of-range vertex references across all cells.
     pub invalid_vertex_references: usize,
-    /// Number of duplicate cells (identical sorted boundary signatures).
+    /// Number of duplicate cells (identical sorted boundary signatures) among
+    /// canonical cells. Welded twins are accounted separately and are not
+    /// duplicates.
     pub duplicate_cells_count: usize,
     /// Number of topologically unique cells.
     pub unique_cells: usize,
+    /// Number of cells that are welded twins aliasing a canonical cell.
+    /// Informational: welded twins are part of the documented coincident-input
+    /// contract, not a defect.
+    pub welded_twin_cells: usize,
+    /// Number of weld-map inconsistencies (twin not aliasing its canonical
+    /// cell's boundary, or canonical index not itself canonical).
+    pub weld_map_issues: usize,
 
     /// Sum of raw cell boundary lengths.
     pub total_cell_vertices: usize,
@@ -152,6 +161,12 @@ impl ValidationReport {
         if self.antipodal_edges > 0 {
             issues.push(format!("{} antipodal edges", self.antipodal_edges));
         }
+        if self.weld_map_issues > 0 {
+            issues.push(format!(
+                "{} weld-map inconsistencies",
+                self.weld_map_issues
+            ));
+        }
 
         issues
     }
@@ -249,6 +264,28 @@ pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
     let num_vertices = diagram.num_vertices();
     let vertices = diagram.vertices();
 
+    // Welded twins alias a canonical cell's boundary; the subdivision is
+    // accounted over canonical cells only, after checking the aliasing holds.
+    let mut welded_twin_cells = 0usize;
+    let mut weld_map_issues = 0usize;
+    let mut is_welded_twin = vec![false; num_cells];
+    for i in 0..num_cells {
+        let canonical = diagram.canonical_cell_index(i);
+        if canonical == i {
+            continue;
+        }
+        welded_twin_cells += 1;
+        is_welded_twin[i] = true;
+        let canonical_is_canonical =
+            canonical < num_cells && diagram.canonical_cell_index(canonical) == canonical;
+        if !canonical_is_canonical
+            || diagram.cell(i).vertex_indices != diagram.cell(canonical).vertex_indices
+        {
+            weld_map_issues += 1;
+        }
+    }
+    let num_faces = num_cells - welded_twin_cells;
+
     let mut unique_cell_signatures = HashSet::new();
     let mut duplicate_cells_count = 0usize;
     let mut vertex_cell_count: Vec<u32> = vec![0; num_vertices];
@@ -264,6 +301,9 @@ pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
     let mut edges: HashMap<(u32, u32), EdgeStat> = HashMap::new();
 
     for cell in diagram.iter_cells() {
+        if is_welded_twin[cell.generator_index] {
+            continue;
+        }
         let len = cell.len();
         total_cell_vertices += len;
 
@@ -390,18 +430,21 @@ pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
         }
     }
 
-    let connected_components = if num_cells == 0 {
+    let connected_components = if num_faces == 0 {
         0
     } else {
-        let mut roots = HashSet::with_capacity(num_cells);
+        let mut roots = HashSet::with_capacity(num_faces);
         for cell_idx in 0..num_cells {
+            if is_welded_twin[cell_idx] {
+                continue;
+            }
             roots.insert(dsu.find(cell_idx));
         }
         roots.len()
     };
 
     let used_vertices = num_vertices.saturating_sub(orphan_vertices);
-    let euler_characteristic = used_vertices as i32 - num_edges as i32 + num_cells as i32;
+    let euler_characteristic = used_vertices as i32 - num_edges as i32 + num_faces as i32;
 
     let mut vertices_off_sphere = 0usize;
     for v in vertices {
@@ -424,6 +467,8 @@ pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
         invalid_vertex_references,
         duplicate_cells_count,
         unique_cells,
+        welded_twin_cells,
+        weld_map_issues,
         total_cell_vertices,
         vertices_off_sphere,
         orphan_vertices,

@@ -24,6 +24,11 @@ pub struct SphericalVoronoi {
 
     /// Flattened vertex indices for all cells.
     cell_indices: Vec<u32>,
+
+    /// Canonical cell index per cell when generators were welded, `None` when
+    /// every generator owns its own cell. Welded twins alias their canonical
+    /// cell's boundary storage; `weld_map[i] == i` for canonical cells.
+    weld_map: Option<Vec<u32>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -44,6 +49,7 @@ impl SphericalVoronoi {
             vertices: Vec::new(),
             cells: vec![CellData { start: 0, len: 0 }; n],
             cell_indices: Vec::new(),
+            weld_map: None,
         }
     }
 
@@ -65,6 +71,7 @@ impl SphericalVoronoi {
                 .map(|(start, len)| CellData { start, len })
                 .collect(),
             cell_indices,
+            weld_map: None,
         }
     }
 
@@ -76,7 +83,11 @@ impl SphericalVoronoi {
         vertices: Vec<Vec3>,
         cells: Vec<VoronoiCell>,
         cell_indices: Vec<u32>,
+        weld_map: Option<Vec<u32>>,
     ) -> Self {
+        debug_assert!(weld_map
+            .as_ref()
+            .is_none_or(|m| m.len() == cells.len()));
         Self {
             generators: generators
                 .into_iter()
@@ -94,6 +105,7 @@ impl SphericalVoronoi {
                 })
                 .collect(),
             cell_indices,
+            weld_map,
         }
     }
 
@@ -148,6 +160,41 @@ impl SphericalVoronoi {
     #[inline]
     pub fn vertex(&self, index: usize) -> UnitVec3 {
         self.vertices[index]
+    }
+
+    /// Canonical cell index for a cell.
+    ///
+    /// Generators welded together during preprocessing share one cell; the
+    /// canonical index is the smallest input index in the weld class, and the
+    /// welded cells alias the canonical cell's boundary. For non-welded cells
+    /// (the overwhelmingly common case) this is the identity.
+    #[inline]
+    pub fn canonical_cell_index(&self, index: usize) -> usize {
+        match &self.weld_map {
+            Some(map) => map[index] as usize,
+            None => index,
+        }
+    }
+
+    /// Canonical-cell mapping when generators were welded, `None` otherwise.
+    ///
+    /// When present, `weld_map()[i]` is the canonical cell index for cell `i`
+    /// (see [`Self::canonical_cell_index`]).
+    #[inline]
+    pub fn weld_map(&self) -> Option<&[u32]> {
+        self.weld_map.as_deref()
+    }
+
+    /// Number of cells that are welded twins of another (canonical) cell.
+    pub fn welded_twin_count(&self) -> usize {
+        match &self.weld_map {
+            Some(map) => map
+                .iter()
+                .enumerate()
+                .filter(|&(i, &c)| c as usize != i)
+                .count(),
+            None => 0,
+        }
     }
 }
 
