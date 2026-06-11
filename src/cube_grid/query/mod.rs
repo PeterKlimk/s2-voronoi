@@ -7,7 +7,8 @@ mod stream;
 
 pub(crate) use directed::DirectedEligibility;
 pub(crate) use stream::{
-    DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream,
+    DirectedNeighborBatch, DirectedNeighborBatchSource, DirectedNeighborFrontier,
+    DirectedNeighborStream,
 };
 
 use crate::fp;

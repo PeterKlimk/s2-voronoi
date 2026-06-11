@@ -10,8 +10,10 @@ use small::{clip_small_ptr, clip_small_ptr_d};
 /// Dispatch clipping to the best specialization for the current polygon size.
 ///
 /// This is the shared match table used by both `clip_convex` and `clip_convex_edgecheck`.
+///
 /// - N=4,8: `% N` is cheap (bitmask), so the plain ptr variant tends to win.
 /// - N=3,5,6,7: avoid `% N` in the hot loop via the ptr_d variant.
+///
 /// We `match` on N first, then branch on bounded/unbounded per arm.
 #[inline(always)]
 fn dispatch_clip(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {

@@ -142,7 +142,8 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
 
             if !self.pending.is_empty() {
                 // Nearest-first within the layer.
-                self.pending.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+                self.pending
+                    .sort_unstable_by_key(|&(dot, _)| std::cmp::Reverse(dot));
                 self.has_pending = true;
                 return;
             }

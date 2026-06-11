@@ -36,6 +36,37 @@ pub(super) fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> u32 {
     key[0] ^ key[1] ^ key[2] ^ a ^ b
 }
 
+/// Reconcile the two directed sides of a shared edge by their endpoint
+/// "third" generators. The sides traverse the edge in opposite directions
+/// (reverse winding), so a full match is `other[0] == mine[1] &&
+/// other[1] == mine[0]`, patched crosswise; otherwise every shared endpoint
+/// is patched individually (cross-slot search) and `false` is returned so
+/// the caller records the unresolved mismatch.
+///
+/// `patch(my_k, other_k)` receives endpoint positions on each side; the
+/// in-shard path writes one direction, the cross-bin overflow path patches
+/// both sides from the same pairing.
+#[inline]
+fn reconcile_edge_endpoints(
+    my_thirds: [u32; 2],
+    other_thirds: [u32; 2],
+    mut patch: impl FnMut(usize, usize),
+) -> bool {
+    if other_thirds[0] == my_thirds[1] && other_thirds[1] == my_thirds[0] {
+        patch(0, 1);
+        patch(1, 0);
+        return true;
+    }
+    for (ok, other) in other_thirds.iter().enumerate() {
+        for (mk, mine) in my_thirds.iter().enumerate() {
+            if other == mine {
+                patch(mk, ok);
+            }
+        }
+    }
+    false
+}
+
 impl ShardDedup {
     pub(super) fn push_edge_check(&mut self, local: LocalId, check: EdgeCheck) {
         let local_idx = local.as_usize();
@@ -74,6 +105,9 @@ impl ShardDedup {
 ///
 /// This eliminates the edges_to_earlier intermediate vec
 #[cfg_attr(feature = "profiling", inline(never))]
+// The argument list is the fused collect+resolve data flow; the two
+// output vecs are caller-owned scratch reused across cells.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn collect_and_resolve_cell_edges(
     cell_idx: u32,
     shard_ctx: &mut super::build::ShardContext<'_>,
@@ -180,24 +214,18 @@ pub(super) fn collect_and_resolve_cell_edges(
                 hp_eps,
             });
         } else {
-            // Edge to earlier neighbor → resolve immediately
+            // Edge to earlier neighbor → resolve immediately.
             // Search Vec for matching check (cache-friendly sequential access)
-            let mut found_check: Option<EdgeCheck> = None;
-            let mut found_idx = 0usize;
-            for (idx, check) in incoming_checks.iter().enumerate() {
-                if check.key == edge_key {
-                    found_check = Some(*check);
-                    found_idx = idx;
-                    break;
-                }
-            }
+            let found = incoming_checks
+                .iter()
+                .position(|check| check.key == edge_key)
+                .map(|idx| (idx, incoming_checks[idx]));
 
-            if let Some(check) = found_check {
+            if let Some((found_idx, check)) = found {
                 debug_assert!(
                     matched & (1u64 << found_idx) == 0,
                     "edge check duplicate side"
                 );
-
                 matched |= 1u64 << found_idx;
 
                 let (a, b) = unpack_edge_key(edge_key);
@@ -206,51 +234,16 @@ pub(super) fn collect_and_resolve_cell_edges(
                     third_for_edge_endpoint(cell_vertices[locals[1] as usize].0, a, b),
                 ];
 
-                // Incoming check is form [OtherStart, OtherEnd]
-                // We are traversing in reverse.
-                // Match: MyStart (thirds[0]) == OtherEnd (check.thirds[1])
-                //        MyEnd   (thirds[1]) == OtherStart (check.thirds[0])
-                let endpoints_match =
-                    check.thirds[0] == my_thirds[1] && check.thirds[1] == my_thirds[0];
-
-                if endpoints_match {
-                    // check.indices[0] is OtherStart -> matches MyEnd (locals[1])
-                    // check.indices[1] is OtherEnd   -> matches MyStart (locals[0])
-
-                    // 1. MyStart receives OtherEnd
-                    let local_idx_0 = locals[0] as usize;
+                let full = reconcile_edge_endpoints(my_thirds, check.thirds, |mk, ck| {
+                    let local_idx = locals[mk] as usize;
                     debug_assert!(
-                        vertex_indices[local_idx_0] == INVALID_INDEX
-                            || vertex_indices[local_idx_0] == check.indices[1],
-                        "edge check index mismatch (start)"
+                        vertex_indices[local_idx] == INVALID_INDEX
+                            || vertex_indices[local_idx] == check.indices[ck],
+                        "edge check index mismatch"
                     );
-                    vertex_indices[local_idx_0] = check.indices[1];
-
-                    // 2. MyEnd receives OtherStart
-                    let local_idx_1 = locals[1] as usize;
-                    debug_assert!(
-                        vertex_indices[local_idx_1] == INVALID_INDEX
-                            || vertex_indices[local_idx_1] == check.indices[0],
-                        "edge check index mismatch (end)"
-                    );
-                    vertex_indices[local_idx_1] = check.indices[0];
-                } else {
-                    // Partial match: search for any shared endpoint (may be in different slots)
-                    for ck in 0..2 {
-                        let check_third = check.thirds[ck];
-                        for mk in 0..2 {
-                            if check_third == my_thirds[mk] {
-                                let local_idx = locals[mk] as usize;
-                                debug_assert!(
-                                    vertex_indices[local_idx] == INVALID_INDEX
-                                        || vertex_indices[local_idx] == check.indices[ck],
-                                    "edge check index mismatch (cross-slot)"
-                                );
-                                vertex_indices[local_idx] = check.indices[ck];
-                            }
-                        }
-                    }
-                    // Endpoint mismatch
+                    vertex_indices[local_idx] = check.indices[ck];
+                });
+                if !full {
                     shard
                         .output
                         .unresolved_edges
@@ -335,74 +328,25 @@ pub(super) fn resolve_edge_check_overflow(
                 let (a_shard, b_shard) =
                     with_two_mut(shards, a.source_bin.as_usize(), b.source_bin.as_usize());
 
-                // Match based on reverse winding:
-                // a (Side 0, Creator) traversing Start->End
-                // b (Side 1, User)    traversing End->Start (relative to a)
-                //
-                // So a.Start == b.End and a.End == b.Start
-                if a.thirds[0] == b.thirds[1] && a.thirds[1] == b.thirds[0] {
-                    // Full match:
-                    // a.indices[0] (a.Start) <-> b.indices[1] (b.End)
-                    // a.indices[1] (a.End)   <-> b.indices[0] (b.Start)
-
-                    // Patch b's slots (using a's indices)
-                    // b.slots[0] (b.Start) gets a.indices[1] (a.End)
-                    if a.indices[1] != INVALID_INDEX {
+                // The two sides traverse the edge in reverse winding;
+                // every endpoint pairing patches both shards symmetrically.
+                let full = reconcile_edge_endpoints(b.thirds, a.thirds, |bk, ak| {
+                    if a.indices[ak] != INVALID_INDEX {
                         patch_slot(
-                            &mut b_shard.output.cell_indices[b.slots[0] as usize],
+                            &mut b_shard.output.cell_indices[b.slots[bk] as usize],
                             a.source_bin,
-                            a.indices[1],
+                            a.indices[ak],
                         );
                     }
-                    // b.slots[1] (b.End) gets a.indices[0] (a.Start)
-                    if a.indices[0] != INVALID_INDEX {
+                    if b.indices[bk] != INVALID_INDEX {
                         patch_slot(
-                            &mut b_shard.output.cell_indices[b.slots[1] as usize],
-                            a.source_bin,
-                            a.indices[0],
-                        );
-                    }
-
-                    // Patch a's slots (using b's indices)
-                    // a.slots[0] (a.Start) gets b.indices[1] (b.End)
-                    if b.indices[1] != INVALID_INDEX {
-                        patch_slot(
-                            &mut a_shard.output.cell_indices[a.slots[0] as usize],
+                            &mut a_shard.output.cell_indices[a.slots[ak] as usize],
                             b.source_bin,
-                            b.indices[1],
+                            b.indices[bk],
                         );
                     }
-                    // a.slots[1] (a.End) gets b.indices[0] (b.Start)
-                    if b.indices[0] != INVALID_INDEX {
-                        patch_slot(
-                            &mut a_shard.output.cell_indices[a.slots[1] as usize],
-                            b.source_bin,
-                            b.indices[0],
-                        );
-                    }
-                } else {
-                    // Partial match: cross-slot search for any shared endpoint
-                    for ak in 0..2 {
-                        for bk in 0..2 {
-                            if a.thirds[ak] == b.thirds[bk] {
-                                if a.indices[ak] != INVALID_INDEX {
-                                    patch_slot(
-                                        &mut b_shard.output.cell_indices[b.slots[bk] as usize],
-                                        a.source_bin,
-                                        a.indices[ak],
-                                    );
-                                }
-                                if b.indices[bk] != INVALID_INDEX {
-                                    patch_slot(
-                                        &mut a_shard.output.cell_indices[a.slots[ak] as usize],
-                                        b.source_bin,
-                                        b.indices[bk],
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    // Endpoint mismatch
+                });
+                if !full {
                     unresolved_edges.push(UnresolvedEdgeMismatch { key: a.key });
                 }
             }

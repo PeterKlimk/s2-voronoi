@@ -1,6 +1,9 @@
 use super::super::types::PolyBuffer;
 use crate::fp;
 
+// Fused clip-output writer: the parameters are the polygon SoA plus the
+// entry/exit intersection data.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_output(
     poly: &PolyBuffer,
     out: &mut PolyBuffer,

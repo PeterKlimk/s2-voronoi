@@ -157,6 +157,8 @@ impl PackedKnnCellScratch {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
+    // SoA query-context plumbing (hot path); bundling adds indirection.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn ensure_expand_r2_band_directed_for(
         &mut self,
         qi: usize,

@@ -121,13 +121,16 @@ fn vertex_pos(vertices: &[Vec3], vertex_id: u32) -> Result<Vec3, crate::VoronoiE
 
 use super::union_find::UnionFind;
 
+/// Rebuilt cell table and index buffer after reconciliation.
+pub(super) type ReconciledCells = (Vec<VoronoiCell>, Vec<u32>);
+
 pub(super) fn reconcile_unresolved_edges(
     edge_records: &[EdgeRecord],
     vertices: &[Vec3],
     cells: &[VoronoiCell],
     cell_indices: &[u32],
     vertex_keys: &[VertexKey],
-) -> Result<Option<(Vec<VoronoiCell>, Vec<u32>)>, crate::VoronoiError> {
+) -> Result<Option<ReconciledCells>, crate::VoronoiError> {
     let mut uf = UnionFind::new(vertices.len());
     let mut merged = 0usize;
     const DEGENERATE_LEN_EPS_SQ: f32 = crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS

@@ -11,6 +11,9 @@ use glam::DVec3;
 
 pub use projection::TangentBasis;
 
+// One long-lived instance per worker, reused via reset(); boxing the
+// large gnomonic variant would put indirection on the hot clip path.
+#[allow(clippy::large_enum_variant)]
 enum BuilderImpl {
     Gnomonic(GnomonicBuilder),
     Fallback(FallbackBuilder),

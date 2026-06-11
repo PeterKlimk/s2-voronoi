@@ -355,10 +355,8 @@ pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
         // Canonical duplicate-cell signature over valid references only.
         let mut signature: Vec<u32> = seen_valid.iter().copied().collect();
         signature.sort_unstable();
-        if !signature.is_empty() {
-            if !unique_cell_signatures.insert(signature) {
-                duplicate_cells_count += 1;
-            }
+        if !signature.is_empty() && !unique_cell_signatures.insert(signature) {
+            duplicate_cells_count += 1;
         }
 
         for &vi in &seen_valid {

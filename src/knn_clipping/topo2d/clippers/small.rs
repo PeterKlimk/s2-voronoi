@@ -171,6 +171,7 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
 
 /// Small-N clipper using modulo iteration (for N=4,8 where `% N` is a bitmask).
 #[inline(always)]
+#[allow(clippy::needless_range_loop)] // index drives 3 parallel outputs + pointer reads
 pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
     poly: &PolyBuffer,
     hp: &HalfPlane,
@@ -299,6 +300,7 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
 
 /// Small-N clipper using modulo-free iteration (for N=3,5,6,7 where `% N` is expensive).
 #[inline(always)]
+#[allow(clippy::needless_range_loop)] // index drives 3 parallel outputs + pointer reads
 pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
     poly: &PolyBuffer,
     hp: &HalfPlane,

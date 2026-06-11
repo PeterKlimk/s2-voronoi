@@ -1,9 +1,7 @@
 use glam::Vec3;
 
-use crate::cube_grid::DirectedNeighborBatchSource;
-
 use super::super::{CellBuildError, CellFailure};
-use super::CellBuildContext;
+use super::{BuildCounters, BuildTrace, CellBuildContext};
 
 pub(super) fn classify_terminal_failure(
     bounded: bool,
@@ -25,14 +23,8 @@ pub(super) fn unexpected_failure_error(
     ctx: &CellBuildContext,
     points: &[Vec3],
     generator_idx: usize,
-    neighbors_processed: usize,
-    did_packed: bool,
-    used_knn: bool,
-    knn_exhausted: bool,
-    last_clip_phase: &str,
-    last_batch_source: Option<DirectedNeighborBatchSource>,
-    last_neighbor_idx: Option<usize>,
-    last_neighbor_slot: Option<u32>,
+    trace: &BuildTrace,
+    counters: &BuildCounters,
     context: &str,
     explicit_failure: Option<CellFailure>,
 ) -> CellBuildError {
@@ -67,14 +59,14 @@ pub(super) fn unexpected_failure_error(
             builder.neighbor_index_count,
             builder.neighbor_slot_count,
             extraction_failure,
-            neighbors_processed,
-            did_packed,
-            used_knn,
-            knn_exhausted,
-            last_clip_phase,
-            last_batch_source,
-            last_neighbor_idx,
-            last_neighbor_slot,
+            counters.neighbors_processed,
+            counters.did_packed,
+            counters.used_knn,
+            counters.knn_exhausted,
+            trace.last_clip_phase,
+            trace.last_batch_source,
+            trace.last_neighbor_idx,
+            trace.last_neighbor_slot,
             generator,
             &neighbor_indices[..neighbor_indices.len().min(10)],
         )),

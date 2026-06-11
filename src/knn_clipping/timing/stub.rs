@@ -70,6 +70,7 @@ impl CellSubAccum {
     #[inline(always)]
     pub fn add_edge_emit(&mut self, _d: Duration) {}
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)] // mirrors the real timing API
     pub fn add_cell_stage(
         &mut self,
         _stage: KnnCellStage,

@@ -71,9 +71,8 @@ The empirical groundwork is done (see correctness-contract.md); this is the impl
    documented `unreachable!`; the fallback angle sort uses `total_cmp` (the old
    `partial_cmp + unwrap_or` could trip std::sort's total-order check on NaN). Remaining panics
    are genuine bug traps per the supported-envelope contract.
-4. Zero-warning builds **(done)** and `rust-version = "1.88"` **(done)**; remaining:
-   `#[deny(missing_docs)]` on the public surface and the ~18 pre-existing clippy style lints
-   (mostly too-many-arguments, tied to the P4 god-function splits).
+4. Zero-warning builds **(done)**, `rust-version = "1.88"` **(done)**, and clippy-clean
+   **(done with the P4.2 splits)**; remaining: `#[deny(missing_docs)]` on the public surface.
 
 ## P2: API completeness
 
@@ -154,9 +153,15 @@ In implementation order:
    re-validation protocol in the module header. Proven a pure relocation (identical diagram
    fingerprint). The inert `termination_max_k` config and the dead cadence policy were removed
    alongside (the parked P3.5 question, closed).
-2. **Split the god functions**: `build_cell_into` (~280 lines, cell_build/run.rs) and
-   `collect_and_resolve_cell_edges` (~210 lines, live_dedup/edge_checks.rs); extract the
-   edge-endpoint matching logic duplicated between the main and overflow paths.
+2. ~~**Split the god functions**~~ **Done.** `build_cell_into` decomposed into phase functions
+   (seed clipping, stream consumption with per-batch clipping, terminal classification /
+   extraction) over two small state structs (`BuildTrace` diagnostics, `BuildCounters`
+   stats), which also collapsed `unexpected_failure_error`'s 13 arguments. The duplicated
+   edge-endpoint matching is now one `reconcile_edge_endpoints` primitive (reverse-winding
+   full match + cross-slot partial search) shared by the in-shard and cross-bin overflow
+   paths, verified arm-by-arm. Proven behavior-preserving by identical diagram fingerprint;
+   the crate is now clippy-clean (remaining hot-path arg-count/loop-index lints carry
+   targeted allows with stated justifications).
 3. ~~**Document the stitching invariant.**~~ **Done.** `docs/live_dedup.md` ("The stitching
    invariant"): the total order, the per-pair coverage contract (cross-bin double discovery vs
    same-bin seed forwarding), why the earlier side always delivers when it agrees the edge

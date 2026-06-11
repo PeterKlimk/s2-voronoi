@@ -5,6 +5,9 @@ use crate::fp;
 
 impl PackedKnnCellScratch {
     #[cfg_attr(feature = "profiling", inline(never))]
+    // The parameter list is the SoA query context; bundling would add
+    // indirection to a hot path for no information gain.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn ensure_tail_directed_for(
         &mut self,
         qi: usize,
