@@ -9,7 +9,7 @@ use crate::cube_grid::{
     DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream, PackedQuery,
 };
 use crate::knn_clipping::topo2d::{BuilderClipOutcome, BuilderFallbackRequest, BuilderStepOutcome};
-use crate::policy::{KnnPolicy, TerminationPolicy};
+use crate::policy::KnnPolicy;
 
 use super::{CellBuildError, CellFailure, CellOutputBuffer};
 use failure::{classify_terminal_failure, unexpected_failure_error};
@@ -123,7 +123,6 @@ pub(crate) struct CellBuildRequest<'a, 'm, 'p, 'g, 's> {
     pub(crate) grid: &'a crate::cube_grid::CubeMapGrid,
     pub(crate) generator_idx: usize,
     pub(crate) directed_ctx: crate::cube_grid::DirectedEligibility<'m>,
-    pub(crate) termination: TerminationPolicy,
     pub(crate) packed: Option<PackedQuery<'p, 'g, 'm>>,
     pub(crate) seed_neighbors: &'s [SeedNeighbor],
 }
@@ -207,13 +206,12 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     let grid = request.grid;
     let generator_idx = request.generator_idx;
     let point_indices = grid.point_indices();
-    let termination = request.termination;
 
     let mut neighbors_processed = 0usize;
     let mut terminated = false;
     let mut knn_exhausted = false;
     let mut used_knn = false;
-    let mut knn_stage = crate::knn_clipping::timing::KnnCellStage::DirectedCursor;
+    let mut knn_stage = crate::knn_clipping::timing::KnnCellStage::ShellExpand;
     let mut did_packed = false;
     let mut packed_safe_exhausted = false;
     let mut packed_tail_used = false;
@@ -279,7 +277,6 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         &mut ctx.scratch,
         request.directed_ctx,
         request.packed.take(),
-        crate::policy::takeover_kind(),
     );
 
     while !terminated && !ctx.builder.is_failed() {
@@ -306,10 +303,9 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                     }
 
                     let should_clip = match batch.source {
-                        // Takeover sources re-cover packed-served points;
+                        // The takeover re-covers packed-served points;
                         // dedup on insertion.
-                        DirectedNeighborBatchSource::DirectedCursor
-                        | DirectedNeighborBatchSource::ShellExpand => {
+                        DirectedNeighborBatchSource::ShellExpand => {
                             ctx.attempted_neighbors.insert(neighbor_idx)
                         }
                         DirectedNeighborBatchSource::PackedChunk0
@@ -353,20 +349,11 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                         &mut fallback_request,
                     );
 
-                    let should_check_termination = match batch.source {
-                        DirectedNeighborBatchSource::DirectedCursor => {
-                            termination.should_check(neighbors_processed)
-                        }
-                        // Sorted batches (packed stages and shell layers):
-                        // mid-batch bounds are sound, so only re-check when a
-                        // clip left the polygon unchanged.
-                        DirectedNeighborBatchSource::PackedChunk0
-                        | DirectedNeighborBatchSource::PackedTail
-                        | DirectedNeighborBatchSource::PackedExpandR2
-                        | DirectedNeighborBatchSource::ShellExpand => {
-                            clip_result == crate::knn_clipping::topo2d::types::ClipResult::Unchanged
-                        }
-                    };
+                    // All batch sources are sorted, so mid-batch bounds are
+                    // sound; only re-check when a clip left the polygon
+                    // unchanged.
+                    let should_check_termination =
+                        clip_result == crate::knn_clipping::topo2d::types::ClipResult::Unchanged;
 
                     if ctx.builder.is_bounded() && should_check_termination {
                         let bound = if pos + 1 < batch.n {
@@ -376,9 +363,9 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                             // Shell layers are sorted within the layer, but
                             // the next layer can contain closer points than
                             // this layer's tail; the mid-batch bound must
-                            // also cover them. (Cursor order is global and
-                            // packed batches dominate their unseen set, so
-                            // next_dot alone is sound for those sources.)
+                            // also cover them. (Packed batches dominate
+                            // their unseen set, so next_dot alone is sound
+                            // for those sources.)
                             if batch.source == DirectedNeighborBatchSource::ShellExpand {
                                 next_dot.max(batch.unseen_bound)
                             } else {
@@ -401,8 +388,6 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                         &mut stream,
                         &mut ctx.packed_chunk,
                         &mut ctx.builder,
-                        termination,
-                        neighbors_processed,
                         &mut used_knn,
                         &mut knn_stage,
                         &mut knn_query_time,
@@ -410,12 +395,9 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                 }
             }
             DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
-                let can_check =
-                    !stream.is_cursor_stage() || termination.should_check(neighbors_processed);
-                if ctx.builder.is_bounded()
-                    && can_check
-                    && ctx.builder.can_terminate(dot_upper_bound)
-                {
+                // Only packed stages produce bounded-unknown frontiers; the
+                // takeover always emits exact layers.
+                if ctx.builder.is_bounded() && ctx.builder.can_terminate(dot_upper_bound) {
                     terminated = true;
                 } else {
                     stream.advance_frontier();

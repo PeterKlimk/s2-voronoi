@@ -32,7 +32,7 @@ use super::super::projection::{face_uv_to_3d, st_to_uv};
 use super::super::query::{DirectedEligibility, DirectedNeighborFrontier, DirectedNeighborStream};
 use super::super::CubeMapGrid;
 use crate::packed_layout::PackedSlotLayout;
-use crate::policy::{PackedNeighborPolicy, TakeoverKind};
+use crate::policy::PackedNeighborPolicy;
 
 const LOCAL_SHIFT: u32 = 24;
 const LOCAL_MASK: u32 = (1u32 << LOCAL_SHIFT) - 1;
@@ -187,29 +187,25 @@ impl Harness {
     fn check_all(&self, name: &str) {
         let n = self.points.len();
         let stride = (n / 128).max(1);
-        const TAKEOVERS: [TakeoverKind; 2] = [TakeoverKind::Cursor, TakeoverKind::Shells];
 
-        // Takeover-only path (packed = None), both kinds.
-        for takeover in TAKEOVERS {
-            for slot in (0..n as u32).step_by(stride) {
-                let query_idx = self.grid.point_indices()[slot as usize] as usize;
-                let ctx = DirectedEligibility::from_layout(
-                    self.bin_of_cell[self.cell_of_slot[slot as usize]],
-                    slot,
-                    self.layout(),
-                );
-                let mut scratch = self.grid.make_scratch();
-                let stream = DirectedNeighborStream::new(
-                    &self.grid,
-                    &self.points,
-                    query_idx,
-                    &mut scratch,
-                    ctx,
-                    None,
-                    takeover,
-                );
-                self.collect_and_check(&format!("{name}/{takeover:?}"), slot, stream);
-            }
+        // Takeover-only path (packed = None).
+        for slot in (0..n as u32).step_by(stride) {
+            let query_idx = self.grid.point_indices()[slot as usize] as usize;
+            let ctx = DirectedEligibility::from_layout(
+                self.bin_of_cell[self.cell_of_slot[slot as usize]],
+                slot,
+                self.layout(),
+            );
+            let mut scratch = self.grid.make_scratch();
+            let stream = DirectedNeighborStream::new(
+                &self.grid,
+                &self.points,
+                query_idx,
+                &mut scratch,
+                ctx,
+                None,
+            );
+            self.collect_and_check(&format!("{name}/takeover"), slot, stream);
         }
 
         // Packed path: per center cell, complete slot-order runs.
@@ -228,12 +224,7 @@ impl Harness {
                 start as u32,
                 self.layout(),
             );
-            for (takeover, expand_r2) in [
-                (TakeoverKind::Cursor, false),
-                (TakeoverKind::Cursor, true),
-                (TakeoverKind::Shells, false),
-                (TakeoverKind::Shells, true),
-            ] {
+            for &expand_r2 in &[false, true] {
                 let mut packed_scratch = PackedKnnCellScratch::new();
                 let mut timings = PackedKnnTimings::default();
                 let PreparedPackedGroupStatus::Ready(mut prepared) =
@@ -264,13 +255,8 @@ impl Harness {
                         &mut scratch,
                         ctx,
                         Some(packed),
-                        takeover,
                     );
-                    self.collect_and_check(
-                        &format!("{name}/packed_r2={expand_r2}_{takeover:?}"),
-                        slot,
-                        stream,
-                    );
+                    self.collect_and_check(&format!("{name}/packed_r2={expand_r2}"), slot, stream);
                 }
             }
         }

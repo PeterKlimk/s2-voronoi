@@ -115,8 +115,11 @@ In implementation order:
    sparse+dense (forces deep shells). This suite is the strangler-pattern net: the shell rework
    must pass it unchanged. Note: emission *order* is deliberately not part of the contract (the
    current exact-order stream test pins the cursor's implementation and will be rewritten).
-2. **Grid resolution policy.** Current resolution (target density 16 points/cell from n) is
-   admittedly tuned to one scenario (see engineering-findings). Important constraint (2026-06):
+2. **Grid resolution policy.** Mostly done: density set to 24 from the 3600 sweep (fastest at
+   100k/500k/2M, flat optimum, 4.8-7.1% over the old 16; neighbors-before-termination 8.16->8.44
+   over that n range, density-independent), occupancy feedback + memory cap implemented, sweep
+   script + counters in place. Remaining: re-sweep beyond 4M and on non-uniform distributions;
+   the shells-native big-cell path below. Original text follows for context. Important constraint (2026-06):
    cells need *more* neighbors before terminating at higher densities, so the optimal
    points-per-cell is not a constant — it varies with point count and distribution. Replace
    with: (a) a target-density *curve* fit from a benchmark sweep across n (and sanity-checked on
@@ -127,12 +130,16 @@ In implementation order:
    shell 0) instead of today's bail to the cursor (`SlowPath`). The termination-vs-density
    interaction also suggests recording neighbors-before-termination stats in timing runs so the
    curve has an explanatory model, not just fitted numbers.
-3. **Shell generalization behind a policy switch.** Implement r >= 3 by BFS over the 3x3 cell
-   adjacency with visited stamps (face/corner stitching machinery exists for r<=2), the same
-   SIMD filter primitive, per-shell sorted emission, annulus certificate. Both paths live
-   side by side; interleaved benchmarks on uniform + clustered + bimodal + the adversarial and
-   fuzz corpus, plus a forced-deep-shell scenario. Then flip, delete the cursor, its scratch
-   heaps, the stream splice state, and the exact-order test.
+3. ~~**Shell generalization behind a policy switch.**~~ **Done, flipped, cursor deleted.**
+   `ShellFrontier` (BFS layers, per-layer sorted emission, ring certificates) passed the NN
+   contract suite on both paths; the side-by-side phase caught two consumer-side bound bugs
+   (mid-batch and pre-consumption termination both assumed "next emission bounds all unseen",
+   true for cursor order and packed invariants, false for shell layers - fixed by combining
+   with the layer certificate). Reference-machine A/B at parity (exact tie at 500k; 2M noise
+   exceeded the takeover's 0.05%-of-cells ceiling). The flip removed `DirectedNoKCursor`, both
+   scratch heaps, the stream's dual-takeover state, the cursor cadence path, and the
+   exact-order stream test; `quality::assess` nearest-generator sampling ported to shells.
+   There is no second algorithm.
 4. **Policy shrink.** After (2) normalizes occupancy, revisit the remaining constants (chunk
    sizes, termination cadence, count-model flags) — most were compensating for unbounded density
    variance and likely simplify or die. Keep what remains expressed through `src/policy.rs`.

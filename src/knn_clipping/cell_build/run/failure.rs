@@ -51,7 +51,7 @@ pub(super) fn unexpected_failure_error(
             "unexpected {} failure: bounded={}, failure={:?}, \
              planes={}, active={}, vertices={}, poly_len={}, has_bounding_ref={}, min_cos={:?}, \
              half_plane_count={}, neighbor_index_count={}, neighbor_slot_count={}, extraction_failure={:?}, neighbors_processed={}, \
-             did_packed={}, did_cursor_fallback={}, knn_exhausted={}, \
+             did_packed={}, did_takeover={}, knn_exhausted={}, \
              last_clip_phase={}, last_batch_source={:?}, last_neighbor_idx={:?}, last_neighbor_slot={:?}; \
              generator_pos={:?}; first_10_neighbor_indices={:?}",
             context,

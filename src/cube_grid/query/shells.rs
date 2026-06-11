@@ -179,3 +179,16 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
         self.exhausted
     }
 }
+
+impl CubeMapGrid {
+    #[inline]
+    pub(crate) fn shell_frontier<'a, 'b>(
+        &'a self,
+        query: Vec3,
+        query_idx: usize,
+        scratch: &'a mut CubeMapGridScratch,
+        eligibility: DirectedEligibility<'b>,
+    ) -> ShellFrontier<'a, 'b> {
+        ShellFrontier::new(self, query, query_idx, scratch, eligibility)
+    }
+}

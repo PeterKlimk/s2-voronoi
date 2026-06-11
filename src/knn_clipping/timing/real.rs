@@ -41,7 +41,7 @@ struct StageCounts {
     packed_chunk0: u64,
     packed_tail: u64,
     packed_expand_r2: u64,
-    directed_cursor: u64,
+    shell_expand: u64,
 }
 
 impl StageCounts {
@@ -51,7 +51,7 @@ impl StageCounts {
             KnnCellStage::PackedChunk0 => self.packed_chunk0 += 1,
             KnnCellStage::PackedTail => self.packed_tail += 1,
             KnnCellStage::PackedExpandR2 => self.packed_expand_r2 += 1,
-            KnnCellStage::DirectedCursor => self.directed_cursor += 1,
+            KnnCellStage::ShellExpand => self.shell_expand += 1,
         }
     }
 
@@ -60,7 +60,7 @@ impl StageCounts {
         self.packed_chunk0 += other.packed_chunk0;
         self.packed_tail += other.packed_tail;
         self.packed_expand_r2 += other.packed_expand_r2;
-        self.directed_cursor += other.directed_cursor;
+        self.shell_expand += other.shell_expand;
     }
 }
 

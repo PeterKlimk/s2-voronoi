@@ -25,8 +25,7 @@ pub(crate) use query::{
 };
 
 use glam::Vec3;
-use std::cmp::{Ordering, Reverse};
-use std::collections::BinaryHeap;
+use std::cmp::Ordering;
 #[cfg(feature = "timing")]
 use std::time::Duration;
 
@@ -283,10 +282,6 @@ pub struct CubeMapGridScratch {
     /// Cell visitation stamps (avoids clearing between queries)
     visited_stamp: Vec<u32>,
     stamp: u32,
-    /// Priority queue for cell expansion (min-heap by distance bound)
-    cell_heap: BinaryHeap<Reverse<(OrdF32, u32)>>,
-    /// Priority queue for discovered directed-eligible points (min-heap by exact distance).
-    point_heap: BinaryHeap<Reverse<(OrdF32, u32)>>,
     /// If true, the current query has exhausted all unseen candidates.
     exhausted: bool,
 }

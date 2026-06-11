@@ -14,8 +14,8 @@ pub enum KnnCellStage {
     PackedTail,
     /// Terminated during packed r=2 expansion band.
     PackedExpandR2,
-    /// Ran directed no-K cursor fallback.
-    DirectedCursor,
+    /// Ran the shell-expansion takeover.
+    ShellExpand,
 }
 
 #[cfg(feature = "timing")]

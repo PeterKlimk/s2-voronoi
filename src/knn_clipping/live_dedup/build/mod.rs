@@ -173,7 +173,6 @@ pub(super) fn build_cells_sharded_live_dedup(
     let assignment = assign_bins(points, grid).map_err(BuildCellsError::PackedLayoutCapacity)?;
     let num_bins = assignment.num_bins;
     let packed_policy = policy.packed();
-    let termination_policy = policy.termination();
 
     let per_bin: Result<
         Vec<(ShardState, crate::knn_clipping::timing::CellSubAccum)>,
@@ -280,7 +279,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                                     &mut live_ctx,
                                     &mut shard_ctx,
                                     &grid_ctx,
-                                    termination_policy,
                                     global,
                                     Some(PackedQuery::new(
                                         &mut prepared,
@@ -309,7 +307,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                                     &mut live_ctx,
                                     &mut shard_ctx,
                                     &grid_ctx,
-                                    termination_policy,
                                     global,
                                     None,
                                 )?;
@@ -339,7 +336,6 @@ pub(super) fn build_cells_sharded_live_dedup(
                             &mut live_ctx,
                             &mut shard_ctx,
                             &grid_ctx,
-                            termination_policy,
                             global,
                             None,
                         )?;
@@ -372,7 +368,6 @@ fn build_and_emit_cell<'a, 'b, 'c>(
     live_ctx: &'a mut LiveDedupCellScratch,
     shard_ctx: &'a mut ShardContext<'b>,
     grid_ctx: &'a GridContext<'c>,
-    termination: crate::policy::TerminationPolicy,
     generator_idx: usize,
     packed: Option<PackedQuery<'_, '_, 'c>>,
 ) -> Result<(), BuildCellsError> {
@@ -415,7 +410,6 @@ fn build_and_emit_cell<'a, 'b, 'c>(
             grid: grid_ctx.grid,
             generator_idx,
             directed_ctx,
-            termination,
             packed,
             seed_neighbors: &live_ctx.seed_neighbors,
         },

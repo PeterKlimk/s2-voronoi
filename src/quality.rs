@@ -460,9 +460,22 @@ fn nearest_generator_index(
     ctx: DirectedEligibility<'_>,
     query: Vec3,
 ) -> Option<usize> {
-    let mut cursor = grid.directed_no_k_cursor(query, generators.len(), scratch, ctx);
-    let slot = cursor.pop_next_proven_slot()?;
-    Some(grid.point_indices()[slot as usize] as usize)
+    let mut frontier = grid.shell_frontier(query, generators.len(), scratch, ctx);
+    let mut batch: Vec<u32> = Vec::new();
+    let mut best: Option<(f32, u32)> = None;
+    while let Some(layer) = frontier.frontier(&mut batch) {
+        // Layers are sorted, so the layer's best candidate is its first slot.
+        let candidate = (layer.first_dot, batch[0]);
+        if best.is_none_or(|(dot, _)| candidate.0 > dot) {
+            best = Some(candidate);
+        }
+        // Proven nearest once no later layer can beat the best so far.
+        if best.is_some_and(|(dot, _)| dot >= layer.unseen_bound) {
+            break;
+        }
+        frontier.advance();
+    }
+    best.map(|(_, slot)| grid.point_indices()[slot as usize] as usize)
 }
 
 #[cfg(test)]

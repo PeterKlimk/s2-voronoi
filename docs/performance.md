@@ -36,7 +36,7 @@ The scripts default to pinned + single-threaded runs where possible.
 ## Policy profiling
 
 When evaluating heuristic changes, do not rely only on total time. Prefer timing-enabled runs that
-also show how work moved between packed stages and directed cursor fallback.
+also show how work moved between the packed stages and the shell-expansion takeover.
 
 Useful commands:
 

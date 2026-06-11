@@ -72,30 +72,6 @@ pub(crate) fn grid_occupancy_rebuild_resolution(
     (new_res > res).then_some(new_res)
 }
 
-/// Which mechanism serves neighbors after the packed stages exhaust.
-///
-/// `Cursor` is the legacy best-first dual-heap walker; `Shells` is the
-/// Chebyshev BFS-layer frontier intended to replace it (docs/todo.md P3.3).
-/// Both satisfy the NN contract suite; the switch exists for side-by-side
-/// benchmarking before the cursor is deleted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TakeoverKind {
-    Cursor,
-    Shells,
-}
-
-/// Takeover selection, with the `S2_VORONOI_SHELL_FRONTIER=1` benchmark
-/// override (default: cursor, until the flip).
-pub(crate) fn takeover_kind() -> TakeoverKind {
-    static OVERRIDE: std::sync::OnceLock<TakeoverKind> = std::sync::OnceLock::new();
-    *OVERRIDE.get_or_init(
-        || match std::env::var("S2_VORONOI_SHELL_FRONTIER").ok().as_deref() {
-            Some("1") | Some("true") => TakeoverKind::Shells,
-            _ => TakeoverKind::Cursor,
-        },
-    )
-}
-
 pub(crate) const DEFAULT_PACKED_CHUNK0_SIZE: usize = 16;
 pub(crate) const DEFAULT_PACKED_CHUNK_SIZE: usize = 8;
 pub(crate) const DEFAULT_TERMINATION_CHECK_START: usize = 8;
@@ -183,6 +159,10 @@ impl TerminationPolicy {
         }
     }
 
+    /// Cadence-based re-check, formerly used by the heap cursor's
+    /// single-slot batches. Unused since the shell-frontier flip; removal is
+    /// parked with the `termination_max_k` decision (docs/todo.md P3.5).
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn should_check(self, neighbors_processed: usize) -> bool {
         self.check_step > 0

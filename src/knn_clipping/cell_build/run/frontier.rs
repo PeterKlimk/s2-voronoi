@@ -3,7 +3,6 @@ use std::time::Duration;
 use crate::cube_grid::{
     DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream,
 };
-use crate::policy::TerminationPolicy;
 
 #[inline]
 pub(super) fn probe_frontier<'a, 'm, 'p, 'g>(
@@ -14,19 +13,18 @@ pub(super) fn probe_frontier<'a, 'm, 'p, 'g>(
     knn_query_time: &mut Duration,
 ) -> DirectedNeighborFrontier {
     let t_knn = crate::knn_clipping::timing::Timer::start();
-    let cursor_stage_before = stream.is_cursor_stage();
+    let takeover_before = stream.is_takeover_stage();
     let frontier = stream.frontier(packed_chunk);
-    let frontier_is_cursor = match frontier {
-        DirectedNeighborFrontier::ExactBatch(batch) => matches!(
-            batch.source,
-            DirectedNeighborBatchSource::DirectedCursor | DirectedNeighborBatchSource::ShellExpand
-        ),
+    let frontier_is_takeover = match frontier {
+        DirectedNeighborFrontier::ExactBatch(batch) => {
+            batch.source == DirectedNeighborBatchSource::ShellExpand
+        }
         DirectedNeighborFrontier::UnknownButBounded { .. }
-        | DirectedNeighborFrontier::Exhausted => cursor_stage_before,
+        | DirectedNeighborFrontier::Exhausted => takeover_before,
     };
-    if frontier_is_cursor {
+    if frontier_is_takeover {
         *used_knn = true;
-        *knn_stage = crate::knn_clipping::timing::KnnCellStage::DirectedCursor;
+        *knn_stage = crate::knn_clipping::timing::KnnCellStage::ShellExpand;
         *knn_query_time += t_knn.elapsed();
     }
     frontier
@@ -37,24 +35,28 @@ pub(super) fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
     stream: &mut DirectedNeighborStream<'a, 'm, 'p, 'g>,
     packed_chunk: &mut Vec<u32>,
     builder: &mut crate::knn_clipping::topo2d::Topo2DBuilder,
-    termination: TerminationPolicy,
-    neighbors_processed: usize,
     used_knn: &mut bool,
     knn_stage: &mut crate::knn_clipping::timing::KnnCellStage,
     knn_query_time: &mut Duration,
 ) -> bool {
     let frontier = probe_frontier(stream, packed_chunk, used_knn, knn_stage, knn_query_time);
-    let can_check_cursor = termination.should_check(neighbors_processed);
 
     match frontier {
         DirectedNeighborFrontier::ExactBatch(batch) => {
-            let can_check =
-                batch.source != DirectedNeighborBatchSource::DirectedCursor || can_check_cursor;
-            can_check && builder.can_terminate(batch.first_dot)
+            // Termination before consuming a batch must bound everything
+            // unseen: the batch itself plus what lies beyond. Packed batches
+            // dominate their unseen set, so first_dot suffices; shell layers
+            // do not (the next layer can beat this layer's best), so combine
+            // with the layer certificate.
+            let bound = if batch.source == DirectedNeighborBatchSource::ShellExpand {
+                batch.first_dot.max(batch.unseen_bound)
+            } else {
+                batch.first_dot
+            };
+            builder.can_terminate(bound)
         }
         DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
-            let can_check = !stream.is_cursor_stage() || can_check_cursor;
-            if can_check && builder.can_terminate(dot_upper_bound) {
+            if builder.can_terminate(dot_upper_bound) {
                 true
             } else {
                 stream.advance_frontier();
