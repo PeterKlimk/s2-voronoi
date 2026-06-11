@@ -75,6 +75,19 @@ pub(crate) const TERMINATION_ANGLE_PAD: f64 = 8.0 * f32::EPSILON as f64;
 /// rounding in the double-angle computation of the certificate itself.
 pub(crate) const TERMINATION_THRESHOLD_GUARD: f64 = 3.0 * f32::EPSILON as f64;
 
+// === Planar termination (plane_clipping) ===
+
+/// Relative widening of the planar termination threshold `4 * max_r2`.
+///
+/// A neighbor at squared distance `d2` from the generator cannot cut the cell
+/// when `d2 > 4 * max_r2` (its bisector passes at distance `sqrt(d2)/2`,
+/// beyond every vertex). The guard absorbs: f32 rounding of the grid's
+/// unseen-distance certificates (including the documented <= 1-ulp wall
+/// rounding slack in `plane_grid`), f32 squared-distance accumulation in
+/// emission, and f64 rounding of `max_r2` itself. 3 ulps relative mirrors the
+/// sphere's `TERMINATION_THRESHOLD_GUARD` granularity.
+pub(crate) const PLANE_TERMINATION_GUARD: f64 = 3.0 * f32::EPSILON as f64;
+
 // === Spherical fallback (constraint replay past the chart limit) ===
 
 /// Constraint-satisfaction slack for fallback vertex candidates (a candidate

@@ -16,7 +16,7 @@ fn cswap_u32(a: &mut u32, b: &mut u32) {
 }
 
 #[inline(always)]
-pub(super) fn sort3_u32(a: u32, b: u32, c: u32) -> [u32; 3] {
+pub(crate) fn sort3_u32(a: u32, b: u32, c: u32) -> [u32; 3] {
     // Sorting network (3 elements): (0,1) (1,2) (0,1)
     let mut x0 = a;
     let mut x1 = b;
