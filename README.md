@@ -1,14 +1,33 @@
 # s2-voronoi
 
-Spherical Voronoi diagrams on the unit sphere (S2).
+Fast spherical Voronoi diagrams on the unit sphere (S2).
 
-This crate computes a Voronoi diagram for points on the unit sphere using a kNN-driven half-space
-clipping algorithm. Cells are built independently (embarrassingly parallel) and then stitched via
-sharded “live” vertex deduplication.
+Most spherical Voronoi implementations go through a 3D convex hull (qhull, scipy) and slow down
+sharply past tens of thousands of points. This crate instead builds every cell independently by
+kNN-driven half-space clipping — the construction usually reserved for GPU implementations — and
+stitches the per-cell results into a single consistent graph on the CPU. Cell construction is
+embarrassingly parallel; cross-cell work is limited to sharded "live" vertex deduplication and a
+narrow reconciliation pass.
+
+Design target: 2.5M points in under 500ms on a 6-core desktop CPU (Ryzen 3600 class) — roughly an
+order of magnitude faster than convex-hull approaches at that scale.
+
+## The correctness contract, in one paragraph
+
+The output is *essentially Voronoi*: the crate aims for a **hard topological guarantee** (the
+returned graph is a strictly valid subdivision of the sphere — checkable via
+`validation::validate`) and a **soft geometric guarantee** (vertex positions accurate to
+floating-point working precision; features at the resolution floor are handled by policy).
+Exactness in the mathematical sense is not promised — no floating-point implementation can — but
+graph validity is treated as non-negotiable and is fuzz-tested at multi-million point counts. See
+`docs/correctness-contract.md` for the precise statement, the coincident-input (weld) policy, and
+the measured safety margins behind it.
 
 ## Status / requirements
 
-- **Nightly Rust required** (`#![feature(portable_simd)]`).
+- Pre-release (0.1). The supported envelope is documented and test-backed, but the API is not yet
+  stable; see `docs/todo.md` for the path to release.
+- **Nightly Rust required** (`#![feature(portable_simd)]`); a stable scalar path is planned.
 - Inputs are **assumed** to be unit-normalized (not enforced; may debug-assert in hot paths).
 - For strict subdivision/invariant checks on computed output, use `validation::validate`.
 
@@ -49,44 +68,37 @@ for cell in diagram.iter_cells() {
 
 `VoronoiConfig` controls preprocessing and (optional) termination fallback:
 
-- `preprocess_mode`: explicit preprocessing contract:
-  - `PreprocessMode::MergeDensity` (default): merge near-coincident generators using a
-    density-based threshold
+- `preprocess_mode`: coincident-generator handling:
+  - `PreprocessMode::MergeDensity` (current default): merge near-coincident generators using a
+    density-based threshold. Scheduled to be replaced by a fixed-radius weld with corrected
+    output semantics — see `docs/correctness-contract.md`.
   - `PreprocessMode::MergeWithin(threshold)`: merge using an explicit threshold
-  - `PreprocessMode::Disabled`: do not merge
+  - `PreprocessMode::Disabled`: do not merge (caller certifies generator separation)
 - `termination_max_k`: cap k growth if termination fallback keeps requesting neighbors.
 
-`compute_with_report` exposes:
-- whether preprocessing actually merged generators and remapped cells
-- strict validation of the returned diagram
-- when preprocessing changed the solved generator set, strict validation of the effective diagram
-  actually solved by the backend
-- when preprocessing changed the solved generator set, the `effective_diagram` itself
-
-If preprocessing is enabled and merges occur, `report.preferred_validation()` is usually the
-validation result you want first; it selects effective validation when available. Likewise,
-`output.preferred_diagram()` selects the effective diagram when available.
+`compute_with_report` exposes whether preprocessing merged generators, the effective diagram the
+backend actually solved, and strict validation of both views; `report.preferred_validation()` and
+`output.preferred_diagram()` select the right view after a merged solve.
 
 ## Features
 
 - `parallel` (default): rayon parallelism in cell construction.
 - `glam`: public `UnitVec3Like` impl + conversions for `glam::Vec3` (glam is always an internal dep).
 - `timing`: detailed phase/sub-phase timing reports.
-- `profiling`: profiling helpers (e.g. selectively disable inlining on hot functions).
-- `microbench`: internal microbench harnesses (requires nightly `test` crate).
 - `qhull`: convex hull backend used for tests/bench comparisons only.
-- `simd_clip`: use SIMD small-N clippers in the main clipper dispatch.
-- `fma`: prefer fused multiply-add via `mul_add` (may change results; can be slower without HW FMA).
+- Internal/research flags (`profiling`, `microbench`, `simd_clip`, `fma`,
+  `packed_knn_sort_small`): not part of the public surface; subject to consolidation.
 
 ## Documentation
 
-- Design / algorithm notes: `docs/architecture.md`
+- Correctness contract + coincidence policy: `docs/correctness-contract.md`
+- Design / algorithm notes (including the parallel-stitching consistency model):
+  `docs/architecture.md`
+- Supported input / failure contract: `docs/supported-envelope.md`
 - Active roadmap / prioritized next steps: `docs/todo.md`
 - Performance + benchmarking: `docs/performance.md`
 - Live vertex dedup and edge checks: `docs/live_dedup.md`
-- Supported input / failure contract: `docs/supported-envelope.md`
-- Active engineering issues / findings log: `docs/engineering-findings.md`
-- Narrow packed `r=2` expansion design note: `docs/plan.md`
+- Engineering issues / findings log: `docs/engineering-findings.md`
 
 ## License
 

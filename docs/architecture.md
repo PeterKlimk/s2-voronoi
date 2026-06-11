@@ -79,6 +79,49 @@ re-entangling clip representation, stream consumption, and terminal-failure clas
 
 See `docs/fallback_builder.md`.
 
+## Consistency model: why independently-built cells form one valid graph
+
+Cells are built in parallel with no shared geometric state, yet the output must be a single
+consistent subdivision. Three mechanisms carry that burden:
+
+1. **Combinatorial vertex identity.** A Voronoi vertex is identified by the sorted triple of
+   generator indices whose bisectors meet there — not by its floating-point position. Two cells
+   that both decide vertex `[a,b,c]` exists agree on its identity exactly, regardless of rounding.
+   Live dedup canonicalizes one representative position per key.
+2. **Directed neighbor ordering.** The bin/local eligibility ordering ensures each shared edge is
+   discovered in a coordinated way across the two owning cells and lets edge-check records
+   propagate vertex indices from earlier-built to later-built cells (see `docs/live_dedup.md`).
+3. **Reconciliation as a bounded safety net.** Where the two owning cells make *different*
+   combinatorial decisions (one keeps an epsilon-scale edge, the other collapses it — possible
+   because each cell evaluates clip predicates in its own gnomonic chart), edge checks and
+   `edge_reconcile` repair the disagreement after assembly.
+
+The important property: geometric *accuracy* is best-effort (f64 internally), but graph *validity*
+only requires the combinatorial decisions of adjacent cells to agree. Today that agreement is
+empirical (per-chart epsilon decisions agree except in adversarial regimes — see the seam finding
+in `docs/engineering-findings.md` and the margin data in `docs/correctness-contract.md`). The
+long-term plan (`docs/todo.md` P5) is to make shared decisions canonical — evaluated once in a
+frame chosen by sorted generator index — so agreement holds by construction and reconciliation
+shrinks to a true edge case.
+
+This argument — that the directed ordering plus combinatorial identity plus bounded repair yields
+a strictly valid subdivision — is the crate's central design idea and should be kept explicit when
+modifying any of the three mechanisms.
+
+## Future geometries
+
+The pipeline separates into geometry-specific layers and a geometry-agnostic core:
+
+- geometry-specific: `cube_grid/` (spatial index with conservative cell bounds), `topo2d/`
+  (chart, bisector construction, termination certificate)
+- geometry-agnostic: directed stitching order, sharded live dedup, edge reconciliation, assembly
+
+A planar (or other-domain) backend would swap the first group: a flat grid index, direct 2D
+clipping (no chart at all — the hemisphere/projection-validity machinery is sphere-specific), and
+a Euclidean distance bound. The plane adds one problem the sphere never has: unbounded cells need
+a boundary policy. Keep geometry-specific code behind these two module boundaries; extract a
+`Geometry` trait only when a second geometry is actually being built.
+
 ## Glossary
 
 - **Generator**: input point that owns one Voronoi cell.

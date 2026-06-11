@@ -5,6 +5,10 @@ This document defines the current computation contract for the primary kNN + cli
 It is intentionally narrower than "all spherical Voronoi diagrams". The implementation supports a
 large practical subset of inputs, but it still has explicit geometric and representation limits.
 
+For the conceptual contract (the hard-topological / soft-geometric split, the coincident-input
+weld policy, and the measured margins behind the envelope boundaries), see
+`docs/correctness-contract.md`.
+
 ## Outcome Classes
 
 The backend currently has four distinct outcome classes.
@@ -85,6 +89,10 @@ Some internal states are still treated as bugs rather than supported input outco
 Examples:
 
 - `ClippedAway`
+  - note (2026-06): this state is input-reachable with merging disabled — clusters of 3+
+    generators below the weld radius can clip an enclosed micro-cell to empty. It currently
+    surfaces as `ComputationFailed` and aborts the whole computation; the planned handling is a
+    degrade-and-report backstop (see `docs/correctness-contract.md` and `docs/todo.md` P0)
 - `NoValidSeed`
 - extraction metadata / reconstruction invariant failures inside `topo2d::builder`
 - internal stream-state contradictions

@@ -161,6 +161,65 @@ Desired direction:
 - treat preprocessing as a separate policy surface with its own correctness tradeoffs, not as a
   transparent robustness improvement
 
+Update (2026-06): finding #7 below establishes that the merge remap is the *sole* cause of strict
+validation failures at 2–4M point counts, and the weld redesign in `docs/todo.md` P0 supersedes
+the density-based policy entirely.
+
+### 7. The large-count "bad edges" were the merge remap, not stitching (resolved interpretation)
+
+The ignored 2–4M fuzz tests carried comments saying bad edges occur in that range. Re-running them
+(2026-06) showed every validation failure is fully explained by the merge pre-filter's output
+remapping: Euler exceeded 2 by exactly the duplicate-cell count on all 15 seed/scale combinations,
+with overused edges ≈ one cell boundary per duplicate. With `PreprocessMode::Disabled`, the same
+inputs validate strictly (modulo orphan vertices, finding #9).
+
+Consequences:
+
+- the intra/inter-bin correction system is clean at multi-million counts; no stitching defect
+  exists in this regime
+- the fuzz tests should be promoted to CI contract tests asserting strict validity once the weld
+  rework (todo P0.1) lands; the stale comments should be deleted
+- correctness issue, root cause in preprocessing remap semantics
+
+### 8. Symmetric/seam positions are a real degenerate regime for near-coincident pairs
+
+Ulp-scale pairs at exactly symmetric coordinates (axis poles, 45° points, cube corners — i.e.
+cube-map seams and `TangentBasis` branch boundaries) produce catastrophic validation failures
+(unpaired edges, multiple components), while the identical configuration under an arbitrary
+rotation is strictly valid. Scattered clusters at the same seam centers are fine down to ~4e-8
+separation, so the trigger is alignment, not proximity alone.
+
+- suspected mechanism: the two twins select different tangent bases at the branch boundary and
+  make divergent epsilon decisions in incompatible charts; unconfirmed
+- practical relevance: axis-aligned and 45° points are common in real inputs (cube-sphere meshes,
+  grids, hand-placed data)
+- mitigations: the 1e-6 weld covers all constructions found so far (worst failure ~1.2e-7);
+  the canonical-predicate refactor (todo P5) is the root fix
+- full margin map in `docs/correctness-contract.md`; probes in `tests/tmp_ulp_regimes.rs`
+- correctness issue (envelope boundary), currently fenced by the weld policy
+
+### 9. Orphan vertices are an intentional representation choice that strict validation miscounts
+
+Edge repair can drop the last reference to a vertex; compaction was deliberately skipped to
+protect the latency budget. Result: single-digit unreferenced vertices at multi-million counts,
+also reproducible at small counts with near-coincident pairs. They do not affect subdivision
+topology (Euler already ignores them), but `validate` counts them as a subdivision issue — so the
+crate's default output fails its own strict check on some seeds.
+
+Desired direction: reclassify as a representation note and/or add O(repairs) targeted compaction
+(track orphaned indices during repair; patch only affected cells). Contract issue.
+
+### 10. Single hard failure mode at the coincidence boundary: micro-cell `ClippedAway`
+
+Every non-recoverable failure observed in the coincidence probes is `ClippedAway` of a cell
+enclosed by sub-weld-radius neighbors — and any single-cell `ClippedAway` currently aborts the
+entire computation. A NaN input component also surfaces through this path as a deep diagnostic
+instead of an input-validation error.
+
+Desired direction: O(n) finite-input check with index-bearing error; backstop that emits a
+degenerate/welded cell plus report entry when the clipped-away cell's constraints are all
+sub-weld-radius (todo P0.3/P0.4). Correctness/contract issue.
+
 ## Working rules for new findings
 
 When adding a new item here:
