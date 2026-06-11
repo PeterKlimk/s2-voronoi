@@ -20,13 +20,16 @@
 
 mod builder;
 pub(crate) mod compute;
+pub(crate) mod driver;
 #[cfg(test)]
 mod tests;
 
 pub(crate) use builder::PlaneCellBuilder;
 
-/// Wall side ids, offset from `wall_base` (= generator count).
+/// Wall side ids, offset from `wall_base` (= generator count). Walls sit at
+/// the normalized domain bounds: x in [0, domain.x], y in [0, domain.y]
+/// (the longer rect side maps to 1; the shorter to < 1 for non-square rects).
 pub(crate) const WALL_BOTTOM: u32 = 0; // y = 0
-pub(crate) const WALL_RIGHT: u32 = 1; // x = 1
-pub(crate) const WALL_TOP: u32 = 2; // y = 1
+pub(crate) const WALL_RIGHT: u32 = 1; // x = domain.x
+pub(crate) const WALL_TOP: u32 = 2; // y = domain.y
 pub(crate) const WALL_LEFT: u32 = 3; // x = 0

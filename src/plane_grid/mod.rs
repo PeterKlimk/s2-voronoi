@@ -18,6 +18,7 @@
 mod query;
 
 pub(crate) use query::{PlaneNeighborFrontier, PlaneNeighborStream};
+// (PlaneGridScratch is defined below and used by both.)
 
 #[cfg(test)]
 mod tests;
@@ -40,6 +41,18 @@ pub(crate) struct PlaneGrid {
     cell_points_x: Vec<f32>,
     /// Y coordinates of points, ordered by cell.
     cell_points_y: Vec<f32>,
+    /// Wall coordinates `i / res` for `i` in `0..=res`, precomputed (the
+    /// certificate reads 4 walls per ring advance; an f32 division each
+    /// would dominate that path).
+    walls: Vec<f32>,
+}
+
+/// Reusable per-query scratch for [`PlaneShellFrontier`]: avoids a heap
+/// allocation per cell in the million-cell driver loop (mirrors the sphere's
+/// `CubeMapGridScratch` pattern).
+#[derive(Default)]
+pub(crate) struct PlaneGridScratch {
+    pub(super) pending: Vec<(crate::fp::OrdF32, u32)>,
 }
 
 impl PlaneGrid {
@@ -83,6 +96,10 @@ impl PlaneGrid {
             cell_points_y[slot as usize] = p.y;
         }
 
+        // Same expression as a point constructed at the wall (`i / res`),
+        // so certificate comparisons match point classification rounding.
+        let walls = (0..=res).map(|i| i as f32 / res as f32).collect();
+
         Self {
             res,
             cell_offsets,
@@ -91,7 +108,13 @@ impl PlaneGrid {
             point_slots,
             cell_points_x,
             cell_points_y,
+            walls,
         }
+    }
+
+    /// Create a reusable scratch for repeated queries.
+    pub(crate) fn make_scratch(&self) -> PlaneGridScratch {
+        PlaneGridScratch::default()
     }
 
     /// Get cell index for a point.
@@ -132,14 +155,13 @@ impl PlaneGrid {
         &self.point_indices
     }
 
-    /// Grid-line coordinate of wall `i` (`i` in `0..=res`).
-    ///
-    /// Computed as `i / res` in f32 — the same rounding as a point constructed
-    /// at the wall — rather than `i * (1/res)`, so wall comparisons in the
-    /// certificates match point classification to within an ulp.
+    /// Grid-line coordinate of wall `i` (`i` in `0..=res`), precomputed as
+    /// `i / res` in f32 — the same rounding as a point constructed at the
+    /// wall, so certificate comparisons match point classification to
+    /// within an ulp.
     #[inline]
     pub(crate) fn wall(&self, i: usize) -> f32 {
-        i as f32 / self.res as f32
+        self.walls[i]
     }
 }
 

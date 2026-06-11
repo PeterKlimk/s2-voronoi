@@ -122,19 +122,22 @@ fn vertex_pos(vertices: &[Vec3], vertex_id: u32) -> Result<Vec3, crate::VoronoiE
 use super::union_find::UnionFind;
 
 /// Rebuilt cell table and index buffer after reconciliation.
-pub(super) type ReconciledCells = (Vec<VoronoiCell>, Vec<u32>);
+pub(crate) type ReconciledCells = (Vec<VoronoiCell>, Vec<u32>);
 
-pub(super) fn reconcile_unresolved_edges(
+pub(crate) fn reconcile_unresolved_edges(
     edge_records: &[EdgeRecord],
     vertices: &[Vec3],
     cells: &[VoronoiCell],
     cell_indices: &[u32],
     vertex_keys: &[VertexKey],
+    // Degenerate-length threshold in the caller's coordinate space (chord
+    // units on the sphere, normalized rect units on the plane); each
+    // geometry owns and justifies its constant.
+    degenerate_len_eps: f32,
 ) -> Result<Option<ReconciledCells>, crate::VoronoiError> {
     let mut uf = UnionFind::new(vertices.len());
     let mut merged = 0usize;
-    const DEGENERATE_LEN_EPS_SQ: f32 = crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS
-        * crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS;
+    let degenerate_len_eps_sq: f32 = degenerate_len_eps * degenerate_len_eps;
 
     for record in edge_records {
         let (a, b) = unpack_edge(record.key.as_u64());
@@ -157,7 +160,7 @@ pub(super) fn reconcile_unresolved_edges(
                 };
                 let (v0, v1) = emit_seg;
                 let len_sq = dist_sq(vertex_pos(vertices, v0)?, vertex_pos(vertices, v1)?);
-                if len_sq <= DEGENERATE_LEN_EPS_SQ {
+                if len_sq <= degenerate_len_eps_sq {
                     if uf.union(v0, v1) {
                         merged += 1;
                     }
@@ -184,7 +187,7 @@ pub(super) fn reconcile_unresolved_edges(
                                 });
                             }
                             if let Some((vj, best_d)) = best {
-                                if best_d <= DEGENERATE_LEN_EPS_SQ && uf.union(vi, vj) {
+                                if best_d <= degenerate_len_eps_sq && uf.union(vi, vj) {
                                     merged += 1;
                                 }
                             }
@@ -311,6 +314,7 @@ mod tests {
             &cells,
             &cell_indices,
             &vertex_keys,
+            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
         )
         .expect("reconciliation should succeed without capacity overflow")
         .expect("expected one-sided epsilon edge to be reconciled");
@@ -368,6 +372,7 @@ mod tests {
             &cells,
             &cell_indices,
             &vertex_keys,
+            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
         )
         .expect("reconciliation should succeed without capacity overflow")
         .expect("expected mismatched shared-edge endpoints to be reconciled");

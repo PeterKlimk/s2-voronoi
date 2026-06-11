@@ -591,6 +591,7 @@ mod tests {
             &assembled.cells,
             &assembled.cell_indices,
             &assembled.vertex_keys,
+            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
         )
         .expect("reconciliation should succeed without capacity overflow")
         .expect("expected unresolved shared-edge mismatch to be reconciled");

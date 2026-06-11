@@ -263,9 +263,13 @@ pub fn compute<P: UnitVec3Like>(points: &[P]) -> Result<SphericalVoronoi, Vorono
 /// area and every interior edge is shared by exactly two cells. Use
 /// [`validation::validate_plane`] for strict invariant checks.
 ///
-/// Exact-bit duplicate points are welded (see [`PlanarVoronoi::weld_map`]);
-/// unlike the sphere there is no near-coincidence weld radius — distinct f32
-/// coordinates always yield well-formed bisectors in the f64 clip math.
+/// Points that coincide after domain normalization are welded (see
+/// [`PlanarVoronoi::weld_map`]). This always includes exact-bit duplicate
+/// inputs, and may include inputs so close (sub-ulp at the rect's scale)
+/// that mapping into the unit-square computation space rounds them to the
+/// same coordinates. Unlike the sphere there is no near-coincidence weld
+/// *radius*: points that remain distinct in normalized space always yield
+/// well-formed bisectors in the f64 clip math.
 ///
 /// Requires at least 1 point (a single generator owns the whole rect).
 ///

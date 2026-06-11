@@ -5,13 +5,14 @@
 //! Chebyshev rings around the start cell are enumerated arithmetically: the
 //! flat chart needs no BFS, no visited stamps, and no scratch. Emission is
 //! per-ring, sorted nearest-first within the ring; the certificate after ring
-//! `k` is the exact squared distance from the query to the boundary of the
-//! explored `(2k+1) x (2k+1)` cell box (clipped at the domain edge, beyond
-//! which nothing exists).
+//! `k` is the squared distance from the query to the boundary of the explored
+//! `(2k+1) x (2k+1)` cell box (clipped at the domain edge, beyond which
+//! nothing exists), shrunk by the wall-classification slack so it lower-bounds
+//! every point classification can place outside the box.
 
 use glam::Vec2;
 
-use super::PlaneGrid;
+use super::{PlaneGrid, PlaneGridScratch};
 use crate::cube_grid::{DirectedCellMode, DirectedEligibility};
 use crate::fp::OrdF32;
 
@@ -25,6 +26,9 @@ pub(crate) struct PlaneShellBatch {
 
 pub(crate) struct PlaneShellFrontier<'a, 'b> {
     grid: &'a PlaneGrid,
+    /// Borrowed per-query scratch holding the pending emission (sorted
+    /// ascending (dist_sq, slot)); reused across cells by the driver.
+    scratch: &'a mut PlaneGridScratch,
     query: Vec2,
     query_idx: usize,
     start_cell: u32,
@@ -35,8 +39,6 @@ pub(crate) struct PlaneShellFrontier<'a, 'b> {
     /// Largest ring with any in-grid cell.
     max_ring: usize,
     eligibility: DirectedEligibility<'b>,
-    /// Sorted (ascending dist_sq, slot) emission for the pending batch.
-    pending: Vec<(OrdF32, u32)>,
     pending_bound: f32,
     has_pending: bool,
     exhausted: bool,
@@ -47,6 +49,7 @@ impl<'a, 'b> PlaneShellFrontier<'a, 'b> {
         grid: &'a PlaneGrid,
         query: Vec2,
         query_idx: usize,
+        scratch: &'a mut PlaneGridScratch,
         eligibility: DirectedEligibility<'b>,
     ) -> Self {
         let start_cell = if query_idx < grid.point_cells.len() {
@@ -58,9 +61,11 @@ impl<'a, 'b> PlaneShellFrontier<'a, 'b> {
         let cx = start_cell as usize % res;
         let cy = start_cell as usize / res;
         let max_ring = cx.max(res - 1 - cx).max(cy).max(res - 1 - cy);
+        scratch.pending.clear();
 
         Self {
             grid,
+            scratch,
             query,
             query_idx,
             start_cell,
@@ -69,7 +74,6 @@ impl<'a, 'b> PlaneShellFrontier<'a, 'b> {
             ring: 0,
             max_ring,
             eligibility,
-            pending: Vec::new(),
             pending_bound: f32::INFINITY,
             has_pending: false,
             exhausted: false,
@@ -103,7 +107,7 @@ impl<'a, 'b> PlaneShellFrontier<'a, 'b> {
             }
             let (dx, dy) = (xs[i] - qx, ys[i] - qy);
             let dist_sq = dx * dx + dy * dy;
-            self.pending.push((OrdF32::new(dist_sq), slot));
+            self.scratch.pending.push((OrdF32::new(dist_sq), slot));
         }
     }
 
@@ -150,20 +154,32 @@ impl<'a, 'b> PlaneShellFrontier<'a, 'b> {
     /// Lower bound on the squared distance from the query to anything outside
     /// the explored cell box of Chebyshev radius `k` (sides clipped at the
     /// domain edge have nothing beyond them).
+    ///
+    /// Each side distance is shrunk by ulps of the wall coordinate: a point
+    /// classified outside the box can sit slightly inside the f32 wall value
+    /// (classification and the wall coordinate round independently), and the
+    /// consumer's termination guard is relative to its own threshold, so the
+    /// certificate must absorb this absolute slack itself. See
+    /// [`crate::tolerances::PLANE_WALL_CLASSIFICATION_SLACK`].
     fn unseen_bound_after(&self, k: usize) -> f32 {
+        const SLACK: f32 = crate::tolerances::PLANE_WALL_CLASSIFICATION_SLACK;
         let res = self.grid.res();
         let mut d = f32::INFINITY;
         if self.cx > k {
-            d = d.min(self.query.x - self.grid.wall(self.cx - k));
+            let w = self.grid.wall(self.cx - k);
+            d = d.min(self.query.x - w - w * SLACK);
         }
         if self.cx + k < res - 1 {
-            d = d.min(self.grid.wall(self.cx + k + 1) - self.query.x);
+            let w = self.grid.wall(self.cx + k + 1);
+            d = d.min(w - w * SLACK - self.query.x);
         }
         if self.cy > k {
-            d = d.min(self.query.y - self.grid.wall(self.cy - k));
+            let w = self.grid.wall(self.cy - k);
+            d = d.min(self.query.y - w - w * SLACK);
         }
         if self.cy + k < res - 1 {
-            d = d.min(self.grid.wall(self.cy + k + 1) - self.query.y);
+            let w = self.grid.wall(self.cy + k + 1);
+            d = d.min(w - w * SLACK - self.query.y);
         }
         if d == f32::INFINITY {
             return f32::INFINITY;
@@ -178,15 +194,17 @@ impl<'a, 'b> PlaneShellFrontier<'a, 'b> {
     fn build_pending(&mut self) {
         debug_assert!(!self.has_pending);
         while self.ring <= self.max_ring {
-            self.pending.clear();
+            self.scratch.pending.clear();
             let k = self.ring;
             self.for_each_ring_cell(k);
             self.ring += 1;
             self.pending_bound = self.unseen_bound_after(k);
 
-            if !self.pending.is_empty() {
+            if !self.scratch.pending.is_empty() {
                 // Nearest-first within the ring.
-                self.pending.sort_unstable_by_key(|&(dist_sq, _)| dist_sq);
+                self.scratch
+                    .pending
+                    .sort_unstable_by_key(|&(dist_sq, _)| dist_sq);
                 self.has_pending = true;
                 return;
             }
@@ -194,9 +212,16 @@ impl<'a, 'b> PlaneShellFrontier<'a, 'b> {
         self.exhausted = true;
     }
 
-    /// Current frontier: fills `out` with the pending ring's slots.
+    /// Current frontier: fills `out` with the pending ring's slots and
+    /// `dists` with their sorted squared distances (the consumer's
+    /// per-emission termination bounds — already computed here, so it
+    /// never re-derives them from point loads).
     /// Returns `None` when the traversal is exhausted.
-    pub(crate) fn frontier(&mut self, out: &mut Vec<u32>) -> Option<PlaneShellBatch> {
+    pub(crate) fn frontier(
+        &mut self,
+        out: &mut Vec<u32>,
+        dists: &mut Vec<f32>,
+    ) -> Option<PlaneShellBatch> {
         if !self.has_pending && !self.exhausted {
             self.build_pending();
         }
@@ -204,17 +229,19 @@ impl<'a, 'b> PlaneShellFrontier<'a, 'b> {
             return None;
         }
         out.clear();
-        out.extend(self.pending.iter().map(|&(_, slot)| slot));
+        dists.clear();
+        out.extend(self.scratch.pending.iter().map(|&(_, slot)| slot));
+        dists.extend(self.scratch.pending.iter().map(|&(d, _)| d.get()));
         Some(PlaneShellBatch {
-            n: self.pending.len(),
-            first_dist_sq: self.pending[0].0.get(),
+            n: self.scratch.pending.len(),
+            first_dist_sq: self.scratch.pending[0].0.get(),
             unseen_bound: self.pending_bound,
         })
     }
 
     pub(crate) fn advance(&mut self) {
         self.has_pending = false;
-        self.pending.clear();
+        self.scratch.pending.clear();
     }
 
     #[inline]
@@ -261,19 +288,32 @@ impl<'a, 'b> PlaneNeighborStream<'a, 'b> {
         grid: &'a PlaneGrid,
         points: &[Vec2],
         query_idx: usize,
+        scratch: &'a mut PlaneGridScratch,
         eligibility: DirectedEligibility<'b>,
     ) -> Self {
         Self {
-            takeover: PlaneShellFrontier::new(grid, points[query_idx], query_idx, eligibility),
+            takeover: PlaneShellFrontier::new(
+                grid,
+                points[query_idx],
+                query_idx,
+                scratch,
+                eligibility,
+            ),
             knn_exhausted: false,
         }
     }
 
     /// Current frontier; repeated calls return the same batch until
-    /// [`Self::advance_frontier`].
-    pub(crate) fn frontier(&mut self, out: &mut Vec<u32>) -> PlaneNeighborFrontier {
+    /// [`Self::advance_frontier`]. `dists` receives the batch's sorted
+    /// squared distances, parallel to `out`.
+    pub(crate) fn frontier(
+        &mut self,
+        out: &mut Vec<u32>,
+        dists: &mut Vec<f32>,
+    ) -> PlaneNeighborFrontier {
         out.clear();
-        if let Some(batch) = self.takeover.frontier(out) {
+        dists.clear();
+        if let Some(batch) = self.takeover.frontier(out, dists) {
             PlaneNeighborFrontier::ExactBatch(PlaneNeighborBatch {
                 n: batch.n,
                 first_dist_sq: batch.first_dist_sq,

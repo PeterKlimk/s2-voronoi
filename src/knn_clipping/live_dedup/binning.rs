@@ -6,26 +6,26 @@ use crate::cube_grid::{cell_to_face_ij, CubeMapGrid};
 
 use super::types::{BinId, LocalId};
 
-pub(super) struct BinAssignment {
-    pub(super) generator_bin: Vec<BinId>,
-    pub(super) global_to_local: Vec<LocalId>,
+pub(crate) struct BinAssignment {
+    pub(crate) generator_bin: Vec<BinId>,
+    pub(crate) global_to_local: Vec<LocalId>,
     /// Packed slot_gen_map: each entry is `(bin << local_shift) | local`. Indexed by slot (SOA index).
-    pub(super) slot_gen_map: Vec<u32>,
+    pub(crate) slot_gen_map: Vec<u32>,
     /// Precomputed shift for extracting bin from packed gen_map/slot_gen_map.
-    pub(super) local_shift: u32,
+    pub(crate) local_shift: u32,
     /// Precomputed mask for extracting local from packed gen_map/slot_gen_map.
-    pub(super) local_mask: u32,
-    pub(super) bin_generators: Vec<Vec<usize>>,
-    pub(super) num_bins: usize,
+    pub(crate) local_mask: u32,
+    pub(crate) bin_generators: Vec<Vec<usize>>,
+    pub(crate) num_bins: usize,
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::knn_clipping) struct PackedLayoutCapacityError {
-    pub(in crate::knn_clipping) bin: usize,
-    pub(in crate::knn_clipping) local_population: usize,
-    pub(in crate::knn_clipping) num_bins: usize,
-    pub(in crate::knn_clipping) local_shift: u32,
-    pub(in crate::knn_clipping) local_mask: u32,
+pub(crate) struct PackedLayoutCapacityError {
+    pub(crate) bin: usize,
+    pub(crate) local_population: usize,
+    pub(crate) num_bins: usize,
+    pub(crate) local_shift: u32,
+    pub(crate) local_mask: u32,
 }
 
 struct BinLayout {
@@ -34,19 +34,25 @@ struct BinLayout {
     num_bins: usize,
 }
 
-fn choose_bin_layout(grid_res: usize) -> BinLayout {
+/// Target shard count from threads (x2) with the `S2_BIN_COUNT` override,
+/// clamped to `[min_bins, 96]`. Shared by the spherical (min 6 — one per
+/// face) and planar (min 1) layouts so the env knob has one parser.
+pub(crate) fn target_bin_count(min_bins: usize) -> usize {
     #[cfg(feature = "parallel")]
     let threads = rayon::current_num_threads().max(1);
     #[cfg(not(feature = "parallel"))]
     let threads = 1;
 
-    // Allow override via env var for benchmarking
-    let target_bins = if let Ok(var) = std::env::var("S2_BIN_COUNT") {
+    if let Ok(var) = std::env::var("S2_BIN_COUNT") {
         var.parse().unwrap_or(threads * 2)
     } else {
         threads * 2
     }
-    .clamp(6, 96);
+    .clamp(min_bins, 96)
+}
+
+fn choose_bin_layout(grid_res: usize) -> BinLayout {
+    let target_bins = target_bin_count(6);
     let target_per_face = (target_bins as f64 / 6.0).max(1.0);
     let mut bin_res = target_per_face.sqrt().ceil() as usize;
     bin_res = bin_res.clamp(1, grid_res.max(1));
@@ -109,53 +115,10 @@ pub(super) fn assign_bins(
     )
 }
 
-/// Planar variant: square block layout over the res x res plane grid, same
-/// packed (bin, local) layout and cell-major local ordering as the sphere.
-pub(super) fn assign_bins_plane(
-    num_points: usize,
-    grid: &crate::plane_grid::PlaneGrid,
-) -> Result<BinAssignment, PackedLayoutCapacityError> {
-    let res = grid.res();
-
-    #[cfg(feature = "parallel")]
-    let threads = rayon::current_num_threads().max(1);
-    #[cfg(not(feature = "parallel"))]
-    let threads = 1;
-    let target_bins = if let Ok(var) = std::env::var("S2_BIN_COUNT") {
-        var.parse().unwrap_or(threads * 2)
-    } else {
-        threads * 2
-    }
-    .clamp(1, 96);
-
-    let mut bin_res = (target_bins as f64).sqrt().ceil() as usize;
-    bin_res = bin_res.clamp(1, res.max(1));
-    let bin_stride = res.div_ceil(bin_res).max(1);
-    let bin_res = res.div_ceil(bin_stride);
-    let num_bins = bin_res * bin_res;
-
-    let bin_for_cell = move |cell: usize| -> usize {
-        let ix = cell % res;
-        let iy = cell / res;
-        let bu = (ix / bin_stride).min(bin_res - 1);
-        let bv = (iy / bin_stride).min(bin_res - 1);
-        bv * bin_res + bu
-    };
-
-    assign_bins_with(
-        num_points,
-        res * res,
-        grid.cell_offsets(),
-        grid.point_indices(),
-        num_bins,
-        bin_for_cell,
-    )
-}
-
 /// Grid-agnostic assignment core over a CSR (cell_offsets, point_indices)
 /// layout: locals are assigned in cell-major order, the invariant the
 /// directed edge-check scheduling relies on.
-fn assign_bins_with(
+pub(crate) fn assign_bins_with(
     n: usize,
     num_cells: usize,
     cell_offsets: &[u32],

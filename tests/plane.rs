@@ -186,6 +186,59 @@ fn plane_boundary_generators() {
 }
 
 #[test]
+fn plane_high_aspect_rect() {
+    // 200:1 aspect: grid sizing must account for the occupied band, the
+    // validation wall tolerance must not swallow the short axis, and the
+    // strict contract must hold end to end.
+    let rect = PlaneRect::new(PlanePoint::new(0.0, 0.0), PlanePoint::new(200.0, 1.0));
+    let points = uniform_in(rect, 2000, 71);
+    let diagram = compute_plane(&points, rect).unwrap();
+    assert_strict(&diagram, "aspect_200");
+    assert_area(&diagram, "aspect_200");
+}
+
+#[test]
+fn plane_vertices_contained_in_rect() {
+    // The strict-subdivision contract includes vertex containment per the
+    // crate's own PlaneRect::contains (the inverse domain transform clamps).
+    for &(min, max, seed) in &[
+        ((0.1f32, 0.0f32), (1.1f32, 1.0f32), 73u64),
+        ((-7.3, 2.9), (11.1, 5.7), 79),
+        ((0.0, 0.0), (3.0, 3.0), 83),
+    ] {
+        let rect = PlaneRect::new(PlanePoint::new(min.0, min.1), PlanePoint::new(max.0, max.1));
+        let points = uniform_in(rect, 400, seed);
+        let diagram = compute_plane(&points, rect).unwrap();
+        for (i, v) in diagram.vertices().iter().enumerate() {
+            assert!(
+                rect.contains(v.x, v.y),
+                "vertex {i} ({}, {}) escapes rect {rect:?}",
+                v.x,
+                v.y
+            );
+        }
+    }
+}
+
+#[test]
+fn plane_extreme_rects_rejected() {
+    // Finite corners whose extent overflows f32, and subnormal extents whose
+    // normalization scale overflows, must fail rect validation up front
+    // rather than sending inf/NaN through the pipeline.
+    let overflow = PlaneRect::new(PlanePoint::new(-3e38, -3e38), PlanePoint::new(3e38, 3e38));
+    assert!(matches!(
+        compute_plane(&[[0.0f32, 0.0]], overflow),
+        Err(VoronoiError::InvalidDomain { .. })
+    ));
+
+    let subnormal = PlaneRect::new(PlanePoint::new(0.0, 0.0), PlanePoint::new(1e-40, 1e-40));
+    assert!(matches!(
+        compute_plane(&[[0.0f32, 0.0]], subnormal),
+        Err(VoronoiError::InvalidDomain { .. })
+    ));
+}
+
+#[test]
 fn plane_input_validation() {
     let unit = PlaneRect::unit();
 

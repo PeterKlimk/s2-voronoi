@@ -64,12 +64,14 @@ fn stream_cell(
     let layout = PackedSlotLayout::new(slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
     // query_bin 1 vs all-zero map: every cell is "other bin" => emit all.
     let ctx = DirectedEligibility::from_layout(1, 0, layout);
-    let mut stream = PlaneNeighborStream::new(grid, points, gi, ctx);
+    let mut scratch = grid.make_scratch();
+    let mut stream = PlaneNeighborStream::new(grid, points, gi, &mut scratch, ctx);
     let mut builder = PlaneCellBuilder::new(gi, points[gi], wall_base, Vec2::ONE);
 
     let mut batch = Vec::new();
+    let mut batch_dists = Vec::new();
     loop {
-        match stream.frontier(&mut batch) {
+        match stream.frontier(&mut batch, &mut batch_dists) {
             PlaneNeighborFrontier::ExactBatch(result) => {
                 for &slot in &batch[..result.n] {
                     let nidx = grid.point_indices()[slot as usize] as usize;

@@ -126,6 +126,7 @@ impl Harness {
         let mut emitted: Vec<u32> = Vec::new();
         let mut emitted_set: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let mut batch: Vec<u32> = Vec::new();
+        let mut batch_dists: Vec<f32> = Vec::new();
 
         let nearest_unseen = |unseen: &std::collections::HashSet<u32>| -> f32 {
             // INFINITY when empty: any bound (including INFINITY) covers it.
@@ -136,7 +137,7 @@ impl Harness {
         };
 
         loop {
-            match stream.frontier(&mut batch) {
+            match stream.frontier(&mut batch, &mut batch_dists) {
                 PlaneNeighborFrontier::ExactBatch(result) => {
                     for &slot in &batch[..result.n] {
                         assert!(
@@ -184,7 +185,9 @@ impl Harness {
                 slot,
                 self.layout(),
             );
-            let stream = PlaneNeighborStream::new(&self.grid, &self.points, query_idx, ctx);
+            let mut scratch = self.grid.make_scratch();
+            let stream =
+                PlaneNeighborStream::new(&self.grid, &self.points, query_idx, &mut scratch, ctx);
             self.collect_and_check(name, slot, stream);
         }
     }
@@ -367,21 +370,27 @@ fn plane_nn_contract_stream_idempotent_frontier() {
     let h = Harness::new(points, 4, 1);
     let ctx = DirectedEligibility::from_layout(0, 0, h.layout());
     let query_idx = h.grid.point_indices()[0] as usize;
-    let mut stream = PlaneNeighborStream::new(&h.grid, &h.points, query_idx, ctx);
+    let mut scratch = h.grid.make_scratch();
+    let mut stream = PlaneNeighborStream::new(&h.grid, &h.points, query_idx, &mut scratch, ctx);
 
     let mut batch = Vec::new();
-    let PlaneNeighborFrontier::ExactBatch(first) = stream.frontier(&mut batch) else {
+    let mut dists = Vec::new();
+    let PlaneNeighborFrontier::ExactBatch(first) = stream.frontier(&mut batch, &mut dists) else {
         panic!("expected an exact batch from a populated grid");
     };
     let first_slots = batch.clone();
-    let PlaneNeighborFrontier::ExactBatch(second) = stream.frontier(&mut batch) else {
+    let PlaneNeighborFrontier::ExactBatch(second) = stream.frontier(&mut batch, &mut dists) else {
         panic!("repeated frontier call changed frontier kind");
     };
     assert_eq!(first.n, second.n);
     assert_eq!(batch, first_slots);
+    assert!(
+        dists.windows(2).all(|w| w[0] <= w[1]),
+        "batch distances must be sorted ascending"
+    );
 
     stream.advance_frontier();
-    if let PlaneNeighborFrontier::ExactBatch(third) = stream.frontier(&mut batch) {
+    if let PlaneNeighborFrontier::ExactBatch(third) = stream.frontier(&mut batch, &mut dists) {
         assert!(
             third.first_dist_sq >= first.unseen_bound - DIST_SQ_TOL,
             "advanced batch outranks the previous certificate: first={:?}, third={:?}",
@@ -397,10 +406,12 @@ fn plane_nn_contract_exhaustion_flag() {
     let h = Harness::new(points, 3, 1);
     let ctx = DirectedEligibility::from_layout(0, 0, h.layout());
     let query_idx = h.grid.point_indices()[0] as usize;
-    let mut stream = PlaneNeighborStream::new(&h.grid, &h.points, query_idx, ctx);
+    let mut scratch = h.grid.make_scratch();
+    let mut stream = PlaneNeighborStream::new(&h.grid, &h.points, query_idx, &mut scratch, ctx);
     let mut batch = Vec::new();
+    let mut dists = Vec::new();
     while !matches!(
-        stream.frontier(&mut batch),
+        stream.frontier(&mut batch, &mut dists),
         PlaneNeighborFrontier::Exhausted
     ) {
         stream.advance_frontier();

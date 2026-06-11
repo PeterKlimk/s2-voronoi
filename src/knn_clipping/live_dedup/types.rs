@@ -6,18 +6,18 @@ use crate::knn_clipping::cell_build::VertexKey;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub(in crate::knn_clipping) struct BinId(u8);
+pub(crate) struct BinId(u8);
 
 impl BinId {
-    pub(in crate::knn_clipping) fn from_usize(value: usize) -> Self {
+    pub(crate) fn from_usize(value: usize) -> Self {
         Self(u8::try_from(value).expect("bin id must fit in u8"))
     }
 
-    pub(in crate::knn_clipping) fn as_u8(self) -> u8 {
+    pub(crate) fn as_u8(self) -> u8 {
         self.0
     }
 
-    pub(in crate::knn_clipping) fn as_usize(self) -> usize {
+    pub(crate) fn as_usize(self) -> usize {
         self.0 as usize
     }
 }
@@ -36,18 +36,18 @@ impl From<BinId> for u8 {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub(in crate::knn_clipping) struct LocalId(u32);
+pub(crate) struct LocalId(u32);
 
 impl LocalId {
-    pub(in crate::knn_clipping) fn from_usize(value: usize) -> Self {
+    pub(crate) fn from_usize(value: usize) -> Self {
         Self(u32::try_from(value).expect("local id must fit in u32"))
     }
 
-    pub(in crate::knn_clipping) fn as_u32(self) -> u32 {
+    pub(crate) fn as_u32(self) -> u32 {
         self.0
     }
 
-    pub(in crate::knn_clipping) fn as_usize(self) -> usize {
+    pub(crate) fn as_usize(self) -> usize {
         self.0 as usize
     }
 }
@@ -66,10 +66,10 @@ impl From<LocalId> for u32 {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub(in crate::knn_clipping) struct EdgeKey(u64);
+pub(crate) struct EdgeKey(u64);
 
 impl EdgeKey {
-    pub(in crate::knn_clipping) fn as_u64(self) -> u64 {
+    pub(crate) fn as_u64(self) -> u64 {
         self.0
     }
 }
@@ -88,8 +88,8 @@ impl From<EdgeKey> for u64 {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub(in crate::knn_clipping) struct EdgeRecord {
-    pub(in crate::knn_clipping) key: EdgeKey,
+pub(crate) struct EdgeRecord {
+    pub(crate) key: EdgeKey,
 }
 
 /// Historical name: this records an unresolved shared-edge reconciliation mismatch.
@@ -98,19 +98,19 @@ pub(in crate::knn_clipping) struct EdgeRecord {
 /// reconciled during live dedup. They are the only inputs to the narrow post-pass
 /// reconciliation in `edge_reconcile.rs`.
 #[derive(Clone, Copy, Debug)]
-pub(in crate::knn_clipping) struct UnresolvedEdgeMismatch {
-    pub(in crate::knn_clipping) key: EdgeKey,
+pub(crate) struct UnresolvedEdgeMismatch {
+    pub(crate) key: EdgeKey,
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct EdgeCheck {
-    pub(super) key: EdgeKey,
+pub(crate) struct EdgeCheck {
+    pub(crate) key: EdgeKey,
     /// Half-plane epsilon to use when clipping this neighbor as an edgecheck-derived seed.
     ///
     /// This is stored to avoid recomputing a normalization-dependent epsilon (sqrt) in the hot
     /// edgecheck seeding path. Tiny cross-side differences are not important; we only need a
     /// stable tolerance scale.
-    pub(super) hp_eps: f32,
+    pub(crate) hp_eps: f32,
     /// For edge (A, B), each endpoint vertex key is (A, B, T).
     /// Store just the "third" generator T for each endpoint, in canonical order.
     pub(super) thirds: [u32; 2],
@@ -137,7 +137,7 @@ pub(super) struct EdgeToLater {
     pub(super) key: EdgeKey,
     pub(super) local_b: LocalId,
     pub(super) locals: [u8; 2],
-    pub(super) hp_eps: f32,
+    pub(crate) hp_eps: f32,
 }
 
 /// Flattened for size: 16 bytes instead of 24.
@@ -150,7 +150,7 @@ pub(super) struct EdgeOverflowLocal {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct DeferredSlot {
+pub(crate) struct DeferredSlot {
     /// Canonical vertex key that identifies the eventual owner bin.
     pub(super) key: VertexKey,
     pub(super) pos: Vec3,

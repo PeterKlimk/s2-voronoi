@@ -10,7 +10,6 @@ pub(crate) mod cell_build;
 pub(crate) mod compute;
 pub(crate) mod edge_reconcile;
 pub(crate) mod live_dedup;
-pub(crate) mod plane_bridge;
 pub(crate) mod preprocess;
 pub(crate) mod timing;
 pub(crate) mod topo2d;

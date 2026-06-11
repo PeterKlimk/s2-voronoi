@@ -5,7 +5,7 @@ use crate::knn_clipping::cell_build::VertexKey;
 use glam::Vec3;
 
 /// Data only needed during vertex deduplication (dropped after overflow flush).
-pub(super) struct ShardDedup {
+pub(crate) struct ShardDedup {
     /// Per-local edge checks (Vec-based for cache locality)
     pub(super) edge_checks: Vec<Vec<EdgeCheck>>,
     /// Pool of reusable Vecs with existing capacity
@@ -22,14 +22,14 @@ impl ShardDedup {
 }
 
 /// Output data needed for final assembly.
-pub(super) struct ShardOutput {
-    pub(super) vertices: Vec<Vec3>,
-    pub(super) vertex_keys: Vec<VertexKey>,
+pub(crate) struct ShardOutput {
+    pub(crate) vertices: Vec<Vec3>,
+    pub(crate) vertex_keys: Vec<VertexKey>,
     pub(super) unresolved_edges: Vec<UnresolvedEdgeMismatch>,
     pub(super) edge_check_overflow: Vec<EdgeCheckOverflow>,
     /// Cell slots whose owner bin is off-shard and must be patched during assembly.
-    pub(super) deferred_slots: Vec<DeferredSlot>,
-    pub(super) cell_indices: Vec<u64>,
+    pub(crate) deferred_slots: Vec<DeferredSlot>,
+    pub(crate) cell_indices: Vec<u64>,
     pub(super) cell_starts: Vec<u32>,
     pub(super) cell_counts: Vec<u8>,
 }
@@ -49,7 +49,7 @@ impl ShardOutput {
     }
 
     #[inline(always)]
-    pub(super) fn set_cell_start(&mut self, local: LocalId, start: u32) {
+    pub(crate) fn set_cell_start(&mut self, local: LocalId, start: u32) {
         self.cell_starts[local.as_usize()] = start;
     }
 
@@ -70,15 +70,15 @@ impl ShardOutput {
 }
 
 /// Per-shard state during cell construction.
-pub(super) struct ShardState {
-    pub(super) dedup: ShardDedup,
-    pub(super) output: ShardOutput,
+pub(crate) struct ShardState {
+    pub(crate) dedup: ShardDedup,
+    pub(crate) output: ShardOutput,
     #[cfg(feature = "timing")]
     pub(super) triplet_keys: u64,
 }
 
 impl ShardState {
-    pub(super) fn new(num_local_generators: usize) -> Self {
+    pub(crate) fn new(num_local_generators: usize) -> Self {
         Self {
             dedup: ShardDedup::new(num_local_generators),
             output: ShardOutput::new(num_local_generators),
@@ -99,7 +99,7 @@ impl ShardState {
 
 /// Shard state after construction, with dedup dropped.
 pub(super) struct ShardFinal {
-    pub(super) output: ShardOutput,
+    pub(crate) output: ShardOutput,
     #[cfg(feature = "timing")]
     pub(super) triplet_keys: u64,
 }

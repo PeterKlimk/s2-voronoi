@@ -18,13 +18,19 @@ mod packed;
 mod shard;
 mod types;
 
-use binning::BinAssignment;
-pub(super) use binning::PackedLayoutCapacityError;
-use shard::ShardState;
-pub(super) use types::{EdgeRecord, UnresolvedEdgeMismatch};
+pub(crate) use binning::BinAssignment;
+pub(crate) use binning::PackedLayoutCapacityError;
+pub(crate) use binning::{assign_bins_with, target_bin_count};
+pub(crate) use build::{
+    checked_local_id, checked_u32, emit_cell_output, LiveDedupCellScratch, ShardContext,
+};
+pub(crate) use edge_checks::unpack_edge_key;
+pub(crate) use shard::ShardState;
+pub(crate) use types::BinId;
+pub(crate) use types::{EdgeRecord, UnresolvedEdgeMismatch};
 
 /// Result of assembling sharded live-dedup data into global arrays.
-pub(super) struct AssemblyResult {
+pub(crate) struct AssemblyResult {
     /// All Voronoi vertex positions (global, concatenated from shards).
     pub vertices: Vec<glam::Vec3>,
     /// Vertex keys (triplet of generator indices), parallel to `vertices`.
@@ -43,13 +49,29 @@ pub(super) struct AssemblyResult {
     pub dedup_sub: super::timing::DedupSubPhases,
 }
 
-pub(super) struct ShardedCellsData {
+pub(crate) struct ShardedCellsData {
     assignment: BinAssignment,
     shards: Vec<ShardState>,
     pub(super) cell_sub: super::timing::CellSubAccum,
 }
 
-pub(super) enum BuildCellsError {
+impl ShardedCellsData {
+    /// Assemble from a geometry driver's output (the planar driver lives in
+    /// `plane_clipping` and builds shards through the pub(crate) seam).
+    pub(crate) fn from_parts(
+        assignment: BinAssignment,
+        shards: Vec<ShardState>,
+        cell_sub: super::timing::CellSubAccum,
+    ) -> Self {
+        Self {
+            assignment,
+            shards,
+            cell_sub,
+        }
+    }
+}
+
+pub(crate) enum BuildCellsError {
     CellBuild(CellBuildError),
     PackedLayoutCapacity(PackedLayoutCapacityError),
     RepresentationLimit(String),
@@ -74,15 +96,7 @@ pub(super) fn build_cells_sharded_live_dedup(
     build::build_cells_sharded_live_dedup(points, grid, termination)
 }
 
-pub(super) fn build_cells_sharded_plane(
-    points: &[glam::Vec2],
-    grid: &crate::plane_grid::PlaneGrid,
-    domain: glam::Vec2,
-) -> Result<ShardedCellsData, BuildCellsError> {
-    build::plane::build_cells_sharded_plane(points, grid, domain)
-}
-
-pub(super) fn assemble_sharded_live_dedup(
+pub(crate) fn assemble_sharded_live_dedup(
     data: ShardedCellsData,
 ) -> Result<AssemblyResult, crate::VoronoiError> {
     assemble::assemble_sharded_live_dedup(data)

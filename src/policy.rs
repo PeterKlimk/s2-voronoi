@@ -46,12 +46,18 @@ pub(crate) fn knn_grid_resolution(num_points: usize) -> usize {
 
 /// Planar grid resolution (cells per axis over the normalized domain).
 ///
-/// Same target density as the sphere; the plane has `res^2` cells instead of
-/// `6 res^2`. Floor of 1 (a single cell is valid), cap keeps the cell array
-/// O(n) for small-n/large-domain inputs.
-pub(crate) fn plane_grid_resolution(num_points: usize) -> usize {
+/// Same target density as the sphere; the plane has `res^2` cells but points
+/// occupy only `occupied_fraction` of the unit square (the normalized domain
+/// is `[0, sx] x [0, sy]` with the longer side 1, so the fraction is
+/// `sx * sy`). Sizing by occupied cells rather than total cells keeps
+/// per-cell occupancy at the target for high-aspect rects instead of
+/// multiplying it by the aspect ratio. Floor of 1 (a single cell is valid);
+/// the cap bounds the cell array for extreme aspect ratios, degrading
+/// occupancy gracefully past it.
+pub(crate) fn plane_grid_resolution(num_points: usize, occupied_fraction: f64) -> usize {
     let target = knn_grid_target_density().max(1.0);
-    ((num_points as f64 / target).sqrt() as usize).clamp(1, 4096)
+    let fraction = occupied_fraction.clamp(f64::MIN_POSITIVE, 1.0);
+    ((num_points as f64 / (target * fraction)).sqrt() as usize).clamp(1, 4096)
 }
 
 /// Occupancy-feedback decision: given a built grid's max cell occupancy,

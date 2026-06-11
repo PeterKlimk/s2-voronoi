@@ -575,7 +575,12 @@ pub fn validate_plane(diagram: &crate::PlanarVoronoi) -> PlaneValidationReport {
 
     let rect = diagram.rect();
     let extent = rect.width().max(rect.height());
-    let wall_eps = crate::tolerances::PLANE_ON_WALL_EPS * extent;
+    // Cap at a quarter of the SHORT axis: for high-aspect rects the
+    // extent-scaled tolerance would otherwise swallow the short axis
+    // entirely, classifying every edge as "on" both short-axis walls and
+    // blinding the unpaired-interior-edge and off-domain checks.
+    let wall_eps =
+        (crate::tolerances::PLANE_ON_WALL_EPS * extent).min(0.25 * rect.width().min(rect.height()));
     let num_cells = diagram.num_cells();
     let num_vertices = diagram.num_vertices();
 

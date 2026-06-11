@@ -3,7 +3,7 @@
 
 use glam::Vec2;
 
-use crate::knn_clipping::plane_bridge::compute_plane_cells;
+use super::driver::compute_plane_cells;
 use crate::plane_diagram::{PlanarVoronoi, PlanePoint, PlanePointLike, PlaneRect};
 use crate::plane_grid::PlaneGrid;
 use crate::policy::plane_grid_resolution;
@@ -13,7 +13,11 @@ use crate::VoronoiError;
 /// invariant under anisotropic scaling, so both axes share one scale; the
 /// longer rect side maps to 1).
 struct DomainTransform {
-    min: Vec2,
+    rect: PlaneRect,
+    /// Longer rect side; carried directly so the inverse map multiplies by
+    /// `extent` instead of the double reciprocal `1/(1/extent)` (which
+    /// overshoots the short axis for ~12% of width/height pairs).
+    extent: f32,
     scale: f32,
     /// Normalized domain extents: walls at x=0, x=domain.x, y=0, y=domain.y.
     domain: Vec2,
@@ -21,11 +25,11 @@ struct DomainTransform {
 
 impl DomainTransform {
     fn new(rect: PlaneRect) -> Self {
-        let min = Vec2::new(rect.min.x, rect.min.y);
         let extent = rect.width().max(rect.height());
         let scale = 1.0 / extent;
         Self {
-            min,
+            rect,
+            extent,
             scale,
             domain: Vec2::new(rect.width() * scale, rect.height() * scale),
         }
@@ -33,13 +37,22 @@ impl DomainTransform {
 
     #[inline]
     fn to_normalized(&self, p: Vec2) -> Vec2 {
-        (p - self.min) * self.scale
+        (p - Vec2::new(self.rect.min.x, self.rect.min.y)) * self.scale
     }
 
+    /// Map a normalized vertex back to rect coordinates.
+    ///
+    /// Clamped to the rect: the diagram is documented as a strict
+    /// subdivision, and even a single rounding can push a wall vertex one
+    /// ulp past the boundary (vertices are mathematically inside, so
+    /// clamping only ever corrects rounding).
     #[inline]
     fn to_rect(&self, p: Vec2) -> PlanePoint {
-        let inv = 1.0 / self.scale;
-        PlanePoint::new(p.x * inv + self.min.x, p.y * inv + self.min.y)
+        let r = self.rect;
+        PlanePoint::new(
+            (p.x * self.extent + r.min.x).clamp(r.min.x, r.max.x),
+            (p.y * self.extent + r.min.y).clamp(r.min.y, r.max.y),
+        )
     }
 }
 
@@ -62,13 +75,29 @@ fn validate_rect(rect: PlaneRect) -> Result<(), VoronoiError> {
             ),
         });
     }
+    // Finite corners do not imply a finite extent (max - min can overflow
+    // f32), and a subnormal extent makes the normalization scale overflow;
+    // both would send inf/NaN through the pipeline.
+    let extent = rect.width().max(rect.height());
+    if !extent.is_finite() || !(1.0 / extent).is_finite() {
+        return Err(VoronoiError::InvalidDomain {
+            message: format!(
+                "rect extent {} is not representable (must be finite and large \
+                 enough that the normalization scale 1/extent is finite)",
+                extent
+            ),
+        });
+    }
     Ok(())
 }
 
-/// Weld exact-bit duplicate points: the one coincidence class that provably
-/// breaks half-plane clipping (the bisector degenerates to the whole plane).
-/// Near-coincident-but-distinct f32 points have exactly representable f64
-/// coordinate differences, so their bisectors stay well-formed.
+/// Weld points with identical NORMALIZED coordinates: the one coincidence
+/// class that provably breaks half-plane clipping (the bisector degenerates
+/// to the whole plane). This is deliberately the computation space, not the
+/// input space — bit-distinct inputs that round together under the rect
+/// normalization MUST weld (they would otherwise produce the degenerate
+/// bisector), while points that stay distinct here have exactly
+/// representable f64 coordinate differences and well-formed bisectors.
 struct ExactWeld {
     /// Canonical (first-occurrence) original index per original index.
     weld_map: Option<Vec<u32>>,
@@ -149,7 +178,8 @@ pub(crate) fn compute_plane_impl<P: PlanePointLike>(
     let weld = weld_exact_duplicates(&normalized);
     let effective = &weld.effective;
 
-    let res = plane_grid_resolution(effective.len());
+    let occupied = transform.domain.x as f64 * transform.domain.y as f64;
+    let res = plane_grid_resolution(effective.len(), occupied);
     let grid = PlaneGrid::new(effective, res);
     let output = compute_plane_cells(effective, &grid, transform.domain)?;
 

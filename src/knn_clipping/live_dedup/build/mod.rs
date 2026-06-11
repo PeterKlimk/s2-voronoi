@@ -1,6 +1,9 @@
 //! Cell construction for live dedup.
-
-pub(super) mod plane;
+//!
+//! The spherical driver lives here; the planar driver (plane_clipping::
+//! driver) reuses the pub(crate) emission seam (`emit_cell_output`,
+//! `LiveDedupCellScratch`, `ShardContext`) so the dedup layer stays
+//! geometry-free.
 
 use glam::Vec3;
 #[cfg(feature = "parallel")]
@@ -24,7 +27,7 @@ use crate::knn_clipping::cell_build::{
 use crate::knn_clipping::TerminationConfig;
 use crate::packed_layout::PackedSlotLayout;
 
-struct EdgeScratch {
+pub(crate) struct EdgeScratch {
     edges_to_later: Vec<EdgeToLater>,
     edges_overflow: Vec<EdgeOverflowLocal>,
     vertex_indices: Vec<u32>,
@@ -116,13 +119,13 @@ impl EdgeScratch {
     }
 }
 
-struct LiveDedupCellScratch {
+pub(crate) struct LiveDedupCellScratch {
     edge_scratch: EdgeScratch,
     seed_neighbors: Vec<SeedNeighbor>,
 }
 
 impl LiveDedupCellScratch {
-    fn new(num_points: usize) -> Self {
+    pub(crate) fn new(num_points: usize) -> Self {
         Self {
             edge_scratch: EdgeScratch::new(),
             seed_neighbors: Vec::with_capacity(num_points.min(16)),
@@ -136,10 +139,10 @@ pub(super) struct GridContext<'a> {
     pub(super) assignment: &'a super::binning::BinAssignment,
 }
 
-pub(super) struct ShardContext<'a> {
-    pub(super) shard: &'a mut ShardState,
-    pub(super) bin: BinId,
-    pub(super) local: LocalId,
+pub(crate) struct ShardContext<'a> {
+    pub(crate) shard: &'a mut ShardState,
+    pub(crate) bin: BinId,
+    pub(crate) local: LocalId,
 }
 
 #[inline]
@@ -148,7 +151,7 @@ fn representation_limit(message: impl Into<String>) -> BuildCellsError {
 }
 
 #[inline]
-fn checked_u32(value: usize, context: &str) -> Result<u32, BuildCellsError> {
+pub(crate) fn checked_u32(value: usize, context: &str) -> Result<u32, BuildCellsError> {
     u32::try_from(value)
         .map_err(|_| representation_limit(format!("{context} exceeds u32 capacity")))
 }
@@ -159,7 +162,7 @@ fn checked_u8(value: usize, context: &str) -> Result<u8, BuildCellsError> {
 }
 
 #[inline]
-fn checked_local_id(value: usize, context: &str) -> Result<LocalId, BuildCellsError> {
+pub(crate) fn checked_local_id(value: usize, context: &str) -> Result<LocalId, BuildCellsError> {
     checked_u32(value, context).map(LocalId::from)
 }
 
@@ -436,7 +439,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
 /// edge checks to later cells. Geometry-free; shared by the spherical and
 /// planar drivers.
 #[allow(clippy::too_many_arguments)] // internal seam shared by two drivers
-fn emit_cell_output(
+pub(crate) fn emit_cell_output(
     cell_sub: &mut crate::knn_clipping::timing::CellSubAccum,
     live_ctx: &mut LiveDedupCellScratch,
     shard_ctx: &mut ShardContext<'_>,

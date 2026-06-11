@@ -81,12 +81,49 @@ pub(crate) const TERMINATION_THRESHOLD_GUARD: f64 = 3.0 * f32::EPSILON as f64;
 ///
 /// A neighbor at squared distance `d2` from the generator cannot cut the cell
 /// when `d2 > 4 * max_r2` (its bisector passes at distance `sqrt(d2)/2`,
-/// beyond every vertex). The guard absorbs: f32 rounding of the grid's
-/// unseen-distance certificates (including the documented <= 1-ulp wall
-/// rounding slack in `plane_grid`), f32 squared-distance accumulation in
-/// emission, and f64 rounding of `max_r2` itself. 3 ulps relative mirrors the
-/// sphere's `TERMINATION_THRESHOLD_GUARD` granularity.
+/// beyond every vertex). The guard absorbs rounding RELATIVE to the
+/// quantities compared: f32 squared-distance accumulation in emission and
+/// f64 rounding of `max_r2` itself. 3 ulps relative mirrors the sphere's
+/// `TERMINATION_THRESHOLD_GUARD` granularity.
+///
+/// Note: the grid certificate's wall-classification slack is ABSOLUTE
+/// (ulps of the wall coordinate, not of `4 * max_r2`) and is therefore
+/// handled inside the certificate itself via
+/// [`PLANE_WALL_CLASSIFICATION_SLACK`], not here — a relative guard cannot
+/// absorb it once cells are much smaller than the domain.
 pub(crate) const PLANE_TERMINATION_GUARD: f64 = 3.0 * f32::EPSILON as f64;
+
+/// Relative shrink applied to wall distances inside the plane grid's
+/// unseen-distance certificate.
+///
+/// Point classification (`(p.x * res) as usize`) and the certificate's wall
+/// coordinate (`fl(i / res)`) round independently, so a point classified
+/// OUTSIDE the explored box can sit up to ~2 ulps of the wall coordinate
+/// INSIDE the f32 wall value (one ulp from the classification product, one
+/// from the wall division). Shrinking each exposed side distance by
+/// `wall * PLANE_WALL_CLASSIFICATION_SLACK` (4 ulps relative — the bound
+/// doubled for margin) restores a sound lower bound by construction. Cost:
+/// certificates loosen by < 5e-7 absolute, negligible against cell sizes
+/// down to ~1e-6 (n ~ 1e12 uniform points).
+pub(crate) const PLANE_WALL_CLASSIFICATION_SLACK: f32 = 4.0 * f32::EPSILON;
+
+/// Degenerate edge-segment length for the planar edge reconcile post-pass,
+/// in normalized domain units (longer rect side = 1).
+///
+/// Same value and same rationale as the sphere's
+/// [`RECONCILE_DEGENERATE_LEN_EPS`], transferred deliberately: planar
+/// coordinates are f32 normalized to unit scale, so the f32-lattice band is
+/// ~1e-7..1e-6 here too. This governs *output repair* of one-sided
+/// epsilon edges (cells that already topologically disagree), not input
+/// welding — the planar pipeline welds only normalized-coordinate
+/// duplicates.
+pub(crate) const PLANE_RECONCILE_DEGENERATE_LEN_EPS: f32 = 1e-6;
+
+/// Neighbor distance below which a planar `ClippedAway` failure is
+/// classified as degenerate (near-coincident) input rather than an internal
+/// error, in normalized domain units. Same f32-lattice scale as
+/// [`PLANE_RECONCILE_DEGENERATE_LEN_EPS`].
+pub(crate) const PLANE_COINCIDENT_DIST: f32 = 1e-6;
 
 /// On-wall classification tolerance for planar validation, in normalized
 /// domain units (longer rect side = 1). Wall vertices come from f64

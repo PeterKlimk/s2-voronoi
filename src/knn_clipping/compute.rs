@@ -478,6 +478,7 @@ fn reconcile_edges(
             &cells,
             &cell_indices,
             vertex_keys,
+            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
         )?
     {
         cells = reconciled_cells;

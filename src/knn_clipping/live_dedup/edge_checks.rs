@@ -16,7 +16,7 @@ use crate::packed_layout::PackedSlotLayout;
 use std::time::Duration;
 
 #[inline]
-pub(super) fn unpack_edge_key(key: EdgeKey) -> (u32, u32) {
+pub(crate) fn unpack_edge_key(key: EdgeKey) -> (u32, u32) {
     let v: u64 = key.into();
     (v as u32, (v >> 32) as u32)
 }
@@ -85,7 +85,7 @@ impl ShardDedup {
         slot.push(check);
     }
 
-    pub(super) fn take_edge_checks(&mut self, local: LocalId) -> Vec<EdgeCheck> {
+    pub(crate) fn take_edge_checks(&mut self, local: LocalId) -> Vec<EdgeCheck> {
         let local_idx = local.as_usize();
         debug_assert!(
             local_idx < self.edge_checks.len(),
