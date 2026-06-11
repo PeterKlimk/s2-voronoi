@@ -17,6 +17,8 @@ profiling = [] # Profiling helpers (e.g. disable inlining on hot functions)
 microbench = ["dep:rand", "dep:rand_chacha"] # Enable internal microbench harnesses (nightly `test` crate)
 qhull = ["qhull-enhanced"]  # Convex hull backend (test/bench only)
 simd_clip = [] # Use SIMD small-N clippers in main clipper dispatch
+simd_wide = ["dep:wide"] # SIMD via the `wide` crate (stable Rust) instead of portable_simd
+simd_scalar = [] # Scalar/autovectorized 8-lane path (stable Rust); benchmarking comparison
 fma = [] # Prefer fused multiply-add via mul_add (may change results; can be slow without HW FMA)
 packed_knn_sort_small = [] # Use crate::sort::sort_small for small packed-kNN sorts
 tools = ["dep:clap", "dep:kiddo", "dep:rand", "dep:rand_chacha"] # Benchmark/utility binaries
@@ -35,6 +37,9 @@ rustc-hash = "2"
 
 # Optional: parallelism
 rayon = { version = "1.10", optional = true }
+
+# Optional: stable-Rust SIMD backend
+wide = { version = "0.7", optional = true }
 
 # Optional: convex hull backend (test-only)
 qhull-enhanced = { version = "0.1", optional = true }

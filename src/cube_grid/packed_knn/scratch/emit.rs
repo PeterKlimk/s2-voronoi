@@ -2,8 +2,6 @@ use super::super::timing::PackedLapTimer;
 use super::helpers::{key_to_dot, key_to_idx, sort_keys_u64};
 use super::*;
 use crate::fp;
-use std::simd::f32x8;
-use std::simd::{cmp::SimdPartialOrd, Mask};
 
 impl PackedKnnCellScratch {
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -62,28 +60,18 @@ impl PackedKnnCellScratch {
             let full_chunks = range_len / 8;
             for chunk in 0..full_chunks {
                 let i = chunk * 8;
-                let cx = f32x8::from_slice(&xs[i..]);
-                let cy = f32x8::from_slice(&ys[i..]);
-                let cz = f32x8::from_slice(&zs[i..]);
+                let candidates = fp::PointChunk8::from_slices(&xs[i..], &ys[i..], &zs[i..]);
+                let dots = candidates.dots(qx_s, qy_s, qz_s);
 
-                let qx = f32x8::splat(qx_s);
-                let qy = f32x8::splat(qy_s);
-                let qz = f32x8::splat(qz_s);
-                let dots = fp::dot3_f32x8(cx, cy, cz, qx, qy, qz);
+                let safe_bits = dots.mask_gt(self.security_thresholds[qi]);
+                let hi_bits = dots.mask_gt(self.thresholds[qi]);
 
-                let hi_vec = f32x8::splat(self.thresholds[qi]);
-                let safe_vec = f32x8::splat(self.security_thresholds[qi]);
-
-                let safe_mask: Mask<i32, 8> = dots.simd_gt(safe_vec);
-                let hi_mask: Mask<i32, 8> = dots.simd_gt(hi_vec);
-
-                let mut tail_bits =
-                    (safe_mask.to_bitmask() as u32) & !(hi_mask.to_bitmask() as u32);
+                let mut tail_bits = safe_bits & !hi_bits;
                 if tail_bits == 0 {
                     continue;
                 }
 
-                let dots_arr: [f32; 8] = dots.into();
+                let dots_arr = dots.to_array();
                 while tail_bits != 0 {
                     let lane = tail_bits.trailing_zeros() as usize;
                     let slot = (soa_start + i + lane) as u32;

@@ -8,8 +8,6 @@ use crate::policy::{
     PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER, PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER,
     PACKED_HI_BUDGET,
 };
-use std::simd::f32x8;
-use std::simd::{cmp::SimdPartialOrd, Mask};
 
 impl PackedKnnCellScratch {
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -224,22 +222,14 @@ impl PackedKnnCellScratch {
         let full_chunks = center_len / 8;
         for chunk in 0..full_chunks {
             let i = chunk * 8;
-            let cx = f32x8::from_slice(&xs[i..]);
-            let cy = f32x8::from_slice(&ys[i..]);
-            let cz = f32x8::from_slice(&zs[i..]);
+            let candidates = fp::PointChunk8::from_slices(&xs[i..], &ys[i..], &zs[i..]);
 
             // Candidate positions in this chunk are [i, i+7]. A query at position qi only
             // needs to consider this chunk if qi <= i+7.
             let qi_end = (i + 8).min(num_queries);
             for qi in 0..qi_end {
-                let qx = f32x8::splat(query_x[qi]);
-                let qy = f32x8::splat(query_y[qi]);
-                let qz = f32x8::splat(query_z[qi]);
-                let dots = fp::dot3_f32x8(cx, cy, cz, qx, qy, qz);
-
-                let thresh_vec = f32x8::splat(security_thresholds[qi]);
-                let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
-                let mut mask_bits = mask.to_bitmask() as u32;
+                let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
+                let mut mask_bits = dots.mask_gt(security_thresholds[qi]);
                 if mask_bits == 0 {
                     continue;
                 }
@@ -258,7 +248,7 @@ impl PackedKnnCellScratch {
                     }
                 }
 
-                let dots_arr: [f32; 8] = dots.into();
+                let dots_arr = dots.to_array();
                 while mask_bits != 0 {
                     let lane = mask_bits.trailing_zeros() as usize;
                     let slot = (center_soa_start + i + lane) as u32;
@@ -400,24 +390,16 @@ impl PackedKnnCellScratch {
             let full_chunks = range_len / 8;
             for chunk in 0..full_chunks {
                 let i = chunk * 8;
-                let cx = f32x8::from_slice(&xs[i..]);
-                let cy = f32x8::from_slice(&ys[i..]);
-                let cz = f32x8::from_slice(&zs[i..]);
+                let candidates = fp::PointChunk8::from_slices(&xs[i..], &ys[i..], &zs[i..]);
 
                 for (qi, &query_slot) in queries.iter().enumerate() {
-                    let qx = f32x8::splat(query_x[qi]);
-                    let qy = f32x8::splat(query_y[qi]);
-                    let qz = f32x8::splat(query_z[qi]);
-                    let dots = fp::dot3_f32x8(cx, cy, cz, qx, qy, qz);
-
-                    let thresh_vec = f32x8::splat(thresholds[qi]);
-                    let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
-                    let mut mask_bits = mask.to_bitmask() as u32;
+                    let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
+                    let mut mask_bits = dots.mask_gt(thresholds[qi]);
                     if mask_bits == 0 {
                         continue;
                     }
 
-                    let dots_arr: [f32; 8] = dots.into();
+                    let dots_arr = dots.to_array();
                     while mask_bits != 0 {
                         let lane = mask_bits.trailing_zeros() as usize;
                         let slot = (soa_start + i + lane) as u32;
@@ -445,24 +427,16 @@ impl PackedKnnCellScratch {
                 ybuf[..rem].copy_from_slice(&ys[i..]);
                 zbuf[..rem].copy_from_slice(&zs[i..]);
 
-                let cx = f32x8::from_array(xbuf);
-                let cy = f32x8::from_array(ybuf);
-                let cz = f32x8::from_array(zbuf);
+                let candidates = fp::PointChunk8::from_arrays(xbuf, ybuf, zbuf);
 
                 for (qi, &query_slot) in queries.iter().enumerate() {
-                    let qx = f32x8::splat(query_x[qi]);
-                    let qy = f32x8::splat(query_y[qi]);
-                    let qz = f32x8::splat(query_z[qi]);
-                    let dots = fp::dot3_f32x8(cx, cy, cz, qx, qy, qz);
-
-                    let thresh_vec = f32x8::splat(thresholds[qi]);
-                    let mask: Mask<i32, 8> = dots.simd_gt(thresh_vec);
-                    let mut mask_bits = (mask.to_bitmask() as u32) & valid_bits;
+                    let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
+                    let mut mask_bits = dots.mask_gt(thresholds[qi]) & valid_bits;
                     if mask_bits == 0 {
                         continue;
                     }
 
-                    let dots_arr: [f32; 8] = dots.into();
+                    let dots_arr = dots.to_array();
                     while mask_bits != 0 {
                         let lane = mask_bits.trailing_zeros() as usize;
                         let slot = (soa_start + i + lane) as u32;

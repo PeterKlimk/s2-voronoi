@@ -1,5 +1,7 @@
-#![feature(portable_simd)]
-#![cfg_attr(test, feature(test))]
+#![cfg_attr(
+    not(any(feature = "simd_wide", feature = "simd_scalar")),
+    feature(portable_simd)
+)]
 
 //! Spherical Voronoi diagrams on the unit sphere (S2).
 //!
