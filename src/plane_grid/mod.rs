@@ -15,6 +15,7 @@
 //! entry normalizes the user's bounding rect to it. Out-of-range coordinates
 //! are clamped into the edge cells (and rejected upstream by validation).
 
+pub(crate) mod packed;
 mod query;
 
 pub(crate) use query::{PlaneNeighborFrontier, PlaneNeighborStream};
@@ -163,6 +164,54 @@ impl PlaneGrid {
     pub(crate) fn wall(&self, i: usize) -> f32 {
         self.walls[i]
     }
+}
+
+/// Lower bound on the squared distance from `(qx, qy)` to anything outside
+/// the Chebyshev-radius-`radius` cell box around `(cx, cy)`.
+///
+/// Sides clipped at the domain edge have nothing beyond them; if every side
+/// is clipped the bound is `INFINITY` (nothing exists outside). Each exposed
+/// side distance is shrunk by ulps of the wall coordinate
+/// ([`crate::tolerances::PLANE_WALL_CLASSIFICATION_SLACK`]): point
+/// classification and the wall coordinate round independently, so a point
+/// classified outside the box can sit slightly inside the f32 wall value.
+///
+/// Single owner of the box-certificate logic: the shell frontier's per-ring
+/// certificate and the packed stage's security thresholds both use it.
+pub(crate) fn outside_box_dist_sq(
+    grid: &PlaneGrid,
+    cx: usize,
+    cy: usize,
+    radius: usize,
+    qx: f32,
+    qy: f32,
+) -> f32 {
+    const SLACK: f32 = crate::tolerances::PLANE_WALL_CLASSIFICATION_SLACK;
+    let res = grid.res();
+    let mut d = f32::INFINITY;
+    if cx > radius {
+        let w = grid.wall(cx - radius);
+        d = d.min(qx - w - w * SLACK);
+    }
+    if cx + radius < res - 1 {
+        let w = grid.wall(cx + radius + 1);
+        d = d.min(w - w * SLACK - qx);
+    }
+    if cy > radius {
+        let w = grid.wall(cy - radius);
+        d = d.min(qy - w - w * SLACK);
+    }
+    if cy + radius < res - 1 {
+        let w = grid.wall(cy + radius + 1);
+        d = d.min(w - w * SLACK - qy);
+    }
+    if d == f32::INFINITY {
+        return f32::INFINITY;
+    }
+    // A query outside the unit square (clamped into an edge cell) can sit
+    // outside the box; 0 is the sound bound there.
+    let d = d.max(0.0);
+    d * d
 }
 
 /// Row-major cell index of a point, clamped into the grid.

@@ -151,43 +151,11 @@ impl<'a, 'b> PlaneShellFrontier<'a, 'b> {
         }
     }
 
-    /// Lower bound on the squared distance from the query to anything outside
-    /// the explored cell box of Chebyshev radius `k` (sides clipped at the
-    /// domain edge have nothing beyond them).
-    ///
-    /// Each side distance is shrunk by ulps of the wall coordinate: a point
-    /// classified outside the box can sit slightly inside the f32 wall value
-    /// (classification and the wall coordinate round independently), and the
-    /// consumer's termination guard is relative to its own threshold, so the
-    /// certificate must absorb this absolute slack itself. See
-    /// [`crate::tolerances::PLANE_WALL_CLASSIFICATION_SLACK`].
+    /// Lower bound on the squared distance from the query to anything
+    /// outside the explored cell box of Chebyshev radius `k` (see
+    /// [`super::outside_box_dist_sq`], the shared box-certificate owner).
     fn unseen_bound_after(&self, k: usize) -> f32 {
-        const SLACK: f32 = crate::tolerances::PLANE_WALL_CLASSIFICATION_SLACK;
-        let res = self.grid.res();
-        let mut d = f32::INFINITY;
-        if self.cx > k {
-            let w = self.grid.wall(self.cx - k);
-            d = d.min(self.query.x - w - w * SLACK);
-        }
-        if self.cx + k < res - 1 {
-            let w = self.grid.wall(self.cx + k + 1);
-            d = d.min(w - w * SLACK - self.query.x);
-        }
-        if self.cy > k {
-            let w = self.grid.wall(self.cy - k);
-            d = d.min(self.query.y - w - w * SLACK);
-        }
-        if self.cy + k < res - 1 {
-            let w = self.grid.wall(self.cy + k + 1);
-            d = d.min(w - w * SLACK - self.query.y);
-        }
-        if d == f32::INFINITY {
-            return f32::INFINITY;
-        }
-        // A query outside the unit square (clamped into an edge cell) can sit
-        // outside the box; 0 is the sound bound there.
-        let d = d.max(0.0);
-        d * d
+        super::outside_box_dist_sq(self.grid, self.cx, self.cy, k, self.query.x, self.query.y)
     }
 
     /// Build the next non-empty ring batch, or mark exhaustion.
@@ -252,6 +220,9 @@ impl<'a, 'b> PlaneShellFrontier<'a, 'b> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PlaneNeighborBatchSource {
+    PackedChunk0,
+    PackedTail,
+    PackedExpandR2,
     ShellExpand,
 }
 
@@ -270,28 +241,51 @@ pub(crate) struct PlaneNeighborBatch {
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum PlaneNeighborFrontier {
     ExactBatch(PlaneNeighborBatch),
+    /// No batch at this stage boundary, but everything unseen is at least
+    /// this far away; the consumer may terminate against the bound or
+    /// `advance_frontier` to the next stage.
+    UnknownButBounded {
+        dist_lower_bound: f32,
+    },
     Exhausted,
 }
 
-/// Directed neighbor stream over the plane grid.
-///
-/// Currently shell-expansion only; a packed SIMD stage slots in ahead of it
-/// later exactly as `cube_grid`'s does (the consumer-facing contract — the
-/// eligible set and the certificates — is what the contract suite pins).
-pub(crate) struct PlaneNeighborStream<'a, 'b> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamStage {
+    Packed,
+    Takeover,
+    Done,
+}
+
+/// Directed neighbor stream over the plane grid: the packed SIMD stages
+/// (when a prepared group is supplied) followed by the shell-expansion
+/// takeover, which re-covers everything the packed stages may have skipped
+/// (the consumer dedups).
+pub(crate) struct PlaneNeighborStream<'a, 'b, 'p, 'g> {
+    grid: &'a PlaneGrid,
     takeover: PlaneShellFrontier<'a, 'b>,
+    packed: Option<super::packed::PlanePackedQuery<'a, 'p, 'g>>,
+    stage: StreamStage,
+    packed_safe_exhausted: bool,
     knn_exhausted: bool,
 }
 
-impl<'a, 'b> PlaneNeighborStream<'a, 'b> {
+impl<'a, 'b, 'p, 'g> PlaneNeighborStream<'a, 'b, 'p, 'g> {
     pub(crate) fn new(
         grid: &'a PlaneGrid,
         points: &[Vec2],
         query_idx: usize,
         scratch: &'a mut PlaneGridScratch,
         eligibility: DirectedEligibility<'b>,
+        packed: Option<super::packed::PlanePackedQuery<'a, 'p, 'g>>,
     ) -> Self {
+        let stage = if packed.is_some() {
+            StreamStage::Packed
+        } else {
+            StreamStage::Takeover
+        };
         Self {
+            grid,
             takeover: PlaneShellFrontier::new(
                 grid,
                 points[query_idx],
@@ -299,6 +293,9 @@ impl<'a, 'b> PlaneNeighborStream<'a, 'b> {
                 scratch,
                 eligibility,
             ),
+            packed,
+            stage,
+            packed_safe_exhausted: false,
             knn_exhausted: false,
         }
     }
@@ -313,26 +310,91 @@ impl<'a, 'b> PlaneNeighborStream<'a, 'b> {
     ) -> PlaneNeighborFrontier {
         out.clear();
         dists.clear();
-        if let Some(batch) = self.takeover.frontier(out, dists) {
-            PlaneNeighborFrontier::ExactBatch(PlaneNeighborBatch {
-                n: batch.n,
-                first_dist_sq: batch.first_dist_sq,
-                unseen_bound: batch.unseen_bound,
-                source: PlaneNeighborBatchSource::ShellExpand,
-            })
-        } else {
-            self.knn_exhausted = self.takeover.is_exhausted();
-            PlaneNeighborFrontier::Exhausted
+        loop {
+            match self.stage {
+                StreamStage::Packed => {
+                    let packed = self
+                        .packed
+                        .as_mut()
+                        .expect("packed stage requires packed query state");
+                    match packed.frontier(out, dists) {
+                        super::packed::PlanePackedFrontier::ExactBatch(batch) => {
+                            let source = match batch.source {
+                                super::packed::PlanePackedBatchSource::Chunk0 => {
+                                    PlaneNeighborBatchSource::PackedChunk0
+                                }
+                                super::packed::PlanePackedBatchSource::Tail => {
+                                    PlaneNeighborBatchSource::PackedTail
+                                }
+                                super::packed::PlanePackedBatchSource::ExpandR2 => {
+                                    PlaneNeighborBatchSource::PackedExpandR2
+                                }
+                            };
+                            return PlaneNeighborFrontier::ExactBatch(PlaneNeighborBatch {
+                                n: batch.n,
+                                first_dist_sq: batch.first_dist_sq,
+                                unseen_bound: batch.unseen_bound,
+                                source,
+                            });
+                        }
+                        super::packed::PlanePackedFrontier::UnknownButBounded {
+                            dist_lower_bound,
+                        } => return PlaneNeighborFrontier::UnknownButBounded { dist_lower_bound },
+                        super::packed::PlanePackedFrontier::Exhausted => {
+                            self.packed_safe_exhausted |= packed.safe_exhausted();
+                            self.stage = StreamStage::Takeover;
+                            continue;
+                        }
+                    }
+                }
+                StreamStage::Takeover => {
+                    if let Some(batch) = self.takeover.frontier(out, dists) {
+                        return PlaneNeighborFrontier::ExactBatch(PlaneNeighborBatch {
+                            n: batch.n,
+                            first_dist_sq: batch.first_dist_sq,
+                            unseen_bound: batch.unseen_bound,
+                            source: PlaneNeighborBatchSource::ShellExpand,
+                        });
+                    }
+                    self.knn_exhausted = self.takeover.is_exhausted();
+                    self.stage = StreamStage::Done;
+                    return PlaneNeighborFrontier::Exhausted;
+                }
+                StreamStage::Done => return PlaneNeighborFrontier::Exhausted,
+            }
         }
     }
 
     pub(crate) fn advance_frontier(&mut self) {
-        self.takeover.advance();
+        match self.stage {
+            StreamStage::Packed => {
+                let grid = self.grid;
+                let packed = self
+                    .packed
+                    .as_mut()
+                    .expect("packed stage requires packed query state");
+                packed.advance_frontier(grid);
+                if packed.is_exhausted() {
+                    self.packed_safe_exhausted |= packed.safe_exhausted();
+                    self.stage = StreamStage::Takeover;
+                }
+            }
+            StreamStage::Takeover => self.takeover.advance(),
+            StreamStage::Done => {}
+        }
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     #[inline]
     pub(crate) fn knn_exhausted(&self) -> bool {
         self.knn_exhausted
+    }
+
+    // Diagnostics surface (sphere parity); the planar stats reporting
+    // grows into it.
+    #[allow(dead_code)]
+    #[inline]
+    pub(crate) fn packed_safe_exhausted(&self) -> bool {
+        self.packed_safe_exhausted
     }
 }

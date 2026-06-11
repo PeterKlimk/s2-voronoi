@@ -48,13 +48,12 @@ pub(crate) fn knn_grid_resolution(num_points: usize) -> usize {
 /// [`plane_grid_resolution`]); `S2_VORONOI_PLANE_GRID_DENSITY` overrides for
 /// experiments.
 ///
-/// Deliberately much lower than the sphere's 24: the spherical optimum is
-/// tied to the packed SIMD stage's batch economics, while the planar path is
-/// (currently) scalar shell expansion, where scanning fewer points per ring
-/// wins. Ryzen 3600 sweep (uniform 1M, single-thread, min of 4):
-/// density 2 = 2043ms, 3 = 2024ms, 4 = 2003ms, 8 = 2321ms, 16 = 2854ms,
-/// 24 = 3528ms; clustered 500k prefers 4 over 8 by a further 24%. The
-/// optimum is flat across 2..4; 4 keeps the cell array smallest.
+/// Ryzen 3600 sweeps (uniform 1M, min of repeats). Pre-packed (scalar shell
+/// expansion only) the optimum was ~4 (ST: d4 = 2003ms vs d24 = 3528ms).
+/// With the packed SIMD stage the batch economics move it up, exactly as on
+/// the sphere: ST d16 = 1765ms ~ d24 = 1750-1860ms (flat) vs d4 = 1989ms;
+/// MT 1M d16 = 410ms / d24 = 417ms / d4 = 441ms; MT 2M d16 = 1004ms.
+/// 16 takes the flat optimum at the smaller cell count.
 pub(crate) fn plane_grid_target_density() -> f64 {
     static OVERRIDE: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
     OVERRIDE
@@ -64,7 +63,7 @@ pub(crate) fn plane_grid_target_density() -> f64 {
                 .and_then(|v| v.parse::<f64>().ok())
                 .filter(|d| *d >= 1.0)
         })
-        .unwrap_or(4.0)
+        .unwrap_or(16.0)
 }
 
 /// Planar grid resolution (cells per axis over the normalized domain).

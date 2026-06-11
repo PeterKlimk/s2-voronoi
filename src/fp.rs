@@ -133,9 +133,58 @@ impl Dots8 {
     }
 }
 
+/// Eight planar points (x, y lanes) for the planar packed-kNN hot loops;
+/// the 2D sibling of [`PointChunk8`].
+pub(crate) struct PlaneChunk8 {
+    x: backend::V,
+    y: backend::V,
+}
+
+/// Eight squared distances; planar semantics are "smaller is closer", so
+/// the mask is `mask_lt`.
+pub(crate) struct Dists8(backend::V);
+
+impl PlaneChunk8 {
+    /// Load the first 8 elements of each slice (caller guarantees length).
+    #[inline(always)]
+    pub(crate) fn from_slices(xs: &[f32], ys: &[f32]) -> Self {
+        Self {
+            x: backend::load_slice(xs),
+            y: backend::load_slice(ys),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn from_arrays(x: [f32; 8], y: [f32; 8]) -> Self {
+        Self {
+            x: backend::load_array(x),
+            y: backend::load_array(y),
+        }
+    }
+
+    /// Lane-wise squared Euclidean distances to a broadcast query point.
+    #[inline(always)]
+    pub(crate) fn dist_sqs(&self, qx: f32, qy: f32) -> Dists8 {
+        Dists8(backend::dist_sq2(self.x, self.y, qx, qy))
+    }
+}
+
+impl Dists8 {
+    /// Bitmask of lanes with dist_sq < threshold (lane i -> bit i).
+    #[inline(always)]
+    pub(crate) fn mask_lt(&self, threshold: f32) -> u32 {
+        backend::mask_lt(self.0, threshold)
+    }
+
+    #[inline(always)]
+    pub(crate) fn to_array(&self) -> [f32; 8] {
+        backend::to_array(self.0)
+    }
+}
+
 #[cfg(not(feature = "simd_scalar"))]
 mod backend {
-    use wide::{f32x8, CmpGt};
+    use wide::{f32x8, CmpGt, CmpLt};
 
     pub(super) type V = f32x8;
 
@@ -172,6 +221,25 @@ mod backend {
     }
 
     #[inline(always)]
+    pub(super) fn dist_sq2(x: V, y: V, qx: f32, qy: f32) -> V {
+        let dx = x - f32x8::splat(qx);
+        let dy = y - f32x8::splat(qy);
+        #[cfg(feature = "fma")]
+        {
+            dx.mul_add(dx, dy * dy)
+        }
+        #[cfg(not(feature = "fma"))]
+        {
+            dx * dx + dy * dy
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn mask_lt(v: V, threshold: f32) -> u32 {
+        v.cmp_lt(f32x8::splat(threshold)).move_mask() as u32 & 0xff
+    }
+
+    #[inline(always)]
     pub(super) fn to_array(v: V) -> [f32; 8] {
         v.to_array()
     }
@@ -205,6 +273,26 @@ mod backend {
         let mut bits = 0u32;
         for (i, &d) in v.iter().enumerate() {
             bits |= u32::from(d > threshold) << i;
+        }
+        bits
+    }
+
+    #[inline(always)]
+    pub(super) fn dist_sq2(x: V, y: V, qx: f32, qy: f32) -> V {
+        let mut out = [0.0f32; 8];
+        for i in 0..8 {
+            let dx = x[i] - qx;
+            let dy = y[i] - qy;
+            out[i] = super::fma_f32(dx, dx, dy * dy);
+        }
+        out
+    }
+
+    #[inline(always)]
+    pub(super) fn mask_lt(v: V, threshold: f32) -> u32 {
+        let mut bits = 0u32;
+        for (i, &d) in v.iter().enumerate() {
+            bits |= u32::from(d < threshold) << i;
         }
         bits
     }

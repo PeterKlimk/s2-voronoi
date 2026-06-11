@@ -66,7 +66,7 @@ fn stream_cell(
     // query_bin 1 vs all-zero map: every cell is "other bin" => emit all.
     let ctx = DirectedEligibility::from_layout(1, 0, layout);
     let mut scratch = grid.make_scratch();
-    let mut stream = PlaneNeighborStream::new(grid, points, gi, &mut scratch, ctx);
+    let mut stream = PlaneNeighborStream::new(grid, points, gi, &mut scratch, ctx, None);
     let mut builder = PlaneCellBuilder::new(gi, points[gi], wall_base, Vec2::ONE);
 
     let mut batch = Vec::new();
@@ -82,6 +82,12 @@ fn stream_cell(
                 if builder.can_terminate(result.unseen_bound) {
                     break;
                 }
+            }
+            PlaneNeighborFrontier::UnknownButBounded { dist_lower_bound } => {
+                if builder.can_terminate(dist_lower_bound) {
+                    break;
+                }
+                stream.advance_frontier();
             }
             PlaneNeighborFrontier::Exhausted => break,
         }

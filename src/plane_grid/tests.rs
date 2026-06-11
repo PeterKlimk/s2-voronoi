@@ -26,9 +26,14 @@ use glam::Vec2;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
+use super::packed::{
+    PlanePackedGroupInput, PlanePackedQuery, PlanePackedScratch, PlanePackedTimings,
+    PlanePreparedGroupStatus,
+};
 use super::{PlaneGrid, PlaneNeighborFrontier, PlaneNeighborStream};
 use crate::cube_grid::DirectedEligibility;
 use crate::packed_layout::PackedSlotLayout;
+use crate::policy::PackedNeighborPolicy;
 
 const LOCAL_SHIFT: u32 = 24;
 const LOCAL_MASK: u32 = (1u32 << LOCAL_SHIFT) - 1;
@@ -119,7 +124,7 @@ impl Harness {
         &self,
         name: &str,
         query_slot: u32,
-        mut stream: PlaneNeighborStream<'_, '_>,
+        mut stream: PlaneNeighborStream<'_, '_, '_, '_>,
     ) -> Vec<u32> {
         let eligible = self.brute_eligible(query_slot);
         let mut unseen: std::collections::HashSet<u32> = eligible.iter().copied().collect();
@@ -158,6 +163,16 @@ impl Harness {
                     );
                     stream.advance_frontier();
                 }
+                PlaneNeighborFrontier::UnknownButBounded { dist_lower_bound } => {
+                    assert!(
+                        nearest_unseen(&unseen) >= dist_lower_bound - DIST_SQ_TOL,
+                        "{name}: bounded frontier {} overstates an unseen eligible \
+                         point at dist_sq {} (query slot {query_slot})",
+                        dist_lower_bound,
+                        nearest_unseen(&unseen)
+                    );
+                    stream.advance_frontier();
+                }
                 PlaneNeighborFrontier::Exhausted => break,
             }
         }
@@ -173,11 +188,13 @@ impl Harness {
         emitted
     }
 
-    /// Run the contract for every (sampled) query through the stream.
+    /// Run the contract for every (sampled) query through the takeover-only
+    /// path and, per center cell, the packed path.
     fn check_all(&self, name: &str) {
         let n = self.points.len();
         let stride = (n / 128).max(1);
 
+        // Takeover-only path (packed = None).
         for slot in (0..n as u32).step_by(stride) {
             let query_idx = self.grid.point_indices()[slot as usize] as usize;
             let ctx = DirectedEligibility::from_layout(
@@ -186,9 +203,67 @@ impl Harness {
                 self.layout(),
             );
             let mut scratch = self.grid.make_scratch();
-            let stream =
-                PlaneNeighborStream::new(&self.grid, &self.points, query_idx, &mut scratch, ctx);
-            self.collect_and_check(name, slot, stream);
+            let stream = PlaneNeighborStream::new(
+                &self.grid,
+                &self.points,
+                query_idx,
+                &mut scratch,
+                ctx,
+                None,
+            );
+            self.collect_and_check(&format!("{name}/takeover"), slot, stream);
+        }
+
+        // Packed path: per center cell, complete slot-order runs.
+        let num_cells = self.grid.cell_offsets().len() - 1;
+        for cell in 0..num_cells {
+            let start = self.grid.cell_offsets()[cell] as usize;
+            let end = self.grid.cell_offsets()[cell + 1] as usize;
+            if start == end {
+                continue;
+            }
+            let queries: Vec<u32> = (start..end).map(|s| s as u32).collect();
+            let group = PlanePackedGroupInput::new(
+                cell,
+                self.bin_of_cell[cell],
+                &queries,
+                start as u32,
+                self.layout(),
+            );
+            for &expand_r2 in &[false, true] {
+                let mut packed_scratch = PlanePackedScratch::new();
+                let mut timings = PlanePackedTimings;
+                let PlanePreparedGroupStatus::Ready(mut prepared) =
+                    packed_scratch.prepare_group(&self.grid, group, &mut timings)
+                else {
+                    // SlowPath groups are exercised by the takeover-only pass.
+                    continue;
+                };
+                for (qi, &slot) in queries.iter().enumerate() {
+                    let query_idx = self.grid.point_indices()[slot as usize] as usize;
+                    let ctx = DirectedEligibility::from_layout(
+                        self.bin_of_cell[cell],
+                        slot,
+                        self.layout(),
+                    );
+                    let mut scratch = self.grid.make_scratch();
+                    let packed = PlanePackedQuery::new(
+                        &mut prepared,
+                        &mut timings,
+                        qi,
+                        PackedNeighborPolicy::for_point_count(self.points.len(), expand_r2),
+                    );
+                    let stream = PlaneNeighborStream::new(
+                        &self.grid,
+                        &self.points,
+                        query_idx,
+                        &mut scratch,
+                        ctx,
+                        Some(packed),
+                    );
+                    self.collect_and_check(&format!("{name}/packed_r2={expand_r2}"), slot, stream);
+                }
+            }
         }
     }
 }
@@ -371,7 +446,8 @@ fn plane_nn_contract_stream_idempotent_frontier() {
     let ctx = DirectedEligibility::from_layout(0, 0, h.layout());
     let query_idx = h.grid.point_indices()[0] as usize;
     let mut scratch = h.grid.make_scratch();
-    let mut stream = PlaneNeighborStream::new(&h.grid, &h.points, query_idx, &mut scratch, ctx);
+    let mut stream =
+        PlaneNeighborStream::new(&h.grid, &h.points, query_idx, &mut scratch, ctx, None);
 
     let mut batch = Vec::new();
     let mut dists = Vec::new();
@@ -407,7 +483,8 @@ fn plane_nn_contract_exhaustion_flag() {
     let ctx = DirectedEligibility::from_layout(0, 0, h.layout());
     let query_idx = h.grid.point_indices()[0] as usize;
     let mut scratch = h.grid.make_scratch();
-    let mut stream = PlaneNeighborStream::new(&h.grid, &h.points, query_idx, &mut scratch, ctx);
+    let mut stream =
+        PlaneNeighborStream::new(&h.grid, &h.points, query_idx, &mut scratch, ctx, None);
     let mut batch = Vec::new();
     let mut dists = Vec::new();
     while !matches!(

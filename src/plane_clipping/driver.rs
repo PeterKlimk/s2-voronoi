@@ -28,7 +28,12 @@ use crate::live_dedup::{
 };
 use crate::packed_layout::PackedSlotLayout;
 use crate::plane_clipping::PlaneCellBuilder;
+use crate::plane_grid::packed::{
+    PlanePackedGroupInput, PlanePackedQuery, PlanePackedScratch, PlanePackedTimings,
+    PlanePreparedGroupStatus,
+};
 use crate::plane_grid::{PlaneGrid, PlaneGridScratch, PlaneNeighborFrontier, PlaneNeighborStream};
+use crate::policy::PackedNeighborPolicy;
 
 pub(crate) struct PlaneCellsOutput {
     pub(crate) vertices: Vec<Vec2>,
@@ -168,24 +173,97 @@ fn build_cells_sharded_plane(
                     assignment.local_mask,
                 );
 
-                for (local_idx, &global) in my_generators.iter().enumerate() {
-                    let local = checked_local_id(local_idx, "shard-local generator index")?;
-                    let mut shard_ctx = ShardContext {
-                        shard: &mut shard,
-                        bin,
-                        local,
-                    };
-                    build_and_emit_cell_plane(
-                        &mut sub_accum,
-                        &mut worker,
-                        &mut edge_scratch,
-                        &mut shard_ctx,
-                        points,
-                        grid,
-                        &assignment,
+                let mut packed_scratch = PlanePackedScratch::new();
+                let mut packed_timings = PlanePackedTimings;
+                let packed_policy = PackedNeighborPolicy::for_point_count(points.len(), false);
+                let packed_queries_all: Vec<u32> = my_generators
+                    .iter()
+                    .map(|&i| grid.point_index_to_slot(i))
+                    .collect();
+
+                // Cell-grouped runs: every cell's queries are prepared as one
+                // packed group (locals are assigned in cell-major order, so
+                // each run is contiguous in my_generators).
+                let mut cursor = 0usize;
+                while cursor < my_generators.len() {
+                    let cell = grid.point_index_to_cell(my_generators[cursor]);
+                    let group_start = cursor;
+                    while cursor < my_generators.len()
+                        && grid.point_index_to_cell(my_generators[cursor]) == cell
+                    {
+                        cursor += 1;
+                    }
+
+                    let queries = &packed_queries_all[group_start..cursor];
+                    let query_local_start = checked_u32(group_start, "packed query local start")?;
+                    let group = PlanePackedGroupInput::new(
+                        cell,
+                        bin.as_u8(),
+                        queries,
+                        query_local_start,
                         layout,
-                        global,
-                    )?;
+                    );
+
+                    match packed_scratch.prepare_group(grid, group, &mut packed_timings) {
+                        PlanePreparedGroupStatus::Ready(mut prepared) => {
+                            for (offset, &global) in
+                                my_generators[group_start..cursor].iter().enumerate()
+                            {
+                                let local_idx = group_start + offset;
+                                let local =
+                                    checked_local_id(local_idx, "shard-local generator index")?;
+                                let mut shard_ctx = ShardContext {
+                                    shard: &mut shard,
+                                    bin,
+                                    local,
+                                };
+                                let packed = PlanePackedQuery::new(
+                                    &mut prepared,
+                                    &mut packed_timings,
+                                    offset,
+                                    packed_policy,
+                                );
+                                build_and_emit_cell_plane(
+                                    &mut sub_accum,
+                                    &mut worker,
+                                    &mut edge_scratch,
+                                    &mut shard_ctx,
+                                    points,
+                                    grid,
+                                    &assignment,
+                                    layout,
+                                    global,
+                                    Some(packed),
+                                )?;
+                            }
+                        }
+                        PlanePreparedGroupStatus::SlowPath => {
+                            for (offset, &global) in
+                                my_generators[group_start..cursor].iter().enumerate()
+                            {
+                                let local_idx = group_start + offset;
+                                let local =
+                                    checked_local_id(local_idx, "shard-local generator index")?;
+                                let mut shard_ctx = ShardContext {
+                                    shard: &mut shard,
+                                    bin,
+                                    local,
+                                };
+                                build_and_emit_cell_plane(
+                                    &mut sub_accum,
+                                    &mut worker,
+                                    &mut edge_scratch,
+                                    &mut shard_ctx,
+                                    points,
+                                    grid,
+                                    &assignment,
+                                    layout,
+                                    global,
+                                    None,
+                                )?;
+                            }
+                        }
+                    }
                 }
 
                 Ok((shard, sub_accum))
@@ -213,7 +291,7 @@ fn cell_build_error(generator_idx: usize, failure: CellFailure) -> BuildCellsErr
 }
 
 #[allow(clippy::too_many_arguments)] // driver seam, mirrors the spherical build_and_emit_cell
-fn build_and_emit_cell_plane(
+fn build_and_emit_cell_plane<'p, 'g>(
     cell_sub: &mut CellSubAccum,
     worker: &mut PlaneWorker,
     edge_scratch: &mut EdgeScratch,
@@ -223,6 +301,7 @@ fn build_and_emit_cell_plane(
     assignment: &BinAssignment,
     layout: PackedSlotLayout<'_>,
     generator_idx: usize,
+    packed: Option<PlanePackedQuery<'_, 'p, 'g>>,
 ) -> Result<(), BuildCellsError> {
     let cell_start = checked_u32(
         shard_ctx.shard.output.cell_indices.len(),
@@ -269,40 +348,52 @@ fn build_and_emit_cell_plane(
         generator_idx,
         &mut worker.grid_scratch,
         directed_ctx,
+        packed,
     );
     let point_indices = grid.point_indices();
 
-    'stream: while let PlaneNeighborFrontier::ExactBatch(batch) =
-        stream.frontier(&mut worker.batch, &mut worker.batch_dists)
-    {
-        for pos in 0..batch.n {
-            let slot = worker.batch[pos];
-            let neighbor_idx = point_indices[slot as usize] as usize;
-            if worker
-                .seed_ids
-                .binary_search(&(neighbor_idx as u32))
-                .is_ok()
-            {
-                continue;
-            }
-            builder
-                .clip_with_slot(neighbor_idx, slot, points[neighbor_idx])
-                .map_err(|f| cell_build_error(generator_idx, f))?;
+    'stream: loop {
+        match stream.frontier(&mut worker.batch, &mut worker.batch_dists) {
+            PlaneNeighborFrontier::ExactBatch(batch) => {
+                for pos in 0..batch.n {
+                    let slot = worker.batch[pos];
+                    let neighbor_idx = point_indices[slot as usize] as usize;
+                    if worker
+                        .seed_ids
+                        .binary_search(&(neighbor_idx as u32))
+                        .is_ok()
+                    {
+                        continue;
+                    }
+                    // Packed -> takeover overlap can re-emit a neighbor; the
+                    // re-clip is an Unchanged no-op (same plane, same eps).
+                    builder
+                        .clip_with_slot(neighbor_idx, slot, points[neighbor_idx])
+                        .map_err(|f| cell_build_error(generator_idx, f))?;
 
-            // Remaining-unseen lower bound: the rest of this ring is sorted
-            // ascending (batch_dists are the frontier's own sort keys), and
-            // unseen_bound covers everything beyond it (shell layers
-            // re-cover, so always combine).
-            let bound = if pos + 1 < batch.n {
-                worker.batch_dists[pos + 1].min(batch.unseen_bound)
-            } else {
-                batch.unseen_bound
-            };
-            if builder.can_terminate(bound) {
-                break 'stream;
+                    // Remaining-unseen lower bound: the rest of this batch is
+                    // sorted ascending (batch_dists are the frontier's own
+                    // sort keys), and unseen_bound covers everything beyond
+                    // it (shell layers re-cover, so always combine).
+                    let bound = if pos + 1 < batch.n {
+                        worker.batch_dists[pos + 1].min(batch.unseen_bound)
+                    } else {
+                        batch.unseen_bound
+                    };
+                    if builder.can_terminate(bound) {
+                        break 'stream;
+                    }
+                }
+                stream.advance_frontier();
             }
+            PlaneNeighborFrontier::UnknownButBounded { dist_lower_bound } => {
+                if builder.can_terminate(dist_lower_bound) {
+                    break 'stream;
+                }
+                stream.advance_frontier();
+            }
+            PlaneNeighborFrontier::Exhausted => break,
         }
-        stream.advance_frontier();
     }
 
     builder
