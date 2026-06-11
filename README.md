@@ -61,8 +61,11 @@ for cell in diagram.iter_cells() {
 - `compute_with_report(&[P], VoronoiConfig) -> Result<ComputeOutput, VoronoiError>`
 - `validation::validate(&SphericalVoronoi) -> ValidationReport`
   Use `ValidationReport::is_strictly_valid()` and the explicit issue summaries.
-- `SphericalVoronoi`: `generators()`, `vertices()`, `iter_cells()`, `cell(i)`
+- `SphericalVoronoi`: `generators()`, `vertices()`, `iter_cells()`, `cell(i)`,
+  `build_adjacency()`, `weld_map()`, `compact_vertices()`
 - `CellView`: `vertex_indices`, `generator_index`, `len()`
+- `CellAdjacency`: per-cell Voronoi neighbors aligned with boundary edges (`neighbors_of(i)`);
+  the neighbor pairs are the Delaunay edges of the generator set
 
 ## Configuration
 

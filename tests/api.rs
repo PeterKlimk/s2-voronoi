@@ -422,3 +422,87 @@ fn test_qhull_available() {
     let voronoi = compute_voronoi_qhull(&points);
     assert_eq!(voronoi.num_cells(), 6);
 }
+
+#[test]
+fn test_adjacency_symmetric_complete_and_edge_aligned() {
+    use std::collections::HashSet;
+
+    let points = random_sphere_points(2_000, 31337);
+    let diagram = compute(&points).unwrap();
+    assert!(validate(&diagram).is_strictly_valid());
+
+    let adjacency = diagram.build_adjacency();
+    assert_eq!(adjacency.num_cells(), diagram.num_cells());
+    assert!(
+        adjacency.is_complete(),
+        "strictly valid diagram must have a neighbor across every edge"
+    );
+
+    let mut total_neighbor_entries = 0usize;
+    for i in 0..diagram.num_cells() {
+        let cell = diagram.cell(i);
+        let neighbors = adjacency.neighbors_of(i);
+        assert_eq!(
+            neighbors.len(),
+            cell.len(),
+            "one neighbor per boundary edge"
+        );
+        total_neighbor_entries += neighbors.len();
+
+        for (k, &j) in neighbors.iter().enumerate() {
+            let j = j as usize;
+            assert_ne!(j, i, "a cell cannot neighbor itself");
+
+            // Symmetry: i appears in j's neighbor list.
+            assert!(
+                adjacency.neighbors_of(j).contains(&(i as u32)),
+                "adjacency must be symmetric ({i} -> {j})"
+            );
+
+            // Edge alignment: the shared edge's vertices appear in j's boundary.
+            let a = cell.vertex_indices[k];
+            let b = cell.vertex_indices[(k + 1) % cell.len()];
+            let j_vertices: HashSet<u32> = diagram.cell(j).vertex_indices.iter().copied().collect();
+            assert!(
+                j_vertices.contains(&a) && j_vertices.contains(&b),
+                "neighbor {j} must share the boundary edge ({a}, {b}) of cell {i}"
+            );
+        }
+    }
+
+    // Every edge contributes one entry per side; average degree ~6.
+    let avg = total_neighbor_entries as f64 / diagram.num_cells() as f64;
+    assert!(
+        (5.5..6.5).contains(&avg),
+        "average neighbor count should be ~6, got {avg}"
+    );
+}
+
+#[test]
+fn test_adjacency_with_welded_twins() {
+    let mut points = random_sphere_points(2_000, 31338);
+    points.push(points[123]); // exact duplicate -> welded twin of 123
+
+    let diagram = compute(&points).unwrap();
+    assert_eq!(diagram.canonical_cell_index(2_000), 123);
+
+    let adjacency = diagram.build_adjacency();
+    assert!(adjacency.is_complete());
+
+    // The twin reports its canonical cell's neighbors.
+    assert_eq!(adjacency.neighbors_of(2_000), adjacency.neighbors_of(123));
+
+    // Twins never appear as neighbors; canonical indices do.
+    for i in 0..diagram.num_cells() {
+        assert!(
+            !adjacency.neighbors_of(i).contains(&2_000),
+            "welded twin must not appear as a neighbor"
+        );
+    }
+    let canonical_appears =
+        (0..diagram.num_cells()).any(|i| adjacency.neighbors_of(i).contains(&123));
+    assert!(
+        canonical_appears,
+        "canonical cell should appear as a neighbor"
+    );
+}

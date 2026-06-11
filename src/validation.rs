@@ -290,13 +290,13 @@ pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
     let mut welded_twin_cells = 0usize;
     let mut weld_map_issues = 0usize;
     let mut is_welded_twin = vec![false; num_cells];
-    for i in 0..num_cells {
+    for (i, twin_flag) in is_welded_twin.iter_mut().enumerate() {
         let canonical = diagram.canonical_cell_index(i);
         if canonical == i {
             continue;
         }
         welded_twin_cells += 1;
-        is_welded_twin[i] = true;
+        *twin_flag = true;
         let canonical_is_canonical =
             canonical < num_cells && diagram.canonical_cell_index(canonical) == canonical;
         if !canonical_is_canonical
@@ -455,8 +455,8 @@ pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
         0
     } else {
         let mut roots = HashSet::with_capacity(num_faces);
-        for cell_idx in 0..num_cells {
-            if is_welded_twin[cell_idx] {
+        for (cell_idx, &is_twin) in is_welded_twin.iter().enumerate() {
+            if is_twin {
                 continue;
             }
             roots.insert(dsu.find(cell_idx));

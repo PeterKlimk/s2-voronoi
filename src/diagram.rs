@@ -131,6 +131,13 @@ impl SphericalVoronoi {
         &self.vertices
     }
 
+    /// Start offset of a cell's range in the shared index buffer (used by
+    /// adjacency construction to mirror the cell layout).
+    #[inline]
+    pub(crate) fn cell_start(&self, index: usize) -> u32 {
+        self.cells[index].start
+    }
+
     /// Get a view of a specific cell.
     #[inline]
     pub fn cell(&self, index: usize) -> CellView<'_> {

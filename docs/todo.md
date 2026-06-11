@@ -76,8 +76,10 @@ The empirical groundwork is done (see correctness-contract.md); this is the impl
 
 In order of user value:
 
-1. **Neighbor adjacency** (`cell_neighbors(i)`) — computed implicitly during clipping; the single
-   most-requested Voronoi API.
+1. ~~**Neighbor adjacency**~~ **Done.** `SphericalVoronoi::build_adjacency()` returns a
+   `CellAdjacency` built by sort-based edge pairing (O(E log E), on demand); neighbor entry `k`
+   of a cell sits across boundary edge `(v[k], v[k+1])`, welded twins alias their canonical
+   cell's list, and the neighbor pairs double as Delaunay edges (covers most of item 3).
 2. **Cell areas / centroids** (spherical excess) — also the building block for the Lloyd
    relaxation demo, which is the crate's best showcase (interactive centroidal tessellation at
    millions of points).

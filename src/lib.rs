@@ -38,6 +38,7 @@
 //! assert_eq!(diagram.num_cells(), 6);
 //! ```
 
+pub mod adjacency;
 mod diagram;
 mod error;
 mod fp;
@@ -101,6 +102,7 @@ pub fn run_batch_clip_microbench() {
 #[cfg(feature = "qhull")]
 pub mod convex_hull;
 
+pub use adjacency::CellAdjacency;
 pub use diagram::{CellView, SphericalVoronoi};
 pub use error::VoronoiError;
 pub use types::{UnitVec3, UnitVec3Like};
