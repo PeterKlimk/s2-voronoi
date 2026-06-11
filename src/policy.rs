@@ -44,18 +44,40 @@ pub(crate) fn knn_grid_resolution(num_points: usize) -> usize {
     ((num_points as f64 / (6.0 * target)).sqrt() as usize).max(4)
 }
 
+/// Target points-per-cell for the planar kNN grid (see
+/// [`plane_grid_resolution`]); `S2_VORONOI_PLANE_GRID_DENSITY` overrides for
+/// experiments.
+///
+/// Deliberately much lower than the sphere's 24: the spherical optimum is
+/// tied to the packed SIMD stage's batch economics, while the planar path is
+/// (currently) scalar shell expansion, where scanning fewer points per ring
+/// wins. Ryzen 3600 sweep (uniform 1M, single-thread, min of 4):
+/// density 2 = 2043ms, 3 = 2024ms, 4 = 2003ms, 8 = 2321ms, 16 = 2854ms,
+/// 24 = 3528ms; clustered 500k prefers 4 over 8 by a further 24%. The
+/// optimum is flat across 2..4; 4 keeps the cell array smallest.
+pub(crate) fn plane_grid_target_density() -> f64 {
+    static OVERRIDE: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
+    OVERRIDE
+        .get_or_init(|| {
+            std::env::var("S2_VORONOI_PLANE_GRID_DENSITY")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .filter(|d| *d >= 1.0)
+        })
+        .unwrap_or(4.0)
+}
+
 /// Planar grid resolution (cells per axis over the normalized domain).
 ///
-/// Same target density as the sphere; the plane has `res^2` cells but points
-/// occupy only `occupied_fraction` of the unit square (the normalized domain
-/// is `[0, sx] x [0, sy]` with the longer side 1, so the fraction is
-/// `sx * sy`). Sizing by occupied cells rather than total cells keeps
-/// per-cell occupancy at the target for high-aspect rects instead of
-/// multiplying it by the aspect ratio. Floor of 1 (a single cell is valid);
-/// the cap bounds the cell array for extreme aspect ratios, degrading
-/// occupancy gracefully past it.
+/// The plane has `res^2` cells but points occupy only `occupied_fraction`
+/// of the unit square (the normalized domain is `[0, sx] x [0, sy]` with
+/// the longer side 1, so the fraction is `sx * sy`). Sizing by occupied
+/// cells rather than total cells keeps per-cell occupancy at the target for
+/// high-aspect rects instead of multiplying it by the aspect ratio. Floor
+/// of 1 (a single cell is valid); the cap bounds the cell array for extreme
+/// aspect ratios, degrading occupancy gracefully past it.
 pub(crate) fn plane_grid_resolution(num_points: usize, occupied_fraction: f64) -> usize {
-    let target = knn_grid_target_density().max(1.0);
+    let target = plane_grid_target_density().max(1.0);
     let fraction = occupied_fraction.clamp(f64::MIN_POSITIVE, 1.0);
     ((num_points as f64 / (target * fraction)).sqrt() as usize).clamp(1, 4096)
 }

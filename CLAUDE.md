@@ -48,6 +48,7 @@ S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_v
 
 - `RAYON_NUM_THREADS=1`: force single-threaded mode (stable perf comparisons).
 - `S2_BIN_COUNT=<n>`: override sharded bin count (defaults to about 2x threads).
+- `S2_VORONOI_PLANE_GRID_DENSITY=<d>`: override the planar grid's points-per-cell target (default 4).
 - `S2_VORONOI_TIMING_KV=1`: emit machine-readable timing lines (`timing` feature).
 
 ## Crate Overview
