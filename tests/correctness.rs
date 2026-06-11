@@ -187,3 +187,101 @@ fn test_knn_matches_qhull_structure() {
         comparison.match_ratio * 100.0
     );
 }
+
+#[test]
+fn test_cell_areas_sum_to_sphere_area() {
+    let points = fibonacci_sphere_points(5_000, 0.1, 2024);
+    let diagram = compute(&points).unwrap();
+
+    let mut total = 0.0f64;
+    for i in 0..diagram.num_cells() {
+        if diagram.canonical_cell_index(i) != i {
+            continue;
+        }
+        let area = diagram.cell_area(i);
+        assert!(area > 0.0, "cell {i} must have positive area");
+        total += area;
+    }
+    let sphere = 4.0 * std::f64::consts::PI;
+    assert!(
+        (total - sphere).abs() / sphere < 1e-6,
+        "canonical cell areas must sum to 4*pi, got {total} (expected {sphere})"
+    );
+}
+
+#[test]
+fn test_octahedron_cells_have_equal_areas() {
+    use s2_voronoi::UnitVec3;
+    let points = vec![
+        UnitVec3::new(1.0, 0.0, 0.0),
+        UnitVec3::new(-1.0, 0.0, 0.0),
+        UnitVec3::new(0.0, 1.0, 0.0),
+        UnitVec3::new(0.0, -1.0, 0.0),
+        UnitVec3::new(0.0, 0.0, 1.0),
+        UnitVec3::new(0.0, 0.0, -1.0),
+    ];
+    let diagram = compute(&points).unwrap();
+    let expected = 4.0 * std::f64::consts::PI / 6.0;
+    for i in 0..6 {
+        let area = diagram.cell_area(i);
+        assert!(
+            (area - expected).abs() / expected < 1e-5,
+            "octahedron cell {i} area {area} should be {expected}"
+        );
+    }
+}
+
+#[test]
+fn test_cell_centroids_unit_length_and_near_generator() {
+    let points = fibonacci_sphere_points(2_000, 0.1, 4096);
+    let diagram = compute(&points).unwrap();
+
+    // Mean spacing ~ sqrt(4*pi/n); the centroid must land well within the
+    // cell's scale of its generator.
+    let mean_spacing = (4.0 * std::f64::consts::PI / 2_000.0f64).sqrt();
+    for i in 0..diagram.num_cells() {
+        let c = diagram.cell_centroid(i);
+        let len = (c.x as f64).hypot(c.y as f64).hypot(c.z as f64);
+        assert!((len - 1.0).abs() < 1e-6, "centroid must be unit length");
+        let g = diagram.generator(i);
+        let dot = (c.x * g.x + c.y * g.y + c.z * g.z) as f64;
+        let angle = dot.clamp(-1.0, 1.0).acos();
+        assert!(
+            angle < mean_spacing,
+            "cell {i} centroid is {angle} rad from its generator (spacing {mean_spacing})"
+        );
+    }
+}
+
+#[test]
+fn test_lloyd_relaxation_converges_toward_centroidal() {
+    use s2_voronoi::UnitVec3;
+    let mut points = fibonacci_sphere_points(500, 0.5, 99);
+
+    let mean_displacement = |diagram: &s2_voronoi::SphericalVoronoi| -> f64 {
+        (0..diagram.num_cells())
+            .map(|i| {
+                let g = diagram.generator(i);
+                let c = diagram.cell_centroid(i);
+                let dot = ((g.x * c.x + g.y * c.y + g.z * c.z) as f64).clamp(-1.0, 1.0);
+                dot.acos()
+            })
+            .sum::<f64>()
+            / diagram.num_cells() as f64
+    };
+
+    let mut last = f64::MAX;
+    for iteration in 0..3 {
+        let diagram = compute(&points).unwrap();
+        let displacement = mean_displacement(&diagram);
+        assert!(
+            displacement < last,
+            "Lloyd iteration {iteration} should reduce mean generator-centroid \
+             displacement ({displacement} >= {last})"
+        );
+        last = displacement;
+        points = (0..diagram.num_cells())
+            .map(|i| diagram.cell_centroid(i))
+            .collect::<Vec<UnitVec3>>();
+    }
+}

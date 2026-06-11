@@ -62,10 +62,12 @@ for cell in diagram.iter_cells() {
 - `validation::validate(&SphericalVoronoi) -> ValidationReport`
   Use `ValidationReport::is_strictly_valid()` and the explicit issue summaries.
 - `SphericalVoronoi`: `generators()`, `vertices()`, `iter_cells()`, `cell(i)`,
-  `build_adjacency()`, `weld_map()`, `compact_vertices()`
+  `build_adjacency()`, `cell_area(i)`, `cell_centroid(i)`, `weld_map()`, `compact_vertices()`
 - `CellView`: `vertex_indices`, `generator_index`, `len()`
 - `CellAdjacency`: per-cell Voronoi neighbors aligned with boundary edges (`neighbors_of(i)`);
   the neighbor pairs are the Delaunay edges of the generator set
+- Lloyd relaxation (centroidal Voronoi tessellation) is one loop:
+  `points = (0..n).map(|i| diagram.cell_centroid(i)).collect()` and recompute.
 
 ## Configuration
 

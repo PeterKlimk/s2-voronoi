@@ -80,11 +80,11 @@ In order of user value:
    `CellAdjacency` built by sort-based edge pairing (O(E log E), on demand); neighbor entry `k`
    of a cell sits across boundary edge `(v[k], v[k+1])`, welded twins alias their canonical
    cell's list, and the neighbor pairs double as Delaunay edges (covers most of item 3).
-2. **Cell areas / centroids** (spherical excess) — also the building block for the Lloyd
-   relaxation demo, which is the crate's best showcase (interactive centroidal tessellation at
-   millions of points).
-3. **Delaunay dual access** — the adjacency is the Delaunay triangulation; exposing it doubles
-   the addressable audience.
+2. ~~**Cell areas / centroids**~~ **Done.** `cell_area(i)` (signed solid-angle fan, f64; sums
+   to 4π over canonical cells, test-pinned) and `cell_centroid(i)` (exact boundary integral,
+   orientation-robust) — Lloyd relaxation is a 3-line loop, with a convergence test as the demo.
+3. **Delaunay dual access** — mostly covered by `build_adjacency()` (neighbor pairs are the
+   Delaunay edges); an explicit triangle-list API remains if users ask for it.
 4. **`serde` feature** on `SphericalVoronoi`.
 5. `compact()` (vertex compaction, see P0.2) as an explicit method.
 
