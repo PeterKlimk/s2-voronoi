@@ -74,8 +74,6 @@ pub(crate) fn grid_occupancy_rebuild_resolution(
 
 pub(crate) const DEFAULT_PACKED_CHUNK0_SIZE: usize = 16;
 pub(crate) const DEFAULT_PACKED_CHUNK_SIZE: usize = 8;
-pub(crate) const DEFAULT_TERMINATION_CHECK_START: usize = 8;
-pub(crate) const DEFAULT_TERMINATION_CHECK_STEP: usize = 1;
 
 /// Target size for the packed "hi" candidate list before selection gets expensive.
 pub(crate) const PACKED_HI_BUDGET: usize = 32;
@@ -128,90 +126,6 @@ impl PackedNeighborPolicy {
     #[inline]
     pub(crate) fn scratch_chunk_capacity(self) -> usize {
         self.chunk0_size.max(self.chunk_size)
-    }
-}
-
-/// Policy decisions for directed termination cadence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TerminationPolicy {
-    check_start: usize,
-    check_step: usize,
-    max_k_cap: Option<usize>,
-}
-
-impl Default for TerminationPolicy {
-    fn default() -> Self {
-        Self {
-            check_start: DEFAULT_TERMINATION_CHECK_START,
-            check_step: DEFAULT_TERMINATION_CHECK_STEP,
-            max_k_cap: None,
-        }
-    }
-}
-
-impl TerminationPolicy {
-    #[inline]
-    pub(crate) fn new(check_start: usize, check_step: usize, max_k_cap: Option<usize>) -> Self {
-        Self {
-            check_start,
-            check_step,
-            max_k_cap,
-        }
-    }
-
-    /// Cadence-based re-check, formerly used by the heap cursor's
-    /// single-slot batches. Unused since the shell-frontier flip; removal is
-    /// parked with the `termination_max_k` decision (docs/todo.md P3.5).
-    #[allow(dead_code)]
-    #[inline]
-    pub(crate) fn should_check(self, neighbors_processed: usize) -> bool {
-        self.check_step > 0
-            && neighbors_processed >= self.check_start
-            && (neighbors_processed - self.check_start).is_multiple_of(self.check_step)
-    }
-
-    #[inline]
-    pub(crate) fn max_k_cap(self) -> Option<usize> {
-        self.max_k_cap
-    }
-}
-
-/// Combined neighbor-query policy derived from public/internal config.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct KnnPolicy {
-    packed: PackedNeighborPolicy,
-    termination: TerminationPolicy,
-}
-
-impl KnnPolicy {
-    #[inline]
-    pub(crate) fn new(packed: PackedNeighborPolicy, termination: TerminationPolicy) -> Self {
-        Self {
-            packed,
-            termination,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn for_point_count(
-        num_points: usize,
-        termination: TerminationPolicy,
-        expand_r2_enabled: bool,
-    ) -> Self {
-        Self::new(
-            PackedNeighborPolicy::for_point_count(num_points, expand_r2_enabled),
-            termination,
-        )
-    }
-
-    #[inline]
-    pub(crate) fn packed(self) -> PackedNeighborPolicy {
-        self.packed
-    }
-
-    #[inline]
-    pub(crate) fn termination(self) -> TerminationPolicy {
-        self.termination
     }
 }
 
@@ -291,48 +205,15 @@ mod tests {
     }
 
     #[test]
-    fn termination_policy_uses_expected_cadence() {
-        let policy = TerminationPolicy::new(8, 3, None);
-        for n in 0..8 {
-            assert!(!policy.should_check(n));
-        }
-        assert!(policy.should_check(8));
-        assert!(!policy.should_check(9));
-        assert!(!policy.should_check(10));
-        assert!(policy.should_check(11));
-        assert!(policy.should_check(14));
-    }
-
-    #[test]
-    fn knn_policy_keeps_packed_and_termination_together() {
-        let termination = TerminationPolicy::new(12, 2, Some(64));
-        let policy = KnnPolicy::for_point_count(20, termination, true);
-        assert_eq!(policy.packed().chunk0_size(), 16);
-        assert_eq!(policy.packed().chunk_size(), 8);
-        assert!(policy.packed().expand_r2_enabled());
-        assert_eq!(policy.termination().max_k_cap(), Some(64));
-        assert!(policy.termination().should_check(12));
-        assert!(policy.termination().should_check(14));
-        assert!(!policy.termination().should_check(13));
-    }
-
-    #[test]
     fn policy_defaults_match_public_and_internal_config_defaults() {
         let public = VoronoiConfig::default();
         let internal = TerminationConfig::default();
-        let policy = KnnPolicy::for_point_count(
-            100,
-            internal.termination_policy(),
-            public.packed_knn_expand_r2,
-        );
+        let policy = internal.packed_policy(100);
 
         assert!(public.packed_knn_expand_r2);
-        assert!(policy.packed().expand_r2_enabled());
-        assert_eq!(policy.packed().chunk0_size(), DEFAULT_PACKED_CHUNK0_SIZE);
-        assert_eq!(policy.packed().chunk_size(), DEFAULT_PACKED_CHUNK_SIZE);
-        assert!(policy
-            .termination()
-            .should_check(DEFAULT_TERMINATION_CHECK_START));
-        assert_eq!(policy.termination().max_k_cap(), None);
+        assert!(internal.packed_expand_r2);
+        assert!(policy.expand_r2_enabled());
+        assert_eq!(policy.chunk0_size(), DEFAULT_PACKED_CHUNK0_SIZE);
+        assert_eq!(policy.chunk_size(), DEFAULT_PACKED_CHUNK_SIZE);
     }
 }

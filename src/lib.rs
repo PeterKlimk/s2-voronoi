@@ -216,13 +216,11 @@ pub struct VoronoiConfig {
     /// diagram rather than receiving duplicated boundaries, so strict
     /// validation passes whether or not welds occur.
     pub preprocess_mode: PreprocessMode,
-    /// Optional cap on k during termination fallback (None = no cap).
-    pub termination_max_k: Option<usize>,
-    /// Enable a cold-path packed r=2 expansion band before falling back to directed cursor kNN.
+    /// Enable a cold-path packed r=2 expansion band before the shell-expansion
+    /// takeover.
     ///
-    /// Default is `true`. The expansion is only built for queries that exhaust the existing
-    /// packed r=1 path without proving
-    /// termination.
+    /// Default is `true`. The expansion is only built for queries that exhaust
+    /// the existing packed r=1 path without proving termination.
     pub packed_knn_expand_r2: bool,
 }
 
@@ -230,7 +228,6 @@ impl Default for VoronoiConfig {
     fn default() -> Self {
         Self {
             preprocess_mode: PreprocessMode::Weld,
-            termination_max_k: None,
             packed_knn_expand_r2: true,
         }
     }

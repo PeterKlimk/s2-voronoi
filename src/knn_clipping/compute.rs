@@ -85,8 +85,6 @@ pub fn compute_voronoi_knn_clipping_with_config_owned(
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     let termination = TerminationConfig {
         packed_expand_r2: config.packed_knn_expand_r2,
-        max_k_cap: config.termination_max_k,
-        ..Default::default()
     };
     compute_voronoi_knn_clipping_owned_core(points, termination, config.preprocess_mode)
 }
@@ -97,8 +95,6 @@ pub fn compute_voronoi_knn_clipping_with_report_owned(
 ) -> Result<ComputeOutput, crate::VoronoiError> {
     let termination = TerminationConfig {
         packed_expand_r2: config.packed_knn_expand_r2,
-        max_k_cap: config.termination_max_k,
-        ..Default::default()
     };
     compute_voronoi_knn_clipping_report_core(points, termination, config.preprocess_mode)
 }

@@ -9,7 +9,7 @@ use crate::cube_grid::{
     DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream, PackedQuery,
 };
 use crate::knn_clipping::topo2d::{BuilderClipOutcome, BuilderFallbackRequest, BuilderStepOutcome};
-use crate::policy::KnnPolicy;
+use crate::policy::PackedNeighborPolicy;
 
 use super::{CellBuildError, CellFailure, CellOutputBuffer};
 use failure::{classify_terminal_failure, unexpected_failure_error};
@@ -68,11 +68,11 @@ pub(crate) struct CellBuildContext {
 }
 
 impl CellBuildContext {
-    pub(crate) fn new(grid: &crate::cube_grid::CubeMapGrid, policy: KnnPolicy) -> Self {
+    pub(crate) fn new(grid: &crate::cube_grid::CubeMapGrid, policy: PackedNeighborPolicy) -> Self {
         Self {
             builder: crate::knn_clipping::topo2d::Topo2DBuilder::new(0, Vec3::ZERO),
             scratch: grid.make_scratch(),
-            packed_chunk: Vec::with_capacity(policy.packed().scratch_chunk_capacity()),
+            packed_chunk: Vec::with_capacity(policy.scratch_chunk_capacity()),
             output_buffer: CellOutputBuffer::default(),
             attempted_neighbors: AttemptedNeighbors::new(grid.point_indices().len()),
             #[cfg(test)]

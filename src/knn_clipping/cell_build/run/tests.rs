@@ -41,7 +41,7 @@ fn bounded_nonfailed_cell_has_no_terminal_failure() {
 fn direct_cursor_builds_normal_cell() {
     let points = octahedron_points();
     let grid = CubeMapGrid::new(&points, 4);
-    let policy = TerminationConfig::default().knn_policy(points.len());
+    let policy = TerminationConfig::default().packed_policy(points.len());
     let mut ctx = CellBuildContext::new(&grid, policy);
     let fake_slot_map = vec![0u32; points.len()];
     let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
@@ -98,7 +98,7 @@ fn projection_invalid_detail_includes_replay_payload_summary() {
 fn forced_handoff_mid_build_still_finishes_the_cell() {
     let points = octahedron_points();
     let grid = CubeMapGrid::new(&points, 4);
-    let policy = TerminationConfig::default().knn_policy(points.len());
+    let policy = TerminationConfig::default().packed_policy(points.len());
     let fake_slot_map = vec![0u32; points.len()];
     let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
     let mut ctx = CellBuildContext::new(&grid, policy);

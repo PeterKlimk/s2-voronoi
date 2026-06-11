@@ -166,13 +166,12 @@ pub(super) fn build_cells_sharded_live_dedup(
     grid: &CubeMapGrid,
     termination: TerminationConfig,
 ) -> Result<ShardedCellsData, BuildCellsError> {
-    let policy = termination.knn_policy(points.len());
+    let policy = termination.packed_policy(points.len());
     // Legacy config compatibility: no-k fallback ignores this cap.
-    let _ = policy.termination().max_k_cap();
 
     let assignment = assign_bins(points, grid).map_err(BuildCellsError::PackedLayoutCapacity)?;
     let num_bins = assignment.num_bins;
-    let packed_policy = policy.packed();
+    let packed_policy = policy;
 
     let per_bin: Result<
         Vec<(ShardState, crate::knn_clipping::timing::CellSubAccum)>,

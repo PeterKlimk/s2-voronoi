@@ -4,9 +4,7 @@
 //! independently from nearby neighbors. This structure is friendly to data-parallel CPU
 //! implementations.
 
-use crate::policy::{
-    KnnPolicy, TerminationPolicy, DEFAULT_TERMINATION_CHECK_START, DEFAULT_TERMINATION_CHECK_STEP,
-};
+use crate::policy::PackedNeighborPolicy;
 
 pub(crate) mod cell_build;
 pub(crate) mod compute;
@@ -28,36 +26,22 @@ pub type MergeResult = preprocess::MergeResult;
 
 #[derive(Debug, Clone, Copy)]
 pub struct TerminationConfig {
-    /// Enables adaptive early termination checks.
-    pub check_start: usize,
-    pub check_step: usize,
-    /// Enable a cold packed r=2 expansion stage before directed cursor fallback.
+    /// Enable a cold packed r=2 expansion stage before the shell takeover.
     pub packed_expand_r2: bool,
-    /// Legacy compatibility field retained in the public config.
-    /// The directed cursor fallback is no-K and ignores this cap.
-    pub max_k_cap: Option<usize>,
 }
 
 impl Default for TerminationConfig {
     fn default() -> Self {
         Self {
-            check_start: DEFAULT_TERMINATION_CHECK_START,
-            check_step: DEFAULT_TERMINATION_CHECK_STEP,
             packed_expand_r2: true,
-            max_k_cap: None,
         }
     }
 }
 
 impl TerminationConfig {
     #[inline]
-    pub(crate) fn termination_policy(&self) -> TerminationPolicy {
-        TerminationPolicy::new(self.check_start, self.check_step, self.max_k_cap)
-    }
-
-    #[inline]
-    pub(crate) fn knn_policy(&self, num_points: usize) -> KnnPolicy {
-        KnnPolicy::for_point_count(num_points, self.termination_policy(), self.packed_expand_r2)
+    pub(crate) fn packed_policy(&self, num_points: usize) -> PackedNeighborPolicy {
+        PackedNeighborPolicy::for_point_count(num_points, self.packed_expand_r2)
     }
 }
 
