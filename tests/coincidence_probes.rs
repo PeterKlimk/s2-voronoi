@@ -1,6 +1,17 @@
-//! Temporary diagnostic: find the pair-separation resolvability threshold
-//! (prefilter disabled), and re-test cube-map seams with guaranteed ulp-scale
-//! (not denormal-scale) twins. Delete after use.
+//! Coincidence margin-mapping probes (diagnostic, run manually).
+//!
+//! These map the resolvability boundary of the raw pipeline (welding
+//! disabled): pair-separation sweeps, ulp-scale clusters, cube-map seam
+//! alignments, and the rotated control. They print validation outcomes
+//! rather than asserting, because they intentionally explore the regime
+//! *below* the supported envelope; the margin data they produce backs the
+//! weld radius in docs/correctness-contract.md. Re-run after changes to the
+//! clipping/dedup numerics to detect boundary drift:
+//!
+//!   cargo test --release --test coincidence_probes -- --ignored --nocapture
+//!
+//! The asserting contract tests derived from these findings live in
+//! tests/adversarial.rs (weld contract + resolvable-regime sections).
 
 mod support;
 
@@ -63,8 +74,8 @@ fn offset_twin(p: UnitVec3, s: f64, rng: &mut ChaCha8Rng) -> Option<(UnitVec3, f
 }
 
 #[test]
-#[ignore = "temporary diagnostic - run manually"]
-fn tmp_separation_sweep() {
+#[ignore = "margin-mapping diagnostic - run manually"]
+fn probe_separation_sweep() {
     const N: usize = 20_000;
     let mut rng = ChaCha8Rng::seed_from_u64(99);
     let base = random_sphere_points(N, 11);
@@ -91,8 +102,8 @@ fn tmp_separation_sweep() {
 }
 
 #[test]
-#[ignore = "temporary diagnostic - run manually"]
-fn tmp_seam_pairs_ulp_scale() {
+#[ignore = "margin-mapping diagnostic - run manually"]
+fn probe_seam_pairs_ulp_scale() {
     const N: usize = 20_000;
     let base = random_sphere_points(N, 11);
 
@@ -135,8 +146,8 @@ fn tmp_seam_pairs_ulp_scale() {
 }
 
 #[test]
-#[ignore = "temporary diagnostic - run manually"]
-fn tmp_seam_pairs_rotated() {
+#[ignore = "margin-mapping diagnostic - run manually"]
+fn probe_seam_pairs_rotated() {
     const N: usize = 20_000;
     let base = random_sphere_points(N, 11);
 
@@ -244,8 +255,8 @@ fn seam_centers() -> Vec<DVec3> {
 }
 
 #[test]
-#[ignore = "temporary diagnostic - run manually"]
-fn tmp_cluster_margin_sweep() {
+#[ignore = "margin-mapping diagnostic - run manually"]
+fn probe_cluster_margin_sweep() {
     const N: usize = 20_000;
     let mut rng = ChaCha8Rng::seed_from_u64(404);
     let base = random_sphere_points(N, 11);
@@ -291,8 +302,8 @@ fn tmp_cluster_margin_sweep() {
 }
 
 #[test]
-#[ignore = "temporary diagnostic - run manually"]
-fn tmp_aligned_separated_pairs() {
+#[ignore = "margin-mapping diagnostic - run manually"]
+fn probe_aligned_separated_pairs() {
     const N: usize = 20_000;
     let mut rng = ChaCha8Rng::seed_from_u64(505);
     let base = random_sphere_points(N, 11);

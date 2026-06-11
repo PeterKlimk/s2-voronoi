@@ -43,14 +43,16 @@ The empirical groundwork is done (see correctness-contract.md); this is the impl
    `ComputationFailed` (bug class). See correctness-contract.md.
 4. ~~**Input validation.**~~ **Done.** O(n) finite check at compute entry returns
    `VoronoiError::InvalidInput { point_index, .. }`.
-5. **Promote the evidence to CI.** Partially done: the 2M/3M/4M fuzz sweeps now assert
-   `STRICT_VALID` under the default config (still `#[ignore]` for runtime — wire into scheduled
-   CI when CI exists), three weld contract tests cover exact duplicates, ulp clusters, and
-   seam-aligned pairs, and the stale "bad edges" comments are gone. Remaining: adopt the full
-   probe matrix (separation sweep, rotated control) from `tests/tmp_ulp_regimes.rs` into
-   `tests/adversarial.rs`.
-6. **Tighten loose assertions** for supported inputs: Euler exactly 2, zero degenerate cells, zero
-   duplicate-vertex cells (loose bounds remain only in explicitly-adversarial diagnostics).
+5. ~~**Promote the evidence to CI.**~~ **Done** (modulo wiring scheduled CI when CI exists): the
+   2M/3M/4M fuzz sweeps assert `STRICT_VALID` under the default config (`#[ignore]` for runtime
+   only), weld contract tests cover exact duplicates, ulp clusters, and seam-aligned pairs,
+   resolvable-regime tests cover above-weld pairs and the rotated-symmetric control with welding
+   disabled, and the margin-mapping probes live on as a permanent diagnostic suite in
+   `tests/coincidence_probes.rs` (run after numerics changes to detect boundary drift).
+6. ~~**Tighten loose assertions**~~ **Done.** Euler exactly 2 (over referenced vertices), zero
+   sub-3-vertex cells, zero duplicate boundary vertices in `tests/correctness.rs`.
+
+**P0 is complete.** The correctness contract is implemented and enforced by asserting tests.
 
 ## P1: Release engineering
 

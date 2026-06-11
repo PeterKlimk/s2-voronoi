@@ -51,7 +51,8 @@ the tolerances should live in one documented module (see roadmap).
 ### The resolvability map (empirical, 2026-06)
 
 Probed with preprocessing disabled, 20k-point bases, defects measured by strict validation
-(`tests/tmp_ulp_regimes.rs` probes; to be adopted into `tests/adversarial.rs`):
+(margin-mapping probes in `tests/coincidence_probes.rs`; the asserting contract tests derived
+from them live in `tests/adversarial.rs`):
 
 | configuration | breaks at (min pairwise chord) | valid from |
 |---|---|---|

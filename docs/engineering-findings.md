@@ -195,7 +195,7 @@ separation, so the trigger is alignment, not proximity alone.
   grids, hand-placed data)
 - mitigations: the 1e-6 weld covers all constructions found so far (worst failure ~1.2e-7);
   the canonical-predicate refactor (todo P5) is the root fix
-- full margin map in `docs/correctness-contract.md`; probes in `tests/tmp_ulp_regimes.rs`
+- full margin map in `docs/correctness-contract.md`; probes in `tests/coincidence_probes.rs`
 - correctness issue (envelope boundary), currently fenced by the weld policy
 
 ### 9. Orphan vertices are an intentional representation choice that strict validation miscounts

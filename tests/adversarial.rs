@@ -542,3 +542,97 @@ fn test_sub_weld_cluster_without_welding_is_degenerate_input() {
         Err(other) => panic!("expected DegenerateInput, got {other:?}"),
     }
 }
+
+// =============================================================================
+// Resolvable-Regime Contract (welding disabled)
+//
+// Above the weld radius the raw pipeline must resolve close pairs without
+// preprocessing - the other half of the coincidence contract. Derived from
+// the margin-mapping probes in tests/coincidence_probes.rs.
+// =============================================================================
+
+#[test]
+fn test_above_weld_pairs_resolve_without_welding() {
+    use glam::DVec3;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
+    use s2_voronoi::{compute_with, PreprocessMode, VoronoiConfig};
+
+    // Pairs just above the weld radius (~1.4e-6): separations 2e-6 and 1e-5.
+    let mut rng = ChaCha8Rng::seed_from_u64(99);
+    for &sep in &[2e-6f64, 1e-5] {
+        let mut points = random_sphere_points(20_000, 11);
+        for i in 0..100 {
+            let p = points[i * 7];
+            let p64 = DVec3::new(p.x as f64, p.y as f64, p.z as f64);
+            let r = DVec3::new(
+                rng.gen_range(-1.0..1.0),
+                rng.gen_range(-1.0..1.0),
+                rng.gen_range(-1.0..1.0),
+            );
+            let t = (r - p64 * r.dot(p64)).normalize();
+            let q64 = (p64 + t * sep).normalize();
+            points.push(s2_voronoi::UnitVec3::new(
+                q64.x as f32,
+                q64.y as f32,
+                q64.z as f32,
+            ));
+        }
+        let result = compute_with(
+            &points,
+            VoronoiConfig {
+                preprocess_mode: PreprocessMode::Disabled,
+                ..VoronoiConfig::default()
+            },
+        );
+        expect_strict_success(&format!("above_weld_pairs_sep_{sep:.0e}"), result);
+    }
+}
+
+#[test]
+fn test_rotated_symmetric_pairs_resolve_without_welding() {
+    use glam::DVec3;
+    use s2_voronoi::{compute_with, PreprocessMode, VoronoiConfig};
+
+    // The rotated control from the seam probes: ulp pairs with the same
+    // relative geometry as the catastrophic seam-aligned regime, but at
+    // generic (rotated) positions, must resolve without welding.
+    let rot = glam::DQuat::from_euler(glam::EulerRot::XYZ, 0.71, 1.13, 2.41);
+    let inv3 = 1.0f64 / 3.0f64.sqrt();
+    let inv2 = 1.0f64 / 2.0f64.sqrt();
+    let mut centers: Vec<DVec3> = Vec::new();
+    for sx in [-1.0f64, 1.0] {
+        for sy in [-1.0f64, 1.0] {
+            for sz in [-1.0f64, 1.0] {
+                centers.push(DVec3::new(sx * inv3, sy * inv3, sz * inv3));
+            }
+        }
+    }
+    for s in [-1.0f64, 1.0] {
+        centers.push(DVec3::new(s * inv2, s * inv2, 0.0));
+        centers.push(DVec3::new(s, 0.0, 0.0));
+        centers.push(DVec3::new(0.0, 0.0, s));
+    }
+
+    let mut points = random_sphere_points(20_000, 11);
+    for &c in &centers {
+        let r = (rot * c).normalize();
+        let p = s2_voronoi::UnitVec3::new(r.x as f32, r.y as f32, r.z as f32);
+        let twin = s2_voronoi::UnitVec3::new(
+            if p.x.abs() > 0.5 { p.x.next_up() } else { p.x },
+            if p.y.abs() > 0.5 { p.y.next_up() } else { p.y },
+            if p.z.abs() > 0.5 { p.z.next_up() } else { p.z },
+        );
+        points.push(p);
+        points.push(twin);
+    }
+
+    let result = compute_with(
+        &points,
+        VoronoiConfig {
+            preprocess_mode: PreprocessMode::Disabled,
+            ..VoronoiConfig::default()
+        },
+    );
+    expect_strict_success("rotated_symmetric_ulp_pairs", result);
+}

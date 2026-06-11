@@ -40,19 +40,19 @@ fn test_cell_count_equals_input() {
 }
 
 #[test]
-fn test_most_cells_have_valid_vertex_count() {
-    // Most cells should have >= 3 vertices (some may fail due to numerical issues)
+fn test_all_cells_have_valid_vertex_count() {
+    // Every cell of a supported input must be a real spherical polygon.
     let points = fibonacci_sphere_points(1000, 0.1, 99999);
     let diagram = compute(&points).unwrap();
 
-    let valid_cells = diagram.iter_cells().filter(|c| c.len() >= 3).count();
-
-    let ratio = valid_cells as f32 / diagram.num_cells() as f32;
-    assert!(
-        ratio > 0.99,
-        "at least 99% of cells should have >= 3 vertices, got {:.1}%",
-        ratio * 100.0
-    );
+    for cell in diagram.iter_cells() {
+        assert!(
+            cell.len() >= 3,
+            "cell {} has only {} vertices",
+            cell.generator_index,
+            cell.len()
+        );
+    }
 }
 
 #[test]
@@ -60,46 +60,43 @@ fn test_no_duplicate_vertices_in_cell() {
     let points = fibonacci_sphere_points(500, 0.1, 54321);
     let diagram = compute(&points).unwrap();
 
-    let mut cells_with_dupes = 0;
     for cell in diagram.iter_cells() {
         let unique: HashSet<u32> = cell.vertex_indices.iter().copied().collect();
-        if unique.len() < cell.vertex_indices.len() {
-            cells_with_dupes += 1;
-        }
+        assert_eq!(
+            unique.len(),
+            cell.vertex_indices.len(),
+            "cell {} repeats a boundary vertex",
+            cell.generator_index
+        );
     }
-
-    let ratio = cells_with_dupes as f32 / diagram.num_cells() as f32;
-    assert!(
-        ratio < 0.01,
-        "less than 1% of cells should have duplicate vertices, got {:.1}%",
-        ratio * 100.0
-    );
 }
 
 #[test]
-fn test_euler_characteristic_approximate() {
-    // For a spherical Voronoi diagram: V - E + F = 2
-    // where F = num_cells, V = num_vertices
-    // Each edge is shared by exactly 2 cells, so E = sum(cell_vertices) / 2
+fn test_euler_characteristic_exact() {
+    // For a spherical Voronoi diagram: V - E + F = 2, with F = num_cells,
+    // V counted over referenced vertices (the representation may carry
+    // unreferenced leftovers; see the orphan-vertices note in
+    // docs/correctness-contract.md), and E = sum(cell boundary lengths) / 2
+    // since each edge is shared by exactly 2 cells.
 
     let points = fibonacci_sphere_points(200, 0.1, 11111);
     let diagram = compute(&points).unwrap();
 
     let f = diagram.num_cells();
-    let v = diagram.num_vertices();
+    let used: HashSet<u32> = diagram
+        .iter_cells()
+        .flat_map(|c| c.vertex_indices.iter().copied())
+        .collect();
+    let v = used.len();
     let total_edges: usize = diagram.iter_cells().map(|c| c.len()).sum();
-    let e = total_edges / 2; // Each edge counted twice
+    assert_eq!(total_edges % 2, 0, "directed edges must pair up");
+    let e = total_edges / 2;
 
     let euler = v as i32 - e as i32 + f as i32;
-
-    // Due to degenerate cells, this may not be exactly 2
-    assert!(
-        (euler - 2).abs() <= 5,
-        "Euler characteristic should be close to 2, got {} (V={}, E={}, F={})",
-        euler,
-        v,
-        e,
-        f
+    assert_eq!(
+        euler, 2,
+        "Euler characteristic must be exactly 2 (V={}, E={}, F={})",
+        v, e, f
     );
 }
 
