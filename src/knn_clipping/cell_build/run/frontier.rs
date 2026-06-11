@@ -17,9 +17,10 @@ pub(super) fn probe_frontier<'a, 'm, 'p, 'g>(
     let cursor_stage_before = stream.is_cursor_stage();
     let frontier = stream.frontier(packed_chunk);
     let frontier_is_cursor = match frontier {
-        DirectedNeighborFrontier::ExactBatch(batch) => {
-            batch.source == DirectedNeighborBatchSource::DirectedCursor
-        }
+        DirectedNeighborFrontier::ExactBatch(batch) => matches!(
+            batch.source,
+            DirectedNeighborBatchSource::DirectedCursor | DirectedNeighborBatchSource::ShellExpand
+        ),
         DirectedNeighborFrontier::UnknownButBounded { .. }
         | DirectedNeighborFrontier::Exhausted => cursor_stage_before,
     };

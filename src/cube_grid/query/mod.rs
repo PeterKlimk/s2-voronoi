@@ -2,6 +2,7 @@
 
 mod directed;
 mod scratch;
+mod shells;
 mod stream;
 
 pub(crate) use directed::DirectedEligibility;

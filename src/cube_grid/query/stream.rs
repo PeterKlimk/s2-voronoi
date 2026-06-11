@@ -3,7 +3,9 @@ use crate::cube_grid::packed_knn::{
 };
 
 use super::directed::DirectedNoKCursor;
+use super::shells::ShellFrontier;
 use super::{CubeMapGrid, CubeMapGridScratch, DirectedEligibility};
+use crate::policy::TakeoverKind;
 use glam::Vec3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,6 +14,7 @@ pub(crate) enum DirectedNeighborBatchSource {
     PackedTail,
     PackedExpandR2,
     DirectedCursor,
+    ShellExpand,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -48,10 +51,15 @@ enum CachedFrontier {
     Exhausted,
 }
 
+enum Takeover<'a, 'm> {
+    Cursor(DirectedNoKCursor<'a, 'm>),
+    Shells(ShellFrontier<'a, 'm>),
+}
+
 pub(crate) struct DirectedNeighborStream<'a, 'm, 'p, 'g> {
     grid: &'a CubeMapGrid,
     query: Vec3,
-    cursor: DirectedNoKCursor<'a, 'm>,
+    takeover: Takeover<'a, 'm>,
     packed: Option<PackedQuery<'p, 'g, 'm>>,
     stage: StreamStage,
     cached_frontier: Option<CachedFrontier>,
@@ -61,20 +69,20 @@ pub(crate) struct DirectedNeighborStream<'a, 'm, 'p, 'g> {
     knn_exhausted: bool,
 }
 
-impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
-    #[inline]
-    fn slot_dot(&self, slot: u32) -> f32 {
-        let slot = slot as usize;
-        crate::fp::dot3_f32(
-            self.query.x,
-            self.query.y,
-            self.query.z,
-            self.grid.cell_points_x[slot],
-            self.grid.cell_points_y[slot],
-            self.grid.cell_points_z[slot],
-        )
-    }
+#[inline]
+fn fp_slot_dot(grid: &CubeMapGrid, query: Vec3, slot: u32) -> f32 {
+    let slot = slot as usize;
+    crate::fp::dot3_f32(
+        query.x,
+        query.y,
+        query.z,
+        grid.cell_points_x[slot],
+        grid.cell_points_y[slot],
+        grid.cell_points_z[slot],
+    )
+}
 
+impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
     #[inline(always)]
     fn packed_mut(&mut self, context: &str) -> &mut PackedQuery<'p, 'g, 'm> {
         match self.packed.as_mut() {
@@ -96,8 +104,23 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
         scratch: &'a mut CubeMapGridScratch,
         directed_ctx: DirectedEligibility<'m>,
         packed: Option<PackedQuery<'p, 'g, 'm>>,
+        takeover_kind: TakeoverKind,
     ) -> Self {
-        let cursor = grid.directed_no_k_cursor(points[query_idx], query_idx, scratch, directed_ctx);
+        let takeover = match takeover_kind {
+            TakeoverKind::Cursor => Takeover::Cursor(grid.directed_no_k_cursor(
+                points[query_idx],
+                query_idx,
+                scratch,
+                directed_ctx,
+            )),
+            TakeoverKind::Shells => Takeover::Shells(ShellFrontier::new(
+                grid,
+                points[query_idx],
+                query_idx,
+                scratch,
+                directed_ctx,
+            )),
+        };
         let did_packed = packed.is_some();
         let stage = if did_packed {
             StreamStage::Packed
@@ -108,7 +131,7 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
         Self {
             grid,
             query: points[query_idx],
-            cursor,
+            takeover,
             packed,
             stage,
             cached_frontier: None,
@@ -181,33 +204,57 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
                 }
                 StreamStage::Cursor => {
                     self.used_cursor = true;
-                    if let Some(slot) = self.cursor.pop_next_proven_slot() {
-                        let unseen_bound = self.cursor.remaining_dot_upper_bound();
-                        out.push(slot);
-                        let batch = DirectedNeighborBatch {
-                            n: 1,
-                            first_dot: self.slot_dot(slot),
-                            unseen_bound,
-                            source: DirectedNeighborBatchSource::DirectedCursor,
-                        };
-                        self.cached_frontier = Some(CachedFrontier::ExactBatch {
-                            batch,
-                            slots: vec![slot],
-                        });
-                        return DirectedNeighborFrontier::ExactBatch(batch);
-                    }
+                    match &mut self.takeover {
+                        Takeover::Cursor(cursor) => {
+                            if let Some(slot) = cursor.pop_next_proven_slot() {
+                                let unseen_bound = cursor.remaining_dot_upper_bound();
+                                let first_dot = fp_slot_dot(self.grid, self.query, slot);
+                                out.push(slot);
+                                let batch = DirectedNeighborBatch {
+                                    n: 1,
+                                    first_dot,
+                                    unseen_bound,
+                                    source: DirectedNeighborBatchSource::DirectedCursor,
+                                };
+                                self.cached_frontier = Some(CachedFrontier::ExactBatch {
+                                    batch,
+                                    slots: vec![slot],
+                                });
+                                return DirectedNeighborFrontier::ExactBatch(batch);
+                            }
 
-                    self.knn_exhausted = self.cursor.is_exhausted();
-                    if self.knn_exhausted {
-                        self.stage = StreamStage::Done;
-                        self.cached_frontier = Some(CachedFrontier::Exhausted);
-                        return DirectedNeighborFrontier::Exhausted;
-                    }
+                            self.knn_exhausted = cursor.is_exhausted();
+                            if self.knn_exhausted {
+                                self.stage = StreamStage::Done;
+                                self.cached_frontier = Some(CachedFrontier::Exhausted);
+                                return DirectedNeighborFrontier::Exhausted;
+                            }
 
-                    let dot_upper_bound = self.cursor.remaining_dot_upper_bound();
-                    self.cached_frontier =
-                        Some(CachedFrontier::UnknownButBounded { dot_upper_bound });
-                    return DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound };
+                            let dot_upper_bound = cursor.remaining_dot_upper_bound();
+                            self.cached_frontier =
+                                Some(CachedFrontier::UnknownButBounded { dot_upper_bound });
+                            return DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound };
+                        }
+                        Takeover::Shells(shells) => {
+                            if let Some(shell_batch) = shells.frontier(out) {
+                                let batch = DirectedNeighborBatch {
+                                    n: shell_batch.n,
+                                    first_dot: shell_batch.first_dot,
+                                    unseen_bound: shell_batch.unseen_bound,
+                                    source: DirectedNeighborBatchSource::ShellExpand,
+                                };
+                                self.cached_frontier = Some(CachedFrontier::ExactBatch {
+                                    batch,
+                                    slots: out.clone(),
+                                });
+                                return DirectedNeighborFrontier::ExactBatch(batch);
+                            }
+                            self.knn_exhausted = shells.is_exhausted();
+                            self.stage = StreamStage::Done;
+                            self.cached_frontier = Some(CachedFrontier::Exhausted);
+                            return DirectedNeighborFrontier::Exhausted;
+                        }
+                    }
                 }
                 StreamStage::Done => {
                     self.cached_frontier = Some(CachedFrontier::Exhausted);
@@ -231,7 +278,12 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
                         self.stage = StreamStage::Cursor;
                     }
                 }
-                StreamStage::Cursor | StreamStage::Done => {}
+                StreamStage::Cursor => {
+                    if let Takeover::Shells(shells) = &mut self.takeover {
+                        shells.advance();
+                    }
+                }
+                StreamStage::Done => {}
             },
             Some(CachedFrontier::Exhausted) | None => {}
         }
@@ -392,6 +444,7 @@ mod tests {
                         &mut grid_scratch,
                         ctx,
                         Some(packed),
+                        crate::policy::TakeoverKind::Cursor,
                     );
 
                     let mut batch = Vec::new();
@@ -403,7 +456,8 @@ mod tests {
                                 for &slot in &batch[..result.n] {
                                     let neighbor_idx = grid.point_indices()[slot as usize] as usize;
                                     let should_emit = match result.source {
-                                        DirectedNeighborBatchSource::DirectedCursor => {
+                                        DirectedNeighborBatchSource::DirectedCursor
+                                        | DirectedNeighborBatchSource::ShellExpand => {
                                             let fresh = !seen[neighbor_idx];
                                             seen[neighbor_idx] = true;
                                             fresh
@@ -483,6 +537,7 @@ mod tests {
             &mut grid_scratch,
             ctx,
             Some(packed),
+            crate::policy::TakeoverKind::Cursor,
         );
 
         let mut batch = Vec::new();
@@ -576,6 +631,7 @@ mod tests {
                         &mut grid_scratch,
                         ctx,
                         Some(packed),
+                        crate::policy::TakeoverKind::Cursor,
                     );
 
                     let expected =
@@ -600,16 +656,8 @@ mod tests {
                                 );
                                 for &slot in &batch[..result.n] {
                                     let neighbor_idx = grid.point_indices()[slot as usize] as usize;
-                                    match result.source {
-                                        DirectedNeighborBatchSource::DirectedCursor => {
-                                            seen[neighbor_idx] = true;
-                                        }
-                                        DirectedNeighborBatchSource::PackedChunk0
-                                        | DirectedNeighborBatchSource::PackedTail
-                                        | DirectedNeighborBatchSource::PackedExpandR2 => {
-                                            seen[neighbor_idx] = true;
-                                        }
-                                    }
+                                    seen[neighbor_idx] = true;
+                                    let _ = result.source;
                                 }
                                 stream.advance_frontier();
                             }

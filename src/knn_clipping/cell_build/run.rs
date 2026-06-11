@@ -279,6 +279,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         &mut ctx.scratch,
         request.directed_ctx,
         request.packed.take(),
+        crate::policy::takeover_kind(),
     );
 
     while !terminated && !ctx.builder.is_failed() {
@@ -305,7 +306,10 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                     }
 
                     let should_clip = match batch.source {
-                        DirectedNeighborBatchSource::DirectedCursor => {
+                        // Takeover sources re-cover packed-served points;
+                        // dedup on insertion.
+                        DirectedNeighborBatchSource::DirectedCursor
+                        | DirectedNeighborBatchSource::ShellExpand => {
                             ctx.attempted_neighbors.insert(neighbor_idx)
                         }
                         DirectedNeighborBatchSource::PackedChunk0
@@ -353,9 +357,13 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                         DirectedNeighborBatchSource::DirectedCursor => {
                             termination.should_check(neighbors_processed)
                         }
+                        // Sorted batches (packed stages and shell layers):
+                        // mid-batch bounds are sound, so only re-check when a
+                        // clip left the polygon unchanged.
                         DirectedNeighborBatchSource::PackedChunk0
                         | DirectedNeighborBatchSource::PackedTail
-                        | DirectedNeighborBatchSource::PackedExpandR2 => {
+                        | DirectedNeighborBatchSource::PackedExpandR2
+                        | DirectedNeighborBatchSource::ShellExpand => {
                             clip_result == crate::knn_clipping::topo2d::types::ClipResult::Unchanged
                         }
                     };
@@ -364,7 +372,18 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                         let bound = if pos + 1 < batch.n {
                             let next_slot = ctx.packed_chunk[pos + 1];
                             let next = point_indices[next_slot as usize] as usize;
-                            points[generator_idx].dot(points[next])
+                            let next_dot = points[generator_idx].dot(points[next]);
+                            // Shell layers are sorted within the layer, but
+                            // the next layer can contain closer points than
+                            // this layer's tail; the mid-batch bound must
+                            // also cover them. (Cursor order is global and
+                            // packed batches dominate their unseen set, so
+                            // next_dot alone is sound for those sources.)
+                            if batch.source == DirectedNeighborBatchSource::ShellExpand {
+                                next_dot.max(batch.unseen_bound)
+                            } else {
+                                next_dot
+                            }
                         } else {
                             batch.unseen_bound
                         };

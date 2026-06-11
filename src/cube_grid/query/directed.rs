@@ -42,7 +42,12 @@ impl<'a> DirectedEligibility<'a> {
     }
 
     #[inline]
-    fn cell_mode(self, grid: &CubeMapGrid, start_cell: u32, cell: usize) -> DirectedCellMode {
+    pub(super) fn cell_mode(
+        self,
+        grid: &CubeMapGrid,
+        start_cell: u32,
+        cell: usize,
+    ) -> DirectedCellMode {
         let Some(bin_b) = self.layout.cell_bin(grid, cell) else {
             return DirectedCellMode::TransitOnly;
         };
@@ -61,14 +66,14 @@ impl<'a> DirectedEligibility<'a> {
     }
 
     #[inline]
-    fn allows_center_slot(self, slot: u32) -> bool {
+    pub(super) fn allows_center_slot(self, slot: u32) -> bool {
         let (bin_b, local_b) = self.layout.bin_local(slot);
         bin_b != self.query_bin || local_b >= self.query_local
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DirectedCellMode {
+pub(super) enum DirectedCellMode {
     TransitOnly,
     EmitAll,
     EmitCenterDirected,
