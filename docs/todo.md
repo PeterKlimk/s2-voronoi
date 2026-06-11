@@ -116,12 +116,17 @@ In implementation order:
    must pass it unchanged. Note: emission *order* is deliberately not part of the contract (the
    current exact-order stream test pins the cursor's implementation and will be rewritten).
 2. **Grid resolution policy.** Current resolution (target density 16 points/cell from n) is
-   admittedly tuned to one scenario (see engineering-findings). Replace with: (a) target density
-   re-derived from a benchmark sweep across n; (b) occupancy feedback — the build already
-   histograms occupancy; rebuild at higher resolution when max occupancy exceeds a bound, capped
-   by a memory budget (total cells O(n)); (c) for concentration beyond what global resolution
-   can fix within memory, a shells-native big-cell path (chunked selection within shell 0)
-   instead of today's bail to the cursor (`SlowPath`).
+   admittedly tuned to one scenario (see engineering-findings). Important constraint (2026-06):
+   cells need *more* neighbors before terminating at higher densities, so the optimal
+   points-per-cell is not a constant — it varies with point count and distribution. Replace
+   with: (a) a target-density *curve* fit from a benchmark sweep across n (and sanity-checked on
+   non-uniform distributions), not a single re-tuned constant; (b) occupancy feedback — the
+   build already histograms occupancy; rebuild at higher resolution when max occupancy exceeds a
+   bound, capped by a memory budget (total cells O(n)); (c) for concentration beyond what global
+   resolution can fix within memory, a shells-native big-cell path (chunked selection within
+   shell 0) instead of today's bail to the cursor (`SlowPath`). The termination-vs-density
+   interaction also suggests recording neighbors-before-termination stats in timing runs so the
+   curve has an explanatory model, not just fitted numbers.
 3. **Shell generalization behind a policy switch.** Implement r >= 3 by BFS over the 3x3 cell
    adjacency with visited stamps (face/corner stitching machinery exists for r<=2), the same
    SIMD filter primitive, per-shell sorted emission, annulus certificate. Both paths live
