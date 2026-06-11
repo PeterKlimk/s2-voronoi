@@ -66,11 +66,14 @@ The empirical groundwork is done (see correctness-contract.md); this is the impl
 2. **Feature consolidation.** User-meaningful features only (`parallel`, `simd`, `serde`,
    `glam`, `qhull`); internal/research flags (`microbench`, `simd_clip`, `fma`,
    `packed_knn_sort_small`, `profiling`) become doc-hidden or merge away.
-3. **Finish the non-panicking contract** (carried from previous roadmap): remaining panic paths in
-   clipper invariants (`clippers/small.rs`), fallback vertex sort (NaN-unsafe `partial_cmp`),
-   stream-state contradictions → structured errors; panic only for true bugs.
-4. Zero-warning builds, `rust-version` (MSRV) in Cargo.toml, `#[deny(missing_docs)]` on the
-   public surface.
+3. ~~**Finish the non-panicking contract**~~ **Done.** The clipper "invariant failure" panic was
+   proven unreachable (mixed cyclic masks always carry both transitions) and converted to a
+   documented `unreachable!`; the fallback angle sort uses `total_cmp` (the old
+   `partial_cmp + unwrap_or` could trip std::sort's total-order check on NaN). Remaining panics
+   are genuine bug traps per the supported-envelope contract.
+4. Zero-warning builds **(done)** and `rust-version = "1.88"` **(done)**; remaining:
+   `#[deny(missing_docs)]` on the public surface and the ~18 pre-existing clippy style lints
+   (mostly too-many-arguments, tied to the P4 god-function splits).
 
 ## P2: API completeness
 
@@ -86,7 +89,7 @@ In order of user value:
 3. **Delaunay dual access** — mostly covered by `build_adjacency()` (neighbor pairs are the
    Delaunay edges); an explicit triangle-list API remains if users ask for it.
 4. ~~**`serde` feature**~~ **Done.** Optional derives on UnitVec3, SphericalVoronoi (weld map included), and CellAdjacency; round-trip test behind the feature.
-5. `compact()` (vertex compaction, see P0.2) as an explicit method.
+5. ~~`compact()`~~ **Done** as `SphericalVoronoi::compact_vertices()` (landed with P0.2).
 
 Explicitly deferred: weighted Voronoi, f64 storage, no_std, dynamic insertion/deletion.
 

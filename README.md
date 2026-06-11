@@ -74,11 +74,13 @@ for cell in diagram.iter_cells() {
 `VoronoiConfig` controls preprocessing and (optional) termination fallback:
 
 - `preprocess_mode`: coincident-generator handling:
-  - `PreprocessMode::MergeDensity` (current default): merge near-coincident generators using a
-    density-based threshold. Scheduled to be replaced by a fixed-radius weld with corrected
-    output semantics — see `docs/correctness-contract.md`.
-  - `PreprocessMode::MergeWithin(threshold)`: merge using an explicit threshold
-  - `PreprocessMode::Disabled`: do not merge (caller certifies generator separation)
+  - `PreprocessMode::Weld` (default): weld generators within the fixed weld radius (~1.4e-6
+    chord, derived from f32 rounding with measured margin — see
+    `docs/correctness-contract.md`). Welded inputs share one cell, exposed via
+    `SphericalVoronoi::weld_map()`.
+  - `PreprocessMode::MergeWithin(threshold)`: weld within an explicit threshold
+  - `PreprocessMode::Disabled`: no welding (caller certifies generator separation above the
+    weld radius)
 - `termination_max_k`: cap k growth if termination fallback keeps requesting neighbors.
 
 `compute_with_report` exposes whether preprocessing merged generators, the effective diagram the
