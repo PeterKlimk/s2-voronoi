@@ -74,6 +74,14 @@ pub(super) fn build_cells_sharded_live_dedup(
     build::build_cells_sharded_live_dedup(points, grid, termination)
 }
 
+pub(super) fn build_cells_sharded_plane(
+    points: &[glam::Vec2],
+    grid: &crate::plane_grid::PlaneGrid,
+    domain: glam::Vec2,
+) -> Result<ShardedCellsData, BuildCellsError> {
+    build::plane::build_cells_sharded_plane(points, grid, domain)
+}
+
 pub(super) fn assemble_sharded_live_dedup(
     data: ShardedCellsData,
 ) -> Result<AssemblyResult, crate::VoronoiError> {

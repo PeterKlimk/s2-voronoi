@@ -18,17 +18,12 @@
 //! state, no projection-limit fallback, and termination is a single
 //! Euclidean comparison (see `PlaneCellBuilder::can_terminate`).
 
-// Only builder-level tests consume this module so far; the planar pipeline
-// (stream orchestration / live dedup integration) lands next.
-#![allow(dead_code)]
-
 mod builder;
+pub(crate) mod compute;
 #[cfg(test)]
 mod tests;
 
-// Re-exported for the planar pipeline (next phase); only tests use them yet.
-#[allow(unused_imports)]
-pub(crate) use builder::{PlaneCellBuilder, PlaneCellOutputBuffer, PlaneVertexData};
+pub(crate) use builder::PlaneCellBuilder;
 
 /// Wall side ids, offset from `wall_base` (= generator count).
 pub(crate) const WALL_BOTTOM: u32 = 0; // y = 0

@@ -1,5 +1,7 @@
 //! Cell construction for live dedup.
 
+pub(super) mod plane;
+
 use glam::Vec3;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -416,13 +418,40 @@ fn build_and_emit_cell<'a, 'b, 'c>(
     .map_err(BuildCellsError::CellBuild)?;
     stats.record_into(cell_sub);
 
-    let mut t_post = crate::knn_clipping::timing::LapTimer::start();
     let output_buffer = build_ctx.output_buffer();
+    emit_cell_output(
+        cell_sub,
+        live_ctx,
+        shard_ctx,
+        grid_ctx.assignment,
+        cell_idx,
+        cell_start,
+        output_buffer,
+        incoming_checks,
+    )
+}
+
+/// Emit one built cell's output into its shard: resolve/record edge checks,
+/// dedup vertices by owner bin (deferring off-shard owners), and forward
+/// edge checks to later cells. Geometry-free; shared by the spherical and
+/// planar drivers.
+#[allow(clippy::too_many_arguments)] // internal seam shared by two drivers
+fn emit_cell_output(
+    cell_sub: &mut crate::knn_clipping::timing::CellSubAccum,
+    live_ctx: &mut LiveDedupCellScratch,
+    shard_ctx: &mut ShardContext<'_>,
+    assignment: &super::binning::BinAssignment,
+    cell_idx: u32,
+    cell_start: u32,
+    output_buffer: &CellOutputBuffer,
+    incoming_checks: Vec<EdgeCheck>,
+) -> Result<(), BuildCellsError> {
+    let mut t_post = crate::knn_clipping::timing::LapTimer::start();
     live_ctx.edge_scratch.collect_and_resolve(
         cell_idx,
         shard_ctx,
         output_buffer,
-        grid_ctx.assignment,
+        assignment,
         incoming_checks,
     );
     let collect_resolve_time = t_post.lap();
@@ -449,7 +478,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
             {
                 shard.triplet_keys += 1;
             }
-            let owner_bin = grid_ctx.assignment.generator_bin[key[0] as usize];
+            let owner_bin = assignment.generator_bin[key[0] as usize];
             if owner_bin == bin {
                 if *vi == INVALID_INDEX {
                     let new_idx = checked_u32(shard.output.vertices.len(), "shard vertex index")?;

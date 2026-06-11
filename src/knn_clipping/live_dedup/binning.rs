@@ -85,10 +85,84 @@ pub(super) fn assign_bins(
     points: &[Vec3],
     grid: &CubeMapGrid,
 ) -> Result<BinAssignment, PackedLayoutCapacityError> {
-    let n = points.len();
     let layout = choose_bin_layout(grid.res());
-    let num_bins = layout.num_bins;
 
+    // Construct per-bin generator order directly from the grid's cell-major layout.
+    //
+    // This preserves the exact `(grid.point_index_to_cell(g), g)` order without a per-bin sort,
+    // keeping `LocalId` as the processing rank for edge-check scheduling.
+    let res = grid.res();
+    let bin_for_cell = |cell: usize| -> usize {
+        let (face, iu, iv) = cell_to_face_ij(cell, res);
+        let bu = (iu / layout.bin_stride).min(layout.bin_res - 1);
+        let bv = (iv / layout.bin_stride).min(layout.bin_res - 1);
+        face * layout.bin_res * layout.bin_res + bv * layout.bin_res + bu
+    };
+
+    assign_bins_with(
+        points.len(),
+        6 * res * res,
+        grid.cell_offsets(),
+        grid.point_indices(),
+        layout.num_bins,
+        bin_for_cell,
+    )
+}
+
+/// Planar variant: square block layout over the res x res plane grid, same
+/// packed (bin, local) layout and cell-major local ordering as the sphere.
+pub(super) fn assign_bins_plane(
+    num_points: usize,
+    grid: &crate::plane_grid::PlaneGrid,
+) -> Result<BinAssignment, PackedLayoutCapacityError> {
+    let res = grid.res();
+
+    #[cfg(feature = "parallel")]
+    let threads = rayon::current_num_threads().max(1);
+    #[cfg(not(feature = "parallel"))]
+    let threads = 1;
+    let target_bins = if let Ok(var) = std::env::var("S2_BIN_COUNT") {
+        var.parse().unwrap_or(threads * 2)
+    } else {
+        threads * 2
+    }
+    .clamp(1, 96);
+
+    let mut bin_res = (target_bins as f64).sqrt().ceil() as usize;
+    bin_res = bin_res.clamp(1, res.max(1));
+    let bin_stride = res.div_ceil(bin_res).max(1);
+    let bin_res = res.div_ceil(bin_stride);
+    let num_bins = bin_res * bin_res;
+
+    let bin_for_cell = move |cell: usize| -> usize {
+        let ix = cell % res;
+        let iy = cell / res;
+        let bu = (ix / bin_stride).min(bin_res - 1);
+        let bv = (iy / bin_stride).min(bin_res - 1);
+        bv * bin_res + bu
+    };
+
+    assign_bins_with(
+        num_points,
+        res * res,
+        grid.cell_offsets(),
+        grid.point_indices(),
+        num_bins,
+        bin_for_cell,
+    )
+}
+
+/// Grid-agnostic assignment core over a CSR (cell_offsets, point_indices)
+/// layout: locals are assigned in cell-major order, the invariant the
+/// directed edge-check scheduling relies on.
+fn assign_bins_with(
+    n: usize,
+    num_cells: usize,
+    cell_offsets: &[u32],
+    point_indices: &[u32],
+    num_bins: usize,
+    bin_for_cell: impl Fn(usize) -> usize,
+) -> Result<BinAssignment, PackedLayoutCapacityError> {
     // Compute bit layout for packed gen_map.
     // bin_bits: minimum bits needed to represent num_bins - 1
     // local_bits: remaining bits for local_id
@@ -100,25 +174,15 @@ pub(super) fn assign_bins(
     let local_shift = 32 - bin_bits;
     let local_mask = (1u32 << local_shift) - 1;
 
-    // Construct per-bin generator order directly from the grid's cell-major layout.
-    //
-    // This preserves the exact `(grid.point_index_to_cell(g), g)` order without a per-bin sort,
-    // keeping `LocalId` as the processing rank for edge-check scheduling.
-    let res = grid.res();
-    let num_cells = 6 * res * res;
-
-    let bin_for_cell = |cell: usize| -> usize {
-        let (face, iu, iv) = cell_to_face_ij(cell, res);
-        let bu = (iu / layout.bin_stride).min(layout.bin_res - 1);
-        let bv = (iv / layout.bin_stride).min(layout.bin_res - 1);
-        face * layout.bin_res * layout.bin_res + bv * layout.bin_res + bu
+    let cell_points = |cell: usize| -> &[u32] {
+        &point_indices[cell_offsets[cell] as usize..cell_offsets[cell + 1] as usize]
     };
 
     // Pre-count to avoid reallocations while building the per-bin generator lists.
     let mut counts: Vec<usize> = vec![0; num_bins];
     for cell in 0..num_cells {
         let b = bin_for_cell(cell);
-        counts[b] += grid.cell_points(cell).len();
+        counts[b] += cell_points(cell).len();
     }
 
     let mut bin_generators: Vec<Vec<usize>> = (0..num_bins)
@@ -133,7 +197,7 @@ pub(super) fn assign_bins(
     for cell in 0..num_cells {
         let b_usize = bin_for_cell(cell);
         let b = BinId::from_usize(b_usize);
-        for &g_u32 in grid.cell_points(cell) {
+        for &g_u32 in cell_points(cell) {
             let g = g_u32 as usize;
             debug_assert!(g < n, "grid returned out-of-range point index");
 
@@ -159,7 +223,7 @@ pub(super) fn assign_bins(
 
     debug_assert_eq!(
         visited, n,
-        "grid cell_points did not cover all points (visited={}, n={})",
+        "grid cells did not cover all points (visited={}, n={})",
         visited, n
     );
     debug_assert!(
@@ -176,11 +240,11 @@ pub(super) fn assign_bins(
     // Build slot_gen_map: iterate cells in order, write packed (bin, local) at each slot position.
     // Slots are the SOA indices: cell_offsets[cell]..cell_offsets[cell+1].
     for cell in 0..num_cells {
-        let cell_start = grid.cell_offsets()[cell] as usize;
-        let cell_end = grid.cell_offsets()[cell + 1] as usize;
+        let cell_start = cell_offsets[cell] as usize;
+        let cell_end = cell_offsets[cell + 1] as usize;
         for (slot_val, &g) in slot_gen_map[cell_start..cell_end]
             .iter_mut()
-            .zip(&grid.point_indices()[cell_start..cell_end])
+            .zip(&point_indices[cell_start..cell_end])
         {
             let g_usize = g as usize;
             let bin = generator_bin[g_usize].as_u8() as u32;

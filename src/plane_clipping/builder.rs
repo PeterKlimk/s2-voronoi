@@ -1,21 +1,27 @@
 //! Planar cell builder: rect-seeded incremental half-plane clipping.
 
-use glam::{DVec2, Vec2};
+use glam::{DVec2, Vec2, Vec3};
 
 use crate::fp;
-use crate::knn_clipping::cell_build::{CellFailure, VertexKey};
+use crate::knn_clipping::cell_build::{CellFailure, CellOutputBuffer, VertexKey};
 use crate::knn_clipping::topo2d::builder::sort3_u32;
-use crate::knn_clipping::topo2d::clippers::clip_convex;
+use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck};
 use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane, PolyBuffer};
 use crate::tolerances::PLANE_TERMINATION_GUARD;
 
 /// One extracted vertex: key (sorted generator/wall triple) and position in
 /// the unit square.
+// The Vec2-native extraction path is exercised by builder tests today and
+// becomes the production path when live-dedup positions genericize (the
+// pipeline currently uses the z=0 `to_vertex_data_v3` embedding). Kept
+// compiled in all profiles to avoid dev-only rot.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) type PlaneVertexData = (VertexKey, Vec2);
 
 /// Per-cell extraction output, mirroring `cell_build::CellOutputBuffer` with
 /// planar positions.
 #[derive(Default)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct PlaneCellOutputBuffer {
     pub(crate) vertices: Vec<PlaneVertexData>,
     pub(crate) edge_neighbor_globals: Vec<u32>,
@@ -24,6 +30,7 @@ pub(crate) struct PlaneCellOutputBuffer {
 }
 
 impl PlaneCellOutputBuffer {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn clear(&mut self) {
         self.vertices.clear();
         self.edge_neighbor_globals.clear();
@@ -44,6 +51,9 @@ pub(crate) struct PlaneCellBuilder {
     /// First virtual wall id (= generator count); walls are
     /// `wall_base + WALL_*`.
     wall_base: u32,
+    /// Domain extents: walls sit at x=0, x=domain.x, y=0, y=domain.y
+    /// (normalized coordinates; the longer rect side maps to 1).
+    domain: DVec2,
 
     half_planes: Vec<HalfPlane>,
     neighbor_indices: Vec<usize>,
@@ -59,11 +69,12 @@ pub(crate) struct PlaneCellBuilder {
 }
 
 impl PlaneCellBuilder {
-    pub(crate) fn new(generator_idx: usize, generator: Vec2, wall_base: u32) -> Self {
+    pub(crate) fn new(generator_idx: usize, generator: Vec2, wall_base: u32, domain: Vec2) -> Self {
         let mut builder = Self {
             generator_idx,
             generator: DVec2::new(generator.x as f64, generator.y as f64),
             wall_base,
+            domain: DVec2::new(domain.x as f64, domain.y as f64),
             half_planes: Vec::with_capacity(32),
             neighbor_indices: Vec::with_capacity(32),
             neighbor_slots: Vec::with_capacity(32),
@@ -96,29 +107,30 @@ impl PlaneCellBuilder {
     fn seed_rect(&mut self) {
         let (gx, gy) = (self.generator.x, self.generator.y);
 
+        let (sx, sy) = (self.domain.x, self.domain.y);
         // (a, b, c) with interior satisfying a*u + b*v + c >= 0:
-        //   bottom (y >= 0):  v + gy >= 0
-        //   right  (x <= 1): -u + (1 - gx) >= 0
-        //   top    (y <= 1): -v + (1 - gy) >= 0
-        //   left   (x >= 0):  u + gx >= 0
-        let walls: [(f64, f64, f64); 4] = [
-            (0.0, 1.0, gy),
-            (-1.0, 0.0, 1.0 - gx),
-            (0.0, -1.0, 1.0 - gy),
-            (1.0, 0.0, gx),
+        //   bottom (y >= 0):   v + gy >= 0
+        //   right  (x <= sx): -u + (sx - gx) >= 0
+        //   top    (y <= sy): -v + (sy - gy) >= 0
+        //   left   (x >= 0):   u + gx >= 0
+        use super::{WALL_BOTTOM, WALL_LEFT, WALL_RIGHT, WALL_TOP};
+        let walls: [(u32, f64, f64, f64); 4] = [
+            (WALL_BOTTOM, 0.0, 1.0, gy),
+            (WALL_RIGHT, -1.0, 0.0, sx - gx),
+            (WALL_TOP, 0.0, -1.0, sy - gy),
+            (WALL_LEFT, 1.0, 0.0, gx),
         ];
-        for (side, &(a, b, c)) in walls.iter().enumerate() {
+        for (plane_idx, &(side, a, b, c)) in walls.iter().enumerate() {
             self.half_planes
-                .push(HalfPlane::new_unnormalized(a, b, c, side));
-            self.neighbor_indices
-                .push((self.wall_base + side as u32) as usize);
+                .push(HalfPlane::new_unnormalized(a, b, c, plane_idx));
+            self.neighbor_indices.push((self.wall_base + side) as usize);
             self.neighbor_slots.push(u32::MAX);
         }
 
         // Corners CCW from bottom-left; vertex_planes = the two adjacent
         // walls, edge_planes[i] = wall of edge i -> i+1.
-        let (u0, u1) = (-gx, 1.0 - gx);
-        let (v0, v1) = (-gy, 1.0 - gy);
+        let (u0, u1) = (-gx, sx - gx);
+        let (v0, v1) = (-gy, sy - gy);
         let poly = &mut self.poly_a;
         poly.clear();
         poly.push_raw(u0, v0, (3, 0), 0);
@@ -170,6 +182,16 @@ impl PlaneCellBuilder {
             clip_convex(&self.poly_b, &hp, &mut self.poly_a)
         };
 
+        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)
+    }
+
+    fn commit_clip(
+        &mut self,
+        clip_result: ClipResult,
+        hp: HalfPlane,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+    ) -> Result<ClipResult, CellFailure> {
         match clip_result {
             ClipResult::TooManyVertices => {
                 self.failed = Some(CellFailure::TooManyVertices);
@@ -203,11 +225,45 @@ impl PlaneCellBuilder {
             .map(|_| ())
     }
 
+    /// Clip with an externally supplied epsilon (edge-check seeds): reusing
+    /// the epsilon computed on the opposite side of the same undirected edge
+    /// keeps both cells' near-degenerate decisions consistent.
+    pub(crate) fn clip_with_slot_edgecheck(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec2,
+        hp_eps: f32,
+    ) -> Result<(), CellFailure> {
+        if !hp_eps.is_finite() || hp_eps <= 0.0 {
+            return self.clip_with_slot(neighbor_idx, neighbor_slot, neighbor);
+        }
+        if let Some(f) = self.failed {
+            return Err(f);
+        }
+
+        let (a, b, c) = self.bisector_coefficients(neighbor);
+        let plane_idx = self.half_planes.len();
+        let hp = HalfPlane::new_unnormalized_with_eps(a, b, c, plane_idx, hp_eps as f64);
+
+        let clip_result = if self.use_a {
+            clip_convex_edgecheck(&self.poly_a, &hp, &mut self.poly_b)
+        } else {
+            clip_convex_edgecheck(&self.poly_b, &hp, &mut self.poly_a)
+        };
+        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)
+            .map(|_| ())
+    }
+
+    // Failure-classification surface (sphere parity); the pipeline's
+    // failure reporting grows into it.
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn is_failed(&self) -> bool {
         self.failed.is_some()
     }
 
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn failure(&self) -> Option<CellFailure> {
         self.failed
@@ -218,6 +274,7 @@ impl PlaneCellBuilder {
         self.current_poly().len
     }
 
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.neighbor_indices.iter().copied()
@@ -244,6 +301,7 @@ impl PlaneCellBuilder {
 
     /// Extract vertices (key + unit-square position) and per-edge neighbor
     /// records, walking the polygon in order.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn to_vertex_data_full(
         &self,
         buffer: &mut PlaneCellOutputBuffer,
@@ -290,6 +348,72 @@ impl PlaneCellBuilder {
             buffer
                 .edge_neighbor_eps
                 .push(self.half_planes[edge_plane].eps as f32);
+        }
+
+        Ok(())
+    }
+
+    /// Extract into the shared `CellOutputBuffer` with positions embedded as
+    /// `Vec3 {x, y, 0}` — the temporary z=0 embedding that lets the planar
+    /// pipeline drive the (geometry-agnostic) live-dedup layer unchanged,
+    /// pending position-type genericization.
+    ///
+    /// Wall edges are emitted with the `u32::MAX` "no stitchable neighbor"
+    /// convention (edge checks skip them); wall ids still appear in vertex
+    /// *keys*, where dedup treats them as ordinary generator indices.
+    pub(crate) fn to_vertex_data_v3(
+        &self,
+        buffer: &mut CellOutputBuffer,
+    ) -> Result<(), CellFailure> {
+        let poly = self.current_poly();
+        if self.failed.is_some() || poly.len < 3 {
+            return Err(CellFailure::NoValidSeed);
+        }
+
+        buffer.clear();
+        buffer.vertices.reserve(poly.len);
+        buffer.edge_neighbor_globals.reserve(poly.len);
+        buffer.edge_neighbor_slots.reserve(poly.len);
+        buffer.edge_neighbor_eps.reserve(poly.len);
+
+        let gen_idx = self.generator_idx as u32;
+        let plane_count = self.half_planes.len();
+        for i in 0..poly.len {
+            let u = poly.us[i];
+            let v = poly.vs[i];
+            if !u.is_finite() || !v.is_finite() {
+                return Err(CellFailure::NoValidSeed);
+            }
+
+            let (plane_a, plane_b) = poly.vertex_planes[i];
+            let edge_plane = poly.edge_planes[i];
+            if plane_a >= plane_count || plane_b >= plane_count || edge_plane >= plane_count {
+                return Err(CellFailure::NoValidSeed);
+            }
+
+            let pos = Vec3::new(
+                (u + self.generator.x) as f32,
+                (v + self.generator.y) as f32,
+                0.0,
+            );
+            let n1 = self.neighbor_indices[plane_a] as u32;
+            let n2 = self.neighbor_indices[plane_b] as u32;
+            buffer.vertices.push((sort3_u32(gen_idx, n1, n2), pos));
+
+            let edge_neighbor = self.neighbor_indices[edge_plane] as u32;
+            if edge_neighbor >= self.wall_base {
+                buffer.edge_neighbor_globals.push(u32::MAX);
+                buffer.edge_neighbor_slots.push(u32::MAX);
+                buffer.edge_neighbor_eps.push(0.0);
+            } else {
+                buffer.edge_neighbor_globals.push(edge_neighbor);
+                buffer
+                    .edge_neighbor_slots
+                    .push(self.neighbor_slots[edge_plane]);
+                buffer
+                    .edge_neighbor_eps
+                    .push(self.half_planes[edge_plane].eps as f32);
+            }
         }
 
         Ok(())

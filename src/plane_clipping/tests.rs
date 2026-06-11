@@ -42,7 +42,7 @@ fn brute_force_cell(
     gi: usize,
     wall_base: u32,
 ) -> Result<PlaneCellOutputBuffer, CellFailure> {
-    let mut builder = PlaneCellBuilder::new(gi, points[gi], wall_base);
+    let mut builder = PlaneCellBuilder::new(gi, points[gi], wall_base, Vec2::ONE);
     for (j, &p) in points.iter().enumerate() {
         if j != gi {
             builder.clip_with_slot(j, j as u32, p)?;
@@ -65,7 +65,7 @@ fn stream_cell(
     // query_bin 1 vs all-zero map: every cell is "other bin" => emit all.
     let ctx = DirectedEligibility::from_layout(1, 0, layout);
     let mut stream = PlaneNeighborStream::new(grid, points, gi, ctx);
-    let mut builder = PlaneCellBuilder::new(gi, points[gi], wall_base);
+    let mut builder = PlaneCellBuilder::new(gi, points[gi], wall_base, Vec2::ONE);
 
     let mut batch = Vec::new();
     loop {
@@ -315,7 +315,7 @@ fn plane_cells_exact_duplicate_is_upstream_policy() {
     // pipeline's exact-duplicate policy handles this before the builder, as
     // on the sphere; here we pin the builder-level behavior.
     let p = Vec2::new(0.4, 0.4);
-    let mut builder = PlaneCellBuilder::new(0, p, 2);
+    let mut builder = PlaneCellBuilder::new(0, p, 2, Vec2::ONE);
     let result = builder.clip_with_slot_result(1, 1, p).unwrap();
     assert_eq!(
         result,
@@ -328,7 +328,7 @@ fn plane_cells_exact_duplicate_is_upstream_policy() {
 fn plane_builder_reset_reuses_cleanly() {
     let points = uniform(60, 41);
     let wall_base = points.len() as u32;
-    let mut builder = PlaneCellBuilder::new(0, points[0], wall_base);
+    let mut builder = PlaneCellBuilder::new(0, points[0], wall_base, Vec2::ONE);
     let mut reused = PlaneCellOutputBuffer::default();
     let mut fresh_buf = PlaneCellOutputBuffer::default();
 
@@ -342,7 +342,7 @@ fn plane_builder_reset_reuses_cleanly() {
         builder.to_vertex_data_full(&mut reused).unwrap();
 
         let fresh = {
-            let mut b = PlaneCellBuilder::new(gi, points[gi], wall_base);
+            let mut b = PlaneCellBuilder::new(gi, points[gi], wall_base, Vec2::ONE);
             for (j, &p) in points.iter().enumerate() {
                 if j != gi {
                     b.clip_with_slot(j, j as u32, p).unwrap();

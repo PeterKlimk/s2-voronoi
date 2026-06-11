@@ -4,6 +4,13 @@
 
 Initial release.
 
+- Planar Voronoi diagrams over a bounded rectangle (`compute_plane`,
+  `PlanarVoronoi`, `PlaneRect`): the same kNN-clipping engine on a flat 2D
+  grid, with rect walls handled as virtual generators so hull cells clip to
+  the domain and the strict-subdivision contract carries over (disk-topology
+  validation via `validation::validate_plane`; cell areas partition the
+  rect). Exact-bit duplicate inputs are welded; no near-coincidence radius
+  is needed on the plane.
 - Spherical Voronoi diagrams on the unit sphere via kNN-driven half-space
   clipping: per-cell parallel construction stitched into one consistent graph
   (see `docs/architecture.md` and the stitching invariant in

@@ -231,8 +231,12 @@ pub(crate) enum PlaneNeighborBatchSource {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PlaneNeighborBatch {
     pub(crate) n: usize,
+    /// Read by contract tests; production consumers use per-emission bounds.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) first_dist_sq: f32,
     pub(crate) unseen_bound: f32,
+    /// Single-source today; the packed stage adds variants.
+    #[allow(dead_code)]
     pub(crate) source: PlaneNeighborBatchSource,
 }
 
@@ -286,6 +290,7 @@ impl<'a, 'b> PlaneNeighborStream<'a, 'b> {
         self.takeover.advance();
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     #[inline]
     pub(crate) fn knn_exhausted(&self) -> bool {
         self.knn_exhausted

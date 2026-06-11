@@ -88,6 +88,12 @@ pub(crate) const TERMINATION_THRESHOLD_GUARD: f64 = 3.0 * f32::EPSILON as f64;
 /// sphere's `TERMINATION_THRESHOLD_GUARD` granularity.
 pub(crate) const PLANE_TERMINATION_GUARD: f64 = 3.0 * f32::EPSILON as f64;
 
+/// On-wall classification tolerance for planar validation, in normalized
+/// domain units (longer rect side = 1). Wall vertices come from f64
+/// intersections cast to f32 (~1e-7 relative); 1e-5 is generous headroom
+/// while staying far below practical cell sizes.
+pub(crate) const PLANE_ON_WALL_EPS: f32 = 1e-5;
+
 // === Spherical fallback (constraint replay past the chart limit) ===
 
 /// Constraint-satisfaction slack for fallback vertex candidates (a candidate

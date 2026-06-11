@@ -15,22 +15,13 @@
 //! entry normalizes the user's bounding rect to it. Out-of-range coordinates
 //! are clamped into the edge cells (and rejected upstream by validation).
 
-// Only the contract suite consumes this module so far; the planar pipeline
-// (cell build / live dedup integration) lands next and removes this allow.
-#![allow(dead_code)]
-
 mod query;
 
-// Re-exported for the planar pipeline (next phase); only tests use them yet.
-#[allow(unused_imports)]
-pub(crate) use query::{
-    PlaneNeighborBatch, PlaneNeighborBatchSource, PlaneNeighborFrontier, PlaneNeighborStream,
-};
+pub(crate) use query::{PlaneNeighborFrontier, PlaneNeighborStream};
 
 #[cfg(test)]
 mod tests;
 
-use crate::cube_grid::DirectedEligibility;
 use glam::Vec2;
 
 /// Uniform spatial grid over the unit square.
@@ -110,6 +101,8 @@ impl PlaneGrid {
     }
 
     /// Get the precomputed cell index for `points[idx]` used to build this grid.
+    // Used by the packed-kNN stage when it lands (cell-grouped query runs).
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn point_index_to_cell(&self, idx: usize) -> usize {
         self.point_cells[idx] as usize
@@ -147,16 +140,6 @@ impl PlaneGrid {
     #[inline]
     pub(crate) fn wall(&self, i: usize) -> f32 {
         i as f32 / self.res as f32
-    }
-
-    #[inline]
-    pub(crate) fn shell_frontier<'a, 'b>(
-        &'a self,
-        query: Vec2,
-        query_idx: usize,
-        eligibility: DirectedEligibility<'b>,
-    ) -> query::PlaneShellFrontier<'a, 'b> {
-        query::PlaneShellFrontier::new(self, query, query_idx, eligibility)
     }
 }
 

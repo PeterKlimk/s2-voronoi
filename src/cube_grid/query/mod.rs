@@ -55,6 +55,9 @@ impl CubeMapGrid {
     }
 
     /// Get points in a cell.
+    // Production consumers moved to raw CSR slices in the shared binning
+    // core; tests still use this accessor.
+    #[cfg_attr(not(test), allow(dead_code))]
     #[inline]
     pub fn cell_points(&self, cell: usize) -> &[u32] {
         let start = self.cell_offsets[cell] as usize;

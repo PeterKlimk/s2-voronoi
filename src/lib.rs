@@ -49,6 +49,7 @@ mod fp;
 pub(crate) mod generated;
 mod measures;
 mod packed_layout;
+mod plane_diagram;
 pub(crate) mod policy;
 #[doc(hidden)]
 pub mod quality;
@@ -112,6 +113,7 @@ pub mod convex_hull;
 pub use adjacency::CellAdjacency;
 pub use diagram::{CellView, SphericalVoronoi};
 pub use error::VoronoiError;
+pub use plane_diagram::{PlanarVoronoi, PlanePoint, PlanePointLike, PlaneRect};
 pub use types::{UnitVec3, UnitVec3Like};
 
 #[cfg(feature = "qhull")]
@@ -251,6 +253,36 @@ impl Default for VoronoiConfig {
 /// clipping model, or unrecoverable internal failures.
 pub fn compute<P: UnitVec3Like>(points: &[P]) -> Result<SphericalVoronoi, VoronoiError> {
     compute_with(points, VoronoiConfig::default())
+}
+
+/// Compute a planar Voronoi diagram over a bounded rectangle.
+///
+/// Every input point must lie inside `rect` (boundary inclusive); hull cells
+/// are clipped to the rect, whose walls behave like virtual generators. The
+/// result is a strict subdivision of the rect: cell areas sum to the rect
+/// area and every interior edge is shared by exactly two cells. Use
+/// [`validation::validate_plane`] for strict invariant checks.
+///
+/// Exact-bit duplicate points are welded (see [`PlanarVoronoi::weld_map`]);
+/// unlike the sphere there is no near-coincidence weld radius — distinct f32
+/// coordinates always yield well-formed bisectors in the f64 clip math.
+///
+/// Requires at least 1 point (a single generator owns the whole rect).
+///
+/// # Example
+///
+/// ```
+/// use s2_voronoi::{compute_plane, PlaneRect};
+///
+/// let points = vec![[0.25f32, 0.25], [0.75, 0.25], [0.5, 0.8]];
+/// let diagram = compute_plane(&points, PlaneRect::unit()).unwrap();
+/// assert_eq!(diagram.num_cells(), 3);
+/// ```
+pub fn compute_plane<P: PlanePointLike>(
+    points: &[P],
+    rect: PlaneRect,
+) -> Result<PlanarVoronoi, VoronoiError> {
+    plane_clipping::compute::compute_plane_impl(points, rect)
 }
 
 /// Compute a spherical Voronoi diagram with explicit configuration.
