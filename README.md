@@ -86,7 +86,7 @@ backend actually solved, and strict validation of both views; `report.preferred_
 - `glam`: public `UnitVec3Like` impl + conversions for `glam::Vec3` (glam is always an internal dep).
 - `timing`: detailed phase/sub-phase timing reports.
 - `qhull`: convex hull backend used for tests/bench comparisons only.
-- Internal/research flags (`profiling`, `microbench`, `simd_clip`, `fma`,
+- Internal/research flags (`profiling`, `microbench`, `fma`,
   `packed_knn_sort_small`): not part of the public surface; subject to consolidation.
 
 ## Documentation

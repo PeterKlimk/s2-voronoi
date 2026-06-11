@@ -30,10 +30,13 @@ pub(crate) struct BuilderFallbackRequest {
     pub(crate) trigger: BuilderFallbackTrigger,
 }
 
+#[cfg(test)]
 impl BuilderFallbackRequest {
     #[inline]
     pub(crate) fn as_cell_failure(self) -> CellFailure {
-        self.trigger.as_cell_failure()
+        match self.trigger {
+            BuilderFallbackTrigger::ProjectionLimit => CellFailure::ProjectionInvalid,
+        }
     }
 }
 
@@ -73,7 +76,9 @@ pub(crate) struct FallbackBuilder {
     pub(crate) generator_idx: usize,
     pub(crate) generator: DVec3,
     constraints: Vec<FallbackConstraint>,
-    trigger: BuilderFallbackTrigger,
+    /// Which limit forced the fallback handoff; read by handoff tests.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) trigger: BuilderFallbackTrigger,
 }
 
 #[derive(Debug, Clone)]
@@ -204,8 +209,9 @@ impl Topo2DBuilder {
         }
     }
 
+    #[cfg(test)]
     #[inline]
-    pub(crate) fn gnomonic(&self) -> &GnomonicBuilder {
+    pub(crate) fn as_gnomonic(&self) -> &GnomonicBuilder {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder,
             BuilderImpl::Fallback(_) => {
@@ -214,26 +220,15 @@ impl Topo2DBuilder {
         }
     }
 
+    #[cfg(test)]
     #[inline]
-    pub(crate) fn gnomonic_mut(&mut self) -> &mut GnomonicBuilder {
+    pub(crate) fn as_gnomonic_mut(&mut self) -> &mut GnomonicBuilder {
         match &mut self.inner {
             BuilderImpl::Gnomonic(builder) => builder,
             BuilderImpl::Fallback(_) => {
                 panic!("attempted to mutably access gnomonic builder after fallback handoff")
             }
         }
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn as_gnomonic(&self) -> &GnomonicBuilder {
-        self.gnomonic()
-    }
-
-    #[cfg(test)]
-    #[inline]
-    pub(crate) fn as_gnomonic_mut(&mut self) -> &mut GnomonicBuilder {
-        self.gnomonic_mut()
     }
 
     #[cfg(test)]
@@ -289,15 +284,6 @@ impl FallbackBuilder {
             generator: builder.generator,
             constraints: builder.constraints.clone(),
             trigger,
-        }
-    }
-}
-
-impl BuilderFallbackTrigger {
-    #[inline]
-    fn as_cell_failure(self) -> CellFailure {
-        match self {
-            BuilderFallbackTrigger::ProjectionLimit => CellFailure::ProjectionInvalid,
         }
     }
 }

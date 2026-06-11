@@ -130,6 +130,7 @@ impl FallbackBuilder {
             ));
     }
 
+    #[cfg(test)]
     #[inline]
     pub(super) fn clip_with_slot(
         &mut self,
@@ -183,6 +184,10 @@ impl Topo2DBuilder {
         Self::classify_clip_result(result)
     }
 
+    /// Test-only convenience: clip and surface a fallback request as its
+    /// underlying failure (production code routes through the policy methods
+    /// and handles fallback explicitly).
+    #[cfg(test)]
     #[inline]
     pub(crate) fn clip_with_slot_policy(
         &mut self,
@@ -199,6 +204,32 @@ impl Topo2DBuilder {
             }
         };
         Self::handle_step_result(result)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clip_with_slot(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+    ) -> Result<(), CellFailure> {
+        match self.clip_with_slot_policy(neighbor_idx, neighbor_slot, neighbor)? {
+            BuilderStepOutcome::Applied => Ok(()),
+            BuilderStepOutcome::NeedsFallback(request) => Err(request.as_cell_failure()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clip_with_slot_result(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+    ) -> Result<ClipResult, CellFailure> {
+        match self.clip_with_slot_result_policy(neighbor_idx, neighbor_slot, neighbor)? {
+            BuilderClipOutcome::Applied(clip_result) => Ok(clip_result),
+            BuilderClipOutcome::NeedsFallback(request) => Err(request.as_cell_failure()),
+        }
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -236,30 +267,5 @@ impl Topo2DBuilder {
             }
         };
         Self::handle_step_result(result)
-    }
-
-    pub fn clip_with_slot(
-        &mut self,
-        neighbor_idx: usize,
-        neighbor_slot: u32,
-        neighbor: Vec3,
-    ) -> Result<(), CellFailure> {
-        match self.clip_with_slot_policy(neighbor_idx, neighbor_slot, neighbor)? {
-            BuilderStepOutcome::Applied => Ok(()),
-            BuilderStepOutcome::NeedsFallback(request) => Err(request.as_cell_failure()),
-        }
-    }
-
-    #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn clip_with_slot_result(
-        &mut self,
-        neighbor_idx: usize,
-        neighbor_slot: u32,
-        neighbor: Vec3,
-    ) -> Result<ClipResult, CellFailure> {
-        match self.clip_with_slot_result_policy(neighbor_idx, neighbor_slot, neighbor)? {
-            BuilderClipOutcome::Applied(clip_result) => Ok(clip_result),
-            BuilderClipOutcome::NeedsFallback(request) => Err(request.as_cell_failure()),
-        }
     }
 }
