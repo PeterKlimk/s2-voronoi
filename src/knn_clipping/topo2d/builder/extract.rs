@@ -6,7 +6,6 @@ use super::{
 use crate::fp;
 use crate::knn_clipping::cell_build::{CellFailure, CellOutputBuffer};
 use glam::{DVec3, Vec3};
-use std::cmp::Ordering;
 
 const FALLBACK_PLANE_TOL: f64 = 1e-9;
 const FALLBACK_DEDUP_DOT: f32 = 1.0 - 1e-5;
@@ -294,7 +293,10 @@ impl FallbackBuilder {
             }
         }
 
-        vertices.sort_by(|a, b| a.angle.partial_cmp(&b.angle).unwrap_or(Ordering::Equal));
+        // total_cmp: NaN angles (degenerate directions) get a deterministic
+        // order instead of an inconsistent comparator, which std::sort may
+        // reject with a panic since Rust 1.81.
+        vertices.sort_by(|a, b| a.angle.total_cmp(&b.angle));
         vertices
     }
 

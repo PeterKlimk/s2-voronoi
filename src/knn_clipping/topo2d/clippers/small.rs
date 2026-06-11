@@ -1,3 +1,12 @@
+/// Find the first inside-entry and inside-exit transitions of a cyclic mask.
+///
+/// Callers guarantee a *mixed* mask (the all-inside / none-inside cases are
+/// handled before calling), and any mixed mask on a cyclic boundary contains
+/// at least one `false -> true` and one `true -> false` transition, so both
+/// scans always succeed; the `unreachable!` is a bug trap, not an input
+/// state. If the epsilon-scale inside test produces multiple surviving arcs
+/// (numerically non-convex polygon), the first arc is kept; the edge-check /
+/// reconciliation layer owns any resulting cross-cell disagreement.
 #[inline(always)]
 fn find_entry_exit_transitions<const N: usize>(
     inside: &[bool; N],
@@ -19,8 +28,8 @@ fn find_entry_exit_transitions<const N: usize>(
 
     match (entry_idx, exit_idx) {
         (Some(entry), Some(exit)) => (entry, exit),
-        _ => panic!(
-            "small clipper invariant failure: partially clipped convex polygon must have one entry and one exit transition (N={}, inside={:?})",
+        _ => unreachable!(
+            "mixed cyclic mask must contain both transitions (N={}, inside={:?})",
             N, inside
         ),
     }
