@@ -206,8 +206,10 @@ also reproducible at small counts with near-coincident pairs. They do not affect
 topology (Euler already ignores them), but `validate` counts them as a subdivision issue — so the
 crate's default output fails its own strict check on some seeds.
 
-Desired direction: reclassify as a representation note and/or add O(repairs) targeted compaction
-(track orphaned indices during repair; patch only affected cells). Contract issue.
+Resolved (2026-06): orphan vertices are now a representation note
+(`ValidationReport::representation_notes`), not a subdivision issue, and
+`SphericalVoronoi::compact_vertices()` removes them on demand. A possible refinement remains:
+O(repairs) tracking during edge repair so compaction cost scales with defect count.
 
 ### 10. Single hard failure mode at the coincidence boundary: micro-cell `ClippedAway`
 

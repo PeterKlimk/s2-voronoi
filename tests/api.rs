@@ -253,6 +253,21 @@ fn test_clustered_cap_extreme_weld_keeps_returned_diagram_strictly_valid() {
             "welded twins must alias their canonical cell's boundary"
         );
     }
+
+    // Compaction keeps the diagram strictly valid and weld-consistent.
+    let mut compacted = output.diagram.clone();
+    compacted.compact_vertices();
+    let report = validate(&compacted);
+    assert!(
+        report.is_strictly_valid(),
+        "compacted welded diagram should validate strictly: {}",
+        report.headline()
+    );
+    assert_eq!(report.orphan_vertices, 0);
+    assert_eq!(
+        compacted.welded_twin_count(),
+        output.diagram.welded_twin_count()
+    );
 }
 
 #[test]

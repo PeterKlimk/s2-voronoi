@@ -17,8 +17,7 @@ use crate::cube_grid::packed_knn::{
 };
 use crate::cube_grid::{CubeMapGrid, PackedQuery};
 use crate::knn_clipping::cell_build::{
-    build_cell_into, CellBuildContext, CellBuildRequest, CellOutputBuffer, SeedNeighbor,
-    VertexData,
+    build_cell_into, CellBuildContext, CellBuildRequest, CellOutputBuffer, SeedNeighbor, VertexData,
 };
 use crate::knn_clipping::TerminationConfig;
 use crate::packed_layout::PackedSlotLayout;
@@ -246,8 +245,7 @@ pub(super) fn build_cells_sharded_live_dedup(
 
                 if packed_policy.enabled() {
                     let queries = &packed_queries_all[group_start..cursor];
-                    let query_local_start =
-                        checked_u32(group_start, "packed query local start")?;
+                    let query_local_start = checked_u32(group_start, "packed query local start")?;
                     let group = PackedGroupInput::new(
                         cell as usize,
                         bin.as_u8(),
@@ -269,7 +267,8 @@ pub(super) fn build_cells_sharded_live_dedup(
                                 my_generators[group_start..cursor].iter().enumerate()
                             {
                                 let local_idx = group_start + offset;
-                                let local = checked_local_id(local_idx, "shard-local generator index")?;
+                                let local =
+                                    checked_local_id(local_idx, "shard-local generator index")?;
                                 let mut shard_ctx = ShardContext {
                                     shard: &mut shard,
                                     bin,
@@ -289,8 +288,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                         offset,
                                         packed_policy,
                                     )),
-                                )
-                                ?;
+                                )?;
                             }
                         }
                         PreparedPackedGroupStatus::SlowPath => {
@@ -298,7 +296,8 @@ pub(super) fn build_cells_sharded_live_dedup(
                                 my_generators[group_start..cursor].iter().enumerate()
                             {
                                 let local_idx = group_start + offset;
-                                let local = checked_local_id(local_idx, "shard-local generator index")?;
+                                let local =
+                                    checked_local_id(local_idx, "shard-local generator index")?;
                                 let mut shard_ctx = ShardContext {
                                     shard: &mut shard,
                                     bin,
@@ -313,8 +312,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                                     termination_policy,
                                     global,
                                     None,
-                                )
-                                ?;
+                                )?;
                             }
                         }
                     }
@@ -344,8 +342,7 @@ pub(super) fn build_cells_sharded_live_dedup(
                             termination_policy,
                             global,
                             None,
-                        )
-                        ?;
+                        )?;
                     }
                 }
             }
@@ -462,8 +459,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
             let owner_bin = grid_ctx.assignment.generator_bin[key[0] as usize];
             if owner_bin == bin {
                 if *vi == INVALID_INDEX {
-                    let new_idx =
-                        checked_u32(shard.output.vertices.len(), "shard vertex index")?;
+                    let new_idx = checked_u32(shard.output.vertices.len(), "shard vertex index")?;
                     shard.output.vertices.push(pos);
                     shard.output.vertex_keys.push(key);
                     *vi = new_idx;
@@ -535,8 +531,8 @@ mod tests {
 
     #[test]
     fn checked_u8_reports_representation_limit() {
-        let err = checked_u8(256, "cell vertex count")
-            .expect_err("value above u8::MAX should fail");
+        let err =
+            checked_u8(256, "cell vertex count").expect_err("value above u8::MAX should fail");
         match err {
             BuildCellsError::RepresentationLimit(msg) => {
                 assert!(msg.contains("cell vertex count"));

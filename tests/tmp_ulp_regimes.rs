@@ -23,7 +23,11 @@ fn run(name: &str, points: &[UnitVec3]) {
             } else {
                 "INVALID"
             };
-            eprintln!("{name}: {} cells, {} - {status}", diagram.num_cells(), report.headline());
+            eprintln!(
+                "{name}: {} cells, {} - {status}",
+                diagram.num_cells(),
+                report.headline()
+            );
         }
         Err(e) => {
             let msg = format!("{e:?}");
@@ -49,7 +53,8 @@ fn offset_twin(p: UnitVec3, s: f64, rng: &mut ChaCha8Rng) -> Option<(UnitVec3, f
     let t = (r - p64 * r.dot(p64)).normalize();
     let q64 = (p64 + t * s).normalize();
     let q = UnitVec3::new(q64.x as f32, q64.y as f32, q64.z as f32);
-    if (q.x.to_bits(), q.y.to_bits(), q.z.to_bits()) == (p.x.to_bits(), p.y.to_bits(), p.z.to_bits())
+    if (q.x.to_bits(), q.y.to_bits(), q.z.to_bits())
+        == (p.x.to_bits(), p.y.to_bits(), p.z.to_bits())
     {
         return None;
     }
@@ -79,9 +84,8 @@ fn tmp_separation_sweep() {
             }
             i += 1;
         }
-        let name = format!(
-            "sep_{s:.0e}_x{placed} (realized {realized_min:.1e}..{realized_max:.1e})"
-        );
+        let name =
+            format!("sep_{s:.0e}_x{placed} (realized {realized_min:.1e}..{realized_max:.1e})");
         run(&name, &pts);
     }
 }
@@ -182,12 +186,7 @@ fn tmp_seam_pairs_rotated() {
 /// k points scattered in a tangent disc of `radius` around `center`, cast to
 /// f32, bitwise-distinct (re-rolled on collision). Returns the points plus the
 /// realized min pairwise chord distance.
-fn cluster_at(
-    center: DVec3,
-    k: usize,
-    radius: f64,
-    rng: &mut ChaCha8Rng,
-) -> (Vec<UnitVec3>, f64) {
+fn cluster_at(center: DVec3, k: usize, radius: f64, rng: &mut ChaCha8Rng) -> (Vec<UnitVec3>, f64) {
     let c = center.normalize();
     let mut pts: Vec<UnitVec3> = Vec::with_capacity(k);
     let mut tries = 0;
@@ -201,9 +200,10 @@ fn cluster_at(
         let t = (r - c * r.dot(c)).normalize();
         let q64 = (c + t * (radius * rng.gen_range(0.1..1.0))).normalize();
         let q = UnitVec3::new(q64.x as f32, q64.y as f32, q64.z as f32);
-        let dup = pts
-            .iter()
-            .any(|p| (p.x.to_bits(), p.y.to_bits(), p.z.to_bits()) == (q.x.to_bits(), q.y.to_bits(), q.z.to_bits()));
+        let dup = pts.iter().any(|p| {
+            (p.x.to_bits(), p.y.to_bits(), p.z.to_bits())
+                == (q.x.to_bits(), q.y.to_bits(), q.z.to_bits())
+        });
         if !dup {
             pts.push(q);
         }
@@ -265,8 +265,7 @@ fn tmp_cluster_margin_sweep() {
                     placed += 1;
                 }
             }
-            let name =
-                format!("rand_k{k}_r{radius:.0e}_x{placed} (min_sep {worst_min:.1e})");
+            let name = format!("rand_k{k}_r{radius:.0e}_x{placed} (min_sep {worst_min:.1e})");
             run(&name, &pts);
         }
     }
@@ -285,8 +284,7 @@ fn tmp_cluster_margin_sweep() {
                     placed += 1;
                 }
             }
-            let name =
-                format!("seam_k{k}_r{radius:.0e}_x{placed} (min_sep {worst_min:.1e})");
+            let name = format!("seam_k{k}_r{radius:.0e}_x{placed} (min_sep {worst_min:.1e})");
             run(&name, &pts);
         }
     }

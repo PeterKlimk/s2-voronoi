@@ -26,26 +26,26 @@ Headline claims to be able to make honestly at release:
 
 The empirical groundwork is done (see correctness-contract.md); this is the implementation.
 
-1. **Replace `MergeDensity` with a fixed-radius weld** (~1e-6 chord).
-   - simple quantized spatial hash + tiny union-find, or reuse of the cube grid; O(n), parallel
-   - fix welded-generator output semantics: welded indices share a cell (no materialized
-     duplicate vertex lists — the current remap's duplicate cells are what fail validation)
-   - validator understands weld classes; `compute_with_report` reports welds
-   - keep `Disabled` (caller certifies separation) and `MergeWithin(r)` (caller policy)
-2. **Orphan-vertex policy.**
-   - reclassify unreferenced vertices as a representation note in strict validation, and/or
-   - O(repairs) targeted compaction: record indices orphaned during edge repair; if non-empty at
-     finalization, swap-remove and patch only affected cells (zero cost on clean runs)
+1. ~~**Replace `MergeDensity` with a fixed-radius weld**~~ **Done.** `PreprocessMode::Weld`
+   (default) welds at the coincident-distance radius via a parallel quantized-key sort pass
+   (~110ms at 2M points); welded twins alias their canonical cell and are exposed via
+   `SphericalVoronoi::weld_map`; the validator accounts canonical cells and checks weld-map
+   consistency. `Disabled` and `MergeWithin(r)` retained.
+2. ~~**Orphan-vertex policy.**~~ **Done.** Unreferenced vertices are a representation note
+   (`ValidationReport::representation_notes`), and `SphericalVoronoi::compact_vertices()` removes
+   them on demand. (Possible refinement: O(repairs) tracking during edge repair so compaction is
+   proportional to defect count.)
 3. **`ClippedAway` backstop.** A micro-cell clipped to empty by sub-weld-radius neighbors emits a
-   degenerate/welded cell plus a report entry instead of aborting the whole computation.
+   degenerate/welded cell plus a report entry instead of aborting the whole computation. With the
+   weld default this can only trigger via `Disabled`/undersized `MergeWithin` radii.
 4. **Input validation.** O(n) finite check with index-bearing error (NaN currently surfaces as a
    deep `ClippedAway` diagnostic).
-5. **Promote the evidence to CI.**
-   - un-ignore the 2M/3M/4M fuzz tests as scheduled CI asserting `STRICT_VALID` (they pass today
-     with preprocessing disabled; after the weld rework they must pass with defaults)
-   - adopt the coincidence probes (separation sweep, ulp clusters, seam/aligned pairs, rotated
-     control) from `tests/tmp_ulp_regimes.rs` into `tests/adversarial.rs` as contract tests
-   - delete the stale "bad edges" comments — the 2–4M failures were the merge remap, not stitching
+5. **Promote the evidence to CI.** Partially done: the 2M/3M/4M fuzz sweeps now assert
+   `STRICT_VALID` under the default config (still `#[ignore]` for runtime — wire into scheduled
+   CI when CI exists), three weld contract tests cover exact duplicates, ulp clusters, and
+   seam-aligned pairs, and the stale "bad edges" comments are gone. Remaining: adopt the full
+   probe matrix (separation sweep, rotated control) from `tests/tmp_ulp_regimes.rs` into
+   `tests/adversarial.rs`.
 6. **Tighten loose assertions** for supported inputs: Euler exactly 2, zero degenerate cells, zero
    duplicate-vertex cells (loose bounds remain only in explicitly-adversarial diagnostics).
 

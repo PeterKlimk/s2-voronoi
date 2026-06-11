@@ -74,11 +74,7 @@ impl WeldGrid {
         let ay = self.axis(p.y);
         let az = self.axis(p.z);
         let options = |(q, near_low, near_high): (u64, bool, bool)| {
-            [
-                Some(q),
-                near_low.then(|| q - 1),
-                near_high.then(|| q + 1),
-            ]
+            [Some(q), near_low.then(|| q - 1), near_high.then(|| q + 1)]
         };
         let xs = options(ax);
         let ys = options(ay);
@@ -158,8 +154,7 @@ pub fn merge_close_points(points: &[Vec3], threshold: f32) -> MergeResult {
             for i in run_start..run_end {
                 let ai = keyed[i].1;
                 for &(_, aj) in &keyed[(i + 1)..run_end] {
-                    let dist_sq =
-                        (points[ai as usize] - points[aj as usize]).length_squared();
+                    let dist_sq = (points[ai as usize] - points[aj as usize]).length_squared();
                     if dist_sq < threshold_sq {
                         pairs.push((ai, aj));
                     }
@@ -272,7 +267,10 @@ mod tests {
         let points = vec![unit(1.0, 0.0, 0.0), p, unit(0.0, 1.0, 0.0), p];
         let result = merge_close_points(&points, 1e-6);
         assert_eq!(result.num_merged, 1);
-        assert_eq!(result.original_to_effective[1], result.original_to_effective[3]);
+        assert_eq!(
+            result.original_to_effective[1],
+            result.original_to_effective[3]
+        );
         assert_eq!(result.effective_points.len(), 3);
     }
 
@@ -283,7 +281,10 @@ mod tests {
         let points = vec![p, q, unit(0.0, 1.0, 0.0)];
         let result = merge_close_points(&points, 1e-6);
         assert_eq!(result.num_merged, 1);
-        assert_eq!(result.original_to_effective[0], result.original_to_effective[1]);
+        assert_eq!(
+            result.original_to_effective[0],
+            result.original_to_effective[1]
+        );
         // Representative is the smallest original index.
         assert_eq!(result.effective_points[result.original_to_effective[0]], p);
     }
@@ -328,7 +329,10 @@ mod tests {
             result.num_merged, 1,
             "pair straddling a quantization wall must still weld"
         );
-        assert_eq!(result.original_to_effective[0], result.original_to_effective[1]);
+        assert_eq!(
+            result.original_to_effective[0],
+            result.original_to_effective[1]
+        );
     }
 
     #[test]

@@ -85,9 +85,7 @@ impl SphericalVoronoi {
         cell_indices: Vec<u32>,
         weld_map: Option<Vec<u32>>,
     ) -> Self {
-        debug_assert!(weld_map
-            .as_ref()
-            .is_none_or(|m| m.len() == cells.len()));
+        debug_assert!(weld_map.as_ref().is_none_or(|m| m.len() == cells.len()));
         Self {
             generators: generators
                 .into_iter()
@@ -196,6 +194,75 @@ impl SphericalVoronoi {
             None => 0,
         }
     }
+
+    /// Remove vertices that no cell references and compact the index storage.
+    ///
+    /// Edge repair may leave a handful of unreferenced vertices behind rather
+    /// than paying this pass on every computation (see the orphan-vertices
+    /// representation note in `docs/correctness-contract.md`). Call this when
+    /// a dense vertex array matters (serialization, GPU upload). Vertex
+    /// indices are remapped; welded twins keep aliasing their canonical
+    /// cell's boundary. Returns the number of vertices removed.
+    pub fn compact_vertices(&mut self) -> usize {
+        let num_vertices = self.vertices.len();
+        let mut used = vec![false; num_vertices];
+        for i in 0..self.cells.len() {
+            if self.canonical_cell_index(i) != i {
+                continue;
+            }
+            for &vi in self.cell(i).vertex_indices {
+                if (vi as usize) < num_vertices {
+                    used[vi as usize] = true;
+                }
+            }
+        }
+
+        let removed = used.iter().filter(|&&u| !u).count();
+        if removed == 0 {
+            return 0;
+        }
+
+        let mut old_to_new = vec![u32::MAX; num_vertices];
+        let mut new_vertices = Vec::with_capacity(num_vertices - removed);
+        for (old, &is_used) in used.iter().enumerate() {
+            if is_used {
+                old_to_new[old] = new_vertices.len() as u32;
+                new_vertices.push(self.vertices[old]);
+            }
+        }
+
+        // Rebuild cells and the index buffer in one pass. Canonical cells
+        // always precede their twins (the canonical index is the smallest in
+        // the weld class), so twins can reuse the rebuilt CellData.
+        let mut new_cells: Vec<CellData> = Vec::with_capacity(self.cells.len());
+        let mut new_indices: Vec<u32> = Vec::with_capacity(self.cell_indices.len());
+        for i in 0..self.cells.len() {
+            let canonical = self.canonical_cell_index(i);
+            if canonical != i {
+                debug_assert!(canonical < i);
+                let alias = new_cells[canonical];
+                new_cells.push(alias);
+                continue;
+            }
+            let start = new_indices.len() as u32;
+            let data = &self.cells[i];
+            let range = data.start as usize..data.start as usize + data.len as usize;
+            new_indices.extend(
+                self.cell_indices[range]
+                    .iter()
+                    .map(|&vi| old_to_new.get(vi as usize).copied().unwrap_or(u32::MAX)),
+            );
+            new_cells.push(CellData {
+                start,
+                len: data.len,
+            });
+        }
+
+        self.vertices = new_vertices;
+        self.cells = new_cells;
+        self.cell_indices = new_indices;
+        removed
+    }
 }
 
 /// A view into a single Voronoi cell.
@@ -265,6 +332,77 @@ mod tests {
         assert_eq!(diagram.num_vertices(), 0);
         assert!(diagram.cell(0).is_empty());
         assert!(diagram.cell(1).is_empty());
+    }
+
+    #[test]
+    fn test_compact_vertices_removes_orphans_and_remaps() {
+        let generators = vec![UnitVec3::new(1.0, 0.0, 0.0), UnitVec3::new(-1.0, 0.0, 0.0)];
+        // Vertex 2 is an orphan; 0, 1, 3, 4 are referenced.
+        let vertices = vec![
+            UnitVec3::new(0.0, 1.0, 0.0),
+            UnitVec3::new(0.0, -1.0, 0.0),
+            UnitVec3::new(0.577, 0.577, 0.577),
+            UnitVec3::new(0.0, 0.0, 1.0),
+            UnitVec3::new(0.0, 0.0, -1.0),
+        ];
+        let mut diagram = SphericalVoronoi::from_cells_and_indices(
+            generators,
+            vertices,
+            vec![0, 4],
+            vec![4, 4],
+            vec![0, 3, 1, 4, 0, 4, 1, 3],
+        );
+
+        let removed = diagram.compact_vertices();
+        assert_eq!(removed, 1);
+        assert_eq!(diagram.num_vertices(), 4);
+        // Indices above the orphan shift down by one; the rest are unchanged.
+        assert_eq!(diagram.cell(0).vertex_indices, &[0, 2, 1, 3]);
+        assert_eq!(diagram.cell(1).vertex_indices, &[0, 3, 1, 2]);
+        assert_eq!(diagram.vertex(2), UnitVec3::new(0.0, 0.0, 1.0));
+        // Second call is a no-op.
+        assert_eq!(diagram.compact_vertices(), 0);
+    }
+
+    #[test]
+    fn test_compact_vertices_preserves_weld_aliasing() {
+        let generators = vec![
+            glam::Vec3::new(1.0, 0.0, 0.0),
+            glam::Vec3::new(1.0, 1e-7, 0.0),
+            glam::Vec3::new(-1.0, 0.0, 0.0),
+        ];
+        let vertices = vec![
+            glam::Vec3::new(0.0, 1.0, 0.0),
+            glam::Vec3::new(0.3, 0.3, 0.9), // orphan
+            glam::Vec3::new(0.0, -1.0, 0.0),
+            glam::Vec3::new(0.0, 0.0, 1.0),
+            glam::Vec3::new(0.0, 0.0, -1.0),
+        ];
+        // Cell 1 is a welded twin of cell 0.
+        let cells = vec![
+            VoronoiCell::new(0, 4),
+            VoronoiCell::new(0, 4),
+            VoronoiCell::new(4, 4),
+        ];
+        let cell_indices = vec![0, 3, 2, 4, 0, 4, 2, 3];
+        let mut diagram = SphericalVoronoi::from_raw_parts(
+            generators,
+            vertices,
+            cells,
+            cell_indices,
+            Some(vec![0, 0, 2]),
+        );
+
+        assert_eq!(diagram.compact_vertices(), 1);
+        assert_eq!(diagram.num_vertices(), 4);
+        assert_eq!(diagram.canonical_cell_index(1), 0);
+        assert_eq!(
+            diagram.cell(1).vertex_indices,
+            diagram.cell(0).vertex_indices,
+            "welded twin must still alias its canonical cell after compaction"
+        );
+        assert_eq!(diagram.cell(0).vertex_indices, &[0, 2, 1, 3]);
+        assert_eq!(diagram.welded_twin_count(), 1);
     }
 
     #[test]

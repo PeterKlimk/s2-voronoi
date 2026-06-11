@@ -95,9 +95,11 @@ the validator understands (shared cell, plus a weld report). Materializing dupli
 the cell is what previously made large fuzz runs validate as INVALID — that representation is the
 bug, not the welding.
 
-Status: target. The current `PreprocessMode::MergeDensity` default approximates the threshold but
-is slower than necessary (density-adaptive machinery the contract doesn't need) and has the
-duplicate-cell output bug. Replacement plan in `docs/todo.md`.
+Status: **implemented.** `PreprocessMode::Weld` (the default) welds at the coincident-distance
+radius via a parallel quantized-key pass; welded twins alias their canonical cell's storage and
+are exposed through `SphericalVoronoi::weld_map` / `canonical_cell_index`. `validate()` accounts
+the subdivision over canonical cells and checks weld-map consistency as an invariant. The 2-4M
+fuzz sweeps assert strict validity under the default config.
 
 ### Input validation
 
@@ -123,13 +125,13 @@ edge repair (compaction was skipped to protect the latency budget); they appear 
 (single digits at multi-million counts), do not affect the subdivision topology, and the Euler
 check already ignores them.
 
-Policy: strict validation should classify unreferenced vertices as a representation note, not an
-invalidity — and/or an opt-in compaction should exist. The preferred implementation makes
-compaction cost proportional to repair count (track indices orphaned during repair; swap-remove
-and patch only the affected cells), so clean runs pay nothing.
+Policy: strict validation classifies unreferenced vertices as a representation note
+(`ValidationReport::representation_notes`), not an invalidity, and an opt-in
+`SphericalVoronoi::compact_vertices()` removes them (one rebuild pass; call it when a dense
+vertex array matters, e.g. serialization or GPU upload). A future refinement could make
+compaction cost proportional to repair count by tracking indices orphaned during edge repair.
 
-Status: target. Today the validator counts orphans as a subdivision issue, which makes the crate's
-default output fail its own strict check on some seeds.
+Status: **implemented** (reclassification + opt-in compaction).
 
 ## Paths to a stronger guarantee
 

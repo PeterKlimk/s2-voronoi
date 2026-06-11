@@ -20,10 +20,7 @@ fn expect_strict_success(name: &str, result: Result<s2_voronoi::SphericalVoronoi
     );
 }
 
-fn expect_defined_failure(
-    name: &str,
-    result: Result<s2_voronoi::SphericalVoronoi, VoronoiError>,
-) {
+fn expect_defined_failure(name: &str, result: Result<s2_voronoi::SphericalVoronoi, VoronoiError>) {
     assert!(
         matches!(
             result,
@@ -117,7 +114,10 @@ fn test_clustered_cap_small_no_preprocess() {
         preprocess_mode: PreprocessMode::Disabled,
         ..Default::default()
     };
-    expect_strict_success("clustered_cap_small_no_preprocess", compute_with(&points, config));
+    expect_strict_success(
+        "clustered_cap_small_no_preprocess",
+        compute_with(&points, config),
+    );
 }
 
 #[test]
@@ -129,7 +129,10 @@ fn test_clustered_cap_tight_no_preprocess() {
         preprocess_mode: PreprocessMode::Disabled,
         ..Default::default()
     };
-    expect_strict_success("clustered_cap_tight_no_preprocess", compute_with(&points, config));
+    expect_strict_success(
+        "clustered_cap_tight_no_preprocess",
+        compute_with(&points, config),
+    );
 }
 
 #[test]
@@ -141,7 +144,10 @@ fn test_cocircular_tight_no_preprocess() {
         preprocess_mode: PreprocessMode::Disabled,
         ..Default::default()
     };
-    expect_strict_success("cocircular_tight_no_preprocess", compute_with(&points, config));
+    expect_strict_success(
+        "cocircular_tight_no_preprocess",
+        compute_with(&points, config),
+    );
 }
 
 // =============================================================================
@@ -282,114 +288,57 @@ fn test_multi_distribution_robustness() {
 // =============================================================================
 // High-Volume Fuzz Tests
 //
-// Diagnostic validation sweeps at large point counts (2-4M). Historical
-// "bad edges" in this range were the pre-weld merge remap duplicating cells
-// (docs/engineering-findings.md #7); with weld semantics these runs validate
-// strictly, modulo intentional orphan vertices on some seeds (finding #9).
-// Marked #[ignore] for runtime; promote to scheduled CI asserting
-// STRICT_VALID once the orphan policy (todo P0.2) lands.
+// Contract sweeps at large point counts (2-4.5M): every run must validate
+// strictly. Historical "bad edges" in this range were the pre-weld merge
+// remap duplicating cells (docs/engineering-findings.md #7); orphan vertices
+// are a documented representation note (finding #9), not an invalidity.
+// Marked #[ignore] for runtime only - suitable for scheduled CI.
 // Run with: cargo test --test adversarial fuzz -- --ignored --nocapture
 // =============================================================================
+
+/// Compute, validate, and assert strict validity for one fuzz case.
+fn assert_fuzz_strictly_valid(name: &str, points: &[s2_voronoi::UnitVec3]) {
+    let diagram = compute(points).unwrap_or_else(|e| panic!("{name}: compute failed with {e:?}"));
+    let report = validate(&diagram);
+    eprintln!(
+        "{name}: {} cells, {}",
+        diagram.num_cells(),
+        report.headline()
+    );
+    assert!(
+        report.is_strictly_valid(),
+        "{name}: expected strict validity, got {}",
+        report.headline()
+    );
+}
 
 #[test]
 #[ignore = "high-volume fuzz test - run manually"]
 fn test_fuzz_2m_random_seeds() {
-    // 2M points with 5 different seeds
     const N: usize = 2_000_000;
-    let seeds: [u64; 5] = [42, 123, 456, 789, 1001];
-
-    for seed in seeds {
+    for seed in [42u64, 123, 456, 789, 1001] {
         let points = random_sphere_points(N, seed);
-        let result = compute(&points);
-
-        match result {
-            Ok(diagram) => {
-                let report = validate(&diagram);
-                let status = if report.is_strictly_valid() {
-                    "STRICT_VALID"
-                } else {
-                    "INVALID"
-                };
-                eprintln!(
-                    "fuzz_2m seed={}: {} cells, {} - {}",
-                    seed,
-                    diagram.num_cells(),
-                    report.headline(),
-                    status
-                );
-            }
-            Err(e) => {
-                eprintln!("fuzz_2m seed={}: FAILED {:?}", seed, e);
-            }
-        }
+        assert_fuzz_strictly_valid(&format!("fuzz_2m seed={seed}"), &points);
     }
 }
 
 #[test]
 #[ignore = "high-volume fuzz test - run manually"]
 fn test_fuzz_3m_random_seeds() {
-    // 3M points with 5 different seeds
     const N: usize = 3_000_000;
-    let seeds: [u64; 5] = [42, 123, 456, 789, 1001];
-
-    for seed in seeds {
+    for seed in [42u64, 123, 456, 789, 1001] {
         let points = random_sphere_points(N, seed);
-        let result = compute(&points);
-
-        match result {
-            Ok(diagram) => {
-                let report = validate(&diagram);
-                let status = if report.is_strictly_valid() {
-                    "STRICT_VALID"
-                } else {
-                    "INVALID"
-                };
-                eprintln!(
-                    "fuzz_3m seed={}: {} cells, {} - {}",
-                    seed,
-                    diagram.num_cells(),
-                    report.headline(),
-                    status
-                );
-            }
-            Err(e) => {
-                eprintln!("fuzz_3m seed={}: FAILED {:?}", seed, e);
-            }
-        }
+        assert_fuzz_strictly_valid(&format!("fuzz_3m seed={seed}"), &points);
     }
 }
 
 #[test]
 #[ignore = "high-volume fuzz test - run manually"]
 fn test_fuzz_4m_random_seeds() {
-    // 4M points with 5 different seeds - in the range where bad edges occur
     const N: usize = 4_000_000;
-    let seeds: [u64; 5] = [42, 123, 456, 789, 1001];
-
-    for seed in seeds {
+    for seed in [42u64, 123, 456, 789, 1001] {
         let points = random_sphere_points(N, seed);
-        let result = compute(&points);
-
-        match result {
-            Ok(diagram) => {
-                let report = validate(&diagram);
-                let status = if report.is_strictly_valid() {
-                    "STRICT_VALID"
-                } else {
-                    "INVALID"
-                };
-                eprintln!(
-                    "fuzz_4m seed={}: {} cells, {} - {}",
-                    seed,
-                    diagram.num_cells(),
-                    report.headline(),
-                    status
-                );
-            }
-            Err(e) => {
-                eprintln!("fuzz_4m seed={}: FAILED {:?}", seed, e);
-            }
-        }
+        assert_fuzz_strictly_valid(&format!("fuzz_4m seed={seed}"), &points);
     }
 }
 
@@ -400,32 +349,9 @@ fn test_fuzz_sweep_sizes() {
     let sizes: [usize; 6] = [
         2_000_000, 2_500_000, 3_000_000, 3_500_000, 4_000_000, 4_500_000,
     ];
-    let seed: u64 = 42;
-
     for n in sizes {
-        let points = random_sphere_points(n, seed);
-        let result = compute(&points);
-
-        match result {
-            Ok(diagram) => {
-                let report = validate(&diagram);
-                let status = if report.is_strictly_valid() {
-                    "STRICT_VALID"
-                } else {
-                    "INVALID"
-                };
-                eprintln!(
-                    "fuzz_sweep n={}: {} cells, {} - {}",
-                    n,
-                    diagram.num_cells(),
-                    report.headline(),
-                    status
-                );
-            }
-            Err(e) => {
-                eprintln!("fuzz_sweep n={}: FAILED {:?}", n, e);
-            }
-        }
+        let points = random_sphere_points(n, 42);
+        assert_fuzz_strictly_valid(&format!("fuzz_sweep n={n}"), &points);
     }
 }
 
@@ -466,7 +392,11 @@ fn test_weld_ulp_cluster_strictly_valid_by_default() {
     points.push(s2_voronoi::UnitVec3::new(p.x.next_up(), p.y, p.z));
     points.push(s2_voronoi::UnitVec3::new(p.x, p.y.next_up(), p.z));
     points.push(s2_voronoi::UnitVec3::new(p.x, p.y, p.z.next_up()));
-    points.push(s2_voronoi::UnitVec3::new(p.x.next_down(), p.y.next_up(), p.z));
+    points.push(s2_voronoi::UnitVec3::new(
+        p.x.next_down(),
+        p.y.next_up(),
+        p.z,
+    ));
 
     let diagram = compute(&points).expect("ulp cluster should weld, not fail");
     let report = validate(&diagram);

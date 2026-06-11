@@ -55,6 +55,11 @@ pub struct ValidationReport {
     /// Number of stored vertices not on the unit sphere within tolerance.
     pub vertices_off_sphere: usize,
     /// Number of vertices that are referenced by no cells.
+    ///
+    /// Representation note, not a defect: edge repair may leave unreferenced
+    /// vertices behind rather than paying a compaction pass (they do not
+    /// participate in the subdivision and the Euler count ignores them). Use
+    /// [`crate::SphericalVoronoi::compact_vertices`] to remove them.
     pub orphan_vertices: usize,
     /// Number of referenced vertices with degree 1 or 2.
     pub low_incidence_vertices: usize,
@@ -111,9 +116,6 @@ impl ValidationReport {
                 self.same_direction_edge_pairs
             ));
         }
-        if self.orphan_vertices > 0 {
-            issues.push(format!("{} orphan vertices", self.orphan_vertices));
-        }
         if self.low_incidence_vertices > 0 {
             let [_d0, d1, d2, _d3, _d4p] = self.degree_counts;
             let mut parts = Vec::new();
@@ -162,19 +164,38 @@ impl ValidationReport {
             issues.push(format!("{} antipodal edges", self.antipodal_edges));
         }
         if self.weld_map_issues > 0 {
-            issues.push(format!(
-                "{} weld-map inconsistencies",
-                self.weld_map_issues
-            ));
+            issues.push(format!("{} weld-map inconsistencies", self.weld_map_issues));
         }
 
         issues
     }
 
+    /// Representation notes: properties of the stored representation that are
+    /// part of the documented contract rather than defects.
+    pub fn representation_notes(&self) -> Vec<String> {
+        let mut notes = Vec::new();
+
+        if self.orphan_vertices > 0 {
+            notes.push(format!("{} orphan vertices", self.orphan_vertices));
+        }
+        if self.welded_twin_cells > 0 {
+            notes.push(format!("{} welded twins", self.welded_twin_cells));
+        }
+
+        notes
+    }
+
     /// Single-line headline for logs and debug output.
     pub fn headline(&self) -> String {
+        let notes = self.representation_notes();
+        let notes_suffix = if notes.is_empty() {
+            String::new()
+        } else {
+            format!(" (notes: {})", notes.join(", "))
+        };
+
         if self.is_strictly_valid() {
-            return "Strictly valid".to_string();
+            return format!("Strictly valid{notes_suffix}");
         }
 
         let subdivision = self.subdivision_issues();
@@ -188,7 +209,7 @@ impl ValidationReport {
             parts.push(format!("invariants: {}", invariants.join(", ")));
         }
 
-        parts.join("; ")
+        format!("{}{notes_suffix}", parts.join("; "))
     }
 }
 
