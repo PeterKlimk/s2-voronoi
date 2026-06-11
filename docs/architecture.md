@@ -104,6 +104,9 @@ long-term plan (`docs/todo.md` P5) is to make shared decisions canonical — eva
 frame chosen by sorted generator index — so agreement holds by construction and reconciliation
 shrinks to a true edge case.
 
+The full invariant — order, coverage contract, the epsilon caveat — is written out in
+`docs/live_dedup.md` ("The stitching invariant").
+
 This argument — that the directed ordering plus combinatorial identity plus bounded repair yields
 a strictly valid subdivision — is the crate's central design idea and should be kept explicit when
 modifying any of the three mechanisms.

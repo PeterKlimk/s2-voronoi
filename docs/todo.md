@@ -149,17 +149,18 @@ In implementation order:
 
 ## P4: Code quality (prestige pass)
 
-1. **Centralize tolerances** in one module with a one-line empirical justification each
-   (EPS_INSIDE, FALLBACK_PLANE_TOL, FALLBACK_DEDUP_DOT, DEGENERATE_LEN_EPS, MIN_PROJECTION_COS,
-   the 1e-28 length checks, grid PAD/SIN_EPS). The margin data in correctness-contract.md is the
-   evidence backing them.
+1. ~~**Centralize tolerances**~~ **Done.** `src/tolerances.rs`: every numerical tolerance with
+   its empirical justification, grouped by pipeline stage, with a hierarchy sanity test and the
+   re-validation protocol in the module header. Proven a pure relocation (identical diagram
+   fingerprint). The inert `termination_max_k` config and the dead cadence policy were removed
+   alongside (the parked P3.5 question, closed).
 2. **Split the god functions**: `build_cell_into` (~280 lines, cell_build/run.rs) and
    `collect_and_resolve_cell_edges` (~210 lines, live_dedup/edge_checks.rs); extract the
    edge-endpoint matching logic duplicated between the main and overflow paths.
-3. **Document the stitching invariant.** The directed bin/local ordering that makes per-cell
-   parallel construction compose into one consistent graph is the crate's most original idea and
-   currently lives only in code structure. Write the argument down (likely in
-   architecture.md / live_dedup.md).
+3. ~~**Document the stitching invariant.**~~ **Done.** `docs/live_dedup.md` ("The stitching
+   invariant"): the total order, the per-pair coverage contract (cross-bin double discovery vs
+   same-bin seed forwarding), why the earlier side always delivers when it agrees the edge
+   exists, and the epsilon caveat that defines reconciliation's job and motivates P5.
 4. Invariant comments on the remaining undocumented unsafe blocks (small clippers; the grid
    scatter is already documented).
 
