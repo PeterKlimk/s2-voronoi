@@ -42,7 +42,7 @@ special-case logic in `cell_build/`. See `docs/fallback_builder.md`.
   - `topo2d/`: gnomonic projection, half-planes, and convex clipping.
   - `live_dedup/`: sharded vertex ownership, deferred-slot patching, and edge-check propagation.
   - `edge_reconcile.rs`: narrow post-pass reconciliation for unresolved shared-edge mismatches.
-  - `preprocess.rs`: merge near-coincident points.
+  - `preprocess.rs`: weld near-coincident generators (see docs/correctness-contract.md).
   - `timing.rs`: optional timing + histograms.
 - `src/cube_grid/`: cube-map spatial index + packed-kNN helpers.
 - `src/convex_hull.rs` (`qhull` feature): convex-hull dual backend (tests/bench comparisons).
@@ -53,10 +53,13 @@ The current heuristic and tuning decisions are intentionally centralized in `src
 
 That layer currently owns:
 
+- query-grid density and occupancy-feedback resolution
 - packed chunk sizing
 - packed `r=2` enablement
-- termination cadence
 - packed count-model constants
+
+Numerical tolerances live separately in `src/tolerances.rs` (empirical values with per-constant
+justification); policy is for performance heuristics, tolerances for correctness slack.
 
 If a future change adds dynamic heuristic activation, it should be expressed through this policy
 layer and the neighbor-source boundary, not by reintroducing local fallback logic into
