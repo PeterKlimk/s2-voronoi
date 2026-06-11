@@ -21,6 +21,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     preprocess_mode: PreprocessMode,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     validate_generator_capacity(points.len())?;
+    validate_generator_finiteness(&points)?;
     let mut tb = TimingBuilder::new();
 
     let t = Timer::start();
@@ -34,7 +35,13 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     };
 
     let grid = build_query_grid(effective_points_ref, &mut tb);
-    let sharded = construct_cell_shards(effective_points_ref, &grid, termination, &mut tb)?;
+    let sharded = construct_cell_shards(
+        effective_points_ref,
+        &grid,
+        termination,
+        merge_result.as_ref(),
+        &mut tb,
+    )?;
     let assembled = assemble_shards(sharded, &mut tb)?;
     let live_dedup::AssemblyResult {
         vertices,
@@ -102,6 +109,7 @@ fn compute_voronoi_knn_clipping_report_core(
     preprocess_mode: PreprocessMode,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
     validate_generator_capacity(points.len())?;
+    validate_generator_finiteness(&points)?;
     let mut tb = TimingBuilder::new();
 
     let t = Timer::start();
@@ -115,7 +123,13 @@ fn compute_voronoi_knn_clipping_report_core(
     };
 
     let grid = build_query_grid(effective_points_ref, &mut tb);
-    let sharded = construct_cell_shards(effective_points_ref, &grid, termination, &mut tb)?;
+    let sharded = construct_cell_shards(
+        effective_points_ref,
+        &grid,
+        termination,
+        merge_result.as_ref(),
+        &mut tb,
+    )?;
     let assembled = assemble_shards(sharded, &mut tb)?;
     let live_dedup::AssemblyResult {
         vertices,
@@ -174,7 +188,11 @@ fn compute_voronoi_knn_clipping_report_core(
     })
 }
 
-fn map_cell_build_error(err: CellBuildError) -> crate::VoronoiError {
+fn map_cell_build_error(
+    err: CellBuildError,
+    effective_points: &[Vec3],
+    merge_result: Option<&MergeResult>,
+) -> crate::VoronoiError {
     let detail_suffix = err
         .detail
         .as_deref()
@@ -197,6 +215,17 @@ fn map_cell_build_error(err: CellBuildError) -> crate::VoronoiError {
             "cell {} exceeded the clipping vertex budget{}",
             err.generator_idx, detail_suffix
         )),
+        CellFailure::ClippedAway => {
+            if let Some(degenerate) =
+                classify_coincident_clipped_away(&err, effective_points, merge_result)
+            {
+                return degenerate;
+            }
+            crate::VoronoiError::ComputationFailed(format!(
+                "cell {} failed during construction with ClippedAway{}",
+                err.generator_idx, detail_suffix
+            ))
+        }
         other => crate::VoronoiError::ComputationFailed(format!(
             "cell {} failed during construction with {:?}{}",
             err.generator_idx, other, detail_suffix
@@ -204,9 +233,68 @@ fn map_cell_build_error(err: CellBuildError) -> crate::VoronoiError {
     }
 }
 
-fn map_build_cells_error(err: live_dedup::BuildCellsError) -> crate::VoronoiError {
+/// Classify a `ClippedAway` failure caused by sub-weld-radius coincidence.
+///
+/// A cell can only be clipped to nothing when other generators sit within the
+/// resolvability scale of its generator (welding is disabled or the requested
+/// radius is below the weld radius). Such inputs get an actionable
+/// `DegenerateInput` naming the coincident generators instead of a generic
+/// computation failure. Emitting a degenerate cell instead is not an option:
+/// the neighbors were already clipped against this generator's bisectors, so
+/// their boundaries would carry edges pairing against a missing cell.
+fn classify_coincident_clipped_away(
+    err: &CellBuildError,
+    effective_points: &[Vec3],
+    merge_result: Option<&MergeResult>,
+) -> Option<crate::VoronoiError> {
+    let generator = *effective_points.get(err.generator_idx)?;
+    let radius_sq = constants::weld_radius() * constants::weld_radius();
+    let coincident: Vec<usize> = effective_points
+        .iter()
+        .enumerate()
+        .filter(|&(i, p)| i != err.generator_idx && (*p - generator).length_squared() < radius_sq)
+        .map(|(i, _)| original_index_for_effective(i, merge_result))
+        .collect();
+    if coincident.is_empty() {
+        return None;
+    }
+
+    let generator_original = original_index_for_effective(err.generator_idx, merge_result);
+    Some(crate::VoronoiError::DegenerateInput {
+        coincident_pairs: coincident.len(),
+        message: format!(
+            "generator {} is within the weld radius ({:.1e}) of generator(s) {:?} and its cell \
+             is below representable scale; enable welding (PreprocessMode::Weld, the default) \
+             or merge these points",
+            generator_original,
+            constants::weld_radius(),
+            coincident
+        ),
+    })
+}
+
+/// First original input index mapping to an effective index (identity when no
+/// welds occurred). O(n) scan; only used on terminal error paths.
+fn original_index_for_effective(effective_idx: usize, merge_result: Option<&MergeResult>) -> usize {
+    match merge_result {
+        Some(mr) => mr
+            .original_to_effective
+            .iter()
+            .position(|&e| e == effective_idx)
+            .unwrap_or(effective_idx),
+        None => effective_idx,
+    }
+}
+
+fn map_build_cells_error(
+    err: live_dedup::BuildCellsError,
+    effective_points: &[Vec3],
+    merge_result: Option<&MergeResult>,
+) -> crate::VoronoiError {
     match err {
-        live_dedup::BuildCellsError::CellBuild(err) => map_cell_build_error(err),
+        live_dedup::BuildCellsError::CellBuild(err) => {
+            map_cell_build_error(err, effective_points, merge_result)
+        }
         live_dedup::BuildCellsError::PackedLayoutCapacity(err) => {
             crate::VoronoiError::RepresentationLimit(format!(
                 "packed bin/local layout capacity exceeded in bin {}: population {} exceeds local mask {} (num_bins={}, local_shift={})",
@@ -227,6 +315,28 @@ fn validate_generator_capacity(num_points: usize) -> Result<(), crate::VoronoiEr
         "generator count {} exceeds u32-backed index capacity",
         num_points
     )))
+}
+
+/// Reject inputs containing non-finite components with an index-bearing error.
+fn validate_generator_finiteness(points: &[Vec3]) -> Result<(), crate::VoronoiError> {
+    #[cfg(feature = "parallel")]
+    let first_bad = {
+        use rayon::prelude::*;
+        points.par_iter().position_first(|p| !p.is_finite())
+    };
+    #[cfg(not(feature = "parallel"))]
+    let first_bad = points.iter().position(|p| !p.is_finite());
+
+    match first_bad {
+        None => Ok(()),
+        Some(point_index) => Err(crate::VoronoiError::InvalidInput {
+            point_index,
+            message: format!(
+                "point has a non-finite component: ({}, {}, {})",
+                points[point_index].x, points[point_index].y, points[point_index].z
+            ),
+        }),
+    }
 }
 
 fn preprocess_effective_points(
@@ -290,11 +400,12 @@ fn construct_cell_shards(
     effective_points: &[Vec3],
     grid: &CubeMapGrid,
     termination: TerminationConfig,
+    merge_result: Option<&MergeResult>,
     tb: &mut TimingBuilder,
 ) -> Result<live_dedup::ShardedCellsData, crate::VoronoiError> {
     let t = Timer::start();
     let sharded = live_dedup::build_cells_sharded_live_dedup(effective_points, grid, termination)
-        .map_err(map_build_cells_error)?;
+        .map_err(|err| map_build_cells_error(err, effective_points, merge_result))?;
     #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]
     tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
     Ok(sharded)
@@ -380,11 +491,15 @@ mod tests {
 
     #[test]
     fn map_projection_invalid_to_unsupported_geometry() {
-        let err = map_cell_build_error(CellBuildError {
-            generator_idx: 7,
-            failure: CellFailure::ProjectionInvalid,
-            detail: None,
-        });
+        let err = map_cell_build_error(
+            CellBuildError {
+                generator_idx: 7,
+                failure: CellFailure::ProjectionInvalid,
+                detail: None,
+            },
+            &[],
+            None,
+        );
         assert!(matches!(
             err,
             VoronoiError::UnsupportedGeometry {
@@ -396,11 +511,15 @@ mod tests {
 
     #[test]
     fn map_unbounded_after_exhaustion_to_computation_failed() {
-        let err = map_cell_build_error(CellBuildError {
-            generator_idx: 11,
-            failure: CellFailure::UnboundedAfterExhaustion,
-            detail: None,
-        });
+        let err = map_cell_build_error(
+            CellBuildError {
+                generator_idx: 11,
+                failure: CellFailure::UnboundedAfterExhaustion,
+                detail: None,
+            },
+            &[],
+            None,
+        );
         match err {
             VoronoiError::ComputationFailed(msg) => {
                 assert!(msg.contains("11"));
@@ -412,11 +531,15 @@ mod tests {
 
     #[test]
     fn map_too_many_vertices_to_computation_failed() {
-        let err = map_cell_build_error(CellBuildError {
-            generator_idx: 13,
-            failure: CellFailure::TooManyVertices,
-            detail: None,
-        });
+        let err = map_cell_build_error(
+            CellBuildError {
+                generator_idx: 13,
+                failure: CellFailure::TooManyVertices,
+                detail: None,
+            },
+            &[],
+            None,
+        );
         match err {
             VoronoiError::ComputationFailed(msg) => {
                 assert!(msg.contains("13"));
@@ -428,11 +551,15 @@ mod tests {
 
     #[test]
     fn map_cell_build_error_appends_detail_when_present() {
-        let err = map_cell_build_error(CellBuildError {
-            generator_idx: 17,
-            failure: CellFailure::NoValidSeed,
-            detail: Some("unexpected vertex extraction failure".to_string()),
-        });
+        let err = map_cell_build_error(
+            CellBuildError {
+                generator_idx: 17,
+                failure: CellFailure::NoValidSeed,
+                detail: Some("unexpected vertex extraction failure".to_string()),
+            },
+            &[],
+            None,
+        );
         match err {
             VoronoiError::ComputationFailed(msg) => {
                 assert!(msg.contains("17"));
@@ -445,15 +572,17 @@ mod tests {
 
     #[test]
     fn map_packed_layout_capacity_to_representation_limit() {
-        let err = map_build_cells_error(BuildCellsError::PackedLayoutCapacity(
-            PackedLayoutCapacityError {
+        let err = map_build_cells_error(
+            BuildCellsError::PackedLayoutCapacity(PackedLayoutCapacityError {
                 bin: 5,
                 local_population: 4096,
                 num_bins: 96,
                 local_shift: 8,
                 local_mask: 255,
-            },
-        ));
+            }),
+            &[],
+            None,
+        );
         match err {
             VoronoiError::RepresentationLimit(msg) => {
                 assert!(msg.contains("bin 5"));
@@ -467,15 +596,67 @@ mod tests {
 
     #[test]
     fn map_build_cells_representation_limit_to_public_representation_limit() {
-        let err = map_build_cells_error(BuildCellsError::RepresentationLimit(
-            "cell vertex count exceeds u8 capacity".to_string(),
-        ));
+        let err = map_build_cells_error(
+            BuildCellsError::RepresentationLimit(
+                "cell vertex count exceeds u8 capacity".to_string(),
+            ),
+            &[],
+            None,
+        );
         match err {
             VoronoiError::RepresentationLimit(msg) => {
                 assert!(msg.contains("cell vertex count"));
                 assert!(msg.contains("u8"));
             }
             other => panic!("expected RepresentationLimit, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn map_clipped_away_with_coincident_neighbor_to_degenerate_input() {
+        let g = glam::Vec3::new(1.0, 0.0, 0.0);
+        let twin = glam::Vec3::new(1.0, 5e-7, 0.0);
+        let far = glam::Vec3::new(0.0, 1.0, 0.0);
+        let err = map_cell_build_error(
+            CellBuildError {
+                generator_idx: 0,
+                failure: CellFailure::ClippedAway,
+                detail: None,
+            },
+            &[g, twin, far],
+            None,
+        );
+        match err {
+            VoronoiError::DegenerateInput {
+                coincident_pairs,
+                message,
+            } => {
+                assert_eq!(coincident_pairs, 1);
+                assert!(message.contains("generator 0"));
+                assert!(message.contains("[1]"));
+                assert!(message.contains("Weld"));
+            }
+            other => panic!("expected DegenerateInput, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn map_clipped_away_without_coincidence_stays_computation_failed() {
+        let err = map_cell_build_error(
+            CellBuildError {
+                generator_idx: 0,
+                failure: CellFailure::ClippedAway,
+                detail: None,
+            },
+            &[
+                glam::Vec3::new(1.0, 0.0, 0.0),
+                glam::Vec3::new(0.0, 1.0, 0.0),
+            ],
+            None,
+        );
+        match err {
+            VoronoiError::ComputationFailed(msg) => assert!(msg.contains("ClippedAway")),
+            other => panic!("expected ComputationFailed, got {:?}", other),
         }
     }
 

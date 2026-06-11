@@ -88,11 +88,13 @@ Some internal states are still treated as bugs rather than supported input outco
 
 Examples:
 
-- `ClippedAway`
-  - note (2026-06): this state is input-reachable with merging disabled — clusters of 3+
-    generators below the weld radius can clip an enclosed micro-cell to empty. It currently
-    surfaces as `ComputationFailed` and aborts the whole computation; the planned handling is a
-    degrade-and-report backstop (see `docs/correctness-contract.md` and `docs/todo.md` P0)
+- `ClippedAway` (only when no sub-weld coincidence explains it)
+  - update (2026-06): this state is input-reachable with welding disabled — clusters of 3+
+    generators below the weld radius can clip an enclosed micro-cell to empty. That
+    coincidence-driven case is now classified as a supported failure
+    (`VoronoiError::DegenerateInput` naming the coincident generators); a `ClippedAway` with no
+    coincident generators remains the bug class (`ComputationFailed`). See
+    `docs/correctness-contract.md`.
 - `NoValidSeed`
 - extraction metadata / reconstruction invariant failures inside `topo2d::builder`
 - internal stream-state contradictions

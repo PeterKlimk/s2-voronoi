@@ -103,20 +103,28 @@ fuzz sweeps assert strict validity under the default config.
 
 ### Input validation
 
-Non-finite components (NaN/inf) must be rejected by an O(n) input check with an index-bearing
-error. (Currently a NaN generator surfaces as a deep `ClippedAway` diagnostic.) Unit-length is
-assumed, not enforced, and stays that way for performance; the contract documents it.
+Non-finite components (NaN/inf) are rejected by an O(n) input check with an index-bearing
+`VoronoiError::InvalidInput`. Unit-length is assumed, not enforced, and stays that way for
+performance; the contract documents it.
 
-Status: target.
+Status: **implemented.**
 
-## The residual backstop
+## The residual failure: classified, not masked
 
-Because the only hard failure mode is `ClippedAway` of a micro-cell, the worst case has a targeted
-backstop: when a cell clips to empty and its constraints came from sub-weld-radius neighbors, emit
-a degenerate/welded cell and record it in the report instead of aborting the whole computation.
-This converts "2.5M-point run dies" into "one cell degraded, reported."
+The only hard failure mode at the coincidence boundary is `ClippedAway` of a micro-cell enclosed
+by sub-weld-radius neighbors — reachable only with welding disabled or an undersized custom
+radius. An earlier draft of this contract proposed emitting a degenerate cell and continuing;
+that is **unsound**: by the time the micro-cell is clipped away, its neighbors have already been
+clipped against its bisectors, so their boundaries carry edges that would pair against the
+missing cell, producing unpaired edges. A late weld has the same problem.
 
-Status: target. Today any single-cell `ClippedAway` aborts the entire computation.
+The implemented resolution classifies instead of masking: on `ClippedAway`, the backend scans for
+generators within the weld radius of the failing one and returns
+`VoronoiError::DegenerateInput` naming the coincident generator indices and pointing at the fix
+(enable welding, or merge the points). A `ClippedAway` with no coincident generators remains
+`ComputationFailed` — that case is a bug, not an input class.
+
+Status: **implemented.**
 
 ## Orphan vertices (representation note)
 

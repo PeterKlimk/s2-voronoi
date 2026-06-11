@@ -451,3 +451,94 @@ fn test_weld_seam_ulp_pairs_strictly_valid_by_default() {
     );
     assert_eq!(report.welded_twin_cells, num_pairs);
 }
+
+#[test]
+fn test_nan_input_rejected_with_index() {
+    let mut points = random_sphere_points(1_000, 17);
+    points[437] = s2_voronoi::UnitVec3::new(f32::NAN, 0.5, 0.5);
+
+    match compute(&points) {
+        Err(VoronoiError::InvalidInput { point_index, .. }) => {
+            assert_eq!(point_index, 437);
+        }
+        other => panic!("expected InvalidInput at point 437, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_infinite_input_rejected_with_index() {
+    let mut points = random_sphere_points(1_000, 17);
+    points[12] = s2_voronoi::UnitVec3::new(0.0, f32::INFINITY, 0.0);
+
+    match compute(&points) {
+        Err(VoronoiError::InvalidInput { point_index, .. }) => {
+            assert_eq!(point_index, 12);
+        }
+        other => panic!("expected InvalidInput at point 12, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_sub_weld_cluster_without_welding_is_degenerate_input() {
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
+    use s2_voronoi::{compute_with, PreprocessMode, VoronoiConfig};
+
+    // Sub-weld clusters (5 points scattered within ~1e-8) hard-fail
+    // construction when welding is off (ClippedAway on the enclosed
+    // micro-cell, see docs/correctness-contract.md); that failure must
+    // surface as an actionable DegenerateInput naming the coincident
+    // generators, not a generic ComputationFailed. Same construction as the
+    // margin-sweep probe that established the failure.
+    let mut points = random_sphere_points(20_000, 11);
+    let mut rng = ChaCha8Rng::seed_from_u64(404);
+    for i in 0..50 {
+        let c = points[i * 31];
+        let c64 = glam::DVec3::new(c.x as f64, c.y as f64, c.z as f64).normalize();
+        let mut placed = 0;
+        let mut tries = 0;
+        while placed < 4 && tries < 200 {
+            tries += 1;
+            let r = glam::DVec3::new(
+                rng.gen_range(-1.0..1.0),
+                rng.gen_range(-1.0..1.0),
+                rng.gen_range(-1.0..1.0),
+            );
+            let t = (r - c64 * r.dot(c64)).normalize();
+            let q64 = (c64 + t * (1e-8 * rng.gen_range(0.1..1.0))).normalize();
+            let q = s2_voronoi::UnitVec3::new(q64.x as f32, q64.y as f32, q64.z as f32);
+            let dup = points.iter().any(|p| (p.x, p.y, p.z) == (q.x, q.y, q.z));
+            if !dup {
+                points.push(q);
+                placed += 1;
+            }
+        }
+    }
+
+    let result = compute_with(
+        &points,
+        VoronoiConfig {
+            preprocess_mode: PreprocessMode::Disabled,
+            ..VoronoiConfig::default()
+        },
+    );
+    match result {
+        Err(VoronoiError::DegenerateInput {
+            coincident_pairs,
+            message,
+        }) => {
+            eprintln!("sub_weld_cluster: DegenerateInput ({coincident_pairs} pairs)");
+            assert!(coincident_pairs >= 1);
+            assert!(
+                message.contains("Weld"),
+                "message should point at the welding fix: {message}"
+            );
+        }
+        Ok(_) => {
+            // Construction order can let the cluster survive; if it computes,
+            // that is also acceptable - the contract is no *generic* failure.
+            eprintln!("sub_weld_cluster: computed without failure");
+        }
+        Err(other) => panic!("expected DegenerateInput, got {other:?}"),
+    }
+}

@@ -9,6 +9,9 @@ pub enum VoronoiError {
     /// Need at least 4 points for a non-degenerate result.
     InsufficientPoints(usize),
 
+    /// An input point is not usable (e.g. a non-finite component).
+    InvalidInput { point_index: usize, message: String },
+
     /// The input induced geometry outside the currently supported clipping model.
     ///
     /// This is used for expected algorithm boundaries such as cells that extend beyond the
@@ -40,6 +43,12 @@ impl fmt::Display for VoronoiError {
         match self {
             VoronoiError::InsufficientPoints(n) => {
                 write!(f, "insufficient points: need at least 4, got {}", n)
+            }
+            VoronoiError::InvalidInput {
+                point_index,
+                message,
+            } => {
+                write!(f, "invalid input at point {}: {}", point_index, message)
             }
             VoronoiError::UnsupportedGeometry {
                 generator_index,

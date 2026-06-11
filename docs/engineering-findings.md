@@ -218,9 +218,12 @@ enclosed by sub-weld-radius neighbors — and any single-cell `ClippedAway` curr
 entire computation. A NaN input component also surfaces through this path as a deep diagnostic
 instead of an input-validation error.
 
-Desired direction: O(n) finite-input check with index-bearing error; backstop that emits a
-degenerate/welded cell plus report entry when the clipped-away cell's constraints are all
-sub-weld-radius (todo P0.3/P0.4). Correctness/contract issue.
+Resolved (2026-06): non-finite inputs are rejected at compute entry with
+`VoronoiError::InvalidInput { point_index, .. }`, and coincidence-driven `ClippedAway` is
+classified as `DegenerateInput` naming the coincident generators (the degrade-and-continue
+backstop idea proved unsound: neighbors already clipped against the missing cell's bisectors
+would carry unpaired edges). Non-coincidence `ClippedAway` remains `ComputationFailed` (bug
+class). See `docs/correctness-contract.md`.
 
 ## Working rules for new findings
 

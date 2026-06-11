@@ -35,11 +35,14 @@ The empirical groundwork is done (see correctness-contract.md); this is the impl
    (`ValidationReport::representation_notes`), and `SphericalVoronoi::compact_vertices()` removes
    them on demand. (Possible refinement: O(repairs) tracking during edge repair so compaction is
    proportional to defect count.)
-3. **`ClippedAway` backstop.** A micro-cell clipped to empty by sub-weld-radius neighbors emits a
-   degenerate/welded cell plus a report entry instead of aborting the whole computation. With the
-   weld default this can only trigger via `Disabled`/undersized `MergeWithin` radii.
-4. **Input validation.** O(n) finite check with index-bearing error (NaN currently surfaces as a
-   deep `ClippedAway` diagnostic).
+3. ~~**`ClippedAway` backstop.**~~ **Done (as classification, not masking).** Emitting a
+   degenerate cell turned out unsound — neighbors already clipped against the missing cell's
+   bisectors would carry unpaired edges. Instead, a coincidence-driven `ClippedAway` (sub-weld
+   neighbors present; only reachable via `Disabled`/undersized `MergeWithin`) returns an
+   actionable `DegenerateInput` naming the coincident generators; without coincidence it stays
+   `ComputationFailed` (bug class). See correctness-contract.md.
+4. ~~**Input validation.**~~ **Done.** O(n) finite check at compute entry returns
+   `VoronoiError::InvalidInput { point_index, .. }`.
 5. **Promote the evidence to CI.** Partially done: the 2M/3M/4M fuzz sweeps now assert
    `STRICT_VALID` under the default config (still `#[ignore]` for runtime — wire into scheduled
    CI when CI exists), three weld contract tests cover exact duplicates, ulp clusters, and
