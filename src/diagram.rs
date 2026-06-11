@@ -12,6 +12,7 @@ use glam::Vec3;
 ///
 /// Each cell is represented as a list of vertex indices forming a spherical polygon.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SphericalVoronoi {
     /// Generator points (input), one per cell.
     generators: Vec<UnitVec3>,
@@ -32,6 +33,7 @@ pub struct SphericalVoronoi {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct CellData {
     start: u32,
     len: u16,

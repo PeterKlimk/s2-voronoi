@@ -506,3 +506,39 @@ fn test_adjacency_with_welded_twins() {
         "canonical cell should appear as a neighbor"
     );
 }
+
+#[cfg(feature = "serde")]
+#[test]
+fn test_serde_roundtrip_preserves_diagram_and_welds() {
+    use s2_voronoi::SphericalVoronoi;
+
+    let mut points = random_sphere_points(500, 777);
+    points.push(points[42]); // welded twin -> weld map must survive
+
+    let diagram = compute(&points).unwrap();
+    let json = serde_json::to_string(&diagram).expect("serialize");
+    let restored: SphericalVoronoi = serde_json::from_str(&json).expect("deserialize");
+
+    assert_eq!(restored.num_cells(), diagram.num_cells());
+    assert_eq!(restored.num_vertices(), diagram.num_vertices());
+    assert_eq!(restored.generators(), diagram.generators());
+    assert_eq!(restored.vertices(), diagram.vertices());
+    for i in 0..diagram.num_cells() {
+        assert_eq!(
+            restored.cell(i).vertex_indices,
+            diagram.cell(i).vertex_indices
+        );
+    }
+    assert_eq!(restored.weld_map(), diagram.weld_map());
+    assert_eq!(restored.canonical_cell_index(500), 42);
+    assert!(validate(&restored).is_strictly_valid());
+
+    // Adjacency round-trips too.
+    let adjacency = diagram.build_adjacency();
+    let adj_json = serde_json::to_string(&adjacency).expect("serialize adjacency");
+    let adj_restored: s2_voronoi::CellAdjacency =
+        serde_json::from_str(&adj_json).expect("deserialize adjacency");
+    for i in 0..diagram.num_cells() {
+        assert_eq!(adj_restored.neighbors_of(i), adjacency.neighbors_of(i));
+    }
+}

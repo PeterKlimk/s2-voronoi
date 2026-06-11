@@ -9,6 +9,7 @@ use bytemuck::{Pod, Zeroable};
 /// debug-assert normalization but does not normalize inputs.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UnitVec3 {
     pub x: f32,
     pub y: f32,

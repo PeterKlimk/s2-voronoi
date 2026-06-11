@@ -85,7 +85,7 @@ In order of user value:
    orientation-robust) — Lloyd relaxation is a 3-line loop, with a convergence test as the demo.
 3. **Delaunay dual access** — mostly covered by `build_adjacency()` (neighbor pairs are the
    Delaunay edges); an explicit triangle-list API remains if users ask for it.
-4. **`serde` feature** on `SphericalVoronoi`.
+4. ~~**`serde` feature**~~ **Done.** Optional derives on UnitVec3, SphericalVoronoi (weld map included), and CellAdjacency; round-trip test behind the feature.
 5. `compact()` (vertex compaction, see P0.2) as an explicit method.
 
 Explicitly deferred: weighted Voronoi, f64 storage, no_std, dynamic insertion/deletion.

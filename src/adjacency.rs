@@ -24,6 +24,7 @@ pub const NO_NEIGHBOR: u32 = u32::MAX;
 /// cells, so a welded twin never appears as a neighbor (its canonical cell
 /// does), and querying a twin returns its canonical cell's list.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CellAdjacency {
     cells: Vec<(u32, u16)>,
     neighbors: Vec<u32>,

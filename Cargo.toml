@@ -16,6 +16,7 @@ glam = []  # Enable UnitVec3Like impl for glam::Vec3
 timing = []  # Enable detailed timing instrumentation
 profiling = [] # Profiling helpers (e.g. disable inlining on hot functions)
 microbench = ["dep:rand", "dep:rand_chacha"] # Enable internal microbench harnesses
+serde = ["dep:serde"] # Serialize/Deserialize for diagram types
 qhull = ["qhull-enhanced"]  # Convex hull backend (test/bench only)
 simd_scalar = [] # Scalar/autovectorized 8-lane path instead of `wide`; debugging/comparison
 fma = [] # Prefer fused multiply-add via mul_add (may change results; can be slow without HW FMA)
@@ -40,12 +41,16 @@ rayon = { version = "1.10", optional = true }
 # Stable-Rust explicit SIMD (default 8-lane backend; see src/fp.rs)
 wide = "0.7"
 
+# Optional: serialization for diagram types
+serde = { version = "1", features = ["derive"], optional = true }
+
 # Optional: convex hull backend (test-only)
 qhull-enhanced = { version = "0.1", optional = true }
 
 [dev-dependencies]
 rand = "0.8"
 rand_chacha = "0.3"
+serde_json = "1"
 
 [[bin]]
 name = "bench_voronoi"
