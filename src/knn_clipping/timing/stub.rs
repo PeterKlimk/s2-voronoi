@@ -116,6 +116,9 @@ impl TimingBuilder {
     pub fn set_knn_build(&mut self, _d: Duration) {}
 
     #[inline(always)]
+    pub fn set_grid_stats(&mut self, _res: usize, _max_occupancy: u64, _rebuilt: bool) {}
+
+    #[inline(always)]
     pub fn set_cell_construction(&mut self, _d: Duration, _sub: CellSubPhases) {}
 
     #[inline(always)]

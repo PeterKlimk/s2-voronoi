@@ -7,7 +7,7 @@ use super::live_dedup;
 use super::timing::{Timer, TimingBuilder};
 use super::{
     cell_build::{CellBuildError, CellFailure},
-    constants, merge_close_points, MergeResult, TerminationConfig, KNN_GRID_TARGET_DENSITY,
+    constants, merge_close_points, MergeResult, TerminationConfig,
 };
 use crate::cube_grid::CubeMapGrid;
 #[cfg(feature = "timing")]
@@ -376,21 +376,61 @@ fn preprocess_effective_points(
     }
 }
 
+fn max_cell_occupancy(grid: &crate::cube_grid::CubeMapGrid) -> usize {
+    grid.cell_offsets()
+        .windows(2)
+        .map(|w| (w[1] - w[0]) as usize)
+        .max()
+        .unwrap_or(0)
+}
+
 fn build_query_grid(
     effective_points: &[Vec3],
     tb: &mut TimingBuilder,
 ) -> crate::cube_grid::CubeMapGrid {
     let t = Timer::start();
     let n = effective_points.len();
-    let target = KNN_GRID_TARGET_DENSITY.max(1.0);
-    let res = ((n as f64 / (6.0 * target)).sqrt() as usize).max(4);
     #[cfg(feature = "timing")]
     let mut grid_build_timings = CubeMapGridBuildTimings::default();
+
+    let build = |res: usize, #[cfg(feature = "timing")] timings: &mut CubeMapGridBuildTimings| {
+        #[cfg(feature = "timing")]
+        {
+            CubeMapGrid::new_with_build_timings(effective_points, res, timings)
+        }
+        #[cfg(not(feature = "timing"))]
+        {
+            CubeMapGrid::new(effective_points, res)
+        }
+    };
+
+    let mut res = crate::policy::knn_grid_resolution(n);
     #[cfg(feature = "timing")]
-    let grid = CubeMapGrid::new_with_build_timings(effective_points, res, &mut grid_build_timings);
+    let grid = build(res, &mut grid_build_timings);
     #[cfg(not(feature = "timing"))]
-    let grid = CubeMapGrid::new(effective_points, res);
+    let grid = build(res);
+    let mut max_occupancy = max_cell_occupancy(&grid);
+
+    // Occupancy feedback: clustered inputs produce mega-cells under the
+    // density-derived resolution; one rebuild at a higher resolution (within
+    // the memory budget) restores bounded per-cell work.
+    let mut rebuilt = false;
+    let grid = match crate::policy::grid_occupancy_rebuild_resolution(res, n, max_occupancy) {
+        Some(new_res) => {
+            res = new_res;
+            rebuilt = true;
+            #[cfg(feature = "timing")]
+            let regrid = build(new_res, &mut grid_build_timings);
+            #[cfg(not(feature = "timing"))]
+            let regrid = build(new_res);
+            max_occupancy = max_cell_occupancy(&regrid);
+            regrid
+        }
+        None => grid,
+    };
+
     tb.set_knn_build(t.elapsed());
+    tb.set_grid_stats(res, max_occupancy as u64, rebuilt);
     #[cfg(feature = "timing")]
     tb.set_knn_build_sub(grid_build_timings.clone());
     grid
@@ -484,10 +524,14 @@ fn remap_cells_to_original_indices(
 
 #[cfg(test)]
 mod tests {
-    use super::{map_build_cells_error, map_cell_build_error, validate_generator_capacity};
+    use super::{
+        build_query_grid, map_build_cells_error, map_cell_build_error, max_cell_occupancy,
+        validate_generator_capacity,
+    };
     use crate::knn_clipping::cell_build::{CellBuildError, CellFailure};
     use crate::knn_clipping::live_dedup::{BuildCellsError, PackedLayoutCapacityError};
     use crate::VoronoiError;
+    use glam::Vec3;
 
     #[test]
     fn map_projection_invalid_to_unsupported_geometry() {
@@ -658,6 +702,50 @@ mod tests {
             VoronoiError::ComputationFailed(msg) => assert!(msg.contains("ClippedAway")),
             other => panic!("expected ComputationFailed, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn clustered_input_triggers_occupancy_rebuild() {
+        use crate::cube_grid::CubeMapGrid;
+        use crate::knn_clipping::timing::TimingBuilder;
+
+        // Deterministic golden-angle spiral cluster in a ~0.1 rad cap around
+        // +Z: a density-derived grid packs thousands of points per cell.
+        let n = 20_000usize;
+        let golden = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
+        let points: Vec<Vec3> = (0..n)
+            .map(|i| {
+                let r = 0.1 * ((i as f32 + 0.5) / n as f32).sqrt();
+                let theta = golden * i as f32;
+                Vec3::new(r * theta.cos(), r * theta.sin(), 1.0).normalize()
+            })
+            .collect();
+
+        let naive_res = crate::policy::knn_grid_resolution(n);
+        let naive_occupancy = max_cell_occupancy(&CubeMapGrid::new(&points, naive_res));
+        let threshold = (crate::policy::GRID_OCCUPANCY_REBUILD_FACTOR
+            * crate::policy::knn_grid_target_density()) as usize;
+        assert!(
+            naive_occupancy > threshold,
+            "fixture must overflow the naive grid (occupancy {naive_occupancy})"
+        );
+
+        let mut tb = TimingBuilder::new();
+        let grid = build_query_grid(&points, &mut tb);
+        let rebuilt_occupancy = max_cell_occupancy(&grid);
+        assert!(
+            grid.res() > naive_res,
+            "occupancy feedback must raise the resolution ({} -> {})",
+            naive_res,
+            grid.res()
+        );
+        assert!(
+            rebuilt_occupancy < naive_occupancy / 4,
+            "rebuild must materially reduce the fullest cell ({naive_occupancy} -> {rebuilt_occupancy})"
+        );
+        // Memory budget: total cells stay O(n).
+        let cells = 6 * grid.res() * grid.res();
+        assert!(cells as f64 <= crate::policy::GRID_MAX_CELLS_PER_POINT * n as f64 * 1.1);
     }
 
     #[cfg(target_pointer_width = "64")]

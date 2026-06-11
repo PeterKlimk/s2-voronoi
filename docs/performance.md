@@ -57,3 +57,15 @@ Counters to watch:
 - `packed_expand_r2_select_ms`
 
 For the current policy surface and change rules, see `docs/policy.md`.
+
+## Grid density tuning
+
+- `S2_VORONOI_GRID_DENSITY=<f>`: override the query-grid target density
+  (points per cell) for sweeps. The default is a known-imperfect constant; the
+  optimum varies with point count and distribution (see docs/todo.md P3.2).
+- `./scripts/sweep_grid_density.sh`: density x size sweep emitting `TIMING_KV`
+  lines. Watch `neighbors_total` (mean neighbors before termination =
+  total / n), `grid_res`, `grid_max_occ`, and `grid_rebuilt` alongside
+  `total_ms` when fitting.
+- Clustered inputs trigger an occupancy-feedback rebuild (one step, memory
+  bounded); `grid_rebuilt=1` in `TIMING_KV` marks affected runs.

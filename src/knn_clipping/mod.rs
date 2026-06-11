@@ -39,11 +39,6 @@ pub struct TerminationConfig {
     pub max_k_cap: Option<usize>,
 }
 
-/// Target points per cell for the cube-map KNN grid.
-/// Lower = more cells, faster scans, more heap overhead.
-/// Higher = fewer cells, longer scans, less overhead.
-pub(super) const KNN_GRID_TARGET_DENSITY: f64 = 16.0;
-
 impl Default for TerminationConfig {
     fn default() -> Self {
         Self {

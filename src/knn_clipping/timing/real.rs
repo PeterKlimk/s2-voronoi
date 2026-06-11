@@ -85,6 +85,10 @@ pub struct CellSubPhases {
     pub packed_tail_builds: u64,
     pub packed_expand_r2_builds: u64,
     pub packed_expand_r2_cap_skips: u64,
+    /// Sum of neighbors processed before termination across all cells
+    /// (mean = total / n; input for the grid-density tuning model).
+    pub neighbors_processed_total: u64,
+    pub neighbors_processed_max: u64,
 }
 
 /// Fine-grained dedup timing and a few size counters.
@@ -116,6 +120,8 @@ pub struct CellSubAccum {
     packed_tail_builds: u64,
     packed_expand_r2_builds: u64,
     packed_expand_r2_cap_skips: u64,
+    neighbors_processed_total: u64,
+    neighbors_processed_max: u64,
 }
 
 impl CellSubAccum {
@@ -178,7 +184,7 @@ impl CellSubAccum {
         &mut self,
         stage: KnnCellStage,
         knn_exhausted: bool,
-        _neighbors_processed: usize,
+        neighbors_processed: usize,
         packed_tail_used: bool,
         packed_expand_r2_used: bool,
         packed_safe_exhausted: bool,
@@ -192,6 +198,8 @@ impl CellSubAccum {
         self.cells_packed_expand_r2_used += packed_expand_r2_used as u64;
         self.cells_packed_safe_exhausted += packed_safe_exhausted as u64;
         self.cells_used_knn += used_knn as u64;
+        self.neighbors_processed_total += neighbors_processed as u64;
+        self.neighbors_processed_max = self.neighbors_processed_max.max(neighbors_processed as u64);
     }
 
     #[inline]
@@ -215,6 +223,10 @@ impl CellSubAccum {
         self.packed_tail_builds += other.packed_tail_builds;
         self.packed_expand_r2_builds += other.packed_expand_r2_builds;
         self.packed_expand_r2_cap_skips += other.packed_expand_r2_cap_skips;
+        self.neighbors_processed_total += other.neighbors_processed_total;
+        self.neighbors_processed_max = self
+            .neighbors_processed_max
+            .max(other.neighbors_processed_max);
     }
 
     #[inline]
@@ -238,6 +250,8 @@ impl CellSubAccum {
             packed_tail_builds: self.packed_tail_builds,
             packed_expand_r2_builds: self.packed_expand_r2_builds,
             packed_expand_r2_cap_skips: self.packed_expand_r2_cap_skips,
+            neighbors_processed_total: self.neighbors_processed_total,
+            neighbors_processed_max: self.neighbors_processed_max,
         }
     }
 }
@@ -255,6 +269,11 @@ pub struct PhaseTimings {
     pub dedup_sub: DedupSubPhases,
     pub edge_reconcile: Duration,
     pub assemble: Duration,
+    /// Query-grid shape: resolution, max cell occupancy, and whether the
+    /// occupancy-feedback rebuild fired.
+    pub grid_res: usize,
+    pub grid_max_occupancy: u64,
+    pub grid_rebuilt: bool,
 }
 
 impl PhaseTimings {
@@ -426,6 +445,14 @@ impl PhaseTimings {
                 self.cell_sub.cells_packed_expand_r2_used,
                 self.cell_sub.cells_packed_safe_exhausted
             );
+            eprintln!(
+                "    neighbors: mean={:.1} max={} (grid res={} max_occ={} rebuilt={})",
+                self.cell_sub.neighbors_processed_total as f64 / n.max(1) as f64,
+                self.cell_sub.neighbors_processed_max,
+                self.grid_res,
+                self.grid_max_occupancy,
+                self.grid_rebuilt
+            );
         }
 
         eprintln!(
@@ -450,7 +477,7 @@ impl PhaseTimings {
 
         if std::env::var_os("S2_VORONOI_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} cells_packed_expand_r2_used={cpe} packed_tail_builds={ptb} packed_expand_r2_builds={prb} packed_expand_r2_cap_skips={pcs} packed_expand_r2_scan_ms={prs:.3} packed_expand_r2_select_ms={prel:.3}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} cells_packed_expand_r2_used={cpe} packed_tail_builds={ptb} packed_expand_r2_builds={prb} packed_expand_r2_cap_skips={pcs} packed_expand_r2_scan_ms={prs:.3} packed_expand_r2_select_ms={prel:.3} neighbors_total={nt} neighbors_max={nm} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -467,6 +494,11 @@ impl PhaseTimings {
                 pcs = self.cell_sub.packed_expand_r2_cap_skips,
                 prs = ms(self.cell_sub.packed_expand_r2_scan),
                 prel = ms(self.cell_sub.packed_expand_r2_select),
+                nt = self.cell_sub.neighbors_processed_total,
+                nm = self.cell_sub.neighbors_processed_max,
+                gr = self.grid_res,
+                gmo = self.grid_max_occupancy,
+                grb = self.grid_rebuilt as u8,
             );
         }
     }
@@ -484,6 +516,9 @@ pub struct TimingBuilder {
     dedup_sub: DedupSubPhases,
     edge_reconcile: Duration,
     assemble: Duration,
+    grid_res: usize,
+    grid_max_occupancy: u64,
+    grid_rebuilt: bool,
 }
 
 impl TimingBuilder {
@@ -499,7 +534,16 @@ impl TimingBuilder {
             dedup_sub: DedupSubPhases::default(),
             edge_reconcile: Duration::ZERO,
             assemble: Duration::ZERO,
+            grid_res: 0,
+            grid_max_occupancy: 0,
+            grid_rebuilt: false,
         }
+    }
+
+    pub fn set_grid_stats(&mut self, res: usize, max_occupancy: u64, rebuilt: bool) {
+        self.grid_res = res;
+        self.grid_max_occupancy = max_occupancy;
+        self.grid_rebuilt = rebuilt;
     }
 
     pub fn set_preprocess(&mut self, d: Duration) {
@@ -544,6 +588,9 @@ impl TimingBuilder {
             dedup_sub: self.dedup_sub,
             edge_reconcile: self.edge_reconcile,
             assemble: self.assemble,
+            grid_res: self.grid_res,
+            grid_max_occupancy: self.grid_max_occupancy,
+            grid_rebuilt: self.grid_rebuilt,
         }
     }
 }
