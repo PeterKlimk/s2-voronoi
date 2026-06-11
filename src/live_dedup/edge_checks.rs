@@ -11,8 +11,8 @@ use super::types::{
 };
 use super::with_two_mut;
 use crate::knn_clipping::cell_build::VertexKey;
-use crate::knn_clipping::timing::Timer;
 use crate::packed_layout::PackedSlotLayout;
+use crate::timing::Timer;
 use std::time::Duration;
 
 #[inline]
@@ -110,7 +110,7 @@ impl ShardDedup {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     cell_idx: u32,
-    shard_ctx: &mut super::build::ShardContext<'_, P>,
+    shard_ctx: &mut super::emit::ShardContext<'_, P>,
     output_buffer: &crate::knn_clipping::cell_build::CellOutputBuffer<P>,
     assignment: &BinAssignment,
     incoming_checks: Vec<EdgeCheck>,

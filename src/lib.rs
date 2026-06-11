@@ -55,6 +55,7 @@ pub(crate) mod policy;
 pub mod quality;
 #[cfg(any(test, feature = "packed_knn_sort_small"))]
 pub(crate) mod sort;
+pub(crate) mod timing;
 pub(crate) mod tolerances;
 mod types;
 pub mod validation;
@@ -93,6 +94,7 @@ macro_rules! maybe_par_iter {
 // Internal modules
 pub(crate) mod cube_grid;
 pub(crate) mod knn_clipping;
+pub(crate) mod live_dedup;
 pub(crate) mod plane_clipping;
 pub(crate) mod plane_grid;
 

@@ -11,7 +11,7 @@ use super::types::{BinId, DeferredSlot, EdgeCheckOverflow, UnresolvedEdgeMismatc
 use super::ShardedCellsData;
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::cell_build::VertexKey;
-use crate::knn_clipping::timing::{DedupSubPhases, Timer};
+use crate::timing::{DedupSubPhases, Timer};
 
 fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
     shards: &mut [super::shard::ShardState<P>],
@@ -561,7 +561,7 @@ mod tests {
         let sharded = ShardedCellsData {
             assignment,
             shards: vec![shard0, shard1],
-            cell_sub: crate::knn_clipping::timing::CellSubAccum::new(),
+            cell_sub: crate::timing::CellSubAccum::new(),
         };
 
         let assembled = assemble_sharded_live_dedup(sharded).expect("assembly should succeed");

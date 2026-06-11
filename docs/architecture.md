@@ -13,7 +13,7 @@ For each generator point `g`:
    produce the cell boundary in 2D (`knn_clipping/topo2d/`).
 4. Extract spherical vertices (unit vectors) from the final 2D polygon and deduplicate them across
    cells (“live dedup”) to build the global vertex list and per-cell index lists
-   (`knn_clipping/live_dedup/`).
+   (`src/live_dedup/`, shared with the planar backend).
 
 Cells are computed independently; “global” work is limited to dedup/overflow handling and narrow
 post-pass edge reconciliation.
@@ -40,7 +40,7 @@ special-case logic in `cell_build/`. See `docs/fallback_builder.md`.
 - `src/knn_clipping/`: kNN + clipping backend.
   - `cell_build/`: single-cell neighbor seeding, stream consumption, clipping, and extraction.
   - `topo2d/`: gnomonic projection, half-planes, and convex clipping.
-  - `live_dedup/`: sharded vertex ownership, deferred-slot patching, and edge-check propagation.
+  - `live_dedup/` (crate root): sharded vertex ownership, deferred-slot patching, and edge-check propagation.
   - `edge_reconcile.rs`: narrow post-pass reconciliation for unresolved shared-edge mismatches.
   - `preprocess.rs`: weld near-coincident generators (see docs/correctness-contract.md).
   - `timing.rs`: optional timing + histograms.

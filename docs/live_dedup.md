@@ -98,5 +98,5 @@ mismatches that survive those two steps.
 
 See:
 
-- `src/knn_clipping/live_dedup/edge_checks.rs`
-- `src/knn_clipping/live_dedup/assemble.rs`
+- `src/live_dedup/edge_checks.rs`
+- `src/live_dedup/assemble.rs`

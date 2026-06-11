@@ -8,10 +8,16 @@ use crate::policy::PackedNeighborPolicy;
 
 pub(crate) mod cell_build;
 pub(crate) mod compute;
+pub(crate) mod driver;
 pub(crate) mod edge_reconcile;
-pub(crate) mod live_dedup;
+// The live-dedup engine moved to the crate root (it is geometry-agnostic
+// and serves both the spherical and planar drivers); re-exported so
+// existing paths keep working.
+pub(crate) use crate::live_dedup;
 pub(crate) mod preprocess;
-pub(crate) mod timing;
+// Timing instrumentation moved to the crate root (the live-dedup engine
+// uses it too); re-exported so existing paths keep working.
+pub(crate) use crate::timing;
 pub(crate) mod topo2d;
 pub(crate) mod union_find;
 

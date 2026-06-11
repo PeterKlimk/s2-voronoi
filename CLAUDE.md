@@ -52,7 +52,7 @@ S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_v
 
 ## Crate Overview
 
-`s2-voronoi` computes spherical Voronoi diagrams on the unit sphere (S2) using kNN-driven half-space clipping.
+`s2-voronoi` computes spherical Voronoi diagrams on the unit sphere (S2) using kNN-driven half-space clipping, plus planar Voronoi diagrams over a bounded rectangle through the same sharded dedup engine (`compute_plane`).
 
 High-level flow per generator:
 
@@ -77,20 +77,35 @@ src/
 ├── lib.rs                         # Public API and feature-gated internal exports
 ├── types.rs                       # UnitVec3 / UnitVec3Like
 ├── diagram.rs                     # SphericalVoronoi storage
-├── validation.rs                  # Topology/consistency checks
+├── plane_diagram.rs               # PlanarVoronoi / PlanePoint / PlaneRect storage
+├── validation.rs                  # Topology checks (sphere + plane variants)
 ├── error.rs                       # VoronoiError
-├── fp.rs                          # Numeric helper ops
-├── knn_clipping/                  # Main backend
-│   ├── compute.rs                 # End-to-end backend orchestration
-│   ├── preprocess.rs              # Near-coincident merge pass
-│   ├── edge_repair.rs             # Post-assembly edge repairs
-│   ├── live_dedup/                # Sharded dedup + assembly
-│   ├── topo2d/                    # Gnomonic/topological clipping
-│   └── timing/                    # Timing feature plumbing
-├── cube_grid/                     # Spatial index + query stack
+├── fp.rs                          # Numeric helper ops + OrdF32
+├── tolerances.rs                  # Centralized numerical tolerances
+├── policy.rs                      # Grid sizing and neighbor policy knobs
+├── timing/                        # Timing feature plumbing (crate-wide)
+├── live_dedup/                    # Geometry-agnostic dedup/assembly engine
+│   ├── cell_output.rs             # VertexKey / CellOutputBuffer<P> vocabulary
+│   ├── emit.rs                    # Shared per-cell shard emission seam
+│   ├── binning.rs                 # CSR bin assignment core + layouts
+│   ├── edge_checks.rs             # Edge-check resolve/forward
+│   └── assemble.rs                # Shard concat + deferred patching
+├── knn_clipping/                  # Spherical backend
+│   ├── compute.rs                 # End-to-end orchestration
+│   ├── driver.rs                  # Per-bin cell-build driver (sphere)
+│   ├── preprocess.rs              # Near-coincident weld pass
+│   ├── edge_reconcile.rs          # Post-assembly edge reconciliation (shared)
+│   ├── cell_build/                # Single-cell construction loop
+│   └── topo2d/                    # Gnomonic/topological clipping
+├── plane_clipping/                # Planar backend (bounded rect)
+│   ├── compute.rs                 # Domain normalization + orchestration
+│   ├── driver.rs                  # Per-bin cell-build driver (plane)
+│   └── builder.rs                 # Rect-seeded planar cell builder
+├── plane_grid/                    # Flat 2D spatial index + shell frontier
+├── cube_grid/                     # Spherical spatial index + query stack
 │   ├── build.rs                   # Grid construction
 │   ├── projection.rs              # Face/uv/st conversion helpers
-│   ├── query/                     # Directed resumable kNN query path
+│   ├── query/                     # Directed eligibility + shell frontier
 │   └── packed_knn/                # Packed batched directed kNN
 ├── generated/
 │   └── sort_nets.rs               # Auto-generated sorting network code

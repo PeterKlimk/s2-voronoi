@@ -5,26 +5,24 @@
 //! - Single-threaded overflow flush (simplifies correctness)
 //! - Per-cell duplicate index checks handled by validation (not in hot path)
 
-use super::cell_build::CellBuildError;
-use super::cell_build::VertexKey;
-use super::TerminationConfig;
 use crate::diagram::VoronoiCell;
 
 mod assemble;
 mod binning;
-mod build;
+mod cell_output;
 mod edge_checks;
+mod emit;
 mod packed;
 mod shard;
 mod types;
 
+pub use cell_output::{CellBuildError, CellFailure, CellOutputBuffer, VertexData, VertexKey};
+
 pub(crate) use binning::BinAssignment;
 pub(crate) use binning::PackedLayoutCapacityError;
-pub(crate) use binning::{assign_bins_with, target_bin_count};
-pub(crate) use build::{
-    checked_local_id, checked_u32, emit_cell_output, LiveDedupCellScratch, ShardContext,
-};
+pub(crate) use binning::{assign_bins, assign_bins_with, target_bin_count};
 pub(crate) use edge_checks::unpack_edge_key;
+pub(crate) use emit::{checked_local_id, checked_u32, emit_cell_output, EdgeScratch, ShardContext};
 pub(crate) use shard::ShardState;
 pub(crate) use types::BinId;
 pub(crate) use types::{EdgeRecord, UnresolvedEdgeMismatch, VertexPosition};
@@ -46,13 +44,13 @@ pub(crate) struct AssemblyResult<P = glam::Vec3> {
     /// Flattened vertex indices for all cells.
     pub cell_indices: Vec<u32>,
     /// Timing sub-phases for the dedup stage.
-    pub dedup_sub: super::timing::DedupSubPhases,
+    pub dedup_sub: crate::timing::DedupSubPhases,
 }
 
 pub(crate) struct ShardedCellsData<P = glam::Vec3> {
     assignment: BinAssignment,
     shards: Vec<ShardState<P>>,
-    pub(super) cell_sub: super::timing::CellSubAccum,
+    pub(super) cell_sub: crate::timing::CellSubAccum,
 }
 
 impl<P: VertexPosition> ShardedCellsData<P> {
@@ -61,7 +59,7 @@ impl<P: VertexPosition> ShardedCellsData<P> {
     pub(crate) fn from_parts(
         assignment: BinAssignment,
         shards: Vec<ShardState<P>>,
-        cell_sub: super::timing::CellSubAccum,
+        cell_sub: crate::timing::CellSubAccum,
     ) -> Self {
         Self {
             assignment,
@@ -86,14 +84,6 @@ fn with_two_mut<T>(v: &mut [T], i: usize, j: usize) -> (&mut T, &mut T) {
         let (a, b) = v.split_at_mut(i);
         (&mut b[0], &mut a[j])
     }
-}
-
-pub(super) fn build_cells_sharded_live_dedup(
-    points: &[glam::Vec3],
-    grid: &crate::cube_grid::CubeMapGrid,
-    termination: TerminationConfig,
-) -> Result<ShardedCellsData, BuildCellsError> {
-    build::build_cells_sharded_live_dedup(points, grid, termination)
 }
 
 pub(crate) fn assemble_sharded_live_dedup<P: VertexPosition>(

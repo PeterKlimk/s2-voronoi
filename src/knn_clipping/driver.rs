@@ -1,0 +1,309 @@
+//! Spherical pipeline driver: per-bin parallel cell construction through
+//! the shared live-dedup engine (the planar sibling is
+//! `plane_clipping::driver`).
+
+use glam::Vec3;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+use crate::cube_grid::packed_knn::{
+    PackedGroupInput, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroupStatus,
+};
+use crate::cube_grid::{CubeMapGrid, PackedQuery};
+use crate::knn_clipping::cell_build::{
+    build_cell_into, CellBuildContext, CellBuildRequest, SeedNeighbor,
+};
+use crate::knn_clipping::TerminationConfig;
+use crate::live_dedup::{
+    assign_bins, checked_local_id, checked_u32, emit_cell_output, unpack_edge_key, BinId,
+    BuildCellsError, EdgeScratch, ShardContext, ShardState, ShardedCellsData,
+};
+use crate::packed_layout::PackedSlotLayout;
+
+pub(super) struct GridContext<'a> {
+    pub(super) points: &'a [Vec3],
+    pub(super) grid: &'a CubeMapGrid,
+    pub(super) assignment: &'a crate::live_dedup::BinAssignment,
+}
+
+/// Per-worker scratch: the shared edge-emission state plus the sphere
+/// driver's seed-neighbor staging (formerly live_dedup's
+/// LiveDedupCellScratch; each driver owns its seed storage now).
+struct SphereCellScratch {
+    edge_scratch: EdgeScratch,
+    seed_neighbors: Vec<SeedNeighbor>,
+}
+
+impl SphereCellScratch {
+    fn new(num_points: usize) -> Self {
+        Self {
+            edge_scratch: EdgeScratch::new(),
+            seed_neighbors: Vec::with_capacity(num_points.min(16)),
+        }
+    }
+}
+
+pub(crate) fn build_cells_sharded_live_dedup(
+    points: &[Vec3],
+    grid: &CubeMapGrid,
+    termination: TerminationConfig,
+) -> Result<ShardedCellsData, BuildCellsError> {
+    let policy = termination.packed_policy(points.len());
+    // Legacy config compatibility: no-k fallback ignores this cap.
+
+    let assignment = assign_bins(points, grid).map_err(BuildCellsError::PackedLayoutCapacity)?;
+    let num_bins = assignment.num_bins;
+    let packed_policy = policy;
+
+    let per_bin: Result<Vec<(ShardState, crate::timing::CellSubAccum)>, BuildCellsError> =
+        maybe_par_into_iter!(0..num_bins)
+            .map(|bin_usize| {
+                use crate::timing::CellSubAccum;
+
+                let bin = BinId::from_usize(bin_usize);
+                let my_generators = &assignment.bin_generators[bin_usize];
+                let mut shard = ShardState::new(my_generators.len());
+
+                let mut sub_accum = CellSubAccum::new();
+                let mut build_ctx = CellBuildContext::new(grid, policy);
+                let mut live_ctx = SphereCellScratch::new(grid.point_indices().len());
+                let vertex_capacity = my_generators.len().saturating_mul(6);
+                shard.output.vertices.reserve(vertex_capacity);
+                shard.output.vertex_keys.reserve(vertex_capacity);
+                shard
+                    .output
+                    .cell_indices
+                    .reserve(my_generators.len().saturating_mul(6));
+                // Conservative estimate for off-shard vertices.
+                shard.output.deferred_slots.reserve(my_generators.len());
+
+                let mut packed_scratch = PackedKnnCellScratch::new();
+
+                #[cfg_attr(
+                    not(feature = "timing"),
+                    allow(clippy::default_constructed_unit_structs)
+                )]
+                let mut packed_timings = PackedKnnTimings::default();
+
+                let packed_queries_all: Vec<u32> = my_generators
+                    .iter()
+                    .map(|&i| grid.point_index_to_slot(i))
+                    .collect();
+                #[cfg(debug_assertions)]
+                {
+                    for &i in my_generators {
+                        debug_assert_eq!(
+                            assignment.generator_bin[i], bin,
+                            "cell assigned to wrong bin"
+                        );
+                    }
+                }
+
+                let grid_ctx = GridContext {
+                    points,
+                    grid,
+                    assignment: &assignment,
+                };
+                let packed_layout = PackedSlotLayout::new(
+                    &assignment.slot_gen_map,
+                    assignment.local_shift,
+                    assignment.local_mask,
+                );
+
+                let mut cursor = 0usize;
+                while cursor < my_generators.len() {
+                    let cell = grid.point_index_to_cell(my_generators[cursor]) as u32;
+                    let start = cursor;
+                    while cursor < my_generators.len()
+                        && grid.point_index_to_cell(my_generators[cursor]) as u32 == cell
+                    {
+                        cursor += 1;
+                    }
+                    let group_start = start;
+
+                    if packed_policy.enabled() {
+                        let queries = &packed_queries_all[group_start..cursor];
+                        let query_local_start =
+                            checked_u32(group_start, "packed query local start")?;
+                        let group = PackedGroupInput::new(
+                            cell as usize,
+                            bin.as_u8(),
+                            queries,
+                            query_local_start,
+                            packed_layout,
+                        );
+
+                        #[cfg(not(feature = "timing"))]
+                        let t_packed = crate::timing::Timer::start();
+                        let prepared =
+                            packed_scratch.prepare_group_directed(grid, group, &mut packed_timings);
+                        #[cfg(not(feature = "timing"))]
+                        let packed_elapsed = t_packed.elapsed();
+
+                        match prepared {
+                            PreparedPackedGroupStatus::Ready(mut prepared) => {
+                                for (offset, &global) in
+                                    my_generators[group_start..cursor].iter().enumerate()
+                                {
+                                    let local_idx = group_start + offset;
+                                    let local =
+                                        checked_local_id(local_idx, "shard-local generator index")?;
+                                    let mut shard_ctx = ShardContext {
+                                        shard: &mut shard,
+                                        bin,
+                                        local,
+                                    };
+                                    build_and_emit_cell(
+                                        &mut sub_accum,
+                                        &mut build_ctx,
+                                        &mut live_ctx,
+                                        &mut shard_ctx,
+                                        &grid_ctx,
+                                        global,
+                                        Some(PackedQuery::new(
+                                            &mut prepared,
+                                            &mut packed_timings,
+                                            offset,
+                                            packed_policy,
+                                        )),
+                                    )?;
+                                }
+                            }
+                            PreparedPackedGroupStatus::SlowPath => {
+                                for (offset, &global) in
+                                    my_generators[group_start..cursor].iter().enumerate()
+                                {
+                                    let local_idx = group_start + offset;
+                                    let local =
+                                        checked_local_id(local_idx, "shard-local generator index")?;
+                                    let mut shard_ctx = ShardContext {
+                                        shard: &mut shard,
+                                        bin,
+                                        local,
+                                    };
+                                    build_and_emit_cell(
+                                        &mut sub_accum,
+                                        &mut build_ctx,
+                                        &mut live_ctx,
+                                        &mut shard_ctx,
+                                        &grid_ctx,
+                                        global,
+                                        None,
+                                    )?;
+                                }
+                            }
+                        }
+
+                        #[cfg(feature = "timing")]
+                        {
+                            sub_accum.add_packed_knn(packed_timings.total());
+                            sub_accum.add_packed_knn_breakdown(&packed_timings);
+                        }
+                        #[cfg(not(feature = "timing"))]
+                        sub_accum.add_packed_knn(packed_elapsed);
+                    } else {
+                        for (offset, &global) in
+                            my_generators[group_start..cursor].iter().enumerate()
+                        {
+                            let local_idx = group_start + offset;
+                            let local = checked_local_id(local_idx, "shard-local generator index")?;
+                            let mut shard_ctx = ShardContext {
+                                shard: &mut shard,
+                                bin,
+                                local,
+                            };
+                            build_and_emit_cell(
+                                &mut sub_accum,
+                                &mut build_ctx,
+                                &mut live_ctx,
+                                &mut shard_ctx,
+                                &grid_ctx,
+                                global,
+                                None,
+                            )?;
+                        }
+                    }
+                }
+
+                Ok((shard, sub_accum))
+            })
+            .collect();
+    let per_bin = per_bin?;
+
+    let mut shards: Vec<ShardState> = Vec::with_capacity(num_bins);
+    let mut merged_sub = crate::timing::CellSubAccum::new();
+    for (shard, sub) in per_bin {
+        merged_sub.merge(&sub);
+        shards.push(shard);
+    }
+
+    Ok(ShardedCellsData::from_parts(assignment, shards, merged_sub))
+}
+
+fn build_and_emit_cell<'a, 'b, 'c>(
+    cell_sub: &'a mut crate::timing::CellSubAccum,
+    build_ctx: &'a mut CellBuildContext,
+    live_ctx: &'a mut SphereCellScratch,
+    shard_ctx: &'a mut ShardContext<'b>,
+    grid_ctx: &'a GridContext<'c>,
+    generator_idx: usize,
+    packed: Option<PackedQuery<'_, '_, 'c>>,
+) -> Result<(), BuildCellsError> {
+    let cell_start = checked_u32(
+        shard_ctx.shard.output.cell_indices.len(),
+        "cell index start",
+    )?;
+    shard_ctx
+        .shard
+        .output
+        .set_cell_start(shard_ctx.local, cell_start);
+
+    let incoming_checks = shard_ctx.shard.dedup.take_edge_checks(shard_ctx.local);
+    live_ctx.seed_neighbors.clear();
+    let cell_idx = checked_u32(generator_idx, "generator index")?;
+    for check in &incoming_checks {
+        let (a, b) = unpack_edge_key(check.key);
+        let neighbor_idx = if a == cell_idx { b } else { a } as usize;
+        let neighbor_slot = grid_ctx.grid.point_index_to_slot(neighbor_idx);
+        live_ctx.seed_neighbors.push(SeedNeighbor {
+            neighbor_idx,
+            neighbor_slot,
+            hp_eps: check.hp_eps,
+        });
+    }
+
+    let directed_ctx = crate::cube_grid::DirectedEligibility::from_layout(
+        shard_ctx.bin.as_u8(),
+        shard_ctx.local.as_u32(),
+        PackedSlotLayout::new(
+            &grid_ctx.assignment.slot_gen_map,
+            grid_ctx.assignment.local_shift,
+            grid_ctx.assignment.local_mask,
+        ),
+    );
+    let stats = build_cell_into(
+        build_ctx,
+        CellBuildRequest {
+            points: grid_ctx.points,
+            grid: grid_ctx.grid,
+            generator_idx,
+            directed_ctx,
+            packed,
+            seed_neighbors: &live_ctx.seed_neighbors,
+        },
+    )
+    .map_err(BuildCellsError::CellBuild)?;
+    stats.record_into(cell_sub);
+
+    let output_buffer = build_ctx.output_buffer();
+    emit_cell_output(
+        cell_sub,
+        &mut live_ctx.edge_scratch,
+        shard_ctx,
+        grid_ctx.assignment,
+        cell_idx,
+        cell_start,
+        output_buffer,
+        incoming_checks,
+    )
+}

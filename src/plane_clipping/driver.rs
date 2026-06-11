@@ -20,12 +20,12 @@ use rayon::prelude::*;
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::cell_build::{CellBuildError, CellFailure, CellOutputBuffer};
 use crate::knn_clipping::edge_reconcile;
-use crate::knn_clipping::live_dedup::{
-    self, assign_bins_with, checked_local_id, checked_u32, emit_cell_output, target_bin_count,
-    unpack_edge_key, BinAssignment, BinId, BuildCellsError, LiveDedupCellScratch,
-    PackedLayoutCapacityError, ShardContext, ShardState, ShardedCellsData,
-};
 use crate::knn_clipping::timing::CellSubAccum;
+use crate::live_dedup::{
+    self, assign_bins_with, checked_local_id, checked_u32, emit_cell_output, target_bin_count,
+    unpack_edge_key, BinAssignment, BinId, BuildCellsError, EdgeScratch, PackedLayoutCapacityError,
+    ShardContext, ShardState, ShardedCellsData,
+};
 use crate::packed_layout::PackedSlotLayout;
 use crate::plane_clipping::PlaneCellBuilder;
 use crate::plane_grid::{PlaneGrid, PlaneGridScratch, PlaneNeighborFrontier, PlaneNeighborStream};
@@ -146,7 +146,7 @@ fn build_cells_sharded_plane(
                 let my_generators = &assignment.bin_generators[bin_usize];
                 let mut shard = ShardState::new(my_generators.len());
                 let mut sub_accum = CellSubAccum::new();
-                let mut live_ctx = LiveDedupCellScratch::new(points.len());
+                let mut edge_scratch = EdgeScratch::new();
                 let mut worker = PlaneWorker {
                     builder: PlaneCellBuilder::new(0, Vec2::ZERO, wall_base, domain),
                     output_buffer: CellOutputBuffer::default(),
@@ -178,7 +178,7 @@ fn build_cells_sharded_plane(
                     build_and_emit_cell_plane(
                         &mut sub_accum,
                         &mut worker,
-                        &mut live_ctx,
+                        &mut edge_scratch,
                         &mut shard_ctx,
                         points,
                         grid,
@@ -216,7 +216,7 @@ fn cell_build_error(generator_idx: usize, failure: CellFailure) -> BuildCellsErr
 fn build_and_emit_cell_plane(
     cell_sub: &mut CellSubAccum,
     worker: &mut PlaneWorker,
-    live_ctx: &mut LiveDedupCellScratch,
+    edge_scratch: &mut EdgeScratch,
     shard_ctx: &mut ShardContext<'_, Vec2>,
     points: &[Vec2],
     grid: &PlaneGrid,
@@ -311,7 +311,7 @@ fn build_and_emit_cell_plane(
 
     emit_cell_output(
         cell_sub,
-        live_ctx,
+        edge_scratch,
         shard_ctx,
         assignment,
         cell_idx,

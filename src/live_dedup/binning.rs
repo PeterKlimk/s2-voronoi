@@ -87,7 +87,7 @@ fn validate_local_capacity(
     })
 }
 
-pub(super) fn assign_bins(
+pub(crate) fn assign_bins(
     points: &[Vec3],
     grid: &CubeMapGrid,
 ) -> Result<BinAssignment, PackedLayoutCapacityError> {

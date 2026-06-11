@@ -19,7 +19,7 @@ fn reconcile_state_error(message: impl Into<String>) -> crate::VoronoiError {
 }
 
 #[inline]
-pub(super) fn unpack_edge(key: u64) -> (u32, u32) {
+pub(crate) fn unpack_edge(key: u64) -> (u32, u32) {
     (key as u32, (key >> 32) as u32)
 }
 
@@ -27,7 +27,7 @@ fn key_contains(key: VertexKey, value: u32) -> bool {
     key[0] == value || key[1] == value || key[2] == value
 }
 
-pub(super) fn shared_neighbor(cell_idx: u32, a: VertexKey, b: VertexKey) -> Option<u32> {
+pub(crate) fn shared_neighbor(cell_idx: u32, a: VertexKey, b: VertexKey) -> Option<u32> {
     if !key_contains(a, cell_idx) || !key_contains(b, cell_idx) {
         return None;
     }
@@ -64,7 +64,7 @@ fn cell_vertex_slice<'a>(
     Ok(&cell_indices[start..end])
 }
 
-pub(super) fn edge_segments_for_neighbor(
+pub(crate) fn edge_segments_for_neighbor(
     cell_idx: u32,
     neighbor: u32,
     cells: &[VoronoiCell],
