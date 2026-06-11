@@ -95,20 +95,45 @@ Explicitly deferred: weighted Voronoi, f64 storage, no_std, dynamic insertion/de
 
 ## P3: kNN / performance robustness
 
-1. **Replace the heap cursor with generalized shell expansion.** The `DirectedNoKCursor`
-   best-first walker buys exact distance ordering the clipper does not need (correctness needs
-   coverage plus a sound unseen-dot bound, which Chebyshev shells provide from the precomputed
-   cell bounds). Generalize the packed ring stages (r=1 tail, r=2 expand) to arbitrary r via BFS
-   over the 3x3 adjacency with visited stamps; delete the dual-heap cursor and its duplicated
-   filtering logic. The fallback path becomes a continuation of the fast path instead of a
-   different algorithm. Benchmark the frontier-certificate contract before and after.
-2. **Occupancy-driven grid resolution.** The build already histograms cell occupancy; if max
-   occupancy exceeds a threshold, rebuild at higher resolution (build is O(n) and cheap). This
-   removes the mega-cell degradation for clustered inputs and most of the "tuned for uniform"
-   brittleness at the root.
-3. **Derive policy constants from observed occupancy** (chunk sizes, termination cadence) at
-   build time instead of fixed values tuned for ~16 points/cell uniform.
-4. Keep all of this expressed through `src/policy.rs` (rule unchanged from previous roadmap).
+Design principle (2026-06 discussion): the knot is not the measured fast path (chunk0 / tail /
+expand-r2 — which already are Chebyshev shells r=0,1,2 with bespoke tuning, serving ~99.95% of
+cells); it is that the fallback beyond r=2 is a *second algorithm* (the dual-heap
+`DirectedNoKCursor`, ~0.05% of cells, a large share of the stack's conceptual weight). The end
+state is one outward-marching shell frontier where the first three shells stay hand-tuned, the
+rest are generated, the certificate is uniform (per-shell annulus bound), eligibility is decided
+at cell level everywhere (a grid cell maps to one bin), and there is no second algorithm.
+
+In implementation order:
+
+1. **Standalone NN contract suite (before touching anything).** Test the neighbor-source layer
+   in isolation from the Voronoi pipeline: emitted eligible set equals brute force, and every
+   frontier certificate conservatively bounds every unseen eligible point. Explicit cube-grid
+   edge/corner coverage: queries and points at the 8 corners (7-cell neighborhoods), the 12
+   face-edge seams, face centers/poles, exact-seam coordinates (1/sqrt(3), 1/sqrt(2)), all
+   points on one face (cross-face shell traversal), one point per face, antipodal pairs (maximal
+   shell radius), near-wall points (classification robustness), tiny n, clusters, bimodal
+   sparse+dense (forces deep shells). This suite is the strangler-pattern net: the shell rework
+   must pass it unchanged. Note: emission *order* is deliberately not part of the contract (the
+   current exact-order stream test pins the cursor's implementation and will be rewritten).
+2. **Grid resolution policy.** Current resolution (target density 16 points/cell from n) is
+   admittedly tuned to one scenario (see engineering-findings). Replace with: (a) target density
+   re-derived from a benchmark sweep across n; (b) occupancy feedback — the build already
+   histograms occupancy; rebuild at higher resolution when max occupancy exceeds a bound, capped
+   by a memory budget (total cells O(n)); (c) for concentration beyond what global resolution
+   can fix within memory, a shells-native big-cell path (chunked selection within shell 0)
+   instead of today's bail to the cursor (`SlowPath`).
+3. **Shell generalization behind a policy switch.** Implement r >= 3 by BFS over the 3x3 cell
+   adjacency with visited stamps (face/corner stitching machinery exists for r<=2), the same
+   SIMD filter primitive, per-shell sorted emission, annulus certificate. Both paths live
+   side by side; interleaved benchmarks on uniform + clustered + bimodal + the adversarial and
+   fuzz corpus, plus a forced-deep-shell scenario. Then flip, delete the cursor, its scratch
+   heaps, the stream splice state, and the exact-order test.
+4. **Policy shrink.** After (2) normalizes occupancy, revisit the remaining constants (chunk
+   sizes, termination cadence, count-model flags) — most were compensating for unbounded density
+   variance and likely simplify or die. Keep what remains expressed through `src/policy.rs`.
+5. Open questions parked from the discussion: whether `termination_max_k` survives (looks
+   vestigial once certificates are uniform and occupancy is bounded), and per-shell vs per-cell
+   certificate granularity (believed to tax only already-pathological cells; benchmark confirms).
 
 ## P4: Code quality (prestige pass)
 

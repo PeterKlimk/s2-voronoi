@@ -236,3 +236,17 @@ When adding a new item here:
 
 This doc should stay high-signal. It is for serious items that should influence roadmap and
 refactoring order, not for minor cleanup notes.
+
+### 11. Grid resolution is tuned to one scenario
+
+The cube-grid resolution is derived from a fixed target density (~16 points/cell from n, floor
+res=4) that was tuned for large uniform inputs (the original 2.5M-point performance target) —
+deliberately, and at the cost of large slowdowns on even mildly degenerate distributions:
+clustered inputs produce mega-cells (degrading to O(k^2)-ish candidate work and, past 65k center
+candidates, a bail to the slow path), and sparse/bimodal inputs pay chunking overhead tuned for
+the wrong occupancy.
+
+Desired direction (see todo P3.2): benchmark-derived target density across input sizes,
+occupancy-feedback rebuild within a memory budget, and a shells-native big-cell path for
+concentration beyond what global resolution can fix. Performance/robustness issue, root cause of
+most "overfit to uniform" symptoms.
