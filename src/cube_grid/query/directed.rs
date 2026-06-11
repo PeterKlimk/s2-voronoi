@@ -1,6 +1,9 @@
-use crate::packed_layout::PackedSlotLayout;
+//! Directed-eligibility rules for the stitching order.
+//!
+//! Grid-agnostic: operates on the CSR `cell_offsets` and the packed
+//! (bin, local) slot layout only, so the cube-map and planar grids share it.
 
-use super::super::CubeMapGrid;
+use crate::packed_layout::PackedSlotLayout;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DirectedEligibility<'a> {
@@ -39,13 +42,13 @@ impl<'a> DirectedEligibility<'a> {
     }
 
     #[inline]
-    pub(super) fn cell_mode(
+    pub(crate) fn cell_mode(
         self,
-        grid: &CubeMapGrid,
+        cell_offsets: &[u32],
         start_cell: u32,
         cell: usize,
     ) -> DirectedCellMode {
-        let Some(bin_b) = self.layout.cell_bin(grid, cell) else {
+        let Some(bin_b) = self.layout.cell_bin(cell_offsets, cell) else {
             return DirectedCellMode::TransitOnly;
         };
         if bin_b != self.query_bin {
@@ -63,14 +66,14 @@ impl<'a> DirectedEligibility<'a> {
     }
 
     #[inline]
-    pub(super) fn allows_center_slot(self, slot: u32) -> bool {
+    pub(crate) fn allows_center_slot(self, slot: u32) -> bool {
         let (bin_b, local_b) = self.layout.bin_local(slot);
         bin_b != self.query_bin || local_b >= self.query_local
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum DirectedCellMode {
+pub(crate) enum DirectedCellMode {
     TransitOnly,
     EmitAll,
     EmitCenterDirected,

@@ -1,5 +1,3 @@
-use crate::cube_grid::CubeMapGrid;
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PackedSlotLayout<'a> {
     slot_gen_map: &'a [u32],
@@ -40,10 +38,14 @@ impl<'a> PackedSlotLayout<'a> {
         (bin, local)
     }
 
+    /// Bin of a grid cell via its first slot (`None` for empty cells).
+    ///
+    /// Takes the CSR `cell_offsets` directly so any grid layout (cube-map or
+    /// planar) with bin-contiguous cells can use it.
     #[inline]
-    pub(crate) fn cell_bin(self, grid: &CubeMapGrid, cell: usize) -> Option<u8> {
-        let start = grid.cell_offsets[cell] as usize;
-        let end = grid.cell_offsets[cell + 1] as usize;
+    pub(crate) fn cell_bin(self, cell_offsets: &[u32], cell: usize) -> Option<u8> {
+        let start = cell_offsets[cell] as usize;
+        let end = cell_offsets[cell + 1] as usize;
         if start >= end {
             return None;
         }

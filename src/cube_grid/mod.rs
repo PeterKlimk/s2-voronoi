@@ -20,12 +20,11 @@ pub(crate) use packed_knn::PackedQuery;
 pub(crate) use projection::{cell_to_face_ij, face_uv_to_3d, st_to_uv};
 use projection::{face_uv_to_cell, point_to_face_uv};
 pub(crate) use query::{
-    DirectedEligibility, DirectedNeighborBatch, DirectedNeighborBatchSource,
+    DirectedCellMode, DirectedEligibility, DirectedNeighborBatch, DirectedNeighborBatchSource,
     DirectedNeighborFrontier, DirectedNeighborStream,
 };
 
 use glam::Vec3;
-use std::cmp::Ordering;
 #[cfg(feature = "timing")]
 use std::time::Duration;
 
@@ -65,39 +64,6 @@ impl CubeMapGridBuildTimings {
 // surface near cube vertices where a "3×3" neighborhood has only 7 unique neighbors (one diagonal
 // is missing because only 3 faces meet at a cube vertex).
 const RING2_MAX: usize = 16;
-
-/// A f32 wrapper that implements Ord using total_cmp.
-/// Unlike NotNan, this doesn't check for NaN - it just orders NaN consistently.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct OrdF32(f32);
-
-impl Eq for OrdF32 {}
-
-impl PartialOrd for OrdF32 {
-    #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for OrdF32 {
-    #[inline]
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.total_cmp(&other.0)
-    }
-}
-
-impl OrdF32 {
-    #[inline]
-    fn new(v: f32) -> Self {
-        OrdF32(v)
-    }
-
-    #[inline]
-    fn get(self) -> f32 {
-        self.0
-    }
-}
 
 /// Cube-map spatial grid for points on unit sphere.
 pub struct CubeMapGrid {

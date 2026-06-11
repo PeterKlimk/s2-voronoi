@@ -92,6 +92,7 @@ macro_rules! maybe_par_iter {
 // Internal modules
 pub(crate) mod cube_grid;
 pub(crate) mod knn_clipping;
+pub(crate) mod plane_grid;
 
 #[cfg(feature = "microbench")]
 pub fn run_clip_convex_microbench() {

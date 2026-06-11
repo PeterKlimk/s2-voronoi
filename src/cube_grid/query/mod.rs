@@ -5,7 +5,7 @@ mod scratch;
 mod shells;
 mod stream;
 
-pub(crate) use directed::DirectedEligibility;
+pub(crate) use directed::{DirectedCellMode, DirectedEligibility};
 pub(crate) use stream::{
     DirectedNeighborBatch, DirectedNeighborBatchSource, DirectedNeighborFrontier,
     DirectedNeighborStream,

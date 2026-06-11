@@ -15,6 +15,40 @@
 //! winning some runs), so the nightly requirement was dropped. The portable
 //! backend can be recovered from git history if `std::simd` stabilizes.
 
+/// An `f32` ordered via `total_cmp` (NaN ordered consistently, not rejected).
+///
+/// Shared by the spatial-grid frontiers for sorted (distance, slot) emission.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct OrdF32(f32);
+
+impl Eq for OrdF32 {}
+
+impl PartialOrd for OrdF32 {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OrdF32 {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+impl OrdF32 {
+    #[inline]
+    pub(crate) fn new(v: f32) -> Self {
+        OrdF32(v)
+    }
+
+    #[inline]
+    pub(crate) fn get(self) -> f32 {
+        self.0
+    }
+}
+
 #[inline(always)]
 pub(crate) fn fma_f32(a: f32, b: f32, c: f32) -> f32 {
     #[cfg(feature = "fma")]

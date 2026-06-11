@@ -12,9 +12,9 @@
 
 use glam::Vec3;
 
-use super::super::{CubeMapGrid, CubeMapGridScratch, OrdF32};
+use super::super::{CubeMapGrid, CubeMapGridScratch};
 use super::directed::{DirectedCellMode, DirectedEligibility};
-use crate::fp;
+use crate::fp::{self, OrdF32};
 
 pub(crate) struct ShellBatch {
     pub(crate) n: usize,
@@ -118,9 +118,11 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
 
             for layer_idx in 0..self.current.len() {
                 let cell = self.current[layer_idx];
-                let mode = self
-                    .eligibility
-                    .cell_mode(self.grid, self.start_cell, cell as usize);
+                let mode = self.eligibility.cell_mode(
+                    &self.grid.cell_offsets,
+                    self.start_cell,
+                    cell as usize,
+                );
                 self.scan_cell(cell as usize, mode);
 
                 for &ncell in self.grid.cell_neighbors(cell as usize) {
