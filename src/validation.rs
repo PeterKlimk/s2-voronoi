@@ -7,8 +7,7 @@
 use crate::SphericalVoronoi;
 use std::collections::{HashMap, HashSet};
 
-const VERTEX_ON_SPHERE_EPS: f32 = 1e-4;
-const ANTIPODAL_DOT_EPS: f32 = 1e-5;
+use crate::tolerances::{ANTIPODAL_DOT_EPS, VERTEX_ON_SPHERE_EPS};
 
 /// Detailed validation report for a spherical Voronoi diagram.
 #[derive(Debug, Clone)]

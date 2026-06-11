@@ -1,6 +1,6 @@
 use crate::fp;
 
-pub const EPS_INSIDE: f64 = 1e-12;
+use crate::tolerances::CLIP_EPS_INSIDE;
 pub const MAX_POLY_VERTICES: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,7 +26,7 @@ impl HalfPlane {
     pub fn new_unnormalized(a: f64, b: f64, c: f64, plane_idx: usize) -> Self {
         let ab2: f64 = fp::fma_f64(a, a, b * b);
         let norm = (ab2 as f32).sqrt() as f64;
-        let eps = EPS_INSIDE * norm;
+        let eps = CLIP_EPS_INSIDE * norm;
 
         HalfPlane {
             a,

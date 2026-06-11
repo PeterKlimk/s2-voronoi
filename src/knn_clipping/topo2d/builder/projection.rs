@@ -55,9 +55,7 @@ impl TangentBasis {
     }
 }
 
-// Conservative lower bound on g · x for a vertex in the current gnomonic model.
-// Below this, the feasible region is effectively at the generator hemisphere boundary.
-pub(super) const MIN_PROJECTION_COS: f64 = 8.0 * f32::EPSILON as f64;
+pub(super) use crate::tolerances::MIN_PROJECTION_COS;
 
 impl FallbackConstraint {
     #[inline]
@@ -81,7 +79,7 @@ impl FallbackConstraint {
 
 impl GnomonicBuilder {
     pub(super) fn new(generator_idx: usize, generator: Vec3) -> Self {
-        let angle_pad = 8.0 * f32::EPSILON as f64;
+        let angle_pad = crate::tolerances::TERMINATION_ANGLE_PAD;
         let (term_sin_pad, term_cos_pad) = angle_pad.sin_cos();
         let gen64 =
             DVec3::new(generator.x as f64, generator.y as f64, generator.z as f64).normalize();
@@ -198,7 +196,7 @@ impl GnomonicBuilder {
             let cos_theta_pad =
                 fp::fma_f64(min_cos, self.term_cos_pad, -sin_theta * self.term_sin_pad);
             let cos_2max = fp::fma_f64(2.0 * cos_theta_pad, cos_theta_pad, -1.0);
-            self.term_threshold_cache = cos_2max - 3.0 * f32::EPSILON as f64;
+            self.term_threshold_cache = cos_2max - crate::tolerances::TERMINATION_THRESHOLD_GUARD;
             self.term_cache_valid = true;
         }
 

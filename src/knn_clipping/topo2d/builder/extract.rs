@@ -7,8 +7,7 @@ use crate::fp;
 use crate::knn_clipping::cell_build::{CellFailure, CellOutputBuffer};
 use glam::{DVec3, Vec3};
 
-const FALLBACK_PLANE_TOL: f64 = 1e-9;
-const FALLBACK_DEDUP_DOT: f32 = 1.0 - 1e-5;
+use crate::tolerances::{EXTRACT_DEGENERATE_LEN2, FALLBACK_DEDUP_DOT, FALLBACK_PLANE_TOL};
 
 #[derive(Clone, Copy)]
 struct FallbackVertex {
@@ -60,7 +59,7 @@ impl GnomonicBuilder {
             );
             let dir = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);
             let len2 = dir.length_squared();
-            if len2 < 1e-28 {
+            if len2 < EXTRACT_DEGENERATE_LEN2 {
                 return Err(CellFailure::NoValidSeed);
             }
             let v_pos = dir * len2.sqrt().recip();
@@ -183,7 +182,7 @@ impl GnomonicBuilder {
             );
             let dir = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);
             let len2 = dir.length_squared();
-            if !len2.is_finite() || len2 < 1e-28 {
+            if !len2.is_finite() || len2 < EXTRACT_DEGENERATE_LEN2 {
                 return Some(ExtractionInvariantFailure::DegenerateDirection { vertex: i, len2 });
             }
 

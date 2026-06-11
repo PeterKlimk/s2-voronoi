@@ -51,6 +51,7 @@ pub(crate) mod policy;
 pub mod quality;
 #[cfg(any(test, feature = "packed_knn_sort_small"))]
 pub(crate) mod sort;
+pub(crate) mod tolerances;
 mod types;
 pub mod validation;
 

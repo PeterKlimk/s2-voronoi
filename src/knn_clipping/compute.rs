@@ -7,7 +7,7 @@ use super::live_dedup;
 use super::timing::{Timer, TimingBuilder};
 use super::{
     cell_build::{CellBuildError, CellFailure},
-    constants, merge_close_points, MergeResult, TerminationConfig,
+    merge_close_points, MergeResult, TerminationConfig,
 };
 use crate::cube_grid::CubeMapGrid;
 #[cfg(feature = "timing")]
@@ -248,7 +248,7 @@ fn classify_coincident_clipped_away(
     merge_result: Option<&MergeResult>,
 ) -> Option<crate::VoronoiError> {
     let generator = *effective_points.get(err.generator_idx)?;
-    let radius_sq = constants::weld_radius() * constants::weld_radius();
+    let radius_sq = crate::tolerances::weld_radius() * crate::tolerances::weld_radius();
     let coincident: Vec<usize> = effective_points
         .iter()
         .enumerate()
@@ -267,7 +267,7 @@ fn classify_coincident_clipped_away(
              is below representable scale; enable welding (PreprocessMode::Weld, the default) \
              or merge these points",
             generator_original,
-            constants::weld_radius(),
+            crate::tolerances::weld_radius(),
             coincident
         ),
     })
@@ -357,7 +357,7 @@ fn preprocess_effective_points(
                 },
             );
         }
-        PreprocessMode::Weld => constants::weld_radius(),
+        PreprocessMode::Weld => crate::tolerances::weld_radius(),
         PreprocessMode::MergeWithin(threshold) => threshold,
     };
     let mut result = merge_close_points(points, threshold);

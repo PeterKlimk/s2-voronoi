@@ -693,8 +693,8 @@ impl CubeMapGrid {
 
                 let cos_radius = min_dot.clamp(-1.0, 1.0);
                 let sin_a = (1.0 - cos_radius * cos_radius).max(0.0).sqrt();
-                const SIN_EPS: f32 = 1e-5;
-                let sin_radius = (sin_a + min_dot * SIN_EPS).clamp(0.0, 1.0);
+                let sin_radius =
+                    (sin_a + min_dot * crate::tolerances::GRID_SIN_EPS).clamp(0.0, 1.0);
 
                 (center, cos_radius, sin_radius)
             })

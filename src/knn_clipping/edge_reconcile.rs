@@ -130,8 +130,8 @@ pub(super) fn reconcile_unresolved_edges(
 ) -> Result<Option<(Vec<VoronoiCell>, Vec<u32>)>, crate::VoronoiError> {
     let mut uf = UnionFind::new(vertices.len());
     let mut merged = 0usize;
-    const DEGENERATE_LEN_EPS: f32 = 1e-6;
-    const DEGENERATE_LEN_EPS_SQ: f32 = DEGENERATE_LEN_EPS * DEGENERATE_LEN_EPS;
+    const DEGENERATE_LEN_EPS_SQ: f32 = crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS
+        * crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS;
 
     for record in edge_records {
         let (a, b) = unpack_edge(record.key.as_u64());

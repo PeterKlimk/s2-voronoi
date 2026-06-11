@@ -145,8 +145,7 @@ impl PackedKnnCellScratch {
                     // by crossing the closest boundary great circle. If we ever see a non-positive
                     // signed distance (numerical issues), fall back to the existing cap bound.
                     let security = if s_min > 0.0 && s_min.is_finite() {
-                        const PAD: f32 = 1e-6;
-                        let s = (s_min - PAD).clamp(0.0, 1.0);
+                        let s = (s_min - crate::tolerances::GRID_PLANE_PAD).clamp(0.0, 1.0);
                         (1.0 - s * s).max(0.0).sqrt()
                     } else {
                         outside_max_dot_xyz(qx, qy, qz, ring2, grid)
