@@ -1,3 +1,5 @@
+#![warn(missing_docs)]
+
 //! Spherical Voronoi diagrams on the unit sphere (S2).
 //!
 //! This crate computes Voronoi diagrams for points on the unit sphere using
@@ -43,6 +45,7 @@ mod diagram;
 mod error;
 mod fp;
 #[cfg(any(test, feature = "packed_knn_sort_small"))]
+#[allow(clippy::too_many_arguments)] // generated sorting networks
 pub(crate) mod generated;
 mod measures;
 mod packed_layout;
@@ -148,11 +151,14 @@ pub struct PreprocessReport {
 }
 
 impl PreprocessReport {
+    /// True when preprocessing welded at least one generator pair.
     #[inline]
     pub fn did_merge(&self) -> bool {
         self.num_merged > 0
     }
 
+    /// True when the returned diagram's cells were remapped back to the
+    /// original input indices (always the case when welds occurred).
     #[inline]
     pub fn did_remap_cells(&self) -> bool {
         self.did_merge()
@@ -162,6 +168,7 @@ impl PreprocessReport {
 /// Observable per-run report for Voronoi computation.
 #[derive(Debug, Clone)]
 pub struct ComputeReport {
+    /// What preprocessing did to the input.
     pub preprocess: PreprocessReport,
     /// Strict validation of the returned public diagram.
     pub returned_validation: validation::ValidationReport,
@@ -187,10 +194,13 @@ impl ComputeReport {
 /// Output of `compute_with_report`.
 #[derive(Debug, Clone)]
 pub struct ComputeOutput {
+    /// The returned diagram (one cell per input point; welded twins share
+    /// their canonical cell).
     pub diagram: SphericalVoronoi,
     /// Effective diagram actually solved by the backend after preprocessing, if
     /// preprocessing merged generators.
     pub effective_diagram: Option<SphericalVoronoi>,
+    /// Preprocessing and validation observability for this run.
     pub report: ComputeReport,
 }
 

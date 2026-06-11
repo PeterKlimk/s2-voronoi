@@ -38,6 +38,7 @@ fn find_entry_exit_transitions<const N: usize>(
 /// Baseline small-N clipper for microbenchmark comparisons.
 #[cfg(any(test, feature = "microbench"))]
 #[allow(dead_code)]
+#[allow(clippy::needless_range_loop)] // index drives 3 parallel outputs + pointer reads
 pub(crate) fn clip_convex_small_bool<const N: usize>(
     poly: &PolyBuffer,
     hp: &HalfPlane,

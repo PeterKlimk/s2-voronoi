@@ -1,3 +1,6 @@
+// PackedKnnTimings is only a unit struct without the `timing` feature, and
+// the qi loops index several parallel arrays.
+#![allow(clippy::default_constructed_unit_structs, clippy::needless_range_loop)]
 use super::*;
 use crate::packed_layout::PackedSlotLayout;
 use rand::{Rng, SeedableRng};

@@ -252,6 +252,7 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
 }
 
 #[cfg(test)]
+#[allow(clippy::default_constructed_unit_structs, clippy::needless_range_loop)] // PackedKnnTimings is feature-dependent; qi indexes parallel arrays
 mod tests {
     use super::*;
     use crate::cube_grid::packed_knn::{

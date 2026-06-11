@@ -104,7 +104,7 @@ impl<'a> PackedGroupInput<'a> {
         );
         debug_assert!(
             self.queries.iter().enumerate().all(|(offset, &slot)| {
-                let (bin, local) = self.layout.unpack_bin_local(slot);
+                let (bin, local) = self.layout.bin_local(slot);
                 bin == self.query_bin && local == self.query_local(offset)
             }),
             "directed packed group (slot -> bin,local) mapping must match query inputs"

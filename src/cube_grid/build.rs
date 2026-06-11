@@ -392,27 +392,24 @@ impl CubeMapGrid {
                 let up_left = diagonal_from_edge_neighbors(center, up, left, res);
                 let up_right = diagonal_from_edge_neighbors(center, up, right, res);
 
-                let ns = [
+                let mut ns = [
                     down_left, down, down_right, left, center, right, up_left, up, up_right,
                 ];
 
-                debug_assert!(
-                    {
-                        let mut ok = true;
-                        for i in 0..9 {
-                            for j in (i + 1)..9 {
-                                if ns[i] == u32::MAX || ns[j] == u32::MAX {
-                                    continue;
-                                }
-                                ok &= ns[i] != ns[j];
-                            }
+                // At tiny resolutions (res <= 2) several 3x3 offsets wrap to
+                // the same neighboring face cell; keep the first occurrence
+                // and pad the rest so consumers (which already handle the
+                // u32::MAX corner padding) never see duplicate ranges.
+                for i in 0..9 {
+                    if ns[i] == u32::MAX {
+                        continue;
+                    }
+                    for j in (i + 1)..9 {
+                        if ns[j] == ns[i] {
+                            ns[j] = u32::MAX;
                         }
-                        ok
-                    },
-                    "duplicate neighbor cell: cell={}, neighbors={:?}",
-                    cell,
-                    ns
-                );
+                    }
+                }
 
                 ns
             })
@@ -522,8 +519,9 @@ impl CubeMapGrid {
                     }
                 }
 
-                debug_assert!(ring_len > 0, "ring2 must be non-empty");
-
+                // Empty at res <= 2, where the 3x3 neighborhood already
+                // covers the whole sphere (consumers treat an empty ring as
+                // "nothing outside").
                 (ring, ring_len as u8)
             })
             .collect();

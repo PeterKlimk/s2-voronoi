@@ -1,3 +1,6 @@
+// PackedKnnTimings is only a unit struct without the `timing` feature, and
+// the loop indices address parallel per-cell arrays.
+#![allow(clippy::default_constructed_unit_structs, clippy::needless_range_loop)]
 //! Contract tests for the neighbor-source layer, in isolation from the
 //! Voronoi pipeline.
 //!

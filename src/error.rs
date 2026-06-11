@@ -10,21 +10,30 @@ pub enum VoronoiError {
     InsufficientPoints(usize),
 
     /// An input point is not usable (e.g. a non-finite component).
-    InvalidInput { point_index: usize, message: String },
+    InvalidInput {
+        /// Index of the offending point in the input slice.
+        point_index: usize,
+        /// What is wrong with it.
+        message: String,
+    },
 
     /// The input induced geometry outside the currently supported clipping model.
     ///
     /// This is used for expected algorithm boundaries such as cells that extend beyond the
     /// generator hemisphere in the current gnomonic projection model.
     UnsupportedGeometry {
+        /// Generator whose cell hit the model boundary.
         generator_index: usize,
+        /// Which boundary, and what to do about it.
         message: String,
     },
 
     /// Too many coincident (or near-coincident) point pairs in the input.
     /// This indicates the input is degenerate and cannot be reliably computed.
     DegenerateInput {
+        /// Number of coincident generator pairs detected.
         coincident_pairs: usize,
+        /// The offending generators and the suggested fix.
         message: String,
     },
 

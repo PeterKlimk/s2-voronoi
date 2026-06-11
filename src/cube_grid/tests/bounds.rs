@@ -1,3 +1,4 @@
+#![allow(clippy::needless_range_loop)] // indices address parallel arrays
 use super::super::*;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;

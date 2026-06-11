@@ -117,7 +117,13 @@ pub(super) fn outside_max_dot_xyz(
     ring2: &[u32],
     grid: &CubeMapGrid,
 ) -> f32 {
-    debug_assert!(!ring2.is_empty(), "ring2 must be non-empty");
+    // An empty ring-2 (res <= 2) means the 3x3 neighborhood covers the whole
+    // sphere: nothing is outside, so the dot floor is a sound (and finite)
+    // bound. Exactly-antipodal candidates sit at the floor and are served by
+    // the takeover's full re-coverage instead of the packed stages.
+    if ring2.is_empty() {
+        return -1.0;
+    }
     let mut max_dot = f32::NEG_INFINITY;
     for &cell in ring2 {
         let idx = cell as usize;

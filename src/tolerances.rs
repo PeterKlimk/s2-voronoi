@@ -141,6 +141,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)] // pinning the constant hierarchy is the point
     fn tolerance_ordering_sanity() {
         // The hierarchy the pipeline relies on: extraction floor far below
         // clipping slack, clipping slack below chart floor, repair scale in

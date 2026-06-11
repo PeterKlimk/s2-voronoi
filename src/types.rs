@@ -11,8 +11,11 @@ use bytemuck::{Pod, Zeroable};
 #[derive(Debug, Clone, Copy, PartialEq, Pod, Zeroable)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct UnitVec3 {
+    /// X component.
     pub x: f32,
+    /// Y component.
     pub y: f32,
+    /// Z component.
     pub z: f32,
 }
 
@@ -110,8 +113,11 @@ impl From<UnitVec3> for glam::Vec3 {
 ///
 /// This allows zero-copy input from various math libraries.
 pub trait UnitVec3Like {
+    /// X component.
     fn x(&self) -> f32;
+    /// Y component.
     fn y(&self) -> f32;
+    /// Z component.
     fn z(&self) -> f32;
 }
 
