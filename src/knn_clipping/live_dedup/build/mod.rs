@@ -43,11 +43,11 @@ impl EdgeScratch {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    fn collect_and_resolve(
+    fn collect_and_resolve<P: super::types::VertexPosition>(
         &mut self,
         cell_idx: u32,
-        shard_ctx: &mut ShardContext<'_>,
-        output_buffer: &CellOutputBuffer,
+        shard_ctx: &mut ShardContext<'_, P>,
+        output_buffer: &CellOutputBuffer<P>,
         assignment: &super::binning::BinAssignment,
         incoming_checks: Vec<EdgeCheck>,
     ) {
@@ -67,10 +67,10 @@ impl EdgeScratch {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    fn emit(
+    fn emit<P: super::types::VertexPosition>(
         &mut self,
-        shard: &mut ShardState,
-        cell_vertices: &[VertexData],
+        shard: &mut ShardState<P>,
+        cell_vertices: &[VertexData<P>],
         cell_start: u32,
         bin: BinId,
     ) {
@@ -139,8 +139,8 @@ pub(super) struct GridContext<'a> {
     pub(super) assignment: &'a super::binning::BinAssignment,
 }
 
-pub(crate) struct ShardContext<'a> {
-    pub(crate) shard: &'a mut ShardState,
+pub(crate) struct ShardContext<'a, P = Vec3> {
+    pub(crate) shard: &'a mut ShardState<P>,
     pub(crate) bin: BinId,
     pub(crate) local: LocalId,
 }
@@ -439,14 +439,14 @@ fn build_and_emit_cell<'a, 'b, 'c>(
 /// edge checks to later cells. Geometry-free; shared by the spherical and
 /// planar drivers.
 #[allow(clippy::too_many_arguments)] // internal seam shared by two drivers
-pub(crate) fn emit_cell_output(
+pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
     cell_sub: &mut crate::knn_clipping::timing::CellSubAccum,
     live_ctx: &mut LiveDedupCellScratch,
-    shard_ctx: &mut ShardContext<'_>,
+    shard_ctx: &mut ShardContext<'_, P>,
     assignment: &super::binning::BinAssignment,
     cell_idx: u32,
     cell_start: u32,
-    output_buffer: &CellOutputBuffer,
+    output_buffer: &CellOutputBuffer<P>,
     incoming_checks: Vec<EdgeCheck>,
 ) -> Result<(), BuildCellsError> {
     let mut t_post = crate::knn_clipping::timing::LapTimer::start();

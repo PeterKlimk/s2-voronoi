@@ -183,11 +183,11 @@ pub(crate) fn compute_plane_impl<P: PlanePointLike>(
     let grid = PlaneGrid::new(effective, res);
     let output = compute_plane_cells(effective, &grid, transform.domain)?;
 
-    // Map vertices back to rect coordinates (drop the z=0 embedding).
+    // Map vertices back to rect coordinates.
     let vertices: Vec<PlanePoint> = output
         .vertices
         .into_iter()
-        .map(|v| transform.to_rect(Vec2::new(v.x, v.y)))
+        .map(|v| transform.to_rect(v))
         .collect();
 
     // One cell per ORIGINAL generator; welded twins alias their canonical

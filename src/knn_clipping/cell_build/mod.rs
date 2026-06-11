@@ -14,7 +14,7 @@ mod run;
 pub type VertexKey = [u32; 3];
 
 /// Vertex data: `(key, position)`. Uses `u32` indices to save space.
-pub type VertexData = (VertexKey, Vec3);
+pub type VertexData<P = Vec3> = (VertexKey, P);
 
 /// Reasons a cell build can terminate unsuccessfully.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,14 +45,14 @@ pub struct CellBuildError {
 
 /// A reusable buffer to hold the extracted output of clipping a cell.
 #[derive(Default)]
-pub struct CellOutputBuffer {
-    pub vertices: Vec<VertexData>,
+pub struct CellOutputBuffer<P = Vec3> {
+    pub vertices: Vec<VertexData<P>>,
     pub edge_neighbor_globals: Vec<u32>,
     pub edge_neighbor_slots: Vec<u32>,
     pub edge_neighbor_eps: Vec<f32>,
 }
 
-impl CellOutputBuffer {
+impl<P> CellOutputBuffer<P> {
     pub fn clear(&mut self) {
         self.vertices.clear();
         self.edge_neighbor_globals.clear();

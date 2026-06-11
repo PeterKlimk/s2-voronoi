@@ -1,6 +1,31 @@
 //! Shared POD-like types for live dedup bookkeeping.
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
+
+/// Vertex position type threaded through the dedup/assembly layer.
+///
+/// The engine is geometry-agnostic: it stores positions, dedups by
+/// [`VertexKey`], and only ever needs a squared distance (edge-reconcile's
+/// degenerate-length check). The sphere instantiates `Vec3`, the plane
+/// `Vec2`; type defaults keep the spherical call sites spelled as before.
+pub(crate) trait VertexPosition: Copy + Send + Sync + std::fmt::Debug + 'static {
+    /// Squared Euclidean distance (chord distance on the unit sphere).
+    fn dist_sq(self, other: Self) -> f32;
+}
+
+impl VertexPosition for Vec3 {
+    #[inline]
+    fn dist_sq(self, other: Self) -> f32 {
+        (self - other).length_squared()
+    }
+}
+
+impl VertexPosition for Vec2 {
+    #[inline]
+    fn dist_sq(self, other: Self) -> f32 {
+        (self - other).length_squared()
+    }
+}
 
 use crate::knn_clipping::cell_build::VertexKey;
 
@@ -150,10 +175,10 @@ pub(super) struct EdgeOverflowLocal {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct DeferredSlot {
+pub(crate) struct DeferredSlot<P = Vec3> {
     /// Canonical vertex key that identifies the eventual owner bin.
     pub(super) key: VertexKey,
-    pub(super) pos: Vec3,
+    pub(super) pos: P,
     /// Bin/cell slot that still needs to be patched once ownership is resolved.
     pub(super) source_bin: BinId,
     pub(super) source_slot: u32,

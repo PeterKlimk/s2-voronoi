@@ -108,10 +108,10 @@ impl ShardDedup {
 // The argument list is the fused collect+resolve data flow; the two
 // output vecs are caller-owned scratch reused across cells.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn collect_and_resolve_cell_edges(
+pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     cell_idx: u32,
-    shard_ctx: &mut super::build::ShardContext<'_>,
-    output_buffer: &crate::knn_clipping::cell_build::CellOutputBuffer,
+    shard_ctx: &mut super::build::ShardContext<'_, P>,
+    output_buffer: &crate::knn_clipping::cell_build::CellOutputBuffer<P>,
     assignment: &BinAssignment,
     incoming_checks: Vec<EdgeCheck>,
     vertex_indices: &mut [u32],
@@ -296,8 +296,8 @@ pub(super) struct OverflowResolveTiming {
 /// between bins without global communication during the main clipping phase.
 ///
 #[cfg_attr(feature = "profiling", inline(never))]
-pub(super) fn resolve_edge_check_overflow(
-    shards: &mut [ShardState],
+pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
+    shards: &mut [ShardState<P>],
     edge_check_overflow: &mut [EdgeCheckOverflow],
     unresolved_edges: &mut Vec<UnresolvedEdgeMismatch>,
 ) -> OverflowResolveTiming {

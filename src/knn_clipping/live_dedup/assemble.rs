@@ -1,6 +1,5 @@
 //! Assembly helpers for live dedup.
 
-use glam::Vec3;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
@@ -14,10 +13,10 @@ use crate::diagram::VoronoiCell;
 use crate::knn_clipping::cell_build::VertexKey;
 use crate::knn_clipping::timing::{DedupSubPhases, Timer};
 
-fn patch_deferred_slots_with_fallback(
-    shards: &mut [super::shard::ShardState],
+fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
+    shards: &mut [super::shard::ShardState<P>],
     generator_bin: &[BinId],
-    deferred_slots: Vec<DeferredSlot>,
+    deferred_slots: Vec<DeferredSlot<P>>,
 ) -> Result<(), crate::VoronoiError> {
     let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| {
         let packed = pack_ref(owner_bin, idx);
@@ -62,9 +61,9 @@ fn patch_deferred_slots_with_fallback(
     Ok(())
 }
 
-pub(super) fn assemble_sharded_live_dedup(
-    mut data: ShardedCellsData,
-) -> Result<super::AssemblyResult, crate::VoronoiError> {
+pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
+    mut data: ShardedCellsData<P>,
+) -> Result<super::AssemblyResult<P>, crate::VoronoiError> {
     let t0 = Timer::start();
 
     let num_bins = data.assignment.num_bins;
@@ -75,7 +74,7 @@ pub(super) fn assemble_sharded_live_dedup(
 
     let mut unresolved_edges: Vec<UnresolvedEdgeMismatch> = Vec::new();
     let mut edge_check_overflow: Vec<EdgeCheckOverflow> = Vec::new();
-    let mut deferred_slots: Vec<DeferredSlot> = Vec::new();
+    let mut deferred_slots: Vec<DeferredSlot<P>> = Vec::new();
     for shard in &mut data.shards {
         unresolved_edges.append(&mut shard.output.unresolved_edges);
         edge_check_overflow.append(&mut shard.output.edge_check_overflow);
@@ -111,7 +110,7 @@ pub(super) fn assemble_sharded_live_dedup(
     let overflow_flush_time = t1.elapsed();
 
     // Convert to ShardFinal, dropping dedup structures to reduce memory pressure
-    let finals: Vec<ShardFinal> = std::mem::take(&mut data.shards)
+    let finals: Vec<ShardFinal<P>> = std::mem::take(&mut data.shards)
         .into_iter()
         .map(|s| s.into_final())
         .collect();
@@ -143,7 +142,7 @@ pub(super) fn assemble_sharded_live_dedup(
 
     #[cfg(feature = "parallel")]
     let (all_vertices, all_vertex_keys) = {
-        let mut all_vertices = Vec::<Vec3>::with_capacity(total_vertices);
+        let mut all_vertices = Vec::<P>::with_capacity(total_vertices);
         let mut all_vertex_keys = Vec::<VertexKey>::with_capacity(total_vertices);
 
         // Safety: We will write to every element in the parallel loop below.
@@ -169,7 +168,7 @@ pub(super) fn assemble_sharded_live_dedup(
                 if count > 0 {
                     let offset = offset as usize;
                     unsafe {
-                        let v_dst = (vertices_ptr as *mut Vec3).add(offset);
+                        let v_dst = (vertices_ptr as *mut P).add(offset);
                         std::ptr::copy_nonoverlapping(shard.output.vertices.as_ptr(), v_dst, count);
 
                         let k_dst = (keys_ptr as *mut VertexKey).add(offset);
@@ -382,6 +381,7 @@ mod tests {
     use crate::knn_clipping::live_dedup::shard::ShardState;
     use crate::knn_clipping::live_dedup::types::{EdgeCheckOverflow, LocalId};
     use crate::knn_clipping::live_dedup::{EdgeRecord, ShardedCellsData};
+    use glam::Vec3;
     use std::collections::BTreeSet;
 
     fn bin(value: usize) -> BinId {
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn deferred_fallback_allocates_once_per_owner_key() {
-        let mut shards = vec![ShardState::new(1), ShardState::new(1)];
+        let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
         shards[0].output.cell_indices = vec![DEFERRED, DEFERRED];
         let generator_bin = vec![bin(1), bin(0), bin(0)];
         let key = [0, 1, 2];
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn overflow_matching_patches_cross_bin_slots_before_fallback() {
-        let mut shards = vec![ShardState::new(1), ShardState::new(1)];
+        let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
         shards[0].output.cell_indices = vec![DEFERRED, DEFERRED];
         shards[1].output.cell_indices = vec![DEFERRED, DEFERRED];
 
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn overflow_mismatch_is_reported_unresolved() {
-        let mut shards = vec![ShardState::new(1), ShardState::new(1)];
+        let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
         let edge_key = pack_edge(0, 1);
         let mut unresolved = Vec::new();
         let mut overflow = vec![

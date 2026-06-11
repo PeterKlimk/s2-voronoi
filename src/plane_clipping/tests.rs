@@ -13,9 +13,10 @@ use glam::Vec2;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use super::builder::{PlaneCellBuilder, PlaneCellOutputBuffer};
+use super::builder::PlaneCellBuilder;
 use crate::cube_grid::DirectedEligibility;
 use crate::knn_clipping::cell_build::CellFailure;
+use crate::knn_clipping::cell_build::CellOutputBuffer;
 use crate::packed_layout::PackedSlotLayout;
 use crate::plane_grid::{PlaneGrid, PlaneNeighborFrontier, PlaneNeighborStream};
 
@@ -41,15 +42,15 @@ fn brute_force_cell(
     points: &[Vec2],
     gi: usize,
     wall_base: u32,
-) -> Result<PlaneCellOutputBuffer, CellFailure> {
+) -> Result<CellOutputBuffer<Vec2>, CellFailure> {
     let mut builder = PlaneCellBuilder::new(gi, points[gi], wall_base, Vec2::ONE);
     for (j, &p) in points.iter().enumerate() {
         if j != gi {
             builder.clip_with_slot(j, j as u32, p)?;
         }
     }
-    let mut buf = PlaneCellOutputBuffer::default();
-    builder.to_vertex_data_full(&mut buf)?;
+    let mut buf = CellOutputBuffer::<Vec2>::default();
+    builder.to_vertex_data(&mut buf)?;
     Ok(buf)
 }
 
@@ -60,7 +61,7 @@ fn stream_cell(
     slot_gen_map: &[u32],
     gi: usize,
     wall_base: u32,
-) -> Result<PlaneCellOutputBuffer, CellFailure> {
+) -> Result<CellOutputBuffer<Vec2>, CellFailure> {
     let layout = PackedSlotLayout::new(slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
     // query_bin 1 vs all-zero map: every cell is "other bin" => emit all.
     let ctx = DirectedEligibility::from_layout(1, 0, layout);
@@ -86,8 +87,8 @@ fn stream_cell(
         }
     }
 
-    let mut buf = PlaneCellOutputBuffer::default();
-    builder.to_vertex_data_full(&mut buf)?;
+    let mut buf = CellOutputBuffer::<Vec2>::default();
+    builder.to_vertex_data(&mut buf)?;
     Ok(buf)
 }
 
@@ -96,7 +97,7 @@ fn all_zero_slot_map(n: usize) -> Vec<u32> {
 }
 
 /// Shoelace area of the (ordered) extracted polygon, accumulated in f64.
-fn cell_area(buf: &PlaneCellOutputBuffer) -> f64 {
+fn cell_area(buf: &CellOutputBuffer<Vec2>) -> f64 {
     let vs = &buf.vertices;
     let mut acc = 0.0f64;
     for i in 0..vs.len() {
@@ -110,8 +111,8 @@ fn cell_area(buf: &PlaneCellOutputBuffer) -> f64 {
 fn assert_cells_equal(
     name: &str,
     gi: usize,
-    brute: &PlaneCellOutputBuffer,
-    stream: &PlaneCellOutputBuffer,
+    brute: &CellOutputBuffer<Vec2>,
+    stream: &CellOutputBuffer<Vec2>,
 ) {
     let mut bkeys: Vec<_> = brute.vertices.iter().map(|&(k, _)| k).collect();
     let mut skeys: Vec<_> = stream.vertices.iter().map(|&(k, _)| k).collect();
@@ -331,8 +332,8 @@ fn plane_builder_reset_reuses_cleanly() {
     let points = uniform(60, 41);
     let wall_base = points.len() as u32;
     let mut builder = PlaneCellBuilder::new(0, points[0], wall_base, Vec2::ONE);
-    let mut reused = PlaneCellOutputBuffer::default();
-    let mut fresh_buf = PlaneCellOutputBuffer::default();
+    let mut reused = CellOutputBuffer::<Vec2>::default();
+    let mut fresh_buf = CellOutputBuffer::<Vec2>::default();
 
     for gi in 0..points.len() {
         builder.reset(gi, points[gi]);
@@ -341,7 +342,7 @@ fn plane_builder_reset_reuses_cleanly() {
                 builder.clip_with_slot(j, j as u32, p).unwrap();
             }
         }
-        builder.to_vertex_data_full(&mut reused).unwrap();
+        builder.to_vertex_data(&mut reused).unwrap();
 
         let fresh = {
             let mut b = PlaneCellBuilder::new(gi, points[gi], wall_base, Vec2::ONE);
@@ -350,7 +351,7 @@ fn plane_builder_reset_reuses_cleanly() {
                     b.clip_with_slot(j, j as u32, p).unwrap();
                 }
             }
-            b.to_vertex_data_full(&mut fresh_buf).unwrap();
+            b.to_vertex_data(&mut fresh_buf).unwrap();
             &fresh_buf
         };
 

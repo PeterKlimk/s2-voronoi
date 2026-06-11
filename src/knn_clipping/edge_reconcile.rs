@@ -10,8 +10,6 @@
 //! - shared-edge endpoint identity mismatches, typically from near-degenerate vertex ownership
 //!   choices where adjacent polygons pick different generator triplets for the same corner
 
-use glam::Vec3;
-
 use super::live_dedup::EdgeRecord;
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::cell_build::VertexKey;
@@ -104,12 +102,14 @@ pub(super) fn edge_segments_for_neighbor(
     Ok(out)
 }
 
-fn dist_sq(a: Vec3, b: Vec3) -> f32 {
-    let d = a - b;
-    d.length_squared()
+fn dist_sq<P: crate::knn_clipping::live_dedup::VertexPosition>(a: P, b: P) -> f32 {
+    a.dist_sq(b)
 }
 
-fn vertex_pos(vertices: &[Vec3], vertex_id: u32) -> Result<Vec3, crate::VoronoiError> {
+fn vertex_pos<P: crate::knn_clipping::live_dedup::VertexPosition>(
+    vertices: &[P],
+    vertex_id: u32,
+) -> Result<P, crate::VoronoiError> {
     vertices.get(vertex_id as usize).copied().ok_or_else(|| {
         reconcile_state_error(format!(
             "edge reconciliation vertex id {} out of range for vertex buffer len {}",
@@ -124,9 +124,9 @@ use super::union_find::UnionFind;
 /// Rebuilt cell table and index buffer after reconciliation.
 pub(crate) type ReconciledCells = (Vec<VoronoiCell>, Vec<u32>);
 
-pub(crate) fn reconcile_unresolved_edges(
+pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     edge_records: &[EdgeRecord],
-    vertices: &[Vec3],
+    vertices: &[P],
     cells: &[VoronoiCell],
     cell_indices: &[u32],
     vertex_keys: &[VertexKey],
@@ -279,6 +279,7 @@ pub(crate) fn reconcile_unresolved_edges(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::Vec3;
     use std::collections::BTreeSet;
 
     fn edge_record(a: u32, b: u32) -> EdgeRecord {

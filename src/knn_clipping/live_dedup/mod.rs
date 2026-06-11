@@ -27,12 +27,12 @@ pub(crate) use build::{
 pub(crate) use edge_checks::unpack_edge_key;
 pub(crate) use shard::ShardState;
 pub(crate) use types::BinId;
-pub(crate) use types::{EdgeRecord, UnresolvedEdgeMismatch};
+pub(crate) use types::{EdgeRecord, UnresolvedEdgeMismatch, VertexPosition};
 
 /// Result of assembling sharded live-dedup data into global arrays.
-pub(crate) struct AssemblyResult {
+pub(crate) struct AssemblyResult<P = glam::Vec3> {
     /// All Voronoi vertex positions (global, concatenated from shards).
-    pub vertices: Vec<glam::Vec3>,
+    pub vertices: Vec<P>,
     /// Vertex keys (triplet of generator indices), parallel to `vertices`.
     pub vertex_keys: Vec<VertexKey>,
     /// Unresolved shared-edge mismatches that survived live dedup assembly.
@@ -49,18 +49,18 @@ pub(crate) struct AssemblyResult {
     pub dedup_sub: super::timing::DedupSubPhases,
 }
 
-pub(crate) struct ShardedCellsData {
+pub(crate) struct ShardedCellsData<P = glam::Vec3> {
     assignment: BinAssignment,
-    shards: Vec<ShardState>,
+    shards: Vec<ShardState<P>>,
     pub(super) cell_sub: super::timing::CellSubAccum,
 }
 
-impl ShardedCellsData {
+impl<P: VertexPosition> ShardedCellsData<P> {
     /// Assemble from a geometry driver's output (the planar driver lives in
     /// `plane_clipping` and builds shards through the pub(crate) seam).
     pub(crate) fn from_parts(
         assignment: BinAssignment,
-        shards: Vec<ShardState>,
+        shards: Vec<ShardState<P>>,
         cell_sub: super::timing::CellSubAccum,
     ) -> Self {
         Self {
@@ -96,8 +96,8 @@ pub(super) fn build_cells_sharded_live_dedup(
     build::build_cells_sharded_live_dedup(points, grid, termination)
 }
 
-pub(crate) fn assemble_sharded_live_dedup(
-    data: ShardedCellsData,
-) -> Result<AssemblyResult, crate::VoronoiError> {
+pub(crate) fn assemble_sharded_live_dedup<P: VertexPosition>(
+    data: ShardedCellsData<P>,
+) -> Result<AssemblyResult<P>, crate::VoronoiError> {
     assemble::assemble_sharded_live_dedup(data)
 }

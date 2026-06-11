@@ -1,43 +1,13 @@
 //! Planar cell builder: rect-seeded incremental half-plane clipping.
 
-use glam::{DVec2, Vec2, Vec3};
+use glam::{DVec2, Vec2};
 
 use crate::fp;
-use crate::knn_clipping::cell_build::{CellFailure, CellOutputBuffer, VertexKey};
+use crate::knn_clipping::cell_build::{CellFailure, CellOutputBuffer};
 use crate::knn_clipping::topo2d::builder::sort3_u32;
 use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck};
 use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane, PolyBuffer};
 use crate::tolerances::PLANE_TERMINATION_GUARD;
-
-/// One extracted vertex: key (sorted generator/wall triple) and position in
-/// the unit square.
-// The Vec2-native extraction path is exercised by builder tests today and
-// becomes the production path when live-dedup positions genericize (the
-// pipeline currently uses the z=0 `to_vertex_data_v3` embedding). Kept
-// compiled in all profiles to avoid dev-only rot.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) type PlaneVertexData = (VertexKey, Vec2);
-
-/// Per-cell extraction output, mirroring `cell_build::CellOutputBuffer` with
-/// planar positions.
-#[derive(Default)]
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) struct PlaneCellOutputBuffer {
-    pub(crate) vertices: Vec<PlaneVertexData>,
-    pub(crate) edge_neighbor_globals: Vec<u32>,
-    pub(crate) edge_neighbor_slots: Vec<u32>,
-    pub(crate) edge_neighbor_eps: Vec<f32>,
-}
-
-impl PlaneCellOutputBuffer {
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn clear(&mut self) {
-        self.vertices.clear();
-        self.edge_neighbor_globals.clear();
-        self.edge_neighbor_slots.clear();
-        self.edge_neighbor_eps.clear();
-    }
-}
 
 /// Incremental planar Voronoi cell builder.
 ///
@@ -307,12 +277,16 @@ impl PlaneCellBuilder {
         (min_unseen_dist_sq_bound as f64) > self.term_threshold_cache
     }
 
-    /// Extract vertices (key + unit-square position) and per-edge neighbor
-    /// records, walking the polygon in order.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn to_vertex_data_full(
+    /// Extract vertices (key + normalized-square `Vec2` position) and
+    /// per-edge neighbor records, walking the polygon in order, into the
+    /// shared (position-generic) `CellOutputBuffer`.
+    ///
+    /// Wall edges are emitted with the `u32::MAX` "no stitchable neighbor"
+    /// convention (edge checks skip them); wall ids still appear in vertex
+    /// *keys*, where dedup treats them as ordinary generator indices.
+    pub(crate) fn to_vertex_data(
         &self,
-        buffer: &mut PlaneCellOutputBuffer,
+        buffer: &mut CellOutputBuffer<Vec2>,
     ) -> Result<(), CellFailure> {
         let poly = self.current_poly();
         if self.failed.is_some() || poly.len < 3 {
@@ -343,67 +317,6 @@ impl PlaneCellBuilder {
             }
 
             let pos = Vec2::new((u + self.generator.x) as f32, (v + self.generator.y) as f32);
-            let n1 = self.neighbor_indices[plane_a] as u32;
-            let n2 = self.neighbor_indices[plane_b] as u32;
-            buffer.vertices.push((sort3_u32(gen_idx, n1, n2), pos));
-
-            buffer
-                .edge_neighbor_globals
-                .push(self.neighbor_indices[edge_plane] as u32);
-            buffer
-                .edge_neighbor_slots
-                .push(self.neighbor_slots[edge_plane]);
-            buffer
-                .edge_neighbor_eps
-                .push(self.half_planes[edge_plane].eps as f32);
-        }
-
-        Ok(())
-    }
-
-    /// Extract into the shared `CellOutputBuffer` with positions embedded as
-    /// `Vec3 {x, y, 0}` — the temporary z=0 embedding that lets the planar
-    /// pipeline drive the (geometry-agnostic) live-dedup layer unchanged,
-    /// pending position-type genericization.
-    ///
-    /// Wall edges are emitted with the `u32::MAX` "no stitchable neighbor"
-    /// convention (edge checks skip them); wall ids still appear in vertex
-    /// *keys*, where dedup treats them as ordinary generator indices.
-    pub(crate) fn to_vertex_data_v3(
-        &self,
-        buffer: &mut CellOutputBuffer,
-    ) -> Result<(), CellFailure> {
-        let poly = self.current_poly();
-        if self.failed.is_some() || poly.len < 3 {
-            return Err(CellFailure::NoValidSeed);
-        }
-
-        buffer.clear();
-        buffer.vertices.reserve(poly.len);
-        buffer.edge_neighbor_globals.reserve(poly.len);
-        buffer.edge_neighbor_slots.reserve(poly.len);
-        buffer.edge_neighbor_eps.reserve(poly.len);
-
-        let gen_idx = self.generator_idx as u32;
-        let plane_count = self.half_planes.len();
-        for i in 0..poly.len {
-            let u = poly.us[i];
-            let v = poly.vs[i];
-            if !u.is_finite() || !v.is_finite() {
-                return Err(CellFailure::NoValidSeed);
-            }
-
-            let (plane_a, plane_b) = poly.vertex_planes[i];
-            let edge_plane = poly.edge_planes[i];
-            if plane_a >= plane_count || plane_b >= plane_count || edge_plane >= plane_count {
-                return Err(CellFailure::NoValidSeed);
-            }
-
-            let pos = Vec3::new(
-                (u + self.generator.x) as f32,
-                (v + self.generator.y) as f32,
-                0.0,
-            );
             let n1 = self.neighbor_indices[plane_a] as u32;
             let n2 = self.neighbor_indices[plane_b] as u32;
             buffer.vertices.push((sort3_u32(gen_idx, n1, n2), pos));

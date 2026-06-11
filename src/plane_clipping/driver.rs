@@ -10,11 +10,10 @@
 //!
 //! Lives in `plane_clipping` so module dependencies run one way
 //! (`plane_clipping -> knn_clipping::live_dedup`'s pub(crate) seam); the
-//! dedup engine itself never references planar types. Positions enter the
-//! shard layer as `Vec3 {x, y, 0}` — the documented temporary embedding,
-//! pending position-type genericization.
+//! dedup engine itself never references planar types, and positions flow
+//! through it as native `Vec2` via the engine's position-generic seam.
 
-use glam::{Vec2, Vec3};
+use glam::Vec2;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -32,7 +31,7 @@ use crate::plane_clipping::PlaneCellBuilder;
 use crate::plane_grid::{PlaneGrid, PlaneGridScratch, PlaneNeighborFrontier, PlaneNeighborStream};
 
 pub(crate) struct PlaneCellsOutput {
-    pub(crate) vertices: Vec<Vec3>,
+    pub(crate) vertices: Vec<Vec2>,
     pub(crate) cells: Vec<VoronoiCell>,
     pub(crate) cell_indices: Vec<u32>,
 }
@@ -40,7 +39,7 @@ pub(crate) struct PlaneCellsOutput {
 /// Build, dedup, assemble, and edge-reconcile all planar cells.
 ///
 /// `points` are normalized coordinates inside `[0, domain.x] x [0, domain.y]`
-/// (the caller maps the user rect); positions come back as `Vec3 {x, y, 0}`.
+/// (the caller maps the user rect); positions come back as normalized `Vec2`.
 pub(crate) fn compute_plane_cells(
     points: &[Vec2],
     grid: &PlaneGrid,
@@ -114,7 +113,7 @@ fn assign_bins_plane(
 /// Per-worker reusable state for planar cell construction.
 struct PlaneWorker {
     builder: PlaneCellBuilder,
-    output_buffer: CellOutputBuffer,
+    output_buffer: CellOutputBuffer<Vec2>,
     batch: Vec<u32>,
     /// Squared distances parallel to `batch`, sorted ascending within the
     /// ring (the per-emission termination bounds, straight from the
@@ -132,7 +131,7 @@ fn build_cells_sharded_plane(
     points: &[Vec2],
     grid: &PlaneGrid,
     domain: Vec2,
-) -> Result<ShardedCellsData, BuildCellsError> {
+) -> Result<ShardedCellsData<Vec2>, BuildCellsError> {
     let assignment =
         assign_bins_plane(points.len(), grid).map_err(BuildCellsError::PackedLayoutCapacity)?;
     let num_bins = assignment.num_bins;
@@ -140,7 +139,7 @@ fn build_cells_sharded_plane(
     checked_u32(points.len() + 4, "virtual wall ids")?;
     let wall_base = points.len() as u32;
 
-    let per_bin: Result<Vec<(ShardState, CellSubAccum)>, BuildCellsError> =
+    let per_bin: Result<Vec<(ShardState<Vec2>, CellSubAccum)>, BuildCellsError> =
         maybe_par_into_iter!(0..num_bins)
             .map(|bin_usize| {
                 let bin = BinId::from_usize(bin_usize);
@@ -194,7 +193,7 @@ fn build_cells_sharded_plane(
             .collect();
     let per_bin = per_bin?;
 
-    let mut shards: Vec<ShardState> = Vec::with_capacity(num_bins);
+    let mut shards: Vec<ShardState<Vec2>> = Vec::with_capacity(num_bins);
     let mut merged_sub = CellSubAccum::new();
     for (shard, sub) in per_bin {
         merged_sub.merge(&sub);
@@ -218,7 +217,7 @@ fn build_and_emit_cell_plane(
     cell_sub: &mut CellSubAccum,
     worker: &mut PlaneWorker,
     live_ctx: &mut LiveDedupCellScratch,
-    shard_ctx: &mut ShardContext<'_>,
+    shard_ctx: &mut ShardContext<'_, Vec2>,
     points: &[Vec2],
     grid: &PlaneGrid,
     assignment: &BinAssignment,
@@ -307,7 +306,7 @@ fn build_and_emit_cell_plane(
     }
 
     builder
-        .to_vertex_data_v3(&mut worker.output_buffer)
+        .to_vertex_data(&mut worker.output_buffer)
         .map_err(|f| cell_build_error(generator_idx, f))?;
 
     emit_cell_output(
