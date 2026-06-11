@@ -6,14 +6,16 @@
 
 /// Target mean points per query-grid cell.
 ///
-/// HONESTY NOTE: this value is tuned for large uniform inputs (the original
-/// 2.5M-point target) and the optimum is known to vary with point count and
-/// distribution — denser inputs need more neighbors before termination, so
-/// the right density is a curve over n, not a constant (docs/todo.md P3.2).
-/// Use `S2_VORONOI_GRID_DENSITY` to override for sweeps; the
-/// `neighbors_total`/`neighbors_max` TIMING_KV fields provide the model
-/// inputs for fitting the curve.
-pub(crate) const KNN_GRID_TARGET_DENSITY: f64 = 16.0;
+/// Set from the 2026-06 reference-machine sweep (Ryzen 3600,
+/// target-cpu=native, single-thread, uniform 100k/500k/2M): density 24 was
+/// fastest at every size (4.8-7.1% over the previous 16), and the optimum is
+/// flat across that range, so a constant suffices for now. Mean
+/// neighbors-before-termination rises mildly with n (8.16 -> 8.44 from 100k
+/// to 2M) and is density-independent; revisit beyond ~4M points or for
+/// strongly non-uniform inputs. Use `S2_VORONOI_GRID_DENSITY` to override
+/// for sweeps (scripts/sweep_grid_density.sh); the `neighbors_total` /
+/// `grid_*` TIMING_KV fields are the model inputs.
+pub(crate) const KNN_GRID_TARGET_DENSITY: f64 = 24.0;
 
 /// Occupancy-feedback rebuild fires when the fullest grid cell exceeds this
 /// multiple of the target density (clustered inputs produce mega-cells that
