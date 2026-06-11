@@ -3,15 +3,17 @@
 //! All explicit SIMD in the crate goes through [`PointChunk8`] / [`Dots8`],
 //! so the backend is swappable for benchmarking and portability:
 //!
-//! - default: `std::simd` (portable_simd, requires nightly)
-//! - `simd_wide`: the `wide` crate (stable Rust, same instructions)
-//! - `simd_scalar`: plain arrays relying on autovectorization (stable)
+//! - default: the `wide` crate (explicit SIMD on stable Rust)
+//! - `simd_scalar`: plain arrays relying on autovectorization (debugging /
+//!   comparison; a few percent slower on generic targets)
 //!
 //! All backends are lane-wise only (no horizontal reductions), so results
-//! are bit-identical across them.
-
-#[cfg(all(feature = "simd_wide", feature = "simd_scalar"))]
-compile_error!("features `simd_wide` and `simd_scalar` are mutually exclusive");
+//! are bit-identical across them (see tests/backend_fingerprint.rs).
+//!
+//! History: the original backend was nightly `portable_simd`. Benchmarks on
+//! the reference Ryzen 3600 (2026-06) showed `wide` at parity (within ~1-2%,
+//! winning some runs), so the nightly requirement was dropped. The portable
+//! backend can be recovered from git history if `std::simd` stabilizes.
 
 #[inline(always)]
 pub(crate) fn fma_f32(a: f32, b: f32, c: f32) -> f32 {
@@ -97,53 +99,7 @@ impl Dots8 {
     }
 }
 
-#[cfg(not(any(feature = "simd_wide", feature = "simd_scalar")))]
-mod backend {
-    use std::simd::cmp::SimdPartialOrd;
-    use std::simd::f32x8;
-    #[cfg(feature = "fma")]
-    use std::simd::StdFloat;
-
-    pub(super) type V = f32x8;
-
-    #[inline(always)]
-    pub(super) fn load_slice(s: &[f32]) -> V {
-        f32x8::from_slice(s)
-    }
-
-    #[inline(always)]
-    pub(super) fn load_array(a: [f32; 8]) -> V {
-        f32x8::from_array(a)
-    }
-
-    #[inline(always)]
-    pub(super) fn dot3(x: V, y: V, z: V, qx: f32, qy: f32, qz: f32) -> V {
-        let qx = f32x8::splat(qx);
-        let qy = f32x8::splat(qy);
-        let qz = f32x8::splat(qz);
-        #[cfg(feature = "fma")]
-        {
-            let ab = x.mul_add(qx, y * qy);
-            z.mul_add(qz, ab)
-        }
-        #[cfg(not(feature = "fma"))]
-        {
-            (x * qx + y * qy) + z * qz
-        }
-    }
-
-    #[inline(always)]
-    pub(super) fn mask_gt(v: V, threshold: f32) -> u32 {
-        v.simd_gt(f32x8::splat(threshold)).to_bitmask() as u32
-    }
-
-    #[inline(always)]
-    pub(super) fn to_array(v: V) -> [f32; 8] {
-        v.to_array()
-    }
-}
-
-#[cfg(feature = "simd_wide")]
+#[cfg(not(feature = "simd_scalar"))]
 mod backend {
     use wide::{f32x8, CmpGt};
 
@@ -187,7 +143,7 @@ mod backend {
     }
 }
 
-#[cfg(all(feature = "simd_scalar", not(feature = "simd_wide")))]
+#[cfg(feature = "simd_scalar")]
 mod backend {
     pub(super) type V = [f32; 8];
 

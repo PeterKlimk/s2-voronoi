@@ -1,8 +1,3 @@
-#![cfg_attr(
-    not(any(feature = "simd_wide", feature = "simd_scalar")),
-    feature(portable_simd)
-)]
-
 //! Spherical Voronoi diagrams on the unit sphere (S2).
 //!
 //! This crate computes Voronoi diagrams for points on the unit sphere using
@@ -10,7 +5,7 @@
 //!
 //! ## Requirements
 //!
-//! - Requires **nightly Rust** (`#![feature(portable_simd)]`).
+//! - Stable Rust (MSRV 1.88).
 //! - Input points are **assumed** to be unit length (not normalized by the API).
 //! - At least 4 points are required to form a non-degenerate diagram.
 //!

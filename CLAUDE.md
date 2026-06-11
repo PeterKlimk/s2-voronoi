@@ -7,7 +7,7 @@ For user-facing crate docs, see `README.md` and `docs/`.
 
 ## Toolchain / Constraints
 
-- Nightly Rust is required (`#![feature(portable_simd)]`).
+- Stable Rust (MSRV 1.88); explicit SIMD via the `wide` crate behind the `src/fp.rs` backend seam.
 - Run heavy checks in release mode where possible.
 - Input points are assumed to be unit-normalized.
 
@@ -142,6 +142,5 @@ Primary integration tests in `tests/`:
 
 ## Known Limitations
 
-- Nightly Rust required.
 - Inputs should be unit-normalized.
 - Numerical edge cases can still produce degeneracies; use `validation::validate`.

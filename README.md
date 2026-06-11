@@ -27,7 +27,7 @@ the measured safety margins behind it.
 
 - Pre-release (0.1). The supported envelope is documented and test-backed, but the API is not yet
   stable; see `docs/todo.md` for the path to release.
-- **Nightly Rust required** (`#![feature(portable_simd)]`); a stable scalar path is planned.
+- **Stable Rust** (MSRV 1.88). Explicit SIMD via the `wide` crate; nightly is no longer required.
 - Inputs are **assumed** to be unit-normalized (not enforced; may debug-assert in hot paths).
 - For strict subdivision/invariant checks on computed output, use `validation::validate`.
 

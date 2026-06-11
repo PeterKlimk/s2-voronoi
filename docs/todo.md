@@ -56,9 +56,13 @@ The empirical groundwork is done (see correctness-contract.md); this is the impl
 
 ## P1: Release engineering
 
-1. **Stable-Rust build path.** Wrap the SIMD primitives (`fp.rs` dot/compare/bitmask) behind a
-   thin abstraction with a scalar implementation; nightly + `simd` feature restores full speed.
-   This unblocks crates.io.
+1. ~~**Stable-Rust build path.**~~ **Done — better than planned: nightly is gone entirely.** All
+   explicit SIMD flows through the `fp.rs` backend seam (`PointChunk8`/`Dots8`); the default
+   backend is the `wide` crate (stable Rust, explicit lanes), with `simd_scalar` as a
+   debugging/comparison fallback. Reference-machine (Ryzen 3600, target-cpu=native) benchmarks
+   showed wide at parity with the old portable_simd backend (within ~1-2%, winning some runs);
+   all backends are bit-identical (tests/backend_fingerprint.rs). portable_simd was deleted
+   (recoverable from git history if std::simd stabilizes). MSRV set to 1.88.
 2. **Feature consolidation.** User-meaningful features only (`parallel`, `simd`, `serde`,
    `glam`, `qhull`); internal/research flags (`microbench`, `simd_clip`, `fma`,
    `packed_knn_sort_small`, `profiling`) become doc-hidden or merge away.
