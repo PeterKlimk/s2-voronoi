@@ -250,3 +250,24 @@ Desired direction (see todo P3.2): benchmark-derived target density across input
 occupancy-feedback rebuild within a memory budget, and a shells-native big-cell path for
 concentration beyond what global resolution can fix. Performance/robustness issue, root cause of
 most "overfit to uniform" symptoms.
+
+### 12. Packed-envelope reach shrinks with scale; takeover engagement grows sharply past ~2M
+
+Measured 2026-06 (Ryzen 3600/WSL2, uniform, density 24): cells served by the takeover grow from
+78 at 2M (0.004%) to 13,126 at 4M (0.33%) — a 168x jump for 2x points — driving mean
+neighbors-before-termination from 8.45 to 12.25. Suspected cause: f32 threshold precision — at
+4M, cell angular sizes (~1e-3 rad) push the security-threshold `1 - cos` values toward f32
+epsilon, so more cells fail to prove safety within the packed stages. This is very likely why
+the historical "bad edges" annotation named the 2-4M range specifically: that is where the
+takeover and fallback paths started being exercised in volume.
+
+Related: the shell takeover's per-layer certificate makes each takeover cell clip more than the
+deleted cursor did (whole layers before the bound improves) — the granularity trade accepted at
+the flip. Invisible at <=2M, ~5% of total clips at 4M uniform; re-measure at 8M+ and consider
+f64 threshold computation or packed-stage extension if it grows.
+
+Also measured: the density optimum is distribution-sensitive in the contrast direction — uniform
+and clustered both peak at density 24, but bimodal (160x density contrast) monotonically prefers
+lower densities (optimum <=12, with 24 costing ~5.7%). First quantified motivation for choosing
+resolution from an occupancy-histogram percentile rather than the mean (pairs with the planned
+big-cell path). Performance issue, scale/distribution envelope.

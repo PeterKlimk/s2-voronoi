@@ -182,6 +182,11 @@ struct Args {
     #[arg(long)]
     lloyd: bool,
 
+    /// Point distribution: fib (default), clustered (caps mixture with
+    /// uniform background), bimodal (dense cap + sparse background).
+    #[arg(long, default_value = "fib")]
+    dist: String,
+
     /// Compare against convex hull ground truth (slow, max 100k)
     #[arg(long)]
     validate: bool,
@@ -199,8 +204,13 @@ struct Args {
     repeat: usize,
 }
 
-fn generate_points(n: usize, seed: u64, lloyd: bool) -> Vec<Vec3> {
+fn generate_points(n: usize, seed: u64, lloyd: bool, dist: &str) -> Vec<Vec3> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    match dist {
+        "clustered" => return clustered_points(n, &mut rng),
+        "bimodal" => return bimodal_points(n, &mut rng),
+        _ => {}
+    }
     let jitter_scale = if lloyd { 0.1 } else { 0.25 };
     let jitter = mean_spacing(n) * jitter_scale;
     let mut points = fibonacci_sphere_points_with_rng(n, jitter, &mut rng);
@@ -208,6 +218,72 @@ fn generate_points(n: usize, seed: u64, lloyd: bool) -> Vec<Vec3> {
         lloyd_relax_kmeans(&mut points, 2, 20, &mut rng);
     }
     points
+}
+
+fn random_unit<R: Rng>(rng: &mut R) -> Vec3 {
+    loop {
+        let p = Vec3::new(
+            rng.gen_range(-1.0f32..1.0),
+            rng.gen_range(-1.0f32..1.0),
+            rng.gen_range(-1.0f32..1.0),
+        );
+        let len_sq = p.length_squared();
+        if len_sq > 1e-6 && len_sq <= 1.0 {
+            return p / len_sq.sqrt();
+        }
+    }
+}
+
+/// Cap sample around `center` with angular radius `radius` (cosine-weighted
+/// disc in the tangent plane, good enough for density stress).
+fn cap_point<R: Rng>(center: Vec3, radius: f32, rng: &mut R) -> Vec3 {
+    let r = radius * rng.gen_range(0.0f32..1.0).sqrt();
+    let theta = rng.gen_range(0.0..std::f32::consts::TAU);
+    let any = if center.x.abs() < 0.9 {
+        Vec3::X
+    } else {
+        Vec3::Y
+    };
+    let t1 = center.cross(any).normalize();
+    let t2 = center.cross(t1);
+    (center + t1 * (r * theta.cos()) + t2 * (r * theta.sin())).normalize()
+}
+
+/// Caps mixture: ~90% of points in n/1000 clusters with log-uniform radii
+/// (0.005..0.1 rad), 10% uniform background. "Game map regions" shape.
+fn clustered_points<R: Rng>(n: usize, rng: &mut R) -> Vec<Vec3> {
+    let num_clusters = (n / 1000).max(1);
+    let centers: Vec<(Vec3, f32)> = (0..num_clusters)
+        .map(|_| {
+            let radius = 0.005f32 * (0.1f32 / 0.005).powf(rng.gen_range(0.0f32..1.0));
+            (random_unit(rng), radius)
+        })
+        .collect();
+    (0..n)
+        .map(|_| {
+            if rng.gen_range(0.0f32..1.0) < 0.1 {
+                random_unit(rng)
+            } else {
+                let (c, r) = centers[rng.gen_range(0..centers.len())];
+                cap_point(c, r, rng)
+            }
+        })
+        .collect()
+}
+
+/// Bimodal: 80% of points in one 0.3 rad cap (~160x density contrast),
+/// 20% uniform background.
+fn bimodal_points<R: Rng>(n: usize, rng: &mut R) -> Vec<Vec3> {
+    let center = Vec3::new(0.0, 0.0, 1.0);
+    (0..n)
+        .map(|_| {
+            if rng.gen_range(0.0f32..1.0) < 0.8 {
+                cap_point(center, 0.3, rng)
+            } else {
+                random_unit(rng)
+            }
+        })
+        .collect()
 }
 
 fn format_rate(count: usize, ms: f64) -> String {
@@ -343,7 +419,9 @@ fn main() {
         args.sizes
     };
 
-    let point_type = if args.lloyd {
+    let point_type = if args.dist != "fib" {
+        args.dist.as_str()
+    } else if args.lloyd {
         "Lloyd-relaxed"
     } else {
         "fibonacci+jitter"
@@ -377,7 +455,7 @@ fn main() {
         println!("{}", "=".repeat(60));
 
         let t_gen = Instant::now();
-        let points = generate_points(*n, args.seed, args.lloyd);
+        let points = generate_points(*n, args.seed, args.lloyd, &args.dist);
         let unit_points: Vec<UnitVec3> = points
             .iter()
             .map(|p| UnitVec3::new(p.x, p.y, p.z))
