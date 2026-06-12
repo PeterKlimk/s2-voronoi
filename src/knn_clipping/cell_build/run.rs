@@ -338,8 +338,9 @@ fn clip_batch(
     counters: &mut BuildCounters,
 ) {
     let t_clip = crate::knn_clipping::timing::Timer::start();
+    let packed_chunk = &phase.packed_chunk[..batch.n];
     for pos in 0..batch.n {
-        let neighbor_slot = phase.packed_chunk[pos];
+        let neighbor_slot = packed_chunk[pos];
         let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
         if neighbor_idx == generator_idx {
             continue;
@@ -398,7 +399,7 @@ fn clip_batch(
 
         if phase.builder.is_bounded() && should_check_termination {
             let bound = if pos + 1 < batch.n {
-                let next_slot = phase.packed_chunk[pos + 1];
+                let next_slot = packed_chunk[pos + 1];
                 let next = point_indices[next_slot as usize] as usize;
                 let next_dot = points[generator_idx].dot(points[next]);
                 // Shell layers are sorted within the layer, but the next
