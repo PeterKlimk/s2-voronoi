@@ -255,7 +255,6 @@ fn test_cell_centroids_unit_length_and_near_generator() {
 
 #[test]
 fn test_lloyd_relaxation_converges_toward_centroidal() {
-    use s2_voronoi::UnitVec3;
     let mut points = fibonacci_sphere_points(500, 0.5, 99);
 
     let mean_displacement = |diagram: &s2_voronoi::SphericalVoronoi| -> f64 {
@@ -280,8 +279,6 @@ fn test_lloyd_relaxation_converges_toward_centroidal() {
              displacement ({displacement} >= {last})"
         );
         last = displacement;
-        points = (0..diagram.num_cells())
-            .map(|i| diagram.cell_centroid(i))
-            .collect::<Vec<UnitVec3>>();
+        points = diagram.lloyd_step();
     }
 }

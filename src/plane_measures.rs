@@ -86,4 +86,23 @@ impl PlanarVoronoi {
             }
         }
     }
+
+    /// The next generator set of Lloyd relaxation: every cell's centroid,
+    /// in input order. Centroids are topology-aware (bounded diagrams
+    /// clamp into the rect, periodic diagrams wrap), so the result is
+    /// always a valid input for the matching compute function:
+    ///
+    /// ```ignore
+    /// for _ in 0..iters {
+    ///     points = compute_plane_periodic(&points, rect)?.lloyd_step();
+    /// }
+    /// ```
+    ///
+    /// Welded twins report their canonical cell's centroid, so coincident
+    /// inputs remain coincident (and re-weld) under relaxation.
+    pub fn lloyd_step(&self) -> Vec<PlanePoint> {
+        (0..self.num_cells())
+            .map(|i| self.cell_centroid(i))
+            .collect()
+    }
 }

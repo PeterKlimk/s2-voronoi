@@ -134,7 +134,8 @@ toroidal graph.
   `build_adjacency()`, `cell_area(i)`, `cell_centroid(i)`, `weld_map()`, `rect()`,
   `topology()` — Lloyd relaxation is the same one-loop recipe on the sphere, rect, and torus
 - Lloyd relaxation (centroidal Voronoi tessellation) is one loop:
-  `points = (0..n).map(|i| diagram.cell_centroid(i)).collect()` and recompute.
+  `points = diagram.lloyd_step()` and recompute — `lloyd_step()` is centroids in input order,
+  topology-aware on the sphere, rect, and torus.
 - Point location: `diagram.build_locator()` returns a reusable locator
   (`SphereLocator` / `PlaneLocator`); `locator.locate(query)` maps a point to
   the cell containing it (its nearest generator's canonical cell) in

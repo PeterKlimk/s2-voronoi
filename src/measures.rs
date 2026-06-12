@@ -82,4 +82,22 @@ impl SphericalVoronoi {
         }
         UnitVec3::new(centroid.x as f32, centroid.y as f32, centroid.z as f32)
     }
+
+    /// The next generator set of Lloyd relaxation: every cell's centroid,
+    /// in input order. Recompute with [`crate::compute`] to complete the
+    /// step:
+    ///
+    /// ```ignore
+    /// for _ in 0..iters {
+    ///     points = compute(&points)?.lloyd_step();
+    /// }
+    /// ```
+    ///
+    /// Welded twins report their canonical cell's centroid, so coincident
+    /// inputs remain coincident (and re-weld) under relaxation.
+    pub fn lloyd_step(&self) -> Vec<UnitVec3> {
+        (0..self.num_cells())
+            .map(|i| self.cell_centroid(i))
+            .collect()
+    }
 }

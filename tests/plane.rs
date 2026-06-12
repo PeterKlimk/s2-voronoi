@@ -338,7 +338,7 @@ fn plane_adjacency_contract() {
 #[test]
 fn plane_measures_and_lloyd() {
     let rect = PlaneRect::new(PlanePoint::new(-2.0, 1.0), PlanePoint::new(6.0, 5.0));
-    let mut points = uniform_in(rect, 400, 97);
+    let points = uniform_in(rect, 400, 97);
     let diagram = compute_plane(&points, rect).unwrap();
 
     // Areas partition the rect (cell_area path, vs the test's own shoelace).
@@ -365,13 +365,8 @@ fn plane_measures_and_lloyd() {
     let mut diagram = diagram;
     let v0 = variance(&diagram);
     for _ in 0..5 {
-        points = (0..diagram.num_cells())
-            .map(|i| {
-                let c = diagram.cell_centroid(i);
-                [c.x, c.y]
-            })
-            .collect();
-        diagram = compute_plane(&points, rect).unwrap();
+        let next = diagram.lloyd_step();
+        diagram = compute_plane(&next, rect).unwrap();
     }
     let v5 = variance(&diagram);
     assert!(
@@ -443,7 +438,7 @@ fn periodic_seam_cells_and_weld() {
 fn periodic_measures_and_lloyd() {
     use s2_voronoi::compute_plane_periodic;
     let rect = PlaneRect::unit();
-    let mut points = uniform_in(rect, 300, 211);
+    let points = uniform_in(rect, 300, 211);
     let mut diagram = compute_plane_periodic(&points, rect).unwrap();
 
     // cell_area must measure seam cells on the unwrapped polygon: total is
@@ -465,13 +460,8 @@ fn periodic_measures_and_lloyd() {
     };
     let v0 = variance(&diagram);
     for _ in 0..5 {
-        points = (0..diagram.num_cells())
-            .map(|i| {
-                let c = diagram.cell_centroid(i);
-                [c.x, c.y]
-            })
-            .collect();
-        diagram = compute_plane_periodic(&points, rect).unwrap();
+        let next = diagram.lloyd_step();
+        diagram = compute_plane_periodic(&next, rect).unwrap();
     }
     let v5 = variance(&diagram);
     assert!(
