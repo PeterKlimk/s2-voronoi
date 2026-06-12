@@ -59,6 +59,45 @@ fn pair_cutoff() -> f64 {
     f64::from_bits(PAIR_CUTOFF_BITS.load(Ordering::Relaxed))
 }
 
+/// Pass-2 key filter: when set, decisions whose question key is in the set
+/// are recorded at ANY margin (de-censoring the cutoff-based pass-1
+/// collection). Arc-cloned once per audit call; None disables.
+#[allow(clippy::type_complexity)]
+static PAIR_KEY_FILTER: std::sync::RwLock<
+    Option<std::sync::Arc<std::collections::HashSet<[u32; 4]>>>,
+> = std::sync::RwLock::new(None);
+
+/// Install (or clear) the pass-2 key filter (probe API).
+pub fn set_pair_key_filter(keys: Option<Vec<[u32; 4]>>) {
+    *PAIR_KEY_FILTER.write().unwrap() = keys.map(|k| std::sync::Arc::new(k.into_iter().collect()));
+}
+
+/// Per-question summary of the current paired collection:
+/// (key, distinct answering cells, local answers conflict, min margin).
+pub fn paired_question_summaries() -> Vec<([u32; 4], u32, bool, f32)> {
+    use std::collections::HashMap;
+    let records = PAIRED.lock().unwrap().clone();
+    let mut groups: HashMap<[u32; 4], Vec<&PairedRecord>> = HashMap::new();
+    for r in &records {
+        groups.entry(r.key).or_default().push(r);
+    }
+    groups
+        .into_iter()
+        .map(|(key, entries)| {
+            let mut cells: Vec<u32> = entries.iter().map(|e| e.cell).collect();
+            cells.sort_unstable();
+            cells.dedup();
+            let conflict =
+                entries.iter().any(|e| e.local_keep) && entries.iter().any(|e| !e.local_keep);
+            let min_margin = entries
+                .iter()
+                .map(|e| e.margin)
+                .fold(f32::INFINITY, f32::min);
+            (key, cells.len() as u32, conflict, min_margin)
+        })
+        .collect()
+}
+
 /// One near-margin decision, keyed by its abstract question: does generator
 /// `key[3]` kill the vertex of sorted triple `key[0..3]`? Multiple cells
 /// answer the same question (each owner of the triple clips that corner
@@ -148,6 +187,7 @@ pub(crate) fn audit_clip(
     }
     let inv_norm = 1.0 / hp.ab2.sqrt();
     let pcut = pair_cutoff();
+    let key_filter = PAIR_KEY_FILTER.read().unwrap().clone();
     let mut batch: Vec<PairedRecord> = Vec::new();
     for i in 0..poly.len {
         let (pa, pb) = poly.vertex_planes[i];
@@ -180,8 +220,12 @@ pub(crate) fn audit_clip(
         }
 
         // Paired collection: record this decision under its abstract
-        // question key so cross-cell answers can be matched up.
-        if nd < pcut {
+        // question key so cross-cell answers can be matched up. Pass 1
+        // collects below the margin cutoff; pass 2 additionally collects
+        // any decision whose key is in the installed filter, at any margin
+        // (de-censoring).
+        let below_cutoff = nd < pcut;
+        if below_cutoff || key_filter.is_some() {
             let (ga, gb) = (neighbor_indices[pa] as u32, neighbor_indices[pb] as u32);
             let g = generator_idx as u32;
             let x = neighbor_idx as u32;
@@ -192,13 +236,17 @@ pub(crate) fn audit_clip(
             if triple.contains(&x) {
                 continue;
             }
-            batch.push(PairedRecord {
-                key: [triple[0], triple[1], triple[2], x],
-                cell: g,
-                margin: nd as f32,
-                local_keep: d >= -hp.eps,
-                canonical: in_circle_sphere_sign(generator_raw, a, b, neighbor_raw),
-            });
+            let key = [triple[0], triple[1], triple[2], x];
+            let wanted = below_cutoff || key_filter.as_ref().is_some_and(|f| f.contains(&key));
+            if wanted {
+                batch.push(PairedRecord {
+                    key,
+                    cell: g,
+                    margin: nd as f32,
+                    local_keep: d >= -hp.eps,
+                    canonical: in_circle_sphere_sign(generator_raw, a, b, neighbor_raw),
+                });
+            }
         }
     }
     if !batch.is_empty() {

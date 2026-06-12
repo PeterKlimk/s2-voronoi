@@ -259,11 +259,23 @@ distinct cells answer the SAME question with conflicting local signs.
 Measured at 500k (cutoff 1e-3), 2M, and defect-bearing 3M seed 3 (cutoff
 1e-4):
 
-1. **The cross-cell conflict tail is empirically ZERO.** 300k-557k
-   multi-party questions per run; not one conflicting pair of local answers
-   — including on the run with 4 real defects. Chart-local errors on shared
-   questions are near-perfectly correlated. (The canonical evaluator's
-   permutation self-check also held: zero inconsistencies.)
+1. **The cross-cell conflict tail is ZERO — now rigorous, not censored.**
+   300k-557k multi-party questions per run; not one conflicting pair of
+   local answers — including on the run with 4 real defects. The follow-up
+   two-pass audit (`probe_two_pass_audit`: pass 1 collects question keys
+   below the margin cutoff; pass 2 re-runs the same input recording every
+   party's answer to those keys at ANY margin) closed the censoring hole:
+   it de-censored 167k-313k question pairs per run whose partner had
+   answered above the cutoff, and the conflict count stayed **zero** across
+   ~5M questions total. Chart-local errors on shared questions are
+   near-perfectly correlated. (The canonical evaluator's permutation
+   self-check also held: zero inconsistencies.)
+
+   The two-pass split also quantifies how normal question-set divergence
+   is: 60-65% of near-tie questions are *truly one-sided* (only one of the
+   triple's three owners ever posed them, at any margin) — divergence is
+   the default at epsilon scale and almost always benign; defects are the
+   rare cases where it touches a feature two cells must agree on.
 2. **Local-vs-canonical disagreements are benign for consistency**: tens of
    thousands per run (the 1e-5..1e-4 band), but they are shared bias, not
    conflict — wrong-but-identical answers yield a consistent
