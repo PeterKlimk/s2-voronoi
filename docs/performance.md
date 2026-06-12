@@ -17,12 +17,29 @@ coordination happens only during vertex deduplication.
 - `RAYON_NUM_THREADS=1`: force single-threaded mode (useful for stable perf comparisons).
 - `S2_BIN_COUNT=<n>`: override bin/shard count (defaults to ~2x threads).
 - `S2_VORONOI_TIMING_KV=1`: enable `TIMING_KV ...` output (requires `timing` feature).
+- `S2_VORONOI_PLANE_GRID_DENSITY=<f>`: override the planar grid's points-per-cell target
+  (default 16; sweep data in `src/policy.rs`).
 
 ## Bench binaries
 
 - `cargo run --release --features tools --bin bench_voronoi -- 100k 500k 1m`
 - `cargo run --release --features tools,timing --bin bench_voronoi -- 500k --no-preprocess`
 - `cargo run --release --features tools,qhull --bin bench_voronoi -- 50k --validate`
+- `cargo run --release --features tools --bin bench_plane -- 100k 1m 2m -n 6 --validate`
+- `cargo run --release --features bench_voronoice --bin bench_plane -- 1m 2m -n 6 --voronoice`
+  (head-to-head against the `voronoice` crate on identical inputs)
+
+## Planar reference numbers (Ryzen 3600, min of repeats, uniform)
+
+| n | plane (MT) | sphere (MT) | voronoice |
+|----|-----------|-------------|-----------|
+| 1M | ~430ms | ~330ms | ~1.4s |
+| 2M | ~1.0s | ~720ms | ~3.5s |
+
+Single-threaded the two geometries are at parity per point (~1.8-1.9s at 1M); the remaining
+multithreaded gap (1.2-1.3x) is parallel-path overhead, not per-point work — under
+investigation. The voronoice gap grows with n (their delaunator core is O(n log n); per-point
+cost here is near constant).
 
 ## Comparison scripts
 

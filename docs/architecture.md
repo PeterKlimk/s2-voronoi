@@ -1,7 +1,9 @@
 # Architecture / algorithm notes
 
-s2-voronoi computes a spherical Voronoi diagram on the unit sphere (S2). The implementation is
-optimized for building many independent cells efficiently.
+s2-voronoi computes Voronoi diagrams on the unit sphere (S2) and, with the same engine, on a
+bounded planar rectangle. The implementation is optimized for building many independent cells
+efficiently; the sharded dedup/stitching core is geometry-agnostic and each geometry contributes
+a driver (spatial index + cell builder).
 
 ## High-level pipeline
 
@@ -31,20 +33,56 @@ The current `topo2d` builder now has an internal wrapper seam around the gnomoni
 so future non-hemispheric handling can be introduced as an alternate builder rather than as
 special-case logic in `cell_build/`. See `docs/fallback_builder.md`.
 
+## The planar backend
+
+`compute_plane` runs the identical pipeline shape over a flat `res x res` grid (`plane_grid/`):
+
+1. The user rect is normalized with a **uniform** scale (Voronoi structure is not invariant under
+   anisotropic scaling); the longer side maps to 1.
+2. Generators within the planar weld radius are welded using the grid itself as the detector
+   (points can only weld within a cell or across a radius-thin wall band) — the no-weld case is a
+   read-only scan of the grid that the kNN queries then reuse.
+3. Candidate neighbors come from the same staged stream as the sphere: a packed SIMD stage
+   (per-cell query groups, 8-wide squared distances, Chunk0/Tail/ExpandR2 with lazy cold paths)
+   followed by a shell-expansion takeover that re-covers everything (the consumer dedups).
+4. Cells clip in the plane directly — **no projection layer at all**; the gnomonic chart's job is
+   already done by geometry. The polygon is seeded with the four rect walls as half-planes owned
+   by *virtual wall generators* (ids `n..n+4`), so every cell is bounded from the seed, boundary
+   vertices are ordinary `[gen, gen, wall]` key triples, and dedup/validation work unchanged.
+5. Termination is a single comparison: a neighbor at squared distance `d2` cannot cut the cell
+   once `d2 > 4 * max_r2` (its bisector passes beyond every vertex). All grid certificates are
+   exact box distances (with a documented wall-classification slack), where the sphere needs
+   conservative cap/plane bounds.
+
+Distance semantics are inverted relative to the sphere throughout the planar stack: squared
+Euclidean distance with *lower*-bound certificates ("nothing unseen is closer than b"), versus
+the sphere's dot products with upper bounds. The directed-eligibility rules, packed slot layout,
+emission seam, assembly, and edge reconciliation are shared, not duplicated.
+
 ## Module map
 
 - `src/lib.rs`: public API (`compute`, `compute_with`, `validation`).
 - `src/diagram.rs`: storage (`SphericalVoronoi`, `CellView`).
 - `src/policy.rs`: internal packed/termination policy and heuristic decisions.
 - `src/types.rs`: `UnitVec3`, `UnitVec3Like`.
-- `src/knn_clipping/`: kNN + clipping backend.
+- `src/live_dedup/`: the geometry-agnostic engine — sharded vertex ownership, deferred-slot
+  patching, edge-check propagation, assembly, bin layout, and the per-cell emission seam. Generic
+  over the vertex position type (`Vec3` on the sphere, `Vec2` on the plane).
+- `src/knn_clipping/`: the spherical backend.
+  - `driver.rs`: per-bin parallel cell-build driver (the planar sibling is
+    `plane_clipping/driver.rs`).
   - `cell_build/`: single-cell neighbor seeding, stream consumption, clipping, and extraction.
-  - `topo2d/`: gnomonic projection, half-planes, and convex clipping.
-  - `live_dedup/` (crate root): sharded vertex ownership, deferred-slot patching, and edge-check propagation.
-  - `edge_reconcile.rs`: narrow post-pass reconciliation for unresolved shared-edge mismatches.
+  - `topo2d/`: gnomonic projection, half-planes, and convex clipping (the 2D clip cores are
+    shared with the plane).
+  - `edge_reconcile.rs`: narrow post-pass reconciliation for unresolved shared-edge mismatches
+    (shared with the plane; each geometry passes its own degenerate-length epsilon).
   - `preprocess.rs`: weld near-coincident generators (see docs/correctness-contract.md).
-  - `timing.rs`: optional timing + histograms.
-- `src/cube_grid/`: cube-map spatial index + packed-kNN helpers.
+- `src/plane_clipping/`: the planar backend — domain normalization + grid-integrated weld
+  (`compute.rs`), per-bin driver (`driver.rs`), rect-seeded cell builder (`builder.rs`).
+- `src/plane_diagram.rs`: `PlanarVoronoi`, `PlanePoint`, `PlaneRect`.
+- `src/cube_grid/`: cube-map spatial index + packed-kNN stage (sphere).
+- `src/plane_grid/`: flat spatial index + packed-kNN stage + shell frontier (plane).
+- `src/timing/`: optional timing + histograms (crate-wide).
 - `src/convex_hull.rs` (`qhull` feature): convex-hull dual backend (tests/bench comparisons).
 
 ## Policy layer

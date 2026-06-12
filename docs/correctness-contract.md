@@ -110,6 +110,45 @@ performance; the contract documents it.
 
 Status: **implemented.**
 
+## The planar contract
+
+`compute_plane` makes the same two-tier promise over the rectangle: a strictly valid subdivision
+(every interior edge in exactly two cells with opposite orientations, single-use edges only on
+the rect boundary, disk topology `V - E + (F + 1) = 2`), enforced by `validation::validate_plane`
+and asserted by the planar fuzz and coincidence suites.
+
+### The planar resolvability map (empirical, 2026-06)
+
+Probed with the raw pipeline (no radius weld), normalized units (longer rect side = 1):
+
+- **Pairs resolve at any distinct-f32 separation** — at generic positions, straddling grid-cell
+  walls (the plane's only classification branches), and at rect corners. The sphere's worst
+  failure class (chart-basis divergence between near-coincident twins at seams) has no planar
+  analog: the plane has one global chart, and a shared bisector is built from exactly negated
+  f64 differences on the two sides. A degenerate (zero) bisector is provably impossible for
+  distinct normalized f32 coordinates — no f64 underflow exists for any f32 difference.
+- **Clusters (k >= 3) below ~1 ulp of unit scale break topology** (degenerate cells, overused
+  edges, broken Euler): invalid at min-separation 3e-8, valid from 6e-8 in every probed
+  configuration. Individual bisectors stay well-formed; their mutual intersections do not.
+- The subnormal-separation regime near the origin (distinct points ~1e-40 apart) fails the same
+  way.
+
+### The planar weld policy
+
+`PLANE_WELD_DIST = 1e-6` normalized: generators within it weld to one cell (lowest original index
+canonical, exposed via `PlanarVoronoi::weld_map()`). That is ~30x margin over the worst observed
+failure (the sphere ships ~8x). Features below this scale exist only for >1e12 uniform points.
+
+Detection is grid-integrated: the kNN spatial grid doubles as the weld detector (a pair can only
+exist within one cell or across a radius-thin wall band), so duplicate-free inputs pay a
+read-only scan and the detection grid is reused for the computation. One measured fact worth
+knowing: uniform random f32 data naturally contains sub-radius pairs at production scales
+(birthday effect — ~3 welds at 1M points, ~15 at 2M), so welded outputs are normal, not
+exceptional, at millions of points.
+
+The permanent probe suite is `tests/plane_coincidence_probes.rs` (ulp pairs/clusters at generic,
+wall, corner, and subnormal positions, plus a randomized sweep in scheduled CI).
+
 ## The residual failure: classified, not masked
 
 The only hard failure mode at the coincidence boundary is `ClippedAway` of a micro-cell enclosed
