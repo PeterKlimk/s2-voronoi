@@ -65,12 +65,6 @@ edge-check seeds), so it needs the same care as any tolerance change.
 already in place; the swap to real timing is mechanical and unlocks
 planar sub-phase profiling (currently only the sphere has it).
 
-### `fma` feature evaluation on FMA hardware
-
-The `fma` feature is off by default ("may be slower on some CPUs") but the
-reference Ryzen 3600 has hardware FMA. Changes results bit-wise (fingerprint
-moves), so it is a declared-policy experiment, not a free win.
-
 ## Done (2026-06, periodic packed port)
 
 - **Packed SIMD stage for the periodic pipeline** (~2x at 500k ST: 1600ms ->
@@ -106,6 +100,15 @@ moves), so it is a declared-policy experiment, not a free win.
   network wins through shared code.
 
 ## Tried and rejected (do not re-try without new information)
+
+- **`fma` feature** (2026-06, measured on the Ryzen 3600): without
+  `-C target-feature=+fma` codegen, `mul_add` lowers to a libm call and the
+  feature is a 25-35% LOSS at 500k ST. With `-C target-cpu=native` it is
+  statistically indistinguishable from the non-fma native build (mins 697.9
+  vs 700.6ms over 4 paired rounds). Verdict: keep off by default; not worth
+  a fingerprint move even on FMA hardware. Side-finding worth advertising:
+  `target-cpu=native` alone is ~6% over the default build (745 -> 703ms)
+  with no semantic change — documented in performance.md.
 
 - **Vectorize the N>8 bitmask clipper** (2026-06): chunking
   `fp::signed_dists_mask8` over the bitmask path measured a consistent ~1%

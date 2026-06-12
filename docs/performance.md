@@ -9,7 +9,10 @@ coordination happens only during vertex deduplication.
   lines when `S2_VORONOI_TIMING_KV` is set.
 - `--features qhull`: enables the convex hull backend for comparisons (slow).
 - `--features simd_clip`: uses SIMD small-N clippers in the main dispatch.
-- `--features fma`: prefers `mul_add` (can change results; may be slower on some CPUs).
+- `--features fma`: prefers `mul_add` (changes results bit-wise). Measured a wash on FMA
+  hardware under `-C target-cpu=native`, and a large LOSS without `+fma` codegen (libm
+  fallback) — see the rejected list in optimization-ideas.md. Prefer plain
+  `RUSTFLAGS="-C target-cpu=native"`, which alone is worth ~6% on the reference Ryzen 3600.
 - `--features tools`: enables benchmark/utility binaries (they are not built by default).
 
 ## Environment knobs
