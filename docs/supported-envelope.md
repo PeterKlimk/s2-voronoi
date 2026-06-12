@@ -125,6 +125,12 @@ The backend is expected to return a defined `Err(...)` for:
 - cells that require the clipped feasible region to reach or exceed the generator hemisphere
   boundary in the current gnomonic model
 - extreme scale/layout cases exceeding current packed/indexing capacity
+- cells whose intermediate clip polygon exceeds the 64-vertex budget
+  (`MAX_POLY_VERTICES`): a cell genuinely bordering more than ~62 others.
+  First concretely reached (2026-06) by a 1M-point cap of angular radius
+  0.05 with 6 anchor generators — each anchor's cell borders the entire cap
+  rim. Returns the vertex-budget `ComputationFailed`; the bound is a
+  representation choice, not a numerical failure
 - some terminal construction failures that are recognized but not yet classified more precisely
 
 Pure great-circle / coplanar cases are the clearest current example of supported failure rather

@@ -92,6 +92,23 @@ sqrt at <1% of total. Only worth retrying on a quiet box, and the eps
 semantics shift (up to sqrt(2) larger) would need fuzz revalidation
 regardless. Low expected value.
 
+## Done (2026-06, edge-repair / weld / stage-0 week — paired-confirmed)
+
+Paired interleaved A/B (12-16 rounds, ST, pinned core, order rotated per
+round) of week-start (8ee131c) vs post-stage-0 HEAD (c579966), on a BUSY box
+— identical-config runs swung up to 2.5x, and the paired medians still
+converged (the protocol works under noise; n must be large):
+
+- **Default mode total: -287ms median at 2M (-7.6%, faster in 11/12 pairs);
+  -94ms at 500k (-7.2%)** — the grid-integrated weld confirmed end-to-end.
+- **Hot path (--no-preprocess): +18ms median at 2M (+0.5%), +10ms at 500k
+  (+1.2%)** — the cost is the stage-0 canonicalization pass itself
+  (~10ns/point scalar f64 sqrt+div), minus ~3ms from the sparse union-find.
+  Parallelized after measurement (default builds pay ~nothing; ST keeps
+  ~20ms at 2M).
+- Repair pass (defect-bearing runs only): 382ms -> 0.06ms at 2M ST
+  (phase-timing measurement, see edge-repair entries).
+
 ## Done (2026-06, batch round 2)
 
 - **Planar TIMING_KV plumbing**: `PlanePackedTimings` is now the sphere's

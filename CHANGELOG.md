@@ -31,7 +31,9 @@ Initial release.
   points and doubles as the coincidence detector, and welds compact the
   grid's point arrays in place (bit-identical to a rebuild on the effective
   points) instead of paying a standalone quantized-key sort pass. At 2M
-  points single-threaded the weld preprocess drops from ~378ms to ~45ms.
+  points single-threaded the weld preprocess drops from ~378ms to ~45ms
+  (paired interleaved A/B vs week-start: -7.6% median total at 2M, -7.2%
+  at 500k, default mode).
   `MergeWithin` radii too large for grid adjacency fall back to the
   standalone detector. (`TIMING_KV` note: `knn_build_ms` now precedes
   `preprocess_ms` in pipeline order, and preprocess no longer includes any

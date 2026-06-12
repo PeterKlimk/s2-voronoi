@@ -358,14 +358,26 @@ fn validate_generator_finiteness(points: &[Vec3]) -> Result<(), crate::VoronoiEr
 /// (contract-violating inputs) are left untouched and fail downstream as
 /// before, rather than being turned into NaNs here.
 fn canonicalize_unit_points(points: &mut [Vec3]) {
-    for p in points.iter_mut() {
-        let v = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
-        let len_sq = v.length_squared();
-        if (0.25..=4.0).contains(&len_sq) {
-            let n = v / len_sq.sqrt();
-            *p = Vec3::new(n.x as f32, n.y as f32, n.z as f32);
+    fn canonicalize_chunk(chunk: &mut [Vec3]) {
+        for p in chunk.iter_mut() {
+            let v = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
+            let len_sq = v.length_squared();
+            if (0.25..=4.0).contains(&len_sq) {
+                let n = v / len_sq.sqrt();
+                *p = Vec3::new(n.x as f32, n.y as f32, n.z as f32);
+            }
         }
     }
+    // ~10ns/point scalar (f64 sqrt + div); parallel chunks so the default
+    // build pays ~nothing. Measured ST cost: ~20ms at 2M (the bulk of stage
+    // 0's +0.5-0.8% single-threaded total).
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        points.par_chunks_mut(1 << 16).for_each(canonicalize_chunk);
+    }
+    #[cfg(not(feature = "parallel"))]
+    canonicalize_chunk(points);
 }
 
 fn prepare_points_and_grid(
