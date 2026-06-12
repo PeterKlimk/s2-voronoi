@@ -89,6 +89,48 @@ for everyone.
 Edge existence follows: edge (g,h) exists iff some t survives, i.e. the
 canonical structure of every cell is determined by the in_circle answers alone.
 
+**Both repair classes are one configuration.** A tiny edge (g,h) runs between
+vertices (g,h,a) and (g,h,b) and its length goes to zero exactly as the
+quadruple (g,h,a,b) approaches cocircularity — at exact cocircularity the
+endpoints merge into a degree-4 vertex. The signed distance the filter tests
+*is* the in-circle margin of that quadruple, so degeneracy and small margin are
+the same condition: dangerous configurations cannot present with comfortable
+margins, and the filter catches the 4+-cocircular vertex and the epsilon edge
+as one case.
+
+**Evaluator implementation (canonical ordering, exactness, tie coherence):**
+
+- *Canonical ordering*: different cells phrase the same 4-point question
+  differently (cell g asks in_circle(g,h,a;b); cell a asks in_circle(g,a,b;h))
+  — all are the same determinant up to row permutation and orientation. The
+  evaluator computes **one determinant in sorted-index row order**; call sites
+  apply the permutation parity. This gives cross-question consistency within a
+  quadruple for free, not just per-question agreement.
+- *Exact signs*: on the unit sphere in_circle(g,h,t;x) reduces to
+  **orient3d(g,h,t,x)** (the circumcircle is the sphere's intersection with
+  the plane through g,h,t); the planar pipelines use the standard 2D incircle.
+  The escalation evaluator computes these signs **exactly** via Shewchuk-style
+  adaptive arithmetic (the `robust` crate, or vendored — f32 inputs are
+  exactly representable in f64, the easiest case). Exactness is confined to
+  the cold escalation path; it makes the agreed structure the *true* topology
+  whenever the determinant is nonzero, and it zeroes the evaluator-error term
+  in the EPS_FILTER inequality.
+- *Exact ties (true cocircularity)*: resolved by **simulation of simplicity**
+  (Edelsbrunner–Mücke): a fixed-order cascade of exact sub-determinant signs,
+  equivalent to an infinitesimal index-ordered perturbation of the input. The
+  perturbation order is the **effective (post-weld) generator index** (the
+  stable global order all predicates run on). Coherence guarantee: the
+  tie-broken structure is the exact Voronoi topology of an actually-perturbed
+  configuration — valid for arbitrarily deep ties (5+ cocircular) by
+  construction, not by validator luck. Degenerate inputs then yield
+  zero-length edges / zero-area slivers, which the "essentially Voronoi"
+  contract already tolerates as representation.
+
+Without the exact+SoS evaluator, deterministic-but-rounded f64 signs guarantee
+*agreement* but not *coherence* (the agreed tie-breaks need not correspond to
+any perturbed configuration). That weaker evaluator is acceptable only as a
+stage-1 shadow-mode stopgap; the implemented escalation path is exact+SoS.
+
 ### Pillar 2 — filtered escalation keeps the hot path
 
 Decisions with large margins are frame-independent for free: if g's chart says
@@ -168,8 +210,9 @@ paired benchmarks gate, alongside the filter compare and the escalation path.
    difference between its value in any cell's chart and the canonical
    in_circle sign, as a function of input magnitudes. Empirical estimation via
    the coincidence probes; the bound feeds EPS_FILTER.
-2. **Canonical evaluator error**: rounding of the fixed f64 in_circle
-   expression. Standard forward-error analysis.
+2. **Canonical evaluator error**: zero — the escalation evaluator is exact
+   (adaptive orient3d/incircle + SoS), which loosens the EPS_FILTER bound to
+   "dominate cross-chart deviation" alone.
 3. **Certificate guard chain**: certificate distance bounds hold against
    computed vertex positions with slack ≥ EPS_CERT; folds the f32 vertex
    position error into the existing guard constants.
@@ -220,10 +263,12 @@ net, fingerprint tests, paired benches):
 - **Naive full canonicalization** (single frame for all evaluation): destroys
   the chart-local SoA hot path; estimated double-digit regression. Rejected on
   exit criterion 2.
-- **Exact predicates** (CGAL-style exact arithmetic fallback): more than the
-  contract needs — "essentially Voronoi" requires agreement, not truth; the
-  deterministic-shared-evaluator fallback is strictly cheaper with the same
-  graph guarantee.
+- **Exact arithmetic on the hot path** (CGAL-style throughout): more than the
+  contract needs — "essentially Voronoi" requires agreement, not truth, and
+  the filtered design keeps the hot path in f32. Note the *escalation
+  evaluator* IS exact (see Pillar 1): there, exactness is not bought for
+  geometric truth but because exact signs + SoS are the cheapest way to make
+  tie-breaking provably coherent, and the path is cold.
 - **Lower-index-generator's-chart as canonical frame**: dominated by the
   symmetric in_circle formulation, which needs no frame choice at all and is
   insensitive to which side evaluates it.
