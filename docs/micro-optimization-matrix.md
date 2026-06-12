@@ -171,7 +171,11 @@ five merge together. Full test suite green on the stack (247).
 - **Unproven at 500k/2M — not merged** (inside the layout-noise floor):
   `chunk-array-loaders`, `clip-batch-slice`, `packed-center-tail-simd`,
   `packed-query-dot-cache`, `projection-max-r2`,
-  `signed-dists-array-refs`.
+  `signed-dists-array-refs`. **Closure test**: all seven unproven branches
+  (incl. `preprocess-touched-reps`) stacked together onto post-merge main
+  measured dead even — +0.1ms median cell_construction at 500k (6/12),
+  total within noise. Their individual sub-floor signals were layout luck,
+  not small accumulating effects; cohort closed.
 - **No positive signal — rejected**: `binning-cache-fuse`,
   `cell-to-face-u32`, `directed-cell-mode`, `frontier-cache-ordf32`.
 - `preprocess-touched-reps`: zero measurable preprocess effect at 500k (its
