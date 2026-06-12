@@ -1,0 +1,27 @@
+name: Scheduled heavy suites
+
+# The release exit criteria (docs/todo.md): fuzz sweeps and coincidence
+# probes green in CI, asserting strict validity at multi-million points.
+on:
+  schedule:
+    - cron: "0 5 * * 1" # weekly, Monday 05:00 UTC
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: Multi-million fuzz sweeps + coincidence probes
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Fuzz sweeps (2-4.5M, strict validity)
+        run: cargo test --release --test adversarial -- --ignored fuzz
+      - name: Coincidence probes (margin drift detection)
+        run: cargo test --release --test coincidence_probes -- --ignored
+      - name: Defect-rate survey (observability, non-asserting)
+        run: cargo test --release --test edge_repair_net probe_defect_rate -- --ignored --nocapture

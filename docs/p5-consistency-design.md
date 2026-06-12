@@ -1,9 +1,13 @@
 # P5: Consistency by Construction — Design
 
-Status: **design accepted, not started** (2026-06-12). This document supersedes the
-two-paragraph P5 sketch in `docs/todo.md` and records the design discussion that
-produced it. Sequencing note: originally slated post-release; now planned
-pre-release at the maintainer's call.
+Status (2026-06-12): **stages 0-1 done; stages 2-4 kept on the roadmap**
+(maintainer decision after the post-stage-0 defect survey: the remaining
+payload is ~1 repairable site per ~3 multi-million runs at 3M+, and the
+contract upgrade is still wanted). Next P5 action: the paired two-cell
+shadow audit (compare both cells' local decisions for the same 4-tuple) to
+place EPS_FILTER — the existing shadow histogram conflates
+platonic-vs-computed deviation with chart-vs-chart divergence. This
+document supersedes the two-paragraph P5 sketch in `docs/todo.md`.
 
 ## Goal
 

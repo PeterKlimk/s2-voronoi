@@ -12,8 +12,10 @@ narrow reconciliation pass. The dedup/stitching engine is geometry-agnostic: the
 planar backends are two drivers over one core.
 
 Design target: 2.5M spherical points in under 500ms on a 6-core desktop CPU (Ryzen 3600 class) —
-roughly an order of magnitude faster than convex-hull approaches at that scale. The planar
-backend computes 2M cells in about a second on the same hardware, 3–4x faster than
+roughly an order of magnitude faster than convex-hull approaches at that scale. Current measured
+upper bound on that machine: ~1.2s for 2.5M points multithreaded (taken on a loaded box; a
+quiet-box measurement is pending — see `docs/performance.md` for protocol and current numbers).
+The planar backend computes 2M cells in about a second on the same hardware, 3–4x faster than
 delaunator-based planar crates at that size (and the gap grows with n: per-point cost is near
 constant here versus their O(n log n)).
 
@@ -51,6 +53,9 @@ the measured safety margins behind it.
   stable; see `docs/todo.md` for the path to release.
 - **Stable Rust** (MSRV 1.88). Explicit SIMD via the `wide` crate; nightly is no longer required.
 - Inputs are **assumed** to be unit-normalized (not enforced; may debug-assert in hot paths).
+  Inputs are canonicalized once at entry (f64-renormalized, rounded back to f32), so the
+  diagram's `generators()` may differ from the raw input by ~1 ulp, and inputs differing only
+  radially (off-unit ulps) resolve to the same generator.
 - For strict subdivision/invariant checks on computed output, use `validation::validate`.
 
 ## Quickstart

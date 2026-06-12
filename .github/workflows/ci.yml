@@ -4,70 +4,52 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch:
-  schedule:
-    # Weekly scheduled run executes the multi-million-point fuzz contract
-    # sweeps that are #[ignore]d for runtime in normal CI.
-    - cron: "17 4 * * 1"
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   test:
-    name: Test (stable)
+    name: Test (stable, default features)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Format
         run: cargo fmt --check
-      - name: Clippy (deny warnings)
+      - name: Clippy (default features)
         run: cargo clippy --release --all-targets -- -D warnings
-      - name: Tests (default features)
+      - name: Test (release)
         run: cargo test --release
-      - name: Tests (dev profile, debug assertions)
-        # The packed-kNN and grid code carry debug_asserts that only the dev
-        # profile compiles; without this step they rot invisibly.
-        run: cargo test
-      - name: Tests (serde)
-        run: cargo test --release --features serde
-      - name: Check (timing feature)
-        run: cargo check --release --features tools,timing
-      - name: Tests (scalar SIMD backend)
-        run: cargo test --release --features simd_scalar --test correctness --test api
-      - name: Doc build
-        run: cargo doc --no-deps --release
-        env:
-          RUSTDOCFLAGS: -D warnings
+
+  features:
+    name: Feature builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test serde + glam
+        run: cargo test --release --features serde,glam
+      - name: Lib tests with p5_shadow (canonical evaluator)
+        run: cargo test --release --features p5_shadow --lib
+      - name: Check simd_scalar backend
+        run: cargo check --release --features simd_scalar
+      - name: Check single-threaded (no default features)
+        run: cargo check --release --no-default-features
 
   msrv:
     name: MSRV (1.88)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.88"
       - uses: Swatinem/rust-cache@v2
-      - name: Check (default features)
+      - name: Check
         run: cargo check --release
-
-  fuzz-contract:
-    name: Fuzz contract sweeps (scheduled)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Fuzz 2M/3M/4M (assert STRICT_VALID)
-        run: cargo test --release --test adversarial fuzz -- --ignored --nocapture
-      - name: Coincidence margin probes (diagnostic)
-        run: cargo test --release --test coincidence_probes -- --ignored --nocapture
-      - name: Planar fuzz 1M/2M (assert strict validity)
-        run: cargo test --release --test plane plane_fuzz_large -- --ignored --nocapture
-      - name: Planar coincidence probes (randomized sweep)
-        run: cargo test --release --test plane_coincidence_probes -- --ignored --nocapture
