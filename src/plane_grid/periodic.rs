@@ -803,8 +803,18 @@ mod tests {
                             dists.windows(2).all(|w| w[0] <= w[1]),
                             "{name}: batch distances must be sorted ascending"
                         );
-                        for &slot in &batch[..result.n] {
+                        // Per-emission bounds are sound iff every reported
+                        // dist is the true min-image distance of its slot.
+                        for (k, &slot) in batch[..result.n].iter().enumerate() {
                             assert_ne!(slot, query_slot, "{name}: emitted the query itself");
+                            let true_d = self.slot_dist_sq(query_slot, slot);
+                            assert!(
+                                (dists[k] - true_d).abs() <= DIST_SQ_TOL,
+                                "{name}: reported dist {} != true min-image dist {} \
+                                 (slot {slot})",
+                                dists[k],
+                                true_d
+                            );
                             // Packed -> takeover overlap may re-emit; the
                             // consumer dedups, so the harness tolerates it.
                             emitted.insert(slot);

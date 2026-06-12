@@ -40,17 +40,6 @@ standalone pass). Two refinements remain:
 - Port the grid-integrated design to the sphere, replacing the standalone
   quantized-key pass (~110ms at 2M per earlier measurements).
 
-### Packed select: partial selection instead of full sort
-
-`select_sort` sorts every emitted chunk so the consumer can use the next
-emission as a mid-batch termination bound. Most cells terminate after ~8
-neighbors, so sorted tails are wasted work. A partial-selection scheme
-(`select_nth` + use the batch *minimum* as the certificate for the whole
-batch) halves the sort work at the cost of a weaker mid-batch bound (later
-termination, more clips). Semantics-affecting: changes emission order, so
-the fingerprint moves and the tradeoff needs paired measurement plus a
-policy decision.
-
 ### HalfPlane epsilon without the per-clip sqrt
 
 `HalfPlane::new_unnormalized` computes `eps = CLIP_EPS_INSIDE * sqrt(ab2)`
@@ -110,6 +99,16 @@ planar sub-phase profiling (currently only the sphere has it).
   network wins through shared code.
 
 ## Tried and rejected (do not re-try without new information)
+
+- **Packed partial selection (unsorted batches + suffix-min bounds)**
+  (2026-06, plane): dropping the per-chunk sort (select_nth only, consumers
+  derive mid-batch bounds from suffix minima — sound for any order) measured
+  a consistent 7-14% LOSS at 2M bounded ST across three paired rounds. The
+  sort is not packaging: nearest-first clip order shrinks the polygon
+  fastest, terminates earlier, and keeps every intermediate clip cheaper —
+  worth far more than the sort costs (small-N networks made sorts cheap).
+  Kept from the attempt: the NN contract harnesses now verify every
+  reported batch distance against brute force per slot.
 
 - **`fma` feature** (2026-06, measured on the Ryzen 3600): without
   `-C target-feature=+fma` codegen, `mul_add` lowers to a libm call and the

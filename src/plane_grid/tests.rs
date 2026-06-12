@@ -144,10 +144,19 @@ impl Harness {
         loop {
             match stream.frontier(&mut batch, &mut batch_dists) {
                 PlaneNeighborFrontier::ExactBatch(result) => {
-                    for &slot in &batch[..result.n] {
+                    // Per-emission bounds are sound iff every reported dist
+                    // is the slot's true distance — assert that.
+                    for (k, &slot) in batch[..result.n].iter().enumerate() {
                         assert!(
                             slot != query_slot,
                             "{name}: stream emitted the query slot itself"
+                        );
+                        let true_d = self.slot_dist_sq(query_slot, slot);
+                        assert!(
+                            (batch_dists[k] - true_d).abs() <= DIST_SQ_TOL,
+                            "{name}: reported dist {} != true dist {} (slot {slot})",
+                            batch_dists[k],
+                            true_d
                         );
                         if emitted_set.insert(slot) {
                             emitted.push(slot);
