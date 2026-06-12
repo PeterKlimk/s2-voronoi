@@ -16,6 +16,7 @@
 //! are clamped into the edge cells (and rejected upstream by validation).
 
 pub(crate) mod packed;
+pub(crate) mod periodic;
 mod query;
 
 pub(crate) use query::{PlaneNeighborFrontier, PlaneNeighborStream};
