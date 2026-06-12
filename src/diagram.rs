@@ -140,6 +140,11 @@ impl SphericalVoronoi {
         self.cells[index].start
     }
 
+    #[inline]
+    pub(crate) fn cell_indices_raw(&self) -> &[u32] {
+        &self.cell_indices
+    }
+
     /// Get a view of a specific cell.
     #[inline]
     pub fn cell(&self, index: usize) -> CellView<'_> {

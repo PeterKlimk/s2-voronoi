@@ -259,6 +259,26 @@ impl PlanarVoronoi {
         self.weld_map.as_deref()
     }
 
+    /// Canonical cell index for `index` (identity unless welded).
+    #[inline]
+    pub fn canonical_cell_index(&self, index: usize) -> usize {
+        match &self.weld_map {
+            Some(map) => map[index] as usize,
+            None => index,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn cell_range(&self, index: usize) -> (u32, u16) {
+        let c = self.cells[index];
+        (c.start, c.len)
+    }
+
+    #[inline]
+    pub(crate) fn cell_indices_raw(&self) -> &[u32] {
+        &self.cell_indices
+    }
+
     /// The domain rectangle this diagram subdivides.
     #[inline]
     pub fn rect(&self) -> PlaneRect {

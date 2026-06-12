@@ -99,7 +99,9 @@ for i in 0..diagram.num_cells() {
   the neighbor pairs are the Delaunay edges of the generator set
 - Planar: `compute_plane(&[P], PlaneRect) -> Result<PlanarVoronoi, VoronoiError>`;
   `validation::validate_plane(&PlanarVoronoi) -> PlaneValidationReport`;
-  `PlanarVoronoi`: `generators()`, `vertices()`, `iter_cells()`, `cell(i)`, `weld_map()`, `rect()`
+  `PlanarVoronoi`: `generators()`, `vertices()`, `iter_cells()`, `cell(i)`,
+  `build_adjacency()`, `cell_area(i)`, `cell_centroid(i)`, `weld_map()`, `rect()` —
+  planar Lloyd relaxation is the same one-loop recipe as the sphere's
 - Lloyd relaxation (centroidal Voronoi tessellation) is one loop:
   `points = (0..n).map(|i| diagram.cell_centroid(i)).collect()` and recompute.
 

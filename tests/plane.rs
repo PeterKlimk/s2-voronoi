@@ -293,6 +293,94 @@ fn plane_larger_uniform_strict() {
     assert_area(&diagram, "uniform_50k");
 }
 
+#[test]
+fn plane_adjacency_contract() {
+    let points = uniform_in(PlaneRect::unit(), 600, 91);
+    let diagram = compute_plane(&points, PlaneRect::unit()).unwrap();
+    let report = validation::validate_plane(&diagram);
+    assert!(report.is_strictly_valid());
+
+    let adjacency = diagram.build_adjacency();
+    assert_eq!(adjacency.num_cells(), diagram.num_cells());
+
+    // Edge-aligned reciprocity: if k-th edge of cell i sees neighbor j,
+    // some edge of j sees i; boundary edges carry NO_NEIGHBOR and their
+    // count matches the validation report exactly.
+    let mut boundary = 0usize;
+    let mut pairs: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
+    for i in 0..diagram.num_cells() {
+        let neighbors = adjacency.neighbors_of(i);
+        assert_eq!(neighbors.len(), diagram.cell(i).len());
+        for &nb in neighbors {
+            if nb == s2_voronoi::adjacency::NO_NEIGHBOR {
+                boundary += 1;
+            } else {
+                assert!(
+                    adjacency.neighbors_of(nb as usize).contains(&(i as u32)),
+                    "adjacency not reciprocal: {i} -> {nb}"
+                );
+                let (lo, hi) = (i.min(nb as usize) as u32, i.max(nb as usize) as u32);
+                pairs.insert((lo, hi));
+            }
+        }
+    }
+    assert_eq!(
+        boundary, report.boundary_edges,
+        "NO_NEIGHBOR count must equal the validator's boundary edge count"
+    );
+    assert_eq!(
+        pairs.len(),
+        report.num_edges - report.boundary_edges,
+        "paired neighbor count must equal interior edge count"
+    );
+}
+
+#[test]
+fn plane_measures_and_lloyd() {
+    let rect = PlaneRect::new(PlanePoint::new(-2.0, 1.0), PlanePoint::new(6.0, 5.0));
+    let mut points = uniform_in(rect, 400, 97);
+    let diagram = compute_plane(&points, rect).unwrap();
+
+    // Areas partition the rect (cell_area path, vs the test's own shoelace).
+    let total: f64 = (0..diagram.num_cells()).map(|i| diagram.cell_area(i)).sum();
+    let expected = rect.width() as f64 * rect.height() as f64;
+    assert!(
+        (total - expected).abs() < 1e-4 * expected,
+        "cell_area sum {total} != rect area {expected}"
+    );
+
+    // Lloyd relaxation: area variance strictly decreases over iterations
+    // (the canonical use of cell_centroid).
+    let variance = |d: &PlanarVoronoi| -> f64 {
+        let n = d.num_cells();
+        let mean = expected / n as f64;
+        (0..n)
+            .map(|i| {
+                let a = d.cell_area(i) - mean;
+                a * a
+            })
+            .sum::<f64>()
+            / n as f64
+    };
+    let mut diagram = diagram;
+    let v0 = variance(&diagram);
+    for _ in 0..5 {
+        points = (0..diagram.num_cells())
+            .map(|i| {
+                let c = diagram.cell_centroid(i);
+                [c.x, c.y]
+            })
+            .collect();
+        diagram = compute_plane(&points, rect).unwrap();
+    }
+    let v5 = variance(&diagram);
+    assert!(
+        v5 < v0 * 0.5,
+        "Lloyd iterations should halve area variance: v0={v0:.3e} v5={v5:.3e}"
+    );
+    assert!(validation::validate_plane(&diagram).is_strictly_valid());
+}
+
 /// Multi-million-point fuzz sweep; run with `--ignored` (scheduled CI).
 #[test]
 #[ignore]

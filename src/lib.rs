@@ -49,6 +49,7 @@ pub(crate) mod generated;
 mod measures;
 mod packed_layout;
 mod plane_diagram;
+mod plane_measures;
 pub(crate) mod policy;
 #[doc(hidden)]
 pub mod quality;
