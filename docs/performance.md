@@ -36,10 +36,11 @@ coordination happens only during vertex deduplication.
 | 1M | ~430ms | ~330ms | ~1.4s |
 | 2M | ~1.0s | ~720ms | ~3.5s |
 
-Single-threaded the two geometries are at parity per point (~1.8-1.9s at 1M); the remaining
-multithreaded gap (1.2-1.3x) is parallel-path overhead, not per-point work — under
-investigation. The voronoice gap grows with n (their delaunator core is O(n log n); per-point
-cost here is near constant).
+Single-threaded the two geometries are at parity per point (~1.8-1.9s at 1M); multithreaded
+they are within ~5-10% of each other when measured in interleaved A/B rounds (long benchmark
+sessions drift the machine by far more than that — always pair the runs you compare). The
+voronoice gap grows with n (their delaunator core is O(n log n); per-point cost here is near
+constant).
 
 ## Comparison scripts
 
