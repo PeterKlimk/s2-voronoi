@@ -20,15 +20,22 @@ pub(super) fn clip_bitmask(
     // Chunk starts are multiples of 8 below n <= 64, so every slice has at
     // least 8 elements; lanes past n compute on stale-but-finite data and
     // are masked off by full_mask below.
-    let mut i = 0usize;
-    while i < n {
-        let (d8, m8) =
-            fp::signed_dists_mask8(hp.a, hp.b, hp.c, &poly.us[i..], &poly.vs[i..], neg_eps);
+    let (us_chunks, _) = poly.us.as_chunks::<8>();
+    let (vs_chunks, _) = poly.vs.as_chunks::<8>();
+    for chunk in 0..n.div_ceil(8) {
+        let i = chunk * 8;
+        let (d8, m8) = fp::signed_dists_mask8(
+            hp.a,
+            hp.b,
+            hp.c,
+            &us_chunks[chunk],
+            &vs_chunks[chunk],
+            neg_eps,
+        );
         for (lane, &d) in d8.iter().enumerate() {
             dists[i + lane].write(d);
         }
         mask |= (m8 as u64) << i;
-        i += 8;
     }
     mask &= full_mask;
 
