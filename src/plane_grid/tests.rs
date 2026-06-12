@@ -241,7 +241,11 @@ impl Harness {
             );
             for &expand_r2 in &[false, true] {
                 let mut packed_scratch = PlanePackedScratch::new();
-                let mut timings = PlanePackedTimings;
+                #[cfg_attr(
+                    not(feature = "timing"),
+                    allow(clippy::default_constructed_unit_structs)
+                )]
+                let mut timings = PlanePackedTimings::default();
                 let PlanePreparedGroupStatus::Ready(mut prepared) =
                     packed_scratch.prepare_group(&self.grid, group, &mut timings)
                 else {

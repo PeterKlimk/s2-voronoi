@@ -63,6 +63,8 @@ Useful commands:
 
 - `S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 100k --no-preprocess`
 - `S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 100k --no-preprocess --packed-expand-r2`
+- `S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_plane -- 500k`
+  (the planar pipelines emit the same KV schema; add `--periodic` for the torus)
 - `./scripts/bench_build.sh --timing HEAD`
 - `./scripts/bench_run.sh -s 100k -r 5 -c 1 -m total -- --packed-expand-r2`
 

@@ -5,6 +5,7 @@ use glam::Vec2;
 
 use super::driver::compute_plane_cells;
 use super::periodic_driver::compute_periodic_cells;
+use crate::knn_clipping::timing::{Timer, TimingBuilder};
 use crate::plane_diagram::{PlanarVoronoi, PlanePoint, PlanePointLike, PlaneRect, PlaneTopology};
 use crate::plane_grid::periodic::PeriodicGrid;
 use crate::plane_grid::PlaneGrid;
@@ -168,7 +169,9 @@ pub(crate) fn compute_plane_impl<P: PlanePointLike>(
         )));
     }
 
+    let mut tb = TimingBuilder::new();
     let transform = DomainTransform::new(rect);
+    let t = Timer::start();
     let mut generators: Vec<PlanePoint> = Vec::with_capacity(points.len());
     let mut normalized: Vec<Vec2> = Vec::with_capacity(points.len());
     for (i, p) in points.iter().enumerate() {
@@ -188,17 +191,24 @@ pub(crate) fn compute_plane_impl<P: PlanePointLike>(
         generators.push(PlanePoint::new(x, y));
         normalized.push(transform.to_normalized(Vec2::new(x, y)));
     }
+    let mut preprocess = t.elapsed();
 
+    let t = Timer::start();
     let occupied = transform.domain.x as f64 * transform.domain.y as f64;
     let res = plane_grid_resolution(normalized.len(), occupied);
     let grid = PlaneGrid::new(&normalized, res);
+    tb.set_knn_build(t.elapsed());
 
     // Optimistic weld: the no-weld case (overwhelmingly common) reuses this
     // very grid for the computation; only actual welds pay a rebuild.
+    let t = Timer::start();
     let weld = weld_within_radius(&normalized, &grid);
+    preprocess += t.elapsed();
+    tb.set_preprocess(preprocess);
+    tb.set_grid_stats(res, 0, weld.is_some());
     let (output, weld_map, original_to_effective) = match &weld {
         None => (
-            compute_plane_cells(&normalized, &grid, transform.domain)?,
+            compute_plane_cells(&normalized, &grid, transform.domain, &mut tb)?,
             None,
             None,
         ),
@@ -206,13 +216,14 @@ pub(crate) fn compute_plane_impl<P: PlanePointLike>(
             let res = plane_grid_resolution(weld.effective.len(), occupied);
             let eff_grid = PlaneGrid::new(&weld.effective, res);
             (
-                compute_plane_cells(&weld.effective, &eff_grid, transform.domain)?,
+                compute_plane_cells(&weld.effective, &eff_grid, transform.domain, &mut tb)?,
                 Some(weld.weld_map.clone()),
                 Some(&weld.original_to_effective),
             )
         }
     };
 
+    let t = Timer::start();
     // Map vertices back to rect coordinates.
     let vertices: Vec<PlanePoint> = output
         .vertices
@@ -227,7 +238,7 @@ pub(crate) fn compute_plane_impl<P: PlanePointLike>(
         Some(map) => map.iter().map(|&eff| output.cells[eff as usize]).collect(),
     };
 
-    Ok(PlanarVoronoi::from_raw_parts(
+    let diagram = PlanarVoronoi::from_raw_parts(
         generators,
         vertices,
         cells,
@@ -235,7 +246,10 @@ pub(crate) fn compute_plane_impl<P: PlanePointLike>(
         weld_map,
         rect,
         PlaneTopology::Bounded,
-    ))
+    );
+    tb.set_assemble(t.elapsed());
+    tb.finish().report(diagram.num_cells());
+    Ok(diagram)
 }
 
 fn weld_within_radius_periodic(points: &[Vec2], grid: &PeriodicGrid) -> Option<WeldResult> {
@@ -285,9 +299,11 @@ pub(crate) fn compute_plane_periodic_impl<P: PlanePointLike>(
         )));
     }
 
+    let mut tb = TimingBuilder::new();
     let transform = DomainTransform::new(rect);
     // Normalized periods: the longer rect side maps to 1.
     let (px, py) = (transform.domain.x, transform.domain.y);
+    let t = Timer::start();
     let mut generators: Vec<PlanePoint> = Vec::with_capacity(points.len());
     let mut normalized: Vec<Vec2> = Vec::with_capacity(points.len());
     for (i, p) in points.iter().enumerate() {
@@ -314,24 +330,37 @@ pub(crate) fn compute_plane_periodic_impl<P: PlanePointLike>(
         ));
     }
 
+    let mut preprocess = t.elapsed();
+
     // The torus is fully occupied: occupancy fraction 1 over res^2 cells.
+    let t = Timer::start();
     let res = plane_grid_resolution(normalized.len(), 1.0);
     let grid = PeriodicGrid::new(&normalized, res, px, py);
+    tb.set_knn_build(t.elapsed());
 
+    let t = Timer::start();
     let weld = weld_within_radius_periodic(&normalized, &grid);
+    preprocess += t.elapsed();
+    tb.set_preprocess(preprocess);
+    tb.set_grid_stats(res, 0, weld.is_some());
     let (output, weld_map, original_to_effective) = match &weld {
-        None => (compute_periodic_cells(&normalized, &grid)?, None, None),
+        None => (
+            compute_periodic_cells(&normalized, &grid, &mut tb)?,
+            None,
+            None,
+        ),
         Some(weld) => {
             let res = plane_grid_resolution(weld.effective.len(), 1.0);
             let eff_grid = PeriodicGrid::new(&weld.effective, res, px, py);
             (
-                compute_periodic_cells(&weld.effective, &eff_grid)?,
+                compute_periodic_cells(&weld.effective, &eff_grid, &mut tb)?,
                 Some(weld.weld_map.clone()),
                 Some(&weld.original_to_effective),
             )
         }
     };
 
+    let t = Timer::start();
     // Map canonical wrapped vertices back to rect coordinates (still
     // canonically wrapped; cell_polygon does the per-cell unwrap).
     let vertices: Vec<PlanePoint> = output
@@ -345,7 +374,7 @@ pub(crate) fn compute_plane_periodic_impl<P: PlanePointLike>(
         Some(map) => map.iter().map(|&eff| output.cells[eff as usize]).collect(),
     };
 
-    Ok(PlanarVoronoi::from_raw_parts(
+    let diagram = PlanarVoronoi::from_raw_parts(
         generators,
         vertices,
         cells,
@@ -353,7 +382,10 @@ pub(crate) fn compute_plane_periodic_impl<P: PlanePointLike>(
         weld_map,
         rect,
         PlaneTopology::Periodic,
-    ))
+    );
+    tb.set_assemble(t.elapsed());
+    tb.finish().report(diagram.num_cells());
+    Ok(diagram)
 }
 
 /// Largest f32 strictly below `p` (clamps wrapped coordinates out of the

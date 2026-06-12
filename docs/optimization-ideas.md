@@ -55,13 +55,15 @@ sqrt at <1% of total. Only worth retrying on a quiet box, and the eps
 semantics shift (up to sqrt(2) larger) would need fuzz revalidation
 regardless. Low expected value.
 
-### Planar TIMING_KV plumbing
-
-`PlanePackedTimings` is a no-op shell with the sphere's call surface
-already in place; the swap to real timing is mechanical and unlocks
-planar sub-phase profiling (currently only the sphere has it).
-
 ## Done (2026-06, batch round 2)
+
+- **Planar TIMING_KV plumbing**: `PlanePackedTimings` is now the sphere's
+  `PackedKnnTimings` (same stages, same `CellSubAccum` breakdown seam);
+  both plane drivers lap knn/clip per batch, classify per-cell stages
+  (chunk0/tail/expand/shell via batch sources, now carried by the periodic
+  stream too), and both compute paths report phase timings + the KV line
+  through the shared `TimingBuilder`. First yield: uniform 500k clips ~6.4
+  neighbors/cell mean and only ~30 cells in 500k reach the shell takeover.
 
 - **Vectorized N>8 bitmask clipper** (~2% sphere ST, torus
   neutral-to-positive; bit-identical, fingerprint held): 8-lane

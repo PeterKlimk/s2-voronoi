@@ -20,7 +20,7 @@ use rayon::prelude::*;
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::cell_build::{CellBuildError, CellFailure, CellOutputBuffer};
 use crate::knn_clipping::edge_reconcile;
-use crate::knn_clipping::timing::CellSubAccum;
+use crate::knn_clipping::timing::{CellSubAccum, KnnCellStage, LapTimer, Timer, TimingBuilder};
 use crate::live_dedup::{
     self, assign_bins_with, checked_local_id, checked_u32, emit_cell_output, target_bin_count,
     unpack_edge_key, BinAssignment, BinId, BuildCellsError, EdgeScratch, PackedLayoutCapacityError,
@@ -32,7 +32,10 @@ use crate::plane_grid::packed::{
     PlanePackedGroupInput, PlanePackedQuery, PlanePackedScratch, PlanePackedTimings,
     PlanePreparedGroupStatus,
 };
-use crate::plane_grid::{PlaneGrid, PlaneGridScratch, PlaneNeighborFrontier, PlaneNeighborStream};
+use crate::plane_grid::{
+    PlaneGrid, PlaneGridScratch, PlaneNeighborBatchSource, PlaneNeighborFrontier,
+    PlaneNeighborStream,
+};
 use crate::policy::PackedNeighborPolicy;
 
 pub(crate) struct PlaneCellsOutput {
@@ -49,11 +52,20 @@ pub(crate) fn compute_plane_cells(
     points: &[Vec2],
     grid: &PlaneGrid,
     domain: Vec2,
+    tb: &mut TimingBuilder,
 ) -> Result<PlaneCellsOutput, crate::VoronoiError> {
+    let t = Timer::start();
     let sharded = build_cells_sharded_plane(points, grid, domain)
         .map_err(|err| map_plane_build_error(err, points))?;
-    let assembly = live_dedup::assemble_sharded_live_dedup(sharded)?;
+    #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]
+    tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
 
+    let t = Timer::start();
+    let assembly = live_dedup::assemble_sharded_live_dedup(sharded)?;
+    #[allow(clippy::clone_on_copy)] // real DedupSubPhases is not Copy
+    tb.set_dedup(t.elapsed(), assembly.dedup_sub.clone());
+
+    let t = Timer::start();
     let records: Vec<live_dedup::EdgeRecord> = assembly
         .unresolved_edges
         .iter()
@@ -74,6 +86,7 @@ pub(crate) fn compute_plane_cells(
         cells = reconciled_cells;
         cell_indices = reconciled_indices;
     }
+    tb.set_edge_reconcile(t.elapsed());
 
     Ok(PlaneCellsOutput {
         vertices: assembly.vertices,
@@ -174,7 +187,11 @@ fn build_cells_sharded_plane(
                 );
 
                 let mut packed_scratch = PlanePackedScratch::new();
-                let mut packed_timings = PlanePackedTimings;
+                #[cfg_attr(
+                    not(feature = "timing"),
+                    allow(clippy::default_constructed_unit_structs)
+                )]
+                let mut packed_timings = PlanePackedTimings::default();
                 let packed_policy = PackedNeighborPolicy::for_point_count(points.len(), false);
                 let packed_queries_all: Vec<u32> = my_generators
                     .iter()
@@ -264,6 +281,12 @@ fn build_cells_sharded_plane(
                             }
                         }
                     }
+                    #[cfg(feature = "timing")]
+                    {
+                        sub_accum.add_packed_knn(packed_timings.total());
+                        sub_accum.add_packed_knn_breakdown(&packed_timings);
+                        packed_timings.clear();
+                    }
                 }
 
                 Ok((shard, sub_accum))
@@ -352,9 +375,23 @@ fn build_and_emit_cell_plane<'p, 'g>(
     );
     let point_indices = grid.point_indices();
 
+    // Coarse knn/clip lap attribution per batch (zero-sized without the
+    // `timing` feature): frontier/advance time -> knn, clip loop -> clip.
+    let mut lap = LapTimer::start();
+    let mut neighbors_processed = 0usize;
+    let mut tail_used = false;
+    let mut expand_used = false;
+    let mut used_knn = false;
     'stream: loop {
         match stream.frontier(&mut worker.batch, &mut worker.batch_dists) {
             PlaneNeighborFrontier::ExactBatch(batch) => {
+                cell_sub.add_knn(lap.lap());
+                match batch.source {
+                    PlaneNeighborBatchSource::PackedTail => tail_used = true,
+                    PlaneNeighborBatchSource::PackedExpandR2 => expand_used = true,
+                    PlaneNeighborBatchSource::ShellExpand => used_knn = true,
+                    PlaneNeighborBatchSource::PackedChunk0 => {}
+                }
                 for pos in 0..batch.n {
                     let slot = worker.batch[pos];
                     let neighbor_idx = point_indices[slot as usize] as usize;
@@ -370,6 +407,7 @@ fn build_and_emit_cell_plane<'p, 'g>(
                     builder
                         .clip_with_slot(neighbor_idx, slot, points[neighbor_idx])
                         .map_err(|f| cell_build_error(generator_idx, f))?;
+                    neighbors_processed += 1;
 
                     // Remaining-unseen lower bound: the rest of this batch is
                     // sorted ascending (batch_dists are the frontier's own
@@ -381,20 +419,47 @@ fn build_and_emit_cell_plane<'p, 'g>(
                         batch.unseen_bound
                     };
                     if builder.can_terminate(bound) {
+                        cell_sub.add_clip(lap.lap());
                         break 'stream;
                     }
                 }
+                cell_sub.add_clip(lap.lap());
                 stream.advance_frontier();
             }
             PlaneNeighborFrontier::UnknownButBounded { dist_lower_bound } => {
+                cell_sub.add_knn(lap.lap());
                 if builder.can_terminate(dist_lower_bound) {
                     break 'stream;
                 }
                 stream.advance_frontier();
             }
-            PlaneNeighborFrontier::Exhausted => break,
+            PlaneNeighborFrontier::Exhausted => {
+                cell_sub.add_knn(lap.lap());
+                break;
+            }
         }
     }
+
+    let stage = if used_knn {
+        KnnCellStage::ShellExpand
+    } else if expand_used {
+        KnnCellStage::PackedExpandR2
+    } else if tail_used {
+        KnnCellStage::PackedTail
+    } else {
+        KnnCellStage::PackedChunk0
+    };
+    cell_sub.add_cell_stage(
+        stage,
+        stream.knn_exhausted(),
+        neighbors_processed,
+        tail_used,
+        expand_used,
+        stream.packed_safe_exhausted(),
+        used_knn,
+        incoming_checks.len(),
+        worker.seed_ids.len(),
+    );
 
     builder
         .to_vertex_data(&mut worker.output_buffer)

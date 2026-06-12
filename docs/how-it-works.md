@@ -44,9 +44,11 @@ can any point farther away. So if candidates arrive in increasing distance order
 **provably complete** the moment the next-candidate distance crosses twice the farthest-vertex
 radius. No global structure ever certified anything; the cell carries its own proof.
 
-For uniformly distributed points the certificate fires after a few dozen candidates — whether
-the input has ten thousand points or ten million. That is the entire reason per-point cost is
-near constant, and it is why the gap to hull/triangulation approaches *grows* with n.
+For uniformly distributed points the certificate fires after clipping ~6-7 neighbors per cell
+(measured: 6.4 mean at 500k, a few dozen candidates examined, and only ~30 cells in 500,000
+needed more than the first packed stage) — whether the input has ten thousand points or ten
+million. That is the entire reason per-point cost is near constant, and it is why the gap to
+hull/triangulation approaches *grows* with n.
 
 What this crate builds around the certificate:
 

@@ -19,6 +19,7 @@
 
 use glam::Vec2;
 
+use super::query::PlaneNeighborBatchSource;
 use crate::cube_grid::{DirectedCellMode, DirectedEligibility};
 use crate::fp::OrdF32;
 
@@ -577,6 +578,7 @@ pub(crate) struct PeriodicNeighborStream<'a, 'b, 'p, 'g> {
     takeover: PeriodicShellFrontier<'a, 'b>,
     packed: Option<super::packed::PlanePackedQuery<'a, 'p, 'g>>,
     in_packed: bool,
+    packed_safe_exhausted: bool,
     knn_exhausted: bool,
 }
 
@@ -586,6 +588,9 @@ pub(crate) struct PeriodicNeighborBatch {
     /// Lower bound on the minimum-image squared distance of every eligible
     /// point not yet emitted (`INFINITY` once nothing unseen remains).
     pub(crate) unseen_bound: f32,
+    /// Which stage produced the batch (stage stats / timing parity with the
+    /// bounded stream).
+    pub(crate) source: PlaneNeighborBatchSource,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -621,6 +626,7 @@ impl<'a, 'b, 'p, 'g> PeriodicNeighborStream<'a, 'b, 'p, 'g> {
             ),
             packed,
             in_packed,
+            packed_safe_exhausted: false,
             knn_exhausted: false,
         }
     }
@@ -639,15 +645,28 @@ impl<'a, 'b, 'p, 'g> PeriodicNeighborStream<'a, 'b, 'p, 'g> {
                 .expect("packed stage requires packed query state");
             match packed.frontier(out, dists) {
                 super::packed::PlanePackedFrontier::ExactBatch(batch) => {
+                    let source = match batch.source {
+                        super::packed::PlanePackedBatchSource::Chunk0 => {
+                            PlaneNeighborBatchSource::PackedChunk0
+                        }
+                        super::packed::PlanePackedBatchSource::Tail => {
+                            PlaneNeighborBatchSource::PackedTail
+                        }
+                        super::packed::PlanePackedBatchSource::ExpandR2 => {
+                            PlaneNeighborBatchSource::PackedExpandR2
+                        }
+                    };
                     return PeriodicNeighborFrontier::ExactBatch(PeriodicNeighborBatch {
                         n: batch.n,
                         unseen_bound: batch.unseen_bound,
+                        source,
                     });
                 }
                 super::packed::PlanePackedFrontier::UnknownButBounded { dist_lower_bound } => {
                     return PeriodicNeighborFrontier::UnknownButBounded { dist_lower_bound };
                 }
                 super::packed::PlanePackedFrontier::Exhausted => {
+                    self.packed_safe_exhausted |= packed.safe_exhausted();
                     self.in_packed = false;
                 }
             }
@@ -656,6 +675,7 @@ impl<'a, 'b, 'p, 'g> PeriodicNeighborStream<'a, 'b, 'p, 'g> {
             PeriodicNeighborFrontier::ExactBatch(PeriodicNeighborBatch {
                 n: batch.n,
                 unseen_bound: batch.unseen_bound,
+                source: PlaneNeighborBatchSource::ShellExpand,
             })
         } else {
             self.knn_exhausted = self.takeover.is_exhausted();
@@ -672,6 +692,7 @@ impl<'a, 'b, 'p, 'g> PeriodicNeighborStream<'a, 'b, 'p, 'g> {
                 .expect("packed stage requires packed query state");
             packed.advance_frontier(grid);
             if packed.is_exhausted() {
+                self.packed_safe_exhausted |= packed.safe_exhausted();
                 self.in_packed = false;
             }
             return;
@@ -684,6 +705,11 @@ impl<'a, 'b, 'p, 'g> PeriodicNeighborStream<'a, 'b, 'p, 'g> {
     #[inline]
     pub(crate) fn knn_exhausted(&self) -> bool {
         self.knn_exhausted
+    }
+
+    #[inline]
+    pub(crate) fn packed_safe_exhausted(&self) -> bool {
+        self.packed_safe_exhausted
     }
 }
 
@@ -895,7 +921,11 @@ mod tests {
                 );
                 for &expand_r2 in &[false, true] {
                     let mut packed_scratch = PlanePackedScratch::new();
-                    let mut timings = PlanePackedTimings;
+                    #[cfg_attr(
+                        not(feature = "timing"),
+                        allow(clippy::default_constructed_unit_structs)
+                    )]
+                    let mut timings = PlanePackedTimings::default();
                     let PlanePreparedGroupStatus::Ready(mut prepared) =
                         packed_scratch.prepare_group(&self.grid, group, &mut timings)
                     else {
@@ -1084,7 +1114,11 @@ mod tests {
                 h.layout(),
             );
             let mut packed_scratch = PlanePackedScratch::new();
-            let mut timings = PlanePackedTimings;
+            #[cfg_attr(
+                not(feature = "timing"),
+                allow(clippy::default_constructed_unit_structs)
+            )]
+            let mut timings = PlanePackedTimings::default();
             let PlanePreparedGroupStatus::Ready(mut prepared) =
                 packed_scratch.prepare_group(&h.grid, group, &mut timings)
             else {
