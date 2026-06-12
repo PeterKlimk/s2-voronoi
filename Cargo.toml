@@ -98,6 +98,13 @@ name = "microbench_packed_select"
 path = "src/bin/microbench_packed_select.rs"
 required-features = ["microbench"]
 
+[profile.release]
+# Idea-sweep top pick 10: 16 default codegen units block intra-crate
+# inlining across module boundaries; thin LTO + 1 CGU restores it.
+# Repo-local effect only (Cargo profiles do not propagate to dependents).
+lto = "thin"
+codegen-units = 1
+
 [profile.checked]
 inherits = "release"
 opt-level = 3
