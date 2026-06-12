@@ -67,7 +67,14 @@ pub(super) fn key_to_dot(key: u64) -> f32 {
 }
 
 #[inline]
-fn max_dot_to_cap_xyz(qx: f32, qy: f32, qz: f32, center: Vec3, cos_r: f32, sin_r: f32) -> f32 {
+pub(super) fn max_dot_to_cap_xyz(
+    qx: f32,
+    qy: f32,
+    qz: f32,
+    center: Vec3,
+    cos_r: f32,
+    sin_r: f32,
+) -> f32 {
     let cos_d = (qx * center.x + qy * center.y + qz * center.z).clamp(-1.0, 1.0);
     if cos_d > cos_r {
         return 1.0;

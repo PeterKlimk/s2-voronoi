@@ -33,6 +33,8 @@ jobs:
         run: cargo test
       - name: Tests (serde)
         run: cargo test --release --features serde
+      - name: Check (timing feature)
+        run: cargo check --release --features tools,timing
       - name: Tests (scalar SIMD backend)
         run: cargo test --release --features simd_scalar --test correctness --test api
       - name: Doc build

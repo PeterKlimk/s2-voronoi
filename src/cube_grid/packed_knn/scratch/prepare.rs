@@ -9,6 +9,12 @@ use crate::policy::{
     PACKED_HI_BUDGET,
 };
 
+/// Cell index of a (non-empty) SoA range via its first slot.
+#[inline]
+fn range_cell(grid: &CubeMapGrid, soa_start: usize) -> usize {
+    grid.point_index_to_cell(grid.point_indices()[soa_start] as usize)
+}
+
 impl PackedKnnCellScratch {
     #[cfg_attr(feature = "profiling", inline(never))]
     // Loop indices address several parallel per-query arrays at once;
@@ -168,9 +174,6 @@ impl PackedKnnCellScratch {
         }
         timings.add_security_thresholds(t.lap());
 
-        self.min_center_dot.resize(num_queries, f32::INFINITY);
-        self.min_center_dot.fill(f32::INFINITY);
-        self.center_lens.resize(num_queries, 0);
         self.thresholds.resize(num_queries, 0.0);
 
         // Don't shrink `Vec<Vec<_>>` to avoid dropping inner buffers when group sizes vary.
@@ -198,6 +201,41 @@ impl PackedKnnCellScratch {
         }
         timings.add_select_prep(t.lap());
 
+        // === Threshold selection (before the center pass: the count model
+        // uses only the security bound and candidate counts, so the center
+        // pass can split hi/tail directly and no demotion pass is needed).
+        //
+        // We tighten the hi threshold above the security floor based on
+        // counts: treat the eligible neighborhood size as
+        // `ring_candidates + (num_queries - qi - 1)` (directed center cell),
+        // and pick a dot threshold t in [security, 1] that targets
+        // ~PACKED_HI_BUDGET candidates above t under a simple "uniform on
+        // [security, 1]" model. Anything safe at/below t goes to the tail.
+        let ring_candidates_est = if PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER {
+            ring_candidates_all
+        } else {
+            ring_candidates_eligible
+        };
+        for qi in 0..num_queries {
+            let security = self.security_thresholds[qi];
+            let center_eligible = if PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER {
+                num_queries.saturating_sub(1)
+            } else {
+                num_queries.saturating_sub(qi + 1)
+            };
+            let n_total = ring_candidates_est + center_eligible;
+            let t_count = if n_total == 0 {
+                security
+            } else {
+                let ratio = ((PACKED_HI_BUDGET as f32) / (n_total as f32)).min(1.0);
+                let t = 1.0 - (1.0 - security) * ratio;
+                t.clamp(security, 1.0)
+            };
+            self.thresholds[qi] = t_count;
+            self.tail_possible[qi] = t_count > security;
+        }
+        timings.add_ring_thresholds(t.lap());
+
         // === Center cell pass (directed triangular).
         let PackedCellRange {
             soa_start: center_soa_start,
@@ -219,7 +257,9 @@ impl PackedKnnCellScratch {
         let query_y = qy_src;
         let query_z = qz_src;
         let security_thresholds = &self.security_thresholds[..num_queries];
+        let hi_thresholds = &self.thresholds[..num_queries];
         let chunk0_keys = &mut self.chunk0_keys[..num_queries];
+        let tail_keys = &mut self.tail_keys[..num_queries];
 
         let full_chunks = center_len / 8;
         for chunk in 0..full_chunks {
@@ -250,14 +290,24 @@ impl PackedKnnCellScratch {
                     }
                 }
 
+                // Split into hi (above the tightened threshold -> chunk0)
+                // and the [security, t] band (-> tail) in one pass; the old
+                // post-hoc demotion loop is gone.
+                let hi_bits = dots.mask_gt(hi_thresholds[qi]) & mask_bits;
+                let mut band_bits = mask_bits & !hi_bits;
+                let mut hi = hi_bits;
                 let dots_arr = dots.to_array();
-                while mask_bits != 0 {
-                    let lane = mask_bits.trailing_zeros() as usize;
+                while hi != 0 {
+                    let lane = hi.trailing_zeros() as usize;
                     let slot = (center_soa_start + i + lane) as u32;
-                    let dot = dots_arr[lane];
-                    chunk0_keys[qi].push(make_desc_key(dot, slot));
-                    self.min_center_dot[qi] = self.min_center_dot[qi].min(dot);
-                    mask_bits &= mask_bits - 1;
+                    chunk0_keys[qi].push(make_desc_key(dots_arr[lane], slot));
+                    hi &= hi - 1;
+                }
+                while band_bits != 0 {
+                    let lane = band_bits.trailing_zeros() as usize;
+                    let slot = (center_soa_start + i + lane) as u32;
+                    tail_keys[qi].push(make_desc_key(dots_arr[lane], slot));
+                    band_bits &= band_bits - 1;
                 }
             }
         }
@@ -277,106 +327,32 @@ impl PackedKnnCellScratch {
                     continue;
                 }
                 let dot = fp::dot3_f32(cx, cy, cz, query_x[qi], query_y[qi], query_z[qi]);
-                if dot > security_thresholds[qi] {
+                if dot > hi_thresholds[qi] {
                     chunk0_keys[qi].push(make_desc_key(dot, slot));
-                    self.min_center_dot[qi] = self.min_center_dot[qi].min(dot);
+                } else if dot > security_thresholds[qi] {
+                    tail_keys[qi].push(make_desc_key(dot, slot));
                 }
+            }
+        }
+        for qi in 0..num_queries {
+            if !tail_keys[qi].is_empty() {
+                self.tail_possible[qi] = true;
             }
         }
         timings.add_center_pass(t.lap());
 
-        for (qi, v) in chunk0_keys.iter().enumerate() {
-            self.center_lens[qi] = v.len();
-        }
-
-        // === Threshold selection.
-        //
-        // The old threshold is derived from the worst (minimum) center dot, ensuring that all
-        // safe center candidates remain "hi" and that we can't miss any ring candidate that would
-        // outrank a kept center candidate.
-        //
-        // To reduce the cost of large ring candidate sets (and especially `select_nth_unstable`),
-        // we allow tightening the hi threshold above the worst center dot. Any safe center
-        // candidates below the tightened threshold get demoted into the tail set, preserving the
-        // ordering/correctness invariant: if we keep a candidate with dot d in "hi", we must not
-        // miss any other safe candidate with dot > d.
-        //
-        // We choose a heuristic tightened threshold based on counts: treat the eligible
-        // neighborhood size as `ring_candidates + (num_queries - qi - 1)` (directed center cell),
-        // and pick a dot threshold t in [security, 1] that targets ~PACKED_HI_BUDGET candidates above t
-        // under a simple "uniform on [security, 1]" model. We never loosen below the old
-        // worst-center threshold.
-        let ring_candidates_est = if PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER {
-            ring_candidates_all
-        } else {
-            ring_candidates_eligible
-        };
-
-        for qi in 0..num_queries {
-            let security = security_thresholds[qi];
-            let center_len = self.center_lens[qi];
-            let min_dot = self.min_center_dot[qi];
-            let _old_t = if center_len > 0 {
-                security.max(min_dot - 1e-6)
-            } else {
-                security
-            };
-
-            let center_eligible = if PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER {
-                num_queries.saturating_sub(1)
-            } else {
-                num_queries.saturating_sub(qi + 1)
-            };
-            let n_total = ring_candidates_est + center_eligible;
-            let t_count = if n_total == 0 {
-                security
-            } else {
-                let ratio = ((PACKED_HI_BUDGET as f32) / (n_total as f32)).min(1.0);
-                let t = 1.0 - (1.0 - security) * ratio;
-                t.clamp(security, 1.0)
-            };
-
-            self.thresholds[qi] = t_count;
-            self.tail_possible[qi] = t_count > security;
-        }
-
-        // Demote center candidates at/below the tightened threshold into tail.
-        //
-        // This ensures that any candidate remaining in chunk0 ("hi") has dot > thresholds[qi],
-        // so the ring pass (which uses dot > thresholds[qi]) cannot miss a ring candidate that
-        // outranks a kept center candidate.
-        for qi in 0..num_queries {
-            let t = self.thresholds[qi];
-            let v = &mut chunk0_keys[qi];
-            if v.is_empty() {
-                continue;
-            }
-
-            let tail_v = &mut self.tail_keys[qi];
-            let mut write = 0usize;
-            let len = v.len();
-            for idx in 0..len {
-                let key = v[idx];
-                let dot = super::helpers::key_to_dot(key);
-                if dot > t {
-                    v[write] = key;
-                    write += 1;
-                } else {
-                    tail_v.push(key);
-                }
-            }
-            v.truncate(write);
-
-            // Tail may be needed either due to a tightened threshold or due to demoted center
-            // candidates. Keep the flag conservative.
-            if !tail_v.is_empty() {
-                self.tail_possible[qi] = true;
-            }
-        }
-        timings.add_ring_thresholds(t.lap());
-
         // === Ring pass: collect "hi" candidates into chunk0.
+        //
+        // Per (ring cell, query) cap pruning: if the cell's spherical cap
+        // cannot contain any point with dot above the query's tightened
+        // threshold, the whole cell is skipped for that query — the masks
+        // would have come back empty, so results are bit-identical and the
+        // chunk dot work is simply avoided.
         let thresholds = &self.thresholds[..num_queries];
+        self.ring_query_active.clear();
+        self.ring_query_active.resize(num_queries, false);
+        let ring_query_active = std::mem::take(&mut self.ring_query_active);
+        let mut ring_query_active = ring_query_active;
         for r in &self.cell_ranges[1..] {
             if r.kind == PackedCellRangeKind::SameBinEarlier {
                 continue;
@@ -384,6 +360,29 @@ impl PackedKnnCellScratch {
 
             let soa_start = r.soa_start;
             let soa_end = r.soa_end;
+            {
+                let rcell = range_cell(grid, soa_start);
+                let center = grid.cell_centers[rcell];
+                let cos_r = grid.cell_cos_radius[rcell];
+                let sin_r = grid.cell_sin_radius[rcell];
+                let mut any = false;
+                for qi in 0..num_queries {
+                    let bound = super::helpers::max_dot_to_cap_xyz(
+                        query_x[qi],
+                        query_y[qi],
+                        query_z[qi],
+                        center,
+                        cos_r,
+                        sin_r,
+                    );
+                    let active = bound > thresholds[qi];
+                    ring_query_active[qi] = active;
+                    any |= active;
+                }
+                if !any {
+                    continue;
+                }
+            }
             let range_len = soa_end - soa_start;
             let xs = &grid.cell_points_x[soa_start..soa_end];
             let ys = &grid.cell_points_y[soa_start..soa_end];
@@ -395,6 +394,9 @@ impl PackedKnnCellScratch {
                 let candidates = fp::PointChunk8::from_slices(&xs[i..], &ys[i..], &zs[i..]);
 
                 for (qi, &query_slot) in queries.iter().enumerate() {
+                    if !ring_query_active[qi] {
+                        continue;
+                    }
                     let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
                     let mut mask_bits = dots.mask_gt(thresholds[qi]);
                     if mask_bits == 0 {
@@ -432,6 +434,9 @@ impl PackedKnnCellScratch {
                 let candidates = fp::PointChunk8::from_arrays(xbuf, ybuf, zbuf);
 
                 for (qi, &query_slot) in queries.iter().enumerate() {
+                    if !ring_query_active[qi] {
+                        continue;
+                    }
                     let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
                     let mut mask_bits = dots.mask_gt(thresholds[qi]) & valid_bits;
                     if mask_bits == 0 {
@@ -453,6 +458,7 @@ impl PackedKnnCellScratch {
                 }
             }
         }
+        self.ring_query_active = ring_query_active;
         timings.add_ring_pass(t.lap());
 
         PreparedPackedGroupStatus::Ready(PreparedPackedGroup {

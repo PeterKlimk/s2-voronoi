@@ -69,6 +69,16 @@ impl StageCounts {
 pub struct CellSubPhases {
     pub knn_query: Duration,
     pub packed_knn: Duration,
+    pub packed_setup: Duration,
+    pub packed_security: Duration,
+    pub packed_center_pass: Duration,
+    pub packed_ring_thresholds: Duration,
+    pub packed_ring_pass: Duration,
+    pub packed_ring_fallback: Duration,
+    pub packed_select_prep: Duration,
+    pub packed_select_partition: Duration,
+    pub packed_select_sort: Duration,
+    pub packed_select_scatter: Duration,
     pub packed_expand_r2_scan: Duration,
     pub packed_expand_r2_select: Duration,
     pub clipping: Duration,
@@ -103,6 +113,16 @@ pub struct DedupSubPhases {
 pub struct CellSubAccum {
     knn_query: Duration,
     packed_knn: Duration,
+    packed_setup: Duration,
+    packed_security: Duration,
+    packed_center_pass: Duration,
+    packed_ring_thresholds: Duration,
+    packed_ring_pass: Duration,
+    packed_ring_fallback: Duration,
+    packed_select_prep: Duration,
+    packed_select_partition: Duration,
+    packed_select_sort: Duration,
+    packed_select_scatter: Duration,
     packed_expand_r2_scan: Duration,
     packed_expand_r2_select: Duration,
     clipping: Duration,
@@ -142,6 +162,16 @@ impl CellSubAccum {
 
     #[inline]
     pub fn add_packed_knn_breakdown(&mut self, timings: &PackedKnnTimings) {
+        self.packed_setup += timings.setup + timings.query_cache;
+        self.packed_security += timings.security_thresholds;
+        self.packed_center_pass += timings.center_pass;
+        self.packed_ring_thresholds += timings.ring_thresholds;
+        self.packed_ring_pass += timings.ring_pass;
+        self.packed_ring_fallback += timings.ring_fallback;
+        self.packed_select_prep += timings.select_prep + timings.select_query_prep;
+        self.packed_select_partition += timings.select_partition;
+        self.packed_select_sort += timings.select_sort;
+        self.packed_select_scatter += timings.select_scatter;
         self.packed_expand_r2_scan += timings.expand_r2_scan;
         self.packed_expand_r2_select += timings.expand_r2_select;
         self.packed_tail_builds += timings.tail_builds;
@@ -206,6 +236,16 @@ impl CellSubAccum {
     pub fn merge(&mut self, other: &CellSubAccum) {
         self.knn_query += other.knn_query;
         self.packed_knn += other.packed_knn;
+        self.packed_setup += other.packed_setup;
+        self.packed_security += other.packed_security;
+        self.packed_center_pass += other.packed_center_pass;
+        self.packed_ring_thresholds += other.packed_ring_thresholds;
+        self.packed_ring_pass += other.packed_ring_pass;
+        self.packed_ring_fallback += other.packed_ring_fallback;
+        self.packed_select_prep += other.packed_select_prep;
+        self.packed_select_partition += other.packed_select_partition;
+        self.packed_select_sort += other.packed_select_sort;
+        self.packed_select_scatter += other.packed_select_scatter;
         self.packed_expand_r2_scan += other.packed_expand_r2_scan;
         self.packed_expand_r2_select += other.packed_expand_r2_select;
         self.clipping += other.clipping;
@@ -234,6 +274,16 @@ impl CellSubAccum {
         CellSubPhases {
             knn_query: self.knn_query,
             packed_knn: self.packed_knn,
+            packed_setup: self.packed_setup,
+            packed_security: self.packed_security,
+            packed_center_pass: self.packed_center_pass,
+            packed_ring_thresholds: self.packed_ring_thresholds,
+            packed_ring_pass: self.packed_ring_pass,
+            packed_ring_fallback: self.packed_ring_fallback,
+            packed_select_prep: self.packed_select_prep,
+            packed_select_partition: self.packed_select_partition,
+            packed_select_sort: self.packed_select_sort,
+            packed_select_scatter: self.packed_select_scatter,
             packed_expand_r2_scan: self.packed_expand_r2_scan,
             packed_expand_r2_select: self.packed_expand_r2_select,
             clipping: self.clipping,
@@ -386,6 +436,23 @@ impl PhaseTimings {
                     est_wall_ms(self.cell_sub.packed_knn),
                     sub_pct(self.cell_sub.packed_knn)
                 );
+                let kernel = [
+                    ("setup", self.cell_sub.packed_setup),
+                    ("security", self.cell_sub.packed_security),
+                    ("center_pass", self.cell_sub.packed_center_pass),
+                    ("ring_thresholds", self.cell_sub.packed_ring_thresholds),
+                    ("ring_pass", self.cell_sub.packed_ring_pass),
+                    ("ring_fallback", self.cell_sub.packed_ring_fallback),
+                    ("select_prep", self.cell_sub.packed_select_prep),
+                    ("select_partition", self.cell_sub.packed_select_partition),
+                    ("select_sort", self.cell_sub.packed_select_sort),
+                    ("select_scatter", self.cell_sub.packed_select_scatter),
+                ];
+                for (label, d) in kernel {
+                    if d.as_nanos() > 0 {
+                        eprintln!("      {:16} {:7.1}ms", label, est_wall_ms(d));
+                    }
+                }
                 if self.cell_sub.packed_expand_r2_scan.as_nanos() > 0
                     || self.cell_sub.packed_expand_r2_select.as_nanos() > 0
                     || self.cell_sub.packed_expand_r2_builds > 0
