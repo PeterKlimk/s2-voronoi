@@ -7,6 +7,9 @@
 /// state. If the epsilon-scale inside test produces multiple surviving arcs
 /// (numerically non-convex polygon), the first arc is kept; the edge-check /
 /// reconciliation layer owns any resulting cross-cell disagreement.
+// Retained for the baseline bool clipper (microbench comparisons); the hot
+// clippers use the branchless bitmask form.
+#[cfg(any(test, feature = "microbench"))]
 #[inline(always)]
 fn find_entry_exit_transitions<const N: usize>(
     inside: &[bool; N],
