@@ -26,8 +26,18 @@ Initial release.
   (strictly valid subdivision, fuzz-asserted at 2-4.5M points in CI) over a
   soft geometric one; see `docs/correctness-contract.md` for the precise
   statement and the measured coincidence margins behind the default weld.
+- Delaunay export (`delaunay_triangles()` on both diagram types): the dual
+  triangulation read off the stored graph — CCW winding (delaunator/CGAL
+  convention), canonical indices, complete on the sphere (2c−4 triangles)
+  and the torus (2c), circumcenter-in-rect subset on the bounded rect,
+  cocircular ties fan-triangulated.
+- Point location (`build_locator()` → `SphereLocator` / `PlaneLocator`):
+  reusable nearest-generator queries in near-constant time per query on all
+  three topologies; periodic queries wrap, bounded-plane queries may lie
+  outside the rect, welded inputs resolve to canonical cells.
 - API: `compute` / `compute_with` / `compute_with_report`, cell views,
-  edge-aligned neighbor adjacency (Delaunay edges), spherical cell areas and
-  centroids (Lloyd relaxation in three lines), strict validation, vertex
-  compaction, weld introspection, optional serde.
+  edge-aligned neighbor adjacency (Delaunay edges), spherical and planar
+  cell areas and centroids with a one-call `lloyd_step()` (Lloyd relaxation
+  on sphere, rect, and torus), strict validation, vertex compaction, weld
+  introspection, optional serde for all diagram types.
 - Stable Rust (MSRV 1.88); explicit SIMD via `wide`.
