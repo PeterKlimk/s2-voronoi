@@ -98,6 +98,31 @@ pub fn paired_question_summaries() -> Vec<([u32; 4], u32, bool, f32)> {
         .collect()
 }
 
+/// Experimental termination-pad override (radians); NaN bits = disabled.
+/// Gate-1 question-set-closure experiments (EPS_CERT sizing) widen the
+/// certificate so marginal generators are delivered to every cell whose
+/// shared features they could affect. Probe-only.
+static TERM_PAD_OVERRIDE_BITS: AtomicU64 = AtomicU64::new(u64::MAX);
+
+/// Set (or clear) the termination angle-pad override (probe API).
+pub fn set_term_pad_override(pad: Option<f64>) {
+    let bits = match pad {
+        Some(p) => p.to_bits(),
+        None => u64::MAX,
+    };
+    TERM_PAD_OVERRIDE_BITS.store(bits, Ordering::Relaxed);
+}
+
+/// Current override, if any (read at builder construction — cold).
+pub(crate) fn term_pad_override() -> Option<f64> {
+    let bits = TERM_PAD_OVERRIDE_BITS.load(Ordering::Relaxed);
+    if bits == u64::MAX {
+        None
+    } else {
+        Some(f64::from_bits(bits))
+    }
+}
+
 /// One near-margin decision, keyed by its abstract question: does generator
 /// `key[3]` kill the vertex of sorted triple `key[0..3]`? Multiple cells
 /// answer the same question (each owner of the triple clips that corner
@@ -385,6 +410,97 @@ pub fn paired_dump_involving(ids: &[u32]) -> String {
             )
             .unwrap();
         }
+    }
+    out
+}
+
+/// Quad-level coherence report: group records by the sorted 4-point SET
+/// (not the (triple, x) phrasing). The two phrasings "(g,h,t1) vs t2" and
+/// "(g,h,t2) vs t1" are the same determinant with opposite parity, so a
+/// 4-set's records are mutually coherent iff they ALL agree with canonical
+/// or ALL disagree; mixed agreement is a genuine contradiction (two corners
+/// that cannot canonically coexist) — the thing the (triple, x)-keyed
+/// pairing structurally could not see.
+pub fn paired_quad_report() -> String {
+    use std::collections::HashMap;
+    use std::fmt::Write;
+
+    let records = PAIRED.lock().unwrap().clone();
+    let mut quads: HashMap<[u32; 4], Vec<&PairedRecord>> = HashMap::new();
+    for r in &records {
+        if r.canonical == 0 {
+            continue; // exact ties: SoS territory, not coherence
+        }
+        let mut q = r.key;
+        q.sort_unstable();
+        quads.entry(q).or_default().push(r);
+    }
+
+    let mut multi_record = 0u64;
+    let mut contradictions = 0u64;
+    let mut cross_cell_contradictions = 0u64;
+    let mut contra_margin_hist = [0u64; BUCKETS];
+    let mut contra_max_margin = 0.0f32;
+    let mut contra_dump: Vec<String> = Vec::new();
+
+    for (q, entries) in &quads {
+        if entries.len() < 2 {
+            continue;
+        }
+        multi_record += 1;
+        let agree = |e: &PairedRecord| e.local_keep == (e.canonical < 0);
+        let any_agree = entries.iter().any(|e| agree(e));
+        let any_disagree = entries.iter().any(|e| !agree(e));
+        if any_agree && any_disagree {
+            contradictions += 1;
+            let mut cells: Vec<u32> = entries.iter().map(|e| e.cell).collect();
+            cells.sort_unstable();
+            cells.dedup();
+            if cells.len() >= 2 {
+                cross_cell_contradictions += 1;
+            }
+            for e in entries {
+                if !agree(e) {
+                    contra_margin_hist[bucket_for(e.margin as f64)] += 1;
+                    contra_max_margin = contra_max_margin.max(e.margin);
+                }
+            }
+            if contra_dump.len() < 12 {
+                let mut line = format!("    quad={q:?}");
+                for e in entries {
+                    write!(
+                        line,
+                        " [x={} cell={} keep={} canon={} m={:.2e}]",
+                        e.key[3], e.cell, e.local_keep, e.canonical, e.margin
+                    )
+                    .unwrap();
+                }
+                contra_dump.push(line);
+            }
+        }
+    }
+
+    let mut out = String::new();
+    writeln!(
+        out,
+        "quads: total={} multi_record={multi_record} CONTRADICTIONS={contradictions}          (cross_cell={cross_cell_contradictions}) max_disagreeing_margin={contra_max_margin:.3e}",
+        quads.len()
+    )
+    .unwrap();
+    writeln!(out, "  contradiction margin buckets (disagreeing records):").unwrap();
+    for (k, c) in contra_margin_hist.iter().enumerate() {
+        if *c == 0 {
+            continue;
+        }
+        let label = if k == 0 {
+            ">= 1e-1".to_string()
+        } else {
+            format!("1e-{:<2}..1e-{:<2}", k + 1, k)
+        };
+        writeln!(out, "    {label} {c}").unwrap();
+    }
+    for line in &contra_dump {
+        writeln!(out, "{line}").unwrap();
     }
     out
 }

@@ -189,3 +189,60 @@ fn probe_two_pass_audit() {
     println!("=== uncensored defect-site anatomy (3m s3) ===");
     print!("{}", s2_voronoi::p5_shadow::paired_dump_involving(&site));
 }
+
+/// Gate-1 closure experiment: sweep the termination certificate's angle pad
+/// (EPS_CERT candidates) over every known defect-bearing input and measure
+/// whether wider delivery kills the defects, and what it costs in wall
+/// time. The decisive stage-2 question: is certificate conservatism alone
+/// sufficient, and at what pad?
+#[test]
+#[ignore]
+fn probe_eps_cert_sweep() {
+    let fixture_2k = defect_fixture();
+    let u3m = random_sphere_points(3_000_000, 3);
+    let u45m = random_sphere_points(4_500_000, 2);
+
+    for pad in [None, Some(1e-6f64), Some(1e-5), Some(1e-4)] {
+        s2_voronoi::p5_shadow::set_term_pad_override(pad);
+        println!("=== pad={pad:?} ===");
+        for (name, points) in [
+            ("fixture_2k", &fixture_2k),
+            ("uniform_3m_s3", &u3m),
+            ("uniform_4500k_s2", &u45m),
+        ] {
+            let t = std::time::Instant::now();
+            let out = compute_with_report(points, VoronoiConfig::default()).expect(name);
+            let dt = t.elapsed().as_millis();
+            println!(
+                "  {name:18} defects={:?} valid={} wall={dt}ms",
+                out.report.unresolved_edge_pairs,
+                out.report.preferred_validation().is_strictly_valid()
+            );
+        }
+    }
+    s2_voronoi::p5_shadow::set_term_pad_override(None);
+}
+
+/// Quad-coherence probe: regroup the paired records by sorted 4-point set,
+/// where the two opposite-parity phrasings of the same question become
+/// comparable. Contradictions here are the real cross-cell conflicts the
+/// (triple, x)-keyed audit structurally missed.
+#[test]
+#[ignore]
+fn probe_quad_coherence() {
+    let run = |name: &str, points: &[s2_voronoi::UnitVec3], cutoff: f64| {
+        s2_voronoi::p5_shadow::paired_reset();
+        s2_voronoi::p5_shadow::set_pair_cutoff(cutoff);
+        let out = compute_with_report(points, VoronoiConfig::default()).expect(name);
+        s2_voronoi::p5_shadow::set_pair_cutoff(0.0);
+        println!(
+            "=== {name}: n={} cutoff={cutoff:.0e} defects={} ===",
+            points.len(),
+            out.report.unresolved_edge_pairs.len()
+        );
+        print!("{}", s2_voronoi::p5_shadow::paired_quad_report());
+    };
+    run("fixture_2k", &defect_fixture(), 1e-3);
+    run("uniform_500k_s2", &random_sphere_points(500_000, 2), 1e-3);
+    run("uniform_3m_s3", &random_sphere_points(3_000_000, 3), 1e-3);
+}

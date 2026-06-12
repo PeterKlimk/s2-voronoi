@@ -83,6 +83,10 @@ impl FallbackConstraint {
 
 impl GnomonicBuilder {
     pub(super) fn new(generator_idx: usize, generator: Vec3) -> Self {
+        #[cfg(feature = "p5_shadow")]
+        let angle_pad = crate::knn_clipping::p5_shadow::term_pad_override()
+            .unwrap_or(crate::tolerances::TERMINATION_ANGLE_PAD);
+        #[cfg(not(feature = "p5_shadow"))]
         let angle_pad = crate::tolerances::TERMINATION_ANGLE_PAD;
         let (term_sin_pad, term_cos_pad) = angle_pad.sin_cos();
         // P5 stage 0: promote the canonicalized f32 bits exactly — no

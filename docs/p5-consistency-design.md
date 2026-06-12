@@ -288,15 +288,51 @@ Measured at 500k (cutoff 1e-3), 2M, and defect-bearing 3M seed 3 (cutoff
    delivered) and in divergent triple identities (thirds mismatches are
    different question SETS by definition).
 
-Consequence for the design: **pillar 3 is the load-bearing pillar.**
-Pillars 1-2 (canonical answers behind a filter) would NOT have fixed the
-observed 3M defects — those answers already matched canonical. EPS_FILTER
-does not need to dominate an answer-conflict tail (there isn't one); the
-escalation's role is to pin the near-tie answers that question-set closure
-(EPS_CERT-conservative certificates) makes commonly-posed, so that both
-cells derive identical corner sets from identical answer sets. Stage 2/3
-should therefore lead with the certificate-conservatism work and treat the
-decision-authoritative clipper changes as its companion, not the headline.
+### Correction: the quad-coherence analysis (supersedes the paragraph below)
+
+The (triple, x)-keyed pairing had a canonicalization gap: for a 4-set
+{g,h,t1,t2}, the phrasings "(g,h,t1) vs t2" and "(g,h,t2) vs t1" are the
+SAME determinant with opposite parity — two cells keeping parity-
+incompatible corners is a genuine contradiction the keying could never
+pair. Regrouping the same records by sorted 4-set (`paired_quad_report`,
+coherence rule: all records in a quad must agree with canonical or all
+disagree) found **exactly one contradiction per defect-bearing run, and it
+is the defect site's quad** — fixture_2k: [25,63,287,322]; 3M seed 3:
+[1790353,2327897,2902347,2992988]; clean 500k: zero. Perfect 1:1.
+
+The contradiction margins are **1e-13..1e-11** — the CLIP_EPS_INSIDE
+(1e-12) scale, where the eps-inside tie-break itself straddles — far below
+the benign 1e-5..1e-4 shared-bias band.
+
+Meanwhile the gate-1 experiment (termination-pad sweep via
+`set_term_pad_override`, pads up to 1e-4 = 100x default, on every known
+defect-bearing input) changed **nothing**: identical defect sets at every
+pad. Delivery was never the mechanism.
+
+**Net design conclusion (replacing the superseded paragraph below):**
+
+- The observed defect mechanism is **failure mode A** — answer divergence
+  on opposite-parity phrasings of near-exactly-cocircular quads — not
+  failure mode B. (Mode B remains a designed-for possibility; it is just
+  not what produces today's defects.)
+- **Pillars 1-2 are the fix**, with economics far better than feared:
+  EPS_FILTER ~ 1e-8 normalized (three orders above the observed
+  contradiction tail) escalates ~0.003% of decisions. The evaluator's
+  parity-canonical form (sorted-row determinant + call-site parity) is
+  exactly what makes the two phrasings coherent.
+- **Pillar 3 certificate-conservatism work is unnecessary** for the
+  observed defects (pad sweep negative). EPS_CERT survives only as a
+  small proof obligation: termination must not hide a question at
+  EPS_FILTER-marginal scale, which the existing pads already dominate by
+  orders of magnitude (filter 1e-8 vs pads ~1e-6).
+- Stage 2 is therefore the decision-authoritative clipper escalation as
+  originally designed, at EPS_FILTER ~ 1e-8.
+
+*(Superseded paragraph, kept for the record:)* Consequence for the design:
+pillar 3 is the load-bearing pillar. Pillars 1-2 (canonical answers behind
+a filter) would NOT have fixed the observed 3M defects — those answers
+already matched canonical. [...] This conclusion was an artifact of the
+under-canonicalized pairing keys described above.
 
 ## Migration plan
 
