@@ -25,6 +25,8 @@ pub(crate) use query::{PlaneNeighborFrontier, PlaneNeighborStream};
 mod tests;
 
 use glam::Vec2;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 /// Uniform spatial grid over the unit square.
 pub(crate) struct PlaneGrid {
@@ -154,6 +156,162 @@ impl PlaneGrid {
     #[inline]
     pub(crate) fn point_indices(&self) -> &[u32] {
         &self.point_indices
+    }
+
+    /// Collect all pairs of point indices within `radius` of each other
+    /// (each unordered pair reported at least once; duplicates possible).
+    ///
+    /// Grid-integrated proximity detection: a qualifying pair is either in
+    /// one cell or straddles a wall with both members within `radius` of it
+    /// (`radius` is far below the cell size at every production
+    /// resolution), so the scan checks each cell's interior triangularly
+    /// plus, for near-wall points only, the E/N/NE/NW neighbors (the W/S
+    /// directions are covered by those cells' own forward checks). The
+    /// common no-pair case is a pure read-only scan of the already-built
+    /// grid — no hashing, no allocation.
+    pub(crate) fn collect_pairs_within(&self, radius: f32, out: &mut Vec<(u32, u32)>) {
+        let res = self.res;
+        let num_cells = res * res;
+        // Parallel over row bands; qualifying pairs are rare, so the
+        // per-band vecs are almost always empty and the reduce is free.
+        let bands: Vec<Vec<(u32, u32)>> = maybe_par_into_iter!(0..res)
+            .map(|band| {
+                let mut local = Vec::new();
+                for cell in band * res..(band + 1) * res {
+                    self.collect_pairs_for_cell(cell, radius, &mut local);
+                }
+                local
+            })
+            .collect();
+        let _ = num_cells;
+        for band in bands {
+            out.extend(band);
+        }
+    }
+
+    /// One cell's contribution to [`Self::collect_pairs_within`].
+    fn collect_pairs_for_cell(&self, cell: usize, radius: f32, out: &mut Vec<(u32, u32)>) {
+        let res = self.res;
+        let r_sq = radius * radius;
+        // Pathological cells (everything coincident) would make the
+        // triangular scan quadratic; switch to a sorted quantized sweep.
+        const FAT_CELL_LIMIT: usize = 256;
+        let mut fat_scratch: Vec<(u64, u32)> = Vec::new();
+
+        {
+            let start = self.cell_offsets[cell] as usize;
+            let end = self.cell_offsets[cell + 1] as usize;
+            let k = end - start;
+            if k == 0 {
+                return;
+            }
+            let xs = &self.cell_points_x[start..end];
+            let ys = &self.cell_points_y[start..end];
+            let idx = &self.point_indices[start..end];
+
+            // Within-cell pairs.
+            if k <= FAT_CELL_LIMIT {
+                for i in 0..k {
+                    for j in (i + 1)..k {
+                        let dx = xs[j] - xs[i];
+                        let dy = ys[j] - ys[i];
+                        if dx * dx + dy * dy <= r_sq {
+                            out.push((idx[i], idx[j]));
+                        }
+                    }
+                }
+            } else {
+                // Quantize to radius-pitch keys, sort, compare each point
+                // against the 3x3 neighborhood of quanta via key ranges.
+                let pitch = radius.max(f32::MIN_POSITIVE);
+                fat_scratch.clear();
+                fat_scratch.extend((0..k).map(|i| {
+                    let qx = (xs[i] / pitch) as u32;
+                    let qy = (ys[i] / pitch) as u32;
+                    ((((qy as u64) << 32) | qx as u64), i as u32)
+                }));
+                fat_scratch.sort_unstable();
+                for n in 0..k {
+                    let (key, i_local) = fat_scratch[n];
+                    let (qy, qx) = ((key >> 32) as u32, (key & 0xFFFF_FFFF) as u32);
+                    for dqy in 0..=1u32 {
+                        for dqx in -1i64..=1 {
+                            if dqy == 0 && dqx < 0 {
+                                continue; // forward half-space only
+                            }
+                            let nkey = (((qy + dqy) as u64) << 32)
+                                | ((qx as i64 + dqx).max(0) as u64 & 0xFFFF_FFFF);
+                            let from = if nkey == key {
+                                n + 1
+                            } else {
+                                fat_scratch.partition_point(|&(kk, _)| kk < nkey)
+                            };
+                            for &(kk, j_local) in &fat_scratch[from..] {
+                                if kk != nkey {
+                                    break;
+                                }
+                                let (i, j) = (i_local as usize, j_local as usize);
+                                let dx = xs[j] - xs[i];
+                                let dy = ys[j] - ys[i];
+                                if dx * dx + dy * dy <= r_sq {
+                                    out.push((idx[i], idx[j]));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Cross-cell pairs: only points within `radius` of the E/N
+            // walls (plus the NE/NW corners) can pair into those neighbors.
+            let (ix, iy) = (cell % res, cell / res);
+            let near_e = ix + 1 < res;
+            let near_n = iy + 1 < res;
+            let e_wall = if near_e { self.wall(ix + 1) } else { 0.0 };
+            let n_wall = if near_n { self.wall(iy + 1) } else { 0.0 };
+            let w_wall = self.wall(ix);
+            for i in 0..k {
+                let (x, y) = (xs[i], ys[i]);
+                let close_e = near_e && e_wall - x <= radius;
+                let close_n = near_n && n_wall - y <= radius;
+                let close_w = ix > 0 && x - w_wall <= radius;
+                if close_e {
+                    self.pairs_against_cell(cell + 1, x, y, idx[i], r_sq, out);
+                }
+                if close_n {
+                    self.pairs_against_cell(cell + res, x, y, idx[i], r_sq, out);
+                }
+                if close_e && close_n {
+                    self.pairs_against_cell(cell + res + 1, x, y, idx[i], r_sq, out);
+                }
+                if close_w && close_n {
+                    self.pairs_against_cell(cell + res - 1, x, y, idx[i], r_sq, out);
+                }
+            }
+        }
+    }
+
+    /// Compare one point against every point of `cell`, pushing qualifying
+    /// pairs. Cross-wall bands are radius-thin, so `cell` rarely has many
+    /// qualifying members.
+    fn pairs_against_cell(
+        &self,
+        cell: usize,
+        x: f32,
+        y: f32,
+        index: u32,
+        r_sq: f32,
+        out: &mut Vec<(u32, u32)>,
+    ) {
+        let start = self.cell_offsets[cell] as usize;
+        let end = self.cell_offsets[cell + 1] as usize;
+        for slot in start..end {
+            let dx = self.cell_points_x[slot] - x;
+            let dy = self.cell_points_y[slot] - y;
+            if dx * dx + dy * dy <= r_sq {
+                out.push((index, self.point_indices[slot]));
+            }
+        }
     }
 
     /// Grid-line coordinate of wall `i` (`i` in `0..=res`), precomputed as

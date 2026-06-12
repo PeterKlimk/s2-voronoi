@@ -9,9 +9,10 @@ Initial release.
   grid, with rect walls handled as virtual generators so hull cells clip to
   the domain and the strict-subdivision contract carries over (disk-topology
   validation via `validation::validate_plane`; cell areas partition the
-  rect). Inputs that coincide after domain normalization (always
-  including exact-bit duplicates) are welded; no near-coincidence weld
-  radius is needed on the plane.
+  rect). Generators within the planar weld radius (~1e-6 of the longer
+  rect side, always including exact duplicates) are welded — required for
+  graph validity, like the sphere's weld; detection reuses the kNN grid so
+  duplicate-free inputs pay only a scan.
 - Spherical Voronoi diagrams on the unit sphere via kNN-driven half-space
   clipping: per-cell parallel construction stitched into one consistent graph
   (see `docs/architecture.md` and the stitching invariant in

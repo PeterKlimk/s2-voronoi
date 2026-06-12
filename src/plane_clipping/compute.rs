@@ -91,52 +91,64 @@ fn validate_rect(rect: PlaneRect) -> Result<(), VoronoiError> {
     Ok(())
 }
 
-/// Weld points with identical NORMALIZED coordinates: the one coincidence
-/// class that provably breaks half-plane clipping (the bisector degenerates
-/// to the whole plane). This is deliberately the computation space, not the
-/// input space — bit-distinct inputs that round together under the rect
-/// normalization MUST weld (they would otherwise produce the degenerate
-/// bisector), while points that stay distinct here have exactly
-/// representable f64 coordinate differences and well-formed bisectors.
-struct ExactWeld {
-    /// Canonical (first-occurrence) original index per original index.
-    weld_map: Option<Vec<u32>>,
-    /// Effective (deduplicated) normalized points.
+/// Radius weld over the already-built grid (the grid-integrated design):
+/// generators within [`crate::tolerances::PLANE_WELD_DIST`] (normalized
+/// units) weld to one cell, the canonical member being the lowest original
+/// index of each group.
+///
+/// Welding within a radius — not just exact coordinate equality — is
+/// required for graph validity: probing (tests/plane_coincidence_probes.rs)
+/// shows clusters of 3+ generators within ~1 ulp of unit scale produce
+/// invalid topology even though each individual bisector is well-formed.
+/// Pairs at any distinct-f32 separation resolve fine; the radius's margin
+/// over the observed failure scale is documented at the constant.
+///
+/// The detection reuses the spatial grid built for the kNN queries (points
+/// can only weld within a cell or across a radius-thin wall band), so the
+/// common no-weld case is a read-only scan and the detection grid IS the
+/// production grid — no hash pass, no copies, no rebuild.
+struct WeldResult {
+    /// Canonical (lowest) original index per original index.
+    weld_map: Vec<u32>,
+    /// Effective (canonical) normalized points, in original index order.
     effective: Vec<Vec2>,
     /// Effective index per original index.
     original_to_effective: Vec<u32>,
 }
 
-fn weld_exact_duplicates(points: &[Vec2]) -> ExactWeld {
-    let mut first_seen: rustc_hash::FxHashMap<[u32; 2], u32> = rustc_hash::FxHashMap::default();
-    first_seen.reserve(points.len());
-    let mut weld_map: Vec<u32> = Vec::with_capacity(points.len());
-    let mut effective: Vec<Vec2> = Vec::with_capacity(points.len());
-    let mut original_to_effective: Vec<u32> = Vec::with_capacity(points.len());
-    let mut any_weld = false;
+fn weld_within_radius(points: &[Vec2], grid: &PlaneGrid) -> Option<WeldResult> {
+    let mut pairs: Vec<(u32, u32)> = Vec::new();
+    grid.collect_pairs_within(crate::tolerances::PLANE_WELD_DIST, &mut pairs);
+    if pairs.is_empty() {
+        return None;
+    }
 
-    for (i, p) in points.iter().enumerate() {
-        let bits = [p.x.to_bits(), p.y.to_bits()];
-        match first_seen.get(&bits) {
-            Some(&canonical) => {
-                any_weld = true;
-                weld_map.push(canonical);
-                original_to_effective.push(original_to_effective[canonical as usize]);
-            }
-            None => {
-                first_seen.insert(bits, i as u32);
-                weld_map.push(i as u32);
-                original_to_effective.push(effective.len() as u32);
-                effective.push(*p);
-            }
+    let mut uf = crate::knn_clipping::union_find::UnionFind::new(points.len());
+    for &(a, b) in &pairs {
+        uf.union_keep_min(a, b);
+    }
+
+    let mut weld_map: Vec<u32> = Vec::with_capacity(points.len());
+    let mut effective: Vec<Vec2> = Vec::new();
+    let mut original_to_effective: Vec<u32> = vec![0; points.len()];
+    for i in 0..points.len() {
+        let canonical = uf.find(i as u32);
+        weld_map.push(canonical);
+        if canonical as usize == i {
+            original_to_effective[i] = effective.len() as u32;
+            effective.push(points[i]);
         }
     }
+    for i in 0..points.len() {
+        let canonical = weld_map[i] as usize;
+        original_to_effective[i] = original_to_effective[canonical];
+    }
 
-    ExactWeld {
-        weld_map: any_weld.then_some(weld_map),
+    Some(WeldResult {
+        weld_map,
         effective,
         original_to_effective,
-    }
+    })
 }
 
 pub(crate) fn compute_plane_impl<P: PlanePointLike>(
@@ -175,13 +187,29 @@ pub(crate) fn compute_plane_impl<P: PlanePointLike>(
         normalized.push(transform.to_normalized(Vec2::new(x, y)));
     }
 
-    let weld = weld_exact_duplicates(&normalized);
-    let effective = &weld.effective;
-
     let occupied = transform.domain.x as f64 * transform.domain.y as f64;
-    let res = plane_grid_resolution(effective.len(), occupied);
-    let grid = PlaneGrid::new(effective, res);
-    let output = compute_plane_cells(effective, &grid, transform.domain)?;
+    let res = plane_grid_resolution(normalized.len(), occupied);
+    let grid = PlaneGrid::new(&normalized, res);
+
+    // Optimistic weld: the no-weld case (overwhelmingly common) reuses this
+    // very grid for the computation; only actual welds pay a rebuild.
+    let weld = weld_within_radius(&normalized, &grid);
+    let (output, weld_map, original_to_effective) = match &weld {
+        None => (
+            compute_plane_cells(&normalized, &grid, transform.domain)?,
+            None,
+            None,
+        ),
+        Some(weld) => {
+            let res = plane_grid_resolution(weld.effective.len(), occupied);
+            let eff_grid = PlaneGrid::new(&weld.effective, res);
+            (
+                compute_plane_cells(&weld.effective, &eff_grid, transform.domain)?,
+                Some(weld.weld_map.clone()),
+                Some(&weld.original_to_effective),
+            )
+        }
+    };
 
     // Map vertices back to rect coordinates.
     let vertices: Vec<PlanePoint> = output
@@ -192,18 +220,17 @@ pub(crate) fn compute_plane_impl<P: PlanePointLike>(
 
     // One cell per ORIGINAL generator; welded twins alias their canonical
     // cell's (start, len) range, exactly like the spherical weld contract.
-    let cells: Vec<crate::diagram::VoronoiCell> = weld
-        .original_to_effective
-        .iter()
-        .map(|&eff| output.cells[eff as usize])
-        .collect();
+    let cells: Vec<crate::diagram::VoronoiCell> = match original_to_effective {
+        None => output.cells,
+        Some(map) => map.iter().map(|&eff| output.cells[eff as usize]).collect(),
+    };
 
     Ok(PlanarVoronoi::from_raw_parts(
         generators,
         vertices,
         cells,
         output.cell_indices,
-        weld.weld_map,
+        weld_map,
         rect,
     ))
 }

@@ -67,3 +67,5 @@ jobs:
         run: cargo test --release --test coincidence_probes -- --ignored --nocapture
       - name: Planar fuzz 1M/2M (assert strict validity)
         run: cargo test --release --test plane plane_fuzz_large -- --ignored --nocapture
+      - name: Planar coincidence probes (randomized sweep)
+        run: cargo test --release --test plane_coincidence_probes -- --ignored --nocapture

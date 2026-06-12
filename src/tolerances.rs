@@ -107,6 +107,21 @@ pub(crate) const PLANE_TERMINATION_GUARD: f64 = 3.0 * f32::EPSILON as f64;
 /// down to ~1e-6 (n ~ 1e12 uniform points).
 pub(crate) const PLANE_WALL_CLASSIFICATION_SLACK: f32 = 4.0 * f32::EPSILON;
 
+/// Planar weld radius in normalized domain units (longer rect side = 1):
+/// generators closer than this are welded to one cell.
+///
+/// Empirically required, not input hygiene — the same conclusion as the
+/// sphere's weld, re-established for the plane by probing
+/// (tests/plane_coincidence_probes.rs + margin probes 2026-06-12): pairs
+/// resolve at any distinct-f32 separation (including straddling grid walls
+/// and at rect corners), but CLUSTERS (k >= 3) within ~1 ulp of unit scale
+/// produce invalid topology (degenerate cells, overused edges) — invalid at
+/// min-separation 3e-8, valid from 6e-8 in every probed configuration,
+/// including the subnormal-separation regime near the origin. 1e-6 gives
+/// ~30x margin over the worst observed failure (the sphere shipped ~8x).
+/// Features below this scale exist only for >1e12 uniform points.
+pub(crate) const PLANE_WELD_DIST: f32 = 1e-6;
+
 /// Degenerate edge-segment length for the planar edge reconcile post-pass,
 /// in normalized domain units (longer rect side = 1).
 ///

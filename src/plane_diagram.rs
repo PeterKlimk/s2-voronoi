@@ -159,10 +159,10 @@ pub struct PlanarVoronoi {
     /// Flattened vertex indices for all cells.
     cell_indices: Vec<u32>,
 
-    /// Canonical cell index per cell when generators coincided after domain
-    /// normalization (always including exact-bit duplicates) and were
-    /// welded; `None` when every generator owns its own cell. Welded twins
-    /// alias their canonical cell's boundary storage.
+    /// Canonical cell index per cell when generators within the planar weld
+    /// radius (~1e-6 of the longer rect side; always including exact
+    /// duplicates) were welded; `None` when every generator owns its own
+    /// cell. Welded twins alias their canonical cell's boundary storage.
     weld_map: Option<Vec<u32>>,
 
     /// The domain rectangle the diagram subdivides.
@@ -250,10 +250,10 @@ impl PlanarVoronoi {
         (0..self.num_cells()).map(move |i| self.cell(i))
     }
 
-    /// Canonical cell index per generator when generators coinciding after
-    /// domain normalization (always including exact-bit duplicates) were
-    /// welded (`weld_map()[i] == i` for canonical cells), `None` when no
-    /// welds occurred.
+    /// Canonical cell index per generator when generators within the planar
+    /// weld radius (always including exact duplicates) were welded
+    /// (`weld_map()[i] == i` for canonical cells), `None` when no welds
+    /// occurred.
     #[inline]
     pub fn weld_map(&self) -> Option<&[u32]> {
         self.weld_map.as_deref()
