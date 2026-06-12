@@ -9,12 +9,6 @@ use crate::policy::{
     PACKED_HI_BUDGET,
 };
 
-/// Cell index of a (non-empty) SoA range via its first slot.
-#[inline]
-fn range_cell(grid: &CubeMapGrid, soa_start: usize) -> usize {
-    grid.point_index_to_cell(grid.point_indices()[soa_start] as usize)
-}
-
 impl PackedKnnCellScratch {
     #[cfg_attr(feature = "profiling", inline(never))]
     // Loop indices address several parallel per-query arrays at once;
@@ -343,16 +337,10 @@ impl PackedKnnCellScratch {
 
         // === Ring pass: collect "hi" candidates into chunk0.
         //
-        // Per (ring cell, query) cap pruning: if the cell's spherical cap
-        // cannot contain any point with dot above the query's tightened
-        // threshold, the whole cell is skipped for that query — the masks
-        // would have come back empty, so results are bit-identical and the
-        // chunk dot work is simply avoided.
+        // (A per-(ring cell, query) cap-prune was tried here and measured
+        // as a net loss: ring cells are adjacent cells, whose caps almost
+        // always overlap the threshold region, so the prune rarely fires.)
         let thresholds = &self.thresholds[..num_queries];
-        self.ring_query_active.clear();
-        self.ring_query_active.resize(num_queries, false);
-        let ring_query_active = std::mem::take(&mut self.ring_query_active);
-        let mut ring_query_active = ring_query_active;
         for r in &self.cell_ranges[1..] {
             if r.kind == PackedCellRangeKind::SameBinEarlier {
                 continue;
@@ -360,29 +348,6 @@ impl PackedKnnCellScratch {
 
             let soa_start = r.soa_start;
             let soa_end = r.soa_end;
-            {
-                let rcell = range_cell(grid, soa_start);
-                let center = grid.cell_centers[rcell];
-                let cos_r = grid.cell_cos_radius[rcell];
-                let sin_r = grid.cell_sin_radius[rcell];
-                let mut any = false;
-                for qi in 0..num_queries {
-                    let bound = super::helpers::max_dot_to_cap_xyz(
-                        query_x[qi],
-                        query_y[qi],
-                        query_z[qi],
-                        center,
-                        cos_r,
-                        sin_r,
-                    );
-                    let active = bound > thresholds[qi];
-                    ring_query_active[qi] = active;
-                    any |= active;
-                }
-                if !any {
-                    continue;
-                }
-            }
             let range_len = soa_end - soa_start;
             let xs = &grid.cell_points_x[soa_start..soa_end];
             let ys = &grid.cell_points_y[soa_start..soa_end];
@@ -394,9 +359,6 @@ impl PackedKnnCellScratch {
                 let candidates = fp::PointChunk8::from_slices(&xs[i..], &ys[i..], &zs[i..]);
 
                 for (qi, &query_slot) in queries.iter().enumerate() {
-                    if !ring_query_active[qi] {
-                        continue;
-                    }
                     let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
                     let mut mask_bits = dots.mask_gt(thresholds[qi]);
                     if mask_bits == 0 {
@@ -434,9 +396,6 @@ impl PackedKnnCellScratch {
                 let candidates = fp::PointChunk8::from_arrays(xbuf, ybuf, zbuf);
 
                 for (qi, &query_slot) in queries.iter().enumerate() {
-                    if !ring_query_active[qi] {
-                        continue;
-                    }
                     let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
                     let mut mask_bits = dots.mask_gt(thresholds[qi]) & valid_bits;
                     if mask_bits == 0 {
@@ -458,7 +417,6 @@ impl PackedKnnCellScratch {
                 }
             }
         }
-        self.ring_query_active = ring_query_active;
         timings.add_ring_pass(t.lap());
 
         PreparedPackedGroupStatus::Ready(PreparedPackedGroup {

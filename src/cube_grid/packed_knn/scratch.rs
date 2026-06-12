@@ -17,8 +17,6 @@ const MAX_CANDIDATES_HARD: usize = 65_536;
 pub struct PackedKnnCellScratch {
     cell_ranges: Vec<PackedCellRange>,
     next_group_gen: u32,
-    /// Per-query active flags for the current ring cell (cap pruning).
-    ring_query_active: Vec<bool>,
     chunk0_keys: Vec<Vec<u64>>,
     tail_keys: Vec<Vec<u64>>,
     chunk0_pos: Vec<usize>,
@@ -166,7 +164,6 @@ impl PackedKnnCellScratch {
         Self {
             cell_ranges: Vec::with_capacity(9),
             next_group_gen: 1,
-            ring_query_active: Vec::new(),
             chunk0_keys: Vec::new(),
             tail_keys: Vec::new(),
             chunk0_pos: Vec::new(),
