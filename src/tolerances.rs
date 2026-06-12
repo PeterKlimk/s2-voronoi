@@ -66,6 +66,24 @@ pub(crate) const CLIP_EPS_INSIDE: f64 = 1e-12;
 /// slack), conservative for the f64 chart math.
 pub(crate) const MIN_PROJECTION_COS: f64 = 8.0 * f32::EPSILON as f64;
 
+/// Canonical-escalation band width as a multiple of a half-plane's stored
+/// eps (`CLIP_EPS_INSIDE * |n|`). **0.0 = escalation disabled — the
+/// production setting.**
+///
+/// P5 stage 2a measured (docs/p5-consistency-design.md, stage-2a findings):
+/// margin-gated escalation is unsound at ANY width, because the gate is
+/// evaluated per cell on displaced computed margins (the same question's
+/// margins differ ~100x across cells; local answers below ~1e-4 are ~50%
+/// anti-correlated with canonical while near-perfectly correlated with
+/// each other). Mixing canonical answers into the correlated-local system
+/// manufactures cross-cell contradictions at the band boundary: factor
+/// 1e4 turned 0/4 natural defects into 10/200 (500k/3M); factors 16..128
+/// fixed the three watched sites but elevated 4.5M from 3 to 6-11. The
+/// clipper machinery is kept (probe-overridable via
+/// `p5_shadow::set_escalation_factor_override`) as the test rig for
+/// successor designs (question-intrinsic gating / antisymmetric tie rule).
+pub(crate) const CLIP_ESCALATION_FACTOR: f64 = 0.0;
+
 /// Angular padding folded into the termination certificate (the polygon's
 /// angular extent is widened by this before comparing against unseen-dot
 /// bounds). Same f32-granularity scale as `MIN_PROJECTION_COS`.

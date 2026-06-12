@@ -5,7 +5,7 @@
 
 #[cfg(feature = "microbench")]
 pub fn run_clip_convex_microbench() {
-    use super::clippers::{clip_convex, clip_convex_small_bool};
+    use super::clippers::{clip_convex, clip_convex_small_bool, EscalationCtx};
     use super::types::{ClipResult, HalfPlane, PolyBuffer};
 
     use std::hint::black_box;
@@ -262,7 +262,12 @@ pub fn run_clip_convex_microbench() {
             ClipResult::Changed
         ));
         assert!(matches!(
-            clip_convex(&poly, &hps_changed[0], &mut out_dispatch),
+            clip_convex(
+                &poly,
+                &hps_changed[0],
+                &mut out_dispatch,
+                &EscalationCtx::disabled()
+            ),
             ClipResult::Changed
         ));
 
@@ -277,7 +282,12 @@ pub fn run_clip_convex_microbench() {
             ClipResult::Unchanged
         ));
         assert!(matches!(
-            clip_convex(&poly, &hps_unchanged[0], &mut out_dispatch),
+            clip_convex(
+                &poly,
+                &hps_unchanged[0],
+                &mut out_dispatch,
+                &EscalationCtx::disabled()
+            ),
             ClipResult::Unchanged
         ));
 
@@ -294,7 +304,7 @@ pub fn run_clip_convex_microbench() {
 
             assert!(
                 matches!(
-                    clip_convex(&poly, hp, &mut out_dispatch),
+                    clip_convex(&poly, hp, &mut out_dispatch, &EscalationCtx::disabled()),
                     ClipResult::Changed
                 ),
                 "dispatch unexpectedly not Changed (N={N}, i={i})"
@@ -325,7 +335,7 @@ pub fn run_clip_convex_microbench() {
             let mut s = 0x1234_5678_9ABC_DEF0u64;
             for _ in 0..iters {
                 let hp = &hps[next_idx(&mut s, hp_mask)];
-                let r = clip_convex(poly, hp, out);
+                let r = clip_convex(poly, hp, out, &EscalationCtx::disabled());
                 black_box(r);
             }
         });
@@ -354,7 +364,7 @@ pub fn run_clip_convex_microbench() {
             let mut s = 0x0BAD_F00D_1234_5678u64;
             for _ in 0..iters {
                 let hp = &hps[next_idx(&mut s, hp_mask)];
-                let r = clip_convex(poly, hp, out);
+                let r = clip_convex(poly, hp, out, &EscalationCtx::disabled());
                 black_box(r);
             }
         });

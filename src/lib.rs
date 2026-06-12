@@ -126,7 +126,8 @@ pub use live_dedup::UnresolvedEdgeOrigin;
 pub mod p5_shadow {
     pub use crate::knn_clipping::p5_shadow::{
         paired_dump_involving, paired_quad_report, paired_question_summaries, paired_report,
-        paired_reset, report, reset, set_pair_cutoff, set_pair_key_filter, set_term_pad_override,
+        paired_reset, report, reset, set_escalation_factor_override, set_pair_cutoff,
+        set_pair_key_filter, set_term_pad_override,
     };
 }
 

@@ -180,6 +180,7 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
     poly: &PolyBuffer,
     hp: &HalfPlane,
     out: &mut PolyBuffer,
+    esc: &super::EscalationCtx<'_>,
 ) -> ClipResult {
     debug_assert_eq!(poly.len, N);
     debug_assert!(N >= 3 && N <= 8);
@@ -198,6 +199,9 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
     let (dists, inside_bits) =
         fp::signed_dists_mask8(hp.a, hp.b, hp.c, &poly.us, &poly.vs, neg_eps);
     let mask = inside_bits & full;
+    // P5 escalation: near-margin lanes are re-decided by the exact
+    // canonical predicate (one abs+compare per live lane on the hot path).
+    let mask = super::maybe_escalate(mask as u64, &dists, N, hp, poly, esc) as u32;
 
     if mask == 0 {
         out.len = 0;
@@ -259,7 +263,7 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
     unsafe {
         let d_entry = *dists.get_unchecked(entry_idx);
         let d_entry_next = *dists.get_unchecked(entry_next);
-        let t_entry = d_entry / (d_entry - d_entry_next);
+        let t_entry = super::lerp_t(d_entry, d_entry_next);
         let entry_u = fp::fma_f64(
             t_entry,
             *us.add(entry_next) - *us.add(entry_idx),
@@ -284,7 +288,7 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
 
         let d_exit = *dists.get_unchecked(exit_idx);
         let d_exit_next = *dists.get_unchecked(exit_next);
-        let t_exit = d_exit / (d_exit - d_exit_next);
+        let t_exit = super::lerp_t(d_exit, d_exit_next);
         let exit_u = fp::fma_f64(
             t_exit,
             *us.add(exit_next) - *us.add(exit_idx),
@@ -312,6 +316,7 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
     poly: &PolyBuffer,
     hp: &HalfPlane,
     out: &mut PolyBuffer,
+    esc: &super::EscalationCtx<'_>,
 ) -> ClipResult {
     debug_assert_eq!(poly.len, N);
     debug_assert!(N >= 3 && N <= 8);
@@ -330,6 +335,9 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
     let (dists, inside_bits) =
         fp::signed_dists_mask8(hp.a, hp.b, hp.c, &poly.us, &poly.vs, neg_eps);
     let mask = inside_bits & full;
+    // P5 escalation: near-margin lanes are re-decided by the exact
+    // canonical predicate (one abs+compare per live lane on the hot path).
+    let mask = super::maybe_escalate(mask as u64, &dists, N, hp, poly, esc) as u32;
 
     if mask == 0 {
         out.len = 0;
@@ -395,8 +403,8 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
         let d_exit = *dists.get_unchecked(exit_idx);
         let d_exit_next = *dists.get_unchecked(exit_next);
 
-        let t_entry = d_entry / (d_entry - d_entry_next);
-        let t_exit = d_exit / (d_exit - d_exit_next);
+        let t_entry = super::lerp_t(d_entry, d_entry_next);
+        let t_exit = super::lerp_t(d_exit, d_exit_next);
 
         let entry_u = fp::fma_f64(
             t_entry,

@@ -4,7 +4,7 @@ use super::{
     Topo2DBuilder,
 };
 use crate::knn_clipping::cell_build::CellFailure;
-use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck};
+use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck, EscalationCtx};
 use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane};
 use glam::Vec3;
 
@@ -76,15 +76,19 @@ impl GnomonicBuilder {
         #[cfg(feature = "p5_shadow")]
         self.shadow_audit(neighbor_idx, neighbor, &hp);
 
+        let esc = EscalationCtx {
+            generator_raw: self.generator_raw,
+            neighbor_raw: neighbor,
+            neighbor_positions: &self.neighbor_positions_raw,
+        };
         let clip_result = if self.use_a {
-            clip_convex(&self.poly_a, &hp, &mut self.poly_b)
+            clip_convex(&self.poly_a, &hp, &mut self.poly_b, &esc)
         } else {
-            clip_convex(&self.poly_b, &hp, &mut self.poly_a)
+            clip_convex(&self.poly_b, &hp, &mut self.poly_a, &esc)
         };
 
         let committed = self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot);
-        #[cfg(feature = "p5_shadow")]
-        self.shadow_sync_positions(neighbor);
+        self.sync_neighbor_positions(neighbor);
         committed
     }
 
@@ -100,27 +104,26 @@ impl GnomonicBuilder {
         };
         crate::knn_clipping::p5_shadow::audit_clip(
             self.generator_idx,
-            self.shadow_generator_raw,
+            self.generator_raw,
             neighbor_idx,
             neighbor,
             &self.neighbor_indices,
-            &self.shadow_neighbor_positions,
+            &self.neighbor_positions_raw,
             poly,
             hp,
         );
     }
 
-    /// Keep the shadow position list parallel to `neighbor_indices`
+    /// Keep the raw position list parallel to `neighbor_indices`
     /// (a `Changed` commit pushed a constraint — including commits that then
     /// fail with `ClippedAway`, so this runs on the error path too).
-    #[cfg(feature = "p5_shadow")]
-    fn shadow_sync_positions(&mut self, neighbor: Vec3) {
-        if self.neighbor_indices.len() > self.shadow_neighbor_positions.len() {
-            self.shadow_neighbor_positions.push(neighbor);
+    fn sync_neighbor_positions(&mut self, neighbor: Vec3) {
+        if self.neighbor_indices.len() > self.neighbor_positions_raw.len() {
+            self.neighbor_positions_raw.push(neighbor);
         }
         debug_assert_eq!(
             self.neighbor_indices.len(),
-            self.shadow_neighbor_positions.len()
+            self.neighbor_positions_raw.len()
         );
     }
 
@@ -146,15 +149,19 @@ impl GnomonicBuilder {
         #[cfg(feature = "p5_shadow")]
         self.shadow_audit(neighbor_idx, neighbor, &hp);
 
+        let esc = EscalationCtx {
+            generator_raw: self.generator_raw,
+            neighbor_raw: neighbor,
+            neighbor_positions: &self.neighbor_positions_raw,
+        };
         let clip_result = if self.use_a {
-            clip_convex_edgecheck(&self.poly_a, &hp, &mut self.poly_b)
+            clip_convex_edgecheck(&self.poly_a, &hp, &mut self.poly_b, &esc)
         } else {
-            clip_convex_edgecheck(&self.poly_b, &hp, &mut self.poly_a)
+            clip_convex_edgecheck(&self.poly_b, &hp, &mut self.poly_a, &esc)
         };
 
         let committed = self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot);
-        #[cfg(feature = "p5_shadow")]
-        self.shadow_sync_positions(neighbor);
+        self.sync_neighbor_positions(neighbor);
         committed?;
         Ok(())
     }

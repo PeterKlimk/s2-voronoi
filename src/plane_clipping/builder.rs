@@ -5,7 +5,7 @@ use glam::{DVec2, Vec2};
 use crate::fp;
 use crate::knn_clipping::cell_build::{CellFailure, CellOutputBuffer};
 use crate::knn_clipping::topo2d::builder::sort3_u32;
-use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck};
+use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck, EscalationCtx};
 use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane, PolyBuffer};
 use crate::tolerances::PLANE_TERMINATION_GUARD;
 
@@ -155,9 +155,19 @@ impl PlaneCellBuilder {
         let hp = HalfPlane::new_unnormalized(a, b, c, plane_idx);
 
         let clip_result = if self.use_a {
-            clip_convex(&self.poly_a, &hp, &mut self.poly_b)
+            clip_convex(
+                &self.poly_a,
+                &hp,
+                &mut self.poly_b,
+                &EscalationCtx::disabled(),
+            )
         } else {
-            clip_convex(&self.poly_b, &hp, &mut self.poly_a)
+            clip_convex(
+                &self.poly_b,
+                &hp,
+                &mut self.poly_a,
+                &EscalationCtx::disabled(),
+            )
         };
 
         self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)
@@ -225,9 +235,19 @@ impl PlaneCellBuilder {
         let hp = HalfPlane::new_unnormalized_with_eps(a, b, c, plane_idx, hp_eps as f64);
 
         let clip_result = if self.use_a {
-            clip_convex_edgecheck(&self.poly_a, &hp, &mut self.poly_b)
+            clip_convex_edgecheck(
+                &self.poly_a,
+                &hp,
+                &mut self.poly_b,
+                &EscalationCtx::disabled(),
+            )
         } else {
-            clip_convex_edgecheck(&self.poly_b, &hp, &mut self.poly_a)
+            clip_convex_edgecheck(
+                &self.poly_b,
+                &hp,
+                &mut self.poly_a,
+                &EscalationCtx::disabled(),
+            )
         };
         self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)
             .map(|_| ())

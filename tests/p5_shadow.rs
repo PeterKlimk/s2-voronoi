@@ -246,3 +246,53 @@ fn probe_quad_coherence() {
     run("uniform_500k_s2", &random_sphere_points(500_000, 2), 1e-3);
     run("uniform_3m_s3", &random_sphere_points(3_000_000, 3), 1e-3);
 }
+
+/// Escalation-band sweep: with the (unsound) wide 1e-8 filter shown to
+/// manufacture contradictions at its boundary, sweep the band downward
+/// toward the CLIP_EPS_INSIDE scale where the observed parity
+/// contradictions actually live. factor = filter / CLIP_EPS_INSIDE;
+/// factor 0 disables escalation entirely (baseline).
+#[test]
+#[ignore]
+fn probe_escalation_band_sweep() {
+    let fixture_2k = defect_fixture();
+    let u500k = random_sphere_points(500_000, 2);
+    let u3m = random_sphere_points(3_000_000, 3);
+
+    for factor in [0.0f64, 64.0] {
+        s2_voronoi::p5_shadow::set_escalation_factor_override(Some(factor));
+        println!("=== factor={factor:.0e} ===");
+        let fixture_360k = {
+            let mean_spacing = (4.0 * std::f32::consts::PI / 2_000_000.0).sqrt();
+            let cos_excl = (15.0 * mean_spacing).cos();
+            let c = SITE_CENTER;
+            let mut f = fixture_2k.clone();
+            f.truncate(fixture_2k.len()); // window+2k scaffold; extend below
+            f.extend(
+                random_sphere_points(360_000, 4242)
+                    .into_iter()
+                    .skip(2_000)
+                    .filter(|p| p.x() * c.0 + p.y() * c.1 + p.z() * c.2 < cos_excl),
+            );
+            f
+        };
+        let u2m = random_sphere_points(2_000_000, 1);
+        let u45m = random_sphere_points(4_500_000, 2);
+        for (name, points) in [
+            ("fixture_2k", &fixture_2k),
+            ("fixture_360k_ish", &fixture_360k),
+            ("uniform_500k_s2", &u500k),
+            ("uniform_2m_s1", &u2m),
+            ("uniform_3m_s3", &u3m),
+            ("uniform_4500k_s2", &u45m),
+        ] {
+            let out = compute_with_report(points, VoronoiConfig::default()).expect(name);
+            println!(
+                "  {name:16} defects={} valid={}",
+                out.report.unresolved_edge_pairs.len(),
+                out.report.preferred_validation().is_strictly_valid()
+            );
+        }
+    }
+    s2_voronoi::p5_shadow::set_escalation_factor_override(None);
+}

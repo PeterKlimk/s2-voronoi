@@ -23,8 +23,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use glam::Vec3;
-use robust::Coord3D;
 
+use crate::knn_clipping::canonical::in_circle_sphere_sign;
 use crate::knn_clipping::topo2d::types::{HalfPlane, PolyBuffer};
 
 /// Margin buckets by decimal exponent of the normalized distance:
@@ -123,6 +123,29 @@ pub(crate) fn term_pad_override() -> Option<f64> {
     }
 }
 
+/// Experimental escalation-factor override (multiplies hp.eps to form the
+/// escalation threshold); NaN bits = use the tolerances default. Probe-only.
+static ESC_FACTOR_OVERRIDE_BITS: AtomicU64 = AtomicU64::new(u64::MAX);
+
+/// Set (or clear) the escalation-factor override (probe API).
+pub fn set_escalation_factor_override(factor: Option<f64>) {
+    let bits = match factor {
+        Some(f) => f.to_bits(),
+        None => u64::MAX,
+    };
+    ESC_FACTOR_OVERRIDE_BITS.store(bits, Ordering::Relaxed);
+}
+
+/// Current override, if any.
+pub(crate) fn escalation_factor_override() -> Option<f64> {
+    let bits = ESC_FACTOR_OVERRIDE_BITS.load(Ordering::Relaxed);
+    if bits == u64::MAX {
+        None
+    } else {
+        Some(f64::from_bits(bits))
+    }
+}
+
 /// One near-margin decision, keyed by its abstract question: does generator
 /// `key[3]` kill the vertex of sorted triple `key[0..3]`? Multiple cells
 /// answer the same question (each owner of the triple clips that corner
@@ -137,50 +160,6 @@ struct PairedRecord {
 }
 
 static PAIRED: std::sync::Mutex<Vec<PairedRecord>> = std::sync::Mutex::new(Vec::new());
-
-#[inline]
-fn c3(p: Vec3) -> Coord3D<f64> {
-    Coord3D {
-        x: p.x as f64,
-        y: p.y as f64,
-        z: p.z as f64,
-    }
-}
-
-/// Exact canonical in-circle on the unit sphere.
-///
-/// Returns +1 if `h` lies strictly inside the circumcircle of (g, a, b)
-/// (the vertex (g,a,b) must be cut by bisector(g,h)), -1 if strictly
-/// outside (the vertex is kept), 0 on an exact tie (4-cocircular, or a
-/// degenerate triple).
-///
-/// Derivation: the Voronoi vertex v of (g,a,b) is the circumcircle pole
-/// with v.g > 0; h inside the cap centered at v through g iff
-/// (h-g).v > 0. With v ~ s*(a-g)x(b-g) and s = sign(((a-g)x(b-g)).g)
-/// = sign(det[a,b,g]):
-///
-///   in_circle(g,a,b;h) = sign(det[a-g, b-g, h-g]) * sign(det[a, b, g])
-///
-/// Both determinants are evaluated exactly (Shewchuk adaptive orient3d;
-/// f32 inputs are exactly representable in f64), so the sign is exact and
-/// permutation-consistent by construction.
-pub(crate) fn in_circle_sphere_sign(g: Vec3, a: Vec3, b: Vec3, h: Vec3) -> i8 {
-    // orient3d(pa,pb,pc,pd) computes det of rows (pa-pd, pb-pd, pc-pd).
-    let d1 = robust::orient3d(c3(a), c3(b), c3(h), c3(g));
-    let d2 = robust::orient3d(
-        c3(a),
-        c3(b),
-        c3(g),
-        Coord3D {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-        },
-    );
-    let prod_sign = (d1 > 0.0) as i8 - (d1 < 0.0) as i8;
-    let pole_sign = (d2 > 0.0) as i8 - (d2 < 0.0) as i8;
-    prod_sign * pole_sign
-}
 
 #[inline]
 fn bucket_for(nd: f64) -> usize {

@@ -14,6 +14,7 @@ pub(crate) mod edge_reconcile;
 // and serves both the spherical and planar drivers); re-exported so
 // existing paths keep working.
 pub(crate) use crate::live_dedup;
+pub(crate) mod canonical;
 #[cfg(feature = "p5_shadow")]
 pub(crate) mod p5_shadow;
 pub(crate) mod preprocess;

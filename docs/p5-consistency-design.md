@@ -334,6 +334,57 @@ a filter) would NOT have fixed the observed 3M defects — those answers
 already matched canonical. [...] This conclusion was an artifact of the
 under-canonicalized pairing keys described above.
 
+## Stage-2a findings (2026-06): margin-gated escalation is unsound
+
+Stage 2a was implemented in full — `EscalationCtx` threaded through the
+clippers, near-margin lanes re-decided by the exact canonical predicate
+(`knn_clipping::canonical`, now a production module; `robust` is a hard
+dependency), guarded lerps for flipped decisions — and rejected by its own
+gates. The escalation-band sweep (probe-overridable factor, band =
+factor x CLIP_EPS_INSIDE x |n|):
+
+| factor | fixture_2k | 500k | 3M s3 | 4.5M s2 |
+|---|---|---|---|---|
+| 0 (off) | 4 | 0 | 4 | 3 |
+| 2 | 4 | 0 | 0 | - |
+| 32-128 | 0 | 0 | 0 | 6-11 |
+| 256-4096 | 0 | 0-3 | 4-64 | - |
+| 1e4 (= the planned 1e-8 filter) | 0 | **10** | **200** | - |
+
+The wide filter manufactures defects wholesale; the narrow band fixes the
+watched sites but elevates 4.5M at every width. Diagnosis: the gate is
+evaluated per cell on **displaced computed margins** — the same question's
+margins differ by ~100x across cells (lerp-chain displacement), and local
+answers below ~1e-4 are ~50% anti-correlated with canonical while
+near-perfectly correlated with each other. Today's consistency is
+**algorithmic correlation**, not geometric accuracy; mixing canonical
+answers into it converts shared bias into cross-system contradiction at
+the band boundary, at a rate that scales with n. No margin threshold is
+sound, because the margin is not a function of the question.
+
+Status: the clipper machinery is kept, **disabled in production**
+(CLIP_ESCALATION_FACTOR = 0.0), overridable via
+`p5_shadow::set_escalation_factor_override` as the test rig for successor
+designs. Successor candidates, in current preference order:
+
+1. **Antisymmetric tie rule**: the observed natural contradictions are
+   caused specifically by the keep-bias `d >= -eps` (both opposite-parity
+   phrasings keep when |d| < eps). A parity-coherent local rule (strict
+   `d >= 0`, or an index-deterministic tie-break) would fix the observed
+   mechanism with NO canonical/local mixing — the correlation story stays
+   intact. Needs: why the eps bias exists (sliver/chatter guards, seed
+   replay tolerance), and a fingerprint-moving revalidation.
+2. **Question-intrinsic gating** = full adaptive canonicalization: every
+   decision evaluated by the (cheap stage A of the) exact predicate on raw
+   generator bits — the gate becomes a pure function of the question, so
+   no mixing boundary exists. This is the "naive canonicalization" cost
+   problem (per-lane gathers, ~10x the flops of the current distance
+   test); would need a cost-feasibility spike before being taken
+   seriously.
+3. **Accept the status quo**: ~1 repairable site per ~3 multi-million
+   runs, O(defects) repair, machine-checked validity. The standing
+   fallback, now with precise knowledge of the residual mechanism.
+
 ## Migration plan
 
 Staged, each stage behind the existing harnesses (NN contract suite, edge-repair

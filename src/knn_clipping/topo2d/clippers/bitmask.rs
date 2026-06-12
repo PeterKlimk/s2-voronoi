@@ -1,5 +1,10 @@
 /// General clipper for large polygons (N > 8) using u64 bitmask.
-pub(super) fn clip_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
+pub(super) fn clip_bitmask(
+    poly: &PolyBuffer,
+    hp: &HalfPlane,
+    out: &mut PolyBuffer,
+    esc: &super::EscalationCtx<'_>,
+) -> ClipResult {
     let n = poly.len;
     debug_assert!(n <= 64, "Polygon too large for u64 bitmask");
 
@@ -27,6 +32,11 @@ pub(super) fn clip_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuff
     }
     mask &= full_mask;
 
+    // P5 escalation: near-margin lanes re-decided canonically. All lanes
+    // 0..n were written above.
+    let dists_slice = unsafe { core::slice::from_raw_parts(dists.as_ptr() as *const f64, n) };
+    mask = super::maybe_escalate(mask, dists_slice, n, hp, poly, esc);
+
     if mask == 0 {
         out.len = 0;
         out.max_r2 = 0.0;
@@ -51,7 +61,10 @@ pub(super) fn clip_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuff
     // input whose polygons fill the buffer; regression test below).
     let trans_mask = (mask ^ prev_mask) & full_mask;
 
-    debug_assert_eq!(trans_mask.count_ones(), 2);
+    // Exactly 2 for a single surviving arc; escalated flips can transiently
+    // produce multiple arcs (the first is kept, the established epsilon
+    // policy — see small.rs's transition doc).
+    debug_assert!(trans_mask.count_ones() >= 2);
 
     let idx1 = trans_mask.trailing_zeros() as usize;
     let trans_mask_rem = trans_mask & !(1 << idx1);
@@ -75,7 +88,7 @@ pub(super) fn clip_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuff
     let (entry_idx, entry_next_idx, entry_d0, entry_d1) = calc_transition(entry_next);
     let (exit_idx, exit_next_idx, exit_d0, exit_d1) = calc_transition(exit_next);
 
-    let t_entry = entry_d0 / (entry_d0 - entry_d1);
+    let t_entry = super::lerp_t(entry_d0, entry_d1);
     let entry_u = fp::fma_f64(
         t_entry,
         poly.us[entry_next_idx] - poly.us[entry_idx],
@@ -88,7 +101,7 @@ pub(super) fn clip_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuff
     );
     let entry_edge_plane = poly.edge_planes[entry_idx];
 
-    let t_exit = exit_d0 / (exit_d0 - exit_d1);
+    let t_exit = super::lerp_t(exit_d0, exit_d1);
     let exit_u = fp::fma_f64(
         t_exit,
         poly.us[exit_next_idx] - poly.us[exit_idx],
@@ -144,7 +157,12 @@ mod tests {
         // Keep u >= 0: crosses the polygon, keeps about half the vertices.
         let hp = HalfPlane::new_unnormalized(1.0, 0.0, 0.0, MAX_POLY_VERTICES);
         let mut out = PolyBuffer::new();
-        let result = clip_bitmask(&poly, &hp, &mut out);
+        let result = clip_bitmask(
+            &poly,
+            &hp,
+            &mut out,
+            &crate::knn_clipping::topo2d::clippers::EscalationCtx::disabled(),
+        );
         assert_eq!(result, ClipResult::Changed);
         assert!(
             out.len >= 3 && out.len <= MAX_POLY_VERTICES,
