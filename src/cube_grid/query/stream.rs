@@ -357,6 +357,7 @@ mod tests {
         let packed = PackedQuery::new(
             &mut prepared,
             &mut packed_timings,
+            &grid,
             qi,
             PackedNeighborPolicy::for_point_count(points.len(), true),
         );
@@ -450,6 +451,7 @@ mod tests {
                     let packed = PackedQuery::new(
                         &mut prepared,
                         &mut packed_timings,
+                        &grid,
                         qi,
                         PackedNeighborPolicy::for_point_count(points.len(), expand_r2_enabled),
                     );

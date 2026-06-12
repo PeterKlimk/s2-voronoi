@@ -175,6 +175,9 @@ pub(crate) struct PackedQuery<'a, 'p, 'g> {
     prepared: &'a mut PreparedPackedGroup<'p, 'g>,
     timings: &'a mut PackedKnnTimings,
     query_index: usize,
+    query_x: f32,
+    query_y: f32,
+    query_z: f32,
     policy: PackedNeighborPolicy,
     stage: PackedQueryStage,
     cached_frontier: Option<CachedFrontier>,
@@ -187,13 +190,19 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
     pub(crate) fn new(
         prepared: &'a mut PreparedPackedGroup<'p, 'g>,
         timings: &'a mut PackedKnnTimings,
+        grid: &CubeMapGrid,
         query_index: usize,
         policy: PackedNeighborPolicy,
     ) -> Self {
+        let query_slot = prepared.group().queries()[query_index];
+        let query_slot_usize = query_slot as usize;
         Self {
             prepared,
             timings,
             query_index,
+            query_x: grid.cell_points_x[query_slot_usize],
+            query_y: grid.cell_points_y[query_slot_usize],
+            query_z: grid.cell_points_z[query_slot_usize],
             policy,
             stage: PackedQueryStage::Chunk0,
             cached_frontier: None,
@@ -206,11 +215,10 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
     #[inline]
     fn slot_dot(&self, grid: &CubeMapGrid, slot: u32) -> f32 {
         let slot = slot as usize;
-        let query_slot = self.prepared.group().queries()[self.query_index] as usize;
         crate::fp::dot3_f32(
-            grid.cell_points_x[query_slot],
-            grid.cell_points_y[query_slot],
-            grid.cell_points_z[query_slot],
+            self.query_x,
+            self.query_y,
+            self.query_z,
             grid.cell_points_x[slot],
             grid.cell_points_y[slot],
             grid.cell_points_z[slot],

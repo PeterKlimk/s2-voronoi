@@ -248,6 +248,7 @@ impl Harness {
                     let packed = PackedQuery::new(
                         &mut prepared,
                         &mut timings,
+                        &self.grid,
                         qi,
                         PackedNeighborPolicy::for_point_count(n, expand_r2),
                     );
