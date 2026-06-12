@@ -85,6 +85,20 @@ for i in 0..diagram.num_cells() {
 - The domain transform is uniform per axis (Voronoi structure is not invariant under anisotropic
   scaling); high-aspect rects are supported, with grid sizing that follows the occupied band.
 
+### Periodic boundaries (rectangular torus)
+
+`compute_plane_periodic` identifies the rect's opposite edges: cells wrap, the diagram has no
+boundary, and every edge is shared by exactly two cells (`build_adjacency().is_complete()`).
+Vertex positions are stored canonically wrapped; `cell_polygon(i)` reconstructs a cell's
+contiguous polygon by unwrapping each vertex to within half a period of its generator.
+`cell_area`/`cell_centroid` are topology-aware, so **periodic Lloyd relaxation** (centroidal
+Voronoi tessellation in periodic domains — the standard physics/materials setup) is the same
+one-loop recipe. Every cell must be provably smaller than a quarter of the shorter period
+(nearest-image exactness); underpopulated domains fail with `UnsupportedGeometry` instead of
+producing wrong answers. Among existing libraries only voro++ handles periodic domains natively,
+and it returns independent per-cell polyhedra — this crate returns the deduplicated, validated
+toroidal graph.
+
 ## API overview
 
 - `compute(&[P]) -> Result<SphericalVoronoi, VoronoiError>`
@@ -99,9 +113,10 @@ for i in 0..diagram.num_cells() {
   the neighbor pairs are the Delaunay edges of the generator set
 - Planar: `compute_plane(&[P], PlaneRect) -> Result<PlanarVoronoi, VoronoiError>`;
   `validation::validate_plane(&PlanarVoronoi) -> PlaneValidationReport`;
-  `PlanarVoronoi`: `generators()`, `vertices()`, `iter_cells()`, `cell(i)`,
-  `build_adjacency()`, `cell_area(i)`, `cell_centroid(i)`, `weld_map()`, `rect()` —
-  planar Lloyd relaxation is the same one-loop recipe as the sphere's
+  `compute_plane_periodic(&[P], PlaneRect)` for toroidal domains;
+  `PlanarVoronoi`: `generators()`, `vertices()`, `iter_cells()`, `cell(i)`, `cell_polygon(i)`,
+  `build_adjacency()`, `cell_area(i)`, `cell_centroid(i)`, `weld_map()`, `rect()`,
+  `topology()` — Lloyd relaxation is the same one-loop recipe on the sphere, rect, and torus
 - Lloyd relaxation (centroidal Voronoi tessellation) is one loop:
   `points = (0..n).map(|i| diagram.cell_centroid(i)).collect()` and recompute.
 

@@ -59,6 +59,18 @@ Euclidean distance with *lower*-bound certificates ("nothing unseen is closer th
 the sphere's dot products with upper bounds. The directed-eligibility rules, packed slot layout,
 emission seam, assembly, and edge reconciliation are shared, not duplicated.
 
+### Periodic (toroidal) domains
+
+`compute_plane_periodic` runs the planar pipeline with three substitutions: the grid's Chebyshev
+rings wrap modulo the resolution (visited-stamped, since rings self-collide once they span the
+grid), all distances are minimum-image, and the cell builder seeds unbounded (no walls) with
+bisectors to each neighbor's nearest image — `wrap_half` is bit-exactly antisymmetric, so the
+two cells of a shared edge construct the identical line. The half-period guard
+(`max_r2 < (min_period/4)^2` at extraction) makes nearest-image clipping exact, makes the
+canonical-wrap + unwrap storage convention well-defined, and keeps the image-agnostic vertex
+keys sound (it excludes the torus's multi-circumcenter hazard). Validation checks the torus
+Euler relation (`V - E + F = 0`) with every edge paired.
+
 ## Module map
 
 - `src/lib.rs`: public API (`compute`, `compute_with`, `validation`).

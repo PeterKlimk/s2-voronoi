@@ -440,6 +440,48 @@ fn periodic_seam_cells_and_weld() {
 }
 
 #[test]
+fn periodic_measures_and_lloyd() {
+    use s2_voronoi::compute_plane_periodic;
+    let rect = PlaneRect::unit();
+    let mut points = uniform_in(rect, 300, 211);
+    let mut diagram = compute_plane_periodic(&points, rect).unwrap();
+
+    // cell_area must measure seam cells on the unwrapped polygon: total is
+    // the torus area.
+    let total: f64 = (0..diagram.num_cells()).map(|i| diagram.cell_area(i)).sum();
+    assert!((total - 1.0).abs() < 1e-4, "torus areas sum to {total}");
+
+    // Periodic Lloyd (CVT on the torus): variance halves and stays valid.
+    let variance = |d: &PlanarVoronoi| -> f64 {
+        let n = d.num_cells();
+        let mean = 1.0 / n as f64;
+        (0..n)
+            .map(|i| {
+                let a = d.cell_area(i) - mean;
+                a * a
+            })
+            .sum::<f64>()
+            / n as f64
+    };
+    let v0 = variance(&diagram);
+    for _ in 0..5 {
+        points = (0..diagram.num_cells())
+            .map(|i| {
+                let c = diagram.cell_centroid(i);
+                [c.x, c.y]
+            })
+            .collect();
+        diagram = compute_plane_periodic(&points, rect).unwrap();
+    }
+    let v5 = variance(&diagram);
+    assert!(
+        v5 < v0 * 0.5,
+        "periodic Lloyd should halve area variance: v0={v0:.3e} v5={v5:.3e}"
+    );
+    assert!(validation::validate_plane(&diagram).is_strictly_valid());
+}
+
+#[test]
 fn periodic_underpopulated_fails_cleanly() {
     use s2_voronoi::compute_plane_periodic;
     let points = vec![[0.1f32, 0.1], [0.6, 0.2], [0.3, 0.7]];

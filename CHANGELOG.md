@@ -13,6 +13,11 @@ Initial release.
   rect side, always including exact duplicates) are welded — required for
   graph validity, like the sphere's weld; detection reuses the kNN grid so
   duplicate-free inputs pay only a scan.
+- Periodic (toroidal) planar Voronoi (`compute_plane_periodic`): the rect's
+  opposite edges are identified; minimum-image clipping with a half-period
+  exactness guard, canonically wrapped vertex storage with a `cell_polygon`
+  unwrap helper, torus validation (V−E+F=0, every edge paired), and
+  topology-aware measures enabling periodic Lloyd relaxation.
 - Spherical Voronoi diagrams on the unit sphere via kNN-driven half-space
   clipping: per-cell parallel construction stitched into one consistent graph
   (see `docs/architecture.md` and the stitching invariant in
