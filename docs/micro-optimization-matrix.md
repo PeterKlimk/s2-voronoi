@@ -116,3 +116,65 @@ Suggested next step: rebuild a focused subset with `--timing` and compare
 phase-level metrics for `main`, `projection-max-r2`, `shell-frontier-scratch`,
 `clip-batch-slice`, `signed-dists-array-refs`, `packed-query-dot-cache`, and
 `packed-center-tail-simd`.
+
+
+## Phase-level paired campaign (2026-06-13, second pass)
+
+Protocol upgrade over the first pass: all 18 binaries rebuilt with
+`--timing`, interleaved per round with rotated start order, and analyzed as
+**paired per-round deltas vs main** (cancels machine drift). Sessions: 16
+rounds x {cell_construction, knn_build, dedup, preprocess(+--preprocess),
+total} at 500k ST.
+
+### The layout-noise calibration (the campaign's key methodological finding)
+
+Two branches whose diffs cannot affect the measured pipeline acted as
+controls, and both showed large, *sign-consistent* offsets:
+
+- `periodic-conditional-wrap` (planar-only diff): **+10.4ms median,
+  13/16 consistent** on sphere cell_construction.
+- `preprocess-touched-reps` (preprocess-only diff, dead code in
+  no-preprocess runs): **-14.5ms median, 12/16** on no-preprocess total.
+
+Per-binary code-layout offsets are stable and consistent — sign
+consistency cannot discriminate them from real effects; only magnitude vs
+the control distribution can. Noise floor: ~±10-15ms (±1.3-2%) per binary
+on the large metrics. **Every first-pass "winner" except
+`extract-inline-checks` sits inside this floor.**
+
+### Survivor and stack confirmation
+
+`extract-inline-checks`: -19.2ms cell_construction (21/24) and -20.3ms
+total at 500k; **-66ms at 2M (11/12)** — scales with n as the eliminated
+per-cell diagnostic pass predicts.
+
+Stacking the five best cell_construction signals
+(extract-inline-checks + shell-frontier-scratch +
+packed-frontier-no-sentinel-fill + point-face-reciprocal +
+packed-tail-hoist) and re-measuring three-way (main / extract / stack):
+
+| comparison | cc 500k r24 | total 500k r24 | cc 2M r12 |
+|---|---:|---:|---:|
+| extract - main | -19.2 (21/24) | -20.3 (17/24) | -66 (11/12) |
+| stack - main | -22.3 (22/24) | **-36.0 (20/24)** | **-120 (12/12)** |
+| stack - extract | -8.7 (17/24) | -10.5 (16/24) | -65 (7/12) |
+
+The stack's increment over extract alone is real (unanimous at 2M), so the
+five merge together. Full test suite green on the stack (247).
+
+### Verdicts
+
+- **Merged to main** (as `agent/micro-opt-stack`): `extract-inline-checks`
+  (the only individually-proven win), `shell-frontier-scratch`,
+  `packed-frontier-no-sentinel-fill`, `point-face-reciprocal`,
+  `packed-tail-hoist` (proven collectively via the stack increment).
+- **Unproven at 500k/2M — not merged** (inside the layout-noise floor):
+  `chunk-array-loaders`, `clip-batch-slice`, `packed-center-tail-simd`,
+  `packed-query-dot-cache`, `projection-max-r2`,
+  `signed-dists-array-refs`.
+- **No positive signal — rejected**: `binning-cache-fuse`,
+  `cell-to-face-u32`, `directed-cell-mode`, `frontier-cache-ordf32`.
+- `preprocess-touched-reps`: zero measurable preprocess effect at 500k (its
+  target path needs weld-heavy inputs); cleanliness-only candidate.
+- `periodic-conditional-wrap`: measured on its actual pipeline
+  (bench_plane --periodic paired A/B) — result recorded below when run.
