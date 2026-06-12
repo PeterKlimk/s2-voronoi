@@ -7,7 +7,7 @@ use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
 use super::types::{
     BinId, EdgeCheck, EdgeCheckOverflow, EdgeKey, EdgeOverflowLocal, EdgeToLater, LocalId,
-    UnresolvedEdgeMismatch,
+    UnresolvedEdgeMismatch, UnresolvedEdgeOrigin,
 };
 use super::with_two_mut;
 use crate::knn_clipping::cell_build::VertexKey;
@@ -244,17 +244,17 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                     vertex_indices[local_idx] = check.indices[ck];
                 });
                 if !full {
-                    shard
-                        .output
-                        .unresolved_edges
-                        .push(UnresolvedEdgeMismatch { key: edge_key });
+                    shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
+                        key: edge_key,
+                        origin: UnresolvedEdgeOrigin::InBinThirdsMismatch,
+                    });
                 }
             } else {
                 // Missing side - earlier neighbor didn't emit check
-                shard
-                    .output
-                    .unresolved_edges
-                    .push(UnresolvedEdgeMismatch { key: edge_key });
+                shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
+                    key: edge_key,
+                    origin: UnresolvedEdgeOrigin::InBinMissingCheck,
+                });
             }
         }
     }
@@ -270,10 +270,10 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     if !all_matched {
         for (idx, check) in incoming_checks.iter().enumerate() {
             if matched & (1u64 << idx) == 0 {
-                shard
-                    .output
-                    .unresolved_edges
-                    .push(UnresolvedEdgeMismatch { key: check.key });
+                shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
+                    key: check.key,
+                    origin: UnresolvedEdgeOrigin::InBinUnconsumedCheck,
+                });
             }
         }
     }
@@ -323,7 +323,10 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
             let b = edge_check_overflow[i + 1];
             if a.side == b.side {
                 debug_assert!(false, "edge check overflow duplicate side");
-                unresolved_edges.push(UnresolvedEdgeMismatch { key: a.key });
+                unresolved_edges.push(UnresolvedEdgeMismatch {
+                    key: a.key,
+                    origin: UnresolvedEdgeOrigin::CrossBinDuplicateSide,
+                });
             } else {
                 let (a_shard, b_shard) =
                     with_two_mut(shards, a.source_bin.as_usize(), b.source_bin.as_usize());
@@ -347,13 +350,17 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
                     }
                 });
                 if !full {
-                    unresolved_edges.push(UnresolvedEdgeMismatch { key: a.key });
+                    unresolved_edges.push(UnresolvedEdgeMismatch {
+                        key: a.key,
+                        origin: UnresolvedEdgeOrigin::CrossBinThirdsMismatch,
+                    });
                 }
             }
             i += 2;
         } else {
             unresolved_edges.push(UnresolvedEdgeMismatch {
                 key: edge_check_overflow[i].key,
+                origin: UnresolvedEdgeOrigin::CrossBinSingleSided,
             });
             i += 1;
         }

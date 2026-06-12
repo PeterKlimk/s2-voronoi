@@ -116,6 +116,7 @@ pub mod convex_hull;
 pub use adjacency::CellAdjacency;
 pub use diagram::{CellView, SphericalVoronoi};
 pub use error::VoronoiError;
+pub use live_dedup::UnresolvedEdgeOrigin;
 pub use locate::{PlaneLocator, SphereLocator};
 pub use plane_diagram::{PlanarVoronoi, PlanePoint, PlanePointLike, PlaneRect, PlaneTopology};
 pub use types::{UnitVec3, UnitVec3Like};
@@ -183,6 +184,13 @@ pub struct ComputeReport {
     /// Strict validation of the effective preprocessed diagram, when preprocessing
     /// changed the solved generator set.
     pub effective_validation: Option<validation::ValidationReport>,
+    /// Unresolved shared-edge mismatches that survived live dedup and were
+    /// handed to post-assembly edge reconciliation, as pairs of
+    /// effective-diagram generator indices plus the detection path that
+    /// recorded each (empty means the repair pass had nothing to do).
+    /// Diagnostic: tests use this to prove defect-forcing inputs actually
+    /// exercise the repair paths (see `tests/edge_repair_net.rs`).
+    pub unresolved_edge_pairs: Vec<(u32, u32, UnresolvedEdgeOrigin)>,
 }
 
 impl ComputeReport {

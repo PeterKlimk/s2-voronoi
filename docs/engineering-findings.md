@@ -271,3 +271,41 @@ and clustered both peak at density 24, but bimodal (160x density contrast) monot
 lower densities (optimum <=12, with 24 costing ~5.7%). First quantified motivation for choosing
 resolution from an occupancy-histogram percentile rather than the mean (pairs with the planned
 big-cell path). Performance issue, scale/distribution envelope.
+
+### 13. Edge-repair paths are now deterministically covered; defect detection is not bin-invariant
+
+Context (2026-06): unresolved shared-edge mismatches occur at ~1-20 per multi-million uniform
+run (none below ~2M; 2M seed 1 has one 3-defect site, seeds 2-4 have none), and the cross-bin
+detection/repair paths had never been deliberately exercised — a defect x bin-boundary
+conjunction that uniform fuzzing essentially never samples, so a wrong repair could have hidden
+indefinitely.
+
+What was done:
+
+- `ComputeReport::unresolved_edge_pairs` now reports each surviving mismatch with an
+  `UnresolvedEdgeOrigin` naming the detection path (three in-bin cases, three overflow cases).
+  Cold path, rare records; pure observability.
+- `tests/edge_repair_net.rs` pins a real defect site (uniform 2M seed 1) via windowed
+  extraction: a 10-mean-spacing cap plus sparse scaffold reproduces the defects at ~1.7k
+  points. Scaffold size steers bin boundaries across the site (grid resolution is a function
+  of n), yielding deterministic coverage of `InBinThirdsMismatch`, `InBinUnconsumedCheck`,
+  `CrossBinSingleSided` (scaffold 280k), and `CrossBinThirdsMismatch` (scaffold 320k), each
+  asserting strict post-repair validity.
+
+Findings worth keeping:
+
+- Synthetic degeneracy produces zero unresolved edges: exact quantized lattices, 1e-8
+  cocircular rings, cube-vertex/great-circle/cap stress all resolve consistently. Exact ties
+  resolve identically in both charts; defects need near-ties inside the narrow cross-chart
+  rounding gap, found only by volume. Consequently the defect fixture is irreplaceable-by-
+  construction and order/rotation sensitive (f32 re-rounding erases the gap).
+- `InBinMissingCheck` (edge to earlier same-bin neighbor with no incoming check) appears
+  unreachable by construction: such edges only enter a cell via replayed seeds, and a seed
+  implies its check is present. The branch stays as a conservative repair route.
+- Defect detection is NOT bin-invariant when a bin boundary cuts the defect site: same-bin
+  pairs are clipped once and seed-forwarded while cross-bin pairs are clipped independently by
+  both sides, so the epsilon disagreements legitimately differ (measured: 4 defects at bins=12
+  vs 3 at bins=48, same input). The invariant that holds across layouts is strict validity
+  after repair. This also means any future scheme treating the defect set as a canonical
+  property of the input is unsound under the current two-chart evaluation; P5
+  (consistency-by-construction) is what would make it canonical (and empty).

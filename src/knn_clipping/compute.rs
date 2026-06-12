@@ -180,6 +180,13 @@ fn compute_voronoi_knn_clipping_report_core(
             preprocess: preprocess_report,
             returned_validation,
             effective_validation,
+            unresolved_edge_pairs: unresolved_edges
+                .iter()
+                .map(|m| {
+                    let (a, b) = edge_reconcile::unpack_edge(m.key.as_u64());
+                    (a.min(b), a.max(b), m.origin)
+                })
+                .collect(),
         },
     })
 }

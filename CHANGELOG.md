@@ -4,6 +4,13 @@
 
 Initial release.
 
+- Edge-repair observability and coverage: `ComputeReport::unresolved_edge_pairs`
+  reports each shared-edge mismatch that reached post-assembly reconciliation,
+  tagged with an `UnresolvedEdgeOrigin` naming the detection path; a
+  deterministic net (`tests/edge_repair_net.rs`) pins a real 2M-scale defect
+  site down to a ~1.7k-point fixture and exercises the in-bin and cross-bin
+  detection/repair paths, asserting strict post-repair validity (see
+  engineering-findings #13).
 - Planar Voronoi diagrams over a bounded rectangle (`compute_plane`,
   `PlanarVoronoi`, `PlaneRect`): the same kNN-clipping engine on a flat 2D
   grid, with rect walls handled as virtual generators so hull cells clip to

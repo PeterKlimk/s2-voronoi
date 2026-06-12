@@ -9,7 +9,7 @@ comparable (observed drift exceeds 30%).
 
 ## Open ideas
 
-### Live within-bin edge repair (structural)
+### Live within-bin edge repair (structural) — assessed 2026-06, deprioritized
 
 Today every unresolved shared-edge mismatch — including those between two
 cells of the *same bin* — accumulates into the shard output and is repaired
@@ -19,11 +19,29 @@ a full-size union-find). Within-bin mismatches could instead be repaired
 are still shard-local; the post-pass would then handle only cross-bin
 cases.
 
-Value today is structural rather than hot (uniform inputs produce ~0
-unresolved edges; the 8x8 cocircular lattice test produces ~112), but it
-removes a serial global pass and becomes load-bearing if epsilon-repair
-volume grows (clustered / near-cocircular inputs), and it is a prerequisite
-for shrinking the post-assembly stage in general.
+Assessment (2026-06 discussion; see engineering-findings #13): deprioritized
+in favor of cheaper/safer steps, because (a) the repair would mutate
+already-emitted cells in the shard CSR, (b) disputed endpoint vertices can
+be owned by *other* bins (DEFERRED slots, no index or settled position
+mid-build), so part of the repair moves to assembly anyway, and (c) a
+two-phase repair needs a composition proof with the cross-bin pass — exactly
+the proof P5 (consistency by construction) would make moot by removing the
+mismatches at the source. Sequence agreed instead:
+
+1. ~~Deterministic coverage net for all detection/repair paths~~ **Done**
+   (`tests/edge_repair_net.rs`, origin-tagged records).
+2. Sparse union-find in `reconcile_unresolved_edges` (drop the O(V) init
+   paid on every run), keeping the total rebuild — its path-insensitivity
+   is a safety property given how rarely the cross-bin branches fire.
+3. Surgical O(defects) in-place patching only if measured worthwhile, with
+   the old rebuild retained as a differential oracle.
+
+Correction to the old note: the "8x8 cocircular lattice / ~112 unresolved"
+figure presumably referred to the planar exact-lattice fixture (the only
+8x8 lattice in the tests; the planar pipeline has no defect report to
+re-verify against). On the sphere, synthetic degeneracy produces zero
+unresolved edges and real defects appear only at multi-million scale
+(~1-20 per run).
 
 ### Weld redesign: detect during scatter + in-place compaction
 

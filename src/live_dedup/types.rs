@@ -117,6 +117,35 @@ pub(crate) struct EdgeRecord {
     pub(crate) key: EdgeKey,
 }
 
+/// Which detection path recorded an unresolved shared-edge mismatch.
+///
+/// Diagnostic only (cold path, rare records): lets tests prove that each
+/// detection path — the three within-bin cases and their cross-bin overflow
+/// analogues — is actually exercised, instead of inferring coverage from
+/// aggregate counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum UnresolvedEdgeOrigin {
+    /// Within-bin: the later cell has an edge to an earlier same-bin
+    /// neighbor, but no incoming edge check matched (the earlier cell
+    /// concluded the edge does not exist).
+    InBinMissingCheck,
+    /// Within-bin: an incoming edge check matched the edge, but the endpoint
+    /// "third" generators do not fully reconcile (the cells disagree on
+    /// endpoint identity).
+    InBinThirdsMismatch,
+    /// Within-bin: an incoming edge check was never matched by any of the
+    /// later cell's edges (the later cell concluded the edge does not exist).
+    InBinUnconsumedCheck,
+    /// Cross-bin: both overflow sides matched by key, but the endpoint
+    /// "third" generators do not fully reconcile.
+    CrossBinThirdsMismatch,
+    /// Cross-bin: only one side emitted an overflow record for this edge key.
+    CrossBinSingleSided,
+    /// Cross-bin: both overflow records carried the same side tag (bug trap;
+    /// debug-asserted).
+    CrossBinDuplicateSide,
+}
+
 /// Historical name: this records an unresolved shared-edge reconciliation mismatch.
 ///
 /// These are produced by edge-check matching when the two sides of an undirected edge cannot be
@@ -125,6 +154,7 @@ pub(crate) struct EdgeRecord {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct UnresolvedEdgeMismatch {
     pub(crate) key: EdgeKey,
+    pub(crate) origin: UnresolvedEdgeOrigin,
 }
 
 #[derive(Clone, Copy)]
