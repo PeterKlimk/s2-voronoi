@@ -33,24 +33,27 @@ pub(crate) fn point_to_face_uv(p: Vec3) -> (usize, f32, f32) {
 
     if ax >= ay && ax >= az {
         // +/-X
+        let inv = 1.0 / ax;
         if x >= 0.0 {
-            (0, -z / ax, y / ax)
+            (0, -z * inv, y * inv)
         } else {
-            (1, z / ax, y / ax)
+            (1, z * inv, y * inv)
         }
     } else if ay >= ax && ay >= az {
         // +/-Y
+        let inv = 1.0 / ay;
         if y >= 0.0 {
-            (2, x / ay, -z / ay)
+            (2, x * inv, -z * inv)
         } else {
-            (3, x / ay, z / ay)
+            (3, x * inv, z * inv)
         }
     } else {
         // +/-Z
+        let inv = 1.0 / az;
         if z >= 0.0 {
-            (4, x / az, y / az)
+            (4, x * inv, y * inv)
         } else {
-            (5, -x / az, y / az)
+            (5, -x * inv, y * inv)
         }
     }
 }
