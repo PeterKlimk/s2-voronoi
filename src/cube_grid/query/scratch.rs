@@ -5,6 +5,9 @@ impl CubeMapGridScratch {
         Self {
             visited_stamp: vec![0; num_cells],
             stamp: 0,
+            current: Vec::new(),
+            next: Vec::new(),
+            pending: Vec::new(),
             exhausted: false,
         }
     }

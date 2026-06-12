@@ -29,12 +29,6 @@ pub(crate) struct ShellFrontier<'a, 'b> {
     query_idx: usize,
     start_cell: u32,
     eligibility: DirectedEligibility<'b>,
-    /// BFS layer whose points have not been emitted yet.
-    current: Vec<u32>,
-    /// Layer discovered while emitting `current`.
-    next: Vec<u32>,
-    /// Sorted (descending dot, slot) emission for the pending batch.
-    pending: Vec<(OrdF32, u32)>,
     pending_bound: f32,
     has_pending: bool,
     exhausted: bool,
@@ -61,6 +55,10 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
             scratch.stamp = 1;
         }
         scratch.mark_visited(start_cell);
+        scratch.current.clear();
+        scratch.current.push(start_cell);
+        scratch.next.clear();
+        scratch.pending.clear();
 
         Self {
             grid,
@@ -69,9 +67,6 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
             query_idx,
             start_cell,
             eligibility,
-            current: vec![start_cell],
-            next: Vec::new(),
-            pending: Vec::new(),
             pending_bound: -1.0,
             has_pending: false,
             exhausted: false,
@@ -102,22 +97,22 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
                 continue;
             }
             let dot = fp::dot3_f32(xs[i], ys[i], zs[i], qx, qy, qz);
-            self.pending.push((OrdF32::new(dot), slot));
+            self.scratch.pending.push((OrdF32::new(dot), slot));
         }
     }
 
     /// Build the next non-empty layer batch, or mark exhaustion.
     fn build_pending(&mut self) {
         debug_assert!(!self.has_pending);
-        while !self.current.is_empty() {
+        while !self.scratch.current.is_empty() {
             // Discover the next ring and its certificate while scanning the
             // current ring's points.
-            self.pending.clear();
-            self.next.clear();
+            self.scratch.pending.clear();
+            self.scratch.next.clear();
             let mut next_min_dist_sq = f32::INFINITY;
 
-            for layer_idx in 0..self.current.len() {
-                let cell = self.current[layer_idx];
+            for layer_idx in 0..self.scratch.current.len() {
+                let cell = self.scratch.current[layer_idx];
                 let mode = self.eligibility.cell_mode(
                     &self.grid.cell_offsets,
                     self.start_cell,
@@ -129,22 +124,23 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
                     if ncell == u32::MAX || !self.scratch.mark_visited(ncell) {
                         continue;
                     }
-                    self.next.push(ncell);
+                    self.scratch.next.push(ncell);
                     let bound = self.grid.cell_min_dist_sq(self.query, ncell as usize);
                     next_min_dist_sq = next_min_dist_sq.min(bound);
                 }
             }
 
-            std::mem::swap(&mut self.current, &mut self.next);
-            self.pending_bound = if self.current.is_empty() {
+            std::mem::swap(&mut self.scratch.current, &mut self.scratch.next);
+            self.pending_bound = if self.scratch.current.is_empty() {
                 -1.0
             } else {
                 (1.0 - 0.5 * next_min_dist_sq).clamp(-1.0, 1.0)
             };
 
-            if !self.pending.is_empty() {
+            if !self.scratch.pending.is_empty() {
                 // Nearest-first within the layer.
-                self.pending
+                self.scratch
+                    .pending
                     .sort_unstable_by_key(|&(dot, _)| std::cmp::Reverse(dot));
                 self.has_pending = true;
                 return;
@@ -164,17 +160,17 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
             return None;
         }
         out.clear();
-        out.extend(self.pending.iter().map(|&(_, slot)| slot));
+        out.extend(self.scratch.pending.iter().map(|&(_, slot)| slot));
         Some(ShellBatch {
-            n: self.pending.len(),
-            first_dot: self.pending[0].0.get(),
+            n: self.scratch.pending.len(),
+            first_dot: self.scratch.pending[0].0.get(),
             unseen_bound: self.pending_bound,
         })
     }
 
     pub(crate) fn advance(&mut self) {
         self.has_pending = false;
-        self.pending.clear();
+        self.scratch.pending.clear();
     }
 
     #[inline]
