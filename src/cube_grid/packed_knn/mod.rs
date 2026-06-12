@@ -153,13 +153,8 @@ pub(crate) enum PackedNeighborFrontier {
 
 #[derive(Debug, Clone)]
 enum CachedFrontier {
-    ExactBatch {
-        batch: PackedNeighborBatch,
-        slots: Vec<u32>,
-    },
-    UnknownButBounded {
-        dot_upper_bound: f32,
-    },
+    ExactBatch(PackedNeighborBatch),
+    UnknownButBounded { dot_upper_bound: f32 },
     Exhausted,
 }
 
@@ -181,6 +176,7 @@ pub(crate) struct PackedQuery<'a, 'p, 'g> {
     tail_used: bool,
     expand_r2_used: bool,
     safe_exhausted: bool,
+    cached_slots: Vec<u32>,
 }
 
 impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
@@ -200,6 +196,7 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
             tail_used: false,
             expand_r2_used: false,
             safe_exhausted: false,
+            cached_slots: Vec::new(),
         }
     }
 
@@ -226,8 +223,8 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
 
         if let Some(cached) = &self.cached_frontier {
             match cached {
-                CachedFrontier::ExactBatch { batch, slots } => {
-                    out.extend_from_slice(slots);
+                CachedFrontier::ExactBatch(batch) => {
+                    out.extend_from_slice(&self.cached_slots);
                     return PackedNeighborFrontier::ExactBatch(*batch);
                 }
                 CachedFrontier::UnknownButBounded { dot_upper_bound } => {
@@ -278,10 +275,9 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
                 unseen_bound: chunk.unseen_bound,
                 source,
             };
-            self.cached_frontier = Some(CachedFrontier::ExactBatch {
-                batch,
-                slots: out.clone(),
-            });
+            self.cached_slots.clear();
+            self.cached_slots.extend_from_slice(out);
+            self.cached_frontier = Some(CachedFrontier::ExactBatch(batch));
             return PackedNeighborFrontier::ExactBatch(batch);
         }
 
@@ -299,7 +295,7 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
     pub(crate) fn advance_frontier(&mut self, grid: &CubeMapGrid) {
         let cached = self.cached_frontier.take();
         match cached {
-            Some(CachedFrontier::ExactBatch { .. }) => {}
+            Some(CachedFrontier::ExactBatch(_)) => {}
             Some(CachedFrontier::UnknownButBounded { .. }) => self.advance_stage(grid),
             Some(CachedFrontier::Exhausted) | None => {}
         }

@@ -246,14 +246,8 @@ enum QueryStage {
 
 #[derive(Debug, Clone)]
 enum CachedFrontier {
-    ExactBatch {
-        batch: PlanePackedBatch,
-        slots: Vec<u32>,
-        dists: Vec<f32>,
-    },
-    UnknownButBounded {
-        dist_lower_bound: f32,
-    },
+    ExactBatch(PlanePackedBatch),
+    UnknownButBounded { dist_lower_bound: f32 },
     Exhausted,
 }
 
@@ -267,6 +261,8 @@ pub(crate) struct PlanePackedQuery<'a, 'p, 'g> {
     stage: QueryStage,
     cached_frontier: Option<CachedFrontier>,
     safe_exhausted: bool,
+    cached_slots: Vec<u32>,
+    cached_dists: Vec<f32>,
 }
 
 impl<'a, 'p, 'g> PlanePackedQuery<'a, 'p, 'g> {
@@ -284,6 +280,8 @@ impl<'a, 'p, 'g> PlanePackedQuery<'a, 'p, 'g> {
             stage: QueryStage::Chunk0,
             cached_frontier: None,
             safe_exhausted: false,
+            cached_slots: Vec::new(),
+            cached_dists: Vec::new(),
         }
     }
 
@@ -299,13 +297,9 @@ impl<'a, 'p, 'g> PlanePackedQuery<'a, 'p, 'g> {
 
         if let Some(cached) = &self.cached_frontier {
             match cached {
-                CachedFrontier::ExactBatch {
-                    batch,
-                    slots,
-                    dists,
-                } => {
-                    out.extend_from_slice(slots);
-                    out_dists.extend_from_slice(dists);
+                CachedFrontier::ExactBatch(batch) => {
+                    out.extend_from_slice(&self.cached_slots);
+                    out_dists.extend_from_slice(&self.cached_dists);
                     return PlanePackedFrontier::ExactBatch(*batch);
                 }
                 CachedFrontier::UnknownButBounded { dist_lower_bound } => {
@@ -349,11 +343,11 @@ impl<'a, 'p, 'g> PlanePackedQuery<'a, 'p, 'g> {
                 unseen_bound: chunk.unseen_bound,
                 source,
             };
-            self.cached_frontier = Some(CachedFrontier::ExactBatch {
-                batch,
-                slots: out.clone(),
-                dists: out_dists.clone(),
-            });
+            self.cached_slots.clear();
+            self.cached_slots.extend_from_slice(out);
+            self.cached_dists.clear();
+            self.cached_dists.extend_from_slice(out_dists);
+            self.cached_frontier = Some(CachedFrontier::ExactBatch(batch));
             return PlanePackedFrontier::ExactBatch(batch);
         }
 
@@ -370,7 +364,7 @@ impl<'a, 'p, 'g> PlanePackedQuery<'a, 'p, 'g> {
     pub(crate) fn advance_frontier<G: PackedGeometry>(&mut self, grid: &G) {
         let cached = self.cached_frontier.take();
         match cached {
-            Some(CachedFrontier::ExactBatch { .. }) => {}
+            Some(CachedFrontier::ExactBatch(_)) => {}
             Some(CachedFrontier::UnknownButBounded { .. }) => self.advance_stage(grid),
             Some(CachedFrontier::Exhausted) | None => {}
         }
