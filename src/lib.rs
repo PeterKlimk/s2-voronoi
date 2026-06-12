@@ -47,7 +47,6 @@ mod error;
 mod fp;
 #[allow(clippy::too_many_arguments)] // generated sorting networks
 pub(crate) mod generated;
-pub mod locate;
 mod measures;
 mod packed_layout;
 mod plane_diagram;
@@ -96,6 +95,7 @@ macro_rules! maybe_par_iter {
 pub(crate) mod cube_grid;
 pub(crate) mod knn_clipping;
 pub(crate) mod live_dedup;
+pub mod locate;
 pub(crate) mod plane_clipping;
 pub(crate) mod plane_grid;
 

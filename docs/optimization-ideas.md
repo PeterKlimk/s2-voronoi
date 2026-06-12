@@ -51,12 +51,6 @@ termination, more clips). Semantics-affecting: changes emission order, so
 the fingerprint moves and the tradeoff needs paired measurement plus a
 policy decision.
 
-### Vectorize the N>8 bitmask clipper
-
-`clippers/bitmask.rs` (polygons above 8 vertices — rare, large-cell path)
-still computes scalar distances; `fp::signed_dists_mask8` now exists and
-chunks of 8 apply directly. Low priority: small share of clips.
-
 ### HalfPlane epsilon without the per-clip sqrt
 
 `HalfPlane::new_unnormalized` computes `eps = CLIP_EPS_INSIDE * sqrt(ab2)`
@@ -112,6 +106,14 @@ moves), so it is a declared-policy experiment, not a free win.
   network wins through shared code.
 
 ## Tried and rejected (do not re-try without new information)
+
+- **Vectorize the N>8 bitmask clipper** (2026-06): chunking
+  `fp::signed_dists_mask8` over the bitmask path measured a consistent ~1%
+  LOSS on sphere 500k ST and torus 500k ST (paired, 3+2 rounds). N>8
+  polygons cluster just above 8 vertices, so the second 8-lane chunk is
+  mostly stale lanes; the old loop's n scalar fmas are cheaper than 16 SIMD
+  lanes plus per-lane writes. Bit-identical (fingerprint held) but slower —
+  reverted.
 
 - **Ring-pass cap pruning** (per ring-cell × query cap bound to skip chunk
   dots): net loss — ring cells are *adjacent* cells, whose caps almost

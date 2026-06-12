@@ -144,8 +144,9 @@ toroidal graph.
 - Point location: `diagram.build_locator()` returns a reusable locator
   (`SphereLocator` / `PlaneLocator`); `locator.locate(query)` maps a point to
   the cell containing it (its nearest generator's canonical cell) in
-  near-constant time per query, on all three topologies. Periodic queries
-  wrap; bounded-plane queries may lie outside the rect.
+  near-constant time per query, on all three topologies; `locate_many(&[q])`
+  batches queries across all cores. Periodic queries wrap; bounded-plane
+  queries may lie outside the rect.
 
 ## Configuration
 

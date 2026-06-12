@@ -15,12 +15,14 @@
 //! the weld radius).
 
 use glam::{Vec2, Vec3};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch, DirectedEligibility};
 use crate::packed_layout::PackedSlotLayout;
 use crate::plane_grid::periodic::{PeriodicGrid, PeriodicGridScratch, PeriodicShellFrontier};
 use crate::plane_grid::{PlaneGrid, PlaneGridScratch};
-use crate::{PlanarVoronoi, PlaneTopology, SphericalVoronoi, UnitVec3Like};
+use crate::{PlanarVoronoi, PlanePointLike, PlaneTopology, SphericalVoronoi, UnitVec3Like};
 
 const LOCATE_LOCAL_SHIFT: u32 = 24;
 const LOCATE_LOCAL_MASK: u32 = (1u32 << LOCATE_LOCAL_SHIFT) - 1;
@@ -29,6 +31,29 @@ const LOCATE_LOCAL_MASK: u32 = (1u32 << LOCATE_LOCAL_SHIFT) - 1;
 /// every cell is "cross-bin" and the directed rules never filter.
 fn all_emit_map(n: usize) -> Vec<u32> {
     (0..n as u32).collect()
+}
+
+/// Run `f` over every query with a per-worker scratch from `mk` (parallel
+/// with the `parallel` feature, plain loop otherwise).
+fn map_with_scratch<P, S, MK, F>(queries: &[P], mk: MK, f: F) -> Vec<usize>
+where
+    P: Sync,
+    S: Send,
+    MK: Fn() -> S + Sync + Send,
+    F: Fn(&mut S, &P) -> usize + Sync + Send,
+{
+    #[cfg(feature = "parallel")]
+    {
+        queries
+            .par_iter()
+            .map_init(&mk, |scratch, p| f(scratch, p))
+            .collect()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut scratch = mk();
+        queries.iter().map(|p| f(&mut scratch, p)).collect()
+    }
 }
 
 /// Point locator for a [`SphericalVoronoi`] diagram.
@@ -71,30 +96,63 @@ impl SphereLocator {
     /// Returns the canonical cell index.
     pub fn locate<P: UnitVec3Like>(&mut self, p: &P) -> usize {
         let query = Vec3::new(p.x(), p.y(), p.z());
-        let layout =
-            PackedSlotLayout::new(&self.slot_gen_map, LOCATE_LOCAL_SHIFT, LOCATE_LOCAL_MASK);
-        let ctx = DirectedEligibility::from_layout(1, 0, layout);
-        let n = self.slot_gen_map.len();
-        let mut frontier = self.grid.shell_frontier(query, n, &mut self.scratch, ctx);
-        let mut batch: Vec<u32> = Vec::new();
-        let mut best: Option<(f32, u32)> = None;
-        while let Some(layer) = frontier.frontier(&mut batch) {
-            // Layers are sorted nearest-first (descending dot).
-            let candidate = (layer.first_dot, batch[0]);
-            if best.is_none_or(|(dot, _)| candidate.0 > dot) {
-                best = Some(candidate);
-            }
-            if best.is_some_and(|(dot, _)| dot >= layer.unseen_bound) {
-                break;
-            }
-            frontier.advance();
+        sphere_locate_core(
+            &self.grid,
+            &self.slot_gen_map,
+            self.canonical.as_deref(),
+            &mut self.scratch,
+            query,
+        )
+    }
+
+    /// Locate every query, in input order (parallel with the `parallel`
+    /// feature — each worker gets its own scratch, so this takes `&self`).
+    pub fn locate_many<P: UnitVec3Like + Sync>(&self, queries: &[P]) -> Vec<usize> {
+        map_with_scratch(
+            queries,
+            || self.grid.make_scratch(),
+            |scratch, p| {
+                sphere_locate_core(
+                    &self.grid,
+                    &self.slot_gen_map,
+                    self.canonical.as_deref(),
+                    scratch,
+                    Vec3::new(p.x(), p.y(), p.z()),
+                )
+            },
+        )
+    }
+}
+
+fn sphere_locate_core(
+    grid: &CubeMapGrid,
+    slot_gen_map: &[u32],
+    canonical: Option<&[u32]>,
+    scratch: &mut CubeMapGridScratch,
+    query: Vec3,
+) -> usize {
+    let layout = PackedSlotLayout::new(slot_gen_map, LOCATE_LOCAL_SHIFT, LOCATE_LOCAL_MASK);
+    let ctx = DirectedEligibility::from_layout(1, 0, layout);
+    let n = slot_gen_map.len();
+    let mut frontier = grid.shell_frontier(query, n, scratch, ctx);
+    let mut batch: Vec<u32> = Vec::new();
+    let mut best: Option<(f32, u32)> = None;
+    while let Some(layer) = frontier.frontier(&mut batch) {
+        // Layers are sorted nearest-first (descending dot).
+        let candidate = (layer.first_dot, batch[0]);
+        if best.is_none_or(|(dot, _)| candidate.0 > dot) {
+            best = Some(candidate);
         }
-        let (_, slot) = best.expect("locator requires a non-empty diagram");
-        let idx = self.grid.point_indices()[slot as usize] as usize;
-        match &self.canonical {
-            Some(map) => map[idx] as usize,
-            None => idx,
+        if best.is_some_and(|(dot, _)| dot >= layer.unseen_bound) {
+            break;
         }
+        frontier.advance();
+    }
+    let (_, slot) = best.expect("locator requires a non-empty diagram");
+    let idx = grid.point_indices()[slot as usize] as usize;
+    match canonical {
+        Some(map) => map[idx] as usize,
+        None => idx,
     }
 }
 
@@ -187,56 +245,104 @@ impl PlaneLocator {
             PackedSlotLayout::new(&self.slot_gen_map, LOCATE_LOCAL_SHIFT, LOCATE_LOCAL_MASK);
         let ctx = DirectedEligibility::from_layout(1, 0, layout);
         let n = self.slot_gen_map.len();
-
-        let mut batch: Vec<u32> = Vec::new();
-        let mut dists: Vec<f32> = Vec::new();
-        let mut best: Option<(f32, u32)> = None;
-
-        let slot = match &mut self.grid {
+        let idx = match &mut self.grid {
             PlaneLocatorGrid::Bounded(grid, scratch) => {
-                let mut frontier =
-                    crate::plane_grid::PlaneShellFrontier::new(grid, q, n, scratch, ctx);
-                while let Some(layer) = frontier.frontier(&mut batch, &mut dists) {
-                    let candidate = (dists[0], batch[0]);
-                    if best.is_none_or(|(d, _)| candidate.0 < d) {
-                        best = Some(candidate);
-                    }
-                    if best.is_some_and(|(d, _)| d <= layer.unseen_bound) {
-                        break;
-                    }
-                    frontier.advance();
-                }
-                let (_, slot) = best.expect("locator requires a non-empty diagram");
-                slot
+                bounded_locate_core(grid, scratch, q, n, ctx)
             }
             PlaneLocatorGrid::Periodic(grid, scratch) => {
-                let qw = Vec2::new(
-                    q.x.rem_euclid(self.domain.x).min(next_below(self.domain.x)),
-                    q.y.rem_euclid(self.domain.y).min(next_below(self.domain.y)),
-                );
-                let mut frontier = PeriodicShellFrontier::new(grid, qw, n, scratch, ctx);
-                while let Some(layer) = frontier.frontier(&mut batch, &mut dists) {
-                    let candidate = (dists[0], batch[0]);
-                    if best.is_none_or(|(d, _)| candidate.0 < d) {
-                        best = Some(candidate);
-                    }
-                    if best.is_some_and(|(d, _)| d <= layer.unseen_bound) {
-                        break;
-                    }
-                    frontier.advance();
-                }
-                let (_, slot) = best.expect("locator requires a non-empty diagram");
-                slot
+                periodic_locate_core(grid, scratch, q, self.domain, n, ctx)
             }
-        };
-
-        let idx = match &self.grid {
-            PlaneLocatorGrid::Bounded(grid, _) => grid.point_indices()[slot as usize] as usize,
-            PlaneLocatorGrid::Periodic(grid, _) => grid.point_indices()[slot as usize] as usize,
         };
         match &self.canonical {
             Some(map) => map[idx] as usize,
             None => idx,
         }
     }
+
+    /// Locate every query, in input order (parallel with the `parallel`
+    /// feature — each worker gets its own scratch, so this takes `&self`).
+    pub fn locate_many<P: PlanePointLike + Sync>(&self, queries: &[P]) -> Vec<usize> {
+        let layout =
+            PackedSlotLayout::new(&self.slot_gen_map, LOCATE_LOCAL_SHIFT, LOCATE_LOCAL_MASK);
+        let n = self.slot_gen_map.len();
+        let canonicalize = |idx: usize| match &self.canonical {
+            Some(map) => map[idx] as usize,
+            None => idx,
+        };
+        match &self.grid {
+            PlaneLocatorGrid::Bounded(grid, _) => map_with_scratch(
+                queries,
+                || grid.make_scratch(),
+                |scratch, p| {
+                    let q = (Vec2::new(p.x(), p.y()) - self.min) * self.scale;
+                    let ctx = DirectedEligibility::from_layout(1, 0, layout);
+                    canonicalize(bounded_locate_core(grid, scratch, q, n, ctx))
+                },
+            ),
+            PlaneLocatorGrid::Periodic(grid, _) => map_with_scratch(
+                queries,
+                || grid.make_scratch(),
+                |scratch, p| {
+                    let q = (Vec2::new(p.x(), p.y()) - self.min) * self.scale;
+                    let ctx = DirectedEligibility::from_layout(1, 0, layout);
+                    canonicalize(periodic_locate_core(grid, scratch, q, self.domain, n, ctx))
+                },
+            ),
+        }
+    }
+}
+
+fn bounded_locate_core(
+    grid: &PlaneGrid,
+    scratch: &mut PlaneGridScratch,
+    q: Vec2,
+    n: usize,
+    ctx: DirectedEligibility<'_>,
+) -> usize {
+    let mut batch: Vec<u32> = Vec::new();
+    let mut dists: Vec<f32> = Vec::new();
+    let mut best: Option<(f32, u32)> = None;
+    let mut frontier = crate::plane_grid::PlaneShellFrontier::new(grid, q, n, scratch, ctx);
+    while let Some(layer) = frontier.frontier(&mut batch, &mut dists) {
+        let candidate = (dists[0], batch[0]);
+        if best.is_none_or(|(d, _)| candidate.0 < d) {
+            best = Some(candidate);
+        }
+        if best.is_some_and(|(d, _)| d <= layer.unseen_bound) {
+            break;
+        }
+        frontier.advance();
+    }
+    let (_, slot) = best.expect("locator requires a non-empty diagram");
+    grid.point_indices()[slot as usize] as usize
+}
+
+fn periodic_locate_core(
+    grid: &PeriodicGrid,
+    scratch: &mut PeriodicGridScratch,
+    q: Vec2,
+    domain: Vec2,
+    n: usize,
+    ctx: DirectedEligibility<'_>,
+) -> usize {
+    let qw = Vec2::new(
+        q.x.rem_euclid(domain.x).min(next_below(domain.x)),
+        q.y.rem_euclid(domain.y).min(next_below(domain.y)),
+    );
+    let mut batch: Vec<u32> = Vec::new();
+    let mut dists: Vec<f32> = Vec::new();
+    let mut best: Option<(f32, u32)> = None;
+    let mut frontier = PeriodicShellFrontier::new(grid, qw, n, scratch, ctx);
+    while let Some(layer) = frontier.frontier(&mut batch, &mut dists) {
+        let candidate = (dists[0], batch[0]);
+        if best.is_none_or(|(d, _)| candidate.0 < d) {
+            best = Some(candidate);
+        }
+        if best.is_some_and(|(d, _)| d <= layer.unseen_bound) {
+            break;
+        }
+        frontier.advance();
+    }
+    let (_, slot) = best.expect("locator requires a non-empty diagram");
+    grid.point_indices()[slot as usize] as usize
 }

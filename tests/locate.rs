@@ -267,3 +267,43 @@ fn locate_small_diagrams() {
     assert_eq!(locator.locate(0.8, 0.2), 1);
     assert_eq!(locator.locate(0.5, 0.9), 2);
 }
+
+#[test]
+fn locate_many_matches_locate() {
+    // Sphere.
+    let points = random_sphere_points(400, 101);
+    let diagram = compute(&points).unwrap();
+    let mut locator = diagram.build_locator();
+    let queries = random_sphere_points(500, 102);
+    let batch = locator.locate_many(&queries);
+    for (q, &got) in queries.iter().zip(&batch) {
+        assert_eq!(got, locator.locate(q));
+    }
+
+    // Bounded plane (queries inside and outside the rect).
+    let rect = PlaneRect::new(PlanePoint::new(-1.0, 0.0), PlanePoint::new(2.0, 2.0));
+    let points = random_rect_points(300, &rect, 103);
+    let diagram = compute_plane(&points, rect).unwrap();
+    let mut locator = diagram.build_locator();
+    let mut rng = ChaCha8Rng::seed_from_u64(104);
+    let queries: Vec<PlanePoint> = (0..500)
+        .map(|_| PlanePoint::new(rng.gen_range(-3.0..4.0), rng.gen_range(-2.0..4.0)))
+        .collect();
+    let batch = locator.locate_many(&queries);
+    for (q, &got) in queries.iter().zip(&batch) {
+        assert_eq!(got, locator.locate(q.x, q.y));
+    }
+
+    // Periodic (wrapping queries).
+    let rect = PlaneRect::unit();
+    let points = random_rect_points(300, &rect, 105);
+    let diagram = compute_plane_periodic(&points, rect).unwrap();
+    let mut locator = diagram.build_locator();
+    let queries: Vec<PlanePoint> = (0..500)
+        .map(|_| PlanePoint::new(rng.gen_range(-5.0..5.0), rng.gen_range(-5.0..5.0)))
+        .collect();
+    let batch = locator.locate_many(&queries);
+    for (q, &got) in queries.iter().zip(&batch) {
+        assert_eq!(got, locator.locate(q.x, q.y));
+    }
+}
