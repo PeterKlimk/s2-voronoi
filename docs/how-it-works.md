@@ -100,14 +100,24 @@ carry the burden instead:
    patched in a sort-and-match pass after construction. No locks, no global map, no
    synchronization inside the hot loop.
 
-3. **A directed build order with edge forwarding.** The bin/local ids induce a total order over
-   generators. For two same-bin cells sharing an edge, only the earlier cell discovers the pair
-   from its candidate stream; it clips, then forwards a compact *edge check* (the edge key plus
-   its endpoint vertex identities) to the later cell, which replays the constraint as a seed
-   before consuming its own stream. The pair is processed once, not twice — and the forwarded
-   record is exactly what coordinates the shared vertex indices. The argument for why the
-   earlier side always delivers (and the epsilon-scale caveat where it can't) is written out in
-   [live_dedup.md](live_dedup.md), "The stitching invariant".
+3. **A directed build order with edge forwarding — two regimes on one diagram.** Fully
+   independent construction pays a hidden tax: every shared edge is discovered and clipped
+   *twice*, once by each owning cell. A sequential algorithm wouldn't pay it — having built
+   cell g, it already knows the g–h edge when it reaches h. This crate runs both regimes at
+   once. Within a bin, cells build sequentially in a fixed order, which makes a sequential-only
+   optimization legal: for two same-bin cells sharing an edge, only the earlier cell discovers
+   the pair from its candidate stream; it clips, then forwards a compact *edge check* (the edge
+   key plus its endpoint vertex identities) to the later cell, which replays the constraint as
+   a seed before consuming its own stream — the pair is processed once, not twice, and the
+   forwarded record is exactly what coordinates the shared vertex indices. Across bins, where
+   no ordering can be assumed (bins run in parallel), both cells clip the shared bisector
+   independently, GPU-paper style, and the assembly pass matches the two sides up afterwards.
+   The *eligibility rules* — which candidates a cell's stream emits versus treats as
+   transit-only — are what switch between the regimes per pair, and the coverage contract (each
+   ordered pair is supplied to each side by exactly one mechanism) is what makes the hybrid
+   sound. The full argument, including why the earlier side always delivers and the
+   epsilon-scale caveat where it can't, is written out in [live_dedup.md](live_dedup.md), "The
+   stitching invariant".
 
 A narrow **edge reconciliation** pass runs last: where two cells made *different* combinatorial
 decisions about an epsilon-scale feature (one kept a sliver edge, the other collapsed it —
@@ -161,7 +171,12 @@ security-radius criterion predates it — Ray et al. credit Lévy & Bonneel 2013
 (Rycroft 2009) uses the same bound. The stitching layer — combinatorial vertex identity, the
 directed order with edge forwarding, sharded dedup with deferred patching, bounded
 reconciliation, and the validated single-graph output contract — was developed independently
-for this crate. Individual ingredients certainly echo known techniques (keying vertices by
-generator triples is folklore in exact-geometry circles; sharding with deferred cross-shard
-patching is a classic parallel pattern). We make no novelty claims; the value is that the
-combination is implemented, tested, and fast.
+for this crate. Within it, the part we believe is most likely to be genuinely novel is the
+**hybrid build regime**: exploiting sequential construction order *within* a shard to do
+work-sharing that fully-parallel formulations cannot express (each same-shard edge clipped
+once and forwarded, rather than discovered twice), while degrading gracefully to independent
+both-sides construction *across* shards — with one coverage contract proving the two regimes
+compose into a single coherent diagram. Other ingredients echo known techniques (keying
+vertices by generator triples is folklore in exact-geometry circles; sharding with deferred
+cross-shard patching is a classic parallel pattern). We claim no more than that; the value is
+that the combination is implemented, tested, and fast.

@@ -25,11 +25,13 @@ by bisectors of nearby points, streamed nearest-first from a spatial grid whose 
 certify when the cell is provably complete (the classical "security radius" — typically after a
 few dozen candidates, independent of n). What the GPU paper deliberately doesn't do is the
 second half of this crate: stitching the independently-built cells into a single shared graph.
-Vertices are identified combinatorially (by generator triple, not by floating-point position),
-deduplicated shard-locally with deferred cross-shard patching — no locks or global maps in the
-hot loop — and a directed build order forwards each shared edge from the earlier cell to the
-later one, halving the clip work and coordinating vertex indices at the same time. The full
-story: [docs/how-it-works.md](docs/how-it-works.md).
+Vertices are identified combinatorially (by generator triple, not by floating-point position)
+and deduplicated shard-locally with deferred cross-shard patching — no locks or global maps in
+the hot loop. Within a shard, cells build sequentially and exploit it: each shared edge is
+clipped once by the earlier cell and forwarded to the later one, halving the clip work and
+coordinating vertex indices at the same time; across shards, cells build fully independently,
+and one coverage contract makes the two regimes compose. The full story:
+[docs/how-it-works.md](docs/how-it-works.md).
 
 ## The correctness contract, in one paragraph
 
