@@ -1,5 +1,8 @@
 # Architecture / algorithm notes
 
+For a reader-oriented narrative of the algorithm (and its relation to prior art), see
+[how-it-works.md](how-it-works.md); this document is the maintainer view.
+
 s2-voronoi computes Voronoi diagrams on the unit sphere (S2) and, with the same engine, on a
 bounded planar rectangle. The implementation is optimized for building many independent cells
 efficiently; the sharded dedup/stitching core is geometry-agnostic and each geometry contributes

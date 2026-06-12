@@ -17,6 +17,20 @@ backend computes 2M cells in about a second on the same hardware, 3–4x faster 
 delaunator-based planar crates at that size (and the gap grows with n: per-point cost is near
 constant here versus their O(n log n)).
 
+## How it works
+
+Each cell is built independently — the *meshless* construction of [Ray et al. 2018 (Meshless
+Voronoi on the GPU)](https://doi.org/10.1145/3272127.3275092), here on CPU SIMD: clip a polygon
+by bisectors of nearby points, streamed nearest-first from a spatial grid whose ring bounds
+certify when the cell is provably complete (the classical "security radius" — typically after a
+few dozen candidates, independent of n). What the GPU paper deliberately doesn't do is the
+second half of this crate: stitching the independently-built cells into a single shared graph.
+Vertices are identified combinatorially (by generator triple, not by floating-point position),
+deduplicated shard-locally with deferred cross-shard patching — no locks or global maps in the
+hot loop — and a directed build order forwards each shared edge from the earlier cell to the
+later one, halving the clip work and coordinating vertex indices at the same time. The full
+story: [docs/how-it-works.md](docs/how-it-works.md).
+
 ## The correctness contract, in one paragraph
 
 The output is *essentially Voronoi*: the crate aims for a **hard topological guarantee** (the
@@ -159,6 +173,7 @@ backend actually solved, and strict validation of both views; `report.preferred_
 
 ## Documentation
 
+- How it works (the algorithm, for readers): `docs/how-it-works.md`
 - Correctness contract + coincidence policy: `docs/correctness-contract.md`
 - Design / algorithm notes (including the parallel-stitching consistency model):
   `docs/architecture.md`
