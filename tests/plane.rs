@@ -505,3 +505,42 @@ fn plane_fuzz_large() {
         );
     }
 }
+
+#[cfg(feature = "serde")]
+#[test]
+fn serde_roundtrip_preserves_plane_diagram_both_topologies() {
+    use s2_voronoi::compute_plane_periodic;
+
+    let rect = PlaneRect::new(PlanePoint::new(-1.0, 0.5), PlanePoint::new(2.0, 2.5));
+    let mut points = uniform_in(rect, 400, 909);
+    points.push(points[42]); // welded twin -> weld map must survive
+
+    let bounded = compute_plane(&points, rect).unwrap();
+    let periodic = compute_plane_periodic(&points, rect).unwrap();
+
+    for diagram in [&bounded, &periodic] {
+        let json = serde_json::to_string(diagram).expect("serialize");
+        let restored: PlanarVoronoi = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(restored.num_cells(), diagram.num_cells());
+        assert_eq!(restored.num_vertices(), diagram.num_vertices());
+        assert_eq!(restored.generators(), diagram.generators());
+        assert_eq!(restored.vertices(), diagram.vertices());
+        assert_eq!(restored.rect(), diagram.rect());
+        assert_eq!(restored.topology(), diagram.topology());
+        for i in 0..diagram.num_cells() {
+            assert_eq!(restored.cell(i), diagram.cell(i));
+        }
+        assert_eq!(restored.weld_map(), diagram.weld_map());
+        assert_eq!(restored.canonical_cell_index(400), 42);
+        let report = validation::validate_plane(&restored);
+        assert!(report.is_strictly_valid());
+
+        // Adjacency rebuilt from the restored diagram matches.
+        let adj = diagram.build_adjacency();
+        let adj_restored = restored.build_adjacency();
+        for i in 0..diagram.num_cells() {
+            assert_eq!(adj_restored.neighbors_of(i), adj.neighbors_of(i));
+        }
+    }
+}

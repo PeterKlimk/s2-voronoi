@@ -166,7 +166,8 @@ backend actually solved, and strict validation of both views; `report.preferred_
 
 - `parallel` (default): rayon parallelism in cell construction.
 - `glam`: public `UnitVec3Like` impl + conversions for `glam::Vec3` (glam is always an internal dep).
-- `serde`: Serialize/Deserialize for `UnitVec3`, `SphericalVoronoi` (weld map included), and
+- `serde`: Serialize/Deserialize for the diagram types — `SphericalVoronoi` and `PlanarVoronoi`
+  (weld map and topology included), `UnitVec3`, `PlanePoint`, `PlaneRect`, `PlaneTopology`, and
   `CellAdjacency`.
 - `timing`: detailed phase/sub-phase timing reports.
 - `qhull`: convex hull backend used for tests/bench comparisons only.
