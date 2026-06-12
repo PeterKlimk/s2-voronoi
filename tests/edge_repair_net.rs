@@ -30,10 +30,20 @@
 //!
 //! Bin boundaries lie on grid-cell lines, and grid resolution is a function
 //! of total point count — so the scaffold size steers bin boundaries across
-//! the (fixed) defect site without touching its bits. Pinned by probe sweep:
-//! scaffold 280k puts the one-sided defect cross-bin (CrossBinSingleSided at
-//! 36-54 bins), scaffold 320k puts two thirds-mismatch defects cross-bin
-//! (CrossBinThirdsMismatch at 36-54 bins).
+//! the (fixed) defect site without touching its bits. Pinned by probe sweep
+//! (re-pinned after P5 stage 0 moved the fingerprint): scaffold 280k+bins 12
+//! shows InBinUnconsumedCheck; scaffold 360k (also 560k) + bins 36-54 puts
+//! the one-sided defect cross-bin (CrossBinSingleSided).
+//!
+//! ## Post stage-0 landscape (input canonicalization, 2026-06)
+//!
+//! Entry canonicalization eliminated the natural defect population at 2M:
+//! uniform seeds 1-10 all produce ZERO unresolved edges (pre stage-0, seed 1
+//! had a 3-defect site). The windowed fixture still defects (different total
+//! n -> different grid -> different epsilon decisions), making it the only
+//! known deterministic sphere defect source — treat it as load-bearing.
+//! CrossBinThirdsMismatch lost its deterministic pin (see the coverage-gap
+//! note at its former test site).
 //!
 //! ## Bin layout and the defect set
 //!
@@ -50,7 +60,8 @@
 //! ## Origin coverage
 //!
 //! Deterministically exercised: InBinThirdsMismatch, InBinUnconsumedCheck,
-//! CrossBinThirdsMismatch, CrossBinSingleSided. Not covered:
+//! CrossBinSingleSided. CrossBinThirdsMismatch: deterministic pin lost at
+//! stage 0 (coverage gap, see above). Not covered:
 //! InBinMissingCheck (believed unreachable by construction — an edge to an
 //! earlier same-bin neighbor only enters a cell via a replayed seed, and a
 //! seed implies its check is present; the branch remains as a conservative
@@ -178,9 +189,11 @@ fn origins(out: &ComputeOutput) -> Vec<UnresolvedEdgeOrigin> {
     v
 }
 
-/// Within-bin detection paths: the small fixture must produce defects through
-/// both reachable in-bin cases at every bin count, with a bin-invariant
-/// defect set, and repair must restore strict validity.
+/// Within-bin thirds-mismatch detection: the small fixture must produce
+/// defects through InBinThirdsMismatch at every bin count, with a
+/// bin-invariant defect set, and repair must restore strict validity.
+/// (Post stage-0 the small fixture's case mix is thirds-mismatch only;
+/// the unconsumed-check case pins at scaffold 280k below.)
 #[test]
 fn net_in_bin_detection_and_repair() {
     let fixture = with_scaffold(&defect_window(), 2_000);
@@ -192,10 +205,6 @@ fn net_in_bin_detection_and_repair() {
         assert!(
             os.contains(&UnresolvedEdgeOrigin::InBinThirdsMismatch),
             "expected InBinThirdsMismatch at bins={bins:?}, got {os:?}"
-        );
-        assert!(
-            os.contains(&UnresolvedEdgeOrigin::InBinUnconsumedCheck),
-            "expected InBinUnconsumedCheck at bins={bins:?}, got {os:?}"
         );
         sets.push((bins, pair_set(&out)));
     }
@@ -209,63 +218,46 @@ fn net_in_bin_detection_and_repair() {
     }
 }
 
-/// Cross-bin one-sided detection: at scaffold 280k a bin boundary splits the
-/// site so the one-sided epsilon-edge defect is detected by the overflow
-/// matcher (CrossBinSingleSided). The defect set must match an in-bin
-/// control run of the same fixture.
+/// Within-bin unconsumed-check detection: at scaffold 280k with an in-bin
+/// layout, the one-sided epsilon-edge defect is detected by the later cell
+/// as an unconsumed incoming check.
+#[test]
+fn net_in_bin_unconsumed_check() {
+    let fixture = with_scaffold(&defect_window(), 280_000);
+    let out = compute_strict("in_bin_unconsumed", &fixture, Some(12));
+    let os = origins(&out);
+    assert!(
+        os.contains(&UnresolvedEdgeOrigin::InBinUnconsumedCheck),
+        "expected InBinUnconsumedCheck at scaffold 280k bins=12, got {os:?} \
+         (layout may have moved; re-run probe_scaffold_sweep)"
+    );
+}
+
+/// Cross-bin one-sided detection: at scaffold 360k with bins 36-54 a bin
+/// boundary splits the site so the one-sided epsilon-edge defect is
+/// detected by the overflow matcher (CrossBinSingleSided). No in-bin
+/// control comparison: post stage-0, the in-bin layouts of this fixture
+/// produce no defects at all (the defect set is layout-dependent when the
+/// boundary cuts the site; see module docs).
 #[test]
 fn net_cross_bin_single_sided() {
-    let fixture = with_scaffold(&defect_window(), 280_000);
-
-    let control = compute_strict("cross_single_control", &fixture, Some(12));
+    let fixture = with_scaffold(&defect_window(), 360_000);
     let split = compute_strict("cross_single_split", &fixture, Some(48));
-
     let os = origins(&split);
     assert!(
         os.contains(&UnresolvedEdgeOrigin::CrossBinSingleSided),
-        "expected CrossBinSingleSided at bins=48, got {os:?} \
+        "expected CrossBinSingleSided at scaffold 360k bins=48, got {os:?} \
          (bin layout may have moved; re-run probe_scaffold_sweep)"
-    );
-    // No pair-set equality here: when the bin boundary cuts the site, the
-    // pair's evaluation path itself changes (seed replay vs independent
-    // EmitAll clipping), and the epsilon disagreements legitimately differ.
-    // Measured at this scaffold: control sees 4 defects, split sees 3.
-    assert!(
-        !pair_set(&control).is_empty(),
-        "control run lost the defects"
     );
 }
 
-/// Cross-bin endpoint-identity mismatch: at scaffold 320k the bin boundary
-/// split routes two thirds-mismatch defects through the overflow matcher
-/// (CrossBinThirdsMismatch). The defect set must match an in-bin control.
-#[test]
-fn net_cross_bin_thirds_mismatch() {
-    let fixture = with_scaffold(&defect_window(), 320_000);
-
-    let control = compute_strict("cross_thirds_control", &fixture, Some(12));
-    let split = compute_strict("cross_thirds_split", &fixture, Some(48));
-
-    let os = origins(&split);
-    assert!(
-        os.contains(&UnresolvedEdgeOrigin::CrossBinThirdsMismatch),
-        "expected CrossBinThirdsMismatch at bins=48, got {os:?} \
-         (bin layout may have moved; re-run probe_scaffold_sweep)"
-    );
-    assert!(
-        !pair_set(&control).is_empty(),
-        "control run lost the defects"
-    );
-    // At this scaffold the two evaluation paths happen to agree on the
-    // defect set; pinned as a regression observation (see the single-sided
-    // test for why equality is not guaranteed in general).
-    assert_eq!(
-        pair_set(&control),
-        pair_set(&split),
-        "defect pair set changed between bin layouts at scaffold 320k \
-         (was measured equal; re-run probe_scaffold_sweep and update)"
-    );
-}
+// Coverage gap (post stage-0): CrossBinThirdsMismatch lost its deterministic
+// fixture — input canonicalization eliminated the configurations where the
+// thirds-mismatch defect family survived a bin-boundary split (sweeps over
+// scaffold 40k-640k x bins {12,36,48,54,96} found none; the family resolves
+// consistently when evaluated via the independent EmitAll path). The
+// detection branch remains; re-run probe_scaffold_sweep/probe_site_scan
+// after numerics changes to look for a new pin.
 
 /// Full-pipeline differential: the surgical in-place repair (production
 /// default) and the original full-rebuild oracle (`S2_EDGE_REPAIR_REBUILD=1`)
@@ -275,7 +267,7 @@ fn net_cross_bin_thirds_mismatch() {
 #[test]
 fn net_repair_backends_agree() {
     let window = defect_window();
-    for (scaffold_n, bins) in [(2_000usize, None), (280_000, Some(48)), (320_000, Some(48))] {
+    for (scaffold_n, bins) in [(2_000usize, None), (280_000, Some(12)), (360_000, Some(48))] {
         let fixture = with_scaffold(&window, scaffold_n);
         let name = format!("differential s={scaffold_n} bins={bins:?}");
 
@@ -334,7 +326,7 @@ fn net_repair_backends_agree() {
 #[ignore]
 fn probe_site_scan() {
     let mut candidates: Vec<(String, Vec<s2_voronoi::UnitVec3>)> = Vec::new();
-    for seed in 1..=4u64 {
+    for seed in 1..=10u64 {
         candidates.push((
             format!("uniform_2m_s{seed}"),
             random_sphere_points(2_000_000, seed),
@@ -402,9 +394,9 @@ fn probe_window() {
 #[ignore]
 fn probe_scaffold_sweep() {
     let window = defect_window();
-    for scaffold_n in (200_000usize..=440_000).step_by(40_000) {
+    for scaffold_n in (40_000usize..=640_000).step_by(40_000) {
         let fixture = with_scaffold(&window, scaffold_n);
-        for bins in [12usize, 36, 48, 54, 66, 96] {
+        for bins in [12usize, 36, 48, 54, 96] {
             let out = with_bin_count(Some(bins), || {
                 compute_with_report(&fixture, VoronoiConfig::default())
             });

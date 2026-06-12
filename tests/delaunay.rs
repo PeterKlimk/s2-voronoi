@@ -94,10 +94,12 @@ fn sphere_delaunay_empty_circumcircle() {
             cc = -cc;
         }
         let r_dot = cc.dot(a);
-        for (i, p) in points.iter().enumerate() {
-            let other = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
+        // Candidates come from the diagram's own generators: the pipeline
+        // canonicalizes inputs at entry (P5 stage 0), so the raw input
+        // points differ from the solved generator set by up to ~1 ulp.
+        for i in 0..diagram.num_cells() {
             assert!(
-                cc.dot(other) <= r_dot + 1e-9,
+                cc.dot(g(i as u32)) <= r_dot + 1e-9,
                 "generator {i} strictly inside circumcircle of {t:?}"
             );
         }

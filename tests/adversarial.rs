@@ -594,9 +594,15 @@ fn test_rotated_symmetric_pairs_resolve_without_welding() {
     use glam::DVec3;
     use s2_voronoi::{compute_with, PreprocessMode, VoronoiConfig};
 
-    // The rotated control from the seam probes: ulp pairs with the same
-    // relative geometry as the catastrophic seam-aligned regime, but at
-    // generic (rotated) positions, must resolve without welding.
+    // The rotated control from the seam probes: sub-weld pairs with the
+    // same relative geometry as the catastrophic seam-aligned regime, but
+    // at generic (rotated) positions, must resolve without welding.
+    //
+    // Twins are placed *tangentially* (~3e-7, sub-weld): entry
+    // canonicalization (P5 stage 0) erases radial-only ulp distinctions by
+    // design — a radial ulp is the same direction on the sphere — and a
+    // collapsed pair is an exact bit-duplicate, which `Disabled` has never
+    // supported (its contract requires no sub-weld pairs).
     let rot = glam::DQuat::from_euler(glam::EulerRot::XYZ, 0.71, 1.13, 2.41);
     let inv3 = 1.0f64 / 3.0f64.sqrt();
     let inv2 = 1.0f64 / 2.0f64.sqrt();
@@ -617,14 +623,15 @@ fn test_rotated_symmetric_pairs_resolve_without_welding() {
     let mut points = random_sphere_points(20_000, 11);
     for &c in &centers {
         let r = (rot * c).normalize();
-        let p = s2_voronoi::UnitVec3::new(r.x as f32, r.y as f32, r.z as f32);
-        let twin = s2_voronoi::UnitVec3::new(
-            if p.x.abs() > 0.5 { p.x.next_up() } else { p.x },
-            if p.y.abs() > 0.5 { p.y.next_up() } else { p.y },
-            if p.z.abs() > 0.5 { p.z.next_up() } else { p.z },
-        );
-        points.push(p);
-        points.push(twin);
+        let arbitrary = if r.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+        let t = r.cross(arbitrary).normalize();
+        let q = (r + t * 3e-7).normalize();
+        points.push(s2_voronoi::UnitVec3::new(
+            r.x as f32, r.y as f32, r.z as f32,
+        ));
+        points.push(s2_voronoi::UnitVec3::new(
+            q.x as f32, q.y as f32, q.z as f32,
+        ));
     }
 
     let result = compute_with(

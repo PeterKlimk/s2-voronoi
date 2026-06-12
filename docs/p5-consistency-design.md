@@ -251,9 +251,34 @@ cost is negligible).
 Staged, each stage behind the existing harnesses (NN contract suite, edge-repair
 net, fingerprint tests, paired benches):
 
-0. **Input canonicalization** (added after stage-1 findings): one
-   renormalization at pipeline entry; delete the per-builder f64
-   renormalization. Fingerprint moves; weld/coincidence tests re-validated.
+0. **Input canonicalization** (added after stage-1 findings). ~~Done~~ —
+   results below exceeded expectations:
+   - One f64 renormalization at entry (band-guarded against
+     contract-violating lengths); per-builder renormalization deleted. The
+     returned diagram's generators are now the canonicalized points (up to
+     ~1 ulp from raw input).
+   - **Required a real fix found by the contract tests**: the bisector's
+     chord compensation hard-coded |g|^2 = 1; with a raw (≤1-ulp-off)
+     generator, the uncompensated c error (~delta_g) amplified by 1/|n|
+     misplaced 2e-6-separation twin bisectors by ~3% of the chart. Fixed
+     exactly and free: scale = (|g|^2 + |h|^2)/(2|g|^2) with 0.5/|g|^2
+     cached per cell (bit-identical to legacy when |g|^2 == 1).
+   - **Natural defects at 2M went to ZERO** (uniform seeds 1-10; pre
+     stage-0, ~1 site per ~4 seeds). The renormalization asymmetry was the
+     dominant source of real cross-cell defects, not just shadow
+     disagreements. Fuzz sweeps 2-4.5M strictly valid; coincidence probes
+     unmoved. The edge-repair net re-pinned (CrossBinThirdsMismatch lost
+     its deterministic fixture — documented coverage gap).
+   - Radial-only ulp-distinct inputs now collapse to exact duplicates at
+     entry (a radial ulp is the same direction; under default Weld they
+     weld; under Disabled they were never supported).
+   - Post-stage-0 shadow audit: disagreements at 2M dropped ~25% (129k ->
+     98k); the remainder sits at 1e-5..1e-4 margins and is
+     computed-vertex conditioning (ill-conditioned lerped intersections),
+     not input bits — and produces zero cross-cell defects. NOTE for stage
+     2: the shadow histogram conflates platonic-vs-computed deviation with
+     chart-vs-chart divergence; placing EPS_FILTER needs a paired audit
+     comparing the two cells' local decisions for the same 4-tuple.
 1. **Canonical evaluator + escalation plumbing, decisions logged not applied.**
    ~~Done~~ (feature `p5_shadow`; findings above).
    Run the filter in shadow mode: count escalations, compare canonical answers

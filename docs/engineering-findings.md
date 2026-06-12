@@ -276,6 +276,9 @@ big-cell path). Performance issue, scale/distribution envelope.
 
 Context (2026-06): unresolved shared-edge mismatches occur at ~1-20 per multi-million uniform
 run (none below ~2M; 2M seed 1 has one 3-defect site, seeds 2-4 have none), and the cross-bin
+(Update, later in 2026-06: P5 stage-0 input canonicalization drove the natural 2M defect rate
+to zero across ten seeds — the dominant defect source was the per-builder renormalization
+asymmetry. The windowed net fixture remains the only known deterministic sphere defect source.)
 detection/repair paths had never been deliberately exercised — a defect x bin-boundary
 conjunction that uniform fuzzing essentially never samples, so a wrong repair could have hidden
 indefinitely.

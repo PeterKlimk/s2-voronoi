@@ -11,6 +11,17 @@ Initial release.
   site down to a ~1.7k-point fixture and exercises the in-bin and cross-bin
   detection/repair paths, asserting strict post-repair validity (see
   engineering-findings #13).
+- Input canonicalization (P5 stage 0): sphere inputs are renormalized once
+  at compute entry (f64-normalize, rounded back to f32) and the per-builder
+  renormalization is gone, so every pipeline stage consumes identical bits
+  per generator; the returned diagram's generators are the canonicalized
+  points (within ~1 ulp of the input). The bisector construction now
+  carries the exact two-sided chord compensation (free: one cached scale
+  per cell). Effect: natural unresolved-edge defects at 2M dropped to zero
+  across ten fuzz seeds (previously ~1 site per ~4 seeds) — the dominant
+  source of cross-cell epsilon disagreements was the renormalization
+  asymmetry. Note: inputs differing only radially (off-unit ulps) now
+  collapse to the same generator at entry.
 - The sphere weld is grid-integrated: the query grid is built on the raw
   points and doubles as the coincidence detector, and welds compact the
   grid's point arrays in place (bit-identical to a rebuild on the effective

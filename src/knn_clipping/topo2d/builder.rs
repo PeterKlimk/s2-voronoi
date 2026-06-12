@@ -62,6 +62,12 @@ pub(crate) struct GnomonicBuilder {
     pub(crate) generator: DVec3,
     pub(crate) basis: TangentBasis,
 
+    /// 0.5 / |generator|^2, cached per cell: the exact chord-bisector scale
+    /// correction for a generator that is (post stage-0) the raw f32 bits
+    /// rather than an f64-renormalized unit vector. Equal to 0.5 exactly for
+    /// exactly-unit generators, reproducing the legacy formula bit-for-bit.
+    inv_two_gg: f64,
+
     half_planes: Vec<HalfPlane>,
     neighbor_indices: Vec<usize>,
     neighbor_slots: Vec<u32>,

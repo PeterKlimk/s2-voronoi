@@ -22,6 +22,8 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     validate_generator_capacity(points.len())?;
     validate_generator_finiteness(&points)?;
+    let mut points = points;
+    canonicalize_unit_points(&mut points);
     let mut tb = TimingBuilder::new();
 
     let (effective_points, merge_result, _preprocess_report, grid) =
@@ -103,6 +105,8 @@ fn compute_voronoi_knn_clipping_report_core(
 ) -> Result<ComputeOutput, crate::VoronoiError> {
     validate_generator_capacity(points.len())?;
     validate_generator_finiteness(&points)?;
+    let mut points = points;
+    canonicalize_unit_points(&mut points);
     let mut tb = TimingBuilder::new();
 
     let (effective_points, merge_result, preprocess_report, grid) =
@@ -345,6 +349,25 @@ fn validate_generator_finiteness(points: &[Vec3]) -> Result<(), crate::VoronoiEr
 /// sweeps. The standalone quantized-key detector remains only for
 /// `MergeWithin` radii too large for grid adjacency. The resolution policy
 /// sees the raw count; welds are far too few to shift it.
+/// P5 stage 0: canonicalize input points once at entry — f64-normalize and
+/// round back to f32 — so every consumer (grid, weld, charts, certificates,
+/// and the P5 canonical predicates) sees identical bits per generator. The
+/// per-builder f64 renormalization is gone; without this pass the pipeline
+/// solved a ~1-ulp-perturbed, asymmetrically-treated point set (stage-1
+/// shadow findings, docs/p5-consistency-design.md). Out-of-band lengths
+/// (contract-violating inputs) are left untouched and fail downstream as
+/// before, rather than being turned into NaNs here.
+fn canonicalize_unit_points(points: &mut [Vec3]) {
+    for p in points.iter_mut() {
+        let v = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
+        let len_sq = v.length_squared();
+        if (0.25..=4.0).contains(&len_sq) {
+            let n = v / len_sq.sqrt();
+            *p = Vec3::new(n.x as f32, n.y as f32, n.z as f32);
+        }
+    }
+}
+
 fn prepare_points_and_grid(
     points: &[Vec3],
     preprocess_mode: PreprocessMode,
