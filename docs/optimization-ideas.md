@@ -77,6 +77,23 @@ The `fma` feature is off by default ("may be slower on some CPUs") but the
 reference Ryzen 3600 has hardware FMA. Changes results bit-wise (fingerprint
 moves), so it is a declared-policy experiment, not a free win.
 
+## Done (2026-06, periodic packed port)
+
+- **Packed SIMD stage for the periodic pipeline** (~2x at 500k ST: 1600ms ->
+  ~830ms, bringing the torus to within ~10% of the bounded plane): the
+  bounded packed stage was genericized over a `PackedGeometry` trait (box
+  enumeration, distance metric, outside-box certificate — monomorphized, the
+  bounded instantiation compiles to the pre-trait code) and the periodic
+  grid supplies wrapped boxes, an 8-lane minimum-image kernel
+  (`fp::dist_sqs_wrapped`, lane math identical to `wrap_abs`), and
+  wrapped-wall security bounds. Found and fixed in the process: re-clipping
+  a bit-identical plane is NOT a no-op for the unbounded-seeded periodic
+  builder (1e6 sentinel coordinates make clip-lerp drift exceed the clip
+  epsilon; the packed -> takeover overlap re-emits, and the re-clip cut
+  phantom slivers). The periodic driver now tracks clipped ids in the
+  sorted seed-skip set. The bounded/sphere builders are seeded bounded
+  (rect walls / gnomonic), where the no-op argument actually holds.
+
 ## Done (2026-06, "kernel contest" round; all bit-identical, paired-verified)
 
 - **Small-N sorting networks always-on** (~4% total at 500k ST): existed as

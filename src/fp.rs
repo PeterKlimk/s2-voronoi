@@ -167,6 +167,12 @@ impl PlaneChunk8 {
     pub(crate) fn dist_sqs(&self, qx: f32, qy: f32) -> Dists8 {
         Dists8(backend::dist_sq2(self.x, self.y, qx, qy))
     }
+
+    /// Lane-wise minimum-image squared distances on a torus.
+    #[inline(always)]
+    pub(crate) fn dist_sqs_wrapped(&self, qx: f32, qy: f32, px: f32, py: f32) -> Dists8 {
+        Dists8(backend::dist_sq2_wrapped(self.x, self.y, qx, qy, px, py))
+    }
 }
 
 impl Dists8 {
@@ -242,6 +248,25 @@ mod backend {
     pub(super) fn dist_sq2(x: V, y: V, qx: f32, qy: f32) -> V {
         let dx = x - f32x8::splat(qx);
         let dy = y - f32x8::splat(qy);
+        #[cfg(feature = "fma")]
+        {
+            dx.mul_add(dx, dy * dy)
+        }
+        #[cfg(not(feature = "fma"))]
+        {
+            dx * dx + dy * dy
+        }
+    }
+
+    /// Minimum-image squared distances on a torus with periods `(px, py)`.
+    /// Lane math mirrors `plane_grid::periodic::wrap_abs`: `|d|.min(p - |d|)`
+    /// per axis (coordinates and query are both inside `[0, p)`).
+    #[inline(always)]
+    pub(super) fn dist_sq2_wrapped(x: V, y: V, qx: f32, qy: f32, px: f32, py: f32) -> V {
+        let dx = (x - f32x8::splat(qx)).abs();
+        let dx = dx.min(f32x8::splat(px) - dx);
+        let dy = (y - f32x8::splat(qy)).abs();
+        let dy = dy.min(f32x8::splat(py) - dy);
         #[cfg(feature = "fma")]
         {
             dx.mul_add(dx, dy * dy)
@@ -339,6 +364,21 @@ mod backend {
         for i in 0..8 {
             let dx = x[i] - qx;
             let dy = y[i] - qy;
+            out[i] = super::fma_f32(dx, dx, dy * dy);
+        }
+        out
+    }
+
+    /// Scalar twin of the wide backend's minimum-image distances (identical
+    /// lane math).
+    #[inline(always)]
+    pub(super) fn dist_sq2_wrapped(x: V, y: V, qx: f32, qy: f32, px: f32, py: f32) -> V {
+        let mut out = [0.0f32; 8];
+        for i in 0..8 {
+            let dx = (x[i] - qx).abs();
+            let dx = dx.min(px - dx);
+            let dy = (y[i] - qy).abs();
+            let dy = dy.min(py - dy);
             out[i] = super::fma_f32(dx, dx, dy * dy);
         }
         out

@@ -11,9 +11,8 @@
 
 use crate::sort::sort_small as sort_small_u64;
 
-use super::super::{outside_box_dist_sq, PlaneGrid};
 use super::timing::{PlanePackedLapTimer, PlanePackedTimings};
-use super::{PlanePackedChunk, PlanePackedGroupInput, PlanePackedStage};
+use super::{PackedGeometry, PlanePackedChunk, PlanePackedGroupInput, PlanePackedStage};
 use crate::fp;
 use crate::policy::{PACKED_HI_BUDGET, PACKED_MAX_EXPAND_R2_CANDIDATES_PER_QUERY};
 
@@ -127,10 +126,10 @@ impl<'a, 'g> PlanePreparedGroup<'a, 'g> {
     }
 
     #[inline]
-    pub(super) fn ensure_tail_for(
+    pub(super) fn ensure_tail_for<G: PackedGeometry>(
         &mut self,
         qi: usize,
-        grid: &PlaneGrid,
+        grid: &G,
         timings: &mut PlanePackedTimings,
     ) {
         self.scratch
@@ -138,10 +137,10 @@ impl<'a, 'g> PlanePreparedGroup<'a, 'g> {
     }
 
     #[inline]
-    pub(super) fn ensure_expand_r2_band_for(
+    pub(super) fn ensure_expand_r2_band_for<G: PackedGeometry>(
         &mut self,
         qi: usize,
-        grid: &PlaneGrid,
+        grid: &G,
         timings: &mut PlanePackedTimings,
     ) -> bool {
         self.scratch
@@ -219,8 +218,8 @@ impl PlanePackedScratch {
     /// Classify a neighbor cell's SoA range for the directed filter (bin and
     /// cell-order properties hold cell-wide, so one decode per cell).
     #[inline]
-    fn classify_cell_range(
-        grid: &PlaneGrid,
+    fn classify_cell_range<G: PackedGeometry>(
+        grid: &G,
         cell: usize,
         center_cell: usize,
         query_bin: u8,
@@ -252,38 +251,23 @@ impl PlanePackedScratch {
         })
     }
 
-    /// Visit every in-grid cell of the Chebyshev-radius-`radius` box around
-    /// `(cx, cy)`, center included.
-    #[inline]
-    fn for_each_box_cell(
-        grid: &PlaneGrid,
-        cx: usize,
-        cy: usize,
-        radius: usize,
-        mut f: impl FnMut(usize),
-    ) {
-        let res = grid.res() as isize;
-        let r = radius as isize;
-        let (cx, cy) = (cx as isize, cy as isize);
-        for y in (cy - r).max(0)..=(cy + r).min(res - 1) {
-            for x in (cx - r).max(0)..=(cx + r).min(res - 1) {
-                f((y * res + x) as usize);
-            }
-        }
-    }
-
     #[cfg_attr(feature = "profiling", inline(never))]
     // Loop indices address several parallel per-query arrays at once;
     // iterator zips would obscure rather than clarify.
     #[allow(clippy::needless_range_loop)]
-    pub(crate) fn prepare_group<'a, 'g>(
+    pub(crate) fn prepare_group<'a, 'g, G: PackedGeometry>(
         &'a mut self,
-        grid: &PlaneGrid,
+        grid: &G,
         group: PlanePackedGroupInput<'g>,
         timings: &mut PlanePackedTimings,
     ) -> PlanePreparedGroupStatus<'a, 'g> {
         timings.clear();
         group.debug_assert_matches_grid(grid);
+        // Wrapped boxes must enumerate distinct cells (tiny torus grids
+        // fall back to the shell stream, which stamps visited cells).
+        if !grid.box_radius_distinct(1) {
+            return PlanePreparedGroupStatus::SlowPath;
+        }
 
         let cell = group.cell();
         let queries = group.queries();
@@ -316,7 +300,7 @@ impl PlanePackedScratch {
             soa_end: q_end,
             kind: PackedCellRangeKind::CrossBin,
         });
-        Self::for_each_box_cell(grid, cx, cy, 1, |ncell| {
+        grid.for_each_box_cell(cx, cy, 1, |ncell| {
             if ncell == cell {
                 return;
             }
@@ -353,15 +337,15 @@ impl PlanePackedScratch {
 
         // live_dedup invariant: groups are complete center-cell runs in slot
         // order, so the query coordinates are the center cell's SoA slices.
-        let qx_src = &grid.cell_points_x[q_start..q_end];
-        let qy_src = &grid.cell_points_y[q_start..q_end];
+        let qx_src = &grid.points_x()[q_start..q_end];
+        let qy_src = &grid.points_y()[q_start..q_end];
 
         // Security: exact lower bound on anything outside the 3x3 box.
         self.security_thresholds.clear();
         self.security_thresholds.reserve(num_queries);
         for qi in 0..num_queries {
             self.security_thresholds
-                .push(outside_box_dist_sq(grid, cx, cy, 1, qx_src[qi], qy_src[qi]));
+                .push(grid.outside_box_dist_sq(cx, cy, 1, qx_src[qi], qy_src[qi]));
         }
         timings.add_security_thresholds(t.lap());
 
@@ -405,7 +389,7 @@ impl PlanePackedScratch {
             // position qi only sees candidates at positions >= qi.
             let qi_end = (i + 8).min(num_queries);
             for qi in 0..qi_end {
-                let dists = candidates.dist_sqs(xs[qi], ys[qi]);
+                let dists = grid.chunk_dist_sqs(&candidates, xs[qi], ys[qi]);
                 let mut mask_bits = dists.mask_lt(security_thresholds[qi]);
                 if mask_bits == 0 {
                     continue;
@@ -442,9 +426,7 @@ impl PlanePackedScratch {
                 if qi == pos {
                     continue;
                 }
-                let dx = xs[pos] - xs[qi];
-                let dy = ys[pos] - ys[qi];
-                let dist_sq = dx * dx + dy * dy;
+                let dist_sq = grid.dist_sq(xs[pos], ys[pos], xs[qi], ys[qi]);
                 if dist_sq < security_thresholds[qi] {
                     chunk0_keys[qi].push(make_asc_key(dist_sq, slot));
                 }
@@ -513,15 +495,15 @@ impl PlanePackedScratch {
             }
             let soa_start = r.soa_start;
             let range_len = r.soa_end - soa_start;
-            let rxs = &grid.cell_points_x[soa_start..r.soa_end];
-            let rys = &grid.cell_points_y[soa_start..r.soa_end];
+            let rxs = &grid.points_x()[soa_start..r.soa_end];
+            let rys = &grid.points_y()[soa_start..r.soa_end];
 
             let full_chunks = range_len / 8;
             for chunk in 0..full_chunks {
                 let i = chunk * 8;
                 let candidates = fp::PlaneChunk8::from_slices(&rxs[i..], &rys[i..]);
                 for qi in 0..num_queries {
-                    let dists = candidates.dist_sqs(xs[qi], ys[qi]);
+                    let dists = grid.chunk_dist_sqs(&candidates, xs[qi], ys[qi]);
                     let mut mask_bits = dists.mask_lt(thresholds[qi]);
                     if mask_bits == 0 {
                         continue;
@@ -545,7 +527,7 @@ impl PlanePackedScratch {
                 ybuf[..rem].copy_from_slice(&rys[i..]);
                 let candidates = fp::PlaneChunk8::from_arrays(xbuf, ybuf);
                 for qi in 0..num_queries {
-                    let dists = candidates.dist_sqs(xs[qi], ys[qi]);
+                    let dists = grid.chunk_dist_sqs(&candidates, xs[qi], ys[qi]);
                     let mut mask_bits = dists.mask_lt(thresholds[qi]) & valid_bits;
                     if mask_bits == 0 {
                         continue;
@@ -571,12 +553,12 @@ impl PlanePackedScratch {
 
     /// Lazily build the tail for one query: the [threshold, security) band
     /// over the ring cells (demoted center candidates are already stored).
-    fn ensure_tail_for(
+    fn ensure_tail_for<G: PackedGeometry>(
         &mut self,
         qi: usize,
         group_queries: &[u32],
         group_gen: u32,
-        grid: &PlaneGrid,
+        grid: &G,
         timings: &mut PlanePackedTimings,
     ) {
         let Some(gen) = self.tail_ready_gen.get(qi).copied() else {
@@ -591,8 +573,8 @@ impl PlanePackedScratch {
         timings.inc_tail_builds();
 
         let query_slot = group_queries[qi];
-        let qx = grid.cell_points_x[query_slot as usize];
-        let qy = grid.cell_points_y[query_slot as usize];
+        let qx = grid.points_x()[query_slot as usize];
+        let qy = grid.points_y()[query_slot as usize];
         let security = self.security_thresholds[qi];
         let t_hi = self.thresholds[qi];
 
@@ -603,14 +585,14 @@ impl PlanePackedScratch {
             }
             let soa_start = r.soa_start;
             let range_len = r.soa_end - soa_start;
-            let rxs = &grid.cell_points_x[soa_start..r.soa_end];
-            let rys = &grid.cell_points_y[soa_start..r.soa_end];
+            let rxs = &grid.points_x()[soa_start..r.soa_end];
+            let rys = &grid.points_y()[soa_start..r.soa_end];
 
             let full_chunks = range_len / 8;
             for chunk in 0..full_chunks {
                 let i = chunk * 8;
                 let candidates = fp::PlaneChunk8::from_slices(&rxs[i..], &rys[i..]);
-                let dists = candidates.dist_sqs(qx, qy);
+                let dists = grid.chunk_dist_sqs(&candidates, qx, qy);
                 let safe_bits = dists.mask_lt(security);
                 let hi_bits = dists.mask_lt(t_hi);
                 let mut tail_bits = safe_bits & !hi_bits;
@@ -633,9 +615,7 @@ impl PlanePackedScratch {
                 if slot == query_slot {
                     continue;
                 }
-                let dx = rxs[i] - qx;
-                let dy = rys[i] - qy;
-                let dist_sq = dx * dx + dy * dy;
+                let dist_sq = grid.dist_sq(rxs[i], rys[i], qx, qy);
                 if dist_sq < security && dist_sq >= t_hi {
                     self.tail_keys[qi].push(make_asc_key(dist_sq, slot));
                 }
@@ -648,9 +628,9 @@ impl PlanePackedScratch {
         }
     }
 
-    fn ensure_expand_r2_cells(
+    fn ensure_expand_r2_cells<G: PackedGeometry>(
         &mut self,
-        grid: &PlaneGrid,
+        grid: &G,
         group: PlanePackedGroupInput<'_>,
         group_gen: u32,
     ) {
@@ -664,7 +644,7 @@ impl PlanePackedScratch {
         let center = group.cell();
         let (cx, cy) = (center % res, center / res);
         let mut ranges: Vec<PackedCellRange> = Vec::new();
-        Self::for_each_box_cell(grid, cx, cy, 2, |cell| {
+        grid.for_each_box_cell(cx, cy, 2, |cell| {
             if let Some(range) = Self::classify_cell_range(
                 grid,
                 cell,
@@ -681,12 +661,12 @@ impl PlanePackedScratch {
     }
 
     /// Lower bound on dist_sq of anything outside the 5x5 box (lazy).
-    fn ensure_security2_for(
+    fn ensure_security2_for<G: PackedGeometry>(
         &mut self,
         qi: usize,
         group: PlanePackedGroupInput<'_>,
         group_gen: u32,
-        grid: &PlaneGrid,
+        grid: &G,
     ) -> f32 {
         self.ensure_cold_query_storage(group.queries().len());
         if self.security2_ready_gen[qi] == group_gen {
@@ -696,13 +676,12 @@ impl PlanePackedScratch {
         let center = group.cell();
         let (cx, cy) = (center % res, center / res);
         let query_slot = group.queries()[qi] as usize;
-        let security = outside_box_dist_sq(
-            grid,
+        let security = grid.outside_box_dist_sq(
             cx,
             cy,
             2,
-            grid.cell_points_x[query_slot],
-            grid.cell_points_y[query_slot],
+            grid.points_x()[query_slot],
+            grid.points_y()[query_slot],
         );
         self.security2[qi] = security;
         self.security2_ready_gen[qi] = group_gen;
@@ -713,14 +692,19 @@ impl PlanePackedScratch {
     /// the 5x5 box with `security1 <= dist_sq < security2`. Returns false
     /// when the band exceeds the per-query cap (caller falls through to the
     /// shell takeover).
-    fn ensure_expand_r2_band_for(
+    fn ensure_expand_r2_band_for<G: PackedGeometry>(
         &mut self,
         qi: usize,
         group: PlanePackedGroupInput<'_>,
         group_gen: u32,
-        grid: &PlaneGrid,
+        grid: &G,
         timings: &mut PlanePackedTimings,
     ) -> bool {
+        if !grid.box_radius_distinct(2) {
+            // Tiny wrapped grids: the 5x5 box would revisit cells; hand off
+            // to the shell takeover instead.
+            return false;
+        }
         self.ensure_cold_query_storage(group.queries().len());
         if self.expand2_ready_gen[qi] == group_gen {
             return true;
@@ -730,8 +714,8 @@ impl PlanePackedScratch {
         self.ensure_expand_r2_cells(grid, group, group_gen);
 
         let query_slot = group.queries()[qi];
-        let qx = grid.cell_points_x[query_slot as usize];
-        let qy = grid.cell_points_y[query_slot as usize];
+        let qx = grid.points_x()[query_slot as usize];
+        let qy = grid.points_y()[query_slot as usize];
         let security1 = self.security_thresholds[qi];
         let center_range = self.cell_ranges[0];
 
@@ -758,9 +742,7 @@ impl PlanePackedScratch {
                 {
                     continue;
                 }
-                let dx = grid.cell_points_x[slot] - qx;
-                let dy = grid.cell_points_y[slot] - qy;
-                let dist_sq = dx * dx + dy * dy;
+                let dist_sq = grid.dist_sq(grid.points_x()[slot], grid.points_y()[slot], qx, qy);
                 if dist_sq >= security1 && dist_sq < security2 {
                     keys.push(make_asc_key(dist_sq, slot_u32));
                     if keys.len() > PACKED_MAX_EXPAND_R2_CANDIDATES_PER_QUERY {

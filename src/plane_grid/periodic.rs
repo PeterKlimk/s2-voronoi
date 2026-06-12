@@ -10,9 +10,12 @@
 //! enumeration. Certificates are wrapped box distances with the same
 //! wall-classification slack as the bounded grid.
 //!
-//! Like the bounded plane's first iteration, the periodic stream is
-//! shell-expansion only; a packed SIMD stage can slot in later behind the
-//! same frontier protocol.
+//! The neighbor stream runs the shared packed SIMD stage first (the
+//! [`super::packed::PackedGeometry`] seam supplies wrapped boxes,
+//! minimum-image distances, and wrapped-wall certificates), then the
+//! shell-expansion takeover re-covers everything. The driver must not
+//! re-clip a re-emitted neighbor (see the periodic driver), because the
+//! unbounded seed makes re-clips non-idempotent.
 
 use glam::Vec2;
 
@@ -166,11 +169,39 @@ impl PeriodicGrid {
         self.point_slots[idx]
     }
 
-    // Used by the packed periodic stage when it lands (cell-grouped runs).
-    #[allow(dead_code)]
     #[inline]
     pub(crate) fn point_index_to_cell(&self, idx: usize) -> usize {
         self.point_cells[idx] as usize
+    }
+
+    /// Lower bound on the minimum-image squared distance from `(qx, qy)`
+    /// to anything outside the wrapped cell box of Chebyshev radius `k`
+    /// around `(cx, cy)`; INFINITY once the box covers the torus. The
+    /// wrapped sibling of the bounded grid's `outside_box_dist_sq`.
+    #[inline]
+    pub(crate) fn outside_wrapped_box_dist_sq(
+        &self,
+        cx: usize,
+        cy: usize,
+        k: usize,
+        qx: f32,
+        qy: f32,
+    ) -> f32 {
+        let res = self.res;
+        if 2 * k + 1 >= res {
+            return f32::INFINITY;
+        }
+        let mut d = f32::INFINITY;
+        let lo_x = (cx + res - k) % res; // left wall index of the box
+        let hi_x = (cx + k + 1) % res; // right wall index
+        let lo_y = (cy + res - k) % res;
+        let hi_y = (cy + k + 1) % res;
+        d = d.min(self.wall_dist(qx, 0, lo_x));
+        d = d.min(self.wall_dist(qx, 0, hi_x));
+        d = d.min(self.wall_dist(qy, 1, lo_y));
+        d = d.min(self.wall_dist(qy, 1, hi_y));
+        let d = d.max(0.0);
+        d * d
     }
 
     /// Minimum-image distance from `q` to the nearest point of the wrapped
@@ -270,6 +301,72 @@ impl PeriodicGrid {
                 out.push((index, qi));
             }
         }
+    }
+}
+
+impl super::packed::PackedGeometry for PeriodicGrid {
+    #[inline(always)]
+    fn res(&self) -> usize {
+        PeriodicGrid::res(self)
+    }
+
+    #[inline(always)]
+    fn cell_offsets(&self) -> &[u32] {
+        PeriodicGrid::cell_offsets(self)
+    }
+
+    #[inline(always)]
+    fn points_x(&self) -> &[f32] {
+        &self.cell_points_x
+    }
+
+    #[inline(always)]
+    fn points_y(&self) -> &[f32] {
+        &self.cell_points_y
+    }
+
+    /// Wrapped box: every cell of the (2r+1)^2 neighborhood modulo the
+    /// resolution. Distinctness (no cell visited twice) is guaranteed by
+    /// [`Self::box_radius_distinct`], which gates the packed stage.
+    #[inline(always)]
+    fn for_each_box_cell(&self, cx: usize, cy: usize, radius: usize, mut f: impl FnMut(usize)) {
+        let res = self.res as isize;
+        let r = radius as isize;
+        let (cx, cy) = (cx as isize, cy as isize);
+        for y in (cy - r)..=(cy + r) {
+            let yw = y.rem_euclid(res) as usize;
+            for x in (cx - r)..=(cx + r) {
+                let xw = x.rem_euclid(res) as usize;
+                f(yw * res as usize + xw);
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn box_radius_distinct(&self, radius: usize) -> bool {
+        // The (2r+1)-wide wrapped box enumerates distinct cells iff it spans
+        // at most the full resolution.
+        2 * radius < self.res
+    }
+
+    #[inline(always)]
+    fn chunk_dist_sqs(
+        &self,
+        chunk: &crate::fp::PlaneChunk8,
+        qx: f32,
+        qy: f32,
+    ) -> crate::fp::Dists8 {
+        chunk.dist_sqs_wrapped(qx, qy, self.px, self.py)
+    }
+
+    #[inline(always)]
+    fn dist_sq(&self, x: f32, y: f32, qx: f32, qy: f32) -> f32 {
+        min_image_dist_sq(Vec2::new(x, y), Vec2::new(qx, qy), self.px, self.py)
+    }
+
+    #[inline(always)]
+    fn outside_box_dist_sq(&self, cx: usize, cy: usize, radius: usize, qx: f32, qy: f32) -> f32 {
+        self.outside_wrapped_box_dist_sq(cx, cy, radius, qx, qy)
     }
 }
 
@@ -396,28 +493,11 @@ impl<'a, 'b> PeriodicShellFrontier<'a, 'b> {
 
     /// Lower bound on the minimum-image squared distance from the query to
     /// anything outside the wrapped box of Chebyshev radius `k`. INFINITY
-    /// once the box covers the torus.
+    /// once the box covers the torus (ring collection is stamped, so once
+    /// the box arithmetic covers both axes everything has been visited).
     fn unseen_bound_after(&self, k: usize) -> f32 {
-        let res = self.grid.res;
-        // The wrapped box covers an axis entirely once it spans res cells.
-        let covers = 2 * k + 1 >= res;
-        if covers {
-            // The box may still not cover the torus if only reached this
-            // ring partially — but ring collection is stamped, so once the
-            // box arithmetic covers both axes everything has been visited.
-            return f32::INFINITY;
-        }
-        let mut d = f32::INFINITY;
-        let lo_x = (self.cx + res - k) % res; // left wall index of the box
-        let hi_x = (self.cx + k + 1) % res; // right wall index
-        let lo_y = (self.cy + res - k) % res;
-        let hi_y = (self.cy + k + 1) % res;
-        d = d.min(self.grid.wall_dist(self.query.x, 0, lo_x));
-        d = d.min(self.grid.wall_dist(self.query.x, 0, hi_x));
-        d = d.min(self.grid.wall_dist(self.query.y, 1, lo_y));
-        d = d.min(self.grid.wall_dist(self.query.y, 1, hi_y));
-        let d = d.max(0.0);
-        d * d
+        self.grid
+            .outside_wrapped_box_dist_sq(self.cx, self.cy, k, self.query.x, self.query.y)
     }
 
     fn build_pending(&mut self) {
@@ -488,10 +568,15 @@ impl<'a, 'b> PeriodicShellFrontier<'a, 'b> {
     }
 }
 
-/// Directed neighbor stream over the periodic grid (shell-expansion only;
-/// the packed stage slots in later behind the same protocol).
-pub(crate) struct PeriodicNeighborStream<'a, 'b> {
+/// Directed neighbor stream over the periodic grid: the packed SIMD stages
+/// (when a prepared group is supplied) followed by the shell-expansion
+/// takeover, which re-covers everything the packed stages may have skipped
+/// (the consumer dedups) — the wrapped twin of `PlaneNeighborStream`.
+pub(crate) struct PeriodicNeighborStream<'a, 'b, 'p, 'g> {
+    grid: &'a PeriodicGrid,
     takeover: PeriodicShellFrontier<'a, 'b>,
+    packed: Option<super::packed::PlanePackedQuery<'a, 'p, 'g>>,
+    in_packed: bool,
     knn_exhausted: bool,
 }
 
@@ -506,18 +591,27 @@ pub(crate) struct PeriodicNeighborBatch {
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum PeriodicNeighborFrontier {
     ExactBatch(PeriodicNeighborBatch),
+    /// No batch at this stage boundary, but everything unseen is at least
+    /// this far away; the consumer may terminate against the bound or
+    /// `advance_frontier` to the next stage.
+    UnknownButBounded {
+        dist_lower_bound: f32,
+    },
     Exhausted,
 }
 
-impl<'a, 'b> PeriodicNeighborStream<'a, 'b> {
+impl<'a, 'b, 'p, 'g> PeriodicNeighborStream<'a, 'b, 'p, 'g> {
     pub(crate) fn new(
         grid: &'a PeriodicGrid,
         points: &[Vec2],
         query_idx: usize,
         scratch: &'a mut PeriodicGridScratch,
         eligibility: DirectedEligibility<'b>,
+        packed: Option<super::packed::PlanePackedQuery<'a, 'p, 'g>>,
     ) -> Self {
+        let in_packed = packed.is_some();
         Self {
+            grid,
             takeover: PeriodicShellFrontier::new(
                 grid,
                 points[query_idx],
@@ -525,6 +619,8 @@ impl<'a, 'b> PeriodicNeighborStream<'a, 'b> {
                 scratch,
                 eligibility,
             ),
+            packed,
+            in_packed,
             knn_exhausted: false,
         }
     }
@@ -534,6 +630,28 @@ impl<'a, 'b> PeriodicNeighborStream<'a, 'b> {
         out: &mut Vec<u32>,
         dists: &mut Vec<f32>,
     ) -> PeriodicNeighborFrontier {
+        out.clear();
+        dists.clear();
+        while self.in_packed {
+            let packed = self
+                .packed
+                .as_mut()
+                .expect("packed stage requires packed query state");
+            match packed.frontier(out, dists) {
+                super::packed::PlanePackedFrontier::ExactBatch(batch) => {
+                    return PeriodicNeighborFrontier::ExactBatch(PeriodicNeighborBatch {
+                        n: batch.n,
+                        unseen_bound: batch.unseen_bound,
+                    });
+                }
+                super::packed::PlanePackedFrontier::UnknownButBounded { dist_lower_bound } => {
+                    return PeriodicNeighborFrontier::UnknownButBounded { dist_lower_bound };
+                }
+                super::packed::PlanePackedFrontier::Exhausted => {
+                    self.in_packed = false;
+                }
+            }
+        }
         if let Some(batch) = self.takeover.frontier(out, dists) {
             PeriodicNeighborFrontier::ExactBatch(PeriodicNeighborBatch {
                 n: batch.n,
@@ -546,6 +664,18 @@ impl<'a, 'b> PeriodicNeighborStream<'a, 'b> {
     }
 
     pub(crate) fn advance_frontier(&mut self) {
+        if self.in_packed {
+            let grid = self.grid;
+            let packed = self
+                .packed
+                .as_mut()
+                .expect("packed stage requires packed query state");
+            packed.advance_frontier(grid);
+            if packed.is_exhausted() {
+                self.in_packed = false;
+            }
+            return;
+        }
         self.takeover.advance();
     }
 
@@ -562,8 +692,13 @@ impl<'a, 'b> PeriodicNeighborStream<'a, 'b> {
 #[cfg(test)]
 #[allow(clippy::needless_range_loop, clippy::while_let_loop)]
 mod tests {
+    use super::super::packed::{
+        PlanePackedGroupInput, PlanePackedQuery, PlanePackedScratch, PlanePackedTimings,
+        PlanePreparedGroupStatus,
+    };
     use super::*;
     use crate::packed_layout::PackedSlotLayout;
+    use crate::policy::PackedNeighborPolicy;
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
@@ -642,22 +777,17 @@ mod tests {
                 .collect()
         }
 
-        fn collect_and_check(&self, name: &str, query_slot: u32) {
+        fn collect_and_check(
+            &self,
+            name: &str,
+            query_slot: u32,
+            mut stream: PeriodicNeighborStream<'_, '_, '_, '_>,
+        ) {
             let eligible = self.brute_eligible(query_slot);
             let mut unseen: std::collections::HashSet<u32> = eligible.iter().copied().collect();
             let mut emitted: std::collections::HashSet<u32> = Default::default();
             let mut batch = Vec::new();
             let mut dists = Vec::new();
-
-            let query_idx = self.grid.point_indices()[query_slot as usize] as usize;
-            let ctx = DirectedEligibility::from_layout(
-                self.bin_of_cell[self.cell_of_slot[query_slot as usize]],
-                query_slot,
-                self.layout(),
-            );
-            let mut scratch = self.grid.make_scratch();
-            let mut stream =
-                PeriodicNeighborStream::new(&self.grid, &self.points, query_idx, &mut scratch, ctx);
 
             let nearest_unseen = |unseen: &std::collections::HashSet<u32>| -> f32 {
                 unseen
@@ -675,6 +805,8 @@ mod tests {
                         );
                         for &slot in &batch[..result.n] {
                             assert_ne!(slot, query_slot, "{name}: emitted the query itself");
+                            // Packed -> takeover overlap may re-emit; the
+                            // consumer dedups, so the harness tolerates it.
                             emitted.insert(slot);
                             unseen.remove(&slot);
                         }
@@ -683,6 +815,16 @@ mod tests {
                             "{name}: unseen_bound {} overstates an unseen point at {} \
                              (query slot {query_slot})",
                             result.unseen_bound,
+                            nearest_unseen(&unseen)
+                        );
+                        stream.advance_frontier();
+                    }
+                    PeriodicNeighborFrontier::UnknownButBounded { dist_lower_bound } => {
+                        assert!(
+                            nearest_unseen(&unseen) >= dist_lower_bound - DIST_SQ_TOL,
+                            "{name}: stage bound {} overstates an unseen point at {} \
+                             (query slot {query_slot})",
+                            dist_lower_bound,
                             nearest_unseen(&unseen)
                         );
                         stream.advance_frontier();
@@ -701,11 +843,85 @@ mod tests {
             );
         }
 
+        /// Run the contract for every (sampled) query through the
+        /// takeover-only path and, per center cell, the packed path
+        /// (mirrors the bounded harness).
         fn check_all(&self, name: &str) {
             let n = self.points.len();
             let stride = (n / 96).max(1);
             for slot in (0..n as u32).step_by(stride) {
-                self.collect_and_check(name, slot);
+                let query_idx = self.grid.point_indices()[slot as usize] as usize;
+                let ctx = DirectedEligibility::from_layout(
+                    self.bin_of_cell[self.cell_of_slot[slot as usize]],
+                    slot,
+                    self.layout(),
+                );
+                let mut scratch = self.grid.make_scratch();
+                let stream = PeriodicNeighborStream::new(
+                    &self.grid,
+                    &self.points,
+                    query_idx,
+                    &mut scratch,
+                    ctx,
+                    None,
+                );
+                self.collect_and_check(&format!("{name}/takeover"), slot, stream);
+            }
+
+            let num_cells = self.grid.cell_offsets().len() - 1;
+            for cell in 0..num_cells {
+                let start = self.grid.cell_offsets()[cell] as usize;
+                let end = self.grid.cell_offsets()[cell + 1] as usize;
+                if start == end {
+                    continue;
+                }
+                let queries: Vec<u32> = (start..end).map(|s| s as u32).collect();
+                let group = PlanePackedGroupInput::new(
+                    cell,
+                    self.bin_of_cell[cell],
+                    &queries,
+                    start as u32,
+                    self.layout(),
+                );
+                for &expand_r2 in &[false, true] {
+                    let mut packed_scratch = PlanePackedScratch::new();
+                    let mut timings = PlanePackedTimings;
+                    let PlanePreparedGroupStatus::Ready(mut prepared) =
+                        packed_scratch.prepare_group(&self.grid, group, &mut timings)
+                    else {
+                        // SlowPath groups (incl. tiny wrapped grids) are
+                        // exercised by the takeover-only pass.
+                        continue;
+                    };
+                    for (qi, &slot) in queries.iter().enumerate() {
+                        let query_idx = self.grid.point_indices()[slot as usize] as usize;
+                        let ctx = DirectedEligibility::from_layout(
+                            self.bin_of_cell[cell],
+                            slot,
+                            self.layout(),
+                        );
+                        let mut scratch = self.grid.make_scratch();
+                        let packed = PlanePackedQuery::new(
+                            &mut prepared,
+                            &mut timings,
+                            qi,
+                            PackedNeighborPolicy::for_point_count(self.points.len(), expand_r2),
+                        );
+                        let stream = PeriodicNeighborStream::new(
+                            &self.grid,
+                            &self.points,
+                            query_idx,
+                            &mut scratch,
+                            ctx,
+                            Some(packed),
+                        );
+                        self.collect_and_check(
+                            &format!("{name}/packed_r2={expand_r2}"),
+                            slot,
+                            stream,
+                        );
+                    }
+                }
             }
         }
     }
@@ -773,6 +989,118 @@ mod tests {
             points.push(points[i * 11]);
         }
         Harness::new(points, 4, 1, 1.0, 1.0).check_all("duplicates");
+    }
+
+    #[test]
+    fn periodic_nn_pipeline_repro_aniso_block_bins() {
+        // Exact shape of the failing pipeline config: anisotropic torus
+        // (py = 0.25), n = 800, res 7, 4x4 block bins of stride 2 —
+        // every slot checked through both stream paths.
+        // Reproduce the pipeline's exact normalized points: rect
+        // (-3,2)-(5,4), seed 203, scale 1/8, wrapped into [0,p).
+        let next_below = |p: f32| f32::from_bits(p.to_bits() - 1);
+        let mut r = rng(203);
+        let points: Vec<Vec2> = (0..800)
+            .map(|_| {
+                let x = r.gen_range(-3.0f32..5.0);
+                let y = r.gen_range(2.0f32..4.0);
+                let nx = (x - -3.0) * 0.125;
+                let ny = (y - 2.0) * 0.125;
+                Vec2::new(
+                    nx.rem_euclid(1.0).min(next_below(1.0)),
+                    ny.rem_euclid(0.25).min(next_below(0.25)),
+                )
+            })
+            .collect();
+        let res = 7usize;
+        let grid = PeriodicGrid::new(&points, res, 1.0, 0.25);
+        let num_cells = res * res;
+        let bin_stride = 2usize;
+        let bin_res = res.div_ceil(bin_stride);
+        let bin_of_cell: Vec<u8> = (0..num_cells)
+            .map(|cell| {
+                let ix = cell % res;
+                let iy = cell / res;
+                let bu = (ix / bin_stride).min(bin_res - 1);
+                let bv = (iy / bin_stride).min(bin_res - 1);
+                (bv * bin_res + bu) as u8
+            })
+            .collect();
+        let mut cell_of_slot = vec![0usize; points.len()];
+        let mut slot_gen_map = vec![0u32; points.len()];
+        for cell in 0..num_cells {
+            let start = grid.cell_offsets()[cell] as usize;
+            let end = grid.cell_offsets()[cell + 1] as usize;
+            for slot in start..end {
+                cell_of_slot[slot] = cell;
+                slot_gen_map[slot] = ((bin_of_cell[cell] as u32) << LOCAL_SHIFT) | slot as u32;
+            }
+        }
+        let h = Harness {
+            points,
+            grid,
+            slot_gen_map,
+            cell_of_slot,
+            bin_of_cell,
+            px: 1.0,
+            py: 0.25,
+        };
+        // Check every slot (no stride): failures here are sparse.
+        for slot in 0..h.points.len() as u32 {
+            let query_idx = h.grid.point_indices()[slot as usize] as usize;
+            let ctx = DirectedEligibility::from_layout(
+                h.bin_of_cell[h.cell_of_slot[slot as usize]],
+                slot,
+                h.layout(),
+            );
+            let mut scratch = h.grid.make_scratch();
+            let stream =
+                PeriodicNeighborStream::new(&h.grid, &h.points, query_idx, &mut scratch, ctx, None);
+            h.collect_and_check("repro/takeover", slot, stream);
+        }
+        let num_cells = h.grid.cell_offsets().len() - 1;
+        for cell in 0..num_cells {
+            let start = h.grid.cell_offsets()[cell] as usize;
+            let end = h.grid.cell_offsets()[cell + 1] as usize;
+            if start == end {
+                continue;
+            }
+            let queries: Vec<u32> = (start..end).map(|s| s as u32).collect();
+            let group = PlanePackedGroupInput::new(
+                cell,
+                h.bin_of_cell[cell],
+                &queries,
+                start as u32,
+                h.layout(),
+            );
+            let mut packed_scratch = PlanePackedScratch::new();
+            let mut timings = PlanePackedTimings;
+            let PlanePreparedGroupStatus::Ready(mut prepared) =
+                packed_scratch.prepare_group(&h.grid, group, &mut timings)
+            else {
+                continue;
+            };
+            for (qi, &slot) in queries.iter().enumerate() {
+                let query_idx = h.grid.point_indices()[slot as usize] as usize;
+                let ctx = DirectedEligibility::from_layout(h.bin_of_cell[cell], slot, h.layout());
+                let mut scratch = h.grid.make_scratch();
+                let packed = PlanePackedQuery::new(
+                    &mut prepared,
+                    &mut timings,
+                    qi,
+                    PackedNeighborPolicy::for_point_count(h.points.len(), false),
+                );
+                let stream = PeriodicNeighborStream::new(
+                    &h.grid,
+                    &h.points,
+                    query_idx,
+                    &mut scratch,
+                    ctx,
+                    Some(packed),
+                );
+                h.collect_and_check("repro/packed", slot, stream);
+            }
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Periodic pipeline driver: per-bin parallel toroidal cell construction
-//! through the shared live-dedup engine (shell-expansion stream only; the
-//! packed periodic stage is future work).
+//! through the shared live-dedup engine (packed SIMD stage + shell-expansion
+//! takeover, like the bounded sibling).
 
 use glam::Vec2;
 #[cfg(feature = "parallel")]
@@ -17,9 +17,14 @@ use crate::live_dedup::{
 };
 use crate::packed_layout::PackedSlotLayout;
 use crate::plane_clipping::periodic_builder::PeriodicCellBuilder;
+use crate::plane_grid::packed::{
+    PlanePackedGroupInput, PlanePackedQuery, PlanePackedScratch, PlanePackedTimings,
+    PlanePreparedGroupStatus,
+};
 use crate::plane_grid::periodic::{
     PeriodicGrid, PeriodicGridScratch, PeriodicNeighborFrontier, PeriodicNeighborStream,
 };
+use crate::policy::PackedNeighborPolicy;
 
 pub(crate) struct PeriodicCellsOutput {
     pub(crate) vertices: Vec<Vec2>,
@@ -150,24 +155,98 @@ fn build_cells_sharded_periodic(
                     assignment.local_mask,
                 );
 
-                for (local_idx, &global) in my_generators.iter().enumerate() {
-                    let local = checked_local_id(local_idx, "shard-local generator index")?;
-                    let mut shard_ctx = ShardContext {
-                        shard: &mut shard,
-                        bin,
-                        local,
-                    };
-                    build_and_emit_cell_periodic(
-                        &mut sub_accum,
-                        &mut worker,
-                        &mut edge_scratch,
-                        &mut shard_ctx,
-                        points,
-                        grid,
-                        &assignment,
+                let mut packed_scratch = PlanePackedScratch::new();
+                let mut packed_timings = PlanePackedTimings;
+                let packed_policy = PackedNeighborPolicy::for_point_count(points.len(), false);
+                let packed_queries_all: Vec<u32> = my_generators
+                    .iter()
+                    .map(|&i| grid.point_index_to_slot(i))
+                    .collect();
+
+                // Cell-grouped runs: every cell's queries are prepared as one
+                // packed group (locals are assigned in cell-major order, so
+                // each run is contiguous in my_generators) — same protocol as
+                // the bounded driver; tiny wrapped grids take the SlowPath.
+                let mut cursor = 0usize;
+                while cursor < my_generators.len() {
+                    let cell = grid.point_index_to_cell(my_generators[cursor]);
+                    let group_start = cursor;
+                    while cursor < my_generators.len()
+                        && grid.point_index_to_cell(my_generators[cursor]) == cell
+                    {
+                        cursor += 1;
+                    }
+
+                    let queries = &packed_queries_all[group_start..cursor];
+                    let query_local_start = checked_u32(group_start, "packed query local start")?;
+                    let group = PlanePackedGroupInput::new(
+                        cell,
+                        bin.as_u8(),
+                        queries,
+                        query_local_start,
                         layout,
-                        global,
-                    )?;
+                    );
+
+                    match packed_scratch.prepare_group(grid, group, &mut packed_timings) {
+                        PlanePreparedGroupStatus::Ready(mut prepared) => {
+                            for (offset, &global) in
+                                my_generators[group_start..cursor].iter().enumerate()
+                            {
+                                let local_idx = group_start + offset;
+                                let local =
+                                    checked_local_id(local_idx, "shard-local generator index")?;
+                                let mut shard_ctx = ShardContext {
+                                    shard: &mut shard,
+                                    bin,
+                                    local,
+                                };
+                                let packed = PlanePackedQuery::new(
+                                    &mut prepared,
+                                    &mut packed_timings,
+                                    offset,
+                                    packed_policy,
+                                );
+                                build_and_emit_cell_periodic(
+                                    &mut sub_accum,
+                                    &mut worker,
+                                    &mut edge_scratch,
+                                    &mut shard_ctx,
+                                    points,
+                                    grid,
+                                    &assignment,
+                                    layout,
+                                    global,
+                                    Some(packed),
+                                )?;
+                            }
+                        }
+                        PlanePreparedGroupStatus::SlowPath => {
+                            for (offset, &global) in
+                                my_generators[group_start..cursor].iter().enumerate()
+                            {
+                                let local_idx = group_start + offset;
+                                let local =
+                                    checked_local_id(local_idx, "shard-local generator index")?;
+                                let mut shard_ctx = ShardContext {
+                                    shard: &mut shard,
+                                    bin,
+                                    local,
+                                };
+                                build_and_emit_cell_periodic(
+                                    &mut sub_accum,
+                                    &mut worker,
+                                    &mut edge_scratch,
+                                    &mut shard_ctx,
+                                    points,
+                                    grid,
+                                    &assignment,
+                                    layout,
+                                    global,
+                                    None,
+                                )?;
+                            }
+                        }
+                    }
                 }
 
                 Ok((shard, sub_accum))
@@ -195,7 +274,7 @@ fn cell_build_error(generator_idx: usize, failure: CellFailure) -> BuildCellsErr
 }
 
 #[allow(clippy::too_many_arguments)] // driver seam, mirrors the other drivers
-fn build_and_emit_cell_periodic(
+fn build_and_emit_cell_periodic<'p, 'g>(
     cell_sub: &mut CellSubAccum,
     worker: &mut PeriodicWorker,
     edge_scratch: &mut EdgeScratch,
@@ -205,6 +284,7 @@ fn build_and_emit_cell_periodic(
     assignment: &BinAssignment,
     layout: PackedSlotLayout<'_>,
     generator_idx: usize,
+    packed: Option<PlanePackedQuery<'_, 'p, 'g>>,
 ) -> Result<(), BuildCellsError> {
     let cell_start = checked_u32(
         shard_ctx.shard.output.cell_indices.len(),
@@ -249,6 +329,7 @@ fn build_and_emit_cell_periodic(
         generator_idx,
         &mut worker.grid_scratch,
         directed_ctx,
+        packed,
     );
     let point_indices = grid.point_indices();
 
@@ -261,12 +342,18 @@ fn build_and_emit_cell_periodic(
                 for pos in 0..batch.n {
                     let slot = worker.batch[pos];
                     let neighbor_idx = point_indices[slot as usize] as usize;
-                    if worker
-                        .seed_ids
-                        .binary_search(&(neighbor_idx as u32))
-                        .is_ok()
-                    {
-                        continue;
+                    // Skip seeds AND already-clipped neighbors. Unlike the
+                    // bounded driver, a packed -> takeover re-emit must NOT
+                    // be re-clipped here: the periodic builder seeds
+                    // unbounded (1e6 sentinel coordinates), so early clip
+                    // intersections carry interpolation error far above the
+                    // clip epsilon, and re-clipping the bit-identical plane
+                    // can cut a phantom sliver off the drifted polygon.
+                    match worker.seed_ids.binary_search(&(neighbor_idx as u32)) {
+                        Ok(_) => continue,
+                        Err(insert_at) => {
+                            worker.seed_ids.insert(insert_at, neighbor_idx as u32);
+                        }
                     }
                     builder
                         .clip_with_slot(neighbor_idx, slot, points[neighbor_idx])
@@ -280,6 +367,12 @@ fn build_and_emit_cell_periodic(
                     if builder.can_terminate(bound) {
                         break 'stream;
                     }
+                }
+                stream.advance_frontier();
+            }
+            PeriodicNeighborFrontier::UnknownButBounded { dist_lower_bound } => {
+                if builder.can_terminate(dist_lower_bound) {
+                    break 'stream;
                 }
                 stream.advance_frontier();
             }

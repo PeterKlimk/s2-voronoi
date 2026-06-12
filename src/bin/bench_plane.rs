@@ -12,7 +12,7 @@ use clap::Parser;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use s2_voronoi::{compute_plane, validation, PlaneRect};
+use s2_voronoi::{compute_plane, compute_plane_periodic, validation, PlanarVoronoi, PlaneRect};
 
 fn parse_count(s: &str) -> Result<usize, String> {
     let s = s.trim().to_lowercase();
@@ -69,6 +69,11 @@ struct Args {
     /// (requires the `bench_voronoice` feature).
     #[arg(long)]
     voronoice: bool,
+
+    /// Benchmark the periodic (toroidal) pipeline instead of the bounded
+    /// one.
+    #[arg(long)]
+    periodic: bool,
 }
 
 fn generate_points(n: usize, seed: u64, dist: &str) -> Vec<[f32; 2]> {
@@ -130,9 +135,17 @@ fn generate_points(n: usize, seed: u64, dist: &str) -> Vec<[f32; 2]> {
     }
 }
 
-fn bench_once(points: &[[f32; 2]]) -> (f64, usize, usize) {
+fn compute(points: &[[f32; 2]], periodic: bool) -> PlanarVoronoi {
+    if periodic {
+        compute_plane_periodic(points, PlaneRect::unit()).expect("compute_plane_periodic failed")
+    } else {
+        compute_plane(points, PlaneRect::unit()).expect("compute_plane failed")
+    }
+}
+
+fn bench_once(points: &[[f32; 2]], periodic: bool) -> (f64, usize, usize) {
     let t = Instant::now();
-    let diagram = compute_plane(points, PlaneRect::unit()).expect("compute_plane failed");
+    let diagram = compute(points, periodic);
     let ms = t.elapsed().as_secs_f64() * 1000.0;
     (ms, diagram.num_cells(), diagram.num_vertices())
 }
@@ -212,7 +225,7 @@ fn main() {
                 print!("  Iteration {}/{}... ", iter + 1, args.repeat);
                 io::stdout().flush().unwrap();
             }
-            let (ms, c, v) = bench_once(&points);
+            let (ms, c, v) = bench_once(&points, args.periodic);
             if args.repeat > 1 {
                 println!("{ms:.1}ms");
             }
@@ -223,7 +236,12 @@ fn main() {
             verts = v;
         }
         let (min, mean) = stats(&times);
-        println!("\ncompute_plane: min {min:.1}ms / mean {mean:.1}ms");
+        let label = if args.periodic {
+            "compute_plane_periodic"
+        } else {
+            "compute_plane"
+        };
+        println!("\n{label}: min {min:.1}ms / mean {mean:.1}ms");
         println!(
             "  {} cells, {} vertices, {:.2}M cells/s (at min)",
             format_num(cells),
@@ -232,7 +250,7 @@ fn main() {
         );
 
         if args.validate {
-            let diagram = compute_plane(&points, PlaneRect::unit()).unwrap();
+            let diagram = compute(&points, args.periodic);
             let report = validation::validate_plane(&diagram);
             println!(
                 "  validate_plane: strictly_valid = {}",
