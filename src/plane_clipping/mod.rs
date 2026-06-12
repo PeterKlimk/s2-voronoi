@@ -21,6 +21,7 @@
 mod builder;
 pub(crate) mod compute;
 pub(crate) mod driver;
+pub(crate) mod periodic_builder;
 #[cfg(test)]
 mod tests;
 
