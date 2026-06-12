@@ -4,8 +4,6 @@ pub(super) fn clip_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuff
     debug_assert!(n <= 64, "Polygon too large for u64 bitmask");
 
     let neg_eps = -hp.eps;
-    let us = poly.us.as_ptr();
-    let vs = poly.vs.as_ptr();
 
     let mut dists: [core::mem::MaybeUninit<f64>; MAX_POLY_VERTICES] =
         unsafe { core::mem::MaybeUninit::uninit().assume_init() };
@@ -13,15 +11,21 @@ pub(super) fn clip_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuff
     let mut mask = 0u64;
     let full_mask: u64 = if n == 64 { !0u64 } else { (1u64 << n) - 1 };
 
-    unsafe {
-        let mut bit = 1u64;
-        for i in 0..n {
-            let d = hp.signed_dist(*us.add(i), *vs.add(i));
-            dists.get_unchecked_mut(i).write(d);
-            mask |= (0u64.wrapping_sub((d >= neg_eps) as u64)) & bit;
-            bit <<= 1;
+    // 8-lane chunks (lane math bit-identical to the scalar signed_dist).
+    // Chunk starts are multiples of 8 below n <= 64, so every slice has at
+    // least 8 elements; lanes past n compute on stale-but-finite data and
+    // are masked off by full_mask below.
+    let mut i = 0usize;
+    while i < n {
+        let (d8, m8) =
+            fp::signed_dists_mask8(hp.a, hp.b, hp.c, &poly.us[i..], &poly.vs[i..], neg_eps);
+        for (lane, &d) in d8.iter().enumerate() {
+            dists[i + lane].write(d);
         }
+        mask |= (m8 as u64) << i;
+        i += 8;
     }
+    mask &= full_mask;
 
     if mask == 0 {
         out.len = 0;

@@ -65,6 +65,16 @@ edge-check seeds), so it needs the same care as any tolerance change.
 already in place; the swap to real timing is mechanical and unlocks
 planar sub-phase profiling (currently only the sphere has it).
 
+## Done (2026-06, batch round 2)
+
+- **Vectorized N>8 bitmask clipper** (~2% sphere ST, torus
+  neutral-to-positive; bit-identical, fingerprint held): 8-lane
+  `fp::signed_dists_mask8` chunks replace the scalar distance loop.
+  Measurement cautionary tale: short `-n 4` runs at 500k during a noisy box
+  phase first measured this as a consistent ~1% loss and it was briefly
+  rejected; re-measured with `-n 6` at 500k AND 2M (six clean pairs) it is
+  a consistent win at both sizes. Borderline calls need big runs.
+
 ## Done (2026-06, periodic packed port)
 
 - **Packed SIMD stage for the periodic pipeline** (~2x at 500k ST: 1600ms ->
@@ -109,14 +119,6 @@ planar sub-phase profiling (currently only the sphere has it).
   a fingerprint move even on FMA hardware. Side-finding worth advertising:
   `target-cpu=native` alone is ~6% over the default build (745 -> 703ms)
   with no semantic change — documented in performance.md.
-
-- **Vectorize the N>8 bitmask clipper** (2026-06): chunking
-  `fp::signed_dists_mask8` over the bitmask path measured a consistent ~1%
-  LOSS on sphere 500k ST and torus 500k ST (paired, 3+2 rounds). N>8
-  polygons cluster just above 8 vertices, so the second 8-lane chunk is
-  mostly stale lanes; the old loop's n scalar fmas are cheaper than 16 SIMD
-  lanes plus per-lane writes. Bit-identical (fingerprint held) but slower —
-  reverted.
 
 - **Ring-pass cap pruning** (per ring-cell × query cap bound to skip chunk
   dots): net loss — ring cells are *adjacent* cells, whose caps almost
