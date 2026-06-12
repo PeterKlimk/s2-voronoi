@@ -46,6 +46,7 @@ mod error;
 mod fp;
 #[allow(clippy::too_many_arguments)] // generated sorting networks
 pub(crate) mod generated;
+pub mod locate;
 mod measures;
 mod packed_layout;
 mod plane_diagram;
@@ -114,6 +115,7 @@ pub mod convex_hull;
 pub use adjacency::CellAdjacency;
 pub use diagram::{CellView, SphericalVoronoi};
 pub use error::VoronoiError;
+pub use locate::{PlaneLocator, SphereLocator};
 pub use plane_diagram::{PlanarVoronoi, PlanePoint, PlanePointLike, PlaneRect, PlaneTopology};
 pub use types::{UnitVec3, UnitVec3Like};
 

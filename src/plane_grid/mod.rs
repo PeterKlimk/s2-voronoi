@@ -19,7 +19,7 @@ pub(crate) mod packed;
 pub(crate) mod periodic;
 mod query;
 
-pub(crate) use query::{PlaneNeighborFrontier, PlaneNeighborStream};
+pub(crate) use query::{PlaneNeighborFrontier, PlaneNeighborStream, PlaneShellFrontier};
 // (PlaneGridScratch is defined below and used by both.)
 
 #[cfg(test)]

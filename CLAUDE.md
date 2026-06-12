@@ -78,6 +78,7 @@ src/
 ├── diagram.rs                     # SphericalVoronoi storage
 ├── plane_diagram.rs               # PlanarVoronoi / PlanePoint / PlaneRect storage
 ├── validation.rs                  # Topology checks (sphere + plane variants)
+├── locate.rs                      # Point-location API (SphereLocator / PlaneLocator)
 ├── error.rs                       # VoronoiError
 ├── fp.rs                          # Numeric helper ops + OrdF32
 ├── tolerances.rs                  # Centralized numerical tolerances

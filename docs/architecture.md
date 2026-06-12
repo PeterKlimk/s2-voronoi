@@ -92,6 +92,8 @@ Euler relation (`V - E + F = 0`) with every edge paired.
 - `src/plane_clipping/`: the planar backend — domain normalization + grid-integrated weld
   (`compute.rs`), per-bin driver (`driver.rs`), rect-seeded cell builder (`builder.rs`).
 - `src/plane_diagram.rs`: `PlanarVoronoi`, `PlanePoint`, `PlaneRect`.
+- `src/locate.rs`: point-location API (`SphereLocator`, `PlaneLocator`) — reuses the grid
+  shell frontiers in all-emit mode to answer nearest-generator queries.
 - `src/cube_grid/`: cube-map spatial index + packed-kNN stage (sphere).
 - `src/plane_grid/`: flat spatial index + packed-kNN stage + shell frontier (plane).
 - `src/timing/`: optional timing + histograms (crate-wide).
