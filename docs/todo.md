@@ -173,14 +173,20 @@ In implementation order:
 
 ## P5: Structural upgrade — consistency by construction
 
-Make every shared combinatorial decision (edge existence, vertex existence) canonical: evaluated
-once in a frame chosen by sorted generator index (or via world-space f64 predicates), inherited
-bit-for-bit by both cells. Graph validity then no longer depends on epsilon agreement between two
-charts; one proves determinism instead of error bounds.
+**Designed (2026-06): see `docs/p5-consistency-design.md`** — the authoritative spec; this
+section is the summary. Make every shared combinatorial decision canonical via three pillars:
+(1) the canonical primitive is the symmetric in-circle predicate on generator 4-tuples (no
+frame choice — supersedes this section's earlier "sorted-index frame" sketch); (2) filtered
+escalation keeps the chart-local hot path (one margin compare per clip lane; only near-ties
+evaluate canonically); (3) question-set closure — certificates conservative by EPS_CERT >
+EPS_FILTER so differing termination can never hide a marginal question from one side (the
+design's named failure mode B).
 
-Expected payoffs: root-fixes the seam/symmetric-position regime, shrinks edge reconciliation's
-responsibilities, and upgrades the contract from "empirically safe with 8x margin" to "valid by
-construction". This is the largest item on the list and should follow, not precede, release.
+Hard exit criteria: the edge-repair net's defects go to ZERO at every bin count (then
+edge_reconcile is deleted and detection becomes a bug trap), and paired benches show <=1% ST
+regression at 500k/2M — criterion 2 can reject the project; the fallback is the hardened
+2026-06 status quo. Largest item on the list; now planned pre-release at maintainer's call
+(supersedes the earlier post-release note).
 
 ## P6: New geometries
 
