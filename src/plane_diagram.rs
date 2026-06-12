@@ -138,6 +138,19 @@ impl PlaneRect {
     }
 }
 
+/// Topology of a planar diagram's domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum PlaneTopology {
+    /// Bounded rectangle: hull cells are clipped to the rect walls.
+    Bounded,
+    /// Rectangular torus: the domain wraps on both axes. Vertex positions
+    /// are stored canonically wrapped into the rect; reconstruct a cell's
+    /// polygon with [`PlanarVoronoi::cell_polygon`], which unwraps each
+    /// vertex to within half a period of the cell's generator.
+    Periodic,
+}
+
 /// A planar Voronoi diagram over a bounded rectangle.
 ///
 /// The diagram is a strict subdivision of the rect: every cell is a convex
@@ -167,6 +180,9 @@ pub struct PlanarVoronoi {
 
     /// The domain rectangle the diagram subdivides.
     rect: PlaneRect,
+
+    /// Domain topology (bounded rect or torus).
+    topology: PlaneTopology,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -184,6 +200,7 @@ impl PlanarVoronoi {
         cell_indices: Vec<u32>,
         weld_map: Option<Vec<u32>>,
         rect: PlaneRect,
+        topology: PlaneTopology,
     ) -> Self {
         debug_assert!(weld_map.as_ref().is_none_or(|m| m.len() == cells.len()));
         Self {
@@ -199,6 +216,7 @@ impl PlanarVoronoi {
             cell_indices,
             weld_map,
             rect,
+            topology,
         }
     }
 
@@ -283,5 +301,55 @@ impl PlanarVoronoi {
     #[inline]
     pub fn rect(&self) -> PlaneRect {
         self.rect
+    }
+
+    /// The domain topology (bounded rect or torus).
+    #[inline]
+    pub fn topology(&self) -> PlaneTopology {
+        self.topology
+    }
+
+    /// True for diagrams computed by `compute_plane_periodic`.
+    #[inline]
+    pub fn is_periodic(&self) -> bool {
+        self.topology == PlaneTopology::Periodic
+    }
+
+    /// The cell's polygon as positions, ready for geometry.
+    ///
+    /// For bounded diagrams this is simply the stored vertex positions in
+    /// boundary order. For periodic diagrams each vertex is unwrapped to
+    /// within half a period of the cell's generator (the canonical-wrap
+    /// storage convention), so the returned polygon is a contiguous simple
+    /// polygon even when the cell straddles the wrap seam — its coordinates
+    /// may extend outside the rect by design.
+    pub fn cell_polygon(&self, index: usize) -> Vec<PlanePoint> {
+        let cell = self.cell(index);
+        match self.topology {
+            PlaneTopology::Bounded => cell.iter().map(|&v| self.vertex(v as usize)).collect(),
+            PlaneTopology::Periodic => {
+                let g = self.generator(index);
+                let (px, py) = (self.rect.width(), self.rect.height());
+                let wrap_half = |d: f32, p: f32| -> f32 {
+                    let half = 0.5 * p;
+                    if d > half {
+                        d - p
+                    } else if d < -half {
+                        d + p
+                    } else {
+                        d
+                    }
+                };
+                cell.iter()
+                    .map(|&v| {
+                        let p = self.vertex(v as usize);
+                        PlanePoint::new(
+                            g.x + wrap_half(p.x - g.x, px),
+                            g.y + wrap_half(p.y - g.y, py),
+                        )
+                    })
+                    .collect()
+            }
+        }
     }
 }

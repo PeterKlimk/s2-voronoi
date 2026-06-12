@@ -381,6 +381,74 @@ fn plane_measures_and_lloyd() {
     assert!(validation::validate_plane(&diagram).is_strictly_valid());
 }
 
+#[test]
+fn periodic_strict_and_partition() {
+    use s2_voronoi::compute_plane_periodic;
+    for &(min, max, n, seed) in &[
+        ((0.0f32, 0.0f32), (1.0f32, 1.0f32), 500usize, 201u64),
+        ((-3.0, 2.0), (5.0, 4.0), 800, 203), // offset anisotropic torus
+    ] {
+        let rect = PlaneRect::new(PlanePoint::new(min.0, min.1), PlanePoint::new(max.0, max.1));
+        let points = uniform_in(rect, n, seed);
+        let diagram = compute_plane_periodic(&points, rect).unwrap();
+        assert!(diagram.is_periodic());
+        let report = validation::validate_plane(&diagram);
+        assert!(report.is_strictly_valid(), "periodic n={n}: {report:#?}");
+        assert_eq!(report.boundary_edges, 0, "a torus has no boundary");
+
+        // Areas partition the torus (via the unwrap convention).
+        let total: f64 = (0..n)
+            .map(|i| {
+                let poly = diagram.cell_polygon(i);
+                let m = poly.len();
+                let mut acc = 0.0f64;
+                for k in 0..m {
+                    let a = poly[k];
+                    let b = poly[(k + 1) % m];
+                    acc += (a.x as f64) * (b.y as f64) - (b.x as f64) * (a.y as f64);
+                }
+                (0.5 * acc).abs()
+            })
+            .sum();
+        let expected = rect.width() as f64 * rect.height() as f64;
+        assert!(
+            (total - expected).abs() < 1e-4 * expected,
+            "torus areas sum to {total}, expected {expected}"
+        );
+
+        // No boundary => the adjacency is complete (every edge paired).
+        let adjacency = diagram.build_adjacency();
+        assert!(adjacency.is_complete(), "torus adjacency must be complete");
+    }
+}
+
+#[test]
+fn periodic_seam_cells_and_weld() {
+    use s2_voronoi::compute_plane_periodic;
+    // Clusters at the corner and edges: cells wrap; exact duplicates weld.
+    let rect = PlaneRect::unit();
+    let mut points = uniform_in(rect, 400, 207);
+    points.push([0.0005, 0.0005]);
+    points.push([0.9995, 0.9995]); // near-opposite corner: wrapped neighbor of the above
+    let dup = points[7];
+    points.push(dup);
+    let diagram = compute_plane_periodic(&points, rect).unwrap();
+    let report = validation::validate_plane(&diagram);
+    assert!(report.is_strictly_valid(), "{report:#?}");
+    let weld = diagram.weld_map().expect("duplicate should weld");
+    assert_eq!(weld[points.len() - 1], 7);
+}
+
+#[test]
+fn periodic_underpopulated_fails_cleanly() {
+    use s2_voronoi::compute_plane_periodic;
+    let points = vec![[0.1f32, 0.1], [0.6, 0.2], [0.3, 0.7]];
+    match compute_plane_periodic(&points, PlaneRect::unit()) {
+        Err(VoronoiError::UnsupportedGeometry { .. }) => {}
+        other => panic!("expected UnsupportedGeometry, got {other:?}"),
+    }
+}
+
 /// Multi-million-point fuzz sweep; run with `--ignored` (scheduled CI).
 #[test]
 #[ignore]

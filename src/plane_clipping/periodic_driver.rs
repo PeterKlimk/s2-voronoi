@@ -1,0 +1,341 @@
+//! Periodic pipeline driver: per-bin parallel toroidal cell construction
+//! through the shared live-dedup engine (shell-expansion stream only; the
+//! packed periodic stage is future work).
+
+use glam::Vec2;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+use crate::diagram::VoronoiCell;
+use crate::knn_clipping::cell_build::{CellBuildError, CellFailure, CellOutputBuffer};
+use crate::knn_clipping::edge_reconcile;
+use crate::knn_clipping::timing::CellSubAccum;
+use crate::live_dedup::{
+    self, assign_bins_with, checked_local_id, checked_u32, emit_cell_output, target_bin_count,
+    unpack_edge_key, BinAssignment, BinId, BuildCellsError, EdgeScratch, PackedLayoutCapacityError,
+    ShardContext, ShardState, ShardedCellsData,
+};
+use crate::packed_layout::PackedSlotLayout;
+use crate::plane_clipping::periodic_builder::PeriodicCellBuilder;
+use crate::plane_grid::periodic::{
+    PeriodicGrid, PeriodicGridScratch, PeriodicNeighborFrontier, PeriodicNeighborStream,
+};
+
+pub(crate) struct PeriodicCellsOutput {
+    pub(crate) vertices: Vec<Vec2>,
+    pub(crate) cells: Vec<VoronoiCell>,
+    pub(crate) cell_indices: Vec<u32>,
+}
+
+/// Build, dedup, assemble, and edge-reconcile all toroidal cells.
+///
+/// `points` are normalized coordinates inside `[0, px) x [0, py)`; vertex
+/// positions come back canonically wrapped into the same domain.
+pub(crate) fn compute_periodic_cells(
+    points: &[Vec2],
+    grid: &PeriodicGrid,
+) -> Result<PeriodicCellsOutput, crate::VoronoiError> {
+    let sharded = build_cells_sharded_periodic(points, grid).map_err(map_periodic_build_error)?;
+    let assembly = live_dedup::assemble_sharded_live_dedup(sharded)?;
+
+    let records: Vec<live_dedup::EdgeRecord> = assembly
+        .unresolved_edges
+        .iter()
+        .map(|b| live_dedup::EdgeRecord { key: b.key })
+        .collect();
+    let mut cells = assembly.cells;
+    let mut cell_indices = assembly.cell_indices;
+    // Note: reconcile distances are raw Euclidean on wrapped positions, so
+    // an epsilon edge exactly straddling the wrap seam is not auto-merged;
+    // it remains an honestly-reported validation finding (documented v1
+    // limitation).
+    if let Some((reconciled_cells, reconciled_indices)) =
+        edge_reconcile::reconcile_unresolved_edges(
+            &records,
+            &assembly.vertices,
+            &cells,
+            &cell_indices,
+            &assembly.vertex_keys,
+            crate::tolerances::PLANE_RECONCILE_DEGENERATE_LEN_EPS,
+        )?
+    {
+        cells = reconciled_cells;
+        cell_indices = reconciled_indices;
+    }
+
+    Ok(PeriodicCellsOutput {
+        vertices: assembly.vertices,
+        cells,
+        cell_indices,
+    })
+}
+
+/// Square block bin layout over the wrapped res x res grid (blocks need no
+/// wrap awareness — only neighbor *queries* wrap).
+fn assign_bins_periodic(
+    num_points: usize,
+    grid: &PeriodicGrid,
+) -> Result<BinAssignment, PackedLayoutCapacityError> {
+    let res = grid.res();
+    let target_bins = target_bin_count(1);
+    let mut bin_res = (target_bins as f64).sqrt().ceil() as usize;
+    bin_res = bin_res.clamp(1, res.max(1));
+    let bin_stride = res.div_ceil(bin_res).max(1);
+    let bin_res = res.div_ceil(bin_stride);
+    let num_bins = bin_res * bin_res;
+
+    let bin_for_cell = move |cell: usize| -> usize {
+        let ix = cell % res;
+        let iy = cell / res;
+        let bu = (ix / bin_stride).min(bin_res - 1);
+        let bv = (iy / bin_stride).min(bin_res - 1);
+        bv * bin_res + bu
+    };
+
+    assign_bins_with(
+        num_points,
+        res * res,
+        grid.cell_offsets(),
+        grid.point_indices(),
+        num_bins,
+        bin_for_cell,
+    )
+}
+
+struct PeriodicWorker {
+    builder: PeriodicCellBuilder,
+    output_buffer: CellOutputBuffer<Vec2>,
+    batch: Vec<u32>,
+    batch_dists: Vec<f32>,
+    seed_ids: Vec<u32>,
+    grid_scratch: PeriodicGridScratch,
+}
+
+fn build_cells_sharded_periodic(
+    points: &[Vec2],
+    grid: &PeriodicGrid,
+) -> Result<ShardedCellsData<Vec2>, BuildCellsError> {
+    let assignment =
+        assign_bins_periodic(points.len(), grid).map_err(BuildCellsError::PackedLayoutCapacity)?;
+    let num_bins = assignment.num_bins;
+    checked_u32(points.len(), "generator count")?;
+    let (px, py) = grid.periods();
+
+    let per_bin: Result<Vec<(ShardState<Vec2>, CellSubAccum)>, BuildCellsError> =
+        maybe_par_into_iter!(0..num_bins)
+            .map(|bin_usize| {
+                let bin = BinId::from_usize(bin_usize);
+                let my_generators = &assignment.bin_generators[bin_usize];
+                let mut shard = ShardState::new(my_generators.len());
+                let mut sub_accum = CellSubAccum::new();
+                let mut edge_scratch = EdgeScratch::new();
+                let mut worker = PeriodicWorker {
+                    builder: PeriodicCellBuilder::new(0, Vec2::ZERO, px, py),
+                    output_buffer: CellOutputBuffer::default(),
+                    batch: Vec::new(),
+                    batch_dists: Vec::new(),
+                    seed_ids: Vec::new(),
+                    grid_scratch: grid.make_scratch(),
+                };
+
+                let vertex_capacity = my_generators.len().saturating_mul(6);
+                shard.output.vertices.reserve(vertex_capacity);
+                shard.output.vertex_keys.reserve(vertex_capacity);
+                shard.output.cell_indices.reserve(vertex_capacity);
+                shard.output.deferred_slots.reserve(my_generators.len());
+
+                let layout = PackedSlotLayout::new(
+                    &assignment.slot_gen_map,
+                    assignment.local_shift,
+                    assignment.local_mask,
+                );
+
+                for (local_idx, &global) in my_generators.iter().enumerate() {
+                    let local = checked_local_id(local_idx, "shard-local generator index")?;
+                    let mut shard_ctx = ShardContext {
+                        shard: &mut shard,
+                        bin,
+                        local,
+                    };
+                    build_and_emit_cell_periodic(
+                        &mut sub_accum,
+                        &mut worker,
+                        &mut edge_scratch,
+                        &mut shard_ctx,
+                        points,
+                        grid,
+                        &assignment,
+                        layout,
+                        global,
+                    )?;
+                }
+
+                Ok((shard, sub_accum))
+            })
+            .collect();
+    let per_bin = per_bin?;
+
+    let mut shards: Vec<ShardState<Vec2>> = Vec::with_capacity(num_bins);
+    let mut merged_sub = CellSubAccum::new();
+    for (shard, sub) in per_bin {
+        merged_sub.merge(&sub);
+        shards.push(shard);
+    }
+
+    Ok(ShardedCellsData::from_parts(assignment, shards, merged_sub))
+}
+
+#[inline]
+fn cell_build_error(generator_idx: usize, failure: CellFailure) -> BuildCellsError {
+    BuildCellsError::CellBuild(CellBuildError {
+        generator_idx,
+        failure,
+        detail: None,
+    })
+}
+
+#[allow(clippy::too_many_arguments)] // driver seam, mirrors the other drivers
+fn build_and_emit_cell_periodic(
+    cell_sub: &mut CellSubAccum,
+    worker: &mut PeriodicWorker,
+    edge_scratch: &mut EdgeScratch,
+    shard_ctx: &mut ShardContext<'_, Vec2>,
+    points: &[Vec2],
+    grid: &PeriodicGrid,
+    assignment: &BinAssignment,
+    layout: PackedSlotLayout<'_>,
+    generator_idx: usize,
+) -> Result<(), BuildCellsError> {
+    let cell_start = checked_u32(
+        shard_ctx.shard.output.cell_indices.len(),
+        "cell index start",
+    )?;
+    shard_ctx
+        .shard
+        .output
+        .set_cell_start(shard_ctx.local, cell_start);
+
+    let incoming_checks = shard_ctx.shard.dedup.take_edge_checks(shard_ctx.local);
+    let cell_idx = checked_u32(generator_idx, "generator index")?;
+
+    let builder = &mut worker.builder;
+    builder.reset(generator_idx, points[generator_idx]);
+
+    worker.seed_ids.clear();
+    for check in &incoming_checks {
+        let (a, b) = unpack_edge_key(check.key);
+        let neighbor_idx = if a == cell_idx { b } else { a } as usize;
+        let neighbor_slot = grid.point_index_to_slot(neighbor_idx);
+        builder
+            .clip_with_slot_edgecheck(
+                neighbor_idx,
+                neighbor_slot,
+                points[neighbor_idx],
+                check.hp_eps,
+            )
+            .map_err(|f| cell_build_error(generator_idx, f))?;
+        worker.seed_ids.push(neighbor_idx as u32);
+    }
+    worker.seed_ids.sort_unstable();
+
+    let directed_ctx = crate::cube_grid::DirectedEligibility::from_layout(
+        shard_ctx.bin.as_u8(),
+        shard_ctx.local.as_u32(),
+        layout,
+    );
+    let mut stream = PeriodicNeighborStream::new(
+        grid,
+        points,
+        generator_idx,
+        &mut worker.grid_scratch,
+        directed_ctx,
+    );
+    let point_indices = grid.point_indices();
+
+    // The frontier loop's Exhausted arm is a non-trivial break (mirrors the
+    // sibling drivers).
+    #[allow(clippy::while_let_loop)]
+    'stream: loop {
+        match stream.frontier(&mut worker.batch, &mut worker.batch_dists) {
+            PeriodicNeighborFrontier::ExactBatch(batch) => {
+                for pos in 0..batch.n {
+                    let slot = worker.batch[pos];
+                    let neighbor_idx = point_indices[slot as usize] as usize;
+                    if worker
+                        .seed_ids
+                        .binary_search(&(neighbor_idx as u32))
+                        .is_ok()
+                    {
+                        continue;
+                    }
+                    builder
+                        .clip_with_slot(neighbor_idx, slot, points[neighbor_idx])
+                        .map_err(|f| cell_build_error(generator_idx, f))?;
+
+                    let bound = if pos + 1 < batch.n {
+                        worker.batch_dists[pos + 1].min(batch.unseen_bound)
+                    } else {
+                        batch.unseen_bound
+                    };
+                    if builder.can_terminate(bound) {
+                        break 'stream;
+                    }
+                }
+                stream.advance_frontier();
+            }
+            PeriodicNeighborFrontier::Exhausted => break,
+        }
+    }
+
+    builder
+        .to_vertex_data(&mut worker.output_buffer)
+        .map_err(|f| cell_build_error(generator_idx, f))?;
+
+    emit_cell_output(
+        cell_sub,
+        edge_scratch,
+        shard_ctx,
+        assignment,
+        cell_idx,
+        cell_start,
+        &worker.output_buffer,
+        incoming_checks,
+    )
+}
+
+fn map_periodic_build_error(err: BuildCellsError) -> crate::VoronoiError {
+    match err {
+        BuildCellsError::CellBuild(err) => match err.failure {
+            // The half-period guard / unbounded exhaustion: the torus is
+            // underpopulated for nearest-image clipping.
+            CellFailure::UnboundedAfterExhaustion => crate::VoronoiError::UnsupportedGeometry {
+                generator_index: err.generator_idx,
+                message: "cell exceeds the half-period guard (too few generators for a \
+                          periodic domain of this size); add generators or use the bounded \
+                          compute_plane"
+                    .to_string(),
+            },
+            CellFailure::ClippedAway => crate::VoronoiError::DegenerateInput {
+                coincident_pairs: 1,
+                message: format!(
+                    "generator {} was fully clipped away (near-coincident generators)",
+                    err.generator_idx
+                ),
+            },
+            failure => crate::VoronoiError::ComputationFailed(format!(
+                "periodic cell construction failed for generator {}: {:?}",
+                err.generator_idx, failure
+            )),
+        },
+        BuildCellsError::PackedLayoutCapacity(err) => {
+            crate::VoronoiError::RepresentationLimit(format!(
+                "packed bin/local layout capacity exceeded in bin {}: population {} exceeds \
+                 local mask {} (num_bins={}, local_shift={})",
+                err.bin, err.local_population, err.local_mask, err.num_bins, err.local_shift
+            ))
+        }
+        BuildCellsError::RepresentationLimit(message) => {
+            crate::VoronoiError::RepresentationLimit(message)
+        }
+    }
+}

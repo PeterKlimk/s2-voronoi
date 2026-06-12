@@ -114,7 +114,7 @@ pub mod convex_hull;
 pub use adjacency::CellAdjacency;
 pub use diagram::{CellView, SphericalVoronoi};
 pub use error::VoronoiError;
-pub use plane_diagram::{PlanarVoronoi, PlanePoint, PlanePointLike, PlaneRect};
+pub use plane_diagram::{PlanarVoronoi, PlanePoint, PlanePointLike, PlaneRect, PlaneTopology};
 pub use types::{UnitVec3, UnitVec3Like};
 
 #[cfg(feature = "qhull")]
@@ -289,6 +289,42 @@ pub fn compute_plane<P: PlanePointLike>(
     rect: PlaneRect,
 ) -> Result<PlanarVoronoi, VoronoiError> {
     plane_clipping::compute::compute_plane_impl(points, rect)
+}
+
+/// Compute a planar Voronoi diagram on a rectangular torus (periodic
+/// boundary conditions): the rect's opposite edges are identified, so cells
+/// wrap across them and the diagram has no boundary.
+///
+/// Vertex positions are stored canonically wrapped into the rect; use
+/// [`PlanarVoronoi::cell_polygon`] to reconstruct a cell's polygon (it
+/// unwraps each vertex to within half a period of the cell's generator).
+/// The result is a strict subdivision of the torus: every edge is shared by
+/// exactly two cells and `validation::validate_plane` checks the torus
+/// Euler relation.
+///
+/// Every cell must be provably smaller than a quarter of the shorter
+/// period for nearest-image clipping to be exact; underpopulated domains
+/// fail with [`VoronoiError::UnsupportedGeometry`] instead of producing
+/// wrong answers (roughly: dozens of reasonably spread generators are
+/// enough; 3 points on a torus are not).
+///
+/// # Example
+///
+/// ```
+/// use s2_voronoi::{compute_plane_periodic, PlaneRect};
+///
+/// let points: Vec<[f32; 2]> = (0..64)
+///     .map(|i| [((i % 8) as f32 + 0.5) / 8.0, ((i / 8) as f32 + 0.37) / 8.0])
+///     .collect();
+/// let diagram = compute_plane_periodic(&points, PlaneRect::unit()).unwrap();
+/// assert!(diagram.is_periodic());
+/// assert_eq!(diagram.num_cells(), 64);
+/// ```
+pub fn compute_plane_periodic<P: PlanePointLike>(
+    points: &[P],
+    rect: PlaneRect,
+) -> Result<PlanarVoronoi, VoronoiError> {
+    plane_clipping::compute::compute_plane_periodic_impl(points, rect)
 }
 
 /// Compute a spherical Voronoi diagram with explicit configuration.

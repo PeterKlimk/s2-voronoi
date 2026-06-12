@@ -4,7 +4,9 @@
 use glam::Vec2;
 
 use super::driver::compute_plane_cells;
-use crate::plane_diagram::{PlanarVoronoi, PlanePoint, PlanePointLike, PlaneRect};
+use super::periodic_driver::compute_periodic_cells;
+use crate::plane_diagram::{PlanarVoronoi, PlanePoint, PlanePointLike, PlaneRect, PlaneTopology};
+use crate::plane_grid::periodic::PeriodicGrid;
 use crate::plane_grid::PlaneGrid;
 use crate::policy::plane_grid_resolution;
 use crate::VoronoiError;
@@ -232,5 +234,131 @@ pub(crate) fn compute_plane_impl<P: PlanePointLike>(
         output.cell_indices,
         weld_map,
         rect,
+        PlaneTopology::Bounded,
     ))
+}
+
+fn weld_within_radius_periodic(points: &[Vec2], grid: &PeriodicGrid) -> Option<WeldResult> {
+    let mut pairs: Vec<(u32, u32)> = Vec::new();
+    grid.collect_pairs_within(crate::tolerances::PLANE_WELD_DIST, &mut pairs);
+    if pairs.is_empty() {
+        return None;
+    }
+    let mut uf = crate::knn_clipping::union_find::UnionFind::new(points.len());
+    for &(a, b) in &pairs {
+        uf.union_keep_min(a, b);
+    }
+    let mut weld_map: Vec<u32> = Vec::with_capacity(points.len());
+    let mut effective: Vec<Vec2> = Vec::new();
+    let mut original_to_effective: Vec<u32> = vec![0; points.len()];
+    for i in 0..points.len() {
+        let canonical = uf.find(i as u32);
+        weld_map.push(canonical);
+        if canonical as usize == i {
+            original_to_effective[i] = effective.len() as u32;
+            effective.push(points[i]);
+        }
+    }
+    for i in 0..points.len() {
+        let canonical = weld_map[i] as usize;
+        original_to_effective[i] = original_to_effective[canonical];
+    }
+    Some(WeldResult {
+        weld_map,
+        effective,
+        original_to_effective,
+    })
+}
+
+pub(crate) fn compute_plane_periodic_impl<P: PlanePointLike>(
+    points: &[P],
+    rect: PlaneRect,
+) -> Result<PlanarVoronoi, VoronoiError> {
+    validate_rect(rect)?;
+    if points.is_empty() {
+        return Err(VoronoiError::InsufficientPoints(0));
+    }
+    if u32::try_from(points.len()).is_err() {
+        return Err(VoronoiError::RepresentationLimit(format!(
+            "generator count {} exceeds u32-backed index capacity",
+            points.len()
+        )));
+    }
+
+    let transform = DomainTransform::new(rect);
+    // Normalized periods: the longer rect side maps to 1.
+    let (px, py) = (transform.domain.x, transform.domain.y);
+    let mut generators: Vec<PlanePoint> = Vec::with_capacity(points.len());
+    let mut normalized: Vec<Vec2> = Vec::with_capacity(points.len());
+    for (i, p) in points.iter().enumerate() {
+        let (x, y) = (p.x(), p.y());
+        if !x.is_finite() || !y.is_finite() {
+            return Err(VoronoiError::InvalidInput {
+                point_index: i,
+                message: format!("non-finite coordinates ({x}, {y})"),
+            });
+        }
+        if !rect.contains(x, y) {
+            return Err(VoronoiError::InvalidInput {
+                point_index: i,
+                message: format!("point ({x}, {y}) lies outside the domain rect"),
+            });
+        }
+        generators.push(PlanePoint::new(x, y));
+        // On the torus, the rect's max edges are identified with its min
+        // edges: wrap normalized coordinates into [0, p).
+        let n = transform.to_normalized(Vec2::new(x, y));
+        normalized.push(Vec2::new(
+            n.x.rem_euclid(px).min(next_below(px)),
+            n.y.rem_euclid(py).min(next_below(py)),
+        ));
+    }
+
+    // The torus is fully occupied: occupancy fraction 1 over res^2 cells.
+    let res = plane_grid_resolution(normalized.len(), 1.0);
+    let grid = PeriodicGrid::new(&normalized, res, px, py);
+
+    let weld = weld_within_radius_periodic(&normalized, &grid);
+    let (output, weld_map, original_to_effective) = match &weld {
+        None => (compute_periodic_cells(&normalized, &grid)?, None, None),
+        Some(weld) => {
+            let res = plane_grid_resolution(weld.effective.len(), 1.0);
+            let eff_grid = PeriodicGrid::new(&weld.effective, res, px, py);
+            (
+                compute_periodic_cells(&weld.effective, &eff_grid)?,
+                Some(weld.weld_map.clone()),
+                Some(&weld.original_to_effective),
+            )
+        }
+    };
+
+    // Map canonical wrapped vertices back to rect coordinates (still
+    // canonically wrapped; cell_polygon does the per-cell unwrap).
+    let vertices: Vec<PlanePoint> = output
+        .vertices
+        .into_iter()
+        .map(|v| transform.to_rect(v))
+        .collect();
+
+    let cells: Vec<crate::diagram::VoronoiCell> = match original_to_effective {
+        None => output.cells,
+        Some(map) => map.iter().map(|&eff| output.cells[eff as usize]).collect(),
+    };
+
+    Ok(PlanarVoronoi::from_raw_parts(
+        generators,
+        vertices,
+        cells,
+        output.cell_indices,
+        weld_map,
+        rect,
+        PlaneTopology::Periodic,
+    ))
+}
+
+/// Largest f32 strictly below `p` (clamps wrapped coordinates out of the
+/// half-open domain's excluded endpoint).
+#[inline]
+fn next_below(p: f32) -> f32 {
+    f32::from_bits(p.to_bits() - 1)
 }

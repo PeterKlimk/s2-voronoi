@@ -527,8 +527,9 @@ pub struct PlaneValidationReport {
     pub num_edges: usize,
     /// Single-use edges that lie on the rect boundary (expected for hull cells).
     pub boundary_edges: usize,
-    /// Euler characteristic `V - E + (F + 1)` with the outer face counted;
-    /// 2 for a valid disk subdivision.
+    /// Normalized Euler characteristic: `V - E + F + 1` (outer face) for
+    /// bounded diagrams, `V - E + F + 2` for periodic ones — 2 for a valid
+    /// subdivision in both topologies.
     pub euler_characteristic: i32,
     /// Cells with fewer than 3 distinct vertices.
     pub degenerate_cells: usize,
@@ -570,6 +571,12 @@ impl PlaneValidationReport {
 }
 
 /// Validate a planar Voronoi diagram against the strict subdivision contract.
+///
+/// Bounded diagrams: disk topology (`V - E + (F + 1) = 2`), interior edges
+/// paired with opposite orientations, single-use edges only on the rect
+/// boundary. Periodic diagrams: torus topology (`V - E + F = 0`), EVERY
+/// edge paired — single-use edges are always defects and `boundary_edges`
+/// stays zero.
 pub fn validate_plane(diagram: &crate::PlanarVoronoi) -> PlaneValidationReport {
     use std::collections::HashMap;
 
@@ -678,8 +685,10 @@ pub fn validate_plane(diagram: &crate::PlanarVoronoi) -> PlaneValidationReport {
     report.orphan_vertices = num_vertices - report.used_vertices;
     report.num_edges = edge_uses.len();
 
+    let periodic = diagram.is_periodic();
     // A single-use edge must lie on the rect boundary: both endpoints within
-    // tolerance of one common wall.
+    // tolerance of one common wall. (Bounded topology only; a torus has no
+    // boundary, so on the periodic side every single-use edge is a defect.)
     let on_common_wall = |a: u32, b: u32| -> bool {
         let (pa, pb) = (diagram.vertex(a as usize), diagram.vertex(b as usize));
         let near = |u: f32, wall: f32| (u - wall).abs() <= wall_eps;
@@ -692,7 +701,7 @@ pub fn validate_plane(diagram: &crate::PlanarVoronoi) -> PlaneValidationReport {
     for (&(a, b), &(uses, balance)) in &edge_uses {
         match uses {
             1 => {
-                if on_common_wall(a, b) {
+                if !periodic && on_common_wall(a, b) {
                     report.boundary_edges += 1;
                 } else {
                     report.unpaired_interior_edges += 1;
@@ -707,8 +716,14 @@ pub fn validate_plane(diagram: &crate::PlanarVoronoi) -> PlaneValidationReport {
         }
     }
 
-    report.euler_characteristic =
-        report.used_vertices as i32 - report.num_edges as i32 + (report.canonical_cells as i32 + 1);
+    // Disk: V - E + (F + 1) = 2 with the outer face. Torus: V - E + F = 0,
+    // normalized here to the same "expected 2" scale (+2) so
+    // is_strictly_valid keeps a single check.
+    report.euler_characteristic = if periodic {
+        report.used_vertices as i32 - report.num_edges as i32 + report.canonical_cells as i32 + 2
+    } else {
+        report.used_vertices as i32 - report.num_edges as i32 + (report.canonical_cells as i32 + 1)
+    };
 
     report
 }

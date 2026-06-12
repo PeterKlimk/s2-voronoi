@@ -30,10 +30,6 @@
 //! nearest image's bisector can touch a cell, so each neighbor contributes
 //! at most one edge per cell and `[g, a, b]` identifies at most one vertex.
 
-// Only builder-level tests consume this module so far; the periodic
-// driver / compute_plane_periodic pipeline lands next and removes this.
-#![allow(dead_code)]
-
 use glam::{DVec2, Vec2};
 
 use crate::fp;

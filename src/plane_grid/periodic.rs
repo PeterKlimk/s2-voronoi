@@ -14,11 +14,6 @@
 //! shell-expansion only; a packed SIMD stage can slot in later behind the
 //! same frontier protocol.
 
-// Only the contract suite consumes this module so far; the periodic
-// pipeline (builder / driver / compute_plane_periodic) lands next and
-// removes this allow.
-#![allow(dead_code)]
-
 use glam::Vec2;
 
 use crate::cube_grid::{DirectedCellMode, DirectedEligibility};
@@ -171,6 +166,8 @@ impl PeriodicGrid {
         self.point_slots[idx]
     }
 
+    // Used by the packed periodic stage when it lands (cell-grouped runs).
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn point_index_to_cell(&self, idx: usize) -> usize {
         self.point_cells[idx] as usize
@@ -189,6 +186,90 @@ impl PeriodicGrid {
         };
         let w = walls[i];
         wrap_abs(q - w, period) - w.abs() * SLACK - period * SLACK
+    }
+}
+
+impl PeriodicGrid {
+    /// Collect all pairs of point indices within minimum-image `radius` of
+    /// each other (each unordered pair reported at least once; duplicates
+    /// and self-pairs are harmless to the union-find consumer).
+    ///
+    /// Same grid-integrated design as the bounded grid, with wrapped
+    /// E/N/NE/NW neighbor bands; at tiny resolutions wrapped neighbors may
+    /// coincide with the cell itself, which only produces redundant pairs.
+    pub(crate) fn collect_pairs_within(&self, radius: f32, out: &mut Vec<(u32, u32)>) {
+        let res = self.res;
+        let r_sq = radius * radius;
+        for cell in 0..res * res {
+            let start = self.cell_offsets[cell] as usize;
+            let end = self.cell_offsets[cell + 1] as usize;
+            let k = end - start;
+            if k == 0 {
+                continue;
+            }
+            // Within-cell pairs (min-image distances; cells are far larger
+            // than the radius at every production resolution).
+            for i in start..end {
+                let pi = Vec2::new(self.cell_points_x[i], self.cell_points_y[i]);
+                for j in (i + 1)..end {
+                    let pj = Vec2::new(self.cell_points_x[j], self.cell_points_y[j]);
+                    if min_image_dist_sq(pi, pj, self.px, self.py) <= r_sq {
+                        out.push((self.point_indices[i], self.point_indices[j]));
+                    }
+                }
+            }
+            // Wrapped forward neighbors for points within `radius` of the
+            // E/N walls (W/S covered by those cells' own forward checks).
+            let (ix, iy) = (cell % res, cell / res);
+            let e_wall = self.walls_x[(ix + 1) % res];
+            let n_wall = self.walls_y[(iy + 1) % res];
+            let w_wall = self.walls_x[ix];
+            let e_cell = iy * res + (ix + 1) % res;
+            let n_cell = ((iy + 1) % res) * res + ix;
+            let ne_cell = ((iy + 1) % res) * res + (ix + 1) % res;
+            let nw_cell = ((iy + 1) % res) * res + (ix + res - 1) % res;
+            for i in start..end {
+                let p = Vec2::new(self.cell_points_x[i], self.cell_points_y[i]);
+                let idx = self.point_indices[i];
+                let close_e = wrap_abs(e_wall - p.x, self.px) <= radius;
+                let close_n = wrap_abs(n_wall - p.y, self.py) <= radius;
+                let close_w = wrap_abs(p.x - w_wall, self.px) <= radius;
+                if close_e {
+                    self.pairs_against_cell(e_cell, p, idx, r_sq, out);
+                }
+                if close_n {
+                    self.pairs_against_cell(n_cell, p, idx, r_sq, out);
+                }
+                if close_e && close_n {
+                    self.pairs_against_cell(ne_cell, p, idx, r_sq, out);
+                }
+                if close_w && close_n {
+                    self.pairs_against_cell(nw_cell, p, idx, r_sq, out);
+                }
+            }
+        }
+    }
+
+    fn pairs_against_cell(
+        &self,
+        cell: usize,
+        p: Vec2,
+        index: u32,
+        r_sq: f32,
+        out: &mut Vec<(u32, u32)>,
+    ) {
+        let start = self.cell_offsets[cell] as usize;
+        let end = self.cell_offsets[cell + 1] as usize;
+        for slot in start..end {
+            let q = Vec2::new(self.cell_points_x[slot], self.cell_points_y[slot]);
+            let qi = self.point_indices[slot];
+            if qi == index {
+                continue;
+            }
+            if min_image_dist_sq(p, q, self.px, self.py) <= r_sq {
+                out.push((index, qi));
+            }
+        }
     }
 }
 
@@ -468,7 +549,8 @@ impl<'a, 'b> PeriodicNeighborStream<'a, 'b> {
         self.takeover.advance();
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    // Diagnostics surface (sibling-stream parity).
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn knn_exhausted(&self) -> bool {
         self.knn_exhausted
