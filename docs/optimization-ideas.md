@@ -92,6 +92,28 @@ sqrt at <1% of total. Only worth retrying on a quiet box, and the eps
 semantics shift (up to sqrt(2) larger) would need fuzz revalidation
 regardless. Low expected value.
 
+## Done (2026-06, micro-opt matrix screen — paired-confirmed)
+
+- **Micro-opt stack merged** (~-36ms total at 500k ST, -120ms
+  cell_construction at 2M, 12/12 paired rounds): extract-inline-checks
+  (individually proven; deletes an O(vertices) per-cell diagnostic
+  pre-pass) plus shell-frontier-scratch, packed-frontier-no-sentinel-fill,
+  point-face-reciprocal, packed-tail-hoist (proven collectively as a
+  stack increment). Full protocol and per-branch verdicts:
+  docs/micro-optimization-matrix.md.
+- **Methodological finding worth keeping**: per-binary code-layout offsets
+  on this codebase are ~±10-15ms (1.3-2%) at 500k ST and are STABLE and
+  SIGN-CONSISTENT across rounds — paired interleaving cancels machine
+  drift but not layout luck; sign consistency alone cannot validate a
+  micro-opt. Use diff-disjoint control branches to calibrate the floor,
+  and stack sub-floor candidates to test their sum.
+- Rejected with measurement: periodic-conditional-wrap (+11.8ms on its own
+  periodic pipeline, 2/13), binning-cache-fuse, cell-to-face-u32,
+  directed-cell-mode, frontier-cache-ordf32. Unproven (inside layout
+  floor, not merged): chunk-array-loaders, clip-batch-slice,
+  packed-center-tail-simd, packed-query-dot-cache, projection-max-r2,
+  signed-dists-array-refs, preprocess-touched-reps.
+
 ## Done (2026-06, edge-repair / weld / stage-0 week — paired-confirmed)
 
 Paired interleaved A/B (12-16 rounds, ST, pinned core, order rotated per

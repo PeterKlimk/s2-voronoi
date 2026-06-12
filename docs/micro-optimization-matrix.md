@@ -177,4 +177,6 @@ five merge together. Full test suite green on the stack (247).
 - `preprocess-touched-reps`: zero measurable preprocess effect at 500k (its
   target path needs weld-heavy inputs); cleanliness-only candidate.
 - `periodic-conditional-wrap`: measured on its actual pipeline
-  (bench_plane --periodic paired A/B) — result recorded below when run.
+  (bench_plane --periodic, 500k ST, 14 order-alternated paired rounds):
+  **+11.8ms median, faster in only 2/13 — rejected** (conditional wrapping
+  defeats the unconditional vectorized minimum-image path).
