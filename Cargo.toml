@@ -22,7 +22,6 @@ serde = ["dep:serde"] # Serialize/Deserialize for diagram types
 qhull = ["qhull-enhanced"]  # Convex hull backend (test/bench only)
 simd_scalar = [] # Scalar/autovectorized 8-lane path instead of `wide`; debugging/comparison
 fma = [] # Prefer fused multiply-add via mul_add (may change results; can be slow without HW FMA)
-packed_knn_sort_small = [] # Use crate::sort::sort_small for small packed-kNN sorts
 tools = ["dep:clap", "dep:kiddo", "dep:rand", "dep:rand_chacha"] # Benchmark/utility binaries
 bench_voronoice = ["tools", "dep:voronoice"] # Head-to-head planar comparison in bench_plane
 

@@ -1,5 +1,4 @@
 use super::super::super::{cell_to_face_ij, CubeMapGrid};
-#[cfg(feature = "packed_knn_sort_small")]
 use crate::sort::sort_small as sort_small_u64;
 use glam::Vec3;
 
@@ -34,12 +33,11 @@ pub(super) fn make_desc_key(dot: f32, idx: u32) -> u64 {
 
 #[inline(always)]
 pub(super) fn sort_keys_u64(keys: &mut [u64]) {
-    #[cfg(feature = "packed_knn_sort_small")]
-    {
-        if keys.len() <= 35 {
-            sort_small_u64(keys);
-            return;
-        }
+    // Sorting networks for small N: paired A/B (quiet box, 8/8 rounds)
+    // measured ~5% total-time win at 500k over sort_unstable here.
+    if keys.len() <= 35 {
+        sort_small_u64(keys);
+        return;
     }
     keys.sort_unstable();
 }

@@ -132,8 +132,8 @@ backend actually solved, and strict validation of both views; `report.preferred_
   `CellAdjacency`.
 - `timing`: detailed phase/sub-phase timing reports.
 - `qhull`: convex hull backend used for tests/bench comparisons only.
-- Internal/research flags (`profiling`, `microbench`, `fma`,
-  `packed_knn_sort_small`): not part of the public surface; subject to consolidation.
+- Internal/research flags (`profiling`, `microbench`, `fma`): not part of the public
+  surface; subject to consolidation.
 
 ## Documentation
 

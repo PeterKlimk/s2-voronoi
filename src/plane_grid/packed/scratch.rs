@@ -9,7 +9,6 @@
 //! — anything outside the radius-`r` cell box is at least that far away, so
 //! the 5x5 box bound directly replaces the sphere's ring-3 machinery.
 
-#[cfg(feature = "packed_knn_sort_small")]
 use crate::sort::sort_small as sort_small_u64;
 
 use super::super::{outside_box_dist_sq, PlaneGrid};
@@ -50,12 +49,10 @@ fn key_to_dist_sq(key: u64) -> f32 {
 
 #[inline(always)]
 fn sort_keys_u64(keys: &mut [u64]) {
-    #[cfg(feature = "packed_knn_sort_small")]
-    {
-        if keys.len() <= 35 {
-            sort_small_u64(keys);
-            return;
-        }
+    // Always-on small-N sorting networks (see the cube twin for the data).
+    if keys.len() <= 35 {
+        sort_small_u64(keys);
+        return;
     }
     keys.sort_unstable();
 }

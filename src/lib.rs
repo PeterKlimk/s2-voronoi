@@ -44,7 +44,6 @@ pub mod adjacency;
 mod diagram;
 mod error;
 mod fp;
-#[cfg(any(test, feature = "packed_knn_sort_small"))]
 #[allow(clippy::too_many_arguments)] // generated sorting networks
 pub(crate) mod generated;
 mod measures;
@@ -53,7 +52,6 @@ mod plane_diagram;
 pub(crate) mod policy;
 #[doc(hidden)]
 pub mod quality;
-#[cfg(any(test, feature = "packed_knn_sort_small"))]
 pub(crate) mod sort;
 pub(crate) mod timing;
 pub(crate) mod tolerances;

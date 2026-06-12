@@ -23,9 +23,6 @@ cargo fmt
 Useful targeted checks:
 
 ```bash
-# Validate packed small-sort path compiles
-cargo check --release --features packed_knn_sort_small
-
 # API/correctness suites only
 cargo test --release --test api --test correctness
 ```
@@ -124,7 +121,6 @@ src/
 - `qhull`: convex-hull backend for comparison tests/bench.
 - `simd_clip`: SIMD small-N clippers in clipper dispatch.
 - `fma`: prefer fused multiply-add (`mul_add`) where used.
-- `packed_knn_sort_small`: enable internal small-sort path in packed kNN.
 - `tools`: benchmark/utility binaries.
 
 ## Tests
