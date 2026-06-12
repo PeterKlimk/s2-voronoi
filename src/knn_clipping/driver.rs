@@ -163,6 +163,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                                         Some(PackedQuery::new(
                                             &mut prepared,
                                             &mut packed_timings,
+                                            grid,
                                             offset,
                                             packed_policy,
                                         )),
