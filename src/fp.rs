@@ -199,8 +199,8 @@ pub(crate) fn signed_dists_mask8(
     a: f64,
     b: f64,
     c: f64,
-    us: &[f64],
-    vs: &[f64],
+    us: &[f64; 8],
+    vs: &[f64; 8],
     neg_eps: f64,
 ) -> ([f64; 8], u32) {
     backend::signed_dists_mask8(a, b, c, us, vs, neg_eps)
@@ -304,14 +304,14 @@ mod backend {
         a: f64,
         b: f64,
         c: f64,
-        us: &[f64],
-        vs: &[f64],
+        us: &[f64; 8],
+        vs: &[f64; 8],
         neg_eps: f64,
     ) -> ([f64; 8], u32) {
-        let u_lo = f64x4::from(<[f64; 4]>::try_from(&us[..4]).unwrap());
-        let u_hi = f64x4::from(<[f64; 4]>::try_from(&us[4..8]).unwrap());
-        let v_lo = f64x4::from(<[f64; 4]>::try_from(&vs[..4]).unwrap());
-        let v_hi = f64x4::from(<[f64; 4]>::try_from(&vs[4..8]).unwrap());
+        let u_lo = f64x4::from([us[0], us[1], us[2], us[3]]);
+        let u_hi = f64x4::from([us[4], us[5], us[6], us[7]]);
+        let v_lo = f64x4::from([vs[0], vs[1], vs[2], vs[3]]);
+        let v_hi = f64x4::from([vs[4], vs[5], vs[6], vs[7]]);
         let d_lo = dists4(a, b, c, u_lo, v_lo);
         let d_hi = dists4(a, b, c, u_hi, v_hi);
         let eps4 = f64x4::splat(neg_eps);
@@ -403,8 +403,8 @@ mod backend {
         a: f64,
         b: f64,
         c: f64,
-        us: &[f64],
-        vs: &[f64],
+        us: &[f64; 8],
+        vs: &[f64; 8],
         neg_eps: f64,
     ) -> ([f64; 8], u32) {
         let mut dists = [0.0f64; 8];

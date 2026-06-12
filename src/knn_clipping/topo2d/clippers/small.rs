@@ -196,8 +196,10 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
     // N read stale-but-finite data) and masked down to the live N bits.
     // Lane math is bit-identical to the scalar signed_dist formula.
     let full: u32 = (1u32 << N) - 1;
+    let (us_chunks, _) = poly.us.as_chunks::<8>();
+    let (vs_chunks, _) = poly.vs.as_chunks::<8>();
     let (dists, inside_bits) =
-        fp::signed_dists_mask8(hp.a, hp.b, hp.c, &poly.us, &poly.vs, neg_eps);
+        fp::signed_dists_mask8(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps);
     let mask = inside_bits & full;
     // P5 escalation: near-margin lanes are re-decided by the exact
     // canonical predicate (one abs+compare per live lane on the hot path).
@@ -332,8 +334,10 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
     // N read stale-but-finite data) and masked down to the live N bits.
     // Lane math is bit-identical to the scalar signed_dist formula.
     let full: u32 = (1u32 << N) - 1;
+    let (us_chunks, _) = poly.us.as_chunks::<8>();
+    let (vs_chunks, _) = poly.vs.as_chunks::<8>();
     let (dists, inside_bits) =
-        fp::signed_dists_mask8(hp.a, hp.b, hp.c, &poly.us, &poly.vs, neg_eps);
+        fp::signed_dists_mask8(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps);
     let mask = inside_bits & full;
     // P5 escalation: near-margin lanes are re-decided by the exact
     // canonical predicate (one abs+compare per live lane on the hot path).
