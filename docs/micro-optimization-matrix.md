@@ -184,3 +184,43 @@ five merge together. Full test suite green on the stack (247).
   (bench_plane --periodic, 500k ST, 14 order-alternated paired rounds):
   **+11.8ms median, faster in only 2/13 — rejected** (conditional wrapping
   defeats the unconditional vectorized minimum-image path).
+
+
+## Prior-based merges and remaining items (2026-06-13, third pass)
+
+Per maintainer direction, branches indistinguishable from zero were
+re-adjudicated on mechanistic priors instead of incumbency:
+
+- **Merged on priors** (all suite-green, regression guard within noise):
+  `projection-max-r2` (deletes a sqrt+div per committed clip, algebraically
+  equivalent), `clip-batch-slice`, `directed-cell-mode` (equivalent
+  short-circuit before the bin lookup), `packed-query-dot-cache` (hoists
+  invariant query loads past `&mut` aliasing), `signed-dists-array-refs`
+  and `chunk-array-loaders` (fixed-size array types: fewer bounds checks,
+  length contracts in types), `preprocess-touched-reps` (strictly less
+  work on weld runs), and `frontier-cache-ordf32` (= idea-sweep top picks
+  1 + 4: the per-batch out.clone() becomes a reused buffer at all three
+  layers; OrdF32 folds total_cmp at construction, fixing the latent
+  Eq/Ord disagreement on -0.0/NaN). Note: the frontier merge conflicted
+  with the dot-cache merge and was first committed unresolved by a chained
+  command (bbc536c) — resolved properly in the follow-up.
+- **Left out with stated reasons** (not status-quo bias):
+  `packed-center-tail-simd` and similar 50-80-line rewrites must earn
+  their complexity by measurement (kernel-contest precedent);
+  `binning-cache-fuse` caches cheap arithmetic in allocated memory (prior
+  worse); `cell-to-face-u32` duplicates code for marginal division width;
+  `periodic-conditional-wrap` measured worse on its own pipeline.
+- **Build flags (top pick 10)**: thin LTO + codegen-units=1 tested as a
+  profile-only A/B — inconclusive on a deteriorating box
+  (cell_construction -10.9ms 8/12 vs total +23.4ms 3/12, spreads
+  ±100ms), and the compile-time cost is concrete and daily. Reverted;
+  re-try in a quiet-box session. Checked-in target-cpu deliberately left
+  to the bench scripts for portability.
+
+### Unimplemented ideas-doc leftovers worth a future look
+
+Top pick 5's proper variant (u8 scratch for bin_for_cell + fused
+slot_gen_map pass — the branch implemented a worse allocation-based
+version); top pick 8's fmodf-libcall half (periodic normalization); the
+PolyBuffer usize->u32 index narrowing (convergent, two scanners); and the
+~170-entry single-scanner catalog tail.
