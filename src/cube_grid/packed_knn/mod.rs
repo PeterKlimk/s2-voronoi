@@ -229,14 +229,9 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
     ) -> PackedNeighborFrontier {
         if let Some(cached) = &self.cached_frontier {
             match cached {
-<<<<<<< HEAD
-                CachedFrontier::ExactBatch { batch, slots } => {
-                    out.clear();
-                    out.extend_from_slice(slots);
-=======
                 CachedFrontier::ExactBatch(batch) => {
+                    out.clear();
                     out.extend_from_slice(&self.cached_slots);
->>>>>>> agent/micro-opt-frontier-cache-ordf32
                     return PackedNeighborFrontier::ExactBatch(*batch);
                 }
                 CachedFrontier::UnknownButBounded { dot_upper_bound } => {
