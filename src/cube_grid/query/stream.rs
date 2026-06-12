@@ -38,13 +38,8 @@ enum StreamStage {
 
 #[derive(Debug, Clone)]
 enum CachedFrontier {
-    ExactBatch {
-        batch: DirectedNeighborBatch,
-        slots: Vec<u32>,
-    },
-    UnknownButBounded {
-        dot_upper_bound: f32,
-    },
+    ExactBatch(DirectedNeighborBatch),
+    UnknownButBounded { dot_upper_bound: f32 },
     Exhausted,
 }
 
@@ -58,6 +53,7 @@ pub(crate) struct DirectedNeighborStream<'a, 'm, 'p, 'g> {
     packed_safe_exhausted: bool,
     used_takeover: bool,
     knn_exhausted: bool,
+    cached_slots: Vec<u32>,
 }
 
 impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
@@ -102,6 +98,7 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
             packed_safe_exhausted: false,
             used_takeover: false,
             knn_exhausted: false,
+            cached_slots: Vec::new(),
         }
     }
 
@@ -110,8 +107,8 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
 
         if let Some(cached) = &self.cached_frontier {
             match cached {
-                CachedFrontier::ExactBatch { batch, slots } => {
-                    out.extend_from_slice(slots);
+                CachedFrontier::ExactBatch(batch) => {
+                    out.extend_from_slice(&self.cached_slots);
                     return DirectedNeighborFrontier::ExactBatch(*batch);
                 }
                 CachedFrontier::UnknownButBounded { dot_upper_bound } => {
@@ -147,10 +144,9 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
                                 unseen_bound: batch.unseen_bound,
                                 source,
                             };
-                            self.cached_frontier = Some(CachedFrontier::ExactBatch {
-                                batch,
-                                slots: out.clone(),
-                            });
+                            self.cached_slots.clear();
+                            self.cached_slots.extend_from_slice(out);
+                            self.cached_frontier = Some(CachedFrontier::ExactBatch(batch));
                             return DirectedNeighborFrontier::ExactBatch(batch);
                         }
                         PackedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
@@ -174,10 +170,9 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
                             unseen_bound: shell_batch.unseen_bound,
                             source: DirectedNeighborBatchSource::ShellExpand,
                         };
-                        self.cached_frontier = Some(CachedFrontier::ExactBatch {
-                            batch,
-                            slots: out.clone(),
-                        });
+                        self.cached_slots.clear();
+                        self.cached_slots.extend_from_slice(out);
+                        self.cached_frontier = Some(CachedFrontier::ExactBatch(batch));
                         return DirectedNeighborFrontier::ExactBatch(batch);
                     }
                     self.knn_exhausted = self.takeover.is_exhausted();
@@ -196,7 +191,7 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
     pub(crate) fn advance_frontier(&mut self) {
         let cached = self.cached_frontier.take();
         match cached {
-            Some(CachedFrontier::ExactBatch { .. })
+            Some(CachedFrontier::ExactBatch(_))
             | Some(CachedFrontier::UnknownButBounded { .. }) => match self.stage {
                 StreamStage::Packed => {
                     let grid = self.grid;
