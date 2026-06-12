@@ -48,6 +48,11 @@ impl<'a> DirectedEligibility<'a> {
         start_cell: u32,
         cell: usize,
     ) -> DirectedCellMode {
+        let cell_u32 = cell as u32;
+        if cell_u32 > start_cell {
+            return DirectedCellMode::EmitAll;
+        }
+
         let Some(bin_b) = self.layout.cell_bin(cell_offsets, cell) else {
             return DirectedCellMode::TransitOnly;
         };
@@ -55,7 +60,6 @@ impl<'a> DirectedEligibility<'a> {
             return DirectedCellMode::EmitAll;
         }
 
-        let cell_u32 = cell as u32;
         if cell_u32 < start_cell {
             DirectedCellMode::TransitOnly
         } else if cell_u32 == start_cell {
