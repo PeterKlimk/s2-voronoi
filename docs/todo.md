@@ -193,6 +193,44 @@ bisectors) and a geometry-agnostic core (directed stitching, sharded dedup, reco
 - Sequence: ship the sphere first; keep geometry-specific code quarantined behind the two module
   boundaries now; do the trait extraction when a second geometry is actually being built, so the
   abstraction is shaped by two instances rather than one.
+- *(Done since: the plane shipped as `compute_plane`, then periodic as `compute_plane_periodic`,
+  both as sibling drivers over the shared core — the quarantine held.)*
+
+### Power diagrams (weighted Voronoi) — designed, not started
+
+Assessment (June 2026): doable as a planar-arc-sized project; recorded here so the design
+thinking isn't lost.
+
+What carries over untouched: triplet vertex keys, sharded dedup, edge forwarding,
+reconciliation, assembly. Bisectors stay straight — the planar radical axis is the
+perpendicular bisector offset by `(w_i − w_j) / (2 d_ij)`; on the sphere use **Sugihara's
+spherical Laguerre diagram**, whose bisectors are still great circles, so gnomonic clipping
+survives. Cell construction changes by one line per geometry.
+
+The three real changes:
+
+1. **Termination certificates** (the hard part): `d > 2·max_r` is unsound with weights — a far
+   generator with a large weight can still cut. The sound bound picks up a weight-spread term;
+   the grid needs per-cell weight maxima and frontiers must order candidates by power distance.
+   Every certificate proof in `plane_grid`/`cube_grid` gets revisited; shell-only first, packed
+   later (the periodic playbook). Silent-wrong-answer territory → contract-suite treatment.
+2. **Empty cells become legal**: a dominated generator owns nothing, but the current contract
+   treats `ClippedAway` as an error. Needs an API-visible `hidden_map` (analogous to
+   `weld_map`) and ripples into validation, adjacency, and the regular-triangulation dual.
+   Design this first.
+3. **Torus guard × weights**: the half-period guard check must use the weighted `max_r`
+   (fail-loudly mechanism unchanged).
+
+Combinatorial blow-up is real but lives in tests/docs, not engine code: weighted follows the
+existing sibling-driver template (additive cost per geometry). Test suites parameterize on
+weighted-with-equal-weights ≡ unweighted topology.
+
+Base-case performance must not regress: no runtime `w == 1` checks in hot loops. Preferred:
+monomorphize over a weighting policy with a ZST unweighted instantiation (offsets constant-fold
+away; the backend fingerprint proves bit-identity). Fallback: a fully separate sibling driver.
+
+Sequence when started: empty-cell contract design → planar bounded power → sphere Laguerre →
+torus → packed stages.
 
 ## Working rules
 
