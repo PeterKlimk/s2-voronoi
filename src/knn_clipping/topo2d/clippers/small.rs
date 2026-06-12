@@ -183,42 +183,45 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
 
     let neg_eps = -hp.eps;
 
-    // SAFETY: `[MaybeUninit<f64>; N]` is valid in an uninitialized state.
-    let mut dists: [core::mem::MaybeUninit<f64>; N] =
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
-
     let us = poly.us.as_ptr();
     let vs = poly.vs.as_ptr();
     let vps = poly.vertex_planes.as_ptr();
     let eps = poly.edge_planes.as_ptr();
 
-    let mut inside = [false; N];
-    let mut any_inside = false;
-    let mut all_inside = true;
+    // All 8 lanes are computed (slices are MAX_POLY_VERTICES long; lanes past
+    // N read stale-but-finite data) and masked down to the live N bits.
+    // Lane math is bit-identical to the scalar signed_dist formula.
+    let full: u32 = (1u32 << N) - 1;
+    let (dists, inside_bits) =
+        fp::signed_dists_mask8(hp.a, hp.b, hp.c, &poly.us, &poly.vs, neg_eps);
+    let mask = inside_bits & full;
 
-    unsafe {
-        for i in 0..N {
-            let d = hp.signed_dist(*us.add(i), *vs.add(i));
-            dists.get_unchecked_mut(i).write(d);
-            let is_inside = d >= neg_eps;
-            inside[i] = is_inside;
-            any_inside |= is_inside;
-            all_inside &= is_inside;
-        }
-    }
-
-    if !any_inside {
+    if mask == 0 {
         out.len = 0;
         out.max_r2 = 0.0;
         out.has_bounding_ref = false;
         return ClipResult::Changed;
     }
 
-    if all_inside {
+    if mask == full {
         return ClipResult::Unchanged;
     }
 
-    let ((entry_idx, entry_next), (exit_idx, exit_next)) = find_entry_exit_transitions(&inside);
+    // First entry (prev outside -> inside) and first exit (prev inside ->
+    // outside) transitions of the cyclic mask, branchlessly: rot[i] holds
+    // inside[prev(i)]. A mixed cyclic mask always contains both.
+    let rot = ((mask << 1) | (mask >> (N - 1))) & full;
+    let entry_bits = mask & !rot;
+    let exit_bits = rot & !mask;
+    debug_assert!(entry_bits != 0 && exit_bits != 0);
+    let entry_next = entry_bits.trailing_zeros() as usize;
+    let exit_next = exit_bits.trailing_zeros() as usize;
+    let entry_idx = if entry_next == 0 {
+        N - 1
+    } else {
+        entry_next - 1
+    };
+    let exit_idx = if exit_next == 0 { N - 1 } else { exit_next - 1 };
 
     #[inline(always)]
     fn r2_of(u: f64, v: f64) -> f64 {
@@ -251,8 +254,8 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
     }
 
     unsafe {
-        let d_entry = dists.get_unchecked(entry_idx).assume_init_read();
-        let d_entry_next = dists.get_unchecked(entry_next).assume_init_read();
+        let d_entry = *dists.get_unchecked(entry_idx);
+        let d_entry_next = *dists.get_unchecked(entry_next);
         let t_entry = d_entry / (d_entry - d_entry_next);
         let entry_u = fp::fma_f64(
             t_entry,
@@ -276,8 +279,8 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
             i = (i + 1) % N;
         }
 
-        let d_exit = dists.get_unchecked(exit_idx).assume_init_read();
-        let d_exit_next = dists.get_unchecked(exit_next).assume_init_read();
+        let d_exit = *dists.get_unchecked(exit_idx);
+        let d_exit_next = *dists.get_unchecked(exit_next);
         let t_exit = d_exit / (d_exit - d_exit_next);
         let exit_u = fp::fma_f64(
             t_exit,
@@ -312,42 +315,45 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
 
     let neg_eps = -hp.eps;
 
-    // SAFETY: `[MaybeUninit<f64>; N]` is valid in an uninitialized state.
-    let mut dists: [core::mem::MaybeUninit<f64>; N] =
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
-
     let us = poly.us.as_ptr();
     let vs = poly.vs.as_ptr();
     let vps = poly.vertex_planes.as_ptr();
     let eps = poly.edge_planes.as_ptr();
 
-    let mut inside = [false; N];
-    let mut any_inside = false;
-    let mut all_inside = true;
+    // All 8 lanes are computed (slices are MAX_POLY_VERTICES long; lanes past
+    // N read stale-but-finite data) and masked down to the live N bits.
+    // Lane math is bit-identical to the scalar signed_dist formula.
+    let full: u32 = (1u32 << N) - 1;
+    let (dists, inside_bits) =
+        fp::signed_dists_mask8(hp.a, hp.b, hp.c, &poly.us, &poly.vs, neg_eps);
+    let mask = inside_bits & full;
 
-    unsafe {
-        for i in 0..N {
-            let d = hp.signed_dist(*us.add(i), *vs.add(i));
-            dists.get_unchecked_mut(i).write(d);
-            let is_inside = d >= neg_eps;
-            inside[i] = is_inside;
-            any_inside |= is_inside;
-            all_inside &= is_inside;
-        }
-    }
-
-    if !any_inside {
+    if mask == 0 {
         out.len = 0;
         out.max_r2 = 0.0;
         out.has_bounding_ref = false;
         return ClipResult::Changed;
     }
 
-    if all_inside {
+    if mask == full {
         return ClipResult::Unchanged;
     }
 
-    let ((entry_idx, entry_next), (exit_idx, exit_next)) = find_entry_exit_transitions(&inside);
+    // First entry (prev outside -> inside) and first exit (prev inside ->
+    // outside) transitions of the cyclic mask, branchlessly: rot[i] holds
+    // inside[prev(i)]. A mixed cyclic mask always contains both.
+    let rot = ((mask << 1) | (mask >> (N - 1))) & full;
+    let entry_bits = mask & !rot;
+    let exit_bits = rot & !mask;
+    debug_assert!(entry_bits != 0 && exit_bits != 0);
+    let entry_next = entry_bits.trailing_zeros() as usize;
+    let exit_next = exit_bits.trailing_zeros() as usize;
+    let entry_idx = if entry_next == 0 {
+        N - 1
+    } else {
+        entry_next - 1
+    };
+    let exit_idx = if exit_next == 0 { N - 1 } else { exit_next - 1 };
 
     #[inline(always)]
     fn r2_of(u: f64, v: f64) -> f64 {
@@ -381,10 +387,10 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
 
     unsafe {
         // Read all four distances first, then issue both divisions for ILP
-        let d_entry = dists.get_unchecked(entry_idx).assume_init_read();
-        let d_entry_next = dists.get_unchecked(entry_next).assume_init_read();
-        let d_exit = dists.get_unchecked(exit_idx).assume_init_read();
-        let d_exit_next = dists.get_unchecked(exit_next).assume_init_read();
+        let d_entry = *dists.get_unchecked(entry_idx);
+        let d_entry_next = *dists.get_unchecked(entry_next);
+        let d_exit = *dists.get_unchecked(exit_idx);
+        let d_exit_next = *dists.get_unchecked(exit_next);
 
         let t_entry = d_entry / (d_entry - d_entry_next);
         let t_exit = d_exit / (d_exit - d_exit_next);

@@ -182,9 +182,27 @@ impl Dists8 {
     }
 }
 
+/// Signed distances of the first 8 polygon vertices to a half-plane
+/// (`fma_f64(a, u, fma_f64(b, v, c))`, lane-exact with the scalar formula)
+/// plus the inside bitmask (`d >= neg_eps`, lane i -> bit i).
+///
+/// Callers may pass slices longer than the live vertex count; lanes past it
+/// compute on stale-but-finite data and must be masked off by the caller.
+#[inline(always)]
+pub(crate) fn signed_dists_mask8(
+    a: f64,
+    b: f64,
+    c: f64,
+    us: &[f64],
+    vs: &[f64],
+    neg_eps: f64,
+) -> ([f64; 8], u32) {
+    backend::signed_dists_mask8(a, b, c, us, vs, neg_eps)
+}
+
 #[cfg(not(feature = "simd_scalar"))]
 mod backend {
-    use wide::{f32x8, CmpGt, CmpLt};
+    use wide::{f32x8, f64x4, CmpGe, CmpGt, CmpLt};
 
     pub(super) type V = f32x8;
 
@@ -243,6 +261,44 @@ mod backend {
     pub(super) fn to_array(v: V) -> [f32; 8] {
         v.to_array()
     }
+
+    #[inline(always)]
+    fn dists4(a: f64, b: f64, c: f64, u: f64x4, v: f64x4) -> f64x4 {
+        #[cfg(feature = "fma")]
+        {
+            u.mul_add(f64x4::splat(a), v.mul_add(f64x4::splat(b), f64x4::splat(c)))
+        }
+        #[cfg(not(feature = "fma"))]
+        {
+            f64x4::splat(a) * u + (f64x4::splat(b) * v + f64x4::splat(c))
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn signed_dists_mask8(
+        a: f64,
+        b: f64,
+        c: f64,
+        us: &[f64],
+        vs: &[f64],
+        neg_eps: f64,
+    ) -> ([f64; 8], u32) {
+        let u_lo = f64x4::from(<[f64; 4]>::try_from(&us[..4]).unwrap());
+        let u_hi = f64x4::from(<[f64; 4]>::try_from(&us[4..8]).unwrap());
+        let v_lo = f64x4::from(<[f64; 4]>::try_from(&vs[..4]).unwrap());
+        let v_hi = f64x4::from(<[f64; 4]>::try_from(&vs[4..8]).unwrap());
+        let d_lo = dists4(a, b, c, u_lo, v_lo);
+        let d_hi = dists4(a, b, c, u_hi, v_hi);
+        let eps4 = f64x4::splat(neg_eps);
+        let mask = (d_lo.cmp_ge(eps4).move_mask() as u32 & 0xf)
+            | ((d_hi.cmp_ge(eps4).move_mask() as u32 & 0xf) << 4);
+        let lo = d_lo.to_array();
+        let hi = d_hi.to_array();
+        (
+            [lo[0], lo[1], lo[2], lo[3], hi[0], hi[1], hi[2], hi[3]],
+            mask,
+        )
+    }
 }
 
 #[cfg(feature = "simd_scalar")]
@@ -300,5 +356,24 @@ mod backend {
     #[inline(always)]
     pub(super) fn to_array(v: V) -> [f32; 8] {
         v
+    }
+
+    #[inline(always)]
+    pub(super) fn signed_dists_mask8(
+        a: f64,
+        b: f64,
+        c: f64,
+        us: &[f64],
+        vs: &[f64],
+        neg_eps: f64,
+    ) -> ([f64; 8], u32) {
+        let mut dists = [0.0f64; 8];
+        let mut mask = 0u32;
+        for i in 0..8 {
+            let d = super::fma_f64(a, us[i], super::fma_f64(b, vs[i], c));
+            dists[i] = d;
+            mask |= u32::from(d >= neg_eps) << i;
+        }
+        (dists, mask)
     }
 }
