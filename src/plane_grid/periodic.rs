@@ -475,7 +475,10 @@ impl<'a, 'b> PeriodicNeighborStream<'a, 'b> {
     }
 }
 
+// Mirrors the other NN contract suites: the loop index addresses parallel
+// per-cell arrays, and the frontier loop has a non-trivial Exhausted arm.
 #[cfg(test)]
+#[allow(clippy::needless_range_loop, clippy::while_let_loop)]
 mod tests {
     use super::*;
     use crate::packed_layout::PackedSlotLayout;
