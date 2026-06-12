@@ -24,7 +24,13 @@ impl GnomonicBuilder {
         buffer: &mut CellOutputBuffer,
     ) -> Result<(), CellFailure> {
         let poly = self.current_poly();
-        if self.debug_extraction_failure().is_some() {
+        if !self.is_bounded() || poly.len < 3 {
+            return Err(CellFailure::NoValidSeed);
+        }
+        let half_plane_count = self.half_planes.len();
+        let neighbor_index_count = self.neighbor_indices.len();
+        let neighbor_slot_count = self.neighbor_slots.len();
+        if half_plane_count != neighbor_index_count || half_plane_count != neighbor_slot_count {
             return Err(CellFailure::NoValidSeed);
         }
 
@@ -59,13 +65,19 @@ impl GnomonicBuilder {
             );
             let dir = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);
             let len2 = dir.length_squared();
-            if len2 < EXTRACT_DEGENERATE_LEN2 {
+            if !len2.is_finite() || len2 < EXTRACT_DEGENERATE_LEN2 {
                 return Err(CellFailure::NoValidSeed);
             }
             let v_pos = dir * len2.sqrt().recip();
 
-            let n1 = self.neighbor_indices[plane_a] as u32;
-            let n2 = self.neighbor_indices[plane_b] as u32;
+            let Some(&n1) = self.neighbor_indices.get(plane_a) else {
+                return Err(CellFailure::NoValidSeed);
+            };
+            let Some(&n2) = self.neighbor_indices.get(plane_b) else {
+                return Err(CellFailure::NoValidSeed);
+            };
+            let n1 = n1 as u32;
+            let n2 = n2 as u32;
             let key = sort3_u32(gen_idx, n1, n2);
             buffer.vertices.push((key, v_pos));
 
@@ -75,15 +87,18 @@ impl GnomonicBuilder {
                 buffer.edge_neighbor_slots.push(u32::MAX);
                 buffer.edge_neighbor_eps.push(0.0);
             } else {
-                buffer
-                    .edge_neighbor_globals
-                    .push(self.neighbor_indices[edge_plane] as u32);
-                buffer
-                    .edge_neighbor_slots
-                    .push(self.neighbor_slots[edge_plane]);
-                buffer
-                    .edge_neighbor_eps
-                    .push(self.half_planes[edge_plane].eps as f32);
+                let Some(&edge_neighbor) = self.neighbor_indices.get(edge_plane) else {
+                    return Err(CellFailure::NoValidSeed);
+                };
+                let Some(&edge_slot) = self.neighbor_slots.get(edge_plane) else {
+                    return Err(CellFailure::NoValidSeed);
+                };
+                let Some(edge_hp) = self.half_planes.get(edge_plane) else {
+                    return Err(CellFailure::NoValidSeed);
+                };
+                buffer.edge_neighbor_globals.push(edge_neighbor as u32);
+                buffer.edge_neighbor_slots.push(edge_slot);
+                buffer.edge_neighbor_eps.push(edge_hp.eps as f32);
             }
         }
 

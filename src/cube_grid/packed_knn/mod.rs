@@ -222,20 +222,23 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
         grid: &CubeMapGrid,
         out: &mut Vec<u32>,
     ) -> PackedNeighborFrontier {
-        out.clear();
-
         if let Some(cached) = &self.cached_frontier {
             match cached {
                 CachedFrontier::ExactBatch { batch, slots } => {
+                    out.clear();
                     out.extend_from_slice(slots);
                     return PackedNeighborFrontier::ExactBatch(*batch);
                 }
                 CachedFrontier::UnknownButBounded { dot_upper_bound } => {
+                    out.clear();
                     return PackedNeighborFrontier::UnknownButBounded {
                         dot_upper_bound: *dot_upper_bound,
                     };
                 }
-                CachedFrontier::Exhausted => return PackedNeighborFrontier::Exhausted,
+                CachedFrontier::Exhausted => {
+                    out.clear();
+                    return PackedNeighborFrontier::Exhausted;
+                }
             }
         }
 
@@ -257,11 +260,16 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
             ),
             PackedQueryStage::Exhausted => {
                 self.cached_frontier = Some(CachedFrontier::Exhausted);
+                out.clear();
                 return PackedNeighborFrontier::Exhausted;
             }
         };
 
-        out.resize(k, u32::MAX);
+        if out.len() < k {
+            out.resize(k, 0);
+        } else {
+            out.truncate(k);
+        }
         if let Some(chunk) = self
             .prepared
             .next_chunk(self.query_index, stage, k, out, self.timings)
@@ -284,6 +292,8 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
             });
             return PackedNeighborFrontier::ExactBatch(batch);
         }
+
+        out.clear();
 
         let dot_upper_bound = if self.stage == PackedQueryStage::Chunk0
             && self.prepared.tail_possible(self.query_index)

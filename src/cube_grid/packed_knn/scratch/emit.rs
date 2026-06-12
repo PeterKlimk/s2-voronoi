@@ -42,6 +42,14 @@ impl PackedKnnCellScratch {
         debug_assert!(self.tail_possible.get(qi).copied().unwrap_or(false));
 
         let mut t_tail = PackedLapTimer::start();
+        let query_slot = group_queries[qi];
+        let query_slot_usize = query_slot as usize;
+        let qx_s = grid.cell_points_x[query_slot_usize];
+        let qy_s = grid.cell_points_y[query_slot_usize];
+        let qz_s = grid.cell_points_z[query_slot_usize];
+        let security_threshold = self.security_thresholds[qi];
+        let threshold = self.thresholds[qi];
+        let tail_keys = &mut self.tail_keys[qi];
         for r in &self.cell_ranges[1..] {
             if r.kind == PackedCellRangeKind::SameBinEarlier {
                 continue;
@@ -54,20 +62,14 @@ impl PackedKnnCellScratch {
             let ys = &grid.cell_points_y[soa_start..soa_end];
             let zs = &grid.cell_points_z[soa_start..soa_end];
 
-            let query_slot = group_queries[qi];
-            let query_slot_usize = query_slot as usize;
-            let qx_s = grid.cell_points_x[query_slot_usize];
-            let qy_s = grid.cell_points_y[query_slot_usize];
-            let qz_s = grid.cell_points_z[query_slot_usize];
-
             let full_chunks = range_len / 8;
             for chunk in 0..full_chunks {
                 let i = chunk * 8;
                 let candidates = fp::PointChunk8::from_slices(&xs[i..], &ys[i..], &zs[i..]);
                 let dots = candidates.dots(qx_s, qy_s, qz_s);
 
-                let safe_bits = dots.mask_gt(self.security_thresholds[qi]);
-                let hi_bits = dots.mask_gt(self.thresholds[qi]);
+                let safe_bits = dots.mask_gt(security_threshold);
+                let hi_bits = dots.mask_gt(threshold);
 
                 let mut tail_bits = safe_bits & !hi_bits;
                 if tail_bits == 0 {
@@ -80,7 +82,7 @@ impl PackedKnnCellScratch {
                     let slot = (soa_start + i + lane) as u32;
                     if slot != query_slot {
                         let dot = dots_arr[lane];
-                        self.tail_keys[qi].push(super::helpers::make_desc_key(dot, slot));
+                        tail_keys.push(super::helpers::make_desc_key(dot, slot));
                     }
                     tail_bits &= tail_bits - 1;
                 }
@@ -98,14 +100,14 @@ impl PackedKnnCellScratch {
                 }
 
                 let dot = fp::dot3_f32(cx, cy, cz, qx_s, qy_s, qz_s);
-                if dot > self.security_thresholds[qi] && dot <= self.thresholds[qi] {
-                    self.tail_keys[qi].push(super::helpers::make_desc_key(dot, slot));
+                if dot > security_threshold && dot <= threshold {
+                    tail_keys.push(super::helpers::make_desc_key(dot, slot));
                 }
             }
         }
         timings.add_ring_fallback(t_tail.lap());
 
-        if self.tail_keys[qi].is_empty() {
+        if tail_keys.is_empty() {
             self.tail_possible[qi] = false;
         }
     }

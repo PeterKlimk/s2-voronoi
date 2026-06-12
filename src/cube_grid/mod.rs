@@ -249,6 +249,12 @@ pub struct CubeMapGridScratch {
     /// Cell visitation stamps (avoids clearing between queries)
     visited_stamp: Vec<u32>,
     stamp: u32,
+    /// BFS layer whose points have not been emitted yet.
+    current: Vec<u32>,
+    /// Layer discovered while emitting `current`.
+    next: Vec<u32>,
+    /// Sorted (descending dot, slot) emission for the pending shell batch.
+    pending: Vec<(crate::fp::OrdF32, u32)>,
     /// If true, the current query has exhausted all unseen candidates.
     exhausted: bool,
 }
