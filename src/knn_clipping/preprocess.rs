@@ -231,22 +231,36 @@ pub(crate) fn merge_result_from_pairs(
         let _ = dsu.union_keep_min(a, b);
     }
 
-    // Extract representatives, preserving first-occurrence order.
-    let mut rep_to_effective: Vec<Option<usize>> = vec![None; n];
+    // Only ids that appeared in a successful union can differ from their own
+    // representative. Untouched ids map to themselves without a hash lookup.
+    let touched_reps: Vec<(usize, usize)> = dsu
+        .touched_ids()
+        .into_iter()
+        .map(|id| {
+            let rep = dsu.find(id) as usize;
+            (id as usize, rep)
+        })
+        .collect();
+    let mut touched = touched_reps.into_iter().peekable();
+
+    // Extract representatives, preserving original-index order.
     let mut effective_points = Vec::new();
     let mut original_to_effective = vec![0usize; n];
-    let mut kept = vec![false; n];
+    let mut kept = vec![true; n];
 
-    for (i, slot) in original_to_effective.iter_mut().enumerate() {
-        let rep = dsu.find(i as u32) as usize;
+    for i in 0..n {
+        let rep = if touched.peek().is_some_and(|&(id, _)| id == i) {
+            touched.next().expect("peeked touched id").1
+        } else {
+            i
+        };
         if rep == i {
-            kept[i] = true;
-        }
-        if rep_to_effective[rep].is_none() {
-            rep_to_effective[rep] = Some(effective_points.len());
+            original_to_effective[i] = effective_points.len();
             effective_points.push(points[rep]);
+        } else {
+            kept[i] = false;
+            original_to_effective[i] = original_to_effective[rep];
         }
-        *slot = rep_to_effective[rep].unwrap();
     }
 
     let num_merged = n - effective_points.len();
