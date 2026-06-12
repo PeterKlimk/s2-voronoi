@@ -143,6 +143,7 @@ backend actually solved, and strict validation of both views; `report.preferred_
 - Supported input / failure contract: `docs/supported-envelope.md`
 - Active roadmap / prioritized next steps: `docs/todo.md`
 - Performance + benchmarking: `docs/performance.md`
+- Optimization ideas ledger (incl. negative results): `docs/optimization-ideas.md`
 - Live vertex dedup and edge checks: `docs/live_dedup.md`
 - Engineering issues / findings log: `docs/engineering-findings.md`
 

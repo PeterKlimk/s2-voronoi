@@ -66,6 +66,7 @@ The `qhull` backend is for comparison/testing, not primary production path.
 - `README.md`: user-facing overview and API summary.
 - `docs/architecture.md`: algorithm and module map.
 - `docs/performance.md`: benchmark guidance and perf knobs.
+- `docs/optimization-ideas.md`: perf backlog with evidence, incl. rejected ideas.
 - `docs/live_dedup.md`: live dedup and edge-check design.
 
 ## Module Map (Current)
