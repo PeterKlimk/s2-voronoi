@@ -34,7 +34,12 @@ Initial release.
 - Point location (`build_locator()` → `SphereLocator` / `PlaneLocator`):
   reusable nearest-generator queries in near-constant time per query on all
   three topologies; periodic queries wrap, bounded-plane queries may lie
-  outside the rect, welded inputs resolve to canonical cells.
+  outside the rect, welded inputs resolve to canonical cells; `locate_many`
+  batches queries across all cores.
+- Performance: the periodic pipeline runs the same packed SIMD kNN stage as
+  the bounded plane (~2x at 500k single-threaded, to within ~10% of the
+  bounded pipeline), and both planar pipelines emit the sphere's TIMING_KV
+  profiling schema under the `timing` feature.
 - API: `compute` / `compute_with` / `compute_with_report`, cell views,
   edge-aligned neighbor adjacency (Delaunay edges), spherical and planar
   cell areas and centroids with a one-call `lloyd_step()` (Lloyd relaxation
