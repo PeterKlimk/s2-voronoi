@@ -44,7 +44,12 @@ pub(super) fn clip_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuff
     }
 
     let prev_mask = (mask << 1) | (mask >> (n - 1));
-    let trans_mask = (mask ^ prev_mask) & ((1u64 << n) - 1);
+    // Reuse full_mask: recomputing `(1u64 << n) - 1` here overflowed at
+    // n == 64 (wrapping shift in release emptied the transition mask,
+    // sending trailing_zeros() == 64 into the vertex arrays — an
+    // input-reachable panic first hit by cap-edge cells of a 1M clustered
+    // input whose polygons fill the buffer; regression test below).
+    let trans_mask = (mask ^ prev_mask) & full_mask;
 
     debug_assert_eq!(trans_mask.count_ones(), 2);
 
@@ -113,3 +118,38 @@ pub(super) fn clip_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuff
 }
 use super::super::types::{ClipResult, HalfPlane, PolyBuffer, MAX_POLY_VERTICES};
 use crate::fp;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// n == 64 regression: the transition mask must survive a full polygon
+    /// buffer (see comment at its computation). A regular 64-gon clipped by
+    /// a crossing half-plane must clip cleanly, not index out of bounds.
+    #[test]
+    fn bitmask_clips_full_64_vertex_polygon() {
+        let mut poly = PolyBuffer::new();
+        for k in 0..MAX_POLY_VERTICES {
+            let theta = (k as f64) * std::f64::consts::TAU / (MAX_POLY_VERTICES as f64);
+            poly.push_raw(
+                theta.cos(),
+                theta.sin(),
+                (k, (k + 1) % MAX_POLY_VERTICES),
+                k,
+            );
+        }
+        poly.max_r2 = 1.0;
+        poly.has_bounding_ref = false;
+
+        // Keep u >= 0: crosses the polygon, keeps about half the vertices.
+        let hp = HalfPlane::new_unnormalized(1.0, 0.0, 0.0, MAX_POLY_VERTICES);
+        let mut out = PolyBuffer::new();
+        let result = clip_bitmask(&poly, &hp, &mut out);
+        assert_eq!(result, ClipResult::Changed);
+        assert!(
+            out.len >= 3 && out.len <= MAX_POLY_VERTICES,
+            "implausible clipped size {}",
+            out.len
+        );
+    }
+}

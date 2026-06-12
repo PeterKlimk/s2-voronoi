@@ -11,6 +11,11 @@ Initial release.
   site down to a ~1.7k-point fixture and exercises the in-bin and cross-bin
   detection/repair paths, asserting strict post-repair validity (see
   engineering-findings #13).
+- Fixed an input-reachable panic in the bitmask clipper: with a polygon at
+  the full 64-vertex budget, a transition-mask shift overflowed and indexed
+  past the vertex arrays (first reachable via cap-edge cells of a 1M-point
+  clustered input). Such inputs now take the clean vertex-budget
+  `ComputationFailed` path; regression-tested with a full 64-gon clip.
 - Input canonicalization (P5 stage 0): sphere inputs are renormalized once
   at compute entry (f64-normalize, rounded back to f32) and the per-builder
   renormalization is gone, so every pipeline stage consumes identical bits

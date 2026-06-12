@@ -272,6 +272,18 @@ net, fingerprint tests, paired benches):
    - Radial-only ulp-distinct inputs now collapse to exact duplicates at
      entry (a radial ulp is the same direction; under default Weld they
      weld; under Disabled they were never supported).
+   - **Defect-rate survey at scale (post stage 0)**: 3M x3 / 4M x4 / 4.5M x2
+     uniform seeds show ~1 defect site per ~3 seeds (3-4 defects each, all
+     in-bin, repair restores strict validity; the 3M/4M seed-3 site is the
+     same generator cluster — sites survive n changes). Bimodal 1M and
+     250k-group cocircular 1M: zero defects. So stage 0 cleaned 2M entirely
+     but the near-tie population still produces occasional sites at 3M+
+     (consistent with finding #12's f32 threshold pressure) — stages 2-4
+     retain a small, now precisely-sized payload. Side find: the survey's
+     clustered-cap 1M input exposed (and got fixed) an n==64 transition-mask
+     overflow panic in the bitmask clipper; that input now fails cleanly
+     with the vertex-budget error (a cell bordering the cap rim genuinely
+     exceeds MAX_POLY_VERTICES — envelope, not defect).
    - Post-stage-0 shadow audit: disagreements at 2M dropped ~25% (129k ->
      98k); the remainder sits at 1e-5..1e-4 margins and is
      computed-vertex conditioning (ill-conditioned lerped intersections),

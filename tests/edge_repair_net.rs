@@ -356,6 +356,78 @@ fn probe_site_scan() {
     }
 }
 
+/// Post-stage-0 defect-rate survey: natural defect counts at 3-4.5M scale
+/// (the finding-#12 regime where f32 threshold pressure grows) and on
+/// adversarial distributions, to size the remaining payload of P5 stages
+/// 2-4. Run with
+/// `cargo test --release --test edge_repair_net probe_defect_rate -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn probe_defect_rate_at_scale() {
+    let run = |name: &str, points: Vec<s2_voronoi::UnitVec3>| {
+        let out = with_bin_count(None, || {
+            compute_with_report(&points, VoronoiConfig::default())
+        });
+        match out {
+            Ok(out) => println!(
+                "{name:28} n={:8} defects={:?} strict_valid={}",
+                points.len(),
+                out.report.unresolved_edge_pairs,
+                out.report.preferred_validation().is_strictly_valid()
+            ),
+            Err(err) => println!("{name:28} n={:8} ERROR: {err:?}", points.len()),
+        }
+    };
+
+    for seed in 1..=3u64 {
+        run(
+            &format!("uniform_3m_s{seed}"),
+            random_sphere_points(3_000_000, seed),
+        );
+    }
+    for seed in 1..=4u64 {
+        run(
+            &format!("uniform_4m_s{seed}"),
+            random_sphere_points(4_000_000, seed),
+        );
+    }
+    for seed in 1..=2u64 {
+        run(
+            &format!("uniform_4500k_s{seed}"),
+            random_sphere_points(4_500_000, seed),
+        );
+    }
+}
+
+/// Adversarial-distribution half of the defect-rate survey (split out so it
+/// can run without the ~10-minute uniform sweep). First run found the
+/// n == 64 transition-mask overflow in the bitmask clipper (cap-edge cells
+/// of clustered_cap_1m fill the polygon buffer).
+#[test]
+#[ignore]
+fn probe_defect_rate_adversarial() {
+    let run = |name: &str, points: Vec<s2_voronoi::UnitVec3>| {
+        let out = with_bin_count(None, || {
+            compute_with_report(&points, VoronoiConfig::default())
+        });
+        match out {
+            Ok(out) => println!(
+                "{name:28} n={:8} defects={:?} strict_valid={}",
+                points.len(),
+                out.report.unresolved_edge_pairs,
+                out.report.preferred_validation().is_strictly_valid()
+            ),
+            Err(err) => println!("{name:28} n={:8} ERROR: {err:?}", points.len()),
+        }
+    };
+    run("clustered_cap_1m", clustered_cap_points(1_000_000, 0.05, 7));
+    run("bimodal_1m", bimodal_density_points(1_000_000, 0.1, 7));
+    run(
+        "cocircular_250kg_1m",
+        near_cocircular_stress_points(250_000, 1e-4, 7),
+    );
+}
+
 /// Re-derive the windowed fixture from a defect site found by
 /// `probe_site_scan` (update `SITE_CENTER`), checking the defects reproduce
 /// across window radii. Findings (2026-06): defects survive windowing at
