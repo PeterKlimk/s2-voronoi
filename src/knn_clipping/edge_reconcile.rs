@@ -119,7 +119,7 @@ fn vertex_pos<P: crate::knn_clipping::live_dedup::VertexPosition>(
     })
 }
 
-use super::union_find::UnionFind;
+use super::union_find::SparseUnionFind;
 
 /// Rebuilt cell table and index buffer after reconciliation.
 pub(crate) type ReconciledCells = (Vec<VoronoiCell>, Vec<u32>);
@@ -135,7 +135,11 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
     // geometry owns and justifies its constant.
     degenerate_len_eps: f32,
 ) -> Result<Option<ReconciledCells>, crate::VoronoiError> {
-    let mut uf = UnionFind::new(vertices.len());
+    // Sparse: only the handful of vertices named by defective edges ever
+    // enter the structure, so clean and near-clean runs skip the O(V) init
+    // a dense UnionFind would pay. Representative choice is identical to
+    // the dense version (see SparseUnionFind docs), so output is unchanged.
+    let mut uf = SparseUnionFind::new();
     let mut merged = 0usize;
     let degenerate_len_eps_sq: f32 = degenerate_len_eps * degenerate_len_eps;
 
