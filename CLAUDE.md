@@ -118,13 +118,12 @@ src/
 
 - `parallel` (default): rayon-based parallel cell construction.
 - `glam`: public `UnitVec3Like` impl/conversions for `glam::Vec3`.
-- `timing`: detailed timing instrumentation.
-- `profiling`: helpers for profiling runs (e.g. inline control).
-- `microbench`: internal microbench harnesses.
+- `serde`: Serialize/Deserialize for diagram types.
 - `qhull`: convex-hull backend for comparison tests/bench.
-- `simd_clip`: SIMD small-N clippers in clipper dispatch.
-- `fma`: prefer fused multiply-add (`mul_add`) where used.
-- `tools`: benchmark/utility binaries.
+- Internal: `timing` (instrumentation), `profiling` (inline control),
+  `microbench` (harnesses), `simd_scalar` (non-`wide` 8-lane fallback),
+  `fma` (mul_add; off by default, see ledger), `tools` (bench binaries),
+  `bench_voronoice` (head-to-head planar comparison).
 
 ## Tests
 

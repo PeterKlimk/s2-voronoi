@@ -13,12 +13,14 @@ use std::collections::HashMap;
 /// Winding is counter-clockwise when viewed from outside.
 #[derive(Debug, Clone)]
 pub struct HullFacet {
+    /// Indices into the original point array, CCW from outside.
     pub indices: [usize; 3],
 }
 
 /// Result of computing a 3D convex hull.
 #[derive(Debug)]
 pub struct ConvexHull {
+    /// Triangular hull facets.
     pub facets: Vec<HullFacet>,
 }
 

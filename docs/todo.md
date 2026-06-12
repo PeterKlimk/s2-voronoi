@@ -63,16 +63,18 @@ The empirical groundwork is done (see correctness-contract.md); this is the impl
    showed wide at parity with the old portable_simd backend (within ~1-2%, winning some runs);
    all backends are bit-identical (tests/backend_fingerprint.rs). portable_simd was deleted
    (recoverable from git history if std::simd stabilizes). MSRV set to 1.88.
-2. **Feature consolidation.** User-meaningful features only (`parallel`, `simd`, `serde`,
-   `glam`, `qhull`); internal/research flags (`microbench`, `simd_clip`, `fma`,
-   `packed_knn_sort_small`, `profiling`) become doc-hidden or merge away.
+2. ~~**Feature consolidation.**~~ **Done.** `simd_clip` and `packed_knn_sort_small`
+   merged away (kernel-contest promotions); remaining internal flags (`timing`,
+   `profiling`, `microbench`, `simd_scalar`, `fma`, `tools`, `bench_voronoice`)
+   documented as non-contractual in README/CLAUDE.md, with docs.rs metadata
+   building only the public surface (`parallel`, `glam`, `serde`).
 3. ~~**Finish the non-panicking contract**~~ **Done.** The clipper "invariant failure" panic was
    proven unreachable (mixed cyclic masks always carry both transitions) and converted to a
    documented `unreachable!`; the fallback angle sort uses `total_cmp` (the old
    `partial_cmp + unwrap_or` could trip std::sort's total-order check on NaN). Remaining panics
    are genuine bug traps per the supported-envelope contract.
-4. Zero-warning builds **(done)**, `rust-version = "1.88"` **(done)**, and clippy-clean
-   **(done with the P4.2 splits)**; remaining: `#[deny(missing_docs)]` on the public surface.
+4. ~~Zero-warning builds, `rust-version = "1.88"`, clippy-clean, `#[deny(missing_docs)]`~~
+   **All done** (missing_docs now denied across all features).
 
 ## P2: API completeness
 

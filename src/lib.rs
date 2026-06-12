@@ -1,4 +1,4 @@
-#![warn(missing_docs)]
+#![deny(missing_docs)]
 
 //! Spherical Voronoi diagrams on the unit sphere (S2).
 //!
@@ -99,11 +99,13 @@ pub mod locate;
 pub(crate) mod plane_clipping;
 pub(crate) mod plane_grid;
 
+/// Run the internal convex-clip microbench harness (feature: `microbench`).
 #[cfg(feature = "microbench")]
 pub fn run_clip_convex_microbench() {
     knn_clipping::topo2d::run_clip_convex_microbench();
 }
 
+/// Run the internal batch-clip microbench harness (feature: `microbench`).
 #[cfg(feature = "microbench")]
 pub fn run_batch_clip_microbench() {
     knn_clipping::topo2d::run_batch_clip_microbench();

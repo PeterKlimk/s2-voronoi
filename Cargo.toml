@@ -11,6 +11,11 @@ exclude = [".github/", "scripts/"]
 keywords = ["voronoi", "sphere", "geometry", "s2"]
 categories = ["algorithms", "mathematics", "science"]
 
+[package.metadata.docs.rs]
+# Public feature surface; internal flags (timing, profiling, microbench,
+# simd_scalar, fma, tools) are not part of the documented contract.
+features = ["parallel", "glam", "serde"]
+
 [features]
 default = ["parallel"]
 parallel = ["rayon"]
