@@ -136,6 +136,11 @@ toroidal graph.
 - Lloyd relaxation (centroidal Voronoi tessellation) is one loop:
   `points = diagram.lloyd_step()` and recompute — `lloyd_step()` is centroids in input order,
   topology-aware on the sphere, rect, and torus.
+- Delaunay export: `diagram.delaunay_triangles()` returns the dual triangulation as
+  `Vec<[u32; 3]>` (CCW, canonical indices — the delaunator/CGAL convention). Complete on the
+  sphere (`2c - 4` triangles) and the torus (`2c`); on the bounded rect it is the subset of
+  Delaunay triangles whose circumcenter lies in the rect. Falls out of the combinatorial vertex
+  identity: a Voronoi vertex *is* a Delaunay triangle.
 - Point location: `diagram.build_locator()` returns a reusable locator
   (`SphereLocator` / `PlaneLocator`); `locator.locate(query)` maps a point to
   the cell containing it (its nearest generator's canonical cell) in

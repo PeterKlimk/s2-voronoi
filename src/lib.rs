@@ -41,6 +41,7 @@
 //! ```
 
 pub mod adjacency;
+mod delaunay;
 mod diagram;
 mod error;
 mod fp;
