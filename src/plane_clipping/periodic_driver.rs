@@ -64,19 +64,15 @@ pub(crate) fn compute_periodic_cells(
     // an epsilon edge exactly straddling the wrap seam is not auto-merged;
     // it remains an honestly-reported validation finding (documented v1
     // limitation).
-    if let Some((reconciled_cells, reconciled_indices)) =
-        edge_reconcile::reconcile_unresolved_edges(
-            &records,
-            &assembly.vertices,
-            &cells,
-            &cell_indices,
-            &assembly.vertex_keys,
-            crate::tolerances::PLANE_RECONCILE_DEGENERATE_LEN_EPS,
-        )?
-    {
-        cells = reconciled_cells;
-        cell_indices = reconciled_indices;
-    }
+    edge_reconcile::reconcile_unresolved_edges(
+        &records,
+        &assembly.vertices,
+        &mut cells,
+        &mut cell_indices,
+        &assembly.vertex_keys,
+        crate::tolerances::PLANE_RECONCILE_DEGENERATE_LEN_EPS,
+        edge_reconcile::repair_apply_from_env(),
+    )?;
 
     tb.set_edge_reconcile(t.elapsed());
 

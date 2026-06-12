@@ -105,6 +105,15 @@ impl SparseUnionFind {
         self.nodes.entry(x).or_insert((x, 0)).0 = p;
     }
 
+    /// All ids that have entered the structure, sorted for determinism.
+    /// Every id that participated in a successful union is included (both
+    /// representatives and merged-away ids).
+    pub fn touched_ids(&self) -> Vec<u32> {
+        let mut ids: Vec<u32> = self.nodes.keys().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
     /// Union by rank, with `UnionFind::union`'s exact tie-breaking.
     /// Returns `true` if `a` and `b` were in different sets.
     pub fn union(&mut self, a: u32, b: u32) -> bool {

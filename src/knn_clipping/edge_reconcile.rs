@@ -124,17 +124,83 @@ use super::union_find::SparseUnionFind;
 /// Rebuilt cell table and index buffer after reconciliation.
 pub(crate) type ReconciledCells = (Vec<VoronoiCell>, Vec<u32>);
 
+/// How reconciliation merges are applied to the cell arrays.
+///
+/// `InPlace` is the production default: only cells naming a merged vertex
+/// are touched (found via the vertex-key triplets), spans shrink in place,
+/// and the index buffer keeps stale tail slots (never read — cells are
+/// `(start, count)` spans). O(defects) instead of O(diagram); measured
+/// ~382ms saved at 2M single-threaded on a defect-bearing run.
+///
+/// `Rebuild` is the original full rewrite, retained as the differential
+/// oracle: the two backends must produce identical per-cell vertex
+/// sequences (pinned by the unit tests below and the full-pipeline
+/// differential in tests/edge_repair_net.rs via `S2_EDGE_REPAIR_REBUILD`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum RepairApply {
+    InPlace,
+    Rebuild,
+}
+
+/// Production apply mode: in-place unless `S2_EDGE_REPAIR_REBUILD=1`
+/// selects the rebuild oracle (diagnostic / differential-testing knob,
+/// read once per compute on the cold path).
+pub(crate) fn repair_apply_from_env() -> RepairApply {
+    match std::env::var("S2_EDGE_REPAIR_REBUILD") {
+        Ok(v) if v == "1" => RepairApply::Rebuild,
+        _ => RepairApply::InPlace,
+    }
+}
+
+/// Reconcile unresolved shared-edge mismatches by merging vertex identities,
+/// patching `cells` / `cell_indices` via the chosen backend. Returns whether
+/// anything merged (false leaves the arrays untouched).
 pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     edge_records: &[EdgeRecord],
     vertices: &[P],
-    cells: &[VoronoiCell],
-    cell_indices: &[u32],
+    cells: &mut Vec<VoronoiCell>,
+    cell_indices: &mut Vec<u32>,
     vertex_keys: &[VertexKey],
     // Degenerate-length threshold in the caller's coordinate space (chord
     // units on the sphere, normalized rect units on the plane); each
     // geometry owns and justifies its constant.
     degenerate_len_eps: f32,
-) -> Result<Option<ReconciledCells>, crate::VoronoiError> {
+    apply: RepairApply,
+) -> Result<bool, crate::VoronoiError> {
+    let (mut uf, merged) = collect_merges(
+        edge_records,
+        vertices,
+        cells,
+        cell_indices,
+        vertex_keys,
+        degenerate_len_eps,
+    )?;
+    if merged == 0 {
+        return Ok(false);
+    }
+    match apply {
+        RepairApply::Rebuild => {
+            let (new_cells, new_indices) = apply_merges_rebuild(&mut uf, cells, cell_indices)?;
+            *cells = new_cells;
+            *cell_indices = new_indices;
+        }
+        RepairApply::InPlace => {
+            apply_merges_in_place(&mut uf, cells, cell_indices, vertex_keys)?;
+        }
+    }
+    Ok(true)
+}
+
+/// Walk the unresolved edge records and collect vertex-identity merges into
+/// a union-find. Both apply backends consume the exact same merge set.
+fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
+    edge_records: &[EdgeRecord],
+    vertices: &[P],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &[VertexKey],
+    degenerate_len_eps: f32,
+) -> Result<(SparseUnionFind, usize), crate::VoronoiError> {
     // Sparse: only the handful of vertices named by defective edges ever
     // enter the structure, so clean and near-clean runs skip the O(V) init
     // a dense UnionFind would pay. Representative choice is identical to
@@ -246,10 +312,16 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         }
     }
 
-    if merged == 0 {
-        return Ok(None);
-    }
+    Ok((uf, merged))
+}
 
+/// Original full-rewrite apply: rebuild every cell span into fresh compacted
+/// arrays. O(diagram); retained as the differential oracle for `InPlace`.
+fn apply_merges_rebuild(
+    uf: &mut SparseUnionFind,
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+) -> Result<ReconciledCells, crate::VoronoiError> {
     let mut new_cells: Vec<VoronoiCell> = Vec::with_capacity(cells.len());
     let mut new_indices: Vec<u32> = Vec::with_capacity(cell_indices.len());
 
@@ -277,7 +349,87 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         new_cells.push(VoronoiCell::new(start_u32, count_u16));
     }
 
-    Ok(Some((new_cells, new_indices)))
+    Ok((new_cells, new_indices))
+}
+
+/// O(defects) apply: patch only the cells that can reference a merged
+/// vertex, in place. A vertex keyed `(A, B, T)` appears only in the
+/// boundaries of cells A, B and T, so the union of key triplets over every
+/// id that entered the union-find covers all referencing cells. Each
+/// affected span is rewritten in place (ids replaced by representatives,
+/// duplicates dropped keeping first occurrence — the same per-cell sequence
+/// the rebuild produces) and its count shrunk; stale tail slots in the
+/// index buffer are never read.
+fn apply_merges_in_place(
+    uf: &mut SparseUnionFind,
+    cells: &mut [VoronoiCell],
+    cell_indices: &mut [u32],
+    vertex_keys: &[VertexKey],
+) -> Result<(), crate::VoronoiError> {
+    let mut affected: Vec<u32> = Vec::new();
+    for v in uf.touched_ids() {
+        let key = *vertex_keys.get(v as usize).ok_or_else(|| {
+            reconcile_state_error(format!(
+                "edge reconciliation merged vertex id {} out of range for vertex_keys len {}",
+                v,
+                vertex_keys.len()
+            ))
+        })?;
+        affected.extend_from_slice(&key);
+    }
+    affected.sort_unstable();
+    affected.dedup();
+    // In production every triplet member is a generator index and thus has
+    // a cell; tolerate out-of-range members (synthetic test fixtures) — the
+    // debug scan below still verifies no reference was missed.
+    affected.retain(|&c| (c as usize) < cells.len());
+
+    for &cell_idx in &affected {
+        let cell_idx_usize = cell_idx as usize;
+        let cell = cells[cell_idx_usize];
+        let start = cell.vertex_start();
+        let count = cell.vertex_count();
+        let end = start + count;
+        if end > cell_indices.len() {
+            return Err(reconcile_state_error(format!(
+                "edge reconciliation cell {cell_idx_usize} span [{start}..{end}) exceeds cell \
+                 index buffer len {}",
+                cell_indices.len()
+            )));
+        }
+        let span = &mut cell_indices[start..end];
+        // In-place rewrite: w trails r, so reads are never clobbered; kept
+        // slots still get their representative written (id may change
+        // without any duplicate forming).
+        let mut w = 0usize;
+        for r in 0..count {
+            let rep = uf.find(span[r]);
+            if !span[..w].contains(&rep) {
+                span[w] = rep;
+                w += 1;
+            }
+        }
+        if w != count {
+            cells[cell_idx_usize] = VoronoiCell::new(start as u32, w as u16);
+        }
+    }
+
+    // The triplet-coverage argument above is a construction invariant, not
+    // a local check — verify it exhaustively in debug builds: no cell may
+    // still reference a merged-away id.
+    #[cfg(debug_assertions)]
+    for (ci, cell) in cells.iter().enumerate() {
+        let span = &cell_indices[cell.vertex_start()..cell.vertex_start() + cell.vertex_count()];
+        for &vi in span {
+            debug_assert_eq!(
+                uf.find(vi),
+                vi,
+                "cell {ci} still references non-representative vertex {vi} after in-place repair"
+            );
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -290,6 +442,67 @@ mod tests {
         EdgeRecord {
             key: (((b as u64) << 32) | a as u64).into(),
         }
+    }
+
+    /// Per-cell vertex-id sequences — the representation-independent view
+    /// shared by both apply backends (rebuild compacts the index buffer,
+    /// in-place leaves stale tail slots; the sequences must be identical).
+    fn cell_sequences(cells: &[VoronoiCell], cell_indices: &[u32]) -> Vec<Vec<u32>> {
+        cells
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                cell_vertex_slice(i as u32, cells, cell_indices)
+                    .expect("valid span")
+                    .to_vec()
+            })
+            .collect()
+    }
+
+    /// Run both backends on clones of the input and assert they produce the
+    /// same per-cell sequences; returns the in-place result.
+    #[allow(clippy::type_complexity)]
+    fn run_both_backends(
+        records: &[EdgeRecord],
+        vertices: &[Vec3],
+        cells: &[VoronoiCell],
+        cell_indices: &[u32],
+        vertex_keys: &[VertexKey],
+    ) -> (bool, Vec<VoronoiCell>, Vec<u32>, Vec<VoronoiCell>, Vec<u32>) {
+        let (mut cells_r, mut idx_r) = (cells.to_vec(), cell_indices.to_vec());
+        let changed_r = reconcile_unresolved_edges(
+            records,
+            vertices,
+            &mut cells_r,
+            &mut idx_r,
+            vertex_keys,
+            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
+            RepairApply::Rebuild,
+        )
+        .expect("rebuild reconciliation should succeed");
+
+        let (mut cells_p, mut idx_p) = (cells.to_vec(), cell_indices.to_vec());
+        let changed_p = reconcile_unresolved_edges(
+            records,
+            vertices,
+            &mut cells_p,
+            &mut idx_p,
+            vertex_keys,
+            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
+            RepairApply::InPlace,
+        )
+        .expect("in-place reconciliation should succeed");
+
+        assert_eq!(
+            changed_r, changed_p,
+            "backends disagree on whether to merge"
+        );
+        assert_eq!(
+            cell_sequences(&cells_r, &idx_r),
+            cell_sequences(&cells_p, &idx_p),
+            "backends disagree on per-cell vertex sequences"
+        );
+        (changed_p, cells_r, idx_r, cells_p, idx_p)
     }
 
     #[test]
@@ -313,28 +526,25 @@ mod tests {
         let cells = vec![VoronoiCell::new(0, 3), VoronoiCell::new(3, 3)];
         let cell_indices = vec![0, 1, 2, 3, 4, 5];
 
-        let repaired = reconcile_unresolved_edges(
+        let (changed, cells_rebuild, idx_rebuild, cells_in_place, _) = run_both_backends(
             &[edge_record(0, 1)],
             &vertices,
             &cells,
             &cell_indices,
             &vertex_keys,
-            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-        )
-        .expect("reconciliation should succeed without capacity overflow")
-        .expect("expected one-sided epsilon edge to be reconciled");
-
-        let (new_cells, new_indices) = repaired;
+        );
+        assert!(changed, "expected one-sided epsilon edge to be reconciled");
         assert_eq!(
-            new_cells[0].vertex_count(),
+            cells_in_place[0].vertex_count(),
             2,
             "epsilon edge should collapse"
         );
         assert_eq!(
-            new_indices.len(),
+            idx_rebuild.len(),
             5,
-            "collapsing the epsilon edge should remove one per-cell index"
+            "rebuild should compact away the merged per-cell index"
         );
+        assert_eq!(cells_rebuild[0].vertex_count(), 2);
     }
 
     #[test]
@@ -371,18 +581,17 @@ mod tests {
             "fixture must start with mismatched shared-edge endpoint ids"
         );
 
-        let repaired = reconcile_unresolved_edges(
+        let (changed, _, _, new_cells, new_indices) = run_both_backends(
             &[edge_record(0, 1)],
             &vertices,
             &cells,
             &cell_indices,
             &vertex_keys,
-            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-        )
-        .expect("reconciliation should succeed without capacity overflow")
-        .expect("expected mismatched shared-edge endpoints to be reconciled");
-
-        let (new_cells, new_indices) = repaired;
+        );
+        assert!(
+            changed,
+            "expected mismatched shared-edge endpoints to be reconciled"
+        );
         let seg_a =
             edge_segments_for_neighbor(0, 1, &new_cells, &new_indices, &vertex_keys).unwrap();
         let seg_b =

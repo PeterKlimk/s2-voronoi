@@ -11,6 +11,13 @@ Initial release.
   site down to a ~1.7k-point fixture and exercises the in-bin and cross-bin
   detection/repair paths, asserting strict post-repair validity (see
   engineering-findings #13).
+- Edge reconciliation is O(defects) instead of O(diagram): merges collect
+  into a sparse union-find (no per-run O(V) init) and apply by patching only
+  the cells that can reference a merged vertex (located via vertex-key
+  triplets), in place. On a defect-bearing 2M single-threaded run the repair
+  drops from ~382ms to ~0.06ms; the original full rebuild is retained as a
+  differential oracle behind `S2_EDGE_REPAIR_REBUILD=1`, with tests pinning
+  identical per-cell output between backends.
 - Planar Voronoi diagrams over a bounded rectangle (`compute_plane`,
   `PlanarVoronoi`, `PlaneRect`): the same kNN-clipping engine on a flat 2D
   grid, with rect walls handled as virtual generators so hull cells clip to

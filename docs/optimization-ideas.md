@@ -30,11 +30,16 @@ mismatches at the source. Sequence agreed instead:
 
 1. ~~Deterministic coverage net for all detection/repair paths~~ **Done**
    (`tests/edge_repair_net.rs`, origin-tagged records).
-2. Sparse union-find in `reconcile_unresolved_edges` (drop the O(V) init
-   paid on every run), keeping the total rebuild — its path-insensitivity
-   is a safety property given how rarely the cross-bin branches fire.
-3. Surgical O(defects) in-place patching only if measured worthwhile, with
-   the old rebuild retained as a differential oracle.
+2. ~~Sparse union-find in `reconcile_unresolved_edges`~~ **Done** (dense
+   init was 3-4.7ms at 2M ST on every run incl. defect-free; now ~0).
+3. ~~Surgical O(defects) in-place patching~~ **Done**: affected cells found
+   via vertex-key triplets (a vertex `(A,B,T)` appears only in cells A, B,
+   T), spans shrink in place, stale index-buffer slots never read. The old
+   rebuild survives as the differential oracle (`RepairApply::Rebuild`,
+   env `S2_EDGE_REPAIR_REBUILD=1`), with unit-level and full-pipeline
+   differential tests asserting identical per-cell sequences. Measured on
+   the defect-bearing 2M seed-1 run (ST): rebuild 382ms -> in-place
+   0.06ms; defect-free runs unchanged (~0).
 
 Correction to the old note: the "8x8 cocircular lattice / ~112 unresolved"
 figure presumably referred to the planar exact-lattice fixture (the only

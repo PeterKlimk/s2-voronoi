@@ -482,19 +482,15 @@ fn reconcile_edges(
         .collect();
 
     let t = Timer::start();
-    if let Some((reconciled_cells, reconciled_indices)) =
-        edge_reconcile::reconcile_unresolved_edges(
-            &repair_edges_storage,
-            vertices,
-            &cells,
-            &cell_indices,
-            vertex_keys,
-            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-        )?
-    {
-        cells = reconciled_cells;
-        cell_indices = reconciled_indices;
-    }
+    edge_reconcile::reconcile_unresolved_edges(
+        &repair_edges_storage,
+        vertices,
+        &mut cells,
+        &mut cell_indices,
+        vertex_keys,
+        crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
+        edge_reconcile::repair_apply_from_env(),
+    )?;
     tb.set_edge_reconcile(t.elapsed());
     Ok((cells, cell_indices))
 }

@@ -78,17 +78,27 @@ const WINDOW_RADIUS_MULT: f32 = 10.0;
 const SCAFFOLD_EXCL_MULT: f32 = 15.0;
 
 /// Serialize env-var mutation across tests in this binary.
-static BIN_COUNT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn with_bin_count<R>(bin_count: Option<usize>, f: impl FnOnce() -> R) -> R {
-    let _guard = BIN_COUNT_LOCK.lock().unwrap();
+fn with_env<R>(bin_count: Option<usize>, repair_rebuild: bool, f: impl FnOnce() -> R) -> R {
+    let _guard = ENV_LOCK.lock().unwrap();
     match bin_count {
         Some(n) => std::env::set_var("S2_BIN_COUNT", n.to_string()),
         None => std::env::remove_var("S2_BIN_COUNT"),
     }
+    if repair_rebuild {
+        std::env::set_var("S2_EDGE_REPAIR_REBUILD", "1");
+    } else {
+        std::env::remove_var("S2_EDGE_REPAIR_REBUILD");
+    }
     let result = f();
     std::env::remove_var("S2_BIN_COUNT");
+    std::env::remove_var("S2_EDGE_REPAIR_REBUILD");
     result
+}
+
+fn with_bin_count<R>(bin_count: Option<usize>, f: impl FnOnce() -> R) -> R {
+    with_env(bin_count, false, f)
 }
 
 fn mean_spacing() -> f32 {
@@ -255,6 +265,58 @@ fn net_cross_bin_thirds_mismatch() {
         "defect pair set changed between bin layouts at scaffold 320k \
          (was measured equal; re-run probe_scaffold_sweep and update)"
     );
+}
+
+/// Full-pipeline differential: the surgical in-place repair (production
+/// default) and the original full-rebuild oracle (`S2_EDGE_REPAIR_REBUILD=1`)
+/// must produce semantically identical diagrams — same defects detected,
+/// same vertices, same per-cell vertex-id sequences — on every net fixture
+/// (in-bin and cross-bin defect routings).
+#[test]
+fn net_repair_backends_agree() {
+    let window = defect_window();
+    for (scaffold_n, bins) in [(2_000usize, None), (280_000, Some(48)), (320_000, Some(48))] {
+        let fixture = with_scaffold(&window, scaffold_n);
+        let name = format!("differential s={scaffold_n} bins={bins:?}");
+
+        let surgical = with_env(bins, false, || {
+            compute_with_report(&fixture, VoronoiConfig::default())
+        })
+        .unwrap_or_else(|e| panic!("{name} surgical: {e:?}"));
+        let rebuild = with_env(bins, true, || {
+            compute_with_report(&fixture, VoronoiConfig::default())
+        })
+        .unwrap_or_else(|e| panic!("{name} rebuild: {e:?}"));
+
+        assert!(
+            !surgical.report.unresolved_edge_pairs.is_empty(),
+            "{name}: fixture produced no defects, differential is vacuous"
+        );
+        assert_eq!(
+            surgical.report.unresolved_edge_pairs, rebuild.report.unresolved_edge_pairs,
+            "{name}: backends saw different defects (detection precedes repair; this \
+             would mean nondeterminism upstream of the repair backends)"
+        );
+
+        let (ds, dr) = (&surgical.diagram, &rebuild.diagram);
+        assert_eq!(ds.num_cells(), dr.num_cells(), "{name}: cell count differs");
+        assert_eq!(
+            ds.num_vertices(),
+            dr.num_vertices(),
+            "{name}: vertex count differs"
+        );
+        for i in 0..ds.num_cells() {
+            assert_eq!(
+                ds.cell(i).vertex_indices,
+                dr.cell(i).vertex_indices,
+                "{name}: cell {i} vertex sequence differs between repair backends"
+            );
+        }
+        assert!(
+            surgical.report.preferred_validation().is_strictly_valid(),
+            "{name}: surgical result must validate strictly"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

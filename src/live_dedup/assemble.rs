@@ -374,7 +374,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
 mod tests {
     use super::*;
     use crate::knn_clipping::edge_reconcile::{
-        edge_segments_for_neighbor, reconcile_unresolved_edges,
+        edge_segments_for_neighbor, reconcile_unresolved_edges, RepairApply,
     };
     use crate::knn_clipping::live_dedup::binning::BinAssignment;
     use crate::knn_clipping::live_dedup::packed::pack_edge;
@@ -585,16 +585,22 @@ mod tests {
             .iter()
             .map(|edge| EdgeRecord { key: edge.key })
             .collect();
-        let (cells, cell_indices) = reconcile_unresolved_edges(
+        let mut cells = assembled.cells.clone();
+        let mut cell_indices = assembled.cell_indices.clone();
+        let changed = reconcile_unresolved_edges(
             &reconcile_input,
             &assembled.vertices,
-            &assembled.cells,
-            &assembled.cell_indices,
+            &mut cells,
+            &mut cell_indices,
             &assembled.vertex_keys,
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
+            RepairApply::InPlace,
         )
-        .expect("reconciliation should succeed without capacity overflow")
-        .expect("expected unresolved shared-edge mismatch to be reconciled");
+        .expect("reconciliation should succeed without capacity overflow");
+        assert!(
+            changed,
+            "expected unresolved shared-edge mismatch to be reconciled"
+        );
 
         let seg_a = edge_segments_for_neighbor(0, 1, &cells, &cell_indices, &assembled.vertex_keys)
             .expect("edge segments should resolve after reconciliation");
