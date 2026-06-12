@@ -542,3 +542,36 @@ fn test_serde_roundtrip_preserves_diagram_and_welds() {
         assert_eq!(adj_restored.neighbors_of(i), adjacency.neighbors_of(i));
     }
 }
+
+#[test]
+fn test_merge_within_large_radius_uses_standalone_detector() {
+    // A radius far above the grid-adjacency bound (1/(16*res)) must route
+    // through the standalone weld detector + grid rebuild fallback and
+    // still produce a strictly valid welded diagram.
+    let mut points = random_sphere_points(2_000, 77);
+    let base = points[10];
+    points.push(base);
+
+    let output = compute_with_report(
+        &points,
+        VoronoiConfig {
+            preprocess_mode: PreprocessMode::MergeWithin(0.05),
+            ..VoronoiConfig::default()
+        },
+    )
+    .expect("large MergeWithin radius should compute via the fallback path");
+
+    assert!(
+        output.report.preprocess.did_merge(),
+        "the duplicated point (and any natural sub-0.05 pairs) must weld"
+    );
+    assert!(
+        output.report.returned_validation.is_strictly_valid(),
+        "returned diagram should validate strictly: {}",
+        output.report.returned_validation.headline()
+    );
+    assert_eq!(
+        output.report.returned_validation.welded_twin_cells,
+        output.report.preprocess.num_merged
+    );
+}

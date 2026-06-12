@@ -51,17 +51,31 @@ unresolved edges and real defects appear only at multi-million scale
 ### Weld redesign: detect during scatter + in-place compaction
 
 The planar weld already reuses the spatial grid as the detector
-(`PlaneGrid::collect_pairs_within`, ~30ms at 1M vs the sphere's ~110ms
-standalone pass). Two refinements remain:
+(`PlaneGrid::collect_pairs_within`, ~30ms at 1M vs the sphere's old ~110ms
+standalone pass).
+
+**Sphere port done (2026-06)**: the query grid is built on the raw points
+and doubles as the weld detector (`CubeMapGrid::collect_weld_pairs` —
+per-cell pairwise scan plus wall-plane-gated 3x3 neighbor checks, verified
+against brute force across resolutions), and on welds the grid's point
+arrays compact in place (`compact_welded`, bit-identical to a fresh build
+on the effective points, test-pinned). The standalone quantized-key
+detector survives only for `MergeWithin` radii above the grid-adjacency
+bound (1/(16*res)). Measured at 2M ST: preprocess 378ms -> ~45ms (~8x; the
+par-sort is gone). Resolution policy now sees the raw count (welds are too
+few to shift it).
+
+Remaining (planar side):
 
 - Detect during the grid's scatter pass (compare each point against the
-  already-scattered prefix of its cell) instead of a separate scan.
-- On welds, compact the existing CSR arrays with one linear sweep instead of
-  rebuilding the grid (relevant because uniform random f32 data contains
-  sub-radius pairs at production scales — ~3 at 1M, ~15 at 2M, birthday
-  effect — so the rebuild path is the norm, not the exception).
-- Port the grid-integrated design to the sphere, replacing the standalone
-  quantized-key pass (~110ms at 2M per earlier measurements).
+  already-scattered prefix of its cell) instead of a separate scan — note
+  the sphere's parallel scatter writes cell segments concurrently, so for
+  the sphere the post-build per-cell scan IS the parallel-friendly form;
+  this refinement only fits the planar sequential scatter.
+- Port the in-place CSR compaction to `PlaneGrid`/`PeriodicGrid` (they
+  still rebuild on welds, and the rebuild path is the norm — uniform f32
+  data contains sub-radius pairs at production scales: ~3 at 1M, ~15 at
+  2M, birthday effect).
 
 ### HalfPlane epsilon without the per-clip sqrt
 

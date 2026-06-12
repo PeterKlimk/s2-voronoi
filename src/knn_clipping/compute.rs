@@ -24,17 +24,14 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     validate_generator_finiteness(&points)?;
     let mut tb = TimingBuilder::new();
 
-    let t = Timer::start();
-    let (effective_points, merge_result, _preprocess_report) =
-        preprocess_effective_points(&points, preprocess_mode);
-    tb.set_preprocess(t.elapsed());
+    let (effective_points, merge_result, _preprocess_report, grid) =
+        prepare_points_and_grid(&points, preprocess_mode, &mut tb);
 
     let effective_points_ref: &[Vec3] = match &effective_points {
         Some(v) => v.as_slice(),
         None => points.as_slice(),
     };
 
-    let grid = build_query_grid(effective_points_ref, &mut tb);
     let sharded = construct_cell_shards(
         effective_points_ref,
         &grid,
@@ -108,17 +105,14 @@ fn compute_voronoi_knn_clipping_report_core(
     validate_generator_finiteness(&points)?;
     let mut tb = TimingBuilder::new();
 
-    let t = Timer::start();
-    let (effective_points, merge_result, preprocess_report) =
-        preprocess_effective_points(&points, preprocess_mode);
-    tb.set_preprocess(t.elapsed());
+    let (effective_points, merge_result, preprocess_report, grid) =
+        prepare_points_and_grid(&points, preprocess_mode, &mut tb);
 
     let effective_points_ref: &[Vec3] = match &effective_points {
         Some(v) => v.as_slice(),
         None => points.as_slice(),
     };
 
-    let grid = build_query_grid(effective_points_ref, &mut tb);
     let sharded = construct_cell_shards(
         effective_points_ref,
         &grid,
@@ -342,41 +336,72 @@ fn validate_generator_finiteness(points: &[Vec3]) -> Result<(), crate::VoronoiEr
     }
 }
 
-fn preprocess_effective_points(
+/// Preprocess (weld) and build the query grid in one step.
+///
+/// The grid is built on the raw points and doubles as the weld detector
+/// (`CubeMapGrid::collect_weld_pairs`); on welds the grid is compacted in
+/// place to the effective points instead of being rebuilt, so the zero-weld
+/// common case pays only the detection scan and the weld case pays linear
+/// sweeps. The standalone quantized-key detector remains only for
+/// `MergeWithin` radii too large for grid adjacency. The resolution policy
+/// sees the raw count; welds are far too few to shift it.
+fn prepare_points_and_grid(
     points: &[Vec3],
     preprocess_mode: PreprocessMode,
-) -> (Option<Vec<Vec3>>, Option<MergeResult>, PreprocessReport) {
+    tb: &mut TimingBuilder,
+) -> (
+    Option<Vec<Vec3>>,
+    Option<MergeResult>,
+    PreprocessReport,
+    CubeMapGrid,
+) {
     let threshold = match preprocess_mode {
-        PreprocessMode::Disabled => {
-            return (
-                None,
-                None,
-                PreprocessReport {
-                    requested_mode: preprocess_mode,
-                    threshold_used: None,
-                    original_points: points.len(),
-                    effective_points: points.len(),
-                    num_merged: 0,
-                },
-            );
-        }
-        PreprocessMode::Weld => crate::tolerances::weld_radius(),
-        PreprocessMode::MergeWithin(threshold) => threshold,
+        PreprocessMode::Disabled => None,
+        PreprocessMode::Weld => Some(crate::tolerances::weld_radius()),
+        PreprocessMode::MergeWithin(threshold) => Some(threshold),
     };
-    let mut result = merge_close_points(points, threshold);
+
+    let mut grid = build_query_grid(points, tb);
+
+    let t = Timer::start();
+    let mut effective_points = None;
+    let mut merge_result = None;
+    if let Some(threshold) = threshold {
+        if threshold <= grid.max_grid_weld_threshold() {
+            let pairs = grid.collect_weld_pairs(threshold);
+            if !pairs.is_empty() {
+                let (mut result, kept) = super::preprocess::merge_result_from_pairs(points, &pairs);
+                grid.compact_welded(
+                    &kept,
+                    &result.original_to_effective,
+                    result.effective_points.len(),
+                );
+                let pts = std::mem::take(&mut result.effective_points);
+                effective_points = Some(pts);
+                merge_result = Some(result);
+            }
+        } else {
+            // Radius too large for grid adjacency (large `MergeWithin`):
+            // standalone detector, then rebuild the grid on the survivors.
+            let mut result = merge_close_points(points, threshold);
+            if result.num_merged > 0 {
+                let pts = std::mem::take(&mut result.effective_points);
+                grid = build_query_grid(&pts, tb);
+                effective_points = Some(pts);
+                merge_result = Some(result);
+            }
+        }
+    }
+    tb.set_preprocess(t.elapsed());
+
     let report = PreprocessReport {
         requested_mode: preprocess_mode,
-        threshold_used: Some(threshold),
+        threshold_used: threshold,
         original_points: points.len(),
-        effective_points: result.effective_points.len(),
-        num_merged: result.num_merged,
+        effective_points: effective_points.as_ref().map_or(points.len(), |p| p.len()),
+        num_merged: merge_result.as_ref().map_or(0, |m| m.num_merged),
     };
-    if result.num_merged > 0 {
-        let pts = std::mem::take(&mut result.effective_points);
-        (Some(pts), Some(result), report)
-    } else {
-        (None, None, report)
-    }
+    (effective_points, merge_result, report, grid)
 }
 
 fn max_cell_occupancy(grid: &crate::cube_grid::CubeMapGrid) -> usize {

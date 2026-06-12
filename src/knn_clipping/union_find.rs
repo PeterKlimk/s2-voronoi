@@ -114,6 +114,20 @@ impl SparseUnionFind {
         ids
     }
 
+    /// Order-dependent union: the smaller index always becomes the
+    /// representative (mirrors `UnionFind::union_keep_min`). Returns `true`
+    /// if `a` and `b` were in different sets.
+    pub fn union_keep_min(&mut self, a: u32, b: u32) -> bool {
+        let ra = self.find(a);
+        let rb = self.find(b);
+        if ra == rb {
+            return false;
+        }
+        let (min, max) = if ra <= rb { (ra, rb) } else { (rb, ra) };
+        self.set_parent(max, min);
+        true
+    }
+
     /// Union by rank, with `UnionFind::union`'s exact tie-breaking.
     /// Returns `true` if `a` and `b` were in different sets.
     pub fn union(&mut self, a: u32, b: u32) -> bool {

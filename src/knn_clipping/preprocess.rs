@@ -211,8 +211,23 @@ pub fn merge_close_points(points: &[Vec3], threshold: f32) -> MergeResult {
         return identity_result(points);
     }
 
-    let mut dsu = super::union_find::UnionFind::new(n);
-    for &(a, b) in &pairs {
+    merge_result_from_pairs(points, &pairs).0
+}
+
+/// Build a `MergeResult` from detected sub-threshold pairs (any detector).
+///
+/// Welding is transitive over the pairs; the class representative is the
+/// smallest original index, and representatives keep their original
+/// relative order in `effective_points`. Also returns `kept[orig]` — true
+/// when `orig` is its class representative (survives the weld) — which the
+/// grid compaction consumes.
+pub(crate) fn merge_result_from_pairs(
+    points: &[Vec3],
+    pairs: &[(u32, u32)],
+) -> (MergeResult, Vec<bool>) {
+    let n = points.len();
+    let mut dsu = super::union_find::SparseUnionFind::new();
+    for &(a, b) in pairs {
         let _ = dsu.union_keep_min(a, b);
     }
 
@@ -220,9 +235,13 @@ pub fn merge_close_points(points: &[Vec3], threshold: f32) -> MergeResult {
     let mut rep_to_effective: Vec<Option<usize>> = vec![None; n];
     let mut effective_points = Vec::new();
     let mut original_to_effective = vec![0usize; n];
+    let mut kept = vec![false; n];
 
     for (i, slot) in original_to_effective.iter_mut().enumerate() {
         let rep = dsu.find(i as u32) as usize;
+        if rep == i {
+            kept[i] = true;
+        }
         if rep_to_effective[rep].is_none() {
             rep_to_effective[rep] = Some(effective_points.len());
             effective_points.push(points[rep]);
@@ -232,11 +251,14 @@ pub fn merge_close_points(points: &[Vec3], threshold: f32) -> MergeResult {
 
     let num_merged = n - effective_points.len();
 
-    MergeResult {
-        effective_points,
-        original_to_effective,
-        num_merged,
-    }
+    (
+        MergeResult {
+            effective_points,
+            original_to_effective,
+            num_merged,
+        },
+        kept,
+    )
 }
 
 #[cfg(test)]

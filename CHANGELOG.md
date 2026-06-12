@@ -11,6 +11,15 @@ Initial release.
   site down to a ~1.7k-point fixture and exercises the in-bin and cross-bin
   detection/repair paths, asserting strict post-repair validity (see
   engineering-findings #13).
+- The sphere weld is grid-integrated: the query grid is built on the raw
+  points and doubles as the coincidence detector, and welds compact the
+  grid's point arrays in place (bit-identical to a rebuild on the effective
+  points) instead of paying a standalone quantized-key sort pass. At 2M
+  points single-threaded the weld preprocess drops from ~378ms to ~45ms.
+  `MergeWithin` radii too large for grid adjacency fall back to the
+  standalone detector. (`TIMING_KV` note: `knn_build_ms` now precedes
+  `preprocess_ms` in pipeline order, and preprocess no longer includes any
+  grid work.)
 - Edge reconciliation is O(defects) instead of O(diagram): merges collect
   into a sparse union-find (no per-run O(V) init) and apply by patching only
   the cells that can reference a merged vertex (located via vertex-key
