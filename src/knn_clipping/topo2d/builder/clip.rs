@@ -74,7 +74,7 @@ impl GnomonicBuilder {
         let hp = HalfPlane::new_unnormalized(a, b, c, plane_idx);
 
         #[cfg(feature = "p5_shadow")]
-        self.shadow_audit(neighbor, &hp);
+        self.shadow_audit(neighbor_idx, neighbor, &hp);
 
         let clip_result = if self.use_a {
             clip_convex(&self.poly_a, &hp, &mut self.poly_b)
@@ -92,15 +92,18 @@ impl GnomonicBuilder {
     /// against the canonical exact predicate before the clip is applied.
     /// No behavior change; compiled out without the feature.
     #[cfg(feature = "p5_shadow")]
-    fn shadow_audit(&self, neighbor: Vec3, hp: &HalfPlane) {
+    fn shadow_audit(&self, neighbor_idx: usize, neighbor: Vec3, hp: &HalfPlane) {
         let poly = if self.use_a {
             &self.poly_a
         } else {
             &self.poly_b
         };
         crate::knn_clipping::p5_shadow::audit_clip(
+            self.generator_idx,
             self.shadow_generator_raw,
+            neighbor_idx,
             neighbor,
+            &self.neighbor_indices,
             &self.shadow_neighbor_positions,
             poly,
             hp,
@@ -141,7 +144,7 @@ impl GnomonicBuilder {
         let hp = HalfPlane::new_unnormalized_with_eps(a, b, c, plane_idx, hp_eps as f64);
 
         #[cfg(feature = "p5_shadow")]
-        self.shadow_audit(neighbor, &hp);
+        self.shadow_audit(neighbor_idx, neighbor, &hp);
 
         let clip_result = if self.use_a {
             clip_convex_edgecheck(&self.poly_a, &hp, &mut self.poly_b)

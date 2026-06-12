@@ -124,7 +124,9 @@ pub use live_dedup::UnresolvedEdgeOrigin;
 #[cfg(feature = "p5_shadow")]
 #[doc(hidden)]
 pub mod p5_shadow {
-    pub use crate::knn_clipping::p5_shadow::{report, reset};
+    pub use crate::knn_clipping::p5_shadow::{
+        paired_dump_involving, paired_report, paired_reset, report, reset, set_pair_cutoff,
+    };
 }
 
 pub use locate::{PlaneLocator, SphereLocator};

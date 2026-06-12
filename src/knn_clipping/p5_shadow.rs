@@ -45,6 +45,35 @@ const ZERO: AtomicU64 = AtomicU64::new(0);
 static MARGIN_HIST: [AtomicU64; BUCKETS] = [ZERO; BUCKETS];
 static DISAGREE_HIST: [AtomicU64; BUCKETS] = [ZERO; BUCKETS];
 
+/// Paired-audit collection cutoff (normalized margin); 0.0 disables.
+/// f64 bits in an atomic so probes can vary it per run.
+static PAIR_CUTOFF_BITS: AtomicU64 = AtomicU64::new(0);
+
+/// Enable/disable paired collection (probe API).
+pub fn set_pair_cutoff(cutoff: f64) {
+    PAIR_CUTOFF_BITS.store(cutoff.to_bits(), Ordering::Relaxed);
+}
+
+#[inline]
+fn pair_cutoff() -> f64 {
+    f64::from_bits(PAIR_CUTOFF_BITS.load(Ordering::Relaxed))
+}
+
+/// One near-margin decision, keyed by its abstract question: does generator
+/// `key[3]` kill the vertex of sorted triple `key[0..3]`? Multiple cells
+/// answer the same question (each owner of the triple clips that corner
+/// against x); pairing them measures cross-cell conflict directly.
+#[derive(Clone, Copy)]
+struct PairedRecord {
+    key: [u32; 4],
+    cell: u32,
+    margin: f32,
+    local_keep: bool,
+    canonical: i8,
+}
+
+static PAIRED: std::sync::Mutex<Vec<PairedRecord>> = std::sync::Mutex::new(Vec::new());
+
 #[inline]
 fn c3(p: Vec3) -> Coord3D<f64> {
     Coord3D {
@@ -102,9 +131,13 @@ fn bucket_for(nd: f64) -> usize {
 /// Audit one clip attempt: for every current polygon vertex with real plane
 /// attribution, classify its margin against the incoming half-plane and,
 /// below the cutoff, compare the local decision with the canonical one.
+#[allow(clippy::too_many_arguments)] // shadow-only audit seam
 pub(crate) fn audit_clip(
+    generator_idx: usize,
     generator_raw: Vec3,
+    neighbor_idx: usize,
     neighbor_raw: Vec3,
+    neighbor_indices: &[usize],
     neighbor_positions: &[Vec3],
     poly: &PolyBuffer,
     hp: &HalfPlane,
@@ -114,6 +147,8 @@ pub(crate) fn audit_clip(
         return;
     }
     let inv_norm = 1.0 / hp.ab2.sqrt();
+    let pcut = pair_cutoff();
+    let mut batch: Vec<PairedRecord> = Vec::new();
     for i in 0..poly.len {
         let (pa, pb) = poly.vertex_planes[i];
         if pa == usize::MAX || pb == usize::MAX {
@@ -127,10 +162,11 @@ pub(crate) fn audit_clip(
         let bucket = bucket_for(nd);
         MARGIN_HIST[bucket].fetch_add(1, Ordering::Relaxed);
 
+        let a = neighbor_positions[pa];
+        let b = neighbor_positions[pb];
+
         if nd < CANONICAL_CUTOFF {
             CANON_EVALS.fetch_add(1, Ordering::Relaxed);
-            let a = neighbor_positions[pa];
-            let b = neighbor_positions[pb];
             let sign = in_circle_sphere_sign(generator_raw, a, b, neighbor_raw);
             if sign == 0 {
                 EXACT_TIES.fetch_add(1, Ordering::Relaxed);
@@ -142,7 +178,167 @@ pub(crate) fn audit_clip(
                 }
             }
         }
+
+        // Paired collection: record this decision under its abstract
+        // question key so cross-cell answers can be matched up.
+        if nd < pcut {
+            let (ga, gb) = (neighbor_indices[pa] as u32, neighbor_indices[pb] as u32);
+            let g = generator_idx as u32;
+            let x = neighbor_idx as u32;
+            let mut triple = [g, ga, gb];
+            triple.sort_unstable();
+            // x in the triple is a degenerate re-clip of an existing
+            // constraint; not a shared 4-point question.
+            if triple.contains(&x) {
+                continue;
+            }
+            batch.push(PairedRecord {
+                key: [triple[0], triple[1], triple[2], x],
+                cell: g,
+                margin: nd as f32,
+                local_keep: d >= -hp.eps,
+                canonical: in_circle_sphere_sign(generator_raw, a, b, neighbor_raw),
+            });
+        }
     }
+    if !batch.is_empty() {
+        PAIRED.lock().unwrap().extend(batch);
+    }
+}
+
+/// Reset the paired-audit collection.
+pub fn paired_reset() {
+    PAIRED.lock().unwrap().clear();
+}
+
+/// Group the paired records by question and report cross-cell agreement.
+///
+/// The headline statistic is the conflict tail: the largest margin at which
+/// some cell holds a local answer that conflicts with a peer's answer (or
+/// with canonical) for the same shared question — the quantity EPS_FILTER
+/// must dominate for P5 stage 2.
+pub fn paired_report() -> String {
+    use std::collections::HashMap;
+    use std::fmt::Write;
+
+    let records = PAIRED.lock().unwrap().clone();
+    let mut groups: HashMap<[u32; 4], Vec<&PairedRecord>> = HashMap::new();
+    for r in &records {
+        groups.entry(r.key).or_default().push(r);
+    }
+
+    let mut out = String::new();
+    let mut multi_party = 0u64;
+    let mut conflict_groups = 0u64;
+    let mut canon_inconsistent = 0u64;
+    // Bucketed by the margin of the conflicting entry (each side of a
+    // conflict counts at its own margin).
+    let mut conflict_hist = [0u64; BUCKETS];
+    let mut conflict_max_margin = 0.0f32;
+    // Property (b) on shared questions only: local vs canonical.
+    let mut canon_disagree_hist = [0u64; BUCKETS];
+    let mut canon_disagree_max = 0.0f32;
+
+    for entries in groups.values() {
+        let mut cells: Vec<u32> = entries.iter().map(|e| e.cell).collect();
+        cells.sort_unstable();
+        cells.dedup();
+
+        // Canonical self-check: one question, one exact answer.
+        if entries.iter().any(|e| e.canonical != entries[0].canonical) {
+            canon_inconsistent += 1;
+        }
+
+        if cells.len() < 2 {
+            continue;
+        }
+        multi_party += 1;
+
+        let any_keep = entries.iter().any(|e| e.local_keep);
+        let any_cut = entries.iter().any(|e| !e.local_keep);
+        if any_keep && any_cut {
+            conflict_groups += 1;
+            for e in entries {
+                // Every entry in a split group conflicts with someone.
+                conflict_hist[bucket_for(e.margin as f64)] += 1;
+                conflict_max_margin = conflict_max_margin.max(e.margin);
+            }
+        }
+
+        for e in entries {
+            if e.canonical != 0 && e.local_keep != (e.canonical < 0) {
+                canon_disagree_hist[bucket_for(e.margin as f64)] += 1;
+                canon_disagree_max = canon_disagree_max.max(e.margin);
+            }
+        }
+    }
+
+    writeln!(
+        out,
+        "paired: records={} questions={} multi_party={} conflict_groups={}          canon_self_check_failures={}",
+        records.len(),
+        groups.len(),
+        multi_party,
+        conflict_groups,
+        canon_inconsistent,
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  cross-cell conflict tail: max margin {:.3e}; canonical-disagreement          tail (shared questions): max margin {:.3e}",
+        conflict_max_margin, canon_disagree_max
+    )
+    .unwrap();
+    writeln!(out, "  margin bucket        conflicts  canon-disagrees").unwrap();
+    for k in 0..BUCKETS {
+        if conflict_hist[k] == 0 && canon_disagree_hist[k] == 0 {
+            continue;
+        }
+        let label = if k == 0 {
+            ">= 1e-1        ".to_string()
+        } else if k == BUCKETS - 1 {
+            format!("<  1e-{}        ", BUCKETS - 1)
+        } else {
+            format!("1e-{:<2} .. 1e-{:<2}", k + 1, k)
+        };
+        writeln!(
+            out,
+            "  {label} {:>10}  {:>10}",
+            conflict_hist[k], canon_disagree_hist[k]
+        )
+        .unwrap();
+    }
+    out
+}
+
+/// Dump every collected paired record whose question involves any of the
+/// given generator ids (defect-site anatomy; probe use).
+pub fn paired_dump_involving(ids: &[u32]) -> String {
+    use std::collections::HashMap;
+    use std::fmt::Write;
+    let records = PAIRED.lock().unwrap().clone();
+    let mut groups: HashMap<[u32; 4], Vec<&PairedRecord>> = HashMap::new();
+    for r in &records {
+        if r.key.iter().any(|k| ids.contains(k)) {
+            groups.entry(r.key).or_default().push(r);
+        }
+    }
+    let mut keys: Vec<_> = groups.keys().copied().collect();
+    keys.sort_unstable();
+    let mut out = String::new();
+    for key in keys {
+        let entries = &groups[&key];
+        writeln!(out, "  q={key:?} canonical={}", entries[0].canonical).unwrap();
+        for e in entries {
+            writeln!(
+                out,
+                "    cell={} keep={} margin={:.3e}",
+                e.cell, e.local_keep, e.margin
+            )
+            .unwrap();
+        }
+    }
+    out
 }
 
 /// Reset all shadow counters.

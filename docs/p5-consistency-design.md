@@ -250,6 +250,42 @@ computed-vs-canonical deviation is genuine chart/lerp rounding; re-measure
 the margin histogram to place EPS_FILTER (expected ~1e-6, where escalation
 cost is negligible).
 
+## Paired two-cell audit findings (stage-2 prerequisite, 2026-06)
+
+The paired audit (`p5_shadow::paired_report`, probe in `tests/p5_shadow.rs`)
+keys every near-margin decision by its abstract question — (sorted triple,
+opposing generator x) — and groups records across cells, measuring how often
+distinct cells answer the SAME question with conflicting local signs.
+Measured at 500k (cutoff 1e-3), 2M, and defect-bearing 3M seed 3 (cutoff
+1e-4):
+
+1. **The cross-cell conflict tail is empirically ZERO.** 300k-557k
+   multi-party questions per run; not one conflicting pair of local answers
+   — including on the run with 4 real defects. Chart-local errors on shared
+   questions are near-perfectly correlated. (The canonical evaluator's
+   permutation self-check also held: zero inconsistencies.)
+2. **Local-vs-canonical disagreements are benign for consistency**: tens of
+   thousands per run (the 1e-5..1e-4 band), but they are shared bias, not
+   conflict — wrong-but-identical answers yield a consistent
+   (epsilon-wrong) structure, which is all the contract needs.
+3. **Defects are question-set divergence, period** (failure mode B,
+   confirmed as the sole observed mechanism): the defect-site anatomy dump
+   (`paired_dump_involving`) shows agreeing, canonical-consistent answers
+   everywhere — the mismatch lives in questions only one side ever posed
+   (corner never formed in the other cell's polygon evolution, or x never
+   delivered) and in divergent triple identities (thirds mismatches are
+   different question SETS by definition).
+
+Consequence for the design: **pillar 3 is the load-bearing pillar.**
+Pillars 1-2 (canonical answers behind a filter) would NOT have fixed the
+observed 3M defects — those answers already matched canonical. EPS_FILTER
+does not need to dominate an answer-conflict tail (there isn't one); the
+escalation's role is to pin the near-tie answers that question-set closure
+(EPS_CERT-conservative certificates) makes commonly-posed, so that both
+cells derive identical corner sets from identical answer sets. Stage 2/3
+should therefore lead with the certificate-conservatism work and treat the
+decision-authoritative clipper changes as its companion, not the headline.
+
 ## Migration plan
 
 Staged, each stage behind the existing harnesses (NN contract suite, edge-repair
