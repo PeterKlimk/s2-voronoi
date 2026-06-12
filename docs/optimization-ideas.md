@@ -48,6 +48,13 @@ to be scale-accurate, not exact — `|a| + |b|` is within sqrt(2) of the true
 norm. Semantics-affecting (epsilon decisions shift; hp_eps is shared across
 edge-check seeds), so it needs the same care as any tolerance change.
 
+Measured 2026-06 (2M sphere ST, 3+3 pairs in both orders): inconclusive —
+forward-order pairs showed 3-7% "wins" that reversed-order pairs exposed
+as thermal drift; the combined data is a wash. Static estimate caps the
+sqrt at <1% of total. Only worth retrying on a quiet box, and the eps
+semantics shift (up to sqrt(2) larger) would need fuzz revalidation
+regardless. Low expected value.
+
 ### Planar TIMING_KV plumbing
 
 `PlanePackedTimings` is a no-op shell with the sphere's call surface
