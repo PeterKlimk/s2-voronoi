@@ -73,13 +73,52 @@ impl GnomonicBuilder {
         let plane_idx = self.half_planes.len();
         let hp = HalfPlane::new_unnormalized(a, b, c, plane_idx);
 
+        #[cfg(feature = "p5_shadow")]
+        self.shadow_audit(neighbor, &hp);
+
         let clip_result = if self.use_a {
             clip_convex(&self.poly_a, &hp, &mut self.poly_b)
         } else {
             clip_convex(&self.poly_b, &hp, &mut self.poly_a)
         };
 
-        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)
+        let committed = self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot);
+        #[cfg(feature = "p5_shadow")]
+        self.shadow_sync_positions(neighbor);
+        committed
+    }
+
+    /// Shadow audit (P5 stage 1): compare near-margin local decisions
+    /// against the canonical exact predicate before the clip is applied.
+    /// No behavior change; compiled out without the feature.
+    #[cfg(feature = "p5_shadow")]
+    fn shadow_audit(&self, neighbor: Vec3, hp: &HalfPlane) {
+        let poly = if self.use_a {
+            &self.poly_a
+        } else {
+            &self.poly_b
+        };
+        crate::knn_clipping::p5_shadow::audit_clip(
+            self.shadow_generator_raw,
+            neighbor,
+            &self.shadow_neighbor_positions,
+            poly,
+            hp,
+        );
+    }
+
+    /// Keep the shadow position list parallel to `neighbor_indices`
+    /// (a `Changed` commit pushed a constraint — including commits that then
+    /// fail with `ClippedAway`, so this runs on the error path too).
+    #[cfg(feature = "p5_shadow")]
+    fn shadow_sync_positions(&mut self, neighbor: Vec3) {
+        if self.neighbor_indices.len() > self.shadow_neighbor_positions.len() {
+            self.shadow_neighbor_positions.push(neighbor);
+        }
+        debug_assert_eq!(
+            self.neighbor_indices.len(),
+            self.shadow_neighbor_positions.len()
+        );
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -101,13 +140,19 @@ impl GnomonicBuilder {
         let plane_idx = self.half_planes.len();
         let hp = HalfPlane::new_unnormalized_with_eps(a, b, c, plane_idx, hp_eps as f64);
 
+        #[cfg(feature = "p5_shadow")]
+        self.shadow_audit(neighbor, &hp);
+
         let clip_result = if self.use_a {
             clip_convex_edgecheck(&self.poly_a, &hp, &mut self.poly_b)
         } else {
             clip_convex_edgecheck(&self.poly_b, &hp, &mut self.poly_a)
         };
 
-        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)?;
+        let committed = self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot);
+        #[cfg(feature = "p5_shadow")]
+        self.shadow_sync_positions(neighbor);
+        committed?;
         Ok(())
     }
 }

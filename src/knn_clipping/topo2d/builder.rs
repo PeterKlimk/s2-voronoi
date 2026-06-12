@@ -71,6 +71,15 @@ pub(crate) struct GnomonicBuilder {
     use_a: bool,
 
     failed: Option<CellFailure>,
+    /// Shadow audit (P5 stage 1): raw f32 generator coordinates — the exact
+    /// input bits the canonical predicate consumes (`generator` above is
+    /// re-normalized f64).
+    #[cfg(feature = "p5_shadow")]
+    pub(crate) shadow_generator_raw: glam::Vec3,
+    /// Shadow audit: raw f32 neighbor positions, parallel to
+    /// `neighbor_indices` / `half_planes`.
+    #[cfg(feature = "p5_shadow")]
+    pub(crate) shadow_neighbor_positions: Vec<glam::Vec3>,
     term_sin_pad: f64,
     term_cos_pad: f64,
     term_threshold_cache: f64,

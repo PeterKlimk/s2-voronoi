@@ -123,7 +123,8 @@ src/
 - Internal: `timing` (instrumentation), `profiling` (inline control),
   `microbench` (harnesses), `simd_scalar` (non-`wide` 8-lane fallback),
   `fma` (mul_add; off by default, see ledger), `tools` (bench binaries),
-  `bench_voronoice` (head-to-head planar comparison).
+  `bench_voronoice` (head-to-head planar comparison), `p5_shadow` (P5
+  stage-1 canonical-vs-local clip decision audit; see docs/p5-consistency-design.md).
 
 ## Tests
 

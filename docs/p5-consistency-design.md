@@ -219,12 +219,43 @@ paired benchmarks gate, alongside the filter compare and the escalation path.
 4. **The inequality**: EPS_CERT > EPS_FILTER > (1) + (2). All constants land in
    `src/tolerances.rs` with their justifications, per house style.
 
+## Stage-1 shadow-mode findings (2026-06)
+
+The shadow audit (`feature p5_shadow`: exact canonical evaluator +
+margin/disagreement histograms in the gnomonic clip path, zero behavior
+change; probe in `tests/p5_shadow.rs`) measured on uniform 2M:
+
+- **Escalation frequency** at normalized-margin cutoffs: ~2.4% of decisions
+  below 1e-4, ~0.24% below 1e-5, ~0.02% below 1e-6 (roughly linear in the
+  threshold). Exact ties: zero on uniform data.
+- **A dominant inconsistency source nobody had quantified**: ~8% of
+  sub-cutoff decisions disagree with the raw-input canonical answer,
+  concentrated at margins 1e-5..1e-4 — far above rounding scale. Cause: the
+  builder f64-renormalizes the generator (`reset`) while neighbors enter as
+  raw f32, so the pipeline solves a slightly different point set than the
+  raw input (f32 points are ~6e-8 off-unit; against |g-h| ~ 2.5e-3 at 2M
+  that is exactly the observed ~2e-5 band). Cell errors are highly
+  correlated (only 3 cross-cell defects on the same run), but canonical
+  decisions must be about the same points the charts consume.
+
+Consequence — **stage 0, input canonicalization**: renormalize all points
+once at pipeline entry (f64-normalize, round back to f32) and remove the
+per-builder renormalization, so every consumer (charts, canonical
+predicates, certificates) sees identical bits. After stage 0 the residual
+computed-vs-canonical deviation is genuine chart/lerp rounding; re-measure
+the margin histogram to place EPS_FILTER (expected ~1e-6, where escalation
+cost is negligible).
+
 ## Migration plan
 
 Staged, each stage behind the existing harnesses (NN contract suite, edge-repair
 net, fingerprint tests, paired benches):
 
+0. **Input canonicalization** (added after stage-1 findings): one
+   renormalization at pipeline entry; delete the per-builder f64
+   renormalization. Fingerprint moves; weld/coincidence tests re-validated.
 1. **Canonical evaluator + escalation plumbing, decisions logged not applied.**
+   ~~Done~~ (feature `p5_shadow`; findings above).
    Run the filter in shadow mode: count escalations, compare canonical answers
    against the local decisions actually taken, on the net fixtures and fuzz
    sweeps. This measures (a) escalation frequency (perf model) and (b) how often

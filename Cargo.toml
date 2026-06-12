@@ -25,6 +25,7 @@ profiling = [] # Profiling helpers (e.g. disable inlining on hot functions)
 microbench = ["dep:rand", "dep:rand_chacha"] # Enable internal microbench harnesses
 serde = ["dep:serde"] # Serialize/Deserialize for diagram types
 qhull = ["qhull-enhanced"]  # Convex hull backend (test/bench only)
+p5_shadow = ["dep:robust"] # P5 stage-1 shadow audit: log canonical-vs-local clip decisions (no behavior change)
 simd_scalar = [] # Scalar/autovectorized 8-lane path instead of `wide`; debugging/comparison
 fma = [] # Prefer fused multiply-add via mul_add (may change results; can be slow without HW FMA)
 tools = ["dep:clap", "dep:kiddo", "dep:rand", "dep:rand_chacha"] # Benchmark/utility binaries
@@ -50,6 +51,10 @@ wide = "0.7"
 
 # Optional: serialization for diagram types
 serde = { version = "1", features = ["derive"], optional = true }
+
+# Optional: exact geometric predicates (Shewchuk adaptive) for the P5
+# canonical evaluator (feature: p5_shadow; production use lands with P5 stage 2)
+robust = { version = "1", optional = true }
 
 # Optional: convex hull backend (test-only)
 qhull-enhanced = { version = "0.1", optional = true }

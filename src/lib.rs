@@ -119,6 +119,14 @@ pub use adjacency::CellAdjacency;
 pub use diagram::{CellView, SphericalVoronoi};
 pub use error::VoronoiError;
 pub use live_dedup::UnresolvedEdgeOrigin;
+
+/// P5 stage-1 shadow audit counters (feature `p5_shadow`); diagnostic only.
+#[cfg(feature = "p5_shadow")]
+#[doc(hidden)]
+pub mod p5_shadow {
+    pub use crate::knn_clipping::p5_shadow::{report, reset};
+}
+
 pub use locate::{PlaneLocator, SphereLocator};
 pub use plane_diagram::{PlanarVoronoi, PlanePoint, PlanePointLike, PlaneRect, PlaneTopology};
 pub use types::{UnitVec3, UnitVec3Like};

@@ -99,6 +99,10 @@ impl GnomonicBuilder {
             poly_b: PolyBuffer::new(),
             use_a: true,
             failed: None,
+            #[cfg(feature = "p5_shadow")]
+            shadow_generator_raw: generator,
+            #[cfg(feature = "p5_shadow")]
+            shadow_neighbor_positions: Vec::with_capacity(32),
             term_sin_pad,
             term_cos_pad,
             term_threshold_cache: 0.0,
@@ -116,6 +120,11 @@ impl GnomonicBuilder {
         self.half_planes.clear();
         self.neighbor_indices.clear();
         self.neighbor_slots.clear();
+        #[cfg(feature = "p5_shadow")]
+        {
+            self.shadow_generator_raw = generator;
+            self.shadow_neighbor_positions.clear();
+        }
         self.poly_a.init_bounding(1e6);
         self.poly_b.clear();
         self.use_a = true;

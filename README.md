@@ -179,7 +179,7 @@ backend actually solved, and strict validation of both views; `report.preferred_
 - `timing`: detailed phase/sub-phase timing reports.
 - `qhull`: convex hull backend used for tests/bench comparisons only.
 - Internal flags (`timing`, `profiling`, `microbench`, `simd_scalar`, `fma`, `tools`,
-  `bench_voronoice`): benching/diagnostics only — not part of the public contract and may
+  `bench_voronoice`, `p5_shadow`): benching/diagnostics only — not part of the public contract and may
   change or disappear without a major version bump.
 
 ## Documentation
