@@ -61,9 +61,16 @@ impl PackedKnnCellScratch {
             let qz_s = grid.cell_points_z[query_slot_usize];
 
             let full_chunks = range_len / 8;
+            let (x_chunks, _) = xs.as_chunks::<8>();
+            let (y_chunks, _) = ys.as_chunks::<8>();
+            let (z_chunks, _) = zs.as_chunks::<8>();
             for chunk in 0..full_chunks {
                 let i = chunk * 8;
-                let candidates = fp::PointChunk8::from_slices(&xs[i..], &ys[i..], &zs[i..]);
+                let candidates = fp::PointChunk8::from_array_refs(
+                    &x_chunks[chunk],
+                    &y_chunks[chunk],
+                    &z_chunks[chunk],
+                );
                 let dots = candidates.dots(qx_s, qy_s, qz_s);
 
                 let safe_bits = dots.mask_gt(self.security_thresholds[qi]);

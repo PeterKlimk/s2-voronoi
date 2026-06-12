@@ -381,9 +381,11 @@ impl PlanePackedScratch {
         let chunk0_keys = &mut self.chunk0_keys[..num_queries];
 
         let full_chunks = center_len / 8;
+        let (x_chunks, _) = xs.as_chunks::<8>();
+        let (y_chunks, _) = ys.as_chunks::<8>();
         for chunk in 0..full_chunks {
             let i = chunk * 8;
-            let candidates = fp::PlaneChunk8::from_slices(&xs[i..], &ys[i..]);
+            let candidates = fp::PlaneChunk8::from_array_refs(&x_chunks[chunk], &y_chunks[chunk]);
 
             // Candidate positions in this chunk are [i, i+7]. A query at
             // position qi only sees candidates at positions >= qi.
@@ -499,9 +501,12 @@ impl PlanePackedScratch {
             let rys = &grid.points_y()[soa_start..r.soa_end];
 
             let full_chunks = range_len / 8;
+            let (x_chunks, _) = rxs.as_chunks::<8>();
+            let (y_chunks, _) = rys.as_chunks::<8>();
             for chunk in 0..full_chunks {
                 let i = chunk * 8;
-                let candidates = fp::PlaneChunk8::from_slices(&rxs[i..], &rys[i..]);
+                let candidates =
+                    fp::PlaneChunk8::from_array_refs(&x_chunks[chunk], &y_chunks[chunk]);
                 for qi in 0..num_queries {
                     let dists = grid.chunk_dist_sqs(&candidates, xs[qi], ys[qi]);
                     let mut mask_bits = dists.mask_lt(thresholds[qi]);
@@ -589,9 +594,12 @@ impl PlanePackedScratch {
             let rys = &grid.points_y()[soa_start..r.soa_end];
 
             let full_chunks = range_len / 8;
+            let (x_chunks, _) = rxs.as_chunks::<8>();
+            let (y_chunks, _) = rys.as_chunks::<8>();
             for chunk in 0..full_chunks {
                 let i = chunk * 8;
-                let candidates = fp::PlaneChunk8::from_slices(&rxs[i..], &rys[i..]);
+                let candidates =
+                    fp::PlaneChunk8::from_array_refs(&x_chunks[chunk], &y_chunks[chunk]);
                 let dists = grid.chunk_dist_sqs(&candidates, qx, qy);
                 let safe_bits = dists.mask_lt(security);
                 let hi_bits = dists.mask_lt(t_hi);

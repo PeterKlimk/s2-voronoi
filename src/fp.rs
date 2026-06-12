@@ -94,16 +94,6 @@ pub(crate) struct PointChunk8 {
 pub(crate) struct Dots8(backend::V);
 
 impl PointChunk8 {
-    /// Load the first 8 elements of each slice (caller guarantees length).
-    #[inline(always)]
-    pub(crate) fn from_slices(xs: &[f32], ys: &[f32], zs: &[f32]) -> Self {
-        Self {
-            x: backend::load_slice(xs),
-            y: backend::load_slice(ys),
-            z: backend::load_slice(zs),
-        }
-    }
-
     #[inline(always)]
     pub(crate) fn from_arrays(x: [f32; 8], y: [f32; 8], z: [f32; 8]) -> Self {
         Self {
@@ -111,6 +101,11 @@ impl PointChunk8 {
             y: backend::load_array(y),
             z: backend::load_array(z),
         }
+    }
+
+    #[inline(always)]
+    pub(crate) fn from_array_refs(x: &[f32; 8], y: &[f32; 8], z: &[f32; 8]) -> Self {
+        Self::from_arrays(*x, *y, *z)
     }
 
     /// Lane-wise dot products against a broadcast query point.
@@ -145,21 +140,17 @@ pub(crate) struct PlaneChunk8 {
 pub(crate) struct Dists8(backend::V);
 
 impl PlaneChunk8 {
-    /// Load the first 8 elements of each slice (caller guarantees length).
-    #[inline(always)]
-    pub(crate) fn from_slices(xs: &[f32], ys: &[f32]) -> Self {
-        Self {
-            x: backend::load_slice(xs),
-            y: backend::load_slice(ys),
-        }
-    }
-
     #[inline(always)]
     pub(crate) fn from_arrays(x: [f32; 8], y: [f32; 8]) -> Self {
         Self {
             x: backend::load_array(x),
             y: backend::load_array(y),
         }
+    }
+
+    #[inline(always)]
+    pub(crate) fn from_array_refs(x: &[f32; 8], y: &[f32; 8]) -> Self {
+        Self::from_arrays(*x, *y)
     }
 
     /// Lane-wise squared Euclidean distances to a broadcast query point.
@@ -211,12 +202,6 @@ mod backend {
     use wide::{f32x8, f64x4, CmpGe, CmpGt, CmpLt};
 
     pub(super) type V = f32x8;
-
-    #[inline(always)]
-    pub(super) fn load_slice(s: &[f32]) -> V {
-        let arr: [f32; 8] = s[..8].try_into().unwrap();
-        f32x8::from(arr)
-    }
 
     #[inline(always)]
     pub(super) fn load_array(a: [f32; 8]) -> V {
@@ -329,11 +314,6 @@ mod backend {
 #[cfg(feature = "simd_scalar")]
 mod backend {
     pub(super) type V = [f32; 8];
-
-    #[inline(always)]
-    pub(super) fn load_slice(s: &[f32]) -> V {
-        s[..8].try_into().unwrap()
-    }
 
     #[inline(always)]
     pub(super) fn load_array(a: [f32; 8]) -> V {
