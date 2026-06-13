@@ -18,6 +18,31 @@ fn reconcile_state_error(message: impl Into<String>) -> crate::VoronoiError {
     crate::VoronoiError::ComputationFailed(message.into())
 }
 
+/// Error for post-repair residuals on the plain compute paths: a non-empty
+/// residual list means the output is provably not a valid subdivision (some
+/// interior edge stays unpaired), and those paths have no report channel to
+/// surface it — so they fail loud rather than return a known-invalid
+/// diagram. `pairs` are the offending cell/generator pairs (capped in the
+/// message). Never constructed on clean runs (the list is empty).
+pub(crate) fn residual_error(pairs: &[(u32, u32)]) -> crate::VoronoiError {
+    let shown: Vec<String> = pairs
+        .iter()
+        .take(8)
+        .map(|&(a, b)| format!("({a},{b})"))
+        .collect();
+    let more = if pairs.len() > 8 {
+        format!(" (+{} more)", pairs.len() - 8)
+    } else {
+        String::new()
+    };
+    crate::VoronoiError::ComputationFailed(format!(
+        "edge reconciliation left {} unpaired interior edge(s) — output is not a valid \
+         subdivision: {}{more}. Use compute_with_report to inspect, or report this input.",
+        pairs.len(),
+        shown.join(" ")
+    ))
+}
+
 #[inline]
 pub(crate) fn unpack_edge(key: u64) -> (u32, u32) {
     (key as u32, (key >> 32) as u32)

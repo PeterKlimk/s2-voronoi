@@ -50,7 +50,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         cell_indices,
         dedup_sub: _,
     } = assembled;
-    let (eff_cells, eff_cell_indices, _post_repair_unpaired) = reconcile_edges(
+    let (eff_cells, eff_cell_indices, post_repair_unpaired) = reconcile_edges(
         &vertices,
         &vertex_keys,
         &unresolved_edges,
@@ -58,6 +58,11 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         cell_indices,
         &mut tb,
     )?;
+    // Plain path: a residual is provably-invalid output and there is no
+    // report channel to surface it, so fail loud rather than ship it.
+    if !post_repair_unpaired.is_empty() {
+        return Err(edge_reconcile::residual_error(&post_repair_unpaired));
+    }
 
     let t = Timer::start();
     let (cells, cell_indices, weld_map) = remap_cells_to_original_indices(

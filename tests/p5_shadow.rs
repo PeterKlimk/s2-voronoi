@@ -409,24 +409,32 @@ fn probe_plane_strict_anatomy() {
             s2_voronoi::p5_shadow::paired_reset();
             s2_voronoi::p5_shadow::plane_unresolved_reset();
             s2_voronoi::p5_shadow::set_pair_cutoff(1e-3);
-            let diagram = compute_plane(points, PlaneRect::unit()).expect(name);
+            // Under the strict override the plain path now ERRORS on
+            // residuals (the production correctness contract). The collector
+            // still captured detection + residual records before the error,
+            // so the anatomy is recoverable either way.
+            let built = compute_plane(points, PlaneRect::unit());
             s2_voronoi::p5_shadow::set_pair_cutoff(0.0);
-
-            let unpaired = unpaired_interior(&diagram);
             let detected = s2_voronoi::p5_shadow::plane_unresolved();
             println!("=== {name} plane_eps={eps:?} ===");
-            println!("  detected unresolved (cell pairs): {detected:?}");
-            println!("  final unpaired interior edges: {}", unpaired.len());
-            for &(va, vb, cell) in unpaired.iter().take(20) {
-                let pa = diagram.vertex(va as usize);
-                let pb = diagram.vertex(vb as usize);
-                println!(
-                    "    v{va}({:.6},{:.6})-v{vb}({:.6},{:.6}) cell={cell}",
-                    pa.x, pa.y, pb.x, pb.y
-                );
+            println!("  detected/residual (cell pairs): {detected:?}");
+            match &built {
+                Ok(diagram) => {
+                    let unpaired = unpaired_interior(diagram);
+                    println!("  final unpaired interior edges: {}", unpaired.len());
+                    for &(va, vb, cell) in unpaired.iter().take(20) {
+                        let pa = diagram.vertex(va as usize);
+                        let pb = diagram.vertex(vb as usize);
+                        println!(
+                            "    v{va}({:.6},{:.6})-v{vb}({:.6},{:.6}) cell={cell}",
+                            pa.x, pa.y, pb.x, pb.y
+                        );
+                    }
+                }
+                Err(e) => println!("  compute_plane errored (residual): {e:?}"),
             }
             print!("{}", s2_voronoi::p5_shadow::paired_quad_report());
-            let cells: Vec<u32> = unpaired.iter().map(|&(.., c)| c).collect();
+            let cells: Vec<u32> = detected.iter().flat_map(|&(a, b)| [a, b]).collect();
             if !cells.is_empty() {
                 println!("--- records involving defect cells {cells:?} ---");
                 print!("{}", s2_voronoi::p5_shadow::paired_dump_involving(&cells));

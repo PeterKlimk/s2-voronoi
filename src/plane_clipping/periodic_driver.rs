@@ -60,12 +60,13 @@ pub(crate) fn compute_periodic_cells(
         .collect();
     let mut cells = assembly.cells;
     let mut cell_indices = assembly.cell_indices;
+    // Torus topology: no boundary, every interior edge must pair.
     // Note: reconcile distances are raw Euclidean on wrapped positions, so
     // an epsilon edge exactly straddling the wrap seam is not auto-merged;
-    // it remains an honestly-reported validation finding (documented v1
-    // limitation).
-    // Torus topology: no boundary, every interior edge must pair.
-    let _residual = edge_reconcile::reconcile_unresolved_edges(
+    // such a residual makes the output an invalid subdivision, so the plain
+    // path fails loud rather than returning it silently (was a documented
+    // "honestly reported" finding only visible via validate_plane).
+    let residual = edge_reconcile::reconcile_unresolved_edges(
         &records,
         &assembly.vertices,
         &mut cells,
@@ -77,6 +78,9 @@ pub(crate) fn compute_periodic_cells(
     )?;
 
     tb.set_edge_reconcile(t.elapsed());
+    if !residual.is_empty() {
+        return Err(edge_reconcile::residual_error(&residual));
+    }
 
     Ok(PeriodicCellsOutput {
         vertices: assembly.vertices,

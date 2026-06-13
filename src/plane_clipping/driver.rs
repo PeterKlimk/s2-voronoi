@@ -79,7 +79,6 @@ pub(crate) fn compute_plane_cells(
     // endpoints on one common rect wall (mirrors validate_plane).
     let verts = &assembly.vertices;
     let wall_eps = crate::tolerances::PLANE_ON_WALL_EPS;
-    #[cfg_attr(not(feature = "p5_shadow"), allow(unused_variables))]
     let residual = edge_reconcile::reconcile_unresolved_edges(
         &records,
         verts,
@@ -105,6 +104,11 @@ pub(crate) fn compute_plane_cells(
             .map(|&(a, b)| (a as u64) | ((b as u64) << 32)),
     );
     tb.set_edge_reconcile(t.elapsed());
+    // Plain path: a residual is provably-invalid output with no report
+    // channel to surface it — fail loud rather than return it.
+    if !residual.is_empty() {
+        return Err(edge_reconcile::residual_error(&residual));
+    }
 
     Ok(PlaneCellsOutput {
         vertices: assembly.vertices,

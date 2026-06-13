@@ -168,6 +168,19 @@ fn test_cube_vertices_tight() {
     expect_strict_success("cube_vertices_tight", compute(&points));
 }
 
+#[test]
+fn test_cube_vertices_100k_seed3_defect_carrier() {
+    // Discovered by the robustness campaign: a cheap (~0.5s), deterministic
+    // defect carrier — the only known sphere input that exercises the
+    // post-assembly repair net below the multi-million-point scale (it
+    // produces InBinThirdsMismatch + InBinUnconsumedCheck records that
+    // repair to strict validity). The contract is strict validity; `compute`
+    // additionally errors on any post-repair residual, so this also guards
+    // the always-caught path.
+    let points = cube_vertex_stress_points(100_000, 0.01, 3);
+    expect_strict_success("cube_vertices_100k_seed3", compute(&points));
+}
+
 // =============================================================================
 // Near-Cocircular Tests (Vertex Instability → Bad Edges)
 // =============================================================================
