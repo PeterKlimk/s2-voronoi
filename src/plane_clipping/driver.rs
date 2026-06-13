@@ -71,6 +71,8 @@ pub(crate) fn compute_plane_cells(
         .iter()
         .map(|b| live_dedup::EdgeRecord { key: b.key })
         .collect();
+    #[cfg(feature = "p5_shadow")]
+    crate::knn_clipping::p5_shadow::record_plane_unresolved(records.iter().map(|r| r.key.as_u64()));
     let mut cells = assembly.cells;
     let mut cell_indices = assembly.cell_indices;
     edge_reconcile::reconcile_unresolved_edges(

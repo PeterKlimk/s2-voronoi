@@ -445,24 +445,53 @@ are fine; biased bisectors restore green).
 
 This is NOT because the plane lacks repair machinery — the planar
 pipeline shares the full edge-check/detection/reconcile stack (a first
-draft of this section claimed otherwise; corrected). Instrumented
-strict-bisector runs show the real difference is the defect population
-and its detectability: 50k uniform detects 2 unresolved edges but ends
-with 3 unpaired interior edges post-repair (escape from detection); the
-402-cell clustered+collinear fixture detects 32 vs 52 unpaired with
-Euler characteristic -12. The sphere's strict-rule residuals are ~1 site
-per millions with 1:1 detection; the plane's are orders denser and leak
-past the net. Structural suspects: the plane has no weld preprocess
-(only exact-duplicate dedup, vs the sphere's ~1.4e-6 chord weld), so
-near-coincident/collinear clusters reach the clipper with
-ill-conditioned bisectors — the bias doubles as the plane's substitute
-for the sphere's prevention layers. The two backends thus sit at
-different points of one design space: prevention-heavy (bias) vs
-repair-heavy (strict + net). Unifying on strict would require: the
-detection-gap anatomy (the 402-cell fixture is a cheap reproducible lab
-— far cheaper than the sphere's multi-million-point sites, and the gap
-may matter for the sphere's untested cross-bin repair too), a plane weld
-story, and repair validated at higher defect rates.
+draft of this section claimed otherwise; corrected). The planar anatomy
+probe (`probe_plane_strict_anatomy`: plane eps override, plane-side
+paired audit with exact planar in-circle, detected-unresolved collector,
+external unpaired-edge recomputation) then measured the mechanism, and
+it is NOT the sphere's:
+
+- **Zero quad contradictions on both failing fixtures** (4.5k / 130k
+  quads audited). The plane's strict failures are not in-circle parity
+  contradictions; the tie/error-regime split does not transfer.
+- **The defects are vertex-identity slivers**: the same geometric corner
+  committed under different triple attributions in different cells —
+  duplicate vertex ids at bit-identical coordinates (e.g. two ids both
+  at (0.510638, 0.507183)), zero-length sliver edges between them,
+  shifted vertex sequences along shared edges. This is the
+  thirds-mismatch family — the same class as the sphere's surviving
+  error-regime defects — at a density orders beyond the sphere's
+  (~1 site per 3 multi-million runs vs 32 sites in 402 cells).
+- **The bias is the sliver guard**: keeping marginal corners in BOTH
+  cells keeps vertex keys and sequences identical across an edge's two
+  cells. That is exactly the "agreement" purpose the constant always
+  documented; the strict experiment finally measured the class it
+  suppresses.
+
+The strict run also exposed two net weaknesses the bias was masking,
+each independently valuable:
+
+1. **Cross-bin detection escape**: every unpaired pair involving the
+   fixture's two far points (whose huge cells live in different spatial
+   bins than the cluster) was absent from the detected-unresolved set.
+   This is the CrossBinThirdsMismatch class whose deterministic pin the
+   sphere lost at stage 0 (edge_repair_net coverage gap) and whose
+   repair was always "a guess" — the 402-cell fixture under
+   `set_plane_clip_eps_override(0.0)` is a cheap deterministic lab
+   for it.
+2. **Repair fails under defect density**: detected, zero-length,
+   bit-identical duplicate-vertex pairs survived reconciliation when
+   one cell participates in several overlapping defect pairs — the
+   isolated-site assumption of the O(defects) repair breaks.
+
+Net framing: the two backends sit at different points of one
+prevention-vs-repair design space — the sphere's prevention (weld,
+canonicalization) keeps its sliver rate near zero so strict + sparse
+repair holds; the plane's bias IS its prevention. Unifying on strict
+requires detection completeness (item 1) and density-robust repair
+(item 2) first; both are worth pursuing regardless, because they are
+exactly what would make output validity machine-guaranteed independent
+of any eps choice.
 
 ## Migration plan
 

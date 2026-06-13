@@ -22,7 +22,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 
 use crate::knn_clipping::canonical::in_circle_sphere_sign;
 use crate::knn_clipping::topo2d::types::{HalfPlane, PolyBuffer};
@@ -171,6 +171,137 @@ pub(crate) fn clip_eps_override() -> Option<f64> {
     } else {
         Some(f64::from_bits(bits))
     }
+}
+
+/// Experimental PLANAR clip-eps override (replaces PLANE_CLIP_EPS_INSIDE
+/// at the bounded plane builder's construction sites — walls and
+/// bisectors; the periodic builder is not covered). u64::MAX bits =
+/// default. Probe-only.
+static PLANE_CLIP_EPS_OVERRIDE_BITS: AtomicU64 = AtomicU64::new(u64::MAX);
+
+/// Set (or clear) the planar clip-eps override (probe API).
+pub fn set_plane_clip_eps_override(eps: Option<f64>) {
+    let bits = match eps {
+        Some(e) => e.to_bits(),
+        None => u64::MAX,
+    };
+    PLANE_CLIP_EPS_OVERRIDE_BITS.store(bits, Ordering::Relaxed);
+}
+
+/// Current planar override, if any.
+pub(crate) fn plane_clip_eps_override() -> Option<f64> {
+    let bits = PLANE_CLIP_EPS_OVERRIDE_BITS.load(Ordering::Relaxed);
+    if bits == u64::MAX {
+        None
+    } else {
+        Some(f64::from_bits(bits))
+    }
+}
+
+/// Exact planar in-circle, sphere-convention signs: +1 = `x` strictly
+/// inside the circumcircle of (g, a, b) (the vertex must be cut), -1 =
+/// strictly outside (kept), 0 = exact tie or degenerate triple.
+/// Orientation-independent via the orient2d factor; signs exact (Shewchuk
+/// adaptive, f32 inputs exactly representable in f64).
+pub(crate) fn in_circle_plane_sign(g: Vec2, a: Vec2, b: Vec2, x: Vec2) -> i8 {
+    let c = |p: Vec2| robust::Coord {
+        x: p.x as f64,
+        y: p.y as f64,
+    };
+    let d1 = robust::incircle(c(g), c(a), c(b), c(x));
+    let d2 = robust::orient2d(c(g), c(a), c(b));
+    ((d1 > 0.0) as i8 - (d1 < 0.0) as i8) * ((d2 > 0.0) as i8 - (d2 < 0.0) as i8)
+}
+
+/// Planar twin of [`audit_clip`]: same paired collection, margin
+/// histogram, cutoff and key-filter machinery; canonical answered by the
+/// exact planar in-circle. Vertices attributed to rect walls (plane
+/// indices 0..4) are skipped as synthetic.
+#[allow(clippy::too_many_arguments)] // shadow-only audit seam
+pub(crate) fn audit_clip_plane(
+    generator_idx: usize,
+    generator: Vec2,
+    neighbor_idx: usize,
+    neighbor: Vec2,
+    neighbor_indices: &[usize],
+    neighbor_positions: &[Vec2],
+    poly: &PolyBuffer,
+    hp: &HalfPlane,
+) {
+    if hp.ab2.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+        return;
+    }
+    let inv_norm = 1.0 / hp.ab2.sqrt();
+    let pcut = pair_cutoff();
+    let key_filter = PAIR_KEY_FILTER.read().unwrap().clone();
+    let mut batch: Vec<PairedRecord> = Vec::new();
+    for i in 0..poly.len {
+        let (pa, pb) = poly.vertex_planes[i];
+        if pa == usize::MAX || pb == usize::MAX || pa < 4 || pb < 4 {
+            SKIPPED_SYNTHETIC.fetch_add(1, Ordering::Relaxed);
+            continue;
+        }
+        debug_assert!(pa < neighbor_positions.len() && pb < neighbor_positions.len());
+        let d = hp.signed_dist(poly.us[i], poly.vs[i]);
+        let nd = d.abs() * inv_norm;
+        AUDITED.fetch_add(1, Ordering::Relaxed);
+        MARGIN_HIST[bucket_for(nd)].fetch_add(1, Ordering::Relaxed);
+
+        let below_cutoff = nd < pcut;
+        if !(below_cutoff || key_filter.is_some()) {
+            continue;
+        }
+        let (ga, gb) = (neighbor_indices[pa] as u32, neighbor_indices[pb] as u32);
+        let g = generator_idx as u32;
+        let x = neighbor_idx as u32;
+        let mut triple = [g, ga, gb];
+        triple.sort_unstable();
+        if triple.contains(&x) {
+            continue;
+        }
+        let key = [triple[0], triple[1], triple[2], x];
+        let wanted = below_cutoff || key_filter.as_ref().is_some_and(|f| f.contains(&key));
+        if wanted {
+            batch.push(PairedRecord {
+                key,
+                cell: g,
+                margin: nd as f32,
+                local_keep: d >= -hp.eps,
+                canonical: in_circle_plane_sign(
+                    generator,
+                    neighbor_positions[pa],
+                    neighbor_positions[pb],
+                    neighbor,
+                ),
+            });
+        }
+    }
+    if !batch.is_empty() {
+        PAIRED.lock().unwrap().extend(batch);
+    }
+}
+
+/// Planar unresolved-edge collector: what detection saw, pre-repair
+/// (the sphere exposes this via `ComputeOutput`; the plane does not).
+static PLANE_UNRESOLVED: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+
+pub(crate) fn record_plane_unresolved(keys: impl Iterator<Item = u64>) {
+    PLANE_UNRESOLVED.lock().unwrap().extend(keys);
+}
+
+/// Reset the planar unresolved-edge collection (probe API).
+pub fn plane_unresolved_reset() {
+    PLANE_UNRESOLVED.lock().unwrap().clear();
+}
+
+/// Detected unresolved planar edges as (cell, cell) pairs (probe API).
+pub fn plane_unresolved() -> Vec<(u32, u32)> {
+    PLANE_UNRESOLVED
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|&k| (k as u32, (k >> 32) as u32))
+        .collect()
 }
 
 /// One near-margin decision, keyed by its abstract question: does generator

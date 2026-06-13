@@ -11,6 +11,17 @@ use crate::tolerances::PLANE_TERMINATION_GUARD;
 
 /// Incremental planar Voronoi cell builder.
 ///
+/// Base inside-slack for this builder's constraints: the production
+/// constant, probe-overridable under `p5_shadow` (tie-rule experiments).
+#[inline]
+fn plane_base_eps() -> f64 {
+    #[cfg(feature = "p5_shadow")]
+    if let Some(e) = crate::knn_clipping::p5_shadow::plane_clip_eps_override() {
+        return e;
+    }
+    crate::tolerances::PLANE_CLIP_EPS_INSIDE
+}
+
 /// Chart coordinates are `(u, v) = point - generator` in f64 (f32 inputs,
 /// f64 math). The polygon is seeded with the unit-square walls, so it is
 /// bounded and `>= 3` vertices from the start; the only failure modes are
@@ -28,6 +39,11 @@ pub(crate) struct PlaneCellBuilder {
     half_planes: Vec<HalfPlane>,
     neighbor_indices: Vec<usize>,
     neighbor_slots: Vec<u32>,
+    /// Raw neighbor positions parallel to `neighbor_indices` (walls hold a
+    /// NaN sentinel, never read — wall-attributed vertices are skipped by
+    /// the audit). Probe-only.
+    #[cfg(feature = "p5_shadow")]
+    neighbor_positions: Vec<Vec2>,
 
     poly_a: PolyBuffer,
     poly_b: PolyBuffer,
@@ -48,6 +64,8 @@ impl PlaneCellBuilder {
             half_planes: Vec::with_capacity(32),
             neighbor_indices: Vec::with_capacity(32),
             neighbor_slots: Vec::with_capacity(32),
+            #[cfg(feature = "p5_shadow")]
+            neighbor_positions: Vec::with_capacity(32),
             poly_a: PolyBuffer::new(),
             poly_b: PolyBuffer::new(),
             use_a: true,
@@ -65,6 +83,8 @@ impl PlaneCellBuilder {
         self.half_planes.clear();
         self.neighbor_indices.clear();
         self.neighbor_slots.clear();
+        #[cfg(feature = "p5_shadow")]
+        self.neighbor_positions.clear();
         self.poly_b.clear();
         self.use_a = true;
         self.failed = None;
@@ -100,10 +120,12 @@ impl PlaneCellBuilder {
                 b,
                 c,
                 plane_idx,
-                crate::tolerances::PLANE_CLIP_EPS_INSIDE,
+                plane_base_eps(),
             ));
             self.neighbor_indices.push((self.wall_base + side) as usize);
             self.neighbor_slots.push(u32::MAX);
+            #[cfg(feature = "p5_shadow")]
+            self.neighbor_positions.push(Vec2::NAN);
         }
 
         // Corners CCW from bottom-left; vertex_planes = the two adjacent
@@ -153,13 +175,10 @@ impl PlaneCellBuilder {
 
         let (a, b, c) = self.bisector_coefficients(neighbor);
         let plane_idx = self.half_planes.len();
-        let hp = HalfPlane::new_unnormalized_base_eps(
-            a,
-            b,
-            c,
-            plane_idx,
-            crate::tolerances::PLANE_CLIP_EPS_INSIDE,
-        );
+        let hp = HalfPlane::new_unnormalized_base_eps(a, b, c, plane_idx, plane_base_eps());
+
+        #[cfg(feature = "p5_shadow")]
+        self.shadow_audit(neighbor_idx, neighbor, &hp);
 
         let clip_result = if self.use_a {
             clip_convex(
@@ -177,7 +196,35 @@ impl PlaneCellBuilder {
             )
         };
 
-        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)
+        let committed = self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot);
+        #[cfg(feature = "p5_shadow")]
+        self.sync_neighbor_positions(neighbor);
+        committed
+    }
+
+    /// Keep the raw position list parallel to `neighbor_indices` (a
+    /// `Changed` commit pushed a constraint — including commits that then
+    /// fail with `ClippedAway`, so this runs on the error path too).
+    #[cfg(feature = "p5_shadow")]
+    fn sync_neighbor_positions(&mut self, neighbor: Vec2) {
+        if self.neighbor_indices.len() > self.neighbor_positions.len() {
+            self.neighbor_positions.push(neighbor);
+        }
+        debug_assert_eq!(self.neighbor_indices.len(), self.neighbor_positions.len());
+    }
+
+    #[cfg(feature = "p5_shadow")]
+    fn shadow_audit(&self, neighbor_idx: usize, neighbor: Vec2, hp: &HalfPlane) {
+        crate::knn_clipping::p5_shadow::audit_clip_plane(
+            self.generator_idx,
+            Vec2::new(self.generator.x as f32, self.generator.y as f32),
+            neighbor_idx,
+            neighbor,
+            &self.neighbor_indices,
+            &self.neighbor_positions,
+            self.current_poly(),
+            hp,
+        );
     }
 
     fn commit_clip(
@@ -241,6 +288,9 @@ impl PlaneCellBuilder {
         let plane_idx = self.half_planes.len();
         let hp = HalfPlane::new_unnormalized_with_eps(a, b, c, plane_idx, hp_eps as f64);
 
+        #[cfg(feature = "p5_shadow")]
+        self.shadow_audit(neighbor_idx, neighbor, &hp);
+
         let clip_result = if self.use_a {
             clip_convex_edgecheck(
                 &self.poly_a,
@@ -256,8 +306,10 @@ impl PlaneCellBuilder {
                 &EscalationCtx::disabled(),
             )
         };
-        self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot)
-            .map(|_| ())
+        let committed = self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot);
+        #[cfg(feature = "p5_shadow")]
+        self.sync_neighbor_positions(neighbor);
+        committed.map(|_| ())
     }
 
     // Failure-classification surface (sphere parity); the pipeline's
