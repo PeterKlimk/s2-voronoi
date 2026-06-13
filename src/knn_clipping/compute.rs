@@ -75,6 +75,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     let timings = tb.finish();
     timings.report(diagram.num_cells());
 
+    crate::validation::verify_sphere_if_enabled(&diagram)?;
     Ok(diagram)
 }
 
@@ -538,6 +539,10 @@ fn assemble_shards(
     Ok(assembled)
 }
 
+/// Reconciled cell arrays plus the post-repair output-invariant residuals
+/// (cell pairs whose shared edge stayed unpaired after both repair passes).
+type ReconciledWithResiduals = (Vec<VoronoiCell>, Vec<u32>, Vec<(u32, u32)>);
+
 fn reconcile_edges(
     vertices: &[Vec3],
     vertex_keys: &[crate::knn_clipping::cell_build::VertexKey],
@@ -545,7 +550,7 @@ fn reconcile_edges(
     mut cells: Vec<VoronoiCell>,
     mut cell_indices: Vec<u32>,
     tb: &mut TimingBuilder,
-) -> Result<(Vec<VoronoiCell>, Vec<u32>, Vec<(u32, u32)>), crate::VoronoiError> {
+) -> Result<ReconciledWithResiduals, crate::VoronoiError> {
     let repair_edges_storage: Vec<live_dedup::EdgeRecord> = unresolved_edges
         .iter()
         .map(|b| live_dedup::EdgeRecord { key: b.key })

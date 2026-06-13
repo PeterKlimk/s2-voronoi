@@ -47,6 +47,8 @@ S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_v
 - `S2_BIN_COUNT=<n>`: override sharded bin count (defaults to about 2x threads).
 - `S2_VORONOI_PLANE_GRID_DENSITY=<d>`: override the planar grid's points-per-cell target (default 4).
 - `S2_VORONOI_TIMING_KV=1`: emit machine-readable timing lines (`timing` feature).
+- `S2_VORONOI_VERIFY=1`: run the full topological validator after every build on the plain `compute`/`compute_plane` fast paths (which otherwise skip it) and return an error on any strict-validity failure. Off by default; O(E) cost per call. Belt-and-braces for callers wanting output validity machine-checked regardless of detection bookkeeping.
+- `S2_EDGE_REPAIR_REBUILD=1`: select the full-rewrite repair backend (differential oracle for the in-place default).
 
 ## Crate Overview
 

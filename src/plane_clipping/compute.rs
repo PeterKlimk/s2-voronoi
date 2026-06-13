@@ -249,6 +249,7 @@ pub(crate) fn compute_plane_impl<P: PlanePointLike>(
     );
     tb.set_assemble(t.elapsed());
     tb.finish().report(diagram.num_cells());
+    crate::validation::verify_plane_if_enabled(&diagram)?;
     Ok(diagram)
 }
 
@@ -385,6 +386,7 @@ pub(crate) fn compute_plane_periodic_impl<P: PlanePointLike>(
     );
     tb.set_assemble(t.elapsed());
     tb.finish().report(diagram.num_cells());
+    crate::validation::verify_plane_if_enabled(&diagram)?;
     Ok(diagram)
 }
 

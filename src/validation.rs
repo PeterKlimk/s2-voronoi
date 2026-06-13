@@ -280,6 +280,61 @@ impl DisjointSet {
 /// This intentionally excludes approximate Voronoi-fidelity or generic-position
 /// heuristics.
 pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
+    validate_impl(diagram)
+}
+
+/// Opt-in post-build verification gate (env `S2_VORONOI_VERIFY=1`).
+///
+/// The full topological validator is O(E) and is skipped by the plain
+/// `compute` / `compute_plane` fast paths for speed (the report-returning
+/// entry points already validate unconditionally). With the net's repair
+/// scans gated on detection records, a defect that left no record would
+/// ship silently on those paths. Enabling this runs the validator after
+/// every build and turns any strict-validity failure into an error —
+/// belt-and-braces for callers who want output validity machine-checked
+/// regardless of cost.
+pub(crate) fn verify_enabled() -> bool {
+    matches!(std::env::var("S2_VORONOI_VERIFY"), Ok(v) if v == "1")
+}
+
+/// Run the sphere validator and map a strict-validity failure to an error
+/// when [`verify_enabled`]. No-op otherwise.
+pub(crate) fn verify_sphere_if_enabled(
+    diagram: &SphericalVoronoi,
+) -> Result<(), crate::VoronoiError> {
+    if !verify_enabled() {
+        return Ok(());
+    }
+    let report = validate_impl(diagram);
+    if report.is_strictly_valid() {
+        return Ok(());
+    }
+    let mut issues = report.subdivision_issues();
+    issues.extend(report.invariant_issues());
+    Err(crate::VoronoiError::ComputationFailed(format!(
+        "S2_VORONOI_VERIFY: returned diagram failed strict validation: {}",
+        issues.join("; ")
+    )))
+}
+
+/// Run the plane validator and map a strict-validity failure to an error
+/// when [`verify_enabled`]. No-op otherwise.
+pub(crate) fn verify_plane_if_enabled(
+    diagram: &crate::PlanarVoronoi,
+) -> Result<(), crate::VoronoiError> {
+    if !verify_enabled() {
+        return Ok(());
+    }
+    let report = validate_plane(diagram);
+    if report.is_strictly_valid() {
+        return Ok(());
+    }
+    Err(crate::VoronoiError::ComputationFailed(format!(
+        "S2_VORONOI_VERIFY: returned plane diagram failed strict validation: {report:?}"
+    )))
+}
+
+fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
     let num_cells = diagram.num_cells();
     let num_vertices = diagram.num_vertices();
     let vertices = diagram.vertices();
@@ -726,4 +781,57 @@ pub fn validate_plane(diagram: &crate::PlanarVoronoi) -> PlaneValidationReport {
     };
 
     report
+}
+
+#[cfg(test)]
+mod verify_gate_tests {
+    use super::*;
+    use glam::Vec3;
+    use std::sync::Mutex;
+
+    // Serializes the process-global env-var mutation so the set/remove
+    // window cannot leak into a parallel case in this test.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// A single triangular cell: its three edges are each used once, and the
+    /// sphere has no boundary, so all three are unpaired interior edges —
+    /// not strictly valid, with every vertex index in range.
+    fn invalid_diagram() -> SphericalVoronoi {
+        // One generator => one cell (num_cells mirrors generator count).
+        SphericalVoronoi::from_raw_parts(
+            vec![Vec3::new(0.0, 0.0, 1.0)],
+            vec![
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(0.0, 0.0, 1.0),
+            ],
+            vec![crate::diagram::VoronoiCell::new(0, 3)],
+            vec![0, 1, 2],
+            None,
+        )
+    }
+
+    #[test]
+    fn verify_gate_errors_only_when_enabled_and_invalid() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let diagram = invalid_diagram();
+        assert!(!validate(&diagram).is_strictly_valid());
+
+        std::env::remove_var("S2_VORONOI_VERIFY");
+        assert!(
+            verify_sphere_if_enabled(&diagram).is_ok(),
+            "disabled gate must not error even on an invalid diagram"
+        );
+
+        std::env::set_var("S2_VORONOI_VERIFY", "1");
+        let res = verify_sphere_if_enabled(&diagram);
+        std::env::remove_var("S2_VORONOI_VERIFY");
+        let err = res.expect_err("enabled gate must error on an invalid diagram");
+        match err {
+            crate::VoronoiError::ComputationFailed(msg) => {
+                assert!(msg.contains("S2_VORONOI_VERIFY"), "message: {msg}");
+            }
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
 }
