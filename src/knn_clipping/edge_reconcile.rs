@@ -209,11 +209,64 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     let mut merged = 0usize;
     let degenerate_len_eps_sq: f32 = degenerate_len_eps * degenerate_len_eps;
 
+    // Identity backstop: the keyed-identity model admits exactly one vertex
+    // per key, but index propagation fails across a defective edge (the
+    // mismatched endpoint's index is not forwarded), so a later cell can
+    // re-create an already-emitted key — duplicate ids for one abstract
+    // vertex. Downstream, cross-bin cells reached through two such edges
+    // reference different copies, producing unpaired edges whose thirds
+    // fully agree (no per-edge record names them). Same-key duplicates ARE
+    // the same vertex by model definition: union them all up front. Gated
+    // on defect runs, so clean runs never pay the O(V) scan.
+    if !edge_records.is_empty() {
+        let mut first_by_key: std::collections::HashMap<VertexKey, u32> =
+            std::collections::HashMap::with_capacity(vertex_keys.len());
+        for (i, key) in vertex_keys.iter().enumerate() {
+            match first_by_key.entry(*key) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(i as u32);
+                }
+                std::collections::hash_map::Entry::Occupied(e) => {
+                    if uf.union(*e.get(), i as u32) {
+                        merged += 1;
+                    }
+                }
+            }
+        }
+    }
+
     for record in edge_records {
         let (a, b) = unpack_edge(record.key.as_u64());
         let seg_a = edge_segments_for_neighbor(a, b, cells, cell_indices, vertex_keys)?;
         let seg_b = edge_segments_for_neighbor(b, a, cells, cell_indices, vertex_keys)?;
         if seg_a.len() != 1 || seg_b.len() != 1 {
+            // Irregular topology (sliver chains, overlapping defects): union
+            // every pair of segment-endpoint vertices — across and within
+            // the two sides — that lie within the degenerate length scale.
+            // Position-based and local to the defective edge, so it stays
+            // O(defect size); it collapses duplicate-position vertices with
+            // distinct keys (an exact-tie corner committed under two
+            // attributions) and sliver chains the per-segment logic cannot
+            // pair up.
+            let mut endpoint_ids: Vec<u32> = Vec::new();
+            for &(v0, v1) in seg_a.iter().chain(seg_b.iter()) {
+                endpoint_ids.push(v0);
+                endpoint_ids.push(v1);
+            }
+            endpoint_ids.sort_unstable();
+            endpoint_ids.dedup();
+            for i in 0..endpoint_ids.len() {
+                for j in (i + 1)..endpoint_ids.len() {
+                    let d = dist_sq(
+                        vertex_pos(vertices, endpoint_ids[i])?,
+                        vertex_pos(vertices, endpoint_ids[j])?,
+                    );
+                    if d <= degenerate_len_eps_sq && uf.union(endpoint_ids[i], endpoint_ids[j]) {
+                        merged += 1;
+                    }
+                }
+            }
+
             // Special-case: one-sided, zero-length boundary edge.
             //
             // This shows up when a cell's topology contains an epsilon edge (often from a

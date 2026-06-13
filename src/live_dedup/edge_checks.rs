@@ -306,13 +306,16 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
     let edge_checks_overflow_sort_time = t_edge_sort.elapsed();
 
     let t_edge_match = Timer::start();
-    let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| {
+    // Returns true when the slot already held a DIFFERENT concrete
+    // reference (duplicate same-key vertices reaching this cell through two
+    // edges); the caller records the conflict so repair sees the site even
+    // when the thirds fully agree.
+    let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| -> bool {
         let packed = pack_ref(owner_bin, idx);
-        debug_assert!(
-            *slot == DEFERRED || *slot == packed,
-            "edge check overflow slot mismatch"
-        );
+        let conflict = *slot != DEFERRED && *slot != packed;
+        debug_assert!(!conflict, "edge check overflow slot mismatch");
         *slot = packed;
+        conflict
     };
     let mut i = 0usize;
     while i < edge_check_overflow.len() {
@@ -333,16 +336,17 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
 
                 // The two sides traverse the edge in reverse winding;
                 // every endpoint pairing patches both shards symmetrically.
+                let mut conflict = false;
                 let full = reconcile_edge_endpoints(b.thirds, a.thirds, |bk, ak| {
                     if a.indices[ak] != INVALID_INDEX {
-                        patch_slot(
+                        conflict |= patch_slot(
                             &mut b_shard.output.cell_indices[b.slots[bk] as usize],
                             a.source_bin,
                             a.indices[ak],
                         );
                     }
                     if b.indices[bk] != INVALID_INDEX {
-                        patch_slot(
+                        conflict |= patch_slot(
                             &mut a_shard.output.cell_indices[a.slots[ak] as usize],
                             b.source_bin,
                             b.indices[bk],
@@ -353,6 +357,11 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
                     unresolved_edges.push(UnresolvedEdgeMismatch {
                         key: a.key,
                         origin: UnresolvedEdgeOrigin::CrossBinThirdsMismatch,
+                    });
+                } else if conflict {
+                    unresolved_edges.push(UnresolvedEdgeMismatch {
+                        key: a.key,
+                        origin: UnresolvedEdgeOrigin::CrossBinSlotConflict,
                     });
                 }
             }

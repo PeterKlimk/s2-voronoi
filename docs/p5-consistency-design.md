@@ -493,6 +493,50 @@ requires detection completeness (item 1) and density-robust repair
 exactly what would make output validity machine-guaranteed independent
 of any eps choice.
 
+### Net hardening (2026-06): causal chain closed, three fixes landed
+
+Tracing the cross-bin escape on the 402-cell lab produced the complete
+causal chain, each step confirmed by instrumentation:
+
+1. Strict rule -> adjacent cells commit a marginal corner under
+   different attributions (sliver/sequence divergence).
+2. The in-bin check detects the thirds mismatch but does NOT propagate
+   the vertex index across the mismatched endpoint, so a later same-bin
+   cell re-creates an already-emitted key: **duplicate ids for one
+   abstract vertex** (live dedup's identity invariant, violated
+   silently; observed directly — e.g. two ids both keyed [53,266,401]
+   at bit-identical positions).
+3. Cross-bin overflow matching compares THIRDS, which fully agree (both
+   sides honestly name the same triple), so no record fires; the two
+   edges adjacent to the duplicated corner then patch the SAME cell
+   slot with different concrete references — debug-asserted only,
+   silent last-write-wins in release. That was the whole detection
+   escape.
+4. Repair never merged same-key duplicates globally, and silently
+   bailed (`continue`) on defective edges with != 1 segment per side.
+
+Fixes (all defect-gated — clean runs are bit-identical):
+
+- **CrossBinSlotConflict** (new `UnresolvedEdgeOrigin`): a contradictory
+  slot patch now records the site; the formerly invisible far-point
+  pairs surface.
+- **Duplicate-key backstop** in `collect_merges`: same key = same
+  abstract vertex by model definition; all duplicates union up front
+  (O(V) hash scan, paid only when unresolved edges exist).
+- **Multi-segment proximity repair**: the silent bail is replaced by a
+  position-based union of all segment endpoints within the degenerate
+  length scale, local to the defective edge.
+
+Measured on the lab (strict bisectors, the stress configuration):
+uniform 50k repairs fully (3 unpaired -> 0, strictly valid); the
+402-cell cluster torture case improves 52 -> 31 — residuals need
+iteration-to-fixpoint or sequence-level repair, noting this fixture is
+400 generators at ~1e-3 spacing under strict clipping, far outside the
+production envelope. Under the production bias both fixtures remain
+0-defect, and the full suites (incl. the sphere edge-repair net) are
+unchanged. The sphere inherits all three fixes — its own thirds-mismatch
+defect class runs through exactly these paths.
+
 ## Migration plan
 
 Staged, each stage behind the existing harnesses (NN contract suite, edge-repair

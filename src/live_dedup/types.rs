@@ -144,6 +144,12 @@ pub enum UnresolvedEdgeOrigin {
     /// Cross-bin: both overflow records carried the same side tag (bug trap;
     /// debug-asserted).
     CrossBinDuplicateSide,
+    /// Cross-bin: endpoint patching tried to write two different concrete
+    /// vertex references into the same cell slot — the signature of
+    /// duplicate same-key vertices (an upstream index-propagation failure)
+    /// reaching a cross-bin cell through two of its edges. The thirds may
+    /// fully agree, so this is detectable only at the slot level.
+    CrossBinSlotConflict,
 }
 
 /// Historical name: this records an unresolved shared-edge reconciliation mismatch.
