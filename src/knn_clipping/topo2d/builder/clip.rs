@@ -49,11 +49,11 @@ impl GnomonicBuilder {
             self.failed = Some(CellFailure::ClippedAway);
             return Err(CellFailure::ClippedAway);
         }
-        if !poly.has_bounding_ref() {
-            if !poly.max_r2.is_finite() || poly.max_r2 >= MAX_PROJECTION_R2 {
-                self.failed = Some(CellFailure::ProjectionInvalid);
-                return Err(CellFailure::ProjectionInvalid);
-            }
+        if !poly.has_bounding_ref()
+            && (!poly.max_r2.is_finite() || poly.max_r2 >= MAX_PROJECTION_R2)
+        {
+            self.failed = Some(CellFailure::ProjectionInvalid);
+            return Err(CellFailure::ProjectionInvalid);
         }
 
         Ok(clip_result)
