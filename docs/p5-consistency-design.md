@@ -592,10 +592,21 @@ Defect-gated like the other repair stages, so clean runs are unchanged.
 Consequence: the class previously thought to need authority-based rebuild
 does not — rebuild is no longer a known requirement. It also removes the
 last obstacle the doc cited for strict-on-plane (the bias's documented
-role was sliver suppression; the slivers are now repaired). Flipping
-`PLANE_CLIP_EPS_INSIDE` to 0 is now a measurable experiment rather than a
-blocked one — pending a strict-plane campaign — but the bias stays the
-production default until that evidence exists.
+role was sliver suppression; the slivers are now repaired).
+
+Strict-plane experiment (2026-06): with collinear-vertex removal in,
+`PLANE_CLIP_EPS_INSIDE` was temporarily flipped to 0 and the full plane
+battery re-run — all 22 plane tests pass, including the cases that
+*previously failed under strict* (`plane_larger_uniform_strict` 50k,
+`plane_clustered_and_collinear`), plus an 18-input multi-seed sweep
+(2k/20k/80k x 6 seeds) all strictly valid. So strict-on-plane is now
+viable on the battery. **The bias remains the production default**
+nonetheless: the gate before flipping it is a full strict-plane campaign
+(thousands of cases, the larger sweep) under a quiet box, not the
+moderate battery — and the flip moves every plane fingerprint, so it is a
+deliberate release decision. The perf bench for the sphere strict rule
+came back perf-neutral (500k +0.6%, 2M -1.7%, both within noise), so
+strictness itself carries no measured cost.
 
 ## Migration plan
 

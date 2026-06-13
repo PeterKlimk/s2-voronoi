@@ -297,6 +297,24 @@ fn plane_larger_uniform_strict() {
 }
 
 #[test]
+fn plane_uniform_multiseed_sweep() {
+    // Breadth beyond the single fixed-seed cases: many seeds x sizes, each
+    // asserted a strict subdivision with conserved area. Holds under either
+    // clip rule (production bias or the strict experiment), so it doubles as
+    // the strict-plane breadth check when PLANE_CLIP_EPS_INSIDE is flipped.
+    for &n in &[2_000usize, 20_000, 80_000] {
+        for seed in 1u64..=6 {
+            let points = uniform_in(PlaneRect::unit(), n, 1000 + seed);
+            let diagram = compute_plane(&points, PlaneRect::unit())
+                .unwrap_or_else(|e| panic!("uniform n={n} seed={seed}: {e:?}"));
+            assert_eq!(diagram.num_cells(), n);
+            assert_strict(&diagram, &format!("uniform_{n}_s{seed}"));
+            assert_area(&diagram, &format!("uniform_{n}_s{seed}"));
+        }
+    }
+}
+
+#[test]
 fn plane_with_report_surfaces_clean_validation() {
     // On a valid input the report carries an empty residual list and a
     // strictly-valid validation, and its diagram matches the plain path.
