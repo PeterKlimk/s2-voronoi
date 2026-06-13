@@ -436,9 +436,15 @@ only.** Expected residual: error-regime contradictions only — the
 fixture_2k/4.5M class — with O(defects) edge repair unchanged as the
 backstop.
 
-**The planar backends keep the bias** (`PLANE_CLIP_EPS_INSIDE = 1e-12`),
-and the full-suite run measured why — the first recorded justification
-for the bias existing at all: with strict bisectors,
+> **SUPERSEDED 2026-06-14 — the plane now uses the strict rule too**
+> (`PLANE_CLIP_EPS_INSIDE = 0.0`). The analysis below stands as the record
+> of *why* the flip needed the fixes it did; the conclusion ("keep the
+> bias") was reversed once those fixes landed and the strict-plane campaign
+> came back clean. See "Strict-plane campaign" near the end of this file.
+
+**At the time, the planar backends kept the bias** (`PLANE_CLIP_EPS_INSIDE
+= 1e-12`), and the full-suite run measured why — the first recorded
+justification for the bias existing at all: with strict bisectors,
 `plane_larger_uniform_strict` (~50k uniform) yields 3 unpaired interior
 edges and `plane_clustered_and_collinear` fails too (strict walls alone
 are fine; biased bisectors restore green).
@@ -635,8 +641,16 @@ reproduce them). Note the periodic path is covered here only by the
 compile-time flip — `set_plane_clip_eps_override` does not patch the
 periodic builder, so the runtime override alone would have missed it.
 Conclusion: strict-on-plane is campaign-clean, not merely battery-clean.
-The bias stays the production default until the fingerprint-moving flip is
-deliberately chosen; the correctness blocker is gone.
+
+**Flipped to default 2026-06-14.** With the campaign clearing the
+correctness gate, `PLANE_CLIP_EPS_INSIDE` was set to 0.0 in production: both
+backends now share the strict antisymmetric keep rule, and the per-geometry
+bias special-case is gone (more parsimonious — one rule, not two). The flip
+moves every plane fingerprint and was taken as a deliberate release
+decision, not for correctness (the bias was never a correctness crutch once
+the sliver/cross-bin/density fixes landed). The constant is kept separate
+from `CLIP_EPS_INSIDE` only so the two backends *can* diverge again and so
+the `p5_shadow` planar override retains a distinct target.
 
 ## Migration plan
 

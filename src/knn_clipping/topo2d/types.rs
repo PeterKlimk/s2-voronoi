@@ -35,8 +35,7 @@ impl HalfPlane {
 
     /// Construct an unnormalized half-plane with an explicit base
     /// inside-slack (`eps = base_eps * |n|`). The planar backends pass
-    /// `PLANE_CLIP_EPS_INSIDE` (they keep the agreement bias; see
-    /// tolerances.rs).
+    /// `PLANE_CLIP_EPS_INSIDE` (now also the strict rule; see tolerances.rs).
     pub fn new_unnormalized_base_eps(
         a: f64,
         b: f64,
