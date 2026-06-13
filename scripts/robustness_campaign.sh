@@ -79,9 +79,14 @@ run_case() { # dist n seed param
   [ "$valid" = "false" ] && invalid=$((invalid + 1))
 }
 
+# Uniform sweep matrix is env-overridable for targeted campaigns (e.g. a
+# large-tier run hunting natural backstop triggers):
+#   UNIFORM_SIZES="3000000 4500000 5000000" SEEDS="$(seq 1 15)" ...
+UNIFORM_SIZES="${UNIFORM_SIZES:-100000 500000 1000000 2000000 3000000}"
+SEEDS="${SEEDS:-1 2 3 4 5 6 7 8 9 10}"
 echo "== uniform seed sweep =="
-for n in 100000 500000 1000000 2000000 3000000; do
-  for seed in 1 2 3 4 5 6 7 8 9 10; do
+for n in $UNIFORM_SIZES; do
+  for seed in $SEEDS; do
     run_case uniform "$n" "$seed" 0
   done
 done
