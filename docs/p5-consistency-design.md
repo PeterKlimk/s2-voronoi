@@ -594,6 +594,17 @@ does not — rebuild is no longer a known requirement. It also removes the
 last obstacle the doc cited for strict-on-plane (the bias's documented
 role was sliver suppression; the slivers are now repaired).
 
+Large-tier robustness campaign (2026-06): 56 cases, uniform 3M/4.5M/5M x
+12 seeds plus the structured set, one process per case. All strictly
+valid; 12 defect-bearing runs, every one repaired to validity. Defect
+frequency scales with n (~2/12 at 3M, 5/12 at 4.5M, 4/12 at 5M). Every
+defect is the in-bin thirds-mismatch family (`InBinThirdsMismatch` /
+`InBinUnconsumedCheck`) — **zero natural triggers** for the cross-bin
+classes or the `CrossBinSlotConflict` / `PostRepairUnpaired` backstops
+even at this scale. Those backstops therefore remain correct-by-
+construction with synthetic-only coverage (the strict-rule plane lab is
+their only exercise); this is a known evidence gap, not a silent one.
+
 Strict-plane experiment (2026-06): with collinear-vertex removal in,
 `PLANE_CLIP_EPS_INSIDE` was temporarily flipped to 0 and the full plane
 battery re-run — all 22 plane tests pass, including the cases that
