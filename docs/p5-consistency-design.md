@@ -566,17 +566,36 @@ detection bookkeeping:
    p5_shadow collector; a public plane report channel is future API
    work). An invalid returned diagram now always carries a record.
 
-Lab results: uniform-50k-strict unchanged (fully healed); the 402-cell
-torture case still holds 31 residuals, but the backstop now
-characterizes them exactly — endpoint keys sharing != 2 generators,
-endpoint positions 1e-4+ apart. These are GEOMETRIC shape
-disagreements (adjacent cells computed visibly different polygon
-chains under strict clipping in a dense cluster), the one class
-vertex-identity merging fundamentally cannot fix. Repairing it would
-need authority-based local rebuild (one cell's shape wins, the
-neighbor's chain is rewritten) — the "surgical patch" successor in the
-edge-repair plan, out of scope here. Under the production bias the
-class does not arise at all in any tested input.
+### Spurious collinear vertices — the residual class, resolved (2026-06)
+
+The 402-cell torture case's 31 strict-rule residuals were first read as
+"geometric shape divergence" needing authority-based local rebuild. The
+residual-geometry dump refuted that: **every** residual involves a vertex
+whose key has a *repeated generator* (e.g. `[180,305,305]`,
+`[53,217,217]`, `[321,321,391]`). A key with only two distinct generators
+is not a Voronoi triple point — both the vertex's incident edges in its
+owner cell go to the *same* neighbor, so it lies on a single bisector and
+is provably collinear with its neighbours (verified: for `[180,305,305]`
+the two adjacent segment slopes match to 4 figures). It is a spurious
+point one cell inserted on a straight shared edge; the neighbour sees the
+edge as a single segment, which is exactly the unpaired-edge defect.
+
+The fix is therefore neither identity-merge nor topological rebuild but
+**removal**: drop the degenerate-key vertex from its owner cell's chain
+(`drop_degenerate_collinear_vertices`, run at the top of each repair
+round). Merging the two collinear segments into the real edge is exact
+and purely local — no cross-cell rewrite, no winding risk. It heals the
+402-cell case **31 -> 0** (the strict-rule diagram is now strictly valid),
+and the always-on residual scan confirms zero unpaired edges remain.
+Defect-gated like the other repair stages, so clean runs are unchanged.
+
+Consequence: the class previously thought to need authority-based rebuild
+does not — rebuild is no longer a known requirement. It also removes the
+last obstacle the doc cited for strict-on-plane (the bias's documented
+role was sliver suppression; the slivers are now repaired). Flipping
+`PLANE_CLIP_EPS_INSIDE` to 0 is now a measurable experiment rather than a
+blocked one — pending a strict-plane campaign — but the bias stays the
+production default until that evidence exists.
 
 ## Migration plan
 

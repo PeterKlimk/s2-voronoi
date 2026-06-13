@@ -260,6 +260,81 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         .collect())
 }
 
+/// If `key` has exactly two distinct generators (one doubled), return the
+/// single (non-doubled) one — the cell that owns the spurious collinear
+/// vertex. `None` for a proper triple point or a fully-degenerate key.
+#[inline]
+fn degenerate_single(key: VertexKey) -> Option<u32> {
+    let [a, b, c] = key;
+    if a == b && b == c {
+        None
+    } else if a == b {
+        Some(c)
+    } else if a == c {
+        Some(b)
+    } else if b == c {
+        Some(a)
+    } else {
+        None
+    }
+}
+
+/// Drop spurious collinear vertices (degenerate keys with a repeated
+/// generator) from the cells that own them. Such a vertex lies on a single
+/// bisector — both its incident edges in that cell go to the same neighbor
+/// — so it is not a Voronoi triple point, and removing it merges the two
+/// collinear segments into the real edge (exact). Returns whether anything
+/// was dropped. Touches only cells that own a degenerate vertex.
+fn drop_degenerate_collinear_vertices(
+    cells: &mut [VoronoiCell],
+    cell_indices: &mut [u32],
+    vertex_keys: &[VertexKey],
+) -> bool {
+    let mut affected: Vec<u32> = Vec::new();
+    for key in vertex_keys {
+        if let Some(single) = degenerate_single(*key) {
+            affected.push(single);
+        }
+    }
+    if affected.is_empty() {
+        return false;
+    }
+    affected.sort_unstable();
+    affected.dedup();
+    affected.retain(|&c| (c as usize) < cells.len());
+
+    let mut changed = false;
+    for &c in &affected {
+        let cell = cells[c as usize];
+        let start = cell.vertex_start();
+        let count = cell.vertex_count();
+        let end = start + count;
+        if end > cell_indices.len() {
+            continue;
+        }
+        let span = &cell_indices[start..end];
+        // Compute the kept chain in a scratch buffer first; only write back
+        // if we will actually commit (never partially mutate the span).
+        let kept: Vec<u32> = span
+            .iter()
+            .copied()
+            .filter(|&v| {
+                vertex_keys
+                    .get(v as usize)
+                    .and_then(|&k| degenerate_single(k))
+                    != Some(c)
+            })
+            .collect();
+        // Guard: never collapse a cell below a triangle.
+        if kept.len() != count && kept.len() >= 3 {
+            cell_indices[start..start + kept.len()].copy_from_slice(&kept);
+            cells[c as usize] = VoronoiCell::new(start as u32, kept.len() as u16);
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// Drive collect+apply to a fixpoint (capped). The duplicate-key backstop
 /// scan runs only in the first Primary round — its unions are idempotent
 /// once applied, and re-counting them would defeat convergence detection.
@@ -276,6 +351,14 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
 ) -> Result<bool, crate::VoronoiError> {
     let mut any = false;
     for round in 0..MAX_REPAIR_ROUNDS {
+        // Drop spurious collinear (degenerate-key) vertices first: a vertex
+        // whose key has only two distinct generators is not a triple point,
+        // it lies on a single bisector (both incident edges go to the same
+        // neighbor) — removing it merges the two collinear segments into the
+        // real edge and is exact. One cell can carry such a point where its
+        // neighbor sees a straight edge, which is precisely an unpaired-edge
+        // defect; this heals it with no cross-cell rewrite.
+        let dropped = drop_degenerate_collinear_vertices(cells, cell_indices, vertex_keys);
         let scan_dup_keys = mode == MergeMode::Primary && round == 0;
         let (mut uf, merged) = collect_merges(
             edge_records,
@@ -287,25 +370,30 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
             mode,
             scan_dup_keys,
         )?;
-        if merged == 0 {
-            break;
-        }
-        let changed = match apply {
-            RepairApply::Rebuild => {
-                let (new_cells, new_indices) = apply_merges_rebuild(&mut uf, cells, cell_indices)?;
-                let changed = cell_spans_differ(cells, cell_indices, &new_cells, &new_indices)?;
-                *cells = new_cells;
-                *cell_indices = new_indices;
-                changed
-            }
-            RepairApply::InPlace => {
-                apply_merges_in_place(&mut uf, cells, cell_indices, vertex_keys)?
+        let merged_changed = if merged == 0 {
+            false
+        } else {
+            match apply {
+                RepairApply::Rebuild => {
+                    let (new_cells, new_indices) =
+                        apply_merges_rebuild(&mut uf, cells, cell_indices)?;
+                    let changed = cell_spans_differ(cells, cell_indices, &new_cells, &new_indices)?;
+                    *cells = new_cells;
+                    *cell_indices = new_indices;
+                    changed
+                }
+                RepairApply::InPlace => {
+                    apply_merges_in_place(&mut uf, cells, cell_indices, vertex_keys)?
+                }
             }
         };
-        if !changed {
+        any |= dropped || merged_changed;
+        // Converged when a round neither dropped a degenerate vertex nor
+        // applied a merge. Each productive round strictly shrinks some span,
+        // so this terminates well within the cap.
+        if !dropped && !merged_changed {
             break;
         }
-        any = true;
     }
     Ok(any)
 }
