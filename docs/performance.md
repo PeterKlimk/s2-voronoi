@@ -92,3 +92,20 @@ For the current policy surface and change rules, see `docs/policy.md`.
   `total_ms` when fitting.
 - Clustered inputs trigger an occupancy-feedback rebuild (one step, memory
   bounded); `grid_rebuilt=1` in `TIMING_KV` marks affected runs.
+
+## Memory
+
+- Per-build peak RSS is roughly linear in point count, ~0.65 KB/point on
+  the Ryzen 3600 reference (measured: 500k≈320 MB, 1M≈660 MB, 2M≈1.3 GB,
+  3M≈2.3 GB). A single build's working set is freed when the diagram is
+  dropped.
+- **Long-running processes that build many diagrams**: glibc does not
+  return freed arenas to the OS between builds, so a process that loops
+  over many builds accumulates a high-water RSS (amplified by per-thread
+  arenas under rayon and fragmentation across mixed allocation sizes) that
+  can climb far above any single build's peak. This is a glibc allocator
+  behavior, not a leak in the crate. Mitigations, in order of preference:
+  build in a child process per job (the OS reclaims fully on exit — see
+  `scripts/robustness_campaign.sh` for the pattern); set
+  `MALLOC_ARENA_MAX=2`; or link a trimming allocator (jemalloc/mimalloc).
+  One-shot CLI usage (one build, then exit) is unaffected.
