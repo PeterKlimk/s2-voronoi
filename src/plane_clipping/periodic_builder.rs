@@ -161,7 +161,13 @@ impl PeriodicCellBuilder {
         }
         let (a, b, c) = self.bisector_coefficients(neighbor);
         let plane_idx = self.half_planes.len();
-        let hp = HalfPlane::new_unnormalized(a, b, c, plane_idx);
+        let hp = HalfPlane::new_unnormalized_base_eps(
+            a,
+            b,
+            c,
+            plane_idx,
+            crate::tolerances::PLANE_CLIP_EPS_INSIDE,
+        );
         let clip_result = if self.use_a {
             clip_convex(
                 &self.poly_a,

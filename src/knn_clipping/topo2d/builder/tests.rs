@@ -308,12 +308,10 @@ fn fallback_reconstruction_preserves_constraint_order_and_eps() {
     assert_eq!(builder.as_fallback().constraints[0].hp_eps, Some(0.125));
     assert_eq!(builder.as_fallback().constraints[1].neighbor_idx, 12);
     assert_eq!(builder.as_fallback().constraints[1].neighbor_slot, 22);
-    assert!(builder.as_fallback().constraints[1]
-        .hp_eps
-        .is_some_and(|eps| eps.is_finite() && eps > 0.0));
+    // Ordinary clips carry the strict-rule eps (CLIP_EPS_INSIDE = 0.0),
+    // preserved exactly through reconstruction.
+    assert_eq!(builder.as_fallback().constraints[1].hp_eps, Some(0.0));
     assert_eq!(builder.as_fallback().constraints[2].neighbor_idx, 13);
     assert_eq!(builder.as_fallback().constraints[2].neighbor_slot, 23);
-    assert!(builder.as_fallback().constraints[2]
-        .hp_eps
-        .is_some_and(|eps| eps.is_finite() && eps > 0.0));
+    assert_eq!(builder.as_fallback().constraints[2].hp_eps, Some(0.0));
 }

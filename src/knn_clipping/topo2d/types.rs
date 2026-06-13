@@ -23,18 +23,36 @@ pub struct HalfPlane {
 }
 
 impl HalfPlane {
+    /// Spherical-backend constructor: applies the `CLIP_EPS_INSIDE` base
+    /// slack (strict rule; probe-overridable under `p5_shadow`).
     pub fn new_unnormalized(a: f64, b: f64, c: f64, plane_idx: usize) -> Self {
+        #[cfg(feature = "p5_shadow")]
+        let base = crate::knn_clipping::p5_shadow::clip_eps_override().unwrap_or(CLIP_EPS_INSIDE);
+        #[cfg(not(feature = "p5_shadow"))]
+        let base = CLIP_EPS_INSIDE;
+        Self::new_unnormalized_base_eps(a, b, c, plane_idx, base)
+    }
+
+    /// Construct an unnormalized half-plane with an explicit base
+    /// inside-slack (`eps = base_eps * |n|`). The planar backends pass
+    /// `PLANE_CLIP_EPS_INSIDE` (they keep the agreement bias; see
+    /// tolerances.rs).
+    pub fn new_unnormalized_base_eps(
+        a: f64,
+        b: f64,
+        c: f64,
+        plane_idx: usize,
+        base_eps: f64,
+    ) -> Self {
         let ab2: f64 = fp::fma_f64(a, a, b * b);
         let norm = (ab2 as f32).sqrt() as f64;
-        let eps = CLIP_EPS_INSIDE * norm;
-
         HalfPlane {
             a,
             b,
             c,
             ab2,
             plane_idx,
-            eps,
+            eps: base_eps * norm,
         }
     }
 

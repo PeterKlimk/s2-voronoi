@@ -146,6 +146,33 @@ pub(crate) fn escalation_factor_override() -> Option<f64> {
     }
 }
 
+/// Experimental clip-eps override (replaces CLIP_EPS_INSIDE at HalfPlane
+/// construction); u64::MAX bits = use the tolerances default. 0.0 turns the
+/// keep-bias `d >= -eps` into the strict antisymmetric tie rule `d >= 0`
+/// (successor candidate 1 in docs/p5-consistency-design.md). The edgecheck
+/// eps-reuse path degrades cleanly: a forwarded eps of 0 routes through the
+/// ordinary construction path, which reads this override again. Probe-only.
+static CLIP_EPS_OVERRIDE_BITS: AtomicU64 = AtomicU64::new(u64::MAX);
+
+/// Set (or clear) the clip-eps override (probe API).
+pub fn set_clip_eps_override(eps: Option<f64>) {
+    let bits = match eps {
+        Some(e) => e.to_bits(),
+        None => u64::MAX,
+    };
+    CLIP_EPS_OVERRIDE_BITS.store(bits, Ordering::Relaxed);
+}
+
+/// Current override, if any.
+pub(crate) fn clip_eps_override() -> Option<f64> {
+    let bits = CLIP_EPS_OVERRIDE_BITS.load(Ordering::Relaxed);
+    if bits == u64::MAX {
+        None
+    } else {
+        Some(f64::from_bits(bits))
+    }
+}
+
 /// One near-margin decision, keyed by its abstract question: does generator
 /// `key[3]` kill the vertex of sorted triple `key[0..3]`? Multiple cells
 /// answer the same question (each owner of the triple clips that corner

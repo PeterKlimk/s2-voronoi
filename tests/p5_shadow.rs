@@ -247,6 +247,92 @@ fn probe_quad_coherence() {
     run("uniform_3m_s3", &random_sphere_points(3_000_000, 3), 1e-3);
 }
 
+/// Antisymmetric-tie-rule sweep (successor candidate 1): replace the
+/// keep-bias `d >= -eps` with strict `d >= 0` (eps override 0.0) and
+/// measure defects + validity across every known defect-bearing input plus
+/// clean controls. Intermediate eps values map where the bias starts/stops
+/// mattering. Also re-runs the quad-coherence report under the strict rule
+/// on the defect carriers: the 1:1 parity contradictions should vanish if
+/// the mechanism diagnosis is right.
+#[test]
+#[ignore]
+fn probe_tie_rule_sweep() {
+    let fixture_2k = defect_fixture();
+    let u500k = random_sphere_points(500_000, 2);
+    let u2m = random_sphere_points(2_000_000, 1);
+    let u3m = random_sphere_points(3_000_000, 3);
+    let u45m = random_sphere_points(4_500_000, 2);
+
+    for eps in [None, Some(0.0f64), Some(1e-14), Some(1e-13)] {
+        s2_voronoi::p5_shadow::set_clip_eps_override(eps);
+        println!("=== clip_eps={eps:?} ===");
+        for (name, points) in [
+            ("fixture_2k", &fixture_2k),
+            ("uniform_500k_s2", &u500k),
+            ("uniform_2m_s1", &u2m),
+            ("uniform_3m_s3", &u3m),
+            ("uniform_4500k_s2", &u45m),
+        ] {
+            let t = std::time::Instant::now();
+            let out = compute_with_report(points, VoronoiConfig::default()).expect(name);
+            let dt = t.elapsed().as_millis();
+            println!(
+                "  {name:16} defects={} valid={} wall={dt}ms",
+                out.report.unresolved_edge_pairs.len(),
+                out.report.preferred_validation().is_strictly_valid()
+            );
+        }
+    }
+
+    // Quad coherence under the strict rule, defect carriers only.
+    s2_voronoi::p5_shadow::set_clip_eps_override(Some(0.0));
+    for (name, points) in [("fixture_2k", &fixture_2k), ("uniform_3m_s3", &u3m)] {
+        s2_voronoi::p5_shadow::paired_reset();
+        s2_voronoi::p5_shadow::set_pair_cutoff(1e-3);
+        let out = compute_with_report(points, VoronoiConfig::default()).expect(name);
+        s2_voronoi::p5_shadow::set_pair_cutoff(0.0);
+        println!(
+            "=== strict-rule quads {name}: defects={} ===",
+            out.report.unresolved_edge_pairs.len()
+        );
+        print!("{}", s2_voronoi::p5_shadow::paired_quad_report());
+    }
+    s2_voronoi::p5_shadow::set_clip_eps_override(None);
+}
+
+/// 4.5M-s2 defect anatomy: the only carrier the tie-rule sweep left
+/// untouched, and the one input the quad-coherence analysis never
+/// characterized. Quad report + defect-site record dump under the default
+/// rule and the strict rule, to learn whether its defects are parity
+/// contradictions at all (vs question-set divergence / margins above the
+/// collection cutoff).
+#[test]
+#[ignore]
+fn probe_45m_quad_anatomy() {
+    let points = random_sphere_points(4_500_000, 2);
+    for eps in [None, Some(0.0f64)] {
+        s2_voronoi::p5_shadow::set_clip_eps_override(eps);
+        s2_voronoi::p5_shadow::paired_reset();
+        s2_voronoi::p5_shadow::set_pair_cutoff(1e-4);
+        let out = compute_with_report(&points, VoronoiConfig::default()).expect("4.5m");
+        s2_voronoi::p5_shadow::set_pair_cutoff(0.0);
+        println!(
+            "=== 4.5m s2 clip_eps={eps:?} defects={:?} ===",
+            out.report.unresolved_edge_pairs
+        );
+        print!("{}", s2_voronoi::p5_shadow::paired_quad_report());
+        let ids: Vec<u32> = out
+            .report
+            .unresolved_edge_pairs
+            .iter()
+            .flat_map(|&(a, b, _)| [a, b])
+            .collect();
+        println!("--- records involving defect generators {ids:?} ---");
+        print!("{}", s2_voronoi::p5_shadow::paired_dump_involving(&ids));
+    }
+    s2_voronoi::p5_shadow::set_clip_eps_override(None);
+}
+
 /// Escalation-band sweep: with the (unsound) wide 1e-8 filter shown to
 /// manufacture contradictions at its boundary, sweep the band downward
 /// toward the CLIP_EPS_INSIDE scale where the observed parity

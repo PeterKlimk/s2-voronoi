@@ -51,13 +51,43 @@ pub(crate) fn weld_radius() -> f32 {
 
 // === Gnomonic clipping (per-cell chart) ===
 
-/// Base inside-slack for half-plane clipping, scaled by the plane's normal
-/// magnitude at use (`eps = CLIP_EPS_INSIDE * |n|`), so the test is
-/// relative to the constraint's conditioning. Keeps epsilon-grazing vertices
-/// on the inside, biasing both cells of a shared edge toward agreeing that a
-/// marginal vertex exists; edge checks and reconciliation own the residual
-/// disagreements.
-pub(crate) const CLIP_EPS_INSIDE: f64 = 1e-12;
+/// Base inside-slack for half-plane clipping on the SPHERICAL backend,
+/// scaled by the plane's normal magnitude at use
+/// (`eps = CLIP_EPS_INSIDE * |n|`). **0.0 = the strict antisymmetric keep
+/// rule `d >= 0` — the production setting.** The planar backends keep the
+/// bias; see [`PLANE_CLIP_EPS_INSIDE`].
+///
+/// The historical value 1e-12 (hex3 import) kept epsilon-grazing vertices
+/// inside, biasing both cells of a shared edge toward agreeing a marginal
+/// vertex exists. The quad-coherence analysis showed that bias to be the
+/// direct cause of tie-regime parity contradictions: for a near-cocircular
+/// 4-set, both opposite-parity phrasings of the same in-circle question
+/// keep when |d| < eps, defeating the antisymmetry that correlated
+/// cross-chart errors otherwise provide. The 2026-06 tie-rule sweep
+/// (docs/p5-consistency-design.md, tie-rule findings) measured strict
+/// `d >= 0` eliminating the 3M-seed-3 defects (4 -> 0, zero quad
+/// contradictions across 8M quads) with no regressions, validity loss, or
+/// wall-time change anywhere in the battery. The surviving defects are
+/// error-regime contradictions (computed-sign errors at 1.5e-11..4.6e-11,
+/// above any tie band) that no local rule can fix; edge checks and
+/// reconciliation own those residuals.
+pub(crate) const CLIP_EPS_INSIDE: f64 = 0.0;
+
+/// Base inside-slack for half-plane clipping on the PLANAR backends (rect
+/// walls and bisectors, bounded and periodic alike): the historical
+/// keep-bias `d >= -eps`, biasing both cells of a shared edge toward
+/// agreeing that a marginal vertex exists.
+///
+/// The plane deliberately does NOT follow the sphere's strict rule. The
+/// 2026-06 tie-rule split test measured why the bias must stay: with
+/// strict bisectors, `plane_larger_uniform_strict` (~50k uniform) produced
+/// 3 unpaired interior edges and `plane_clustered_and_collinear` also
+/// failed — the planar pipeline has no analogue of the sphere's
+/// edge-check/repair net, so marginal cross-cell disagreements that the
+/// sphere repairs in O(defects) surface as validity failures here. The
+/// bias is the plane's defect-suppression mechanism (walls alone strict is
+/// fine; bisectors need it).
+pub(crate) const PLANE_CLIP_EPS_INSIDE: f64 = 1e-12;
 
 /// Chart-validity floor: once the clipped polygon's minimum generator-dot
 /// reaches this, the feasible region is effectively at the generator's
@@ -82,6 +112,9 @@ pub(crate) const MIN_PROJECTION_COS: f64 = 8.0 * f32::EPSILON as f64;
 /// clipper machinery is kept (probe-overridable via
 /// `p5_shadow::set_escalation_factor_override`) as the test rig for
 /// successor designs (question-intrinsic gating / antisymmetric tie rule).
+/// Note: with `CLIP_EPS_INSIDE = 0.0` the band `factor * hp.eps` is zero
+/// regardless of factor; escalation experiments must also set
+/// `p5_shadow::set_clip_eps_override` to a nonzero eps.
 pub(crate) const CLIP_ESCALATION_FACTOR: f64 = 0.0;
 
 /// Angular padding folded into the termination certificate (the polygon's
@@ -232,11 +265,16 @@ mod tests {
     #[test]
     #[allow(clippy::assertions_on_constants)] // pinning the constant hierarchy is the point
     fn tolerance_ordering_sanity() {
-        // The hierarchy the pipeline relies on: extraction floor far below
-        // clipping slack, clipping slack below chart floor, repair scale in
-        // the weld family.
-        assert!((EXTRACT_DEGENERATE_LEN2 as f64).sqrt() < CLIP_EPS_INSIDE);
+        // The hierarchy the pipeline relies on: sphere clipping slack zero
+        // (strict antisymmetric keep rule; see CLIP_EPS_INSIDE) and below
+        // the chart floor; the plane keeps the historical bias, with the
+        // extraction floor far below it. Pin the extraction floor below the
+        // error-regime contradiction scale (~1e-11) as well.
+        assert!(CLIP_EPS_INSIDE == 0.0);
+        assert!((EXTRACT_DEGENERATE_LEN2 as f64).sqrt() < PLANE_CLIP_EPS_INSIDE);
+        assert!((EXTRACT_DEGENERATE_LEN2 as f64).sqrt() < 1e-11);
         assert!(CLIP_EPS_INSIDE < MIN_PROJECTION_COS);
+        assert!(PLANE_CLIP_EPS_INSIDE < MIN_PROJECTION_COS);
         assert!(RECONCILE_DEGENERATE_LEN_EPS <= weld_radius());
         assert!(FALLBACK_DEDUP_DOT < 1.0);
     }

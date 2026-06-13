@@ -92,14 +92,15 @@ impl PlaneCellBuilder {
         ];
         for (plane_idx, &(side, a, b, c)) in walls.iter().enumerate() {
             // Wall normals are unit axis vectors (norm exactly 1), so the
-            // epsilon equals CLIP_EPS_INSIDE; the with_eps constructor skips
-            // new_unnormalized's per-call sqrt in this once-per-cell reset.
+            // epsilon equals PLANE_CLIP_EPS_INSIDE; the with_eps constructor
+            // skips new_unnormalized's per-call sqrt in this once-per-cell
+            // reset.
             self.half_planes.push(HalfPlane::new_unnormalized_with_eps(
                 a,
                 b,
                 c,
                 plane_idx,
-                crate::tolerances::CLIP_EPS_INSIDE,
+                crate::tolerances::PLANE_CLIP_EPS_INSIDE,
             ));
             self.neighbor_indices.push((self.wall_base + side) as usize);
             self.neighbor_slots.push(u32::MAX);
@@ -152,7 +153,13 @@ impl PlaneCellBuilder {
 
         let (a, b, c) = self.bisector_coefficients(neighbor);
         let plane_idx = self.half_planes.len();
-        let hp = HalfPlane::new_unnormalized(a, b, c, plane_idx);
+        let hp = HalfPlane::new_unnormalized_base_eps(
+            a,
+            b,
+            c,
+            plane_idx,
+            crate::tolerances::PLANE_CLIP_EPS_INSIDE,
+        );
 
         let clip_result = if self.use_a {
             clip_convex(

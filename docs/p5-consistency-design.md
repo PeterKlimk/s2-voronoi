@@ -385,6 +385,69 @@ designs. Successor candidates, in current preference order:
    runs, O(defects) repair, machine-checked validity. The standing
    fallback, now with precise knowledge of the residual mechanism.
 
+## Tie-rule findings (2026-06): candidate 1 measured; strict rule adopted
+
+Candidate 1 was implemented as a probe (`set_clip_eps_override`: the eps
+override replaces CLIP_EPS_INSIDE at `HalfPlane` construction; 0.0 =
+strict `d >= 0`. The edgecheck eps-reuse path degrades cleanly — a
+forwarded eps of 0 routes through ordinary construction) and swept over
+the defect battery (`probe_tie_rule_sweep`):
+
+| clip eps | fixture_2k | 500k s2 | 2M s1 | 3M s3 | 4.5M s2 |
+|---|---|---|---|---|---|
+| 1e-12 (old default) | 4 | 0 | 0 | 4 | 3 |
+| 0.0 (strict) | 4 | 0 | 0 | **0** | 3 |
+| 1e-14 | 4 | 0 | 0 | 0 | 3 |
+| 1e-13 | 4 | 0 | 0 | 0 | 3 |
+
+All runs strictly valid; wall times unchanged. Strict-rule quad reports:
+3M s3 shows **0 contradictions across 8.0M multi-record quads** — the
+cross-chart error correlation really does deliver antisymmetry at scale —
+while fixture_2k's single contradiction survives bit-identically.
+
+The observed contradiction band (1e-13..1e-11) therefore splits into two
+regimes:
+
+- **Tie regime** (margins <= eps): both opposite-parity phrasings kept by
+  the `d >= -eps` bias. The strict rule eliminates these (3M s3: 4 -> 0;
+  any eps below ~1e-13 suffices).
+- **Error regime** (margins > eps): the computed d itself carries the
+  wrong sign in one chart (fixture_2k: disagreeing record at +1.51e-11
+  where canonical says cut; 4.5M s2: the same phrasing answered
+  oppositely by two cells at ~4e-11 — the correlation tail itself). No
+  local rule can fix these, and stage 2a showed canonical mixing makes
+  them worse. Edge repair owns them.
+
+4.5M s2 anatomy (`probe_45m_quad_anatomy`; previously uncharacterized):
+its 3 defects trace to exactly one parity-contradiction quad
+[749399, 1899262, 3667055, 4269011] at margins 3.5e-11..4.6e-11,
+bit-identical under default and strict rules — pure error regime. The
+1:1 defect-site:quad-contradiction correspondence now holds on all three
+carriers.
+
+Also closed: why the eps bias existed. Git history traces `d >= -eps` to
+the pre-repo hex3 import with no recorded rationale beyond biasing
+shared-edge agreement on marginal vertices; the sweep found no input
+where removing it costs anything (no new defects, no validity loss, no
+sliver/chatter symptoms, no wall-time change).
+
+**Decision: CLIP_EPS_INSIDE = 0.0 in production — spherical backend
+only.** Expected residual: error-regime contradictions only — the
+fixture_2k/4.5M class — with O(defects) edge repair unchanged as the
+backstop.
+
+**The planar backends keep the bias** (`PLANE_CLIP_EPS_INSIDE = 1e-12`),
+and the full-suite run measured why — the first recorded justification
+for the bias existing at all: with strict bisectors,
+`plane_larger_uniform_strict` (~50k uniform) yields 3 unpaired interior
+edges and `plane_clustered_and_collinear` fails too (strict walls alone
+are fine; biased bisectors restore green). The plane has no analogue of
+the sphere's edge-check/repair net, so the marginal cross-cell
+disagreements the sphere repairs in O(defects) surface directly as
+validity failures there. The bias is the plane's defect-suppression
+mechanism; revisiting it would mean porting the repair net to the planar
+pipeline first.
+
 ## Migration plan
 
 Staged, each stage behind the existing harnesses (NN contract suite, edge-repair
