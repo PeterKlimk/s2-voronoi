@@ -613,11 +613,30 @@ battery re-run — all 22 plane tests pass, including the cases that
 (2k/20k/80k x 6 seeds) all strictly valid. So strict-on-plane is now
 viable on the battery. **The bias remains the production default**
 nonetheless: the gate before flipping it is a full strict-plane campaign
-(thousands of cases, the larger sweep) under a quiet box, not the
-moderate battery — and the flip moves every plane fingerprint, so it is a
-deliberate release decision. The perf bench for the sphere strict rule
-came back perf-neutral (500k +0.6%, 2M -1.7%, both within noise), so
-strictness itself carries no measured cost.
+(thousands of cases, the larger sweep), and the flip moves every plane
+fingerprint, so it is a deliberate release decision. The perf bench for
+the sphere strict rule came back perf-neutral (500k +0.6%, 2M -1.7%, both
+within noise), so strictness itself carries no measured cost.
+
+Strict-plane campaign (2026-06-14): the gate above, now run.
+`PLANE_CLIP_EPS_INSIDE` flipped to 0, rebuilt, **1,362 cases** through
+`plane_campaign_case` (one process per case, `scripts/plane_campaign.sh`,
+self-labelling the compiled rule). Coverage put the volume where the risk
+is — the sliver/tie/parity classes the strict rule historically broke on:
+750 clustered (tight-to-loose jitter, the 402-cell torture class), 300
+near-cocircular (planar parity-defect class), 150 exact-tie lattices, plus
+126 uniform (2k–1M x 20 seeds), 30 periodic tori, and 6 non-unit-rect
+(200:1 aspect + offset). **All 1,362 strictly valid; zero residual edge
+pairs; zero out-of-envelope errors.** Not one case needed repair under
+strict — the collinear-vertex removal that unblocked strict-plane is not
+even exercised on these inputs (the slivers it heals only appeared under
+the *moderate* clustered battery; the campaign's tighter jitter does not
+reproduce them). Note the periodic path is covered here only by the
+compile-time flip — `set_plane_clip_eps_override` does not patch the
+periodic builder, so the runtime override alone would have missed it.
+Conclusion: strict-on-plane is campaign-clean, not merely battery-clean.
+The bias stays the production default until the fingerprint-moving flip is
+deliberately chosen; the correctness blocker is gone.
 
 ## Migration plan
 
