@@ -50,7 +50,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         cell_indices,
         dedup_sub: _,
     } = assembled;
-    let (eff_cells, eff_cell_indices) = reconcile_edges(
+    let (eff_cells, eff_cell_indices, _post_repair_unpaired) = reconcile_edges(
         &vertices,
         &vertex_keys,
         &unresolved_edges,
@@ -133,7 +133,7 @@ fn compute_voronoi_knn_clipping_report_core(
         cell_indices,
         dedup_sub: _,
     } = assembled;
-    let (eff_cells, eff_cell_indices) = reconcile_edges(
+    let (eff_cells, eff_cell_indices, post_repair_unpaired) = reconcile_edges(
         &vertices,
         &vertex_keys,
         &unresolved_edges,
@@ -141,6 +141,16 @@ fn compute_voronoi_knn_clipping_report_core(
         cell_indices,
         &mut tb,
     )?;
+    // Surface output-invariant residuals alongside the detection records:
+    // anything here survived both repair passes and is a real defect in
+    // the returned diagram.
+    let mut unresolved_edges = unresolved_edges;
+    for &(a, b) in &post_repair_unpaired {
+        unresolved_edges.push(live_dedup::UnresolvedEdgeMismatch {
+            key: live_dedup::pack_edge(a, b),
+            origin: live_dedup::UnresolvedEdgeOrigin::PostRepairUnpaired,
+        });
+    }
 
     let effective_diagram = if merge_result.is_some() {
         Some(crate::SphericalVoronoi::from_raw_parts(
@@ -535,14 +545,15 @@ fn reconcile_edges(
     mut cells: Vec<VoronoiCell>,
     mut cell_indices: Vec<u32>,
     tb: &mut TimingBuilder,
-) -> Result<(Vec<VoronoiCell>, Vec<u32>), crate::VoronoiError> {
+) -> Result<(Vec<VoronoiCell>, Vec<u32>, Vec<(u32, u32)>), crate::VoronoiError> {
     let repair_edges_storage: Vec<live_dedup::EdgeRecord> = unresolved_edges
         .iter()
         .map(|b| live_dedup::EdgeRecord { key: b.key })
         .collect();
 
     let t = Timer::start();
-    edge_reconcile::reconcile_unresolved_edges(
+    // The sphere has no boundary: every interior edge must pair.
+    let post_repair_unpaired = edge_reconcile::reconcile_unresolved_edges(
         &repair_edges_storage,
         vertices,
         &mut cells,
@@ -550,9 +561,10 @@ fn reconcile_edges(
         vertex_keys,
         crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
         edge_reconcile::repair_apply_from_env(),
+        |_, _| false,
     )?;
     tb.set_edge_reconcile(t.elapsed());
-    Ok((cells, cell_indices))
+    Ok((cells, cell_indices, post_repair_unpaired))
 }
 
 /// Map effective cells back to original input indices.

@@ -64,7 +64,8 @@ pub(crate) fn compute_periodic_cells(
     // an epsilon edge exactly straddling the wrap seam is not auto-merged;
     // it remains an honestly-reported validation finding (documented v1
     // limitation).
-    edge_reconcile::reconcile_unresolved_edges(
+    // Torus topology: no boundary, every interior edge must pair.
+    let _residual = edge_reconcile::reconcile_unresolved_edges(
         &records,
         &assembly.vertices,
         &mut cells,
@@ -72,6 +73,7 @@ pub(crate) fn compute_periodic_cells(
         &assembly.vertex_keys,
         crate::tolerances::PLANE_RECONCILE_DEGENERATE_LEN_EPS,
         edge_reconcile::repair_apply_from_env(),
+        |_, _| false,
     )?;
 
     tb.set_edge_reconcile(t.elapsed());

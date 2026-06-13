@@ -75,15 +75,35 @@ pub(crate) fn compute_plane_cells(
     crate::knn_clipping::p5_shadow::record_plane_unresolved(records.iter().map(|r| r.key.as_u64()));
     let mut cells = assembly.cells;
     let mut cell_indices = assembly.cell_indices;
-    edge_reconcile::reconcile_unresolved_edges(
+    // Bounded topology: a single-use edge is legitimate only with both
+    // endpoints on one common rect wall (mirrors validate_plane).
+    let verts = &assembly.vertices;
+    let wall_eps = crate::tolerances::PLANE_ON_WALL_EPS;
+    #[cfg_attr(not(feature = "p5_shadow"), allow(unused_variables))]
+    let residual = edge_reconcile::reconcile_unresolved_edges(
         &records,
-        &assembly.vertices,
+        verts,
         &mut cells,
         &mut cell_indices,
         &assembly.vertex_keys,
         crate::tolerances::PLANE_RECONCILE_DEGENERATE_LEN_EPS,
         edge_reconcile::repair_apply_from_env(),
+        |va, vb| {
+            let pa = verts[va as usize];
+            let pb = verts[vb as usize];
+            let near = |u: f32, wall: f32| (u - wall).abs() <= wall_eps;
+            (near(pa.x, 0.0) && near(pb.x, 0.0))
+                || (near(pa.x, domain.x) && near(pb.x, domain.x))
+                || (near(pa.y, 0.0) && near(pb.y, 0.0))
+                || (near(pa.y, domain.y) && near(pb.y, domain.y))
+        },
     )?;
+    #[cfg(feature = "p5_shadow")]
+    crate::knn_clipping::p5_shadow::record_plane_unresolved(
+        residual
+            .iter()
+            .map(|&(a, b)| (a as u64) | ((b as u64) << 32)),
+    );
     tb.set_edge_reconcile(t.elapsed());
 
     Ok(PlaneCellsOutput {

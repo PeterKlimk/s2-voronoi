@@ -587,7 +587,11 @@ mod tests {
             .collect();
         let mut cells = assembled.cells.clone();
         let mut cell_indices = assembled.cell_indices.clone();
-        let changed = reconcile_unresolved_edges(
+        let spans_before: Vec<Vec<u32>> = cells
+            .iter()
+            .map(|c| cell_indices[c.vertex_start()..c.vertex_start() + c.vertex_count()].to_vec())
+            .collect();
+        let _residual = reconcile_unresolved_edges(
             &reconcile_input,
             &assembled.vertices,
             &mut cells,
@@ -595,10 +599,15 @@ mod tests {
             &assembled.vertex_keys,
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
             RepairApply::InPlace,
+            |_, _| false,
         )
         .expect("reconciliation should succeed without capacity overflow");
-        assert!(
-            changed,
+        let spans_after: Vec<Vec<u32>> = cells
+            .iter()
+            .map(|c| cell_indices[c.vertex_start()..c.vertex_start() + c.vertex_count()].to_vec())
+            .collect();
+        assert_ne!(
+            spans_before, spans_after,
             "expected unresolved shared-edge mismatch to be reconciled"
         );
 

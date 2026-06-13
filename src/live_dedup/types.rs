@@ -150,6 +150,11 @@ pub enum UnresolvedEdgeOrigin {
     /// reaching a cross-bin cell through two of its edges. The thirds may
     /// fully agree, so this is detectable only at the slot level.
     CrossBinSlotConflict,
+    /// Post-repair output-invariant backstop: an interior edge used by
+    /// exactly one cell survived reconciliation. Reported, not force-fixed
+    /// — the backstop's eps-bounded pass refuses to merge distant vertices
+    /// on synthesized evidence.
+    PostRepairUnpaired,
 }
 
 /// Historical name: this records an unresolved shared-edge reconciliation mismatch.

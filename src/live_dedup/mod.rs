@@ -23,10 +23,11 @@ pub(crate) use binning::PackedLayoutCapacityError;
 pub(crate) use binning::{assign_bins, assign_bins_with, target_bin_count};
 pub(crate) use edge_checks::unpack_edge_key;
 pub(crate) use emit::{checked_local_id, checked_u32, emit_cell_output, EdgeScratch, ShardContext};
+pub(crate) use packed::pack_edge;
 pub(crate) use shard::ShardState;
 pub(crate) use types::BinId;
 pub use types::UnresolvedEdgeOrigin;
-pub(crate) use types::{EdgeRecord, UnresolvedEdgeMismatch, VertexPosition};
+pub(crate) use types::{EdgeKey, EdgeRecord, UnresolvedEdgeMismatch, VertexPosition};
 
 /// Result of assembling sharded live-dedup data into global arrays.
 pub(crate) struct AssemblyResult<P = glam::Vec3> {

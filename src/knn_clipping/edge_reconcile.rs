@@ -10,7 +10,7 @@
 //! - shared-edge endpoint identity mismatches, typically from near-degenerate vertex ownership
 //!   choices where adjacent polygons pick different generator triplets for the same corner
 
-use super::live_dedup::EdgeRecord;
+use super::live_dedup::{EdgeKey, EdgeRecord};
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::cell_build::VertexKey;
 
@@ -152,9 +152,35 @@ pub(crate) fn repair_apply_from_env() -> RepairApply {
     }
 }
 
-/// Reconcile unresolved shared-edge mismatches by merging vertex identities,
-/// patching `cells` / `cell_indices` via the chosen backend. Returns whether
-/// anything merged (false leaves the arrays untouched).
+/// Hard cap on repair rounds; each productive round strictly shrinks some
+/// cell span, so termination is structural — the cap is a backstop.
+const MAX_REPAIR_ROUNDS: usize = 8;
+
+/// How a repair pass interprets its records when pairing endpoints.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MergeMode {
+    /// Bookkeeping-driven records (live-dedup detection): full pairing
+    /// semantics, including the forced nearest-endpoint pairing for
+    /// 1-1 segment mismatches.
+    Primary,
+    /// Output-invariant backstop records (synthesized from unpaired
+    /// interior edges): eps-bounded proximity unions only — never
+    /// force-merge distant vertices on synthesized evidence.
+    ProximityOnly,
+}
+
+/// Reconcile unresolved shared-edge mismatches by merging vertex
+/// identities, patching `cells` / `cell_indices` via the chosen backend.
+///
+/// Runs the bookkeeping-driven repair to a fixpoint (merges can expose
+/// newly pairable states), then checks the output invariant directly:
+/// every interior edge must be used by exactly two cells. Unpaired
+/// findings synthesize an eps-bounded backstop pass (the owning cell pair
+/// is recovered from the endpoint keys' shared generators); whatever
+/// survives is returned as cell pairs for the caller's report rather than
+/// force-merged. Returns an empty vec on clean runs (no records) without
+/// touching anything — the scans are paid only on defect runs.
+#[allow(clippy::too_many_arguments)] // geometry-parameterized repair seam
 pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     edge_records: &[EdgeRecord],
     vertices: &[P],
@@ -166,33 +192,247 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
     // geometry owns and justifies its constant.
     degenerate_len_eps: f32,
     apply: RepairApply,
-) -> Result<bool, crate::VoronoiError> {
-    let (mut uf, merged) = collect_merges(
+    // Geometry's boundary classification: true when a single-use edge
+    // between these vertex ids is legitimate (plane rect walls). The
+    // sphere and the periodic plane have no boundary.
+    is_boundary_edge: impl Fn(u32, u32) -> bool,
+) -> Result<Vec<(u32, u32)>, crate::VoronoiError> {
+    if edge_records.is_empty() {
+        return Ok(Vec::new());
+    }
+    run_repair_rounds(
         edge_records,
         vertices,
         cells,
         cell_indices,
         vertex_keys,
         degenerate_len_eps,
+        apply,
+        MergeMode::Primary,
     )?;
-    if merged == 0 {
-        return Ok(false);
+
+    let unpaired = scan_unpaired_interior(cells, cell_indices, &is_boundary_edge)?;
+    if unpaired.is_empty() {
+        return Ok(Vec::new());
     }
-    match apply {
-        RepairApply::Rebuild => {
-            let (new_cells, new_indices) = apply_merges_rebuild(&mut uf, cells, cell_indices)?;
-            *cells = new_cells;
-            *cell_indices = new_indices;
+    let synth = synthesize_backstop_records(&unpaired, vertex_keys, cells.len());
+    if !synth.is_empty() {
+        run_repair_rounds(
+            &synth,
+            vertices,
+            cells,
+            cell_indices,
+            vertex_keys,
+            degenerate_len_eps,
+            apply,
+            MergeMode::ProximityOnly,
+        )?;
+    }
+    let residual = scan_unpaired_interior(cells, cell_indices, &is_boundary_edge)?;
+    Ok(residual
+        .iter()
+        .map(|&(va, vb, owner)| cell_pair_for_unpaired(va, vb, owner, vertex_keys))
+        .collect())
+}
+
+/// Drive collect+apply to a fixpoint (capped). The duplicate-key backstop
+/// scan runs only in the first Primary round — its unions are idempotent
+/// once applied, and re-counting them would defeat convergence detection.
+#[allow(clippy::too_many_arguments)]
+fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
+    edge_records: &[EdgeRecord],
+    vertices: &[P],
+    cells: &mut Vec<VoronoiCell>,
+    cell_indices: &mut Vec<u32>,
+    vertex_keys: &[VertexKey],
+    degenerate_len_eps: f32,
+    apply: RepairApply,
+    mode: MergeMode,
+) -> Result<bool, crate::VoronoiError> {
+    let mut any = false;
+    for round in 0..MAX_REPAIR_ROUNDS {
+        let scan_dup_keys = mode == MergeMode::Primary && round == 0;
+        let (mut uf, merged) = collect_merges(
+            edge_records,
+            vertices,
+            cells,
+            cell_indices,
+            vertex_keys,
+            degenerate_len_eps,
+            mode,
+            scan_dup_keys,
+        )?;
+        if merged == 0 {
+            break;
         }
-        RepairApply::InPlace => {
-            apply_merges_in_place(&mut uf, cells, cell_indices, vertex_keys)?;
+        let changed = match apply {
+            RepairApply::Rebuild => {
+                let (new_cells, new_indices) = apply_merges_rebuild(&mut uf, cells, cell_indices)?;
+                let changed = cell_spans_differ(cells, cell_indices, &new_cells, &new_indices)?;
+                *cells = new_cells;
+                *cell_indices = new_indices;
+                changed
+            }
+            RepairApply::InPlace => {
+                apply_merges_in_place(&mut uf, cells, cell_indices, vertex_keys)?
+            }
+        };
+        if !changed {
+            break;
+        }
+        any = true;
+    }
+    Ok(any)
+}
+
+/// Semantic per-cell sequence comparison (the rebuild backend compacts the
+/// index buffer, so raw buffer equality would spin the fixpoint loop).
+fn cell_spans_differ(
+    old_cells: &[VoronoiCell],
+    old_indices: &[u32],
+    new_cells: &[VoronoiCell],
+    new_indices: &[u32],
+) -> Result<bool, crate::VoronoiError> {
+    if old_cells.len() != new_cells.len() {
+        return Ok(true);
+    }
+    for ci in 0..old_cells.len() {
+        let o = cell_vertex_slice(ci as u32, old_cells, old_indices)?;
+        let n = cell_vertex_slice(ci as u32, new_cells, new_indices)?;
+        if o != n {
+            return Ok(true);
         }
     }
-    Ok(true)
+    Ok(false)
+}
+
+/// Output-invariant scan: undirected edges over all cell boundaries used
+/// exactly once that are not legitimate boundary edges. Returns
+/// (vertex_a, vertex_b, owning cell), sorted. O(total cell indices).
+fn scan_unpaired_interior(
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    is_boundary_edge: &impl Fn(u32, u32) -> bool,
+) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
+    use std::collections::HashMap;
+    let mut uses: HashMap<(u32, u32), (u32, u32)> = HashMap::new();
+    for ci in 0..cells.len() {
+        let span = cell_vertex_slice(ci as u32, cells, cell_indices)?;
+        let n = span.len();
+        // Degenerate (< 3 vertex) cells have no well-formed edge cycle;
+        // validation reports them separately.
+        if n < 3 {
+            continue;
+        }
+        for k in 0..n {
+            let a = span[k];
+            let b = span[if k + 1 == n { 0 } else { k + 1 }];
+            if a == b {
+                continue;
+            }
+            let key = (a.min(b), a.max(b));
+            uses.entry(key).or_insert((0, ci as u32)).0 += 1;
+        }
+    }
+    let mut out: Vec<(u32, u32, u32)> = uses
+        .into_iter()
+        .filter(|&((a, b), (count, _))| count == 1 && !is_boundary_edge(a, b))
+        .map(|((a, b), (_, owner))| (a, b, owner))
+        .collect();
+    out.sort_unstable();
+    Ok(out)
+}
+
+/// The two generators shared by both endpoint keys — for a well-formed
+/// edge these are exactly the owning cell pair.
+fn key_common_pair(k1: VertexKey, k2: VertexKey) -> Option<(u32, u32)> {
+    let mut common = [0u32; 3];
+    let mut n = 0;
+    for &g in &k1 {
+        if key_contains(k2, g) && n < 3 {
+            common[n] = g;
+            n += 1;
+        }
+    }
+    if n == 2 {
+        Some((common[0].min(common[1]), common[0].max(common[1])))
+    } else {
+        None
+    }
+}
+
+/// Synthesize repair records from unpaired interior edges: the owning cell
+/// pair recovered from the endpoint keys' shared generators, deduplicated.
+fn synthesize_backstop_records(
+    unpaired: &[(u32, u32, u32)],
+    vertex_keys: &[VertexKey],
+    num_cells: usize,
+) -> Vec<EdgeRecord> {
+    let mut keys: Vec<u64> = unpaired
+        .iter()
+        .filter_map(|&(va, vb, _)| {
+            let k1 = *vertex_keys.get(va as usize)?;
+            let k2 = *vertex_keys.get(vb as usize)?;
+            let (a, b) = key_common_pair(k1, k2)?;
+            // In production every key member has a cell; tolerate synthetic
+            // fixtures whose keys name nonexistent generators (mirrors the
+            // out-of-range tolerance in apply_merges_in_place).
+            if (a as usize) >= num_cells || (b as usize) >= num_cells {
+                return None;
+            }
+            Some((a as u64) | ((b as u64) << 32))
+        })
+        .collect();
+    keys.sort_unstable();
+    keys.dedup();
+    keys.into_iter()
+        .map(|k| EdgeRecord {
+            key: EdgeKey::from(k),
+        })
+        .collect()
+}
+
+/// Report identity for a residual unpaired edge: the endpoint keys' shared
+/// generator pair when well-formed, else the owning cell twice.
+fn cell_pair_for_unpaired(va: u32, vb: u32, owner: u32, vertex_keys: &[VertexKey]) -> (u32, u32) {
+    match (vertex_keys.get(va as usize), vertex_keys.get(vb as usize)) {
+        (Some(&k1), Some(&k2)) => key_common_pair(k1, k2).unwrap_or((owner, owner)),
+        _ => (owner, owner),
+    }
 }
 
 /// Walk the unresolved edge records and collect vertex-identity merges into
 /// a union-find. Both apply backends consume the exact same merge set.
+/// Union every pair of segment-endpoint vertices, across and within the
+/// two sides, that lie within the degenerate length scale. Local to one
+/// defective edge, so the quadratic pairing is over a handful of ids.
+fn proximity_union_segments<P: crate::knn_clipping::live_dedup::VertexPosition>(
+    seg_a: &[(u32, u32)],
+    seg_b: &[(u32, u32)],
+    vertices: &[P],
+    degenerate_len_eps_sq: f32,
+    uf: &mut SparseUnionFind,
+    merged: &mut usize,
+) -> Result<(), crate::VoronoiError> {
+    let mut ids: Vec<u32> = Vec::with_capacity((seg_a.len() + seg_b.len()) * 2);
+    for &(v0, v1) in seg_a.iter().chain(seg_b.iter()) {
+        ids.push(v0);
+        ids.push(v1);
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    for i in 0..ids.len() {
+        for j in (i + 1)..ids.len() {
+            let d = dist_sq(vertex_pos(vertices, ids[i])?, vertex_pos(vertices, ids[j])?);
+            if d <= degenerate_len_eps_sq && uf.union(ids[i], ids[j]) {
+                *merged += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     edge_records: &[EdgeRecord],
     vertices: &[P],
@@ -200,6 +440,8 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     cell_indices: &[u32],
     vertex_keys: &[VertexKey],
     degenerate_len_eps: f32,
+    mode: MergeMode,
+    scan_dup_keys: bool,
 ) -> Result<(SparseUnionFind, usize), crate::VoronoiError> {
     // Sparse: only the handful of vertices named by defective edges ever
     // enter the structure, so clean and near-clean runs skip the O(V) init
@@ -218,7 +460,7 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     // fully agree (no per-edge record names them). Same-key duplicates ARE
     // the same vertex by model definition: union them all up front. Gated
     // on defect runs, so clean runs never pay the O(V) scan.
-    if !edge_records.is_empty() {
+    if scan_dup_keys {
         let mut first_by_key: std::collections::HashMap<VertexKey, u32> =
             std::collections::HashMap::with_capacity(vertex_keys.len());
         for (i, key) in vertex_keys.iter().enumerate() {
@@ -239,6 +481,17 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
         let (a, b) = unpack_edge(record.key.as_u64());
         let seg_a = edge_segments_for_neighbor(a, b, cells, cell_indices, vertex_keys)?;
         let seg_b = edge_segments_for_neighbor(b, a, cells, cell_indices, vertex_keys)?;
+        if mode == MergeMode::ProximityOnly {
+            proximity_union_segments(
+                &seg_a,
+                &seg_b,
+                vertices,
+                degenerate_len_eps_sq,
+                &mut uf,
+                &mut merged,
+            )?;
+            continue;
+        }
         if seg_a.len() != 1 || seg_b.len() != 1 {
             // Irregular topology (sliver chains, overlapping defects): union
             // every pair of segment-endpoint vertices — across and within
@@ -248,24 +501,14 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
             // distinct keys (an exact-tie corner committed under two
             // attributions) and sliver chains the per-segment logic cannot
             // pair up.
-            let mut endpoint_ids: Vec<u32> = Vec::new();
-            for &(v0, v1) in seg_a.iter().chain(seg_b.iter()) {
-                endpoint_ids.push(v0);
-                endpoint_ids.push(v1);
-            }
-            endpoint_ids.sort_unstable();
-            endpoint_ids.dedup();
-            for i in 0..endpoint_ids.len() {
-                for j in (i + 1)..endpoint_ids.len() {
-                    let d = dist_sq(
-                        vertex_pos(vertices, endpoint_ids[i])?,
-                        vertex_pos(vertices, endpoint_ids[j])?,
-                    );
-                    if d <= degenerate_len_eps_sq && uf.union(endpoint_ids[i], endpoint_ids[j]) {
-                        merged += 1;
-                    }
-                }
-            }
+            proximity_union_segments(
+                &seg_a,
+                &seg_b,
+                vertices,
+                degenerate_len_eps_sq,
+                &mut uf,
+                &mut merged,
+            )?;
 
             // Special-case: one-sided, zero-length boundary edge.
             //
@@ -418,7 +661,8 @@ fn apply_merges_in_place(
     cells: &mut [VoronoiCell],
     cell_indices: &mut [u32],
     vertex_keys: &[VertexKey],
-) -> Result<(), crate::VoronoiError> {
+) -> Result<bool, crate::VoronoiError> {
+    let mut changed = false;
     let mut affected: Vec<u32> = Vec::new();
     for v in uf.touched_ids() {
         let key = *vertex_keys.get(v as usize).ok_or_else(|| {
@@ -456,10 +700,16 @@ fn apply_merges_in_place(
         // without any duplicate forming).
         let mut w = 0usize;
         for r in 0..count {
-            let rep = uf.find(span[r]);
+            let orig = span[r];
+            let rep = uf.find(orig);
+            if rep != orig {
+                changed = true;
+            }
             if !span[..w].contains(&rep) {
                 span[w] = rep;
                 w += 1;
+            } else {
+                changed = true;
             }
         }
         if w != count {
@@ -482,7 +732,7 @@ fn apply_merges_in_place(
         }
     }
 
-    Ok(())
+    Ok(changed)
 }
 
 #[cfg(test)]
@@ -523,7 +773,7 @@ mod tests {
         vertex_keys: &[VertexKey],
     ) -> (bool, Vec<VoronoiCell>, Vec<u32>, Vec<VoronoiCell>, Vec<u32>) {
         let (mut cells_r, mut idx_r) = (cells.to_vec(), cell_indices.to_vec());
-        let changed_r = reconcile_unresolved_edges(
+        let residual_r = reconcile_unresolved_edges(
             records,
             vertices,
             &mut cells_r,
@@ -531,11 +781,12 @@ mod tests {
             vertex_keys,
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
             RepairApply::Rebuild,
+            |_, _| false,
         )
         .expect("rebuild reconciliation should succeed");
 
         let (mut cells_p, mut idx_p) = (cells.to_vec(), cell_indices.to_vec());
-        let changed_p = reconcile_unresolved_edges(
+        let residual_p = reconcile_unresolved_edges(
             records,
             vertices,
             &mut cells_p,
@@ -543,19 +794,21 @@ mod tests {
             vertex_keys,
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
             RepairApply::InPlace,
+            |_, _| false,
         )
         .expect("in-place reconciliation should succeed");
 
         assert_eq!(
-            changed_r, changed_p,
-            "backends disagree on whether to merge"
+            residual_r, residual_p,
+            "backends disagree on post-repair residuals"
         );
         assert_eq!(
             cell_sequences(&cells_r, &idx_r),
             cell_sequences(&cells_p, &idx_p),
             "backends disagree on per-cell vertex sequences"
         );
-        (changed_p, cells_r, idx_r, cells_p, idx_p)
+        let changed = cell_sequences(&cells_p, &idx_p) != cell_sequences(cells, cell_indices);
+        (changed, cells_r, idx_r, cells_p, idx_p)
     }
 
     #[test]

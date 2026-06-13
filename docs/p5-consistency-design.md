@@ -537,6 +537,47 @@ production envelope. Under the production bias both fixtures remain
 unchanged. The sphere inherits all three fixes — its own thirds-mismatch
 defect class runs through exactly these paths.
 
+### Fixpoint repair + output-invariant backstop (2026-06)
+
+`reconcile_unresolved_edges` was restructured around the principle that
+correctness should rest on the OUTPUT INVARIANT (every interior edge
+used by exactly two cells — the validator's pairing check), not on
+detection bookkeeping:
+
+1. **Fixpoint loop**: the bookkeeping-driven repair now iterates
+   collect+apply until no merge changes a cell (capped at 8 rounds;
+   each productive round strictly shrinks some span). The duplicate-key
+   backstop scan runs only in the first round (its unions are
+   idempotent once applied).
+2. **Invariant scan**: after the primary passes, the repaired cells are
+   scanned directly for unpaired interior edges — O(total cell
+   indices), paid only on defect runs. Boundary classification is
+   geometry-supplied (sphere and periodic plane: none; bounded plane:
+   both endpoints on one common rect wall, mirroring validate_plane).
+3. **Eps-bounded backstop pass**: findings synthesize repair records —
+   the owning cell pair is the two generators the endpoint keys share —
+   and rerun repair in proximity-only mode, which unions only vertices
+   within the degenerate length scale. Synthesized evidence never
+   force-merges distant vertices: a genuine hole must be reported, not
+   papered over.
+4. **Residual reporting**: whatever survives is returned as cell pairs
+   and surfaced as `PostRepairUnpaired` in the sphere's
+   `unresolved_edge_pairs` report (the plane records it to the
+   p5_shadow collector; a public plane report channel is future API
+   work). An invalid returned diagram now always carries a record.
+
+Lab results: uniform-50k-strict unchanged (fully healed); the 402-cell
+torture case still holds 31 residuals, but the backstop now
+characterizes them exactly — endpoint keys sharing != 2 generators,
+endpoint positions 1e-4+ apart. These are GEOMETRIC shape
+disagreements (adjacent cells computed visibly different polygon
+chains under strict clipping in a dense cluster), the one class
+vertex-identity merging fundamentally cannot fix. Repairing it would
+need authority-based local rebuild (one cell's shape wins, the
+neighbor's chain is rewritten) — the "surgical patch" successor in the
+edge-repair plan, out of scope here. Under the production bias the
+class does not arise at all in any tested input.
+
 ## Migration plan
 
 Staged, each stage behind the existing harnesses (NN contract suite, edge-repair

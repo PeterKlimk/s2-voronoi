@@ -24,7 +24,7 @@ fn pack_bc(b: u32, c: u32) -> u64 {
 }
 
 #[inline]
-pub(super) fn pack_edge(a: u32, b: u32) -> EdgeKey {
+pub(crate) fn pack_edge(a: u32, b: u32) -> EdgeKey {
     let (min, max) = if a <= b { (a, b) } else { (b, a) };
     EdgeKey::from(pack_bc(min, max))
 }
