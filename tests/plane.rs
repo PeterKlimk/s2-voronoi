@@ -4,7 +4,10 @@
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use s2_voronoi::{compute_plane, validation, PlanarVoronoi, PlanePoint, PlaneRect, VoronoiError};
+use s2_voronoi::{
+    compute_plane, compute_plane_periodic_with_report, compute_plane_with_report, validation,
+    PlanarVoronoi, PlanePoint, PlaneRect, VoronoiError,
+};
 
 fn rng(seed: u64) -> ChaCha8Rng {
     ChaCha8Rng::seed_from_u64(seed)
@@ -291,6 +294,39 @@ fn plane_larger_uniform_strict() {
     let diagram = compute_plane(&points, PlaneRect::unit()).unwrap();
     assert_strict(&diagram, "uniform_50k");
     assert_area(&diagram, "uniform_50k");
+}
+
+#[test]
+fn plane_with_report_surfaces_clean_validation() {
+    // On a valid input the report carries an empty residual list and a
+    // strictly-valid validation, and its diagram matches the plain path.
+    let points = uniform_in(PlaneRect::unit(), 5_000, 7);
+    let out = compute_plane_with_report(&points, PlaneRect::unit()).expect("report build");
+    assert!(
+        out.report.unresolved_edge_pairs.is_empty(),
+        "clean input must have no residuals, got {:?}",
+        out.report.unresolved_edge_pairs
+    );
+    assert!(
+        out.report.validation.is_strictly_valid(),
+        "clean input report must be strictly valid: {:?}",
+        out.report.validation
+    );
+    assert_eq!(out.diagram.num_cells(), 5_000);
+
+    // Periodic report variant on a well-populated torus.
+    let torus: Vec<[f32; 2]> = (0..256)
+        .map(|i| {
+            [
+                ((i % 16) as f32 + 0.5) / 16.0,
+                ((i / 16) as f32 + 0.5) / 16.0,
+            ]
+        })
+        .collect();
+    let pout =
+        compute_plane_periodic_with_report(&torus, PlaneRect::unit()).expect("periodic report");
+    assert!(pout.report.unresolved_edge_pairs.is_empty());
+    assert!(pout.report.validation.is_strictly_valid());
 }
 
 #[test]

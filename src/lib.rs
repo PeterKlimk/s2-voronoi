@@ -317,6 +317,44 @@ pub fn compute_plane<P: PlanePointLike>(
     plane_clipping::compute::compute_plane_impl(points, rect)
 }
 
+/// Observability for a planar computation (bounded or periodic).
+#[derive(Debug, Clone)]
+pub struct PlaneComputeReport {
+    /// Strict validation of the returned diagram.
+    pub validation: validation::PlaneValidationReport,
+    /// Post-repair unpaired interior edges as generator pairs (empty on a
+    /// valid result). These are the residuals the plain `compute_plane` /
+    /// `compute_plane_periodic` paths turn into an error; the report path
+    /// surfaces them instead. Indices are effective-generator indices
+    /// (equal to original input indices when no welding occurred).
+    pub unresolved_edge_pairs: Vec<(u32, u32)>,
+}
+
+/// Output of [`compute_plane_with_report`] / [`compute_plane_periodic_with_report`].
+#[derive(Debug, Clone)]
+pub struct PlaneComputeOutput {
+    /// The returned diagram (one cell per input point; welded twins share
+    /// their canonical cell).
+    pub diagram: PlanarVoronoi,
+    /// Validation and residual observability for this run.
+    pub report: PlaneComputeReport,
+}
+
+/// Compute a bounded planar Voronoi diagram and return observability
+/// metadata instead of erroring on a post-repair residual.
+///
+/// [`compute_plane`] fails loud if reconciliation leaves an unpaired
+/// interior edge (provably-invalid output with no other signal channel).
+/// This variant returns the diagram together with a [`PlaneComputeReport`]
+/// carrying strict validation and the residual generator pairs, so callers
+/// that want to inspect (rather than be interrupted by) a defect can.
+pub fn compute_plane_with_report<P: PlanePointLike>(
+    points: &[P],
+    rect: PlaneRect,
+) -> Result<PlaneComputeOutput, VoronoiError> {
+    plane_clipping::compute::compute_plane_with_report_impl(points, rect)
+}
+
 /// Compute a planar Voronoi diagram on a rectangular torus (periodic
 /// boundary conditions): the rect's opposite edges are identified, so cells
 /// wrap across them and the diagram has no boundary.
@@ -351,6 +389,16 @@ pub fn compute_plane_periodic<P: PlanePointLike>(
     rect: PlaneRect,
 ) -> Result<PlanarVoronoi, VoronoiError> {
     plane_clipping::compute::compute_plane_periodic_impl(points, rect)
+}
+
+/// Periodic counterpart of [`compute_plane_with_report`]: returns the torus
+/// diagram plus validation/residual observability instead of erroring on a
+/// post-repair residual.
+pub fn compute_plane_periodic_with_report<P: PlanePointLike>(
+    points: &[P],
+    rect: PlaneRect,
+) -> Result<PlaneComputeOutput, VoronoiError> {
+    plane_clipping::compute::compute_plane_periodic_with_report_impl(points, rect)
 }
 
 /// Compute a spherical Voronoi diagram with explicit configuration.

@@ -154,10 +154,42 @@ fn weld_within_radius(points: &[Vec2], grid: &PlaneGrid) -> Option<WeldResult> {
     })
 }
 
+/// Plain bounded compute: a residual is provably-invalid output with no
+/// report channel, so fail loud.
 pub(crate) fn compute_plane_impl<P: PlanePointLike>(
     points: &[P],
     rect: PlaneRect,
 ) -> Result<PlanarVoronoi, VoronoiError> {
+    let (diagram, residual) = compute_plane_built(points, rect)?;
+    if !residual.is_empty() {
+        return Err(crate::knn_clipping::edge_reconcile::residual_error(
+            &residual,
+        ));
+    }
+    crate::validation::verify_plane_if_enabled(&diagram)?;
+    Ok(diagram)
+}
+
+/// Bounded compute with observability: returns the diagram plus a report
+/// carrying strict validation and any post-repair unpaired-edge residuals
+/// (effective-generator pairs; equal to original indices when no weld
+/// occurred). Does NOT error on residuals — the report is the catch channel.
+pub(crate) fn compute_plane_with_report_impl<P: PlanePointLike>(
+    points: &[P],
+    rect: PlaneRect,
+) -> Result<crate::PlaneComputeOutput, VoronoiError> {
+    let (diagram, residual) = compute_plane_built(points, rect)?;
+    let report = crate::PlaneComputeReport {
+        validation: crate::validation::validate_plane(&diagram),
+        unresolved_edge_pairs: residual,
+    };
+    Ok(crate::PlaneComputeOutput { diagram, report })
+}
+
+fn compute_plane_built<P: PlanePointLike>(
+    points: &[P],
+    rect: PlaneRect,
+) -> Result<(PlanarVoronoi, Vec<(u32, u32)>), VoronoiError> {
     validate_rect(rect)?;
     if points.is_empty() {
         return Err(VoronoiError::InsufficientPoints(0));
@@ -222,6 +254,7 @@ pub(crate) fn compute_plane_impl<P: PlanePointLike>(
             )
         }
     };
+    let residual = output.residual.clone();
 
     let t = Timer::start();
     // Map vertices back to rect coordinates.
@@ -249,8 +282,7 @@ pub(crate) fn compute_plane_impl<P: PlanePointLike>(
     );
     tb.set_assemble(t.elapsed());
     tb.finish().report(diagram.num_cells());
-    crate::validation::verify_plane_if_enabled(&diagram)?;
-    Ok(diagram)
+    Ok((diagram, residual))
 }
 
 fn weld_within_radius_periodic(points: &[Vec2], grid: &PeriodicGrid) -> Option<WeldResult> {
@@ -285,10 +317,39 @@ fn weld_within_radius_periodic(points: &[Vec2], grid: &PeriodicGrid) -> Option<W
     })
 }
 
+/// Plain periodic compute: fail loud on residuals (an unpaired edge on the
+/// torus is an invalid subdivision).
 pub(crate) fn compute_plane_periodic_impl<P: PlanePointLike>(
     points: &[P],
     rect: PlaneRect,
 ) -> Result<PlanarVoronoi, VoronoiError> {
+    let (diagram, residual) = compute_plane_periodic_built(points, rect)?;
+    if !residual.is_empty() {
+        return Err(crate::knn_clipping::edge_reconcile::residual_error(
+            &residual,
+        ));
+    }
+    crate::validation::verify_plane_if_enabled(&diagram)?;
+    Ok(diagram)
+}
+
+/// Periodic compute with observability (see [`compute_plane_with_report_impl`]).
+pub(crate) fn compute_plane_periodic_with_report_impl<P: PlanePointLike>(
+    points: &[P],
+    rect: PlaneRect,
+) -> Result<crate::PlaneComputeOutput, VoronoiError> {
+    let (diagram, residual) = compute_plane_periodic_built(points, rect)?;
+    let report = crate::PlaneComputeReport {
+        validation: crate::validation::validate_plane(&diagram),
+        unresolved_edge_pairs: residual,
+    };
+    Ok(crate::PlaneComputeOutput { diagram, report })
+}
+
+fn compute_plane_periodic_built<P: PlanePointLike>(
+    points: &[P],
+    rect: PlaneRect,
+) -> Result<(PlanarVoronoi, Vec<(u32, u32)>), VoronoiError> {
     validate_rect(rect)?;
     if points.is_empty() {
         return Err(VoronoiError::InsufficientPoints(0));
@@ -360,6 +421,7 @@ pub(crate) fn compute_plane_periodic_impl<P: PlanePointLike>(
             )
         }
     };
+    let residual = output.residual.clone();
 
     let t = Timer::start();
     // Map canonical wrapped vertices back to rect coordinates (still
@@ -386,8 +448,7 @@ pub(crate) fn compute_plane_periodic_impl<P: PlanePointLike>(
     );
     tb.set_assemble(t.elapsed());
     tb.finish().report(diagram.num_cells());
-    crate::validation::verify_plane_if_enabled(&diagram)?;
-    Ok(diagram)
+    Ok((diagram, residual))
 }
 
 /// Largest f32 strictly below `p` (clamps wrapped coordinates out of the

@@ -42,6 +42,10 @@ pub(crate) struct PlaneCellsOutput {
     pub(crate) vertices: Vec<Vec2>,
     pub(crate) cells: Vec<VoronoiCell>,
     pub(crate) cell_indices: Vec<u32>,
+    /// Post-repair unpaired interior edges as generator pairs (empty on a
+    /// valid result). The caller's plain path errors on these; the report
+    /// path surfaces them.
+    pub(crate) residual: Vec<(u32, u32)>,
 }
 
 /// Build, dedup, assemble, and edge-reconcile all planar cells.
@@ -104,13 +108,9 @@ pub(crate) fn compute_plane_cells(
             .map(|&(a, b)| (a as u64) | ((b as u64) << 32)),
     );
     tb.set_edge_reconcile(t.elapsed());
-    // Plain path: a residual is provably-invalid output with no report
-    // channel to surface it — fail loud rather than return it.
-    if !residual.is_empty() {
-        return Err(edge_reconcile::residual_error(&residual));
-    }
 
     Ok(PlaneCellsOutput {
+        residual,
         vertices: assembly.vertices,
         cells,
         cell_indices,

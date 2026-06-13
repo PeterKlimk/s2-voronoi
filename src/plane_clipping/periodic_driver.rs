@@ -31,6 +31,10 @@ pub(crate) struct PeriodicCellsOutput {
     pub(crate) vertices: Vec<Vec2>,
     pub(crate) cells: Vec<VoronoiCell>,
     pub(crate) cell_indices: Vec<u32>,
+    /// Post-repair unpaired edges as generator pairs (empty on a valid
+    /// torus result). The caller's plain path errors on these; the report
+    /// path surfaces them.
+    pub(crate) residual: Vec<(u32, u32)>,
 }
 
 /// Build, dedup, assemble, and edge-reconcile all toroidal cells.
@@ -78,11 +82,9 @@ pub(crate) fn compute_periodic_cells(
     )?;
 
     tb.set_edge_reconcile(t.elapsed());
-    if !residual.is_empty() {
-        return Err(edge_reconcile::residual_error(&residual));
-    }
 
     Ok(PeriodicCellsOutput {
+        residual,
         vertices: assembly.vertices,
         cells,
         cell_indices,
