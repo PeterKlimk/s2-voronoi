@@ -123,11 +123,18 @@ Blunter alternative (also lean reject): a globally denser grid selected
 from a user "is uniform / is clustered" hint, instead of a per-cell
 sub-index. Cheaper to build but pays everywhere — non-uniform inputs have
 sparse regions too, so a uniformly denser grid wastes build time and
-memory on empty cells to help a few hot spots. And it largely duplicates
-the existing occupancy-feedback rebuild (which already densifies adaptively
-when occupancy is high) plus the `S2_VORONOI_GRID_DENSITY` knob (already
-the manual density hint for power users). Same bounded 1.46x prize, no new
-API justified.
+memory on empty cells to help a few hot spots.
+
+Caveat (corrected 2026-06): the SPHERE already has an occupancy-feedback
+rebuild (`grid_occupancy_rebuild_resolution`, policy.rs) — a one-shot
+re-grid at higher resolution when the fullest cell exceeds 16x the target
+density, memory-capped to O(n) cells — plus the `S2_VORONOI_GRID_DENSITY`
+manual knob, so a hint adds little there. The PLANE has neither feedback
+rebuild nor occupancy knob beyond `S2_VORONOI_PLANE_GRID_DENSITY`; it sizes
+the grid once by occupied fraction. So if the dense-cell cost matters for a
+real workload, the highest-value first step is porting the sphere's
+occupancy-feedback rebuild to the plane (small, reuses proven policy),
+before any sub-index or hint API. Same bounded ~1.46x prize either way.
 
 ## Done (2026-06, micro-opt matrix screen — paired-confirmed)
 
