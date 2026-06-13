@@ -617,12 +617,13 @@ battery re-run — all 22 plane tests pass, including the cases that
 *previously failed under strict* (`plane_larger_uniform_strict` 50k,
 `plane_clustered_and_collinear`), plus an 18-input multi-seed sweep
 (2k/20k/80k x 6 seeds) all strictly valid. So strict-on-plane is now
-viable on the battery. **The bias remains the production default**
-nonetheless: the gate before flipping it is a full strict-plane campaign
+viable on the battery. At this point the bias was still the production
+default: the gate before flipping it was a full strict-plane campaign
 (thousands of cases, the larger sweep), and the flip moves every plane
-fingerprint, so it is a deliberate release decision. The perf bench for
-the sphere strict rule came back perf-neutral (500k +0.6%, 2M -1.7%, both
-within noise), so strictness itself carries no measured cost.
+fingerprint, so it was held as a deliberate release decision — run and
+taken below. The perf bench for the sphere strict rule came back
+perf-neutral (500k +0.6%, 2M -1.7%, both within noise), so strictness
+itself carries no measured cost.
 
 Strict-plane campaign (2026-06-14): the gate above, now run.
 `PLANE_CLIP_EPS_INSIDE` flipped to 0, rebuilt, **1,362 cases** through
