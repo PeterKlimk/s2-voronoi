@@ -78,15 +78,23 @@ pub(crate) const CLIP_EPS_INSIDE: f64 = 0.0;
 /// keep-bias `d >= -eps`, biasing both cells of a shared edge toward
 /// agreeing that a marginal vertex exists.
 ///
-/// The plane deliberately does NOT follow the sphere's strict rule. The
-/// 2026-06 tie-rule split test measured why the bias must stay: with
-/// strict bisectors, `plane_larger_uniform_strict` (~50k uniform) produced
-/// 3 unpaired interior edges and `plane_clustered_and_collinear` also
-/// failed — the planar pipeline has no analogue of the sphere's
-/// edge-check/repair net, so marginal cross-cell disagreements that the
-/// sphere repairs in O(defects) surface as validity failures here. The
-/// bias is the plane's defect-suppression mechanism (walls alone strict is
-/// fine; bisectors need it).
+/// The plane deliberately does NOT follow the sphere's strict rule, and
+/// NOT because it lacks machinery: the planar pipeline shares the full
+/// edge-check/detection/reconcile stack. The difference is the defect
+/// POPULATION. Measured (2026-06, instrumented strict-bisector runs):
+/// 50k uniform yields 2 detected unresolved edges but 3 unpaired interior
+/// edges post-repair (some disagreements escape detection); the 402-cell
+/// clustered+collinear fixture yields 32 detected vs 52 unpaired and
+/// Euler characteristic -12. Compare the sphere, where strict-rule
+/// residuals are ~1 site per millions and detection catches them 1:1.
+/// The plane's defect-prevention layers are weaker — no weld preprocess
+/// (only exact-duplicate dedup, vs the sphere's ~1.4e-6 chord weld), so
+/// degenerate clusters reach the clipper raw — and its strict-rule defect
+/// population overwhelms and partially escapes the shared net. The bias
+/// suppresses that population at the source. Revisiting strict-on-plane
+/// requires: the detection-gap anatomy (the tiny clustered fixture is a
+/// cheap lab for it), a plane weld story, and repair validated at higher
+/// defect rates. Walls alone strict is fine; bisectors need the bias.
 pub(crate) const PLANE_CLIP_EPS_INSIDE: f64 = 1e-12;
 
 /// Chart-validity floor: once the clipped polygon's minimum generator-dot

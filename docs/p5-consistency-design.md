@@ -441,12 +441,28 @@ and the full-suite run measured why — the first recorded justification
 for the bias existing at all: with strict bisectors,
 `plane_larger_uniform_strict` (~50k uniform) yields 3 unpaired interior
 edges and `plane_clustered_and_collinear` fails too (strict walls alone
-are fine; biased bisectors restore green). The plane has no analogue of
-the sphere's edge-check/repair net, so the marginal cross-cell
-disagreements the sphere repairs in O(defects) surface directly as
-validity failures there. The bias is the plane's defect-suppression
-mechanism; revisiting it would mean porting the repair net to the planar
-pipeline first.
+are fine; biased bisectors restore green).
+
+This is NOT because the plane lacks repair machinery — the planar
+pipeline shares the full edge-check/detection/reconcile stack (a first
+draft of this section claimed otherwise; corrected). Instrumented
+strict-bisector runs show the real difference is the defect population
+and its detectability: 50k uniform detects 2 unresolved edges but ends
+with 3 unpaired interior edges post-repair (escape from detection); the
+402-cell clustered+collinear fixture detects 32 vs 52 unpaired with
+Euler characteristic -12. The sphere's strict-rule residuals are ~1 site
+per millions with 1:1 detection; the plane's are orders denser and leak
+past the net. Structural suspects: the plane has no weld preprocess
+(only exact-duplicate dedup, vs the sphere's ~1.4e-6 chord weld), so
+near-coincident/collinear clusters reach the clipper with
+ill-conditioned bisectors — the bias doubles as the plane's substitute
+for the sphere's prevention layers. The two backends thus sit at
+different points of one design space: prevention-heavy (bias) vs
+repair-heavy (strict + net). Unifying on strict would require: the
+detection-gap anatomy (the 402-cell fixture is a cheap reproducible lab
+— far cheaper than the sphere's multi-million-point sites, and the gap
+may matter for the sphere's untested cross-bin repair too), a plane weld
+story, and repair validated at higher defect rates.
 
 ## Migration plan
 
