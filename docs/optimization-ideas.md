@@ -92,6 +92,43 @@ sqrt at <1% of total. Only worth retrying on a quiet box, and the eps
 semantics shift (up to sqrt(2) larger) would need fuzz revalidation
 regardless. Low expected value.
 
+### Optional sub-index for very dense grid cells — assessed 2026-06, low priority
+
+When a grid cell holds far more generators than the uniform target, the
+per-query neighbor scan inside that cell does more work. The idea: detect
+over-occupied cells and give them an optional finer (nested) index so dense
+clusters query as cheaply as uniform regions.
+
+The motivating measurement is also the argument against it — degradation
+with local density ratio is strongly sub-linear and bounded:
+
+| density ratio | tess time | vs uniform |
+|---|---|---|
+| 1:1 (uniform) | 2,892 ms | 1.00x |
+| 6.7:1 | 3,772 ms | 1.30x |
+| 23.9:1 | 3,907 ms | 1.35x |
+| 50:1 | 4,216 ms | 1.46x |
+
+Even a 50x density ratio costs only 1.46x. The existing grid (plus the
+occupancy-feedback rebuild, one step, memory-bounded) already absorbs
+density gracefully, so a sub-index would add a hot-path branch and a build
+cost to reclaim at most ~30-46% on inputs that are (a) rare and (b) often
+limited by something else first — the 64-vertex clip budget and welding
+both bite in very dense clusters before query cost dominates. Worth
+revisiting only if a real target workload is dominated by extreme,
+persistent local-density contrast; otherwise the complexity is not paid
+for. Lean reject.
+
+Blunter alternative (also lean reject): a globally denser grid selected
+from a user "is uniform / is clustered" hint, instead of a per-cell
+sub-index. Cheaper to build but pays everywhere — non-uniform inputs have
+sparse regions too, so a uniformly denser grid wastes build time and
+memory on empty cells to help a few hot spots. And it largely duplicates
+the existing occupancy-feedback rebuild (which already densifies adaptively
+when occupancy is high) plus the `S2_VORONOI_GRID_DENSITY` knob (already
+the manual density hint for power users). Same bounded 1.46x prize, no new
+API justified.
+
 ## Done (2026-06, micro-opt matrix screen — paired-confirmed)
 
 - **Micro-opt stack merged** (~-36ms total at 500k ST, -120ms
