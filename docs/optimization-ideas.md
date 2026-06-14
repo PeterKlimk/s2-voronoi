@@ -77,20 +77,26 @@ Remaining (planar side):
   data contains sub-radius pairs at production scales: ~3 at 1M, ~15 at
   2M, birthday effect).
 
-### HalfPlane epsilon without the per-clip sqrt
+### HalfPlane epsilon without the per-clip sqrt — DONE (2026-06-14, free after the strict flip)
 
-`HalfPlane::new_unnormalized` computes `eps = CLIP_EPS_INSIDE * sqrt(ab2)`
-per clip attempt (~one sqrt per neighbor per cell). The epsilon only needs
-to be scale-accurate, not exact — `|a| + |b|` is within sqrt(2) of the true
-norm. Semantics-affecting (epsilon decisions shift; hp_eps is shared across
-edge-check seeds), so it needs the same care as any tolerance change.
+`HalfPlane::new_unnormalized` computed `eps = base_eps * sqrt(ab2)` per clip
+attempt (~one sqrt per neighbor per cell). The original idea was to
+approximate the norm by `|a| + |b|` (within sqrt(2)); that was rejected as
+low-EV — semantics-affecting (eps shifts up to sqrt(2), needs fuzz
+revalidation; hp_eps is shared across edge-check seeds) and measured a wash
+at 2M sphere ST (forward-order 3-7% "wins" were thermal drift; static
+estimate <1% of total).
 
-Measured 2026-06 (2M sphere ST, 3+3 pairs in both orders): inconclusive —
-forward-order pairs showed 3-7% "wins" that reversed-order pairs exposed
-as thermal drift; the combined data is a wash. Static estimate caps the
-sqrt at <1% of total. Only worth retrying on a quiet box, and the eps
-semantics shift (up to sqrt(2) larger) would need fuzz revalidation
-regardless. Low expected value.
+The strict-rule flip changed the calculus. With `CLIP_EPS_INSIDE = 0.0` and
+`PLANE_CLIP_EPS_INSIDE = 0.0`, `base_eps` is 0 in production, so
+`eps = 0.0 * sqrt(ab2) = 0.0` *identically* — the sqrt is provably dead, not
+approximated. `new_unnormalized_base_eps` now skips it when `base_eps == 0.0`
+(the only nonzero base_eps is the p5_shadow eps-override probe, which keeps
+the exact path). Multiply-by-zero is exact, so output is bit-identical (full
+correctness suite + p5_shadow lib green); it also removes a `0.0 * inf = NaN`
+trap on a pathological huge-normal plane. Same small (<1%) prize as before
+but now ZERO risk and no revalidation — batched for the next quiet-box
+perf-test of the commit log.
 
 ### Optional sub-index for very dense grid cells — assessed 2026-06, low priority
 

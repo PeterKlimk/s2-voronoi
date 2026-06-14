@@ -44,14 +44,25 @@ impl HalfPlane {
         base_eps: f64,
     ) -> Self {
         let ab2: f64 = fp::fma_f64(a, a, b * b);
-        let norm = (ab2 as f32).sqrt() as f64;
+        // eps = base_eps * |n|, |n| = sqrt(ab2). Both backends now use the
+        // strict keep rule (base_eps = CLIP_EPS_INSIDE / PLANE_CLIP_EPS_INSIDE
+        // = 0.0), so eps is identically 0.0 and the per-clip sqrt is pure
+        // waste — skip it on the hot path. The only nonzero base_eps is the
+        // p5_shadow eps-override probe, which still takes the exact path.
+        // Multiply-by-zero is exact, so this shifts no clip decision (and
+        // avoids a 0.0 * inf = NaN trap on a pathological huge-normal plane).
+        let eps = if base_eps == 0.0 {
+            0.0
+        } else {
+            base_eps * (ab2 as f32).sqrt() as f64
+        };
         HalfPlane {
             a,
             b,
             c,
             ab2,
             plane_idx,
-            eps: base_eps * norm,
+            eps,
         }
     }
 
