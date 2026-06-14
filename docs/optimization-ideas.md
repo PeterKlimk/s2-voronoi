@@ -192,8 +192,9 @@ including the memory-capped case (e.g. mega at 1M, where even the rebuild
 can't fully fix the giant cells) and minority hotspots the rebuild now
 correctly skips. Rebuild alone fails those; punch 1 alone would sub-index
 most cells on a majority-dense input where one global re-grid is cheaper.
-Build punch 1 when dense clusters become a real workload; see the dense-cell
-section above.
+**Full design: `docs/dense-cell-subindex-design.md`** (costless occupancy-
+gated fast-path branch, ambient-3D kd-tree, best-first stream bounded by the
+ring certificate). Build it when dense clusters become a real workload.
 
 ## Done (2026-06, micro-opt matrix screen — paired-confirmed)
 
