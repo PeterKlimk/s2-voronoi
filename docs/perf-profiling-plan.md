@@ -73,7 +73,8 @@ Status: `pending` until run, then record the verdict inline.
 |------|------|--------|
 | expand_r2 on/off across regimes | A/B the runtime toggle via a 2nd build forcing it on | **DONE 2026-06-14**: uniform −1.7% (neutral), splittable +645% (7.45×), mega >9× (single run 86s vs 9.5s). Never a win, catastrophic dense. → flip lib default to off / density-gate. See multi-regime-perf.md item 1. |
 | LTO + 1 CGU profile | build with thin-LTO + codegen-units=1, A/B whole-profile (was inconclusive on noisy box; a win would dwarf the micro-opts) | pending |
-| MT 500ms @ 2.5M | the release-facing number; `--multi -s 2.5m`; not yet demonstrable (busy-box floor ~1.24s) | pending |
+| MT 500ms @ 2.5M | the release-facing number; `--multi -s 2.5m` | **MEASURED 2026-06-14**: clean seed ~2.4s MT (busy box), bottleneck `cell_construction` ~1.6s (parallel); knn 0.15s, dedup 0.24s. 500ms target ~5× out via the core compute. **BUT** the bench *default* seed (12345) @ 2.5m is corrupted by the edge_reconcile bug below (12–21s) — always measure with an explicit clean seed at 2.5m. |
+| **edge_reconcile O(V)-per-round (HIGH)** | localize repair to affected cells | **FOUND 2026-06-14**: at 2.5m, **3 edge_records → 6.7–21s** reconcile (clean seeds: 0 records → 0.004ms). `run_repair_rounds` calls `drop_degenerate_collinear_vertices` which sweeps ALL ~5M vertex_keys every round (edge_reconcile.rs:327), + `collect_merges` full scan round 0. O(V×rounds) triggered by ANY defect. Defects occur ~1–20/run at millions → occasional ~10× slower production build. Fix: scope the sweep to cells in `edge_records` (+neighbors), preserving the detection-completeness contract. See memory `edge-reconcile-global-scan`. |
 | micro-opt catalog tail | implement + measure: top-pick-5 u8 bin scratch, fmodf purge, PolyBuffer u32 narrowing | not implemented |
 
 ### Future commits — append here
