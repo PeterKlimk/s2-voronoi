@@ -222,10 +222,18 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                 .map(|idx| (idx, incoming_checks[idx]));
 
             if let Some((found_idx, check)) = found {
-                debug_assert!(
-                    matched & (1u64 << found_idx) == 0,
-                    "edge check duplicate side"
-                );
+                // One incoming check matching two of this cell's edges
+                // (duplicate side) was long believed impossible. The strict
+                // planar keep rule (PLANE_CLIP_EPS_INSIDE = 0.0) makes it
+                // reachable: a sliver can give a cell two edges to one
+                // neighbor. Release has no assert here and already produces
+                // strictly-valid output on these inputs (the duplicate
+                // re-resolves, any displaced check surfaces via the
+                // unmatched-check loop below, and repair + the output-
+                // invariant scan restore validity — verified by the plane
+                // battery and the strict-plane campaign). So this is a
+                // handled defect, not an invariant violation; debug builds
+                // must not abort (this only makes debug match release).
                 matched |= 1u64 << found_idx;
 
                 let (a, b) = unpack_edge_key(edge_key);
@@ -236,11 +244,16 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
 
                 let full = reconcile_edge_endpoints(my_thirds, check.thirds, |mk, ck| {
                     let local_idx = locals[mk] as usize;
-                    debug_assert!(
-                        vertex_indices[local_idx] == INVALID_INDEX
-                            || vertex_indices[local_idx] == check.indices[ck],
-                        "edge check index mismatch"
-                    );
+                    // A local endpoint already carrying a DIFFERENT global id
+                    // is a vertex-identity sliver (one corner committed under
+                    // two triple attributions) — reachable under the strict
+                    // planar keep rule (PLANE_CLIP_EPS_INSIDE = 0.0), not an
+                    // invariant violation. Release adopts the incoming id
+                    // (last write wins) and the output-invariant scan + repair
+                    // restore strict validity (verified by the plane battery
+                    // and the strict campaign); the validate / S2_VORONOI_VERIFY
+                    // gates remain the production catch. Debug must not abort
+                    // (this only makes debug match release behavior).
                     vertex_indices[local_idx] = check.indices[ck];
                 });
                 if !full {
@@ -312,8 +325,10 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
     // when the thirds fully agree.
     let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| -> bool {
         let packed = pack_ref(owner_bin, idx);
+        // A slot already holding a DIFFERENT concrete reference is a real,
+        // handled defect (recorded by the caller as CrossBinSlotConflict so
+        // repair sees the site); not an invariant violation, so no assert.
         let conflict = *slot != DEFERRED && *slot != packed;
-        debug_assert!(!conflict, "edge check overflow slot mismatch");
         *slot = packed;
         conflict
     };
@@ -325,7 +340,14 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
             let a = edge_check_overflow[i];
             let b = edge_check_overflow[i + 1];
             if a.side == b.side {
-                debug_assert!(false, "edge check overflow duplicate side");
+                // Two same-side overflow checks for one edge key: a
+                // duplicate cross-bin attribution (a marginal corner kept by
+                // an extra cell). Long believed unreachable, but the strict
+                // planar keep rule (PLANE_CLIP_EPS_INSIDE = 0.0) gives it a
+                // natural trigger — e.g. the bounded-plane fixture in the
+                // `locate` suite. It is recorded as CrossBinDuplicateSide and
+                // repaired to strict validity, so it is a handled defect, not
+                // an invariant violation (hence no abort).
                 unresolved_edges.push(UnresolvedEdgeMismatch {
                     key: a.key,
                     origin: UnresolvedEdgeOrigin::CrossBinDuplicateSide,

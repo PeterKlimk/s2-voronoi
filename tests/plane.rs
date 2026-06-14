@@ -315,6 +315,28 @@ fn plane_uniform_multiseed_sweep() {
 }
 
 #[test]
+fn plane_cross_bin_duplicate_side_repairs() {
+    // Natural trigger of the CrossBinDuplicateSide cross-bin overflow path,
+    // which was synthetic-only until the strict planar keep rule shipped
+    // (PLANE_CLIP_EPS_INSIDE = 0.0). On this fixture a marginal corner kept
+    // by an extra cell produces a duplicate same-side edge-check
+    // attribution; it is detected and repaired to strict validity. Pinned
+    // so the repair stays exercised in BOTH the release and the dev-profile
+    // (debug_assert) CI runs — under the old "this never happens" assert the
+    // dev profile aborted here. (The `locate` suite's bounded-plane block
+    // exercises the same fixture incidentally; this is the focused
+    // regression.)
+    let rect = PlaneRect::new(PlanePoint::new(-1.0, 0.0), PlanePoint::new(2.0, 2.0));
+    let points = uniform_in(rect, 300, 103);
+    // The plain path errors on any post-repair residual, so a successful
+    // build here means the duplicate-side defect repaired completely.
+    let diagram = compute_plane(&points, rect).expect("duplicate-side fixture must repair");
+    assert_eq!(diagram.num_cells(), 300);
+    assert_strict(&diagram, "cross_bin_duplicate_side");
+    assert_area(&diagram, "cross_bin_duplicate_side");
+}
+
+#[test]
 fn plane_with_report_surfaces_clean_validation() {
     // On a valid input the report carries an empty residual list and a
     // strictly-valid validation, and its diagram matches the plain path.
