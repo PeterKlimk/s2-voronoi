@@ -53,8 +53,19 @@ Each: problem → fix → status → priority → regime. Cross-refs at the bott
   win → **remove / default off** (also shrinks punch-1 to 2 hooks). If yes →
   **pre-gate by ring-2 size** (skip *before* gathering) so the downside is
   bounded ~neutral instead of 10×.
-- **Status**: identified; measurement pending. **Priority: HIGH** (cheap,
-  removes a sharp cliff, independent of everything else). **Regime: dense.**
+- **MEASURED (2026-06-14, `bench_run --converge`, on/off A/B at 500k)**:
+  - uniform: **−1.7%** (CI [−5.3%, +2.0%], 43/69 rounds) → *neutral*, no
+    meaningful win in the good regime.
+  - splittable: **+645%** (7.45× slower, 0/12 rounds, unanimous).
+  - mega: **>9× slower** — a *single* expand-on run hit 86 s of CPU vs the
+    baseline's 9.5 s and hadn't finished (run killed; the point was made).
+  Verdict: **never a meaningful win, catastrophic under concentration.** The
+  hot 3×3 certifies on uniform so the stage is inert there; it only ever fires
+  where it hurts. → **default off (or pre-gate by ring-2 size)**; remove the
+  punch-1 ring-2 hook. Note the bench binary already defaults it *off*, but the
+  library default is still `true` (lib.rs) — that's the gap to close.
+- **Status**: **measured — confirmed net-negative.** Next: flip the library
+  default to `false` (or density-gate). **Priority: HIGH.** **Regime: dense.**
 
 ### 2. `punch-2` — occupancy rebuild (global re-grid for *moderate* density)
 - Re-grids the whole sphere finer when concentration is real (`Σocc²/n` over

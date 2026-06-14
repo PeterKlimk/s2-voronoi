@@ -71,6 +71,7 @@ Status: `pending` until run, then record the verdict inline.
 
 | item | what | status |
 |------|------|--------|
+| expand_r2 on/off across regimes | A/B the runtime toggle via a 2nd build forcing it on | **DONE 2026-06-14**: uniform −1.7% (neutral), splittable +645% (7.45×), mega >9× (single run 86s vs 9.5s). Never a win, catastrophic dense. → flip lib default to off / density-gate. See multi-regime-perf.md item 1. |
 | LTO + 1 CGU profile | build with thin-LTO + codegen-units=1, A/B whole-profile (was inconclusive on noisy box; a win would dwarf the micro-opts) | pending |
 | MT 500ms @ 2.5M | the release-facing number; `--multi -s 2.5m`; not yet demonstrable (busy-box floor ~1.24s) | pending |
 | micro-opt catalog tail | implement + measure: top-pick-5 u8 bin scratch, fmodf purge, PolyBuffer u32 narrowing | not implemented |
