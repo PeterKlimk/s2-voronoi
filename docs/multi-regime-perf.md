@@ -59,13 +59,34 @@ Each: problem → fix → status → priority → regime. Cross-refs at the bott
   - splittable: **+645%** (7.45× slower, 0/12 rounds, unanimous).
   - mega: **>9× slower** — a *single* expand-on run hit 86 s of CPU vs the
     baseline's 9.5 s and hadn't finished (run killed; the point was made).
-  Verdict: **never a meaningful win, catastrophic under concentration.** The
-  hot 3×3 certifies on uniform so the stage is inert there; it only ever fires
-  where it hurts. → **default off (or pre-gate by ring-2 size)**; remove the
-  punch-1 ring-2 hook. Note the bench binary already defaults it *off*, but the
-  library default is still `true` (lib.rs) — that's the gap to close.
-- **Status**: **measured — confirmed net-negative.** Next: flip the library
-  default to `false` (or density-gate). **Priority: HIGH.** **Regime: dense.**
+  Verdict: **net-negative *as currently implemented*.** Even in the best
+  regime it bought ~nothing (−1.7%, within noise); it only fires where it hurts.
+- **Why it's slow (root cause, traced 2026-06-14)** — three independent flaws,
+  none fundamental:
+  1. **Scalar, not SIMD.** The band scan is a per-slot scalar `fp::dot3_f32`
+     (`cold.rs:218`) over contiguous SoA (`cell_points_{x,y,z}`) — the *exact*
+     shape Chunk0 vectorizes. It's scalar only because it was the "cold" path.
+  2. **No reuse on failure.** On cap-overflow it does `keys.clear()`
+     (`cold.rs:229`) — discards the whole scan — then the stream falls to the
+     shell-cursor, which **re-walks from the home cell** (`shells.rs:4-7,57-59`)
+     and re-scans the same neighborhood (consumer dedups). The covered cells +
+     security bound are known, so resuming past them is possible but unbuilt.
+  3. **Wrong thing bounded.** The cap limits the candidate *list*, not the
+     *slots scanned* (`cold.rs:228`) — O(occ²) band scan happens regardless.
+- **Decision (two-track):**
+  - **Stop-gap (now):** flip the lib default `packed_knn_expand_r2 → false`
+    (the bench binary already defaults off; the directed cursor is the
+    correctness fallback so off is correctness-neutral). One line, reversible,
+    stops the measured 6.5–9× bleeding. **Does not** delete the stage.
+  - **Real plan (retrial):** implement expand_r2 *properly* — SIMD band scan +
+    clean handoff that **reuses** packed work into a **grouped, SIMD cursor**
+    (see item 9) — and *then* re-measure whether expand_r2 justifies itself in
+    **any** regime. If a well-built version still never wins, *then* remove it.
+    The −1.7% uniform result suggests it may not, but that's a verdict to earn
+    under a good implementation, not under the current scalar/no-reuse one.
+- **Status**: **measured net-negative (current impl); stop-gap = default off;
+  retrial folded into item 9.** **Priority: HIGH** (stop-gap), MEDIUM (retrial).
+  **Regime: dense.**
 
 ### 2. `punch-2` — occupancy rebuild (global re-grid for *moderate* density)
 - Re-grids the whole sphere finer when concentration is real (`Σocc²/n` over
@@ -93,9 +114,12 @@ Each: problem → fix → status → priority → regime. Cross-refs at the bott
 ### 4. Directed-cursor batching — recover same-cell correlation
 - **Problem**: the cursor fallback is **per-query** — same-cell generators all
   scan the same (dense) cell independently, losing the SIMD + dedup the packed
-  group gets for the 3×3.
-- **Fix**: batch the cursor by cell (shared dot-matrix). Recovers an ~8×
-  constant; **does NOT break the quadratic** (punch-1 does).
+  group gets for the 3×3. And like expand_r2, the cursor's ring scan is
+  **scalar `fp::dot3_f32` over SoA** (`shells.rs:99`) — same vectorizable shape,
+  also never SIMD'd.
+- **Fix**: batch the cursor by cell (shared dot-matrix) **and** SIMD the ring
+  scan. Recovers an ~8× constant; **does NOT break the quadratic** (punch-1
+  does). This is a facet of the unified engine — see item 9.
 - **Status**: identified. **Priority: MEDIUM** (constant-factor; cheaper than
   punch-1 but smaller; partly subsumed by punch-1). **Regime: dense.**
 
@@ -128,6 +152,41 @@ Each: problem → fix → status → priority → regime. Cross-refs at the bott
   fundamentally different local method (treat the cap as a local 2D problem)
   might beat re-gridding. Only if punch-1 proves insufficient. **Priority:
   LOW / research.** **Regime: extreme dense.**
+
+### 9. Unified candidate engine — the synthesis (where 1/4/5 converge)
+The realization behind items 1, 4, 5: **every candidate scan in the kNN engine
+is the same "dot over contiguous SoA" primitive** — Chunk0 vectorizes it; the
+two *cold* paths (expand_r2 band `cold.rs:218`, shell-cursor ring `shells.rs:99`)
+are scalar `fp::dot3_f32`, purely by historical accident. The current design
+also keeps **two separate candidate engines** (packed = SoA batch + dot
+thresholds; cursor = cell-BFS frontier + visited stamps) bridged by the cheapest
+possible glue ("let the consumer dedup" the re-emitted points), which throws away
+packed work on every handoff.
+
+The target architecture is **one** engine with four properties, each of which is
+an item above:
+- **SIMD everywhere** — one 8-wide ring-scan primitive over SoA, used by packed
+  prep *and* the cursor (items 1, 4). Constant factor (~÷8); doesn't touch
+  asymptotics.
+- **Reusing / resume-from-bound** — don't `keys.clear()` and re-walk from ring 0
+  on failure; carry the kept candidates + security bound + covered-cell set
+  forward so the cursor *resumes* instead of restarting (item 1 flaw 2). Removes
+  duplicate coverage.
+- **Grouped** — batch a cell's queries against the shared ring they all scan
+  (item 4). Amortizes per-query overhead and enables SIMD-across-queries.
+- **Index-backed** — punch-1 per dense cell so no single scan goes O(occ²)
+  (item 3). The *only* lever that changes asymptotics.
+
+In this design **`expand_r2` is not a special stage** — it's just "the r=2 layer
+of a SIMD, grouped, resuming cursor." So the right experiment isn't "is expand_r2
+worth it today" (measured: no) but **"once the cursor is SIMD + grouped +
+resuming, does a dedicated r=2 batch still beat just letting the unified cursor
+roll to ring 2?"** — re-trial expand_r2 across *all* regimes under that
+implementation; remove it only if a good version still never wins.
+- **Status**: framing + plan (this section). Build order: SIMD the two cold
+  scans (self-contained, measurable) → resume/reuse handoff → grouped cursor →
+  punch-1 → expand_r2 retrial. **Priority: HIGH** (subsumes the dense backlog).
+  **Regime: dense (with uniform-neutral as the constraint).**
 
 ## Canonical benchmarks (so we measure all regimes, not just uniform)
 
