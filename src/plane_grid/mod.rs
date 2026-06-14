@@ -118,6 +118,59 @@ impl PlaneGrid {
         }
     }
 
+    /// Remove welded-away points and remap survivors to effective indices,
+    /// in place — the planar twin of `CubeMapGrid::compact_welded`, avoiding a
+    /// fresh grid build (the par-sort) when welds occur. `kept[orig]` says
+    /// whether original point `orig` survives (is its weld-class
+    /// representative); `original_to_effective[orig]` gives its effective
+    /// index; `n_eff` is the effective point count.
+    ///
+    /// Only the point-dependent arrays change; `res`/`walls` depend on
+    /// resolution alone. The scatter in `new` is stable by original index and
+    /// survivors keep their relative order, so the compacted grid is
+    /// bit-identical to a fresh build on the effective points at the same
+    /// resolution (pinned by a test).
+    pub(crate) fn compact_welded(
+        &mut self,
+        kept: &[bool],
+        original_to_effective: &[u32],
+        n_eff: usize,
+    ) {
+        let num_cells = self.res * self.res;
+        let mut new_point_cells = vec![0u32; n_eff];
+        let mut w = 0usize;
+        let mut read_start = 0usize;
+        for cell in 0..num_cells {
+            let read_end = self.cell_offsets[cell + 1] as usize;
+            for r in read_start..read_end {
+                let orig = self.point_indices[r] as usize;
+                if !kept[orig] {
+                    continue;
+                }
+                let eff = original_to_effective[orig];
+                self.point_indices[w] = eff;
+                self.cell_points_x[w] = self.cell_points_x[r];
+                self.cell_points_y[w] = self.cell_points_y[r];
+                new_point_cells[eff as usize] = cell as u32;
+                w += 1;
+            }
+            self.cell_offsets[cell + 1] = w as u32;
+            read_start = read_end;
+        }
+        debug_assert_eq!(w, n_eff, "compaction kept-count mismatch");
+        self.point_indices.truncate(w);
+        self.cell_points_x.truncate(w);
+        self.cell_points_y.truncate(w);
+        self.point_cells = new_point_cells;
+
+        let mut point_slots = vec![u32::MAX; n_eff];
+        for (slot, &eff) in self.point_indices.iter().enumerate() {
+            point_slots[eff as usize] = slot as u32;
+        }
+        debug_assert!(!point_slots.contains(&u32::MAX));
+        self.point_slots = point_slots;
+    }
+
     /// Create a reusable scratch for repeated queries.
     pub(crate) fn make_scratch(&self) -> PlaneGridScratch {
         PlaneGridScratch::default()

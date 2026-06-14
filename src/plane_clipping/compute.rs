@@ -228,7 +228,7 @@ fn compute_plane_built<P: PlanePointLike>(
     let t = Timer::start();
     let occupied = transform.domain.x as f64 * transform.domain.y as f64;
     let res = plane_grid_resolution(normalized.len(), occupied);
-    let grid = PlaneGrid::new(&normalized, res);
+    let mut grid = PlaneGrid::new(&normalized, res);
     tb.set_knn_build(t.elapsed());
 
     // Optimistic weld: the no-weld case (overwhelmingly common) reuses this
@@ -245,10 +245,17 @@ fn compute_plane_built<P: PlanePointLike>(
             None,
         ),
         Some(weld) => {
-            let res = plane_grid_resolution(weld.effective.len(), occupied);
-            let eff_grid = PlaneGrid::new(&weld.effective, res);
+            // Compact the existing grid in place at the same resolution rather
+            // than rebuilding (the sphere's approach): welds are too few to
+            // shift the resolution, and the compacted grid is bit-identical to
+            // a fresh build on the effective points. Skips the count+scatter.
+            let n_eff = weld.effective.len();
+            let kept: Vec<bool> = (0..normalized.len())
+                .map(|i| weld.weld_map[i] as usize == i)
+                .collect();
+            grid.compact_welded(&kept, &weld.original_to_effective, n_eff);
             (
-                compute_plane_cells(&weld.effective, &eff_grid, transform.domain, &mut tb)?,
+                compute_plane_cells(&weld.effective, &grid, transform.domain, &mut tb)?,
                 Some(weld.weld_map.clone()),
                 Some(&weld.original_to_effective),
             )
@@ -397,7 +404,7 @@ fn compute_plane_periodic_built<P: PlanePointLike>(
     // The torus is fully occupied: occupancy fraction 1 over res^2 cells.
     let t = Timer::start();
     let res = plane_grid_resolution(normalized.len(), 1.0);
-    let grid = PeriodicGrid::new(&normalized, res, px, py);
+    let mut grid = PeriodicGrid::new(&normalized, res, px, py);
     tb.set_knn_build(t.elapsed());
 
     let t = Timer::start();
@@ -412,10 +419,15 @@ fn compute_plane_periodic_built<P: PlanePointLike>(
             None,
         ),
         Some(weld) => {
-            let res = plane_grid_resolution(weld.effective.len(), 1.0);
-            let eff_grid = PeriodicGrid::new(&weld.effective, res, px, py);
+            // Compact in place at the same resolution instead of rebuilding
+            // (see the bounded path); bit-identical to a fresh effective grid.
+            let n_eff = weld.effective.len();
+            let kept: Vec<bool> = (0..normalized.len())
+                .map(|i| weld.weld_map[i] as usize == i)
+                .collect();
+            grid.compact_welded(&kept, &weld.original_to_effective, n_eff);
             (
-                compute_periodic_cells(&weld.effective, &eff_grid, &mut tb)?,
+                compute_periodic_cells(&weld.effective, &grid, &mut tb)?,
                 Some(weld.weld_map.clone()),
                 Some(&weld.original_to_effective),
             )

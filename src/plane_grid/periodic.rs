@@ -128,6 +128,50 @@ impl PeriodicGrid {
         }
     }
 
+    /// Remove welded-away points in place — the torus twin of
+    /// `PlaneGrid::compact_welded` (same fields, same bit-identical-to-rebuild
+    /// guarantee; `walls`/`px`/`py`/`res` are resolution geometry, untouched).
+    pub(crate) fn compact_welded(
+        &mut self,
+        kept: &[bool],
+        original_to_effective: &[u32],
+        n_eff: usize,
+    ) {
+        let num_cells = self.res * self.res;
+        let mut new_point_cells = vec![0u32; n_eff];
+        let mut w = 0usize;
+        let mut read_start = 0usize;
+        for cell in 0..num_cells {
+            let read_end = self.cell_offsets[cell + 1] as usize;
+            for r in read_start..read_end {
+                let orig = self.point_indices[r] as usize;
+                if !kept[orig] {
+                    continue;
+                }
+                let eff = original_to_effective[orig];
+                self.point_indices[w] = eff;
+                self.cell_points_x[w] = self.cell_points_x[r];
+                self.cell_points_y[w] = self.cell_points_y[r];
+                new_point_cells[eff as usize] = cell as u32;
+                w += 1;
+            }
+            self.cell_offsets[cell + 1] = w as u32;
+            read_start = read_end;
+        }
+        debug_assert_eq!(w, n_eff, "compaction kept-count mismatch");
+        self.point_indices.truncate(w);
+        self.cell_points_x.truncate(w);
+        self.cell_points_y.truncate(w);
+        self.point_cells = new_point_cells;
+
+        let mut point_slots = vec![u32::MAX; n_eff];
+        for (slot, &eff) in self.point_indices.iter().enumerate() {
+            point_slots[eff as usize] = slot as u32;
+        }
+        debug_assert!(!point_slots.contains(&u32::MAX));
+        self.point_slots = point_slots;
+    }
+
     #[inline]
     fn cell_of(x: f32, y: f32, res: usize, px: f32, py: f32) -> usize {
         let ix = ((x * res as f32 / px) as usize).min(res - 1);
