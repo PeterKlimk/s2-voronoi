@@ -142,9 +142,11 @@ evaluation showed a global re-grid only ever helps when the dense region is
 the majority of points (where it rescues an otherwise-infeasible build);
 for the moderate-density cases a plane port would target, OFF degrades
 gracefully and a re-grid is a net pessimization. So the plane port is only
-worth it if a real majority-concentration planar workload appears; the
-sub-index ("punch 1" local refinement) is the better general direction for
-both geometries if dense-cell cost ever becomes a real target.
+worth it if a real majority-concentration planar workload appears. The
+sub-index ("punch 1" local refinement) is SYNERGISTIC with the rebuild, not a
+replacement — it handles local hotspots and the residual over-full cells a
+global re-grid can't tame, while the rebuild handles globally-dense inputs;
+build both if dense-cell cost ever becomes a real target.
 
 ## Occupancy rebuild re-calibration — DONE (2026-06-14)
 
@@ -181,9 +183,17 @@ resolution) — this is purely a build-time change. Timing magnitudes measured
 on a noisy box; the *deterministic* occupancy crossover and the
 feasibility (finishes / times out) signal carry the conclusion.
 
-Follow-up still open: "punch 1" local sub-index for over-full cells (a local
-re-grid that never de-tunes the background) — the better general fix if dense
-clusters ever become a real workload; see the dense-cell section above.
+Follow-up still open — "punch 1", SYNERGISTIC with this rebuild (not a
+replacement): a local sub-index for over-full cells (a local re-grid that
+never de-tunes the background). The two compose along different axes — the
+rebuild gets the *global* resolution right when the bulk is dense; punch 1
+mops up the *residual* over-full cells a single global resolution can't tame,
+including the memory-capped case (e.g. mega at 1M, where even the rebuild
+can't fully fix the giant cells) and minority hotspots the rebuild now
+correctly skips. Rebuild alone fails those; punch 1 alone would sub-index
+most cells on a majority-dense input where one global re-grid is cheaper.
+Build punch 1 when dense clusters become a real workload; see the dense-cell
+section above.
 
 ## Done (2026-06, micro-opt matrix screen — paired-confirmed)
 
