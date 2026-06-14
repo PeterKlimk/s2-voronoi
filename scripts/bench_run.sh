@@ -34,6 +34,13 @@ METRIC="total"
 NO_PREPROCESS=true
 CSV=""
 EXTRA_BENCH_ARGS=()
+# Convergence mode: run paired-interleaved rounds until the per-round-ratio CI
+# settles (decision-grade on a NOISY box for effects above the ~layout floor),
+# then stop. First commit listed = baseline; others reported relative to it.
+CONVERGE=false
+MAX_ROUNDS=160
+MIN_ROUNDS=12
+RESOLUTION=0.01    # ± band (1%) treated as "neutral"; ~the code-layout floor
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -43,6 +50,10 @@ while [[ $# -gt 0 ]]; do
         --seeds|--seed) SEEDS="$2"; shift 2 ;;
         --dist-param) DIST_PARAM="$2"; shift 2 ;;
         --csv) CSV="$2"; shift 2 ;;
+        --converge) CONVERGE=true; shift ;;
+        --max-rounds) MAX_ROUNDS="$2"; shift 2 ;;
+        --min-rounds) MIN_ROUNDS="$2"; shift 2 ;;
+        --resolution) RESOLUTION="$2"; shift 2 ;;
         -c|--cooldown) COOLDOWN="$2"; shift 2 ;;
         -p|--pin) CPU_PIN="$2"; shift 2 ;;
         --no-pin) CPU_PIN=""; shift ;;
@@ -62,6 +73,12 @@ Usage: bench_run.sh [opts] [-- bench_voronoi_args...]
       --seeds "..."   Seed(s) to sweep (default: bench_voronoi default, one run)
       --dist-param X  Distribution shape knob (gradient k / mega fraction)
       --csv FILE      Write a structured CSV across the whole matrix
+      --converge      Run paired-interleaved rounds until the per-round-ratio
+                      95% CI settles, then stop (decision-grade on a noisy box
+                      for effects above ~--resolution). First commit = baseline.
+      --max-rounds N  Cap for --converge (default 160)
+      --min-rounds N  Min rounds before checking convergence (default 12)
+      --resolution R  Neutral band / target resolution (default 0.01 = 1%)
   -c, --cooldown N    Seconds between rounds (default: 5)
   -p, --pin CORE      Pin to CPU core (default: 0); --no-pin to disable
   -1, --single        Single-threaded (default); --multi to allow rayon
@@ -123,8 +140,40 @@ calc_stats() {
     sort -n "$file" | awk '{a[NR]=$1;s+=$1} END{n=NR;med=(n%2==1)?a[int(n/2)+1]:(a[n/2]+a[n/2+1])/2;printf "%.1f %.1f %.1f %.1f",a[1],med,s/n,a[n]}'
 }
 
+# Paired verdict of `target` vs `baseline` over rounds (paired by line number,
+# so common-mode noise cancels). Prints: VERDICT geomean ci_lo ci_hi k n
+# VERDICT in {FASTER,SLOWER,NEUTRAL,UNRESOLVED,INSUF}. The CI is on the
+# log-ratio (geometric); NEUTRAL = CI fully inside [1-res,1+res]; FASTER =
+# CI fully below 1-res (target faster than baseline); SLOWER = fully above.
+paired_verdict() {
+    local baseline="$1" target="$2" res="$3"
+    awk -v res="$res" '
+        NR==FNR { b[FNR]=$1; nb=FNR; next }
+        { if (FNR<=nb && b[FNR]>0 && $1>0) { r=$1/b[FNR]; lr=log(r); s+=lr; s2+=lr*lr; n++; if($1<b[FNR]) k++ } }
+        END {
+            if (n<3) { printf "INSUF 0 0 0 0 %d", n+0; exit }
+            m=s/n; var=(s2-n*m*m)/(n-1); if(var<0)var=0; se=sqrt(var/n);
+            gm=exp(m); lo=exp(m-1.96*se); hi=exp(m+1.96*se);
+            # Direction by the paired SIGN test (robust to the heavy-tailed
+            # per-round bursts on a busy box that inflate the parametric CI);
+            # magnitude by the geometric mean. k = rounds target beat baseline.
+            z=(2*k-n)/sqrt(n); sig=(z*z>3.8416);   # |z|>1.96 ~ p<0.05, two-sided
+            v="UNRESOLVED";
+            if (sig && gm < 1-res) v="FASTER";
+            else if (sig && gm > 1+res) v="SLOWER";
+            else if ((lo>=1-res && hi<=1+res) || (sig && gm>=1-res && gm<=1+res)) v="NEUTRAL";
+            printf "%s %.4f %.4f %.4f %d %d", v, gm, lo, hi, k, n;
+        }' "$baseline" "$target"
+}
+
 SEED_LIST="${SEEDS:-_}"   # "_" sentinel = no explicit seed
-[[ -n "$CSV" ]] && echo "commit,size,dist,seed,metric,min_ms,median_ms,avg_ms,max_ms,spread_pct" > "$CSV"
+if [[ -n "$CSV" ]]; then
+    if $CONVERGE; then
+        echo "commit,size,dist,seed,metric,verdict,geomean,ci_lo,ci_hi,k_faster,n,rounds" > "$CSV"
+    else
+        echo "commit,size,dist,seed,metric,min_ms,median_ms,avg_ms,max_ms,spread_pct" > "$CSV"
+    fi
+fi
 
 echo "=== Interleaved benchmark matrix ==="
 echo "Versions: $NUM_VERSIONS | rounds=$ROUNDS metric=$METRIC ${SINGLE_THREAD:+ST}${CPU_PIN:+ pin=$CPU_PIN}"
@@ -143,7 +192,9 @@ run_cell() { # size dist seed
     echo ""; echo "### cell: size=$size dist=$dist seed=${seed/_/default} ###"
     for idx in "${INDICES[@]}"; do > "$TMP_DIR/times_$idx.txt"; done
 
-    for round in $(seq 1 "$ROUNDS"); do
+    local cap="$ROUNDS"; $CONVERGE && cap="$MAX_ROUNDS"
+    local done_rounds=0
+    for round in $(seq 1 "$cap"); do
         local start=$(( (round - 1) % NUM_VERSIONS ))
         $TASKSET "$TMP_DIR/bench_${INDICES[$start]}" "${bench_args[@]}" >/dev/null 2>&1 || true  # warmup
         for offset in $(seq 0 $((NUM_VERSIONS - 1))); do
@@ -155,8 +206,35 @@ run_cell() { # size dist seed
             fi
             echo "$ms" >> "$TMP_DIR/times_$idx.txt"
         done
-        [[ $round -lt $ROUNDS ]] && sleep "$COOLDOWN"
+        done_rounds=$round
+        # Convergence: stop once every non-baseline pair's CI has settled.
+        if $CONVERGE && (( round >= MIN_ROUNDS )); then
+            local all_resolved=true j
+            for j in "${!INDICES[@]}"; do
+                (( j == 0 )) && continue
+                local vv; vv=$(paired_verdict "$TMP_DIR/times_${INDICES[0]}.txt" "$TMP_DIR/times_${INDICES[$j]}.txt" "$RESOLUTION" | awk '{print $1}')
+                [[ "$vv" == "UNRESOLVED" || "$vv" == "INSUF" ]] && all_resolved=false
+            done
+            $all_resolved && break
+        fi
+        [[ $round -lt $cap ]] && sleep "$COOLDOWN"
     done
+
+    if $CONVERGE; then
+        local conv="converged"; (( done_rounds >= MAX_ROUNDS )) && conv="HIT MAX (unresolved at ${RESOLUTION} resolution)"
+        echo "  baseline: ${LABELS[0]}   rounds=$done_rounds ($conv)"
+        for i in "${!INDICES[@]}"; do
+            (( i == 0 )) && continue
+            local v gm lo hi k n
+            read -r v gm lo hi k n <<< "$(paired_verdict "$TMP_DIR/times_${INDICES[0]}.txt" "$TMP_DIR/times_${INDICES[$i]}.txt" "$RESOLUTION")"
+            local pct ci
+            pct=$(awk -v g="$gm" 'BEGIN{printf "%+.1f%%",(g-1)*100}')
+            ci=$(awk -v a="$lo" -v b="$hi" 'BEGIN{printf "[%+.1f%%, %+.1f%%]",(a-1)*100,(b-1)*100}')
+            printf "    %-26.26s %-11s %7s vs base  CI %-20s (%d/%d faster)\n" "${LABELS[$i]}" "$v" "$pct" "$ci" "$k" "$n"
+            [[ -n "$CSV" ]] && echo "\"${LABELS[$i]}\",$size,$dist,${seed/_/default},$METRIC,$v,$gm,$lo,$hi,$k,$n,$done_rounds" >> "$CSV"
+        done
+        return
+    fi
 
     # Per-commit stats + verdict for this cell.
     local best_median=999999999 best_idx=""
