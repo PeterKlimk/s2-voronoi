@@ -80,17 +80,49 @@ identically to one homed in the cell. **No cell-local 2D frame, no
 cross-face/wraparound handling.** This is what makes a "parallel structure,
 cube grid untouched" approach clean.
 
-### Structure options (mostly orthogonal to the integration below)
+### Structure options (a spectrum; mostly orthogonal to the integration below)
 
-- **Intra-cell axis-sort** — permute the dense cell's points within their
-  existing SoA range along one axis; scan binary-searches the axis slab.
-  Least invasive (SoA/SIMD preserved), but prunes one axis only.
-- **Per-cell mini-grid** — small bucket grid; fuller pruning, side storage.
-- **Per-cell 3D kd-tree** — full pruning, best-first (priority-queue)
-  traversal yields points in increasing distance — which is exactly the lazy
-  stream the consumer wants (below). Best fit for the *extreme residual*
-  cells punch 1 targets (post-rebuild, capped, very dense), where full
-  pruning beats a one-axis slab. Recommended starting point.
+Three candidates were considered, ordered by pruning power and invasiveness.
+The choice is largely independent of the producer/consumer integration below —
+all three answer "dense points near q"; they differ in how hard they prune and
+how much they disturb the flat SoA layout.
+
+**1. Intra-cell axis-sort** *(least invasive — the cheapest viable form).*
+At build time, permute an over-full cell's points *within their existing SoA
+range* along the cell's dominant spread axis. The scan then binary-searches
+the axis band `[q−r, q+r]` and only touches that slab.
+- Pros: **no side structure at all** (just a permutation of the existing
+  arrays); **preserves SoA contiguity so the 8-wide SIMD scan still works** on
+  the slab; trivial, cheap build (sort only the rare dense cells).
+- Cons: **prunes one axis only** — points inside the slab but far on the other
+  two axes are still scanned, so it's a slab not a ball. A partial win: good
+  for moderately dense cells, weakening as concentration grows (the slab holds
+  ~occ^{2/3} points for an isotropic cluster).
+- When: try this first; if it's "good enough" for the realistic residual
+  cells it avoids all the side-structure machinery.
+
+**2. Per-cell mini-grid** *(fuller pruning, side storage).*
+Give an over-full cell its own small bucket grid (2D in the cell's tangent
+plane, or 3D).
+- Pros: prunes all axes (closer to O(1) per query); conceptually a *local
+  re-grid* of just that cell — the local analogue of the global rebuild.
+- Cons: needs side storage; **breaks SoA contiguity for those cells** (loses
+  SIMD there — acceptable, since those are exactly the cells where the linear
+  scan was the problem); another structure to build/validate.
+
+**3. Per-cell 3D kd-tree** *(full pruning + free lazy stream).*
+- Pros: full pruning, and best-first (priority-queue) traversal yields points
+  **in increasing distance** — which is exactly the lazy stream the consumer
+  wants (integration model B below), so structure and integration align. Best
+  fit for the *extreme residual* cells punch 1 targets (post-rebuild, capped,
+  very dense), where full pruning beats a one-axis slab.
+- Cons: most machinery (per-cell tree build + scalar best-first traversal);
+  heaviest of the three.
+
+Recommendation: start with **axis-sort** (cheapest, SIMD-kept) and measure;
+escalate to the **kd-tree** for the extreme post-rebuild capped cells if the
+slab pruning proves insufficient. The mini-grid is the middle point if the
+kd-tree's per-query traversal overhead turns out to dominate.
 
 ## The real work: producer/consumer integration
 
