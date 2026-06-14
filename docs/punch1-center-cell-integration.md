@@ -1,0 +1,82 @@
+# punch-1 center-cell band-prune — integration design (the "hard part")
+
+Status (2026-06-15): **design locked, feasible + certificate-safe; not yet
+implemented.** On `agent/punch1-axissort` (DenseCellIndex + `band_slots`
+scaffold validated). The pathology and target are measured — see memory
+`dense-cost-attribution` and the `cap` bench dist.
+
+## Target (measured)
+
+The `cap` dist (everything in one tight cell) is O(occ²): at 25k, ~106s;
+50k+ doesn't finish; `grid_max_occ=24500` (the occupancy rebuild *cannot* split
+a cap tighter than a max-res cell). Phase split (cap 10k): `packed_knn` is 5309
+of 5722 ms of `cell_construction`, of which **`packed_select_partition` = 4480ms
+(78%)** + `center_pass` = 767ms. The clip is a non-issue (278ms).
+
+Root: `prepare_group_directed` (scratch/prepare.rs) scans the **whole center
+cell for every query in the group** (center_len × num_queries dots, ~line 262),
+building per-query candidate lists ~occ long, then `select_nth_unstable` over
+~occ (emit.rs:185) — O(occ²) regionally.
+
+## Why a naive band-prune doesn't work
+
+The candidate gather must be **complete to the query's security threshold**
+(everything with `dot > security` found, else the kNN/Voronoi is wrong). But
+`security_thresholds[qi]` is the dot to the **3×3 boundary** (prepare.rs:150) —
+for a dense cell the *entire cell* is inside it, so any band that covers the
+security radius = the whole cell. No prune.
+
+## The safe + winning design
+
+Exploit `band_slots`' **superset property** (validated): `band_slots(cell, q, r)`
+returns a superset of every point within Euclidean `r` of `q`. So if we process
+that band and keep points with `dot > cos_angle(r)`, we have **all** points
+within `r` — and `cos_angle(r)` is then a *sound* completeness bound.
+
+For a **dense** center cell (`center_len > DENSE_CELL_THRESHOLD` &&
+`dense_index.has(cell)`), per query `qi`:
+1. Pick `r` sized for ~a few × `chunk0_size` nearest, from local density:
+   `ρ ≈ β·sqrt(T / center_len)` (β = cell cap half-angle from `cell_cap_cos`,
+   T = target count), `r = 2·sin(ρ/2)`.
+2. `band_slots(cell, q_qi, r, &mut band)` → candidate slots (≈ occ^(2/3), not occ).
+3. For each band slot: dot; **apply the directed intra-bin filter** (the
+   `qi >= i` self/ordering rule, prepare.rs:282 — required for the stitching
+   contract); split into chunk0 (`dot > hi`) / tail (`security < dot ≤ hi`).
+4. Set this query's effective completeness bound to `max(security_qi,
+   cos_angle(r))` — we have certified completeness only to `r`. The chunk0
+   `unseen_bound` / tail handling already carry this downstream.
+5. **Grow / fallback**: if the cell builder consumes the whole band without
+   closing (needs beyond `r`), it must get the rest. Two options:
+   (a) lazy re-band at `2r` (fits the existing chunk0→tail two-stage as a third
+   "grow" stage), or (b) fall through to the shell-takeover cursor, which scans
+   the full cell once (O(occ), correct, slow — acceptable if rare). Start with
+   (b) for simplicity + safety; measure how often it triggers; add (a) only if
+   the fallback is hot.
+
+The fast path (non-dense cells) is the existing SIMD batch, untouched →
+**uniform pays nothing** (gated on `center_len > DENSE_CELL_THRESHOLD`).
+
+## Soundness
+
+- Completeness rests on the `band_slots` superset property (no point within `r`
+  is missed) + the `cos_angle(r)` bound (downstream knows coverage stops at r) +
+  the existing cursor/tail for beyond-r. The **NN-contract suite** is the gate;
+  add a debug differential (dense path vs the full-cell scan: same neighbor set
+  within `r`) if practical.
+- The directed filter must be replicated exactly, or the stitching/dedup
+  contract breaks (one-sided edges). This is the subtlest part.
+
+## Risk
+
+This is the most correctness-critical path in the engine (kNN completeness). A
+subtle error silently corrupts diagrams. Implement carefully, NN-contract-gated,
+with the dense-vs-full differential — not as a rushed change.
+
+## Validation plan
+
+- NN-contract suite (all variants) green.
+- `cap` dist: O(occ²) → ~O(occ^(5/3)); 25k 106s → target a few s; 50k/100k
+  finish; via `bench_voronoi --dist cap`.
+- uniform 500k/2M `--converge`: NEUTRAL (gate never engages).
+- splittable/mega: neutral-to-better (their cells are rebuild-capped, mostly
+  below the gate; no regression).
