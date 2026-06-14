@@ -67,15 +67,20 @@ few to shift it).
 
 Remaining (planar side):
 
-- Detect during the grid's scatter pass (compare each point against the
-  already-scattered prefix of its cell) instead of a separate scan — note
-  the sphere's parallel scatter writes cell segments concurrently, so for
-  the sphere the post-build per-cell scan IS the parallel-friendly form;
-  this refinement only fits the planar sequential scatter.
-- Port the in-place CSR compaction to `PlaneGrid`/`PeriodicGrid` (they
-  still rebuild on welds, and the rebuild path is the norm — uniform f32
-  data contains sub-radius pairs at production scales: ~3 at 1M, ~15 at
-  2M, birthday effect).
+- ~~Port the in-place CSR compaction to `PlaneGrid`/`PeriodicGrid`~~ **DONE
+  2026-06-14 (`c3d455b`)**: both paths now `compact_welded` in place instead
+  of rebuilding on welds; bit-identical, suite-pinned.
+- Detect during the grid's scatter pass instead of a separate scan —
+  **REJECTED ON ANALYSIS 2026-06-14** (do not retry without new framing).
+  Three problems specific to the plane: (1) the scatter runs in point-index
+  order, so neighbor cells aren't populated yet — only the *within-cell* half
+  can fold in, and the **cross-cell wall-band pairs still need a separate
+  pass**; (2) `collect_pairs_within` is already **parallel** (row bands) while
+  the scatter is sequential, so fusing loses parallelism; (3) it does the same
+  O(target·n) within-cell comparisons either way — the only saving is one
+  cache-warm re-read. Same work, minus parallelism, still needs the cross-cell
+  pass → likely a wash or regression. The detector is already in good shape;
+  the compaction above was the real win in this path.
 
 ### HalfPlane epsilon without the per-clip sqrt — DONE (2026-06-14, free after the strict flip)
 
