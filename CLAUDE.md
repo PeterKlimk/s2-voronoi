@@ -36,9 +36,15 @@ cargo run --release --features tools --bin bench_voronoi -- 100k 500k 1m
 # Detailed sub-phase timing
 S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 500k --no-preprocess
 
-# Inter-commit perf comparisons
+# Inter-commit perf comparisons (interleaved, paired, single-thread)
 ./scripts/bench_build.sh --chain 6
 ./scripts/bench_run.sh -s 500k -r 20 -m total
+
+# Distribution + size matrix with CSV (bench_voronoi --dist: fib uniform
+# clustered bimodal gradient outlier splittable mega; --dist-param tunes
+# gradient k / mega fraction). Clustered inputs need explicit dists — uniform
+# alone misses density-contrast regressions (see docs/perf-testing-timeline.md).
+./scripts/bench_run.sh -s "500k 2m" -d "uniform mega" --seeds "1 2 3" --csv /tmp/bench.csv
 ```
 
 ## Environment Knobs

@@ -27,6 +27,9 @@ coordination happens only during vertex deduplication.
 
 - `cargo run --release --features tools --bin bench_voronoi -- 100k 500k 1m`
 - `cargo run --release --features tools,timing --bin bench_voronoi -- 500k --no-preprocess`
+- Distribution stress: `--dist {fib|uniform|clustered|bimodal|gradient|outlier|splittable|mega}`
+  (`--dist-param` tunes gradient steepness k / mega cap fraction). Density-contrast
+  distributions exercise the occupancy path that uniform input never touches.
 - `cargo run --release --features tools,qhull --bin bench_voronoi -- 50k --validate`
 - `cargo run --release --features tools --bin bench_plane -- 100k 1m 2m -n 6 --validate`
 - `cargo run --release --features bench_voronoice --bin bench_plane -- 1m 2m -n 6 --voronoice`
@@ -52,7 +55,16 @@ For inter-commit comparisons:
 - `./scripts/bench_build.sh --chain 6`
 - `./scripts/bench_run.sh -s 500k -r 20 -m total`
 
-The scripts default to pinned + single-threaded runs where possible.
+`bench_run.sh` sweeps a matrix of sizes x distributions x seeds and can emit a
+structured CSV (`commit,size,dist,seed,metric,min/median/avg/max,spread`):
+
+- `./scripts/bench_run.sh -s "500k 2m" -d "uniform mega" --seeds "1 2 3" --csv out.csv`
+
+Each cell runs the commits interleaved with rotating start order (the paired
+protocol). The scripts default to pinned + single-threaded runs. The box is
+noisy — per-binary code-layout offsets alone are ~1-2% at 500k ST, so treat
+sub-1% deltas as noise (see docs/micro-optimization-matrix.md). For *which*
+commits to A/B and what to skip, see docs/perf-testing-timeline.md.
 
 ## Policy profiling
 

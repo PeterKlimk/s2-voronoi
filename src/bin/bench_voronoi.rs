@@ -182,10 +182,19 @@ struct Args {
     #[arg(long)]
     lloyd: bool,
 
-    /// Point distribution: fib (default), clustered (caps mixture with
-    /// uniform background), bimodal (dense cap + sparse background).
+    /// Point distribution. Well-distributed: fib (default), uniform (true
+    /// random). Density-contrast: clustered (caps mixture), bimodal (one dense
+    /// cap over a sparse bg), gradient (smooth density ~exp(k·z)), outlier
+    /// (uniform plus one tiny pile), splittable (many cell-scale clusters),
+    /// mega (one cap holding a fraction of all points). See --dist-param.
     #[arg(long, default_value = "fib")]
     dist: String,
+
+    /// Distribution shape knob, meaning depends on --dist: gradient = k
+    /// (steepness, default 4); mega = fraction in the cap (default 0.8);
+    /// others ignore it. 0 = use the distribution's default.
+    #[arg(long, default_value_t = 0.0)]
+    dist_param: f64,
 
     /// Compare against convex hull ground truth (slow, max 100k)
     #[arg(long)]
@@ -204,11 +213,16 @@ struct Args {
     repeat: usize,
 }
 
-fn generate_points(n: usize, seed: u64, lloyd: bool, dist: &str) -> Vec<Vec3> {
+fn generate_points(n: usize, seed: u64, lloyd: bool, dist: &str, param: f64) -> Vec<Vec3> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     match dist {
+        "uniform" => return (0..n).map(|_| random_unit(&mut rng)).collect(),
         "clustered" => return clustered_points(n, &mut rng),
         "bimodal" => return bimodal_points(n, &mut rng),
+        "gradient" => return gradient_points(n, param, &mut rng),
+        "outlier" => return outlier_points(n, &mut rng),
+        "splittable" => return splittable_points(n, &mut rng),
+        "mega" => return mega_points(n, param, &mut rng),
         _ => {}
     }
     let jitter_scale = if lloyd { 0.1 } else { 0.25 };
@@ -284,6 +298,61 @@ fn bimodal_points<R: Rng>(n: usize, rng: &mut R) -> Vec<Vec3> {
             }
         })
         .collect()
+}
+
+/// Smooth density gradient: weight ~ exp(k·z), denser toward +z. The
+/// realistic "one region wants high density, another low" case — no discrete
+/// cluster. `k` = param (default 4); pole/anti-pole density ratio ~ exp(2k).
+fn gradient_points<R: Rng>(n: usize, param: f64, rng: &mut R) -> Vec<Vec3> {
+    let k = if param > 0.0 { param as f32 } else { 4.0 };
+    let wmax = k.exp();
+    let mut pts: Vec<Vec3> = Vec::with_capacity(n);
+    while pts.len() < n {
+        let z = rng.gen_range(-1.0f32..1.0);
+        if rng.gen_range(0.0f32..wmax) < (k * z).exp() {
+            let theta = rng.gen_range(0.0..std::f32::consts::TAU);
+            let r = (1.0 - z * z).sqrt();
+            pts.push(Vec3::new(r * theta.cos(), r * theta.sin(), z));
+        }
+    }
+    pts
+}
+
+/// Uniform background plus one tiny sub-cell pile (~500 points in a 0.0025 rad
+/// cap): the "one cell over by chance / local pile" case. A spatial grid can't
+/// split a sub-cell pile, so it stresses the *detection*, not the fix.
+fn outlier_points<R: Rng>(n: usize, rng: &mut R) -> Vec<Vec3> {
+    let pile = 500.min(n / 2);
+    let center = Vec3::new(0.3, 0.4, 0.866).normalize();
+    let mut pts: Vec<Vec3> = (0..n - pile).map(|_| random_unit(rng)).collect();
+    pts.extend((0..pile).map(|_| cap_point(center, 0.0025, rng)));
+    pts
+}
+
+/// Many (40) cell-scale clusters (~0.03 rad, ~8k points each) on a uniform
+/// background: dense enough to exceed per-cell targets but larger than a grid
+/// cell, so a finer grid *can* subdivide them. The minority-but-spread case.
+fn splittable_points<R: Rng>(n: usize, rng: &mut R) -> Vec<Vec3> {
+    let k = 40usize;
+    let per = 8000.min(n / (2 * k));
+    let mut pts: Vec<Vec3> = (0..n - per * k).map(|_| random_unit(rng)).collect();
+    for _ in 0..k {
+        let c = random_unit(rng);
+        pts.extend((0..per).map(|_| cap_point(c, 0.03, rng)));
+    }
+    pts
+}
+
+/// One 0.05 rad cap holding a `param` fraction (default 0.8) of all points,
+/// rest uniform: extreme single concentration. The majority-concentration
+/// case where a global re-grid is essential (the flat scan is O(occ²)).
+fn mega_points<R: Rng>(n: usize, param: f64, rng: &mut R) -> Vec<Vec3> {
+    let frac = if param > 0.0 { param } else { 0.8 };
+    let bulk = ((n as f64) * frac) as usize;
+    let center = Vec3::new(0.0, 0.0, 1.0);
+    let mut pts: Vec<Vec3> = (0..n - bulk).map(|_| random_unit(rng)).collect();
+    pts.extend((0..bulk).map(|_| cap_point(center, 0.05, rng)));
+    pts
 }
 
 fn format_rate(count: usize, ms: f64) -> String {
@@ -455,7 +524,7 @@ fn main() {
         println!("{}", "=".repeat(60));
 
         let t_gen = Instant::now();
-        let points = generate_points(*n, args.seed, args.lloyd, &args.dist);
+        let points = generate_points(*n, args.seed, args.lloyd, &args.dist, args.dist_param);
         let unit_points: Vec<UnitVec3> = points
             .iter()
             .map(|p| UnitVec3::new(p.x, p.y, p.z))

@@ -6,16 +6,21 @@ release runtime. Built from the git log of the 2026-06-14 session.
 
 ## How to use
 
-Paired, interleaved, single-thread (the established protocol):
+Paired, interleaved, single-thread (the established protocol). `bench_run.sh`
+now sweeps sizes x distributions x seeds and emits CSV:
 ```
 ./scripts/bench_build.sh --chain <n>     # build the commit chain
-./scripts/bench_run.sh -s 500k -r 20 -m total
-./scripts/bench_run.sh -s 2m   -r 12 -m total
+# uniform sweep (the micro-opt + strict anchors):
+./scripts/bench_run.sh -s "500k 2m" -d uniform --seeds "1 2 3" --csv /tmp/uni.csv
+# occupancy anchor MUST include density-contrast dists — uniform misses it:
+./scripts/bench_run.sh -s "500k 1m" -d "uniform splittable mega" --seeds "1 2" --csv /tmp/occ.csv
+./scripts/bench_run.sh -s 300k -d mega --dist-param 0.4 --csv /tmp/mega.csv
 ```
 Box is noisy — use order-rotated paired medians; treat sub-1% deltas as noise
 (per the micro-opt matrix finding, per-binary code-layout offsets alone are
-±1-2% at 500k ST). For the occupancy anchor, also bench a **clustered** input,
-not just uniform.
+±1-2% at 500k ST). The bench tool now has the full distribution set
+(`fib uniform clustered bimodal gradient outlier splittable mega`,
+`--dist-param`) — the occupancy anchor's win only shows on the clustered dists.
 
 ## Already characterized (do NOT re-test)
 

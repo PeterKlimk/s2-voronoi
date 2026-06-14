@@ -1,26 +1,48 @@
 #!/bin/bash
 # Run interleaved benchmarks for binaries built by `bench_build.sh`.
-# Defaults favor reproducibility (single-threaded + optional CPU pinning).
+#
+# Sweeps a matrix of sizes x distributions x seeds. For each cell it runs the
+# commits interleaved with rotating start order (the paired protocol that
+# cancels slow-drift), and reports per-commit median/spread plus a relative
+# verdict. Optionally emits a structured CSV across the whole matrix.
+#
+# Defaults favor reproducibility (single-threaded + CPU pinning). The box is
+# noisy: per-binary code-layout offsets alone are ~1-2% at 500k ST (see
+# docs/micro-optimization-matrix.md), so treat sub-1% deltas as noise and use
+# a control commit when a result is close.
+#
+# Examples:
+#   ./scripts/bench_run.sh -s 500k -r 20 -m total
+#   ./scripts/bench_run.sh -s "500k 2m" -d "uniform mega" --seeds "1 2 3" --csv /tmp/bench.csv
+#   ./scripts/bench_run.sh -s 1m -d mega --dist-param 0.4
 
 set -euo pipefail
 
 TMP_DIR="/tmp/bench_compare"
 MANIFEST="$TMP_DIR/manifest.txt"
 
-# Defaults.
+# Defaults (single values are back-compatible; space-separated lists sweep).
 ROUNDS=5
-SIZE="100k"
+SIZES="100k"
+DISTS="fib"
+SEEDS=""           # empty => bench_voronoi's default seed (single run)
+DIST_PARAM=""
 COOLDOWN=5
 CPU_PIN="0"
 SINGLE_THREAD=true
 METRIC="total"
 NO_PREPROCESS=true
+CSV=""
 EXTRA_BENCH_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         -r|--rounds) ROUNDS="$2"; shift 2 ;;
-        -s|--size) SIZE="$2"; shift 2 ;;
+        -s|--size|--sizes) SIZES="$2"; shift 2 ;;
+        -d|--dist|--dists) DISTS="$2"; shift 2 ;;
+        --seeds|--seed) SEEDS="$2"; shift 2 ;;
+        --dist-param) DIST_PARAM="$2"; shift 2 ;;
+        --csv) CSV="$2"; shift 2 ;;
         -c|--cooldown) COOLDOWN="$2"; shift 2 ;;
         -p|--pin) CPU_PIN="$2"; shift 2 ;;
         --no-pin) CPU_PIN=""; shift ;;
@@ -29,299 +51,145 @@ while [[ $# -gt 0 ]]; do
         -m|--metric) METRIC="$2"; shift 2 ;;
         --no-preprocess) NO_PREPROCESS=true; shift ;;
         --preprocess) NO_PREPROCESS=false; shift ;;
-        --)
-            shift
-            EXTRA_BENCH_ARGS+=("$@")
-            break
-            ;;
+        --) shift; EXTRA_BENCH_ARGS+=("$@"); break ;;
         -h|--help)
-            echo "Usage: $0 [-r rounds] [-s size] [-c cooldown] [-p cpu] [--no-pin] [--multi] [-m metric] [-- bench_voronoi_args...]"
-            echo ""
-            echo "Options:"
-            echo "  -r, --rounds    Number of rounds (default: 5)"
-            echo "  -s, --size      Benchmark size (default: 100k)"
-            echo "  -c, --cooldown  Seconds between rounds (default: 5)"
-            echo "  -p, --pin       Pin to CPU core (default: 0)"
-            echo "  --no-pin        Disable CPU pinning"
-            echo "  -1, --single    Force single-threaded (default)"
-            echo "  --multi         Allow multi-threaded"
-            echo "  -m, --metric    Metric to record: total, timing_total, preprocess, knn_build, cell_construction, dedup, edge_reconcile, assemble (default: total)"
-            echo "  --no-preprocess Pass --no-preprocess to bench_voronoi (default)"
-            echo "  --preprocess    Don't pass --no-preprocess"
-            echo "  --              Forward remaining args directly to bench_voronoi"
-            exit 0
-            ;;
+            cat <<'EOF'
+Usage: bench_run.sh [opts] [-- bench_voronoi_args...]
+  -r, --rounds N      Rounds per cell (default: 5)
+  -s, --sizes "..."   Size(s), space-separated to sweep (default: 100k)
+  -d, --dists "..."   Distribution(s) to sweep: fib uniform clustered bimodal
+                      gradient outlier splittable mega (default: fib)
+      --seeds "..."   Seed(s) to sweep (default: bench_voronoi default, one run)
+      --dist-param X  Distribution shape knob (gradient k / mega fraction)
+      --csv FILE      Write a structured CSV across the whole matrix
+  -c, --cooldown N    Seconds between rounds (default: 5)
+  -p, --pin CORE      Pin to CPU core (default: 0); --no-pin to disable
+  -1, --single        Single-threaded (default); --multi to allow rayon
+  -m, --metric M      total|timing_total|preprocess|knn_build|cell_construction|
+                      dedup|edge_reconcile|assemble (default: total)
+      --no-preprocess Pass --no-preprocess (default); --preprocess to disable
+      --              Forward remaining args to bench_voronoi
+EOF
+            exit 0 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
 
-# Check manifest exists
-if [[ ! -f "$MANIFEST" ]]; then
-    echo "Error: $MANIFEST not found"
-    echo "Run ./scripts/bench_build.sh first"
-    exit 1
-fi
+[[ -f "$MANIFEST" ]] || { echo "Error: $MANIFEST not found; run bench_build.sh first"; exit 1; }
 
-# Read manifest into arrays
-INDICES=()
-LABELS=()
+INDICES=(); LABELS=()
 while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^# ]] && continue
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
     IFS=: read -r idx label <<< "$line"
-    INDICES+=("$idx")
-    LABELS+=("$label")
+    INDICES+=("$idx"); LABELS+=("$label")
 done < "$MANIFEST"
-
 NUM_VERSIONS=${#INDICES[@]}
-if [[ $NUM_VERSIONS -eq 0 ]]; then
-    echo "Error: No versions found in manifest"
-    exit 1
-fi
-
-# Check binaries exist
+[[ $NUM_VERSIONS -eq 0 ]] && { echo "Error: no versions in manifest"; exit 1; }
 for idx in "${INDICES[@]}"; do
-    if [[ ! -x "$TMP_DIR/bench_$idx" ]]; then
-        echo "Error: $TMP_DIR/bench_$idx not found"
-        echo "Run ./scripts/bench_build.sh first"
-        exit 1
-    fi
+    [[ -x "$TMP_DIR/bench_$idx" ]] || { echo "Error: $TMP_DIR/bench_$idx missing; rebuild"; exit 1; }
 done
 
-# Build taskset prefix if pinning is requested.
 TASKSET=""
 if [[ -n "$CPU_PIN" ]]; then
-    if command -v taskset &> /dev/null; then
-        TASKSET="taskset -c $CPU_PIN"
-    else
-        echo "Warning: taskset not found, running without CPU pinning"
-    fi
+    command -v taskset &>/dev/null && TASKSET="taskset -c $CPU_PIN" \
+        || echo "Warning: taskset not found, no CPU pinning"
 fi
-
-# Configure single-threaded mode.
-if $SINGLE_THREAD; then
-    export RAYON_NUM_THREADS=1
-fi
-
-bench_args=("$SIZE")
-if $NO_PREPROCESS; then
-    bench_args+=("--no-preprocess")
-fi
-bench_args+=("${EXTRA_BENCH_ARGS[@]}")
+$SINGLE_THREAD && export RAYON_NUM_THREADS=1
 
 extract_metric_ms() {
-    local output="$1"
-    local metric="$2"
-    local line=""
-
-    # Prefer machine-readable timing if present.
-    # Only applies to timing-derived metrics (not "total", which comes from the bench output).
+    local output="$1" metric="$2" line=""
     if [[ "$metric" != "total" ]]; then
-        local kv
-        kv="$(echo "$output" | grep -m1 -E "^TIMING_KV " || true)"
+        local kv; kv="$(echo "$output" | grep -m1 -E "^TIMING_KV " || true)"
         if [[ -n "$kv" ]]; then
-            local key
-            if [[ "$metric" == "timing_total" ]]; then
-                key="total_ms"
-            else
-                key="${metric}_ms"
-            fi
-            local val=""
-            if val="$(echo "$kv" | awk -v k="${key}=" '{
-                    for (i=1; i<=NF; i++) {
-                        if (index($i, k) == 1) {
-                            v = substr($i, length(k)+1);
-                            print v;
-                            exit;
-                        }
-                    }
-                    exit 1
-                }')"; then
-                if [[ -n "$val" ]]; then
-                    echo "$val"
-                    return 0
-                fi
+            local key; [[ "$metric" == "timing_total" ]] && key="total_ms" || key="${metric}_ms"
+            local val
+            if val="$(echo "$kv" | awk -v k="${key}=" '{for(i=1;i<=NF;i++){if(index($i,k)==1){print substr($i,length(k)+1);exit}}exit 1}')"; then
+                [[ -n "$val" ]] && { echo "$val"; return 0; }
             fi
         fi
     fi
-
     case "$metric" in
-        total)
-            line="$(echo "$output" | grep -m1 "Total time:" || true)"
-            ;;
-        timing_total)
-            line="$(echo "$output" | grep -m1 -E "^[[:space:]]*total:" || true)"
-            ;;
-        *)
-            line="$(echo "$output" | grep -m1 -E "[[:space:]]${metric}:" || true)"
-            ;;
+        total) line="$(echo "$output" | grep -m1 "Total time:" || true)" ;;
+        timing_total) line="$(echo "$output" | grep -m1 -E "^[[:space:]]*total:" || true)" ;;
+        *) line="$(echo "$output" | grep -m1 -E "[[:space:]]${metric}:" || true)" ;;
     esac
-
-    if [[ -z "$line" ]]; then
-        return 1
-    fi
-
-    # Find the first token that looks like "123.4ms" and print the numeric part.
-    echo "$line" | awk '{
-        for (i=1; i<=NF; i++) {
-            if ($i ~ /^[0-9]+(\.[0-9]+)?ms$/) {
-                gsub(/ms$/, "", $i);
-                print $i;
-                exit;
-            }
-        }
-    }'
+    [[ -z "$line" ]] && return 1
+    echo "$line" | awk '{for(i=1;i<=NF;i++){if($i~/^[0-9]+(\.[0-9]+)?ms$/){gsub(/ms$/,"",$i);print $i;exit}}}'
 }
-
-float_gt() {
-    awk -v a="$1" -v b="$2" 'BEGIN { exit !(a > b) }'
-}
-
-float_lt() {
-    awk -v a="$1" -v b="$2" 'BEGIN { exit !(a < b) }'
-}
-
-echo "=== Interleaved Benchmark ==="
-echo "Versions: $NUM_VERSIONS"
-echo "Rounds: $ROUNDS, Size: $SIZE, Cooldown: ${COOLDOWN}s"
-[[ -n "$CPU_PIN" ]] && echo "CPU pin: core $CPU_PIN"
-$SINGLE_THREAD && echo "Mode: single-threaded"
-if [[ ${#bench_args[@]} -gt 1 ]]; then
-    echo "Args: ${bench_args[*]:1}"
-elif $NO_PREPROCESS; then
-    echo "Args: --no-preprocess"
-fi
-echo "Metric: $METRIC"
-echo ""
-echo "Testing:"
-for i in "${!INDICES[@]}"; do
-    echo "  ${LABELS[$i]}"
-done
-echo ""
-
-# Create result files.
-for idx in "${INDICES[@]}"; do
-    > "$TMP_DIR/times_${METRIC}_$idx.txt"
-done
-
-# Run interleaved with rotating start position.
-for round in $(seq 1 $ROUNDS); do
-    echo "--- Round $round/$ROUNDS ---"
-
-    # Rotate starting position each round to reduce order bias.
-    start=$(( (round - 1) % NUM_VERSIONS ))
-
-    # Warmup run (discarded) using the first binary in rotation.
-    warmup_idx="${INDICES[$start]}"
-    warmup_output=$($TASKSET "$TMP_DIR/bench_$warmup_idx" "${bench_args[@]}" 2>&1)
-    if warmup_ms="$(extract_metric_ms "$warmup_output" "$METRIC")"; then
-        echo "  (warmup: ${warmup_ms}ms)"
-    else
-        echo "  (warmup: metric '$METRIC' not found)"
-        if [[ "$METRIC" != "total" ]]; then
-            echo "  Hint: rebuild with timing enabled, e.g. ./scripts/bench_build.sh --timing"
-            exit 1
-        fi
-    fi
-
-    for offset in $(seq 0 $((NUM_VERSIONS - 1))); do
-        i=$(( (start + offset) % NUM_VERSIONS ))
-        idx="${INDICES[$i]}"
-        label="${LABELS[$i]}"
-        output=$($TASKSET "$TMP_DIR/bench_$idx" "${bench_args[@]}" 2>&1)
-        if ! time_ms="$(extract_metric_ms "$output" "$METRIC")"; then
-            echo "  $label: FAILED (metric '$METRIC' not found)"
-            continue
-        fi
-
-        echo "  $label: ${time_ms}ms"
-        echo "$time_ms" >> "$TMP_DIR/times_${METRIC}_$idx.txt"
-    done
-
-    if [[ $round -lt $ROUNDS ]]; then
-        sleep "$COOLDOWN"
-    fi
-done
-
-echo ""
-echo "=== Results ==="
-echo ""
-
+float_gt() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a>b)}'; }
+float_lt() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a<b)}'; }
 calc_stats() {
-    local file="$1"
-    [[ ! -s "$file" ]] && { echo "0 0 0 0"; return; }
-    sort -n "$file" | awk '
-    { a[NR] = $1; sum += $1 }
-    END {
-        n = NR; min = a[1]; max = a[n]; avg = sum / n
-        median = (n % 2 == 1) ? a[int(n/2) + 1] : (a[n/2] + a[n/2 + 1]) / 2
-        printf "%.1f %.1f %.1f %.1f", min, median, avg, max
-    }'
+    local file="$1"; [[ ! -s "$file" ]] && { echo "0 0 0 0"; return; }
+    sort -n "$file" | awk '{a[NR]=$1;s+=$1} END{n=NR;med=(n%2==1)?a[int(n/2)+1]:(a[n/2]+a[n/2+1])/2;printf "%.1f %.1f %.1f %.1f",a[1],med,s/n,a[n]}'
 }
 
-# Find max label length for formatting.
-max_len=7  # minimum "Version"
-for label in "${LABELS[@]}"; do
-    len=${#label}
-    (( len > max_len )) && max_len=$len
-done
+SEED_LIST="${SEEDS:-_}"   # "_" sentinel = no explicit seed
+[[ -n "$CSV" ]] && echo "commit,size,dist,seed,metric,min_ms,median_ms,avg_ms,max_ms,spread_pct" > "$CSV"
 
-# Print header.
-printf "%-${max_len}s %10s %10s %10s %10s %10s\n" "Version" "Min" "Median" "Avg" "Max" "Spread"
-printf "%-${max_len}s %10s %10s %10s %10s %10s\n" "$(printf '%*s' $max_len '' | tr ' ' '-')" "---" "------" "---" "---" "------"
+echo "=== Interleaved benchmark matrix ==="
+echo "Versions: $NUM_VERSIONS | rounds=$ROUNDS metric=$METRIC ${SINGLE_THREAD:+ST}${CPU_PIN:+ pin=$CPU_PIN}"
+echo "Sizes: [$SIZES]  Dists: [$DISTS]  Seeds: [${SEEDS:-default}]${DIST_PARAM:+  dist-param=$DIST_PARAM}"
+for l in "${LABELS[@]}"; do echo "  $l"; done
 
-# Store per-version metrics for comparison.
-declare -A MINS
-declare -A MEDIANS
+run_cell() { # size dist seed
+    local size="$1" dist="$2" seed="$3"
+    local bench_args=("$size")
+    $NO_PREPROCESS && bench_args+=("--no-preprocess")
+    bench_args+=("--dist" "$dist")
+    [[ "$seed" != "_" ]] && bench_args+=("--seed" "$seed")
+    [[ -n "$DIST_PARAM" ]] && bench_args+=("--dist-param" "$DIST_PARAM")
+    bench_args+=("${EXTRA_BENCH_ARGS[@]}")
 
-for i in "${!INDICES[@]}"; do
-    idx="${INDICES[$i]}"
-    label="${LABELS[$i]}"
-    stats=$(calc_stats "$TMP_DIR/times_${METRIC}_$idx.txt")
-    read -r min median avg max <<< "$stats"
-    MINS[$idx]="$min"
-    MEDIANS[$idx]="$median"
-    if float_gt "$min" "0"; then
-        spread=$(echo "$max $min" | awk '{printf "%.1f%%", ($1 - $2) / $2 * 100}')
-    else
-        spread="N/A"
-    fi
-    printf "%-${max_len}s %9.1fms %9.1fms %9.1fms %9.1fms %10s\n" "$label" "$min" "$median" "$avg" "$max" "$spread"
-done
+    echo ""; echo "### cell: size=$size dist=$dist seed=${seed/_/default} ###"
+    for idx in "${INDICES[@]}"; do > "$TMP_DIR/times_$idx.txt"; done
 
-echo ""
-echo "=== Relative Performance (median times, lower is better) ==="
-echo ""
-
-# Find the fastest (lowest median).
-best_idx=""
-best_median=999999999
-for i in "${!INDICES[@]}"; do
-    idx="${INDICES[$i]}"
-    median="${MEDIANS[$idx]}"
-    if float_gt "$median" "0" && float_lt "$median" "$best_median"; then
-        best_median="$median"
-        best_idx="$idx"
-    fi
-done
-
-if [[ -n "$best_idx" ]]; then
-    for i in "${!INDICES[@]}"; do
-        idx="${INDICES[$i]}"
-        label="${LABELS[$i]}"
-        median="${MEDIANS[$idx]}"
-        if [[ -n "$median" && "$median" != "0" ]]; then
-            pct=$(echo "$median $best_median" | awk '{printf "%.1f", ($1 / $2 - 1) * 100}')
-            if [[ "$idx" == "$best_idx" ]]; then
-                verdict="FASTEST"
-            elif float_gt "$pct" "0.5"; then
-                verdict="+${pct}%"
-            else
-                verdict="~same"
+    for round in $(seq 1 "$ROUNDS"); do
+        local start=$(( (round - 1) % NUM_VERSIONS ))
+        $TASKSET "$TMP_DIR/bench_${INDICES[$start]}" "${bench_args[@]}" >/dev/null 2>&1 || true  # warmup
+        for offset in $(seq 0 $((NUM_VERSIONS - 1))); do
+            local i=$(( (start + offset) % NUM_VERSIONS )) idx label out ms
+            idx="${INDICES[$i]}"; label="${LABELS[$i]}"
+            out=$($TASKSET "$TMP_DIR/bench_$idx" "${bench_args[@]}" 2>&1)
+            if ! ms="$(extract_metric_ms "$out" "$METRIC")"; then
+                echo "  $label: FAILED (metric '$METRIC' not found)"; continue
             fi
-            printf "%-${max_len}s %s\n" "$label" "$verdict"
-        fi
+            echo "$ms" >> "$TMP_DIR/times_$idx.txt"
+        done
+        [[ $round -lt $ROUNDS ]] && sleep "$COOLDOWN"
     done
-fi
+
+    # Per-commit stats + verdict for this cell.
+    local best_median=999999999 best_idx=""
+    declare -A MED
+    printf "  %-28s %9s %9s %9s\n" "version" "median" "min" "spread"
+    for i in "${!INDICES[@]}"; do
+        local idx="${INDICES[$i]}" label="${LABELS[$i]}" min med avg max spread
+        read -r min med avg max <<< "$(calc_stats "$TMP_DIR/times_${INDICES[$i]}.txt")"
+        MED[$idx]="$med"
+        if float_gt "$min" "0"; then spread="$(awk -v a="$max" -v b="$min" 'BEGIN{printf "%.1f%%",(a-b)/b*100}')"; else spread="N/A"; fi
+        printf "  %-28.28s %8.1fms %8.1fms %9s\n" "$label" "$med" "$min" "$spread"
+        [[ -n "$CSV" ]] && echo "\"$label\",$size,$dist,${seed/_/default},$METRIC,$min,$med,$avg,$max,${spread/\%/}" >> "$CSV"
+        if float_gt "$med" "0" && float_lt "$med" "$best_median"; then best_median="$med"; best_idx="$idx"; fi
+    done
+    if [[ -n "$best_idx" ]]; then
+        for i in "${!INDICES[@]}"; do
+            local idx="${INDICES[$i]}" med="${MED[${INDICES[$i]}]}"
+            [[ -z "$med" || "$med" == "0" ]] && continue
+            local pct; pct="$(awk -v a="$med" -v b="$best_median" 'BEGIN{printf "%.1f",(a/b-1)*100}')"
+            local v; [[ "$idx" == "$best_idx" ]] && v="FASTEST" || { float_gt "$pct" "0.5" && v="+${pct}%" || v="~same"; }
+            printf "    %-28.28s %s\n" "${LABELS[$i]}" "$v"
+        done
+    fi
+}
+
+for size in $SIZES; do
+    for dist in $DISTS; do
+        for seed in $SEED_LIST; do
+            run_cell "$size" "$dist" "$seed"
+        done
+    done
+done
 
 echo ""
+[[ -n "$CSV" ]] && echo "CSV written: $CSV"
+echo "Done."
