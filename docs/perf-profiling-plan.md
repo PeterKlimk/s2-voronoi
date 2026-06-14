@@ -1,24 +1,27 @@
 # Performance profiling plan (living doc)
 
-The box is noisy for the foreseeable future, so we **accumulate** perf-relevant
-commits and do **one big quiet-box run** later rather than benching each change
-as it lands. This doc is the standing plan: the workload matrix to run, and the
-**queue** of commits to A/B when we run it. Append to the queue as perf-relevant
-commits land; skip the rest.
+**No longer gated on a quiet box.** `bench_run.sh --converge` makes paired A/B
+**decision-grade on a busy box** for any effect above ~the resolution floor
+(see Strategy) — so we measure changes *as they land* rather than batching for
+a quiet run. The queue below is now just a record of what's been measured / is
+pending, not a wait-list.
 
 Companion: `docs/perf-testing-timeline.md` has the detailed per-commit
-classification and rationale for the initial (2026-06 strict-plane + occupancy)
-batch. This doc is the forward-looking, append-as-we-go version.
+classification; `docs/multi-regime-perf.md` is the organizing frame.
 
 ## Strategy
 
-- One paired quiet-box run covers the whole queue: `bench_build.sh --chain`
-  over the queued commits, then the matrix below via `bench_run.sh --csv`.
-- A bigger run later is always an option — nothing here expires. Don't
-  half-measure on the noisy box; let the queue grow.
-- Decision-grade protocol (dev-environment memory): 2M inputs, `-r 5+`,
-  interleaved pairs in BOTH orders, min/median. Treat sub-1% as noise (layout
-  luck alone is ±1-2% at 500k ST).
+- **Measure with `--converge`** (validated 2026-06-14 on a busy box, load 2–4):
+  paired-interleaved rounds cancel slow drift; the per-round **sign test**
+  decides direction (robust to the heavy-tailed sub-round bursts that inflate a
+  parametric CI); it auto-stops when settled. A ~2% effect resolved in 57
+  rounds at load 2–4; **big effects (10–100×, 13–73%) converge in a handful of
+  rounds with tight magnitude too.**
+- **Resolution floor**: direction is reliable down to ~1% even busy; *magnitude*
+  stays imprecise for small effects on a busy box (CI ±~3%). For a precise
+  *magnitude* on a sub-2% micro, a quiet box still helps — but that's the
+  low-value tail. Everything in the multi-regime backlog is above the floor.
+- First commit listed = baseline; others reported relative to it.
 
 ## Workload matrix (what to run)
 
@@ -30,13 +33,14 @@ batch. This doc is the forward-looking, append-as-we-go version.
 | seeds | 1–3 | noise / shape variance |
 | threads | ST default; **MT for the 500ms@2.5M release target** | ST is the stable comparison; MT is the headline number |
 
-Run recipe:
+Run recipe (busy-box-OK via `--converge`; **list baseline first**):
 ```
-./scripts/bench_build.sh --chain <N>            # or explicit hashes
-./scripts/bench_run.sh -s "500k 2m" -d uniform --seeds "1 2 3" --csv /tmp/uni.csv
-./scripts/bench_run.sh -s "500k 1m" -d "uniform splittable mega" --seeds "1 2" --csv /tmp/occ.csv
-# localize a regression: add --timing to the build, -m <phase> to the run
-# MT target: --multi -s 2.5m -d uniform
+./scripts/bench_build.sh <baseline> <candidate>      # or --chain N / explicit hashes
+./scripts/bench_run.sh -s "500k 2m" -d uniform --converge --csv /tmp/uni.csv
+./scripts/bench_run.sh -s "500k 1m" -d "uniform splittable mega" --converge --csv /tmp/occ.csv
+# localize: add --timing to the build, -m <phase> to the run (e.g. -m dedup)
+# MT target: --multi -s 2.5m -d uniform --converge
+# tune: --resolution 0.01 (band), --max-rounds 160 (cap), --min-rounds 12
 ```
 
 ## Profiling queue (accumulating)
@@ -48,7 +52,7 @@ Status: `pending` until run, then record the verdict inline.
 
 | commit | change | measure | expectation | status |
 |--------|--------|---------|-------------|--------|
-| `0def19e` | per-clip eps sqrt skip (both backends) | uniform 500k/2M, sphere+plane | tiny win <1% | pending |
+| `0def19e` | per-clip eps sqrt skip (both backends) | uniform 500k/2M, sphere+plane | tiny win <1% | **measured (bundled w/ `4ea01d9`)**: 500k uniform busy box, `--converge` → **UNRESOLVED** (best run +1.6% to +3.8%, sign 20–21/57–60 faster). Sub-2% bundle sits at the busy-box resolution floor — direction leans neutral/slightly-slower but magnitude unpinnable here. Quiet box only if we want the exact number. |
 | `ff3528b` | plane strict clip rule | plane uniform 500k/2M | neutral (confirm; repair-rate could shift) | pending |
 | `33b4962` | occupancy rebuild → Σocc²/n trigger | uniform (regression check) **+ splittable + mega** | uniform neutral; clustered much faster | pending |
 | `c3d455b` | plane weld: compact grid in place vs rebuild | **bench_plane** `-m preprocess`, uniform 2M/5M (welds via birthday effect; or a welding dist) | preprocess win on welded runs; total ~neutral | pending — phase-localized, interim noisy signal OK |
@@ -83,12 +87,16 @@ see the skip list in `docs/perf-testing-timeline.md`. Template:
 | `<hash>` | <what changed> | <sizes/dists/metric> | <expectation> | pending |
 ```
 
-## When we run
+## How to run (any box)
 
-1. Quiet the box (or accept it's a coarse pass and note it).
-2. `bench_build.sh --chain` over the queue (or explicit hashes spanning it).
-3. Run the matrix above, CSV per (uniform / clustered) sweep.
-4. Record verdicts inline in the queue tables; move confirmed wins/neutrals to a
-   "done" note and drop them from pending.
-5. For anything borderline, add a diff-disjoint control commit and re-run that
-   cell to measure the layout-luck floor.
+1. `bench_build.sh <baseline> <candidate>` (or `--chain N`) to stage binaries.
+2. `bench_run.sh ... --converge` per regime (uniform / clustered). Sign test
+   decides direction; it auto-stops when settled or at `--max-rounds`.
+3. Record verdicts inline; move confirmed wins/neutrals to a "done" note and
+   drop them from pending.
+4. **If a row comes back UNRESOLVED**, it's a sub-resolution-floor effect (the
+   busy box can't pin a <~2% magnitude). Options: accept "neutral, too small to
+   matter," or save it for a quiet box if the exact number matters. Don't keep
+   re-running it busy — that's the one thing `--converge` can't fix.
+5. For a borderline win worth confirming, add a diff-disjoint control commit and
+   converge that cell too, to measure the fixed layout-luck floor (~1–2%).

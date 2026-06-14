@@ -136,6 +136,13 @@ measuring the right regime. Rules:
   affect.
 - When adding a fast-path, measure its **worst** regime, not just its target —
   enforce "no unbounded downside."
+- **You don't need a quiet box.** `bench_run.sh --converge` (paired-interleaved
+  rounds + per-round sign test) is decision-grade on a busy box for any effect
+  above ~1–2%. Every effect this doc cares about — the regime regressions
+  (13–73%) and the dense 10–100× wins — is far above that floor and converges in
+  a handful of rounds. The only thing the busy box costs us is the exact
+  *magnitude* of sub-2% micros (those come back UNRESOLVED; save them for a quiet
+  box only if the number matters). So: measure as changes land, don't batch.
 
 ## Cross-references
 - `docs/dense-cell-subindex-design.md` — punch-1 detail (structure options, hooks, integration)
