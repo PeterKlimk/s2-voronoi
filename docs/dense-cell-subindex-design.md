@@ -191,6 +191,32 @@ and `packed_knn`'s own center-cell range read. Both need the guard.
 3. Fast path cost: one predicted-not-taken compare. Dense path cost: O(log
    occ)-ish per query instead of O(occ), paid only by the rare dense cells.
 
+## Implementation plan (ordered) — branches `agent/punch1-*`
+
+The 2026-06-14 scoping finding reshapes the build: the **producer/consumer
+integration is shared and is ~all the work**; the structure (axis-sort vs
+kd-tree) is a thin plug-in *after* it. So build integration-first on a base
+branch, then fork cheap structure variants — not two parallel full builds.
+
+1. **Marker** (trivial): `DENSE_CELL_THRESHOLD` (policy.rs, done) + detect
+   dense cells at grid build into a side list. Behavior-preserving.
+2. **Sub-index trait + side map** (variant-agnostic): `trait CellSubIndex`
+   with a best-first / radius-bounded query; `Option<side map>` on the grid,
+   built only for dense cells. Side structures only (never permute SoA).
+3. **The integration** (the real work, shared): give the directed query a way
+   to prune a dense cell's scan. Decide radius-plumb vs lazy-stream — lazy
+   best-first stream is preferred (fits the consumer's nearest-first +
+   `pending_bound` early termination). Intercept BOTH `shells.rs::scan_cell`
+   and `packed_knn`'s center-cell read. Honor the directed-eligibility filter.
+4. **Certificate re-validation**: the NN-contract suite must pass on the dense
+   path; the query must return everything within `pending_bound` (no fixed-K
+   truncation).
+5. **Structure variants** (cheap, post-integration): axis-sort side index
+   (sorted slot list by dominant axis, band query) on `agent/punch1-axissort`;
+   3D kd-tree (best-first) on `agent/punch1-kdtree` off the same base.
+6. **Measure** (quiet box): `bench_build.sh` over main + both branches;
+   `bench_run.sh -d "uniform splittable mega"`; A/B vs baseline and each other.
+
 ## Open questions for implementation
 
 - Exact `DENSE_CELL_THRESHOLD` (crossover where kd-tree query beats linear
