@@ -120,8 +120,8 @@ pub struct CubeMapGrid {
 
     /// Dense-cell sub-index ("punch 1", axis-sort): present only when some cell
     /// exceeds `DENSE_CELL_THRESHOLD` (rare). Side structure; does not affect
-    /// the SoA. Not yet consulted by the query path (integration pending).
-    #[allow(dead_code)]
+    /// the SoA. Consulted by the directed packed center pass to band-prune the
+    /// O(occ²) full-cell scan (see `packed_knn::scratch::prepare`).
     dense_index: Option<dense::DenseCellIndex>,
 }
 

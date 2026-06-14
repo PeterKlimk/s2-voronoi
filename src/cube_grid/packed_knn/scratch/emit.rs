@@ -171,7 +171,7 @@ impl PackedKnnCellScratch {
                     } else if self.tail_possible[qi] {
                         self.thresholds[qi]
                     } else {
-                        self.security_thresholds[qi]
+                        self.center_bound[qi]
                     };
                     return Some(PackedChunk {
                         n: emit,
@@ -199,7 +199,7 @@ impl PackedKnnCellScratch {
                 } else if self.tail_possible[qi] {
                     self.thresholds[qi]
                 } else {
-                    self.security_thresholds[qi]
+                    self.center_bound[qi]
                 };
                 Some(PackedChunk { n, unseen_bound })
             }
@@ -236,7 +236,7 @@ impl PackedKnnCellScratch {
                 let unseen_bound = if has_more {
                     last_dot
                 } else {
-                    self.security_thresholds[qi]
+                    self.center_bound[qi]
                 };
                 Some(PackedChunk { n, unseen_bound })
             }

@@ -461,6 +461,35 @@ fn nn_contract_clustered_and_bimodal() {
 }
 
 #[test]
+fn nn_contract_dense_single_cell() {
+    // > DENSE_CELL_THRESHOLD points packed into a single grid cell: the regime
+    // that triggers the dense-cell band-prune center pass. The band certifies
+    // completeness only down to its radius bound; the shell takeover covers
+    // everything below it. The contract (conservative certificates + complete
+    // eligible set) must hold exactly, exercising both band and takeover.
+    const RES: usize = 8;
+    let mut r = rng(101);
+    let base = Vec3::new(0.31, 0.52, 0.79).normalize();
+    let points: Vec<Vec3> = (0..640).map(|_| jitter(base, 1e-3, &mut r)).collect();
+
+    // Guard: the scenario is only meaningful if it actually packs one cell over
+    // the dense threshold (otherwise the band path never runs and this is a
+    // vacuous duplicate of the clustered case).
+    let probe = CubeMapGrid::new(&points, RES);
+    let max_occ = (0..probe.cell_offsets().len() - 1)
+        .map(|c| probe.cell_points(c).len())
+        .max()
+        .unwrap_or(0);
+    assert!(
+        max_occ > crate::policy::DENSE_CELL_THRESHOLD,
+        "dense-cell scenario must exceed DENSE_CELL_THRESHOLD (got max_occ={max_occ})"
+    );
+    drop(probe);
+
+    Harness::new(points, RES, 1).check_all("dense_single_cell");
+}
+
+#[test]
 fn nn_contract_duplicate_positions() {
     let mut points = uniform(100, 47);
     for i in 0..5 {

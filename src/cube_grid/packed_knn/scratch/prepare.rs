@@ -170,6 +170,14 @@ impl PackedKnnCellScratch {
 
         self.thresholds.resize(num_queries, 0.0);
 
+        // Per-query packed-coverage floor. Defaults to the security bound (full
+        // center scan); the dense band path raises it to the band bound below.
+        self.center_bound.clear();
+        self.center_bound
+            .extend_from_slice(&self.security_thresholds[..num_queries]);
+        self.band_mode.clear();
+        self.band_mode.resize(num_queries, false);
+
         // Don't shrink `Vec<Vec<_>>` to avoid dropping inner buffers when group sizes vary.
         if self.chunk0_keys.len() < num_queries {
             self.chunk0_keys.resize_with(num_queries, Vec::new);
@@ -251,87 +259,186 @@ impl PackedKnnCellScratch {
         let query_y = qy_src;
         let query_z = qz_src;
         let security_thresholds = &self.security_thresholds[..num_queries];
-        let hi_thresholds = &self.thresholds[..num_queries];
         let chunk0_keys = &mut self.chunk0_keys[..num_queries];
         let tail_keys = &mut self.tail_keys[..num_queries];
 
-        let full_chunks = center_len / 8;
-        let (x_chunks, _) = xs.as_chunks::<8>();
-        let (y_chunks, _) = ys.as_chunks::<8>();
-        let (z_chunks, _) = zs.as_chunks::<8>();
-        for chunk in 0..full_chunks {
-            let i = chunk * 8;
-            let candidates = fp::PointChunk8::from_array_refs(
-                &x_chunks[chunk],
-                &y_chunks[chunk],
-                &z_chunks[chunk],
-            );
+        // Dense center cell: band-prune the O(occ²) full scan. `band_radius`
+        // is cell-level (it depends only on occupancy/extent), so compute once
+        // for the whole group; the per-query decision is whether the band is a
+        // strict inner subset of that query's security coverage.
+        let dense_radius = if center_len > crate::policy::DENSE_CELL_THRESHOLD {
+            grid.dense_band_radius(cell as u32, crate::policy::DENSE_BAND_TARGET_COUNT)
+        } else {
+            None
+        };
 
-            // Candidate positions in this chunk are [i, i+7]. A query at position qi only
-            // needs to consider this chunk if qi <= i+7.
-            let qi_end = (i + 8).min(num_queries);
-            for qi in 0..qi_end {
-                let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
-                let mut mask_bits = dots.mask_gt(security_thresholds[qi]);
-                if mask_bits == 0 {
-                    continue;
-                }
-
-                // Directed intra-bin filter for center cell:
-                // allowed candidates are those with position >= qi, excluding self.
-                if qi >= i {
-                    let rel = qi - i;
-                    debug_assert!(rel < 8);
-                    if rel > 0 {
-                        mask_bits &= !((1u32 << rel) - 1);
-                    }
-                    mask_bits &= !(1u32 << rel);
-                    if mask_bits == 0 {
+        match dense_radius {
+            Some(r_claim) if r_claim > 0.0 => {
+                // Gather a band a hair wider than `r_claim` to absorb f32 error,
+                // then keep points with `dot > band_bound = 1 - r_claim²/2`.
+                // By the band's superset property every center point within
+                // chord `r_claim` (hence `dot > band_bound`) is in the band, so
+                // the coverage is complete down to `band_bound`; the shell
+                // takeover backstops anything below it (rare for a dense cell,
+                // where the cell closes within the band).
+                let r_gather = r_claim * (1.0 + 1e-3);
+                let band_bound = (1.0 - 0.5 * r_claim * r_claim).clamp(-1.0, 1.0);
+                for qi in 0..num_queries {
+                    let security = security_thresholds[qi];
+                    if band_bound <= security {
+                        // Band would cover the whole security region (no win)
+                        // and would wrongly claim less coverage than the full
+                        // scan; fall back to a directed full scan for this
+                        // query (rare in a genuinely dense cell). center_bound
+                        // and thresholds stay at their defaults (security/hi).
+                        let hi = self.thresholds[qi];
+                        for pos in (qi + 1)..center_len {
+                            let dot = fp::dot3_f32(
+                                xs[pos],
+                                ys[pos],
+                                zs[pos],
+                                query_x[qi],
+                                query_y[qi],
+                                query_z[qi],
+                            );
+                            if dot <= security {
+                                continue;
+                            }
+                            let slot = (center_soa_start + pos) as u32;
+                            if dot > hi {
+                                chunk0_keys[qi].push(make_desc_key(dot, slot));
+                            } else {
+                                tail_keys[qi].push(make_desc_key(dot, slot));
+                            }
+                        }
                         continue;
                     }
-                }
 
-                // Split into hi (above the tightened threshold -> chunk0)
-                // and the [security, t] band (-> tail) in one pass; the old
-                // post-hoc demotion loop is gone.
-                let hi_bits = dots.mask_gt(hi_thresholds[qi]) & mask_bits;
-                let mut band_bits = mask_bits & !hi_bits;
-                let mut hi = hi_bits;
-                let dots_arr = dots.to_array();
-                while hi != 0 {
-                    let lane = hi.trailing_zeros() as usize;
-                    let slot = (center_soa_start + i + lane) as u32;
-                    chunk0_keys[qi].push(make_desc_key(dots_arr[lane], slot));
-                    hi &= hi - 1;
-                }
-                while band_bits != 0 {
-                    let lane = band_bits.trailing_zeros() as usize;
-                    let slot = (center_soa_start + i + lane) as u32;
-                    tail_keys[qi].push(make_desc_key(dots_arr[lane], slot));
-                    band_bits &= band_bits - 1;
+                    self.center_bound[qi] = band_bound;
+                    self.band_mode[qi] = true;
+                    // The band covers only `(band_bound, 1]`. The model's
+                    // hi/tail split assumes the tail extends down to `security`,
+                    // which the band does NOT — so it is meaningless here: emit
+                    // the whole band as chunk0 and disable the tail. chunk0
+                    // exhaustion then reports `center_bound = band_bound` and the
+                    // shell takeover covers everything below it. Lower the ring
+                    // threshold to `band_bound` too so the shared ring pass
+                    // collects every ring point above the floor into chunk0
+                    // (regardless of where the model's `hi` sat).
+                    self.tail_possible[qi] = false;
+                    self.thresholds[qi] = band_bound;
+                    grid.dense_band_slots(
+                        cell as u32,
+                        query_x[qi],
+                        query_y[qi],
+                        query_z[qi],
+                        r_gather,
+                        &mut self.band_scratch,
+                    );
+                    for idx in 0..self.band_scratch.len() {
+                        let slot = self.band_scratch[idx];
+                        let pos = slot as usize - center_soa_start;
+                        // Directed intra-bin filter: later slots only (this
+                        // also excludes self at pos == qi).
+                        if pos <= qi {
+                            continue;
+                        }
+                        let dot = fp::dot3_f32(
+                            xs[pos],
+                            ys[pos],
+                            zs[pos],
+                            query_x[qi],
+                            query_y[qi],
+                            query_z[qi],
+                        );
+                        if dot <= band_bound {
+                            continue;
+                        }
+                        chunk0_keys[qi].push(make_desc_key(dot, slot));
+                    }
                 }
             }
-        }
+            _ => {
+                let hi_thresholds = &self.thresholds[..num_queries];
+                let full_chunks = center_len / 8;
+                let (x_chunks, _) = xs.as_chunks::<8>();
+                let (y_chunks, _) = ys.as_chunks::<8>();
+                let (z_chunks, _) = zs.as_chunks::<8>();
+                for chunk in 0..full_chunks {
+                    let i = chunk * 8;
+                    let candidates = fp::PointChunk8::from_array_refs(
+                        &x_chunks[chunk],
+                        &y_chunks[chunk],
+                        &z_chunks[chunk],
+                    );
 
-        let tail_start = full_chunks * 8;
-        for pos in tail_start..center_len {
-            let cx = xs[pos];
-            let cy = ys[pos];
-            let cz = zs[pos];
-            let slot = (center_soa_start + pos) as u32;
+                    // Candidate positions in this chunk are [i, i+7]. A query at position qi only
+                    // needs to consider this chunk if qi <= i+7.
+                    let qi_end = (i + 8).min(num_queries);
+                    for qi in 0..qi_end {
+                        let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
+                        let mut mask_bits = dots.mask_gt(security_thresholds[qi]);
+                        if mask_bits == 0 {
+                            continue;
+                        }
 
-            // Candidate position is `pos`. A query at position qi can only see this candidate
-            // if qi <= pos, excluding qi == pos (self).
-            let qi_end = (pos + 1).min(num_queries);
-            for qi in 0..qi_end {
-                if qi == pos {
-                    continue;
+                        // Directed intra-bin filter for center cell:
+                        // allowed candidates are those with position >= qi, excluding self.
+                        if qi >= i {
+                            let rel = qi - i;
+                            debug_assert!(rel < 8);
+                            if rel > 0 {
+                                mask_bits &= !((1u32 << rel) - 1);
+                            }
+                            mask_bits &= !(1u32 << rel);
+                            if mask_bits == 0 {
+                                continue;
+                            }
+                        }
+
+                        // Split into hi (above the tightened threshold -> chunk0)
+                        // and the [security, t] band (-> tail) in one pass; the old
+                        // post-hoc demotion loop is gone.
+                        let hi_bits = dots.mask_gt(hi_thresholds[qi]) & mask_bits;
+                        let mut band_bits = mask_bits & !hi_bits;
+                        let mut hi = hi_bits;
+                        let dots_arr = dots.to_array();
+                        while hi != 0 {
+                            let lane = hi.trailing_zeros() as usize;
+                            let slot = (center_soa_start + i + lane) as u32;
+                            chunk0_keys[qi].push(make_desc_key(dots_arr[lane], slot));
+                            hi &= hi - 1;
+                        }
+                        while band_bits != 0 {
+                            let lane = band_bits.trailing_zeros() as usize;
+                            let slot = (center_soa_start + i + lane) as u32;
+                            tail_keys[qi].push(make_desc_key(dots_arr[lane], slot));
+                            band_bits &= band_bits - 1;
+                        }
+                    }
                 }
-                let dot = fp::dot3_f32(cx, cy, cz, query_x[qi], query_y[qi], query_z[qi]);
-                if dot > hi_thresholds[qi] {
-                    chunk0_keys[qi].push(make_desc_key(dot, slot));
-                } else if dot > security_thresholds[qi] {
-                    tail_keys[qi].push(make_desc_key(dot, slot));
+
+                let tail_start = full_chunks * 8;
+                for pos in tail_start..center_len {
+                    let cx = xs[pos];
+                    let cy = ys[pos];
+                    let cz = zs[pos];
+                    let slot = (center_soa_start + pos) as u32;
+
+                    // Candidate position is `pos`. A query at position qi can only see this candidate
+                    // if qi <= pos, excluding qi == pos (self).
+                    let qi_end = (pos + 1).min(num_queries);
+                    for qi in 0..qi_end {
+                        if qi == pos {
+                            continue;
+                        }
+                        let dot = fp::dot3_f32(cx, cy, cz, query_x[qi], query_y[qi], query_z[qi]);
+                        if dot > hi_thresholds[qi] {
+                            chunk0_keys[qi].push(make_desc_key(dot, slot));
+                        } else if dot > security_thresholds[qi] {
+                            tail_keys[qi].push(make_desc_key(dot, slot));
+                        }
+                    }
                 }
             }
         }

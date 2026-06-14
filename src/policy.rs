@@ -55,6 +55,15 @@ pub(crate) const GRID_MAX_CELLS_PER_POINT: f64 = 8.0;
 /// calibration; see docs/dense-cell-subindex-design.md.
 pub(crate) const DENSE_CELL_THRESHOLD: usize = 512;
 
+/// Target nearest-neighbor count the dense-cell band gather aims to capture per
+/// query. Sizes the band radius (`r ≈ (diag/2)·sqrt(target/occ)`) and hence the
+/// completeness bound; the shell takeover backstops queries whose cell needs
+/// neighbors beyond the band, so this only trades band width (work per query)
+/// against takeover frequency. Set comfortably above the typical
+/// neighbors-before-termination (~8) so takeover stays rare. See
+/// docs/punch1-center-cell-integration.md.
+pub(crate) const DENSE_BAND_TARGET_COUNT: usize = 128;
+
 /// Query-grid target density, with the sweep/tuning env override.
 pub(crate) fn knn_grid_target_density() -> f64 {
     static OVERRIDE: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();

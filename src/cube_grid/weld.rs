@@ -195,6 +195,17 @@ impl CubeMapGrid {
         }
         debug_assert!(!point_slots.contains(&u32::MAX));
         self.point_slots = point_slots;
+
+        // The dense-cell side index is keyed to slot order and cell ranges,
+        // both of which compaction just rewrote — rebuild it from the compacted
+        // arrays (matches a fresh build at this resolution).
+        self.dense_index = super::dense::DenseCellIndex::build(
+            &self.cell_offsets,
+            &self.cell_points_x,
+            &self.cell_points_y,
+            &self.cell_points_z,
+            crate::policy::DENSE_CELL_THRESHOLD,
+        );
     }
 }
 

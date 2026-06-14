@@ -24,6 +24,10 @@ struct DenseCellEntry {
     /// The corresponding sorted axis coordinates (parallel to `sorted_slots`),
     /// held separately for branch-light binary search.
     sorted_coord: Vec<f32>,
+    /// Euclidean (chord) diagonal of the cell's coordinate bounding box: a
+    /// cheap, safe upper bound on the cell's spatial extent, used to size the
+    /// band radius for a target nearest-neighbor count from local density.
+    diag: f32,
 }
 
 /// Side index over a grid's over-full cells. Empty when no cell is dense.
@@ -53,8 +57,17 @@ impl DenseCellIndex {
             let ys = &cell_points_y[start..end];
             let zs = &cell_points_z[start..end];
 
-            // Dominant axis = largest coordinate range over the cell's points.
-            let axis = dominant_axis(xs, ys, zs);
+            // Dominant axis = largest coordinate range over the cell's points;
+            // bounding-box diagonal = a safe extent for sizing the band radius.
+            let (rx, ry, rz) = axis_ranges(xs, ys, zs);
+            let axis = if rx >= ry && rx >= rz {
+                0
+            } else if ry >= rz {
+                1
+            } else {
+                2
+            };
+            let diag = (rx * rx + ry * ry + rz * rz).sqrt();
             let coord = |i: usize| match axis {
                 0 => xs[i],
                 1 => ys[i],
@@ -76,6 +89,7 @@ impl DenseCellIndex {
                     axis,
                     sorted_slots,
                     sorted_coord,
+                    diag,
                 },
             );
         }
@@ -86,11 +100,28 @@ impl DenseCellIndex {
         }
     }
 
-    /// Whether `cell` has a sub-index. Callers gate on `occ > threshold` first
-    /// (free from `end - start`); this confirms and is only hit on dense cells.
-    #[allow(dead_code)]
+    /// Whether `cell` has a sub-index. The production query path gates via
+    /// [`band_radius`](Self::band_radius) (which returns `None` when absent),
+    /// so this is a test-only confirmation helper.
+    #[cfg(test)]
     pub(crate) fn has(&self, cell: u32) -> bool {
         self.cells.contains_key(&cell)
+    }
+
+    /// Suggested band gather radius (Euclidean chord) for `cell` that captures
+    /// roughly `target_count` nearest neighbors under a uniform-local-density
+    /// model: `r ≈ (diag/2)·sqrt(target/occ)`. `None` when `cell` is not
+    /// indexed. The radius is cell-level (independent of the query); the caller
+    /// derives the completeness bound `1 - r²/2` and gathers a slightly wider
+    /// band to absorb fp error (see the band-prune integration design doc).
+    pub(crate) fn band_radius(&self, cell: u32, target_count: usize) -> Option<f32> {
+        let entry = self.cells.get(&cell)?;
+        let occ = entry.sorted_slots.len();
+        if occ == 0 {
+            return None;
+        }
+        let frac = (target_count as f32 / occ as f32).sqrt();
+        Some(0.5 * entry.diag * frac)
     }
 
     /// Slots of `cell` whose `axis` coordinate lies within `radius` of the
@@ -101,7 +132,6 @@ impl DenseCellIndex {
     /// This is the certificate-safe prune: every point within `radius` is in
     /// the band, so no true neighbor is missed (vs a fixed-K cap). The band is
     /// found by two binary searches on the sorted axis coordinates.
-    #[allow(dead_code)]
     pub(crate) fn band_slots(
         &self,
         cell: u32,
@@ -128,8 +158,8 @@ impl DenseCellIndex {
     }
 }
 
-/// Index (0/1/2) of the axis with the largest coordinate range.
-fn dominant_axis(xs: &[f32], ys: &[f32], zs: &[f32]) -> u8 {
+/// Per-axis coordinate ranges (max - min) over the cell's points.
+fn axis_ranges(xs: &[f32], ys: &[f32], zs: &[f32]) -> (f32, f32, f32) {
     let range = |s: &[f32]| -> f32 {
         let mut lo = f32::INFINITY;
         let mut hi = f32::NEG_INFINITY;
@@ -139,14 +169,7 @@ fn dominant_axis(xs: &[f32], ys: &[f32], zs: &[f32]) -> u8 {
         }
         hi - lo
     };
-    let (rx, ry, rz) = (range(xs), range(ys), range(zs));
-    if rx >= ry && rx >= rz {
-        0
-    } else if ry >= rz {
-        1
-    } else {
-        2
-    }
+    (range(xs), range(ys), range(zs))
 }
 
 #[cfg(test)]

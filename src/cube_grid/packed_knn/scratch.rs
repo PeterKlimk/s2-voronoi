@@ -25,6 +25,18 @@ pub struct PackedKnnCellScratch {
     tail_ready_gen: Vec<u32>,
     security_thresholds: Vec<f32>,
     thresholds: Vec<f32>,
+    /// Per-query completeness floor of the packed center coverage: the dot
+    /// below which the packed stages have NOT certified completeness. Equals
+    /// `security_thresholds[qi]` on the normal full-cell scan; raised to the
+    /// dense band bound (`1 - r²/2 > security`) for band-pruned dense queries,
+    /// where the shell takeover covers everything below it.
+    center_bound: Vec<f32>,
+    /// Whether query `qi` took the dense band path (center covered only to
+    /// `center_bound[qi]`, so expand_r2 — which assumes full coverage to
+    /// `security` — is skipped and the takeover handles the rest).
+    band_mode: Vec<bool>,
+    /// Reusable scratch for the dense band's gathered candidate slots.
+    band_scratch: Vec<u32>,
     expand_r2_cells: Vec<PackedCellRange>,
     expand_r2_cells_gen: u32,
     ring3_cells: Vec<u32>,
@@ -142,6 +154,11 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
     }
 
     #[inline]
+    pub(super) fn is_band(&self, qi: usize) -> bool {
+        self.scratch.is_band(qi)
+    }
+
+    #[inline]
     pub(super) fn tail_upper_bound(&self, qi: usize) -> f32 {
         self.scratch.tail_upper_bound(qi)
     }
@@ -172,6 +189,9 @@ impl PackedKnnCellScratch {
             tail_ready_gen: Vec::new(),
             security_thresholds: Vec::new(),
             thresholds: Vec::new(),
+            center_bound: Vec::new(),
+            band_mode: Vec::new(),
+            band_scratch: Vec::new(),
             expand_r2_cells: Vec::new(),
             expand_r2_cells_gen: 0,
             ring3_cells: Vec::new(),
@@ -211,11 +231,21 @@ impl PackedKnnCellScratch {
 
     #[inline]
     pub(super) fn resume_security(&self, qi: usize, group_gen: u32) -> f32 {
+        // Band queries never run expand_r2; their packed coverage stops at the
+        // band bound, with the takeover below it.
+        if self.band_mode.get(qi).copied().unwrap_or(false) {
+            return self.center_bound[qi];
+        }
         if self.expand2_ready_gen.get(qi).copied().unwrap_or(0) == group_gen {
             self.security2[qi]
         } else {
             self.security_thresholds[qi]
         }
+    }
+
+    #[inline]
+    pub(super) fn is_band(&self, qi: usize) -> bool {
+        self.band_mode.get(qi).copied().unwrap_or(false)
     }
 
     #[inline]

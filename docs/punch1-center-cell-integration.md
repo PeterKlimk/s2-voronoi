@@ -1,9 +1,37 @@
 # punch-1 center-cell band-prune — integration design (the "hard part")
 
-Status (2026-06-15): **design locked, feasible + certificate-safe; not yet
-implemented.** On `agent/punch1-axissort` (DenseCellIndex + `band_slots`
-scaffold validated). The pathology and target are measured — see memory
-`dense-cost-attribution` and the `cap` bench dist.
+Status (2026-06-15): **IMPLEMENTED** on `agent/punch1-axissort` (axis-sort
+variant). The dense band-prune center pass is wired into `prepare_group_directed`,
+gated on `center_len > DENSE_CELL_THRESHOLD` + a dense sub-index; the completeness
+floor flows through `center_bound`/`band_mode` and the shell takeover backstops
+everything below the band. NN-contract suite (incl. a new dense-single-cell
+scenario) + full `S2_VORONOI_VERIFY=1` topological validation green.
+
+## Measured outcome (2026-06-15, WSL2/Ryzen 3600, single run)
+
+- `cap` 25k: **106s → ~6.2s (~17×)**. 50k (was: didn't finish) → 23s; 100k → 7s
+  (finer rebuild grid splits the cap). `S2_VORONOI_VERIFY=1` passes on all.
+- Phase split (cap 25k): `packed_knn` **5722ms → 313ms (~18×)** — the O(occ²)
+  `select_partition` is gone. The residual `cell_construction` cost is the shell
+  takeover, which fires for ~100% of cap cells: cap cells genuinely need ~3339
+  neighbors to terminate (near-equidistant points → slow certificate), and the
+  takeover sorts the cell *once* (O(occ log occ)) vs the old per-chunk
+  `select_nth` (O(occ²)). So the remaining cap ceiling is the **termination
+  certificate depth**, a separate backlog item — NOT the kNN gather.
+- `DENSE_BAND_TARGET_COUNT` swept {32,64,128,512,1024}: cap is insensitive
+  (takeover dominates regardless); mega 500k best at 64–128. Settled on **128**
+  (placeholder; differences within single-run noise, proper quiet-box
+  calibration still owed). Larger T is pure overhead on cap.
+- uniform 500k: **neutral** (no dense cell → gate never engages).
+
+## Latent bug found + fixed during integration
+
+`CubeMapGrid::compact_welded` (near-coincident weld) rewrites `cell_offsets` /
+`point_indices` / `cell_points_*` in place but had left `dense_index` stale,
+yielding out-of-range band slots on welded clustered inputs. `compact_welded`
+now rebuilds `dense_index` from the compacted arrays.
+
+## Original design (kept for reference)
 
 ## Target (measured)
 

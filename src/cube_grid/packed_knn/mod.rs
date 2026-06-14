@@ -330,6 +330,7 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
 
         if self.stage != PackedQueryStage::ExpandR2
             && self.policy.expand_r2_enabled()
+            && !self.prepared.is_band(self.query_index)
             && self.prepared.ensure_expand_r2_band_directed_for(
                 self.query_index,
                 grid,
