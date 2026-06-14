@@ -120,10 +120,24 @@ Each: problem → fix → status → priority → regime. Cross-refs at the bott
   **scalar `fp::dot3_f32` over SoA** (`shells.rs:99`) — same vectorizable shape,
   also never SIMD'd.
 - **Fix**: batch the cursor by cell (shared dot-matrix) **and** SIMD the ring
-  scan. Recovers an ~8× constant; **does NOT break the quadratic** (punch-1
-  does). This is a facet of the unified engine — see item 9.
-- **Status**: identified. **Priority: MEDIUM** (constant-factor; cheaper than
-  punch-1 but smaller; partly subsumed by punch-1). **Regime: dense.**
+  scan. **Does NOT break the quadratic** (punch-1 does).
+- **TRIED: SIMD the ring-scan dot alone — NOT a win (2026-06-14).** Replaced
+  `scan_cell`'s scalar `dot3_f32` with 8-wide `PointChunk8` (bit-identical dots,
+  output unchanged, suites green). A/B vs the LTO baseline: uniform **+6.5%**,
+  splittable **+8.5%** SLOWER (mega cut short — no win was going to flip it).
+  Reverted. Two caveats keep this from being a clean "regression" verdict:
+  (1) the expected upside was **minor anyway** — `scan_cell`'s cost is the
+  *scalar candidate emit* (filter + push to the `pending` Vec), not the dot, so
+  vectorizing only the dot adds `to_array` materialization with no downstream
+  SIMD benefit; (2) **LTO + `codegen-units=1` inflates layout noise** — any
+  source edit reshuffles the whole binary, so part of the +6–8% is likely
+  layout luck, not a true slowdown (uniform regressing at all is the tell, since
+  the cursor barely fires there). Net: no evidence of a win in any regime, and
+  the real lever is the **emit/heap pipeline or punch-1** (don't scan the whole
+  ring), not the dot. The batched-cursor idea (shared work across a cell's
+  queries) is untried and separate.
+- **Status**: dot-SIMD tried + rejected; cell-batching still open. **Priority:
+  LOW** (dot-SIMD dead-end; batching partly subsumed by punch-1). **Regime: dense.**
 
 ### 5. Packed chunk-certificate — stop escalating wrongly on dense
 - **Problem**: in a dense cell the chunk-based certificate can't close locally
@@ -169,7 +183,11 @@ The target architecture is **one** engine with four properties, each of which is
 an item above:
 - **SIMD everywhere** — one 8-wide ring-scan primitive over SoA, used by packed
   prep *and* the cursor (items 1, 4). Constant factor (~÷8); doesn't touch
-  asymptotics.
+  asymptotics. **Caveat (measured, item 4):** SIMD-ing the cursor's *dot alone*
+  did NOT help — the dot isn't `scan_cell`'s bottleneck, the scalar emit is. So
+  this facet only pays off if the *whole* candidate pipeline (emit/heap/merge)
+  is vectorized together, not the dot in isolation. Lower-confidence after that
+  result; punch-1 (avoid scanning the ring) is the surer dense lever.
 - **Reusing / resume-from-bound** — don't `keys.clear()` and re-walk from ring 0
   on failure; carry the kept candidates + security bound + covered-cell set
   forward so the cursor *resumes* instead of restarting (item 1 flaw 2). Removes
@@ -215,6 +233,20 @@ measuring the right regime. Rules:
   a handful of rounds. The only thing the busy box costs us is the exact
   *magnitude* of sub-2% micros (those come back UNRESOLVED; save them for a quiet
   box only if the number matters). So: measure as changes land, don't batch.
+- **LTO + `codegen-units=1` raises the layout-noise floor.** Since we adopted
+  thin-LTO/1-CGU, any source edit reshuffles the *whole* binary's layout, so the
+  per-binary layout-luck floor for small-change A/Bs is now higher than the old
+  ~1–2%. A small-change A/B that shows ±several% in a regime the change can't
+  plausibly touch (e.g., a cursor-only edit moving *uniform*) is the tell — it's
+  layout, not the change. Isolate with a diff-disjoint control commit, or only
+  trust effects large enough to dwarf layout (measure in the regime the change
+  actually targets, at the extreme end).
+- **Don't over-run `--converge` for a yes/no decision.** It runs each regime to
+  full sign-test convergence (the 2026-06-14 SIMD-cursor probe took 46/78 rounds
+  per regime — far more than needed to conclude "no win"). For "is this a win?"
+  a low `--max-rounds` (~20–30) and/or a wider `--resolution` is enough; full
+  convergence is only for pinning a precise *magnitude*. Also: once a couple of
+  regimes clearly show no win, stop — don't wait for the remaining cells.
 
 ## Cross-references
 - `docs/dense-cell-subindex-design.md` — punch-1 detail (structure options, hooks, integration)
