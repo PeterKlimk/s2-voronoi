@@ -74,19 +74,21 @@ Each: problem → fix → status → priority → regime. Cross-refs at the bott
   3. **Wrong thing bounded.** The cap limits the candidate *list*, not the
      *slots scanned* (`cold.rs:228`) — O(occ²) band scan happens regardless.
 - **Decision (two-track):**
-  - **Stop-gap (now):** flip the lib default `packed_knn_expand_r2 → false`
-    (the bench binary already defaults off; the directed cursor is the
-    correctness fallback so off is correctness-neutral). One line, reversible,
-    stops the measured 6.5–9× bleeding. **Does not** delete the stage.
+  - **Stop-gap (SHIPPED 2026-06-14):** lib default flipped
+    `packed_knn_expand_r2 → false` (both `VoronoiConfig` and the internal
+    `TerminationConfig`; the directed cursor is the correctness fallback so off
+    is correctness-neutral — verified: lib+api+correctness+adversarial all
+    green). Reversible via the knob; stops the measured 6.5–9× bleeding.
+    **Does not** delete the stage.
   - **Real plan (retrial):** implement expand_r2 *properly* — SIMD band scan +
     clean handoff that **reuses** packed work into a **grouped, SIMD cursor**
     (see item 9) — and *then* re-measure whether expand_r2 justifies itself in
     **any** regime. If a well-built version still never wins, *then* remove it.
     The −1.7% uniform result suggests it may not, but that's a verdict to earn
     under a good implementation, not under the current scalar/no-reuse one.
-- **Status**: **measured net-negative (current impl); stop-gap = default off;
-  retrial folded into item 9.** **Priority: HIGH** (stop-gap), MEDIUM (retrial).
-  **Regime: dense.**
+- **Status**: **measured net-negative (current impl); stop-gap SHIPPED (lib
+  default off); retrial folded into item 9.** **Priority:** stop-gap done,
+  MEDIUM (retrial). **Regime: dense.**
 
 ### 2. `punch-2` — occupancy rebuild (global re-grid for *moderate* density)
 - Re-grids the whole sphere finer when concentration is real (`Σocc²/n` over

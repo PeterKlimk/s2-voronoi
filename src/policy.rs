@@ -279,9 +279,10 @@ mod tests {
         let internal = TerminationConfig::default();
         let policy = internal.packed_policy(100);
 
-        assert!(public.packed_knn_expand_r2);
-        assert!(internal.packed_expand_r2);
-        assert!(policy.expand_r2_enabled());
+        // expand_r2 defaults OFF (measured net-negative; see VoronoiConfig docs).
+        assert!(!public.packed_knn_expand_r2);
+        assert!(!internal.packed_expand_r2);
+        assert!(!policy.expand_r2_enabled());
         assert_eq!(policy.chunk0_size(), DEFAULT_PACKED_CHUNK0_SIZE);
         assert_eq!(policy.chunk_size(), DEFAULT_PACKED_CHUNK_SIZE);
     }
