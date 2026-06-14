@@ -80,6 +80,26 @@ identically to one homed in the cell. **No cell-local 2D frame, no
 cross-face/wraparound handling.** This is what makes a "parallel structure,
 cube grid untouched" approach clean.
 
+### Implementation findings (2026-06-14, from scoping the build)
+
+Two constraints discovered while scoping, which revise the options below:
+
+1. **Sub-indexes must be SIDE structures — do NOT permute the main SoA.**
+   `slot_gen_map` is indexed by slot (SoA position) and binning assigns
+   local-ids in slot order, so reordering a dense cell's points in place
+   changes local-ids and ripples through dedup / packed-kNN / vertex emission.
+   So the "in-place axis-sort" framing below is wrong; the axis-sort must be a
+   *separate* sorted list of the cell's slot indices, leaving the grid SoA
+   untouched. (This unifies the variants: one scaffold = a side map of
+   per-dense-cell sub-indexes; the variants differ only in structure type.)
+2. **No prune radius exists at `scan_cell` time.** The directed query
+   accumulates a whole ring's candidates into `pending`, sorts by dot, and the
+   consumer applies the `pending_bound` certificate ring-by-ring — there is no
+   per-query current-best threaded into `scan_cell`. So a side index gives *no*
+   speedup until the producer/consumer integration (radius-plumb or
+   lazy-stream) lands. That integration is the load-bearing work, not the
+   structure.
+
 ### Structure options (a spectrum; mostly orthogonal to the integration below)
 
 Three candidates were considered, ordered by pruning power and invasiveness.
