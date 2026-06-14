@@ -324,6 +324,16 @@ impl CubeMapGrid {
             "point_slots not fully initialized"
         );
 
+        // Dense-cell side index (punch 1): built only for over-full cells, so
+        // None on uniform input. Side structure — leaves the SoA untouched.
+        let dense_index = super::dense::DenseCellIndex::build(
+            &cell_offsets,
+            &cell_points_x,
+            &cell_points_y,
+            &cell_points_z,
+            crate::policy::DENSE_CELL_THRESHOLD,
+        );
+
         CubeMapGrid {
             res,
             cell_offsets,
@@ -341,6 +351,7 @@ impl CubeMapGrid {
             cell_points_y,
             cell_points_z,
             point_slots,
+            dense_index,
         }
     }
 

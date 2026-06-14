@@ -53,7 +53,6 @@ pub(crate) const GRID_MAX_CELLS_PER_POINT: f64 = 8.0;
 /// building for that cell — the linear-scan vs sub-index crossover (distinct
 /// from the rebuild's Σocc²/n trigger). Placeholder pending the quiet-box
 /// calibration; see docs/dense-cell-subindex-design.md.
-#[allow(dead_code)]
 pub(crate) const DENSE_CELL_THRESHOLD: usize = 512;
 
 /// Query-grid target density, with the sweep/tuning env override.
