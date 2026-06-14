@@ -35,7 +35,7 @@ impl HalfPlane {
 
     /// Construct an unnormalized half-plane with an explicit base
     /// inside-slack (`eps = base_eps * |n|`). The planar backends pass
-    /// `PLANE_CLIP_EPS_INSIDE` (now also the strict rule; see tolerances.rs).
+    /// `PLANE_CLIP_EPS_INSIDE` (the keep-bias; see tolerances.rs).
     pub fn new_unnormalized_base_eps(
         a: f64,
         b: f64,
@@ -44,13 +44,12 @@ impl HalfPlane {
         base_eps: f64,
     ) -> Self {
         let ab2: f64 = fp::fma_f64(a, a, b * b);
-        // eps = base_eps * |n|, |n| = sqrt(ab2). Both backends now use the
-        // strict keep rule (base_eps = CLIP_EPS_INSIDE / PLANE_CLIP_EPS_INSIDE
-        // = 0.0), so eps is identically 0.0 and the per-clip sqrt is pure
-        // waste — skip it on the hot path. The only nonzero base_eps is the
-        // p5_shadow eps-override probe, which still takes the exact path.
-        // Multiply-by-zero is exact, so this shifts no clip decision (and
-        // avoids a 0.0 * inf = NaN trap on a pathological huge-normal plane).
+        // eps = base_eps * |n|, |n| = sqrt(ab2). The SPHERE uses base_eps = 0
+        // (strict CLIP_EPS_INSIDE), so eps is identically 0.0 and the per-clip
+        // sqrt is pure waste — skip it. The PLANE (PLANE_CLIP_EPS_INSIDE =
+        // 1e-12, the bias) and the p5_shadow override pass nonzero base_eps and
+        // take the exact path. Multiply-by-zero is exact, so this shifts no
+        // clip decision (and avoids a 0.0 * inf = NaN on a huge-normal plane).
         let eps = if base_eps == 0.0 {
             0.0
         } else {

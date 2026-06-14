@@ -54,8 +54,8 @@ pub(crate) fn weld_radius() -> f32 {
 /// Base inside-slack for half-plane clipping on the SPHERICAL backend,
 /// scaled by the plane's normal magnitude at use
 /// (`eps = CLIP_EPS_INSIDE * |n|`). **0.0 = the strict antisymmetric keep
-/// rule `d >= 0` — the production setting.** The planar backends now use the
-/// same strict rule; see [`PLANE_CLIP_EPS_INSIDE`].
+/// rule `d >= 0` — the production setting.** The planar backends keep the
+/// bias (strict regresses plane perf via slivers); see [`PLANE_CLIP_EPS_INSIDE`].
 ///
 /// The historical value 1e-12 (hex3 import) kept epsilon-grazing vertices
 /// inside, biasing both cells of a shared edge toward agreeing a marginal
@@ -74,35 +74,32 @@ pub(crate) fn weld_radius() -> f32 {
 pub(crate) const CLIP_EPS_INSIDE: f64 = 0.0;
 
 /// Base inside-slack for half-plane clipping on the PLANAR backends (rect
-/// walls and bisectors, bounded and periodic alike). **0.0 = the strict
-/// antisymmetric keep rule `d >= 0`, matching the sphere — the production
-/// setting.** A separate constant from [`CLIP_EPS_INSIDE`] only so the two
-/// backends *can* diverge (and so the `p5_shadow` planar override has a
-/// distinct target); they now agree.
+/// walls and bisectors, bounded and periodic alike): the keep-bias
+/// `d >= -eps`. **1e-12 (the bias) is the production setting** — the planar
+/// backends deliberately do NOT use the sphere's strict rule. A separate
+/// constant from [`CLIP_EPS_INSIDE`] so the two backends diverge here.
 ///
-/// History — why this was 1e-12 (the keep-bias `d >= -eps`) until
-/// 2026-06-14. The bias kept epsilon-grazing corners inside BOTH cells of a
-/// shared edge, holding vertex keys and sequences identical. The planar
-/// anatomy probe (`probe_plane_strict_anatomy`) measured what flipping it
-/// to strict exposed: NOT in-circle parity contradictions (zero quad
-/// contradictions, exact planar in-circle) but VERTEX-IDENTITY SLIVERS —
-/// the same geometric corner committed under different triple attributions
-/// in different cells (duplicate vertex ids at bit-identical coordinates,
-/// zero-length sliver edges, shifted sequences along shared edges), the
-/// thirds-mismatch family, orders denser than the sphere's (~1 site per
-/// millions). The bias suppressed that class at the source, which was its
-/// real (long-undocumented) purpose. Removing it required, and got, three
-/// fixes the bias had been masking: collinear-vertex removal of the
-/// degenerate `[a,b,b]` keys (`drop_degenerate_collinear_vertices`),
-/// cross-bin defect detection (`CrossBinThirdsMismatch` /
-/// `CrossBinSlotConflict`), and density-robust multi-defect repair to
-/// fixpoint. With those in, the strict-plane campaign (1,362 cases —
-/// clustered/cocircular/lattice slivers plus uniform/periodic/non-unit-rect
-/// breadth, `scripts/plane_campaign.sh`) came back 100% strictly valid with
-/// zero residuals and zero repairs needed. The flip moves every plane
-/// fingerprint; it was taken deliberately as a release decision once the
-/// campaign cleared the correctness gate. See docs/p5-consistency-design.md.
-pub(crate) const PLANE_CLIP_EPS_INSIDE: f64 = 0.0;
+/// Why the plane keeps the bias and the sphere doesn't: the bias keeps
+/// epsilon-grazing corners inside BOTH cells of a shared edge, holding vertex
+/// keys/sequences identical, which **suppresses VERTEX-IDENTITY SLIVERS** —
+/// the same corner committed under different triple attributions (duplicate
+/// ids, zero-length sliver edges). The plane produces these orders denser
+/// than the sphere (~1 site per millions), so on the plane they are not rare.
+///
+/// History: flipped to 0.0 (strict) on 2026-06-14 (`ff3528b`) for parsimony
+/// after a 1,362-case correctness campaign came back clean. That flip was
+/// **REVERTED on 2026-06-14 (quiet-box perf)**: the campaign validated
+/// correctness but never measured perf, and strict is a major REGRESSION —
+/// the slivers it admits are detected (uniform 2M: 212 unresolved edges,
+/// zero on the bias) and trigger the O(n) `edge_reconcile` machinery on
+/// EVERY plane build (~42% of build time, +73% total). The "zero repairs"
+/// campaign claim was a misread of the post-repair residual count (0), not
+/// the repair WORK. The bias's slivers-guard role is real and load-bearing
+/// for plane perf. (A future option to reclaim strict-plane: make
+/// `edge_reconcile` O(defects) instead of O(n) per round, so a few slivers
+/// cost little; see docs/optimization-ideas.md.) See
+/// docs/p5-consistency-design.md.
+pub(crate) const PLANE_CLIP_EPS_INSIDE: f64 = 1e-12;
 
 /// Chart-validity floor: once the clipped polygon's minimum generator-dot
 /// reaches this, the feasible region is effectively at the generator's
@@ -280,12 +277,14 @@ mod tests {
     #[test]
     #[allow(clippy::assertions_on_constants)] // pinning the constant hierarchy is the point
     fn tolerance_ordering_sanity() {
-        // The hierarchy the pipeline relies on: BOTH backends use the strict
-        // antisymmetric keep rule (clipping slack zero; see CLIP_EPS_INSIDE /
-        // PLANE_CLIP_EPS_INSIDE), with the extraction floor pinned below the
-        // error-regime contradiction scale (~1e-11).
+        // The hierarchy the pipeline relies on: the SPHERE uses the strict
+        // antisymmetric keep rule (clipping slack zero), the PLANE keeps the
+        // bias (its dense slivers must be suppressed — strict is a perf
+        // regression there); the extraction floor sits below the plane bias
+        // and below the error-regime contradiction scale (~1e-11).
         assert!(CLIP_EPS_INSIDE == 0.0);
-        assert!(PLANE_CLIP_EPS_INSIDE == 0.0);
+        assert!(PLANE_CLIP_EPS_INSIDE > 0.0);
+        assert!((EXTRACT_DEGENERATE_LEN2 as f64).sqrt() < PLANE_CLIP_EPS_INSIDE);
         assert!((EXTRACT_DEGENERATE_LEN2 as f64).sqrt() < 1e-11);
         assert!(CLIP_EPS_INSIDE < MIN_PROJECTION_COS);
         assert!(PLANE_CLIP_EPS_INSIDE < MIN_PROJECTION_COS);
