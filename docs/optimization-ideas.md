@@ -7,6 +7,11 @@ the perf-specific backlog. Measurement rules: paired interleaved runs
 on a quieted machine; multithreaded numbers from different sessions are not
 comparable (observed drift exceeds 30%).
 
+> Organizing frame for the dense/non-uniform items below (occupancy rebuild,
+> dense-cell sub-index, expand_r2, directed-cursor batching): see
+> **`docs/multi-regime-perf.md`** — "keep uniform best-in-class, accept a small
+> uniform cost for 10–100× elsewhere; no fast-path with an unbounded downside."
+
 ## Open ideas
 
 ### Live within-bin edge repair (structural) — assessed 2026-06, deprioritized
