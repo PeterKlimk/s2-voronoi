@@ -98,23 +98,17 @@ name = "microbench_packed_select"
 path = "src/bin/microbench_packed_select.rs"
 required-features = ["microbench"]
 
-[profile.release]
-# Thin-LTO + single codegen unit: measured ~3-4% whole-program speedup on
-# uniform (500k -4.2%, 2M -2.7%, bench_run --converge 2026-06-14). Build-profile
-# only; costs release compile time (~8s -> ~50s for the bench binary).
-lto = "thin"
-codegen-units = 1
+# NOTE: thin-LTO + codegen-units=1 was tried (commit f4c6426) and reverted.
+# It showed a ~few% uniform win, but the magnitude is layout-noise-confounded,
+# it was never verified on other regimes, and it costs ~6x release build time.
+# Parked as a perf idea (docs/perf-profiling-plan.md) to revisit with a proper
+# multi-regime + diff-disjoint-control measurement.
 
 [profile.checked]
 inherits = "release"
 opt-level = 3
 debug = true
 debug-assertions = true
-# Keep the checked debugging profile fast to build; it exists for
-# debug-assertion correctness runs, not perf, so it opts out of the
-# release LTO it would otherwise inherit.
-lto = false
-codegen-units = 16
 
 [profile.checked.package."*"]
 debug = false
