@@ -1,13 +1,41 @@
 # P5: Consistency by Construction — Design
 
-Status (2026-06-12): **stages 0-1 done; stages 2-4 kept on the roadmap**
-(maintainer decision after the post-stage-0 defect survey: the remaining
-payload is ~1 repairable site per ~3 multi-million runs at 3M+, and the
-contract upgrade is still wanted). Next P5 action: the paired two-cell
-shadow audit (compare both cells' local decisions for the same 4-tuple) to
-place EPS_FILTER — the existing shadow histogram conflates
-platonic-vs-computed deviation with chart-vs-chart divergence. This
-document supersedes the two-paragraph P5 sketch in `docs/todo.md`.
+Status (2026-06-14): **DEFERRED — removing `edge_reconcile` is rejected for
+now, revisitable later.** Stages 0-1 are done and one stage-2 successor (the
+antisymmetric tie rule) shipped; the rest of P5 — the work that would let
+`edge_reconcile` be deleted — is explicitly parked. Decision rationale:
+
+- The exit criterion for deleting reconcile is *defects → 0 at every bin
+  count*, i.e. P5 must stop defects being **produced** (consistency by
+  construction), not repair them. We are not there, and getting there is a
+  genuine research-grade project, not a cleanup.
+- **Tie-regime defects: eliminated by construction** by the strict keep rule
+  (`CLIP_EPS_INSIDE = 0.0`, now also `PLANE_CLIP_EPS_INSIDE = 0.0`) — P5
+  stage-2 successor candidate 1. See "Tie-rule findings" below.
+- **Error-regime defects remain**: computed-sign errors larger than eps
+  (~1 repairable site per ~3 multi-million runs). No local rule fixes these;
+  only evaluating the exact canonical predicate where it matters does. The
+  load-bearing pillar is **pillar 3 (certificate closure / EPS_CERT)** —
+  defects are failure mode B (a cell never forms the corner or never receives
+  the marginal generator), not cells disagreeing on a question they both ask
+  (the paired audit found the cross-cell conflict tail is zero).
+- **The unsolved blocker**: a cheap-AND-correct canonical escalation. The
+  exact predicate everywhere is too slow on the hot path; margin-gated
+  filtered escalation was implemented and **rejected by measurement** (the
+  margin is not a function of the question — see stage-2a findings). So we
+  have correct-but-slow and fast-but-unsound, and no proven third option.
+
+Why deferral is safe: the current pipeline already *catches* every defect
+(plain paths error on residual; report/`S2_VORONOI_VERIFY` run the full
+validator; the early-return is debug-guarded) and repairs to strict validity.
+Finishing P5 buys *simplification and a stronger by-construction guarantee*,
+not a fix to user-visible breakage. Revisit if/when the cheap-correct
+escalation problem is cracked or a perf hit becomes acceptable.
+
+Next P5 action *if resumed*: the certificate-closure (EPS_CERT) work — make
+every cell that a marginal question could affect actually receive it — plus a
+question-intrinsic (not margin-gated) escalation. This document supersedes the
+two-paragraph P5 sketch in `docs/todo.md`.
 
 ## Goal
 

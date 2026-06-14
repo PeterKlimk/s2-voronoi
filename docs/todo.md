@@ -185,8 +185,15 @@ design's named failure mode B).
 Hard exit criteria: the edge-repair net's defects go to ZERO at every bin count (then
 edge_reconcile is deleted and detection becomes a bug trap), and paired benches show <=1% ST
 regression at 500k/2M — criterion 2 can reject the project; the fallback is the hardened
-2026-06 status quo. Largest item on the list; now planned pre-release at maintainer's call
-(supersedes the earlier post-release note).
+2026-06 status quo.
+
+**DEFERRED (2026-06-14): removing `edge_reconcile` is rejected for now.** The tie-regime
+defect class was eliminated by construction (the strict keep rule shipped); the error-regime
+remainder needs a cheap-AND-correct canonical escalation that is still unsolved (margin-gated
+escalation was measured unsound). Deferral is safe because every defect is already caught and
+repaired to strict validity — finishing P5 buys simplification, not a breakage fix. See the
+Status block in `docs/p5-consistency-design.md` for the full rationale and the resume plan
+(certificate closure / EPS_CERT).
 
 ## P6: New geometries
 
