@@ -157,10 +157,16 @@ pub(crate) fn assign_bins_with(
     let mut slot_gen_map: Vec<u32> = vec![u32::MAX; n];
 
     let mut visited = 0usize;
-    for cell in 0..num_cells {
+    for (cell, win) in cell_offsets.windows(2).enumerate() {
         let b_usize = bin_for_cell(cell);
         let b = BinId::from_usize(b_usize);
-        for &g_u32 in cell_points(cell) {
+        // Points of a cell occupy contiguous slots cell_start.. in this order,
+        // so we can fill slot_gen_map inline here from each point's own (bin,
+        // local) — no separate O(n) pass, no generator_bin/global_to_local
+        // read-back.
+        let cell_start = win[0] as usize;
+        let cell_end = win[1] as usize;
+        for (offset, &g_u32) in point_indices[cell_start..cell_end].iter().enumerate() {
             let g = g_u32 as usize;
             debug_assert!(g < n, "grid returned out-of-range point index");
 
@@ -180,6 +186,8 @@ pub(crate) fn assign_bins_with(
                 local_shift,
                 local_mask
             );
+            slot_gen_map[cell_start + offset] =
+                ((b.as_u8() as u32) << local_shift) | local.as_u32();
             visited += 1;
         }
     }
@@ -200,23 +208,8 @@ pub(crate) fn assign_bins_with(
         "unassigned global_to_local entries"
     );
 
-    // Build slot_gen_map: iterate cells in order, write packed (bin, local) at each slot position.
-    // Slots are the SOA indices: cell_offsets[cell]..cell_offsets[cell+1].
-    for cell in 0..num_cells {
-        let cell_start = cell_offsets[cell] as usize;
-        let cell_end = cell_offsets[cell + 1] as usize;
-        for (slot_val, &g) in slot_gen_map[cell_start..cell_end]
-            .iter_mut()
-            .zip(&point_indices[cell_start..cell_end])
-        {
-            let g_usize = g as usize;
-            let bin = generator_bin[g_usize].as_u8() as u32;
-            let local = global_to_local[g_usize].as_u32();
-            debug_assert!(local <= local_mask, "local id does not fit packed layout");
-            *slot_val = (bin << local_shift) | local;
-        }
-    }
-
+    // slot_gen_map is now filled inline during the scatter pass above
+    // (fused — no separate read-back pass).
     debug_assert!(
         !slot_gen_map.contains(&u32::MAX),
         "unassigned slot_gen_map entries"
