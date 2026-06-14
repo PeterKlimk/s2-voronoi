@@ -51,6 +51,7 @@ Status: `pending` until run, then record the verdict inline.
 | `0def19e` | per-clip eps sqrt skip (both backends) | uniform 500k/2M, sphere+plane | tiny win <1% | pending |
 | `ff3528b` | plane strict clip rule | plane uniform 500k/2M | neutral (confirm; repair-rate could shift) | pending |
 | `33b4962` | occupancy rebuild → Σocc²/n trigger | uniform (regression check) **+ splittable + mega** | uniform neutral; clustered much faster | pending |
+| `c3d455b` | plane weld: compact grid in place vs rebuild | **bench_plane** `-m preprocess`, uniform 2M/5M (welds via birthday effect; or a welding dist) | preprocess win on welded runs; total ~neutral | pending — phase-localized, interim noisy signal OK |
 
 ### Re-confirm on quiet box (benched only on noisy box)
 
