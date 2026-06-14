@@ -4,6 +4,10 @@ When the quiet-box perf pass happens, this says **which commits to A/B and
 which to skip**, so paired runs aren't wasted on commits that can't move
 release runtime. Built from the git log of the 2026-06-14 session.
 
+> This is the detailed per-commit classification for the initial batch. The
+> **living, append-as-we-go plan** (workload matrix + accumulating queue) is
+> `docs/perf-profiling-plan.md` — add new perf-relevant commits there.
+
 ## How to use
 
 Paired, interleaved, single-thread (the established protocol). `bench_run.sh`
