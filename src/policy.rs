@@ -24,23 +24,23 @@ pub(crate) const KNN_GRID_TARGET_DENSITY: f64 = 24.0;
 /// `n` makes it scale-free: it equals the target density (~24) for uniform
 /// input and rises with concentration.
 ///
-/// Calibrated 2026-06-14 (reference machine, deterministic occupancy +
-/// feasibility sweep, see docs/optimization-ideas.md). The earlier trigger
-/// (`max_occ > 16×target`) fired far too eagerly: it re-grids on any modest
-/// cluster, and a global re-grid de-tunes the whole grid's mean density to
-/// chase a few hot cells — measured 1.5–9× SLOWER than not rebuilding on
-/// outlier / few-cluster / spread-cluster inputs, while the fullest cell is
-/// no problem until it holds thousands of points. `Σocc²/n` is the right
-/// signal because it weights by total work: one giant cell in a uniform sea
-/// stays low (rebuild correctly skipped — that's a local-index problem), but
-/// genuine majority-concentration drives it high. Crossover data: OFF is
-/// feasible (and rebuild HARMFUL — ON 7.0s > OFF 4.5s) at `Σocc²/n=1237`, and
-/// infeasible (rebuild rescues — ON 10s vs OFF >60s) at 2753; point-mass
-/// fraction does NOT separate these (0.283 fine vs 0.299 hangs). The
-/// threshold sits in that gap. Note this fires only on the regime where the
-/// concentrated region is the majority, so the global re-grid's background
-/// de-tuning is dominated by the giant-cell savings.
-pub(crate) const GRID_REBUILD_SUMSQ_PER_N: f64 = 2000.0;
+/// `Σocc²/n` is the right *variable*: it weights by total candidate-scan work,
+/// so a single giant cell in a uniform sea stays low (rebuild correctly
+/// skipped — that's a local-index problem) while genuine concentration drives
+/// it high. The earlier `max_occ > 16×target` trigger fired far too eagerly
+/// (re-grids on any cell over the bar, even when not rebuilding is faster).
+///
+/// Threshold calibrated on a QUIET box (2026-06-14): a clean OFF-vs-ON sweep
+/// across two cluster shapes located the beneficial crossover at `Σocc²/n ≈
+/// 450`, shape-invariant — rebuild HURTS below it (splittable ssn=274 −19%,
+/// mega ssn=331 −8%) and HELPS above it (splittable ssn=536 +18%, mega ssn=712
+/// +29%, rising to +60%/rescue at higher concentration); uniform (ssn~26) and
+/// smooth gradients (ssn~187) sit well below. 500 classifies every measured
+/// point correctly. NOTE: an earlier value of 2000 (committed `33b4962`) was
+/// set from NOISY-box data that wildly overstated the effect (claimed 9× where
+/// the truth is ±15-20%) and put the crossover 4-7× too high — corrected here.
+/// See docs/optimization-ideas.md.
+pub(crate) const GRID_REBUILD_SUMSQ_PER_N: f64 = 500.0;
 
 /// Post-rebuild target for the fullest cell (drives the new resolution):
 /// `new_res = res · sqrt(max_occ / this)`. Half the legacy 16×target band.
