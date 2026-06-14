@@ -223,6 +223,32 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
     is_boundary_edge: impl Fn(u32, u32) -> bool,
 ) -> Result<Vec<(u32, u32)>, crate::VoronoiError> {
     if edge_records.is_empty() {
+        // Production fast path: with no detected mismatch there is nothing to
+        // repair, and the O(total cell indices) output-invariant scan is
+        // skipped — avoiding it on clean runs is the whole point of this
+        // early return. Soundness rests on a detection-completeness claim:
+        // every unpaired interior edge produces >= 1 detection record, so an
+        // empty record set implies a clean output. That follows from the
+        // coverage contract (docs/live_dedup.md "stitching invariant"): a
+        // one-sided edge is either cross-bin (its overflow is a singleton or
+        // a mismatch => record) or same-bin (a forwarded check goes unconsumed
+        // => record); a same-bin later cell cannot be the lone owner. Rather
+        // than trust that argument silently, debug builds run the scan anyway
+        // and assert it is clean — turning detection-completeness into a
+        // continuously-checked invariant at ZERO release cost. If this ever
+        // fires, a defect escaped detection and the early return is unsafe for
+        // that input class (revisit the contract, not just this assert).
+        #[cfg(debug_assertions)]
+        {
+            let unpaired = scan_unpaired_interior(cells, cell_indices, &is_boundary_edge)?;
+            assert!(
+                unpaired.is_empty(),
+                "edge-reconcile early-return invariant violated: {} unpaired interior \
+                 edge(s) with ZERO detection records — a defect escaped detection \
+                 (see docs/live_dedup.md stitching invariant)",
+                unpaired.len()
+            );
+        }
         return Ok(Vec::new());
     }
     run_repair_rounds(

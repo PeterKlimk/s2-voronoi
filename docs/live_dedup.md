@@ -54,6 +54,24 @@ edge is exactly the class of mismatch `edge_reconcile` repairs. This residual as
 precise motivation for the eventual canonical-predicate refactor (docs/todo.md P5): decide each
 shared edge once, and the caveat disappears.
 
+**Detection completeness (why `edge_reconcile` may skip its scan on clean runs).** The repair pass
+runs an output-invariant scan (every interior edge used by exactly two cells) but only when
+detection produced at least one unresolved record; on a record-free run it returns immediately,
+skipping the O(total cell indices) scan. That early return is sound because *every* unpaired
+interior edge produces at least one detection record. An unpaired edge is owned by exactly one
+cell C (neighbor D lacks it), and C built it, so: (a) cross-bin — C's `EmitAll` overflow for the
+edge is a singleton or a mismatch against D's, either way a record; (b) same-bin with C the
+earlier generator — C's forwarded edge check is never consumed by D, an `InBinUnconsumedCheck`
+record; (c) same-bin with C the later generator is impossible, since C only carries an edge to an
+earlier same-bin D when D sent a seed, which means D agreed the edge exists and built it (so it is
+paired, not unpaired). Duplicate-key slivers — unpaired edges between duplicate copies of one key,
+whose thirds *agree* and so name no per-edge record — are secondary effects of a primary recorded
+mismatch (index propagation fails precisely *because* an endpoint mismatched, and that mismatch is
+the record), so the record set is still non-empty. Debug builds verify this directly: on the
+record-free early return they run the scan anyway and assert it is clean, turning the argument into
+a continuously-checked invariant at zero release cost (the assert lives in
+`edge_reconcile::reconcile_unresolved_edges`).
+
 **Vertex identity is combinatorial.** A vertex is keyed by its sorted generator triple, so cells
 that agree a vertex exists agree on its identity exactly, independent of floating-point
 positions; dedup picks one representative position per key.
