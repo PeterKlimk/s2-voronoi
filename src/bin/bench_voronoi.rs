@@ -223,6 +223,21 @@ fn generate_points(n: usize, seed: u64, lloyd: bool, dist: &str, param: f64) -> 
         "outlier" => return outlier_points(n, &mut rng),
         "splittable" => return splittable_points(n, &mut rng),
         "mega" => return mega_points(n, param, &mut rng),
+        // Almost everything inside a single tight cap (radius = dist-param,
+        // default 0.002 ≈ tighter than one max-res grid cell) — the "everything
+        // in one cell" extreme the occupancy rebuild's memory cap cannot split.
+        // A ~2% uniform background bounds the rim cells (a fully-isolated cap
+        // leaves rim cells spanning the empty hemisphere, which the chart cannot
+        // build — a separate correctness limitation, not the perf case here).
+        "cap" => {
+            let r = if param > 0.0 { param as f32 } else { 0.002 };
+            let center = Vec3::new(0.0, 0.0, 1.0);
+            let bg = (n / 50).max(16);
+            let bulk = n.saturating_sub(bg);
+            let mut pts: Vec<Vec3> = (0..bg).map(|_| random_unit(&mut rng)).collect();
+            pts.extend((0..bulk).map(|_| cap_point(center, r, &mut rng)));
+            return pts;
+        }
         _ => {}
     }
     let jitter_scale = if lloyd { 0.1 } else { 0.25 };
