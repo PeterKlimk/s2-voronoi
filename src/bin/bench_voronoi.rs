@@ -557,7 +557,6 @@ fn main() {
                 PreprocessMode::Weld
             },
             packed_knn_expand_r2: args.packed_expand_r2,
-            ..VoronoiConfig::default()
         };
 
         for iter in 0..args.repeat {
