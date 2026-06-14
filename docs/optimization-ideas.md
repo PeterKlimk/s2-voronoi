@@ -177,16 +177,32 @@ minority of hot cells. It only wins when the dense region is the **majority**
 (background negligible, giant cells otherwise O(occ²)-infeasible).
 
 **Fix**: trigger on `Σocc²/n` (the candidate-scan work proxy = cost of NOT
-rebuilding), not max occupancy. Crossover is sharp and single-variable:
-rebuild is harmful at Σocc²/n=1237, essential at 2753 (point-mass fraction
-does NOT separate these — splittable 0.28 fine vs mega-f0.3 0.30 hangs).
-Threshold set to **2000** (`GRID_REBUILD_SUMSQ_PER_N`). Naturally skips the
-single-giant-cell-in-uniform case (low Σocc²/n → that's a local-index
-problem, not a re-grid one). Output is unaffected (the grid is only a
-candidate index; the kNN certificate finds the same neighbors at any
-resolution) — this is purely a build-time change. Timing magnitudes measured
-on a noisy box; the *deterministic* occupancy crossover and the
-feasibility (finishes / times out) signal carry the conclusion.
+rebuilding), not max occupancy. The variable is right (concentration drives
+the giant-cell cost; a single giant cell in a uniform sea stays low → a
+local-index problem, not a re-grid one). Output is unaffected (the grid is
+only a candidate index; the kNN certificate finds the same neighbors at any
+resolution) — purely a build-time change.
+
+**Threshold correction (QUIET-box, `681b155`): 2000 → 500.** The original
+2000 was set from NOISY-box scratch timing that overstated the effect (it
+claimed 9× where the truth is ±15-20%) and put the crossover 4-7× too high. A
+clean quiet-box OFF-vs-ON sweep across two cluster shapes located the
+beneficial crossover at `Σocc²/n ≈ 450`, shape-invariant:
+
+| input | Σocc²/n | rebuild |
+|---|---|---|
+| mega frac0.05 | 102 | hurts 41% |
+| splittable 1m | 274 | hurts 19% |
+| mega frac0.1 | 331 | hurts 8% |
+| splittable 500k | 536 | **helps 18%** |
+| mega frac0.15 | 712 | **helps 29%** |
+| mega frac0.2 | 1244 | **helps 60%** |
+
+500 classifies every point correctly (uniform ssn~26 / gradient ~187 below;
+extreme mega ssn~19500 above). Lesson: the noisy box didn't just add variance,
+it inverted a verdict (splittable rebuild "9× harmful" at 1M was real-but-mild
+−19%, and at 500k it actually HELPS) — quiet-box calibration was load-bearing,
+not a formality.
 
 Follow-up still open — "punch 1", SYNERGISTIC with this rebuild (not a
 replacement): a local sub-index for over-full cells (a local re-grid that
