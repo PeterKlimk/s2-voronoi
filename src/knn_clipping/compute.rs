@@ -463,6 +463,24 @@ fn max_cell_occupancy(grid: &crate::cube_grid::CubeMapGrid) -> usize {
         .unwrap_or(0)
 }
 
+/// `Σocc²/n`: the occupancy-rebuild trigger signal (see
+/// `policy::GRID_REBUILD_SUMSQ_PER_N`). One cheap pass over the CSR offsets;
+/// equals the target density for uniform input, rising with concentration.
+fn cell_sum_sq_per_n(grid: &crate::cube_grid::CubeMapGrid, n: usize) -> f64 {
+    if n == 0 {
+        return 0.0;
+    }
+    let sum_sq: f64 = grid
+        .cell_offsets()
+        .windows(2)
+        .map(|w| {
+            let c = (w[1] - w[0]) as f64;
+            c * c
+        })
+        .sum();
+    sum_sq / n as f64
+}
+
 fn build_query_grid(
     effective_points: &[Vec3],
     tb: &mut TimingBuilder,
@@ -489,24 +507,29 @@ fn build_query_grid(
     #[cfg(not(feature = "timing"))]
     let grid = build(res);
     let mut max_occupancy = max_cell_occupancy(&grid);
+    let sum_sq_per_n = cell_sum_sq_per_n(&grid, n);
 
-    // Occupancy feedback: clustered inputs produce mega-cells under the
-    // density-derived resolution; one rebuild at a higher resolution (within
-    // the memory budget) restores bounded per-cell work.
+    // Occupancy feedback: a catastrophically concentrated input (Σocc²/n over
+    // the threshold) makes the per-cell candidate scan O(occ²)-infeasible; one
+    // global re-grid at higher resolution (within the memory budget) restores
+    // tractable per-cell work. Fires only in that regime — modest clusters
+    // degrade gracefully and a re-grid would be a net pessimization there.
     let mut rebuilt = false;
-    let grid = match crate::policy::grid_occupancy_rebuild_resolution(res, n, max_occupancy) {
-        Some(new_res) => {
-            res = new_res;
-            rebuilt = true;
-            #[cfg(feature = "timing")]
-            let regrid = build(new_res, &mut grid_build_timings);
-            #[cfg(not(feature = "timing"))]
-            let regrid = build(new_res);
-            max_occupancy = max_cell_occupancy(&regrid);
-            regrid
-        }
-        None => grid,
-    };
+    let grid =
+        match crate::policy::grid_occupancy_rebuild_resolution(res, n, max_occupancy, sum_sq_per_n)
+        {
+            Some(new_res) => {
+                res = new_res;
+                rebuilt = true;
+                #[cfg(feature = "timing")]
+                let regrid = build(new_res, &mut grid_build_timings);
+                #[cfg(not(feature = "timing"))]
+                let regrid = build(new_res);
+                max_occupancy = max_cell_occupancy(&regrid);
+                regrid
+            }
+            None => grid,
+        };
 
     tb.set_knn_build(t.elapsed());
     tb.set_grid_stats(res, max_occupancy as u64, rebuilt);
@@ -611,8 +634,8 @@ fn remap_cells_to_original_indices(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_query_grid, map_build_cells_error, map_cell_build_error, max_cell_occupancy,
-        validate_generator_capacity,
+        build_query_grid, cell_sum_sq_per_n, map_build_cells_error, map_cell_build_error,
+        max_cell_occupancy, validate_generator_capacity,
     };
     use crate::knn_clipping::cell_build::{CellBuildError, CellFailure};
     use crate::knn_clipping::live_dedup::{BuildCellsError, PackedLayoutCapacityError};
@@ -808,12 +831,14 @@ mod tests {
             .collect();
 
         let naive_res = crate::policy::knn_grid_resolution(n);
-        let naive_occupancy = max_cell_occupancy(&CubeMapGrid::new(&points, naive_res));
-        let threshold = (crate::policy::GRID_OCCUPANCY_REBUILD_FACTOR
-            * crate::policy::knn_grid_target_density()) as usize;
+        let naive_grid = CubeMapGrid::new(&points, naive_res);
+        let naive_occupancy = max_cell_occupancy(&naive_grid);
+        // The trigger is the catastrophic-work signal Σocc²/n: this fully
+        // concentrated fixture must clear it (all points pile into a few cells).
+        let naive_sum_sq_per_n = cell_sum_sq_per_n(&naive_grid, n);
         assert!(
-            naive_occupancy > threshold,
-            "fixture must overflow the naive grid (occupancy {naive_occupancy})"
+            naive_sum_sq_per_n > crate::policy::GRID_REBUILD_SUMSQ_PER_N,
+            "fixture must be catastrophically concentrated (Σocc²/n {naive_sum_sq_per_n:.0})"
         );
 
         let mut tb = TimingBuilder::new();

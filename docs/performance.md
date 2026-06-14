@@ -90,8 +90,12 @@ For the current policy surface and change rules, see `docs/policy.md`.
   lines. Watch `neighbors_total` (mean neighbors before termination =
   total / n), `grid_res`, `grid_max_occ`, and `grid_rebuilt` alongside
   `total_ms` when fitting.
-- Clustered inputs trigger an occupancy-feedback rebuild (one step, memory
-  bounded); `grid_rebuilt=1` in `TIMING_KV` marks affected runs.
+- Catastrophically concentrated inputs (Σocc²/n over `GRID_REBUILD_SUMSQ_PER_N`,
+  i.e. the dense region is the majority of points) trigger a one-step,
+  memory-bounded occupancy-feedback rebuild; `grid_rebuilt=1` in `TIMING_KV`
+  marks affected runs. Modest clusters do NOT trigger it — a global re-grid
+  de-tunes the background and is a net pessimization there (see the occupancy
+  rebuild re-calibration in docs/optimization-ideas.md).
 
 ## Memory
 

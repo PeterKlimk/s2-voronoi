@@ -131,16 +131,59 @@ sub-index. Cheaper to build but pays everywhere — non-uniform inputs have
 sparse regions too, so a uniformly denser grid wastes build time and
 memory on empty cells to help a few hot spots.
 
-Caveat (corrected 2026-06): the SPHERE already has an occupancy-feedback
-rebuild (`grid_occupancy_rebuild_resolution`, policy.rs) — a one-shot
-re-grid at higher resolution when the fullest cell exceeds 16x the target
-density, memory-capped to O(n) cells — plus the `S2_VORONOI_GRID_DENSITY`
-manual knob, so a hint adds little there. The PLANE has neither feedback
-rebuild nor occupancy knob beyond `S2_VORONOI_PLANE_GRID_DENSITY`; it sizes
-the grid once by occupied fraction. So if the dense-cell cost matters for a
-real workload, the highest-value first step is porting the sphere's
-occupancy-feedback rebuild to the plane (small, reuses proven policy),
-before any sub-index or hint API. Same bounded ~1.46x prize either way.
+Caveat: the SPHERE has an occupancy-feedback rebuild
+(`grid_occupancy_rebuild_resolution`, policy.rs) — a one-shot global re-grid,
+memory-capped to O(n) cells — plus the `S2_VORONOI_GRID_DENSITY` knob. Its
+trigger was **re-calibrated 2026-06-14** (see "Occupancy rebuild
+re-calibration" below): it now fires only on catastrophic concentration
+(`Σocc²/n` over threshold), not on any modest cluster. The PLANE has no
+feedback rebuild. **Porting it to the plane is now LOWER priority**: the
+evaluation showed a global re-grid only ever helps when the dense region is
+the majority of points (where it rescues an otherwise-infeasible build);
+for the moderate-density cases a plane port would target, OFF degrades
+gracefully and a re-grid is a net pessimization. So the plane port is only
+worth it if a real majority-concentration planar workload appears; the
+sub-index ("punch 1" local refinement) is the better general direction for
+both geometries if dense-cell cost ever becomes a real target.
+
+## Occupancy rebuild re-calibration — DONE (2026-06-14)
+
+The occupancy-feedback rebuild (added 2026-06-11, `1e1dfcc`) was validated on
+the wrong metric — its integration test pinned *occupancy reduction*, never
+*wall-time*. A deterministic occupancy + feasibility sweep across density-
+contrast distributions showed the original `max_occ > 16×target (=384)`
+trigger fires far too eagerly and is a **net pessimization in every case it
+fired** on non-extreme inputs:
+
+| distribution | max_occ | pts-in-over frac | Σocc²/n | rebuild ON vs OFF |
+|---|---|---|---|---|
+| outlier (1 pile) | 503 | 0.0005 | 26 | 1.5× SLOWER |
+| fewclusters (8) | 632 | 0.005 | 28 | 2.4× SLOWER |
+| splittable (387 cells) | 1125 | 0.28 | 244 | 9× SLOWER |
+| mega-f0.2 | 7079 | 0.20 | 1237 | 1.6× SLOWER (OFF 4.5s) |
+| mega-f0.3 | 10621 | 0.30 | 2753 | RESCUE (OFF >60s → ON 10s) |
+| mega-f0.8 | 28205 | 0.80 | 19449 | RESCUE (OFF ∞ → ON 12s) |
+
+Root cause: a single *global* resolution can't refine a hotspot without
+de-tuning the background — the rebuild collapsed mean density 24→4 to chase a
+minority of hot cells. It only wins when the dense region is the **majority**
+(background negligible, giant cells otherwise O(occ²)-infeasible).
+
+**Fix**: trigger on `Σocc²/n` (the candidate-scan work proxy = cost of NOT
+rebuilding), not max occupancy. Crossover is sharp and single-variable:
+rebuild is harmful at Σocc²/n=1237, essential at 2753 (point-mass fraction
+does NOT separate these — splittable 0.28 fine vs mega-f0.3 0.30 hangs).
+Threshold set to **2000** (`GRID_REBUILD_SUMSQ_PER_N`). Naturally skips the
+single-giant-cell-in-uniform case (low Σocc²/n → that's a local-index
+problem, not a re-grid one). Output is unaffected (the grid is only a
+candidate index; the kNN certificate finds the same neighbors at any
+resolution) — this is purely a build-time change. Timing magnitudes measured
+on a noisy box; the *deterministic* occupancy crossover and the
+feasibility (finishes / times out) signal carry the conclusion.
+
+Follow-up still open: "punch 1" local sub-index for over-full cells (a local
+re-grid that never de-tunes the background) — the better general fix if dense
+clusters ever become a real workload; see the dense-cell section above.
 
 ## Done (2026-06, micro-opt matrix screen — paired-confirmed)
 

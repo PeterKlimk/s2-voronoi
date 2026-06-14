@@ -17,10 +17,34 @@
 /// `grid_*` TIMING_KV fields are the model inputs.
 pub(crate) const KNN_GRID_TARGET_DENSITY: f64 = 24.0;
 
-/// Occupancy-feedback rebuild fires when the fullest grid cell exceeds this
-/// multiple of the target density (clustered inputs produce mega-cells that
-/// degrade candidate filtering quadratically).
-pub(crate) const GRID_OCCUPANCY_REBUILD_FACTOR: f64 = 16.0;
+/// Occupancy-feedback rebuild fires when the candidate-scan work proxy
+/// `Σocc²/n` exceeds this. `Σocc²` is the sum of squared per-cell
+/// occupancies — exactly the O(occ²) cost of scanning each cell's candidates
+/// for every query homed in it, i.e. the cost of NOT rebuilding. Dividing by
+/// `n` makes it scale-free: it equals the target density (~24) for uniform
+/// input and rises with concentration.
+///
+/// Calibrated 2026-06-14 (reference machine, deterministic occupancy +
+/// feasibility sweep, see docs/optimization-ideas.md). The earlier trigger
+/// (`max_occ > 16×target`) fired far too eagerly: it re-grids on any modest
+/// cluster, and a global re-grid de-tunes the whole grid's mean density to
+/// chase a few hot cells — measured 1.5–9× SLOWER than not rebuilding on
+/// outlier / few-cluster / spread-cluster inputs, while the fullest cell is
+/// no problem until it holds thousands of points. `Σocc²/n` is the right
+/// signal because it weights by total work: one giant cell in a uniform sea
+/// stays low (rebuild correctly skipped — that's a local-index problem), but
+/// genuine majority-concentration drives it high. Crossover data: OFF is
+/// feasible (and rebuild HARMFUL — ON 7.0s > OFF 4.5s) at `Σocc²/n=1237`, and
+/// infeasible (rebuild rescues — ON 10s vs OFF >60s) at 2753; point-mass
+/// fraction does NOT separate these (0.283 fine vs 0.299 hangs). The
+/// threshold sits in that gap. Note this fires only on the regime where the
+/// concentrated region is the majority, so the global re-grid's background
+/// de-tuning is dominated by the giant-cell savings.
+pub(crate) const GRID_REBUILD_SUMSQ_PER_N: f64 = 2000.0;
+
+/// Post-rebuild target for the fullest cell (drives the new resolution):
+/// `new_res = res · sqrt(max_occ / this)`. Half the legacy 16×target band.
+pub(crate) const GRID_REBUILD_TARGET_MAX_OCC: f64 = 192.0;
 
 /// Memory cap for the feedback rebuild: total grid cells stay O(n).
 pub(crate) const GRID_MAX_CELLS_PER_POINT: f64 = 8.0;
@@ -92,14 +116,16 @@ pub(crate) fn grid_occupancy_rebuild_resolution(
     res: usize,
     num_points: usize,
     max_occupancy: usize,
+    sum_sq_per_n: f64,
 ) -> Option<usize> {
-    let target = knn_grid_target_density().max(1.0);
-    let threshold = GRID_OCCUPANCY_REBUILD_FACTOR * target;
-    if (max_occupancy as f64) <= threshold {
+    // Fire only in the catastrophic-concentration regime where NOT rebuilding
+    // is infeasible (see GRID_REBUILD_SUMSQ_PER_N). Below it, the flat grid
+    // degrades gracefully and a global re-grid is a net pessimization.
+    if sum_sq_per_n <= GRID_REBUILD_SUMSQ_PER_N {
         return None;
     }
 
-    let desired_max = (threshold * 0.5).max(1.0);
+    let desired_max = GRID_REBUILD_TARGET_MAX_OCC.max(1.0);
     let scale = (max_occupancy as f64 / desired_max).sqrt();
     let new_res = ((res as f64 * scale).ceil() as usize).max(res + 1);
 
@@ -189,25 +215,31 @@ mod tests {
     }
 
     #[test]
-    fn occupancy_rebuild_fires_only_above_threshold() {
-        let target = knn_grid_target_density();
-        let threshold = (GRID_OCCUPANCY_REBUILD_FACTOR * target) as usize;
+    fn occupancy_rebuild_fires_only_when_work_is_catastrophic() {
+        // The trigger is Σocc²/n, NOT max occupancy: a single big cell (high
+        // max_occ, low Σocc²/n) must NOT fire — that is a local-index problem,
+        // and a global re-grid would de-tune the whole grid (measured harmful).
+        let below = GRID_REBUILD_SUMSQ_PER_N * 0.5;
+        let above = GRID_REBUILD_SUMSQ_PER_N * 2.0;
 
+        // Below the work threshold: no rebuild, even with a fat fullest cell.
         assert_eq!(
-            grid_occupancy_rebuild_resolution(32, 100_000, target as usize),
+            grid_occupancy_rebuild_resolution(32, 100_000, 5_000, below),
+            None,
+            "high max_occ but low Σocc²/n must not rebuild (single-giant-cell case)"
+        );
+        // At the threshold: still no rebuild (strict >).
+        assert_eq!(
+            grid_occupancy_rebuild_resolution(32, 100_000, 5_000, GRID_REBUILD_SUMSQ_PER_N),
             None
         );
-        assert_eq!(
-            grid_occupancy_rebuild_resolution(32, 100_000, threshold),
-            None
-        );
-
-        let new_res = grid_occupancy_rebuild_resolution(32, 100_000, threshold * 16)
-            .expect("16x over threshold must trigger a rebuild");
+        // Above it: rebuild to a finer resolution.
+        let new_res = grid_occupancy_rebuild_resolution(32, 100_000, 20_000, above)
+            .expect("catastrophic Σocc²/n must trigger a rebuild");
         assert!(new_res > 32);
 
-        // Memory cap: total cells stay O(n).
-        let capped = grid_occupancy_rebuild_resolution(32, 1_000, 1_000)
+        // Memory cap: total cells stay O(n) even for an extreme concentration.
+        let capped = grid_occupancy_rebuild_resolution(32, 1_000, 1_000, above)
             .map(|r| 6 * r * r)
             .unwrap_or(0);
         assert!(
