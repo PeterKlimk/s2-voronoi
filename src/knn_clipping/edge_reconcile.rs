@@ -240,7 +240,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         // that input class (revisit the contract, not just this assert).
         #[cfg(debug_assertions)]
         {
-            let unpaired = scan_unpaired_interior(cells, cell_indices, &is_boundary_edge)?;
+            let unpaired = scan_unpaired_interior_global(cells, cell_indices, &is_boundary_edge)?;
             assert!(
                 unpaired.is_empty(),
                 "edge-reconcile early-return invariant violated: {} unpaired interior \
@@ -251,6 +251,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         }
         return Ok(Vec::new());
     }
+    let primary_candidates = affected_cells_from_records(edge_records);
     run_repair_rounds(
         edge_records,
         vertices,
@@ -262,7 +263,13 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         MergeMode::Primary,
     )?;
 
-    let unpaired = scan_unpaired_interior(cells, cell_indices, &is_boundary_edge)?;
+    let unpaired = scan_unpaired_interior(
+        cells,
+        cell_indices,
+        vertex_keys,
+        &primary_candidates,
+        &is_boundary_edge,
+    )?;
     if unpaired.is_empty() {
         return Ok(Vec::new());
     }
@@ -279,7 +286,18 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
             MergeMode::ProximityOnly,
         )?;
     }
-    let residual = scan_unpaired_interior(cells, cell_indices, &is_boundary_edge)?;
+    // Residual scan covers both passes' touched regions.
+    let mut residual_candidates = primary_candidates;
+    residual_candidates.extend(affected_cells_from_records(&synth));
+    residual_candidates.sort_unstable();
+    residual_candidates.dedup();
+    let residual = scan_unpaired_interior(
+        cells,
+        cell_indices,
+        vertex_keys,
+        &residual_candidates,
+        &is_boundary_edge,
+    )?;
     Ok(residual
         .iter()
         .map(|&(va, vb, owner)| cell_pair_for_unpaired(va, vb, owner, vertex_keys))
@@ -305,32 +323,79 @@ fn degenerate_single(key: VertexKey) -> Option<u32> {
     }
 }
 
+/// Cells named (as the two edge endpoints) by the detection records — the only
+/// cells a repair round can legitimately need to touch. Sorted + deduped.
+fn affected_cells_from_records(edge_records: &[EdgeRecord]) -> Vec<u32> {
+    let mut cells = Vec::with_capacity(edge_records.len() * 2);
+    for record in edge_records {
+        let (a, b) = unpack_edge(record.key.as_u64());
+        cells.push(a);
+        cells.push(b);
+    }
+    cells.sort_unstable();
+    cells.dedup();
+    cells
+}
+
+/// Debug-only: assert the localized `drop_degenerate_collinear_vertices` cannot
+/// miss a defect. Every cell that owns a droppable degenerate vertex must be in
+/// `candidate_cells`; otherwise a degenerate (= unpaired-edge) defect exists
+/// that no detection record names — a detection-completeness contract violation
+/// (see docs/live_dedup.md "stitching invariant"), making localization unsafe.
+/// O(total edges) but debug-only, so it costs nothing in release.
+#[cfg(debug_assertions)]
+fn assert_candidate_covers_droppable(
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &[VertexKey],
+    candidate_cells: &[u32],
+) {
+    for (ci, cell) in cells.iter().enumerate() {
+        let start = cell.vertex_start();
+        let end = start + cell.vertex_count();
+        if end > cell_indices.len() {
+            continue;
+        }
+        let owns_droppable = cell_indices[start..end].iter().any(|&v| {
+            vertex_keys
+                .get(v as usize)
+                .and_then(|&k| degenerate_single(k))
+                == Some(ci as u32)
+        });
+        debug_assert!(
+            !owns_droppable || candidate_cells.binary_search(&(ci as u32)).is_ok(),
+            "edge-reconcile localization gap: cell {ci} owns a droppable degenerate \
+             vertex but no edge_record names it (detection-completeness contract \
+             violated; see docs/live_dedup.md stitching invariant)"
+        );
+    }
+}
+
 /// Drop spurious collinear vertices (degenerate keys with a repeated
 /// generator) from the cells that own them. Such a vertex lies on a single
 /// bisector — both its incident edges in that cell go to the same neighbor
 /// — so it is not a Voronoi triple point, and removing it merges the two
 /// collinear segments into the real edge (exact). Returns whether anything
-/// was dropped. Touches only cells that own a degenerate vertex.
+/// was dropped.
+///
+/// Touches only `candidate_cells` (the cells named by the detection records),
+/// not the whole vertex set: by the detection-completeness contract, every
+/// droppable degenerate vertex's owner cell is an endpoint of some unresolved
+/// edge, so the records' cells cover them all. This keeps a repair round
+/// O(defect size) instead of O(total vertices) per round — the latter made a
+/// 3-defect run cost seconds at 2.5M (see docs/perf-profiling-plan.md). Debug
+/// builds assert the coverage via `assert_candidate_covers_droppable`.
 fn drop_degenerate_collinear_vertices(
     cells: &mut [VoronoiCell],
     cell_indices: &mut [u32],
     vertex_keys: &[VertexKey],
+    candidate_cells: &[u32],
 ) -> bool {
-    let mut affected: Vec<u32> = Vec::new();
-    for key in vertex_keys {
-        if let Some(single) = degenerate_single(*key) {
-            affected.push(single);
-        }
-    }
-    if affected.is_empty() {
-        return false;
-    }
-    affected.sort_unstable();
-    affected.dedup();
-    affected.retain(|&c| (c as usize) < cells.len());
-
     let mut changed = false;
-    for &c in &affected {
+    for &c in candidate_cells {
+        if (c as usize) >= cells.len() {
+            continue;
+        }
         let cell = cells[c as usize];
         let start = cell.vertex_start();
         let count = cell.vertex_count();
@@ -376,6 +441,12 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
     mode: MergeMode,
 ) -> Result<bool, crate::VoronoiError> {
     let mut any = false;
+    // The only cells a round can need to touch are those named by the records.
+    // Computed once; repair rounds only remove vertices, so this set is a valid
+    // (shrinking) cover for every round, not just the first.
+    let candidate_cells = affected_cells_from_records(edge_records);
+    #[cfg(debug_assertions)]
+    assert_candidate_covers_droppable(cells, cell_indices, vertex_keys, &candidate_cells);
     for round in 0..MAX_REPAIR_ROUNDS {
         // Drop spurious collinear (degenerate-key) vertices first: a vertex
         // whose key has only two distinct generators is not a triple point,
@@ -384,7 +455,8 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
         // real edge and is exact. One cell can carry such a point where its
         // neighbor sees a straight edge, which is precisely an unpaired-edge
         // defect; this heals it with no cross-cell rewrite.
-        let dropped = drop_degenerate_collinear_vertices(cells, cell_indices, vertex_keys);
+        let dropped =
+            drop_degenerate_collinear_vertices(cells, cell_indices, vertex_keys, &candidate_cells);
         let scan_dup_keys = mode == MergeMode::Primary && round == 0;
         let (mut uf, merged) = collect_merges(
             edge_records,
@@ -445,10 +517,154 @@ fn cell_spans_differ(
     Ok(false)
 }
 
-/// Output-invariant scan: undirected edges over all cell boundaries used
-/// exactly once that are not legitimate boundary edges. Returns
-/// (vertex_a, vertex_b, owning cell), sorted. O(total cell indices).
+/// Output-invariant scan: interior undirected edges used by exactly one cell
+/// (and not a legitimate boundary). Returns (vertex_a, vertex_b, owning cell),
+/// sorted.
+///
+/// Localized to the repair's touched region: reconciliation modifies only the
+/// cells named by the detection records (`candidate_cells`) and the vertices
+/// they share, so only those cells and their 1-ring can be incident to a
+/// post-repair unpaired edge. We build the edge-use map over that region, then
+/// partner-verify each singleton against the true neighbor cell's span
+/// (recovered from the endpoint keys) to reject edges whose real partner merely
+/// lies outside the scanned region. This makes the scan O(defect) instead of
+/// O(total edges) — the global scan cost ~17 s on a 2.5M run with only 3
+/// defects (see docs/perf-profiling-plan.md / memory `edge-reconcile-global-scan`).
+///
+/// Debug builds assert the localized result is identical to the global scan, so
+/// any gap in the locality argument is caught immediately at zero release cost.
 fn scan_unpaired_interior(
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &[VertexKey],
+    candidate_cells: &[u32],
+    is_boundary_edge: &impl Fn(u32, u32) -> bool,
+) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
+    let out = scan_unpaired_interior_localized(
+        cells,
+        cell_indices,
+        vertex_keys,
+        candidate_cells,
+        is_boundary_edge,
+    )?;
+    #[cfg(debug_assertions)]
+    {
+        let global = scan_unpaired_interior_global(cells, cell_indices, is_boundary_edge)?;
+        // Both are sorted; compare directly.
+        debug_assert_eq!(
+            out, global,
+            "edge-reconcile localized unpaired-scan disagrees with the global scan \
+             (locality argument violated; see docs/live_dedup.md stitching invariant)"
+        );
+    }
+    Ok(out)
+}
+
+fn scan_unpaired_interior_localized(
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &[VertexKey],
+    candidate_cells: &[u32],
+    is_boundary_edge: &impl Fn(u32, u32) -> bool,
+) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
+    use std::collections::HashMap;
+    // Scan region = candidate cells + their 1-ring (the cells named by the
+    // generators in their vertices' keys).
+    let mut region: Vec<u32> = Vec::new();
+    for &c in candidate_cells {
+        if (c as usize) >= cells.len() {
+            continue;
+        }
+        region.push(c);
+        let span = cell_vertex_slice(c, cells, cell_indices)?;
+        for &v in span {
+            if let Some(key) = vertex_keys.get(v as usize) {
+                for &g in key {
+                    if (g as usize) < cells.len() {
+                        region.push(g);
+                    }
+                }
+            }
+        }
+    }
+    region.sort_unstable();
+    region.dedup();
+
+    let mut uses: HashMap<(u32, u32), (u32, u32)> = HashMap::new();
+    for &ci in &region {
+        let span = cell_vertex_slice(ci, cells, cell_indices)?;
+        let n = span.len();
+        // Degenerate (< 3 vertex) cells have no well-formed edge cycle;
+        // validation reports them separately.
+        if n < 3 {
+            continue;
+        }
+        for k in 0..n {
+            let a = span[k];
+            let b = span[if k + 1 == n { 0 } else { k + 1 }];
+            if a == b {
+                continue;
+            }
+            let key = (a.min(b), a.max(b));
+            uses.entry(key).or_insert((0, ci)).0 += 1;
+        }
+    }
+
+    let mut out: Vec<(u32, u32, u32)> = Vec::new();
+    for ((a, b), (count, owner)) in uses {
+        if count != 1 || is_boundary_edge(a, b) {
+            continue;
+        }
+        // Partner-verify: a singleton within the scanned region is genuinely
+        // unpaired only if the edge's *other* cell does not carry it. Recover
+        // the true cell pair from the endpoint keys; if the partner (the cell
+        // of the pair that is not `owner`) carries this edge, it was paired all
+        // along and simply lay outside the scanned region.
+        if let (Some(&ka), Some(&kb)) = (vertex_keys.get(a as usize), vertex_keys.get(b as usize)) {
+            if let Some((g1, g2)) = key_common_pair(ka, kb) {
+                let partner = if g1 == owner { g2 } else { g1 };
+                if partner != owner && cell_has_edge(partner, a, b, cells, cell_indices)? {
+                    continue;
+                }
+            }
+        }
+        out.push((a, b, owner));
+    }
+    out.sort_unstable();
+    Ok(out)
+}
+
+/// Whether `cell_id`'s boundary cycle contains the undirected edge (a, b).
+fn cell_has_edge(
+    cell_id: u32,
+    a: u32,
+    b: u32,
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+) -> Result<bool, crate::VoronoiError> {
+    if (cell_id as usize) >= cells.len() {
+        return Ok(false);
+    }
+    let span = cell_vertex_slice(cell_id, cells, cell_indices)?;
+    let n = span.len();
+    if n < 3 {
+        return Ok(false);
+    }
+    for k in 0..n {
+        let x = span[k];
+        let y = span[if k + 1 == n { 0 } else { k + 1 }];
+        if (x == a && y == b) || (x == b && y == a) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Global O(total edges) reference scan — the debug differential for the
+/// localized `scan_unpaired_interior`, and the whole-diagram check behind the
+/// empty-records early return. Debug-only; the production path is localized.
+#[cfg(debug_assertions)]
+fn scan_unpaired_interior_global(
     cells: &[VoronoiCell],
     cell_indices: &[u32],
     is_boundary_edge: &impl Fn(u32, u32) -> bool,
@@ -458,8 +674,6 @@ fn scan_unpaired_interior(
     for ci in 0..cells.len() {
         let span = cell_vertex_slice(ci as u32, cells, cell_indices)?;
         let n = span.len();
-        // Degenerate (< 3 vertex) cells have no well-formed edge cycle;
-        // validation reports them separately.
         if n < 3 {
             continue;
         }
