@@ -64,6 +64,29 @@ Notes:
 - `2c1156e` — `S2_VORONOI_VERIFY` gate, **off by default**; zero cost unless
   the env var is set.
 
+## Broader history — already benched, but only on the NOISY box
+
+These have recorded numbers, but from the noisy WSL2 box (layout-luck ±1-2%
+at 500k ST per the micro-opt matrix). A quiet box would firm them up; the
+canonicalization one is a genuine cost worth pinning, not just re-confirming.
+
+| commit(s) | change | recorded (noisy box) | quiet-box value |
+|-----------|--------|----------------------|-----------------|
+| `24b8df8` (+ stack) | micro-opt stack (extract-inline-checks +4) | −36ms@500k, −120ms cc@2M, 12/12 paired | re-confirm; layout-luck caveat |
+| `73fb7f8` | sphere strict tie rule | perf-neutral (500k +0.6%, 2M −1.7%) | re-confirm |
+| `e659655` | **stage-0 entry canonicalization** (correctness) | the one real hot-path *regression*: +18ms@2M, parallelized to ~20ms ST | **characterize ST cost properly** — it's a real add, not a win |
+| `5dbfd5c` / grid-integrated weld | weld redesign | preprocess 378→45ms@2M (~8×) | re-confirm the big win |
+
+## Deferred to a quiet box (from the ledger / memory)
+
+- **LTO + 1 CGU profile** (`3a55f75` tried, `cba2f47` reverted, `0adbda7`
+  deferred): inconclusive on the noisy box + concrete compile-time cost.
+  Retry on a quiet box — a profile-wide win would dwarf the micro-opts.
+- **MT 500ms @ 2.5M target** (todo.md goal): the release-facing number, NOT
+  yet demonstrable (busy-box floor ~1.24s @2.5M). The headline measurement.
+- **Micro-opt catalog tail** (matrix doc): unimplemented candidates —
+  top-pick-5 u8 bin scratch, fmodf purge, PolyBuffer u32 narrowing.
+
 ## Suggested minimal pass
 
 Three A/B comparisons cover the whole arc:
