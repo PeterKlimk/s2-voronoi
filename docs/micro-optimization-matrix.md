@@ -217,10 +217,24 @@ re-adjudicated on mechanistic priors instead of incumbency:
   re-try in a quiet-box session. Checked-in target-cpu deliberately left
   to the bench scripts for portability.
 
-### Unimplemented ideas-doc leftovers worth a future look
+### Unimplemented ideas-doc leftovers — assessed 2026-06-14
 
-Top pick 5's proper variant (u8 scratch for bin_for_cell + fused
-slot_gen_map pass — the branch implemented a worse allocation-based
-version); top pick 8's fmodf-libcall half (periodic normalization); the
-PolyBuffer usize->u32 index narrowing (convergent, two scanners); and the
-~170-entry single-scanner catalog tail.
+- **Top pick 5, fused slot_gen_map pass** — **DONE (`4ea01d9`)**: write
+  slot_gen_map inline during the scatter pass, delete the separate read-back
+  pass. Bit-identical, no new memory.
+- **Top pick 5, u8 bin_for_cell cache** — **not done.** It is the de-allocated
+  variant of the already-rejected `binning-cache-fuse` (caching cheap
+  arithmetic in a num_cells array); u8 shrinks the array but the
+  allocation-vs-recompute tradeoff that sank it stands. Skip unless measured.
+- **Top pick 8, fmodf purge (periodic)** — **mostly moot.** The hot periodic
+  path (`wrap_abs`, every min-image distance / certificate) is already
+  fmodf-free (`d.abs(); d.min(p-d)`). The remaining `f32::rem_euclid` calls are
+  at vertex-emit / per-point setup, and replacing them with a conditional wrap
+  assumes the value is <1 period out (not guaranteed for large periodic cells).
+  Low value, real correctness-range risk. Skip.
+- **PolyBuffer usize->u32 narrowing** — **deferred (poor ROI).** 56 references
+  across 11 files (both clippers incl. SIMD bitmask, extract, output,
+  p5_shadow, both plane builders), each needing casts + usize::MAX->u32::MAX
+  sentinel handling, for a partial-buffer cache win (the f64 us/vs arrays
+  dominate the footprint). Too invasive for an unmeasurable micro.
+- The ~170-entry single-scanner catalog tail remains.
