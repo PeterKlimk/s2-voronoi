@@ -96,6 +96,18 @@ fn maybe_escalate(
         .unwrap_or(crate::tolerances::CLIP_ESCALATION_FACTOR);
     #[cfg(not(feature = "p5_shadow"))]
     let factor = crate::tolerances::CLIP_ESCALATION_FACTOR;
+    // Production: `factor` is the compile-time const `CLIP_ESCALATION_FACTOR`,
+    // which is 0.0, so `filter_eps` is 0.0 and the near-margin band is empty —
+    // the scan below can never set `near`, and `escalate_mask` never runs.
+    // The compiler can't prove `hp.eps * 0.0 == 0.0` (IEEE: inf/nan would give
+    // nan), so without this const-foldable guard it still emits the per-lane
+    // abs+compare scan on every clip. Behavior is unchanged: the guarded path
+    // returns exactly the same `mask` the scan would. The `p5_shadow` build
+    // keeps the runtime path (its `factor` can be overridden nonzero).
+    #[cfg(not(feature = "p5_shadow"))]
+    if factor == 0.0 {
+        return mask;
+    }
     let filter_eps = hp.eps * factor;
     let mut near = false;
     for &d in &dists[..n] {
