@@ -54,6 +54,28 @@ fn total_cmp_key(bits: i32) -> i32 {
     bits ^ ((((bits >> 31) as u32) >> 1) as i32)
 }
 
+// The `fma` feature is only sound when the SIMD backend actually fuses. On
+// x86/x86_64 the `wide` crate's `mul_add` lowers to a true FMA *only* when the
+// `fma` target feature is enabled; without it, `wide` does a two-rounding
+// `a*b+c`. The scalar `f32::mul_add` (below) always fuses, so the SIMD and
+// scalar kNN-distance paths would round differently and desymmetrize neighbor
+// selection (cell i admits neighbor j while j drops i -> unpaired interior
+// edge). Require `+fma` so both paths fuse identically. The `simd_scalar`
+// backend routes its SIMD dot through `f32::mul_add` too, so it is exempt.
+#[cfg(all(
+    feature = "fma",
+    not(feature = "simd_scalar"),
+    any(target_arch = "x86", target_arch = "x86_64"),
+    not(target_feature = "fma")
+))]
+compile_error!(
+    "the `fma` feature requires the `fma` target feature on x86/x86_64; build \
+     with `RUSTFLAGS=\"-C target-feature=+fma\"` or `-C target-cpu=native`. \
+     Without it the `wide` SIMD dot and the scalar dot round differently and \
+     kNN neighbor selection can desymmetrize, producing invalid topology. Use \
+     the `simd_scalar` backend if you need `fma` without HW FMA."
+);
+
 #[inline(always)]
 pub(crate) fn fma_f32(a: f32, b: f32, c: f32) -> f32 {
     #[cfg(feature = "fma")]
