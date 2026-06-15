@@ -17,6 +17,15 @@ use frontier::{maybe_terminate_or_advance_frontier, probe_frontier};
 
 use glam::Vec3;
 
+/// Per-cell "already attempted this neighbor" set, stamp-based to avoid an
+/// O(n) clear per cell.
+///
+/// Keyed by the neighbor's **SOA slot**, not its global point index. Both
+/// uniquely identify a point (slot↔index is a permutation), so dedup semantics
+/// are identical — but slot order is the grid's spatial order, so a cell's
+/// neighbors (and successive cells) touch a clustered region of `seen_stamp`,
+/// which is far more cache-friendly than the spatially-scattered global-index
+/// order. (`seen_stamp` is num_points entries; slots are in `[0, num_points)`.)
 struct AttemptedNeighbors {
     seen_stamp: Vec<u32>,
     stamp: u32,
@@ -41,19 +50,19 @@ impl AttemptedNeighbors {
     }
 
     #[inline]
-    fn insert(&mut self, id: usize) -> bool {
-        debug_assert!(id < self.seen_stamp.len(), "neighbor id out of bounds");
-        if self.seen_stamp[id] == self.stamp {
+    fn insert(&mut self, slot: usize) -> bool {
+        debug_assert!(slot < self.seen_stamp.len(), "neighbor slot out of bounds");
+        if self.seen_stamp[slot] == self.stamp {
             return false;
         }
-        self.seen_stamp[id] = self.stamp;
+        self.seen_stamp[slot] = self.stamp;
         true
     }
 
     #[inline]
-    fn mark(&mut self, id: usize) {
-        debug_assert!(id < self.seen_stamp.len(), "neighbor id out of bounds");
-        self.seen_stamp[id] = self.stamp;
+    fn mark(&mut self, slot: usize) {
+        debug_assert!(slot < self.seen_stamp.len(), "neighbor slot out of bounds");
+        self.seen_stamp[slot] = self.stamp;
     }
 }
 
@@ -287,7 +296,7 @@ fn clip_seed_neighbors(
         trace.last_batch_source = None;
         trace.last_clip_phase = "edgecheck_seed";
 
-        if !ctx.attempted_neighbors.insert(seed.neighbor_idx) {
+        if !ctx.attempted_neighbors.insert(seed.neighbor_slot as usize) {
             continue;
         }
 
@@ -342,10 +351,10 @@ fn clip_batch(
         let should_clip = match batch.source {
             // The takeover re-covers packed-served points; dedup on insertion.
             DirectedNeighborBatchSource::ShellExpand => {
-                phase.attempted_neighbors.insert(neighbor_idx)
+                phase.attempted_neighbors.insert(neighbor_slot as usize)
             }
             DirectedNeighborBatchSource::PackedChunk0 | DirectedNeighborBatchSource::PackedTail => {
-                phase.attempted_neighbors.mark(neighbor_idx);
+                phase.attempted_neighbors.mark(neighbor_slot as usize);
                 true
             }
         };
