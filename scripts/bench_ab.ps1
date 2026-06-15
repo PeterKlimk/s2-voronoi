@@ -28,7 +28,7 @@ $repo = Split-Path -Parent $PSScriptRoot   # repo root (scripts/..)
 Set-Location $repo
 
 # Refuse to run with a dirty tree (we switch branches to build).
-if (git status --porcelain) { throw "Working tree not clean — commit/stash first (this script checks out other refs)." }
+if (git status --porcelain) { throw "Working tree not clean - commit/stash first (this script checks out other refs)." }
 $startRef = (git rev-parse --abbrev-ref HEAD).Trim()
 if ($startRef -eq "HEAD") { $startRef = (git rev-parse HEAD).Trim() }  # detached
 
@@ -61,7 +61,7 @@ Write-Host "`nInterleaved A/B: base=$Base  cand=$Cand  size=$Size dist=$Dist thr
 $baseT = New-Object System.Collections.Generic.List[double]
 $candT = New-Object System.Collections.Generic.List[double]
 $candWins = 0
-# Warmup (cold start / clock ramp) — discarded.
+# Warmup (cold start / clock ramp) - discarded.
 [void](Get-TotalMs $baseExe); [void](Get-TotalMs $candExe)
 for ($i = 1; $i -le $Rounds; $i++) {
   $b = Get-TotalMs $baseExe
