@@ -527,6 +527,19 @@ fn build_query_grid(
             None => grid,
         };
 
+    // Gate the dense-cell band-prune on a rebuild having fired. The band only
+    // wins on deep-certificate, un-splittable concentration (cap-like), which
+    // is exactly the regime that triggers the occupancy rebuild and survives
+    // it (a cell still over the dense threshold). Moderate clusters that never
+    // trip the rebuild close fast in the packed path, where the band + takeover
+    // is a measured net loss (clustered 500k ~ -13%); disable it there. Scale-
+    // invariant, unlike a fixed occupancy threshold (clustered occ grows with
+    // n). See docs/punch1-center-cell-integration.md.
+    let mut grid = grid;
+    if !rebuilt {
+        grid.clear_dense_index();
+    }
+
     tb.set_knn_build(t.elapsed());
     tb.set_grid_stats(res, max_occupancy as u64, rebuilt);
     #[cfg(feature = "timing")]

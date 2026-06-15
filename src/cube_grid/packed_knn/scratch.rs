@@ -24,6 +24,17 @@ pub struct PackedKnnCellScratch {
     tail_ready_gen: Vec<u32>,
     security_thresholds: Vec<f32>,
     thresholds: Vec<f32>,
+    /// Per-query completeness floor of the packed center coverage: the dot
+    /// below which the packed stages have NOT certified completeness. Equals
+    /// `security_thresholds[qi]` on the normal full-cell scan; raised to the
+    /// dense band bound (`1 - r²/2 > security`) for band-pruned dense queries,
+    /// where the shell takeover covers everything below it.
+    center_bound: Vec<f32>,
+    /// Whether query `qi` took the dense band path (center covered only to
+    /// `center_bound[qi]`, with the takeover handling the rest).
+    band_mode: Vec<bool>,
+    /// Reusable scratch for the dense band's gathered candidate slots.
+    band_scratch: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -131,6 +142,9 @@ impl PackedKnnCellScratch {
             tail_ready_gen: Vec::new(),
             security_thresholds: Vec::new(),
             thresholds: Vec::new(),
+            center_bound: Vec::new(),
+            band_mode: Vec::new(),
+            band_scratch: Vec::new(),
         }
     }
 
@@ -142,6 +156,9 @@ impl PackedKnnCellScratch {
 
     #[inline]
     pub(super) fn resume_security(&self, qi: usize) -> f32 {
+        if self.band_mode.get(qi).copied().unwrap_or(false) {
+            return self.center_bound[qi];
+        }
         self.security_thresholds[qi]
     }
 

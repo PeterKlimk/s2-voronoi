@@ -79,6 +79,45 @@ impl CubeMapGrid {
         &self.neighbors[cell]
     }
 
+    /// Drop the dense-cell sub-index, disabling the band-prune center pass for
+    /// this grid. The band only pays off on the deep-certificate, un-splittable
+    /// concentration that the occupancy rebuild fires on (and fails to split);
+    /// on fast-closing moderate clusters that never trigger a rebuild it is a
+    /// net loss, so `build_query_grid` clears it there. See
+    /// docs/punch1-center-cell-integration.md.
+    pub(crate) fn clear_dense_index(&mut self) {
+        self.dense_index = None;
+    }
+
+    /// Suggested dense-cell band gather radius for `cell` targeting
+    /// `target_count` nearest neighbors, or `None` when `cell` has no dense
+    /// sub-index (the common case). See `dense::DenseCellIndex::band_radius`.
+    #[inline]
+    pub(crate) fn dense_band_radius(&self, cell: u32, target_count: usize) -> Option<f32> {
+        self.dense_index
+            .as_ref()
+            .and_then(|idx| idx.band_radius(cell, target_count))
+    }
+
+    /// Fill `out` with `cell`'s SoA slots whose dominant-axis coordinate lies
+    /// within `radius` of the query — a superset of all points within Euclidean
+    /// `radius`. Clears `out` and leaves it empty when `cell` is not dense.
+    #[inline]
+    pub(crate) fn dense_band_slots(
+        &self,
+        cell: u32,
+        qx: f32,
+        qy: f32,
+        qz: f32,
+        radius: f32,
+        out: &mut Vec<u32>,
+    ) {
+        match self.dense_index.as_ref() {
+            Some(idx) => idx.band_slots(cell, qx, qy, qz, radius, out),
+            None => out.clear(),
+        }
+    }
+
     /// Get the ring-2 cells (Chebyshev distance 2) for a cell.
     #[inline]
     pub fn cell_ring2(&self, cell: usize) -> &[u32] {

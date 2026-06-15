@@ -12,6 +12,7 @@
 //! of cells; worst-case falls back to brute force.
 
 mod build;
+mod dense;
 pub mod packed_knn;
 mod projection;
 mod query;
@@ -125,6 +126,12 @@ pub struct CubeMapGrid {
     ///
     /// `point_slots[point_idx]` gives the slot in `point_indices` / `cell_points_*`.
     point_slots: Vec<u32>,
+
+    /// Dense-cell sub-index ("punch 1", axis-sort): present only when some cell
+    /// exceeds `DENSE_CELL_THRESHOLD` (rare). Side structure; does not affect
+    /// the SoA. Consulted by the directed packed center pass to band-prune the
+    /// O(occ²) full-cell scan (see `packed_knn::scratch::prepare`).
+    dense_index: Option<dense::DenseCellIndex>,
 }
 
 #[derive(Clone, Copy, Debug)]
