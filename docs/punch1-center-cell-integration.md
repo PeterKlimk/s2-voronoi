@@ -24,6 +24,33 @@ scenario) + full `S2_VORONOI_VERIFY=1` topological validation green.
   calibration still owed). Larger T is pure overhead on cap.
 - uniform 500k: **neutral** (no dense cell → gate never engages).
 
+## Regression sweep + the rebuild gate (2026-06-15)
+
+A converge A/B vs `main` across the distribution matrix found the band path is
+NOT universally safe at `DENSE_CELL_THRESHOLD=512`:
+
+- `grid_max_occ` probe (500k): the occupancy rebuild caps mega/splittable/
+  bimodal at ~220 (< 512) so the band is **dormant** there; uniform/gradient are
+  naturally low. Only `clustered` (occ 1655, `rebuilt=0`) and `outlier` (occ 534,
+  `rebuilt=0`) actually engage the band.
+- Those two **regressed**: clustered 500k −13.5%, outlier −7.3% (HEAD slower).
+- cap-size crossover (isolated dense cell, occ ≈ n): neutral at occ ~2000,
+  HEAD 3× faster at 5k, 7.5× at 10k. The band only pays off when cells need a
+  **deep certificate** (near-equidistant points → many neighbors to close, e.g.
+  cap); on fast-closing moderate clusters main's direct scan never drains the
+  cell and the band + takeover is pure overhead.
+
+**Fix — gate the band on `grid_rebuilt`** (`build_query_grid` clears the dense
+index when no rebuild fired). A deep-certificate pathology is always highly
+concentrated → always trips the occupancy rebuild (Σocc²/n > 500) and survives
+it (a cell still over the dense threshold). This is **scale-invariant** (a fixed
+occupancy threshold fails because clustered's dense-cell occ grows with n).
+After the gate: clustered −13.5% → −2.6% (CI touches 0 = neutral, band dormant
+→ identical hot code, residual is cold-code layout noise), outlier −7.3% →
++0.5% (neutral), cap 5k win preserved (2.7×). The `nn_contract` dense gate still
+exercises the band directly (it builds the grid via `CubeMapGrid::new`, which
+keeps the index regardless of the production rebuild gate).
+
 ## Latent bug found + fixed during integration
 
 `CubeMapGrid::compact_welded` (near-coincident weld) rewrites `cell_offsets` /

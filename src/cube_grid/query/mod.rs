@@ -71,6 +71,16 @@ impl CubeMapGrid {
         &self.neighbors[cell]
     }
 
+    /// Drop the dense-cell sub-index, disabling the band-prune center pass for
+    /// this grid. The band only pays off on the deep-certificate, un-splittable
+    /// concentration that the occupancy rebuild fires on (and fails to split);
+    /// on fast-closing moderate clusters that never trigger a rebuild it is a
+    /// net loss, so `build_query_grid` clears it there. See
+    /// docs/punch1-center-cell-integration.md.
+    pub(crate) fn clear_dense_index(&mut self) {
+        self.dense_index = None;
+    }
+
     /// Suggested dense-cell band gather radius for `cell` targeting
     /// `target_count` nearest neighbors, or `None` when `cell` has no dense
     /// sub-index (the common case). See `dense::DenseCellIndex::band_radius`.
