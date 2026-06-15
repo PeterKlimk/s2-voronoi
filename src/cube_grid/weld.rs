@@ -338,6 +338,12 @@ mod tests {
                     grid.cell_points_z, fresh.cell_points_z,
                     "res={res} seed={seed}"
                 );
+                // The slot-ordered AoS positions must also match a fresh build
+                // (compact_welded rebuilds them; pins the sync invariant).
+                assert_eq!(
+                    grid.cell_points_aos, fresh.cell_points_aos,
+                    "res={res} seed={seed}"
+                );
             }
         }
     }
