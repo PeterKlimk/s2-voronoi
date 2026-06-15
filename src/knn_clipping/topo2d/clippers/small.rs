@@ -192,14 +192,21 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
     let vps = poly.vertex_planes.as_ptr();
     let eps = poly.edge_planes.as_ptr();
 
-    // All 8 lanes are computed (slices are MAX_POLY_VERTICES long; lanes past
-    // N read stale-but-finite data) and masked down to the live N bits.
-    // Lane math is bit-identical to the scalar signed_dist formula.
+    // For N <= 4 (triangles/quads) only the low four lanes are live, so one
+    // f64x4 eval suffices; N in 5..=8 needs all eight. `N` is a const generic,
+    // so this branch resolves at compile time. Lanes past N read
+    // stale-but-finite data and are masked down to the live N bits; lane math
+    // is bit-identical to the scalar signed_dist formula.
     let full: u32 = (1u32 << N) - 1;
     let (us_chunks, _) = poly.us.as_chunks::<8>();
     let (vs_chunks, _) = poly.vs.as_chunks::<8>();
-    let (dists, inside_bits) =
-        fp::signed_dists_mask8(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps);
+    let (dists, inside_bits) = if N <= 4 {
+        let (d4, m4) =
+            fp::signed_dists_mask4(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps);
+        ([d4[0], d4[1], d4[2], d4[3], 0.0, 0.0, 0.0, 0.0], m4)
+    } else {
+        fp::signed_dists_mask8(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps)
+    };
     let mask = inside_bits & full;
     // P5 escalation: near-margin lanes are re-decided by the exact
     // canonical predicate (one abs+compare per live lane on the hot path).
@@ -330,14 +337,21 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
     let vps = poly.vertex_planes.as_ptr();
     let eps = poly.edge_planes.as_ptr();
 
-    // All 8 lanes are computed (slices are MAX_POLY_VERTICES long; lanes past
-    // N read stale-but-finite data) and masked down to the live N bits.
-    // Lane math is bit-identical to the scalar signed_dist formula.
+    // For N <= 4 (triangles/quads) only the low four lanes are live, so one
+    // f64x4 eval suffices; N in 5..=8 needs all eight. `N` is a const generic,
+    // so this branch resolves at compile time. Lanes past N read
+    // stale-but-finite data and are masked down to the live N bits; lane math
+    // is bit-identical to the scalar signed_dist formula.
     let full: u32 = (1u32 << N) - 1;
     let (us_chunks, _) = poly.us.as_chunks::<8>();
     let (vs_chunks, _) = poly.vs.as_chunks::<8>();
-    let (dists, inside_bits) =
-        fp::signed_dists_mask8(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps);
+    let (dists, inside_bits) = if N <= 4 {
+        let (d4, m4) =
+            fp::signed_dists_mask4(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps);
+        ([d4[0], d4[1], d4[2], d4[3], 0.0, 0.0, 0.0, 0.0], m4)
+    } else {
+        fp::signed_dists_mask8(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps)
+    };
     let mask = inside_bits & full;
     // P5 escalation: near-margin lanes are re-decided by the exact
     // canonical predicate (one abs+compare per live lane on the hot path).

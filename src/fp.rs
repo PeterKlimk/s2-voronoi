@@ -202,6 +202,22 @@ pub(crate) fn signed_dists_mask8(
     backend::signed_dists_mask8(a, b, c, us, vs, neg_eps)
 }
 
+/// Like `signed_dists_mask8` but only evaluates the first four lanes — used by
+/// the N <= 4 clip kernels (triangles/quads) to halve the SIMD distance eval.
+/// Reads `us[0..4]`/`vs[0..4]`; the result is bit-identical to lanes 0..4 of
+/// the eight-lane path.
+#[inline(always)]
+pub(crate) fn signed_dists_mask4(
+    a: f64,
+    b: f64,
+    c: f64,
+    us: &[f64; 8],
+    vs: &[f64; 8],
+    neg_eps: f64,
+) -> ([f64; 4], u32) {
+    backend::signed_dists_mask4(a, b, c, us, vs, neg_eps)
+}
+
 #[cfg(not(feature = "simd_scalar"))]
 mod backend {
     use wide::{f32x8, f64x4, CmpGe, CmpGt, CmpLt};
@@ -314,6 +330,25 @@ mod backend {
             mask,
         )
     }
+
+    /// Four-lane twin of `signed_dists_mask8` for clipping polygons with
+    /// N <= 4 (triangles/quads): one `f64x4` instead of two, bit-identical to
+    /// lanes 0..4 of the eight-lane path. Only `us[0..4]`/`vs[0..4]` are read.
+    #[inline(always)]
+    pub(super) fn signed_dists_mask4(
+        a: f64,
+        b: f64,
+        c: f64,
+        us: &[f64; 8],
+        vs: &[f64; 8],
+        neg_eps: f64,
+    ) -> ([f64; 4], u32) {
+        let u = f64x4::from([us[0], us[1], us[2], us[3]]);
+        let v = f64x4::from([vs[0], vs[1], vs[2], vs[3]]);
+        let d = dists4(a, b, c, u, v);
+        let mask = d.cmp_ge(f64x4::splat(neg_eps)).move_mask() as u32 & 0xf;
+        (d.to_array(), mask)
+    }
 }
 
 #[cfg(feature = "simd_scalar")]
@@ -395,6 +430,27 @@ mod backend {
         let mut dists = [0.0f64; 8];
         let mut mask = 0u32;
         for i in 0..8 {
+            let d = super::fma_f64(a, us[i], super::fma_f64(b, vs[i], c));
+            dists[i] = d;
+            mask |= u32::from(d >= neg_eps) << i;
+        }
+        (dists, mask)
+    }
+
+    /// Four-lane twin of `signed_dists_mask8` (scalar backend); see the wide
+    /// backend's version. Bit-identical to lanes 0..4 of the eight-lane path.
+    #[inline(always)]
+    pub(super) fn signed_dists_mask4(
+        a: f64,
+        b: f64,
+        c: f64,
+        us: &[f64; 8],
+        vs: &[f64; 8],
+        neg_eps: f64,
+    ) -> ([f64; 4], u32) {
+        let mut dists = [0.0f64; 4];
+        let mut mask = 0u32;
+        for i in 0..4 {
             let d = super::fma_f64(a, us[i], super::fma_f64(b, vs[i], c));
             dists[i] = d;
             mask |= u32::from(d >= neg_eps) << i;
