@@ -80,7 +80,10 @@ impl GnomonicBuilder {
         let esc = EscalationCtx {
             generator_raw: self.generator_raw,
             neighbor_raw: neighbor,
+            #[cfg(feature = "p5_shadow")]
             neighbor_positions: &self.neighbor_positions_raw,
+            #[cfg(not(feature = "p5_shadow"))]
+            neighbor_positions: &[],
         };
         let clip_result = if self.use_a {
             clip_convex(&self.poly_a, &hp, &mut self.poly_b, &esc)
@@ -118,14 +121,22 @@ impl GnomonicBuilder {
     /// Keep the raw position list parallel to `neighbor_indices`
     /// (a `Changed` commit pushed a constraint — including commits that then
     /// fail with `ClippedAway`, so this runs on the error path too).
+    ///
+    /// Only the `p5_shadow` build reads `neighbor_positions_raw` (production
+    /// keeps escalation dead), so this is a no-op otherwise.
+    #[cfg_attr(not(feature = "p5_shadow"), allow(unused_variables))]
+    #[inline]
     fn sync_neighbor_positions(&mut self, neighbor: Vec3) {
-        if self.neighbor_indices.len() > self.neighbor_positions_raw.len() {
-            self.neighbor_positions_raw.push(neighbor);
+        #[cfg(feature = "p5_shadow")]
+        {
+            if self.neighbor_indices.len() > self.neighbor_positions_raw.len() {
+                self.neighbor_positions_raw.push(neighbor);
+            }
+            debug_assert_eq!(
+                self.neighbor_indices.len(),
+                self.neighbor_positions_raw.len()
+            );
         }
-        debug_assert_eq!(
-            self.neighbor_indices.len(),
-            self.neighbor_positions_raw.len()
-        );
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -153,7 +164,10 @@ impl GnomonicBuilder {
         let esc = EscalationCtx {
             generator_raw: self.generator_raw,
             neighbor_raw: neighbor,
+            #[cfg(feature = "p5_shadow")]
             neighbor_positions: &self.neighbor_positions_raw,
+            #[cfg(not(feature = "p5_shadow"))]
+            neighbor_positions: &[],
         };
         let clip_result = if self.use_a {
             clip_convex_edgecheck(&self.poly_a, &hp, &mut self.poly_b, &esc)

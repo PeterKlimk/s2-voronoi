@@ -83,6 +83,11 @@ pub(crate) struct GnomonicBuilder {
     pub(crate) generator_raw: glam::Vec3,
     /// Raw f32 neighbor positions, parallel to `neighbor_indices` /
     /// `half_planes`; consumed by canonical escalation and the shadow audit.
+    /// In production `CLIP_ESCALATION_FACTOR == 0.0`, so the escalation path is
+    /// dead (see `maybe_escalate`) and this list is never read — it exists only
+    /// for the `p5_shadow` audit/override build, so it (and its per-clip
+    /// maintenance in `sync_neighbor_positions`) is gated off otherwise.
+    #[cfg(feature = "p5_shadow")]
     pub(crate) neighbor_positions_raw: Vec<glam::Vec3>,
     term_sin_pad: f64,
     term_cos_pad: f64,

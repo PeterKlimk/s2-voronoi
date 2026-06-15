@@ -112,6 +112,7 @@ impl GnomonicBuilder {
             use_a: true,
             failed: None,
             generator_raw: generator,
+            #[cfg(feature = "p5_shadow")]
             neighbor_positions_raw: Vec::with_capacity(32),
             term_sin_pad,
             term_cos_pad,
@@ -132,6 +133,7 @@ impl GnomonicBuilder {
         self.neighbor_indices.clear();
         self.neighbor_slots.clear();
         self.generator_raw = generator;
+        #[cfg(feature = "p5_shadow")]
         self.neighbor_positions_raw.clear();
         self.poly_a.init_bounding(1e6);
         self.poly_b.clear();
