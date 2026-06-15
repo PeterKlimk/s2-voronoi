@@ -166,13 +166,10 @@ impl PackedKnnCellScratch {
 
         self.thresholds.resize(num_queries, 0.0);
 
-        // Per-query packed-coverage floor. Defaults to the security bound (full
-        // center scan); the dense band path raises it to the band bound below.
+        // Cleared so non-dense groups don't inherit band state from a previous
+        // dense group. Dense groups resize these lazily below.
         self.center_bound.clear();
-        self.center_bound
-            .extend_from_slice(&self.security_thresholds[..num_queries]);
         self.band_mode.clear();
-        self.band_mode.resize(num_queries, false);
 
         // Don't shrink `Vec<Vec<_>>` to avoid dropping inner buffers when group sizes vary.
         if self.chunk0_keys.len() < num_queries {
@@ -270,6 +267,8 @@ impl PackedKnnCellScratch {
 
         match dense_radius {
             Some(r_claim) if r_claim > 0.0 => {
+                self.center_bound.resize(num_queries, 0.0);
+                self.band_mode.resize(num_queries, false);
                 // Gather a band a hair wider than `r_claim` to absorb f32 error,
                 // then keep points with `dot > band_bound = 1 - r_claim²/2`.
                 // By the band's superset property every center point within

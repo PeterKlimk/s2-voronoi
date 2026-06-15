@@ -132,6 +132,11 @@ impl PackedKnnCellScratch {
         if k == 0 || out.is_empty() {
             return None;
         }
+        let coverage_bound = if self.band_mode.get(qi).copied().unwrap_or(false) {
+            self.center_bound[qi]
+        } else {
+            self.security_thresholds[qi]
+        };
 
         match stage {
             PackedStage::Chunk0 => {
@@ -171,7 +176,7 @@ impl PackedKnnCellScratch {
                     } else if self.tail_possible[qi] {
                         self.thresholds[qi]
                     } else {
-                        self.center_bound[qi]
+                        coverage_bound
                     };
                     return Some(PackedChunk {
                         n: emit,
@@ -199,7 +204,7 @@ impl PackedKnnCellScratch {
                 } else if self.tail_possible[qi] {
                     self.thresholds[qi]
                 } else {
-                    self.center_bound[qi]
+                    coverage_bound
                 };
                 Some(PackedChunk { n, unseen_bound })
             }
@@ -233,11 +238,7 @@ impl PackedKnnCellScratch {
                 let last_dot = key_to_dot(remaining[n - 1]);
                 self.tail_pos[qi] = start + n;
                 let has_more = self.tail_pos[qi] < keys.len();
-                let unseen_bound = if has_more {
-                    last_dot
-                } else {
-                    self.center_bound[qi]
-                };
+                let unseen_bound = if has_more { last_dot } else { coverage_bound };
                 Some(PackedChunk { n, unseen_bound })
             }
         }
