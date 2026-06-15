@@ -177,7 +177,7 @@ fn build_cells_sharded_periodic(
                     allow(clippy::default_constructed_unit_structs)
                 )]
                 let mut packed_timings = PlanePackedTimings::default();
-                let packed_policy = PackedNeighborPolicy::for_point_count(points.len(), false);
+                let packed_policy = PackedNeighborPolicy::for_point_count(points.len());
                 let packed_queries_all: Vec<u32> = my_generators
                     .iter()
                     .map(|&i| grid.point_index_to_slot(i))
@@ -364,7 +364,6 @@ fn build_and_emit_cell_periodic<'p, 'g>(
     let mut lap = LapTimer::start();
     let mut neighbors_processed = 0usize;
     let mut tail_used = false;
-    let mut expand_used = false;
     let mut used_knn = false;
     // The frontier loop's Exhausted arm is a non-trivial break (mirrors the
     // sibling drivers).
@@ -375,7 +374,6 @@ fn build_and_emit_cell_periodic<'p, 'g>(
                 cell_sub.add_knn(lap.lap());
                 match batch.source {
                     PlaneNeighborBatchSource::PackedTail => tail_used = true,
-                    PlaneNeighborBatchSource::PackedExpandR2 => expand_used = true,
                     PlaneNeighborBatchSource::ShellExpand => used_knn = true,
                     PlaneNeighborBatchSource::PackedChunk0 => {}
                 }
@@ -429,8 +427,6 @@ fn build_and_emit_cell_periodic<'p, 'g>(
 
     let stage = if used_knn {
         KnnCellStage::ShellExpand
-    } else if expand_used {
-        KnnCellStage::PackedExpandR2
     } else if tail_used {
         KnnCellStage::PackedTail
     } else {
@@ -441,7 +437,6 @@ fn build_and_emit_cell_periodic<'p, 'g>(
         stream.knn_exhausted(),
         neighbors_processed,
         tail_used,
-        expand_used,
         stream.packed_safe_exhausted(),
         used_knn,
         incoming_checks.len(),

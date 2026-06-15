@@ -12,8 +12,6 @@ pub enum KnnCellStage {
     PackedChunk0,
     /// Terminated during packed tail (r=1, dot >= security).
     PackedTail,
-    /// Terminated during packed r=2 expansion band.
-    PackedExpandR2,
     /// Ran the shell-expansion takeover.
     ShellExpand,
 }

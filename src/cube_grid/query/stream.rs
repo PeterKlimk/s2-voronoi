@@ -10,7 +10,6 @@ use glam::Vec3;
 pub(crate) enum DirectedNeighborBatchSource {
     PackedChunk0,
     PackedTail,
-    PackedExpandR2,
     ShellExpand,
 }
 
@@ -134,9 +133,6 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
                                 PackedNeighborBatchSource::Tail => {
                                     DirectedNeighborBatchSource::PackedTail
                                 }
-                                PackedNeighborBatchSource::ExpandR2 => {
-                                    DirectedNeighborBatchSource::PackedExpandR2
-                                }
                             };
                             let batch = DirectedNeighborBatch {
                                 n: batch.n,
@@ -219,14 +215,6 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
         self.packed
             .as_ref()
             .map(|packed| packed.tail_used())
-            .unwrap_or(false)
-    }
-
-    #[inline]
-    pub(crate) fn packed_expand_r2_used(&self) -> bool {
-        self.packed
-            .as_ref()
-            .map(|packed| packed.expand_r2_used())
             .unwrap_or(false)
     }
 
@@ -354,7 +342,7 @@ mod tests {
             &mut packed_timings,
             &grid,
             qi,
-            PackedNeighborPolicy::for_point_count(points.len(), true),
+            PackedNeighborPolicy::for_point_count(points.len()),
         );
         let mut stream = DirectedNeighborStream::new(
             &grid,
@@ -428,7 +416,7 @@ mod tests {
             let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
 
             let group = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
-            for &expand_r2_enabled in &[false, true] {
+            {
                 let mut packed_scratch = PackedKnnCellScratch::new();
                 let mut packed_timings = PackedKnnTimings::default();
                 let PreparedPackedGroupStatus::Ready(mut prepared) =
@@ -448,7 +436,7 @@ mod tests {
                         &mut packed_timings,
                         &grid,
                         qi,
-                        PackedNeighborPolicy::for_point_count(points.len(), expand_r2_enabled),
+                        PackedNeighborPolicy::for_point_count(points.len()),
                     );
                     let mut stream = DirectedNeighborStream::new(
                         &grid,
@@ -485,7 +473,7 @@ mod tests {
                             DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
                                 assert!(
                                     best_unseen_dot <= dot_upper_bound + 1e-6,
-                                    "frontier bound underestimated best unseen neighbor for seed={seed}, qi={qi}, expand_r2_enabled={expand_r2_enabled}"
+                                    "frontier bound underestimated best unseen neighbor for seed={seed}, qi={qi}"
                                 );
                                 stream.advance_frontier();
                             }
@@ -493,7 +481,7 @@ mod tests {
                                 assert_eq!(
                                     seen.iter().filter(|seen| **seen).count(),
                                     expected.len(),
-                                    "frontier exhausted before emitting all neighbors for seed={seed}, qi={qi}, expand_r2_enabled={expand_r2_enabled}"
+                                    "frontier exhausted before emitting all neighbors for seed={seed}, qi={qi}"
                                 );
                                 break;
                             }

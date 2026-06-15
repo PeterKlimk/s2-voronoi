@@ -120,7 +120,6 @@ impl<'a> PackedGroupInput<'a> {
 enum PackedStage {
     Chunk0,
     Tail,
-    ExpandR2,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -133,7 +132,6 @@ struct PackedChunk {
 pub(crate) enum PackedNeighborBatchSource {
     Chunk0,
     Tail,
-    ExpandR2,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -162,7 +160,6 @@ enum CachedFrontier {
 enum PackedQueryStage {
     Chunk0,
     Tail,
-    ExpandR2,
     Exhausted,
 }
 
@@ -177,7 +174,6 @@ pub(crate) struct PackedQuery<'a, 'p, 'g> {
     stage: PackedQueryStage,
     cached_frontier: Option<CachedFrontier>,
     tail_used: bool,
-    expand_r2_used: bool,
     safe_exhausted: bool,
     cached_slots: Vec<u32>,
 }
@@ -203,7 +199,6 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
             stage: PackedQueryStage::Chunk0,
             cached_frontier: None,
             tail_used: false,
-            expand_r2_used: false,
             safe_exhausted: false,
             cached_slots: Vec::new(),
         }
@@ -256,11 +251,6 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
             PackedQueryStage::Tail => (
                 PackedStage::Tail,
                 PackedNeighborBatchSource::Tail,
-                self.policy.chunk_size(),
-            ),
-            PackedQueryStage::ExpandR2 => (
-                PackedStage::ExpandR2,
-                PackedNeighborBatchSource::ExpandR2,
                 self.policy.chunk_size(),
             ),
             PackedQueryStage::Exhausted => {
@@ -328,19 +318,6 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
             return;
         }
 
-        if self.stage != PackedQueryStage::ExpandR2
-            && self.policy.expand_r2_enabled()
-            && self.prepared.ensure_expand_r2_band_directed_for(
-                self.query_index,
-                grid,
-                self.timings,
-            )
-        {
-            self.stage = PackedQueryStage::ExpandR2;
-            self.expand_r2_used = true;
-            return;
-        }
-
         self.safe_exhausted = true;
         self.stage = PackedQueryStage::Exhausted;
     }
@@ -348,11 +325,6 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
     #[inline]
     pub(crate) fn tail_used(&self) -> bool {
         self.tail_used
-    }
-
-    #[inline]
-    pub(crate) fn expand_r2_used(&self) -> bool {
-        self.expand_r2_used
     }
 
     #[inline]

@@ -696,9 +696,6 @@ impl<'a, 'b, 'p, 'g> PeriodicNeighborStream<'a, 'b, 'p, 'g> {
                         super::packed::PlanePackedBatchSource::Tail => {
                             PlaneNeighborBatchSource::PackedTail
                         }
-                        super::packed::PlanePackedBatchSource::ExpandR2 => {
-                            PlaneNeighborBatchSource::PackedExpandR2
-                        }
                     };
                     return PeriodicNeighborFrontier::ExactBatch(PeriodicNeighborBatch {
                         n: batch.n,
@@ -963,7 +960,7 @@ mod tests {
                     start as u32,
                     self.layout(),
                 );
-                for &expand_r2 in &[false, true] {
+                {
                     let mut packed_scratch = PlanePackedScratch::new();
                     #[cfg_attr(
                         not(feature = "timing"),
@@ -989,7 +986,7 @@ mod tests {
                             &mut prepared,
                             &mut timings,
                             qi,
-                            PackedNeighborPolicy::for_point_count(self.points.len(), expand_r2),
+                            PackedNeighborPolicy::for_point_count(self.points.len()),
                         );
                         let stream = PeriodicNeighborStream::new(
                             &self.grid,
@@ -999,11 +996,7 @@ mod tests {
                             ctx,
                             Some(packed),
                         );
-                        self.collect_and_check(
-                            &format!("{name}/packed_r2={expand_r2}"),
-                            slot,
-                            stream,
-                        );
+                        self.collect_and_check(&format!("{name}/packed"), slot, stream);
                     }
                 }
             }
@@ -1176,7 +1169,7 @@ mod tests {
                     &mut prepared,
                     &mut timings,
                     qi,
-                    PackedNeighborPolicy::for_point_count(h.points.len(), false),
+                    PackedNeighborPolicy::for_point_count(h.points.len()),
                 );
                 let stream = PeriodicNeighborStream::new(
                     &h.grid,

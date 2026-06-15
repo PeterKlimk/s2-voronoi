@@ -1,6 +1,5 @@
 //! Packed-kNN scratch + implementation.
 
-mod cold;
 mod emit;
 mod helpers;
 mod prepare;
@@ -25,15 +24,6 @@ pub struct PackedKnnCellScratch {
     tail_ready_gen: Vec<u32>,
     security_thresholds: Vec<f32>,
     thresholds: Vec<f32>,
-    expand_r2_cells: Vec<PackedCellRange>,
-    expand_r2_cells_gen: u32,
-    ring3_cells: Vec<u32>,
-    ring3_cells_gen: u32,
-    expand2_keys: Vec<Vec<u64>>,
-    expand2_pos: Vec<usize>,
-    expand2_ready_gen: Vec<u32>,
-    security2: Vec<f32>,
-    security2_ready_gen: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -113,27 +103,8 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
     }
 
     #[inline]
-    pub(super) fn ensure_expand_r2_band_directed_for(
-        &mut self,
-        qi: usize,
-        grid: &CubeMapGrid,
-        timings: &mut PackedKnnTimings,
-    ) -> bool {
-        self.scratch.ensure_expand_r2_band_directed_for(
-            qi,
-            self.group,
-            self.group_gen,
-            grid,
-            self.group.slot_gen_map(),
-            self.group.local_shift(),
-            self.group.local_mask(),
-            timings,
-        )
-    }
-
-    #[inline]
     pub(super) fn resume_security(&self, qi: usize) -> f32 {
-        self.scratch.resume_security(qi, self.group_gen)
+        self.scratch.resume_security(qi)
     }
 
     #[inline]
@@ -144,18 +115,6 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
     #[inline]
     pub(super) fn tail_upper_bound(&self, qi: usize) -> f32 {
         self.scratch.tail_upper_bound(qi)
-    }
-
-    #[inline]
-    #[cfg(test)]
-    pub(crate) fn ensure_security2_for(
-        &mut self,
-        qi: usize,
-        grid: &CubeMapGrid,
-        timings: &mut PackedKnnTimings,
-    ) -> f32 {
-        self.scratch
-            .ensure_security2_for(qi, self.group, self.group_gen, grid, timings)
     }
 }
 
@@ -172,34 +131,6 @@ impl PackedKnnCellScratch {
             tail_ready_gen: Vec::new(),
             security_thresholds: Vec::new(),
             thresholds: Vec::new(),
-            expand_r2_cells: Vec::new(),
-            expand_r2_cells_gen: 0,
-            ring3_cells: Vec::new(),
-            ring3_cells_gen: 0,
-            expand2_keys: Vec::new(),
-            expand2_pos: Vec::new(),
-            expand2_ready_gen: Vec::new(),
-            security2: Vec::new(),
-            security2_ready_gen: Vec::new(),
-        }
-    }
-
-    #[inline]
-    fn ensure_cold_query_storage(&mut self, num_queries: usize) {
-        if self.expand2_keys.len() < num_queries {
-            self.expand2_keys.resize_with(num_queries, Vec::new);
-        }
-        if self.expand2_pos.len() < num_queries {
-            self.expand2_pos.resize(num_queries, 0);
-        }
-        if self.expand2_ready_gen.len() < num_queries {
-            self.expand2_ready_gen.resize(num_queries, 0);
-        }
-        if self.security2.len() < num_queries {
-            self.security2.resize(num_queries, -1.0);
-        }
-        if self.security2_ready_gen.len() < num_queries {
-            self.security2_ready_gen.resize(num_queries, 0);
         }
     }
 
@@ -210,12 +141,8 @@ impl PackedKnnCellScratch {
     }
 
     #[inline]
-    pub(super) fn resume_security(&self, qi: usize, group_gen: u32) -> f32 {
-        if self.expand2_ready_gen.get(qi).copied().unwrap_or(0) == group_gen {
-            self.security2[qi]
-        } else {
-            self.security_thresholds[qi]
-        }
+    pub(super) fn resume_security(&self, qi: usize) -> f32 {
+        self.security_thresholds[qi]
     }
 
     #[inline]

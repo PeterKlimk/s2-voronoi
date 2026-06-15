@@ -257,28 +257,12 @@ pub struct VoronoiConfig {
     /// diagram rather than receiving duplicated boundaries, so strict
     /// validation passes whether or not welds occur.
     pub preprocess_mode: PreprocessMode,
-    /// Enable a cold-path packed r=2 expansion band before the shell-expansion
-    /// takeover.
-    ///
-    /// **Default is `false`** (disabled). A/B measurement (2026-06-14) found the
-    /// stage net-negative *as currently implemented*: neutral on uniform
-    /// (−1.7%, within noise) and catastrophic under concentration (6.5× slower
-    /// on `splittable`, >9× on `mega`). Root cause: the band scan is a scalar
-    /// O(occ²) pass whose post-hoc cap bounds the candidate list, not the scan,
-    /// and on overflow it discards the work and falls to the shell-expansion
-    /// takeover anyway. The takeover is the correctness fallback, so disabling
-    /// this stage is correctness-neutral. The stage is retained behind this knob
-    /// for a re-trial under a properly SIMD/grouped/resuming cursor (see
-    /// `docs/multi-regime-perf.md` items 1 & 9); it is only ever built for
-    /// queries that exhaust the packed r=1 path without proving termination.
-    pub packed_knn_expand_r2: bool,
 }
 
 impl Default for VoronoiConfig {
     fn default() -> Self {
         Self {
             preprocess_mode: PreprocessMode::Weld,
-            packed_knn_expand_r2: false,
         }
     }
 }

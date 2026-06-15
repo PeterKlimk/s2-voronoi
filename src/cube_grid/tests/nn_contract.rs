@@ -227,7 +227,7 @@ impl Harness {
                 start as u32,
                 self.layout(),
             );
-            for &expand_r2 in &[false, true] {
+            {
                 let mut packed_scratch = PackedKnnCellScratch::new();
                 let mut timings = PackedKnnTimings::default();
                 let PreparedPackedGroupStatus::Ready(mut prepared) =
@@ -250,7 +250,7 @@ impl Harness {
                         &mut timings,
                         &self.grid,
                         qi,
-                        PackedNeighborPolicy::for_point_count(n, expand_r2),
+                        PackedNeighborPolicy::for_point_count(n),
                     );
                     let stream = DirectedNeighborStream::new(
                         &self.grid,
@@ -260,7 +260,7 @@ impl Harness {
                         ctx,
                         Some(packed),
                     );
-                    self.collect_and_check(&format!("{name}/packed_r2={expand_r2}"), slot, stream);
+                    self.collect_and_check(&format!("{name}/packed"), slot, stream);
                 }
             }
         }

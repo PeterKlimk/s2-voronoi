@@ -34,19 +34,12 @@ pub use preprocess::merge_close_points;
 pub type MergeResult = preprocess::MergeResult;
 
 #[derive(Debug, Clone, Copy, Default)]
-pub struct TerminationConfig {
-    /// Enable a cold packed r=2 expansion stage before the shell takeover.
-    ///
-    /// Defaults to `false` (the bool default): measured net-negative as
-    /// implemented — see `VoronoiConfig::packed_knn_expand_r2` docs and
-    /// `docs/multi-regime-perf.md` items 1 & 9.
-    pub packed_expand_r2: bool,
-}
+pub struct TerminationConfig {}
 
 impl TerminationConfig {
     #[inline]
     pub(crate) fn packed_policy(&self, num_points: usize) -> PackedNeighborPolicy {
-        PackedNeighborPolicy::for_point_count(num_points, self.packed_expand_r2)
+        PackedNeighborPolicy::for_point_count(num_points)
     }
 }
 

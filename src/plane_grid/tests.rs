@@ -239,7 +239,7 @@ impl Harness {
                 start as u32,
                 self.layout(),
             );
-            for &expand_r2 in &[false, true] {
+            {
                 let mut packed_scratch = PlanePackedScratch::new();
                 #[cfg_attr(
                     not(feature = "timing"),
@@ -264,7 +264,7 @@ impl Harness {
                         &mut prepared,
                         &mut timings,
                         qi,
-                        PackedNeighborPolicy::for_point_count(self.points.len(), expand_r2),
+                        PackedNeighborPolicy::for_point_count(self.points.len()),
                     );
                     let stream = PlaneNeighborStream::new(
                         &self.grid,
@@ -274,7 +274,7 @@ impl Harness {
                         ctx,
                         Some(packed),
                     );
-                    self.collect_and_check(&format!("{name}/packed_r2={expand_r2}"), slot, stream);
+                    self.collect_and_check(&format!("{name}/packed"), slot, stream);
                 }
             }
         }

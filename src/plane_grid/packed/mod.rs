@@ -5,7 +5,7 @@
 //! prepared as one group (3x3 SoA scan, 8-wide squared distances via
 //! `fp::PlaneChunk8`), then each query drains its sorted candidates in
 //! stages — Chunk0 (tightened "hi" set), Tail (the [threshold, security)
-//! band, built lazily), ExpandR2 (the 5x5 band, built lazily) — before the
+//! band, built lazily) — before the
 //! shell-expansion takeover re-covers everything else. Certificates are
 //! squared-distance LOWER bounds (smaller is closer), from the exact box
 //! geometry.
@@ -199,7 +199,6 @@ impl<'a> PlanePackedGroupInput<'a> {
 pub(crate) enum PlanePackedStage {
     Chunk0,
     Tail,
-    ExpandR2,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -214,7 +213,6 @@ pub(crate) struct PlanePackedChunk {
 pub(crate) enum PlanePackedBatchSource {
     Chunk0,
     Tail,
-    ExpandR2,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -240,7 +238,6 @@ pub(crate) enum PlanePackedFrontier {
 enum QueryStage {
     Chunk0,
     Tail,
-    ExpandR2,
     Exhausted,
 }
 
@@ -322,11 +319,6 @@ impl<'a, 'p, 'g> PlanePackedQuery<'a, 'p, 'g> {
                 PlanePackedBatchSource::Tail,
                 self.policy.chunk_size(),
             ),
-            QueryStage::ExpandR2 => (
-                PlanePackedStage::ExpandR2,
-                PlanePackedBatchSource::ExpandR2,
-                self.policy.chunk_size(),
-            ),
             QueryStage::Exhausted => {
                 self.cached_frontier = Some(CachedFrontier::Exhausted);
                 return PlanePackedFrontier::Exhausted;
@@ -375,16 +367,6 @@ impl<'a, 'p, 'g> PlanePackedQuery<'a, 'p, 'g> {
             self.prepared
                 .ensure_tail_for(self.query_index, grid, self.timings);
             self.stage = QueryStage::Tail;
-            return;
-        }
-
-        if self.stage != QueryStage::ExpandR2
-            && self.policy.expand_r2_enabled()
-            && self
-                .prepared
-                .ensure_expand_r2_band_for(self.query_index, grid, self.timings)
-        {
-            self.stage = QueryStage::ExpandR2;
             return;
         }
 

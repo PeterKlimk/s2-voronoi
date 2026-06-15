@@ -144,25 +144,21 @@ pub(crate) const PACKED_HI_BUDGET: usize = 32;
 pub(crate) const PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER: bool = false;
 /// Count-model knob: include same-bin-earlier cells when estimating packed candidate pressure.
 pub(crate) const PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER: bool = false;
-/// Hard cold-path cap for packed `r=2` expansion storage per query.
-pub(crate) const PACKED_MAX_EXPAND_R2_CANDIDATES_PER_QUERY: usize = 8_192;
 
 /// Policy decisions that affect packed neighbor sourcing before directed cursor fallback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PackedNeighborPolicy {
     chunk0_size: usize,
     chunk_size: usize,
-    expand_r2_enabled: bool,
 }
 
 impl PackedNeighborPolicy {
     #[inline]
-    pub(crate) fn for_point_count(num_points: usize, expand_r2_enabled: bool) -> Self {
+    pub(crate) fn for_point_count(num_points: usize) -> Self {
         let max_neighbors = num_points.saturating_sub(1);
         Self {
             chunk0_size: DEFAULT_PACKED_CHUNK0_SIZE.min(max_neighbors),
             chunk_size: DEFAULT_PACKED_CHUNK_SIZE.min(max_neighbors),
-            expand_r2_enabled,
         }
     }
 
@@ -182,11 +178,6 @@ impl PackedNeighborPolicy {
     }
 
     #[inline]
-    pub(crate) fn expand_r2_enabled(self) -> bool {
-        self.expand_r2_enabled
-    }
-
-    #[inline]
     pub(crate) fn scratch_chunk_capacity(self) -> usize {
         self.chunk0_size.max(self.chunk_size)
     }
@@ -195,7 +186,7 @@ impl PackedNeighborPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{knn_clipping::TerminationConfig, VoronoiConfig};
+    use crate::knn_clipping::TerminationConfig;
 
     #[test]
     fn grid_resolution_scales_with_point_count() {
@@ -250,39 +241,33 @@ mod tests {
 
     #[test]
     fn packed_policy_clamps_to_available_neighbors() {
-        let zero = PackedNeighborPolicy::for_point_count(0, true);
+        let zero = PackedNeighborPolicy::for_point_count(0);
         assert!(!zero.enabled());
         assert_eq!(zero.chunk0_size(), 0);
         assert_eq!(zero.chunk_size(), 0);
 
-        let one = PackedNeighborPolicy::for_point_count(1, true);
+        let one = PackedNeighborPolicy::for_point_count(1);
         assert!(!one.enabled());
         assert_eq!(one.chunk0_size(), 0);
         assert_eq!(one.chunk_size(), 0);
 
-        let small = PackedNeighborPolicy::for_point_count(5, true);
+        let small = PackedNeighborPolicy::for_point_count(5);
         assert!(small.enabled());
         assert_eq!(small.chunk0_size(), 4);
         assert_eq!(small.chunk_size(), 4);
         assert_eq!(small.scratch_chunk_capacity(), 4);
 
-        let large = PackedNeighborPolicy::for_point_count(100, false);
+        let large = PackedNeighborPolicy::for_point_count(100);
         assert_eq!(large.chunk0_size(), 16);
         assert_eq!(large.chunk_size(), 8);
         assert_eq!(large.scratch_chunk_capacity(), 16);
-        assert!(!large.expand_r2_enabled());
     }
 
     #[test]
-    fn policy_defaults_match_public_and_internal_config_defaults() {
-        let public = VoronoiConfig::default();
+    fn policy_defaults_match_internal_config_defaults() {
         let internal = TerminationConfig::default();
         let policy = internal.packed_policy(100);
 
-        // expand_r2 defaults OFF (measured net-negative; see VoronoiConfig docs).
-        assert!(!public.packed_knn_expand_r2);
-        assert!(!internal.packed_expand_r2);
-        assert!(!policy.expand_r2_enabled());
         assert_eq!(policy.chunk0_size(), DEFAULT_PACKED_CHUNK0_SIZE);
         assert_eq!(policy.chunk_size(), DEFAULT_PACKED_CHUNK_SIZE);
     }

@@ -240,45 +240,6 @@ impl PackedKnnCellScratch {
                 };
                 Some(PackedChunk { n, unseen_bound })
             }
-            PackedStage::ExpandR2 => {
-                debug_assert!(
-                    self.expand2_ready_gen.get(qi).copied().unwrap_or(0) == group_gen,
-                    "expand_r2 stage requested before ensure_expand_r2"
-                );
-                let mut t_stage = PackedLapTimer::start();
-                let mut t = PackedLapTimer::start();
-                let keys = &mut self.expand2_keys.get_mut(qi)?;
-                let start = *self.expand2_pos.get(qi)?;
-                if start >= keys.len() {
-                    return None;
-                }
-                let remaining = &mut keys[start..];
-                let n = k.min(out.len()).min(remaining.len());
-                if n == 0 {
-                    return None;
-                }
-                timings.add_select_query_prep(t.lap());
-                if remaining.len() > n {
-                    remaining.select_nth_unstable(n - 1);
-                    timings.add_select_partition(t.lap());
-                }
-                sort_keys_u64(&mut remaining[..n]);
-                timings.add_select_sort_sized(t.lap(), n);
-                for (dst, key) in out[..n].iter_mut().zip(remaining[..n].iter()) {
-                    *dst = key_to_idx(*key);
-                }
-                timings.add_select_scatter(t.lap());
-                let last_dot = key_to_dot(remaining[n - 1]);
-                self.expand2_pos[qi] = start + n;
-                let has_more = self.expand2_pos[qi] < keys.len();
-                let unseen_bound = if has_more {
-                    last_dot
-                } else {
-                    self.security2[qi]
-                };
-                timings.add_expand_r2_select(t_stage.lap());
-                Some(PackedChunk { n, unseen_bound })
-            }
         }
     }
 }

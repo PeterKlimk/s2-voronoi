@@ -97,10 +97,19 @@ Each: problem → fix → status → priority → regime. Cross-refs at the bott
     **any** regime. If a well-built version still never wins, *then* remove it.
     The −1.7% uniform result suggests it may not, but that's a verdict to earn
     under a good implementation, not under the current scalar/no-reuse one.
-- **Status**: **measured net-negative in EVERY regime (current impl) — incl.
-  the sparse best-case (gradient −3-4%, 2026-06-15); stop-gap SHIPPED (lib
-  default off); retrial folded into item 9 with a concrete bar.** **Priority:**
-  stop-gap done, MEDIUM (retrial). **Regime: dense + sparse (no winner).**
+- **REMOVED (2026-06-15).** Measured net-negative in EVERY sphere regime
+  (uniform −1.7%, sparse/gradient −3-4%, dense 6.5-9×) and, on the **plane**,
+  perf-NEUTRAL *and dead code* — both plane drivers hardcoded
+  `for_point_count(.., false)`, so it never ran in production; forced on it
+  validated strictly-valid but never won (uniform/clustered/grid/uniform-periodic
+  all within ±1.5%, coin-flip sign tests). With no winning regime on either
+  geometry and the shell takeover as the correctness fallback, the stage was
+  deleted end-to-end (−1002 lines / 25 files; `cold.rs` gone; sphere diagram
+  fingerprint bit-identical, full suite + clippy green). A future retrial
+  (item 9: SIMD + resuming + grouped cursor) would re-introduce it from scratch
+  with a concrete bar — beat the shell takeover on the sparse divert by >4%.
+  **Priority: DONE (removed).** **Regime: dense + sparse (no winner, both
+  geometries).**
 
 ### 2. `punch-2` — occupancy rebuild (global re-grid for *moderate* density)
 - Re-grids the whole sphere finer when concentration is real (`Σocc²/n` over

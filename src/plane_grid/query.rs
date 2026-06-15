@@ -222,7 +222,6 @@ impl<'a, 'b> PlaneShellFrontier<'a, 'b> {
 pub(crate) enum PlaneNeighborBatchSource {
     PackedChunk0,
     PackedTail,
-    PackedExpandR2,
     ShellExpand,
 }
 
@@ -325,9 +324,6 @@ impl<'a, 'b, 'p, 'g> PlaneNeighborStream<'a, 'b, 'p, 'g> {
                                 }
                                 super::packed::PlanePackedBatchSource::Tail => {
                                     PlaneNeighborBatchSource::PackedTail
-                                }
-                                super::packed::PlanePackedBatchSource::ExpandR2 => {
-                                    PlaneNeighborBatchSource::PackedExpandR2
                                 }
                             };
                             return PlaneNeighborFrontier::ExactBatch(PlaneNeighborBatch {

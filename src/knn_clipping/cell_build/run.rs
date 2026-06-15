@@ -139,7 +139,6 @@ pub(crate) struct CellBuildStats {
     used_knn: bool,
     did_packed: bool,
     packed_tail_used: bool,
-    packed_expand_r2_used: bool,
     packed_safe_exhausted: bool,
     knn_stage: crate::knn_clipping::timing::KnnCellStage,
 }
@@ -154,9 +153,7 @@ impl CellBuildStats {
         let stage = if self.used_knn {
             self.knn_stage
         } else if self.did_packed {
-            if self.packed_expand_r2_used {
-                crate::knn_clipping::timing::KnnCellStage::PackedExpandR2
-            } else if self.packed_tail_used {
+            if self.packed_tail_used {
                 crate::knn_clipping::timing::KnnCellStage::PackedTail
             } else {
                 crate::knn_clipping::timing::KnnCellStage::PackedChunk0
@@ -170,7 +167,6 @@ impl CellBuildStats {
             self.knn_exhausted,
             self.neighbors_processed,
             self.packed_tail_used,
-            self.packed_expand_r2_used,
             self.packed_safe_exhausted,
             self.used_knn,
             self.incoming_seed_neighbors,
@@ -231,7 +227,6 @@ pub(super) struct BuildCounters {
     pub(super) knn_exhausted: bool,
     pub(super) did_packed: bool,
     packed_tail_used: bool,
-    packed_expand_r2_used: bool,
     packed_safe_exhausted: bool,
     terminated: bool,
 }
@@ -249,7 +244,6 @@ impl BuildCounters {
             knn_exhausted: false,
             did_packed: false,
             packed_tail_used: false,
-            packed_expand_r2_used: false,
             packed_safe_exhausted: false,
             terminated: false,
         }
@@ -258,7 +252,6 @@ impl BuildCounters {
     fn absorb_stream(&mut self, stream: &DirectedNeighborStream<'_, '_, '_, '_>) {
         self.did_packed |= stream.did_packed();
         self.packed_tail_used |= stream.packed_tail_used();
-        self.packed_expand_r2_used |= stream.packed_expand_r2_used();
         self.packed_safe_exhausted |= stream.packed_safe_exhausted();
         self.knn_exhausted |= stream.knn_exhausted();
     }
@@ -351,9 +344,7 @@ fn clip_batch(
             DirectedNeighborBatchSource::ShellExpand => {
                 phase.attempted_neighbors.insert(neighbor_idx)
             }
-            DirectedNeighborBatchSource::PackedChunk0
-            | DirectedNeighborBatchSource::PackedTail
-            | DirectedNeighborBatchSource::PackedExpandR2 => {
+            DirectedNeighborBatchSource::PackedChunk0 | DirectedNeighborBatchSource::PackedTail => {
                 phase.attempted_neighbors.mark(neighbor_idx);
                 true
             }
@@ -445,10 +436,6 @@ fn consume_stream(
 
         match frontier {
             DirectedNeighborFrontier::ExactBatch(batch) => {
-                if batch.source == DirectedNeighborBatchSource::PackedExpandR2 {
-                    counters.knn_stage = crate::knn_clipping::timing::KnnCellStage::PackedExpandR2;
-                }
-
                 clip_batch(
                     &mut phase,
                     batch,
@@ -597,7 +584,6 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         used_knn: counters.used_knn,
         did_packed: counters.did_packed,
         packed_tail_used: counters.packed_tail_used,
-        packed_expand_r2_used: counters.packed_expand_r2_used,
         packed_safe_exhausted: counters.packed_safe_exhausted,
         knn_stage: counters.knn_stage,
     })

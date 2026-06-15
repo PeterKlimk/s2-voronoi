@@ -36,10 +36,6 @@ impl PackedKnnCellScratch {
             // Reserve `0` as "never set"; on wrap, clear all generation stamps.
             group_gen = 1;
             self.tail_ready_gen.fill(0);
-            self.expand_r2_cells_gen = 0;
-            self.ring3_cells_gen = 0;
-            self.expand2_ready_gen.fill(0);
-            self.security2_ready_gen.fill(0);
         }
         self.next_group_gen = group_gen;
 

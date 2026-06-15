@@ -166,7 +166,6 @@ stage:
   - `PreprocessMode::MergeWithin(threshold)`: weld within an explicit threshold
   - `PreprocessMode::Disabled`: no welding (caller certifies generator separation above the
     weld radius)
-- `packed_knn_expand_r2`: enable the cold ring-2 packed expansion stage (off by default).
 
 The planar pipeline currently takes no configuration; its weld radius is fixed (see above).
 

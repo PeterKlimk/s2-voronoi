@@ -1,20 +1,19 @@
 //! Planar packed-kNN scratch + group preparation, selection, and the lazy
-//! tail / ring-2 expansion stages.
+//! tail stage.
 //!
 //! The planar port of `cube_grid::packed_knn::scratch` with the semantic
 //! inversions documented per site: squared-distance keys sort ASCENDING
 //! (nearest first), candidate masks are `mask_lt`, and every conservative
-//! spherical bound (security planes, ring-2 cap sweeps, ring-3 BFS) is
-//! replaced by the exact box certificate [`super::super::outside_box_dist_sq`]
-//! — anything outside the radius-`r` cell box is at least that far away, so
-//! the 5x5 box bound directly replaces the sphere's ring-3 machinery.
+//! spherical bound (security planes) is replaced by the exact box certificate
+//! [`super::super::outside_box_dist_sq`] — anything outside the radius-`r`
+//! cell box is at least that far away.
 
 use crate::sort::sort_small as sort_small_u64;
 
 use super::timing::{PlanePackedLapTimer, PlanePackedTimings};
 use super::{PackedGeometry, PlanePackedChunk, PlanePackedGroupInput, PlanePackedStage};
 use crate::fp;
-use crate::policy::{PACKED_HI_BUDGET, PACKED_MAX_EXPAND_R2_CANDIDATES_PER_QUERY};
+use crate::policy::PACKED_HI_BUDGET;
 
 // Hard cap on total candidates in a 3x3 neighborhood to avoid pathological
 // allocations (same value as the sphere).
@@ -89,14 +88,6 @@ pub struct PlanePackedScratch {
     /// Tightened "hi" threshold: chunk0 holds candidates with
     /// `dist_sq < thresholds[qi]`; the tail holds the rest below security.
     thresholds: Vec<f32>,
-    expand_r2_cells: Vec<PackedCellRange>,
-    expand_r2_cells_gen: u32,
-    expand2_keys: Vec<Vec<u64>>,
-    expand2_pos: Vec<usize>,
-    expand2_ready_gen: Vec<u32>,
-    /// Lower bound on dist_sq of anything outside the 5x5 box.
-    security2: Vec<f32>,
-    security2_ready_gen: Vec<u32>,
 }
 
 pub(crate) struct PlanePreparedGroup<'a, 'g> {
@@ -137,23 +128,8 @@ impl<'a, 'g> PlanePreparedGroup<'a, 'g> {
     }
 
     #[inline]
-    pub(super) fn ensure_expand_r2_band_for<G: PackedGeometry>(
-        &mut self,
-        qi: usize,
-        grid: &G,
-        timings: &mut PlanePackedTimings,
-    ) -> bool {
-        self.scratch
-            .ensure_expand_r2_band_for(qi, self.group, self.group_gen, grid, timings)
-    }
-
-    #[inline]
     pub(super) fn resume_security(&self, qi: usize) -> f32 {
-        if self.scratch.expand2_ready_gen.get(qi).copied().unwrap_or(0) == self.group_gen {
-            self.scratch.security2[qi]
-        } else {
-            self.scratch.security_thresholds[qi]
-        }
+        self.scratch.security_thresholds[qi]
     }
 
     #[inline]
@@ -186,32 +162,6 @@ impl PlanePackedScratch {
             tail_ready_gen: Vec::new(),
             security_thresholds: Vec::new(),
             thresholds: Vec::new(),
-            expand_r2_cells: Vec::new(),
-            expand_r2_cells_gen: 0,
-            expand2_keys: Vec::new(),
-            expand2_pos: Vec::new(),
-            expand2_ready_gen: Vec::new(),
-            security2: Vec::new(),
-            security2_ready_gen: Vec::new(),
-        }
-    }
-
-    #[inline]
-    fn ensure_cold_query_storage(&mut self, num_queries: usize) {
-        if self.expand2_keys.len() < num_queries {
-            self.expand2_keys.resize_with(num_queries, Vec::new);
-        }
-        if self.expand2_pos.len() < num_queries {
-            self.expand2_pos.resize(num_queries, 0);
-        }
-        if self.expand2_ready_gen.len() < num_queries {
-            self.expand2_ready_gen.resize(num_queries, 0);
-        }
-        if self.security2.len() < num_queries {
-            self.security2.resize(num_queries, f32::INFINITY);
-        }
-        if self.security2_ready_gen.len() < num_queries {
-            self.security2_ready_gen.resize(num_queries, 0);
         }
     }
 
@@ -281,9 +231,6 @@ impl PlanePackedScratch {
             // Reserve `0` as "never set"; on wrap, clear all generation stamps.
             group_gen = 1;
             self.tail_ready_gen.fill(0);
-            self.expand_r2_cells_gen = 0;
-            self.expand2_ready_gen.fill(0);
-            self.security2_ready_gen.fill(0);
         }
         self.next_group_gen = group_gen;
 
@@ -636,137 +583,6 @@ impl PlanePackedScratch {
         }
     }
 
-    fn ensure_expand_r2_cells<G: PackedGeometry>(
-        &mut self,
-        grid: &G,
-        group: PlanePackedGroupInput<'_>,
-        group_gen: u32,
-    ) {
-        if self.expand_r2_cells_gen == group_gen {
-            return;
-        }
-        self.expand_r2_cells.clear();
-        self.expand_r2_cells_gen = group_gen;
-
-        let res = grid.res();
-        let center = group.cell();
-        let (cx, cy) = (center % res, center / res);
-        let mut ranges: Vec<PackedCellRange> = Vec::new();
-        grid.for_each_box_cell(cx, cy, 2, |cell| {
-            if let Some(range) = Self::classify_cell_range(
-                grid,
-                cell,
-                center,
-                group.query_bin(),
-                group.slot_gen_map(),
-                group.local_shift(),
-                group.local_mask(),
-            ) {
-                ranges.push(range);
-            }
-        });
-        self.expand_r2_cells = ranges;
-    }
-
-    /// Lower bound on dist_sq of anything outside the 5x5 box (lazy).
-    fn ensure_security2_for<G: PackedGeometry>(
-        &mut self,
-        qi: usize,
-        group: PlanePackedGroupInput<'_>,
-        group_gen: u32,
-        grid: &G,
-    ) -> f32 {
-        self.ensure_cold_query_storage(group.queries().len());
-        if self.security2_ready_gen[qi] == group_gen {
-            return self.security2[qi];
-        }
-        let res = grid.res();
-        let center = group.cell();
-        let (cx, cy) = (center % res, center / res);
-        let query_slot = group.queries()[qi] as usize;
-        let security = grid.outside_box_dist_sq(
-            cx,
-            cy,
-            2,
-            grid.points_x()[query_slot],
-            grid.points_y()[query_slot],
-        );
-        self.security2[qi] = security;
-        self.security2_ready_gen[qi] = group_gen;
-        security
-    }
-
-    /// Lazily build the ring-2 expansion band for one query: candidates in
-    /// the 5x5 box with `security1 <= dist_sq < security2`. Returns false
-    /// when the band exceeds the per-query cap (caller falls through to the
-    /// shell takeover).
-    fn ensure_expand_r2_band_for<G: PackedGeometry>(
-        &mut self,
-        qi: usize,
-        group: PlanePackedGroupInput<'_>,
-        group_gen: u32,
-        grid: &G,
-        timings: &mut PlanePackedTimings,
-    ) -> bool {
-        if !grid.box_radius_distinct(2) {
-            // Tiny wrapped grids: the 5x5 box would revisit cells; hand off
-            // to the shell takeover instead.
-            return false;
-        }
-        self.ensure_cold_query_storage(group.queries().len());
-        if self.expand2_ready_gen[qi] == group_gen {
-            return true;
-        }
-
-        let security2 = self.ensure_security2_for(qi, group, group_gen, grid);
-        self.ensure_expand_r2_cells(grid, group, group_gen);
-
-        let query_slot = group.queries()[qi];
-        let qx = grid.points_x()[query_slot as usize];
-        let qy = grid.points_y()[query_slot as usize];
-        let security1 = self.security_thresholds[qi];
-        let center_range = self.cell_ranges[0];
-
-        let keys = &mut self.expand2_keys[qi];
-        keys.clear();
-        self.expand2_pos[qi] = 0;
-        timings.inc_expand_r2_builds();
-
-        let mut t = PlanePackedLapTimer::start();
-        for range in &self.expand_r2_cells {
-            if range.kind == PackedCellRangeKind::SameBinEarlier {
-                continue;
-            }
-            for slot in range.soa_start..range.soa_end {
-                let slot_u32 = slot as u32;
-                if slot_u32 == query_slot {
-                    continue;
-                }
-                // Directed center-cell filter (same-bin same-cell: local >=
-                // query local, i.e. slot >= query slot).
-                if range.soa_start == center_range.soa_start
-                    && range.soa_end == center_range.soa_end
-                    && slot_u32 < query_slot
-                {
-                    continue;
-                }
-                let dist_sq = grid.dist_sq(grid.points_x()[slot], grid.points_y()[slot], qx, qy);
-                if dist_sq >= security1 && dist_sq < security2 {
-                    keys.push(make_asc_key(dist_sq, slot_u32));
-                    if keys.len() > PACKED_MAX_EXPAND_R2_CANDIDATES_PER_QUERY {
-                        keys.clear();
-                        timings.inc_expand_r2_cap_skips();
-                        return false;
-                    }
-                }
-            }
-        }
-        timings.add_expand_r2_scan(t.lap());
-
-        self.expand2_ready_gen[qi] = group_gen;
-        true
-    }
-
     /// Emit the next sorted chunk for a stage. `out`/`out_dists` receive the
     /// slots and their squared distances (ascending); the chunk's
     /// `unseen_bound` lower-bounds everything not yet emitted.
@@ -806,18 +622,6 @@ impl PlanePackedScratch {
                 );
                 let bound = self.security_thresholds[qi];
                 (self.tail_keys.get_mut(qi)?, &mut self.tail_pos[qi], bound)
-            }
-            PlanePackedStage::ExpandR2 => {
-                debug_assert!(
-                    self.expand2_ready_gen.get(qi).copied().unwrap_or(0) == group_gen,
-                    "expand_r2 stage requested before ensure_expand_r2"
-                );
-                let bound = self.security2[qi];
-                (
-                    self.expand2_keys.get_mut(qi)?,
-                    &mut self.expand2_pos[qi],
-                    bound,
-                )
             }
         };
 

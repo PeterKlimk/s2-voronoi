@@ -40,7 +40,6 @@ impl LapTimer {
 struct StageCounts {
     packed_chunk0: u64,
     packed_tail: u64,
-    packed_expand_r2: u64,
     shell_expand: u64,
 }
 
@@ -50,7 +49,6 @@ impl StageCounts {
         match stage {
             KnnCellStage::PackedChunk0 => self.packed_chunk0 += 1,
             KnnCellStage::PackedTail => self.packed_tail += 1,
-            KnnCellStage::PackedExpandR2 => self.packed_expand_r2 += 1,
             KnnCellStage::ShellExpand => self.shell_expand += 1,
         }
     }
@@ -59,7 +57,6 @@ impl StageCounts {
     fn merge(&mut self, other: &StageCounts) {
         self.packed_chunk0 += other.packed_chunk0;
         self.packed_tail += other.packed_tail;
-        self.packed_expand_r2 += other.packed_expand_r2;
         self.shell_expand += other.shell_expand;
     }
 }
@@ -79,8 +76,6 @@ pub struct CellSubPhases {
     pub packed_select_partition: Duration,
     pub packed_select_sort: Duration,
     pub packed_select_scatter: Duration,
-    pub packed_expand_r2_scan: Duration,
-    pub packed_expand_r2_select: Duration,
     pub clipping: Duration,
     pub certification: Duration,
     pub key_dedup: Duration,
@@ -89,12 +84,9 @@ pub struct CellSubPhases {
     pub edge_emit: Duration,
     pub cells_knn_exhausted: u64,
     pub cells_packed_tail_used: u64,
-    pub cells_packed_expand_r2_used: u64,
     pub cells_packed_safe_exhausted: u64,
     pub cells_used_knn: u64,
     pub packed_tail_builds: u64,
-    pub packed_expand_r2_builds: u64,
-    pub packed_expand_r2_cap_skips: u64,
     /// Sum of neighbors processed before termination across all cells
     /// (mean = total / n; input for the grid-density tuning model).
     pub neighbors_processed_total: u64,
@@ -123,8 +115,6 @@ pub struct CellSubAccum {
     packed_select_partition: Duration,
     packed_select_sort: Duration,
     packed_select_scatter: Duration,
-    packed_expand_r2_scan: Duration,
-    packed_expand_r2_select: Duration,
     clipping: Duration,
     certification: Duration,
     key_dedup: Duration,
@@ -134,12 +124,9 @@ pub struct CellSubAccum {
     stage_counts: StageCounts,
     cells_knn_exhausted: u64,
     cells_packed_tail_used: u64,
-    cells_packed_expand_r2_used: u64,
     cells_packed_safe_exhausted: u64,
     cells_used_knn: u64,
     packed_tail_builds: u64,
-    packed_expand_r2_builds: u64,
-    packed_expand_r2_cap_skips: u64,
     neighbors_processed_total: u64,
     neighbors_processed_max: u64,
 }
@@ -172,11 +159,7 @@ impl CellSubAccum {
         self.packed_select_partition += timings.select_partition;
         self.packed_select_sort += timings.select_sort;
         self.packed_select_scatter += timings.select_scatter;
-        self.packed_expand_r2_scan += timings.expand_r2_scan;
-        self.packed_expand_r2_select += timings.expand_r2_select;
         self.packed_tail_builds += timings.tail_builds;
-        self.packed_expand_r2_builds += timings.expand_r2_builds;
-        self.packed_expand_r2_cap_skips += timings.expand_r2_cap_skips;
     }
 
     #[inline]
@@ -216,7 +199,6 @@ impl CellSubAccum {
         knn_exhausted: bool,
         neighbors_processed: usize,
         packed_tail_used: bool,
-        packed_expand_r2_used: bool,
         packed_safe_exhausted: bool,
         used_knn: bool,
         _incoming_edgechecks: usize,
@@ -225,7 +207,6 @@ impl CellSubAccum {
         self.stage_counts.add(stage);
         self.cells_knn_exhausted += knn_exhausted as u64;
         self.cells_packed_tail_used += packed_tail_used as u64;
-        self.cells_packed_expand_r2_used += packed_expand_r2_used as u64;
         self.cells_packed_safe_exhausted += packed_safe_exhausted as u64;
         self.cells_used_knn += used_knn as u64;
         self.neighbors_processed_total += neighbors_processed as u64;
@@ -246,8 +227,6 @@ impl CellSubAccum {
         self.packed_select_partition += other.packed_select_partition;
         self.packed_select_sort += other.packed_select_sort;
         self.packed_select_scatter += other.packed_select_scatter;
-        self.packed_expand_r2_scan += other.packed_expand_r2_scan;
-        self.packed_expand_r2_select += other.packed_expand_r2_select;
         self.clipping += other.clipping;
         self.certification += other.certification;
         self.key_dedup += other.key_dedup;
@@ -257,12 +236,9 @@ impl CellSubAccum {
         self.stage_counts.merge(&other.stage_counts);
         self.cells_knn_exhausted += other.cells_knn_exhausted;
         self.cells_packed_tail_used += other.cells_packed_tail_used;
-        self.cells_packed_expand_r2_used += other.cells_packed_expand_r2_used;
         self.cells_packed_safe_exhausted += other.cells_packed_safe_exhausted;
         self.cells_used_knn += other.cells_used_knn;
         self.packed_tail_builds += other.packed_tail_builds;
-        self.packed_expand_r2_builds += other.packed_expand_r2_builds;
-        self.packed_expand_r2_cap_skips += other.packed_expand_r2_cap_skips;
         self.neighbors_processed_total += other.neighbors_processed_total;
         self.neighbors_processed_max = self
             .neighbors_processed_max
@@ -284,8 +260,6 @@ impl CellSubAccum {
             packed_select_partition: self.packed_select_partition,
             packed_select_sort: self.packed_select_sort,
             packed_select_scatter: self.packed_select_scatter,
-            packed_expand_r2_scan: self.packed_expand_r2_scan,
-            packed_expand_r2_select: self.packed_expand_r2_select,
             clipping: self.clipping,
             certification: self.certification,
             key_dedup: self.key_dedup,
@@ -294,12 +268,9 @@ impl CellSubAccum {
             edge_emit: self.edge_emit,
             cells_knn_exhausted: self.cells_knn_exhausted,
             cells_packed_tail_used: self.cells_packed_tail_used,
-            cells_packed_expand_r2_used: self.cells_packed_expand_r2_used,
             cells_packed_safe_exhausted: self.cells_packed_safe_exhausted,
             cells_used_knn: self.cells_used_knn,
             packed_tail_builds: self.packed_tail_builds,
-            packed_expand_r2_builds: self.packed_expand_r2_builds,
-            packed_expand_r2_cap_skips: self.packed_expand_r2_cap_skips,
             neighbors_processed_total: self.neighbors_processed_total,
             neighbors_processed_max: self.neighbors_processed_max,
         }
@@ -453,24 +424,10 @@ impl PhaseTimings {
                         eprintln!("      {:16} {:7.1}ms", label, est_wall_ms(d));
                     }
                 }
-                if self.cell_sub.packed_expand_r2_scan.as_nanos() > 0
-                    || self.cell_sub.packed_expand_r2_select.as_nanos() > 0
-                    || self.cell_sub.packed_expand_r2_builds > 0
-                    || self.cell_sub.packed_expand_r2_cap_skips > 0
-                {
+                if self.cell_sub.packed_tail_builds > 0 {
                     eprintln!(
-                        "      expand_r2_scan:   {:7.1}ms",
-                        est_wall_ms(self.cell_sub.packed_expand_r2_scan)
-                    );
-                    eprintln!(
-                        "      expand_r2_select: {:7.1}ms",
-                        est_wall_ms(self.cell_sub.packed_expand_r2_select)
-                    );
-                    eprintln!(
-                        "      packed_builds: tail={} expand_r2={} expand_r2_cap_skips={}",
+                        "      packed_builds: tail={}",
                         self.cell_sub.packed_tail_builds,
-                        self.cell_sub.packed_expand_r2_builds,
-                        self.cell_sub.packed_expand_r2_cap_skips
                     );
                 }
             }
@@ -505,11 +462,10 @@ impl PhaseTimings {
                 sub_pct(self.cell_sub.edge_emit)
             );
             eprintln!(
-                "    cells: used_knn={} knn_exhausted={} packed_tail_used={} packed_expand_r2_used={} packed_safe_exhausted={}",
+                "    cells: used_knn={} knn_exhausted={} packed_tail_used={} packed_safe_exhausted={}",
                 self.cell_sub.cells_used_knn,
                 self.cell_sub.cells_knn_exhausted,
                 self.cell_sub.cells_packed_tail_used,
-                self.cell_sub.cells_packed_expand_r2_used,
                 self.cell_sub.cells_packed_safe_exhausted
             );
             eprintln!(
@@ -544,7 +500,7 @@ impl PhaseTimings {
 
         if std::env::var_os("S2_VORONOI_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} cells_packed_expand_r2_used={cpe} packed_tail_builds={ptb} packed_expand_r2_builds={prb} packed_expand_r2_cap_skips={pcs} packed_expand_r2_scan_ms={prs:.3} packed_expand_r2_select_ms={prel:.3} neighbors_total={nt} neighbors_max={nm} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} packed_tail_builds={ptb} neighbors_total={nt} neighbors_max={nm} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -555,12 +511,7 @@ impl PhaseTimings {
                 asmb = ms(self.assemble),
                 cuk = self.cell_sub.cells_used_knn,
                 cpt = self.cell_sub.cells_packed_tail_used,
-                cpe = self.cell_sub.cells_packed_expand_r2_used,
                 ptb = self.cell_sub.packed_tail_builds,
-                prb = self.cell_sub.packed_expand_r2_builds,
-                pcs = self.cell_sub.packed_expand_r2_cap_skips,
-                prs = ms(self.cell_sub.packed_expand_r2_scan),
-                prel = ms(self.cell_sub.packed_expand_r2_select),
                 nt = self.cell_sub.neighbors_processed_total,
                 nm = self.cell_sub.neighbors_processed_max,
                 gr = self.grid_res,
