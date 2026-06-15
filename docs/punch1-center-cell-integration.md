@@ -7,6 +7,14 @@ floor flows through `center_bound`/`band_mode` and the shell takeover backstops
 everything below the band. NN-contract suite (incl. a new dense-single-cell
 scenario) + full `S2_VORONOI_VERIFY=1` topological validation green.
 
+**Validation status (2026-06-15): appears regression-free** across the
+distribution matrix at both 500k and 2m (converge A/B vs `main`): a clean ~17×
+win on the `cap` pathology, neutral everywhere else (the `grid_rebuilt` gate
+keeps the band dormant on the regimes where it would otherwise regress — see
+the regression-sweep section below). **NOT yet merged** — held on the branch
+for a human correctness review of the kNN-completeness changes before merge.
+Pushed to remote for that review.
+
 ## Measured outcome (2026-06-15, WSL2/Ryzen 3600, single run)
 
 - `cap` 25k: **106s → ~6.2s (~17×)**. 50k (was: didn't finish) → 23s; 100k → 7s
