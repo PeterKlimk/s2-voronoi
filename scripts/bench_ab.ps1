@@ -15,7 +15,7 @@
   .\scripts\bench_ab.ps1 -Base main -Cand agent/aos-clip-positions -Threads 0   # 0 = all cores (MT)
 #>
 param(
-  [string]$Base    = "main",
+  [string]$Base    = "origin/main",                 # fetched below; avoids a stale local main
   [string]$Cand    = "agent/aos-clip-positions",
   [string]$Size    = "1m",
   [string]$Dist    = "uniform",
@@ -31,6 +31,10 @@ Set-Location $repo
 if (git status --porcelain) { throw "Working tree not clean - commit/stash first (this script checks out other refs)." }
 $startRef = (git rev-parse --abbrev-ref HEAD).Trim()
 if ($startRef -eq "HEAD") { $startRef = (git rev-parse HEAD).Trim() }  # detached
+
+# Refresh remote refs so origin/* refs (the default Base) are current.
+Write-Host "Fetching origin ..." -ForegroundColor Cyan
+git fetch --quiet origin
 
 $baseExe = Join-Path $env:TEMP "bench_base.exe"
 $candExe = Join-Path $env:TEMP "bench_cand.exe"
