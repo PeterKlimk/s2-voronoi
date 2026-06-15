@@ -59,6 +59,17 @@ Each: problem → fix → status → priority → regime. Cross-refs at the bott
   - splittable: **+645%** (7.45× slower, 0/12 rounds, unanimous).
   - mega: **>9× slower** — a *single* expand-on run hit 86 s of CPU vs the
     baseline's 9.5 s and hadn't finished (run killed; the point was made).
+- **MEASURED (2026-06-15, the sparse gate — paired on/off, 500k ST):** the
+  hypothesis was that gradient (sparse anti-pole, no dense-cap confound) is the
+  one place expand_r2 could finally win. It does *fire* and divert cells off
+  the shell takeover (k=2: shell 1.87%→0.09%, r2 catches 1.87%), but it is
+  **3–4% SLOWER even here**: gradient k=2 ratio 1.041 (ON-faster 5/24), k=4
+  1.029 (5/24). bimodal (cap + sparse bg) ON = 2.6× slower (the cap dominates).
+  The scalar ring-2 band scan + per-fire setup costs *more* than letting those
+  ~2% of cells fall to the shell. **So expand_r2 has NO winning regime in its
+  current form** — uniform neutral, sparse −3-4%, dense catastrophic. The
+  item-9 retrial bar is now concrete: a SIMD + resuming version must beat the
+  shell takeover on the sparse divert by >4% to justify the stage existing.
   Verdict: **net-negative *as currently implemented*.** Even in the best
   regime it bought ~nothing (−1.7%, within noise); it only fires where it hurts.
 - **Why it's slow (root cause, traced 2026-06-14)** — three independent flaws,
@@ -86,9 +97,10 @@ Each: problem → fix → status → priority → regime. Cross-refs at the bott
     **any** regime. If a well-built version still never wins, *then* remove it.
     The −1.7% uniform result suggests it may not, but that's a verdict to earn
     under a good implementation, not under the current scalar/no-reuse one.
-- **Status**: **measured net-negative (current impl); stop-gap SHIPPED (lib
-  default off); retrial folded into item 9.** **Priority:** stop-gap done,
-  MEDIUM (retrial). **Regime: dense.**
+- **Status**: **measured net-negative in EVERY regime (current impl) — incl.
+  the sparse best-case (gradient −3-4%, 2026-06-15); stop-gap SHIPPED (lib
+  default off); retrial folded into item 9 with a concrete bar.** **Priority:**
+  stop-gap done, MEDIUM (retrial). **Regime: dense + sparse (no winner).**
 
 ### 2. `punch-2` — occupancy rebuild (global re-grid for *moderate* density)
 - Re-grids the whole sphere finer when concentration is real (`Σocc²/n` over
@@ -155,12 +167,27 @@ Each: problem → fix → status → priority → regime. Cross-refs at the bott
   (e.g., it's also how a density-gate on expand_r2 or a batched-cursor decision
   would be made). **Status: framing** (informs 1/3/4). **Priority: framing.**
 
-### 7. Sparse / gradient regime — *measure it*
-- We've focused on dense; the sparse end (gradient poles, low local density) is
-  **under-tested**. Grid density (24/cell) and expand_r2 are uniform-tuned;
-  confirm nothing degrades, and it's the deciding test for whether expand_r2
-  ever wins (item 1). **Status: gap.** **Priority: MEDIUM** (cheap; gates 1).
-  **Regime: sparse.**
+### 7. Sparse / gradient regime — ~~*measure it*~~ MEASURED (2026-06-15)
+- We had focused on dense; the sparse end (gradient poles, low local density)
+  was under-tested. **Done.** Regime map (500k, ST, expand_r2 OFF):
+
+  | dist | nbrs/cell | shell% | tail% | grid_max_occ | rebuilt |
+  |---|---|---|---|---|---|
+  | fib | 8.28 | 0.00 | 2.14 | 41 | 0 |
+  | uniform | 9.83 | 0.11 | 6.31 | 52 | 0 |
+  | gradient k=2 | 9.96 | 1.87 | 6.02 | 140 | 0 |
+  | gradient k=4 | 9.97 | 1.70 | 6.00 | 250 | 0 |
+  | gradient k=8 | 12.94 | 0.87 | 5.31 | 441 | 0 |
+  | bimodal | 12.56 | 19.32 | 5.20 | 216 | 1 |
+  | outlier | 9.88 | 0.11 | 6.32 | 534 | 0 |
+
+  **Findings:** (1) **nothing degrades on sparse** — neighbors-per-cell (the
+  termination-depth proxy) stays ~8-13 across *every* regime, so the 24/cell
+  grid density holds and the sparse end is handled gracefully (it just falls to
+  the shell takeover: bimodal 19%, gradient 1-2%, others ~0). (2) **expand_r2
+  loses even on the cleanest sparse regime** (gradient −3-4%; see item 1) — so
+  it has no winning regime in its current form, and default-off is confirmed
+  correct. **Status: DONE** (gate for item 1 resolved). **Regime: sparse.**
 
 ### 8. Alternate dense path (speculative)
 - For *majority*-dense input, a dense cap is geometrically ~a planar patch; a
