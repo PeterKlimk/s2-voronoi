@@ -18,6 +18,16 @@ struct CellBounds {
     v_line_planes: Vec<Vec3>,
 }
 
+/// Build the slot-ordered AoS position array from the SoA coordinate arrays
+/// (one sequential pass; see `CubeMapGrid::cell_points_aos`).
+pub(super) fn build_pos_aos(xs: &[f32], ys: &[f32], zs: &[f32]) -> Vec<Vec3> {
+    debug_assert_eq!(xs.len(), ys.len());
+    debug_assert_eq!(xs.len(), zs.len());
+    (0..xs.len())
+        .map(|i| Vec3::new(xs[i], ys[i], zs[i]))
+        .collect()
+}
+
 impl CubeMapGrid {
     /// Build a cube-map grid from points on unit sphere.
     ///
@@ -324,6 +334,8 @@ impl CubeMapGrid {
             "point_slots not fully initialized"
         );
 
+        let cell_points_aos = build_pos_aos(&cell_points_x, &cell_points_y, &cell_points_z);
+
         CubeMapGrid {
             res,
             cell_offsets,
@@ -340,6 +352,7 @@ impl CubeMapGrid {
             cell_points_x,
             cell_points_y,
             cell_points_z,
+            cell_points_aos,
             point_slots,
         }
     }

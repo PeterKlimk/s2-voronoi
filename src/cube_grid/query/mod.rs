@@ -54,6 +54,14 @@ impl CubeMapGrid {
         &self.point_indices
     }
 
+    /// Slot-ordered AoS point positions (see `cell_points_aos`). `[slot]` is an
+    /// exact bit copy of `points[point_indices[slot]]`, in spatial slot order —
+    /// a cache-friendly neighbor-position gather for the clip path.
+    #[inline]
+    pub fn point_pos_slots(&self) -> &[Vec3] {
+        &self.cell_points_aos
+    }
+
     /// Get points in a cell.
     // Production consumers moved to raw CSR slices in the shared binning
     // core; tests still use this accessor.

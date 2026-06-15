@@ -112,6 +112,15 @@ pub struct CubeMapGrid {
     /// Z coordinates of points, ordered by cell.
     pub(super) cell_points_z: Vec<f32>,
 
+    /// AoS copy of the point positions in slot order (parallel to
+    /// `cell_points_{x,y,z}`). The clip path gathers a neighbor's position by
+    /// slot from here: slot order is the grid's spatial order, so a cell's
+    /// neighbors hit a clustered region (cache-friendly), and AoS is one cache
+    /// line per point — unlike the cold scattered `points[global_idx]` gather
+    /// or the 3-cache-line SoA read. Kept in sync with `cell_points_{x,y,z}`
+    /// (built at construction and rebuilt by `compact_welded`).
+    pub(super) cell_points_aos: Vec<glam::Vec3>,
+
     /// Inverse mapping from point index to SOA slot index.
     ///
     /// `point_slots[point_idx]` gives the slot in `point_indices` / `cell_points_*`.

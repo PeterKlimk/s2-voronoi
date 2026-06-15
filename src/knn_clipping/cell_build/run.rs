@@ -282,6 +282,7 @@ struct StreamPhase<'x> {
 fn clip_seed_neighbors(
     ctx: &mut CellBuildContext,
     points: &[Vec3],
+    pos_slots: &[Vec3],
     seed_neighbors: &[SeedNeighbor],
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
@@ -300,7 +301,7 @@ fn clip_seed_neighbors(
             continue;
         }
 
-        let neighbor = points[seed.neighbor_idx];
+        let neighbor = pos_slots[seed.neighbor_slot as usize];
         match ctx.builder.clip_with_slot_edgecheck_policy(
             seed.neighbor_idx,
             seed.neighbor_slot,
@@ -330,11 +331,13 @@ fn clip_seed_neighbors(
 
 /// Clip one exact batch; returns with `counters.terminated` set when the
 /// builder's certificate fires mid-batch.
+#[allow(clippy::too_many_arguments)]
 fn clip_batch(
     phase: &mut StreamPhase<'_>,
     batch: crate::cube_grid::DirectedNeighborBatch,
     points: &[Vec3],
     point_indices: &[u32],
+    pos_slots: &[Vec3],
     generator_idx: usize,
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
@@ -367,7 +370,9 @@ fn clip_batch(
         trace.last_batch_source = Some(batch.source);
         trace.last_clip_phase = "stream";
 
-        let neighbor = points[neighbor_idx];
+        // Position from the slot-ordered AoS array (spatial order → clustered,
+        // cache-friendly); bit-identical to points[neighbor_idx].
+        let neighbor = pos_slots[neighbor_slot as usize];
         let clip_result =
             match phase
                 .builder
@@ -400,8 +405,11 @@ fn clip_batch(
         if phase.builder.is_bounded() && should_check_termination {
             let bound = if pos + 1 < batch.n {
                 let next_slot = packed_chunk[pos + 1];
-                let next = point_indices[next_slot as usize] as usize;
-                let next_dot = points[generator_idx].dot(points[next]);
+                // Next neighbor's position from the slot-ordered AoS (clustered,
+                // and consistent with the main gather above — points[next] would
+                // be a cold scattered read into the otherwise-unused points[]);
+                // bit-identical to points[point_indices[next_slot]].
+                let next_dot = points[generator_idx].dot(pos_slots[next_slot as usize]);
                 // Shell layers are sorted within the layer, but the next
                 // layer can contain closer points than this layer's tail;
                 // the mid-batch bound must also cover them. (Packed batches
@@ -425,11 +433,13 @@ fn clip_batch(
 }
 
 /// Phase 2: drive the neighbor stream to termination, failure, or exhaustion.
+#[allow(clippy::too_many_arguments)]
 fn consume_stream(
     stream: &mut DirectedNeighborStream<'_, '_, '_, '_>,
     mut phase: StreamPhase<'_>,
     points: &[Vec3],
     point_indices: &[u32],
+    pos_slots: &[Vec3],
     generator_idx: usize,
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
@@ -450,6 +460,7 @@ fn consume_stream(
                     batch,
                     points,
                     point_indices,
+                    pos_slots,
                     generator_idx,
                     trace,
                     counters,
@@ -537,6 +548,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     let grid = request.grid;
     let generator_idx = request.generator_idx;
     let point_indices = grid.point_indices();
+    let pos_slots = grid.point_pos_slots();
 
     let mut trace = BuildTrace::new();
     let mut counters = BuildCounters::new();
@@ -548,6 +560,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     clip_seed_neighbors(
         ctx,
         points,
+        pos_slots,
         request.seed_neighbors,
         &mut trace,
         &mut counters,
@@ -573,6 +586,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         },
         points,
         point_indices,
+        pos_slots,
         generator_idx,
         &mut trace,
         &mut counters,

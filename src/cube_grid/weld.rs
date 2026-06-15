@@ -187,6 +187,12 @@ impl CubeMapGrid {
         self.cell_points_x.truncate(w);
         self.cell_points_y.truncate(w);
         self.cell_points_z.truncate(w);
+        // Keep the AoS slot-ordered positions in sync with the compacted SoA.
+        self.cell_points_aos = super::build::build_pos_aos(
+            &self.cell_points_x,
+            &self.cell_points_y,
+            &self.cell_points_z,
+        );
         self.point_cells = new_point_cells;
 
         let mut point_slots = vec![u32::MAX; n_eff];
