@@ -567,7 +567,7 @@ fn scan_unpaired_interior_localized(
     candidate_cells: &[u32],
     is_boundary_edge: &impl Fn(u32, u32) -> bool,
 ) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
-    use std::collections::HashMap;
+    use rustc_hash::FxHashMap as HashMap;
     // Scan region = candidate cells + their 1-ring (the cells named by the
     // generators in their vertices' keys).
     let mut region: Vec<u32> = Vec::new();
@@ -590,7 +590,7 @@ fn scan_unpaired_interior_localized(
     region.sort_unstable();
     region.dedup();
 
-    let mut uses: HashMap<(u32, u32), (u32, u32)> = HashMap::new();
+    let mut uses: HashMap<(u32, u32), (u32, u32)> = HashMap::default();
     for &ci in &region {
         let span = cell_vertex_slice(ci, cells, cell_indices)?;
         let n = span.len();
@@ -669,8 +669,8 @@ fn scan_unpaired_interior_global(
     cell_indices: &[u32],
     is_boundary_edge: &impl Fn(u32, u32) -> bool,
 ) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
-    use std::collections::HashMap;
-    let mut uses: HashMap<(u32, u32), (u32, u32)> = HashMap::new();
+    use rustc_hash::FxHashMap as HashMap;
+    let mut uses: HashMap<(u32, u32), (u32, u32)> = HashMap::default();
     for ci in 0..cells.len() {
         let span = cell_vertex_slice(ci as u32, cells, cell_indices)?;
         let n = span.len();
@@ -814,8 +814,13 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     // the same vertex by model definition: union them all up front. Gated
     // on defect runs, so clean runs never pay the O(V) scan.
     if scan_dup_keys {
-        let mut first_by_key: std::collections::HashMap<VertexKey, u32> =
-            std::collections::HashMap::with_capacity(vertex_keys.len());
+        // FxHashMap: this is the one remaining O(V) pass in repair (scans every
+        // vertex key to union same-key duplicates). The default SipHash hasher
+        // dominated defect-run reconcile time; FxHash on a 12-byte [u32;3] key
+        // is several times cheaper. Semantics are identical (hasher choice does
+        // not affect first-seen / union results).
+        let mut first_by_key: rustc_hash::FxHashMap<VertexKey, u32> =
+            rustc_hash::FxHashMap::with_capacity_and_hasher(vertex_keys.len(), Default::default());
         for (i, key) in vertex_keys.iter().enumerate() {
             match first_by_key.entry(*key) {
                 std::collections::hash_map::Entry::Vacant(e) => {
