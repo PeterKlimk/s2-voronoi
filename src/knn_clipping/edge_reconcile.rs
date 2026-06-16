@@ -785,6 +785,141 @@ fn proximity_union_segments<P: crate::knn_clipping::live_dedup::VertexPosition>(
     Ok(())
 }
 
+/// Escape hatch: force the O(V) global same-key duplicate scan instead of the
+/// localized BFS. Diagnostic / differential safety valve, read once on the cold
+/// defect path.
+fn dupscan_force_global() -> bool {
+    matches!(std::env::var("S2_EDGE_REPAIR_GLOBAL_DUPSCAN"), Ok(v) if v == "1")
+}
+
+/// Union all same-key vertex duplicates by a single O(V) pass over every key.
+/// First-seen (lowest id, since iteration is sequential) is the representative.
+fn global_dup_key_unions(vertex_keys: &[VertexKey], uf: &mut SparseUnionFind, merged: &mut usize) {
+    let mut first_by_key: rustc_hash::FxHashMap<VertexKey, u32> =
+        rustc_hash::FxHashMap::with_capacity_and_hasher(vertex_keys.len(), Default::default());
+    for (i, key) in vertex_keys.iter().enumerate() {
+        match first_by_key.entry(*key) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(i as u32);
+            }
+            std::collections::hash_map::Entry::Occupied(e) => {
+                if uf.union(*e.get(), i as u32) {
+                    *merged += 1;
+                }
+            }
+        }
+    }
+}
+
+/// Localized same-key duplicate union: a BFS over only the defect-affected
+/// region instead of the O(V) global scan.
+///
+/// A same-key duplicate is, by the keyed-identity model, a re-emitted copy of
+/// one abstract corner `[a,b,c]` (geometrically coincident — the same
+/// circumcenter); the copies are split among the three cells `a`, `b`, `c` that
+/// meet there. Duplicates are created by a defective edge and propagate only
+/// through corners that share a cell, so every duplicated corner is connected,
+/// via a path of shared cells, back to a cell named by a detection record.
+///
+/// The BFS therefore:
+/// - seeds with the record cells (both endpoints of every edge record);
+/// - scans each cell's corner vertices into a *small* `first_by_key` map keyed
+///   by the local region (not all V);
+/// - on a real collision (a different id with the same key — `other != v`),
+///   unions the copies and marks the cell **damaged**;
+/// - when a cell is damaged, enqueues its full 1-ring (every other generator
+///   named in its corners' keys), so the next link of a duplicate chain is
+///   reached. Self-references (the same id seen from another of its owner
+///   cells) never expand, which keeps non-defective regions out of the scan.
+///
+/// Bounded by (duplicate cluster + its 1-ring + seed cells) = O(defect region).
+/// A `#[cfg(debug_assertions)]` oracle pins the result equal to the global scan.
+fn localized_dup_key_unions(
+    edge_records: &[EdgeRecord],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &[VertexKey],
+    uf: &mut SparseUnionFind,
+    merged: &mut usize,
+) -> Result<(), crate::VoronoiError> {
+    use rustc_hash::{FxHashMap, FxHashSet};
+
+    let mut first_by_key: FxHashMap<VertexKey, u32> = FxHashMap::default();
+    let mut scanned: FxHashSet<u32> = FxHashSet::default();
+    let mut worklist: Vec<u32> = affected_cells_from_records(edge_records);
+
+    while let Some(cell) = worklist.pop() {
+        if cell as usize >= cells.len() || !scanned.insert(cell) {
+            continue;
+        }
+        let slice = cell_vertex_slice(cell, cells, cell_indices)?;
+        let mut damaged = false;
+        for &v in slice {
+            let Some(&key) = vertex_keys.get(v as usize) else {
+                continue;
+            };
+            match first_by_key.entry(key) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(v);
+                }
+                std::collections::hash_map::Entry::Occupied(e) => {
+                    let other = *e.get();
+                    // `other == v` is the same corner vertex seen again from
+                    // another of its owner cells — not a duplicate, no union.
+                    if other != v {
+                        if uf.union(other, v) {
+                            *merged += 1;
+                        }
+                        damaged = true;
+                    }
+                }
+            }
+        }
+        if damaged {
+            // Expand to this damaged cell's 1-ring: every other generator that
+            // shares a corner with it may hold a further copy / chain link.
+            for &v in slice {
+                if let Some(&key) = vertex_keys.get(v as usize) {
+                    for &g in key.iter() {
+                        if g != cell && !scanned.contains(&g) {
+                            worklist.push(g);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Debug oracle: assert the localized BFS unioned exactly the same same-key
+/// duplicates as the global scan would — i.e. every pair the global scan would
+/// merge is already connected in `uf`. Catches any gap in the connectivity
+/// contract on every defect-bearing test input at zero release cost.
+#[cfg(debug_assertions)]
+fn assert_localized_dupscan_complete(vertex_keys: &[VertexKey], uf: &mut SparseUnionFind) {
+    let mut first_by_key: rustc_hash::FxHashMap<VertexKey, u32> =
+        rustc_hash::FxHashMap::with_capacity_and_hasher(vertex_keys.len(), Default::default());
+    for (i, key) in vertex_keys.iter().enumerate() {
+        let i = i as u32;
+        match first_by_key.entry(*key) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(i);
+            }
+            std::collections::hash_map::Entry::Occupied(e) => {
+                let other = *e.get();
+                debug_assert_eq!(
+                    uf.find(other),
+                    uf.find(i),
+                    "edge-reconcile localized dup-scan gap: vertices {other} and {i} share a \
+                     key but the localized BFS did not union them — the duplicate-connectivity \
+                     contract is violated (set S2_EDGE_REPAIR_GLOBAL_DUPSCAN=1 to fall back)"
+                );
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     edge_records: &[EdgeRecord],
@@ -814,24 +949,22 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     // the same vertex by model definition: union them all up front. Gated
     // on defect runs, so clean runs never pay the O(V) scan.
     if scan_dup_keys {
-        // FxHashMap: this is the one remaining O(V) pass in repair (scans every
-        // vertex key to union same-key duplicates). The default SipHash hasher
-        // dominated defect-run reconcile time; FxHash on a 12-byte [u32;3] key
-        // is several times cheaper. Semantics are identical (hasher choice does
-        // not affect first-seen / union results).
-        let mut first_by_key: rustc_hash::FxHashMap<VertexKey, u32> =
-            rustc_hash::FxHashMap::with_capacity_and_hasher(vertex_keys.len(), Default::default());
-        for (i, key) in vertex_keys.iter().enumerate() {
-            match first_by_key.entry(*key) {
-                std::collections::hash_map::Entry::Vacant(e) => {
-                    e.insert(i as u32);
-                }
-                std::collections::hash_map::Entry::Occupied(e) => {
-                    if uf.union(*e.get(), i as u32) {
-                        merged += 1;
-                    }
-                }
-            }
+        if dupscan_force_global() {
+            global_dup_key_unions(vertex_keys, &mut uf, &mut merged);
+        } else {
+            localized_dup_key_unions(
+                edge_records,
+                cells,
+                cell_indices,
+                vertex_keys,
+                &mut uf,
+                &mut merged,
+            )?;
+            // Debug oracle: the localized BFS must union exactly the same
+            // same-key duplicates as the O(V) global scan. Costs nothing in
+            // release; catches any gap in the connectivity contract immediately.
+            #[cfg(debug_assertions)]
+            assert_localized_dupscan_complete(vertex_keys, &mut uf);
         }
     }
 
@@ -1167,6 +1300,73 @@ mod tests {
         );
         let changed = cell_sequences(&cells_p, &idx_p) != cell_sequences(cells, cell_indices);
         (changed, cells_r, idx_r, cells_p, idx_p)
+    }
+
+    /// Normalized partition (each vertex -> its component's min member) so two
+    /// union-finds can be compared structurally.
+    fn partition(uf: &mut SparseUnionFind, n: u32) -> Vec<u32> {
+        let mut root = vec![0u32; n as usize];
+        for v in 0..n {
+            root[v as usize] = uf.find(v);
+        }
+        // canonicalize: map each root to its smallest member
+        let mut canon = std::collections::BTreeMap::<u32, u32>::new();
+        for v in 0..n {
+            let r = root[v as usize];
+            canon.entry(r).and_modify(|m| *m = (*m).min(v)).or_insert(v);
+        }
+        (0..n).map(|v| canon[&root[v as usize]]).collect()
+    }
+
+    /// The localized BFS dup-scan must union the same components as the global
+    /// O(V) scan — including a *chain*: corner [0,1,2] is triplicated (copies
+    /// in cells 0,1,2) and corner [2,3,4] is duplicated (copies in cells 2,3).
+    /// Only edge (0,1) is recorded, so cells 3,4 are reached purely through the
+    /// damaged-cell 1-ring expansion off cell 2.
+    #[test]
+    fn localized_dupscan_matches_global_with_chain() {
+        // vertices 0,1,2 = copies of corner [0,1,2]; 3,4 = copies of [2,3,4].
+        let vertex_keys: Vec<VertexKey> =
+            vec![[0, 1, 2], [0, 1, 2], [0, 1, 2], [2, 3, 4], [2, 3, 4]];
+        // cell c -> its corner vertex ids
+        let cells = vec![
+            VoronoiCell::new(0, 1), // cell 0: [v0]
+            VoronoiCell::new(1, 1), // cell 1: [v1]
+            VoronoiCell::new(2, 2), // cell 2: [v2, v3]
+            VoronoiCell::new(4, 1), // cell 3: [v4]
+            VoronoiCell::new(5, 0), // cell 4: (no owned corners in this fixture)
+        ];
+        let cell_indices = vec![0u32, 1, 2, 3, 4];
+        let records = [edge_record(0, 1)];
+
+        let mut uf_local = SparseUnionFind::new();
+        let mut merged_local = 0usize;
+        localized_dup_key_unions(
+            &records,
+            &cells,
+            &cell_indices,
+            &vertex_keys,
+            &mut uf_local,
+            &mut merged_local,
+        )
+        .expect("localized dup scan");
+
+        let mut uf_global = SparseUnionFind::new();
+        let mut merged_global = 0usize;
+        global_dup_key_unions(&vertex_keys, &mut uf_global, &mut merged_global);
+
+        assert_eq!(
+            partition(&mut uf_local, 5),
+            partition(&mut uf_global, 5),
+            "localized BFS dup-scan must match the global scan's components (chain case)"
+        );
+        assert_eq!(merged_local, merged_global, "same number of merges");
+        // Sanity: the two corners are distinct components, each fully merged.
+        let p = partition(&mut uf_local, 5);
+        assert_eq!(p[0], p[1], "corner [0,1,2] copies unioned");
+        assert_eq!(p[1], p[2], "corner [0,1,2] third copy unioned via 1-ring");
+        assert_eq!(p[3], p[4], "chained corner [2,3,4] copies unioned");
+        assert_ne!(p[0], p[3], "distinct corners stay distinct");
     }
 
     #[test]
