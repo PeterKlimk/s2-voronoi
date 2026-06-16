@@ -110,7 +110,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     let overflow_flush_time = t1.elapsed();
 
     // Convert to ShardFinal, dropping dedup structures to reduce memory pressure
-    let finals: Vec<ShardFinal<P>> = std::mem::take(&mut data.shards)
+    let mut finals: Vec<ShardFinal<P>> = std::mem::take(&mut data.shards)
         .into_iter()
         .map(|s| s.into_final())
         .collect();
@@ -140,20 +140,18 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
         ));
     }
 
+    // Positions are always needed by the diagram, so concatenate them. Vertex
+    // *keys* are only consulted by edge reconciliation (for at most the defect
+    // region), so they are NOT concatenated — kept per-shard in
+    // `ShardedVertexKeys` below.
     #[cfg(feature = "parallel")]
-    let (all_vertices, all_vertex_keys) = {
+    let all_vertices = {
         let mut all_vertices = Vec::<P>::with_capacity(total_vertices);
-        let mut all_vertex_keys = Vec::<VertexKey>::with_capacity(total_vertices);
-
         // Safety: We will write to every element in the parallel loop below.
         unsafe {
             all_vertices.set_len(total_vertices);
-            all_vertex_keys.set_len(total_vertices);
         }
-
         let vertices_ptr = all_vertices.as_mut_ptr() as usize;
-        let keys_ptr = all_vertex_keys.as_mut_ptr() as usize;
-
         finals
             .par_iter()
             .zip(vertex_offsets.par_iter())
@@ -164,40 +162,36 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
                     shard.output.vertex_keys.len(),
                     "vertex keys out of sync with vertex positions"
                 );
-
                 if count > 0 {
-                    let offset = offset as usize;
                     unsafe {
-                        let v_dst = (vertices_ptr as *mut P).add(offset);
+                        let v_dst = (vertices_ptr as *mut P).add(offset as usize);
                         std::ptr::copy_nonoverlapping(shard.output.vertices.as_ptr(), v_dst, count);
-
-                        let k_dst = (keys_ptr as *mut VertexKey).add(offset);
-                        std::ptr::copy_nonoverlapping(
-                            shard.output.vertex_keys.as_ptr(),
-                            k_dst,
-                            count,
-                        );
                     }
                 }
             });
-
-        (all_vertices, all_vertex_keys)
+        all_vertices
     };
 
     #[cfg(not(feature = "parallel"))]
-    let (all_vertices, all_vertex_keys) = {
+    let all_vertices = {
         let mut all_vertices = Vec::with_capacity(total_vertices);
-        let mut all_vertex_keys = Vec::with_capacity(total_vertices);
         for shard in &finals {
-            debug_assert_eq!(
-                shard.output.vertices.len(),
-                shard.output.vertex_keys.len(),
-                "vertex keys out of sync with vertex positions"
-            );
             all_vertices.extend_from_slice(&shard.output.vertices);
-            all_vertex_keys.extend_from_slice(&shard.output.vertex_keys);
         }
-        (all_vertices, all_vertex_keys)
+        all_vertices
+    };
+
+    // Move the per-shard key vecs out of the (about-to-be-dropped) finals into
+    // the sharded accessor — O(num_bins), zero copy. `offsets` is the
+    // prefix-sum (vertex_offsets + total) so a global vid maps to `(bin, local)`.
+    let all_vertex_keys = {
+        let mut offsets = vertex_offsets.clone();
+        offsets.push(total_vertices as u32);
+        let shard_keys: Vec<Vec<VertexKey>> = finals
+            .iter_mut()
+            .map(|s| std::mem::take(&mut s.output.vertex_keys))
+            .collect();
+        super::ShardedVertexKeys::new(offsets, shard_keys)
     };
 
     let num_cells = data.assignment.generator_bin.len();
@@ -374,7 +368,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
 mod tests {
     use super::*;
     use crate::knn_clipping::edge_reconcile::{
-        edge_segments_for_neighbor, reconcile_unresolved_edges, RepairApply,
+        edge_segments_for_neighbor, reconcile_unresolved_edges, RepairApply, VertexKeys,
     };
     use crate::knn_clipping::live_dedup::binning::BinAssignment;
     use crate::knn_clipping::live_dedup::packed::pack_edge;
@@ -575,8 +569,8 @@ mod tests {
         let cell1_indices = &assembled.cell_indices[cell1_start..cell1_start + 3];
         let fallback_global = cell1_indices[2] as usize;
         assert_eq!(
-            assembled.vertex_keys[fallback_global],
-            [0, 4, 5],
+            assembled.vertex_keys.get(fallback_global as u32),
+            Some([0, 4, 5]),
             "deferred slot should be patched through fallback ownership before reconciliation"
         );
 
@@ -596,7 +590,7 @@ mod tests {
             &assembled.vertices,
             &mut cells,
             &mut cell_indices,
-            &assembled.vertex_keys,
+            VertexKeys::Sharded(&assembled.vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
             RepairApply::InPlace,
             |_, _| false,
@@ -611,10 +605,22 @@ mod tests {
             "expected unresolved shared-edge mismatch to be reconciled"
         );
 
-        let seg_a = edge_segments_for_neighbor(0, 1, &cells, &cell_indices, &assembled.vertex_keys)
-            .expect("edge segments should resolve after reconciliation");
-        let seg_b = edge_segments_for_neighbor(1, 0, &cells, &cell_indices, &assembled.vertex_keys)
-            .expect("edge segments should resolve after reconciliation");
+        let seg_a = edge_segments_for_neighbor(
+            0,
+            1,
+            &cells,
+            &cell_indices,
+            VertexKeys::Sharded(&assembled.vertex_keys),
+        )
+        .expect("edge segments should resolve after reconciliation");
+        let seg_b = edge_segments_for_neighbor(
+            1,
+            0,
+            &cells,
+            &cell_indices,
+            VertexKeys::Sharded(&assembled.vertex_keys),
+        )
+        .expect("edge segments should resolve after reconciliation");
         assert_eq!(seg_a.len(), 1);
         assert_eq!(seg_b.len(), 1);
         let set_a = BTreeSet::from([seg_a[0].0, seg_a[0].1]);

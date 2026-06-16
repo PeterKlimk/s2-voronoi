@@ -75,7 +75,7 @@ pub(crate) fn compute_periodic_cells(
         &assembly.vertices,
         &mut cells,
         &mut cell_indices,
-        &assembly.vertex_keys,
+        edge_reconcile::VertexKeys::Sharded(&assembly.vertex_keys),
         crate::tolerances::PLANE_RECONCILE_DEGENERATE_LEN_EPS,
         edge_reconcile::repair_apply_from_env(),
         |_, _| false,

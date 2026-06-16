@@ -582,7 +582,7 @@ type ReconciledWithResiduals = (Vec<VoronoiCell>, Vec<u32>, Vec<(u32, u32)>);
 
 fn reconcile_edges(
     vertices: &[Vec3],
-    vertex_keys: &[crate::knn_clipping::cell_build::VertexKey],
+    vertex_keys: &live_dedup::ShardedVertexKeys,
     unresolved_edges: &[live_dedup::UnresolvedEdgeMismatch],
     mut cells: Vec<VoronoiCell>,
     mut cell_indices: Vec<u32>,
@@ -600,7 +600,7 @@ fn reconcile_edges(
         vertices,
         &mut cells,
         &mut cell_indices,
-        vertex_keys,
+        edge_reconcile::VertexKeys::Sharded(vertex_keys),
         crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
         edge_reconcile::repair_apply_from_env(),
         |_, _| false,

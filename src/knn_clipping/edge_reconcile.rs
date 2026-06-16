@@ -10,9 +10,52 @@
 //! - shared-edge endpoint identity mismatches, typically from near-degenerate vertex ownership
 //!   choices where adjacent polygons pick different generator triplets for the same corner
 
-use super::live_dedup::{EdgeKey, EdgeRecord};
+use super::live_dedup::{EdgeKey, EdgeRecord, ShardedVertexKeys};
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::cell_build::VertexKey;
+
+/// Read-only view of vertex keys passed to reconciliation. `Flat` backs the
+/// unit tests (and any caller holding a contiguous array); `Sharded` is the
+/// production path, looking keys up per-shard without a global concatenation.
+/// `Copy` so it threads through the repair helpers by value.
+#[derive(Clone, Copy)]
+pub(crate) enum VertexKeys<'a> {
+    // Used by the unit tests (and any caller holding a contiguous array).
+    #[cfg_attr(not(test), allow(dead_code))]
+    Flat(&'a [VertexKey]),
+    Sharded(&'a ShardedVertexKeys),
+}
+
+impl VertexKeys<'_> {
+    #[inline]
+    fn get(&self, vid: u32) -> Option<VertexKey> {
+        match self {
+            VertexKeys::Flat(s) => s.get(vid as usize).copied(),
+            VertexKeys::Sharded(s) => s.get(vid),
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        match self {
+            VertexKeys::Flat(s) => s.len(),
+            VertexKeys::Sharded(s) => s.len(),
+        }
+    }
+
+    /// Visit every `(vid, key)` in global slot order. Only the global-scan
+    /// escape path and the debug oracle need this; the localized BFS does not.
+    fn for_each(&self, mut f: impl FnMut(u32, VertexKey)) {
+        match self {
+            VertexKeys::Flat(s) => {
+                for (i, &k) in s.iter().enumerate() {
+                    f(i as u32, k);
+                }
+            }
+            VertexKeys::Sharded(s) => s.for_each(f),
+        }
+    }
+}
 
 fn reconcile_state_error(message: impl Into<String>) -> crate::VoronoiError {
     crate::VoronoiError::ComputationFailed(message.into())
@@ -94,7 +137,7 @@ pub(crate) fn edge_segments_for_neighbor(
     neighbor: u32,
     cells: &[VoronoiCell],
     cell_indices: &[u32],
-    vertex_keys: &[VertexKey],
+    vertex_keys: VertexKeys<'_>,
 ) -> Result<Vec<(u32, u32)>, crate::VoronoiError> {
     let slice = cell_vertex_slice(cell_idx, cells, cell_indices)?;
     let n = slice.len();
@@ -106,14 +149,14 @@ pub(crate) fn edge_segments_for_neighbor(
     for i in 0..n {
         let vi = slice[i];
         let vj = slice[(i + 1) % n];
-        let ki = *vertex_keys.get(vi as usize).ok_or_else(|| {
+        let ki = vertex_keys.get(vi).ok_or_else(|| {
             reconcile_state_error(format!(
                 "edge reconciliation vertex id {} out of range for vertex_keys len {}",
                 vi,
                 vertex_keys.len()
             ))
         })?;
-        let kj = *vertex_keys.get(vj as usize).ok_or_else(|| {
+        let kj = vertex_keys.get(vj).ok_or_else(|| {
             reconcile_state_error(format!(
                 "edge reconciliation vertex id {} out of range for vertex_keys len {}",
                 vj,
@@ -211,7 +254,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
     vertices: &[P],
     cells: &mut Vec<VoronoiCell>,
     cell_indices: &mut Vec<u32>,
-    vertex_keys: &[VertexKey],
+    vertex_keys: VertexKeys<'_>,
     // Degenerate-length threshold in the caller's coordinate space (chord
     // units on the sphere, normalized rect units on the plane); each
     // geometry owns and justifies its constant.
@@ -347,7 +390,7 @@ fn affected_cells_from_records(edge_records: &[EdgeRecord]) -> Vec<u32> {
 fn assert_candidate_covers_droppable(
     cells: &[VoronoiCell],
     cell_indices: &[u32],
-    vertex_keys: &[VertexKey],
+    vertex_keys: VertexKeys<'_>,
     candidate_cells: &[u32],
 ) {
     for (ci, cell) in cells.iter().enumerate() {
@@ -356,12 +399,9 @@ fn assert_candidate_covers_droppable(
         if end > cell_indices.len() {
             continue;
         }
-        let owns_droppable = cell_indices[start..end].iter().any(|&v| {
-            vertex_keys
-                .get(v as usize)
-                .and_then(|&k| degenerate_single(k))
-                == Some(ci as u32)
-        });
+        let owns_droppable = cell_indices[start..end]
+            .iter()
+            .any(|&v| vertex_keys.get(v).and_then(degenerate_single) == Some(ci as u32));
         debug_assert!(
             !owns_droppable || candidate_cells.binary_search(&(ci as u32)).is_ok(),
             "edge-reconcile localization gap: cell {ci} owns a droppable degenerate \
@@ -388,7 +428,7 @@ fn assert_candidate_covers_droppable(
 fn drop_degenerate_collinear_vertices(
     cells: &mut [VoronoiCell],
     cell_indices: &mut [u32],
-    vertex_keys: &[VertexKey],
+    vertex_keys: VertexKeys<'_>,
     candidate_cells: &[u32],
 ) -> bool {
     let mut changed = false;
@@ -409,12 +449,7 @@ fn drop_degenerate_collinear_vertices(
         let kept: Vec<u32> = span
             .iter()
             .copied()
-            .filter(|&v| {
-                vertex_keys
-                    .get(v as usize)
-                    .and_then(|&k| degenerate_single(k))
-                    != Some(c)
-            })
+            .filter(|&v| vertex_keys.get(v).and_then(degenerate_single) != Some(c))
             .collect();
         // Guard: never collapse a cell below a triangle.
         if kept.len() != count && kept.len() >= 3 {
@@ -435,7 +470,7 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
     vertices: &[P],
     cells: &mut Vec<VoronoiCell>,
     cell_indices: &mut Vec<u32>,
-    vertex_keys: &[VertexKey],
+    vertex_keys: VertexKeys<'_>,
     degenerate_len_eps: f32,
     apply: RepairApply,
     mode: MergeMode,
@@ -536,7 +571,7 @@ fn cell_spans_differ(
 fn scan_unpaired_interior(
     cells: &[VoronoiCell],
     cell_indices: &[u32],
-    vertex_keys: &[VertexKey],
+    vertex_keys: VertexKeys<'_>,
     candidate_cells: &[u32],
     is_boundary_edge: &impl Fn(u32, u32) -> bool,
 ) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
@@ -563,7 +598,7 @@ fn scan_unpaired_interior(
 fn scan_unpaired_interior_localized(
     cells: &[VoronoiCell],
     cell_indices: &[u32],
-    vertex_keys: &[VertexKey],
+    vertex_keys: VertexKeys<'_>,
     candidate_cells: &[u32],
     is_boundary_edge: &impl Fn(u32, u32) -> bool,
 ) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
@@ -578,8 +613,8 @@ fn scan_unpaired_interior_localized(
         region.push(c);
         let span = cell_vertex_slice(c, cells, cell_indices)?;
         for &v in span {
-            if let Some(key) = vertex_keys.get(v as usize) {
-                for &g in key {
+            if let Some(key) = vertex_keys.get(v) {
+                for g in key {
                     if (g as usize) < cells.len() {
                         region.push(g);
                     }
@@ -620,7 +655,7 @@ fn scan_unpaired_interior_localized(
         // the true cell pair from the endpoint keys; if the partner (the cell
         // of the pair that is not `owner`) carries this edge, it was paired all
         // along and simply lay outside the scanned region.
-        if let (Some(&ka), Some(&kb)) = (vertex_keys.get(a as usize), vertex_keys.get(b as usize)) {
+        if let (Some(ka), Some(kb)) = (vertex_keys.get(a), vertex_keys.get(b)) {
             if let Some((g1, g2)) = key_common_pair(ka, kb) {
                 let partner = if g1 == owner { g2 } else { g1 };
                 if partner != owner && cell_has_edge(partner, a, b, cells, cell_indices)? {
@@ -718,14 +753,14 @@ fn key_common_pair(k1: VertexKey, k2: VertexKey) -> Option<(u32, u32)> {
 /// pair recovered from the endpoint keys' shared generators, deduplicated.
 fn synthesize_backstop_records(
     unpaired: &[(u32, u32, u32)],
-    vertex_keys: &[VertexKey],
+    vertex_keys: VertexKeys<'_>,
     num_cells: usize,
 ) -> Vec<EdgeRecord> {
     let mut keys: Vec<u64> = unpaired
         .iter()
         .filter_map(|&(va, vb, _)| {
-            let k1 = *vertex_keys.get(va as usize)?;
-            let k2 = *vertex_keys.get(vb as usize)?;
+            let k1 = vertex_keys.get(va)?;
+            let k2 = vertex_keys.get(vb)?;
             let (a, b) = key_common_pair(k1, k2)?;
             // In production every key member has a cell; tolerate synthetic
             // fixtures whose keys name nonexistent generators (mirrors the
@@ -747,9 +782,9 @@ fn synthesize_backstop_records(
 
 /// Report identity for a residual unpaired edge: the endpoint keys' shared
 /// generator pair when well-formed, else the owning cell twice.
-fn cell_pair_for_unpaired(va: u32, vb: u32, owner: u32, vertex_keys: &[VertexKey]) -> (u32, u32) {
-    match (vertex_keys.get(va as usize), vertex_keys.get(vb as usize)) {
-        (Some(&k1), Some(&k2)) => key_common_pair(k1, k2).unwrap_or((owner, owner)),
+fn cell_pair_for_unpaired(va: u32, vb: u32, owner: u32, vertex_keys: VertexKeys<'_>) -> (u32, u32) {
+    match (vertex_keys.get(va), vertex_keys.get(vb)) {
+        (Some(k1), Some(k2)) => key_common_pair(k1, k2).unwrap_or((owner, owner)),
         _ => (owner, owner),
     }
 }
@@ -794,21 +829,23 @@ fn dupscan_force_global() -> bool {
 
 /// Union all same-key vertex duplicates by a single O(V) pass over every key.
 /// First-seen (lowest id, since iteration is sequential) is the representative.
-fn global_dup_key_unions(vertex_keys: &[VertexKey], uf: &mut SparseUnionFind, merged: &mut usize) {
+fn global_dup_key_unions(
+    vertex_keys: VertexKeys<'_>,
+    uf: &mut SparseUnionFind,
+    merged: &mut usize,
+) {
     let mut first_by_key: rustc_hash::FxHashMap<VertexKey, u32> =
         rustc_hash::FxHashMap::with_capacity_and_hasher(vertex_keys.len(), Default::default());
-    for (i, key) in vertex_keys.iter().enumerate() {
-        match first_by_key.entry(*key) {
-            std::collections::hash_map::Entry::Vacant(e) => {
-                e.insert(i as u32);
-            }
-            std::collections::hash_map::Entry::Occupied(e) => {
-                if uf.union(*e.get(), i as u32) {
-                    *merged += 1;
-                }
+    vertex_keys.for_each(|i, key| match first_by_key.entry(key) {
+        std::collections::hash_map::Entry::Vacant(e) => {
+            e.insert(i);
+        }
+        std::collections::hash_map::Entry::Occupied(e) => {
+            if uf.union(*e.get(), i) {
+                *merged += 1;
             }
         }
-    }
+    });
 }
 
 /// Localized same-key duplicate union: a BFS over only the defect-affected
@@ -838,7 +875,7 @@ fn localized_dup_key_unions(
     edge_records: &[EdgeRecord],
     cells: &[VoronoiCell],
     cell_indices: &[u32],
-    vertex_keys: &[VertexKey],
+    vertex_keys: VertexKeys<'_>,
     uf: &mut SparseUnionFind,
     merged: &mut usize,
 ) -> Result<(), crate::VoronoiError> {
@@ -855,7 +892,7 @@ fn localized_dup_key_unions(
         let slice = cell_vertex_slice(cell, cells, cell_indices)?;
         let mut damaged = false;
         for &v in slice {
-            let Some(&key) = vertex_keys.get(v as usize) else {
+            let Some(key) = vertex_keys.get(v) else {
                 continue;
             };
             match first_by_key.entry(key) {
@@ -879,7 +916,7 @@ fn localized_dup_key_unions(
             // Expand to this damaged cell's 1-ring: every other generator that
             // shares a corner with it may hold a further copy / chain link.
             for &v in slice {
-                if let Some(&key) = vertex_keys.get(v as usize) {
+                if let Some(key) = vertex_keys.get(v) {
                     for &g in key.iter() {
                         if g != cell && !scanned.contains(&g) {
                             worklist.push(g);
@@ -897,27 +934,24 @@ fn localized_dup_key_unions(
 /// merge is already connected in `uf`. Catches any gap in the connectivity
 /// contract on every defect-bearing test input at zero release cost.
 #[cfg(debug_assertions)]
-fn assert_localized_dupscan_complete(vertex_keys: &[VertexKey], uf: &mut SparseUnionFind) {
+fn assert_localized_dupscan_complete(vertex_keys: VertexKeys<'_>, uf: &mut SparseUnionFind) {
     let mut first_by_key: rustc_hash::FxHashMap<VertexKey, u32> =
         rustc_hash::FxHashMap::with_capacity_and_hasher(vertex_keys.len(), Default::default());
-    for (i, key) in vertex_keys.iter().enumerate() {
-        let i = i as u32;
-        match first_by_key.entry(*key) {
-            std::collections::hash_map::Entry::Vacant(e) => {
-                e.insert(i);
-            }
-            std::collections::hash_map::Entry::Occupied(e) => {
-                let other = *e.get();
-                debug_assert_eq!(
-                    uf.find(other),
-                    uf.find(i),
-                    "edge-reconcile localized dup-scan gap: vertices {other} and {i} share a \
-                     key but the localized BFS did not union them — the duplicate-connectivity \
-                     contract is violated (set S2_EDGE_REPAIR_GLOBAL_DUPSCAN=1 to fall back)"
-                );
-            }
+    vertex_keys.for_each(|i, key| match first_by_key.entry(key) {
+        std::collections::hash_map::Entry::Vacant(e) => {
+            e.insert(i);
         }
-    }
+        std::collections::hash_map::Entry::Occupied(e) => {
+            let other = *e.get();
+            debug_assert_eq!(
+                uf.find(other),
+                uf.find(i),
+                "edge-reconcile localized dup-scan gap: vertices {other} and {i} share a \
+                 key but the localized BFS did not union them — the duplicate-connectivity \
+                 contract is violated (set S2_EDGE_REPAIR_GLOBAL_DUPSCAN=1 to fall back)"
+            );
+        }
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -926,7 +960,7 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     vertices: &[P],
     cells: &[VoronoiCell],
     cell_indices: &[u32],
-    vertex_keys: &[VertexKey],
+    vertex_keys: VertexKeys<'_>,
     degenerate_len_eps: f32,
     mode: MergeMode,
     scan_dup_keys: bool,
@@ -1151,12 +1185,12 @@ fn apply_merges_in_place(
     uf: &mut SparseUnionFind,
     cells: &mut [VoronoiCell],
     cell_indices: &mut [u32],
-    vertex_keys: &[VertexKey],
+    vertex_keys: VertexKeys<'_>,
 ) -> Result<bool, crate::VoronoiError> {
     let mut changed = false;
     let mut affected: Vec<u32> = Vec::new();
     for v in uf.touched_ids() {
-        let key = *vertex_keys.get(v as usize).ok_or_else(|| {
+        let key = vertex_keys.get(v).ok_or_else(|| {
             reconcile_state_error(format!(
                 "edge reconciliation merged vertex id {} out of range for vertex_keys len {}",
                 v,
@@ -1269,7 +1303,7 @@ mod tests {
             vertices,
             &mut cells_r,
             &mut idx_r,
-            vertex_keys,
+            VertexKeys::Flat(vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
             RepairApply::Rebuild,
             |_, _| false,
@@ -1282,7 +1316,7 @@ mod tests {
             vertices,
             &mut cells_p,
             &mut idx_p,
-            vertex_keys,
+            VertexKeys::Flat(vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
             RepairApply::InPlace,
             |_, _| false,
@@ -1345,7 +1379,7 @@ mod tests {
             &records,
             &cells,
             &cell_indices,
-            &vertex_keys,
+            VertexKeys::Flat(&vertex_keys),
             &mut uf_local,
             &mut merged_local,
         )
@@ -1353,7 +1387,11 @@ mod tests {
 
         let mut uf_global = SparseUnionFind::new();
         let mut merged_global = 0usize;
-        global_dup_key_unions(&vertex_keys, &mut uf_global, &mut merged_global);
+        global_dup_key_unions(
+            VertexKeys::Flat(&vertex_keys),
+            &mut uf_global,
+            &mut merged_global,
+        );
 
         assert_eq!(
             partition(&mut uf_local, 5),
@@ -1433,9 +1471,11 @@ mod tests {
         let cell_indices = vec![0, 1, 2, 3, 4, 5];
 
         let seg_a_before =
-            edge_segments_for_neighbor(0, 1, &cells, &cell_indices, &vertex_keys).unwrap();
+            edge_segments_for_neighbor(0, 1, &cells, &cell_indices, VertexKeys::Flat(&vertex_keys))
+                .unwrap();
         let seg_b_before =
-            edge_segments_for_neighbor(1, 0, &cells, &cell_indices, &vertex_keys).unwrap();
+            edge_segments_for_neighbor(1, 0, &cells, &cell_indices, VertexKeys::Flat(&vertex_keys))
+                .unwrap();
         assert_eq!(seg_a_before.len(), 1);
         assert_eq!(seg_b_before.len(), 1);
         let before_a = BTreeSet::from([seg_a_before[0].0, seg_a_before[0].1]);
@@ -1456,10 +1496,22 @@ mod tests {
             changed,
             "expected mismatched shared-edge endpoints to be reconciled"
         );
-        let seg_a =
-            edge_segments_for_neighbor(0, 1, &new_cells, &new_indices, &vertex_keys).unwrap();
-        let seg_b =
-            edge_segments_for_neighbor(1, 0, &new_cells, &new_indices, &vertex_keys).unwrap();
+        let seg_a = edge_segments_for_neighbor(
+            0,
+            1,
+            &new_cells,
+            &new_indices,
+            VertexKeys::Flat(&vertex_keys),
+        )
+        .unwrap();
+        let seg_b = edge_segments_for_neighbor(
+            1,
+            0,
+            &new_cells,
+            &new_indices,
+            VertexKeys::Flat(&vertex_keys),
+        )
+        .unwrap();
         assert_eq!(seg_a.len(), 1, "cell 0 should still expose one shared edge");
         assert_eq!(seg_b.len(), 1, "cell 1 should still expose one shared edge");
 
