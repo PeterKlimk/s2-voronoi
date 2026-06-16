@@ -70,11 +70,6 @@ pub(crate) enum PreparedPackedGroupStatus<'a, 'g> {
 
 impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
     #[inline]
-    pub(super) fn group(&self) -> PackedGroupInput<'g> {
-        self.group
-    }
-
-    #[inline]
     #[cfg(test)]
     pub(crate) fn security(&self, qi: usize) -> f32 {
         self.scratch.security(qi)

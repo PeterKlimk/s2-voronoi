@@ -125,6 +125,7 @@ enum PackedStage {
 #[derive(Debug, Clone, Copy)]
 struct PackedChunk {
     n: usize,
+    first_dot: f32,
     unseen_bound: f32,
 }
 
@@ -167,9 +168,6 @@ pub(crate) struct PackedQuery<'a, 'p, 'g> {
     prepared: &'a mut PreparedPackedGroup<'p, 'g>,
     timings: &'a mut PackedKnnTimings,
     query_index: usize,
-    query_x: f32,
-    query_y: f32,
-    query_z: f32,
     policy: PackedNeighborPolicy,
     stage: PackedQueryStage,
     cached_frontier: Option<CachedFrontier>,
@@ -181,19 +179,14 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
     pub(crate) fn new(
         prepared: &'a mut PreparedPackedGroup<'p, 'g>,
         timings: &'a mut PackedKnnTimings,
-        grid: &CubeMapGrid,
+        _grid: &CubeMapGrid,
         query_index: usize,
         policy: PackedNeighborPolicy,
     ) -> Self {
-        let query_slot = prepared.group().queries()[query_index];
-        let query_slot_usize = query_slot as usize;
         Self {
             prepared,
             timings,
             query_index,
-            query_x: grid.cell_points_x[query_slot_usize],
-            query_y: grid.cell_points_y[query_slot_usize],
-            query_z: grid.cell_points_z[query_slot_usize],
             policy,
             stage: PackedQueryStage::Chunk0,
             cached_frontier: None,
@@ -202,22 +195,9 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
         }
     }
 
-    #[inline]
-    fn slot_dot(&self, grid: &CubeMapGrid, slot: u32) -> f32 {
-        let slot = slot as usize;
-        crate::fp::dot3_f32(
-            self.query_x,
-            self.query_y,
-            self.query_z,
-            grid.cell_points_x[slot],
-            grid.cell_points_y[slot],
-            grid.cell_points_z[slot],
-        )
-    }
-
     pub(crate) fn frontier(
         &mut self,
-        grid: &CubeMapGrid,
+        _grid: &CubeMapGrid,
         out: &mut Vec<u32>,
     ) -> PackedNeighborFrontier {
         if let Some(cached) = &self.cached_frontier {
@@ -271,14 +251,9 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
             .next_chunk(self.query_index, stage, k, out, self.timings)
         {
             out.truncate(chunk.n);
-            let first_dot = if chunk.n > 0 {
-                self.slot_dot(grid, out[0])
-            } else {
-                -1.0
-            };
             let batch = PackedNeighborBatch {
                 n: chunk.n,
-                first_dot,
+                first_dot: chunk.first_dot,
                 unseen_bound: chunk.unseen_bound,
                 source,
             };

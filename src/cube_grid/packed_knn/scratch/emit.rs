@@ -168,6 +168,7 @@ impl PackedKnnCellScratch {
                         *dst = key_to_idx(*key);
                     }
                     timings.add_select_scatter(t.lap());
+                    let first_dot = key_to_dot(remaining[0]);
                     let last_dot = key_to_dot(remaining[emit - 1]);
                     self.chunk0_pos[qi] = start + emit;
                     let has_more = self.chunk0_pos[qi] < keys.len();
@@ -180,6 +181,7 @@ impl PackedKnnCellScratch {
                     };
                     return Some(PackedChunk {
                         n: emit,
+                        first_dot,
                         unseen_bound,
                     });
                 }
@@ -196,6 +198,7 @@ impl PackedKnnCellScratch {
                     *dst = key_to_idx(*key);
                 }
                 timings.add_select_scatter(t.lap());
+                let first_dot = key_to_dot(remaining[0]);
                 let last_dot = key_to_dot(remaining[n - 1]);
                 self.chunk0_pos[qi] = start + n;
                 let has_more = self.chunk0_pos[qi] < keys.len();
@@ -206,7 +209,11 @@ impl PackedKnnCellScratch {
                 } else {
                     coverage_bound
                 };
-                Some(PackedChunk { n, unseen_bound })
+                Some(PackedChunk {
+                    n,
+                    first_dot,
+                    unseen_bound,
+                })
             }
             PackedStage::Tail => {
                 debug_assert!(
@@ -235,11 +242,16 @@ impl PackedKnnCellScratch {
                     *dst = key_to_idx(*key);
                 }
                 timings.add_select_scatter(t.lap());
+                let first_dot = key_to_dot(remaining[0]);
                 let last_dot = key_to_dot(remaining[n - 1]);
                 self.tail_pos[qi] = start + n;
                 let has_more = self.tail_pos[qi] < keys.len();
                 let unseen_bound = if has_more { last_dot } else { coverage_bound };
-                Some(PackedChunk { n, unseen_bound })
+                Some(PackedChunk {
+                    n,
+                    first_dot,
+                    unseen_bound,
+                })
             }
         }
     }
