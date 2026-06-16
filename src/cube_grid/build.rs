@@ -18,13 +18,22 @@ struct CellBounds {
     v_line_planes: Vec<Vec3>,
 }
 
-/// Build the slot-ordered AoS position array from the SoA coordinate arrays
-/// (one sequential pass; see `CubeMapGrid::cell_points_aos`).
-pub(super) fn build_pos_aos(xs: &[f32], ys: &[f32], zs: &[f32]) -> Vec<Vec3> {
+/// Build the slot-ordered AoS records from the SoA coordinate arrays and the
+/// slot->global-index map (one sequential pass; see `CubeMapGrid::cell_points_aos`).
+pub(super) fn build_pos_aos(
+    xs: &[f32],
+    ys: &[f32],
+    zs: &[f32],
+    point_indices: &[u32],
+) -> Vec<super::SlotPoint> {
     debug_assert_eq!(xs.len(), ys.len());
     debug_assert_eq!(xs.len(), zs.len());
+    debug_assert_eq!(xs.len(), point_indices.len());
     (0..xs.len())
-        .map(|i| Vec3::new(xs[i], ys[i], zs[i]))
+        .map(|i| super::SlotPoint {
+            pos: Vec3::new(xs[i], ys[i], zs[i]),
+            idx: point_indices[i],
+        })
         .collect()
 }
 
@@ -334,7 +343,12 @@ impl CubeMapGrid {
             "point_slots not fully initialized"
         );
 
-        let cell_points_aos = build_pos_aos(&cell_points_x, &cell_points_y, &cell_points_z);
+        let cell_points_aos = build_pos_aos(
+            &cell_points_x,
+            &cell_points_y,
+            &cell_points_z,
+            &point_indices,
+        );
         // Dense-cell side index (punch 1): built only for over-full cells, so
         // None on uniform input. Side structure; leaves the SoA untouched.
         let dense_index = super::dense::DenseCellIndex::build(

@@ -30,6 +30,21 @@ use glam::Vec3;
 #[cfg(feature = "timing")]
 use std::time::Duration;
 
+/// Slot-ordered point record: a point's position fused with its global point
+/// index into one 16-byte, cache-line-aligned record. The clip hot loop gathers
+/// a neighbor's position *and* its index with a single random by-slot load
+/// (one cache line) instead of two separate random loads into `cell_points_aos`
+/// and `point_indices`. `align(16)` guarantees each record sits within one 64-B
+/// line (no straddle, 4 per line).
+#[repr(C, align(16))]
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct SlotPoint {
+    /// The point's position (bit-identical to `points[idx]`).
+    pub pos: Vec3,
+    /// The point's global index into the original `points` slice.
+    pub idx: u32,
+}
+
 /// Fine-grained timings for `CubeMapGrid::new`.
 #[cfg(feature = "timing")]
 #[derive(Debug, Clone, Default)]
@@ -120,7 +135,7 @@ pub struct CubeMapGrid {
     /// line per point — unlike the cold scattered `points[global_idx]` gather
     /// or the 3-cache-line SoA read. Kept in sync with `cell_points_{x,y,z}`
     /// (built at construction and rebuilt by `compact_welded`).
-    pub(super) cell_points_aos: Vec<glam::Vec3>,
+    pub(super) cell_points_aos: Vec<SlotPoint>,
 
     /// Inverse mapping from point index to SOA slot index.
     ///

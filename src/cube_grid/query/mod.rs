@@ -54,11 +54,12 @@ impl CubeMapGrid {
         &self.point_indices
     }
 
-    /// Slot-ordered AoS point positions (see `cell_points_aos`). `[slot]` is an
-    /// exact bit copy of `points[point_indices[slot]]`, in spatial slot order —
-    /// a cache-friendly neighbor-position gather for the clip path.
+    /// Slot-ordered AoS point records (see `cell_points_aos`). `[slot].pos` is an
+    /// exact bit copy of `points[point_indices[slot]]` and `[slot].idx` is that
+    /// global index, in spatial slot order — a cache-friendly neighbor gather
+    /// (position + index in one cache line) for the clip path.
     #[inline]
-    pub fn point_pos_slots(&self) -> &[Vec3] {
+    pub fn point_pos_slots(&self) -> &[crate::cube_grid::SlotPoint] {
         &self.cell_points_aos
     }
 

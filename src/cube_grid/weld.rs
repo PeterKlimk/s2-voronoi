@@ -192,6 +192,7 @@ impl CubeMapGrid {
             &self.cell_points_x,
             &self.cell_points_y,
             &self.cell_points_z,
+            &self.point_indices,
         );
         self.point_cells = new_point_cells;
 

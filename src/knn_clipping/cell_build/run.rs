@@ -282,7 +282,7 @@ struct StreamPhase<'x> {
 fn clip_seed_neighbors(
     ctx: &mut CellBuildContext,
     points: &[Vec3],
-    pos_slots: &[Vec3],
+    pos_slots: &[crate::cube_grid::SlotPoint],
     seed_neighbors: &[SeedNeighbor],
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
@@ -301,7 +301,7 @@ fn clip_seed_neighbors(
             continue;
         }
 
-        let neighbor = pos_slots[seed.neighbor_slot as usize];
+        let neighbor = pos_slots[seed.neighbor_slot as usize].pos;
         match ctx.builder.clip_with_slot_edgecheck_policy(
             seed.neighbor_idx,
             seed.neighbor_slot,
@@ -336,8 +336,7 @@ fn clip_batch(
     phase: &mut StreamPhase<'_>,
     batch: crate::cube_grid::DirectedNeighborBatch,
     points: &[Vec3],
-    point_indices: &[u32],
-    pos_slots: &[Vec3],
+    pos_slots: &[crate::cube_grid::SlotPoint],
     generator_idx: usize,
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
@@ -346,7 +345,10 @@ fn clip_batch(
     let packed_chunk = &phase.packed_chunk[..batch.n];
     for pos in 0..batch.n {
         let neighbor_slot = packed_chunk[pos];
-        let neighbor_idx = point_indices[neighbor_slot as usize] as usize;
+        // One fused load gets both the global index and the position (one cache
+        // line) instead of two separate random by-slot loads.
+        let slot_point = pos_slots[neighbor_slot as usize];
+        let neighbor_idx = slot_point.idx as usize;
         if neighbor_idx == generator_idx {
             continue;
         }
@@ -370,9 +372,9 @@ fn clip_batch(
         trace.last_batch_source = Some(batch.source);
         trace.last_clip_phase = "stream";
 
-        // Position from the slot-ordered AoS array (spatial order → clustered,
+        // Position from the fused record loaded above (spatial order → clustered,
         // cache-friendly); bit-identical to points[neighbor_idx].
-        let neighbor = pos_slots[neighbor_slot as usize];
+        let neighbor = slot_point.pos;
         let clip_result =
             match phase
                 .builder
@@ -409,7 +411,7 @@ fn clip_batch(
                 // and consistent with the main gather above — points[next] would
                 // be a cold scattered read into the otherwise-unused points[]);
                 // bit-identical to points[point_indices[next_slot]].
-                let next_dot = points[generator_idx].dot(pos_slots[next_slot as usize]);
+                let next_dot = points[generator_idx].dot(pos_slots[next_slot as usize].pos);
                 // Shell layers are sorted within the layer, but the next
                 // layer can contain closer points than this layer's tail;
                 // the mid-batch bound must also cover them. (Packed batches
@@ -438,8 +440,7 @@ fn consume_stream(
     stream: &mut DirectedNeighborStream<'_, '_, '_, '_>,
     mut phase: StreamPhase<'_>,
     points: &[Vec3],
-    point_indices: &[u32],
-    pos_slots: &[Vec3],
+    pos_slots: &[crate::cube_grid::SlotPoint],
     generator_idx: usize,
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
@@ -459,7 +460,6 @@ fn consume_stream(
                     &mut phase,
                     batch,
                     points,
-                    point_indices,
                     pos_slots,
                     generator_idx,
                     trace,
@@ -547,7 +547,6 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     let points = request.points;
     let grid = request.grid;
     let generator_idx = request.generator_idx;
-    let point_indices = grid.point_indices();
     let pos_slots = grid.point_pos_slots();
 
     let mut trace = BuildTrace::new();
@@ -585,7 +584,6 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                 .force_fallback_after_neighbors_processed,
         },
         points,
-        point_indices,
         pos_slots,
         generator_idx,
         &mut trace,
