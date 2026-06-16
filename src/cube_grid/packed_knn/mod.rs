@@ -175,7 +175,6 @@ pub(crate) struct PackedQuery<'a, 'p, 'g> {
     cached_frontier: Option<CachedFrontier>,
     tail_used: bool,
     safe_exhausted: bool,
-    cached_slots: Vec<u32>,
 }
 
 impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
@@ -200,7 +199,6 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
             cached_frontier: None,
             tail_used: false,
             safe_exhausted: false,
-            cached_slots: Vec::new(),
         }
     }
 
@@ -225,8 +223,11 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
         if let Some(cached) = &self.cached_frontier {
             match cached {
                 CachedFrontier::ExactBatch(batch) => {
-                    out.clear();
-                    out.extend_from_slice(&self.cached_slots);
+                    debug_assert_eq!(
+                        out.len(),
+                        batch.n,
+                        "cached packed frontier must keep slots in the caller scratch buffer"
+                    );
                     return PackedNeighborFrontier::ExactBatch(*batch);
                 }
                 CachedFrontier::UnknownButBounded { dot_upper_bound } => {
@@ -281,8 +282,6 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
                 unseen_bound: chunk.unseen_bound,
                 source,
             };
-            self.cached_slots.clear();
-            self.cached_slots.extend_from_slice(out);
             self.cached_frontier = Some(CachedFrontier::ExactBatch(batch));
             return PackedNeighborFrontier::ExactBatch(batch);
         }

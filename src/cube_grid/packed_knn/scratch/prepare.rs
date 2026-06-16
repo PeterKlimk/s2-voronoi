@@ -178,8 +178,8 @@ impl PackedKnnCellScratch {
         for v in &mut self.chunk0_keys[..num_queries] {
             v.clear();
         }
+        self.chunk0_pos.clear();
         self.chunk0_pos.resize(num_queries, 0);
-        self.chunk0_pos.fill(0);
 
         // Same rationale as `chunk0_keys` above.
         if self.tail_keys.len() < num_queries {
@@ -188,8 +188,8 @@ impl PackedKnnCellScratch {
         for v in &mut self.tail_keys[..num_queries] {
             v.clear();
         }
+        self.tail_pos.clear();
         self.tail_pos.resize(num_queries, 0);
-        self.tail_pos.fill(0);
         self.tail_possible.resize(num_queries, false);
         if self.tail_ready_gen.len() < num_queries {
             self.tail_ready_gen.resize(num_queries, 0);
