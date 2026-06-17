@@ -207,6 +207,29 @@ stability, quiet box.
     packed/local-index work in `multi-regime-perf.md`, but they do not weaken
     the certificate case.
 
+    **Prototype 0 (2026-06-17, known-batch directional shadow):** implemented a
+    no-behavior-change timing probe for a conservative subset of the full
+    direction-aware certificate. At exact-batch checks, if the existing scalar
+    certificate would pass after the batch and every remaining known candidate
+    in the batch is all-inside against the current polygon, the probe counts
+    one shadow termination and the candidates that a real implementation would
+    skip. It is a lower bound: it does not model directional bounds for unknown
+    frontier regions and counts only the first hit per cell.
+
+    | distribution | neighbors total | shadow-hit cells | shadow-saved candidates | saved / neighbors |
+    |---|---:|---:|---:|---:|
+    | fib | 1,720,255 | 62,809 | 526,061 | 30.6% |
+    | uniform | 1,977,806 | 80,775 | 643,231 | 32.5% |
+    | gradient k=4 | 1,983,723 | 80,946 | 645,520 | 32.5% |
+    | splittable | 2,864,306 | 101,632 | 990,939 | 34.6% |
+
+    Caveat: the naive shadow probe scans polygon vertices for every candidate
+    tested and is intentionally too expensive to judge wall time. The signal is
+    the custom counter: even this narrow known-batch certificate finds roughly a
+    third of processed candidates skippable across regimes. Next design target:
+    replace the O(batch · vertices) shadow test with a cheap sector/support
+    envelope and add directional bounds for frontier regions.
+
 ### Library-derived ideas parked during the scan
 
 These came from comparing our design against mature geometry-library habits

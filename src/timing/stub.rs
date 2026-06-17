@@ -85,6 +85,15 @@ impl CellSubAccum {
     ) {
     }
     #[inline(always)]
+    pub fn add_directional_shadow(
+        &mut self,
+        _checks: usize,
+        _candidate_tests: usize,
+        _hits: usize,
+        _saved: usize,
+    ) {
+    }
+    #[inline(always)]
     pub fn merge(&mut self, _other: &CellSubAccum) {}
     #[inline(always)]
     pub fn into_sub_phases(self) -> CellSubPhases {

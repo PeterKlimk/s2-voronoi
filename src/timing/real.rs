@@ -95,6 +95,13 @@ pub struct CellSubPhases {
     /// `neighbors_processed_total` to size examine-and-reject headroom.
     pub final_edges_total: u64,
     pub final_edges_max: u64,
+    /// Shadow direction-aware batch-skip probe counters. These do not affect
+    /// construction; they estimate candidates a conservative known-batch
+    /// directional certificate could skip.
+    pub directional_shadow_checks: u64,
+    pub directional_shadow_candidate_tests: u64,
+    pub directional_shadow_hits: u64,
+    pub directional_shadow_saved: u64,
 }
 
 /// Fine-grained dedup timing and a few size counters.
@@ -135,6 +142,10 @@ pub struct CellSubAccum {
     neighbors_processed_max: u64,
     final_edges_total: u64,
     final_edges_max: u64,
+    directional_shadow_checks: u64,
+    directional_shadow_candidate_tests: u64,
+    directional_shadow_hits: u64,
+    directional_shadow_saved: u64,
 }
 
 impl CellSubAccum {
@@ -223,6 +234,20 @@ impl CellSubAccum {
     }
 
     #[inline]
+    pub fn add_directional_shadow(
+        &mut self,
+        checks: usize,
+        candidate_tests: usize,
+        hits: usize,
+        saved: usize,
+    ) {
+        self.directional_shadow_checks += checks as u64;
+        self.directional_shadow_candidate_tests += candidate_tests as u64;
+        self.directional_shadow_hits += hits as u64;
+        self.directional_shadow_saved += saved as u64;
+    }
+
+    #[inline]
     pub fn merge(&mut self, other: &CellSubAccum) {
         self.knn_query += other.knn_query;
         self.packed_knn += other.packed_knn;
@@ -254,6 +279,10 @@ impl CellSubAccum {
             .max(other.neighbors_processed_max);
         self.final_edges_total += other.final_edges_total;
         self.final_edges_max = self.final_edges_max.max(other.final_edges_max);
+        self.directional_shadow_checks += other.directional_shadow_checks;
+        self.directional_shadow_candidate_tests += other.directional_shadow_candidate_tests;
+        self.directional_shadow_hits += other.directional_shadow_hits;
+        self.directional_shadow_saved += other.directional_shadow_saved;
     }
 
     #[inline]
@@ -286,6 +315,10 @@ impl CellSubAccum {
             neighbors_processed_max: self.neighbors_processed_max,
             final_edges_total: self.final_edges_total,
             final_edges_max: self.final_edges_max,
+            directional_shadow_checks: self.directional_shadow_checks,
+            directional_shadow_candidate_tests: self.directional_shadow_candidate_tests,
+            directional_shadow_hits: self.directional_shadow_hits,
+            directional_shadow_saved: self.directional_shadow_saved,
         }
     }
 }
@@ -501,6 +534,15 @@ impl PhaseTimings {
                 self.cell_sub.final_edges_max,
                 examine_per_edge
             );
+            if self.cell_sub.directional_shadow_checks > 0 {
+                eprintln!(
+                    "    dir_shadow: checks={} tests={} hits={} saved={}",
+                    self.cell_sub.directional_shadow_checks,
+                    self.cell_sub.directional_shadow_candidate_tests,
+                    self.cell_sub.directional_shadow_hits,
+                    self.cell_sub.directional_shadow_saved
+                );
+            }
         }
 
         eprintln!(
@@ -525,7 +567,7 @@ impl PhaseTimings {
 
         if std::env::var_os("S2_VORONOI_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} packed_tail_builds={ptb} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} packed_tail_builds={ptb} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -547,6 +589,10 @@ impl PhaseTimings {
                 } else {
                     0.0
                 },
+                dsc = self.cell_sub.directional_shadow_checks,
+                dst = self.cell_sub.directional_shadow_candidate_tests,
+                dsh = self.cell_sub.directional_shadow_hits,
+                dss = self.cell_sub.directional_shadow_saved,
                 gr = self.grid_res,
                 gmo = self.grid_max_occupancy,
                 grb = self.grid_rebuilt as u8,

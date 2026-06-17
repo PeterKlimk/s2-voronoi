@@ -143,6 +143,10 @@ pub(crate) struct CellBuildStats {
     certification: Duration,
     neighbors_processed: usize,
     final_edges: usize,
+    directional_shadow_checks: usize,
+    directional_shadow_candidate_tests: usize,
+    directional_shadow_hits: usize,
+    directional_shadow_saved: usize,
     incoming_seed_neighbors: usize,
     edgecheck_seed_clips: usize,
     knn_exhausted: bool,
@@ -159,6 +163,12 @@ impl CellBuildStats {
         cell_sub.add_knn(self.knn_query);
         cell_sub.add_clip(self.clipping);
         cell_sub.add_cert(self.certification);
+        cell_sub.add_directional_shadow(
+            self.directional_shadow_checks,
+            self.directional_shadow_candidate_tests,
+            self.directional_shadow_hits,
+            self.directional_shadow_saved,
+        );
 
         let stage = if self.used_knn {
             self.knn_stage
@@ -239,6 +249,12 @@ pub(super) struct BuildCounters {
     pub(super) did_packed: bool,
     packed_tail_used: bool,
     packed_safe_exhausted: bool,
+    directional_shadow_checks: usize,
+    directional_shadow_candidate_tests: usize,
+    directional_shadow_hits: usize,
+    directional_shadow_saved: usize,
+    #[cfg(feature = "timing")]
+    directional_shadow_terminated: bool,
     terminated: bool,
 }
 
@@ -256,6 +272,12 @@ impl BuildCounters {
             did_packed: false,
             packed_tail_used: false,
             packed_safe_exhausted: false,
+            directional_shadow_checks: 0,
+            directional_shadow_candidate_tests: 0,
+            directional_shadow_hits: 0,
+            directional_shadow_saved: 0,
+            #[cfg(feature = "timing")]
+            directional_shadow_terminated: false,
             terminated: false,
         }
     }
@@ -266,6 +288,41 @@ impl BuildCounters {
         self.packed_safe_exhausted |= stream.packed_safe_exhausted();
         self.knn_exhausted |= stream.knn_exhausted();
     }
+}
+
+#[cfg(feature = "timing")]
+fn audit_directional_batch_skip(
+    builder: &mut crate::knn_clipping::topo2d::Topo2DBuilder,
+    remaining_slots: &[u32],
+    unseen_bound_after_batch: f32,
+    pos_slots: &[crate::cube_grid::SlotPoint],
+    counters: &mut BuildCounters,
+) {
+    if counters.directional_shadow_terminated || remaining_slots.is_empty() || !builder.is_bounded()
+    {
+        return;
+    }
+    counters.directional_shadow_checks += 1;
+
+    // Conservative lower-bound prototype: if the existing scalar certificate
+    // would pass after this exact batch, and every remaining known candidate in
+    // the batch is all-inside against the current polygon, a direction-aware
+    // known-batch certificate could skip those candidates and terminate here.
+    if !builder.can_terminate(unseen_bound_after_batch) {
+        return;
+    }
+
+    for &slot in remaining_slots {
+        counters.directional_shadow_candidate_tests += 1;
+        let neighbor = pos_slots[slot as usize].pos;
+        if !builder.candidate_would_be_unchanged(neighbor) {
+            return;
+        }
+    }
+
+    counters.directional_shadow_hits += 1;
+    counters.directional_shadow_saved += remaining_slots.len();
+    counters.directional_shadow_terminated = true;
 }
 
 /// The disjoint `CellBuildContext` borrows the stream-consumption phase needs
@@ -431,6 +488,14 @@ fn clip_batch(
                 counters.terminated = true;
                 break;
             }
+            #[cfg(feature = "timing")]
+            audit_directional_batch_skip(
+                phase.builder,
+                &packed_chunk[pos + 1..batch.n],
+                batch.unseen_bound,
+                pos_slots,
+                counters,
+            );
         }
     }
     counters.clipping_time += t_clip.elapsed();
@@ -475,9 +540,8 @@ fn consume_stream(
                         stream,
                         phase.packed_chunk,
                         phase.builder,
-                        &mut counters.used_knn,
-                        &mut counters.knn_stage,
-                        &mut counters.knn_query_time,
+                        pos_slots,
+                        counters,
                     );
                 }
             }
@@ -603,6 +667,10 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         certification: counters.certification_time,
         neighbors_processed: counters.neighbors_processed,
         final_edges: ctx.output_buffer.vertices.len(),
+        directional_shadow_checks: counters.directional_shadow_checks,
+        directional_shadow_candidate_tests: counters.directional_shadow_candidate_tests,
+        directional_shadow_hits: counters.directional_shadow_hits,
+        directional_shadow_saved: counters.directional_shadow_saved,
         incoming_seed_neighbors: request.seed_neighbors.len(),
         edgecheck_seed_clips: counters.edgecheck_seed_clips,
         knn_exhausted: counters.knn_exhausted,

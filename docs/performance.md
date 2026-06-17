@@ -90,6 +90,9 @@ Counters to watch:
 - `final_edges_total` / `final_edges_max`: final cell degrees after extraction.
 - `examine_per_edge`: `neighbors_total / final_edges_total`, the main counter for
   examine-and-reject certificate headroom.
+- `dir_shadow_checks`, `dir_shadow_candidate_tests`, `dir_shadow_hits`,
+  `dir_shadow_saved`: timing-only known-batch direction-certificate shadow
+  probe; use as custom counters only, not wall-time evidence.
 
 For the current policy surface and change rules, see `docs/policy.md`.
 

@@ -139,6 +139,26 @@ impl GnomonicBuilder {
         }
     }
 
+    /// Shadow/profiling helper: test whether a candidate's bisector would leave
+    /// the current polygon unchanged. This mirrors the ordinary clipper's
+    /// all-inside decision without mutating builder state.
+    #[cfg(feature = "timing")]
+    pub(super) fn candidate_would_be_unchanged(&self, neighbor: Vec3) -> bool {
+        if !self.is_bounded() || self.vertex_count() < 3 {
+            return false;
+        }
+        let (a, b, c) = self.bisector_coefficients(neighbor);
+        let hp = HalfPlane::new_unnormalized(a, b, c, self.half_planes.len());
+        let poly = self.current_poly();
+        let neg_eps = -hp.eps;
+        for i in 0..poly.len {
+            if hp.signed_dist(poly.us[i], poly.vs[i]) < neg_eps {
+                return false;
+            }
+        }
+        true
+    }
+
     #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn clip_with_slot_edgecheck(
         &mut self,
@@ -239,6 +259,12 @@ impl FallbackBuilder {
         self.push_constraint(neighbor_idx, neighbor_slot, neighbor, replay_hp_eps);
         Ok(())
     }
+
+    #[inline]
+    #[cfg(feature = "timing")]
+    pub(super) fn candidate_would_be_unchanged(&self, _neighbor: Vec3) -> bool {
+        false
+    }
 }
 
 impl Topo2DBuilder {
@@ -337,5 +363,14 @@ impl Topo2DBuilder {
             }
         };
         Self::handle_step_result(result)
+    }
+
+    #[inline]
+    #[cfg(feature = "timing")]
+    pub(crate) fn candidate_would_be_unchanged(&self, neighbor: Vec3) -> bool {
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.candidate_would_be_unchanged(neighbor),
+            BuilderImpl::Fallback(builder) => builder.candidate_would_be_unchanged(neighbor),
+        }
     }
 }

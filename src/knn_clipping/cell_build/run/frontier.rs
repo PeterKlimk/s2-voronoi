@@ -35,11 +35,16 @@ pub(super) fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
     stream: &mut DirectedNeighborStream<'a, 'm, 'p, 'g>,
     packed_chunk: &mut Vec<u32>,
     builder: &mut crate::knn_clipping::topo2d::Topo2DBuilder,
-    used_knn: &mut bool,
-    knn_stage: &mut crate::knn_clipping::timing::KnnCellStage,
-    knn_query_time: &mut Duration,
+    _pos_slots: &[crate::cube_grid::SlotPoint],
+    counters: &mut super::BuildCounters,
 ) -> bool {
-    let frontier = probe_frontier(stream, packed_chunk, used_knn, knn_stage, knn_query_time);
+    let frontier = probe_frontier(
+        stream,
+        packed_chunk,
+        &mut counters.used_knn,
+        &mut counters.knn_stage,
+        &mut counters.knn_query_time,
+    );
 
     match frontier {
         DirectedNeighborFrontier::ExactBatch(batch) => {
@@ -53,7 +58,19 @@ pub(super) fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
             } else {
                 batch.first_dot
             };
-            builder.can_terminate(bound)
+            if builder.can_terminate(bound) {
+                true
+            } else {
+                #[cfg(feature = "timing")]
+                super::audit_directional_batch_skip(
+                    builder,
+                    &packed_chunk[..batch.n],
+                    batch.unseen_bound,
+                    _pos_slots,
+                    counters,
+                );
+                false
+            }
         }
         DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
             if builder.can_terminate(dot_upper_bound) {
