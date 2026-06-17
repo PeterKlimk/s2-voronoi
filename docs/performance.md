@@ -84,12 +84,12 @@ Counters to watch:
 
 - `cells_used_knn`
 - `cells_packed_tail_used`
-- `cells_packed_expand_r2_used`
 - `packed_tail_builds`
-- `packed_expand_r2_builds`
-- `packed_expand_r2_cap_skips`
-- `packed_expand_r2_scan_ms`
-- `packed_expand_r2_select_ms`
+- `neighbors_total` / `neighbors_max`: candidates actually clipped or seed-applied before
+  termination.
+- `final_edges_total` / `final_edges_max`: final cell degrees after extraction.
+- `examine_per_edge`: `neighbors_total / final_edges_total`, the main counter for
+  examine-and-reject certificate headroom.
 
 For the current policy surface and change rules, see `docs/policy.md`.
 

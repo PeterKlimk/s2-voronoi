@@ -188,7 +188,60 @@ stability, quiet box.
     `neighbors_processed`; add edges-kept). Sizes the certificate prize: 1.6×
     means ~37% of examination cost is the theoretical max recovery; ~1.2× means
     the certificate lever is nearly dead and ST is at its floor for this class.
-    **Do this before committing to lever (1).**
+    **DONE (2026-06-17, initial counter probe):** timing KV now emits
+    `final_edges_total`, `final_edges_max`, and `examine_per_edge =
+    neighbors_total / final_edges_total` for sphere and plane drivers. Fixed
+    seed, `RAYON_NUM_THREADS=1`, `--no-preprocess`, n=200k:
+
+    | distribution | neighbors/cell | final edges/cell | examine/edge | note |
+    |---|---:|---:|---:|---|
+    | fib | 8.60 | 6.00 | 1.434 | quasi-regular lower bound; still nonzero headroom |
+    | uniform | 9.89 | 6.00 | 1.648 | normal-case doc estimate confirmed |
+    | gradient k=4 | 9.92 | 6.00 | 1.653 | sparse/graded case same ratio |
+    | splittable | 14.32 | 6.00 | 2.387 | dense case adds extra examine tax |
+
+    Hardware-counter spot check agreed on work scale: uniform 200k was
+    ~2.60B instructions; splittable 200k was ~6.52B instructions. Verdict:
+    the gate for lever (1) is satisfied. The direction-aware certificate is
+    the right research prototype to design next; dense cases still need the
+    packed/local-index work in `multi-regime-perf.md`, but they do not weaken
+    the certificate case.
+
+### Library-derived ideas parked during the scan
+
+These came from comparing our design against mature geometry-library habits
+(CGAL spatial sorting, Voro++-style single-cell construction, Qhull/local-hull
+thinking, Triangle/CGAL predicate kernels, VoroTop topology analysis). They are
+recorded only where they differ from the existing backlog above.
+
+- **Locality variants beyond current slot order** `[safe, measure]`.
+  Production already stores points in grid cell-major slot order, assigns
+  within-bin locals in that order, and keys hot attempted-neighbor state by
+  slot; a Morton cell-order probe was already marginal. The remaining library
+  idea is narrower: try CGAL-like face-local Hilbert / median-Hilbert ordering
+  or coarse-cell work scheduling as a measurement-only branch, with counters
+  for cache misses, seed-handoff hits, packed group shape, and
+  `examine_per_edge`. Low priority, but worth keeping because it is cheap and
+  correctness-neutral.
+- **Local Delaunay / lifted-hull oracle for pathological cells**
+  `[safe fallback, oracle first]`. Instead of global Delaunay, gather a
+  conservative local patch only when a cell's `neighbors_processed` or
+  occupancy crosses a high threshold, then compute the local star/lower hull as
+  a debug oracle or rare fallback. This is distinct from the clipping fallback
+  ideas: it changes algorithm only for nasty cells and could validate
+  direction-aware certificate prototypes.
+- **Predicate-kernel packaging for P5** `[correctness architecture]`.
+  P5 already says "canonical predicates"; the library-derived addition is
+  packaging discipline. Build a tiny isolated filtered/exact predicate kernel
+  with its own tests and perf counters before threading it through clipping, in
+  the Triangle/CGAL style, instead of letting exactness grow organically inside
+  the builder.
+- **Topology-signature regression harness** `[test oracle]`. Borrow the
+  VoroTop habit of classifying Voronoi cell topology. For fixed fixtures,
+  record compact per-cell topology histograms or canonical graph signatures
+  (degree distribution, vertex-degree patterns, maybe small-cell graph hashes).
+  This catches "valid but combinatorially different" changes during certificate
+  and predicate experiments; it is not a runtime feature.
 
 ### Strategic / positioning
 

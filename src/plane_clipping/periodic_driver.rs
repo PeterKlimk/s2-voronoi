@@ -432,20 +432,24 @@ fn build_and_emit_cell_periodic<'p, 'g>(
     } else {
         KnnCellStage::PackedChunk0
     };
-    cell_sub.add_cell_stage(
-        stage,
-        stream.knn_exhausted(),
-        neighbors_processed,
-        tail_used,
-        stream.packed_safe_exhausted(),
-        used_knn,
-        incoming_checks.len(),
-        worker.seed_ids.len(),
-    );
+    let knn_exhausted = stream.knn_exhausted();
+    let packed_safe_exhausted = stream.packed_safe_exhausted();
 
     builder
         .to_vertex_data(&mut worker.output_buffer)
         .map_err(|f| cell_build_error(generator_idx, f))?;
+
+    cell_sub.add_cell_stage(
+        stage,
+        knn_exhausted,
+        neighbors_processed,
+        worker.output_buffer.vertices.len(),
+        tail_used,
+        packed_safe_exhausted,
+        used_knn,
+        incoming_checks.len(),
+        worker.seed_ids.len(),
+    );
 
     emit_cell_output(
         cell_sub,

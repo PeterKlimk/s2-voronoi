@@ -91,6 +91,10 @@ pub struct CellSubPhases {
     /// (mean = total / n; input for the grid-density tuning model).
     pub neighbors_processed_total: u64,
     pub neighbors_processed_max: u64,
+    /// Sum of final cell degrees across all cells. Used with
+    /// `neighbors_processed_total` to size examine-and-reject headroom.
+    pub final_edges_total: u64,
+    pub final_edges_max: u64,
 }
 
 /// Fine-grained dedup timing and a few size counters.
@@ -129,6 +133,8 @@ pub struct CellSubAccum {
     packed_tail_builds: u64,
     neighbors_processed_total: u64,
     neighbors_processed_max: u64,
+    final_edges_total: u64,
+    final_edges_max: u64,
 }
 
 impl CellSubAccum {
@@ -198,6 +204,7 @@ impl CellSubAccum {
         stage: KnnCellStage,
         knn_exhausted: bool,
         neighbors_processed: usize,
+        final_edges: usize,
         packed_tail_used: bool,
         packed_safe_exhausted: bool,
         used_knn: bool,
@@ -211,6 +218,8 @@ impl CellSubAccum {
         self.cells_used_knn += used_knn as u64;
         self.neighbors_processed_total += neighbors_processed as u64;
         self.neighbors_processed_max = self.neighbors_processed_max.max(neighbors_processed as u64);
+        self.final_edges_total += final_edges as u64;
+        self.final_edges_max = self.final_edges_max.max(final_edges as u64);
     }
 
     #[inline]
@@ -243,6 +252,8 @@ impl CellSubAccum {
         self.neighbors_processed_max = self
             .neighbors_processed_max
             .max(other.neighbors_processed_max);
+        self.final_edges_total += other.final_edges_total;
+        self.final_edges_max = self.final_edges_max.max(other.final_edges_max);
     }
 
     #[inline]
@@ -273,6 +284,8 @@ impl CellSubAccum {
             packed_tail_builds: self.packed_tail_builds,
             neighbors_processed_total: self.neighbors_processed_total,
             neighbors_processed_max: self.neighbors_processed_max,
+            final_edges_total: self.final_edges_total,
+            final_edges_max: self.final_edges_max,
         }
     }
 }
@@ -476,6 +489,18 @@ impl PhaseTimings {
                 self.grid_max_occupancy,
                 self.grid_rebuilt
             );
+            let examine_per_edge = if self.cell_sub.final_edges_total > 0 {
+                self.cell_sub.neighbors_processed_total as f64
+                    / self.cell_sub.final_edges_total as f64
+            } else {
+                0.0
+            };
+            eprintln!(
+                "    final_edges: mean={:.2} max={} examine_per_edge={:.3}",
+                self.cell_sub.final_edges_total as f64 / n.max(1) as f64,
+                self.cell_sub.final_edges_max,
+                examine_per_edge
+            );
         }
 
         eprintln!(
@@ -500,7 +525,7 @@ impl PhaseTimings {
 
         if std::env::var_os("S2_VORONOI_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} packed_tail_builds={ptb} neighbors_total={nt} neighbors_max={nm} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} packed_tail_builds={ptb} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -514,6 +539,14 @@ impl PhaseTimings {
                 ptb = self.cell_sub.packed_tail_builds,
                 nt = self.cell_sub.neighbors_processed_total,
                 nm = self.cell_sub.neighbors_processed_max,
+                fet = self.cell_sub.final_edges_total,
+                fem = self.cell_sub.final_edges_max,
+                epe = if self.cell_sub.final_edges_total > 0 {
+                    self.cell_sub.neighbors_processed_total as f64
+                        / self.cell_sub.final_edges_total as f64
+                } else {
+                    0.0
+                },
                 gr = self.grid_res,
                 gmo = self.grid_max_occupancy,
                 grb = self.grid_rebuilt as u8,

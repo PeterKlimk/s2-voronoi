@@ -76,6 +76,7 @@ impl CellSubAccum {
         _stage: KnnCellStage,
         _knn_exhausted: bool,
         _neighbors_processed: usize,
+        _final_edges: usize,
         _packed_tail_used: bool,
         _packed_safe_exhausted: bool,
         _used_knn: bool,
