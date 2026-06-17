@@ -413,25 +413,53 @@ impl PackedKnnCellScratch {
                     }
                 }
 
-                let tail_start = full_chunks * 8;
-                for pos in tail_start..center_len {
-                    let cx = xs[pos];
-                    let cy = ys[pos];
-                    let cz = zs[pos];
-                    let slot = (center_soa_start + pos) as u32;
+                let rem = center_len % 8;
+                if rem != 0 {
+                    let i = full_chunks * 8;
+                    debug_assert!(i < center_len);
+                    let valid_bits = (1u32 << (rem as u32)) - 1;
 
-                    // Candidate position is `pos`. A query at position qi can only see this candidate
-                    // if qi <= pos, excluding qi == pos (self).
-                    let qi_end = (pos + 1).min(num_queries);
-                    for qi in 0..qi_end {
-                        if qi == pos {
+                    let mut xbuf = [0.0f32; 8];
+                    let mut ybuf = [0.0f32; 8];
+                    let mut zbuf = [0.0f32; 8];
+                    xbuf[..rem].copy_from_slice(&xs[i..]);
+                    ybuf[..rem].copy_from_slice(&ys[i..]);
+                    zbuf[..rem].copy_from_slice(&zs[i..]);
+
+                    let candidates = fp::PointChunk8::from_arrays(xbuf, ybuf, zbuf);
+                    for qi in 0..num_queries {
+                        let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
+                        let mut mask_bits = dots.mask_gt(security_thresholds[qi]) & valid_bits;
+                        if mask_bits == 0 {
                             continue;
                         }
-                        let dot = fp::dot3_f32(cx, cy, cz, query_x[qi], query_y[qi], query_z[qi]);
-                        if dot > hi_thresholds[qi] {
-                            chunk0_keys[qi].push(make_desc_key(dot, slot));
-                        } else if dot > security_thresholds[qi] {
-                            tail_keys[qi].push(make_desc_key(dot, slot));
+
+                        // Directed intra-bin filter for the padded tail chunk:
+                        // query qi may only emit candidate positions strictly after qi.
+                        if qi >= i {
+                            let rel = qi - i;
+                            debug_assert!(rel < 8);
+                            mask_bits &= !((1u32 << (rel + 1)) - 1);
+                            if mask_bits == 0 {
+                                continue;
+                            }
+                        }
+
+                        let hi_bits = dots.mask_gt(hi_thresholds[qi]) & mask_bits;
+                        let mut band_bits = mask_bits & !hi_bits;
+                        let mut hi = hi_bits;
+                        let dots_arr = dots.to_array();
+                        while hi != 0 {
+                            let lane = hi.trailing_zeros() as usize;
+                            let slot = (center_soa_start + i + lane) as u32;
+                            chunk0_keys[qi].push(make_desc_key(dots_arr[lane], slot));
+                            hi &= hi - 1;
+                        }
+                        while band_bits != 0 {
+                            let lane = band_bits.trailing_zeros() as usize;
+                            let slot = (center_soa_start + i + lane) as u32;
+                            tail_keys[qi].push(make_desc_key(dots_arr[lane], slot));
+                            band_bits &= band_bits - 1;
                         }
                     }
                 }
@@ -498,18 +526,35 @@ impl PackedKnnCellScratch {
 
             let rem = range_len % 8;
             if rem != 0 {
-                let i = full_chunks * 8;
-                debug_assert!(i < range_len);
-                let valid_bits = (1u32 << (rem as u32)) - 1;
+                let (slot_base, valid_bits, candidates) = if full_chunks > 0 {
+                    let i = range_len - 8;
+                    let valid_bits = (0xffu32 << (8 - rem)) & 0xff;
+                    (
+                        soa_start + i,
+                        valid_bits,
+                        fp::PointChunk8::from_array_refs(
+                            xs[i..].try_into().unwrap(),
+                            ys[i..].try_into().unwrap(),
+                            zs[i..].try_into().unwrap(),
+                        ),
+                    )
+                } else {
+                    debug_assert!(range_len < 8);
+                    let valid_bits = (1u32 << (rem as u32)) - 1;
 
-                let mut xbuf = [0.0f32; 8];
-                let mut ybuf = [0.0f32; 8];
-                let mut zbuf = [0.0f32; 8];
-                xbuf[..rem].copy_from_slice(&xs[i..]);
-                ybuf[..rem].copy_from_slice(&ys[i..]);
-                zbuf[..rem].copy_from_slice(&zs[i..]);
+                    let mut xbuf = [0.0f32; 8];
+                    let mut ybuf = [0.0f32; 8];
+                    let mut zbuf = [0.0f32; 8];
+                    xbuf[..rem].copy_from_slice(xs);
+                    ybuf[..rem].copy_from_slice(ys);
+                    zbuf[..rem].copy_from_slice(zs);
 
-                let candidates = fp::PointChunk8::from_arrays(xbuf, ybuf, zbuf);
+                    (
+                        soa_start,
+                        valid_bits,
+                        fp::PointChunk8::from_arrays(xbuf, ybuf, zbuf),
+                    )
+                };
 
                 for (qi, &query_slot) in queries.iter().enumerate() {
                     let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
@@ -521,7 +566,7 @@ impl PackedKnnCellScratch {
                     let dots_arr = dots.to_array();
                     while mask_bits != 0 {
                         let lane = mask_bits.trailing_zeros() as usize;
-                        let slot = (soa_start + i + lane) as u32;
+                        let slot = (slot_base + lane) as u32;
                         debug_assert_ne!(
                             slot, query_slot,
                             "ring pass should never revisit the query slot"
