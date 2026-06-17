@@ -87,10 +87,9 @@ impl PackedKnnCellScratch {
                 while tail_bits != 0 {
                     let lane = tail_bits.trailing_zeros() as usize;
                     let slot = (soa_start + i + lane) as u32;
-                    if slot != query_slot {
-                        let dot = dots_arr[lane];
-                        tail_keys.push(super::helpers::make_desc_key(dot, slot));
-                    }
+                    debug_assert_ne!(slot, query_slot);
+                    let dot = dots_arr[lane];
+                    tail_keys.push(super::helpers::make_desc_key(dot, slot));
                     tail_bits &= tail_bits - 1;
                 }
             }
@@ -101,10 +100,7 @@ impl PackedKnnCellScratch {
                 let cy = ys[i];
                 let cz = zs[i];
                 let slot = (soa_start + i) as u32;
-
-                if slot == query_slot {
-                    continue;
-                }
+                debug_assert_ne!(slot, query_slot);
 
                 let dot = fp::dot3_f32(cx, cy, cz, qx_s, qy_s, qz_s);
                 if dot > security_threshold && dot <= threshold {

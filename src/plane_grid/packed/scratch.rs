@@ -558,18 +558,15 @@ impl PlanePackedScratch {
                 while tail_bits != 0 {
                     let lane = tail_bits.trailing_zeros() as usize;
                     let slot = (soa_start + i + lane) as u32;
-                    if slot != query_slot {
-                        self.tail_keys[qi].push(make_asc_key(dists_arr[lane], slot));
-                    }
+                    debug_assert_ne!(slot, query_slot);
+                    self.tail_keys[qi].push(make_asc_key(dists_arr[lane], slot));
                     tail_bits &= tail_bits - 1;
                 }
             }
             let rem_start = full_chunks * 8;
             for i in rem_start..range_len {
                 let slot = (soa_start + i) as u32;
-                if slot == query_slot {
-                    continue;
-                }
+                debug_assert_ne!(slot, query_slot);
                 let dist_sq = grid.dist_sq(rxs[i], rys[i], qx, qy);
                 if dist_sq < security && dist_sq >= t_hi {
                     self.tail_keys[qi].push(make_asc_key(dist_sq, slot));
