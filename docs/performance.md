@@ -93,6 +93,9 @@ Counters to watch:
 - `dir_shadow_checks`, `dir_shadow_candidate_tests`, `dir_shadow_hits`,
   `dir_shadow_saved`: timing-only known-batch direction-certificate shadow
   probe; use as custom counters only, not wall-time evidence.
+- `dir_support_candidate_tests`, `dir_support_hits`, `dir_support_saved`,
+  `dir_support_false_positive_hits`: timing-only 64-sector support-envelope
+  subset of the shadow probe.
 
 For the current policy surface and change rules, see `docs/policy.md`.
 

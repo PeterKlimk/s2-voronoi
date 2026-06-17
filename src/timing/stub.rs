@@ -91,6 +91,10 @@ impl CellSubAccum {
         _candidate_tests: usize,
         _hits: usize,
         _saved: usize,
+        _support_candidate_tests: usize,
+        _support_hits: usize,
+        _support_saved: usize,
+        _support_false_positive_hits: usize,
     ) {
     }
     #[inline(always)]

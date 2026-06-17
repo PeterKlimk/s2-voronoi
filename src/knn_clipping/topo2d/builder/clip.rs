@@ -40,6 +40,10 @@ impl GnomonicBuilder {
                 self.neighbor_slots.push(neighbor_slot);
                 self.use_a = !self.use_a;
                 self.term_cache_valid = false;
+                #[cfg(feature = "timing")]
+                {
+                    self.support_cache_valid = false;
+                }
             }
             ClipResult::Unchanged => {}
         }
@@ -159,6 +163,52 @@ impl GnomonicBuilder {
         true
     }
 
+    #[cfg(feature = "timing")]
+    fn rebuild_support_cache(&mut self) {
+        const K: usize = 64;
+        let poly = self.current_poly().clone();
+        for sector in 0..K {
+            let angle = (sector as f64) * std::f64::consts::TAU / K as f64;
+            let (sin, cos) = angle.sin_cos();
+            let mut min_proj = f64::INFINITY;
+            for i in 0..poly.len {
+                min_proj = min_proj.min(cos * poly.us[i] + sin * poly.vs[i]);
+            }
+            self.support_min_proj[sector] = min_proj;
+        }
+        self.support_cache_valid = true;
+    }
+
+    /// Conservative O(1) support-envelope version of
+    /// `candidate_would_be_unchanged`. False means "unknown"; true should imply
+    /// the exact all-vertices test is also true.
+    #[cfg(feature = "timing")]
+    pub(super) fn candidate_would_be_unchanged_support(&mut self, neighbor: Vec3) -> bool {
+        const K: usize = 64;
+        const SECTOR_PENALTY: f64 = 2.0 * 0.024_541_228_522_912_288_f64; // 2 * sin(pi / (2K))
+
+        if !self.is_bounded() || self.vertex_count() < 3 {
+            return false;
+        }
+        if !self.support_cache_valid {
+            self.rebuild_support_cache();
+        }
+
+        let (a, b, c) = self.bisector_coefficients(neighbor);
+        let hp = HalfPlane::new_unnormalized(a, b, c, self.half_planes.len());
+        if hp.ab2 <= 0.0 || !hp.ab2.is_finite() {
+            return hp.c >= -hp.eps;
+        }
+
+        let angle = b.atan2(a).rem_euclid(std::f64::consts::TAU);
+        let sector = ((angle * K as f64 / std::f64::consts::TAU).round() as usize) & (K - 1);
+        let poly = self.current_poly();
+        let radius = poly.max_r2.max(0.0).sqrt();
+        let support_lb = self.support_min_proj[sector] - SECTOR_PENALTY * radius;
+        let hp_len = hp.ab2.sqrt();
+        hp_len * support_lb + hp.c >= -hp.eps
+    }
+
     #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn clip_with_slot_edgecheck(
         &mut self,
@@ -263,6 +313,12 @@ impl FallbackBuilder {
     #[inline]
     #[cfg(feature = "timing")]
     pub(super) fn candidate_would_be_unchanged(&self, _neighbor: Vec3) -> bool {
+        false
+    }
+
+    #[inline]
+    #[cfg(feature = "timing")]
+    pub(super) fn candidate_would_be_unchanged_support(&mut self, _neighbor: Vec3) -> bool {
         false
     }
 }
@@ -371,6 +427,19 @@ impl Topo2DBuilder {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder.candidate_would_be_unchanged(neighbor),
             BuilderImpl::Fallback(builder) => builder.candidate_would_be_unchanged(neighbor),
+        }
+    }
+
+    #[inline]
+    #[cfg(feature = "timing")]
+    pub(crate) fn candidate_would_be_unchanged_support(&mut self, neighbor: Vec3) -> bool {
+        match &mut self.inner {
+            BuilderImpl::Gnomonic(builder) => {
+                builder.candidate_would_be_unchanged_support(neighbor)
+            }
+            BuilderImpl::Fallback(builder) => {
+                builder.candidate_would_be_unchanged_support(neighbor)
+            }
         }
     }
 }

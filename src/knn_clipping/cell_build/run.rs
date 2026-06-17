@@ -147,6 +147,10 @@ pub(crate) struct CellBuildStats {
     directional_shadow_candidate_tests: usize,
     directional_shadow_hits: usize,
     directional_shadow_saved: usize,
+    directional_support_candidate_tests: usize,
+    directional_support_hits: usize,
+    directional_support_saved: usize,
+    directional_support_false_positive_hits: usize,
     incoming_seed_neighbors: usize,
     edgecheck_seed_clips: usize,
     knn_exhausted: bool,
@@ -168,6 +172,10 @@ impl CellBuildStats {
             self.directional_shadow_candidate_tests,
             self.directional_shadow_hits,
             self.directional_shadow_saved,
+            self.directional_support_candidate_tests,
+            self.directional_support_hits,
+            self.directional_support_saved,
+            self.directional_support_false_positive_hits,
         );
 
         let stage = if self.used_knn {
@@ -253,6 +261,10 @@ pub(super) struct BuildCounters {
     directional_shadow_candidate_tests: usize,
     directional_shadow_hits: usize,
     directional_shadow_saved: usize,
+    directional_support_candidate_tests: usize,
+    directional_support_hits: usize,
+    directional_support_saved: usize,
+    directional_support_false_positive_hits: usize,
     #[cfg(feature = "timing")]
     directional_shadow_terminated: bool,
     terminated: bool,
@@ -276,6 +288,10 @@ impl BuildCounters {
             directional_shadow_candidate_tests: 0,
             directional_shadow_hits: 0,
             directional_shadow_saved: 0,
+            directional_support_candidate_tests: 0,
+            directional_support_hits: 0,
+            directional_support_saved: 0,
+            directional_support_false_positive_hits: 0,
             #[cfg(feature = "timing")]
             directional_shadow_terminated: false,
             terminated: false,
@@ -312,16 +328,33 @@ fn audit_directional_batch_skip(
         return;
     }
 
+    let mut support_all_unchanged = true;
+    for &slot in remaining_slots {
+        counters.directional_support_candidate_tests += 1;
+        let neighbor = pos_slots[slot as usize].pos;
+        if !builder.candidate_would_be_unchanged_support(neighbor) {
+            support_all_unchanged = false;
+            break;
+        }
+    }
+
     for &slot in remaining_slots {
         counters.directional_shadow_candidate_tests += 1;
         let neighbor = pos_slots[slot as usize].pos;
         if !builder.candidate_would_be_unchanged(neighbor) {
+            if support_all_unchanged {
+                counters.directional_support_false_positive_hits += 1;
+            }
             return;
         }
     }
 
     counters.directional_shadow_hits += 1;
     counters.directional_shadow_saved += remaining_slots.len();
+    if support_all_unchanged {
+        counters.directional_support_hits += 1;
+        counters.directional_support_saved += remaining_slots.len();
+    }
     counters.directional_shadow_terminated = true;
 }
 
@@ -671,6 +704,10 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         directional_shadow_candidate_tests: counters.directional_shadow_candidate_tests,
         directional_shadow_hits: counters.directional_shadow_hits,
         directional_shadow_saved: counters.directional_shadow_saved,
+        directional_support_candidate_tests: counters.directional_support_candidate_tests,
+        directional_support_hits: counters.directional_support_hits,
+        directional_support_saved: counters.directional_support_saved,
+        directional_support_false_positive_hits: counters.directional_support_false_positive_hits,
         incoming_seed_neighbors: request.seed_neighbors.len(),
         edgecheck_seed_clips: counters.edgecheck_seed_clips,
         knn_exhausted: counters.knn_exhausted,

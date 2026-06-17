@@ -93,6 +93,10 @@ pub(crate) struct GnomonicBuilder {
     term_cos_pad: f64,
     term_threshold_cache: f64,
     term_cache_valid: bool,
+    #[cfg(feature = "timing")]
+    support_cache_valid: bool,
+    #[cfg(feature = "timing")]
+    support_min_proj: [f64; 64],
 }
 
 pub(crate) struct FallbackBuilder {

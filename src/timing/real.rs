@@ -102,6 +102,10 @@ pub struct CellSubPhases {
     pub directional_shadow_candidate_tests: u64,
     pub directional_shadow_hits: u64,
     pub directional_shadow_saved: u64,
+    pub directional_support_candidate_tests: u64,
+    pub directional_support_hits: u64,
+    pub directional_support_saved: u64,
+    pub directional_support_false_positive_hits: u64,
 }
 
 /// Fine-grained dedup timing and a few size counters.
@@ -146,6 +150,10 @@ pub struct CellSubAccum {
     directional_shadow_candidate_tests: u64,
     directional_shadow_hits: u64,
     directional_shadow_saved: u64,
+    directional_support_candidate_tests: u64,
+    directional_support_hits: u64,
+    directional_support_saved: u64,
+    directional_support_false_positive_hits: u64,
 }
 
 impl CellSubAccum {
@@ -240,11 +248,19 @@ impl CellSubAccum {
         candidate_tests: usize,
         hits: usize,
         saved: usize,
+        support_candidate_tests: usize,
+        support_hits: usize,
+        support_saved: usize,
+        support_false_positive_hits: usize,
     ) {
         self.directional_shadow_checks += checks as u64;
         self.directional_shadow_candidate_tests += candidate_tests as u64;
         self.directional_shadow_hits += hits as u64;
         self.directional_shadow_saved += saved as u64;
+        self.directional_support_candidate_tests += support_candidate_tests as u64;
+        self.directional_support_hits += support_hits as u64;
+        self.directional_support_saved += support_saved as u64;
+        self.directional_support_false_positive_hits += support_false_positive_hits as u64;
     }
 
     #[inline]
@@ -283,6 +299,11 @@ impl CellSubAccum {
         self.directional_shadow_candidate_tests += other.directional_shadow_candidate_tests;
         self.directional_shadow_hits += other.directional_shadow_hits;
         self.directional_shadow_saved += other.directional_shadow_saved;
+        self.directional_support_candidate_tests += other.directional_support_candidate_tests;
+        self.directional_support_hits += other.directional_support_hits;
+        self.directional_support_saved += other.directional_support_saved;
+        self.directional_support_false_positive_hits +=
+            other.directional_support_false_positive_hits;
     }
 
     #[inline]
@@ -319,6 +340,10 @@ impl CellSubAccum {
             directional_shadow_candidate_tests: self.directional_shadow_candidate_tests,
             directional_shadow_hits: self.directional_shadow_hits,
             directional_shadow_saved: self.directional_shadow_saved,
+            directional_support_candidate_tests: self.directional_support_candidate_tests,
+            directional_support_hits: self.directional_support_hits,
+            directional_support_saved: self.directional_support_saved,
+            directional_support_false_positive_hits: self.directional_support_false_positive_hits,
         }
     }
 }
@@ -536,11 +561,15 @@ impl PhaseTimings {
             );
             if self.cell_sub.directional_shadow_checks > 0 {
                 eprintln!(
-                    "    dir_shadow: checks={} tests={} hits={} saved={}",
+                    "    dir_shadow: checks={} tests={} hits={} saved={} support_tests={} support_hits={} support_saved={} support_false_pos={}",
                     self.cell_sub.directional_shadow_checks,
                     self.cell_sub.directional_shadow_candidate_tests,
                     self.cell_sub.directional_shadow_hits,
-                    self.cell_sub.directional_shadow_saved
+                    self.cell_sub.directional_shadow_saved,
+                    self.cell_sub.directional_support_candidate_tests,
+                    self.cell_sub.directional_support_hits,
+                    self.cell_sub.directional_support_saved,
+                    self.cell_sub.directional_support_false_positive_hits
                 );
             }
         }
@@ -567,7 +596,7 @@ impl PhaseTimings {
 
         if std::env::var_os("S2_VORONOI_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} packed_tail_builds={ptb} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} packed_tail_builds={ptb} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -593,6 +622,10 @@ impl PhaseTimings {
                 dst = self.cell_sub.directional_shadow_candidate_tests,
                 dsh = self.cell_sub.directional_shadow_hits,
                 dss = self.cell_sub.directional_shadow_saved,
+                dpt = self.cell_sub.directional_support_candidate_tests,
+                dph = self.cell_sub.directional_support_hits,
+                dps = self.cell_sub.directional_support_saved,
+                dpf = self.cell_sub.directional_support_false_positive_hits,
                 gr = self.grid_res,
                 gmo = self.grid_max_occupancy,
                 grb = self.grid_rebuilt as u8,

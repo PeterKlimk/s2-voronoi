@@ -230,6 +230,27 @@ stability, quiet box.
     replace the O(batch · vertices) shadow test with a cheap sector/support
     envelope and add directional bounds for frontier regions.
 
+    **Prototype 1 (2026-06-17, 64-sector support envelope):** added a
+    timing-only conservative support cache over the current polygon. For a
+    candidate half-plane direction, it uses the nearest cached sector plus a
+    radius penalty; `support=true` should imply the exact all-vertices test is
+    also true. The probe counts false-positive hits separately and saw zero in
+    the fixed-seed 200k sweep below. Wall time is still not evidence here: the
+    timing build computes both support and exact shadow checks so they can be
+    compared.
+
+    | distribution | exact shadow saved | support saved | support / exact | support false-positive hits |
+    |---|---:|---:|---:|---:|
+    | fib | 526,061 | 396,951 | 75.5% | 0 |
+    | uniform | 643,231 | 518,214 | 80.6% | 0 |
+    | gradient k=4 | 645,520 | 515,580 | 79.9% | 0 |
+    | splittable | 990,939 | 839,818 | 84.8% | 0 |
+
+    This is enough to justify a real implementation sketch: cache the support
+    envelope on polygon changes, use it to skip the remainder of known exact
+    batches when the beyond-batch scalar certificate passes, then separately
+    design directional certificates for unknown frontier regions.
+
 ### Library-derived ideas parked during the scan
 
 These came from comparing our design against mature geometry-library habits
