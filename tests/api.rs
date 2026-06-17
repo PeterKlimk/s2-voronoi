@@ -75,7 +75,6 @@ fn test_compute_with_explicit_preprocess_modes() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::Weld,
-            ..VoronoiConfig::default()
         },
     )
     .expect("density-based preprocessing should succeed");
@@ -85,7 +84,6 @@ fn test_compute_with_explicit_preprocess_modes() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::Disabled,
-            ..VoronoiConfig::default()
         },
     )
     .expect("disabled preprocessing should succeed");
@@ -100,7 +98,6 @@ fn test_compute_with_report_surfaces_preprocess_outcome() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::Weld,
-            ..VoronoiConfig::default()
         },
     )
     .expect("compute_with_report should succeed");
@@ -146,7 +143,6 @@ fn test_clustered_cap_tight_report_keeps_default_preprocessing_nonintrusive() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::Weld,
-            ..VoronoiConfig::default()
         },
     )
     .expect("clustered cap should still compute with default preprocessing");
@@ -193,7 +189,6 @@ fn test_clustered_cap_extreme_weld_keeps_returned_diagram_strictly_valid() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::MergeWithin(3.5e-4),
-            ..VoronoiConfig::default()
         },
     )
     .expect("clustered_cap_extreme should compute under coarse welding");
@@ -286,7 +281,6 @@ fn test_compute_with_report_exposes_effective_diagram_when_merges_occur() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::MergeWithin(0.001),
-            ..VoronoiConfig::default()
         },
     )
     .expect("explicit merge preprocessing should still compute");
@@ -556,7 +550,6 @@ fn test_merge_within_large_radius_uses_standalone_detector() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::MergeWithin(0.05),
-            ..VoronoiConfig::default()
         },
     )
     .expect("large MergeWithin radius should compute via the fallback path");

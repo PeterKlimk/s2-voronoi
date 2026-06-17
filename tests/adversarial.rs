@@ -112,7 +112,6 @@ fn test_clustered_cap_small_no_preprocess() {
     let points = clustered_cap_points(100, 0.087, 42);
     let config = VoronoiConfig {
         preprocess_mode: PreprocessMode::Disabled,
-        ..Default::default()
     };
     expect_strict_success(
         "clustered_cap_small_no_preprocess",
@@ -127,7 +126,6 @@ fn test_clustered_cap_tight_no_preprocess() {
     let points = clustered_cap_points(100, 0.0175, 42);
     let config = VoronoiConfig {
         preprocess_mode: PreprocessMode::Disabled,
-        ..Default::default()
     };
     expect_strict_success(
         "clustered_cap_tight_no_preprocess",
@@ -142,7 +140,6 @@ fn test_cocircular_tight_no_preprocess() {
     let points = near_cocircular_stress_points(25, 0.001, 42);
     let config = VoronoiConfig {
         preprocess_mode: PreprocessMode::Disabled,
-        ..Default::default()
     };
     expect_strict_success(
         "cocircular_tight_no_preprocess",
@@ -532,7 +529,6 @@ fn test_sub_weld_cluster_without_welding_is_degenerate_input() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::Disabled,
-            ..VoronoiConfig::default()
         },
     );
     match result {
@@ -595,7 +591,6 @@ fn test_above_weld_pairs_resolve_without_welding() {
             &points,
             VoronoiConfig {
                 preprocess_mode: PreprocessMode::Disabled,
-                ..VoronoiConfig::default()
             },
         );
         expect_strict_success(&format!("above_weld_pairs_sep_{sep:.0e}"), result);
@@ -651,7 +646,6 @@ fn test_rotated_symmetric_pairs_resolve_without_welding() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::Disabled,
-            ..VoronoiConfig::default()
         },
     );
     expect_strict_success("rotated_symmetric_ulp_pairs", result);

@@ -24,7 +24,6 @@ use support::points::random_sphere_points;
 fn run(name: &str, points: &[UnitVec3]) {
     let config = VoronoiConfig {
         preprocess_mode: PreprocessMode::Disabled,
-        ..VoronoiConfig::default()
     };
     match compute_with(points, config) {
         Ok(diagram) => {

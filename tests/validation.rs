@@ -53,7 +53,6 @@ fn test_validation_clustered_cap_tight_without_preprocess_is_strictly_valid() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::Disabled,
-            ..VoronoiConfig::default()
         },
     )
     .expect("clustered cap should compute without preprocessing");

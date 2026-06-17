@@ -565,32 +565,33 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         &mut counters,
     );
 
-    let mut stream = DirectedNeighborStream::new(
-        grid,
-        points,
-        generator_idx,
-        &mut ctx.scratch,
-        request.directed_ctx,
-        request.packed.take(),
-    );
-    consume_stream(
-        &mut stream,
-        StreamPhase {
-            builder: &mut ctx.builder,
-            packed_chunk: &mut ctx.packed_chunk,
-            attempted_neighbors: &mut ctx.attempted_neighbors,
-            #[cfg(test)]
-            force_fallback_after_neighbors_processed: &mut ctx
-                .force_fallback_after_neighbors_processed,
-        },
-        points,
-        pos_slots,
-        generator_idx,
-        &mut trace,
-        &mut counters,
-    );
-    counters.absorb_stream(&stream);
-    drop(stream);
+    {
+        let mut stream = DirectedNeighborStream::new(
+            grid,
+            points,
+            generator_idx,
+            &mut ctx.scratch,
+            request.directed_ctx,
+            request.packed.take(),
+        );
+        consume_stream(
+            &mut stream,
+            StreamPhase {
+                builder: &mut ctx.builder,
+                packed_chunk: &mut ctx.packed_chunk,
+                attempted_neighbors: &mut ctx.attempted_neighbors,
+                #[cfg(test)]
+                force_fallback_after_neighbors_processed: &mut ctx
+                    .force_fallback_after_neighbors_processed,
+            },
+            points,
+            pos_slots,
+            generator_idx,
+            &mut trace,
+            &mut counters,
+        );
+        counters.absorb_stream(&stream);
+    }
 
     finish_cell(ctx, points, generator_idx, &trace, &mut counters)?;
 
