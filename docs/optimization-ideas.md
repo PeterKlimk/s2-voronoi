@@ -14,6 +14,14 @@ comparable (observed drift exceeds 30%).
 
 ## Open ideas
 
+> **Single-thread headroom vs Fade2D:** the algorithmic ST backlog (direction-
+> aware completeness certificate, angular-sweep clipper, NN/candidate-set
+> reuse, handoff correctness, examine-and-reject instrumentation, many-core
+> positioning) lives in **`docs/st-headroom-and-fade-comparison.md`**, grounded
+> in a head-to-head against Fade2D. Summary: ST belongs to Delaunay
+> structurally; our edge is MT scaling + native sphere; independence-safe ST
+> headroom is ~1.1–1.25×.
+
 ### Live within-bin edge repair (structural) — assessed 2026-06, deprioritized
 
 Today every unresolved shared-edge mismatch — including those between two
