@@ -144,7 +144,11 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     // *keys* are only consulted by edge reconciliation (for at most the defect
     // region), so they are NOT concatenated — kept per-shard in
     // `ShardedVertexKeys` below.
+    // `P: Copy` (no Drop), and the parallel scatter below writes every slot
+    // exactly once via the partitioned `vertex_offsets`, so reserving then
+    // `set_len` over uninitialized-but-fully-overwritten `Copy` memory is sound.
     #[cfg(feature = "parallel")]
+    #[allow(clippy::uninit_vec)]
     let all_vertices = {
         let mut all_vertices = Vec::<P>::with_capacity(total_vertices);
         // Safety: We will write to every element in the parallel loop below.
