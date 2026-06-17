@@ -349,10 +349,7 @@ impl PlanePackedScratch {
                 if qi >= i {
                     let rel = qi - i;
                     debug_assert!(rel < 8);
-                    if rel > 0 {
-                        mask_bits &= !((1u32 << rel) - 1);
-                    }
-                    mask_bits &= !(1u32 << rel);
+                    mask_bits &= u32::MAX << (rel + 1);
                     if mask_bits == 0 {
                         continue;
                     }
