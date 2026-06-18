@@ -60,6 +60,7 @@ Reading:
 |---|---|---|
 | Directional shell/cap certificate | parked promising | Branches `agent/directional-certificates` (`f51523a`) and `agent/directional-cell-cap-gate-audit` (`3eaf1c4`) showed the expected shape: roughly equal on fib, faster in mega/dense rebuilt regimes. Keep default-off until broader validation/product decision. |
 | Candidate-production certificate work | open, narrower than before | New work must avoid candidate examination, or reuse already-paid metadata. Do not restart late known-batch support probing without a cheaper trigger. |
+| Whole-ring packed bound skip | default-off prototype | Branch `agent/packed-local-certificate` adds `S2_VORONOI_PACKED_RING_BOUND_SKIP=1`: a query-level cap bound skips ring candidate production when no ring cell can beat the packed threshold. Initial 100k ST counters: gated off on fib, neutral on splittable, about 1.2% fewer instructions on mega. Needs quiet-box validation before product judgment. |
 | Cheap conservative reject before clip | still open, lower priority | Only worth another try if the test is cheaper than a clip and can run without inflating branches on common unchanged candidates. |
 | Angular-sweep clipper | speculative | Demoted: same-bin handoff already removes much of the duplicate fresh clipping this would optimize. Consider only after certificate/candidate work stalls. |
 
@@ -152,6 +153,27 @@ one. Whole-cell coverage is below 1% of audited shell slots even in mega. This
 does not support a behavior prototype that spends hot-path branches on exact
 producer duplicate lists; revisit only if the producer can export coarser
 coverage bounds/ranges that skip sub-security work, not just emitted slots.
+
+Whole-ring packed bound skip, branch `agent/packed-local-certificate`,
+default-off via `S2_VORONOI_PACKED_RING_BOUND_SKIP=1`, gated to groups with at
+least 512 eligible ring candidates, optimized with a sqrt-free cap comparison
+and compact active-query ring loops, 100k ST no-preprocess, `perf stat -r 3`:
+
+| distribution | enabled instructions | baseline instructions | enabled cycles | baseline cycles | bound checks | query skips |
+|---|---:|---:|---:|---:|---:|---:|
+| fib | 2.044902B | 2.044897B | 1.071B | 1.028B | 0 | 0 |
+| splittable | 4.486730B | 4.490155B | 2.151B | 2.121B | 19,838 | 1,333 |
+| mega f=0.8 | 10.212392B | 10.335657B | 4.337B | 4.385B | 75,413 | 27,812 |
+
+Interpretation: this is the right kind of candidate-production certificate
+(it skips ring dot/emit work before candidates exist), but the first useful
+signal is dense-regime-sized, not a broad ST win. The query-level gate is
+essential: the ungated version skipped more queries but added enough cap-bound
+work to hurt fib instructions. The optimized version recovers the default path
+instruction count and moves dense mega from about 1.0% to about 1.2% fewer
+instructions in the quick run; cycle reads outside mega remain noise-prone.
+Treat as a default-off dense/productization candidate pending paired quiet-box
+runs at larger sizes.
 
 ## Do Not Retread Without New Evidence
 
