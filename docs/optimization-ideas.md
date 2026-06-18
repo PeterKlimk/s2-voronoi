@@ -25,6 +25,8 @@ Measurement rules:
 | Punch 1 implemented center-cell band prune | `docs/punch1-center-cell-integration.md` |
 | Paired micro-optimization evidence | `docs/micro-optimization-matrix.md` |
 | Raw micro-idea backlog | `docs/micro-optimization-ideas.md` |
+| Edge-check matching (parked: near-optimal for sane regime) | `docs/edgecheck-matching-optimization.md` |
+| Post-clipping pipeline (certification + edge_emit) | `docs/post-clipping-pipeline-optimization.md` |
 | Roadmap priorities | `docs/todo.md` |
 
 ## Current High-Value Threads
