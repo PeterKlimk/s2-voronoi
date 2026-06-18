@@ -8,9 +8,9 @@
 //! empty on uniform input and the fast path never touches it. See
 //! docs/dense-cell-subindex-design.md.
 //!
-//! NOTE: the query path does not consult this yet — that is the
-//! producer/consumer integration (the load-bearing follow-up). This module is
-//! the structure + its band query, validated in isolation.
+//! The packed center-cell path consults this via a conservative band query and
+//! reports coverage only down to the band's dot bound; shell takeover backstops
+//! anything below that bound.
 
 use std::collections::HashMap;
 

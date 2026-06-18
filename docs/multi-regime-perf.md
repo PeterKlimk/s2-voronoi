@@ -20,20 +20,20 @@ the priority; other regimes must merely stop being *cliffs*.
 **Corollary principle — no unbounded downside.** Every fast-path / optimization
 must degrade to ~neutral in its *worst* regime, not catastrophically. An
 "optimization" that can 10× *regress* is a liability regardless of its upside.
-(`expand_r2` violates this today — see item 1.)
+`expand_r2` is the cautionary example; it was removed after violating this.
 
 ## The regimes, and how we currently fare
 
 | regime | examples | current behavior |
 |--------|----------|------------------|
 | **Uniform / quasi-uniform** | random sphere, fibonacci, Lloyd | **optimal** — flat grid + SIMD packed; 3×3 certifies |
-| **Dense / clustered** | hex3 (1153:1), `mega`, `splittable` | **O(occ²) per dense cell**; expand_r2 over-gather; per-query cursor; 10×+ losses |
-| **Smooth gradient / sparse** | density-graded, sparse poles | mostly OK (one global grid handles it), but grid density + expand_r2 are *uniform-tuned*; **under-measured** |
+| **Dense / clustered** | hex3 (1153:1), `mega`, `splittable`, `cap` | Punch 2 rebuild + Punch 1 dense center-cell band now handle the worst center-gather cliff; residual cost is certificate depth / shell takeover. |
+| **Smooth gradient / sparse** | density-graded, sparse poles | measured mostly OK; grid density holds and shell takeover covers the sparse tail. |
 | **Degenerate** | exact-cocircular, lattices, rect walls | correctness handled; plane perf via reconcile (the strict-plane lesson) |
 
-The through-line: nearly every mechanism is tuned for the uniform regime, and
-the *responses* to leaving it (expand_r2 escalation, global re-grid, per-query
-cursor) were designed for mild departures and misbehave on extreme ones.
+The through-line: nearly every mechanism is tuned for the uniform regime. The
+successful dense fixes are gated responses: global re-grid only when density
+dominates scan work, and Punch 1 only on rebuilt residual dense cells.
 
 ## Work items (framed by the principle)
 
@@ -120,19 +120,20 @@ Each: problem → fix → status → priority → regime. Cross-refs at the bott
 - **Status**: SHIPPED + quiet-box re-tuned (`Σocc²/n > 500`). **Priority: done
   / monitor.** **Regime: moderate dense.**
 
-### 3. `punch-1` — per-dense-cell local index (*the real dense fix*)
+### 3. `punch-1` — per-dense-cell local index (*implemented dense fix*)
 - **Problem**: a dense cell is **O(occ²)** to query regardless of SIMD (a
   constant factor); the rebuild's memory cap leaves residual dense cells.
-- **Fix**: a side index (axis-sort / kd-tree) per over-dense cell →
-  **O(occ log occ)**. Hooks: `shells.rs::scan_cell`, `packed_knn` center-cell
-  read, and — if expand_r2 survives — its ring-2 band gather (3 sites). The
-  hard part is the producer/consumer integration (lazy best-first stream /
-  radius), not the structure.
+- **Fix shipped on branch**: an axis-sort side index plus a certificate-safe
+  center-cell band in `packed_knn` for rebuilt dense grids. The band is complete
+  to its radius and the shell takeover backstops everything beyond it.
 - **Synergy with punch-2**: rebuild handles *moderate* (cells reach ~target),
   punch-1 handles the *residual/extreme* the memory cap can't.
-- **Status**: designed + scaffold (branch `agent/punch1-axissort`, structure
-  increment done; integration unbuilt). **Priority: HIGH** (the prize; hex3
-  justifies it). **Regime: dense / extreme.**
+- **Measured outcome**: cap 25k went from about 106s to 6.2s; uniform was
+  neutral; clustered/outlier regressions disappeared after gating the dense
+  index on `grid_rebuilt`.
+- **Status**: IMPLEMENTED on the Punch 1 axis-sort branch and present in code,
+  still review/merge-gated because the kNN-completeness path is correctness
+  critical. **Priority: review/productize.** **Regime: dense / extreme.**
 
 ### 4. Directed-cursor batching — recover same-cell correlation
 - **Problem**: the cursor fallback is **per-query** — same-cell generators all
@@ -165,9 +166,9 @@ Each: problem → fix → status → priority → regime. Cross-refs at the bott
   expand_r2 / the cursor **even though its neighbors are all in the home cell**.
 - **Fix**: a tighter *local* certificate that closes within ring-0 when the
   k-th candidate is provably nearest — so dense queries never escalate.
-- **Status**: identified (deeper). **Priority: MEDIUM-LOW** (punch-1 may
-  subsume; but a better certificate helps even without the index). **Regime:
-  dense.**
+- **Status**: still identified. Punch 1 removed the worst center-gather cliff,
+  but cap-like inputs can still be dominated by genuine certificate depth /
+  shell takeover. **Priority: MEDIUM-LOW.** **Regime: dense.**
 
 ### 6. Regime-aware dispatch (the meta-pattern)
 - The engine should **detect the regime cheaply** (`Σocc²/n`; per-cell occ from
@@ -201,14 +202,15 @@ Each: problem → fix → status → priority → regime. Cross-refs at the bott
 ### 8. Alternate dense path (speculative)
 - For *majority*-dense input, a dense cap is geometrically ~a planar patch; a
   fundamentally different local method (treat the cap as a local 2D problem)
-  might beat re-gridding. Only if punch-1 proves insufficient. **Priority:
+  might beat re-gridding. Only if Punch 1 plus certificate work prove
+  insufficient. **Priority:
   LOW / research.** **Regime: extreme dense.**
 
 ### 9. Unified candidate engine — the synthesis (where 1/4/5 converge)
 The realization behind items 1, 4, 5: **every candidate scan in the kNN engine
 is the same "dot over contiguous SoA" primitive** — Chunk0 vectorizes it; the
-two *cold* paths (expand_r2 band `cold.rs:218`, shell-cursor ring `shells.rs:99`)
-are scalar `fp::dot3_f32`, purely by historical accident. The current design
+old cold paths (`expand_r2` band and shell-cursor ring) were scalar
+`fp::dot3_f32`, purely by historical accident. The current design
 also keeps **two separate candidate engines** (packed = SoA batch + dot
 thresholds; cursor = cell-BFS frontier + visited stamps) bridged by the cheapest
 possible glue ("let the consumer dedup" the re-emitted points), which throws away
@@ -229,8 +231,8 @@ an item above:
   duplicate coverage.
 - **Grouped** — batch a cell's queries against the shared ring they all scan
   (item 4). Amortizes per-query overhead and enables SIMD-across-queries.
-- **Index-backed** — punch-1 per dense cell so no single scan goes O(occ²)
-  (item 3). The *only* lever that changes asymptotics.
+- **Index-backed** — Punch 1 per dense cell so no center-cell gather goes
+  O(occ²) (item 3). This part now exists for the packed center path.
 
 In this design **`expand_r2` is not a special stage** — it's just "the r=2 layer
 of a SIMD, grouped, resuming cursor." So the right experiment isn't "is expand_r2
@@ -238,10 +240,11 @@ worth it today" (measured: no) but **"once the cursor is SIMD + grouped +
 resuming, does a dedicated r=2 batch still beat just letting the unified cursor
 roll to ring 2?"** — re-trial expand_r2 across *all* regimes under that
 implementation; remove it only if a good version still never wins.
-- **Status**: framing + plan (this section). Build order: SIMD the two cold
-  scans (self-contained, measurable) → resume/reuse handoff → grouped cursor →
-  punch-1 → expand_r2 retrial. **Priority: HIGH** (subsumes the dense backlog).
-  **Regime: dense (with uniform-neutral as the constraint).**
+- **Status**: framing updated after Punch 1. Remaining work is less "build the
+  dense fix" and more "unify frontier/cursor contracts": resume/reuse handoff,
+  grouped cursor if it still matters, and certificate-depth reduction for the
+  cap tail. **Priority: MEDIUM.** **Regime: dense (with uniform-neutral as the
+  constraint).**
 
 ## Canonical benchmarks (so we measure all regimes, not just uniform)
 
@@ -287,7 +290,8 @@ measuring the right regime. Rules:
   regimes clearly show no win, stop — don't wait for the remaining cells.
 
 ## Cross-references
-- `docs/dense-cell-subindex-design.md` — punch-1 detail (structure options, hooks, integration)
-- `docs/optimization-ideas.md` — occupancy re-calibration, expand_r2 assessment, sub-index ledger entry
+- `docs/dense-cell-subindex-design.md` — punch-1 design summary
+- `docs/punch1-center-cell-integration.md` — implemented center-cell band prune
+- `docs/optimization-ideas.md` — compact performance ledger, occupancy re-calibration, rejected idea index
 - `docs/perf-profiling-plan.md` — the measurement queue (where items 1/4/7 land)
 - `docs/perf-testing-timeline.md` — per-commit classification

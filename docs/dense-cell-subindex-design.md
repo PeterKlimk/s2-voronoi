@@ -1,10 +1,14 @@
 # Dense-cell sub-index ("punch 1") — design note
 
-Status (2026-06-14): **designed, not built.** Deferred until extreme local
-density is a real workload. This is the local half of the "1-2 punch" for
-non-uniform inputs; the global half (the occupancy-feedback rebuild) shipped
-re-calibrated on 2026-06-14 (see docs/optimization-ideas.md, "Occupancy
-rebuild re-calibration"). The two are **synergistic, not alternatives**.
+Status (2026-06-18): **axis-sort center-cell band prune implemented**. This
+document is now the compact design background; the implementation ledger is
+`docs/punch1-center-cell-integration.md`.
+
+Punch 1 is the local half of the "1-2 punch" for non-uniform inputs. The global
+half is the occupancy-feedback rebuild (see `docs/optimization-ideas.md`,
+"Occupancy Rebuild Re-Calibration"). The two are **synergistic, not
+alternatives**: rebuild handles majority-density; the dense side index handles
+residual over-full cells after rebuild.
 
 ## Problem
 
@@ -15,8 +19,9 @@ SIMD scan of each cell's full point range (`packed_knn`). A cell holding
 ring expansion that includes every neighbor cell's queries, not just the
 `occ` homed in it. So a giant cell costs **O(occ²) regionally**, and the flat
 grid has no intra-cell structure to prune it. At extreme concentration this
-goes from slow to infeasible (measured: 80% of points in one cap never
-finishes a 300k build).
+goes from slow to infeasible. The implemented Punch 1 path targets the worst
+center-cell gather first, where cap-like inputs previously spent almost all
+time.
 
 ### Why this is distinct from the rebuild
 
@@ -28,13 +33,15 @@ hotspot — a global re-grid de-tunes the whole grid's mean density (measured
 fully tame the densest cells (mega at 1M leaves residual over-full cells).
 
 The sub-index fixes the **residual / local** problem the rebuild can't:
-- minority hotspots the rebuild now correctly skips,
-- the residual over-full cells a memory-capped global resolution leaves,
+- residual over-full cells a memory-capped global resolution leaves,
+- cap-like post-rebuild cells where the packed center pass would scan/select
+  O(occ²),
 - without de-tuning the background (the flat grid stays as-is everywhere else).
 
-Rebuild alone fails those; sub-index alone would wastefully refine most cells
-on a majority-dense input where one cheap global re-grid is better. They
-compose on different axes.
+Production currently clears the dense index when no rebuild fired. That keeps
+minority hotspots/moderate clusters on the baseline path, because the
+axis-sort band was measured as overhead for fast-closing clustered/outlier
+cases.
 
 ## Hard requirement: a costless fast path
 
@@ -42,14 +49,14 @@ Large cells are rare, so the machinery must be a **predictably-not-taken
 branch** that is effectively free when no cell is dense (the overwhelming
 common case).
 
-This needs **no new per-cell data structure**. Both scan paths already have
-the cell's occupancy as a live value (`end - start` from `cell_offsets` —
-`shells.rs::scan_cell`, `packed_knn/mod.rs`). The guard is two lines:
+This needs no hot per-cell flag. Scan paths already have the cell's occupancy
+as a live value (`end - start` from `cell_offsets`), and the side map is only
+consulted when the dense branch is taken:
 
 ```rust
 let occ = end - start;
 if occ > DENSE_CELL_THRESHOLD {   // rare → branch predicted not-taken
-    // consult this cell's sub-index (best-first stream; see below)
+    // consult this cell's side index
 } else {
     // the existing linear / SIMD scan, verbatim
 }
@@ -60,9 +67,9 @@ if occ > DENSE_CELL_THRESHOLD {   // rare → branch predicted not-taken
   disappears into speculation. No flags array, no extra cache line.
 - A side map (`dense_cell_id → sub-index`) is consulted **only** when the
   branch is taken. Normal cells never touch it.
-- Sub-indexes are **built only for over-threshold cells at grid
-  construction**, so a uniform input builds zero of them and the side map is
-  empty. Cost scales strictly with the (rare) problem.
+- Sub-indexes are **built only for over-threshold cells at grid construction**,
+  so a uniform input builds zero of them and the side map is empty. Production
+  additionally drops the side index unless the occupancy rebuild fired.
 
 `DENSE_CELL_THRESHOLD` is a *per-cell* "linear-scan vs sub-index crossover"
 (the `occ` where O(occ) scanning loses to the structure's lookup/traversal
@@ -100,26 +107,24 @@ Two constraints discovered while scoping, which revise the options below:
    lazy-stream) lands. That integration is the load-bearing work, not the
    structure.
 
-### Structure options (a spectrum; mostly orthogonal to the integration below)
+### Structure options
 
-Three candidates were considered, ordered by pruning power and invasiveness.
-The choice is largely independent of the producer/consumer integration below —
-all three answer "dense points near q"; they differ in how hard they prune and
-how much they disturb the flat SoA layout.
+Three candidates were considered. The first one was implemented.
 
-**1. Intra-cell axis-sort** *(least invasive — the cheapest viable form).*
-At build time, permute an over-full cell's points *within their existing SoA
-range* along the cell's dominant spread axis. The scan then binary-searches
-the axis band `[q−r, q+r]` and only touches that slab.
-- Pros: **no side structure at all** (just a permutation of the existing
-  arrays); **preserves SoA contiguity so the 8-wide SIMD scan still works** on
-  the slab; trivial, cheap build (sort only the rare dense cells).
+**1. Side axis-sort** *(implemented).*
+At build time, store each over-full cell's slot ids sorted by dominant spread
+axis. The query binary-searches the axis band `[q-r, q+r]` and only touches
+that slab.
+- Pros: leaves the main SoA and slot order untouched; cheap to build; the band
+  is a superset of every point within radius `r`, so it supports a conservative
+  completeness bound.
 - Cons: **prunes one axis only** — points inside the slab but far on the other
   two axes are still scanned, so it's a slab not a ball. A partial win: good
   for moderately dense cells, weakening as concentration grows (the slab holds
   ~occ^{2/3} points for an isotropic cluster).
-- When: try this first; if it's "good enough" for the realistic residual
-  cells it avoids all the side-structure machinery.
+- Status: implemented for the packed center-cell pass. It is enough to remove
+  the measured cap center-gather cliff; see
+  `docs/punch1-center-cell-integration.md`.
 
 **2. Per-cell mini-grid** *(fuller pruning, side storage).*
 Give an over-full cell its own small bucket grid (2D in the cell's tangent
@@ -139,29 +144,27 @@ plane, or 3D).
 - Cons: most machinery (per-cell tree build + scalar best-first traversal);
   heaviest of the three.
 
-Recommendation: start with **axis-sort** (cheapest, SIMD-kept) and measure;
-escalate to the **kd-tree** for the extreme post-rebuild capped cells if the
-slab pruning proves insufficient. The mini-grid is the middle point if the
-kd-tree's per-query traversal overhead turns out to dominate.
+Recommendation after implementation: keep the side axis-sort as the baseline.
+Escalate to the kd-tree only if real dense workloads remain dominated by
+within-cell candidate gathering rather than by certificate depth / shell
+takeover.
 
-## The real work: producer/consumer integration
+## Producer/consumer integration
 
-The hard part is not the structure or the fast-path branch — it is that
-`scan_cell` is a **"dump ALL candidates" producer**, while the pruning radius
-/ k-th-best lives in the **consumer** (packed_knn's chunked early-termination
-plus the ring `pending_bound`). A sub-index must bridge that one of two ways:
+The hard part was not the structure or the fast-path branch. It was that the
+candidate producer wants to dump all candidates, while the pruning radius /
+k-th-best lives in the consumer. The implemented center-cell path bridges this
+with a radius-bounded band:
 
-- **(A) Range query** — plumb the consumer's current radius down so the scan
-  asks the structure for "dense points within R of q." Correct, but threads a
-  radius through the producer.
-- **(B) Lazy distance-ordered stream** *(recommended)* — the dense cell
-  yields its points in increasing distance to q; the consumer's existing
-  early-termination pulls until its certificate closes. A kd-tree's
-  best-first traversal *is* this stream, so the structure and integration
-  align.
+- Pick `r` from cell extent and `DENSE_BAND_TARGET_COUNT`.
+- Gather a side-axis band widened slightly for fp error.
+- Keep points above `band_bound = 1 - r²/2`.
+- Report completeness only down to `band_bound`; the existing shell takeover
+  remains the backstop below it.
 
-There are **two scan paths** to intercept: the directed `shells.rs::scan_cell`
-and `packed_knn`'s own center-cell range read. Both need the guard.
+This is intentionally narrower than the original all-scan-path plan: the
+packed center-cell read was the measured O(occ²) cliff. A kd-tree/lazy stream
+for shell cells remains a possible later escalation, not current baseline.
 
 ## Correctness traps (must design around)
 
@@ -182,46 +185,31 @@ and `packed_knn`'s own center-cell range read. Both need the guard.
 
 ## Shape, end to end
 
-1. At grid build: for each cell with `occ > DENSE_CELL_THRESHOLD` (rare),
-   build a 3D kd-tree over its points; store in a side map. Uniform input
-   builds none.
-2. In both scan paths: `if occ > DENSE_CELL_THRESHOLD` → best-first stream
-   from the cell's kd-tree, bounded by the ring certificate and filtered by
-   eligibility; else the existing scan, verbatim.
-3. Fast path cost: one predicted-not-taken compare. Dense path cost: O(log
-   occ)-ish per query instead of O(occ), paid only by the rare dense cells.
+1. At grid build: for each cell with `occ > DENSE_CELL_THRESHOLD`, build a side
+   axis-sort index over that cell's SoA slots. Uniform input builds none.
+2. During production grid setup: clear the dense index unless the
+   occupancy-feedback rebuild fired.
+3. In packed center-cell prep: if a dense radius exists, gather a conservative
+   band, emit it as chunk0, set the center completeness bound to `band_bound`,
+   and let shell takeover cover anything below.
+4. Fast path cost: no dense index and no side lookup on normal grids. Dense
+   path cost: band-size work instead of full center-cell gather/select.
 
-## Implementation plan (ordered) — branches `agent/punch1-*`
+## Implementation State
 
-The 2026-06-14 scoping finding reshapes the build: the **producer/consumer
-integration is shared and is ~all the work**; the structure (axis-sort vs
-kd-tree) is a thin plug-in *after* it. So build integration-first on a base
-branch, then fork cheap structure variants — not two parallel full builds.
+- `src/cube_grid/dense.rs`: side axis-sort index and band query.
+- `src/cube_grid/packed_knn/scratch/prepare.rs`: dense center-cell band mode,
+  `center_bound`, and shell-takeover backstop.
+- `src/knn_clipping/compute.rs`: production gate that clears the dense index
+  when no rebuild fired.
+- `src/cube_grid/tests/nn_contract.rs`: dense-cell certificate contract
+  coverage.
 
-1. **Marker** (trivial): `DENSE_CELL_THRESHOLD` (policy.rs, done) + detect
-   dense cells at grid build into a side list. Behavior-preserving.
-2. **Sub-index trait + side map** (variant-agnostic): `trait CellSubIndex`
-   with a best-first / radius-bounded query; `Option<side map>` on the grid,
-   built only for dense cells. Side structures only (never permute SoA).
-3. **The integration** (the real work, shared): give the directed query a way
-   to prune a dense cell's scan. Decide radius-plumb vs lazy-stream — lazy
-   best-first stream is preferred (fits the consumer's nearest-first +
-   `pending_bound` early termination). Intercept BOTH `shells.rs::scan_cell`
-   and `packed_knn`'s center-cell read. Honor the directed-eligibility filter.
-4. **Certificate re-validation**: the NN-contract suite must pass on the dense
-   path; the query must return everything within `pending_bound` (no fixed-K
-   truncation).
-5. **Structure variants** (cheap, post-integration): axis-sort side index
-   (sorted slot list by dominant axis, band query) on `agent/punch1-axissort`;
-   3D kd-tree (best-first) on `agent/punch1-kdtree` off the same base.
-6. **Measure** (quiet box): `bench_build.sh` over main + both branches;
-   `bench_run.sh -d "uniform splittable mega"`; A/B vs baseline and each other.
+## Open Questions
 
-## Open questions for implementation
-
-- Exact `DENSE_CELL_THRESHOLD` (crossover where kd-tree query beats linear
-  SIMD scan) — measure on a quiet box.
-- Integration model (A vs B) and whether the packed_knn chunked consumer can
-  pull from a lazy stream without a large refactor.
-- Whether the axis-sort (in-place, SIMD-preserving) is "good enough" for the
-  realistic residual cells, deferring the kd-tree.
+- `DENSE_CELL_THRESHOLD` and `DENSE_BAND_TARGET_COUNT` still deserve quiet-box
+  calibration.
+- Whether shell-cell dense indexing is ever needed now that the center-cell
+  cliff is gone.
+- Whether a 3D kd-tree/lazy stream beats side axis-sort on real dense inputs,
+  or whether remaining cost is mostly certificate depth.
