@@ -6,7 +6,7 @@
 a quiet run. The queue below is now just a record of what's been measured / is
 pending, not a wait-list.
 
-Companion: `docs/perf-testing-timeline.md` has the detailed per-commit
+Companion: `docs/perf-testing-timeline.md` archives the initial per-commit
 classification; `docs/multi-regime-perf.md` is the organizing frame.
 
 ## Strategy
@@ -83,7 +83,7 @@ When a perf-relevant commit lands, add a row above (new-this-session table or a
 fresh dated section). **Perf-relevant** = touches release hot-path code. **Skip**
 (do not queue): docs, tests/scripts, `#[cfg(debug_assertions)]`-only, opt-in
 (off-by-default) paths, and codegen-identical refactors (clippy collapses etc.) —
-see the skip list in `docs/perf-testing-timeline.md`. Template:
+see the archived skip-list rules in `docs/perf-testing-timeline.md`. Template:
 
 ```
 | `<hash>` | <what changed> | <sizes/dists/metric> | <expectation> | pending |

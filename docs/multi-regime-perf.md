@@ -294,4 +294,4 @@ measuring the right regime. Rules:
 - `docs/punch1-center-cell-integration.md` — implemented center-cell band prune
 - `docs/optimization-ideas.md` — compact performance ledger, occupancy re-calibration, rejected idea index
 - `docs/perf-profiling-plan.md` — the measurement queue (where items 1/4/7 land)
-- `docs/perf-testing-timeline.md` — per-commit classification
+- `docs/perf-testing-timeline.md` — archived initial per-commit classification

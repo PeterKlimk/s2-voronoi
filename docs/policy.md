@@ -11,14 +11,12 @@ construction, and reconciliation.
 The current policy layer covers:
 
 - packed neighbor chunk sizing
-- packed `r=2` expansion enablement
 - termination check cadence
 - packed count-model constants used to tighten packed thresholds
-- cold-path caps for packed `r=2` expansion
 
-It does not currently choose a dynamic `r=2` activation heuristic. Expansion is still a simple
-policy flag: enabled by default, then triggered whenever packed `r=1` is exhausted without proving
-termination.
+It no longer owns packed `r=2` expansion. That stage was measured and removed
+from the live neighbor-source policy; see `docs/plan.md` for the archived design
+and `docs/optimization-ideas.md` for the rejection note.
 
 ## Current decisions
 
@@ -39,25 +37,9 @@ constants now live in `src/policy.rs`:
 - `PACKED_HI_BUDGET`
 - `PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER`
 - `PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER`
-- `PACKED_MAX_EXPAND_R2_CANDIDATES_PER_QUERY`
 
-Those constants affect threshold tightening and cold-path `r=2` expansion caps. They should be
-treated as policy, not as local implementation detail.
-
-### Expansion activation
-
-The crate's current default is:
-
-- `packed_knn_expand_r2 = true`
-
-The runtime behavior is:
-
-- do packed `r=1`
-- if packed `r=1` is exhausted without proving termination, try packed `r=2`
-- if packed `r=2` is exhausted or skipped by cap, fall back to directed cursor
-
-Future smart activation heuristics should stay in the neighbor-source / policy layer. They should
-not be added back into `process_cell`.
+Those constants affect packed threshold tightening. They should be treated as
+policy, not as local implementation detail.
 
 ### Termination cadence
 
@@ -79,26 +61,21 @@ Useful commands:
 cargo test --release --lib
 cargo test --release --test api --test correctness
 S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 100k --no-preprocess
-S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 100k --no-preprocess --packed-expand-r2
 ./scripts/bench_build.sh --timing HEAD
-./scripts/bench_run.sh -s 100k -r 5 -c 1 -m total -- --packed-expand-r2
+./scripts/bench_run.sh -s 100k -r 5 -c 1 -m total
 ```
 
 Counters to watch:
 
 - `cells_used_knn`
 - `cells_packed_tail_used`
-- `cells_packed_expand_r2_used`
 - `packed_tail_builds`
-- `packed_expand_r2_builds`
-- `packed_expand_r2_cap_skips`
-- `packed_expand_r2_scan_ms`
-- `packed_expand_r2_select_ms`
+- `neighbors_total`
+- `neighbors_max`
 
 Interpretation rules:
 
 - Prefer structural counters over tiny wall-time deltas on noisy runs.
-- Compare knob-off and knob-on behavior on more than one distribution.
 - Treat changes to packed thresholds and activation heuristics as policy changes, not micro-edits.
 
 ## Change rules

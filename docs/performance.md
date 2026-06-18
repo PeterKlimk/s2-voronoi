@@ -63,22 +63,22 @@ structured CSV (`commit,size,dist,seed,metric,min/median/avg/max,spread`):
 Each cell runs the commits interleaved with rotating start order (the paired
 protocol). The scripts default to pinned + single-threaded runs. The box is
 noisy — per-binary code-layout offsets alone are ~1-2% at 500k ST, so treat
-sub-1% deltas as noise (see docs/micro-optimization-matrix.md). For *which*
-commits to A/B and what to skip, see docs/perf-testing-timeline.md.
+sub-1% deltas as noise (see docs/micro-optimization-matrix.md). For the current
+A/B workflow, see docs/perf-profiling-plan.md; the older per-commit timeline is
+archived in docs/perf-testing-timeline.md.
 
 ## Policy profiling
 
 When evaluating heuristic changes, do not rely only on total time. Prefer timing-enabled runs that
-also show how work moved between the packed stages and the shell-expansion takeover.
+also show how work moved between packed neighbor sourcing and the shell-expansion takeover.
 
 Useful commands:
 
 - `S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 100k --no-preprocess`
-- `S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 100k --no-preprocess --packed-expand-r2`
 - `S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_plane -- 500k`
   (the planar pipelines emit the same KV schema; add `--periodic` for the torus)
 - `./scripts/bench_build.sh --timing HEAD`
-- `./scripts/bench_run.sh -s 100k -r 5 -c 1 -m total -- --packed-expand-r2`
+- `./scripts/bench_run.sh -s 100k -r 5 -c 1 -m total`
 
 Counters to watch:
 
