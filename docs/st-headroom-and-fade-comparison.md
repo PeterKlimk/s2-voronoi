@@ -21,6 +21,8 @@ and is parked rather than "next to try."
   removes work.
 - Candidate-set locality exists, but previous-cell prefixes are not strong
   enough to skip packed selection or candidate production.
+- Packed-to-shell duplicate filtering can reuse already-paid attempted-slot
+  metadata, but the branch/stamp checks did not produce an instruction win.
 - Distance symmetry, as "known neighbor distance seeds an unseen bound", did
   not fire even under aggressive audits.
 - Directional shell/cap certificates have real value in dense rebuilt regimes
@@ -83,6 +85,7 @@ Reading:
 | `agent/frontier-prune-prototype` | `5e835da` | parked negative | Scalar shell-layer bound had zero skip hits in fib/splittable/mega 100k. |
 | `agent/directional-certificates` | `f51523a` | parked promising | Integrated directional shell skip into the frontier path. Measurement read roughly equal on fib and faster in mega; keep as default-off research/productization candidate. |
 | `agent/directional-cell-cap-gate-audit` | `3eaf1c4` | parked promising | Auto-gated shell-cell cap skip preserved fib/splittable and reduced mega 100k instructions by about 11.9%. |
+| `agent/packed-shell-resume` | `24fa58d` | parked near-neutral | Attempted-slot filtering suppresses packed-emitted seed-neighborhood duplicates before shell dot/sort work, but counter reads showed no instruction win; cycles sometimes improved in dense regimes, while fib fast path looked slightly worse. Needs a stronger trigger or cheaper duplicate test before retrying. |
 
 ## Key Measurements To Remember
 
@@ -118,6 +121,20 @@ Shell-cell cap auto gate, branch `3eaf1c4`, non-timing perf counters:
 | mega f=0.8 auto on | 7.246B | 3.026B |
 | mega f=0.8 auto disabled | 8.228B | 3.340B |
 
+Packed-shell attempted-slot duplicate filter, branch `24fa58d`, 100k ST
+no-preprocess, sequential `perf stat -r 5` against `main`:
+
+| distribution | branch instructions | main instructions | branch cycles | main cycles |
+|---|---:|---:|---:|---:|
+| fib | 897.481M | 896.691M | 477.799M | 462.939M |
+| splittable | 2.565B | 2.563B | 1.179B | 1.249B |
+| mega f=0.8 | 7.574B | 7.417B | 3.098B | 3.237B |
+
+Interpretation: the slot filter does reduce downstream work enough to improve
+cycles in dense takeover-heavy cases on this run, but it adds instructions and
+branches. Treat it as an implementation-cost warning, not a productization
+candidate.
+
 ## Do Not Retread Without New Evidence
 
 - More endpoint/anchored seed ordering tweaks. The signal is real, but the
@@ -127,6 +144,9 @@ Shell-cell cap auto gate, branch `3eaf1c4`, non-timing perf counters:
   same-bin earlier locals.
 - Previous-cell packed prefix reuse as a selection shortcut. Full-prefix hits
   are too rare.
+- Packed-to-shell attempted-slot duplicate filtering as a broad default. The
+  reuse signal exists, but the stamp check is not cheap enough; retry only with
+  a tighter activation trigger or a producer-side exact duplicate list.
 - Distance-symmetry bound seeding with incoming edgecheck neighbor dots.
 - Late known-batch directional support probes without a much cheaper trigger.
 - A fresh "directional certificate" branch from scratch. The frontier-path
