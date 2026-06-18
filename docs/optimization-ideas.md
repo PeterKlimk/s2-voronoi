@@ -119,9 +119,57 @@ planar workload.
 
 ### Angular-sweep clipper
 
-Still conceptually valid but demoted. Same-bin handoff already removes much of
-the duplicate fresh clipping it would optimize, and certificate/candidate work
-is a better target.
+Counter-probed on `codex/angular-sweep-clipping` (2026-06-18) with an opt-in
+timing audit. The audit used the existing 64-sector angular support envelope
+before each bounded stream clip, then compared against the real clip result.
+It is software counters only; wall time was intentionally ignored.
+
+| dist | neighbors | audited candidates | exact unchanged | support hits | support misses | false positives |
+|---|---:|---:|---:|---:|---:|---:|
+| fib | 819,121 | 381,139 | 203,530 | 176,608 | 26,922 | 0 |
+| uniform | 991,724 | 528,853 | 354,369 | 315,050 | 39,319 | 0 |
+| splittable | 1,571,515 | 1,076,591 | 902,641 | 847,575 | 55,066 | 0 |
+| mega 0.8 | 3,709,805 | 3,133,815 | 2,946,563 | 2,883,619 | 62,944 | 0 |
+
+Signal: the angular envelope can conservatively identify 21.6% / 31.8% /
+53.9% / 77.7% of all processed-neighbor clips as no-op in these regimes, and
+captures 86.8% / 88.9% / 93.9% / 97.9% of the exact unchanged clips. The
+opportunity is real, especially on dense inputs.
+
+Actual 64-sector skip, however, was rejected. `codex/angular-sweep-clipping`
+commit `a1236a3` turned support hits into real skips; same-binary `perf stat
+-r 3`, 100k ST, env off vs env on:
+
+| dist | skipped clips | instructions | cycles | branches | branch misses |
+|---|---:|---:|---:|---:|---:|
+| fib | 176,608 | +160.3% | +139.5% | +139.9% | +28.6% |
+| uniform | 315,050 | +121.8% | +89.4% | +106.5% | +20.3% |
+| splittable | 847,575 | +66.6% | +70.0% | +63.7% | +20.2% |
+| mega 0.8 | 2,883,619 | +33.9% | +43.9% | +26.6% | +24.4% |
+
+Verdict: reject the 64-sector support-cache implementation as a runtime skip.
+The skipped-clip signal is real, but the per-candidate support test (bisector
+projection, sectoring, and frequent support-cache rebuilds) overwhelms the
+savings even in the dense mega case.
+
+Follow-up cheap variant on `codex/cheap-angular-skip` commit `c2b2ef9`:
+`S2_VORONOI_RADIUS_SKIP=1` uses the existing polygon radius bound before
+entering the clipper, gated to cells with at least 4 accepted constraints.
+Same-binary `perf stat -r 5`, 100k ST, env off vs env on:
+
+| dist | radius tests | radius hits | instructions | cycles | branches |
+|---|---:|---:|---:|---:|---:|
+| fib | 373,110 | 48,637 | +0.07% | -0.96% | +0.60% |
+| uniform | 528,567 | 48,256 | +0.16% | +0.22% | +0.77% |
+| splittable | 1,076,941 | 139,692 | +0.08% | -4.64% | +0.82% |
+| mega 0.8 | 3,129,204 | 1,364,073 | -0.85% | +2.11% | +0.05% |
+
+Verdict: plausible but marginal, not a clear production win. This is far more
+competitive than the 64-sector support-cache skip because it has no rebuilds
+and reuses the cheap radius certificate, but the upside is only visible in the
+mega dense case and is still below 1% instructions. Keep it parked as an
+env-gated micro-probe unless a broader dense-regime gate can make the win
+decision-grade.
 
 ## Tried And Rejected
 

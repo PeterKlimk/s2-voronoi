@@ -96,6 +96,9 @@ Counters to watch:
 - `dir_support_candidate_tests`, `dir_support_hits`, `dir_support_saved`,
   `dir_support_false_positive_hits`: timing-only 64-sector support-envelope
   subset of the shadow probe.
+- Branch-only angular/radius skip probes are recorded in
+  `docs/optimization-ideas.md`; they are experiment results, not current
+  mainline runtime knobs.
 
 For the current policy surface and change rules, see `docs/policy.md`.
 
