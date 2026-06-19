@@ -275,13 +275,18 @@ impl Topo2DBuilder {
         }
     }
 
+    #[cold]
+    #[inline(never)]
+    fn reset_from_fallback(&mut self, generator_idx: usize, generator: Vec3) {
+        self.inner = BuilderImpl::Gnomonic(GnomonicBuilder::new(generator_idx, generator));
+    }
+
     #[cfg_attr(feature = "profiling", inline(never))]
     pub fn reset(&mut self, generator_idx: usize, generator: Vec3) {
-        match &mut self.inner {
-            BuilderImpl::Gnomonic(builder) => builder.reset(generator_idx, generator),
-            BuilderImpl::Fallback(_) => {
-                self.inner = BuilderImpl::Gnomonic(GnomonicBuilder::new(generator_idx, generator));
-            }
+        if let BuilderImpl::Gnomonic(builder) = &mut self.inner {
+            builder.reset(generator_idx, generator);
+        } else {
+            self.reset_from_fallback(generator_idx, generator);
         }
     }
 
