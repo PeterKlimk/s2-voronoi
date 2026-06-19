@@ -5,7 +5,7 @@
 //! approximate Voronoi fidelity or generic-position heuristics.
 
 use crate::SphericalVoronoi;
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::tolerances::{ANTIPODAL_DOT_EPS, VERTEX_ON_SPHERE_EPS};
 
@@ -235,6 +235,36 @@ struct EdgeStat {
     cells: Vec<usize>,
 }
 
+const INLINE_CELL_SIGNATURE_VERTS: usize = 8;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum CellSignature {
+    Inline {
+        len: u8,
+        vertices: [u32; INLINE_CELL_SIGNATURE_VERTS],
+    },
+    Heap(Vec<u32>),
+}
+
+fn cell_signature(vertices: &[u32]) -> Option<CellSignature> {
+    if vertices.is_empty() {
+        return None;
+    }
+    if vertices.len() <= INLINE_CELL_SIGNATURE_VERTS {
+        let mut out = [0u32; INLINE_CELL_SIGNATURE_VERTS];
+        out[..vertices.len()].copy_from_slice(vertices);
+        out[..vertices.len()].sort_unstable();
+        Some(CellSignature::Inline {
+            len: vertices.len() as u8,
+            vertices: out,
+        })
+    } else {
+        let mut out = vertices.to_vec();
+        out.sort_unstable();
+        Some(CellSignature::Heap(out))
+    }
+}
+
 #[derive(Debug, Clone)]
 struct DisjointSet {
     parent: Vec<usize>,
@@ -305,6 +335,15 @@ pub(crate) fn verify_sphere_if_enabled(
     if !verify_enabled() {
         return Ok(());
     }
+    match verify_sphere_fast(diagram) {
+        Ok(()) => return Ok(()),
+        Err(reason) => {
+            if matches!(std::env::var("S2_VORONOI_VERIFY_TRACE"), Ok(v) if v == "1") {
+                eprintln!("S2_VORONOI_VERIFY fast path fell back: {reason}");
+            }
+        }
+    }
+
     let report = validate_impl(diagram);
     if report.is_strictly_valid() {
         return Ok(());
@@ -315,6 +354,201 @@ pub(crate) fn verify_sphere_if_enabled(
         "S2_VORONOI_VERIFY: returned diagram failed strict validation: {}",
         issues.join("; ")
     )))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EdgeUse {
+    key: u64,
+    forward: bool,
+    cell: u32,
+}
+
+#[inline]
+fn edge_key(lo: u32, hi: u32) -> u64 {
+    ((lo as u64) << 32) | hi as u64
+}
+
+/// Fast success-path verifier for `S2_VORONOI_VERIFY`.
+///
+/// This checks the same strict sphere contract as [`validate_impl`], but does
+/// not build the detailed diagnostic report. On failure the caller reruns the
+/// full validator to produce the public error message.
+fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
+    let num_cells = diagram.num_cells();
+    let num_vertices = diagram.num_vertices();
+
+    let mut welded_twin_cells = 0usize;
+    let mut is_welded_twin = vec![false; num_cells];
+    for (i, twin_flag) in is_welded_twin.iter_mut().enumerate() {
+        let canonical = diagram.canonical_cell_index(i);
+        if canonical == i {
+            continue;
+        }
+        welded_twin_cells += 1;
+        *twin_flag = true;
+        let canonical_is_canonical =
+            canonical < num_cells && diagram.canonical_cell_index(canonical) == canonical;
+        if !canonical_is_canonical
+            || diagram.cell(i).vertex_indices != diagram.cell(canonical).vertex_indices
+        {
+            return Err("weld map");
+        }
+    }
+    let num_faces = num_cells - welded_twin_cells;
+
+    let estimated_directed_edges = diagram.cell_indices_raw().len();
+    let mut unique_cell_signatures: FxHashSet<CellSignature> =
+        FxHashSet::with_capacity_and_hasher(num_faces.max(1), Default::default());
+    let mut vertex_cell_count = vec![0u8; num_vertices];
+    let mut edge_uses = Vec::with_capacity(estimated_directed_edges);
+
+    for cell in diagram.iter_cells() {
+        if is_welded_twin[cell.generator_index] {
+            continue;
+        }
+        let len = cell.len();
+        let mut seen_stack = [0u32; 64];
+        let mut seen_stack_len = 0usize;
+        let mut seen_spill = if len > seen_stack.len() {
+            Vec::with_capacity(len)
+        } else {
+            Vec::new()
+        };
+        let use_spill = len > seen_stack.len();
+
+        for &vi in cell.vertex_indices {
+            if (vi as usize) >= num_vertices {
+                return Err("invalid vertex reference");
+            }
+
+            let is_duplicate = if use_spill {
+                if seen_spill.contains(&vi) {
+                    true
+                } else {
+                    seen_spill.push(vi);
+                    false
+                }
+            } else if seen_stack[..seen_stack_len].contains(&vi) {
+                true
+            } else {
+                seen_stack[seen_stack_len] = vi;
+                seen_stack_len += 1;
+                false
+            };
+
+            if is_duplicate {
+                return Err("duplicate vertex in cell");
+            }
+            let count = &mut vertex_cell_count[vi as usize];
+            *count = count.saturating_add(1);
+        }
+
+        let seen_valid_len = if use_spill {
+            seen_spill.len()
+        } else {
+            seen_stack_len
+        };
+        if seen_valid_len < 3 {
+            return Err("degenerate cell");
+        }
+
+        let signature = if use_spill {
+            cell_signature(&seen_spill)
+        } else {
+            cell_signature(&seen_stack[..seen_stack_len])
+        };
+        if let Some(signature) = signature {
+            if !unique_cell_signatures.insert(signature) {
+                return Err("duplicate cell");
+            }
+        }
+
+        for edge_idx in 0..len {
+            let a = cell.vertex_indices[edge_idx];
+            let b = cell.vertex_indices[(edge_idx + 1) % len];
+            if a == b {
+                return Err("self-loop edge");
+            }
+
+            let va = diagram.vertex(a as usize);
+            let vb = diagram.vertex(b as usize);
+            let dot = va.x * vb.x + va.y * vb.y + va.z * vb.z;
+            if dot <= -1.0 + ANTIPODAL_DOT_EPS {
+                return Err("antipodal edge");
+            }
+
+            let (lo, hi, forward) = if a < b { (a, b, true) } else { (b, a, false) };
+            edge_uses.push(EdgeUse {
+                key: edge_key(lo, hi),
+                forward,
+                cell: cell.generator_index as u32,
+            });
+        }
+    }
+
+    let mut used_vertices = 0usize;
+    for &count in &vertex_cell_count {
+        if count > 0 {
+            used_vertices += 1;
+            if count < 3 {
+                return Err("low-incidence vertex");
+            }
+        }
+    }
+
+    for v in diagram.vertices() {
+        let len_sq = v.x * v.x + v.y * v.y + v.z * v.z;
+        if (len_sq - 1.0).abs() > VERTEX_ON_SPHERE_EPS {
+            return Err("off-sphere vertex");
+        }
+    }
+
+    edge_uses.sort_unstable_by_key(|edge| edge.key);
+
+    let mut dsu = DisjointSet::new(num_cells);
+    let mut num_edges = 0usize;
+    let mut i = 0usize;
+    while i < edge_uses.len() {
+        num_edges += 1;
+        let first = edge_uses[i];
+        let mut j = i + 1;
+        while j < edge_uses.len() && edge_uses[j].key == first.key {
+            j += 1;
+        }
+
+        let group = &edge_uses[i..j];
+        if group.len() != 2 || group[0].forward == group[1].forward {
+            return Err("unpaired, overused, or misoriented edge");
+        }
+        if group[0].cell != group[1].cell {
+            dsu.union(group[0].cell as usize, group[1].cell as usize);
+        }
+        i = j;
+    }
+
+    let connected_components = if num_faces == 0 {
+        0
+    } else {
+        let mut roots: FxHashSet<usize> =
+            FxHashSet::with_capacity_and_hasher(num_faces, Default::default());
+        for (cell_idx, &is_twin) in is_welded_twin.iter().enumerate() {
+            if is_twin {
+                continue;
+            }
+            roots.insert(dsu.find(cell_idx));
+        }
+        roots.len()
+    };
+    if connected_components != 1 {
+        return Err("disconnected subdivision");
+    }
+
+    let euler_characteristic = used_vertices as i32 - num_edges as i32 + num_faces as i32;
+    if euler_characteristic != 2 {
+        return Err("bad euler characteristic");
+    }
+
+    Ok(())
 }
 
 /// Run the plane validator and map a strict-validity failure to an error
@@ -361,7 +595,11 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
     }
     let num_faces = num_cells - welded_twin_cells;
 
-    let mut unique_cell_signatures = HashSet::new();
+    let estimated_directed_edges = diagram.cell_indices_raw().len();
+    let estimated_undirected_edges = (estimated_directed_edges / 2).max(1);
+
+    let mut unique_cell_signatures: FxHashSet<CellSignature> =
+        FxHashSet::with_capacity_and_hasher(num_faces.max(1), Default::default());
     let mut duplicate_cells_count = 0usize;
     let mut vertex_cell_count: Vec<u32> = vec![0; num_vertices];
 
@@ -373,7 +611,8 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
     let mut self_loop_edges = 0usize;
     let mut antipodal_edges = 0usize;
 
-    let mut edges: HashMap<(u32, u32), EdgeStat> = HashMap::new();
+    let mut edges: FxHashMap<u64, EdgeStat> =
+        FxHashMap::with_capacity_and_hasher(estimated_undirected_edges, Default::default());
 
     for cell in diagram.iter_cells() {
         if is_welded_twin[cell.generator_index] {
@@ -382,7 +621,14 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
         let len = cell.len();
         total_cell_vertices += len;
 
-        let mut seen_valid = HashSet::new();
+        let mut seen_stack = [0u32; 64];
+        let mut seen_stack_len = 0usize;
+        let mut seen_spill = if len > seen_stack.len() {
+            Vec::with_capacity(len)
+        } else {
+            Vec::new()
+        };
+        let use_spill = len > seen_stack.len();
         let mut cell_has_duplicate_vertices = false;
         let mut cell_has_invalid_reference = false;
 
@@ -392,8 +638,26 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
                 cell_has_invalid_reference = true;
                 continue;
             }
-            if !seen_valid.insert(vi) {
+
+            let is_duplicate = if use_spill {
+                if seen_spill.contains(&vi) {
+                    true
+                } else {
+                    seen_spill.push(vi);
+                    false
+                }
+            } else if seen_stack[..seen_stack_len].contains(&vi) {
+                true
+            } else {
+                seen_stack[seen_stack_len] = vi;
+                seen_stack_len += 1;
+                false
+            };
+
+            if is_duplicate {
                 cell_has_duplicate_vertices = true;
+            } else {
+                vertex_cell_count[vi as usize] += 1;
             }
         }
 
@@ -403,19 +667,25 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
         if cell_has_invalid_reference {
             cells_with_invalid_references += 1;
         }
-        if seen_valid.len() < 3 {
+        let seen_valid_len = if use_spill {
+            seen_spill.len()
+        } else {
+            seen_stack_len
+        };
+        if seen_valid_len < 3 {
             degenerate_cells += 1;
         }
 
         // Canonical duplicate-cell signature over valid references only.
-        let mut signature: Vec<u32> = seen_valid.iter().copied().collect();
-        signature.sort_unstable();
-        if !signature.is_empty() && !unique_cell_signatures.insert(signature) {
-            duplicate_cells_count += 1;
-        }
-
-        for &vi in &seen_valid {
-            vertex_cell_count[vi as usize] += 1;
+        let signature = if use_spill {
+            cell_signature(&seen_spill)
+        } else {
+            cell_signature(&seen_stack[..seen_stack_len])
+        };
+        if let Some(signature) = signature {
+            if !unique_cell_signatures.insert(signature) {
+                duplicate_cells_count += 1;
+            }
         }
 
         if len < 2 {
@@ -443,7 +713,7 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
             }
 
             let (lo, hi, forward) = if a < b { (a, b, true) } else { (b, a, false) };
-            let stat = edges.entry((lo, hi)).or_default();
+            let stat = edges.entry(edge_key(lo, hi)).or_default();
             if forward {
                 stat.forward += 1;
             } else {
@@ -493,11 +763,11 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
             same_direction_edge_pairs += 1;
         }
 
-        let mut unique_cells_for_edge = stat.cells.clone();
-        unique_cells_for_edge.sort_unstable();
-        unique_cells_for_edge.dedup();
-        if let Some((&first, rest)) = unique_cells_for_edge.split_first() {
-            for &other in rest {
+        if let Some((&first, rest)) = stat.cells.split_first() {
+            for (offset, &other) in rest.iter().enumerate() {
+                if stat.cells[..=offset].contains(&other) {
+                    continue;
+                }
                 dsu.union(first, other);
             }
         }
@@ -506,7 +776,8 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
     let connected_components = if num_faces == 0 {
         0
     } else {
-        let mut roots = HashSet::with_capacity(num_faces);
+        let mut roots: FxHashSet<usize> =
+            FxHashSet::with_capacity_and_hasher(num_faces, Default::default());
         for (cell_idx, &is_twin) in is_welded_twin.iter().enumerate() {
             if is_twin {
                 continue;
