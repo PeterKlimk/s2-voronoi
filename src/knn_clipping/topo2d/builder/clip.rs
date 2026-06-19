@@ -1,7 +1,7 @@
 use super::projection::MIN_PROJECTION_COS;
 use super::{
     BuilderClipOutcome, BuilderImpl, BuilderStepOutcome, FallbackBuilder, GnomonicBuilder,
-    Topo2DBuilder,
+    SphericalPoly, SphericalPolyVertex, Topo2DBuilder,
 };
 use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck, EscalationCtx};
@@ -269,21 +269,169 @@ impl GnomonicBuilder {
 }
 
 impl FallbackBuilder {
+    /// Inside test for the incremental clip. Operates on the f32 polygon
+    /// vertices (~1e-7 noise at unit scale), so it uses the f32-noise-tolerant
+    /// `ON_PLANE_TOL` band rather than the much tighter `FALLBACK_PLANE_TOL`
+    /// (1e-9) that extraction's `satisfies_all_constraints` applies to *exact
+    /// f64* pair-intersection directions. A 1e-9 slack here wrongly clips
+    /// near-boundary f32 vertices and can collapse the polygon below 3 vertices
+    /// (UnboundedAfterExhaustion). (`hp_eps` is gnomonic-chart scaled —
+    /// meaningless against this chord-scale dot — and is retained only as output
+    /// metadata.)
+    fn classify_vertex(constraint: &super::FallbackConstraint, position: Vec3) -> bool {
+        let p = glam::DVec3::new(position.x as f64, position.y as f64, position.z as f64);
+        constraint.normal.dot(p) >= -Self::ON_PLANE_TOL
+    }
+
+    fn edge_intersection(
+        a: SphericalPolyVertex,
+        b: SphericalPolyVertex,
+        constraint: &super::FallbackConstraint,
+    ) -> Option<SphericalPolyVertex> {
+        let a64 = glam::DVec3::new(
+            a.position.x as f64,
+            a.position.y as f64,
+            a.position.z as f64,
+        );
+        let b64 = glam::DVec3::new(
+            b.position.x as f64,
+            b.position.y as f64,
+            b.position.z as f64,
+        );
+        let edge_normal = a64.cross(b64);
+        let edge_len2 = edge_normal.length_squared();
+        if !edge_len2.is_finite() || edge_len2 <= 1e-24 {
+            return None;
+        }
+
+        let cross = edge_normal.cross(constraint.normal);
+        let len2 = cross.length_squared();
+        if !len2.is_finite() || len2 <= 1e-24 {
+            return None;
+        }
+        let candidate = cross * len2.sqrt().recip();
+        let midpoint = (a64 + b64).normalize_or_zero();
+        let dir = if candidate.dot(midpoint) >= 0.0 {
+            candidate
+        } else {
+            -candidate
+        };
+        let dir32 = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32).normalize();
+        Some(SphericalPolyVertex { position: dir32 })
+    }
+
+    fn push_output_vertex(
+        vertices: &mut Vec<SphericalPolyVertex>,
+        edge_planes: &mut Vec<usize>,
+        vertex: SphericalPolyVertex,
+        outgoing_edge: usize,
+    ) {
+        if let Some(last) = vertices.last_mut() {
+            if last.position.dot(vertex.position) >= crate::tolerances::FALLBACK_DEDUP_DOT {
+                if let Some(last_edge) = edge_planes.last_mut() {
+                    *last_edge = outgoing_edge;
+                }
+                return;
+            }
+        }
+        vertices.push(vertex);
+        edge_planes.push(outgoing_edge);
+    }
+
+    pub(super) fn clip_poly_with_constraint(
+        poly: &SphericalPoly,
+        constraint: &super::FallbackConstraint,
+        clip_plane: usize,
+    ) -> SphericalPoly {
+        let n = poly.vertices.len();
+        if n < 3 {
+            return SphericalPoly::empty();
+        }
+
+        let mut out_vertices = Vec::with_capacity(n + 1);
+        let mut out_edges = Vec::with_capacity(n + 1);
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let a = poly.vertices[i];
+            let b = poly.vertices[j];
+            let edge_plane = poly.edge_planes[i];
+            let a_in = Self::classify_vertex(constraint, a.position);
+            let b_in = Self::classify_vertex(constraint, b.position);
+
+            match (a_in, b_in) {
+                (true, true) => {
+                    Self::push_output_vertex(&mut out_vertices, &mut out_edges, a, edge_plane);
+                }
+                (true, false) => {
+                    Self::push_output_vertex(&mut out_vertices, &mut out_edges, a, edge_plane);
+                    if let Some(x) = Self::edge_intersection(a, b, constraint) {
+                        Self::push_output_vertex(&mut out_vertices, &mut out_edges, x, clip_plane);
+                    }
+                }
+                (false, true) => {
+                    if let Some(x) = Self::edge_intersection(a, b, constraint) {
+                        Self::push_output_vertex(&mut out_vertices, &mut out_edges, x, edge_plane);
+                    }
+                }
+                (false, false) => {}
+            }
+        }
+
+        if out_vertices.len() >= 2
+            && out_vertices[0]
+                .position
+                .dot(out_vertices[out_vertices.len() - 1].position)
+                >= crate::tolerances::FALLBACK_DEDUP_DOT
+        {
+            out_vertices.pop();
+            out_edges.pop();
+        }
+
+        if out_vertices.len() < 3 {
+            return SphericalPoly::empty();
+        }
+        SphericalPoly {
+            vertices: out_vertices,
+            edge_planes: out_edges,
+        }
+    }
+
     fn push_constraint(
         &mut self,
         neighbor_idx: usize,
         neighbor_slot: u32,
         neighbor: Vec3,
         hp_eps: Option<f32>,
-    ) {
-        self.constraints
-            .push(super::FallbackConstraint::from_neighbor(
-                self.generator,
-                neighbor_idx,
-                neighbor_slot,
-                hp_eps,
-                neighbor,
-            ));
+    ) -> ClipResult {
+        let constraint = super::FallbackConstraint::from_neighbor(
+            self.generator,
+            neighbor_idx,
+            neighbor_slot,
+            hp_eps,
+            neighbor,
+        );
+        let plane_idx = self.constraints.len();
+        self.constraints.push(constraint);
+        let constraint = &self.constraints[plane_idx];
+        let clipped = Self::clip_poly_with_constraint(&self.poly, constraint, plane_idx);
+        if clipped.len() == self.poly.len()
+            && clipped.edge_planes == self.poly.edge_planes
+            && clipped
+                .vertices
+                .iter()
+                .zip(self.poly.vertices.iter())
+                .all(|(a, b)| a.position.dot(b.position) >= crate::tolerances::FALLBACK_DEDUP_DOT)
+        {
+            // The constraint cut nothing, so no edge references `plane_idx`;
+            // drop it so it does not inflate the O(constraints) extraction
+            // scans. Mirrors the gnomonic path, which never records an
+            // `Unchanged` clip as an accepted half-plane.
+            self.constraints.pop();
+            ClipResult::Unchanged
+        } else {
+            self.poly = clipped;
+            ClipResult::Changed
+        }
     }
 
     #[cfg(test)]
@@ -305,8 +453,7 @@ impl FallbackBuilder {
         neighbor_slot: u32,
         neighbor: Vec3,
     ) -> Result<ClipResult, CellFailure> {
-        self.push_constraint(neighbor_idx, neighbor_slot, neighbor, None);
-        Ok(ClipResult::Changed)
+        Ok(self.push_constraint(neighbor_idx, neighbor_slot, neighbor, None))
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]

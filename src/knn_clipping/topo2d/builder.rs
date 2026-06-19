@@ -4,7 +4,7 @@ mod projection;
 #[cfg(test)]
 mod tests;
 
-use super::types::{HalfPlane, PolyBuffer};
+use super::types::{HalfPlane, PolyBuffer, INVALID_PLANE_ID};
 use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::types::ClipResult;
 use glam::DVec3;
@@ -106,9 +106,21 @@ pub(crate) struct FallbackBuilder {
     pub(crate) generator_idx: usize,
     pub(crate) generator: DVec3,
     constraints: Vec<FallbackConstraint>,
+    poly: SphericalPoly,
     /// Which limit forced the fallback handoff; read by handoff tests.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) trigger: BuilderFallbackTrigger,
+}
+
+#[derive(Clone)]
+pub(crate) struct SphericalPoly {
+    vertices: Vec<SphericalPolyVertex>,
+    edge_planes: Vec<usize>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SphericalPolyVertex {
+    pub(crate) position: glam::Vec3,
 }
 
 #[derive(Debug, Clone)]
@@ -302,12 +314,30 @@ impl FallbackBuilder {
             })
             .collect();
 
-        Self {
+        let mut fallback = Self {
             generator_idx: builder.generator_idx,
             generator: builder.generator,
             constraints,
+            poly: SphericalPoly::from_gnomonic(builder),
             trigger,
+        };
+
+        if trigger == BuilderFallbackTrigger::PolygonVertexLimit {
+            if let Some((plane_idx, constraint)) = fallback
+                .constraints
+                .len()
+                .checked_sub(1)
+                .map(|idx| (idx, &fallback.constraints[idx]))
+            {
+                fallback.poly = FallbackBuilder::clip_poly_with_constraint(
+                    &fallback.poly,
+                    constraint,
+                    plane_idx,
+                );
+            }
         }
+
+        fallback
     }
 
     fn from_fallback(builder: &FallbackBuilder, trigger: BuilderFallbackTrigger) -> Self {
@@ -315,7 +345,83 @@ impl FallbackBuilder {
             generator_idx: builder.generator_idx,
             generator: builder.generator,
             constraints: builder.constraints.clone(),
+            poly: builder.poly.clone(),
             trigger,
         }
+    }
+}
+
+impl SphericalPoly {
+    fn empty() -> Self {
+        Self {
+            vertices: Vec::new(),
+            edge_planes: Vec::new(),
+        }
+    }
+
+    fn from_gnomonic(builder: &GnomonicBuilder) -> Self {
+        let poly = builder.current_poly();
+        if poly.len < 3 {
+            return Self::empty();
+        }
+
+        let mut out = Self {
+            vertices: Vec::with_capacity(poly.len),
+            edge_planes: Vec::with_capacity(poly.len),
+        };
+
+        for i in 0..poly.len {
+            let edge_plane = poly.edge_planes[i];
+            let u = poly.us[i];
+            let v = poly.vs[i];
+            let dir = DVec3::new(
+                crate::fp::fma_f64(
+                    u,
+                    builder.basis.t1.x,
+                    crate::fp::fma_f64(v, builder.basis.t2.x, builder.basis.g.x),
+                ),
+                crate::fp::fma_f64(
+                    u,
+                    builder.basis.t1.y,
+                    crate::fp::fma_f64(v, builder.basis.t2.y, builder.basis.g.y),
+                ),
+                crate::fp::fma_f64(
+                    u,
+                    builder.basis.t1.z,
+                    crate::fp::fma_f64(v, builder.basis.t2.z, builder.basis.g.z),
+                ),
+            );
+            let dir = glam::Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);
+            let len2 = dir.length_squared();
+            if !len2.is_finite() || len2 < crate::tolerances::EXTRACT_DEGENERATE_LEN2 {
+                return Self::empty();
+            }
+
+            out.vertices.push(SphericalPolyVertex {
+                position: dir * len2.sqrt().recip(),
+            });
+            // Bounding-box pseudo-edges (INVALID_PLANE_ID) are kept as an
+            // out-of-range sentinel so the incremental clip can still carry and
+            // eventually remove the box vertices as real bisectors arrive. Any
+            // sentinel that survives to extraction is caught there as an
+            // unbounded-cell failure rather than silently dropping a corner.
+            out.edge_planes.push(plane_id_to_fallback(edge_plane));
+        }
+
+        out
+    }
+
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.vertices.len()
+    }
+}
+
+#[inline]
+fn plane_id_to_fallback(plane: super::types::PlaneId) -> usize {
+    if plane == INVALID_PLANE_ID {
+        usize::MAX
+    } else {
+        plane as usize
     }
 }
