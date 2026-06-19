@@ -148,3 +148,241 @@ pub(crate) fn repair(
     }
     Ok(residual)
 }
+
+/// Deterministic local triangulation + spherical circumcenters.
+///
+/// The contested interior of a component is re-resolved from a single shared
+/// computation so every component cell agrees (consistency, not exactness — see
+/// the design doc). Bowyer–Watson over a shared gnomonic chart gives one
+/// deterministic triangulation; near-cocircular ties resolve to *a* consistent
+/// choice (acceptable because such vertices are geometrically ~ambiguous).
+mod delaunay {
+    // Tested primitives; wired into the resolver in the next step (interior
+    // re-resolution + re-stitch). Allow dead_code until then.
+    #![allow(dead_code)]
+    use glam::DVec3;
+
+    /// Shared gnomonic chart for a local generator set: project each unit
+    /// generator `p` to the tangent plane at the set centroid.
+    pub(super) struct Chart {
+        center: DVec3,
+        e1: DVec3,
+        e2: DVec3,
+    }
+
+    impl Chart {
+        pub(super) fn new(gens: &[DVec3]) -> Option<Self> {
+            let mut c = DVec3::ZERO;
+            for &g in gens {
+                c += g;
+            }
+            let len2 = c.length_squared();
+            if !len2.is_finite() || len2 <= 1e-18 {
+                return None;
+            }
+            let center = c / len2.sqrt();
+            // Any stable tangent basis at `center`.
+            let helper = if center.x.abs() < 0.9 {
+                DVec3::X
+            } else {
+                DVec3::Y
+            };
+            let e1 = (helper - center * helper.dot(center)).normalize();
+            let e2 = center.cross(e1);
+            Some(Self { center, e1, e2 })
+        }
+
+        /// Gnomonic projection; `None` if `p` is on/over the chart horizon.
+        pub(super) fn project(&self, p: DVec3) -> Option<[f64; 2]> {
+            let d = p.dot(self.center);
+            if d <= 1e-6 {
+                return None;
+            }
+            let s = p / d;
+            Some([s.dot(self.e1), s.dot(self.e2)])
+        }
+    }
+
+    #[inline]
+    fn orient2d(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
+        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    }
+
+    /// `> 0` when `d` lies strictly inside the circumcircle of CCW triangle
+    /// `(a,b,c)`. Orientation-independent (multiplies by the triangle's
+    /// orientation sign), so callers need not pre-order the triangle.
+    fn in_circle(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> f64 {
+        let adx = a[0] - d[0];
+        let ady = a[1] - d[1];
+        let bdx = b[0] - d[0];
+        let bdy = b[1] - d[1];
+        let cdx = c[0] - d[0];
+        let cdy = c[1] - d[1];
+        let ad = adx * adx + ady * ady;
+        let bd = bdx * bdx + bdy * bdy;
+        let cd = cdx * cdx + cdy * cdy;
+        let det = adx * (bdy * cd - bd * cdy) - ady * (bdx * cd - bd * cdx)
+            + ad * (bdx * cdy - bdy * cdx);
+        det * orient2d(a, b, c)
+    }
+
+    /// Bowyer–Watson triangulation of `pts` (indices into the returned tris are
+    /// indices into `pts`). Returns CCW-or-CW triangles covering the convex
+    /// hull. Deterministic; ties (cocircular) resolve via the strict `> tol`
+    /// test to a single consistent triangulation.
+    pub(super) fn triangulate(pts: &[[f64; 2]]) -> Vec<[usize; 3]> {
+        let n = pts.len();
+        if n < 3 {
+            return Vec::new();
+        }
+        // Super-triangle covering the bbox, vertices indexed n, n+1, n+2.
+        let (mut minx, mut miny, mut maxx, mut maxy) = (
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        );
+        for p in pts {
+            minx = minx.min(p[0]);
+            miny = miny.min(p[1]);
+            maxx = maxx.max(p[0]);
+            maxy = maxy.max(p[1]);
+        }
+        let dmax = (maxx - minx).max(maxy - miny).max(1e-12);
+        let midx = 0.5 * (minx + maxx);
+        let midy = 0.5 * (miny + maxy);
+        let st = [
+            [midx - 20.0 * dmax, midy - dmax],
+            [midx, midy + 20.0 * dmax],
+            [midx + 20.0 * dmax, midy - dmax],
+        ];
+        let coord = |i: usize| -> [f64; 2] {
+            if i < n {
+                pts[i]
+            } else {
+                st[i - n]
+            }
+        };
+        let tol = 1e-12 * dmax * dmax;
+
+        let mut tris: Vec<[usize; 3]> = vec![[n, n + 1, n + 2]];
+        for (i, &p) in pts.iter().enumerate() {
+            // Triangles whose circumcircle contains p are "bad".
+            let mut bad = Vec::new();
+            for (ti, t) in tris.iter().enumerate() {
+                if in_circle(coord(t[0]), coord(t[1]), coord(t[2]), p) > tol {
+                    bad.push(ti);
+                }
+            }
+            // Cavity boundary = edges appearing in exactly one bad triangle.
+            let mut edges: Vec<[usize; 2]> = Vec::new();
+            for &ti in &bad {
+                let t = tris[ti];
+                for e in [[t[0], t[1]], [t[1], t[2]], [t[2], t[0]]] {
+                    // Shared iff the reverse edge is also present among bad tris.
+                    if let Some(pos) = edges.iter().position(|x| {
+                        (x[0] == e[1] && x[1] == e[0]) || (x[0] == e[0] && x[1] == e[1])
+                    }) {
+                        edges.swap_remove(pos);
+                    } else {
+                        edges.push(e);
+                    }
+                }
+            }
+            // Remove bad triangles (descending index so swap_remove is safe).
+            bad.sort_unstable_by(|a, b| b.cmp(a));
+            for ti in bad {
+                tris.swap_remove(ti);
+            }
+            // Re-triangulate the cavity by connecting p to each boundary edge.
+            for e in edges {
+                tris.push([e[0], e[1], i]);
+            }
+        }
+        // Drop triangles touching a super-triangle vertex.
+        tris.retain(|t| t.iter().all(|&v| v < n));
+        tris
+    }
+
+    /// Unit direction equidistant (spherical) from three unit generators — the
+    /// Voronoi vertex of triangle `(a,b,c)`. `None` if degenerate.
+    pub(super) fn circumcenter(a: DVec3, b: DVec3, c: DVec3) -> Option<DVec3> {
+        let nrm = (a - b).cross(b - c);
+        let len2 = nrm.length_squared();
+        if !len2.is_finite() || len2 <= 1e-30 {
+            return None;
+        }
+        let dir = nrm / len2.sqrt();
+        Some(if dir.dot(a) >= 0.0 { dir } else { -dir })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn valid_triangulation(pts: &[[f64; 2]], tris: &[[usize; 3]]) -> bool {
+            // No triangle's circumcircle strictly contains another point
+            // (Delaunay), and every triangle is non-degenerate.
+            for t in tris {
+                if orient2d(pts[t[0]], pts[t[1]], pts[t[2]]).abs() < 1e-15 {
+                    return false;
+                }
+                for (j, &p) in pts.iter().enumerate() {
+                    if j == t[0] || j == t[1] || j == t[2] {
+                        continue;
+                    }
+                    if in_circle(pts[t[0]], pts[t[1]], pts[t[2]], p) > 1e-9 {
+                        return false;
+                    }
+                }
+            }
+            true
+        }
+
+        #[test]
+        fn triangulates_square_consistently() {
+            // 4 cocircular corners → 2 triangles, deterministic.
+            let pts = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+            let t1 = triangulate(&pts);
+            let t2 = triangulate(&pts);
+            assert_eq!(t1.len(), 2, "square → 2 triangles");
+            assert_eq!(t1, t2, "deterministic");
+            assert!(valid_triangulation(&pts, &t1));
+        }
+
+        #[test]
+        fn triangulates_pentagon_fan() {
+            let pts = [[0.0, 0.0], [1.0, 0.1], [0.6, 1.0], [-0.6, 0.9], [-1.0, 0.0]];
+            let tris = triangulate(&pts);
+            // Convex position, 5 points → 2n-2-h = 10-2-5 = 3 triangles.
+            assert_eq!(tris.len(), 3);
+            assert!(valid_triangulation(&pts, &tris));
+        }
+
+        #[test]
+        fn circumcenter_is_equidistant() {
+            let a = DVec3::new(0.0, 0.0, 1.0);
+            let b = DVec3::new(0.1, 0.0, 1.0).normalize();
+            let c = DVec3::new(0.0, 0.1, 1.0).normalize();
+            let p = circumcenter(a, b, c).unwrap();
+            let (da, db, dc) = (p.dot(a), p.dot(b), p.dot(c));
+            assert!(
+                (da - db).abs() < 1e-9 && (db - dc).abs() < 1e-9,
+                "equidistant"
+            );
+        }
+
+        #[test]
+        fn chart_projects_round_trip_order() {
+            let gens = [
+                DVec3::new(0.0, 0.0, 1.0),
+                DVec3::new(0.05, 0.0, 1.0).normalize(),
+                DVec3::new(0.0, 0.05, 1.0).normalize(),
+            ];
+            let chart = Chart::new(&gens).unwrap();
+            for g in gens {
+                assert!(chart.project(g).is_some());
+            }
+        }
+    }
+}
