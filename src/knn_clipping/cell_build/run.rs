@@ -8,6 +8,7 @@ use std::time::Duration;
 use crate::cube_grid::{
     DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream, PackedQuery,
 };
+use crate::knn_clipping::topo2d::types::MAX_POLY_VERTICES;
 use crate::knn_clipping::topo2d::{
     BuilderClipOutcome, BuilderFallbackRequest, BuilderFallbackTrigger, BuilderStepOutcome,
 };
@@ -84,7 +85,7 @@ impl CellBuildContext {
             builder: crate::knn_clipping::topo2d::Topo2DBuilder::new(0, Vec3::ZERO),
             scratch: grid.make_scratch(),
             packed_chunk: Vec::with_capacity(policy.scratch_chunk_capacity()),
-            output_buffer: CellOutputBuffer::default(),
+            output_buffer: CellOutputBuffer::with_capacity(MAX_POLY_VERTICES),
             attempted_neighbors: AttemptedNeighbors::new(grid.point_indices().len()),
             #[cfg(test)]
             force_fallback_after_neighbors_processed: None,

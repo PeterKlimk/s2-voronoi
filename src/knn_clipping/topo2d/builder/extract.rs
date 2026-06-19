@@ -36,10 +36,6 @@ impl GnomonicBuilder {
         }
 
         buffer.clear();
-        buffer.vertices.reserve(poly.len);
-        buffer.edge_neighbor_globals.reserve(poly.len);
-        buffer.edge_neighbor_slots.reserve(poly.len);
-        buffer.edge_neighbor_eps.reserve(poly.len);
 
         let gen_idx = self.generator_idx as u32;
         for i in 0..poly.len {
@@ -335,10 +331,6 @@ impl FallbackBuilder {
         }
 
         buffer.clear();
-        buffer.vertices.reserve(vertices.len());
-        buffer.edge_neighbor_globals.reserve(vertices.len());
-        buffer.edge_neighbor_slots.reserve(vertices.len());
-        buffer.edge_neighbor_eps.reserve(vertices.len());
 
         let gen_idx = self.generator_idx as u32;
         for (i, vertex) in vertices.iter().copied().enumerate() {

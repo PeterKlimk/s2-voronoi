@@ -48,6 +48,15 @@ pub struct CellOutputBuffer<P = Vec3> {
 }
 
 impl<P> CellOutputBuffer<P> {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            vertices: Vec::with_capacity(capacity),
+            edge_neighbor_globals: Vec::with_capacity(capacity),
+            edge_neighbor_slots: Vec::with_capacity(capacity),
+            edge_neighbor_eps: Vec::with_capacity(capacity),
+        }
+    }
+
     pub fn clear(&mut self) {
         self.vertices.clear();
         self.edge_neighbor_globals.clear();
