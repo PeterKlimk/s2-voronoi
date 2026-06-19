@@ -9,6 +9,7 @@
 //! Opt-in via `S2_RECLIP_REPAIR` while under development; the default path is
 //! unchanged (the loud `residual_error` still fires on any survivor).
 
+use crate::cube_grid::CubeMapGrid;
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::edge_reconcile::{self, VertexKeys};
 use crate::knn_clipping::union_find::SparseUnionFind;
@@ -143,16 +144,26 @@ fn jitter_unit(gen: u32, axis: u32) -> f64 {
 /// Order cell `g`'s vertices into a boundary cycle by *combinatorial* adjacency
 /// (two vertices are adjacent iff they share a neighbor of `g`), not by angle —
 /// angle-ordering is unstable for the near-coincident vertices of a degenerate
-/// corner and produces spurious adjacencies. `None` if the vertices do not form
-/// a single clean cycle (every neighbor must appear in exactly two of `g`'s
-/// vertices), which flags a malformed/incomplete cell.
-fn build_cycle(g: u32, verts: &[[u32; 3]]) -> Option<Vec<[u32; 3]>> {
+/// corner and produces spurious adjacencies. The cycle is wound consistently
+/// (CCW around `g`'s outward normal) so adjacent cells traverse a shared edge in
+/// opposite directions, as `validation::validate` requires. `None` if the
+/// vertices do not form a single clean cycle (every neighbor must appear in
+/// exactly two of `g`'s vertices) — a malformed/incomplete cell.
+///
+/// Deterministic: `verts` is pre-sorted (so index 0 is canonical) and a
+/// `BTreeMap` drives adjacency, so the result does not depend on hash ordering.
+fn build_cycle(
+    g: u32,
+    gpos: DVec3,
+    verts: &[[u32; 3]],
+    pos_of: impl Fn([u32; 3]) -> Option<DVec3>,
+) -> Option<Vec<[u32; 3]>> {
     let n = verts.len();
     if n < 3 {
         return None;
     }
     // neighbor -> indices of g's vertices containing it (must be exactly 2).
-    let mut by_nbr: HashMap<u32, Vec<usize>> = HashMap::new();
+    let mut by_nbr: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
     for (i, v) in verts.iter().enumerate() {
         for &x in v {
             if x != g {
@@ -179,7 +190,7 @@ fn build_cycle(g: u32, verts: &[[u32; 3]]) -> Option<Vec<[u32; 3]>> {
     if deg.iter().any(|&d| d != 2) {
         return None;
     }
-    // Walk the single cycle.
+    // Walk the single cycle from the canonical (index-0) vertex.
     let mut order = Vec::with_capacity(n);
     let (mut prev, mut cur) = (usize::MAX, 0usize);
     for _ in 0..n {
@@ -195,7 +206,18 @@ fn build_cycle(g: u32, verts: &[[u32; 3]]) -> Option<Vec<[u32; 3]>> {
     if cur != 0 || order.len() != n {
         return None; // multiple disjoint cycles -> not a simple polygon
     }
-    Some(order.into_iter().map(|i| verts[i]).collect())
+    let mut poly: Vec<[u32; 3]> = order.into_iter().map(|i| verts[i]).collect();
+    // Orient CCW around g's outward normal: signed area = Σ (Vi × Vi+1)·ĝ.
+    let mut signed = 0.0f64;
+    for w in 0..poly.len() {
+        let a = pos_of(poly[w])?;
+        let b = pos_of(poly[(w + 1) % poly.len()])?;
+        signed += a.cross(b).dot(gpos);
+    }
+    if signed < 0.0 {
+        poly[1..].reverse(); // keep the canonical start vertex fixed
+    }
+    Some(poly)
 }
 
 #[inline]
@@ -206,20 +228,24 @@ fn cell_span<'a>(cells: &[VoronoiCell], cell_indices: &'a [u32], g: u32) -> Opti
     cell_indices.get(start..end)
 }
 
-/// Per-cell re-resolved polygons (as ordered vertex keys) plus the positions of
-/// the new interior vertices.
+/// Per-cell re-resolved polygons (ordered vertex keys), the positions of the new
+/// interior vertices, and the pinned vid for each boundary key (recovered from
+/// the valid outside cells, so a contested cell's own dropped boundary edges are
+/// restored).
 struct Resolved {
     polys: Vec<(u32, Vec<[u32; 3]>)>,
     interior_pos: HashMap<[u32; 3], Vec3>,
+    boundary_pin: HashMap<[u32; 3], u32>,
 }
 
-/// Re-resolve one component into consistent per-cell key polygons by
-/// triangulating its local generator set in a single shared chart. `None` to
-/// bail (component is left as residual): horizon/degeneracy, or a non-triangle
-/// fan that would not be a clean cell.
+/// Re-resolve one component into consistent per-cell key polygons by finding
+/// the local Voronoi vertices (empty-circumcircle triples) and ordering each
+/// cell by shared-neighbor adjacency. `None` to bail (component left as
+/// residual): horizon/degeneracy, or a cell that does not form a clean cycle.
 fn resolve_component(
     comp: &Component,
     points: &[Vec3],
+    grid: &CubeMapGrid,
     cells: &[VoronoiCell],
     cell_indices: &[u32],
     vertex_keys: &ShardedVertexKeys,
@@ -239,18 +265,46 @@ fn resolve_component(
         (base + jit).normalize()
     };
 
-    // Filter set = every generator in a component cell's existing keys (G plus
-    // the 1-ring). An interior vertex must be closer to its three generators
-    // than to any of these.
+    // Filter set: the COMPLETE local neighborhood of every component generator,
+    // read from the spatial grid (its cell + the 3x3 + ring-2 cells). An interior
+    // vertex is real iff it is closer to its three generators than to any of
+    // these. The grid is in the same effective index space as `points`/keys, so
+    // its point ids are valid generator ids. Using the grid (not the existing
+    // cell keys) is essential: the keys come from the buggy fallback output that
+    // dropped neighbors, so a key-derived filter is incomplete and lets spurious
+    // triples pass.
     let mut filter: Vec<(u32, DVec3)> = Vec::new();
     let mut filter_seen: HashSet<u32> = HashSet::new();
+    let mut add_filter = |x: u32, filter: &mut Vec<(u32, DVec3)>| {
+        if (x as usize) < points.len() && filter_seen.insert(x) {
+            filter.push((x, gjit(x)));
+        }
+    };
+    for &g in &comp.cells {
+        let cell = grid.point_index_to_cell(g as usize);
+        for &nc in grid.cell_neighbors(cell).iter() {
+            for &pt in grid.cell_points(nc as usize) {
+                add_filter(pt, &mut filter);
+            }
+        }
+        for &nc in grid.cell_ring2(cell) {
+            for &pt in grid.cell_points(nc as usize) {
+                add_filter(pt, &mut filter);
+            }
+        }
+    }
+
+    // Each component cell's boundary vertices (keys touching an outside cell),
+    // taken from its own polygon and pinned to their existing vid so the shared
+    // edge to the unchanged outside cell stays paired.
+    let mut boundary_of: HashMap<u32, Vec<[u32; 3]>> = HashMap::new();
+    let mut boundary_pin: HashMap<[u32; 3], u32> = HashMap::new();
     for &g in &comp.cells {
         for &vid in cell_span(cells, cell_indices, g)? {
             if let Some(k) = vertex_keys.get(vid) {
-                for x in k {
-                    if filter_seen.insert(x) {
-                        filter.push((x, gjit(x)));
-                    }
+                if k.iter().any(|x| !gset.contains(x)) {
+                    boundary_pin.entry(k).or_insert(vid);
+                    boundary_of.entry(g).or_default().push(k);
                 }
             }
         }
@@ -298,26 +352,25 @@ fn resolve_component(
         );
     }
 
-    // Build each cell's polygon: existing boundary vertices (keys touching
-    // outside G — pinned) plus the incident interior vertices, ordered into a
-    // cycle by shared-neighbor adjacency (robust to the near-coincident vertices
-    // of a degenerate corner, where angle-ordering is unstable).
+    // Build each cell's polygon: recovered boundary vertices (pinned) plus the
+    // incident interior vertices, ordered into a consistently-wound cycle by
+    // shared-neighbor adjacency (robust to the near-coincident vertices of a
+    // degenerate corner, where angle-ordering is unstable).
     let mut polys: Vec<(u32, Vec<[u32; 3]>)> = Vec::with_capacity(comp.cells.len());
     for &g in &comp.cells {
         let mut verts: Vec<[u32; 3]> = Vec::new();
-        for &vid in cell_span(cells, cell_indices, g)? {
-            if let Some(k) = vertex_keys.get(vid) {
-                if k.iter().any(|x| !gset.contains(x)) {
-                    verts.push(k);
-                }
-            }
+        if let Some(keys) = boundary_of.get(&g) {
+            verts.extend_from_slice(keys);
         }
         if let Some(keys) = incident_interior.get(&g) {
             verts.extend_from_slice(keys);
         }
         verts.sort_unstable();
         verts.dedup();
-        let Some(poly) = build_cycle(g, &verts) else {
+        let gc = gjit(g);
+        let pos_of =
+            |key: [u32; 3]| delaunay::circumcenter(gjit(key[0]), gjit(key[1]), gjit(key[2]));
+        let Some(poly) = build_cycle(g, gc, &verts, pos_of) else {
             if trace() {
                 eprintln!(
                     "[reclip]     bail cell {g}: {} vertices do not form a clean cycle",
@@ -332,6 +385,7 @@ fn resolve_component(
     Some(Resolved {
         polys,
         interior_pos,
+        boundary_pin,
     })
 }
 
@@ -343,6 +397,7 @@ fn resolve_component(
 #[allow(clippy::too_many_arguments, clippy::ptr_arg)]
 pub(crate) fn repair(
     points: &[Vec3],
+    grid: &CubeMapGrid,
     vertices: &mut Vec<Vec3>,
     cells: &mut Vec<VoronoiCell>,
     cell_indices: &mut Vec<u32>,
@@ -356,21 +411,6 @@ pub(crate) fn repair(
             residual.len(),
             comps.len()
         );
-    }
-
-    // Existing key -> vid, for pinning boundary vertices (built from the current
-    // polygons of all component cells; boundary keys are already consistent).
-    let mut existing: HashMap<[u32; 3], u32> = HashMap::new();
-    for comp in &comps {
-        for &g in &comp.cells {
-            if let Some(span) = cell_span(cells, cell_indices, g) {
-                for &vid in span {
-                    if let Some(k) = vertex_keys.get(vid) {
-                        existing.entry(k).or_insert(vid);
-                    }
-                }
-            }
-        }
     }
 
     let orig_len = vertices.len() as u32;
@@ -395,7 +435,8 @@ pub(crate) fn repair(
             bail(&mut residual_out);
             continue;
         }
-        let Some(res) = resolve_component(comp, points, cells, cell_indices, vertex_keys) else {
+        let Some(res) = resolve_component(comp, points, grid, cells, cell_indices, vertex_keys)
+        else {
             if trace() {
                 eprintln!(
                     "[reclip]   bail: resolve_component failed ({} cells)",
@@ -406,17 +447,37 @@ pub(crate) fn repair(
             continue;
         };
 
-        // Validate: every boundary key (not interior) must already exist to pin.
+        // Validate: every poly key is either a recomputed interior vertex or a
+        // boundary key pinned from a valid outside cell. Also bound u32 index
+        // capacity before appending (assembly checked pre-repair, but Tier-2
+        // appends after).
+        let new_interior = res
+            .interior_pos
+            .keys()
+            .filter(|k| !interior_vid.contains_key(*k))
+            .count();
+        let total_poly: usize = res.polys.iter().map(|(_, p)| p.len()).sum();
+        if vertices.len() + new_interior > u32::MAX as usize
+            || cell_indices.len() + total_poly > u32::MAX as usize
+        {
+            return Err(crate::VoronoiError::ComputationFailed(
+                "re-clip repair exceeded u32 index capacity".into(),
+            ));
+        }
+        let mut unpinnable = false;
         for (_, poly) in &res.polys {
             for key in poly {
-                if !res.interior_pos.contains_key(key) && !existing.contains_key(key) {
+                if !res.interior_pos.contains_key(key) && !res.boundary_pin.contains_key(key) {
                     if trace() {
                         eprintln!("[reclip]   bail: unpinnable boundary key {key:?}");
                     }
-                    bail(&mut residual_out);
-                    continue 'comp;
+                    unpinnable = true;
                 }
             }
+        }
+        if unpinnable {
+            bail(&mut residual_out);
+            continue 'comp;
         }
 
         // Assign interior vids (append positions + overlay keys, deduped by key).
@@ -436,7 +497,7 @@ pub(crate) fn repair(
                 let vid = interior_vid
                     .get(key)
                     .copied()
-                    .or_else(|| existing.get(key).copied())
+                    .or_else(|| res.boundary_pin.get(key).copied())
                     .expect("validated above");
                 cell_indices.push(vid);
             }
@@ -471,7 +532,17 @@ pub(crate) fn repair(
             }
         }
     }
-    let mut edge_use: HashMap<(u32, u32), (u32, bool, [u32; 2])> = HashMap::new();
+    // Count DIRECTED edge uses per undirected pair: a valid interior edge is
+    // used once forward (lo->hi) and once reverse (hi->lo). `validation::validate`
+    // requires this opposite-orientation pairing, so counting undirected uses ==2
+    // would miss two cells emitting a shared edge in the SAME direction.
+    struct EdgeUse {
+        fwd: u32,
+        bwd: u32,
+        touched: bool,
+        owners: [u32; 2],
+    }
+    let mut edge_use: HashMap<(u32, u32), EdgeUse> = HashMap::new();
     for &c in &region {
         let is_touched = touched_set.contains(&c);
         let Some(span) = cell_span(cells, cell_indices, c) else {
@@ -482,35 +553,46 @@ pub(crate) fn repair(
             let a = span[i];
             let b = span[(i + 1) % n];
             let e = (a.min(b), a.max(b));
-            let slot = edge_use
-                .entry(e)
-                .or_insert((0, false, [u32::MAX, u32::MAX]));
-            if (slot.0 as usize) < 2 {
-                slot.2[slot.0 as usize] = c;
+            let slot = edge_use.entry(e).or_insert(EdgeUse {
+                fwd: 0,
+                bwd: 0,
+                touched: false,
+                owners: [u32::MAX, u32::MAX],
+            });
+            let uses = slot.fwd + slot.bwd;
+            if (uses as usize) < 2 {
+                slot.owners[uses as usize] = c;
             }
-            slot.0 += 1;
-            slot.1 |= is_touched;
+            if a < b {
+                slot.fwd += 1;
+            } else {
+                slot.bwd += 1;
+            }
+            slot.touched |= is_touched;
         }
     }
-    for (edge, (count, touched_owner, owners)) in edge_use {
-        // Only edges incident to a re-stitched cell are our concern; edges
-        // entirely among unchanged outside cells (touched_owner=false) pair as
-        // before. An in-scope edge must be used by exactly two cells.
-        if touched_owner && count != 2 {
+    for (edge, u) in edge_use {
+        // Edges entirely among unchanged outside cells pair as before; only edges
+        // incident to a re-stitched cell are our concern. They must be used once
+        // in each direction.
+        if u.touched && (u.fwd != 1 || u.bwd != 1) {
             if trace() {
                 eprintln!(
-                    "[reclip]   BADEDGE vids=({},{}) keys=({:?},{:?}) count={count} owners={owners:?}",
+                    "[reclip]   BADEDGE vids=({},{}) keys=({:?},{:?}) fwd={} bwd={} owners={:?}",
                     edge.0,
                     edge.1,
                     key_of(edge.0),
-                    key_of(edge.1)
+                    key_of(edge.1),
+                    u.fwd,
+                    u.bwd,
+                    u.owners
                 );
             }
-            let a = owners[0];
-            let b = if owners[1] == u32::MAX {
-                owners[0]
+            let a = u.owners[0];
+            let b = if u.owners[1] == u32::MAX {
+                u.owners[0]
             } else {
-                owners[1]
+                u.owners[1]
             };
             residual_out.push((a.min(b), a.max(b)));
         }

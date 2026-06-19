@@ -52,6 +52,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     } = assembled;
     let (eff_cells, eff_cell_indices, post_repair_unpaired) = reconcile_edges(
         effective_points_ref,
+        &grid,
         &mut vertices,
         &vertex_keys,
         &unresolved_edges,
@@ -138,6 +139,7 @@ fn compute_voronoi_knn_clipping_report_core(
     } = assembled;
     let (eff_cells, eff_cell_indices, post_repair_unpaired) = reconcile_edges(
         effective_points_ref,
+        &grid,
         &mut vertices,
         &vertex_keys,
         &unresolved_edges,
@@ -584,6 +586,7 @@ type ReconciledWithResiduals = (Vec<VoronoiCell>, Vec<u32>, Vec<(u32, u32)>);
 
 fn reconcile_edges(
     points: &[Vec3],
+    grid: &CubeMapGrid,
     vertices: &mut Vec<Vec3>,
     vertex_keys: &live_dedup::ShardedVertexKeys,
     unresolved_edges: &[live_dedup::UnresolvedEdgeMismatch],
@@ -614,6 +617,7 @@ fn reconcile_edges(
         if !post_repair_unpaired.is_empty() && super::reclip_repair::enabled() {
             super::reclip_repair::repair(
                 points,
+                grid,
                 vertices,
                 &mut cells,
                 &mut cell_indices,
