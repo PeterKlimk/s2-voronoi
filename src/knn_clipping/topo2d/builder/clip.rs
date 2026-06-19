@@ -268,6 +268,14 @@ impl GnomonicBuilder {
     }
 }
 
+/// Squared-distance threshold for merging coincident vertices *during* the
+/// incremental clip (~1e-6 rad, matching extraction's `push_fallback_vertex`).
+/// Deliberately far tighter than `FALLBACK_DEDUP_DOT` (~4.5e-3 rad): that coarse
+/// value is for the final output-vertex dedup over exact all-pairs points, but
+/// applying it per-clip collapses short *real* edges and overwrites the dropped
+/// edge's neighbor plane, silently losing a true neighbor of the cell.
+const CLIP_DEDUP_LEN2: f32 = 1e-12;
+
 impl FallbackBuilder {
     /// Inside test for the incremental clip. Operates on the f32 polygon
     /// vertices (~1e-7 noise at unit scale), so it uses the f32-noise-tolerant
@@ -327,7 +335,7 @@ impl FallbackBuilder {
         outgoing_edge: usize,
     ) {
         if let Some(last) = vertices.last_mut() {
-            if last.position.dot(vertex.position) >= crate::tolerances::FALLBACK_DEDUP_DOT {
+            if (last.position - vertex.position).length_squared() <= CLIP_DEDUP_LEN2 {
                 if let Some(last_edge) = edge_planes.last_mut() {
                     *last_edge = outgoing_edge;
                 }
@@ -378,10 +386,9 @@ impl FallbackBuilder {
         }
 
         if out_vertices.len() >= 2
-            && out_vertices[0]
-                .position
-                .dot(out_vertices[out_vertices.len() - 1].position)
-                >= crate::tolerances::FALLBACK_DEDUP_DOT
+            && (out_vertices[0].position - out_vertices[out_vertices.len() - 1].position)
+                .length_squared()
+                <= CLIP_DEDUP_LEN2
         {
             out_vertices.pop();
             out_edges.pop();
