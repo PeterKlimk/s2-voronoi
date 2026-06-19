@@ -13,8 +13,13 @@ use crate::diagram::VoronoiCell;
 use crate::knn_clipping::edge_reconcile::{self, VertexKeys};
 use crate::knn_clipping::union_find::SparseUnionFind;
 use crate::live_dedup::ShardedVertexKeys;
-use glam::Vec3;
-use std::collections::BTreeMap;
+use glam::{DVec3, Vec3};
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+/// Cap on a single component's cell count; larger contested regions fail loud
+/// (returned as residual) rather than risk an unbounded re-clip. The de-risking
+/// measurement put the largest real component at ~50 generators.
+const MAX_COMPONENT_CELLS: usize = 512;
 
 /// Whether the Tier-2 re-clip pass is enabled (off by default).
 pub(crate) fn enabled() -> bool {
@@ -113,18 +118,187 @@ fn identify_components(
     Ok(comps)
 }
 
+#[inline]
+fn key3(a: u32, b: u32, c: u32) -> [u32; 3] {
+    let mut k = [a, b, c];
+    k.sort_unstable();
+    k
+}
+
+/// The single generator shared by two vertex keys other than `g` — the
+/// neighbor across the edge between them. `None` if they share != 1 such.
+fn shared_other(ki: [u32; 3], kj: [u32; 3], g: u32) -> Option<u32> {
+    let mut found = None;
+    for &x in &ki {
+        if x != g && kj.contains(&x) {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(x);
+        }
+    }
+    found
+}
+
+#[inline]
+fn cell_span<'a>(cells: &[VoronoiCell], cell_indices: &'a [u32], g: u32) -> Option<&'a [u32]> {
+    let c = cells.get(g as usize)?;
+    let start = c.vertex_start();
+    let end = start + c.vertex_count();
+    cell_indices.get(start..end)
+}
+
+/// Per-cell re-resolved polygons (as ordered vertex keys) plus the positions of
+/// the new interior vertices.
+struct Resolved {
+    polys: Vec<(u32, Vec<[u32; 3]>)>,
+    interior_pos: HashMap<[u32; 3], Vec3>,
+}
+
+/// Re-resolve one component into consistent per-cell key polygons by
+/// triangulating its local generator set in a single shared chart. `None` to
+/// bail (component is left as residual): horizon/degeneracy, or a non-triangle
+/// fan that would not be a clean cell.
+fn resolve_component(
+    comp: &Component,
+    points: &[Vec3],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &ShardedVertexKeys,
+) -> Option<Resolved> {
+    let gpos = |g: u32| {
+        let p = points[g as usize];
+        DVec3::new(p.x as f64, p.y as f64, p.z as f64)
+    };
+    let gset: HashSet<u32> = comp.cells.iter().copied().collect();
+
+    // Chart anchored at the component centroid (component cells are a tight
+    // cluster). Built from G only, so a far sparse 1-ring neighbor can't tilt it.
+    let g_positions: Vec<DVec3> = comp.cells.iter().map(|&g| gpos(g)).collect();
+    let chart = delaunay::Chart::new(&g_positions)?;
+
+    // Triangulation generator set = G plus the *projectable* 1-ring (every
+    // generator in a component cell's existing keys). Far neighbors that miss
+    // the chart horizon are dropped: they cannot lie inside a tight interior
+    // circumcircle, so they never bound an interior vertex.
+    let mut tri_gens: Vec<u32> = Vec::new();
+    let mut tri_proj: Vec<[f64; 2]> = Vec::new();
+    let mut seen: HashSet<u32> = HashSet::new();
+    let mut add = |g: u32, tri_gens: &mut Vec<u32>, tri_proj: &mut Vec<[f64; 2]>| {
+        if seen.insert(g) {
+            if let Some(xy) = chart.project(gpos(g)) {
+                tri_gens.push(g);
+                tri_proj.push(xy);
+            }
+        }
+    };
+    for &g in &comp.cells {
+        add(g, &mut tri_gens, &mut tri_proj);
+    }
+    for &g in &comp.cells {
+        for &vid in cell_span(cells, cell_indices, g)? {
+            if let Some(k) = vertex_keys.get(vid) {
+                for x in k {
+                    add(x, &mut tri_gens, &mut tri_proj);
+                }
+            }
+        }
+    }
+    let tris = delaunay::triangulate(&tri_proj);
+    if tris.is_empty() {
+        return None;
+    }
+
+    // Interior Voronoi vertices: circumcenters of all-G Delaunay triangles
+    // (the empty-circle test already accounts for the projectable 1-ring).
+    // Map each component generator to the interior vertices incident to it.
+    let mut interior_pos: HashMap<[u32; 3], Vec3> = HashMap::new();
+    let mut incident_interior: HashMap<u32, Vec<[u32; 3]>> = HashMap::new();
+    for t in &tris {
+        let g3 = [tri_gens[t[0]], tri_gens[t[1]], tri_gens[t[2]]];
+        if !g3.iter().all(|g| gset.contains(g)) {
+            continue;
+        }
+        let key = key3(g3[0], g3[1], g3[2]);
+        let Some(cc) = delaunay::circumcenter(gpos(g3[0]), gpos(g3[1]), gpos(g3[2])) else {
+            if trace() {
+                eprintln!("[reclip]     bail: interior circumcenter degenerate {key:?}");
+            }
+            return None;
+        };
+        interior_pos.insert(key, Vec3::new(cc.x as f32, cc.y as f32, cc.z as f32));
+        for &g in &g3 {
+            incident_interior.entry(g).or_default().push(key);
+        }
+    }
+
+    // Build each component cell's polygon: existing boundary vertices (keys with
+    // a non-G generator — pinned) merged with the recomputed interior vertices,
+    // ordered by angle around the generator in the shared chart.
+    let mut polys: Vec<(u32, Vec<[u32; 3]>)> = Vec::with_capacity(comp.cells.len());
+    for &g in &comp.cells {
+        let g_xy = chart.ortho(gpos(g));
+        // angle of a vertex key around g, from its triple's circumcenter.
+        let angle_of = |key: [u32; 3]| -> Option<f64> {
+            let cc = delaunay::circumcenter(gpos(key[0]), gpos(key[1]), gpos(key[2]))?;
+            let xy = chart.ortho(cc);
+            Some((xy[1] - g_xy[1]).atan2(xy[0] - g_xy[0]))
+        };
+        let mut verts: Vec<(f64, [u32; 3])> = Vec::new();
+        // Boundary vertices from g's existing polygon (keys touching outside G).
+        for &vid in cell_span(cells, cell_indices, g)? {
+            if let Some(k) = vertex_keys.get(vid) {
+                if k.iter().any(|x| !gset.contains(x)) {
+                    let Some(a) = angle_of(k) else {
+                        if trace() {
+                            eprintln!(
+                                "[reclip]     bail cell {g}: boundary angle degenerate {k:?}"
+                            );
+                        }
+                        return None;
+                    };
+                    verts.push((a, k));
+                }
+            }
+        }
+        // Interior vertices incident to g.
+        if let Some(keys) = incident_interior.get(&g) {
+            for &k in keys {
+                let Some(a) = angle_of(k) else {
+                    if trace() {
+                        eprintln!("[reclip]     bail cell {g}: interior angle degenerate {k:?}");
+                    }
+                    return None;
+                };
+                verts.push((a, k));
+            }
+        }
+        verts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        verts.dedup_by_key(|(_, k)| *k);
+        if verts.len() < 3 {
+            if trace() {
+                eprintln!("[reclip]     bail cell {g}: only {} vertices", verts.len());
+            }
+            return None;
+        }
+        polys.push((g, verts.into_iter().map(|(_, k)| k).collect()));
+    }
+
+    Some(Resolved {
+        polys,
+        interior_pos,
+    })
+}
+
 /// Re-resolve contested components that survived Tier-1, returning the residual
-/// still unpaired afterward (empty on full success).
-///
-/// Currently identifies the components (and traces them under `S2_RECLIP_TRACE`)
-/// but does not yet re-clip — returns the input residual unchanged. The
-/// resolver and re-stitch phases land incrementally.
-// `&mut Vec` (not `&mut [_]`): the re-stitch phase appends re-resolved cell
-// spans to `cell_indices`, so it needs to grow the buffer, not just mutate it.
+/// still unpaired afterward (empty on full success). See
+/// `docs/reclip-repair-design.md`.
+// `&mut Vec` (not `&mut [_]`): re-stitch appends re-resolved cell spans to
+// `cell_indices` and new interior vertices to `vertices`.
 #[allow(clippy::too_many_arguments, clippy::ptr_arg)]
 pub(crate) fn repair(
-    _points: &[Vec3],
-    _vertices: &[Vec3],
+    points: &[Vec3],
+    vertices: &mut Vec<Vec3>,
     cells: &mut Vec<VoronoiCell>,
     cell_indices: &mut Vec<u32>,
     vertex_keys: &ShardedVertexKeys,
@@ -137,16 +311,147 @@ pub(crate) fn repair(
             residual.len(),
             comps.len()
         );
-        for (i, c) in comps.iter().enumerate() {
-            eprintln!(
-                "  comp {i}: {} cells, {} contested edges; cells={:?}",
-                c.cells.len(),
-                c.edges.len(),
-                c.cells
-            );
+    }
+
+    // Existing key -> vid, for pinning boundary vertices (built from the current
+    // polygons of all component cells; boundary keys are already consistent).
+    let mut existing: HashMap<[u32; 3], u32> = HashMap::new();
+    for comp in &comps {
+        for &g in &comp.cells {
+            if let Some(span) = cell_span(cells, cell_indices, g) {
+                for &vid in span {
+                    if let Some(k) = vertex_keys.get(vid) {
+                        existing.entry(k).or_insert(vid);
+                    }
+                }
+            }
         }
     }
-    Ok(residual)
+
+    let orig_len = vertices.len() as u32;
+    let mut interior_vid: HashMap<[u32; 3], u32> = HashMap::new();
+    let mut overlay: Vec<[u32; 3]> = Vec::new();
+    let mut residual_out: Vec<(u32, u32)> = Vec::new();
+    let mut touched: Vec<u32> = Vec::new();
+
+    'comp: for comp in &comps {
+        let bail = |out: &mut Vec<(u32, u32)>| {
+            for &(_, _, owner) in &comp.edges {
+                out.push((owner, owner));
+            }
+        };
+        if comp.cells.len() > MAX_COMPONENT_CELLS {
+            if trace() {
+                eprintln!(
+                    "[reclip]   bail: component too large ({} cells)",
+                    comp.cells.len()
+                );
+            }
+            bail(&mut residual_out);
+            continue;
+        }
+        let Some(res) = resolve_component(comp, points, cells, cell_indices, vertex_keys) else {
+            if trace() {
+                eprintln!(
+                    "[reclip]   bail: resolve_component failed ({} cells)",
+                    comp.cells.len()
+                );
+            }
+            bail(&mut residual_out);
+            continue;
+        };
+
+        // Validate: every boundary key (not interior) must already exist to pin.
+        for (_, poly) in &res.polys {
+            for key in poly {
+                if !res.interior_pos.contains_key(key) && !existing.contains_key(key) {
+                    if trace() {
+                        eprintln!("[reclip]   bail: unpinnable boundary key {key:?}");
+                    }
+                    bail(&mut residual_out);
+                    continue 'comp;
+                }
+            }
+        }
+
+        // Assign interior vids (append positions + overlay keys, deduped by key).
+        for (key, pos) in &res.interior_pos {
+            interior_vid.entry(*key).or_insert_with(|| {
+                let v = orig_len + overlay.len() as u32;
+                overlay.push(*key);
+                vertices.push(*pos);
+                v
+            });
+        }
+
+        // Re-stitch: append each new polygon and repoint its cell.
+        for (g, poly) in &res.polys {
+            let start = cell_indices.len() as u32;
+            for key in poly {
+                let vid = interior_vid
+                    .get(key)
+                    .copied()
+                    .or_else(|| existing.get(key).copied())
+                    .expect("validated above");
+                cell_indices.push(vid);
+            }
+            cells[*g as usize] = VoronoiCell::new(start, poly.len() as u16);
+            touched.push(*g);
+        }
+    }
+
+    // Re-detect: every interior edge (between two touched cells) must now be
+    // used by exactly two cells. Boundary edges are pinned (unchanged) and pair
+    // by construction, so only interior edges need checking.
+    let touched_set: HashSet<u32> = touched.iter().copied().collect();
+    let key_of = |vid: u32| -> Option<[u32; 3]> {
+        if vid < orig_len {
+            vertex_keys.get(vid)
+        } else {
+            overlay.get((vid - orig_len) as usize).copied()
+        }
+    };
+    let mut edge_use: HashMap<(u32, u32), (u32, [u32; 2])> = HashMap::new();
+    for &g in &touched {
+        let Some(span) = cell_span(cells, cell_indices, g) else {
+            continue;
+        };
+        let n = span.len();
+        for i in 0..n {
+            let vi = span[i];
+            let vj = span[(i + 1) % n];
+            let (Some(ki), Some(kj)) = (key_of(vi), key_of(vj)) else {
+                continue;
+            };
+            let Some(m) = shared_other(ki, kj, g) else {
+                continue;
+            };
+            if !touched_set.contains(&m) {
+                continue; // boundary edge: pinned, trusted
+            }
+            let e = (vi.min(vj), vi.max(vj));
+            let slot = edge_use.entry(e).or_insert((0, [g, u32::MAX]));
+            if slot.0 < 2 {
+                slot.1[slot.0 as usize] = g;
+            }
+            slot.0 += 1;
+        }
+    }
+    for (_, (count, owners)) in edge_use {
+        if count != 2 {
+            residual_out.push((owners[0].min(owners[1]), owners[0].max(owners[1])));
+        }
+    }
+
+    if trace() {
+        eprintln!(
+            "[reclip] re-stitched {} cell(s), {} new interior vertices; {} residual edge(s) remain",
+            touched.len(),
+            overlay.len(),
+            residual_out.len()
+        );
+    }
+    Ok(residual_out)
 }
 
 /// Deterministic local triangulation + spherical circumcenters.
@@ -157,9 +462,6 @@ pub(crate) fn repair(
 /// deterministic triangulation; near-cocircular ties resolve to *a* consistent
 /// choice (acceptable because such vertices are geometrically ~ambiguous).
 mod delaunay {
-    // Tested primitives; wired into the resolver in the next step (interior
-    // re-resolution + re-stitch). Allow dead_code until then.
-    #![allow(dead_code)]
     use glam::DVec3;
 
     /// Shared gnomonic chart for a local generator set: project each unit
@@ -200,6 +502,12 @@ mod delaunay {
             }
             let s = p / d;
             Some([s.dot(self.e1), s.dot(self.e2)])
+        }
+
+        /// Orthographic tangent coordinates (no horizon): robust for angular
+        /// ordering of vertices around a generator.
+        pub(super) fn ortho(&self, p: DVec3) -> [f64; 2] {
+            [p.dot(self.e1), p.dot(self.e2)]
         }
     }
 

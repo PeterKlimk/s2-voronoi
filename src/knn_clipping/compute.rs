@@ -43,7 +43,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     )?;
     let assembled = assemble_shards(sharded, &mut tb)?;
     let live_dedup::AssemblyResult {
-        vertices,
+        mut vertices,
         vertex_keys,
         unresolved_edges,
         cells,
@@ -52,7 +52,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     } = assembled;
     let (eff_cells, eff_cell_indices, post_repair_unpaired) = reconcile_edges(
         effective_points_ref,
-        &vertices,
+        &mut vertices,
         &vertex_keys,
         &unresolved_edges,
         cells,
@@ -129,7 +129,7 @@ fn compute_voronoi_knn_clipping_report_core(
     )?;
     let assembled = assemble_shards(sharded, &mut tb)?;
     let live_dedup::AssemblyResult {
-        vertices,
+        mut vertices,
         vertex_keys,
         unresolved_edges,
         cells,
@@ -138,7 +138,7 @@ fn compute_voronoi_knn_clipping_report_core(
     } = assembled;
     let (eff_cells, eff_cell_indices, post_repair_unpaired) = reconcile_edges(
         effective_points_ref,
-        &vertices,
+        &mut vertices,
         &vertex_keys,
         &unresolved_edges,
         cells,
@@ -584,7 +584,7 @@ type ReconciledWithResiduals = (Vec<VoronoiCell>, Vec<u32>, Vec<(u32, u32)>);
 
 fn reconcile_edges(
     points: &[Vec3],
-    vertices: &[Vec3],
+    vertices: &mut Vec<Vec3>,
     vertex_keys: &live_dedup::ShardedVertexKeys,
     unresolved_edges: &[live_dedup::UnresolvedEdgeMismatch],
     mut cells: Vec<VoronoiCell>,
@@ -600,7 +600,7 @@ fn reconcile_edges(
     // The sphere has no boundary: every interior edge must pair.
     let post_repair_unpaired = edge_reconcile::reconcile_unresolved_edges(
         &repair_edges_storage,
-        vertices,
+        vertices.as_slice(),
         &mut cells,
         &mut cell_indices,
         edge_reconcile::VertexKeys::Sharded(vertex_keys),
