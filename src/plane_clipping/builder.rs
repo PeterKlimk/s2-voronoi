@@ -388,7 +388,9 @@ impl PlaneCellBuilder {
             }
 
             let (plane_a, plane_b) = poly.vertex_planes[i];
-            let edge_plane = poly.edge_planes[i];
+            let plane_a = plane_a as usize;
+            let plane_b = plane_b as usize;
+            let edge_plane = poly.edge_planes[i] as usize;
             // The rect seed registers the walls as planes 0..4, so every
             // vertex and edge of a planar polygon references a real plane.
             if plane_a >= plane_count || plane_b >= plane_count || edge_plane >= plane_count {

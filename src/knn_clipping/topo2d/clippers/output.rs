@@ -1,4 +1,4 @@
-use super::super::types::PolyBuffer;
+use super::super::types::{PlaneId, PolyBuffer, INVALID_PLANE_ID};
 use crate::fp;
 
 // Fused clip-output writer: the parameters are the polygon SoA plus the
@@ -9,12 +9,12 @@ pub(super) fn build_output(
     out: &mut PolyBuffer,
     n: usize,
     entry_pt: (f64, f64),
-    entry_edge_plane: usize,
+    entry_edge_plane: PlaneId,
     entry_next: usize,
     exit_pt: (f64, f64),
-    exit_edge_plane: usize,
+    exit_edge_plane: PlaneId,
     exit_idx: usize,
-    hp_plane_idx: usize,
+    hp_plane_idx: PlaneId,
 ) {
     out.len = 0;
     let mut max_r2 = 0.0f64;
@@ -29,7 +29,7 @@ pub(super) fn build_output(
             out.push_raw(u, v, vp, $ep);
             max_r2 = max_r2.max(fp::fma_f64(u, u, v * v));
             if track_bounding {
-                has_bounding |= vp.0 == usize::MAX;
+                has_bounding |= vp.0 == INVALID_PLANE_ID;
             }
         }};
     }

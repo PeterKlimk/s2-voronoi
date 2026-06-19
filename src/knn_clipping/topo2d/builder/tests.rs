@@ -1,7 +1,7 @@
 use super::projection::MIN_PROJECTION_COS;
 use super::*;
 use crate::knn_clipping::cell_build::CellOutputBuffer;
-use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane};
+use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane, INVALID_PLANE_ID};
 use glam::Vec3;
 use std::cmp::Ordering;
 
@@ -175,9 +175,9 @@ fn extraction_failure_reports_invalid_vertex_plane_metadata() {
     gnomonic.poly_b.vertex_planes[0] = (7, 8);
     gnomonic.poly_b.vertex_planes[1] = (7, 8);
     gnomonic.poly_b.vertex_planes[2] = (7, 8);
-    gnomonic.poly_b.edge_planes[0] = usize::MAX;
-    gnomonic.poly_b.edge_planes[1] = usize::MAX;
-    gnomonic.poly_b.edge_planes[2] = usize::MAX;
+    gnomonic.poly_b.edge_planes[0] = INVALID_PLANE_ID;
+    gnomonic.poly_b.edge_planes[1] = INVALID_PLANE_ID;
+    gnomonic.poly_b.edge_planes[2] = INVALID_PLANE_ID;
     gnomonic.use_a = false;
 
     assert_eq!(

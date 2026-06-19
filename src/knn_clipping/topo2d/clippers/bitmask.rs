@@ -141,6 +141,7 @@ use crate::fp;
 
 #[cfg(test)]
 mod tests {
+    use super::super::super::types::plane_id;
     use super::*;
 
     /// Full-buffer regression: the transition mask must survive a full polygon
@@ -155,8 +156,8 @@ mod tests {
             poly.push_raw(
                 theta.cos(),
                 theta.sin(),
-                (k, (k + 1) % MAX_POLY_VERTICES),
-                k,
+                (plane_id(k), plane_id((k + 1) % MAX_POLY_VERTICES)),
+                plane_id(k),
             );
         }
         poly.max_r2 = 1.0;

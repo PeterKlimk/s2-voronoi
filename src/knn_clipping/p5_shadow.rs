@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use glam::{Vec2, Vec3};
 
 use crate::knn_clipping::canonical::in_circle_sphere_sign;
-use crate::knn_clipping::topo2d::types::{HalfPlane, PolyBuffer};
+use crate::knn_clipping::topo2d::types::{HalfPlane, PolyBuffer, INVALID_PLANE_ID};
 
 /// Margin buckets by decimal exponent of the normalized distance:
 /// bucket 0: nd >= 1e-1, bucket k: 1e-(k+1) <= nd < 1e-k, bucket 15: nd < 1e-15 (incl. 0).
@@ -237,10 +237,12 @@ pub(crate) fn audit_clip_plane(
     let mut batch: Vec<PairedRecord> = Vec::new();
     for i in 0..poly.len {
         let (pa, pb) = poly.vertex_planes[i];
-        if pa == usize::MAX || pb == usize::MAX || pa < 4 || pb < 4 {
+        if pa == INVALID_PLANE_ID || pb == INVALID_PLANE_ID || pa < 4 || pb < 4 {
             SKIPPED_SYNTHETIC.fetch_add(1, Ordering::Relaxed);
             continue;
         }
+        let pa = pa as usize;
+        let pb = pb as usize;
         debug_assert!(pa < neighbor_positions.len() && pb < neighbor_positions.len());
         let d = hp.signed_dist(poly.us[i], poly.vs[i]);
         let nd = d.abs() * inv_norm;
@@ -353,10 +355,12 @@ pub(crate) fn audit_clip(
     let mut batch: Vec<PairedRecord> = Vec::new();
     for i in 0..poly.len {
         let (pa, pb) = poly.vertex_planes[i];
-        if pa == usize::MAX || pb == usize::MAX {
+        if pa == INVALID_PLANE_ID || pb == INVALID_PLANE_ID {
             SKIPPED_SYNTHETIC.fetch_add(1, Ordering::Relaxed);
             continue;
         }
+        let pa = pa as usize;
+        let pb = pb as usize;
         debug_assert!(pa < neighbor_positions.len() && pb < neighbor_positions.len());
         let d = hp.signed_dist(poly.us[i], poly.vs[i]);
         let nd = d.abs() * inv_norm;

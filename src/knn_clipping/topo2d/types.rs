@@ -2,6 +2,14 @@ use crate::fp;
 
 use crate::tolerances::CLIP_EPS_INSIDE;
 pub const MAX_POLY_VERTICES: usize = 24;
+pub type PlaneId = u32;
+pub const INVALID_PLANE_ID: PlaneId = PlaneId::MAX;
+
+#[inline]
+pub(crate) fn plane_id(idx: usize) -> PlaneId {
+    debug_assert!(PlaneId::try_from(idx).is_ok(), "plane index exceeds u32");
+    idx as PlaneId
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClipResult {
@@ -18,7 +26,7 @@ pub struct HalfPlane {
     pub b: f64,
     pub c: f64,
     pub ab2: f64,
-    pub plane_idx: usize,
+    pub plane_idx: PlaneId,
     pub eps: f64,
 }
 
@@ -60,7 +68,7 @@ impl HalfPlane {
             b,
             c,
             ab2,
-            plane_idx,
+            plane_idx: plane_id(plane_idx),
             eps,
         }
     }
@@ -76,7 +84,7 @@ impl HalfPlane {
             b,
             c,
             ab2,
-            plane_idx,
+            plane_idx: plane_id(plane_idx),
             eps,
         }
     }
@@ -99,8 +107,8 @@ pub struct PolyBuffer {
     pub has_bounding_ref: bool,
     pub us: [f64; MAX_POLY_VERTICES],
     pub vs: [f64; MAX_POLY_VERTICES],
-    pub vertex_planes: [(usize, usize); MAX_POLY_VERTICES],
-    pub edge_planes: [usize; MAX_POLY_VERTICES],
+    pub vertex_planes: [(PlaneId, PlaneId); MAX_POLY_VERTICES],
+    pub edge_planes: [PlaneId; MAX_POLY_VERTICES],
 }
 
 impl PolyBuffer {
@@ -124,12 +132,12 @@ impl PolyBuffer {
         self.vs[1] = -bound * 0.5;
         self.us[2] = bound * 0.866;
         self.vs[2] = -bound * 0.5;
-        self.vertex_planes[0] = (usize::MAX, usize::MAX);
-        self.vertex_planes[1] = (usize::MAX, usize::MAX);
-        self.vertex_planes[2] = (usize::MAX, usize::MAX);
-        self.edge_planes[0] = usize::MAX;
-        self.edge_planes[1] = usize::MAX;
-        self.edge_planes[2] = usize::MAX;
+        self.vertex_planes[0] = (INVALID_PLANE_ID, INVALID_PLANE_ID);
+        self.vertex_planes[1] = (INVALID_PLANE_ID, INVALID_PLANE_ID);
+        self.vertex_planes[2] = (INVALID_PLANE_ID, INVALID_PLANE_ID);
+        self.edge_planes[0] = INVALID_PLANE_ID;
+        self.edge_planes[1] = INVALID_PLANE_ID;
+        self.edge_planes[2] = INVALID_PLANE_ID;
         self.len = 3;
         self.max_r2 = bound * bound;
         self.has_bounding_ref = true;
@@ -143,7 +151,7 @@ impl PolyBuffer {
     }
 
     #[inline]
-    pub fn push_raw(&mut self, u: f64, v: f64, vp: (usize, usize), ep: usize) {
+    pub fn push_raw(&mut self, u: f64, v: f64, vp: (PlaneId, PlaneId), ep: PlaneId) {
         let i = self.len;
         debug_assert!(i < MAX_POLY_VERTICES);
         unsafe {

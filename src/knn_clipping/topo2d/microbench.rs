@@ -6,7 +6,7 @@
 #[cfg(feature = "microbench")]
 pub fn run_clip_convex_microbench() {
     use super::clippers::{clip_convex, clip_convex_small_bool, EscalationCtx};
-    use super::types::{ClipResult, HalfPlane, PolyBuffer};
+    use super::types::{plane_id, ClipResult, HalfPlane, PolyBuffer};
 
     use std::hint::black_box;
     use std::time::{Duration, Instant};
@@ -102,8 +102,8 @@ pub fn run_clip_convex_microbench() {
             let v = radius * s;
             p.us[i] = u;
             p.vs[i] = v;
-            p.vertex_planes[i] = (i, (i + 1) % N);
-            p.edge_planes[i] = i;
+            p.vertex_planes[i] = (plane_id(i), plane_id((i + 1) % N));
+            p.edge_planes[i] = plane_id(i);
             p.max_r2 = p.max_r2.max(u * u + v * v);
         }
         p

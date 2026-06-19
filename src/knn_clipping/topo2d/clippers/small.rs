@@ -109,7 +109,7 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
                 max_r2 = r2;
             }
             if track_bounding {
-                has_bounding |= vp.0 == usize::MAX;
+                has_bounding |= vp.0 == super::super::types::INVALID_PLANE_ID;
             }
         }};
     }
@@ -264,7 +264,7 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
                 max_r2 = r2;
             }
             if TRACK_BOUNDING {
-                has_bounding |= vp.0 == usize::MAX;
+                has_bounding |= vp.0 == super::super::types::INVALID_PLANE_ID;
             }
         }};
     }
@@ -409,7 +409,7 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
                 max_r2 = r2;
             }
             if TRACK_BOUNDING {
-                has_bounding |= vp.0 == usize::MAX;
+                has_bounding |= vp.0 == super::super::types::INVALID_PLANE_ID;
             }
         }};
     }

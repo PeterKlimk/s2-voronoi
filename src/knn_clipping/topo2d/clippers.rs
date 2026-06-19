@@ -1,4 +1,4 @@
-use super::types::{ClipResult, HalfPlane, PolyBuffer};
+use super::types::{ClipResult, HalfPlane, PolyBuffer, INVALID_PLANE_ID};
 
 mod bitmask;
 mod output;
@@ -51,12 +51,12 @@ fn escalate_mask(
             continue;
         }
         let (pa, pb) = poly.vertex_planes[i];
-        if pa == usize::MAX || pb == usize::MAX {
+        if pa == INVALID_PLANE_ID || pb == INVALID_PLANE_ID {
             continue;
         }
         let (Some(&a), Some(&b)) = (
-            esc.neighbor_positions.get(pa),
-            esc.neighbor_positions.get(pb),
+            esc.neighbor_positions.get(pa as usize),
+            esc.neighbor_positions.get(pb as usize),
         ) else {
             continue;
         };

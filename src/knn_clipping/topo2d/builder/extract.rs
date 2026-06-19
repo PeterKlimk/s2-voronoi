@@ -5,6 +5,7 @@ use super::{
 };
 use crate::fp;
 use crate::knn_clipping::cell_build::{CellFailure, CellOutputBuffer};
+use crate::knn_clipping::topo2d::types::INVALID_PLANE_ID;
 use glam::{DVec3, Vec3};
 
 use crate::tolerances::{EXTRACT_DEGENERATE_LEN2, FALLBACK_DEDUP_DOT, FALLBACK_PLANE_TOL};
@@ -70,6 +71,8 @@ impl GnomonicBuilder {
             }
             let v_pos = dir * len2.sqrt().recip();
 
+            let plane_a = plane_a as usize;
+            let plane_b = plane_b as usize;
             let Some(&n1) = self.neighbor_indices.get(plane_a) else {
                 return Err(CellFailure::NoValidSeed);
             };
@@ -82,11 +85,12 @@ impl GnomonicBuilder {
             buffer.vertices.push((key, v_pos));
 
             let edge_plane = poly.edge_planes[i];
-            if edge_plane == usize::MAX {
+            if edge_plane == INVALID_PLANE_ID {
                 buffer.edge_neighbor_globals.push(u32::MAX);
                 buffer.edge_neighbor_slots.push(u32::MAX);
                 buffer.edge_neighbor_eps.push(0.0);
             } else {
+                let edge_plane = edge_plane as usize;
                 let Some(&edge_neighbor) = self.neighbor_indices.get(edge_plane) else {
                     return Err(CellFailure::NoValidSeed);
                 };
@@ -111,6 +115,8 @@ impl GnomonicBuilder {
 
         for i in 0..poly.len {
             let (pa, pb) = poly.vertex_planes[i];
+            let pa = pa as usize;
+            let pb = pb as usize;
             if pa < active.len() {
                 active[pa] = true;
             }
@@ -169,6 +175,8 @@ impl GnomonicBuilder {
             }
 
             let (plane_a, plane_b) = poly.vertex_planes[i];
+            let plane_a = plane_a as usize;
+            let plane_b = plane_b as usize;
             if plane_a >= neighbor_index_count || plane_b >= neighbor_index_count {
                 return Some(ExtractionInvariantFailure::InvalidVertexPlane {
                     vertex: i,
@@ -202,18 +210,20 @@ impl GnomonicBuilder {
             }
 
             let edge_plane = poly.edge_planes[i];
-            if edge_plane != usize::MAX
-                && (edge_plane >= half_plane_count
+            if edge_plane != INVALID_PLANE_ID {
+                let edge_plane = edge_plane as usize;
+                if edge_plane >= half_plane_count
                     || edge_plane >= neighbor_index_count
-                    || edge_plane >= neighbor_slot_count)
-            {
-                return Some(ExtractionInvariantFailure::InvalidEdgePlane {
-                    vertex: i,
-                    edge_plane,
-                    half_plane_count,
-                    neighbor_index_count,
-                    neighbor_slot_count,
-                });
+                    || edge_plane >= neighbor_slot_count
+                {
+                    return Some(ExtractionInvariantFailure::InvalidEdgePlane {
+                        vertex: i,
+                        edge_plane,
+                        half_plane_count,
+                        neighbor_index_count,
+                        neighbor_slot_count,
+                    });
+                }
             }
         }
 

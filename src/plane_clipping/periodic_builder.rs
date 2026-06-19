@@ -301,7 +301,9 @@ impl PeriodicCellBuilder {
                 return Err(CellFailure::NoValidSeed);
             }
             let (plane_a, plane_b) = poly.vertex_planes[i];
-            let edge_plane = poly.edge_planes[i];
+            let plane_a = plane_a as usize;
+            let plane_b = plane_b as usize;
+            let edge_plane = poly.edge_planes[i] as usize;
             if plane_a >= plane_count || plane_b >= plane_count || edge_plane >= plane_count {
                 return Err(CellFailure::NoValidSeed);
             }
