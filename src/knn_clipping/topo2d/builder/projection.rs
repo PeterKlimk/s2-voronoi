@@ -36,19 +36,31 @@ pub struct TangentBasis {
 
 impl TangentBasis {
     pub fn new(g: DVec3) -> Self {
-        if g.z < -0.999_999_9 {
+        let len_sq = g.length_squared();
+        if len_sq == 0.0 || !len_sq.is_finite() {
             return TangentBasis {
-                t1: DVec3::NEG_Y,
-                t2: DVec3::NEG_X,
+                t1: DVec3::X,
+                t2: DVec3::Y,
                 g,
             };
         }
 
-        // Unit-vector ONB construction; avoids the sqrt/divide in the hot reset path.
-        let a = 1.0 / (1.0 + g.z);
-        let b = -g.x * g.y * a;
-        let t1 = DVec3::new(1.0 - g.x * g.x * a, b, -g.x);
-        let t2 = DVec3::new(b, 1.0 - g.y * g.y * a, -g.y);
+        let (mut t1, mut t2) = if g.z < -0.999_999_9 {
+            (DVec3::NEG_Y, DVec3::NEG_X)
+        } else {
+            let a = 1.0 / (1.0 + g.z);
+            let b = -g.x * g.y * a;
+            (
+                DVec3::new(1.0 - g.x * g.x * a, b, -g.x),
+                DVec3::new(b, 1.0 - g.y * g.y * a, -g.y),
+            )
+        };
+        // The closed-form ONB assumes |g| == 1, but production keeps the
+        // exact f32-promoted generator. Project out the tiny radial component
+        // so the chart axes are tangent to that promoted point set.
+        let inv_len_sq = len_sq.recip();
+        t1 -= g * (t1.dot(g) * inv_len_sq);
+        t2 -= g * (t2.dot(g) * inv_len_sq);
         TangentBasis { t1, t2, g }
     }
 }

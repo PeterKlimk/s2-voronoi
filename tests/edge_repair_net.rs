@@ -218,22 +218,22 @@ fn net_in_bin_detection_and_repair() {
     }
 }
 
-/// Within-bin unconsumed-check detection: at scaffold 280k with an in-bin
+/// Within-bin unconsumed-check detection: at scaffold 40k with an in-bin
 /// layout, the one-sided epsilon-edge defect is detected by the later cell
 /// as an unconsumed incoming check.
 #[test]
 fn net_in_bin_unconsumed_check() {
-    let fixture = with_scaffold(&defect_window(), 280_000);
+    let fixture = with_scaffold(&defect_window(), 40_000);
     let out = compute_strict("in_bin_unconsumed", &fixture, Some(12));
     let os = origins(&out);
     assert!(
         os.contains(&UnresolvedEdgeOrigin::InBinUnconsumedCheck),
-        "expected InBinUnconsumedCheck at scaffold 280k bins=12, got {os:?} \
+        "expected InBinUnconsumedCheck at scaffold 40k bins=12, got {os:?} \
          (layout may have moved; re-run probe_scaffold_sweep)"
     );
 }
 
-/// Cross-bin one-sided detection: at scaffold 360k with bins 36-54 a bin
+/// Cross-bin one-sided detection: at scaffold 280k with bins 36-54 a bin
 /// boundary splits the site so the one-sided epsilon-edge defect is
 /// detected by the overflow matcher (CrossBinSingleSided). No in-bin
 /// control comparison: post stage-0, the in-bin layouts of this fixture
@@ -241,12 +241,12 @@ fn net_in_bin_unconsumed_check() {
 /// boundary cuts the site; see module docs).
 #[test]
 fn net_cross_bin_single_sided() {
-    let fixture = with_scaffold(&defect_window(), 360_000);
+    let fixture = with_scaffold(&defect_window(), 280_000);
     let split = compute_strict("cross_single_split", &fixture, Some(48));
     let os = origins(&split);
     assert!(
         os.contains(&UnresolvedEdgeOrigin::CrossBinSingleSided),
-        "expected CrossBinSingleSided at scaffold 360k bins=48, got {os:?} \
+        "expected CrossBinSingleSided at scaffold 280k bins=48, got {os:?} \
          (bin layout may have moved; re-run probe_scaffold_sweep)"
     );
 }
@@ -267,7 +267,7 @@ fn net_cross_bin_single_sided() {
 #[test]
 fn net_repair_backends_agree() {
     let window = defect_window();
-    for (scaffold_n, bins) in [(2_000usize, None), (280_000, Some(12)), (360_000, Some(48))] {
+    for (scaffold_n, bins) in [(2_000usize, None), (40_000, Some(12)), (280_000, Some(48))] {
         let fixture = with_scaffold(&window, scaffold_n);
         let name = format!("differential s={scaffold_n} bins={bins:?}");
 
