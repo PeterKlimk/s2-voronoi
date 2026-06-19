@@ -24,7 +24,7 @@ Measurement rules:
 | Dense-cell local index summary | `docs/dense-cell-subindex-design.md` |
 | Punch 1 implemented center-cell band prune | `docs/punch1-center-cell-integration.md` |
 | Paired micro-optimization evidence | `docs/micro-optimization-matrix.md` |
-| Raw micro-idea backlog | `docs/micro-optimization-ideas.md` |
+| Raw micro-idea backlog and clipper hot-path queue | `docs/micro-optimization-ideas.md` |
 | Edge-check matching (parked: near-optimal for sane regime) | `docs/edgecheck-matching-optimization.md` |
 | Post-clipping pipeline (cert + edge_emit: both rejected) | `docs/post-clipping-pipeline-optimization.md` |
 | Research-level: incremental support cert, dot reuse, batched clip | `docs/research-level-optimization.md` |

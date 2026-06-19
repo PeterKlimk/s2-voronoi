@@ -60,6 +60,54 @@ because the mechanism is concrete and the prior is not obviously bad.
 | Edge-neighbor / dedup structure packing | Repeated small structs may be cache-sensitive in large-N assembly. | Shared-data layout changes are correctness-sensitive; needs targeted profiles. |
 | Dense-regime local indexing variants | Directly attacks high-occupancy candidate scans. | Prefer the active dense-cell docs over resurrecting raw micro ideas. |
 
+## Clipper Hot-Path Queue
+
+Status: current working queue after parking the late-clip/proxy/certificate
+experiments. The prior from those branches is that extra geometric rejection
+state is hard to make cheaper than the clipper. The better target is the clip
+kernel itself, especially changed/mixed clips and hot small-N cases.
+
+Timing-only counters on `agent/clipper-hotpath-audit` (`2de4899`) record clip
+class by source and polygon length:
+
+- `clip_stream_full`, `clip_stream_radius`, `clip_stream_empty`,
+  `clip_stream_mixed`, `clip_stream_too_many`
+- `clip_edge_full`, `clip_edge_empty`, `clip_edge_mixed`, `clip_edge_too_many`
+- `clip_stream_n3` through `clip_stream_n9p`, plus edge equivalents
+
+Initial 100k single-thread samples showed:
+
+- Empty clips were zero in the sampled fib/uniform/splittable regimes.
+- Mixed stream clips were stable across regimes, about 611k-623k, with about
+  2.8M output vertices total.
+- Dense regimes mainly add unchanged/full/radius clips, not more mixed output.
+- Edgecheck clips did not hit the counted convex clipper path in those samples;
+  seed behavior should be audited separately before optimizing edgecheck-only
+  clip branches.
+- Hot N buckets are 3-6 for fib/uniform; splittable also has material 7/8/9+.
+
+### Current Candidates
+
+| idea | why it might matter | caution / next counter |
+|---|---|---|
+| Fast production `lerp_t` | Intersection is paid only on mixed changed clips, which are stable and real work. A fast path could use `d0 / (d0 - d1)` instead of `is_finite()` plus clamp. | First shadow/count how often transition `t` is non-finite or outside `[0, 1]`, especially under P5/escalation-sensitive cases. Keep guarded lerp for shadow/escalation if needed. |
+| N/mask histogram | Needed before more specialization. Exact by-N full/empty/mixed/output counts decide whether N=4/5/6 or late unchanged clips deserve hand tuning. | Already available on `agent/clipper-hotpath-audit`; run the same counters on larger fib and dense cases before behavior changes. |
+| Narrow `PolyBuffer` plane metadata to `u32` | Aligns with the memory-throughput thesis: `vertex_planes: [(usize, usize); 64]` and `edge_planes: [usize; 64]` are bulky hot polygon metadata. | Invasive and correctness-sensitive. Needs a branch with focused tests around extraction, sentinels, P5 shadow, and output assembly. |
+| Avoid distance materialization on unchanged clips | A mask-only first pass could return early for `mask == full` without keeping distance arrays. Mixed clips would recompute only transition distances. | Risky because mixed clips are common in fib; recompute may lose. Only try after histogram says unchanged dominates the intended regime. |
+| Edgecheck-specific assumptions | If seed/edgecheck clips are mostly mixed, an edgecheck-only path could drop full/empty branches. | Current counters saw no edge clipper calls in sampled runs, so first find the actual seed path and instrument it. |
+
+Working ranking:
+
+1. Use the N/mask histogram branch to confirm the hot shape on larger fib and
+   dense inputs.
+2. Try a fast `lerp_t` variant, guarded by a shadow counter for out-of-range or
+   non-finite transition parameters.
+3. Try `u32` plane metadata if the goal is memory traffic rather than arithmetic.
+4. Leave mask-only unchanged as a maybe; it needs strong unchanged-by-N evidence.
+5. Do not spend time on empty-output handling, more cached proxy state, or
+   generic N>8 bitmask tuning unless a new profile contradicts the current
+   counters.
+
 ## Ideas To Leave Parked
 
 | idea | reason |
