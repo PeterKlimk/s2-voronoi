@@ -17,9 +17,10 @@ use glam::{DVec3, Vec3};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Cap on a single component's cell count; larger contested regions fail loud
-/// (returned as residual) rather than risk an unbounded re-clip. The de-risking
+/// (returned as residual) rather than risk an unbounded re-clip. The interior
+/// solve is O(|G|^3 * filter), so this also bounds cost; the de-risking
 /// measurement put the largest real component at ~50 generators.
-const MAX_COMPONENT_CELLS: usize = 512;
+const MAX_COMPONENT_CELLS: usize = 128;
 
 /// Whether the Tier-2 re-clip pass is enabled (off by default).
 pub(crate) fn enabled() -> bool {
@@ -125,19 +126,76 @@ fn key3(a: u32, b: u32, c: u32) -> [u32; 3] {
     k
 }
 
-/// The single generator shared by two vertex keys other than `g` — the
-/// neighbor across the edge between them. `None` if they share != 1 such.
-fn shared_other(ki: [u32; 3], kj: [u32; 3], g: u32) -> Option<u32> {
-    let mut found = None;
-    for &x in &ki {
-        if x != g && kj.contains(&x) {
-            if found.is_some() {
-                return None;
+/// Deterministic pseudo-random value in [-1, 1] keyed by `(gen, axis)`. Used to
+/// jitter projected generators so no two are coincident/cocircular; stable per
+/// generator id so every component sees the same perturbation.
+#[inline]
+fn jitter_unit(gen: u32, axis: u32) -> f64 {
+    // SplitMix64-style avalanche on a mixed key.
+    let mut z = (gen as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ ((axis as u64) << 1 | 1);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    // Map to [-1, 1).
+    (z as f64 / u64::MAX as f64) * 2.0 - 1.0
+}
+
+/// Order cell `g`'s vertices into a boundary cycle by *combinatorial* adjacency
+/// (two vertices are adjacent iff they share a neighbor of `g`), not by angle —
+/// angle-ordering is unstable for the near-coincident vertices of a degenerate
+/// corner and produces spurious adjacencies. `None` if the vertices do not form
+/// a single clean cycle (every neighbor must appear in exactly two of `g`'s
+/// vertices), which flags a malformed/incomplete cell.
+fn build_cycle(g: u32, verts: &[[u32; 3]]) -> Option<Vec<[u32; 3]>> {
+    let n = verts.len();
+    if n < 3 {
+        return None;
+    }
+    // neighbor -> indices of g's vertices containing it (must be exactly 2).
+    let mut by_nbr: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (i, v) in verts.iter().enumerate() {
+        for &x in v {
+            if x != g {
+                by_nbr.entry(x).or_default().push(i);
             }
-            found = Some(x);
         }
     }
-    found
+    // Build the 2-regular adjacency graph (each shared neighbor links 2 verts).
+    let mut adj: Vec<[usize; 2]> = vec![[usize::MAX; 2]; n];
+    let mut deg = vec![0usize; n];
+    for vs in by_nbr.values() {
+        if vs.len() != 2 {
+            return None;
+        }
+        let (a, b) = (vs[0], vs[1]);
+        if deg[a] == 2 || deg[b] == 2 {
+            return None;
+        }
+        adj[a][deg[a]] = b;
+        deg[a] += 1;
+        adj[b][deg[b]] = a;
+        deg[b] += 1;
+    }
+    if deg.iter().any(|&d| d != 2) {
+        return None;
+    }
+    // Walk the single cycle.
+    let mut order = Vec::with_capacity(n);
+    let (mut prev, mut cur) = (usize::MAX, 0usize);
+    for _ in 0..n {
+        order.push(cur);
+        let nxt = if adj[cur][0] != prev {
+            adj[cur][0]
+        } else {
+            adj[cur][1]
+        };
+        prev = cur;
+        cur = nxt;
+    }
+    if cur != 0 || order.len() != n {
+        return None; // multiple disjoint cycles -> not a simple polygon
+    }
+    Some(order.into_iter().map(|i| verts[i]).collect())
 }
 
 #[inline]
@@ -166,30 +224,24 @@ fn resolve_component(
     cell_indices: &[u32],
     vertex_keys: &ShardedVertexKeys,
 ) -> Option<Resolved> {
-    let gpos = |g: u32| {
-        let p = points[g as usize];
-        DVec3::new(p.x as f64, p.y as f64, p.z as f64)
-    };
     let gset: HashSet<u32> = comp.cells.iter().copied().collect();
-
-    // Chart anchored at the component centroid (component cells are a tight
-    // cluster). Built from G only, so a far sparse 1-ring neighbor can't tilt it.
-    let g_positions: Vec<DVec3> = comp.cells.iter().map(|&g| gpos(g)).collect();
-    let chart = delaunay::Chart::new(&g_positions)?;
-
-    // Triangulate ONLY the component cells G (a tight, chart-centered cluster).
-    // The 1-ring is kept separately for the emptiness filter, not triangulated:
-    // it spreads outward and, projected from the component centroid, distorts
-    // enough to wreck the triangulation of the dense cluster.
-    let tri_gens: Vec<u32> = comp.cells.clone();
-    let tri_proj: Vec<[f64; 2]> = tri_gens
-        .iter()
-        .map(|&g| chart.project(gpos(g)))
-        .collect::<Option<_>>()?;
+    // Jittered unit positions: a deterministic per-generator perturbation (~1e-9,
+    // keyed by global id) so no triple is exactly cocircular/coincident. This
+    // makes the degenerate-split choice jitter-determined — but consistently, as
+    // the jitter is shared across cells — and keeps positions within ~1e-9 of
+    // true (well inside the near-Voronoi tolerance). All geometry uses jittered
+    // positions so the emptiness decision and the output vertex agree.
+    let gjit = |g: u32| -> DVec3 {
+        let p = points[g as usize];
+        let base = DVec3::new(p.x as f64, p.y as f64, p.z as f64);
+        const J: f64 = 1e-9;
+        let jit = DVec3::new(jitter_unit(g, 0), jitter_unit(g, 1), jitter_unit(g, 2)) * J;
+        (base + jit).normalize()
+    };
 
     // Filter set = every generator in a component cell's existing keys (G plus
-    // the 1-ring), as 3-D unit vectors. An interior vertex must be closer to its
-    // three generators than to any of these.
+    // the 1-ring). An interior vertex must be closer to its three generators
+    // than to any of these.
     let mut filter: Vec<(u32, DVec3)> = Vec::new();
     let mut filter_seen: HashSet<u32> = HashSet::new();
     for &g in &comp.cells {
@@ -197,122 +249,84 @@ fn resolve_component(
             if let Some(k) = vertex_keys.get(vid) {
                 for x in k {
                     if filter_seen.insert(x) {
-                        filter.push((x, gpos(x)));
+                        filter.push((x, gjit(x)));
                     }
                 }
             }
         }
     }
 
-    let tris = delaunay::triangulate(&tri_proj);
-    if tris.is_empty() {
-        return None;
-    }
-
-    // Interior Voronoi vertices: circumcenters of G-triangles whose circumcircle
-    // is empty of every filter generator (so the vertex is a real triple point,
-    // not one bounded by a nearer 1-ring neighbor).
-    // Map each component generator to the interior vertices incident to it.
+    // Interior Voronoi vertices: every all-G triple whose circumcircle is empty
+    // of all filter generators. Brute force over triples — no triangulation, so
+    // no generator can be orphaned — and jitter removes the cocircular
+    // over-counting that made the per-cell emptiness inconsistent. The triple set
+    // is a single deterministic computation, so every component cell inherits the
+    // same vertices (consistent by construction).
+    const EMPTY_TOL: f64 = 1e-12; // f64 noise floor; jitter (1e-9) dominates ties.
+    let gvec = &comp.cells;
+    let gp: Vec<DVec3> = gvec.iter().map(|&g| gjit(g)).collect();
     let mut interior_pos: HashMap<[u32; 3], Vec3> = HashMap::new();
     let mut incident_interior: HashMap<u32, Vec<[u32; 3]>> = HashMap::new();
-    if trace() {
-        let mut incident_all: HashMap<u32, usize> = HashMap::new();
-        for t in &tris {
-            for &li in t {
-                *incident_all.entry(tri_gens[li]).or_insert(0) += 1;
+    for i in 0..gvec.len() {
+        for j in (i + 1)..gvec.len() {
+            for k in (j + 1)..gvec.len() {
+                let Some(cc) = delaunay::circumcenter(gp[i], gp[j], gp[k]) else {
+                    continue; // collinear triple: not a vertex
+                };
+                let g3 = [gvec[i], gvec[j], gvec[k]];
+                let radius = cc.dot(gp[i]);
+                let empty = filter
+                    .iter()
+                    .all(|&(d, dp)| g3.contains(&d) || cc.dot(dp) <= radius + EMPTY_TOL);
+                if !empty {
+                    continue;
+                }
+                let key = key3(g3[0], g3[1], g3[2]);
+                interior_pos.insert(key, Vec3::new(cc.x as f32, cc.y as f32, cc.z as f32));
+                for &g in &g3 {
+                    incident_interior.entry(g).or_default().push(key);
+                }
             }
         }
-        let missing: Vec<u32> = comp
-            .cells
-            .iter()
-            .copied()
-            .filter(|g| !incident_all.contains_key(g))
-            .collect();
+    }
+    if trace() {
         eprintln!(
-            "[reclip]   diag: {} tri_gens, {} tris; component cells with ZERO incident triangles: {:?}",
-            tri_gens.len(),
-            tris.len(),
-            missing
+            "[reclip]   diag: {} cells, {} filter gens, {} interior vertices",
+            gvec.len(),
+            filter.len(),
+            interior_pos.len()
         );
     }
-    // On-circle slack for the emptiness test (chord units): a generator within
-    // this of the circumradius is treated as on the circle, not inside.
-    const EMPTY_TOL: f64 = 1e-7;
-    for t in &tris {
-        let g3 = [tri_gens[t[0]], tri_gens[t[1]], tri_gens[t[2]]];
-        // (all in G by construction now)
-        let key = key3(g3[0], g3[1], g3[2]);
-        let Some(cc) = delaunay::circumcenter(gpos(g3[0]), gpos(g3[1]), gpos(g3[2])) else {
-            if trace() {
-                eprintln!("[reclip]     bail: interior circumcenter degenerate {key:?}");
-            }
-            return None;
-        };
-        // Empty-circumcircle test against the full filter set: closer = larger
-        // dot, so the vertex is real iff no other generator beats its radius.
-        let radius_dot = cc.dot(gpos(g3[0]));
-        let empty = filter
-            .iter()
-            .all(|&(d, dp)| g3.contains(&d) || cc.dot(dp) <= radius_dot + EMPTY_TOL);
-        if !empty {
-            continue;
-        }
-        interior_pos.insert(key, Vec3::new(cc.x as f32, cc.y as f32, cc.z as f32));
-        for &g in &g3 {
-            incident_interior.entry(g).or_default().push(key);
-        }
-    }
 
-    // Build each component cell's polygon: existing boundary vertices (keys with
-    // a non-G generator — pinned) merged with the recomputed interior vertices,
-    // ordered by angle around the generator in the shared chart.
+    // Build each cell's polygon: existing boundary vertices (keys touching
+    // outside G — pinned) plus the incident interior vertices, ordered into a
+    // cycle by shared-neighbor adjacency (robust to the near-coincident vertices
+    // of a degenerate corner, where angle-ordering is unstable).
     let mut polys: Vec<(u32, Vec<[u32; 3]>)> = Vec::with_capacity(comp.cells.len());
     for &g in &comp.cells {
-        let g_xy = chart.ortho(gpos(g));
-        // angle of a vertex key around g, from its triple's circumcenter.
-        let angle_of = |key: [u32; 3]| -> Option<f64> {
-            let cc = delaunay::circumcenter(gpos(key[0]), gpos(key[1]), gpos(key[2]))?;
-            let xy = chart.ortho(cc);
-            Some((xy[1] - g_xy[1]).atan2(xy[0] - g_xy[0]))
-        };
-        let mut verts: Vec<(f64, [u32; 3])> = Vec::new();
-        // Boundary vertices from g's existing polygon (keys touching outside G).
+        let mut verts: Vec<[u32; 3]> = Vec::new();
         for &vid in cell_span(cells, cell_indices, g)? {
             if let Some(k) = vertex_keys.get(vid) {
                 if k.iter().any(|x| !gset.contains(x)) {
-                    let Some(a) = angle_of(k) else {
-                        if trace() {
-                            eprintln!(
-                                "[reclip]     bail cell {g}: boundary angle degenerate {k:?}"
-                            );
-                        }
-                        return None;
-                    };
-                    verts.push((a, k));
+                    verts.push(k);
                 }
             }
         }
-        // Interior vertices incident to g.
         if let Some(keys) = incident_interior.get(&g) {
-            for &k in keys {
-                let Some(a) = angle_of(k) else {
-                    if trace() {
-                        eprintln!("[reclip]     bail cell {g}: interior angle degenerate {k:?}");
-                    }
-                    return None;
-                };
-                verts.push((a, k));
-            }
+            verts.extend_from_slice(keys);
         }
-        verts.sort_by(|a, b| a.0.total_cmp(&b.0));
-        verts.dedup_by_key(|(_, k)| *k);
-        if verts.len() < 3 {
+        verts.sort_unstable();
+        verts.dedup();
+        let Some(poly) = build_cycle(g, &verts) else {
             if trace() {
-                eprintln!("[reclip]     bail cell {g}: only {} vertices", verts.len());
+                eprintln!(
+                    "[reclip]     bail cell {g}: {} vertices do not form a clean cycle",
+                    verts.len()
+                );
             }
             return None;
-        }
-        polys.push((g, verts.into_iter().map(|(_, k)| k).collect()));
+        };
+        polys.push((g, poly));
     }
 
     Some(Resolved {
@@ -431,9 +445,14 @@ pub(crate) fn repair(
         }
     }
 
-    // Re-detect: every interior edge (between two touched cells) must now be
-    // used by exactly two cells. Boundary edges are pinned (unchanged) and pair
-    // by construction, so only interior edges need checking.
+    // Re-detect, matching the validator exactly: count directed edge uses by
+    // undirected VID pair (not by key — a malformed re-stitched polygon can have
+    // consecutive vertices that share no clean neighbor, which a key-based check
+    // would skip but the validator counts). Scope to the affected region: the
+    // touched cells plus every cell sharing a vertex with them. An edge with a
+    // touched owner must be used exactly twice; anything else is residual. This
+    // is the SAME invariant `validation::validate` enforces, so a clean result
+    // here means the returned diagram is a valid subdivision (no silent ship).
     let touched_set: HashSet<u32> = touched.iter().copied().collect();
     let key_of = |vid: u32| -> Option<[u32; 3]> {
         if vid < orig_len {
@@ -442,37 +461,62 @@ pub(crate) fn repair(
             overlay.get((vid - orig_len) as usize).copied()
         }
     };
-    let mut edge_use: HashMap<(u32, u32), (u32, [u32; 2])> = HashMap::new();
+    let mut region: HashSet<u32> = touched_set.clone();
     for &g in &touched {
-        let Some(span) = cell_span(cells, cell_indices, g) else {
+        if let Some(span) = cell_span(cells, cell_indices, g) {
+            for &vid in span {
+                if let Some(k) = key_of(vid) {
+                    region.extend(k);
+                }
+            }
+        }
+    }
+    let mut edge_use: HashMap<(u32, u32), (u32, bool, [u32; 2])> = HashMap::new();
+    for &c in &region {
+        let is_touched = touched_set.contains(&c);
+        let Some(span) = cell_span(cells, cell_indices, c) else {
             continue;
         };
         let n = span.len();
         for i in 0..n {
-            let vi = span[i];
-            let vj = span[(i + 1) % n];
-            let (Some(ki), Some(kj)) = (key_of(vi), key_of(vj)) else {
-                continue;
-            };
-            let Some(m) = shared_other(ki, kj, g) else {
-                continue;
-            };
-            if !touched_set.contains(&m) {
-                continue; // boundary edge: pinned, trusted
-            }
-            let e = (vi.min(vj), vi.max(vj));
-            let slot = edge_use.entry(e).or_insert((0, [g, u32::MAX]));
-            if slot.0 < 2 {
-                slot.1[slot.0 as usize] = g;
+            let a = span[i];
+            let b = span[(i + 1) % n];
+            let e = (a.min(b), a.max(b));
+            let slot = edge_use
+                .entry(e)
+                .or_insert((0, false, [u32::MAX, u32::MAX]));
+            if (slot.0 as usize) < 2 {
+                slot.2[slot.0 as usize] = c;
             }
             slot.0 += 1;
+            slot.1 |= is_touched;
         }
     }
-    for (_, (count, owners)) in edge_use {
-        if count != 2 {
-            residual_out.push((owners[0].min(owners[1]), owners[0].max(owners[1])));
+    for (edge, (count, touched_owner, owners)) in edge_use {
+        // Only edges incident to a re-stitched cell are our concern; edges
+        // entirely among unchanged outside cells (touched_owner=false) pair as
+        // before. An in-scope edge must be used by exactly two cells.
+        if touched_owner && count != 2 {
+            if trace() {
+                eprintln!(
+                    "[reclip]   BADEDGE vids=({},{}) keys=({:?},{:?}) count={count} owners={owners:?}",
+                    edge.0,
+                    edge.1,
+                    key_of(edge.0),
+                    key_of(edge.1)
+                );
+            }
+            let a = owners[0];
+            let b = if owners[1] == u32::MAX {
+                owners[0]
+            } else {
+                owners[1]
+            };
+            residual_out.push((a.min(b), a.max(b)));
         }
     }
+    residual_out.sort_unstable();
+    residual_out.dedup();
 
     if trace() {
         eprintln!(
@@ -485,172 +529,12 @@ pub(crate) fn repair(
     Ok(residual_out)
 }
 
-/// Deterministic local triangulation + spherical circumcenters.
-///
-/// The contested interior of a component is re-resolved from a single shared
-/// computation so every component cell agrees (consistency, not exactness — see
-/// the design doc). Bowyer–Watson over a shared gnomonic chart gives one
-/// deterministic triangulation; near-cocircular ties resolve to *a* consistent
-/// choice (acceptable because such vertices are geometrically ~ambiguous).
+/// Spherical circumcenter helper.
 mod delaunay {
     use glam::DVec3;
-    use std::collections::HashMap;
-
-    /// Shared gnomonic chart for a local generator set: project each unit
-    /// generator `p` to the tangent plane at the set centroid.
-    pub(super) struct Chart {
-        center: DVec3,
-        e1: DVec3,
-        e2: DVec3,
-    }
-
-    impl Chart {
-        pub(super) fn new(gens: &[DVec3]) -> Option<Self> {
-            let mut c = DVec3::ZERO;
-            for &g in gens {
-                c += g;
-            }
-            let len2 = c.length_squared();
-            if !len2.is_finite() || len2 <= 1e-18 {
-                return None;
-            }
-            let center = c / len2.sqrt();
-            // Any stable tangent basis at `center`.
-            let helper = if center.x.abs() < 0.9 {
-                DVec3::X
-            } else {
-                DVec3::Y
-            };
-            let e1 = (helper - center * helper.dot(center)).normalize();
-            let e2 = center.cross(e1);
-            Some(Self { center, e1, e2 })
-        }
-
-        /// Gnomonic projection; `None` if `p` is on/over the chart horizon.
-        pub(super) fn project(&self, p: DVec3) -> Option<[f64; 2]> {
-            let d = p.dot(self.center);
-            if d <= 1e-6 {
-                return None;
-            }
-            let s = p / d;
-            Some([s.dot(self.e1), s.dot(self.e2)])
-        }
-
-        /// Orthographic tangent coordinates (no horizon): robust for angular
-        /// ordering of vertices around a generator.
-        pub(super) fn ortho(&self, p: DVec3) -> [f64; 2] {
-            [p.dot(self.e1), p.dot(self.e2)]
-        }
-    }
-
-    #[inline]
-    fn orient2d(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> f64 {
-        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
-    }
-
-    /// `> 0` when `d` lies strictly inside the circumcircle of CCW triangle
-    /// `(a,b,c)`. Orientation-independent (multiplies by the triangle's
-    /// orientation sign), so callers need not pre-order the triangle.
-    fn in_circle(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> f64 {
-        let adx = a[0] - d[0];
-        let ady = a[1] - d[1];
-        let bdx = b[0] - d[0];
-        let bdy = b[1] - d[1];
-        let cdx = c[0] - d[0];
-        let cdy = c[1] - d[1];
-        let ad = adx * adx + ady * ady;
-        let bd = bdx * bdx + bdy * bdy;
-        let cd = cdx * cdx + cdy * cdy;
-        let det = adx * (bdy * cd - bd * cdy) - ady * (bdx * cd - bd * cdx)
-            + ad * (bdx * cdy - bdy * cdx);
-        det * orient2d(a, b, c)
-    }
-
-    /// Bowyer–Watson triangulation of `pts` (indices into the returned tris are
-    /// indices into `pts`). Returns CCW-or-CW triangles covering the convex
-    /// hull. Deterministic; ties (cocircular) resolve via the strict `> tol`
-    /// test to a single consistent triangulation.
-    pub(super) fn triangulate(pts: &[[f64; 2]]) -> Vec<[usize; 3]> {
-        let n = pts.len();
-        if n < 3 {
-            return Vec::new();
-        }
-        // Super-triangle covering the bbox, vertices indexed n, n+1, n+2.
-        let (mut minx, mut miny, mut maxx, mut maxy) = (
-            f64::INFINITY,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-            f64::NEG_INFINITY,
-        );
-        for p in pts {
-            minx = minx.min(p[0]);
-            miny = miny.min(p[1]);
-            maxx = maxx.max(p[0]);
-            maxy = maxy.max(p[1]);
-        }
-        let dmax = (maxx - minx).max(maxy - miny).max(1e-12);
-        let midx = 0.5 * (minx + maxx);
-        let midy = 0.5 * (miny + maxy);
-        let st = [
-            [midx - 1000.0 * dmax, midy - 1000.0 * dmax],
-            [midx, midy + 1000.0 * dmax],
-            [midx + 1000.0 * dmax, midy - 1000.0 * dmax],
-        ];
-        let coord = |i: usize| -> [f64; 2] {
-            if i < n {
-                pts[i]
-            } else {
-                st[i - n]
-            }
-        };
-        let tol = 1e-12 * dmax * dmax;
-
-        let mut tris: Vec<[usize; 3]> = vec![[n, n + 1, n + 2]];
-        for (i, &p) in pts.iter().enumerate() {
-            // Triangles whose circumcircle contains p are "bad".
-            let mut bad = Vec::new();
-            for (ti, t) in tris.iter().enumerate() {
-                if in_circle(coord(t[0]), coord(t[1]), coord(t[2]), p) > tol {
-                    bad.push(ti);
-                }
-            }
-            // Cavity boundary = undirected edges appearing in exactly one bad
-            // triangle. Orientation-independent (count by sorted pair): the
-            // triangles carry no consistent winding, so directed-edge matching
-            // would mis-cancel genuine boundary edges and lose points.
-            let mut edge_count: HashMap<(usize, usize), u32> = HashMap::new();
-            for &ti in &bad {
-                let t = tris[ti];
-                for e in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
-                    *edge_count.entry((e.0.min(e.1), e.0.max(e.1))).or_insert(0) += 1;
-                }
-            }
-            // Remove bad triangles (descending index so swap_remove is safe).
-            bad.sort_unstable_by(|a, b| b.cmp(a));
-            for ti in bad {
-                tris.swap_remove(ti);
-            }
-            // Re-triangulate the cavity: connect p to each boundary edge,
-            // oriented CCW so created triangles have consistent winding.
-            for ((u, v), c) in edge_count {
-                if c != 1 {
-                    continue;
-                }
-                let tri = if orient2d(coord(u), coord(v), p) >= 0.0 {
-                    [u, v, i]
-                } else {
-                    [v, u, i]
-                };
-                tris.push(tri);
-            }
-        }
-        // Drop triangles touching a super-triangle vertex.
-        tris.retain(|t| t.iter().all(|&v| v < n));
-        tris
-    }
 
     /// Unit direction equidistant (spherical) from three unit generators — the
-    /// Voronoi vertex of triangle `(a,b,c)`. `None` if degenerate.
+    /// Voronoi vertex of triangle `(a,b,c)`. `None` if degenerate (collinear).
     pub(super) fn circumcenter(a: DVec3, b: DVec3, c: DVec3) -> Option<DVec3> {
         let nrm = (a - b).cross(b - c);
         let len2 = nrm.length_squared();
@@ -665,76 +549,6 @@ mod delaunay {
     mod tests {
         use super::*;
 
-        fn valid_triangulation(pts: &[[f64; 2]], tris: &[[usize; 3]]) -> bool {
-            // No triangle's circumcircle strictly contains another point
-            // (Delaunay), and every triangle is non-degenerate.
-            for t in tris {
-                if orient2d(pts[t[0]], pts[t[1]], pts[t[2]]).abs() < 1e-15 {
-                    return false;
-                }
-                for (j, &p) in pts.iter().enumerate() {
-                    if j == t[0] || j == t[1] || j == t[2] {
-                        continue;
-                    }
-                    if in_circle(pts[t[0]], pts[t[1]], pts[t[2]], p) > 1e-9 {
-                        return false;
-                    }
-                }
-            }
-            true
-        }
-
-        #[test]
-        fn triangulates_square_consistently() {
-            // 4 cocircular corners → 2 triangles, deterministic.
-            let pts = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
-            let t1 = triangulate(&pts);
-            let t2 = triangulate(&pts);
-            assert_eq!(t1.len(), 2, "square → 2 triangles");
-            assert_eq!(t1, t2, "deterministic");
-            assert!(valid_triangulation(&pts, &t1));
-        }
-
-        #[test]
-        fn triangulates_grid_covers_all_points() {
-            // 6x6 jittered grid: every interior point must be incident to a
-            // triangle, and the count must match Euler (2n - 2 - hull).
-            let mut pts = Vec::new();
-            for i in 0..6u32 {
-                for j in 0..6u32 {
-                    let jit = ((i * 7 + j * 13) % 5) as f64 * 1e-3;
-                    pts.push([i as f64 + jit, j as f64 - jit]);
-                }
-            }
-            let tris = triangulate(&pts);
-            let mut incident = vec![false; pts.len()];
-            for t in &tris {
-                for &v in t {
-                    incident[v] = true;
-                }
-            }
-            assert!(incident.iter().all(|&x| x), "every point incident");
-            // A correct triangulation has 2n-2-h triangles (h = hull size); for
-            // this mostly-interior grid that is ~50. The lost-points bug gave
-            // ~n; require comfortably more than n to catch it.
-            assert!(
-                tris.len() >= pts.len() + pts.len() / 3,
-                "triangle count {} too low for {} points (Bowyer–Watson lost points)",
-                tris.len(),
-                pts.len()
-            );
-            assert!(valid_triangulation(&pts, &tris));
-        }
-
-        #[test]
-        fn triangulates_pentagon_fan() {
-            let pts = [[0.0, 0.0], [1.0, 0.1], [0.6, 1.0], [-0.6, 0.9], [-1.0, 0.0]];
-            let tris = triangulate(&pts);
-            // Convex position, 5 points → 2n-2-h = 10-2-5 = 3 triangles.
-            assert_eq!(tris.len(), 3);
-            assert!(valid_triangulation(&pts, &tris));
-        }
-
         #[test]
         fn circumcenter_is_equidistant() {
             let a = DVec3::new(0.0, 0.0, 1.0);
@@ -746,19 +560,6 @@ mod delaunay {
                 (da - db).abs() < 1e-9 && (db - dc).abs() < 1e-9,
                 "equidistant"
             );
-        }
-
-        #[test]
-        fn chart_projects_round_trip_order() {
-            let gens = [
-                DVec3::new(0.0, 0.0, 1.0),
-                DVec3::new(0.05, 0.0, 1.0).normalize(),
-                DVec3::new(0.0, 0.05, 1.0).normalize(),
-            ];
-            let chart = Chart::new(&gens).unwrap();
-            for g in gens {
-                assert!(chart.project(g).is_some());
-            }
         }
     }
 }
