@@ -22,6 +22,7 @@ impl GnomonicBuilder {
     }
 
     /// Commit a clip result: update state on Changed, set failure on TooManyVertices/ClippedAway.
+    #[cfg_attr(not(feature = "profiling"), inline(always))]
     pub(super) fn commit_clip(
         &mut self,
         clip_result: ClipResult,
@@ -72,6 +73,7 @@ impl GnomonicBuilder {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
+    #[cfg_attr(not(feature = "profiling"), inline(always))]
     pub(super) fn clip_with_slot_result(
         &mut self,
         neighbor_idx: usize,
@@ -338,12 +340,14 @@ impl FallbackBuilder {
 }
 
 impl Topo2DBuilder {
+    #[inline(always)]
     pub(crate) fn handle_step_result(
         result: Result<(), CellFailure>,
     ) -> Result<BuilderStepOutcome, CellFailure> {
         Self::classify_step_result(result)
     }
 
+    #[inline(always)]
     pub(crate) fn handle_clip_result(
         result: Result<ClipResult, CellFailure>,
     ) -> Result<BuilderClipOutcome, CellFailure> {
@@ -399,6 +403,7 @@ impl Topo2DBuilder {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
+    #[cfg_attr(not(feature = "profiling"), inline(always))]
     pub(crate) fn clip_with_slot_result_policy(
         &mut self,
         neighbor_idx: usize,
@@ -417,6 +422,7 @@ impl Topo2DBuilder {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
+    #[cfg_attr(not(feature = "profiling"), inline(always))]
     pub(crate) fn clip_with_slot_edgecheck_policy(
         &mut self,
         neighbor_idx: usize,
