@@ -47,12 +47,6 @@ impl TangentBasis {
         let t2 = g.cross(t1);
         TangentBasis { t1, t2, g }
     }
-
-    #[cfg_attr(feature = "profiling", inline(never))]
-    #[cfg_attr(not(feature = "profiling"), inline)]
-    pub fn plane_to_line(&self, n: DVec3) -> (f64, f64, f64) {
-        (n.dot(self.t1), n.dot(self.t2), n.dot(self.g))
-    }
 }
 
 pub(super) use crate::tolerances::MIN_PROJECTION_COS;
@@ -95,6 +89,7 @@ impl GnomonicBuilder {
         let gen64 = DVec3::new(generator.x as f64, generator.y as f64, generator.z as f64);
         let inv_two_gg = 0.5 / gen64.length_squared();
         let basis = TangentBasis::new(gen64);
+        let generator_dot_g = gen64.dot(basis.g);
 
         let mut poly_a = PolyBuffer::new();
         poly_a.init_bounding(1e6);
@@ -104,6 +99,7 @@ impl GnomonicBuilder {
             generator: gen64,
             basis,
             inv_two_gg,
+            generator_dot_g,
             half_planes: Vec::with_capacity(32),
             neighbor_indices: Vec::with_capacity(32),
             neighbor_slots: Vec::with_capacity(32),
@@ -133,6 +129,7 @@ impl GnomonicBuilder {
         self.generator = gen64;
         self.inv_two_gg = 0.5 / gen64.length_squared();
         self.basis = TangentBasis::new(gen64);
+        self.generator_dot_g = gen64.dot(self.basis.g);
         self.half_planes.clear();
         self.neighbor_indices.clear();
         self.neighbor_slots.clear();
@@ -161,25 +158,22 @@ impl GnomonicBuilder {
 
         let n_raw = DVec3::new(neighbor.x as f64, neighbor.y as f64, neighbor.z as f64);
         let len_sq = n_raw.length_squared();
-        // Exact chord bisector of two non-unit points: the plane value at
-        // chart points needs c = (|g|^2 + |h|^2)/2 - g.h, achieved by
-        // w = g * (|g|^2 + |h|^2) / (2|g|^2) - h dotted with (t1, t2, g)
-        // (t1, t2 are exactly orthogonal to g, so a and b stay -t.h). For
-        // |g| exactly 1 this is the legacy scale = (|h|^2 + 1)/2,
-        // bit-for-bit. Without the |g|^2 correction, a ~1e-7 off-unit
-        // generator displaces a 2e-6-separation twin's bisector by ~3% of
-        // the chart (c error ~delta_g amplified by 1/|n|) — the
-        // resolvable-regime killer the contract tests catch.
+        // Exact chord bisector of two f32-canonicalized points promoted to
+        // f64. Do not collapse this to the unit-vector formula: the promoted
+        // f32 inputs are slightly off-unit, and that correction is what keeps
+        // near-twin bisectors in the same solved point set as the rest of the
+        // pipeline.
+        //
+        // The plane value at chart points needs c = (|g|^2 + |h|^2)/2 - g.h,
+        // achieved by w = g * (|g|^2 + |h|^2) / (2|g|^2) - h dotted with
+        // (t1, t2, g). Cache `g`'s projection onto the chart normal so each
+        // clip only projects the neighbor and applies the same scale algebra.
         let scale = fp::fma_f64(len_sq, self.inv_two_gg, 0.5);
-
-        let g = self.generator;
-        let normal_unnorm = DVec3::new(
-            fp::fma_f64(g.x, scale, -n_raw.x),
-            fp::fma_f64(g.y, scale, -n_raw.y),
-            fp::fma_f64(g.z, scale, -n_raw.z),
-        );
-
-        self.basis.plane_to_line(normal_unnorm)
+        (
+            -n_raw.dot(self.basis.t1),
+            -n_raw.dot(self.basis.t2),
+            fp::fma_f64(scale, self.generator_dot_g, -n_raw.dot(self.basis.g)),
+        )
     }
 
     #[inline]

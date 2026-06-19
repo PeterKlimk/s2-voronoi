@@ -69,6 +69,7 @@ pub(crate) struct GnomonicBuilder {
     /// rather than an f64-renormalized unit vector. Equal to 0.5 exactly for
     /// exactly-unit generators, reproducing the legacy formula bit-for-bit.
     inv_two_gg: f64,
+    generator_dot_g: f64,
 
     half_planes: Vec<HalfPlane>,
     neighbor_indices: Vec<usize>,
