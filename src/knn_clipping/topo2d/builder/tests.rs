@@ -51,6 +51,13 @@ fn fallback_points(g: Vec3, h1: Vec3, h2: Vec3, h3: Vec3) -> Vec<Vec3> {
     points
 }
 
+fn fallback_points4(g: Vec3, h1: Vec3, h2: Vec3, h3: Vec3, h4: Vec3) -> Vec<Vec3> {
+    let mut points = fallback_points(g, h1, h2, h3);
+    points.resize(15, Vec3::ZERO);
+    points[14] = h4;
+    points
+}
+
 #[test]
 fn changed_clip_fails_when_bounded_polygon_reaches_projection_limit() {
     let mut builder = Topo2DBuilder::new(0, Vec3::Z);
@@ -228,6 +235,60 @@ fn too_many_vertices_records_current_constraint_before_fallback() {
     assert_eq!(gnomonic.half_planes.len(), 1);
     assert_eq!(gnomonic.neighbor_indices, vec![11]);
     assert_eq!(gnomonic.neighbor_slots, vec![21]);
+}
+
+#[test]
+fn polygon_vertex_limit_handoff_replays_overflowing_constraint() {
+    let g = Vec3::new(0.0, 0.0, 1.0);
+    let mut builder = Topo2DBuilder::new(0, g);
+
+    let h1 = Vec3::new(1.0, 0.0, 0.5).normalize();
+    let h2 = Vec3::new(-0.5, 0.866, 0.5).normalize();
+    let h3 = Vec3::new(-0.5, -0.866, 0.5).normalize();
+    let h4 = Vec3::new(0.0, 1.0, 0.75).normalize();
+
+    assert_eq!(
+        builder.clip_with_slot_edgecheck_policy(11, 21, h1, 0.125),
+        Ok(BuilderStepOutcome::Applied)
+    );
+    assert_eq!(
+        builder.clip_with_slot_policy(12, 22, h2),
+        Ok(BuilderStepOutcome::Applied)
+    );
+    assert_eq!(
+        builder.clip_with_slot_policy(13, 23, h3),
+        Ok(BuilderStepOutcome::Applied)
+    );
+
+    let hp = HalfPlane::new_unnormalized(1.0, 0.0, 0.0, builder.accepted_constraint_count());
+    assert_eq!(
+        builder
+            .as_gnomonic_mut()
+            .commit_clip(ClipResult::TooManyVertices, hp, 14, 24,),
+        Err(crate::knn_clipping::cell_build::CellFailure::TooManyVertices)
+    );
+
+    let points = fallback_points4(g, h1, h2, h3, h4);
+    builder.enter_fallback(
+        &points,
+        BuilderFallbackRequest {
+            trigger: BuilderFallbackTrigger::PolygonVertexLimit,
+        },
+    );
+
+    assert_eq!(
+        builder.as_fallback().trigger,
+        BuilderFallbackTrigger::PolygonVertexLimit
+    );
+    assert_eq!(builder.as_fallback().constraints.len(), 4);
+    assert_eq!(builder.as_fallback().constraints[3].neighbor_idx, 14);
+    assert_eq!(builder.as_fallback().constraints[3].neighbor_slot, 24);
+
+    let mut buffer = CellOutputBuffer::default();
+    builder
+        .to_vertex_data_full(&mut buffer)
+        .expect("polygon-cap fallback replay should produce extractable vertices");
+    assert!(buffer.vertices.len() >= 3);
 }
 
 #[test]

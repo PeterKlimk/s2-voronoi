@@ -86,6 +86,8 @@ pub struct CellSubPhases {
     pub cells_packed_tail_used: u64,
     pub cells_packed_safe_exhausted: u64,
     pub cells_used_knn: u64,
+    pub fallback_projection: u64,
+    pub fallback_polygon_cap: u64,
     pub packed_tail_builds: u64,
     /// Sum of neighbors processed before termination across all cells
     /// (mean = total / n; input for the grid-density tuning model).
@@ -141,6 +143,8 @@ pub struct CellSubAccum {
     cells_packed_tail_used: u64,
     cells_packed_safe_exhausted: u64,
     cells_used_knn: u64,
+    fallback_projection: u64,
+    fallback_polygon_cap: u64,
     packed_tail_builds: u64,
     neighbors_processed_total: u64,
     neighbors_processed_max: u64,
@@ -242,6 +246,12 @@ impl CellSubAccum {
     }
 
     #[inline]
+    pub fn add_fallbacks(&mut self, projection: usize, polygon_cap: usize) {
+        self.fallback_projection += projection as u64;
+        self.fallback_polygon_cap += polygon_cap as u64;
+    }
+
+    #[inline]
     pub fn add_directional_shadow(
         &mut self,
         checks: usize,
@@ -288,6 +298,8 @@ impl CellSubAccum {
         self.cells_packed_tail_used += other.cells_packed_tail_used;
         self.cells_packed_safe_exhausted += other.cells_packed_safe_exhausted;
         self.cells_used_knn += other.cells_used_knn;
+        self.fallback_projection += other.fallback_projection;
+        self.fallback_polygon_cap += other.fallback_polygon_cap;
         self.packed_tail_builds += other.packed_tail_builds;
         self.neighbors_processed_total += other.neighbors_processed_total;
         self.neighbors_processed_max = self
@@ -331,6 +343,8 @@ impl CellSubAccum {
             cells_packed_tail_used: self.cells_packed_tail_used,
             cells_packed_safe_exhausted: self.cells_packed_safe_exhausted,
             cells_used_knn: self.cells_used_knn,
+            fallback_projection: self.fallback_projection,
+            fallback_polygon_cap: self.fallback_polygon_cap,
             packed_tail_builds: self.packed_tail_builds,
             neighbors_processed_total: self.neighbors_processed_total,
             neighbors_processed_max: self.neighbors_processed_max,
@@ -539,6 +553,12 @@ impl PhaseTimings {
                 self.cell_sub.cells_packed_tail_used,
                 self.cell_sub.cells_packed_safe_exhausted
             );
+            if self.cell_sub.fallback_projection > 0 || self.cell_sub.fallback_polygon_cap > 0 {
+                eprintln!(
+                    "    fallbacks: projection={} polygon_cap={}",
+                    self.cell_sub.fallback_projection, self.cell_sub.fallback_polygon_cap
+                );
+            }
             eprintln!(
                 "    neighbors: mean={:.1} max={} (grid res={} max_occ={} rebuilt={})",
                 self.cell_sub.neighbors_processed_total as f64 / n.max(1) as f64,
@@ -596,7 +616,7 @@ impl PhaseTimings {
 
         if std::env::var_os("S2_VORONOI_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} packed_tail_builds={ptb} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} packed_tail_builds={ptb} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -607,6 +627,8 @@ impl PhaseTimings {
                 asmb = ms(self.assemble),
                 cuk = self.cell_sub.cells_used_knn,
                 cpt = self.cell_sub.cells_packed_tail_used,
+                fpj = self.cell_sub.fallback_projection,
+                fpc = self.cell_sub.fallback_polygon_cap,
                 ptb = self.cell_sub.packed_tail_builds,
                 nt = self.cell_sub.neighbors_processed_total,
                 nm = self.cell_sub.neighbors_processed_max,

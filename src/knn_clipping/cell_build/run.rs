@@ -8,7 +8,9 @@ use std::time::Duration;
 use crate::cube_grid::{
     DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream, PackedQuery,
 };
-use crate::knn_clipping::topo2d::{BuilderClipOutcome, BuilderFallbackRequest, BuilderStepOutcome};
+use crate::knn_clipping::topo2d::{
+    BuilderClipOutcome, BuilderFallbackRequest, BuilderFallbackTrigger, BuilderStepOutcome,
+};
 use crate::policy::PackedNeighborPolicy;
 
 use super::{CellBuildError, CellFailure, CellOutputBuffer};
@@ -151,6 +153,8 @@ pub(crate) struct CellBuildStats {
     directional_support_hits: usize,
     directional_support_saved: usize,
     directional_support_false_positive_hits: usize,
+    fallback_projection: usize,
+    fallback_polygon_cap: usize,
     incoming_seed_neighbors: usize,
     edgecheck_seed_clips: usize,
     knn_exhausted: bool,
@@ -177,6 +181,7 @@ impl CellBuildStats {
             self.directional_support_saved,
             self.directional_support_false_positive_hits,
         );
+        cell_sub.add_fallbacks(self.fallback_projection, self.fallback_polygon_cap);
 
         let stage = if self.used_knn {
             self.knn_stage
@@ -265,6 +270,8 @@ pub(super) struct BuildCounters {
     directional_support_hits: usize,
     directional_support_saved: usize,
     directional_support_false_positive_hits: usize,
+    fallback_projection: usize,
+    fallback_polygon_cap: usize,
     #[cfg(feature = "timing")]
     directional_shadow_terminated: bool,
     terminated: bool,
@@ -292,6 +299,8 @@ impl BuildCounters {
             directional_support_hits: 0,
             directional_support_saved: 0,
             directional_support_false_positive_hits: 0,
+            fallback_projection: 0,
+            fallback_polygon_cap: 0,
             #[cfg(feature = "timing")]
             directional_shadow_terminated: false,
             terminated: false,
@@ -303,6 +312,13 @@ impl BuildCounters {
         self.packed_tail_used |= stream.packed_tail_used();
         self.packed_safe_exhausted |= stream.packed_safe_exhausted();
         self.knn_exhausted |= stream.knn_exhausted();
+    }
+
+    fn record_fallback(&mut self, request: BuilderFallbackRequest) {
+        match request.trigger {
+            BuilderFallbackTrigger::ProjectionLimit => self.fallback_projection += 1,
+            BuilderFallbackTrigger::PolygonVertexLimit => self.fallback_polygon_cap += 1,
+        }
     }
 }
 
@@ -403,6 +419,7 @@ fn clip_seed_neighbors(
             Ok(BuilderStepOutcome::Applied) => {}
             Ok(BuilderStepOutcome::NeedsFallback(request)) => {
                 trace.fallback_request = Some(request);
+                counters.record_fallback(request);
                 ctx.builder.enter_fallback(points, request);
             }
             Err(_) => break,
@@ -475,6 +492,7 @@ fn clip_batch(
                 Ok(BuilderClipOutcome::Applied(result)) => result,
                 Ok(BuilderClipOutcome::NeedsFallback(request)) => {
                     trace.fallback_request = Some(request);
+                    counters.record_fallback(request);
                     phase.builder.enter_fallback(points, request);
                     crate::knn_clipping::topo2d::types::ClipResult::Changed
                 }
@@ -708,6 +726,8 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         directional_support_hits: counters.directional_support_hits,
         directional_support_saved: counters.directional_support_saved,
         directional_support_false_positive_hits: counters.directional_support_false_positive_hits,
+        fallback_projection: counters.fallback_projection,
+        fallback_polygon_cap: counters.fallback_polygon_cap,
         incoming_seed_neighbors: request.seed_neighbors.len(),
         edgecheck_seed_clips: counters.edgecheck_seed_clips,
         knn_exhausted: counters.knn_exhausted,
