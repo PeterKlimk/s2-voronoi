@@ -36,15 +36,19 @@ pub struct TangentBasis {
 
 impl TangentBasis {
     pub fn new(g: DVec3) -> Self {
-        let arbitrary = if g.x.abs() <= g.y.abs() && g.x.abs() <= g.z.abs() {
-            DVec3::X
-        } else if g.y.abs() <= g.z.abs() {
-            DVec3::Y
-        } else {
-            DVec3::Z
-        };
-        let t1 = g.cross(arbitrary).normalize();
-        let t2 = g.cross(t1);
+        if g.z < -0.999_999_9 {
+            return TangentBasis {
+                t1: DVec3::NEG_Y,
+                t2: DVec3::NEG_X,
+                g,
+            };
+        }
+
+        // Unit-vector ONB construction; avoids the sqrt/divide in the hot reset path.
+        let a = 1.0 / (1.0 + g.z);
+        let b = -g.x * g.y * a;
+        let t1 = DVec3::new(1.0 - g.x * g.x * a, b, -g.x);
+        let t2 = DVec3::new(b, 1.0 - g.y * g.y * a, -g.y);
         TangentBasis { t1, t2, g }
     }
 }
