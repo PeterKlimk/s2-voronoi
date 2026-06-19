@@ -568,7 +568,7 @@ fn cell_spans_differ(
 ///
 /// Debug builds assert the localized result is identical to the global scan, so
 /// any gap in the locality argument is caught immediately at zero release cost.
-fn scan_unpaired_interior(
+pub(crate) fn scan_unpaired_interior(
     cells: &[VoronoiCell],
     cell_indices: &[u32],
     vertex_keys: VertexKeys<'_>,
