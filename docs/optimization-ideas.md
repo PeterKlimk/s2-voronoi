@@ -28,6 +28,7 @@ Measurement rules:
 | Edge-check matching (parked: near-optimal for sane regime) | `docs/edgecheck-matching-optimization.md` |
 | Post-clipping pipeline (cert + edge_emit: both rejected) | `docs/post-clipping-pipeline-optimization.md` |
 | Research-level: incremental support cert, dot reuse, batched clip | `docs/research-level-optimization.md` |
+| Late clip reduction: final-edge rank, candidate aperture, wedge certificates | `docs/late-clip-reduction-ideas.md` |
 | Roadmap priorities | `docs/todo.md` |
 
 ## Current High-Value Threads
