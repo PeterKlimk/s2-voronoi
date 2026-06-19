@@ -214,6 +214,26 @@ fn resolve_component(
     // Map each component generator to the interior vertices incident to it.
     let mut interior_pos: HashMap<[u32; 3], Vec3> = HashMap::new();
     let mut incident_interior: HashMap<u32, Vec<[u32; 3]>> = HashMap::new();
+    if trace() {
+        let mut incident_all: HashMap<u32, usize> = HashMap::new();
+        for t in &tris {
+            for &li in t {
+                *incident_all.entry(tri_gens[li]).or_insert(0) += 1;
+            }
+        }
+        let missing: Vec<u32> = comp
+            .cells
+            .iter()
+            .copied()
+            .filter(|g| !incident_all.contains_key(g))
+            .collect();
+        eprintln!(
+            "[reclip]   diag: {} tri_gens, {} tris; component cells with ZERO incident triangles: {:?}",
+            tri_gens.len(),
+            tris.len(),
+            missing
+        );
+    }
     for t in &tris {
         let g3 = [tri_gens[t[0]], tri_gens[t[1]], tri_gens[t[2]]];
         if !g3.iter().all(|g| gset.contains(g)) {
@@ -463,6 +483,7 @@ pub(crate) fn repair(
 /// choice (acceptable because such vertices are geometrically ~ambiguous).
 mod delaunay {
     use glam::DVec3;
+    use std::collections::HashMap;
 
     /// Shared gnomonic chart for a local generator set: project each unit
     /// generator `p` to the tangent plane at the set centroid.
@@ -560,9 +581,9 @@ mod delaunay {
         let midx = 0.5 * (minx + maxx);
         let midy = 0.5 * (miny + maxy);
         let st = [
-            [midx - 20.0 * dmax, midy - dmax],
-            [midx, midy + 20.0 * dmax],
-            [midx + 20.0 * dmax, midy - dmax],
+            [midx - 1000.0 * dmax, midy - 1000.0 * dmax],
+            [midx, midy + 1000.0 * dmax],
+            [midx + 1000.0 * dmax, midy - 1000.0 * dmax],
         ];
         let coord = |i: usize| -> [f64; 2] {
             if i < n {
@@ -582,19 +603,15 @@ mod delaunay {
                     bad.push(ti);
                 }
             }
-            // Cavity boundary = edges appearing in exactly one bad triangle.
-            let mut edges: Vec<[usize; 2]> = Vec::new();
+            // Cavity boundary = undirected edges appearing in exactly one bad
+            // triangle. Orientation-independent (count by sorted pair): the
+            // triangles carry no consistent winding, so directed-edge matching
+            // would mis-cancel genuine boundary edges and lose points.
+            let mut edge_count: HashMap<(usize, usize), u32> = HashMap::new();
             for &ti in &bad {
                 let t = tris[ti];
-                for e in [[t[0], t[1]], [t[1], t[2]], [t[2], t[0]]] {
-                    // Shared iff the reverse edge is also present among bad tris.
-                    if let Some(pos) = edges.iter().position(|x| {
-                        (x[0] == e[1] && x[1] == e[0]) || (x[0] == e[0] && x[1] == e[1])
-                    }) {
-                        edges.swap_remove(pos);
-                    } else {
-                        edges.push(e);
-                    }
+                for e in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                    *edge_count.entry((e.0.min(e.1), e.0.max(e.1))).or_insert(0) += 1;
                 }
             }
             // Remove bad triangles (descending index so swap_remove is safe).
@@ -602,9 +619,18 @@ mod delaunay {
             for ti in bad {
                 tris.swap_remove(ti);
             }
-            // Re-triangulate the cavity by connecting p to each boundary edge.
-            for e in edges {
-                tris.push([e[0], e[1], i]);
+            // Re-triangulate the cavity: connect p to each boundary edge,
+            // oriented CCW so created triangles have consistent winding.
+            for ((u, v), c) in edge_count {
+                if c != 1 {
+                    continue;
+                }
+                let tri = if orient2d(coord(u), coord(v), p) >= 0.0 {
+                    [u, v, i]
+                } else {
+                    [v, u, i]
+                };
+                tris.push(tri);
             }
         }
         // Drop triangles touching a super-triangle vertex.
@@ -656,6 +682,37 @@ mod delaunay {
             assert_eq!(t1.len(), 2, "square → 2 triangles");
             assert_eq!(t1, t2, "deterministic");
             assert!(valid_triangulation(&pts, &t1));
+        }
+
+        #[test]
+        fn triangulates_grid_covers_all_points() {
+            // 6x6 jittered grid: every interior point must be incident to a
+            // triangle, and the count must match Euler (2n - 2 - hull).
+            let mut pts = Vec::new();
+            for i in 0..6u32 {
+                for j in 0..6u32 {
+                    let jit = ((i * 7 + j * 13) % 5) as f64 * 1e-3;
+                    pts.push([i as f64 + jit, j as f64 - jit]);
+                }
+            }
+            let tris = triangulate(&pts);
+            let mut incident = vec![false; pts.len()];
+            for t in &tris {
+                for &v in t {
+                    incident[v] = true;
+                }
+            }
+            assert!(incident.iter().all(|&x| x), "every point incident");
+            // A correct triangulation has 2n-2-h triangles (h = hull size); for
+            // this mostly-interior grid that is ~50. The lost-points bug gave
+            // ~n; require comfortably more than n to catch it.
+            assert!(
+                tris.len() >= pts.len() + pts.len() / 3,
+                "triangle count {} too low for {} points (Bowyer–Watson lost points)",
+                tris.len(),
+                pts.len()
+            );
+            assert!(valid_triangulation(&pts, &tris));
         }
 
         #[test]
