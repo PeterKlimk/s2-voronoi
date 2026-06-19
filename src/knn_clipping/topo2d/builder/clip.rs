@@ -53,7 +53,7 @@ impl GnomonicBuilder {
                     self.support_cache_valid = false;
                 }
             }
-            ClipResult::Unchanged => {}
+            ClipResult::Unchanged => return Ok(ClipResult::Unchanged),
         }
 
         let poly = self.current_poly();
@@ -103,6 +103,9 @@ impl GnomonicBuilder {
             clip_convex(&self.poly_b, &hp, &mut self.poly_a, &esc)
         };
 
+        if clip_result == ClipResult::Unchanged {
+            return Ok(ClipResult::Unchanged);
+        }
         let committed = self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot);
         self.sync_neighbor_positions(neighbor);
         committed
@@ -253,6 +256,9 @@ impl GnomonicBuilder {
             clip_convex_edgecheck(&self.poly_b, &hp, &mut self.poly_a, &esc)
         };
 
+        if clip_result == ClipResult::Unchanged {
+            return Ok(());
+        }
         let committed = self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot);
         self.sync_neighbor_positions(neighbor);
         committed?;

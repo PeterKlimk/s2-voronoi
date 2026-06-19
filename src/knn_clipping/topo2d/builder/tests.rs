@@ -108,6 +108,27 @@ fn changed_clip_allows_bounded_polygon_inside_projection_limit() {
 }
 
 #[test]
+fn unchanged_clip_skips_projection_validation() {
+    let mut builder = Topo2DBuilder::new(0, Vec3::Z);
+    let gnomonic = builder.as_gnomonic_mut();
+    gnomonic.poly_a.clear();
+    gnomonic.poly_a.len = 3;
+    gnomonic.poly_a.has_bounding_ref = false;
+    gnomonic.poly_a.max_r2 = f64::INFINITY;
+
+    let result = gnomonic.commit_clip(
+        ClipResult::Unchanged,
+        HalfPlane::new_unnormalized(1.0, 0.0, 1.0, 0),
+        1,
+        u32::MAX,
+    );
+
+    assert_eq!(result, Ok(ClipResult::Unchanged));
+    assert_eq!(gnomonic.half_planes.len(), 0);
+    assert_eq!(builder.failure(), None);
+}
+
+#[test]
 fn generic_full_sphere_cells_do_not_clip_away() {
     let points = generic_sphere_points(24);
 
