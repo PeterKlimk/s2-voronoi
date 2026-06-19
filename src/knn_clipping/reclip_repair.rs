@@ -177,40 +177,41 @@ fn resolve_component(
     let g_positions: Vec<DVec3> = comp.cells.iter().map(|&g| gpos(g)).collect();
     let chart = delaunay::Chart::new(&g_positions)?;
 
-    // Triangulation generator set = G plus the *projectable* 1-ring (every
-    // generator in a component cell's existing keys). Far neighbors that miss
-    // the chart horizon are dropped: they cannot lie inside a tight interior
-    // circumcircle, so they never bound an interior vertex.
-    let mut tri_gens: Vec<u32> = Vec::new();
-    let mut tri_proj: Vec<[f64; 2]> = Vec::new();
-    let mut seen: HashSet<u32> = HashSet::new();
-    let mut add = |g: u32, tri_gens: &mut Vec<u32>, tri_proj: &mut Vec<[f64; 2]>| {
-        if seen.insert(g) {
-            if let Some(xy) = chart.project(gpos(g)) {
-                tri_gens.push(g);
-                tri_proj.push(xy);
-            }
-        }
-    };
-    for &g in &comp.cells {
-        add(g, &mut tri_gens, &mut tri_proj);
-    }
+    // Triangulate ONLY the component cells G (a tight, chart-centered cluster).
+    // The 1-ring is kept separately for the emptiness filter, not triangulated:
+    // it spreads outward and, projected from the component centroid, distorts
+    // enough to wreck the triangulation of the dense cluster.
+    let tri_gens: Vec<u32> = comp.cells.clone();
+    let tri_proj: Vec<[f64; 2]> = tri_gens
+        .iter()
+        .map(|&g| chart.project(gpos(g)))
+        .collect::<Option<_>>()?;
+
+    // Filter set = every generator in a component cell's existing keys (G plus
+    // the 1-ring), as 3-D unit vectors. An interior vertex must be closer to its
+    // three generators than to any of these.
+    let mut filter: Vec<(u32, DVec3)> = Vec::new();
+    let mut filter_seen: HashSet<u32> = HashSet::new();
     for &g in &comp.cells {
         for &vid in cell_span(cells, cell_indices, g)? {
             if let Some(k) = vertex_keys.get(vid) {
                 for x in k {
-                    add(x, &mut tri_gens, &mut tri_proj);
+                    if filter_seen.insert(x) {
+                        filter.push((x, gpos(x)));
+                    }
                 }
             }
         }
     }
+
     let tris = delaunay::triangulate(&tri_proj);
     if tris.is_empty() {
         return None;
     }
 
-    // Interior Voronoi vertices: circumcenters of all-G Delaunay triangles
-    // (the empty-circle test already accounts for the projectable 1-ring).
+    // Interior Voronoi vertices: circumcenters of G-triangles whose circumcircle
+    // is empty of every filter generator (so the vertex is a real triple point,
+    // not one bounded by a nearer 1-ring neighbor).
     // Map each component generator to the interior vertices incident to it.
     let mut interior_pos: HashMap<[u32; 3], Vec3> = HashMap::new();
     let mut incident_interior: HashMap<u32, Vec<[u32; 3]>> = HashMap::new();
@@ -234,11 +235,12 @@ fn resolve_component(
             missing
         );
     }
+    // On-circle slack for the emptiness test (chord units): a generator within
+    // this of the circumradius is treated as on the circle, not inside.
+    const EMPTY_TOL: f64 = 1e-7;
     for t in &tris {
         let g3 = [tri_gens[t[0]], tri_gens[t[1]], tri_gens[t[2]]];
-        if !g3.iter().all(|g| gset.contains(g)) {
-            continue;
-        }
+        // (all in G by construction now)
         let key = key3(g3[0], g3[1], g3[2]);
         let Some(cc) = delaunay::circumcenter(gpos(g3[0]), gpos(g3[1]), gpos(g3[2])) else {
             if trace() {
@@ -246,6 +248,15 @@ fn resolve_component(
             }
             return None;
         };
+        // Empty-circumcircle test against the full filter set: closer = larger
+        // dot, so the vertex is real iff no other generator beats its radius.
+        let radius_dot = cc.dot(gpos(g3[0]));
+        let empty = filter
+            .iter()
+            .all(|&(d, dp)| g3.contains(&d) || cc.dot(dp) <= radius_dot + EMPTY_TOL);
+        if !empty {
+            continue;
+        }
         interior_pos.insert(key, Vec3::new(cc.x as f32, cc.y as f32, cc.z as f32));
         for &g in &g3 {
             incident_interior.entry(g).or_default().push(key);
