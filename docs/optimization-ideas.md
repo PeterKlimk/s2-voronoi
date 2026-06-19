@@ -26,7 +26,8 @@ Measurement rules:
 | Paired micro-optimization evidence | `docs/micro-optimization-matrix.md` |
 | Raw micro-idea backlog | `docs/micro-optimization-ideas.md` |
 | Edge-check matching (parked: near-optimal for sane regime) | `docs/edgecheck-matching-optimization.md` |
-| Post-clipping pipeline (certification + edge_emit) | `docs/post-clipping-pipeline-optimization.md` |
+| Post-clipping pipeline (cert + edge_emit: both rejected) | `docs/post-clipping-pipeline-optimization.md` |
+| Research-level: incremental support cert, dot reuse, batched clip | `docs/research-level-optimization.md` |
 | Roadmap priorities | `docs/todo.md` |
 
 ## Current High-Value Threads
