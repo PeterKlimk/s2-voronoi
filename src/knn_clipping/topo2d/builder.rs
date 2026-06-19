@@ -28,6 +28,7 @@ pub struct Topo2DBuilder {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BuilderFallbackTrigger {
     ProjectionLimit,
+    PolygonVertexLimit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +42,7 @@ impl BuilderFallbackRequest {
     pub(crate) fn as_cell_failure(self) -> CellFailure {
         match self.trigger {
             BuilderFallbackTrigger::ProjectionLimit => CellFailure::ProjectionInvalid,
+            BuilderFallbackTrigger::PolygonVertexLimit => CellFailure::TooManyVertices,
         }
     }
 }
@@ -171,8 +173,10 @@ impl Topo2DBuilder {
             CellFailure::ProjectionInvalid => Some(BuilderFallbackRequest {
                 trigger: BuilderFallbackTrigger::ProjectionLimit,
             }),
-            CellFailure::TooManyVertices
-            | CellFailure::ClippedAway
+            CellFailure::TooManyVertices => Some(BuilderFallbackRequest {
+                trigger: BuilderFallbackTrigger::PolygonVertexLimit,
+            }),
+            CellFailure::ClippedAway
             | CellFailure::UnboundedAfterExhaustion
             | CellFailure::NoValidSeed => None,
         }

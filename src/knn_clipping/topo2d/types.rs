@@ -1,7 +1,7 @@
 use crate::fp;
 
 use crate::tolerances::CLIP_EPS_INSIDE;
-pub const MAX_POLY_VERTICES: usize = 64;
+pub const MAX_POLY_VERTICES: usize = 24;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClipResult {

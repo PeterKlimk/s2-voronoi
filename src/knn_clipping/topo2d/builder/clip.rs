@@ -31,6 +31,14 @@ impl GnomonicBuilder {
     ) -> Result<ClipResult, CellFailure> {
         match clip_result {
             ClipResult::TooManyVertices => {
+                self.half_planes.push(hp);
+                self.neighbor_indices.push(neighbor_idx);
+                self.neighbor_slots.push(neighbor_slot);
+                self.term_cache_valid = false;
+                #[cfg(feature = "timing")]
+                {
+                    self.support_cache_valid = false;
+                }
                 self.failed = Some(CellFailure::TooManyVertices);
                 return Err(CellFailure::TooManyVertices);
             }

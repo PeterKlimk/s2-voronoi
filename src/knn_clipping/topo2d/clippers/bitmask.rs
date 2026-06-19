@@ -143,11 +143,12 @@ use crate::fp;
 mod tests {
     use super::*;
 
-    /// n == 64 regression: the transition mask must survive a full polygon
-    /// buffer (see comment at its computation). A regular 64-gon clipped by
-    /// a crossing half-plane must clip cleanly, not index out of bounds.
+    /// Full-buffer regression: the transition mask must survive a full polygon
+    /// buffer (see comment at its computation). A regular max-sized polygon
+    /// clipped by a crossing half-plane must clip cleanly, not index out of
+    /// bounds.
     #[test]
-    fn bitmask_clips_full_64_vertex_polygon() {
+    fn bitmask_clips_full_vertex_polygon() {
         let mut poly = PolyBuffer::new();
         for k in 0..MAX_POLY_VERTICES {
             let theta = (k as f64) * std::f64::consts::TAU / (MAX_POLY_VERTICES as f64);

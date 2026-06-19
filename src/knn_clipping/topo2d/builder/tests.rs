@@ -204,13 +204,30 @@ fn projection_invalid_is_classified_as_fallback_handoff() {
 }
 
 #[test]
-fn too_many_vertices_remains_terminal_in_policy_api() {
+fn too_many_vertices_is_classified_as_polygon_fallback_handoff() {
     assert_eq!(
         Topo2DBuilder::classify_clip_result(Err(
             crate::knn_clipping::cell_build::CellFailure::TooManyVertices,
         )),
+        Ok(BuilderClipOutcome::NeedsFallback(BuilderFallbackRequest {
+            trigger: BuilderFallbackTrigger::PolygonVertexLimit,
+        }))
+    );
+}
+
+#[test]
+fn too_many_vertices_records_current_constraint_before_fallback() {
+    let mut builder = Topo2DBuilder::new(0, Vec3::Z);
+    let gnomonic = builder.as_gnomonic_mut();
+    let hp = HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0);
+
+    assert_eq!(
+        gnomonic.commit_clip(ClipResult::TooManyVertices, hp, 11, 21,),
         Err(crate::knn_clipping::cell_build::CellFailure::TooManyVertices)
     );
+    assert_eq!(gnomonic.half_planes.len(), 1);
+    assert_eq!(gnomonic.neighbor_indices, vec![11]);
+    assert_eq!(gnomonic.neighbor_slots, vec![21]);
 }
 
 #[test]
