@@ -222,15 +222,18 @@ Correctness-first work:
    residual ⟹ strictly valid`. Two sweeps: default (detection-completeness) and
    `RECLIP=1` mega (recovery rate, `post_repair` column).
 
-Resolver rework — **direction chosen** (resolves the ~⅓–½ mega bail tail; see
-`docs/reclip-repair-design.md` roadmap #2): swap jitter→**exact `in_circle`**
-(the real fix — most degeneracies are near-cocircular and resolve with no
-tie-break), and for true exactly-cocircular cliques **merge into one high-degree
-vertex** (explicit degree-4+ support) rather than SoS-splitting. Start here;
-local constrained Delaunay is the long-term alternative if the operating point
-demands it. Guard: explicit component-expansion if a clique member is outside the
-component; gate through `verify_sphere_effective_strict`. Perf detail in
-`docs/optimization-ideas.md`.
+Resolver rework — **MEASURED, direction corrected** (see
+`docs/reclip-repair-design.md` roadmap #2). Prototyped the exact-predicate swap
+and instrumented mega before investing: exact cocircular ties NEVER fire on mega
+(`in_circle==0` count = 0), the exact predicate REGRESSED recovery (jitter 4/6 →
+exact 2/6 clean, the jitter approximation was helping the assembly), and the real
+bail is **runaway `Expand`** (boundary recovery leaves degree-1 endpoints →
+component grows 8→49 cells → budget bail). So the lever is the **assembly, not the
+predicate**: pursue **B — local constrained Delaunay** (dual of one local
+triangulation incl. boundary generators → no boundary-recovery, no `Expand`, no
+degree-1 runaway), which needs a real spherical CDT/hull engine. **C+M
+deprioritized** (no mega benefit; structured high-degree already handled by Tier-1,
+`tests/high_degree.rs`).
 
 ### Structured high-degeneracy inputs — perf weakness (low priority)
 

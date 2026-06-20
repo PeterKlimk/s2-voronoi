@@ -43,18 +43,35 @@ see memory `fallback-rewrite-mega-bug` and [[fallback_builder.md]].
 >    approximate vertex (within the "essentially Voronoi" contract), and proper
 >    hardening (a synthetic detection record forcing the output-invariant scan)
 >    is deferred.
-> 2. **Resolver rework — direction chosen (2026-06-20).** Replace the jitter +
->    tolerance brute force with the **exact spherical in-circle predicate**
->    (`canonical.rs:37` `in_circle_sphere_sign`, via `robust` — already a hard
->    dependency) as the empty-circle test, dropping the jitter. Three independent
->    reviews (two Codex passes + design analysis) converged on this:
+> 2. **Resolver rework — MEASURED 2026-06-20, hypothesis REFUTED; bail root is the
+>    ASSEMBLY, not the predicate.** The plan below (swap jitter → exact in-circle,
+>    then merge cliques) was prototyped and instrumented on mega before investing.
+>    Findings (mega 200k/500k, single-thread A/B, identical resolver input):
 >
->    - **The exact predicate is the real fix.** Most mega degeneracies are
->      *near*-cocircular, not exactly cocircular; the exact predicate returns a
->      definite, frame-free, all-cells-agree sign for those, which resolves the
->      bail (the `>2 candidate endpoints` overcount) *without any tie-break*. Real
->      exact `in_circle == 0` is rare on random f32 mega — it's the
->      *structured-input* tail.
+>    - **Exact cocircular ties NEVER fire on mega** (`in_circle == 0` count = 0
+>      across all cases) — confirms exact ties are the *structured-input* tail, not
+>      a mega phenomenon. So the **MERGE step (M) is irrelevant to mega**, and
+>      structured high-degree inputs are already handled by Tier-1 proximity-merge
+>      (`tests/high_degree.rs`) — i.e. C+M currently has **no live use case**.
+>    - **The exact predicate REGRESSED recovery** (jitter 4/6 → exact 2/6 clean;
+>      two cases flipped clean→bail, deterministic). The jitter's ~1e-9
+>      approximation was *helping* the fragile assembly converge; exact emptiness
+>      produces more near-degenerate vertices for it to choke on.
+>    - **The real bail mechanism is runaway `Expand`:** the boundary recovery from
+>      outside cells leaves degree-1 endpoints, so the resolver keeps pulling in
+>      more generators (traced: a component grew 8→15→26→39→49 cells) until the
+>      budget trips and it bails. This is independent of the emptiness predicate.
+>
+>    **Revised direction:** the lever is the **assembly**, not the predicate. The
+>    cleanest fix is **B (local constrained Delaunay / convex hull)** — the dual of
+>    ONE local triangulation that *includes* the boundary generators, so there is
+>    no boundary-recovery step, no degree-1 endpoints, and no `Expand` runaway; the
+>    per-cell polygons fall out structurally and consistently. The current C
+>    assembly (boundary-recovery + `Expand`) is the thing that fails. B's cost is a
+>    real spherical CDT/hull engine (none exists in-crate), but it targets the
+>    actual root. **C+M is deprioritized** (no mega benefit, structured tail
+>    already handled). The exact predicate is shelved unless a future assembly
+>    actually benefits from it. Superseded text follows for context:
 >    - **For a true exactly-cocircular clique, MERGE — don't SoS-split.**
 >      Represent the degenerate vertex DIRECTLY as one high-degree vertex incident
 >      to all 4+ clique generators (one vid; assemble by angular order around the
