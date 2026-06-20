@@ -197,40 +197,41 @@ Status block in `docs/p5-consistency-design.md` for the full rationale and the r
 
 ### Tier-2 re-clip repair (fallback hardening) — correctness-first
 
-Prototype landed on `agent/fallback-incremental-clip`, opt-in `S2_RECLIP_REPAIR`,
-**not yet sound**. Full review + Codex second opinion:
+Opt-in `S2_RECLIP_REPAIR` on `agent/fallback-incremental-clip`. **Gate now sound
+(landed); fuzzed.** Full review + two Codex passes:
 `docs/reclip-fallback-review-2026-06.md`; design + roadmap:
-`docs/reclip-repair-design.md`. Context: the repair only fires on `mega`
-(unrepairable stitch errors are never observed outside it), so it is rare and
-its current cost is an acceptable stopgap.
+`docs/reclip-repair-design.md`. The repair only fires on `mega` (unrepairable
+stitch errors are never observed outside it), so it is rare; its cost is an
+acceptable stopgap, and runtime always-on validation is rejected (kills perf).
 
-Correctness-first work (in order; land before default-on or before loosening the
-hot clipper against it):
+Correctness-first work:
 
-1. **Gate → validator equivalence (CRITICAL).** The re-detect gate
-   (`reclip_repair.rs:792-882`) checks only directed edge-pairing; the strict
-   validator also rejects low-incidence (degree<3) / antipodal / off-sphere /
-   duplicate / Euler. Reproduced silent-invalid: `S2_RECLIP_REPAIR=1` (VERIFY
-   off) on `bench_voronoi 1m --dist mega --seed 2 --no-preprocess`. Fix: on any
-   re-stitch, run `verify_sphere_fast`/`validate_impl` over the affected region
-   (or whole diagram — components ≤128 cells) inside `repair()`, fold failures
-   into residual. Bind to the repair, not `S2_VORONOI_VERIFY` (the report path
-   returns the diagram even on non-empty residual). Add a regression test that a
-   repaired mega diagram passes strict validation **without** `S2_VORONOI_VERIFY`.
-2. **Fallthrough fail-loud (HIGH, always-live path).** `extract.rs:388-399`
-   fabricates a wrong vertex key on `pair_vertex` failure; symmetric cells can
-   agree on it and the validator can't catch it. Return `Vec::new()` (→
-   `NoValidSeed`, surfaces at `run.rs:646-655`) or flag the cell for the
-   unconditional output-invariant scan.
-3. **Cheap robustness:** guard out-of-range generator ids → bail not panic
-   (`reclip_repair.rs:312,335,787`); deterministic interior-vid assignment (sort
-   keys before `:767`); bail on zero signed-area winding (`:250`); defensive
-   pin-vs-interior key ordering (`:779-784`, C5).
+1. ~~**Gate → validator equivalence (CRITICAL).**~~ **Done.** `repair()` runs
+   `validation::verify_sphere_effective_strict` over the re-stitched diagram and
+   reverts-or-loud-fails; bound to the repair (covers plain + report paths), not
+   `S2_VORONOI_VERIFY`. Rollback made byte-identical (first-snapshot-per-`g`,
+   Codex-found). Determinism (sorted vids) + OOB guard landed.
+2. **Fallthrough fail-loud — TRIED, REVERTED.** Returning `Vec::new()` breaks all
+   mega repair (the fallthrough is load-bearing). The kept approximate corner is
+   a topology-valid accuracy defect, not invalid topology. Proper fix (synthetic
+   detection record forcing the output-invariant scan) deferred.
+3. ~~**Cheap robustness.**~~ **Done** (OOB guard, deterministic vids; zero-area
+   winding + C5 pin-ordering left as low-pri / not-currently-reachable).
+4. ~~**Fuzzing.**~~ **Done.** `robustness_campaign` + `tests/reclip_repair.rs`
+   cover the repair path with the contract `no surviving PostRepairUnpaired
+   residual ⟹ strictly valid`. Two sweeps: default (detection-completeness) and
+   `RECLIP=1` mega (recovery rate, `post_repair` column).
 
 Performance (deferred behind correctness): replace the `O(|G|³·|filter|)`×8
 brute-force resolver with exact predicates / proper local Delaunay so it does not
 explode with contested-cell count N — see `docs/optimization-ideas.md`
-("Tier-2 re-clip resolver — exact-predicate rework").
+("Tier-2 re-clip resolver — exact-predicate rework"). The mega recovery-rate
+sweep quantifies how often this is needed (how often mega lands valid-graph vs
+loud-error today).
+
+Known pre-existing branch debt: 3 clippy warnings (`timing/stub.rs:88`,
+`cell_build/run/frontier.rs:61`, `compute.rs:587` `reconcile_edges` 8-arg) trip
+CI's `-D warnings`; clean up before merge.
 
 ## P6: New geometries
 
