@@ -24,8 +24,14 @@ see memory `fallback-rewrite-mega-bug` and [[fallback_builder.md]].
 >    on any strict-validity failure, surfacing the original contested edges as
 >    residual → the existing loud-fail backstop fires. The guarantee is bound to
 >    the repair, not `S2_VORONOI_VERIFY`, so both the plain and report paths are
->    covered. *Confirmed:* mega 200k seeds 1/2/3 repair clean (validator agrees);
->    mega 1m seed 2 now loud-fails instead of shipping invalid. Interior-vid
+>    covered. The rollback snapshots only the FIRST pre-repair cell per generator
+>    (a generator can be re-stitched by two components when `Expand` pulls a
+>    shared outside cell into both; replaying intermediate snapshots would restore
+>    a stale span into the truncated buffers — a report-path corruption a second
+>    Codex pass caught, now fixed + debug-asserted + report-path-verified).
+>    *Confirmed:* mega 200k seeds 1/2/3 repair clean (validator agrees); mega 1m
+>    seed 2 now loud-fails (plain) / returns the clean pre-repair diagram with
+>    residual diagnostics (report) instead of shipping invalid. Interior-vid
 >    assignment was also made deterministic, and out-of-range generator ids are
 >    guarded (bail, not panic). **Limitation (follow-up):** validation is
 >    whole-diagram, so a single bailed component reverts the *whole* repair

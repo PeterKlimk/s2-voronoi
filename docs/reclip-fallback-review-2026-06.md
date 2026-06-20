@@ -326,6 +326,17 @@ Net: no finding was overturned; the critical and high calls are corroborated by 
 second model, one propagation detail was corrected, and two items were added
 (report-path exposure; gnomonic→fallback staleness).
 
+**Second Codex pass — on the *implemented* gate fix.** Confirmed the
+effective-strict validator matches `verify_sphere_fast`, the success-direction
+soundness, and the determinism/OOB fixes; agreed the fallthrough is an accuracy
+(not topology) defect. **Found one real bug:** the revert was not byte-identical
+when a generator is re-stitched by two components (`Expand` can pull a shared
+outside cell into both) — the snapshot `Vec` replayed intermediate states,
+restoring a stale span into the truncated buffers, which the *report* path would
+read as a corrupted cell. Fixed: snapshot the FIRST pre-repair cell per generator
+(a `HashMap`), plus a debug-assert guard; report-path verified clean on mega 1m
+seed 2 (returns the pre-repair diagram with residual diagnostics, no corruption).
+
 ## Appendix — invariants the strict validator enforces (gate must match)
 
 From `verify_sphere_fast` / `validate_impl` (`validation.rs`), the gate currently

@@ -396,11 +396,15 @@ impl FallbackBuilder {
                 // (the fallthrough is load-bearing; measured 2026-06-20). The
                 // residual risk is a symmetric-fallthrough wrong KEY: two
                 // neighbours agreeing on the same approximate triple collapse by
-                // key-only dedup to one on-sphere vertex with approximate
-                // position — topologically valid (the validator accepts it),
-                // within the "essentially Voronoi" contract, not a silent invalid
-                // ship. Hardening (a synthetic detection record forcing the
-                // output-invariant scan) is deferred; see
+                // key-only dedup to one vertex. That vertex is on-sphere and the
+                // edges still pair, so the *topology* is valid (the validator
+                // accepts it; `validation` excludes Voronoi fidelity by design),
+                // but its position/attribution is geometrically wrong — an
+                // accuracy defect, not invalid topology. Keeping it is a
+                // pragmatic availability call, not a proof it is within the
+                // approximate-Voronoi contract. Proper hardening (a synthetic
+                // detection record forcing the output-invariant scan so the wrong
+                // key is caught) is deferred; see
                 // docs/reclip-fallback-review-2026-06.md.
                 Self::push_fallback_vertex(
                     &mut vertices,

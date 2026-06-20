@@ -712,13 +712,17 @@ pub(crate) fn repair(
     let mut interior_vid: HashMap<[u32; 3], u32> = HashMap::new();
     let mut overlay: Vec<[u32; 3]> = Vec::new();
     let mut touched: Vec<u32> = Vec::new();
-    // Pre-overwrite `(g, old cell)` snapshots. `cell_indices`/`vertices` are only
-    // appended to, so restoring these cells and truncating both buffers back to
-    // their original lengths fully reverts the repair if the validate-or-revert
-    // gate below rejects it. A bailed component simply re-stitches nothing; its
-    // original contested edge survives and the gate's whole-diagram validation
+    // First-overwrite `g -> old cell` snapshots. `cell_indices`/`vertices` are
+    // only appended to, so restoring these cells and truncating both buffers back
+    // to their original lengths fully reverts the repair if the validate-or-revert
+    // gate below rejects it. Keyed by `g` and keeping the FIRST snapshot only: a
+    // generator can be re-stitched by two components (component `Expand` can pull
+    // a shared outside cell into both), and replaying intermediate snapshots would
+    // restore `g` to a re-stitched state pointing into the now-truncated buffers
+    // instead of its true pre-repair cell. A bailed component re-stitches nothing;
+    // its original contested edge survives and the gate's whole-diagram validation
     // sees it, so no separate residual bookkeeping is needed here.
-    let mut touched_snapshot: Vec<(u32, VoronoiCell)> = Vec::new();
+    let mut touched_snapshot: HashMap<u32, VoronoiCell> = HashMap::new();
 
     'comp: for comp in &comps {
         if comp.cells.len() > MAX_COMPONENT_CELLS {
@@ -802,7 +806,7 @@ pub(crate) fn repair(
                     .expect("validated above");
                 cell_indices.push(vid);
             }
-            touched_snapshot.push((*g, cells[*g as usize]));
+            touched_snapshot.entry(*g).or_insert(cells[*g as usize]);
             cells[*g as usize] = VoronoiCell::new(start, poly.len() as u16);
             touched.push(*g);
         }
@@ -849,11 +853,22 @@ pub(crate) fn repair(
     // diagram returns byte-identical to its pre-repair state, and surface the
     // original contested edges as residual so the existing loud-fail backstop
     // fires. Neither the plain nor the report path can then ship invalid topology.
-    for &(g, cell) in &touched_snapshot {
+    for (&g, &cell) in &touched_snapshot {
         cells[g as usize] = cell;
     }
     cell_indices.truncate(orig_indices_len);
     vertices.truncate(orig_len as usize);
+    // After a correct revert every restored cell points inside the pre-repair
+    // index buffer. A stale re-stitched span (the duplicate-touch rollback
+    // hazard the first-snapshot-only map guards against) would point past it,
+    // which the report path would later read as a corrupted cell.
+    debug_assert!(
+        touched_snapshot.keys().all(|&g| {
+            let c = cells[g as usize];
+            c.vertex_start() + c.vertex_count() <= orig_indices_len
+        }),
+        "reverted cell span points past the pre-repair index buffer"
+    );
 
     let mut residual_out = residual;
     residual_out.sort_unstable();
