@@ -16,6 +16,7 @@ pub(crate) mod reclip_repair;
 // existing paths keep working.
 pub(crate) use crate::live_dedup;
 pub(crate) mod canonical;
+pub(crate) mod local_hull;
 #[cfg(feature = "p5_shadow")]
 pub(crate) mod p5_shadow;
 pub(crate) mod preprocess;
