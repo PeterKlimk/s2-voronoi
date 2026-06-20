@@ -388,6 +388,20 @@ impl FallbackBuilder {
             } else if let Some(vertex) = self.pair_vertex(plane_a, plane_b) {
                 Self::push_fallback_vertex(&mut vertices, vertex);
             } else {
+                // `pair_vertex` found the (plane_a, plane_b) intersection just
+                // outside the cell and no split plane_c resolves the corner. We
+                // keep the raw f32 clip corner so the fallback still emits a
+                // bounded cell for the residual-detection + Tier-2 repair to
+                // reconcile — failing loud here instead breaks ALL mega repair
+                // (the fallthrough is load-bearing; measured 2026-06-20). The
+                // residual risk is a symmetric-fallthrough wrong KEY: two
+                // neighbours agreeing on the same approximate triple collapse by
+                // key-only dedup to one on-sphere vertex with approximate
+                // position — topologically valid (the validator accepts it),
+                // within the "essentially Voronoi" contract, not a silent invalid
+                // ship. Hardening (a synthetic detection record forcing the
+                // output-invariant scan) is deferred; see
+                // docs/reclip-fallback-review-2026-06.md.
                 Self::push_fallback_vertex(
                     &mut vertices,
                     FallbackVertex {

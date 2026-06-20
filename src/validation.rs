@@ -551,6 +551,176 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
     Ok(())
 }
 
+/// Strict S2-subdivision check over raw effective arrays (no weld map),
+/// enforcing the SAME contract as [`verify_sphere_fast`].
+///
+/// Used by the Tier-2 re-clip repair to gate its output against the full
+/// validator *inside the repair* — independent of the `S2_VORONOI_VERIFY` env
+/// flag (so both the plain and report paths are covered) and without cloning the
+/// diagram into a `SphericalVoronoi`. Effective index space has no welded twins,
+/// so every cell is its own face (`num_faces == num_cells`).
+///
+/// Pinned to `verify_sphere_fast` by the differential test
+/// `effective_strict_matches_fast`.
+pub(crate) fn verify_sphere_effective_strict(
+    vertices: &[glam::Vec3],
+    cells: &[crate::diagram::VoronoiCell],
+    cell_indices: &[u32],
+) -> Result<(), &'static str> {
+    let num_cells = cells.len();
+    let num_vertices = vertices.len();
+
+    let mut unique_cell_signatures: FxHashSet<CellSignature> =
+        FxHashSet::with_capacity_and_hasher(num_cells.max(1), Default::default());
+    let mut vertex_cell_count = vec![0u8; num_vertices];
+    let mut edge_uses = Vec::with_capacity(cell_indices.len());
+
+    for (ci, cell) in cells.iter().enumerate() {
+        let start = cell.vertex_start();
+        let len = cell.vertex_count();
+        let Some(span) = len
+            .checked_add(start)
+            .and_then(|end| cell_indices.get(start..end))
+        else {
+            return Err("invalid cell span");
+        };
+
+        let mut seen_stack = [0u32; 64];
+        let mut seen_stack_len = 0usize;
+        let mut seen_spill = if len > seen_stack.len() {
+            Vec::with_capacity(len)
+        } else {
+            Vec::new()
+        };
+        let use_spill = len > seen_stack.len();
+
+        for &vi in span {
+            if (vi as usize) >= num_vertices {
+                return Err("invalid vertex reference");
+            }
+            let is_duplicate = if use_spill {
+                if seen_spill.contains(&vi) {
+                    true
+                } else {
+                    seen_spill.push(vi);
+                    false
+                }
+            } else if seen_stack[..seen_stack_len].contains(&vi) {
+                true
+            } else {
+                seen_stack[seen_stack_len] = vi;
+                seen_stack_len += 1;
+                false
+            };
+            if is_duplicate {
+                return Err("duplicate vertex in cell");
+            }
+            let count = &mut vertex_cell_count[vi as usize];
+            *count = count.saturating_add(1);
+        }
+
+        let seen_valid_len = if use_spill {
+            seen_spill.len()
+        } else {
+            seen_stack_len
+        };
+        if seen_valid_len < 3 {
+            return Err("degenerate cell");
+        }
+
+        let signature = if use_spill {
+            cell_signature(&seen_spill)
+        } else {
+            cell_signature(&seen_stack[..seen_stack_len])
+        };
+        if let Some(signature) = signature {
+            if !unique_cell_signatures.insert(signature) {
+                return Err("duplicate cell");
+            }
+        }
+
+        for edge_idx in 0..len {
+            let a = span[edge_idx];
+            let b = span[(edge_idx + 1) % len];
+            if a == b {
+                return Err("self-loop edge");
+            }
+            let va = vertices[a as usize];
+            let vb = vertices[b as usize];
+            let dot = va.x * vb.x + va.y * vb.y + va.z * vb.z;
+            if dot <= -1.0 + ANTIPODAL_DOT_EPS {
+                return Err("antipodal edge");
+            }
+            let (lo, hi, forward) = if a < b { (a, b, true) } else { (b, a, false) };
+            edge_uses.push(EdgeUse {
+                key: edge_key(lo, hi),
+                forward,
+                cell: ci as u32,
+            });
+        }
+    }
+
+    let mut used_vertices = 0usize;
+    for &count in &vertex_cell_count {
+        if count > 0 {
+            used_vertices += 1;
+            if count < 3 {
+                return Err("low-incidence vertex");
+            }
+        }
+    }
+
+    for v in vertices {
+        let len_sq = v.x * v.x + v.y * v.y + v.z * v.z;
+        if (len_sq - 1.0).abs() > VERTEX_ON_SPHERE_EPS {
+            return Err("off-sphere vertex");
+        }
+    }
+
+    edge_uses.sort_unstable_by_key(|edge| edge.key);
+
+    let mut dsu = DisjointSet::new(num_cells);
+    let mut num_edges = 0usize;
+    let mut i = 0usize;
+    while i < edge_uses.len() {
+        num_edges += 1;
+        let first = edge_uses[i];
+        let mut j = i + 1;
+        while j < edge_uses.len() && edge_uses[j].key == first.key {
+            j += 1;
+        }
+        let group = &edge_uses[i..j];
+        if group.len() != 2 || group[0].forward == group[1].forward {
+            return Err("unpaired, overused, or misoriented edge");
+        }
+        if group[0].cell != group[1].cell {
+            dsu.union(group[0].cell as usize, group[1].cell as usize);
+        }
+        i = j;
+    }
+
+    let connected_components = if num_cells == 0 {
+        0
+    } else {
+        let mut roots: FxHashSet<usize> =
+            FxHashSet::with_capacity_and_hasher(num_cells, Default::default());
+        for cell_idx in 0..num_cells {
+            roots.insert(dsu.find(cell_idx));
+        }
+        roots.len()
+    };
+    if connected_components != 1 {
+        return Err("disconnected subdivision");
+    }
+
+    let euler_characteristic = used_vertices as i32 - num_edges as i32 + num_cells as i32;
+    if euler_characteristic != 2 {
+        return Err("bad euler characteristic");
+    }
+
+    Ok(())
+}
+
 /// Run the plane validator and map a strict-validity failure to an error
 /// when [`verify_enabled`]. No-op otherwise.
 pub(crate) fn verify_plane_if_enabled(
@@ -1104,5 +1274,80 @@ mod verify_gate_tests {
             }
             other => panic!("unexpected error variant: {other:?}"),
         }
+    }
+
+    fn fib_sphere(n: usize) -> Vec<[f32; 3]> {
+        let golden = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
+        (0..n)
+            .map(|i| {
+                let y = 1.0 - (i as f32 / (n as f32 - 1.0)) * 2.0;
+                let r = (1.0 - y * y).max(0.0).sqrt();
+                let theta = golden * i as f32;
+                let v = Vec3::new(theta.cos() * r, y, theta.sin() * r).normalize();
+                [v.x, v.y, v.z]
+            })
+            .collect()
+    }
+
+    /// Extract the effective-space arrays (`weld_map` is `None` for the diagrams
+    /// used here, so the diagram *is* its own effective representation).
+    fn effective_arrays(
+        d: &SphericalVoronoi,
+    ) -> (Vec<Vec3>, Vec<crate::diagram::VoronoiCell>, Vec<u32>) {
+        let verts = d
+            .vertices()
+            .iter()
+            .map(|v| Vec3::new(v.x, v.y, v.z))
+            .collect();
+        let cells = (0..d.num_cells())
+            .map(|i| crate::diagram::VoronoiCell::new(d.cell_start(i), d.cell(i).len() as u16))
+            .collect();
+        (verts, cells, d.cell_indices_raw().to_vec())
+    }
+
+    /// The slice validator must reach the SAME verdict (and first error) as the
+    /// canonical `verify_sphere_fast` it stands in for inside the re-clip repair.
+    fn assert_agree(d: &SphericalVoronoi) {
+        let (v, c, ci) = effective_arrays(d);
+        let fast = verify_sphere_fast(d);
+        let eff = verify_sphere_effective_strict(&v, &c, &ci);
+        assert_eq!(fast, eff, "fast={fast:?} effective={eff:?}");
+    }
+
+    #[test]
+    fn effective_strict_matches_fast() {
+        // Valid: a real computed diagram (no coincident points => no weld map).
+        let good = crate::compute(&fib_sphere(64)).expect("compute");
+        assert!(
+            verify_sphere_fast(&good).is_ok(),
+            "compute output must be valid"
+        );
+        assert_agree(&good);
+
+        // Invalid: three unpaired interior edges + degree-1 vertices.
+        assert_agree(&invalid_diagram());
+
+        // Invalid: a vertex repeated within one cell.
+        assert_agree(&SphericalVoronoi::from_raw_parts(
+            vec![Vec3::new(0.0, 0.0, 1.0)],
+            vec![
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(0.0, 0.0, 1.0),
+            ],
+            vec![crate::diagram::VoronoiCell::new(0, 4)],
+            vec![0, 1, 0, 2],
+            None,
+        ));
+
+        // Invalid: an off-sphere vertex on an otherwise-valid diagram. (The
+        // validator does not read generator positions, so a placeholder vec of
+        // the right length suffices.)
+        let (mut v, c, ci) = effective_arrays(&good);
+        v[0] *= 2.0;
+        let generators = vec![Vec3::new(0.0, 0.0, 1.0); c.len()];
+        let corrupted = SphericalVoronoi::from_raw_parts(generators, v, c, ci, None);
+        assert!(verify_sphere_fast(&corrupted).is_err());
+        assert_agree(&corrupted);
     }
 }
