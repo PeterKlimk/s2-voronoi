@@ -149,6 +149,49 @@ pub fn mega_points(n: usize, frac: f32, seed: u64) -> Vec<UnitVec3> {
     points
 }
 
+/// Cubed-sphere grid: 6 cube faces, each a ~k×k grid of interior cell centers
+/// projected to the sphere (k chosen so the total is ≈ `n`). Generators sit on a
+/// regular quad lattice, so most Voronoi vertices are (near-)degree-4 — a CLEAN,
+/// spread-out, high-degeneracy construction at normal density (the opposite of
+/// `mega`'s clustered noise). Exercises the reconcile's high-degree / coincident-
+/// vertex merge path at O(n) defects. `seed` is ignored (fully deterministic).
+pub fn cubed_sphere_points(n: usize, _seed: u64) -> Vec<UnitVec3> {
+    let k = ((n as f64 / 6.0).sqrt().round() as usize).max(1);
+    let mut pts = Vec::with_capacity(6 * k * k);
+    let axes: [[f32; 3]; 6] = [
+        [1.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, -1.0],
+    ];
+    for nrm in axes {
+        let t1 = if nrm[0].abs() < 0.5 {
+            [1.0, 0.0, 0.0]
+        } else {
+            [0.0, 1.0, 0.0]
+        };
+        let t2 = [
+            nrm[1] * t1[2] - nrm[2] * t1[1],
+            nrm[2] * t1[0] - nrm[0] * t1[2],
+            nrm[0] * t1[1] - nrm[1] * t1[0],
+        ];
+        for i in 0..k {
+            for j in 0..k {
+                let u = -1.0 + (i as f32 + 0.5) * 2.0 / k as f32;
+                let v = -1.0 + (j as f32 + 0.5) * 2.0 / k as f32;
+                let x = nrm[0] + u * t1[0] + v * t2[0];
+                let y = nrm[1] + u * t1[1] + v * t2[1];
+                let z = nrm[2] + u * t1[2] + v * t2[2];
+                let l = (x * x + y * y + z * z).sqrt();
+                pts.push(UnitVec3::new(x / l, y / l, z / l));
+            }
+        }
+    }
+    pts
+}
+
 /// Generate points near cube vertices (stress cube-face stitching logic).
 ///
 /// Places points near the 8 corners of the inscribed cube, where 3 cube faces

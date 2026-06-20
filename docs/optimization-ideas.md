@@ -107,6 +107,40 @@ See `docs/punch1-center-cell-integration.md` for the implemented behavior and
 
 ## Deprioritized But Not Forgotten
 
+### Structured high-degeneracy inputs (clean grids) — reconcile-load overhead
+
+Measured weakness (2026-06-20), low priority, a known consequence of an explicit
+design decision — NOT a correctness or scaling break. A *clean, spread-out*
+construction whose Voronoi diagram has many genuine high-degree (4+) vertices —
+e.g. a cubed-sphere quad grid (generators at quad-cell centers), regular
+polytopes — produces `O(n)` coincident-vertex disagreements: at each degree-4
+vertex the four cells emit different triple-keys for the same point, so each
+yields ~3 detection records that Tier-1 reconcile must merge. Result on the
+cubed-sphere grid (`tests/support::cubed_sphere_points`, validated in
+`tests/high_degree.rs`):
+
+| n | time | reconcile defects | degree-4+ verts | valid |
+|--:|--:|--:|--:|:--:|
+| 60k  | 133 ms | 5,795  | 1,838 | yes |
+| 135k | 320 ms | 8,996  | 2,856 | yes |
+| 240k | 551 ms | 11,802 | 3,767 | yes |
+
+So ~430k pts/s, **flat across sizes → linear, no cliff** (defects even grow
+*sub*-linearly), but ≈10× slower than uniform's rate. The cause is purely the
+reconcile load from thousands of defects (uniform sees 1–20); it stays linear
+only because the reconcile dup-scan is localized — the old `O(V·rounds)` global
+scan would have cliffed here. This is the cost of the hot-path triple-key choice
+(degree-3 corners, no cocircular detection in the clipper) + a reconcile tuned
+for the sparse-defect common case. Correctness is unaffected at every scale.
+
+Recovery ideas (TBD — user has candidates; record when chosen). Likely lever:
+collapse coincident vertices at *assembly/dedup* time (position-aware merge)
+instead of paying the detect→reconcile round-trip, or have the clipper emit a
+canonical high-degree vertex directly. Worth ~most of the 10× back. Low priority:
+structured grids are a niche input, the result is linear + correct, and it is a
+deliberate trade for the uniform hot-path speed. Confirm any fix preserves strict
+validity on `tests/high_degree.rs` and the `grid` campaign distribution.
+
 ### Tier-2 re-clip resolver — exact-predicate rework (deferred behind correctness)
 
 Deferred until the Tier-2 soundness fix lands (gate→validator; see

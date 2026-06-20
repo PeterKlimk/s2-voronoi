@@ -43,15 +43,45 @@ see memory `fallback-rewrite-mega-bug` and [[fallback_builder.md]].
 >    approximate vertex (within the "essentially Voronoi" contract), and proper
 >    hardening (a synthetic detection record forcing the output-invariant scan)
 >    is deferred.
-> 2. **Performance later, preserving correctness.** Replace the resolver's
->    tolerance brute force (interior = all-`|G|³` triples × full-filter emptiness,
->    re-run up to 8× per `Expand`) — which **explodes with the number of contested
->    cells N** — with **concrete/exact predicates** (adaptive in-circle / orient3d
->    à la Shewchuk + a consistent tie-break, i.e. a proper local Delaunay) that
->    are both correct and well-scaled. Exactness was earlier rejected as
->    unnecessary *for consistency*; it is re-motivated here purely as the
->    **performance** path that avoids the cubic-×-filter blowup, not as a
->    correctness prerequisite. Tracked in `docs/optimization-ideas.md`.
+> 2. **Resolver rework — direction chosen (2026-06-20).** Replace the jitter +
+>    tolerance brute force with the **exact spherical in-circle predicate**
+>    (`canonical.rs:37` `in_circle_sphere_sign`, via `robust` — already a hard
+>    dependency) as the empty-circle test, dropping the jitter. Three independent
+>    reviews (two Codex passes + design analysis) converged on this:
+>
+>    - **The exact predicate is the real fix.** Most mega degeneracies are
+>      *near*-cocircular, not exactly cocircular; the exact predicate returns a
+>      definite, frame-free, all-cells-agree sign for those, which resolves the
+>      bail (the `>2 candidate endpoints` overcount) *without any tie-break*. Real
+>      exact `in_circle == 0` is rare on random f32 mega — it's the
+>      *structured-input* tail.
+>    - **For a true exactly-cocircular clique, MERGE — don't SoS-split.**
+>      Represent the degenerate vertex DIRECTLY as one high-degree vertex incident
+>      to all 4+ clique generators (one vid; assemble by angular order around the
+>      circumcenter), rather than symbolically perturbing it into a degree-3 fan.
+>      The diagram stores positions + per-cell indices (not keys), the validator
+>      accepts degree ≥ 3, `locate`/serialization/`delaunay_triangles` all cope —
+>      so high-degree output is fully supported. Merge **avoids SoS entirely**
+>      (SoS-coherence across emptiness/triple/position/winding is the part most
+>      likely to get wrong); its only residual ties (coincident generators —
+>      welded; great-circle clique — bail/pole rule) are far narrower.
+>      Implementation: a variable-length internal key + cyclic-order assembly,
+>      replacing the `keys.len()==2`-only edge rule that currently bails.
+>      **Guard (Codex):** if exact clique discovery finds any member OUTSIDE the
+>      component, EXPAND the component before emitting the merged vertex — make the
+>      firewall explicit, don't rely on boundary-pin recovery alone. Always gate
+>      the re-stitch through `verify_sphere_effective_strict` (already wired).
+>    - **Local constrained Delaunay (the dual) is the alternative / long-term**
+>      shape if components or filters ever grow badly (it removes the
+>      `O(|G|³·|filter|)` term structurally and makes `Expand` an incremental
+>      insert) — but it needs a real spherical CDT/hull engine (none exists in the
+>      crate today) and is the higher-risk build. Start with exact-predicate +
+>      merge; reach for Delaunay only if the operating point demands it.
+>
+>    Sequencing: (a) swap predicate, (b) instrument how often `in_circle == 0`
+>    actually fires on mega before investing in the merge, (c) add explicit
+>    degree-4/5 cocircular fixtures (incl. a boundary-pinned one) that force the
+>    merge. Perf tracked in `docs/optimization-ideas.md`.
 
 ## Problem
 

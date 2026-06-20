@@ -222,12 +222,28 @@ Correctness-first work:
    residual ⟹ strictly valid`. Two sweeps: default (detection-completeness) and
    `RECLIP=1` mega (recovery rate, `post_repair` column).
 
-Performance (deferred behind correctness): replace the `O(|G|³·|filter|)`×8
-brute-force resolver with exact predicates / proper local Delaunay so it does not
-explode with contested-cell count N — see `docs/optimization-ideas.md`
-("Tier-2 re-clip resolver — exact-predicate rework"). The mega recovery-rate
-sweep quantifies how often this is needed (how often mega lands valid-graph vs
-loud-error today).
+Resolver rework — **direction chosen** (resolves the ~⅓–½ mega bail tail; see
+`docs/reclip-repair-design.md` roadmap #2): swap jitter→**exact `in_circle`**
+(the real fix — most degeneracies are near-cocircular and resolve with no
+tie-break), and for true exactly-cocircular cliques **merge into one high-degree
+vertex** (explicit degree-4+ support) rather than SoS-splitting. Start here;
+local constrained Delaunay is the long-term alternative if the operating point
+demands it. Guard: explicit component-expansion if a clique member is outside the
+component; gate through `verify_sphere_effective_strict`. Perf detail in
+`docs/optimization-ideas.md`.
+
+### Structured high-degeneracy inputs — perf weakness (low priority)
+
+A *clean, spread-out* input whose Voronoi has many genuine degree-4+ vertices
+(cubed-sphere grid, regular polytopes) stays strictly valid at every scale but
+runs **~10× slower than uniform** (linear, no cliff): O(n) coincident-vertex
+disagreements → thousands of reconcile defects (uniform sees 1–20). A deliberate
+consequence of the hot-path triple-key choice + sparse-defect-tuned reconcile,
+not a correctness/scaling break. Recovery ideas exist (likely: position-aware
+coincident-vertex merge at assembly time instead of the detect→reconcile
+round-trip — TBD). Low priority. Regression-guarded by `tests/high_degree.rs`
+(cube/cuboctahedron/cubed-sphere) and the `grid` campaign distribution. Detail:
+`docs/optimization-ideas.md` "structured high-degeneracy inputs".
 
 Known pre-existing branch debt: 3 clippy warnings (`timing/stub.rs:88`,
 `cell_build/run/frontier.rs:61`, `compute.rs:587` `reconcile_edges` 8-arg) trip

@@ -85,6 +85,9 @@ fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<UnitVec3> {
         // `param` is the cap fraction; the only distribution that drives the
         // fallback + Tier-2 re-clip repair (run with S2_RECLIP_REPAIR=1).
         "mega" => mega_points(n, param, seed),
+        // Clean structured quad grid: O(n) high-degree vertices at normal
+        // density — the high-degeneracy/reconcile-load regime.
+        "grid" => cubed_sphere_points(n, seed),
         other => panic!("unknown S2_CASE_DIST '{other}'"),
     }
 }
