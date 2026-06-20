@@ -119,6 +119,36 @@ pub fn clustered_cap_points(n: usize, cap_radius_rad: f32, seed: u64) -> Vec<Uni
     points
 }
 
+/// Mega density-contrast: a `frac` fraction of the points packed into a tiny
+/// cap (radius 0.05 rad) around the north pole, the rest uniform over the
+/// sphere. This manufactures the high-degree cocircular degenerate vertices that
+/// drive the fallback extractor + Tier-2 re-clip repair — the only distribution
+/// observed to exercise that path. `frac` is the cap fraction (default 0.8 when
+/// `<= 0`); mirrors `bench_voronoi`'s `mega` distribution.
+pub fn mega_points(n: usize, frac: f32, seed: u64) -> Vec<UnitVec3> {
+    let frac = if frac > 0.0 { frac.min(1.0) } else { 0.8 };
+    let bulk = ((n as f32) * frac) as usize;
+    let background = n.saturating_sub(bulk);
+    let cap_radius_rad = 0.05f32;
+    let cos_theta_max = cap_radius_rad.cos();
+
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let mut points = Vec::with_capacity(n);
+    points.extend(random_sphere_points_with_rng(background, &mut rng));
+    for _ in 0..bulk {
+        let u: f32 = rng.gen();
+        let cos_theta = 1.0 - u * (1.0 - cos_theta_max);
+        let sin_theta = (1.0 - cos_theta * cos_theta).max(0.0).sqrt();
+        let phi: f32 = rng.gen_range(0.0..2.0 * PI);
+        points.push(UnitVec3::new(
+            sin_theta * phi.cos(),
+            sin_theta * phi.sin(),
+            cos_theta,
+        ));
+    }
+    points
+}
+
 /// Generate points near cube vertices (stress cube-face stitching logic).
 ///
 /// Places points near the 8 corners of the inscribed cube, where 3 cube faces

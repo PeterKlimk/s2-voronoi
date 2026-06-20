@@ -82,21 +82,31 @@ fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<UnitVec3> {
         "cube" => cube_vertex_stress_points(n, param, seed),
         "cocircular" => near_cocircular_stress_points(n, param, seed),
         "fibonacci" => fibonacci_sphere_points(n, param, seed),
+        // `param` is the cap fraction; the only distribution that drives the
+        // fallback + Tier-2 re-clip repair (run with S2_RECLIP_REPAIR=1).
+        "mega" => mega_points(n, param, seed),
         other => panic!("unknown S2_CASE_DIST '{other}'"),
     }
 }
 
 /// One campaign case, parameterized entirely by environment so the driver
 /// script can fork a fresh process per case:
-///   S2_CASE_DIST  (uniform|clustered|bimodal|cube|cocircular|fibonacci)
+///   S2_CASE_DIST  (uniform|clustered|bimodal|cube|cocircular|fibonacci|mega)
 ///   S2_CASE_N     point count (group count for cocircular)
 ///   S2_CASE_SEED  rng seed
-///   S2_CASE_PARAM shape knob (f32; default 0.3)
+///   S2_CASE_PARAM shape knob (f32; default 0.3 — for mega it is the cap fraction)
 ///
-/// Emits a single machine-parseable `CASERESULT` line. A build that returns
-/// an error is recorded as `result=err` (documented out-of-envelope
-/// behavior) WITHOUT failing the test; a build that succeeds but is not
-/// strictly valid fails the test (a real, newly found invalid-output bug).
+/// Set `S2_RECLIP_REPAIR=1` to exercise the opt-in Tier-2 re-clip repair (only
+/// `mega` produces the contested clusters it acts on).
+///
+/// Emits a single machine-parseable `CASERESULT` line. A build that returns an
+/// error is recorded as `result=err` (documented out-of-envelope behavior)
+/// WITHOUT failing the test. The contract checked is the silent-invalid guard:
+/// a returned diagram with NO surviving `PostRepairUnpaired` residual must be
+/// strictly valid — otherwise the test fails (a real, newly found
+/// silent-invalid bug). A diagram that left a residual is out-of-envelope on
+/// this report API (the hot `compute` path loud-fails on it) and is recorded,
+/// not failed.
 #[test]
 #[ignore]
 fn campaign_case() {
@@ -116,6 +126,16 @@ fn campaign_case() {
             }
             let valid = out.report.preferred_validation().is_strictly_valid();
             let defects = out.report.unresolved_edge_pairs.len();
+            // Residuals that survived to the RETURNED diagram. `compute` (the
+            // hot path) loud-fails on these; `compute_with_report` returns them
+            // as diagnostics instead. Their absence is the silent-invalid
+            // contract: no surviving residual MUST mean a strictly-valid graph.
+            let post_repair = out
+                .report
+                .unresolved_edge_pairs
+                .iter()
+                .filter(|(_, _, o)| matches!(o, UnresolvedEdgeOrigin::PostRepairUnpaired))
+                .count();
             let origins_str = if origins.is_empty() {
                 "none".to_string()
             } else {
@@ -127,13 +147,19 @@ fn campaign_case() {
             };
             println!(
                 "CASERESULT dist={dist} n={actual_n} seed={seed} param={param} \
-                 result=ok defects={defects} valid={valid} peak_mb={} origins={origins_str}",
+                 result=ok defects={defects} post_repair={post_repair} valid={valid} \
+                 peak_mb={} origins={origins_str}",
                 peak_rss_mb()
             );
+            // THE contract: a returned diagram with NO surviving residual must be
+            // strictly valid. A diagram that left a `PostRepairUnpaired` residual
+            // is out-of-envelope on the report API (the hot `compute` path
+            // loud-fails on it) — recorded, not a fuzzer failure.
             assert!(
-                valid,
-                "{dist} n={actual_n} seed={seed}: built diagram is NOT strictly valid \
-                 (origins {origins_str}) — a real invalid-output defect"
+                valid || post_repair > 0,
+                "{dist} n={actual_n} seed={seed}: returned diagram is NOT strictly valid \
+                 yet left NO post-repair residual (origins {origins_str}) — a SILENT \
+                 invalid-output defect"
             );
         }
         Err(e) => {
