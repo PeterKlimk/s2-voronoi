@@ -63,6 +63,27 @@ bounding neighborhood (tens–low-hundreds), **not** the old ~9k grid filter.
 6. **validate-or-revert** gate (`verify_sphere_effective_strict`) as the final
    check — revert the whole repair on any strict-invalidity.
 
+## ⚠️ MEASURED 2026-06-20 — boundary stitch is the HARD part (pin-by-key fails)
+
+First integration (hull core wired in, `secured(g)` = nearest-128 of the grid
+neighborhood, pin-by-key) was prototyped and **bails on every mega case** (0/6
+clean, worse than jitter's 4/6) — and reverted. The bail is *not* the hull or the
+point set; it's the boundary pin: the hull emits a boundary vertex
+`{g, r, x}` whose triple **exists in no ring cell** (e.g. mega 200k s1 cell 11764
+→ `{11764, 42566, 184997}`). Root cause: the contested↔ring seam is *itself
+near-degenerate*, and the **exact** hull picks a different third-generator there
+than the **approximate** (gnomonic) original diagram did. They disagree exactly at
+the degeneracy — which is where the seam lives — so there is no matching key to
+pin to. This refutes the "pin-by-key is sound, original-fidelity-or-revert" read
+below: in practice it doesn't reach original-fidelity, it fails to stitch at all.
+
+**Consequence:** the geometric-stitch + promotion (below, previously "optional")
+is **required**, not optional. The seam must be advanced outward — promote any
+ring cell whose hull boundary disagrees with its existing vertex into `C` and
+re-mesh it too — until the seam reaches genuinely non-degenerate cells (the true
+firewall), bounded by the cap, else revert. That is the next design iteration.
+Pin-by-key alone is a dead end on mega. (Older "subtlety" framing retained below.)
+
 ## The one subtlety — boundary fidelity (Codex item E)
 
 "Non-contested" means *topologically agreed*, not *geometrically correct*: a ring
