@@ -195,6 +195,43 @@ repaired to strict validity — finishing P5 buys simplification, not a breakage
 Status block in `docs/p5-consistency-design.md` for the full rationale and the resume plan
 (certificate closure / EPS_CERT).
 
+### Tier-2 re-clip repair (fallback hardening) — correctness-first
+
+Prototype landed on `agent/fallback-incremental-clip`, opt-in `S2_RECLIP_REPAIR`,
+**not yet sound**. Full review + Codex second opinion:
+`docs/reclip-fallback-review-2026-06.md`; design + roadmap:
+`docs/reclip-repair-design.md`. Context: the repair only fires on `mega`
+(unrepairable stitch errors are never observed outside it), so it is rare and
+its current cost is an acceptable stopgap.
+
+Correctness-first work (in order; land before default-on or before loosening the
+hot clipper against it):
+
+1. **Gate → validator equivalence (CRITICAL).** The re-detect gate
+   (`reclip_repair.rs:792-882`) checks only directed edge-pairing; the strict
+   validator also rejects low-incidence (degree<3) / antipodal / off-sphere /
+   duplicate / Euler. Reproduced silent-invalid: `S2_RECLIP_REPAIR=1` (VERIFY
+   off) on `bench_voronoi 1m --dist mega --seed 2 --no-preprocess`. Fix: on any
+   re-stitch, run `verify_sphere_fast`/`validate_impl` over the affected region
+   (or whole diagram — components ≤128 cells) inside `repair()`, fold failures
+   into residual. Bind to the repair, not `S2_VORONOI_VERIFY` (the report path
+   returns the diagram even on non-empty residual). Add a regression test that a
+   repaired mega diagram passes strict validation **without** `S2_VORONOI_VERIFY`.
+2. **Fallthrough fail-loud (HIGH, always-live path).** `extract.rs:388-399`
+   fabricates a wrong vertex key on `pair_vertex` failure; symmetric cells can
+   agree on it and the validator can't catch it. Return `Vec::new()` (→
+   `NoValidSeed`, surfaces at `run.rs:646-655`) or flag the cell for the
+   unconditional output-invariant scan.
+3. **Cheap robustness:** guard out-of-range generator ids → bail not panic
+   (`reclip_repair.rs:312,335,787`); deterministic interior-vid assignment (sort
+   keys before `:767`); bail on zero signed-area winding (`:250`); defensive
+   pin-vs-interior key ordering (`:779-784`, C5).
+
+Performance (deferred behind correctness): replace the `O(|G|³·|filter|)`×8
+brute-force resolver with exact predicates / proper local Delaunay so it does not
+explode with contested-cell count N — see `docs/optimization-ideas.md`
+("Tier-2 re-clip resolver — exact-predicate rework").
+
 ## P6: New geometries
 
 The engine decomposes into geometry-specific layers (`cube_grid` indexing, `topo2d` chart +

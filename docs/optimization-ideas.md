@@ -107,6 +107,31 @@ See `docs/punch1-center-cell-integration.md` for the implemented behavior and
 
 ## Deprioritized But Not Forgotten
 
+### Tier-2 re-clip resolver — exact-predicate rework (deferred behind correctness)
+
+Deferred until the Tier-2 soundness fix lands (gate→validator; see
+`docs/reclip-repair-design.md` and `docs/reclip-fallback-review-2026-06.md` #O5).
+Today the resolver finds interior vertices by brute force — every all-component
+triple (`O(|G|³)`) tested for empty-circumcircle against the **full** local grid
+filter (`|filter|` ≈ 8.5k–9.4k on dense mega), and the whole attempt is re-run
+from scratch up to 8× per `Expand` as the component grows toward
+`MAX_COMPONENT_CELLS = 128`. Cost is `O(|G|³ · |filter|)` × attempts — it
+**explodes with the number of contested cells**. It is the dominant Tier-2 cost,
+but the path is **mega-only and rare** (no unrepairable stitch error is observed
+outside `mega`), so it is not yet worth optimizing.
+
+When it is: replace the tolerance brute force with **concrete/exact predicates**
+— adaptive `in_circle`/`orient3d` (Shewchuk) + a consistent SoS-style tie-break,
+i.e. a proper local Delaunay — which is both correct and well-scaled, rather than
+the cubic-×-filter blowup. (Exact arithmetic was previously rejected as
+unnecessary *for consistency* — memory `fallback-rewrite-mega-bug`; it is
+re-motivated here purely as the **perf** path.) Cheaper interim levers if a full
+rework is premature: make `Expand` incremental (filter is monotone, prior triples
+are a subset, memoize `gjit`); prune each triple's emptiness test to the
+circumcircle-radius neighborhood; `FxHashMap` is NOT worth it (dwarfed by the
+solve). Measure on the documented mega repro producing the largest contested
+component; preserve strict-validity through any swap.
+
 ### Live within-bin edge repair
 
 Deprioritized. It would mutate already-emitted shard CSR, disputed endpoint

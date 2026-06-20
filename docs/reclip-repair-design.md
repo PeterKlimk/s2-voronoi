@@ -1,11 +1,51 @@
 # Re-clip Repair — Design
 
-Status (2026-06-20): **PROPOSED / implementation starting.** Tier-2 repair that
-re-resolves the rare local clusters the cheap stitch (`edge_reconcile`) cannot,
-by jointly re-clipping a connected component of contested cells against a pinned
-boundary of already-valid cells. Grew out of diagnosing the spherical fallback
-rewrite's failures on the `mega` distribution; see memory
-`fallback-rewrite-mega-bug` and [[fallback_builder.md]].
+Status (2026-06-20): **PROTOTYPE, OPT-IN (`S2_RECLIP_REPAIR`). Gate now sound
+(landed); resolver still bails loudly on the densest `mega` clusters.** Tier-2
+repair that re-resolves the rare local clusters the cheap stitch
+(`edge_reconcile`) cannot, by jointly re-clipping a connected component of
+contested cells against a pinned boundary of already-valid cells. Grew out of
+diagnosing the spherical fallback rewrite's failures on the `mega` distribution;
+see memory `fallback-rewrite-mega-bug` and [[fallback_builder.md]].
+
+> **Soundness gap — FIXED 2026-06-20 (gate now validator-equivalent).** See
+> [`reclip-fallback-review-2026-06.md`](reclip-fallback-review-2026-06.md).
+> The old re-detect gate was a *subset* of `validation::validate` (directed
+> edge-pairing only), so it could ship a silently-invalid diagram with
+> `S2_RECLIP_REPAIR=1` and `S2_VORONOI_VERIFY` off (reproduced: mega 1m seed 2 →
+> a degree-2 "low-incidence vertex" the gate passed). Independently confirmed by
+> a Codex second opinion.
+>
+> **Agreed roadmap (2026-06-20):**
+> 1. **Correctness first — DONE.** `repair()` now runs the full effective-space
+>    validator (`validation::verify_sphere_effective_strict`, pinned to
+>    `verify_sphere_fast` by a differential test) over the re-stitched diagram and
+>    **reverts the entire repair** (restoring the byte-identical pre-repair state)
+>    on any strict-validity failure, surfacing the original contested edges as
+>    residual → the existing loud-fail backstop fires. The guarantee is bound to
+>    the repair, not `S2_VORONOI_VERIFY`, so both the plain and report paths are
+>    covered. *Confirmed:* mega 200k seeds 1/2/3 repair clean (validator agrees);
+>    mega 1m seed 2 now loud-fails instead of shipping invalid. Interior-vid
+>    assignment was also made deterministic, and out-of-range generator ids are
+>    guarded (bail, not panic). **Limitation (follow-up):** validation is
+>    whole-diagram, so a single bailed component reverts the *whole* repair
+>    (all-or-nothing); per-component commit-or-rollback would keep the valid
+>    components and recover partial repairs on the report path. The hot-path
+>    fallthrough fail-loud (`extract.rs:388-399`) was implemented and **reverted
+>    by measurement** — it breaks *all* mega repair (the fallthrough is
+>    load-bearing); the residual risk is a topologically-valid on-sphere
+>    approximate vertex (within the "essentially Voronoi" contract), and proper
+>    hardening (a synthetic detection record forcing the output-invariant scan)
+>    is deferred.
+> 2. **Performance later, preserving correctness.** Replace the resolver's
+>    tolerance brute force (interior = all-`|G|³` triples × full-filter emptiness,
+>    re-run up to 8× per `Expand`) — which **explodes with the number of contested
+>    cells N** — with **concrete/exact predicates** (adaptive in-circle / orient3d
+>    à la Shewchuk + a consistent tie-break, i.e. a proper local Delaunay) that
+>    are both correct and well-scaled. Exactness was earlier rejected as
+>    unnecessary *for consistency*; it is re-motivated here purely as the
+>    **performance** path that avoids the cubic-×-filter blowup, not as a
+>    correctness prerequisite. Tracked in `docs/optimization-ideas.md`.
 
 ## Problem
 
