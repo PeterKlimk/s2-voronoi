@@ -9,6 +9,7 @@
 //! Opt-in via `S2_RECLIP_REPAIR` while under development; the default path is
 //! unchanged (the loud `residual_error` still fires on any survivor).
 
+use super::boundary;
 use crate::cube_grid::CubeMapGrid;
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::edge_reconcile::{self, VertexKeys};
@@ -658,6 +659,311 @@ fn rim_probe() -> bool {
     std::env::var("S2_RIM_PROBE").is_ok()
 }
 
+fn boundary_probe() -> bool {
+    std::env::var("S2_BOUNDARY_PROBE").is_ok()
+}
+
+/// Gather a (super)set of every non-`C` cell adjacent to component `C` (grid
+/// neighborhood of every generator plus every outside generator named in a
+/// component cell's vertex keys). Shared by the boundary probe and grow probe.
+fn gather_ring(
+    gset: &HashSet<u32>,
+    points: &[Vec3],
+    grid: &CubeMapGrid,
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &ShardedVertexKeys,
+) -> HashSet<u32> {
+    let mut ring: HashSet<u32> = HashSet::new();
+    for &g in gset {
+        if (g as usize) >= points.len() {
+            continue;
+        }
+        let cell = grid.point_index_to_cell(g as usize);
+        for &nc in grid.cell_neighbors(cell).iter() {
+            if nc != u32::MAX {
+                ring.extend(grid.cell_points(nc as usize).iter().copied());
+            }
+        }
+        for &nc in grid.cell_ring2(cell) {
+            if nc != u32::MAX {
+                ring.extend(grid.cell_points(nc as usize).iter().copied());
+            }
+        }
+        if let Some(span) = cell_span(cells, cell_indices, g) {
+            for &vid in span {
+                if let Some(k) = vertex_keys.get(vid) {
+                    ring.extend(k.iter().copied());
+                }
+            }
+        }
+    }
+    ring.retain(|h| !gset.contains(h));
+    ring
+}
+
+/// Grow-until-clean experiment for one initially-unbalanced component. Repeatedly
+/// absorbs the background cells at each dangling rim end into `C` and re-extracts,
+/// reporting whether the boundary converges to clean oriented loops and at what
+/// component size. (Measurement only.)
+#[allow(clippy::too_many_arguments)]
+fn boundary_grow_probe(
+    points: &[Vec3],
+    grid: &CubeMapGrid,
+    vertices: &[Vec3],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &ShardedVertexKeys,
+    gset0: &HashSet<u32>,
+) {
+    let max_iters = env_usize("S2_BOUNDARY_GROW_ITERS", 64);
+    let max_cells = env_usize("S2_BOUNDARY_GROW_MAX", 4096);
+    let mut gset = gset0.clone();
+    let start = gset.len();
+
+    for iter in 1..=max_iters {
+        let ring = gather_ring(&gset, points, grid, cells, cell_indices, vertex_keys);
+        let diag = match boundary::diagnose_boundary(&gset, &ring, cells, cell_indices, vertex_keys)
+        {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!(
+                    "[grow]   iter={iter} diagnose error {e:?} (size={})",
+                    gset.len()
+                );
+                return;
+            }
+        };
+        if diag.imbalances.is_empty() {
+            // Confirm a full extraction succeeds.
+            let ok = boundary::extract_boundary(
+                &gset,
+                &ring,
+                cells,
+                cell_indices,
+                vertices,
+                vertex_keys,
+            )
+            .is_ok();
+            eprintln!(
+                "[grow]   CONVERGED iter={iter} start={start} -> size={} (extract_ok={ok})",
+                gset.len()
+            );
+            return;
+        }
+        // Absorb the background generators at every dangling rim end.
+        let mut added = 0usize;
+        for im in &diag.imbalances {
+            for &x in &im.key {
+                if !gset.contains(&x) && (x as usize) < points.len() && gset.insert(x) {
+                    added += 1;
+                }
+            }
+        }
+        if gset.len() > max_cells {
+            eprintln!(
+                "[grow]   DIVERGED iter={iter} start={start} size={} imbalanced={} (cap {max_cells})",
+                gset.len(),
+                diag.imbalances.len()
+            );
+            return;
+        }
+        if added == 0 {
+            eprintln!(
+                "[grow]   STUCK iter={iter} start={start} size={} imbalanced={} (no new cells absorbed)",
+                gset.len(),
+                diag.imbalances.len()
+            );
+            return;
+        }
+    }
+    eprintln!(
+        "[grow]   MAXITER start={start} size={} (still unbalanced after {max_iters})",
+        gset.len()
+    );
+}
+
+/// Boundary-extractor probe (dev-only, `S2_BOUNDARY_PROBE`). Runs the Tier-2
+/// patch synthesizer's boundary extractor (`boundary::extract_boundary`) on every
+/// real contested component WITHOUT filling, to measure which boundary topology
+/// actually occurs on the mega seeds: how many components extract into clean
+/// oriented loops, how many are multi-loop / pinched, the loop-size distribution
+/// (sizes the fill), and which `BoundaryError` fires when extraction fails. This
+/// is the measurement that tells us whether the fill must handle the hard cases
+/// Codex flagged (pinch / multi-loop / holes) or whether the floor case covers
+/// the real data.
+fn boundary_probe_components(
+    points: &[Vec3],
+    grid: &CubeMapGrid,
+    vertices: &[Vec3],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &ShardedVertexKeys,
+    comps: &[Component],
+) {
+    let (mut ok, mut multiloop) = (0usize, 0usize);
+    let mut loop_sizes: Vec<usize> = Vec::new();
+    // Error tally by variant: [unbalanced, duplicate, missing_pos, missing_key, open_walk].
+    let mut errs = [0usize; 5];
+    let mut detail_budget = env_usize("S2_BOUNDARY_DETAIL", 3);
+
+    for comp in comps {
+        let gset: HashSet<u32> = comp.cells.iter().copied().collect();
+
+        // Ring candidates: grid neighborhood of every component generator plus
+        // every outside generator named in a component cell's vertex keys. A
+        // superset is safe (the extractor ignores non-adjacent cells); this
+        // mirrors the gathering in `resolve_component_attempt`.
+        let mut ring: HashSet<u32> = HashSet::new();
+        for &g in &comp.cells {
+            if (g as usize) >= points.len() {
+                continue;
+            }
+            let cell = grid.point_index_to_cell(g as usize);
+            for &nc in grid.cell_neighbors(cell).iter() {
+                if nc != u32::MAX {
+                    ring.extend(grid.cell_points(nc as usize).iter().copied());
+                }
+            }
+            for &nc in grid.cell_ring2(cell) {
+                if nc != u32::MAX {
+                    ring.extend(grid.cell_points(nc as usize).iter().copied());
+                }
+            }
+            if let Some(span) = cell_span(cells, cell_indices, g) {
+                for &vid in span {
+                    if let Some(k) = vertex_keys.get(vid) {
+                        ring.extend(k.iter().copied());
+                    }
+                }
+            }
+        }
+        ring.retain(|h| !gset.contains(h));
+
+        match boundary::extract_boundary(&gset, &ring, cells, cell_indices, vertices, vertex_keys) {
+            Ok(b) => {
+                ok += 1;
+                if b.loops.len() > 1 {
+                    multiloop += 1;
+                }
+                loop_sizes.extend(b.loops.iter().map(|l| l.len()));
+            }
+            Err(e) => {
+                let i = match e {
+                    boundary::BoundaryError::UnbalancedVertex { .. } => 0,
+                    boundary::BoundaryError::DuplicateDirectedEdge { .. } => 1,
+                    boundary::BoundaryError::MissingPosition { .. } => 2,
+                    boundary::BoundaryError::MissingKey { .. } => 3,
+                    boundary::BoundaryError::OpenWalk { .. } => 4,
+                };
+                errs[i] += 1;
+
+                // Detailed dump for the first few unbalanced components: WHY is
+                // the boundary not a clean manifold? Cross-check each imbalanced
+                // vid against the component's own unpaired edges and classify its
+                // key as interior-to-C (all 3 gens in C) vs boundary (mixed).
+                if matches!(e, boundary::BoundaryError::UnbalancedVertex { .. })
+                    && detail_budget > 0
+                {
+                    detail_budget -= 1;
+                    let resid_vids: HashSet<u32> = comp
+                        .edges
+                        .iter()
+                        .flat_map(|&(va, vb, _)| [va, vb])
+                        .collect();
+                    match boundary::diagnose_boundary(
+                        &gset,
+                        &ring,
+                        cells,
+                        cell_indices,
+                        vertex_keys,
+                    ) {
+                        Ok(d) => {
+                            let (mut interior, mut boundary_kind, mut on_resid) = (0, 0, 0);
+                            for im in &d.imbalances {
+                                let nc = im.key.iter().filter(|x| gset.contains(x)).count();
+                                if nc == 3 {
+                                    interior += 1;
+                                } else {
+                                    boundary_kind += 1;
+                                }
+                                if resid_vids.contains(&im.vid) {
+                                    on_resid += 1;
+                                }
+                            }
+                            eprintln!(
+                                "[boundary]   DETAIL comp cells={} ring={} edges={} verts={} \
+                                 imbalanced={} (interior_key={interior} boundary_key={boundary_kind} \
+                                 on_residual_edge={on_resid})",
+                                comp.cells.len(),
+                                ring.len(),
+                                d.num_edges,
+                                d.num_verts,
+                                d.imbalances.len(),
+                            );
+                            for im in d.imbalances.iter().take(6) {
+                                let nc = im.key.iter().filter(|x| gset.contains(x)).count();
+                                // For each non-C generator in the key, is it in the
+                                // gathered ring set? (distinguishes a gathering gap
+                                // from genuine rim non-manifoldness).
+                                let bg: Vec<(u32, bool)> = im
+                                    .key
+                                    .iter()
+                                    .filter(|x| !gset.contains(x))
+                                    .map(|&x| (x, ring.contains(&x)))
+                                    .collect();
+                                eprintln!(
+                                    "[boundary]     vid={} key={:?} in={} out={} (gens_in_C={nc}, on_resid={}) bg_in_ring={:?}",
+                                    im.vid,
+                                    im.key,
+                                    im.in_deg,
+                                    im.out_deg,
+                                    resid_vids.contains(&im.vid),
+                                    bg,
+                                );
+                            }
+                        }
+                        Err(de) => eprintln!("[boundary]   DETAIL diagnose failed: {de:?}"),
+                    }
+
+                    // Grow-until-clean experiment: absorb the background cells at
+                    // each dangling rim end into C, re-extract, repeat. Measures
+                    // whether "expand the component past the non-manifold rim"
+                    // converges to a clean boundary at a bounded size (the
+                    // principled alternative to bilaterally healing the rim, which
+                    // would touch ring cells and reopen the firewall).
+                    boundary_grow_probe(
+                        points,
+                        grid,
+                        vertices,
+                        cells,
+                        cell_indices,
+                        vertex_keys,
+                        &gset,
+                    );
+                }
+            }
+        }
+    }
+
+    loop_sizes.sort_unstable();
+    let (min, max) = (
+        loop_sizes.first().copied().unwrap_or(0),
+        loop_sizes.last().copied().unwrap_or(0),
+    );
+    eprintln!(
+        "[boundary] comps={} extracted_ok={ok} multiloop={multiloop} loops={} \
+         loop_size[min={min} max={max}] err[unbalanced={} dup={} miss_pos={} miss_key={} open={}]",
+        comps.len(),
+        loop_sizes.len(),
+        errs[0],
+        errs[1],
+        errs[2],
+        errs[3],
+        errs[4],
+    );
+}
+
 /// One contested cluster: the cells (generators) that disagree about a
 /// high-degree degenerate vertex, plus the raw unpaired interior edges within
 /// it. The boundary (already-paired edges to outside cells) is derived later
@@ -877,14 +1183,18 @@ fn build_cycle_from_edges(
 }
 
 #[inline]
-fn cell_span<'a>(cells: &[VoronoiCell], cell_indices: &'a [u32], g: u32) -> Option<&'a [u32]> {
+pub(crate) fn cell_span<'a>(
+    cells: &[VoronoiCell],
+    cell_indices: &'a [u32],
+    g: u32,
+) -> Option<&'a [u32]> {
     let c = cells.get(g as usize)?;
     let start = c.vertex_start();
     let end = start + c.vertex_count();
     cell_indices.get(start..end)
 }
 
-fn key_common_pair(a: VertexKey3, b: VertexKey3) -> Option<(u32, u32)> {
+pub(crate) fn key_common_pair(a: VertexKey3, b: VertexKey3) -> Option<(u32, u32)> {
     let mut common = [0u32; 3];
     let mut n = 0usize;
     for x in a {
@@ -1515,6 +1825,19 @@ pub(crate) fn repair(
 
     if rim_probe() {
         rim_probe_components(
+            points,
+            grid,
+            vertices.as_slice(),
+            cells.as_slice(),
+            cell_indices.as_slice(),
+            vertex_keys,
+            &comps,
+        );
+        return Ok(residual);
+    }
+
+    if boundary_probe() {
+        boundary_probe_components(
             points,
             grid,
             vertices.as_slice(),

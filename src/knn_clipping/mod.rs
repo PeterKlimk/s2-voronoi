@@ -6,6 +6,7 @@
 
 use crate::policy::PackedNeighborPolicy;
 
+pub(crate) mod boundary;
 pub(crate) mod cell_build;
 pub(crate) mod compute;
 pub(crate) mod driver;

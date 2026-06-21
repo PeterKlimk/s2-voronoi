@@ -126,11 +126,13 @@ Implication: this does **not** threaten correctness (extra unpaired edges are
 still detected — valid-or-error holds), but it makes "never error" **harder**:
 parallelism inflates the mess, it scales with n, so any Tier-2 repair faces a
 bigger, n-growing component and is likelier to hit `MAX_COMPONENT_CELLS=128` /
-`MAX_LOCAL_SET=3072` and bail. The within/cross-bin gap looks like a real dedup
-inconsistency, not a fundamental degeneracy — likely the **highest-value lever**:
-closing it shrinks residuals toward the serial baseline everywhere (not just
-mega), reducing cells-to-repair and worst-case component size before any backstop
-is built.
+`MAX_LOCAL_SET=3072` and bail. (UPDATE 2026-06-21: first read as a fixable dedup
+inconsistency / "highest-value lever", but the origin tally + Codex review
+concluded it is an inherent **artifact of parallel construction** — conservative
+cross-bin pairing of degenerate >2-record groups vs optimistic within-bin
+last-write-wins — NOT a bug and not to be fixed. See the retraction in the
+SUPERSEDING DIRECTION section. The n-growing residual is a constraint the totality
+repair must absorb, not something to shrink first.)
 
 ## Decision (2026-06-21)
 
@@ -186,11 +188,19 @@ oriented simple cycles. Holes to close:
 - local-DT fidelity only with boundary constrained to loop vids; `local_hull`
   lacks a coplanar policy so it is not a total engine as-is.
 
-Plus a process steer: **fix the cross-bin dedup inconsistency first/in parallel**
-(the 1.7× inflation makes every fallback look worse than necessary).
+Process steer RETRACTED (2026-06-21): the cross-bin gap is NOT a fixable
+inconsistency. After the origin tally + Codex review it is an inherent **artifact
+of parallel construction** — the cross-bin path is conservative about degenerate
+>2-record edge groups (`CrossBinSingleSided`/`DuplicateSide`) where within-bin is
+optimistic (last-write-wins). Symmetric 1:1 edges never go single-sided; only
+near-cocircular degenerate groups do. The serial path papers over real ambiguity;
+matching it would mean making the parallel path non-deterministic. **Parked, not a
+bug.** The n-growing residual is therefore a *constraint the totality repair must
+absorb* (remove the `MAX_COMPONENT_CELLS`/`MAX_LOCAL_SET` bails), not something to
+shrink first.
 
 ### Refined plan
-1. Cross-bin resolution fix (highest leverage; shrinks residuals everywhere).
+1. ~~Cross-bin resolution fix~~ — DROPPED (not a bug; parallel artifact, see above).
 2. Boundary extractor (the centerpiece): manifold proof + oriented-cycle decomp,
    pinch/multi-loop/hole/multi-chain handling.
 3. Fill: fan per region, reference every boundary vid, fresh first-class synthetic
@@ -202,3 +212,49 @@ Plus a process steer: **fix the cross-bin dedup inconsistency first/in parallel*
 
 All three Codex reviews converge: direction confirmed, whole-cap DT rejected, the
 work is **boundary extraction + bail removal**, not the fill.
+
+## Boundary extractor built + measured (2026-06-21) — grow-until-clean is the unlock
+
+Step 2 (the boundary extractor) is implemented and unit-tested in
+`src/knn_clipping/boundary.rs`: `collect_boundary_edges` (inside-on-left directed
+edges, reversed from valid ring cells), `decompose_cycles` (oriented simple
+cycles, with angular-order pinch handling at shared vertices), `extract_boundary`,
+and a `diagnose_boundary` for the probe. Unit fixtures cover single loop, two
+disjoint loops, figure-eight pinch (genuinely exercised — the walk must pass
+*through* the pinch, not close at it), unbalanced/missing-position errors, and a
+hand-built single-triangle collect.
+
+Measured on real contested components via `S2_BOUNDARY_PROBE` (mega 1m, repair on,
+parallel, seeds 1-3 × pole/edge):
+
+- **The boundary is NOT a clean manifold as-extracted.** Most components fail with
+  `UnbalancedVertex`: a small, *balanced* set (2-5 per component) of dangling rim
+  ends — vids with in/out degree (1,0) paired with (0,1). Not on residual edges;
+  every background generator at every dangling end is already in the gathered ring
+  (`bg_in_ring` all true), so it is **genuine rim non-manifoldness** (the
+  near-cocircular percolation reaching the rim: adjacent ring cells reference
+  slightly different rim vertices), NOT a gathering gap. This empirically refutes
+  the bare "reproduce the boundary verbatim, `identify_components` suffices" claim
+  (exactly as Codex flagged).
+- **Multi-loop boundaries are real** (up to 3 loops/component, loop sizes 5-202),
+  so the fill must handle several oriented loops, not one. Pinch never occurred on
+  real data (`miss_pos=0`), though the extractor handles it.
+- **Grow-until-clean converges, cheaply (the unlock).** Absorbing the background
+  cells at each dangling rim end into `C` and re-extracting makes the boundary a
+  clean manifold — in **one growth step** for almost every component (one took
+  two), final component size ≤ 88, across all 6 seeds × both centers, every
+  component, `extract_ok=true`. This is the principled alternative to bilaterally
+  healing the rim (which would touch ring cells and reopen the firewall): instead
+  push the component boundary *outward* past the non-manifold rim until it lands
+  where the ring agrees. It reuses the spirit of the existing `Expand` mechanism.
+
+**Refined pipeline (measured):** `identify_components` → **grow-until-extractable**
+(absorb dangling-rim cells, 1-2 steps, bounded) → `extract_boundary` (clean
+oriented loops) → fill. The grow step is the missing piece the extractor surfaced,
+and it is cheap. Step 3 (the fill) now has a firm input contract: one or more
+clean oriented loops of existing vids, total component size ≤ ~90, ring untouched.
+
+Harness: `S2_BOUNDARY_PROBE` (extract every component, no fill),
+`S2_BOUNDARY_DETAIL=<n>` (dump first n unbalanced components + grow convergence),
+`S2_BOUNDARY_GROW_ITERS` / `S2_BOUNDARY_GROW_MAX` (grow caps). All inert by
+default.
