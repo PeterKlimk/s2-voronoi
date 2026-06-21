@@ -627,6 +627,17 @@ fn reconcile_edges(
         } else {
             post_repair_unpaired
         };
+    // Dev-only canonical topology audit (no mutation; gated on S2_CANON_AUDIT).
+    // Runs every build so the uniform-input control fires even with no residual.
+    super::reclip_repair::audit_if_enabled(
+        points,
+        grid,
+        vertices.as_slice(),
+        &cells,
+        &cell_indices,
+        vertex_keys,
+        &post_repair_unpaired,
+    );
     tb.set_edge_reconcile(t.elapsed());
     Ok((cells, cell_indices, post_repair_unpaired))
 }

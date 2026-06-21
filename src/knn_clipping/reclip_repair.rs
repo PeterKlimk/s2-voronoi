@@ -35,6 +35,541 @@ fn trace() -> bool {
     std::env::var("S2_RECLIP_TRACE").is_ok()
 }
 
+/// Observational seam-classification diagnostic (no repair). See `diagnose_seam`.
+fn diag() -> bool {
+    std::env::var("S2_RECLIP_DIAG").is_ok()
+}
+
+/// Rebuild the free local hull per component and classify each contested↔ring
+/// seam face WITHOUT stitching, to size the overlay/collapse design: how many
+/// seam vertices the exact hull reproduces (`match` — pin would succeed) vs
+/// disagrees (`mismatch`), split by C–V–V / C–C–V, and for each mismatch the
+/// angular distance to the nearest existing ring-cell vertex (the collapsibility
+/// proxy: `coincident` = mergeable/deletable, `far` = genuine disagreement).
+fn diagnose_seam(
+    points: &[Vec3],
+    grid: &CubeMapGrid,
+    vertices: &[Vec3],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &ShardedVertexKeys,
+    comps: &[Component],
+) {
+    const SECURED_K: usize = 384;
+    const MAX_LOCAL_SET: usize = 3072;
+
+    let (mut n_comp, mut n_bail) = (0usize, 0usize);
+    let (mut seam, mut matched) = (0usize, 0usize);
+    let (mut mm_cvv, mut mm_ccv) = (0usize, 0usize);
+    let (mut g_coinc, mut g_near, mut g_far) = (0usize, 0usize, 0usize);
+    let mut comp_sizes: Vec<usize> = Vec::new();
+
+    for comp in comps {
+        n_comp += 1;
+        comp_sizes.push(comp.cells.len());
+        let cset: HashSet<u32> = comp.cells.iter().copied().collect();
+
+        // Local point set S = C ∪ secured(C) (nearest-K of the grid neighborhood).
+        let mut sset = cset.clone();
+        let mut overflow = false;
+        for &g in &comp.cells {
+            if (g as usize) >= points.len() {
+                overflow = true;
+                break;
+            }
+            let gp = points[g as usize];
+            let cell = grid.point_index_to_cell(g as usize);
+            let mut cand: HashSet<u32> = HashSet::new();
+            for &nc in grid.cell_neighbors(cell).iter() {
+                if nc != u32::MAX {
+                    cand.extend(grid.cell_points(nc as usize).iter().copied());
+                }
+            }
+            for &nc in grid.cell_ring2(cell) {
+                if nc != u32::MAX {
+                    cand.extend(grid.cell_points(nc as usize).iter().copied());
+                }
+            }
+            let mut by_dist: Vec<(f32, u32)> = cand
+                .into_iter()
+                .filter(|&c| c != g && (c as usize) < points.len())
+                .map(|c| (gp.dot(points[c as usize]), c))
+                .collect();
+            by_dist.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+            for &(_, id) in by_dist.iter().take(SECURED_K) {
+                sset.insert(id);
+            }
+            if sset.len() > MAX_LOCAL_SET {
+                overflow = true;
+                break;
+            }
+        }
+        if overflow {
+            n_bail += 1;
+            continue;
+        }
+
+        let mut s_ids: Vec<u32> = sset.into_iter().collect();
+        s_ids.sort_unstable();
+        let s_pts: Vec<Vec3> = s_ids.iter().map(|&id| points[id as usize]).collect();
+        let Some(hull) = crate::knn_clipping::local_hull::LocalHull::build(&s_pts) else {
+            n_bail += 1;
+            continue;
+        };
+
+        // Existing ring-cell vertex keys (match test) + positions (geometry test).
+        let mut key_to_vid: HashMap<VertexKey3, u32> = HashMap::new();
+        for &id in &s_ids {
+            if cset.contains(&id) || (id as usize) >= cells.len() {
+                continue;
+            }
+            if let Some(span) = cell_span(cells, cell_indices, id) {
+                for &vid in span {
+                    if let Some(k) = vertex_keys.get(vid) {
+                        key_to_vid.entry(k).or_insert(vid);
+                    }
+                }
+            }
+        }
+
+        // Classify each hull face once: seam = some-but-not-all contested.
+        for (fi, f) in hull.faces().iter().enumerate() {
+            let (ga, gb, gc) = (s_ids[f[0]], s_ids[f[1]], s_ids[f[2]]);
+            let ncon = [ga, gb, gc].iter().filter(|x| cset.contains(x)).count();
+            if ncon == 0 || ncon == 3 {
+                continue; // pure-ring or interior, not a seam
+            }
+            seam += 1;
+            let key = key3(ga, gb, gc);
+            if key_to_vid.contains_key(&key) {
+                matched += 1;
+                continue;
+            }
+            if ncon == 1 {
+                mm_cvv += 1;
+            } else {
+                mm_ccv += 1;
+            }
+            // Nearest existing vertex among the involved ring cells.
+            let cc = hull.face_circumcenter(fi);
+            let ccf = Vec3::new(cc.x as f32, cc.y as f32, cc.z as f32);
+            let mut best = f32::INFINITY;
+            for &gen in &[ga, gb, gc] {
+                if cset.contains(&gen) || (gen as usize) >= cells.len() {
+                    continue;
+                }
+                if let Some(span) = cell_span(cells, cell_indices, gen) {
+                    for &vid in span {
+                        if (vid as usize) < vertices.len() {
+                            let dot = ccf.dot(vertices[vid as usize]).clamp(-1.0, 1.0);
+                            let ang = (2.0 * (1.0 - dot)).max(0.0).sqrt(); // ~chord≈angle
+                            best = best.min(ang);
+                        }
+                    }
+                }
+            }
+            if best < 1e-4 {
+                g_coinc += 1;
+            } else if best < 1e-2 {
+                g_near += 1;
+            } else {
+                g_far += 1;
+            }
+        }
+    }
+
+    comp_sizes.sort_unstable();
+    eprintln!(
+        "[diag] comps={n_comp} bailed={n_bail} sizes={comp_sizes:?} | seam={seam} match={matched} \
+         mismatch={}  (cvv={mm_cvv} ccv={mm_ccv})  mm_dist[coincident<1e-4={g_coinc} near<1e-2={g_near} far>=1e-2={g_far}]",
+        mm_cvv + mm_ccv
+    );
+}
+
+// ============================================================================
+// Canonical topology audit (dev-only, `S2_CANON_AUDIT`).
+//
+// Answers: does the EXACT local Delaunay (local_hull, exact orient3d) ever
+// disagree with the fast clipper's topology for a cell that produced NO
+// inter-cell disagreement (no residual)? That set is the "bait": coherent
+// wrong-but-valid topology the disagreement-triggered repair can never see.
+//
+// Method per cell g: build the exact local hull over g + its secured
+// neighborhood, take g's fan (cell_faces), compare its neighbor set to the
+// fast diagram's. Guarded against the free-hull boundary artifact by requiring
+// the secured radius to exceed 2x g's fan radius (the bounded-cell certificate:
+// no unseen generator beyond 2*max_r can affect g's cell).
+//
+// The oracle is validated by a uniform-input control: on non-degenerate input
+// the fast clipper is correct, so bait must be ~0 there. If it is not, the
+// audit (not the clipper) is wrong.
+// ============================================================================
+
+fn audit() -> bool {
+    std::env::var("S2_CANON_AUDIT").is_ok()
+}
+
+fn env_usize(key: &str, default: usize) -> usize {
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
+#[inline]
+fn ang(a: DVec3, b: DVec3) -> f64 {
+    a.normalize().dot(b.normalize()).clamp(-1.0, 1.0).acos()
+}
+
+/// Outcome of auditing one cell.
+enum CellAudit {
+    SkipNoSpan,
+    SkipHullFail,
+    SkipUnderSecured,
+    Agree,
+    /// Topology differs. `displacement` = max angular gap (rad) between an exact
+    /// fan circumcenter and the nearest fast vertex of g (how far the diagram's
+    /// worst vertex is from the exact answer). `exact_only` = neighbors the exact
+    /// hull has but the fast clipper dropped; `fast_only` = the reverse.
+    Disagree {
+        displacement: f64,
+        exact_only: usize,
+        fast_only: usize,
+    },
+}
+
+/// Audit a single cell `g` against the exact local hull. `secured_k` neighbors
+/// are gathered from the 3x3 + ring-2 grid neighborhood.
+fn audit_cell(
+    g: u32,
+    points: &[Vec3],
+    grid: &CubeMapGrid,
+    vertices: &[Vec3],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &ShardedVertexKeys,
+    secured_k: usize,
+) -> CellAudit {
+    let gi = g as usize;
+    if gi >= points.len() {
+        return CellAudit::SkipNoSpan;
+    }
+    let Some(span) = cell_span(cells, cell_indices, g) else {
+        return CellAudit::SkipNoSpan;
+    };
+    if span.len() < 3 {
+        return CellAudit::SkipNoSpan;
+    }
+    let gp = points[gi];
+    let gpd = DVec3::new(gp.x as f64, gp.y as f64, gp.z as f64);
+
+    // Fast neighbor set + fast vertex positions for g.
+    let mut n_fast: HashSet<u32> = HashSet::new();
+    let mut fast_verts: Vec<DVec3> = Vec::with_capacity(span.len());
+    for &vid in span {
+        if (vid as usize) < vertices.len() {
+            let v = vertices[vid as usize];
+            fast_verts.push(DVec3::new(v.x as f64, v.y as f64, v.z as f64));
+        }
+        if let Some(key) = vertex_keys.get(vid) {
+            for id in key {
+                if id != g && (id as usize) < points.len() {
+                    n_fast.insert(id);
+                }
+            }
+        }
+    }
+
+    // Secured neighborhood: nearest secured_k of the grid neighborhood.
+    let cell = grid.point_index_to_cell(gi);
+    let mut cand: HashSet<u32> = HashSet::new();
+    for &nc in grid.cell_neighbors(cell).iter() {
+        if nc != u32::MAX {
+            cand.extend(grid.cell_points(nc as usize).iter().copied());
+        }
+    }
+    for &nc in grid.cell_ring2(cell) {
+        if nc != u32::MAX {
+            cand.extend(grid.cell_points(nc as usize).iter().copied());
+        }
+    }
+    let mut by_dist: Vec<(f32, u32)> = cand
+        .into_iter()
+        .filter(|&c| c != g && (c as usize) < points.len())
+        .map(|c| (gp.dot(points[c as usize]), c))
+        .collect();
+    by_dist.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+    by_dist.truncate(secured_k);
+    if by_dist.len() < 4 {
+        return CellAudit::SkipHullFail;
+    }
+    // Angular radius of the secured set (farthest included neighbor).
+    let secured_dot = by_dist.last().map(|&(d, _)| d).unwrap_or(1.0);
+    let secured_radius = (secured_dot as f64).clamp(-1.0, 1.0).acos();
+
+    let mut s_ids: Vec<u32> = Vec::with_capacity(by_dist.len() + 1);
+    s_ids.push(g);
+    s_ids.extend(by_dist.iter().map(|&(_, id)| id));
+    let s_pts: Vec<Vec3> = s_ids.iter().map(|&id| points[id as usize]).collect();
+
+    let Some(hull) = crate::knn_clipping::local_hull::LocalHull::build(&s_pts) else {
+        return CellAudit::SkipHullFail;
+    };
+    let g_local = 0usize; // g pushed first.
+    let fan = hull.cell_faces(g_local);
+    if fan.is_empty() {
+        return CellAudit::SkipHullFail;
+    }
+
+    // Exact neighbor set + fan radius (farthest circumcenter from g).
+    let mut n_exact: HashSet<u32> = HashSet::new();
+    let mut fan_radius = 0.0f64;
+    let mut ccs: Vec<DVec3> = Vec::with_capacity(fan.len());
+    for &fi in &fan {
+        let f = hull.faces()[fi];
+        for &l in &f {
+            if l != g_local {
+                n_exact.insert(s_ids[l]);
+            }
+        }
+        let cc = hull.face_circumcenter(fi);
+        fan_radius = fan_radius.max(ang(gpd, cc));
+        ccs.push(cc);
+    }
+
+    // Under-secured: g's fan might be truncated by the secured set's own outer
+    // boundary. The certificate guarantees completeness only when the secured
+    // radius exceeds 2x the fan radius. Otherwise we cannot trust a "disagree".
+    if secured_radius < 2.0 * fan_radius {
+        return CellAudit::SkipUnderSecured;
+    }
+
+    if n_exact == n_fast {
+        return CellAudit::Agree;
+    }
+
+    // Geometric significance: how far the exact answer's worst vertex is from
+    // any fast vertex of g.
+    let mut displacement = 0.0f64;
+    if !fast_verts.is_empty() {
+        for cc in &ccs {
+            let nearest = fast_verts
+                .iter()
+                .map(|fv| ang(*cc, *fv))
+                .fold(f64::INFINITY, f64::min);
+            displacement = displacement.max(nearest);
+        }
+    }
+    let exact_only = n_exact.difference(&n_fast).count();
+    let fast_only = n_fast.difference(&n_exact).count();
+    CellAudit::Disagree {
+        displacement,
+        exact_only,
+        fast_only,
+    }
+}
+
+/// Run the canonical topology audit (no mutation). Audits two populations:
+/// `suspect` cells (grid neighborhood of the contested components — where
+/// coherent wrong topology would hide, adjacent to detected disagreement) and a
+/// strided uniform `control` sample (oracle sanity, expect ~0 bait).
+pub(crate) fn audit_if_enabled(
+    points: &[Vec3],
+    grid: &CubeMapGrid,
+    vertices: &[Vec3],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &ShardedVertexKeys,
+    residual: &[(u32, u32)],
+) {
+    if !audit() {
+        return;
+    }
+    let secured_k = env_usize("S2_CANON_AUDIT_K", 256);
+    let sample_target = env_usize("S2_CANON_AUDIT_SAMPLE", 4000);
+
+    // Contested cells (for detected-vs-bait classification).
+    let contested: HashSet<u32> =
+        match identify_components(cells, cell_indices, vertex_keys, residual) {
+            Ok(comps) => comps.iter().flat_map(|c| c.cells.iter().copied()).collect(),
+            Err(_) => residual.iter().flat_map(|&(a, b)| [a, b]).collect(),
+        };
+
+    // Suspect population: grid neighborhood of every contested cell.
+    let mut suspects: HashSet<u32> = HashSet::new();
+    for &g in &contested {
+        if (g as usize) >= points.len() {
+            continue;
+        }
+        let cell = grid.point_index_to_cell(g as usize);
+        for &nc in grid.cell_neighbors(cell).iter() {
+            if nc != u32::MAX {
+                suspects.extend(grid.cell_points(nc as usize).iter().copied());
+            }
+        }
+        for &nc in grid.cell_ring2(cell) {
+            if nc != u32::MAX {
+                suspects.extend(grid.cell_points(nc as usize).iter().copied());
+            }
+        }
+    }
+
+    // Control population: deterministic strided sample of all cells.
+    let n_cells = cells.len();
+    let stride = (n_cells / sample_target.max(1)).max(1);
+    let mut control: HashSet<u32> = (0..n_cells as u32).step_by(stride).collect();
+    control.retain(|g| !suspects.contains(g));
+
+    // Tally per population.
+    struct Tally {
+        audited: usize,
+        skip_nospan: usize,
+        skip_hullfail: usize,
+        skip_undersecured: usize,
+        agree: usize,
+        disagree_detected: usize,
+        disagree_bait: usize,
+        // Bait displacement decade buckets (rad):
+        // [<1e-6, 1e-6, 1e-5, 1e-4, 1e-3, >=1e-2].
+        disp_buckets: [usize; 6],
+        max_disp: f64,
+        bait_exact_only: usize, // fast dropped a neighbor exact keeps
+        bait_fast_only: usize,  // fast invented a neighbor exact lacks
+        examples: Vec<(u32, f64, usize, usize)>,
+    }
+    impl Tally {
+        fn new() -> Self {
+            Tally {
+                audited: 0,
+                skip_nospan: 0,
+                skip_hullfail: 0,
+                skip_undersecured: 0,
+                agree: 0,
+                disagree_detected: 0,
+                disagree_bait: 0,
+                disp_buckets: [0; 6],
+                max_disp: 0.0,
+                bait_exact_only: 0,
+                bait_fast_only: 0,
+                examples: Vec::new(),
+            }
+        }
+        fn record(&mut self, g: u32, detected: bool, a: CellAudit) {
+            self.audited += 1;
+            match a {
+                CellAudit::SkipNoSpan => self.skip_nospan += 1,
+                CellAudit::SkipHullFail => self.skip_hullfail += 1,
+                CellAudit::SkipUnderSecured => self.skip_undersecured += 1,
+                CellAudit::Agree => self.agree += 1,
+                CellAudit::Disagree {
+                    displacement,
+                    exact_only,
+                    fast_only,
+                } => {
+                    if detected {
+                        self.disagree_detected += 1;
+                    } else {
+                        self.disagree_bait += 1;
+                        let b = if displacement < 1e-6 {
+                            0
+                        } else if displacement < 1e-5 {
+                            1
+                        } else if displacement < 1e-4 {
+                            2
+                        } else if displacement < 1e-3 {
+                            3
+                        } else if displacement < 1e-2 {
+                            4
+                        } else {
+                            5
+                        };
+                        self.disp_buckets[b] += 1;
+                        self.max_disp = self.max_disp.max(displacement);
+                        self.bait_exact_only += exact_only;
+                        self.bait_fast_only += fast_only;
+                        if self.examples.len() < 12 {
+                            self.examples.push((g, displacement, exact_only, fast_only));
+                        }
+                    }
+                }
+            }
+        }
+        fn report(&self, label: &str) {
+            eprintln!(
+                "[audit:{label}] audited={} agree={} disagree(detected={} bait={}) \
+                 skip(nospan={} hullfail={} undersecured={})",
+                self.audited,
+                self.agree,
+                self.disagree_detected,
+                self.disagree_bait,
+                self.skip_nospan,
+                self.skip_hullfail,
+                self.skip_undersecured,
+            );
+            if self.disagree_bait > 0 {
+                eprintln!(
+                    "[audit:{label}]   BAIT displacement(rad) [<1e-6={} 1e-6={} 1e-5={} 1e-4={} \
+                     1e-3={} >=1e-2={}] max={:.3e} | neighbors: exact_only={} fast_only={}",
+                    self.disp_buckets[0],
+                    self.disp_buckets[1],
+                    self.disp_buckets[2],
+                    self.disp_buckets[3],
+                    self.disp_buckets[4],
+                    self.disp_buckets[5],
+                    self.max_disp,
+                    self.bait_exact_only,
+                    self.bait_fast_only,
+                );
+                for (g, d, eo, fo) in &self.examples {
+                    eprintln!(
+                        "[audit:{label}]     cell {g}: displacement={d:.3e} rad exact_only={eo} fast_only={fo}"
+                    );
+                }
+            }
+        }
+    }
+
+    let mut t_suspect = Tally::new();
+    for &g in &suspects {
+        let detected = contested.contains(&g);
+        let a = audit_cell(
+            g,
+            points,
+            grid,
+            vertices,
+            cells,
+            cell_indices,
+            vertex_keys,
+            secured_k,
+        );
+        t_suspect.record(g, detected, a);
+    }
+
+    let mut t_control = Tally::new();
+    for &g in &control {
+        let a = audit_cell(
+            g,
+            points,
+            grid,
+            vertices,
+            cells,
+            cell_indices,
+            vertex_keys,
+            secured_k,
+        );
+        t_control.record(g, false, a);
+    }
+
+    eprintln!(
+        "[audit] contested={} suspects={} control={} secured_k={secured_k}",
+        contested.len(),
+        suspects.len(),
+        control.len(),
+    );
+    t_suspect.report("suspect");
+    t_control.report("control");
+}
+
 /// One contested cluster: the cells (generators) that disagree about a
 /// high-degree degenerate vertex, plus the raw unpaired interior edges within
 /// it. The boundary (already-paired edges to outside cells) is derived later
@@ -705,6 +1240,19 @@ pub(crate) fn repair(
             residual.len(),
             comps.len()
         );
+    }
+
+    if diag() {
+        diagnose_seam(
+            points,
+            grid,
+            vertices.as_slice(),
+            cells.as_slice(),
+            cell_indices.as_slice(),
+            vertex_keys,
+            &comps,
+        );
+        return Ok(residual);
     }
 
     let orig_len = vertices.len() as u32;
