@@ -72,18 +72,135 @@ pub(crate) enum BoundaryError {
     OpenWalk { at: u32 },
 }
 
+/// How boundary edges are collected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CollectMode {
+    /// Key domain: scan ring cells, infer the edge's two cells via the common
+    /// generator pair of its endpoint keys. Fragile at near-degenerate vertices
+    /// where consecutive ring vertices do not share a clean 2-generator edge.
+    Keys,
+    /// Edge-pairing domain: a boundary edge is a `C`-cell directed edge whose
+    /// reverse is owned by a non-`C` cell (so it is paired across the rim by
+    /// construction). Manifold-by-construction when the rim is paired-clean;
+    /// genuinely-unpaired `C`-cell edges (the residual, interior to `C`) are
+    /// skipped. This is the robust collector.
+    Paired,
+}
+
 /// Collect the inside-oriented directed boundary edges of component `C`.
 ///
-/// Scans every ring candidate cell `h` (a non-`C` cell, possibly a superset —
-/// non-adjacent cells simply contribute nothing). For each polygon edge `va→vb`
-/// of `h` whose two incident generators are `{h, across}` with `across ∈ C`, the
-/// edge separates the ring from the contested region; `h` is valid and wound with
-/// `h` on its left, so the contested region lies on the left of the **reverse**
-/// edge `vb→va`. Emitting the reverse gives a consistent inside-on-left boundary.
-///
-/// Returns the directed edges and a `vid → key` pin map. Duplicate directed edges
-/// are an error (the ring emitted the same oriented edge twice).
+/// See [`CollectMode`]. Returns the directed edges and a `vid → key` pin map.
 fn collect_boundary_edges(
+    gset: &HashSet<u32>,
+    ring_candidates: &HashSet<u32>,
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &ShardedVertexKeys,
+    mode: CollectMode,
+) -> Result<CollectedBoundary, BoundaryError> {
+    match mode {
+        CollectMode::Keys => {
+            collect_boundary_edges_keys(gset, ring_candidates, cells, cell_indices, vertex_keys)
+        }
+        CollectMode::Paired => {
+            collect_boundary_edges_paired(gset, ring_candidates, cells, cell_indices, vertex_keys)
+        }
+    }
+}
+
+/// Edge-pairing-domain collection (the robust path). Build a directed-edge →
+/// owning-cell map over `C ∪ ring`, then a `C`-cell edge `va→vb` is a boundary
+/// edge iff its reverse `vb→va` is owned by a non-`C` cell. The `C`-cell traverses
+/// it with the `C`-region on its left, so emit `va→vb` directly (inside-on-left,
+/// no reversal). Edges whose reverse has no owner are genuinely unpaired (residual,
+/// interior to `C`) and are skipped — by construction the boundary then closes
+/// without growing, and any unpaired `C↔`ring edge would manifest as an imbalance
+/// (which is then a real, detectable mismatch).
+fn collect_boundary_edges_paired(
+    gset: &HashSet<u32>,
+    ring_candidates: &HashSet<u32>,
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &ShardedVertexKeys,
+) -> Result<CollectedBoundary, BoundaryError> {
+    // Undirected edge {lo,hi} -> the cells using it, with orientation. Built over
+    // C ∪ ring so both sides of every rim edge are seen.
+    #[derive(Default)]
+    struct Uses {
+        // (cell, forward) where forward = traversed lo->hi.
+        uses: Vec<(u32, bool)>,
+    }
+    let mut edge_uses: HashMap<(u32, u32), Uses> = HashMap::new();
+    let record = |g: u32, map: &mut HashMap<(u32, u32), Uses>| {
+        if (g as usize) >= cells.len() {
+            return;
+        }
+        if let Some(span) = cell_span(cells, cell_indices, g) {
+            let n = span.len();
+            for i in 0..n {
+                let a = span[i];
+                let b = span[(i + 1) % n];
+                if a == b {
+                    continue;
+                }
+                let (lo, hi, fwd) = if a < b { (a, b, true) } else { (b, a, false) };
+                map.entry((lo, hi)).or_default().uses.push((g, fwd));
+            }
+        }
+    };
+    for &g in gset {
+        record(g, &mut edge_uses);
+    }
+    for &h in ring_candidates {
+        if !gset.contains(&h) {
+            record(h, &mut edge_uses);
+        }
+    }
+
+    // Emit the topological cut: an undirected edge is a clean boundary edge iff it
+    // has EXACTLY two uses, of OPPOSITE orientation, with EXACTLY ONE owner in C
+    // (Codex's full paired-edge contract). Orientation is taken from the RING
+    // (trusted) use and reversed, so the contested region is on the left. Anything
+    // else involving a C cell (singleton, >2 uses, same orientation, both-in-C with
+    // a third use) is NOT a clean cut: it is interior residual / non-manifold and
+    // is left for the fill / surfaced as an imbalance — never papered over here.
+    let mut edges: Vec<(u32, u32)> = Vec::new();
+    let mut key_of: HashMap<u32, VertexKey3> = HashMap::new();
+    for (&(lo, hi), u) in &edge_uses {
+        if u.uses.len() != 2 {
+            continue;
+        }
+        let (c0, f0) = u.uses[0];
+        let (c1, f1) = u.uses[1];
+        if f0 == f1 {
+            continue; // same orientation: not a manifold pairing
+        }
+        let in0 = gset.contains(&c0);
+        let in1 = gset.contains(&c1);
+        if in0 == in1 {
+            continue; // both in C (interior) or both ring (not C's boundary)
+        }
+        // Ring use = the one not in C. Inside-on-left = reverse of the ring use.
+        let ring_fwd = if in0 { f1 } else { f0 };
+        // ring_fwd true means ring traverses lo->hi, so inside edge is hi->lo.
+        let (from, to) = if ring_fwd { (hi, lo) } else { (lo, hi) };
+        if let Some(k) = vertex_keys.get(from) {
+            key_of.insert(from, k);
+        }
+        if let Some(k) = vertex_keys.get(to) {
+            key_of.insert(to, k);
+        }
+        edges.push((from, to));
+    }
+    Ok((edges, key_of))
+}
+
+/// Key-domain collection (legacy/fragile). Scans every ring candidate cell `h`
+/// (a non-`C` cell). For each polygon edge `va→vb` of `h` whose two incident
+/// generators are `{h, across}` with `across ∈ C`, the edge separates the ring
+/// from the contested region; `h` is wound with `h` on its left, so the contested
+/// region lies on the left of the **reverse** edge `vb→va`.
+fn collect_boundary_edges_keys(
     gset: &HashSet<u32>,
     ring_candidates: &HashSet<u32>,
     cells: &[VoronoiCell],
@@ -274,9 +391,16 @@ pub(crate) fn extract_boundary(
     cell_indices: &[u32],
     vertices: &[Vec3],
     vertex_keys: &ShardedVertexKeys,
+    mode: CollectMode,
 ) -> Result<BoundaryExtract, BoundaryError> {
-    let (edges, key_of) =
-        collect_boundary_edges(gset, ring_candidates, cells, cell_indices, vertex_keys)?;
+    let (edges, key_of) = collect_boundary_edges(
+        gset,
+        ring_candidates,
+        cells,
+        cell_indices,
+        vertex_keys,
+        mode,
+    )?;
     let pos_of = |vid: u32| vertices.get(vid as usize).copied();
     let cycles = decompose_cycles(&edges, pos_of)?;
     let mut loops = Vec::with_capacity(cycles.len());
@@ -318,9 +442,16 @@ pub(crate) fn diagnose_boundary(
     cells: &[VoronoiCell],
     cell_indices: &[u32],
     vertex_keys: &ShardedVertexKeys,
+    mode: CollectMode,
 ) -> Result<BoundaryDiag, BoundaryError> {
-    let (edges, key_of) =
-        collect_boundary_edges(gset, ring_candidates, cells, cell_indices, vertex_keys)?;
+    let (edges, key_of) = collect_boundary_edges(
+        gset,
+        ring_candidates,
+        cells,
+        cell_indices,
+        vertex_keys,
+        mode,
+    )?;
     let mut out_deg: HashMap<u32, u32> = HashMap::new();
     let mut in_deg: HashMap<u32, u32> = HashMap::new();
     for &(a, b) in &edges {
@@ -510,15 +641,89 @@ mod tests {
         let gset: HashSet<u32> = [0u32].into_iter().collect();
         let ring: HashSet<u32> = [1u32, 2, 3].into_iter().collect();
 
-        let extract =
-            extract_boundary(&gset, &ring, &cells, &cell_indices, &vertices, &vk).unwrap();
-        assert_eq!(extract.loops.len(), 1, "one boundary loop");
-        let vids: Vec<u32> = extract.loops[0].iter().map(|bv| bv.vid).collect();
-        // Inside-on-left loop around g0: V0->V1->V2 (reverse of each ring edge).
-        assert_eq!(canon(&vids), vec![0, 1, 2], "got {vids:?}");
-        // Keys are pinned to the existing boundary vertices.
-        for bv in &extract.loops[0] {
-            assert_eq!(bv.key, keys[bv.vid as usize]);
+        // Both collection modes agree on this clean fixture: the inside-on-left
+        // loop around g0 is V0->V1->V2.
+        for mode in [CollectMode::Keys, CollectMode::Paired] {
+            let extract =
+                extract_boundary(&gset, &ring, &cells, &cell_indices, &vertices, &vk, mode)
+                    .unwrap();
+            assert_eq!(extract.loops.len(), 1, "one boundary loop ({mode:?})");
+            let vids: Vec<u32> = extract.loops[0].iter().map(|bv| bv.vid).collect();
+            assert_eq!(canon(&vids), vec![0, 1, 2], "{mode:?} got {vids:?}");
+            for bv in &extract.loops[0] {
+                assert_eq!(bv.key, keys[bv.vid as usize]);
+            }
         }
+    }
+
+    /// Paired mode is robust to a ring vertex whose KEY is degenerate (shares only
+    /// one generator with its neighbor, so `key_common_pair` would drop the edge):
+    /// the edge-pairing domain recovers the boundary from actual vid-pairs. Here
+    /// ring cell 2's vertex V1 carries a "wrong" 3rd generator (99) so its key no
+    /// longer shares a clean 2-gen pair across the V0–V1 edge, yet the vid-pair
+    /// V0–V1 is still cleanly used by cell 0 (V0->V1) and cell 2 (V1->V0).
+    #[test]
+    fn paired_mode_survives_degenerate_key() {
+        let keys = [
+            [0u32, 1, 2], // 0: V0
+            [0, 2, 99], // 1: V1  -- degenerate 3rd gen (not 3): breaks key pair on V0-V1 and V1-V2
+            [0, 3, 1],  // 2: V2
+            [1, 2, 6],  // 3
+            [2, 3, 7],  // 4
+            [3, 1, 8],  // 5
+        ];
+        let vk = keys_from(&keys);
+        let mut cell_indices: Vec<u32> = Vec::new();
+        let mut cells: Vec<VoronoiCell> = Vec::new();
+        let push_cell = |idx: &mut Vec<u32>, cells: &mut Vec<VoronoiCell>, span: &[u32]| {
+            let start = idx.len() as u32;
+            idx.extend_from_slice(span);
+            cells.push(VoronoiCell::new(start, span.len() as u16));
+        };
+        push_cell(&mut cell_indices, &mut cells, &[0, 1, 2]); // g0 (C): V0->V1->V2
+        push_cell(&mut cell_indices, &mut cells, &[0, 2, 5]); // g1: V0->V2->5
+        push_cell(&mut cell_indices, &mut cells, &[1, 0, 3]); // g2: V1->V0->3
+        push_cell(&mut cell_indices, &mut cells, &[2, 1, 4]); // g3: V2->V1->4
+        let vertices = vec![
+            cap_pos(90.0, 0.05),
+            cap_pos(210.0, 0.05),
+            cap_pos(330.0, 0.05),
+            cap_pos(150.0, 0.1),
+            cap_pos(270.0, 0.1),
+            cap_pos(30.0, 0.1),
+        ];
+        let gset: HashSet<u32> = [0u32].into_iter().collect();
+        let ring: HashSet<u32> = [1u32, 2, 3].into_iter().collect();
+
+        // Paired mode reconstructs the full triangle loop despite the bad key.
+        let paired = extract_boundary(
+            &gset,
+            &ring,
+            &cells,
+            &cell_indices,
+            &vertices,
+            &vk,
+            CollectMode::Paired,
+        )
+        .unwrap();
+        assert_eq!(paired.loops.len(), 1);
+        let vids: Vec<u32> = paired.loops[0].iter().map(|bv| bv.vid).collect();
+        assert_eq!(canon(&vids), vec![0, 1, 2], "paired got {vids:?}");
+
+        // Key mode drops the V0-V1 and V1-V2 edges (no clean common pair) and so
+        // dangles / fails to close — demonstrating the fragility paired mode fixes.
+        let key_err = extract_boundary(
+            &gset,
+            &ring,
+            &cells,
+            &cell_indices,
+            &vertices,
+            &vk,
+            CollectMode::Keys,
+        );
+        assert!(
+            key_err.is_err(),
+            "key mode should fail on the degenerate key, got {key_err:?}"
+        );
     }
 }

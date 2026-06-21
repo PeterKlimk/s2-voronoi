@@ -258,3 +258,55 @@ Harness: `S2_BOUNDARY_PROBE` (extract every component, no fill),
 `S2_BOUNDARY_DETAIL=<n>` (dump first n unbalanced components + grow convergence),
 `S2_BOUNDARY_GROW_ITERS` / `S2_BOUNDARY_GROW_MAX` (grow caps). All inert by
 default.
+
+## Edge-domain pivot — extract the topological cut, not a key-derived adjacency (2026-06-21)
+
+User hypothesis: "non-loop boundaries should be surfaced by edge mismatches."
+Tested it with an UNRESTRICTED local edge-pairing check (`local_unpaired_incident`)
+at every imbalanced vid. Result: the key-domain extractor's imbalances are at vids
+that are **locally edge-paired CLEAN** (`local_unpaired=0`) — so they are NOT real
+edge defects; they are a **classification artifact**: `key_common_pair` drops a
+boundary edge when two consecutive ring vertices don't share a clean 2-generator
+edge (near-degenerate vertex), even though the actual vid-pair topology is fine.
+The literal hypothesis is false (nothing to detect); the deeper instinct — work in
+the edge domain — is right.
+
+Codex (gpt-5.5) review agreed and tightened it. **The correct primitive:**
+`Boundary(C) = actual paired undirected edges whose two incident owners contain
+exactly ONE cell in C` — the topological cut of the face set, not a key recognizer.
+Enforce the full paired-edge contract: exactly two uses, opposite orientation,
+exactly one owner in C; reject duplicates; take orientation from the **ring
+(trusted) side, reversed** (C cells are the suspect side — never source orientation
+from them). Keys are kept for pinning/fill metadata only.
+
+Implemented as `CollectMode::Paired` (now the default; `Keys` kept for A/B). Unit
+test `paired_mode_survives_degenerate_key` locks the win: Paired reconstructs the
+loop where Keys drops the edge and fails.
+
+Measured (mega 1m, parallel, all 6 seeds × pole/edge):
+- **Paired flips the result:** most components now extract cleanly first-try
+  (e.g. pole s2 2/7→7/7, pole s3 1/5→5/5); residual failures drop from ~all to 0-2
+  per run. Multi-loop confirmed real (loops up to 339 vids).
+- The **remaining 0-2 imbalances per run are GENUINE** (here the user's hypothesis
+  IS right): the imbalanced vids are now `on_residual=true`, `local_unpaired=2`,
+  all-C keys (`gens_in_C=3`) — interior splits of a degenerate RIM vertex (two
+  near-coincident vids sharing a C generator, joined only by an unpaired residual
+  edge), so the cut enters one split and exits the other and cannot close.
+- grow-by-KEY is STUCK on these (all-C keys → nothing to absorb). The fix is to
+  broaden along the OTHER axis: absorb the **ring cells incident to the imbalanced
+  vids**. With that fallback, every stuck case CONVERGES in one step (1-2 cells),
+  `extract_ok=true`, across all seeds.
+
+**Final measured pipeline:** `identify_components → extract_boundary
+(CollectMode::Paired, full contract) → on a classified failure (genuine non-
+manifold cut / interior rim split) broaden by incident ring cells, re-extract
+(1 step) → clean oriented loops → fill`. Per Codex, broaden ONLY behind specific
+classified failures (singleton-near-C, missing partner, use-count≠2), fail loud in
+probe / broaden in release; do NOT keep grow as a quiet catch-all. A global
+vid-pair incidence map (built once on the cold repair path) would make
+`C ∪ ring` completeness a proof rather than an empirical observation — optional
+hardening for "any welded input".
+
+Verdict (Codex, unchanged): boundary-extractor + synthetic-interior fill is the
+right totality mechanism; whole-cap exact repair is the wrong blast radius. The
+correction was making extraction a cut over actual edge uses.

@@ -702,6 +702,55 @@ fn gather_ring(
     ring
 }
 
+/// Local edge-pairing check over `cellset` (= C ∪ ring): for each target vid,
+/// how many incident undirected edges it has and how many of those are UNPAIRED
+/// (used once, or twice in the same orientation) in the current diagram. Used to
+/// test the hypothesis that a boundary imbalance coincides with a genuine
+/// (but Tier-1-undetected) edge mismatch. Target vids are interior to `cellset`
+/// (rim of C), so their incident edges have both cells in `cellset` and no
+/// outer-border false-positive applies.
+fn local_unpaired_incident(
+    target_vids: &HashSet<u32>,
+    cellset: &HashSet<u32>,
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+) -> HashMap<u32, (usize, usize)> {
+    // group key (lo,hi) -> (count, forward_count)
+    let mut groups: HashMap<(u32, u32), (u32, u32)> = HashMap::new();
+    for &g in cellset {
+        let Some(span) = cell_span(cells, cell_indices, g) else {
+            continue;
+        };
+        let n = span.len();
+        for i in 0..n {
+            let a = span[i];
+            let b = span[(i + 1) % n];
+            if a == b {
+                continue;
+            }
+            let (lo, hi, fwd) = if a < b { (a, b, 1u32) } else { (b, a, 0u32) };
+            let e = groups.entry((lo, hi)).or_insert((0, 0));
+            e.0 += 1;
+            e.1 += fwd;
+        }
+    }
+    let mut out: HashMap<u32, (usize, usize)> = HashMap::new();
+    for (&(lo, hi), &(count, fwd)) in &groups {
+        // Paired iff exactly two uses, one forward one backward.
+        let paired = count == 2 && fwd == 1;
+        for v in [lo, hi] {
+            if target_vids.contains(&v) {
+                let slot = out.entry(v).or_insert((0, 0));
+                slot.0 += 1;
+                if !paired {
+                    slot.1 += 1;
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Grow-until-clean experiment for one initially-unbalanced component. Repeatedly
 /// absorbs the background cells at each dangling rim end into `C` and re-extracts,
 /// reporting whether the boundary converges to clean oriented loops and at what
@@ -715,6 +764,7 @@ fn boundary_grow_probe(
     cell_indices: &[u32],
     vertex_keys: &ShardedVertexKeys,
     gset0: &HashSet<u32>,
+    mode: boundary::CollectMode,
 ) {
     let max_iters = env_usize("S2_BOUNDARY_GROW_ITERS", 64);
     let max_cells = env_usize("S2_BOUNDARY_GROW_MAX", 4096);
@@ -723,17 +773,18 @@ fn boundary_grow_probe(
 
     for iter in 1..=max_iters {
         let ring = gather_ring(&gset, points, grid, cells, cell_indices, vertex_keys);
-        let diag = match boundary::diagnose_boundary(&gset, &ring, cells, cell_indices, vertex_keys)
-        {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!(
-                    "[grow]   iter={iter} diagnose error {e:?} (size={})",
-                    gset.len()
-                );
-                return;
-            }
-        };
+        let diag =
+            match boundary::diagnose_boundary(&gset, &ring, cells, cell_indices, vertex_keys, mode)
+            {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!(
+                        "[grow]   iter={iter} diagnose error {e:?} (size={})",
+                        gset.len()
+                    );
+                    return;
+                }
+            };
         if diag.imbalances.is_empty() {
             // Confirm a full extraction succeeds.
             let ok = boundary::extract_boundary(
@@ -743,6 +794,7 @@ fn boundary_grow_probe(
                 cell_indices,
                 vertices,
                 vertex_keys,
+                mode,
             )
             .is_ok();
             eprintln!(
@@ -757,6 +809,24 @@ fn boundary_grow_probe(
             for &x in &im.key {
                 if !gset.contains(&x) && (x as usize) < points.len() && gset.insert(x) {
                     added += 1;
+                }
+            }
+        }
+        // If key-based absorption stalls (the imbalanced vids are interior splits
+        // with all-C keys — a degenerate rim vertex), broaden along the OTHER
+        // axis: absorb every ring cell incident to an imbalanced vid (the cells
+        // that own the split's clean cut edges), pushing the boundary outward past
+        // the split.
+        if added == 0 {
+            let bad: HashSet<u32> = diag.imbalances.iter().map(|im| im.vid).collect();
+            for &h in &ring {
+                if gset.contains(&h) {
+                    continue;
+                }
+                if let Some(span) = cell_span(cells, cell_indices, h) {
+                    if span.iter().any(|v| bad.contains(v)) && gset.insert(h) {
+                        added += 1;
+                    }
                 }
             }
         }
@@ -806,6 +876,13 @@ fn boundary_probe_components(
     // Error tally by variant: [unbalanced, duplicate, missing_pos, missing_key, open_walk].
     let mut errs = [0usize; 5];
     let mut detail_budget = env_usize("S2_BOUNDARY_DETAIL", 3);
+    // Collection mode: edge-pairing (default, robust) vs key-domain (legacy).
+    let mode = if std::env::var("S2_BOUNDARY_KEYS").is_ok() {
+        boundary::CollectMode::Keys
+    } else {
+        boundary::CollectMode::Paired
+    };
+    eprintln!("[boundary] collect_mode={mode:?}");
 
     for comp in comps {
         let gset: HashSet<u32> = comp.cells.iter().copied().collect();
@@ -840,7 +917,15 @@ fn boundary_probe_components(
         }
         ring.retain(|h| !gset.contains(h));
 
-        match boundary::extract_boundary(&gset, &ring, cells, cell_indices, vertices, vertex_keys) {
+        match boundary::extract_boundary(
+            &gset,
+            &ring,
+            cells,
+            cell_indices,
+            vertices,
+            vertex_keys,
+            mode,
+        ) {
             Ok(b) => {
                 ok += 1;
                 if b.loops.len() > 1 {
@@ -877,6 +962,7 @@ fn boundary_probe_components(
                         cells,
                         cell_indices,
                         vertex_keys,
+                        mode,
                     ) {
                         Ok(d) => {
                             let (mut interior, mut boundary_kind, mut on_resid) = (0, 0, 0);
@@ -901,6 +987,27 @@ fn boundary_probe_components(
                                 d.num_verts,
                                 d.imbalances.len(),
                             );
+                            // HYPOTHESIS TEST (user): does each boundary imbalance
+                            // coincide with a genuine (Tier-1-undetected) edge
+                            // mismatch? Local edge-pairing over C ∪ ring at the
+                            // imbalanced vids.
+                            let mut cellset = gset.clone();
+                            cellset.extend(ring.iter().copied());
+                            let target: HashSet<u32> =
+                                d.imbalances.iter().map(|im| im.vid).collect();
+                            let unpaired =
+                                local_unpaired_incident(&target, &cellset, cells, cell_indices);
+                            let on_unpaired = d
+                                .imbalances
+                                .iter()
+                                .filter(|im| unpaired.get(&im.vid).is_some_and(|&(_, u)| u > 0))
+                                .count();
+                            eprintln!(
+                                "[boundary]   HYP imbalanced={} on_unpaired_edge={on_unpaired} \
+                                 on_residual={on_resid} (if on_unpaired==imbalanced and on_residual==0 \
+                                 => detection gap, not a new repair mechanism)",
+                                d.imbalances.len(),
+                            );
                             for im in d.imbalances.iter().take(6) {
                                 let nc = im.key.iter().filter(|x| gset.contains(x)).count();
                                 // For each non-C generator in the key, is it in the
@@ -912,8 +1019,10 @@ fn boundary_probe_components(
                                     .filter(|x| !gset.contains(x))
                                     .map(|&x| (x, ring.contains(&x)))
                                     .collect();
+                                let (inc, unp) = unpaired.get(&im.vid).copied().unwrap_or((0, 0));
                                 eprintln!(
-                                    "[boundary]     vid={} key={:?} in={} out={} (gens_in_C={nc}, on_resid={}) bg_in_ring={:?}",
+                                    "[boundary]     vid={} key={:?} in={} out={} (gens_in_C={nc}, on_resid={}) \
+                                     bg_in_ring={:?} local_edges={inc} local_unpaired={unp}",
                                     im.vid,
                                     im.key,
                                     im.in_deg,
@@ -940,6 +1049,7 @@ fn boundary_probe_components(
                         cell_indices,
                         vertex_keys,
                         &gset,
+                        mode,
                     );
                 }
             }
