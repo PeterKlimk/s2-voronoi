@@ -51,8 +51,6 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         dedup_sub: _,
     } = assembled;
     let (eff_cells, eff_cell_indices, post_repair_unpaired) = reconcile_edges(
-        effective_points_ref,
-        &grid,
         &mut vertices,
         &vertex_keys,
         &unresolved_edges,
@@ -138,8 +136,6 @@ fn compute_voronoi_knn_clipping_report_core(
         dedup_sub: _,
     } = assembled;
     let (eff_cells, eff_cell_indices, post_repair_unpaired) = reconcile_edges(
-        effective_points_ref,
-        &grid,
         &mut vertices,
         &vertex_keys,
         &unresolved_edges,
@@ -585,8 +581,6 @@ fn assemble_shards(
 type ReconciledWithResiduals = (Vec<VoronoiCell>, Vec<u32>, Vec<(u32, u32)>);
 
 fn reconcile_edges(
-    points: &[Vec3],
-    grid: &CubeMapGrid,
     vertices: &mut Vec<Vec3>,
     vertex_keys: &live_dedup::ShardedVertexKeys,
     unresolved_edges: &[live_dedup::UnresolvedEdgeMismatch],
@@ -611,33 +605,10 @@ fn reconcile_edges(
         edge_reconcile::repair_apply_from_env(),
         |_, _| false,
     )?;
-    // Tier-2: re-clip the contested components Tier-1 could not pair. Opt-in
-    // and a no-op on clean runs (empty residual). See reclip_repair.
-    let post_repair_unpaired =
-        if !post_repair_unpaired.is_empty() && super::reclip_repair::enabled() {
-            super::reclip_repair::repair(
-                points,
-                grid,
-                vertices,
-                &mut cells,
-                &mut cell_indices,
-                vertex_keys,
-                post_repair_unpaired,
-            )?
-        } else {
-            post_repair_unpaired
-        };
-    // Dev-only canonical topology audit (no mutation; gated on S2_CANON_AUDIT).
-    // Runs every build so the uniform-input control fires even with no residual.
-    super::reclip_repair::audit_if_enabled(
-        points,
-        grid,
-        vertices.as_slice(),
-        &cells,
-        &cell_indices,
-        vertex_keys,
-        &post_repair_unpaired,
-    );
+    // The simple cross-bin stitch above is the only repair pass: any surviving
+    // unpaired interior edge is surfaced as a residual error by the caller
+    // (valid-or-error contract — see docs/reclip-hull-snap-experiment-2026-06.md
+    // for why post-hoc Tier-2 repair was investigated and dropped).
     tb.set_edge_reconcile(t.elapsed());
     Ok((cells, cell_indices, post_repair_unpaired))
 }

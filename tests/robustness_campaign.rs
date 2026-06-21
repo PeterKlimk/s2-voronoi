@@ -82,8 +82,9 @@ fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<UnitVec3> {
         "cube" => cube_vertex_stress_points(n, param, seed),
         "cocircular" => near_cocircular_stress_points(n, param, seed),
         "fibonacci" => fibonacci_sphere_points(n, param, seed),
-        // `param` is the cap fraction; the only distribution that drives the
-        // fallback + Tier-2 re-clip repair (run with S2_RECLIP_REPAIR=1).
+        // `param` is the cap fraction; the only distribution dense enough to
+        // drive the contested near-cocircular regime (which now errors loudly
+        // per the valid-or-error contract).
         "mega" => mega_points(n, param, seed),
         // Clean structured quad grid: O(n) high-degree vertices at normal
         // density — the high-degeneracy/reconcile-load regime.
@@ -98,9 +99,6 @@ fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<UnitVec3> {
 ///   S2_CASE_N     point count (group count for cocircular)
 ///   S2_CASE_SEED  rng seed
 ///   S2_CASE_PARAM shape knob (f32; default 0.3 — for mega it is the cap fraction)
-///
-/// Set `S2_RECLIP_REPAIR=1` to exercise the opt-in Tier-2 re-clip repair (only
-/// `mega` produces the contested clusters it acts on).
 ///
 /// Emits a single machine-parseable `CASERESULT` line. A build that returns an
 /// error is recorded as `result=err` (documented out-of-envelope behavior)

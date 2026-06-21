@@ -554,7 +554,12 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
 /// Strict S2-subdivision check over raw effective arrays (no weld map),
 /// enforcing the SAME contract as [`verify_sphere_fast`].
 ///
-/// Used by the Tier-2 re-clip repair to gate its output against the full
+/// Retained (and covered by `effective_strict_matches_fast`) as a standalone
+/// effective-space strict validator: it has no current production caller after the
+/// Tier-2 re-clip repair was removed, but is the natural gate for a future
+/// locally-resolved region (the planned hybrid exact-predicate path).
+///
+/// Was used by the Tier-2 re-clip repair to gate its output against the full
 /// validator *inside the repair* — independent of the `S2_VORONOI_VERIFY` env
 /// flag (so both the plain and report paths are covered) and without cloning the
 /// diagram into a `SphericalVoronoi`. Effective index space has no welded twins,
@@ -562,6 +567,7 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
 ///
 /// Pinned to `verify_sphere_fast` by the differential test
 /// `effective_strict_matches_fast`.
+#[allow(dead_code)] // no production caller post-Tier-2-removal; kept for tests + future hybrid
 pub(crate) fn verify_sphere_effective_strict(
     vertices: &[glam::Vec3],
     cells: &[crate::diagram::VoronoiCell],
