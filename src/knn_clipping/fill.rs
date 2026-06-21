@@ -348,72 +348,136 @@ pub(crate) fn fill_or_fallback(
     }
 }
 
-/// Run the fill and locally verify its output topology (no mutation): every
-/// boundary loop edge is reproduced exactly once by the inside cells, and every
-/// interior edge is shared by exactly two cells in opposite orientation. Returns
-/// a human-readable error string for the probe. (Degree/Euler are left to the
-/// whole-diagram gate; this checks the fill's own pairing + boundary reproduction,
-/// the core correctness.)
-pub(crate) fn fill_check(patch: &FilledPatch, loops: &[Vec<BoundaryVert>]) -> Result<(), String> {
-    // Synthetic interior vertices must be on the unit sphere (validator requires
-    // it), and every Synthetic ref must index a real synthetic.
+/// Verify a filled patch against (almost) every validator invariant, locally and
+/// without mutation — so the probe's success count reflects what the whole-diagram
+/// gate will actually accept. Mirrors `verify_sphere_effective_strict` except for
+/// global Euler/connectivity (left to the gate). Hardened per Codex review:
+///
+/// - exactly one cell per generator (no duplicate / missing generator);
+/// - each cell a simple cycle (>=3 distinct vertices, no self-loop, no dup vid);
+/// - **directed** boundary reproduction: each loop edge `cur -> next` appears once,
+///   in the inside-on-left direction (catches B's signed-area rewind flipping a
+///   seam edge — the local check Codex flagged was missing);
+/// - interior edges used exactly twice, opposite orientation;
+/// - no antipodal edge (fatal to the validator);
+/// - **global incidence >= 3** for every referenced vertex: boundary vids count
+///   `ring_ref_count` (non-C cells referencing them, precomputed) + patch cells;
+///   synthetic vids count patch cells. This is the check that catches the crude
+///   fill's owner-transition `{g1,g2,R}` vertex dropping to incidence 2.
+/// - no duplicate patch-cell signature.
+///
+/// `vertices` provides positions for `Existing` refs (antipodal test);
+/// `ring_ref_count` maps a boundary vid to the number of non-C cells referencing
+/// it (so post-patch incidence is exact).
+pub(crate) fn fill_check(
+    patch: &FilledPatch,
+    loops: &[Vec<BoundaryVert>],
+    gset: &HashSet<u32>,
+    vertices: &[Vec3],
+    ring_ref_count: &HashMap<u32, u32>,
+) -> Result<(), String> {
+    // Synthetic positions on-sphere + refs in range.
     for (i, v) in patch.synthetic.iter().enumerate() {
         if (v.length_squared() - 1.0).abs() > 1e-4 {
             return Err(format!("synthetic vertex {i} not on sphere"));
         }
     }
-    for (_, poly) in &patch.polys {
-        for r in poly {
-            if let FillRef::Synthetic(i) = r {
-                if (*i as usize) >= patch.synthetic.len() {
-                    return Err(format!("dangling synthetic ref {i}"));
-                }
-            }
+
+    // Exactly one cell per generator.
+    let mut gens_seen: HashSet<u32> = HashSet::new();
+    for (g, _) in &patch.polys {
+        if !gset.contains(g) {
+            return Err(format!("cell for non-component generator {g}"));
+        }
+        if !gens_seen.insert(*g) {
+            return Err(format!("duplicate cell for generator {g}"));
         }
     }
+    if gens_seen.len() != gset.len() {
+        return Err(format!(
+            "filled {}/{} generators",
+            gens_seen.len(),
+            gset.len()
+        ));
+    }
 
-    // Loop edges as undirected Existing-ref pairs; each must appear once inside.
-    let er = |vid: u32| FillRef::Existing(vid);
+    let pos = |r: FillRef| -> Option<Vec3> {
+        match r {
+            FillRef::Existing(v) => vertices.get(v as usize).copied(),
+            FillRef::Synthetic(i) => patch.synthetic.get(i as usize).copied(),
+        }
+    };
     let undir = |a: FillRef, b: FillRef| if a <= b { (a, b) } else { (b, a) };
-    let mut loop_edges: HashSet<(FillRef, FillRef)> = HashSet::new();
+
+    // Loop directed edges (inside-on-left): the patch must traverse each exactly
+    // this way so it pairs with the ring's reverse.
+    let mut loop_dir: HashSet<(u32, u32)> = HashSet::new();
+    let mut loop_undir: HashSet<(FillRef, FillRef)> = HashSet::new();
     for lp in loops {
         let n = lp.len();
         for i in 0..n {
-            loop_edges.insert(undir(er(lp[i].vid), er(lp[(i + 1) % n].vid)));
+            let (a, b) = (lp[i].vid, lp[(i + 1) % n].vid);
+            loop_dir.insert((a, b));
+            loop_undir.insert(undir(FillRef::Existing(a), FillRef::Existing(b)));
         }
     }
 
-    // Directed edge uses across all produced cells, grouped undirected.
+    // Per-vertex patch incidence (distinct cells) + edge uses + signatures.
+    let mut incidence: HashMap<FillRef, u32> = HashMap::new();
     let mut uses: HashMap<(FillRef, FillRef), (u32, u32)> = HashMap::new(); // (count, forward)
-    for (_, poly) in &patch.polys {
+    let mut signatures: HashSet<Vec<FillRef>> = HashSet::new();
+    for (g, poly) in &patch.polys {
         let n = poly.len();
         if n < 3 {
-            return Err(format!("cell has {n} < 3 vertices"));
+            return Err(format!("cell {g} has {n} < 3 vertices"));
         }
-        let mut distinct: HashSet<FillRef> = HashSet::new();
+        let mut distinct: Vec<FillRef> = poly.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        if distinct.len() != n {
+            return Err(format!("duplicate vertex in cell {g}"));
+        }
+        if !signatures.insert(distinct.clone()) {
+            return Err(format!("duplicate cell signature (cell {g})"));
+        }
+        for &r in &distinct {
+            *incidence.entry(r).or_default() += 1;
+        }
         for i in 0..n {
-            let a = poly[i];
-            let b = poly[(i + 1) % n];
+            let (a, b) = (poly[i], poly[(i + 1) % n]);
             if a == b {
-                return Err("self-loop edge in cell".into());
+                return Err(format!("self-loop edge in cell {g}"));
             }
-            distinct.insert(a);
+            // Antipodal check.
+            if let (Some(pa), Some(pb)) = (pos(a), pos(b)) {
+                if pa.dot(pb) <= -1.0 + 1e-6 {
+                    return Err(format!("antipodal edge in cell {g}"));
+                }
+            } else {
+                return Err(format!("edge with no position in cell {g}"));
+            }
             let (lo, hi) = undir(a, b);
             let fwd = u32::from((lo, hi) == (a, b));
             let e = uses.entry((lo, hi)).or_insert((0, 0));
             e.0 += 1;
             e.1 += fwd;
         }
-        if distinct.len() != n {
-            return Err("duplicate vertex in cell".into());
-        }
     }
 
+    // Edge pairing + directed boundary reproduction.
     let mut seen_loop: HashSet<(FillRef, FillRef)> = HashSet::new();
     for (&(lo, hi), &(count, fwd)) in &uses {
-        if loop_edges.contains(&(lo, hi)) {
+        if loop_undir.contains(&(lo, hi)) {
             if count != 1 {
                 return Err(format!("boundary edge used {count}x inside (want 1)"));
+            }
+            // Direction must be the inside-on-left one.
+            let (FillRef::Existing(a), FillRef::Existing(b)) = (lo, hi) else {
+                return Err("boundary edge with synthetic endpoint".into());
+            };
+            let directed = if fwd == 1 { (a, b) } else { (b, a) };
+            if !loop_dir.contains(&directed) {
+                return Err(format!("boundary edge {directed:?} reversed inside"));
             }
             seen_loop.insert((lo, hi));
         } else if count != 2 || fwd != 1 {
@@ -422,12 +486,23 @@ pub(crate) fn fill_check(patch: &FilledPatch, loops: &[Vec<BoundaryVert>]) -> Re
             ));
         }
     }
-    if seen_loop.len() != loop_edges.len() {
+    if seen_loop.len() != loop_undir.len() {
         return Err(format!(
             "reproduced {}/{} boundary edges",
             seen_loop.len(),
-            loop_edges.len()
+            loop_undir.len()
         ));
+    }
+
+    // Global incidence >= 3 for every referenced vertex.
+    for (&r, &patch_refs) in &incidence {
+        let total = match r {
+            FillRef::Existing(v) => patch_refs + ring_ref_count.get(&v).copied().unwrap_or(0),
+            FillRef::Synthetic(_) => patch_refs,
+        };
+        if total < 3 {
+            return Err(format!("vertex {r:?} incidence {total} < 3"));
+        }
     }
     Ok(())
 }
@@ -572,7 +647,12 @@ mod tests {
             assert!(poly.len() >= 3);
             assert!(poly.contains(&FillRef::Synthetic(0)), "hub in every wedge");
         }
-        fill_check(&patch, &loops).expect("crude patch must be locally valid");
+        // Positions for the 4 loop vids (0..3); each is an arc endpoint shared by
+        // 2 wedges, so 1 ring ref each gives incidence 3.
+        let vertices: Vec<Vec3> = (0..4).map(|i| cap(i as f64 * 90.0)).collect();
+        let ring_ref_count: HashMap<u32, u32> = (0u32..4).map(|v| (v, 1)).collect();
+        fill_check(&patch, &loops, &gset, &vertices, &ring_ref_count)
+            .expect("crude patch must be locally valid");
     }
 
     /// `fill_check` rejects a patch whose interior edge is used only once.
@@ -602,7 +682,10 @@ mod tests {
             ],
             synthetic: vec![Vec3::Z],
         };
-        assert!(fill_check(&patch, &loops).is_err());
+        let gset: HashSet<u32> = [0u32, 1].into_iter().collect();
+        let vertices: Vec<Vec3> = (0..4).map(|i| cap(i as f64 * 90.0)).collect();
+        let ring_ref_count: HashMap<u32, u32> = HashMap::new();
+        assert!(fill_check(&patch, &loops, &gset, &vertices, &ring_ref_count).is_err());
     }
 
     /// Crude fill bails (not panics) on multi-loop and on too-few-edges.

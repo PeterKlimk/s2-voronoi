@@ -973,9 +973,25 @@ fn boundary_probe_components(
                 fill_max_loops = fill_max_loops.max(b.loops.len());
 
                 // Fill: near-Voronoi (B) with crude fallback (A), then locally
-                // verify the patch (per-cell cycles + boundary pairing).
+                // verify the patch against the validator invariants. Precompute
+                // ring reference counts (non-C cells referencing each boundary vid)
+                // for the exact post-patch incidence check.
+                let mut ring_ref_count: HashMap<u32, u32> = HashMap::new();
+                for &h in &ring {
+                    if let Some(span) = cell_span(cells, cell_indices, h) {
+                        for &vid in span {
+                            *ring_ref_count.entry(vid).or_default() += 1;
+                        }
+                    }
+                }
                 match super::fill::fill_or_fallback(&gset, &b.loops, points, grid) {
-                    Some((patch, used_a)) => match super::fill::fill_check(&patch, &b.loops) {
+                    Some((patch, used_a)) => match super::fill::fill_check(
+                        &patch,
+                        &b.loops,
+                        &gset,
+                        vertices,
+                        &ring_ref_count,
+                    ) {
                         Ok(()) => {
                             if used_a {
                                 fill_a += 1;

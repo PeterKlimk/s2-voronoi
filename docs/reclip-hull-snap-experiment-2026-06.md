@@ -310,3 +310,42 @@ hardening for "any welded input".
 Verdict (Codex, unchanged): boundary-extractor + synthetic-interior fill is the
 right totality mechanism; whole-cap exact repair is the wrong blast radius. The
 correction was making extraction a cut over actual edge uses.
+
+## Fill stage (2026-06-21) — B opportunism + the crude-fan dead end
+
+Built `src/knn_clipping/fill.rs` (`FilledPatch` over first-class `FillRef`
+= Existing | Synthetic, per Codex):
+- **B = `fill_component`** (near-Voronoi): empty-circumcircle interior of the C
+  generators + per-cell-cycle assembly (`build_cycle_from_edges`), driven by the
+  CLEAN boundary. Fills ~50-70% of components with good geometry; the rest bail
+  `OpenCell` because the empty-circumcircle interior is ill-defined on
+  near-cocircular points (missing interior vertices leave a cell open). Same
+  ceiling the old `resolve_component_attempt` hit — B cannot be total here, by
+  construction.
+- **A = `fill_component_crude`** (intended totality fallback): single-hub wedge
+  fan over a single loop.
+
+Codex review (gpt-5.5) + a HARDENED `fill_check` (now mirrors the validator:
+directed seam reproduction, antipodal, global incidence>=3 via precomputed ring
+ref counts, synthetic incidence, dup-cell signatures, one-cell-per-generator)
+**refuted the crude fan**: it produces INVALID patches. The exact failing shape
+(Codex, confirmed on every single-loop A case): an owner-transition boundary
+vertex with key `{g1,g2,R}` (two C gens + one ring) has only ONE ring cell
+referencing it after the rewrite, so the fill must reference it from >=2 cells;
+the index-sliced fan can leave it arc-interior in a single wedge -> global
+incidence 2 -> `low-incidence vertex`. Respecting `edge_owner` fixes incidence
+(transition vertices become shared) but then a NON-CONTIGUOUS generator (common:
+9-31/run) needs >=2 wedges = >=2 cells for one generator, violating
+cell_count==m. A single hub cannot merge a generator's arcs (it would revisit the
+hub -> duplicate vertex). So the crude wedge fan is a DEAD END for validity.
+
+**Honest status:** gated repair coverage is **B alone (~50-70%)**; the crude fan is
+gated-safe but never valid, so it never improves coverage. (The earlier "81%" was
+optimistic — it predated the directed/incidence checks and counted patches the
+gate would revert.) Never-invalid still holds (the whole-diagram gate reverts any
+bad patch to residual_error).
+
+The correctness engine must be a proper **topological planar-subdivision fill**
+(respect `edge_owner` for incidence + seam; close non-contiguous cells through a
+real interior skeleton; handle multi-loop/holes) — Codex's "DCEL/cut-graph
+transform," not a fan. That is the open totality piece.
