@@ -341,9 +341,7 @@ mod tests {
     fn canonical_faces(orig: &[Vec3], h: &LocalHull) -> Vec<[usize; 3]> {
         let id = |p: DVec3| -> usize {
             orig.iter()
-                .position(|q| {
-                    DVec3::new(q.x as f64, q.y as f64, q.z as f64) == p
-                })
+                .position(|q| DVec3::new(q.x as f64, q.y as f64, q.z as f64) == p)
                 .expect("face vertex must be an original point")
         };
         let mut out: Vec<[usize; 3]> = h
@@ -439,6 +437,67 @@ mod tests {
                 // A cube corner touches 3 square faces; triangulated, its dual
                 // fan has at least 3 faces.
                 assert!(fan.len() >= 3, "cube cell {i} fan too short: {}", fan.len());
+            }
+        }
+    }
+
+    /// THE core escalation invariant: every two generators that share a Voronoi
+    /// edge, read from ONE hull, agree on that edge's two endpoints (the two
+    /// incident faces = the two shared Voronoi vertices) — and those endpoints
+    /// are cyclically adjacent in BOTH dual fans. This is why rebuilding a whole
+    /// component as a single hull pairs every interior edge by construction:
+    /// there is one triangulation, so both sides name the same triples.
+    #[test]
+    fn dual_cells_agree_on_shared_edges() {
+        use std::collections::HashMap;
+        let mut s: u64 = 0xCAFE_F00D;
+        let mut rng = || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            (s as f32 / u64::MAX as f32) * 2.0 - 1.0
+        };
+        let n = 50;
+        let pts: Vec<Vec3> = (0..n).map(|_| u(rng(), rng(), rng())).collect();
+        let h = LocalHull::build(&pts).unwrap();
+
+        let fans: Vec<Vec<usize>> = (0..n).map(|i| h.cell_faces(i)).collect();
+        for (i, fan) in fans.iter().enumerate() {
+            assert!(!fan.is_empty(), "generator {i} has no dual cell");
+        }
+
+        // Undirected hull edge -> incident face indices.
+        let mut edge_faces: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+        for (fi, f) in h.faces().iter().enumerate() {
+            for k in 0..3 {
+                let (a, b) = (f[k], f[(k + 1) % 3]);
+                edge_faces.entry((a.min(b), a.max(b))).or_default().push(fi);
+            }
+        }
+
+        let adjacent = |fan: &[usize], f0: usize, f1: usize| -> bool {
+            let len = fan.len() as isize;
+            let p0 = fan.iter().position(|&f| f == f0).expect("face in fan") as isize;
+            let p1 = fan.iter().position(|&f| f == f1).expect("face in fan") as isize;
+            let d = (p0 - p1).rem_euclid(len);
+            d == 1 || d == len - 1
+        };
+
+        for ((i, j), shared) in &edge_faces {
+            // Each interior Voronoi edge is bounded by exactly two vertices.
+            assert_eq!(
+                shared.len(),
+                2,
+                "edge ({i},{j}) shared by {} faces, not 2",
+                shared.len()
+            );
+            // Both cells carry those same two vertices, cyclically adjacent —
+            // i.e. both sides emit the identical shared edge.
+            for &g in &[*i, *j] {
+                assert!(
+                    adjacent(&fans[g], shared[0], shared[1]),
+                    "edge ({i},{j}) endpoints not adjacent in dual cell {g}"
+                );
             }
         }
     }

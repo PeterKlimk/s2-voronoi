@@ -26,6 +26,7 @@ microbench = ["dep:rand", "dep:rand_chacha"] # Enable internal microbench harnes
 serde = ["dep:serde"] # Serialize/Deserialize for diagram types
 qhull = ["qhull-enhanced"]  # Convex hull backend (test/bench only)
 p5_shadow = [] # P5 shadow audit: log canonical-vs-local clip decisions (no behavior change)
+escalate_probe = [] # Expose the defect-driven exact local-rebuild for integration testing
 simd_scalar = [] # Scalar/autovectorized 8-lane path instead of `wide`; debugging/comparison
 fma = [] # Prefer fused multiply-add via mul_add. On x86/x86_64 requires the `+fma` target feature (RUSTFLAGS="-C target-feature=+fma" or -C target-cpu=native); else compile error (SIMD/scalar dot paths must fuse identically). See src/fp.rs guard.
 tools = ["dep:clap", "dep:kiddo", "dep:rand", "dep:rand_chacha"] # Benchmark/utility binaries

@@ -132,6 +132,15 @@ pub mod p5_shadow {
     };
 }
 
+/// Defect-driven escalation probe (feature `escalate_probe`); lets an
+/// integration test drive the exact local rebuild over real defect sites.
+/// Diagnostic only.
+#[cfg(feature = "escalate_probe")]
+#[doc(hidden)]
+pub mod escalate_probe {
+    pub use crate::knn_clipping::escalate::{gather_local, rebuild_cells, RebuiltCell};
+}
+
 pub use locate::{PlaneLocator, SphereLocator};
 pub use plane_diagram::{PlanarVoronoi, PlanePoint, PlanePointLike, PlaneRect, PlaneTopology};
 pub use types::{UnitVec3, UnitVec3Like};
