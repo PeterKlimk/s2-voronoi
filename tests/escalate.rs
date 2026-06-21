@@ -7,8 +7,12 @@
 
 mod support;
 
+use std::collections::HashMap;
+
 use glam::Vec3;
-use s2_voronoi::escalate_probe::{gather_local, rebuild_cells};
+use s2_voronoi::escalate_probe::{
+    check_cell_internally_paired, gather_local, rebuild_cells, RebuiltCell,
+};
 use s2_voronoi::{compute_with_report, UnitVec3, VoronoiConfig};
 use support::points::*;
 
@@ -54,8 +58,14 @@ fn rebuild_resolves_mega_defects() {
                 bailed += 1;
                 continue;
             };
-            let edge_from_a = cells[0].shared_edge_with(b);
-            let edge_from_b = cells[1].shared_edge_with(a);
+            let by_gen: HashMap<u32, &RebuiltCell> =
+                cells.iter().map(|c| (c.generator, c)).collect();
+            let (Some(ca), Some(cb)) = (by_gen.get(&a), by_gen.get(&b)) else {
+                bailed += 1;
+                continue;
+            };
+            let edge_from_a = ca.shared_edge_with(b);
+            let edge_from_b = cb.shared_edge_with(a);
             assert_eq!(
                 edge_from_a, edge_from_b,
                 "k={k}: rebuilt cells disagree on edge ({a},{b}): \
@@ -71,4 +81,47 @@ fn rebuild_resolves_mega_defects() {
             defects.len()
         );
     }
+}
+
+/// Stronger than the per-edge check: rebuild each defect's whole neighborhood as
+/// ONE hull and verify EVERY edge of BOTH defect cells pairs internally — i.e.
+/// the defect cells are fully-valid local subdivisions, not just consistent on
+/// the one a-b edge. `check_cell_internally_paired` panics on any interior
+/// pairing disagreement, so a clean run is the proof.
+#[test]
+fn defect_cells_are_internally_valid_after_rebuild() {
+    let points = mega_points(100_000, 0.8, 3);
+    let pts3 = to_vec3(&points);
+    let out = compute_with_report(&points, VoronoiConfig::default()).expect("build");
+    let defects: Vec<(u32, u32)> = out
+        .report
+        .unresolved_edge_pairs
+        .iter()
+        .map(|&(a, b, _)| (a, b))
+        .collect();
+    assert!(!defects.is_empty());
+
+    let mut total_rim = 0usize;
+    let mut total_edges = 0usize;
+    for &(a, b) in &defects {
+        // Gather the defect's neighborhood, then rebuild EVERY gathered cell so
+        // a's and b's neighbors are present to pair against.
+        let local = gather_local(&pts3, &[a, b], 96);
+        let cells = rebuild_cells(&pts3, &local, &local).expect("hull");
+        let by_gen: HashMap<u32, RebuiltCell> =
+            cells.into_iter().map(|c| (c.generator, c)).collect();
+
+        for &g in &[a, b] {
+            let cell = &by_gen[&g];
+            total_edges += cell.vertices.len();
+            // Panics on any interior pairing disagreement; rim edges (neighbor
+            // outside the gathered set) are counted, not failed.
+            total_rim += check_cell_internally_paired(cell, &by_gen);
+        }
+    }
+    println!(
+        "{} defects: all defect-cell interior edges paired; {total_rim} rim edges \
+         (neighbor outside gather) of {total_edges} total uncheckable",
+        defects.len()
+    );
 }

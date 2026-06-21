@@ -138,7 +138,9 @@ pub mod p5_shadow {
 #[cfg(feature = "escalate_probe")]
 #[doc(hidden)]
 pub mod escalate_probe {
-    pub use crate::knn_clipping::escalate::{gather_local, rebuild_cells, RebuiltCell};
+    pub use crate::knn_clipping::escalate::{
+        check_cell_internally_paired, gather_local, rebuild_cells, shared_neighbor, RebuiltCell,
+    };
 }
 
 pub use locate::{PlaneLocator, SphereLocator};

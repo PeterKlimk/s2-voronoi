@@ -73,6 +73,67 @@ pub fn gather_local(points: &[Vec3], seeds: &[u32], k: usize) -> Vec<u32> {
     set.into_iter().collect()
 }
 
+/// The common third generator of two vertices of `g`'s cell that share an edge:
+/// each vertex triple contains `g`; consecutive cell vertices also share the
+/// neighbor `m` whose bisector carries the edge `g–m`. Returns `m`, or `None`
+/// if the two triples don't share exactly one other generator (not an edge).
+pub fn shared_neighbor(g: u32, t0: [u32; 3], t1: [u32; 3]) -> Option<u32> {
+    let common: Vec<u32> = t0
+        .iter()
+        .copied()
+        .filter(|&x| x != g && t1.contains(&x))
+        .collect();
+    if common.len() == 1 {
+        Some(common[0])
+    } else {
+        None
+    }
+}
+
+/// Whether two vertices are cyclically adjacent in a cell's fan.
+fn cyclically_adjacent(verts: &[[u32; 3]], a: [u32; 3], b: [u32; 3]) -> bool {
+    let n = verts.len();
+    let pa = verts.iter().position(|&t| t == a);
+    let pb = verts.iter().position(|&t| t == b);
+    match (pa, pb) {
+        (Some(pa), Some(pb)) => {
+            let d = (pa as isize - pb as isize).rem_euclid(n as isize);
+            d == 1 || d == n as isize - 1
+        }
+        _ => false,
+    }
+}
+
+/// Verify every interior edge of `g`'s rebuilt cell pairs: for each edge `g–m`
+/// whose neighbor `m` is also rebuilt (`cells_by_gen`), `m`'s cell must carry
+/// the same two endpoint triples, cyclically adjacent. Returns the number of
+/// edges that could NOT be checked because `m` is outside the rebuilt set (the
+/// rim) — 0 means the cell is fully internally paired. Panics on a genuine
+/// pairing disagreement (an interior defect the rebuild failed to resolve).
+pub fn check_cell_internally_paired(
+    cell: &RebuiltCell,
+    cells_by_gen: &std::collections::HashMap<u32, RebuiltCell>,
+) -> usize {
+    let g = cell.generator;
+    let n = cell.vertices.len();
+    let mut rim = 0usize;
+    for i in 0..n {
+        let t0 = cell.vertices[i];
+        let t1 = cell.vertices[(i + 1) % n];
+        let Some(m) = shared_neighbor(g, t0, t1) else {
+            continue; // coincident / degenerate vertex pair — skip
+        };
+        match cells_by_gen.get(&m) {
+            Some(mc) => assert!(
+                cyclically_adjacent(&mc.vertices, t0, t1),
+                "edge {g}-{m} present in {g}'s cell ({t0:?},{t1:?}) but not paired in {m}'s cell"
+            ),
+            None => rim += 1,
+        }
+    }
+    rim
+}
+
 /// Rebuild the `seeds`' Voronoi cells from one exact local hull over
 /// `local_ids`. Returns one [`RebuiltCell`] per seed, or `None` if the local
 /// set has no 3D hull (all generators coplanar — a measure-zero pathology).
@@ -88,10 +149,13 @@ pub fn rebuild_cells(
 
     let mut out = Vec::with_capacity(seeds.len());
     for &g in seeds {
-        let lg = local_of(g)?;
+        let Some(lg) = local_of(g) else { continue };
         let fan = hull.cell_faces(lg);
         if fan.is_empty() {
-            return None; // broken fan — caller bails (shouldn't happen interior)
+            // Broken fan: a boundary generator of the local patch whose true
+            // neighbors aren't all gathered (the rim). Skip it — interior cells
+            // (the defect site) are clean. Callers treat a missing cell as rim.
+            continue;
         }
         let vertices = fan
             .iter()
