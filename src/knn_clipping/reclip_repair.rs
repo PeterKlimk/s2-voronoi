@@ -240,6 +240,7 @@ enum CellAudit {
 
 /// Audit a single cell `g` against the exact local hull. `secured_k` neighbors
 /// are gathered from the 3x3 + ring-2 grid neighborhood.
+#[allow(clippy::too_many_arguments)]
 fn audit_cell(
     g: u32,
     points: &[Vec3],
@@ -568,6 +569,93 @@ pub(crate) fn audit_if_enabled(
     );
     t_suspect.report("suspect");
     t_control.report("control");
+}
+
+/// Rim probe (dev-only, `S2_RIM_PROBE`). BFS outward in grid-adjacency from the
+/// contested components and report the exact-vs-fast disagree-rate per ring, to
+/// test whether the contested region is wrapped by a BOUNDED, clean firewall (a
+/// ring where the fast diagram agrees with the exact Delaunay, so a rebuild can
+/// pin there cleanly — unlike the inside-cap seam that failed 0/6). A firewall
+/// is "clean" when a ring has zero disagreements (agree, or sparse-skip = a
+/// non-degenerate background cell the window method can't audit — both clean).
+fn rim_probe_components(
+    points: &[Vec3],
+    grid: &CubeMapGrid,
+    vertices: &[Vec3],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: &ShardedVertexKeys,
+    comps: &[Component],
+) {
+    let secured_k = env_usize("S2_CANON_AUDIT_K", 256);
+    let max_rings = env_usize("S2_RIM_MAX_RINGS", 40);
+    let mut visited: HashSet<u32> = comps.iter().flat_map(|c| c.cells.iter().copied()).collect();
+    let mut frontier: Vec<u32> = visited.iter().copied().collect();
+    eprintln!(
+        "[rim] components={} ring0(contested)={}",
+        comps.len(),
+        frontier.len()
+    );
+    for ring in 1..=max_rings {
+        let mut next: Vec<u32> = Vec::new();
+        for &g in &frontier {
+            if (g as usize) >= points.len() {
+                continue;
+            }
+            let cell = grid.point_index_to_cell(g as usize);
+            for &nc in grid.cell_neighbors(cell).iter() {
+                if nc != u32::MAX {
+                    for &p in grid.cell_points(nc as usize) {
+                        if visited.insert(p) {
+                            next.push(p);
+                        }
+                    }
+                }
+            }
+        }
+        if next.is_empty() {
+            eprintln!("[rim] ring {ring}: exhausted (no clean firewall before exhaustion)");
+            break;
+        }
+        let (mut agree, mut dis, mut skip) = (0usize, 0usize, 0usize);
+        for &g in &next {
+            match audit_cell(
+                g,
+                points,
+                grid,
+                vertices,
+                cells,
+                cell_indices,
+                vertex_keys,
+                secured_k,
+            ) {
+                CellAudit::Agree => agree += 1,
+                CellAudit::Disagree { .. } => dis += 1,
+                _ => skip += 1,
+            }
+        }
+        let rate = if agree + dis > 0 {
+            100.0 * agree as f64 / (agree + dis) as f64
+        } else {
+            f64::NAN
+        };
+        eprintln!(
+            "[rim] ring {ring}: n={} agree={agree} disagree={dis} skip={skip} agree_rate={rate:.0}%",
+            next.len()
+        );
+        if dis == 0 {
+            eprintln!(
+                "[rim] CLEAN FIREWALL at ring {ring} (cumulative cells inside = {})",
+                visited.len()
+            );
+            break;
+        }
+        frontier = next;
+    }
+}
+
+fn rim_probe() -> bool {
+    std::env::var("S2_RIM_PROBE").is_ok()
 }
 
 /// One contested cluster: the cells (generators) that disagree about a
@@ -1218,6 +1306,176 @@ fn resolve_component(
     None
 }
 
+/// Whether the experimental hull + snap-to-loop resolver is selected.
+fn hull_mode() -> bool {
+    std::env::var("S2_RECLIP_HULL").is_ok()
+}
+
+/// Outcome of one component under the hull-snap resolver (for instrumentation).
+#[derive(Default)]
+struct HullStats {
+    bail_fan: usize,
+    bail_snap: usize,
+    bail_hull: usize,
+    resolved: usize,
+}
+
+/// Experimental Tier-2 resolver: rebuild the contested component `C` from the
+/// EXACT local Delaunay (`local_hull`, exact `orient3d`) and attach it to the
+/// surrounding diagram by SNAPPING each seam vertex to the nearest existing
+/// loop vertex — bypassing the pin-by-key match that bails when the exact hull
+/// picks a different third generator at a near-degenerate seam.
+///
+/// Snap is not strictly safe: merging two near-coincident loop vertices into
+/// one can leave a ring cell below 3 vertices (a digon), and keeping both can
+/// leave a sub-epsilon edge. Both are caught by the existing validate-or-revert
+/// gate (never silent-invalid); this resolver only changes how `Resolved` is
+/// produced. See `docs/canonical-certification-design-2026-06.md`.
+fn resolve_component_hull_snap(
+    comp: &Component,
+    points: &[Vec3],
+    grid: &CubeMapGrid,
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertices: &[Vec3],
+    stats: &mut HullStats,
+) -> Option<Resolved> {
+    const SECURED_K: usize = 256;
+    const MAX_LOCAL_SET: usize = 8192;
+    let cset: HashSet<u32> = comp.cells.iter().copied().collect();
+
+    // Local point set S = C ∪ secured(C). The dense cap's 3x3 + ring-2 window
+    // holds far more than the cell needs, so take the nearest-K per generator
+    // (the certificate closes well within K here) and union. A whole-window
+    // union would blow past MAX_LOCAL_SET on mega.
+    let mut sset = cset.clone();
+    for &g in &comp.cells {
+        if (g as usize) >= points.len() {
+            return None;
+        }
+        let gp = points[g as usize];
+        let cell = grid.point_index_to_cell(g as usize);
+        let mut cand: HashSet<u32> = HashSet::new();
+        for &nc in grid.cell_neighbors(cell).iter() {
+            if nc != u32::MAX {
+                cand.extend(grid.cell_points(nc as usize).iter().copied());
+            }
+        }
+        for &nc in grid.cell_ring2(cell) {
+            if nc != u32::MAX {
+                cand.extend(grid.cell_points(nc as usize).iter().copied());
+            }
+        }
+        let mut by_dist: Vec<(f32, u32)> = cand
+            .into_iter()
+            .filter(|&c| c != g && (c as usize) < points.len())
+            .map(|c| (gp.dot(points[c as usize]), c))
+            .collect();
+        by_dist.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+        sset.extend(by_dist.iter().take(SECURED_K).map(|&(_, id)| id));
+        if sset.len() > MAX_LOCAL_SET {
+            return None;
+        }
+    }
+
+    let mut s_ids: Vec<u32> = sset.into_iter().collect();
+    s_ids.sort_unstable();
+    let s_pts: Vec<Vec3> = s_ids.iter().map(|&id| points[id as usize]).collect();
+    let local_of: HashMap<u32, usize> = s_ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+
+    let Some(hull) = crate::knn_clipping::local_hull::LocalHull::build(&s_pts) else {
+        stats.bail_hull += 1;
+        return None;
+    };
+
+    let mut interior_pos: HashMap<VertexKey3, Vec3> = HashMap::new();
+    let mut boundary_pin: HashMap<VertexKey3, u32> = HashMap::new();
+    let mut polys: Vec<(u32, Vec<VertexKey3>)> = Vec::with_capacity(comp.cells.len());
+
+    for &g in &comp.cells {
+        let g_local = local_of[&g];
+        let fan = hull.cell_faces(g_local);
+        if fan.is_empty() {
+            stats.bail_fan += 1;
+            return None;
+        }
+        let mut poly: Vec<VertexKey3> = Vec::with_capacity(fan.len());
+        // Pinned vid per poly entry (Some for boundary/snapped, None for a fresh
+        // interior vertex). Used to collapse consecutive snaps to the same loop
+        // vid — the near-cocircular case where the exact hull splits one existing
+        // seam vertex into two faces.
+        let mut poly_pin: Vec<Option<u32>> = Vec::with_capacity(fan.len());
+        for &fi in &fan {
+            let f = hull.faces()[fi];
+            let gens = [s_ids[f[0]], s_ids[f[1]], s_ids[f[2]]];
+            let key = key3(gens[0], gens[1], gens[2]);
+            let ncon = gens.iter().filter(|x| cset.contains(x)).count();
+
+            if ncon == 3 {
+                let cc = hull.face_circumcenter(fi);
+                interior_pos
+                    .entry(key)
+                    .or_insert_with(|| Vec3::new(cc.x as f32, cc.y as f32, cc.z as f32));
+                poly.push(key);
+                poly_pin.push(None);
+                continue;
+            }
+
+            // Boundary face: snap to the nearest existing vertex among the
+            // involved ring cells.
+            let cc = hull.face_circumcenter(fi);
+            let ccf = Vec3::new(cc.x as f32, cc.y as f32, cc.z as f32);
+            let mut best: Option<(f32, u32)> = None;
+            for &r in &gens {
+                if cset.contains(&r) || (r as usize) >= cells.len() {
+                    continue;
+                }
+                if let Some(span) = cell_span(cells, cell_indices, r) {
+                    for &vid in span {
+                        if (vid as usize) < vertices.len() {
+                            let d = ccf.dot(vertices[vid as usize]);
+                            if best.is_none_or(|(bd, _)| d > bd) {
+                                best = Some((d, vid));
+                            }
+                        }
+                    }
+                }
+            }
+            let Some((_, vid)) = best else {
+                stats.bail_snap += 1;
+                return None;
+            };
+            // Collapse a consecutive snap to the same loop vid (merge the split).
+            if poly_pin.last() == Some(&Some(vid)) {
+                continue;
+            }
+            boundary_pin.insert(key, vid);
+            poly.push(key);
+            poly_pin.push(Some(vid));
+        }
+        // Cyclic collapse: first and last both snap to the same loop vid.
+        while poly.len() >= 2
+            && poly_pin.first().copied().flatten().is_some()
+            && poly_pin.first() == poly_pin.last()
+        {
+            poly.pop();
+            poly_pin.pop();
+        }
+        if poly.len() < 3 {
+            stats.bail_snap += 1;
+            return None;
+        }
+        polys.push((g, poly));
+    }
+
+    stats.resolved += 1;
+    Some(Resolved {
+        polys,
+        interior_pos,
+        boundary_pin,
+    })
+}
+
 /// Re-resolve contested components that survived Tier-1, returning the residual
 /// still unpaired afterward (empty on full success). See
 /// `docs/reclip-repair-design.md`.
@@ -1255,6 +1513,19 @@ pub(crate) fn repair(
         return Ok(residual);
     }
 
+    if rim_probe() {
+        rim_probe_components(
+            points,
+            grid,
+            vertices.as_slice(),
+            cells.as_slice(),
+            cell_indices.as_slice(),
+            vertex_keys,
+            &comps,
+        );
+        return Ok(residual);
+    }
+
     let orig_len = vertices.len() as u32;
     let orig_indices_len = cell_indices.len();
     let mut interior_vid: HashMap<[u32; 3], u32> = HashMap::new();
@@ -1271,6 +1542,8 @@ pub(crate) fn repair(
     // its original contested edge survives and the gate's whole-diagram validation
     // sees it, so no separate residual bookkeeping is needed here.
     let mut touched_snapshot: HashMap<u32, VoronoiCell> = HashMap::new();
+    let use_hull = hull_mode();
+    let mut hull_stats = HullStats::default();
 
     'comp: for comp in &comps {
         if comp.cells.len() > MAX_COMPONENT_CELLS {
@@ -1282,8 +1555,20 @@ pub(crate) fn repair(
             }
             continue;
         }
-        let Some(res) = resolve_component(comp, points, grid, cells, cell_indices, vertex_keys)
-        else {
+        let resolved = if use_hull {
+            resolve_component_hull_snap(
+                comp,
+                points,
+                grid,
+                cells,
+                cell_indices,
+                vertices.as_slice(),
+                &mut hull_stats,
+            )
+        } else {
+            resolve_component(comp, points, grid, cells, cell_indices, vertex_keys)
+        };
+        let Some(res) = resolved else {
             if trace() {
                 eprintln!(
                     "[reclip]   bail: resolve_component failed ({} cells)",
@@ -1358,6 +1643,50 @@ pub(crate) fn repair(
             cells[*g as usize] = VoronoiCell::new(start, poly.len() as u16);
             touched.push(*g);
         }
+    }
+
+    // Hull-snap instrumentation: categorize the predicted local failure modes
+    // over the touched cells before the gate decides (digon = cell dropped below
+    // 3 vertices by a merge; dup-edge = consecutive duplicate vid = a sub-eps
+    // collapse). These are the snap failure modes we set out to measure.
+    if use_hull {
+        let mut digons = 0usize;
+        let mut dup_edges = 0usize;
+        for &g in &touched {
+            let Some(span) = cell_span(cells, cell_indices, g) else {
+                continue;
+            };
+            if span.len() < 3 {
+                digons += 1;
+            }
+            let n = span.len();
+            for i in 0..n {
+                if n > 0 && span[i] == span[(i + 1) % n] {
+                    dup_edges += 1;
+                    break;
+                }
+            }
+        }
+        let gate_ok = !touched.is_empty()
+            && crate::validation::verify_sphere_effective_strict(
+                vertices.as_slice(),
+                cells.as_slice(),
+                cell_indices.as_slice(),
+            )
+            .is_ok();
+        eprintln!(
+            "[hull] comps={} resolved={} bail(hull={} fan={} snap={}) touched={} \
+             digons={} dup_edges={} gate={}",
+            comps.len(),
+            hull_stats.resolved,
+            hull_stats.bail_hull,
+            hull_stats.bail_fan,
+            hull_stats.bail_snap,
+            touched.len(),
+            digons,
+            dup_edges,
+            if gate_ok { "clean" } else { "revert" },
+        );
     }
 
     // Validate-or-revert gate.

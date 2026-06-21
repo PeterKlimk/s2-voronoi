@@ -360,7 +360,15 @@ fn splittable_points<R: Rng>(n: usize, rng: &mut R) -> Vec<Vec3> {
 fn mega_points<R: Rng>(n: usize, param: f64, rng: &mut R) -> Vec<Vec3> {
     let frac = if param > 0.0 { param } else { 0.8 };
     let bulk = ((n as f64) * frac) as usize;
-    let center = Vec3::new(0.0, 0.0, 1.0);
+    // S2_BENCH_CAP_CENTER places the dense cap to stress bin-line straddling:
+    // `pole` (default) = face +Z center, lands in one bin; `edge` = a cube-face
+    // edge (two-face/bin seam through the cap); `corner` = a cube corner
+    // (three-face straddle).
+    let center = match std::env::var("S2_BENCH_CAP_CENTER").ok().as_deref() {
+        Some("edge") => Vec3::new(1.0, 0.0, 1.0).normalize(),
+        Some("corner") => Vec3::new(1.0, 1.0, 1.0).normalize(),
+        _ => Vec3::new(0.0, 0.0, 1.0),
+    };
     let mut pts: Vec<Vec3> = (0..n - bulk).map(|_| random_unit(rng)).collect();
     pts.extend((0..bulk).map(|_| cap_point(center, 0.05, rng)));
     pts

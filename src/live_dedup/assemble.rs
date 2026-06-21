@@ -89,6 +89,38 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     #[allow(unused_variables)]
     let edge_checks_overflow_time = overflow_timing.sort + overflow_timing.match_;
 
+    // Dev-only: tally unresolved-edge origins to see which path inflates the
+    // residual (within-bin vs cross-bin). See docs/reclip-hull-snap-experiment.
+    if std::env::var("S2_UNPAIRED_ORIGINS").is_ok() {
+        use super::types::UnresolvedEdgeOrigin as O;
+        let mut c = [0usize; 8];
+        for e in &unresolved_edges {
+            let i = match e.origin {
+                O::InBinMissingCheck => 0,
+                O::InBinThirdsMismatch => 1,
+                O::InBinUnconsumedCheck => 2,
+                O::CrossBinThirdsMismatch => 3,
+                O::CrossBinSingleSided => 4,
+                O::CrossBinDuplicateSide => 5,
+                O::CrossBinSlotConflict => 6,
+                O::PostRepairUnpaired => 7,
+            };
+            c[i] += 1;
+        }
+        eprintln!(
+            "[origins] total={} | InBin(miss={} thirds={} unconsumed={}) \
+             CrossBin(thirds={} single={} dup={} slot={})",
+            unresolved_edges.len(),
+            c[0],
+            c[1],
+            c[2],
+            c[3],
+            c[4],
+            c[5],
+            c[6]
+        );
+    }
+
     let t_deferred = Timer::start();
     patch_deferred_slots_with_fallback(
         &mut data.shards,
