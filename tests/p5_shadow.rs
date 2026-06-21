@@ -48,6 +48,172 @@ fn probe_shadow_audit() {
     run_case("uniform_2m_s1", &random_sphere_points(2_000_000, 1));
 }
 
+/// GO/NO-GO for the adaptive canonical clip
+/// (docs/adaptive-canonical-clip-design-2026-06.md §5/§7): the SUPERSET-BAND
+/// measurement. Raise the exact-eval cutoff so EVERY keep/drop decision is
+/// compared against the exact in-circle predicate, then read the smallest
+/// margin BAND that contains all disagreements + ties (the band the cheap SIMD
+/// prefilter would need) and its trip rate, across all regimes. A BAND with
+/// the superset property at <1% trip => the cheap prefilter stands.
+///
+/// Run single-threaded for stable counts:
+///   RAYON_NUM_THREADS=1 cargo test --release --features p5_shadow \
+///     --test p5_shadow -- --ignored probe_superset_band --nocapture
+#[test]
+#[ignore]
+fn probe_superset_band() {
+    let run = |name: &str, points: &[s2_voronoi::UnitVec3]| {
+        s2_voronoi::p5_shadow::reset();
+        // Evaluate the exact predicate at every margin (not just < 1e-4), so a
+        // large-margin disagreement cannot be missed.
+        s2_voronoi::p5_shadow::set_audit_cutoff(Some(10.0));
+        let out = compute_with_report(points, VoronoiConfig::default()).expect(name);
+        s2_voronoi::p5_shadow::set_audit_cutoff(None);
+        println!(
+            "=== {name}: n={} defects={} ===",
+            points.len(),
+            out.report.unresolved_edge_pairs.len()
+        );
+        print!("{}", s2_voronoi::p5_shadow::report());
+    };
+
+    run("uniform_200k_s1", &random_sphere_points(200_000, 1));
+    run("mega_200k_s3", &mega_points(200_000, 0.8, 3));
+    run(
+        "clustered_200k_r0.05",
+        &clustered_cap_points(200_000, 0.05, 1),
+    );
+    run(
+        "bimodal_200k_r0.1",
+        &bimodal_density_points(200_000, 0.1, 1),
+    );
+    run("grid_cubed_~150k", &cubed_sphere_points(150_000, 0));
+    run(
+        "cube_stress_100k_s0.02",
+        &cube_vertex_stress_points(100_000, 0.02, 1),
+    );
+    run(
+        "cocircular_20k_groups",
+        &near_cocircular_stress_points(20_000, 1e-4, 1),
+    );
+    run(
+        "fibonacci_200k_j0.5",
+        &fibonacci_sphere_points(200_000, 0.5, 1),
+    );
+}
+
+/// The TRUE GO/NO-GO band: the CROSS-CELL conflict tail. Single-cell
+/// chart-vs-exact disagreement (probe_superset_band) is a pessimistic proxy —
+/// most such disagreements are benign because both incident cells drift the
+/// same way and still agree with each other. A defect needs two cells to answer
+/// the SAME question differently. `paired_quad_report` groups decisions by the
+/// sorted 4-point question and reports cross-cell CONTRADICTIONS and their max
+/// margin — the band the per-cell flag must actually cover.
+///
+///   RAYON_NUM_THREADS=1 cargo test --release --features p5_shadow \
+///     --test p5_shadow -- --ignored probe_superset_paired --nocapture
+#[test]
+#[ignore]
+fn probe_superset_paired() {
+    let run = |name: &str, points: &[s2_voronoi::UnitVec3], cutoff: f64| {
+        s2_voronoi::p5_shadow::reset();
+        s2_voronoi::p5_shadow::paired_reset();
+        s2_voronoi::p5_shadow::set_pair_cutoff(cutoff);
+        let out = compute_with_report(points, VoronoiConfig::default()).expect(name);
+        s2_voronoi::p5_shadow::set_pair_cutoff(0.0);
+        println!(
+            "=== {name}: n={} cutoff={cutoff:.0e} defects={} ===",
+            points.len(),
+            out.report.unresolved_edge_pairs.len()
+        );
+        print!("{}", s2_voronoi::p5_shadow::paired_quad_report());
+    };
+
+    // Clean baseline: expect ~0 cross-cell contradictions despite many
+    // single-cell disagreements.
+    run("uniform_200k_s1", &random_sphere_points(200_000, 1), 1e-4);
+    // Defect-bearing: the contradiction margins ARE the band.
+    run("mega_100k_s3", &mega_points(100_000, 0.8, 3), 1e-4);
+    run(
+        "clustered_100k_r0.05",
+        &clustered_cap_points(100_000, 0.05, 1),
+        1e-4,
+    );
+    run("grid_cubed_~150k", &cubed_sphere_points(150_000, 0), 1e-3);
+}
+
+/// Quick cost proxy for exact-clip-everywhere: the dominant overhead is one
+/// adaptive in-circle (`orient3d`) per keep/drop decision instead of SIMD
+/// `signed_dist`. Isolate it by timing the SAME build with the per-decision
+/// exact predicate evaluated for EVERY vertex (`audit_cutoff=10`) vs NOT
+/// (`audit_cutoff=0`) — both keep identical audit bookkeeping (the per-vertex
+/// signed_dist + margin atomic), so the DELTA is purely the predicate cost.
+/// UPPER BOUND: `in_circle_sphere_sign` does 2 `orient3d`, d2 recomputed each
+/// call; a real exact clip caches d2 (~1 orient3d/decision) → halve the delta.
+/// Also excludes the (smaller) circumcenter-vs-lerp vertex cost.
+///   RAYON_NUM_THREADS=1 cargo test --release --features p5_shadow \
+///     --test p5_shadow -- --ignored probe_predicate_cost --nocapture
+#[test]
+#[ignore]
+fn probe_predicate_cost() {
+    use std::time::Instant;
+    let time_one = |points: &[s2_voronoi::UnitVec3], cutoff: f64| -> f64 {
+        let mut best = f64::INFINITY;
+        for _ in 0..3 {
+            s2_voronoi::p5_shadow::reset();
+            s2_voronoi::p5_shadow::set_audit_cutoff(Some(cutoff));
+            let t = Instant::now();
+            let out = compute_with_report(points, VoronoiConfig::default()).expect("build");
+            let dt = t.elapsed().as_secs_f64();
+            std::hint::black_box(&out);
+            best = best.min(dt);
+        }
+        s2_voronoi::p5_shadow::set_audit_cutoff(None);
+        best
+    };
+    let run = |name: &str, points: &[s2_voronoi::UnitVec3]| {
+        // cutoff=0 => predicate never evaluated (bookkeeping only); cutoff=10 =>
+        // evaluated for every decision.
+        let base = time_one(points, 0.0);
+        let full = time_one(points, 10.0);
+        println!(
+            "{name}: n={} bookkeeping_only={base:.3}s  +per-decision-incircle={full:.3}s  \
+             delta={:.3}s ({:.1}% ; real~{:.1}% after d2 caching)",
+            points.len(),
+            full - base,
+            100.0 * (full - base) / base,
+            50.0 * (full - base) / base,
+        );
+    };
+    run("uniform_200k_s1", &random_sphere_points(200_000, 1));
+    run("mega_100k_s3", &mega_points(100_000, 0.8, 3));
+}
+
+/// Does mega have SAME-QUESTION cross-cell sign conflicts at a wider margin, or
+/// is its divergence purely question-set (different fourth generators, which
+/// the same-4-set report cannot see)? Sweep the collection cutoff on one mega
+/// input. If contradictions stay 0 as the cutoff widens, mega's defects are
+/// question-set divergence, not sign conflicts.
+///   RAYON_NUM_THREADS=1 cargo test --release --features p5_shadow \
+///     --test p5_shadow -- --ignored probe_mega_cutoff_sweep --nocapture
+#[test]
+#[ignore]
+fn probe_mega_cutoff_sweep() {
+    let pts = mega_points(100_000, 0.8, 3);
+    for cutoff in [1e-4, 1e-3, 1e-2] {
+        s2_voronoi::p5_shadow::reset();
+        s2_voronoi::p5_shadow::paired_reset();
+        s2_voronoi::p5_shadow::set_pair_cutoff(cutoff);
+        let out = compute_with_report(&pts, VoronoiConfig::default()).expect("mega");
+        s2_voronoi::p5_shadow::set_pair_cutoff(0.0);
+        println!(
+            "=== mega_100k_s3 cutoff={cutoff:.0e} defects={} ===",
+            out.report.unresolved_edge_pairs.len()
+        );
+        print!("{}", s2_voronoi::p5_shadow::paired_quad_report());
+    }
+}
+
 /// Paired two-cell audit (P5 stage-2 prerequisite): group near-margin
 /// decisions by their abstract question — (sorted triple, opposing
 /// generator) — and measure how often distinct cells answer the SAME

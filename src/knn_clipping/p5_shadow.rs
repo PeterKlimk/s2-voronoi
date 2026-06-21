@@ -44,6 +44,32 @@ static EXACT_TIES: AtomicU64 = AtomicU64::new(0);
 const ZERO: AtomicU64 = AtomicU64::new(0);
 static MARGIN_HIST: [AtomicU64; BUCKETS] = [ZERO; BUCKETS];
 static DISAGREE_HIST: [AtomicU64; BUCKETS] = [ZERO; BUCKETS];
+/// Exact ties (canonical == 0) bucketed by margin — a tie at margin `m` forces
+/// the superset BAND >= m just as a disagreement does (§5 of
+/// docs/adaptive-canonical-clip-design-2026-06.md).
+static TIE_HIST: [AtomicU64; BUCKETS] = [ZERO; BUCKETS];
+
+/// Probe-settable margin below which `audit_clip` evaluates the exact
+/// predicate. Default `CANONICAL_CUTOFF`; the superset-BAND measurement raises
+/// it (e.g. to 10.0) to evaluate EVERY decision, so a disagreement/tie at a
+/// *large* margin — the thing that would break the superset property — cannot
+/// be missed. `u64::MAX` bits = use the default. Probe-only.
+static AUDIT_CUTOFF_BITS: AtomicU64 = AtomicU64::new(u64::MAX);
+
+/// Set (or clear) the exact-evaluation cutoff (probe API).
+pub fn set_audit_cutoff(cutoff: Option<f64>) {
+    AUDIT_CUTOFF_BITS.store(cutoff.map_or(u64::MAX, |c| c.to_bits()), Ordering::Relaxed);
+}
+
+#[inline]
+fn audit_cutoff() -> f64 {
+    let bits = AUDIT_CUTOFF_BITS.load(Ordering::Relaxed);
+    if bits == u64::MAX {
+        CANONICAL_CUTOFF
+    } else {
+        f64::from_bits(bits)
+    }
+}
 
 /// Paired-audit collection cutoff (normalized margin); 0.0 disables.
 /// f64 bits in an atomic so probes can vary it per run.
@@ -371,11 +397,12 @@ pub(crate) fn audit_clip(
         let a = neighbor_positions[pa];
         let b = neighbor_positions[pb];
 
-        if nd < CANONICAL_CUTOFF {
+        if nd < audit_cutoff() {
             CANON_EVALS.fetch_add(1, Ordering::Relaxed);
             let sign = in_circle_sphere_sign(generator_raw, a, b, neighbor_raw);
             if sign == 0 {
                 EXACT_TIES.fetch_add(1, Ordering::Relaxed);
+                TIE_HIST[bucket].fetch_add(1, Ordering::Relaxed);
             } else {
                 let local_keep = d >= -hp.eps;
                 let canonical_keep = sign < 0;
@@ -658,6 +685,9 @@ pub fn reset() {
     for b in &DISAGREE_HIST {
         b.store(0, Ordering::Relaxed);
     }
+    for b in &TIE_HIST {
+        b.store(0, Ordering::Relaxed);
+    }
 }
 
 /// Formatted dump of the shadow counters.
@@ -674,13 +704,66 @@ pub fn report() -> String {
         EXACT_TIES.load(Ordering::Relaxed),
     )
     .unwrap();
-    writeln!(out, "  margin nd=|d|/|n|      decisions  disagreements").unwrap();
-    for (k, (m, dis)) in MARGIN_HIST.iter().zip(DISAGREE_HIST.iter()).enumerate() {
-        let m = m.load(Ordering::Relaxed);
-        let dis = dis.load(Ordering::Relaxed);
-        if m == 0 && dis == 0 {
+    // Snapshot the histograms once (atomics may be live under parallel builds).
+    let margin: Vec<u64> = MARGIN_HIST
+        .iter()
+        .map(|b| b.load(Ordering::Relaxed))
+        .collect();
+    let disagree: Vec<u64> = DISAGREE_HIST
+        .iter()
+        .map(|b| b.load(Ordering::Relaxed))
+        .collect();
+    let tie: Vec<u64> = TIE_HIST.iter().map(|b| b.load(Ordering::Relaxed)).collect();
+    let total: u64 = margin.iter().sum();
+
+    // Superset BAND (§5): the smallest bucket index (= LARGEST margin) carrying
+    // any disagreement or tie. The BAND must reach that margin (~1e-k), so the
+    // trip rate is the cumulative fraction of decisions at margin <= 1e-k, i.e.
+    // buckets j >= k. `None` => no leak at any margin => BAND -> 0 (ideal).
+    let min_leak = (0..BUCKETS).find(|&k| disagree[k] + tie[k] > 0);
+    match min_leak {
+        Some(k) => {
+            let trip: u64 = margin[k..].iter().sum();
+            let trip_pct = if total > 0 {
+                100.0 * trip as f64 / total as f64
+            } else {
+                0.0
+            };
+            let leak_total: u64 = disagree.iter().chain(tie.iter()).sum();
+            writeln!(
+                out,
+                "  SUPERSET: min-leak band ~1e-{k} (largest disagree/tie margin); \
+                 trip rate {trip_pct:.4}% ({trip}/{total}); total leaks={leak_total}"
+            )
+            .unwrap();
+        }
+        None => {
+            writeln!(
+                out,
+                "  SUPERSET: no disagreement/tie at any audited margin (BAND -> 0); total={total}"
+            )
+            .unwrap();
+        }
+    }
+
+    writeln!(
+        out,
+        "  margin nd=|d|/|n|      decisions  disagreements         ties   cum_trip%"
+    )
+    .unwrap();
+    // Cumulative from the largest-margin bucket (k=0) downward.
+    let mut cum: u64 = 0;
+    for k in 0..BUCKETS {
+        cum += margin[k];
+        let (m, dis, ti) = (margin[k], disagree[k], tie[k]);
+        if m == 0 && dis == 0 && ti == 0 {
             continue;
         }
+        let cum_pct = if total > 0 {
+            100.0 * cum as f64 / total as f64
+        } else {
+            0.0
+        };
         let label = if k == 0 {
             ">= 1e-1        ".to_string()
         } else if k == BUCKETS - 1 {
@@ -688,7 +771,7 @@ pub fn report() -> String {
         } else {
             format!("1e-{:<2} .. 1e-{:<2}", k + 1, k)
         };
-        writeln!(out, "  {label} {m:>12}  {dis:>12}").unwrap();
+        writeln!(out, "  {label} {m:>12}  {dis:>12} {ti:>12}  {cum_pct:>9.4}").unwrap();
     }
     out
 }
