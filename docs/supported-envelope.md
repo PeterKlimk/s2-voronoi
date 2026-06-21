@@ -51,6 +51,10 @@ Current public failure classes:
   - current examples:
     - unbounded-after-exhaustion
     - clipping vertex-budget exhaustion
+    - **edge-reconciliation residual**: surviving unpaired interior edge(s) after the cross-bin
+      stitch. The sphere has no boundary, so an unpaired interior edge means the produced graph is
+      not a valid subdivision; rather than ship it, `compute` errors. This is the
+      **under-resolved near-cocircular regime** — see "Resolvability floor" below.
 
 These are considered part of the supported contract. They should fail cleanly without panic.
 
@@ -131,10 +135,42 @@ The backend is expected to return a defined `Err(...)` for:
   0.05 with 6 anchor generators — each anchor's cell borders the entire cap
   rim. Returns the vertex-budget `ComputationFailed`; the bound is a
   representation choice, not a numerical failure
+- **dense near-cocircular / near-cospherical clusters below the f32 resolution floor**
+  (the "Resolvability floor" below): many generators packed into a cap small enough that their
+  true Voronoi vertices fall below f32 separation. Returns an edge-reconciliation residual
+  `ComputationFailed` (or the vertex-budget case above). Empirically a ~0.05-rad cap holding
+  ~100k+ generators starts erroring; ~50k is fine. Mitigation: `PreprocessMode::MergeWithin` to
+  weld near-coincident generators
 - some terminal construction failures that are recognized but not yet classified more precisely
 
 Pure great-circle / coplanar cases are the clearest current example of supported failure rather
 than supported success.
+
+### Resolvability floor (why the dense near-cocircular regime errors)
+
+The crate stores Voronoi vertices as **f32** coordinates and `validation::validate` checks that a
+cell's vertices are distinct. A Voronoi vertex is the circumcenter of its three (or more)
+generators — a **construction** (a division), not a predicate. For the thin Delaunay triangles
+produced by a dense near-cocircular cluster the circumcenter is ill-conditioned, and adjacent
+Voronoi vertices end up closer than f32 can resolve. Below that floor a valid f32 subdivision does
+not exist for the input, so the backend prefers a loud error over a degenerate / non-manifold
+graph.
+
+This is an intrinsic finite-precision limit, not a fixable bug:
+
+- It is a **construction** precision limit, orthogonal to **predicate** robustness. Exact /
+  adaptive predicates (CGAL, spade, `robust`) make the *Delaunay* combinatorially correct but do
+  not make circumcenters representable; libraries that extract a Voronoi from the Delaunay hit the
+  analogous wall (e.g. voronator documents thin-hull-triangle cells distorting or going missing).
+- Average point spacing does **not** predict failure; thin-triangle conditioning (roughly inverse
+  to the minimum triangle angle/altitude) does. So there is deliberately **no exposed density
+  threshold** — use `PreprocessMode::MergeWithin` to weld sub-resolution generators instead.
+- f64 vertex storage would extend the valid range by orders of magnitude, but any fixed precision
+  has such a floor.
+
+The full investigation (including why a post-hoc topological repair engine was prototyped and then
+dropped, and the planned hybrid alternative) is in
+`docs/reclip-hull-snap-experiment-2026-06.md`.
 
 ### Inputs still treated as outside the explicit contract
 

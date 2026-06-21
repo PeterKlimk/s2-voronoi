@@ -349,3 +349,40 @@ The correctness engine must be a proper **topological planar-subdivision fill**
 (respect `edge_owner` for incidence + seam; close non-contiguous cells through a
 real interior skeleton; handle multi-loop/holes) — Codex's "DCEL/cut-graph
 transform," not a fan. That is the open totality piece.
+
+## OUTCOME (2026-06-21) — investigation closed, code removed, contract kept
+
+Decision: **stop pursuing post-hoc totality on the mega regime; keep valid-or-error.**
+The regime is below the **f32 Voronoi-vertex resolution floor** (a *construction*
+precision limit, not predicate robustness) — even an exact global Delaunay
+degenerates into f32 here, and a topological totality engine would need synthetic
+topology with no faithful f32 vertex realization. That is a different product
+contract.
+
+Removed (commit after this doc update): the entire opt-in Tier-2 stack —
+`reclip_repair.rs` (jitter/empty-circumcircle resolver, hull-snap, and the
+`S2_CANON_AUDIT` / `S2_RECLIP_DIAG` / `S2_RIM_PROBE` / `S2_BOUNDARY_PROBE`
+measurement harnesses), plus `boundary.rs` (edge-domain extractor) and `fill.rs`
+(near-Voronoi B + crude A). They are post-hoc-repair specific. The cheap cross-bin
+stitch (`edge_reconcile`, Tier-1) remains the only repair pass; survivors are
+surfaced as `residual_error`. The contract is documented in
+`docs/supported-envelope.md` ("Resolvability floor").
+
+Kept as carry-forward: `local_hull` (exact-predicate Delaunay; has its own tests),
+the `orient3d` / circumcenter primitives, and this document (the learning). This
+file is now historical; the modules it references no longer exist (see git history
+at the commits cited above).
+
+### Planned next direction — hybrid: detect-during-clip + exact local Delaunay
+A *different* architecture from post-hoc repair, scoped to make the **<1%-bad good
+inputs** robust (mega stays `error`):
+1. A cheap, high-recall **conditioning detector** in the clip hot loop (e.g.
+   orient3d / in-circle predicate margin; a thin-triangle / ill-conditioned-
+   circumcenter test). Tune for recall over precision; aim for <1% trip-rate on
+   good inputs so the fast parallel clip path stays fast.
+2. For flagged regions, resolve **exactly** with `local_hull` (needs its coplanar
+   policy hardened first), growing the region until its rim is well-conditioned
+   (exact == fast agree). Isolated bad regions converge small; mega's whole-cap
+   ill-conditioning never reaches a clean rim → `error` (the contract, for free).
+This composes the fast approximate clip for good inputs with an exact resolver for
+the rare bad ones, and reuses `local_hull` rather than the removed post-hoc stack.
