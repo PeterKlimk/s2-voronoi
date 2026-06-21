@@ -333,6 +333,116 @@ mod tests {
         }
     }
 
+    /// Canonical triangulation: each face mapped to a sorted triple of ORIGINAL
+    /// point indices (via exact coordinate match), the whole set sorted. Two
+    /// builds of the same points in different orders must yield the same set —
+    /// the cross-cell-consistency property (a cell's local point order is
+    /// arbitrary, so the hull must not depend on it).
+    fn canonical_faces(orig: &[Vec3], h: &LocalHull) -> Vec<[usize; 3]> {
+        let id = |p: DVec3| -> usize {
+            orig.iter()
+                .position(|q| {
+                    DVec3::new(q.x as f64, q.y as f64, q.z as f64) == p
+                })
+                .expect("face vertex must be an original point")
+        };
+        let mut out: Vec<[usize; 3]> = h
+            .faces()
+            .iter()
+            .map(|f| {
+                let mut t = [id(h.pts[f[0]]), id(h.pts[f[1]]), id(h.pts[f[2]])];
+                t.sort_unstable();
+                t
+            })
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// Documents that the BARE hull's triangulation of exact cocircular cliques
+    /// (the cube's square faces) is order-DEPENDENT — the insertion order picks
+    /// the diagonal. `#[ignore]` because the escalation use does NOT require
+    /// across-build determinism: a component is rebuilt as ONE hull (so its
+    /// diagonals are internally consistent), the grow-until-clean-rim condition
+    /// keeps cocircular cliques interior to that single hull, and the coincident
+    /// high-degree vertices it emits are collapsed by the existing Tier-1
+    /// proximity-merge (see tests/high_degree.rs). Kept as a record of the bare
+    /// hull's behavior should a per-cell build ever be contemplated.
+    #[test]
+    #[ignore]
+    fn cube_triangulation_is_order_invariant() {
+        let base = [
+            u(1.0, 1.0, 1.0),
+            u(1.0, 1.0, -1.0),
+            u(1.0, -1.0, 1.0),
+            u(1.0, -1.0, -1.0),
+            u(-1.0, 1.0, 1.0),
+            u(-1.0, 1.0, -1.0),
+            u(-1.0, -1.0, 1.0),
+            u(-1.0, -1.0, -1.0),
+        ];
+        let h0 = LocalHull::build(&base).unwrap();
+        let canon0 = canonical_faces(&base, &h0);
+
+        // A few permutations of the same points.
+        let perms: [[usize; 8]; 3] = [
+            [7, 6, 5, 4, 3, 2, 1, 0],
+            [0, 2, 4, 6, 1, 3, 5, 7],
+            [3, 1, 4, 7, 0, 6, 2, 5],
+        ];
+        for (pi, perm) in perms.iter().enumerate() {
+            let pts: Vec<Vec3> = perm.iter().map(|&i| base[i]).collect();
+            let h = LocalHull::build(&pts).unwrap();
+            // Map through `base` (stable identity) regardless of build order.
+            let canon = canonical_faces(&base, &h);
+            assert_eq!(
+                canon, canon0,
+                "cube triangulation differs under permutation {pi} ({perm:?}) — \
+                 cocircular-tie resolution is order-dependent"
+            );
+        }
+    }
+
+    /// The load-bearing property for the escalation rebuild: every generator's
+    /// dual cell reads as a single clean fan, INCLUDING on a structure with
+    /// exact cocircular cliques (the cube's square faces). `cell_faces` must not
+    /// bail (return empty) for any generator of a valid hull, regardless of how
+    /// the cocircular faces were triangulated.
+    #[test]
+    fn cube_all_cells_read_as_clean_fans() {
+        let pts = [
+            u(1.0, 1.0, 1.0),
+            u(1.0, 1.0, -1.0),
+            u(1.0, -1.0, 1.0),
+            u(1.0, -1.0, -1.0),
+            u(-1.0, 1.0, 1.0),
+            u(-1.0, 1.0, -1.0),
+            u(-1.0, -1.0, 1.0),
+            u(-1.0, -1.0, -1.0),
+        ];
+        // Try several input orders: each must yield 8 readable cells (the
+        // triangulation may differ, but every dual fan must still chain).
+        let perms: [[usize; 8]; 3] = [
+            [0, 1, 2, 3, 4, 5, 6, 7],
+            [7, 6, 5, 4, 3, 2, 1, 0],
+            [3, 1, 4, 7, 0, 6, 2, 5],
+        ];
+        for perm in &perms {
+            let ordered: Vec<Vec3> = perm.iter().map(|&i| pts[i]).collect();
+            let h = LocalHull::build(&ordered).unwrap();
+            for i in 0..ordered.len() {
+                let fan = h.cell_faces(i);
+                assert!(
+                    !fan.is_empty(),
+                    "cube cell {i} (order {perm:?}) read as a broken fan"
+                );
+                // A cube corner touches 3 square faces; triangulated, its dual
+                // fan has at least 3 faces.
+                assert!(fan.len() >= 3, "cube cell {i} fan too short: {}", fan.len());
+            }
+        }
+    }
+
     #[test]
     fn coplanar_set_returns_none() {
         // Four points on the equator (cocircular / coplanar through origin).
