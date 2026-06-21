@@ -30,16 +30,26 @@ use glam::Vec3;
 use std::collections::{HashMap, HashSet};
 
 type VertexKey3 = [u32; 3];
-/// Inside-oriented directed boundary edges plus a `vid → key` pin map.
-type CollectedBoundary = (Vec<(u32, u32)>, HashMap<u32, VertexKey3>);
+/// Inside-oriented directed boundary edges, a `vid → key` pin map, and a
+/// `directed-edge → C-owner generator` map (the C-side cell of each boundary
+/// edge, needed by the fill to assign boundary arcs to generators).
+type CollectedBoundary = (
+    Vec<(u32, u32)>,
+    HashMap<u32, VertexKey3>,
+    HashMap<(u32, u32), u32>,
+);
 
 /// A vertex on the contested component's boundary, pinned to an existing global
 /// vertex id (recovered from a valid ring cell) and carrying its generator-triple
-/// key for the fill stage.
+/// key plus the C-generator that owns the boundary edge LEAVING this vertex (the
+/// next edge in the loop) — the fill uses it to group the loop into per-generator
+/// arcs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BoundaryVert {
     pub(crate) vid: u32,
     pub(crate) key: VertexKey3,
+    /// C-generator owning the boundary edge `vid → next`.
+    pub(crate) edge_owner: u32,
 }
 
 /// The extracted boundary of a contested component: oriented simple cycles of
@@ -166,6 +176,7 @@ fn collect_boundary_edges_paired(
     // is left for the fill / surfaced as an imbalance — never papered over here.
     let mut edges: Vec<(u32, u32)> = Vec::new();
     let mut key_of: HashMap<u32, VertexKey3> = HashMap::new();
+    let mut owner_of: HashMap<(u32, u32), u32> = HashMap::new();
     for (&(lo, hi), u) in &edge_uses {
         if u.uses.len() != 2 {
             continue;
@@ -180,8 +191,9 @@ fn collect_boundary_edges_paired(
         if in0 == in1 {
             continue; // both in C (interior) or both ring (not C's boundary)
         }
-        // Ring use = the one not in C. Inside-on-left = reverse of the ring use.
-        let ring_fwd = if in0 { f1 } else { f0 };
+        // Ring use = the one not in C; C owner = the one in C. Inside-on-left =
+        // reverse of the ring use.
+        let (ring_fwd, c_owner) = if in0 { (f1, c0) } else { (f0, c1) };
         // ring_fwd true means ring traverses lo->hi, so inside edge is hi->lo.
         let (from, to) = if ring_fwd { (hi, lo) } else { (lo, hi) };
         if let Some(k) = vertex_keys.get(from) {
@@ -190,9 +202,10 @@ fn collect_boundary_edges_paired(
         if let Some(k) = vertex_keys.get(to) {
             key_of.insert(to, k);
         }
+        owner_of.insert((from, to), c_owner);
         edges.push((from, to));
     }
-    Ok((edges, key_of))
+    Ok((edges, key_of, owner_of))
 }
 
 /// Key-domain collection (legacy/fragile). Scans every ring candidate cell `h`
@@ -210,6 +223,7 @@ fn collect_boundary_edges_keys(
     let mut edges: Vec<(u32, u32)> = Vec::new();
     let mut seen: HashSet<(u32, u32)> = HashSet::new();
     let mut key_of: HashMap<u32, VertexKey3> = HashMap::new();
+    let mut owner_of: HashMap<(u32, u32), u32> = HashMap::new();
 
     for &h in ring_candidates {
         if gset.contains(&h) || (h as usize) >= cells.len() {
@@ -229,7 +243,7 @@ fn collect_boundary_edges_keys(
                 continue;
             };
             // The edge's two incident generators are {a, b}. In cell h one of
-            // them is h itself; the other is the cell across the edge.
+            // them is h itself; the other is the cell across the edge (the C owner).
             let across = if a == h {
                 b
             } else if b == h {
@@ -246,11 +260,12 @@ fn collect_boundary_edges_keys(
             if !seen.insert((vb, va)) {
                 return Err(BoundaryError::DuplicateDirectedEdge { from: vb, to: va });
             }
+            owner_of.insert((vb, va), across);
             edges.push((vb, va));
         }
     }
 
-    Ok((edges, key_of))
+    Ok((edges, key_of, owner_of))
 }
 
 /// Angle of `neighbor` as seen from `center`, measured CCW in the tangent plane
@@ -393,7 +408,7 @@ pub(crate) fn extract_boundary(
     vertex_keys: &ShardedVertexKeys,
     mode: CollectMode,
 ) -> Result<BoundaryExtract, BoundaryError> {
-    let (edges, key_of) = collect_boundary_edges(
+    let (edges, key_of, owner_of) = collect_boundary_edges(
         gset,
         ring_candidates,
         cells,
@@ -405,10 +420,21 @@ pub(crate) fn extract_boundary(
     let cycles = decompose_cycles(&edges, pos_of)?;
     let mut loops = Vec::with_capacity(cycles.len());
     for cycle in cycles {
-        let mut loop_verts = Vec::with_capacity(cycle.len());
-        for vid in cycle {
+        let n = cycle.len();
+        let mut loop_verts = Vec::with_capacity(n);
+        for (i, &vid) in cycle.iter().enumerate() {
             let key = *key_of.get(&vid).ok_or(BoundaryError::MissingKey { vid })?;
-            loop_verts.push(BoundaryVert { vid, key });
+            // Owner of the edge leaving this vid (vid -> next in the loop).
+            let next = cycle[(i + 1) % n];
+            let edge_owner = owner_of
+                .get(&(vid, next))
+                .copied()
+                .ok_or(BoundaryError::MissingKey { vid })?;
+            loop_verts.push(BoundaryVert {
+                vid,
+                key,
+                edge_owner,
+            });
         }
         loops.push(loop_verts);
     }
@@ -444,7 +470,7 @@ pub(crate) fn diagnose_boundary(
     vertex_keys: &ShardedVertexKeys,
     mode: CollectMode,
 ) -> Result<BoundaryDiag, BoundaryError> {
-    let (edges, key_of) = collect_boundary_edges(
+    let (edges, key_of, _owner_of) = collect_boundary_edges(
         gset,
         ring_candidates,
         cells,

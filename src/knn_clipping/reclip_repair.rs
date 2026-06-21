@@ -875,6 +875,9 @@ fn boundary_probe_components(
     let mut loop_sizes: Vec<usize> = Vec::new();
     // Error tally by variant: [unbalanced, duplicate, missing_pos, missing_key, open_walk].
     let mut errs = [0usize; 5];
+    // Fill-structure accumulators (across cleanly-extracted components).
+    let (mut fill_interior_gens, mut fill_noncontig_gens, mut fill_max_loops) =
+        (0usize, 0usize, 0usize);
     let mut detail_budget = env_usize("S2_BOUNDARY_DETAIL", 3);
     // Collection mode: edge-pairing (default, robust) vs key-domain (legacy).
     let mode = if std::env::var("S2_BOUNDARY_KEYS").is_ok() {
@@ -932,6 +935,48 @@ fn boundary_probe_components(
                     multiloop += 1;
                 }
                 loop_sizes.extend(b.loops.iter().map(|l| l.len()));
+
+                // Fill-structure analysis: what must the fill handle?
+                //  - arcs per generator = maximal runs of equal edge_owner around
+                //    the loops (a generator with >=2 arcs is non-contiguous: a
+                //    naive fan-from-center would repeat the center in one cell);
+                //  - interior generators = in C but owning no boundary edge (still
+                //    need a cell from the fill).
+                let mut arcs_of: HashMap<u32, usize> = HashMap::new();
+                for lp in &b.loops {
+                    let n = lp.len();
+                    if n == 0 {
+                        continue;
+                    }
+                    for i in 0..n {
+                        let cur = lp[i].edge_owner;
+                        let prev = lp[(i + n - 1) % n].edge_owner;
+                        if cur != prev {
+                            *arcs_of.entry(cur).or_default() += 1;
+                        }
+                    }
+                    // Single-owner loop (one arc) leaves arcs_of empty for it.
+                    if lp.iter().all(|v| v.edge_owner == lp[0].edge_owner) {
+                        *arcs_of.entry(lp[0].edge_owner).or_default() += 1;
+                    }
+                }
+                let owners: HashSet<u32> = b
+                    .loops
+                    .iter()
+                    .flat_map(|l| l.iter().map(|v| v.edge_owner))
+                    .collect();
+                let interior = gset.len() - owners.len();
+                let noncontig = arcs_of.values().filter(|&&a| a >= 2).count();
+                fill_interior_gens += interior;
+                fill_noncontig_gens += noncontig;
+                fill_max_loops = fill_max_loops.max(b.loops.len());
+                if interior > 0 || noncontig > 0 || b.loops.len() > 1 {
+                    eprintln!(
+                        "[fill]   comp cells={} loops={} interior_gens={interior} noncontig_gens={noncontig}",
+                        comp.cells.len(),
+                        b.loops.len(),
+                    );
+                }
             }
             Err(e) => {
                 let i = match e {
@@ -1071,6 +1116,10 @@ fn boundary_probe_components(
         errs[2],
         errs[3],
         errs[4],
+    );
+    eprintln!(
+        "[fill] (over cleanly-extracted comps) interior_gens={fill_interior_gens} \
+         noncontig_gens={fill_noncontig_gens} max_loops={fill_max_loops}"
     );
 }
 
