@@ -878,6 +878,7 @@ fn boundary_probe_components(
     // Fill-structure accumulators (across cleanly-extracted components).
     let (mut fill_interior_gens, mut fill_noncontig_gens, mut fill_max_loops) =
         (0usize, 0usize, 0usize);
+    let (mut fill_ok, mut fill_a, mut fill_fail) = (0usize, 0usize, 0usize);
     let mut detail_budget = env_usize("S2_BOUNDARY_DETAIL", 3);
     // Collection mode: edge-pairing (default, robust) vs key-domain (legacy).
     let mode = if std::env::var("S2_BOUNDARY_KEYS").is_ok() {
@@ -970,12 +971,35 @@ fn boundary_probe_components(
                 fill_interior_gens += interior;
                 fill_noncontig_gens += noncontig;
                 fill_max_loops = fill_max_loops.max(b.loops.len());
-                if interior > 0 || noncontig > 0 || b.loops.len() > 1 {
-                    eprintln!(
-                        "[fill]   comp cells={} loops={} interior_gens={interior} noncontig_gens={noncontig}",
-                        comp.cells.len(),
-                        b.loops.len(),
-                    );
+
+                // Fill: near-Voronoi (B) with crude fallback (A), then locally
+                // verify the patch (per-cell cycles + boundary pairing).
+                match super::fill::fill_or_fallback(&gset, &b.loops, points, grid) {
+                    Some((patch, used_a)) => match super::fill::fill_check(&patch, &b.loops) {
+                        Ok(()) => {
+                            if used_a {
+                                fill_a += 1;
+                            } else {
+                                fill_ok += 1;
+                            }
+                        }
+                        Err(kind) => {
+                            fill_fail += 1;
+                            eprintln!(
+                                "[fill]   INVALID comp cells={} loops={} used_a={used_a}: {kind}",
+                                comp.cells.len(),
+                                b.loops.len(),
+                            );
+                        }
+                    },
+                    None => {
+                        fill_fail += 1;
+                        eprintln!(
+                            "[fill]   NEITHER comp cells={} loops={} interior={interior} noncontig={noncontig}",
+                            comp.cells.len(),
+                            b.loops.len(),
+                        );
+                    }
                 }
             }
             Err(e) => {
@@ -1119,7 +1143,8 @@ fn boundary_probe_components(
     );
     eprintln!(
         "[fill] (over cleanly-extracted comps) interior_gens={fill_interior_gens} \
-         noncontig_gens={fill_noncontig_gens} max_loops={fill_max_loops}"
+         noncontig_gens={fill_noncontig_gens} max_loops={fill_max_loops} \
+         fill_B={fill_ok} fill_A={fill_a} fill_fail={fill_fail}"
     );
 }
 
@@ -1245,7 +1270,7 @@ fn identify_components(
 }
 
 #[inline]
-fn key3(a: u32, b: u32, c: u32) -> [u32; 3] {
+pub(crate) fn key3(a: u32, b: u32, c: u32) -> [u32; 3] {
     let mut k = [a, b, c];
     k.sort_unstable();
     k
@@ -1255,7 +1280,7 @@ fn key3(a: u32, b: u32, c: u32) -> [u32; 3] {
 /// jitter projected generators so no two are coincident/cocircular; stable per
 /// generator id so every component sees the same perturbation.
 #[inline]
-fn jitter_unit(gen: u32, axis: u32) -> f64 {
+pub(crate) fn jitter_unit(gen: u32, axis: u32) -> f64 {
     // SplitMix64-style avalanche on a mixed key.
     let mut z = (gen as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ ((axis as u64) << 1 | 1);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -1265,7 +1290,7 @@ fn jitter_unit(gen: u32, axis: u32) -> f64 {
     (z as f64 / u64::MAX as f64) * 2.0 - 1.0
 }
 
-fn build_cycle_from_edges(
+pub(crate) fn build_cycle_from_edges(
     g: u32,
     gpos: DVec3,
     verts: &[VertexKey3],
@@ -1369,10 +1394,10 @@ pub(crate) fn key_common_pair(a: VertexKey3, b: VertexKey3) -> Option<(u32, u32)
 /// interior vertices, and the pinned vid for each boundary key (recovered from
 /// the valid outside cells, so a contested cell's own dropped boundary edges are
 /// restored).
-struct Resolved {
-    polys: Vec<(u32, Vec<VertexKey3>)>,
-    interior_pos: HashMap<VertexKey3, Vec3>,
-    boundary_pin: HashMap<VertexKey3, u32>,
+pub(crate) struct Resolved {
+    pub(crate) polys: Vec<(u32, Vec<VertexKey3>)>,
+    pub(crate) interior_pos: HashMap<VertexKey3, Vec3>,
+    pub(crate) boundary_pin: HashMap<VertexKey3, u32>,
 }
 
 enum ResolveAttempt {
@@ -2243,12 +2268,12 @@ pub(crate) fn repair(
 }
 
 /// Spherical circumcenter helper.
-mod delaunay {
+pub(crate) mod delaunay {
     use glam::DVec3;
 
     /// Unit direction equidistant (spherical) from three unit generators — the
     /// Voronoi vertex of triangle `(a,b,c)`. `None` if degenerate (collinear).
-    pub(super) fn circumcenter(a: DVec3, b: DVec3, c: DVec3) -> Option<DVec3> {
+    pub(crate) fn circumcenter(a: DVec3, b: DVec3, c: DVec3) -> Option<DVec3> {
         let nrm = (a - b).cross(b - c);
         let len2 = nrm.length_squared();
         if !len2.is_finite() || len2 <= 1e-30 {
