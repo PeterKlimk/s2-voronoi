@@ -1,7 +1,7 @@
 # Escalation Build State (Updated 2026-06-22)
 
-Resume anchor for local repair / exact-reference work. This document supersedes
-the earlier projected-vs-raw diagnosis.
+Resume anchor for local repair and normalized-reference work. This document
+supersedes the earlier projected-vs-raw diagnosis.
 
 ## Current Status
 
@@ -14,6 +14,10 @@ the earlier projected-vs-raw diagnosis.
   remains available as an A/B diagnostic path.
 - Known mega 100k defects (seeds 1, 2, 15) are repaired to strict validity.
 - Broad sweep: 25 defective inputs repaired, clean controls remain valid.
+- Current contract target: fast path is nearly always graph-correct; repair is
+  the cold correctness backstop; returned diagrams are strictly valid or the
+  computation fails loudly. We are not pursuing a full exact-predicate hot-path
+  construction as the active product goal.
 
 ## Major Correction: Normalize Before Exact 3D
 
@@ -31,7 +35,8 @@ Once the 3D oracle f64-renormalizes inputs:
   is now the default final backstop to avoid projected-chart failure modes.
 
 So: the issue was **not projection drift**. It was failure to normalize before
-exact 3D construction.
+exact 3D construction. This makes normalized local 3D repair the right backstop,
+not a reason to make every fast clip decision exact.
 
 ## Probe Results
 
@@ -73,12 +78,13 @@ Known mega repair comparison:
 
 ## Recommended Next Work
 
-1. Run the broad repair sweep with the `RepairMode::Local3d` default.
+1. Keep the broad repair sweep running with the `RepairMode::Local3d` default.
 2. Compare closure sizes, rounds, strict-valid acceptance, and runtime against
-   explicit `RepairMode::LocalProjected`.
+   explicit `RepairMode::LocalProjected` when changing repair code.
 3. Keep CGAL retained as an external audit probe for normalized 3D truth.
-4. For exact-by-construction mode, use normalized 3D hull / local hull as the
-   graph reference. Do not use raw f32 3D hulls as a spherical oracle.
+4. Hunt specifically for repaired-valid-but-wrong local topology. None is
+   currently known.
+5. Do not use raw f32 3D hulls as a spherical oracle.
 
 ## Code Map
 

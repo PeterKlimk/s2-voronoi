@@ -20,6 +20,8 @@ Headline claims to be able to make honestly at release:
 
 - millions of cells per second on desktop CPUs (2.5M points < 500ms on a Ryzen 3600 class part)
 - strict graph validity asserted by CI at multi-million point counts
+- normalized local 3D repair for rare residual regions, accepted only behind a
+  whole-diagram strict-validation gate
 - a documented coincidence policy with measured safety margins (not folklore epsilons)
 
 ## P0: Implement the correctness contract

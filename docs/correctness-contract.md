@@ -181,35 +181,50 @@ compaction cost proportional to repair count by tracking indices orphaned during
 
 Status: **implemented** (reclassification + opt-in compaction).
 
+## Current repair-backed graph contract
+
+The active spherical strategy is:
+
+```text
+fast gnomonic clip
+  -> assemble and validate
+  -> if residual topology defects are detected, rebuild the implicated closure
+     with normalized local 3D repair
+  -> accept only a strictly valid whole diagram, otherwise return a loud error
+```
+
+This is deliberately weaker than a global exact-predicate construction, and that
+is the point. The fast path is nearly always the normalized S2 graph in observed
+uniform and practical workloads. In the rare near-degenerate regimes that expose
+fast-path disagreements, normalized local 3D repair has produced the normalized
+truth graph in every observed repaired case, and no "coherently agreed upon but
+wrong" repaired local topology has been observed. The hard public guarantee is
+therefore **valid subdivision or error**; exact graph equality in adversarial tie
+regimes remains an empirical repair property, not a symbolic promise.
+
+The reference graph, when audited, is the convex hull / Delaunay graph of
+f64-renormalized S2 directions. Raw f32 radius drift is not part of the spherical
+contract.
+
 ## Paths to a stronger guarantee
 
-In increasing order of strength; none block release, all are roadmap items:
+These are optional hardening directions; none block release:
 
 1. **Tolerance audit / forward error analysis.** The consistency-critical predicates are few:
    point-vs-half-plane sign in f64 chart coordinates, projection validity, extraction degeneracy.
    Bounding the computed-distance error and verifying the clip epsilon dominates it converts the
    central tolerances from empirical to derived-with-safety-factor.
-2. **Consistency by construction (canonical predicates).** Today the same combinatorial fact
-   ("does edge (a,b) exist?") is decided twice, in two different per-generator charts, and
-   validity depends on the two epsilon-laden answers agreeing — the seam regime is exactly this
-   dependency biting (twins at `TangentBasis` branch boundaries select different charts). Making
-   every shared decision canonical — evaluated once, in a frame chosen by sorted generator index,
-   inherited bit-for-bit by both cells — makes graph validity independent of floating-point
-   accuracy. One then proves determinism (a code-structure property) instead of error bounds.
-   This would also root-fix the seam regime and shrink what edge reconciliation has to repair.
-
-   Update (2026-06-22): the exact-reference diagnosis was corrected again.
-   Exact 3D construction must f64-renormalize directions first; otherwise exact
-   predicates preserve tiny f32 radius drift and solve an off-sphere Euclidean
-   hull problem. With normalized directions, fast output matched CGAL on the
-   tested uniform/mega cases and normalized local 3D repair matched projected
-   repair on known mega defects. The active repair path is therefore local
-   repair with a valid-or-revert gate; exact-by-construction remains a future
-   canonical-output mode. See `docs/escalation-build-state-2026-06.md` and
-   `docs/local-repair-oracle-2026-06.md`.
+2. **Repair completeness audit.** Continue broad CGAL/local-hull sweeps over
+   repaired cases. The specific thing to hunt is a repaired diagram that is
+   strictly valid but disagrees with normalized 3D truth. We have not observed
+   one; finding one would change the contract.
 3. **Exact oracle at small N.** A rational-arithmetic (or robust-predicate) reference
    implementation for N ≤ ~100, used as a combinatorial test oracle for boundary-region fuzzing
    (separations in [1e-8, 1e-6]).
+4. **Canonical/exact topology research.** A full exact-by-construction fast path
+   remains a research direction, but it is no longer the active product target.
+   The failed mixed exact/local predicate experiments showed that exact signs
+   cannot simply be dropped into the current approximate polygon evolution.
 
 ## What this contract is not
 

@@ -173,6 +173,10 @@ graph.
 > - Local repair is workable: normalized local 3D repair is default-on behind a
 >   strict-valid gate, and projected repair remains available as an A/B
 >   diagnostic path.
+> - The active contract is not "exact graph by fast construction." It is:
+>   ordinary cells are fast-built, rare residual regions are rebuilt with
+>   normalized local 3D repair, and returned diagrams must be strictly valid.
+>   Exact-predicate hot-path certification is research, not the release target.
 >
 > Current state: `docs/escalation-build-state-2026-06.md` and
 > `docs/local-repair-oracle-2026-06.md`. The older framing below is retained for

@@ -295,8 +295,6 @@ fn build_and_emit_cell<'a, 'b, 'c>(
     )
     .map_err(BuildCellsError::CellBuild)?;
     stats.record_into(cell_sub);
-    #[cfg(feature = "escalate_probe")]
-    stats.record_proactive_audit(generator_idx);
 
     let output_buffer = build_ctx.output_buffer();
     emit_cell_output(

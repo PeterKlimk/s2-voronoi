@@ -100,10 +100,6 @@ pub(crate) struct GnomonicBuilder {
     support_cache_valid: bool,
     #[cfg(feature = "timing")]
     support_min_proj: [f64; 64],
-    #[cfg(feature = "escalate_probe")]
-    proactive_min_transition_delta: Option<f64>,
-    #[cfg(feature = "escalate_probe")]
-    proactive_min_early_unchanged_clearance: Option<f64>,
 }
 
 pub(crate) struct FallbackBuilder {

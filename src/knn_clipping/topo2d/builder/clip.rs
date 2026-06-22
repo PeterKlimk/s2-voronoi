@@ -90,8 +90,6 @@ impl GnomonicBuilder {
 
         #[cfg(feature = "p5_shadow")]
         self.shadow_audit(neighbor_idx, neighbor, &hp);
-        #[cfg(feature = "escalate_probe")]
-        self.observe_proactive_clip_metrics(&hp);
 
         let esc = EscalationCtx {
             generator_raw: self.generator_raw,
@@ -113,67 +111,6 @@ impl GnomonicBuilder {
         let committed = self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot);
         self.sync_neighbor_positions(neighbor);
         committed
-    }
-
-    #[cfg(feature = "escalate_probe")]
-    fn observe_proactive_clip_metrics(&mut self, hp: &HalfPlane) {
-        let poly = self.current_poly();
-        if poly.len < 3 {
-            return;
-        }
-
-        let neg_eps = -hp.eps;
-        let mut dists = [0.0f64; crate::knn_clipping::topo2d::types::MAX_POLY_VERTICES];
-        let mut inside = [false; crate::knn_clipping::topo2d::types::MAX_POLY_VERTICES];
-        for i in 0..poly.len {
-            let d = hp.signed_dist(poly.us[i], poly.vs[i]);
-            dists[i] = d;
-            inside[i] = d >= neg_eps;
-        }
-
-        let all_inside = inside[..poly.len].iter().all(|&v| v);
-        let all_outside = inside[..poly.len].iter().all(|&v| !v);
-        let mut min_transition_delta = None;
-        if !all_inside && !all_outside {
-            for i in 0..poly.len {
-                let j = (i + 1) % poly.len;
-                if inside[i] != inside[j] {
-                    let delta = (dists[i] - dists[j]).abs();
-                    if delta.is_finite() {
-                        min_transition_delta =
-                            Some(min_transition_delta.map_or(delta, |old: f64| old.min(delta)));
-                    }
-                }
-            }
-        }
-
-        let mut early_clearance = None;
-        const EARLY_UNCHANGED_MIN_N: usize = 5;
-        if all_inside
-            && !poly.has_bounding_ref
-            && poly.len >= EARLY_UNCHANGED_MIN_N
-            && poly.max_r2 > 0.0
-            && hp.c >= 0.0
-        {
-            let clearance = hp.c * hp.c - hp.ab2 * poly.max_r2;
-            if clearance.is_finite() && clearance >= 0.0 {
-                early_clearance = Some(clearance);
-            }
-        }
-        let _ = poly;
-
-        if let Some(delta) = min_transition_delta {
-            self.proactive_min_transition_delta = Some(
-                self.proactive_min_transition_delta
-                    .map_or(delta, |old| old.min(delta)),
-            );
-        }
-        if let Some(clearance) = early_clearance {
-            self.proactive_min_early_unchanged_clearance = Some(
-                self.proactive_min_early_unchanged_clearance
-                    .map_or(clearance, |old| old.min(clearance)),
-            );
-        }
     }
 
     /// Shadow audit (P5 stage 1): compare near-margin local decisions

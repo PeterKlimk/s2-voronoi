@@ -83,38 +83,31 @@ CGAL vs normalized `LocalHull` also matched at uniform 100k (`changed=0`), thoug
 the in-repo global `LocalHull` implementation is much slower than CGAL at that
 scale and should remain a diagnostic/probe path.
 
-## Exact-By-Construction Detection
+## Contract Direction
 
-The starting point is not "make every clip exact"; the measured target set is too
-small for that to be the first move. The useful probe is:
+The current target is **nearly always correct by fast construction, always valid
+by validation/repair construction**. We are no longer trying to turn the fast
+gnomonic clip loop into a fully exact-predicate construction.
 
-```bash
-S2_CGAL_HULL3_BIN=/tmp/cgal_hull3 S2_ESCALATE_DIST=mega S2_ESCALATE_N=100000 \
-cargo test --release --features escalate_probe --test escalate \
-probe_cgal_hull3_flag_recall -- --ignored --nocapture
-```
+The reason is practical and mathematical: the observed rare disagreements live
+in degenerate regimes where f32 input, normalization policy, simulation-of-
+simplicity tie choices, chart arithmetic, lerped intersections, and kNN
+termination all interact. The fast clipper can be made better, but a complete
+symbolic proof for that path would be expensive and would still need a tie
+policy story.
 
-This compares fast cells against normalized CGAL truth, then sweeps a cheap
-normalized-3D near-cocircularity margin over the fast fan. On mega 100k seed 3:
+Normalized local 3D repair is the better boundary:
 
-- changed vs normalized CGAL: 1 cell (0.0010%);
-- topology-defect cells from the assembled fast graph: 2;
-- `flag ∪ topology_defect` recalled the changed cell even with no margin-band
-  trip;
-- a `1e-6` normalized 3D margin band also recalled it directly, flagging 4.746%
-  of cells on that case.
+1. fast path handles ordinary cells;
+2. topology residuals seed a normalized local 3D rebuild;
+3. the repaired closure is accepted only if the whole diagram validates;
+4. if repair cannot produce a strictly valid diagram, the computation fails
+   loudly instead of returning a non-manifold graph.
 
-That suggests the exact-by-construction path should be developed as a detector
-and escalation pipeline:
-
-1. keep the reactive topology-defect trigger as a guaranteed validity backstop;
-2. add a cheap normalized-3D near-cocircular flag probe for valid-but-wrong cells;
-3. rebuild flagged/defective cells with a normalized exact local oracle;
-4. measure recall against CGAL before attempting a hot-path exact clipper.
-
-See `docs/proactive-correctness-audit-2026-06.md` for the flag/error-budget
-audit plan covering projection error, lerp drift, termination bounds, and KNN
-coverage.
+So far, repaired cases have produced the normalized 3D truth graph in every
+observed probe. We have observed fast-path coherent disagreements in mega
+inputs, but we have not observed a strictly valid repaired local topology that
+coherently agrees on the wrong graph.
 
 ## Practical Rules
 
@@ -124,17 +117,13 @@ coverage.
    disagreement.
 3. Do not treat "local 3D repair cascades" as a settled result unless the probe
    normalizes before exact predicates.
-4. The remaining decision is empirical: run the broad sweep with the new
-   `RepairMode::Local3d` default and compare closure/runtime against
-   `RepairMode::LocalProjected`.
+4. Treat exact-predicate fast-path work as research only. It should not block
+   the repair-backed contract.
 
 ## Open Work
 
-- Broad sweep normalized local 3D repair across the existing mega/clustered/
-  bimodal/adversarial cases, with `RepairMode::LocalProjected` as the A/B
-  comparator.
-- Sweep `probe_cgal_hull3_flag_recall` across larger uniform and mega seeds to
-  find the smallest band with zero changed-cell misses.
-- If exact-by-construction mode is pursued, start from `flag ∪ topology defect`
-  escalation using normalized 3D hull / local hull as the canonical graph
-  reference, with CGAL as the external audit oracle.
+- Keep broad normalized local 3D repair sweeps in the regression suite.
+- Use CGAL/local-hull probes to look specifically for repaired-valid-but-wrong
+  local topology. None is currently known.
+- Keep `RepairMode::LocalProjected` as an A/B diagnostic, not as the final
+  fallback in extreme closures.

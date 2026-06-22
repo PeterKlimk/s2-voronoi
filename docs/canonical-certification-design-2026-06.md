@@ -1,5 +1,12 @@
 # Canonical Certification and Exact-Topology Direction (2026-06-21)
 
+> **Status update (2026-06-22): historical research note.** The active contract
+> has moved back to normalized local 3D repair plus strict validation:
+> nearly-always fast-correct, always valid-or-error. The exact/canonical
+> topology direction below remains useful background, especially the failed
+> mixed exact/local predicate experiment, but it is no longer the active product
+> target.
+
 This note records the design direction that came out of the Tier-2 repair
 discussion after reading `reclip-tier2-state-2026-06.md`,
 `reclip-local-hull-design.md`, and `p5-consistency-design.md`.
@@ -294,4 +301,3 @@ The intermediate success criterion is not "no suspicious cells". It is:
    it expose a faster "nearly Voronoi, graph-valid" mode?
 5. Can enough of the canonical determinant filter be vectorized or batched to
    make the common-case tax close to invisible on memory-bound runs?
-

@@ -172,6 +172,13 @@ toroidal graph.
     stereographic chart and exact 2D predicates
   - `RepairMode::Disabled`: preserve the raw fast-path residual/error behavior for diagnostics
 
+The spherical backend is intentionally not an exact-predicate hot-path solver.
+The contract is that ordinary inputs are solved by the fast gnomonic clipper,
+rare suspicious regions are rebuilt by normalized local 3D repair, and returned
+diagrams must pass strict topology validation. In adversarial tie/degenerate
+regimes, the library prefers a valid repaired diagram or a loud error over
+claiming a globally exact symbolic graph.
+
 The planar pipeline currently takes no configuration; its weld radius is fixed (see above).
 
 `compute_with_report` exposes whether preprocessing merged generators, the effective diagram the

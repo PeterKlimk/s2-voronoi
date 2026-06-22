@@ -58,7 +58,7 @@ pub(super) fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
             } else {
                 batch.first_dot
             };
-            if counters.try_terminate(builder, bound) {
+            if builder.can_terminate(bound) {
                 true
             } else {
                 #[cfg(feature = "timing")]
@@ -73,7 +73,7 @@ pub(super) fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
             }
         }
         DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
-            if counters.try_terminate(builder, dot_upper_bound) {
+            if builder.can_terminate(dot_upper_bound) {
                 true
             } else {
                 stream.advance_frontier();
