@@ -141,16 +141,20 @@ The backend is expected to return a defined `Err(...)` for:
 - cells whose intermediate clip polygon exceeds the fixed clipping vertex budget
   (`MAX_POLY_VERTICES` is currently 24): a cell genuinely bordering more than
   about 22 others before fallback/recovery can contain it.
-  First concretely reached (2026-06) by a 1M-point cap of angular radius
-  0.05 with 6 anchor generators — each anchor's cell borders the entire cap
-  rim. Returns the vertex-budget `ComputationFailed`; the bound is a
-  representation choice, not a numerical failure
+  This remains a representation limit, not a numerical failure. Current
+  benchmark-style dense-cap probes reach the repair path rather than this limit;
+  keep this row for genuinely high-degree constructed cells or future cap
+  variants that force a single cell to border the whole rim.
 - **dense near-cocircular / near-cospherical clusters below the f32 resolution floor**
-  (the "Resolvability floor" below): many generators packed into a cap small enough that their
-  true Voronoi vertices fall below f32 separation. Returns an edge-reconciliation residual
-  `ComputationFailed` (or the vertex-budget case above). Empirically a ~0.05-rad cap holding
-  ~100k+ generators starts erroring; ~50k is fine. Mitigation: `PreprocessMode::MergeWithin` to
-  weld near-coincident generators
+  (the "Resolvability floor" below): many generators packed into a cap small
+  enough that their true Voronoi vertices fall below f32 separation. This is now
+  primarily a **repair frontier**, not a default failure class: a benchmark-style
+  50k cap at radius 0.05 is a pinned raw fast-path defect with
+  `RepairMode::Disabled`, while default local 3D repair returns strict-valid.
+  A 2026-06 sweep of 1M benchmark-style clustered-cap, bimodal, and
+  near-cocircular cases also returned strict-valid under the default config.
+  Use `PreprocessMode::MergeWithin` when the intended model should weld
+  near-coincident generators rather than preserve subresolution structure
 - some terminal construction failures that are recognized but not yet classified more precisely
 
 Pure great-circle / coplanar cases are the clearest current example of supported failure rather

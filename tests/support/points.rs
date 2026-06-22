@@ -149,6 +149,41 @@ pub fn mega_points(n: usize, frac: f32, seed: u64) -> Vec<UnitVec3> {
     points
 }
 
+/// Dense single-cap benchmark fixture: almost all points in a tangent-plane
+/// disk around +Z, with a sparse uniform background to bound rim cells. Mirrors
+/// `bench_voronoi --dist cap` for correctness regressions rather than timing.
+pub fn benchmark_cap_points(n: usize, radius_rad: f32, seed: u64) -> Vec<UnitVec3> {
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let background = (n / 50).max(16).min(n);
+    let bulk = n.saturating_sub(background);
+    let mut points: Vec<UnitVec3> = (0..background)
+        .map(|_| random_unit_cube_with_rng(&mut rng))
+        .collect();
+    points.extend((0..bulk).map(|_| tangent_cap_point_z(radius_rad, &mut rng)));
+    points
+}
+
+fn random_unit_cube_with_rng<R: Rng + ?Sized>(rng: &mut R) -> UnitVec3 {
+    loop {
+        let x: f32 = rng.gen_range(-1.0..1.0);
+        let y: f32 = rng.gen_range(-1.0..1.0);
+        let z: f32 = rng.gen_range(-1.0..1.0);
+        let len_sq = x * x + y * y + z * z;
+        if len_sq > 1e-6 && len_sq <= 1.0 {
+            let inv_len = 1.0 / len_sq.sqrt();
+            return UnitVec3::new(x * inv_len, y * inv_len, z * inv_len);
+        }
+    }
+}
+
+fn tangent_cap_point_z<R: Rng + ?Sized>(radius_rad: f32, rng: &mut R) -> UnitVec3 {
+    let r = radius_rad * rng.gen_range(0.0f32..1.0).sqrt();
+    let theta = rng.gen_range(0.0..2.0 * PI);
+    let x = -r * theta.sin();
+    let y = r * theta.cos();
+    UnitVec3::new(x, y, 1.0)
+}
+
 /// Cubed-sphere grid: 6 cube faces, each a ~k×k grid of interior cell centers
 /// projected to the sphere (k chosen so the total is ≈ `n`). Generators sit on a
 /// regular quad lattice, so most Voronoi vertices are (near-)degree-4 — a CLEAN,

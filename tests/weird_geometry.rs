@@ -10,12 +10,13 @@
 mod support;
 
 use s2_voronoi::{
-    compute, validation::validate, DegenerateMode, PreprocessMode, UnitVec3, VoronoiConfig,
-    VoronoiError,
+    compute, validation::validate, DegenerateMode, PreprocessMode, RepairMode, UnitVec3,
+    VoronoiConfig, VoronoiError,
 };
 use std::f32::consts::PI;
 use support::points::{
-    clustered_cap_points, cubed_sphere_points, great_circle_points, hemisphere_points,
+    benchmark_cap_points, clustered_cap_points, cubed_sphere_points, great_circle_points,
+    hemisphere_points,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,6 +196,37 @@ fn robust_great_circle_perturbation_solves_rank2_fixture() {
 }
 
 #[test]
+fn dense_cap_frontier_requires_repair_but_default_is_valid() {
+    let points = benchmark_cap_points(50_000, 0.05, 7);
+
+    let raw = s2_voronoi::compute_with_report(
+        &points,
+        VoronoiConfig {
+            repair_mode: RepairMode::Disabled,
+            ..VoronoiConfig::default()
+        },
+    )
+    .expect("dense-cap raw path should build far enough to report the residual defect");
+
+    assert!(
+        !raw.report.returned_validation.is_strictly_valid(),
+        "dense-cap fixture should remain a raw fast-path defect; replace it if this becomes valid"
+    );
+    assert!(
+        !raw.report.unresolved_edge_pairs.is_empty(),
+        "raw dense-cap defect should be visible as unresolved edge pairs"
+    );
+
+    let repaired = s2_voronoi::compute_with_report(&points, VoronoiConfig::default())
+        .expect("default repair should solve the dense-cap frontier fixture");
+    assert!(
+        repaired.report.returned_validation.is_strictly_valid(),
+        "default repair should return a strict-valid dense-cap diagram: {}",
+        repaired.report.returned_validation.headline()
+    );
+}
+
+#[test]
 #[ignore = "diagnostic: prints the current weird-geometry failure taxonomy"]
 fn classify_weird_geometry_failures() {
     for (name, points) in [
@@ -211,6 +243,10 @@ fn classify_weird_geometry_failures() {
         (
             "latitude_ring_64_near_north_pole",
             pole_with_latitude_ring(64, 0.5),
+        ),
+        (
+            "dense_cap_50k_repair_frontier",
+            benchmark_cap_points(50_000, 0.05, 7),
         ),
     ] {
         match s2_voronoi::compute_with_report(&points, VoronoiConfig::default()) {
