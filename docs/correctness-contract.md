@@ -206,6 +206,12 @@ The reference graph, when audited, is the convex hull / Delaunay graph of
 f64-renormalized S2 directions. Raw f32 radius drift is not part of the spherical
 contract.
 
+`ComputeReport` separates repair diagnostics from output residuals:
+`pre_repair_edge_mismatches` records live-dedup disagreements that exercised
+reconciliation/repair, while `post_repair_unpaired_edges` records residual
+output-invariant failures. A strict-valid returned diagram may legitimately have
+pre-repair mismatches; it must not have post-repair residuals.
+
 Welding and degenerate perturbation are separate policies. Welding resolves
 subresolution coincidence by solving an effective generator set and remapping
 welded twins onto canonical cells. It does not make lower-dimensional inputs

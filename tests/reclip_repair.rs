@@ -15,9 +15,7 @@
 mod support;
 use support::points::mega_points;
 
-use s2_voronoi::{
-    compute, compute_with_report, ComputeReport, UnresolvedEdgeOrigin, VoronoiConfig,
-};
+use s2_voronoi::{compute, compute_with_report, ComputeReport, VoronoiConfig};
 use std::sync::Mutex;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -41,11 +39,7 @@ fn with_repair_env<T>(extra: &[(&str, &str)], f: impl FnOnce() -> T) -> T {
 /// Count residuals that survived to the returned diagram (what the hot path
 /// loud-fails on; the report path returns them as diagnostics instead).
 fn surviving_residual(report: &ComputeReport) -> usize {
-    report
-        .unresolved_edge_pairs
-        .iter()
-        .filter(|(_, _, o)| matches!(o, UnresolvedEdgeOrigin::PostRepairUnpaired))
-        .count()
+    report.post_repair_unpaired_edges.len()
 }
 
 const SEEDS: [u64; 3] = [1, 2, 3];

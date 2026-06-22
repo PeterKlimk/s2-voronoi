@@ -267,10 +267,26 @@ pub struct ComputeReport {
     /// Strict validation of the effective preprocessed diagram, when preprocessing
     /// changed the solved generator set.
     pub effective_validation: Option<validation::ValidationReport>,
+    /// Shared-edge mismatches observed during live dedup before the
+    /// post-assembly reconciliation and optional local repair passes.
+    ///
+    /// These are useful diagnostics for proving that a near-degenerate input
+    /// exercised the repair machinery. They do not mean the returned diagram is
+    /// invalid; check [`ComputeReport::post_repair_unpaired_edges`] and
+    /// [`ComputeReport::preferred_validation`] for the output contract.
+    pub pre_repair_edge_mismatches: Vec<(u32, u32, UnresolvedEdgeOrigin)>,
+    /// Interior edges that remained unpaired after reconciliation and were not
+    /// cleared by an accepted local repair. `compute` turns these into a loud
+    /// error; `compute_with_report` surfaces them for diagnostics.
+    pub post_repair_unpaired_edges: Vec<(u32, u32)>,
     /// Unresolved shared-edge mismatches that survived live dedup and were
     /// handed to post-assembly edge reconciliation, as pairs of
     /// effective-diagram generator indices plus the detection path that
-    /// recorded each (empty means the repair pass had nothing to do).
+    /// recorded each. Historical aggregate: contains
+    /// [`ComputeReport::pre_repair_edge_mismatches`] plus
+    /// `PostRepairUnpaired` records when
+    /// [`ComputeReport::post_repair_unpaired_edges`] is non-empty.
+    ///
     /// Diagnostic: tests use this to prove defect-forcing inputs actually
     /// exercise the repair paths (see `tests/edge_repair_net.rs`).
     pub unresolved_edge_pairs: Vec<(u32, u32, UnresolvedEdgeOrigin)>,
@@ -287,6 +303,13 @@ impl ComputeReport {
         self.effective_validation
             .as_ref()
             .unwrap_or(&self.returned_validation)
+    }
+
+    /// True when the returned report contains output-invariant residuals that
+    /// plain `compute` would reject with an error.
+    #[inline]
+    pub fn has_post_repair_residuals(&self) -> bool {
+        !self.post_repair_unpaired_edges.is_empty()
     }
 }
 

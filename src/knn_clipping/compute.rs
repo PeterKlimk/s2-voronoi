@@ -241,6 +241,22 @@ fn compute_voronoi_knn_clipping_report_core(
     // local repair was accepted, the returned diagram is strictly valid and
     // these residuals no longer survive to output.
     let mut unresolved_edges = unresolved_edges;
+    let pre_repair_edge_mismatches: Vec<(u32, u32, live_dedup::UnresolvedEdgeOrigin)> =
+        unresolved_edges
+            .iter()
+            .map(|m| {
+                let (a, b) = edge_reconcile::unpack_edge(m.key.as_u64());
+                (a.min(b), a.max(b), m.origin)
+            })
+            .collect();
+    let post_repair_unpaired_edges: Vec<(u32, u32)> = if repair_accepted {
+        Vec::new()
+    } else {
+        post_repair_unpaired
+            .iter()
+            .map(|&(a, b)| (a.min(b), a.max(b)))
+            .collect()
+    };
     if !repair_accepted {
         for &(a, b) in &post_repair_unpaired {
             unresolved_edges.push(live_dedup::UnresolvedEdgeMismatch {
@@ -287,6 +303,8 @@ fn compute_voronoi_knn_clipping_report_core(
             degenerate: degenerate_report,
             returned_validation,
             effective_validation,
+            pre_repair_edge_mismatches,
+            post_repair_unpaired_edges,
             unresolved_edge_pairs: unresolved_edges
                 .iter()
                 .map(|m| {

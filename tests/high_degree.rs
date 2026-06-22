@@ -14,10 +14,7 @@
 mod support;
 use support::points::cubed_sphere_points;
 
-use s2_voronoi::{
-    compute, compute_with_report, validation::validate, UnitVec3, UnresolvedEdgeOrigin,
-    VoronoiConfig,
-};
+use s2_voronoi::{compute, compute_with_report, validation::validate, UnitVec3, VoronoiConfig};
 use std::f32::consts::PI;
 
 fn u(x: f32, y: f32, z: f32) -> UnitVec3 {
@@ -137,12 +134,7 @@ fn cubed_sphere_scaling_probe() {
         let pts = cubed_sphere_points(6 * k * k, 0);
         let out = compute_with_report(&pts, VoronoiConfig::default())
             .unwrap_or_else(|e| panic!("k={k}: {e:?}"));
-        let post = out
-            .report
-            .unresolved_edge_pairs
-            .iter()
-            .filter(|(_, _, x)| matches!(x, UnresolvedEdgeOrigin::PostRepairUnpaired))
-            .count();
+        let post = out.report.post_repair_unpaired_edges.len();
         let v = out.report.preferred_validation();
         let [_, _, _, d3, d4] = v.degree_counts;
         eprintln!(

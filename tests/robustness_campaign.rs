@@ -131,12 +131,7 @@ fn campaign_case() {
             // hot path) loud-fails on these; `compute_with_report` returns them
             // as diagnostics instead. Their absence is the silent-invalid
             // contract: no surviving residual MUST mean a strictly-valid graph.
-            let post_repair = out
-                .report
-                .unresolved_edge_pairs
-                .iter()
-                .filter(|(_, _, o)| matches!(o, UnresolvedEdgeOrigin::PostRepairUnpaired))
-                .count();
+            let post_repair = out.report.post_repair_unpaired_edges.len();
             let origins_str = if origins.is_empty() {
                 "none".to_string()
             } else {

@@ -8,7 +8,7 @@
 
 mod support;
 
-use s2_voronoi::{compute, compute_with_report, RepairMode, UnresolvedEdgeOrigin, VoronoiConfig};
+use s2_voronoi::{compute, compute_with_report, RepairMode, VoronoiConfig};
 use support::points::*;
 
 #[test]
@@ -78,12 +78,7 @@ fn accepted_default_repair_clears_surviving_residual_report() {
             out.report.returned_validation.is_strictly_valid(),
             "mega 100k s{seed}: default repair was not accepted"
         );
-        let post = out
-            .report
-            .unresolved_edge_pairs
-            .iter()
-            .filter(|(_, _, origin)| matches!(origin, UnresolvedEdgeOrigin::PostRepairUnpaired))
-            .count();
+        let post = out.report.post_repair_unpaired_edges.len();
         assert_eq!(
             post, 0,
             "mega 100k s{seed}: accepted repair left surviving residual records"

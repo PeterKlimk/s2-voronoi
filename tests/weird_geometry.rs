@@ -213,8 +213,12 @@ fn dense_cap_frontier_requires_repair_but_default_is_valid() {
         "dense-cap fixture should remain a raw fast-path defect; replace it if this becomes valid"
     );
     assert!(
-        !raw.report.unresolved_edge_pairs.is_empty(),
-        "raw dense-cap defect should be visible as unresolved edge pairs"
+        !raw.report.pre_repair_edge_mismatches.is_empty(),
+        "raw dense-cap defect should be visible as pre-repair edge mismatches"
+    );
+    assert!(
+        raw.report.has_post_repair_residuals(),
+        "raw dense-cap defect should leave post-repair residuals when local repair is disabled"
     );
 
     let repaired = s2_voronoi::compute_with_report(&points, VoronoiConfig::default())
@@ -223,6 +227,14 @@ fn dense_cap_frontier_requires_repair_but_default_is_valid() {
         repaired.report.returned_validation.is_strictly_valid(),
         "default repair should return a strict-valid dense-cap diagram: {}",
         repaired.report.returned_validation.headline()
+    );
+    assert!(
+        !repaired.report.pre_repair_edge_mismatches.is_empty(),
+        "default dense-cap fixture should still exercise the repair path"
+    );
+    assert!(
+        !repaired.report.has_post_repair_residuals(),
+        "accepted default repair should clear output-invariant residuals"
     );
 }
 
@@ -251,10 +263,10 @@ fn classify_weird_geometry_failures() {
     ] {
         match s2_voronoi::compute_with_report(&points, VoronoiConfig::default()) {
             Ok(output) => eprintln!(
-                "WEIRDCASE {name}: ok cells={} validation={} unresolved={}",
+                "WEIRDCASE {name}: ok cells={} validation={} pre_repair={}",
                 output.preferred_diagram().num_cells(),
                 output.report.preferred_validation().headline(),
-                output.report.unresolved_edge_pairs.len()
+                output.report.pre_repair_edge_mismatches.len()
             ),
             Err(err) => eprintln!("WEIRDCASE {name}: err {err:?}"),
         }
