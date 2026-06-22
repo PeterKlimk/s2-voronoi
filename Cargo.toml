@@ -26,7 +26,7 @@ microbench = ["dep:rand", "dep:rand_chacha"] # Enable internal microbench harnes
 serde = ["dep:serde"] # Serialize/Deserialize for diagram types
 qhull = ["qhull-enhanced"]  # Convex hull backend (test/bench only)
 p5_shadow = [] # P5 shadow audit: log canonical-vs-local clip decisions (no behavior change)
-escalate_probe = [] # Expose the defect-driven exact local-rebuild for integration testing
+escalate_probe = ["dep:delaunator"] # Expose the defect-driven exact local-rebuild for integration testing
 simd_scalar = [] # Scalar/autovectorized 8-lane path instead of `wide`; debugging/comparison
 fma = [] # Prefer fused multiply-add via mul_add. On x86/x86_64 requires the `+fma` target feature (RUSTFLAGS="-C target-feature=+fma" or -C target-cpu=native); else compile error (SIMD/scalar dot paths must fuse identically). See src/fp.rs guard.
 tools = ["dep:clap", "dep:kiddo", "dep:rand", "dep:rand_chacha"] # Benchmark/utility binaries
@@ -56,6 +56,7 @@ serde = { version = "1", features = ["derive"], optional = true }
 # Exact geometric predicates (Shewchuk adaptive) for the P5 canonical
 # escalation evaluator (production: near-tie clip decisions)
 robust = "1"
+delaunator = { version = "1.1.0", optional = true }
 
 # Optional: convex hull backend (test-only)
 qhull-enhanced = { version = "0.1", optional = true }
@@ -65,7 +66,6 @@ qhull-enhanced = { version = "0.1", optional = true }
 voronoice = { version = "0.2", optional = true }
 
 [dev-dependencies]
-delaunator = "1.1.0"
 rand = "0.8"
 rand_chacha = "0.3"
 rayon = "1.10"

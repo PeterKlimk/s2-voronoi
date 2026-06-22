@@ -860,51 +860,52 @@ fn escalation_generalization_sweep() {
     run("uniform 100k s7 (clean)", &random_sphere_points(100_000, 7));
 }
 
-/// Narrow WIN, but NOT general — mega 100k s3's defect is a single CONTAINED
-/// malformed cell (cell 11548: neighbor 17853 in 4 boundary vertices ⇒ an
-/// invalid non-convex polygon; the only malformed cell in 99996), and all 5 of
-/// its unpaired edges contain it. Consensus repair (rebuild the malformed cell
-/// from its valid neighbors' attributed triples, adopting their diagonals) makes
-/// THIS input strictly valid with zero cascade.
-///
-/// It does NOT generalize (see `escalation_generalization_sweep`): the general
-/// mega defect is cross-cell decision divergence between individually-VALID cells
-/// (no malformed cell), which consensus does not address and can even regress
-/// (mega 300k s3: 51→52). So this is kept `#[ignore]` — a real but narrow result,
-/// not a green gate. The full story (hull splice diverges; reclip is source-
-/// compatible but f32 can't fix; surgical/component rebuild cascade; consensus is
-/// a contained-malformation-only fix) is in docs/escalation-build-state-2026-06.md
-/// and the memory note `route-a-splice-diverges`.
-///
-/// `set_escalation_enabled` is a process-global toggle only THIS test flips.
+/// Regression: defect-driven repair (projected delaunator oracle + grow on
+/// unpaired-edges & low-incidence vertices + valid-or-revert gate) turns the
+/// defective mega builds into STRICTLY VALID diagrams. Covers the formerly-hard
+/// seeds: s2 (cross-cell decision divergence between individually-valid cells)
+/// and s15 (a low-incidence-only defect with NO unpaired edge). Off by default;
+/// `set_escalation_enabled` is a process-global toggle only THIS test flips, so
+/// the on/off builds below are reliable under parallel execution.
 #[test]
-#[ignore = "narrow: consensus repair fixes the contained-malformation case (s3) only; does not generalize"]
-fn escalation_splice_makes_mega_strictly_valid() {
-    let points = mega_points(100_000, 0.8, 3);
+fn escalation_repair_makes_mega_strictly_valid() {
+    let cfg = || VoronoiConfig::default();
+    let mut fixed_at_least_one = false;
+    for seed in [1u64, 2, 15] {
+        let points = mega_points(100_000, 0.8, seed);
 
-    // Baseline: escalation off — the fast path leaves a real defect residual.
-    set_escalation_enabled(false);
-    let before = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    let before_valid = before.report.returned_validation.is_strictly_valid();
-    println!(
-        "escalation OFF: {} | {}",
-        if before_valid { "VALID" } else { "INVALID" },
-        before.report.returned_validation
-    );
-    assert!(
-        !before_valid,
-        "expected mega 100k s3 to be invalid without escalation (no defect to fix?)"
-    );
+        set_escalation_enabled(false);
+        let before = compute_with_report(&points, cfg()).expect("build");
+        let before_valid = before.report.returned_validation.is_strictly_valid();
 
-    // Escalation on — the residual is resolved by exact local rebuild + splice.
-    set_escalation_enabled(true);
-    let after = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    set_escalation_enabled(false);
-    let after_report = &after.report.returned_validation;
-    println!("escalation ON:  {after_report}");
+        set_escalation_enabled(true);
+        let after = compute_with_report(&points, cfg()).expect("build");
+        set_escalation_enabled(false);
+        let after_report = &after.report.returned_validation;
+
+        println!(
+            "mega 100k s{seed}: off={} on={}",
+            if before_valid { "VALID" } else { "INVALID" },
+            if after_report.is_strictly_valid() {
+                "VALID".to_string()
+            } else {
+                format!("{:?}", after_report.subdivision_issues())
+            }
+        );
+        // The repair must always reach strict validity (the valid-or-revert gate
+        // guarantees the output is never worse than the fast path, so this is the
+        // meaningful bar).
+        assert!(
+            after_report.is_strictly_valid(),
+            "seed {seed}: repair did not produce a strictly valid diagram: {:?}",
+            after_report.subdivision_issues()
+        );
+        fixed_at_least_one |= !before_valid;
+    }
+    // Sanity: at least one of these seeds is a genuine defect the repair fixed
+    // (otherwise the test would pass trivially on already-valid inputs).
     assert!(
-        after_report.is_strictly_valid(),
-        "escalation did not produce a strictly valid diagram: {:?}",
-        after_report.subdivision_issues()
+        fixed_at_least_one,
+        "expected at least one mega seed to be invalid without the repair"
     );
 }

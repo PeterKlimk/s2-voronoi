@@ -233,6 +233,275 @@ pub fn reclip_cells(points: &[Vec3], local_ids: &[u32], seeds: &[u32]) -> Option
     Some(out)
 }
 
+/// PROJECTED exact oracle (feature `escalate_probe`): the exact spherical
+/// Delaunay via stereographic projection + `delaunator` (exact predicates),
+/// read as each seed's ordered Voronoi fan. Projected ⇒ agrees with the fast
+/// (gnomonic) diagram at well-conditioned rim edges ⇒ rebuilt rim triples reuse
+/// the existing fast vids and pair by construction (no cascade). Fans are
+/// ordered by COMBINATORIAL chaining of incident Delaunay triangles — no
+/// reliance on the ill-conditioned circumcenter coordinates of near-cocircular
+/// vertices. Drop-in for `rebuild_cells`/`reclip_cells`.
+#[cfg(feature = "escalate_probe")]
+pub fn delaunator_cells(
+    points: &[Vec3],
+    local_ids: &[u32],
+    seeds: &[u32],
+) -> Option<Vec<RebuiltCell>> {
+    use std::collections::{BTreeSet, HashMap};
+    if local_ids.len() < 3 {
+        return None;
+    }
+    let mut c = Vec3::ZERO;
+    for &g in local_ids {
+        c += points[g as usize];
+    }
+    let pole = (-c).normalize();
+    let a = if pole.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+    let e1 = (a - pole * a.dot(pole)).normalize();
+    let e2 = pole.cross(e1);
+    let proj: Vec<delaunator::Point> = local_ids
+        .iter()
+        .map(|&g| {
+            let p = points[g as usize];
+            let d = (1.0 - p.dot(pole)).max(1e-12);
+            delaunator::Point {
+                x: (p.dot(e1) / d) as f64,
+                y: (p.dot(e2) / d) as f64,
+            }
+        })
+        .collect();
+    let tri = delaunator::triangulate(&proj);
+    if tri.triangles.is_empty() {
+        return None;
+    }
+    let seedset: BTreeSet<u32> = seeds.iter().copied().collect();
+    // Incident sorted-global triples per seed generator.
+    let mut incident: HashMap<u32, Vec<[u32; 3]>> = HashMap::new();
+    for t in tri.triangles.chunks_exact(3) {
+        let gs = [local_ids[t[0]], local_ids[t[1]], local_ids[t[2]]];
+        let mut tri3 = gs;
+        tri3.sort_unstable();
+        for &g in &gs {
+            if seedset.contains(&g) {
+                incident.entry(g).or_default().push(tri3);
+            }
+        }
+    }
+    let adj = |a: [u32; 3], b: [u32; 3]| a != b && a.iter().filter(|x| b.contains(x)).count() == 2;
+    let mut out = Vec::with_capacity(seeds.len());
+    for &g in seeds {
+        let Some(tris) = incident.get(&g) else {
+            continue;
+        };
+        let n = tris.len();
+        if n < 3 {
+            continue;
+        }
+        // Chain incident triangles into the cyclic fan (each shares edge g-x with
+        // the next). delaunator's fans are clean, so this closes — a generator on
+        // the projection hull won't close and is skipped (treated as rim).
+        let mut used = vec![false; n];
+        let mut order = vec![tris[0]];
+        used[0] = true;
+        let mut ok = true;
+        for _ in 1..n {
+            let cur = *order.last().unwrap();
+            match (0..n).find(|&j| !used[j] && adj(cur, tris[j])) {
+                Some(j) => {
+                    used[j] = true;
+                    order.push(tris[j]);
+                }
+                None => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if ok && adj(*order.last().unwrap(), order[0]) {
+            out.push(RebuiltCell {
+                generator: g,
+                vertices: order,
+            });
+        }
+    }
+    Some(out)
+}
+
+/// Proper defect repair (feature `escalate_probe`): wholesale-splice the defect
+/// closure with the PROJECTED exact oracle (`delaunator_cells`) and grow until
+/// the residual closes. Because the oracle is projected, the rebuilt rim triples
+/// match the surrounding fast cells (reuse their vids) and pair by construction,
+/// so the closure stays bounded (converges in ~1 round). The whole-diagram
+/// never-worse gate lives in the caller.
+#[cfg(feature = "escalate_probe")]
+pub fn repair_delaunator(
+    points: &[Vec3],
+    work: &mut WorkingDiagram,
+    defect_pairs: &[(u32, u32)],
+    _gather_k: usize,
+    max_rounds: usize,
+) -> EscalationStats {
+    use std::collections::HashMap;
+    let mut stats = EscalationStats::default();
+    let defect_gens: std::collections::BTreeSet<u32> =
+        defect_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
+    let target_sign = work.winding_convention(points, &defect_gens);
+
+    // ONE GLOBAL stereographic Delaunay (fixed pole) over all generators. A
+    // global pole is what makes the rebuilt rim agree with the fast diagram
+    // (fast ≈ the global-pole Delaunay); a per-gather local pole picks different
+    // near-cocircular diagonals → rim mismatch → overgrowth/skips. Defective
+    // inputs are clustered, so a single pole = antipode of the centroid is sound.
+    let mut centroid = Vec3::ZERO;
+    for &p in points {
+        centroid += p;
+    }
+    let pole = (-centroid).normalize();
+    let a = if pole.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+    let e1 = (a - pole * a.dot(pole)).normalize();
+    let e2 = pole.cross(e1);
+    let proj: Vec<delaunator::Point> = points
+        .iter()
+        .map(|&p| {
+            let d = (1.0 - p.dot(pole)).max(1e-12);
+            delaunator::Point {
+                x: (p.dot(e1) / d) as f64,
+                y: (p.dot(e2) / d) as f64,
+            }
+        })
+        .collect();
+    let tri = delaunator::triangulate(&proj);
+    if tri.triangles.is_empty() {
+        return stats;
+    }
+    // generator -> incident sorted-global triples (the global Delaunay fan)
+    let mut incident: HashMap<u32, Vec<[u32; 3]>> = HashMap::new();
+    for t in tri.triangles.chunks_exact(3) {
+        let mut k = [t[0] as u32, t[1] as u32, t[2] as u32];
+        k.sort_unstable();
+        for &li in t {
+            incident.entry(li as u32).or_default().push(k);
+        }
+    }
+    let adj = |a: [u32; 3], b: [u32; 3]| a != b && a.iter().filter(|x| b.contains(x)).count() == 2;
+    // Ordered fan for g from its incident triples (combinatorial chain); None if
+    // it doesn't close (g on the projection hull — a far-hemisphere rim cell).
+    let extract = |g: u32| -> Option<Vec<[u32; 3]>> {
+        let tris = incident.get(&g)?;
+        let n = tris.len();
+        if n < 3 {
+            return None;
+        }
+        let mut used = vec![false; n];
+        let mut order = vec![tris[0]];
+        used[0] = true;
+        for _ in 1..n {
+            let cur = *order.last().unwrap();
+            let j = (0..n).find(|&j| !used[j] && adj(cur, tris[j]))?;
+            used[j] = true;
+            order.push(tris[j]);
+        }
+        if adj(*order.last().unwrap(), order[0]) {
+            Some(order)
+        } else {
+            None
+        }
+    };
+
+    let mut spliced: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    // Seed the closure from the unpaired-edge generators AND any low-incidence
+    // vertices (degree 1/2 — a sliver/near-coincident vertex can be a defect with
+    // NO unpaired edge, which the unpaired-only trigger misses).
+    let mut closure: std::collections::BTreeSet<u32> = defect_gens;
+    {
+        let mut refcount: HashMap<u32, u32> = HashMap::new();
+        for list in &work.cells {
+            for &v in list {
+                *refcount.entry(v).or_default() += 1;
+            }
+        }
+        for (&v, &c) in &refcount {
+            if (1..3).contains(&c) {
+                for x in work.vkey[v as usize] {
+                    closure.insert(x);
+                }
+            }
+        }
+    }
+    for _ in 0..max_rounds {
+        if closure.is_empty() {
+            break;
+        }
+        stats.rounds += 1;
+        let cells: Vec<RebuiltCell> = closure
+            .iter()
+            .filter_map(|&g| {
+                extract(g).map(|vertices| RebuiltCell {
+                    generator: g,
+                    vertices,
+                })
+            })
+            .collect();
+        for c in &cells {
+            work.splice_generator(points, c.generator, &c.vertices, target_sign);
+            spliced.insert(c.generator);
+        }
+        // Grow on residual defects: unpaired edges AND low-incidence vertices.
+        // A vertex referenced by 1 or 2 cells is a degree-1/2 artifact — e.g. a
+        // closure cell re-fanned away a fast vertex its NON-closure neighbors
+        // still reference, leaving it degree-2 OUTSIDE the closure. Scan globally
+        // and add that triple's generators so the next round completes them.
+        let mut implicated: std::collections::BTreeSet<u32> =
+            work.unpaired_generators().into_iter().collect();
+        {
+            let mut refcount: HashMap<u32, u32> = HashMap::new();
+            for list in &work.cells {
+                for &v in list {
+                    *refcount.entry(v).or_default() += 1;
+                }
+            }
+            for (&v, &c) in &refcount {
+                if (1..3).contains(&c) {
+                    for x in work.vkey[v as usize] {
+                        implicated.insert(x);
+                    }
+                }
+            }
+        }
+        let new: Vec<u32> = implicated
+            .iter()
+            .copied()
+            .filter(|g| !closure.contains(g))
+            .collect();
+        if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+            eprintln!(
+                "  repair round {}: closure={} spliced={} implicated={} new={}",
+                stats.rounds,
+                closure.len(),
+                spliced.len(),
+                implicated.len(),
+                new.len(),
+            );
+        }
+        if new.is_empty() {
+            stats.stuck_components = usize::from(!implicated.is_empty());
+            break;
+        }
+        for g in new {
+            closure.insert(g);
+        }
+    }
+    stats.spliced_generators = spliced.len();
+    if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+        eprintln!(
+            "repair_delaunator: {:?}; final unpaired-implicated={}",
+            stats,
+            work.unpaired_generators().len()
+        );
+    }
+    stats
+}
+
 /// Select the active cell source from `S2_ESCALATE_SOURCE` (`reclip` | `hull`),
 /// defaulting to the passed-in `source`. Lets the probes A/B the local re-clip
 /// against the from-scratch hull without rewiring callers.
@@ -276,6 +545,27 @@ pub fn triple_circumcenter(points: &[Vec3], t: [u32; 3]) -> Vec3 {
         n = -n;
     }
     Vec3::new(n.x as f32, n.y as f32, n.z as f32)
+}
+
+/// Order a cell's vertex triples into a cyclic boundary by the angular position
+/// of each circumcenter in generator `g`'s tangent plane. Robust for a mixed
+/// rim(fast)+interior(hull) vertex set — unlike a greedy shared-generator cycle
+/// walk, it never bails on a non-manifold/degenerate set (the grow loop + the
+/// never-worse gate catch any residual inconsistency).
+fn order_cell_angular(points: &[Vec3], g: u32, triples: &[[u32; 3]]) -> Vec<[u32; 3]> {
+    let gp = points[g as usize];
+    let a = if gp.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+    let e1 = (a - gp * a.dot(gp)).normalize();
+    let e2 = gp.cross(e1);
+    let mut keyed: Vec<(f32, [u32; 3])> = triples
+        .iter()
+        .map(|&t| {
+            let c = triple_circumcenter(points, t);
+            (c.dot(e2).atan2(c.dot(e1)), t)
+        })
+        .collect();
+    keyed.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
+    keyed.into_iter().map(|(_, t)| t).collect()
 }
 
 /// A mutable triple-keyed view of the assembled diagram, in effective-generator
@@ -624,32 +914,19 @@ impl WorkingDiagram {
                 }
             }
             let vs: Vec<[u32; 3]> = verts.into_iter().collect();
-            let n = vs.len();
-            if n < 3 {
+            if vs.len() < 3 {
                 continue;
             }
-            let mut used = vec![false; n];
-            let mut order = vec![vs[0]];
-            used[0] = true;
-            let mut ok = true;
-            for _ in 1..n {
-                let cur = *order.last().unwrap();
-                match (0..n).find(|&j| !used[j] && adj(cur, vs[j])) {
-                    Some(j) => {
-                        used[j] = true;
-                        order.push(vs[j]);
-                    }
-                    None => {
-                        ok = false;
-                        break;
-                    }
-                }
-            }
-            if ok && adj(*order.last().unwrap(), order[0]) {
-                self.splice_generator(points, g, &order, target_sign);
-                filled += 1;
-            }
+            // Robust cyclic order: sort the (rim+interior) vertex set by the
+            // angular position of each circumcenter in g's tangent plane. Unlike
+            // a greedy shared-generator cycle walk, this never bails on a
+            // non-manifold / degenerate vertex set — any residual inconsistency
+            // is caught by the grow loop and the whole-diagram never-worse gate.
+            let order = order_cell_angular(points, g, &vs);
+            self.splice_generator(points, g, &order, target_sign);
+            filled += 1;
         }
+        let _ = adj;
         filled
     }
 

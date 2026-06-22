@@ -174,16 +174,37 @@ fn compute_voronoi_knn_clipping_report_core(
             .iter()
             .map(|&(a, b)| (a.min(b), a.max(b)))
             .collect();
+        // Also trigger on low-incidence vertices (degree 1/2): a sliver /
+        // near-coincident vertex can be a defect with NO unpaired edge, which the
+        // unpaired-only trigger misses. Cheap O(V+E) scan of the assembled cells.
+        let has_low_incidence = {
+            let mut cnt = vec![0u32; vertices.len()];
+            for &v in &eff_cell_indices {
+                cnt[v as usize] += 1;
+            }
+            cnt.iter().any(|&c| c == 1 || c == 2)
+        };
         // The A0 de-risk probe measures the full-exact-vs-flag classification and
         // must run even when there are no residual defects (e.g. small inputs).
         let force_for_probe = std::env::var("S2_ESCALATE_PROBE_A0").is_ok();
-        if !defect_pairs.is_empty() || force_for_probe {
+        if !defect_pairs.is_empty() || has_low_incidence || force_for_probe {
             let mut work = escalate::WorkingDiagram::from_assembled(
                 &vertices,
                 &vertex_keys,
                 &eff_cells,
                 &eff_cell_indices,
             );
+            // Projected exact oracle (delaunator) when available — proven to
+            // converge; falls back to the dependency-free local engine otherwise.
+            #[cfg(feature = "escalate_probe")]
+            let _stats = escalate::repair_delaunator(
+                effective_points_ref,
+                &mut work,
+                &defect_pairs,
+                ESCALATE_GATHER_K,
+                ESCALATE_MAX_ROUNDS,
+            );
+            #[cfg(not(feature = "escalate_probe"))]
             let _stats = escalate::escalate_diagram(
                 effective_points_ref,
                 &mut work,
@@ -193,9 +214,24 @@ fn compute_voronoi_knn_clipping_report_core(
                 escalate::rebuild_cells,
             );
             let (new_vertices, new_cells, new_cell_indices) = work.into_flat();
-            vertices = new_vertices;
-            eff_cells = new_cells;
-            eff_cell_indices = new_cell_indices;
+
+            // Valid-or-revert gate: accept the repair only if it makes the
+            // diagram STRICTLY VALID. A repair that doesn't fully resolve the
+            // defects is reverted, so the output is always either strictly valid
+            // (repaired) or the original error-reported diagram — never a subtly
+            // invalid in-between. (Cheap: one O(E) validate on the cold path.)
+            let post = crate::validation::validate(&crate::SphericalVoronoi::from_raw_parts(
+                effective_points_ref.to_vec(),
+                new_vertices.clone(),
+                new_cells.clone(),
+                new_cell_indices.clone(),
+                None,
+            ));
+            if post.is_strictly_valid() {
+                vertices = new_vertices;
+                eff_cells = new_cells;
+                eff_cell_indices = new_cell_indices;
+            }
         }
     }
 
