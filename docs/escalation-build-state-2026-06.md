@@ -4,6 +4,13 @@ Resume anchor for the adaptive-canonical-clip / escalation work. Read this +
 `docs/adaptive-canonical-clip-design-2026-06.md` (design + measured GO/NO-GO) to
 pick up. Branch: `agent/canonical-predicate-topology`.
 
+> **LATEST (2026-06-22, commit `0e944dd`):** the repair is now **dependency-free
+> and LOCAL** — one exact 2D Delaunay (`robust::incircle`, no `delaunator`) in a
+> single shared stereographic chart over a local gather. Mega 100k s1–20 /
+> 300k / 500k / 1m all strictly valid, parity with the delaunator scaffolding.
+> Current thinking, the projected-vs-raw oracle question, and the open
+> measurement are in **`docs/local-repair-oracle-2026-06.md`**.
+
 > **CORRECTION (2026-06-22):** an earlier version of this doc presented
 > "rebuild a defect neighborhood as ONE exact `local_hull` and splice it back"
 > as the *proven local fix* and recommended re-running assembly with that rebuild
