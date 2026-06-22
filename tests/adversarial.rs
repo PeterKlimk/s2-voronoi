@@ -212,34 +212,16 @@ fn test_cocircular_extreme() {
 
 #[test]
 fn test_hemisphere_basic() {
-    // 100 points on upper hemisphere
+    // 100 points on upper hemisphere.
     let points = hemisphere_points(100, 42);
-    let result = compute(&points);
-
-    assert!(
-        matches!(
-            result,
-            Err(VoronoiError::UnsupportedGeometry { .. }) | Err(VoronoiError::ComputationFailed(_))
-        ),
-        "hemisphere_basic should fail cleanly with an explicit error, got {:?}",
-        result
-    );
+    expect_strict_success("hemisphere_basic", compute(&points));
 }
 
 #[test]
 fn test_hemisphere_dense() {
-    // 500 points on upper hemisphere - likely to create cells >90°
+    // 500 points on upper hemisphere; a few cells require cold spherical extraction.
     let points = hemisphere_points(500, 42);
-    let result = compute(&points);
-
-    assert!(
-        matches!(
-            result,
-            Err(VoronoiError::UnsupportedGeometry { .. }) | Err(VoronoiError::ComputationFailed(_))
-        ),
-        "hemisphere_dense should fail cleanly with an explicit error, got {:?}",
-        result
-    );
+    expect_strict_success("hemisphere_dense", compute(&points));
 }
 
 // =============================================================================

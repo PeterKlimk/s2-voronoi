@@ -110,12 +110,10 @@ The taxonomy should stay separated like this:
 
 - `ProjectionInvalid`: builder-specific representational limit, eligible for fallback
 - `UnboundedAfterExhaustion`: no bounded gnomonic polygon was ever formed. This is
-  currently the terminal signal for the pinned pure-great-circle and upper-hemisphere
-  fixtures (`tests/weird_geometry.rs::classify_weird_geometry_failures`). It is
-  not handled by the existing handoff because the gnomonic polygon still contains
-  bounding-box sentinel edges; a fallback for this class must reconstruct the cell
-  directly from all accepted bisector constraints, not from a bounded gnomonic
-  polygon.
+  still the terminal signal for pinned pure-great-circle fixtures in strict mode.
+  Upper-hemisphere fixtures now route through a cold all-constraints spherical
+  extractor after exhaustion. That path reconstructs the cell directly from all
+  accepted bisector constraints, not from a bounded gnomonic polygon.
 - `TooManyVertices`: builder/resource failure; eligible for the bounded-polygon
   spherical fallback handoff.
 - `ClippedAway`: terminal contradiction / invalid build path
@@ -139,9 +137,9 @@ Recommended constraints:
 - deterministic replay of accepted neighbors before consuming new neighbors
 
 The current fallback covers bounded-polygon handoff/replay and spherical clipping
-after `ProjectionInvalid` / `TooManyVertices` triggers. It does not cover
-`UnboundedAfterExhaustion`; that requires an all-constraints spherical extraction
-path that can start without a pre-existing bounded polygon.
+after `ProjectionInvalid` / `TooManyVertices` triggers. It also has a cold
+`UnboundedAfterExhaustion` backstop that starts without a pre-existing bounded
+polygon and extracts from all accepted constraints.
 
 ## Remaining design questions
 
@@ -154,21 +152,21 @@ path that can start without a pre-existing bounded polygon.
 
 Until those are answered, the wrapper seam should remain small and explicit.
 
-## All-constraints extractor probe
+## All-constraints extractor
 
-For `UnboundedAfterExhaustion`, a test-only prototype now routes the accepted
-bisector constraints through a cold all-pairs spherical halfspace extractor:
-enumerate every pair of accepted planes, keep the two intersection directions
-that satisfy all accepted constraints, deduplicate, cyclically order around the
-generator, and derive each vertex key as `(generator, neighbor_a, neighbor_b)`.
-Adjacent vertices must share a constraint, producing the edge-neighbor cycle
-needed by the normal output path.
+For `UnboundedAfterExhaustion`, production now routes the accepted bisector
+constraints through a cold all-pairs spherical halfspace extractor: enumerate
+every pair of accepted planes, keep the two intersection directions that satisfy
+all accepted constraints, deduplicate, cyclically order around the generator,
+and derive each vertex key as `(generator, neighbor_a, neighbor_b)`. Adjacent
+vertices must share a constraint, producing the edge-neighbor cycle needed by
+the normal output path.
 
-That prototype reconstructs the currently failing upper-hemisphere cells:
+That extractor reconstructs the upper-hemisphere exhaustion cells:
 
-- `hemisphere_100`: all 4 failed cells extract 7 vertices and 7 edge neighbors
-- `hemisphere_500`: all 4 failed cells extract 9 vertices and 9 edge neighbors
-- `hemisphere_2k`: all 4 failed cells extract 11 vertices and 11 edge neighbors
+- `hemisphere_100`: 4 cells use all-constraints extraction and emit up to 7 edges
+- `hemisphere_500`: 4 cells use all-constraints extraction and emit up to 9 edges
+- `hemisphere_2k`: 4 cells use all-constraints extraction and emit up to 11 edges
 
 It intentionally does not solve exact rank-2 great-circle inputs: those have no
 full-dimensional spherical cell under the unperturbed constraints, so the
@@ -198,10 +196,10 @@ One run after the rank-2 perturbation work showed:
 - `great_circle_50`: every cell failed `UnboundedAfterExhaustion`; each processed
   49 neighbors
 - `great_circle_jitter_50`: every cell succeeded but each processed 48 neighbors
-- `hemisphere_100`: 96 cells succeeded, 4 failed; failing cells processed 99
-  neighbors
-- `hemisphere_500`: 496 cells succeeded, 4 failed; failing cells processed 499
-  neighbors
+- `hemisphere_100`: every cell succeeds; 4 cells exhaust the stream and take the
+  all-constraints extractor after processing 99 neighbors
+- `hemisphere_500`: every cell succeeds; 4 cells exhaust the stream and take the
+  all-constraints extractor after processing 499 neighbors
 - `latitude_ring_32` / `latitude_ring_64`: every cell succeeded, every cell
   exhausted the stream, and the two pole cells triggered polygon-cap fallback
 
@@ -211,8 +209,8 @@ With `S2_PROBE_LARGE=1`:
 - `great_circle_200`: every cell failed `UnboundedAfterExhaustion`; each processed
   199 neighbors
 - `great_circle_jitter_200`: every cell succeeded; p50=170, p90=198, max=198
-- `hemisphere_2k`: 1996 cells succeeded, 4 failed; failing cells processed 1999
-  neighbors
+- `hemisphere_2k`: every cell succeeds; 5 cells exhaust the stream, and 4 of
+  those take the all-constraints extractor after processing 1999 neighbors
 - `latitude_ring_256`: every cell succeeded; nearly every cell exhausted the
   stream, and the two pole cells triggered polygon-cap fallback
 
@@ -221,8 +219,8 @@ Interpretation:
 - ordinary full-sphere cells terminate very early
 - rank-2 / near-rank-2 inputs are globally expensive because local termination
   cannot prove enough in the generator chart
-- hemisphere failures are concentrated in a few cells, but those cells currently
-  walk the whole stream before failing
+- hemisphere exhaustion is concentrated in a few cells, and those cells
+  currently walk the whole stream before the cold extractor succeeds
 - a future robust path should not wait for global exhaustion; it should enter the
   all-constraints spherical extractor once a cell remains unbounded after enough
   evidence that the generator-centered chart is the wrong model

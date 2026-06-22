@@ -246,6 +246,14 @@ impl Topo2DBuilder {
     }
 
     #[inline]
+    pub(crate) fn generator(&self) -> DVec3 {
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.generator,
+            BuilderImpl::Fallback(builder) => builder.generator,
+        }
+    }
+
+    #[inline]
     pub(crate) fn accepted_constraint_count(&self) -> usize {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder.neighbor_indices.len(),
@@ -290,7 +298,6 @@ impl Topo2DBuilder {
         matches!(self.inner, BuilderImpl::Fallback(_))
     }
 
-    #[cfg(test)]
     pub(crate) fn accepted_spherical_constraints(
         &self,
         points: &[glam::Vec3],

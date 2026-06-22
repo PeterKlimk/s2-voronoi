@@ -156,6 +156,7 @@ pub(crate) struct CellBuildStats {
     directional_support_false_positive_hits: usize,
     fallback_projection: usize,
     fallback_polygon_cap: usize,
+    fallback_all_constraints: usize,
     incoming_seed_neighbors: usize,
     edgecheck_seed_clips: usize,
     knn_exhausted: bool,
@@ -182,7 +183,11 @@ impl CellBuildStats {
             self.directional_support_saved,
             self.directional_support_false_positive_hits,
         );
-        cell_sub.add_fallbacks(self.fallback_projection, self.fallback_polygon_cap);
+        cell_sub.add_fallbacks(
+            self.fallback_projection,
+            self.fallback_polygon_cap,
+            self.fallback_all_constraints,
+        );
 
         let stage = if self.used_knn {
             self.knn_stage
@@ -273,6 +278,7 @@ pub(super) struct BuildCounters {
     directional_support_false_positive_hits: usize,
     fallback_projection: usize,
     fallback_polygon_cap: usize,
+    fallback_all_constraints: usize,
     #[cfg(feature = "timing")]
     directional_shadow_terminated: bool,
     terminated: bool,
@@ -302,6 +308,7 @@ impl BuildCounters {
             directional_support_false_positive_hits: 0,
             fallback_projection: 0,
             fallback_polygon_cap: 0,
+            fallback_all_constraints: 0,
             #[cfg(feature = "timing")]
             directional_shadow_terminated: false,
             terminated: false,
@@ -625,6 +632,19 @@ fn finish_cell(
             ctx.builder.failure(),
             counters.knn_exhausted,
         ) {
+            if failure == CellFailure::UnboundedAfterExhaustion {
+                let t_cert = crate::knn_clipping::timing::Timer::start();
+                if ctx
+                    .builder
+                    .to_vertex_data_from_all_constraints(points, &mut ctx.output_buffer)
+                    .is_ok()
+                {
+                    counters.fallback_all_constraints += 1;
+                    counters.certification_time += t_cert.elapsed();
+                    return Ok(());
+                }
+                counters.certification_time += t_cert.elapsed();
+            }
             return Err(CellBuildError {
                 generator_idx,
                 failure,
@@ -729,6 +749,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         directional_support_false_positive_hits: counters.directional_support_false_positive_hits,
         fallback_projection: counters.fallback_projection,
         fallback_polygon_cap: counters.fallback_polygon_cap,
+        fallback_all_constraints: counters.fallback_all_constraints,
         incoming_seed_neighbors: request.seed_neighbors.len(),
         edgecheck_seed_clips: counters.edgecheck_seed_clips,
         knn_exhausted: counters.knn_exhausted,

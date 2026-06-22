@@ -392,16 +392,14 @@ fn test_input_types() {
 }
 
 #[test]
-fn test_compute_reports_hemisphere_limit_as_error() {
+fn test_compute_solves_upper_hemisphere_large_cells() {
     let points = hemisphere_points(100, 42);
-    let result = compute(&points);
+    let diagram = compute(&points).expect("hemisphere-limited inputs should compute");
+    let report = validate(&diagram);
     assert!(
-        matches!(
-            result,
-            Err(VoronoiError::UnsupportedGeometry { .. }) | Err(VoronoiError::ComputationFailed(_))
-        ),
-        "hemisphere-limited inputs should fail cleanly, got {:?}",
-        result
+        report.is_strictly_valid(),
+        "hemisphere-limited output should validate strictly: {}",
+        report.headline()
     );
 }
 

@@ -534,6 +534,16 @@ impl Topo2DBuilder {
         }
     }
 
+    #[cfg_attr(feature = "profiling", inline(never))]
+    pub(crate) fn to_vertex_data_from_all_constraints(
+        &self,
+        points: &[Vec3],
+        buffer: &mut CellOutputBuffer,
+    ) -> Result<(), CellFailure> {
+        let constraints = self.accepted_spherical_constraints(points);
+        extract_all_constraints_cell(self.generator_idx(), self.generator(), &constraints, buffer)
+    }
+
     pub fn count_active_planes(&self) -> (usize, usize) {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder.count_active_planes(),
@@ -554,4 +564,149 @@ impl Topo2DBuilder {
             BuilderImpl::Fallback(builder) => builder.debug_extraction_failure(),
         }
     }
+}
+
+fn extract_all_constraints_cell(
+    generator_idx: usize,
+    generator: DVec3,
+    constraints: &[super::FallbackConstraint],
+    buffer: &mut CellOutputBuffer,
+) -> Result<(), CellFailure> {
+    if constraints.len() < 3 {
+        return Err(CellFailure::NoValidSeed);
+    }
+
+    let mut vertices = Vec::new();
+    for a in 0..constraints.len() {
+        for b in a + 1..constraints.len() {
+            let cross = constraints[a].normal.cross(constraints[b].normal);
+            let len2 = cross.length_squared();
+            if !len2.is_finite() || len2 <= 1e-24 {
+                continue;
+            }
+
+            let inv_len = len2.sqrt().recip();
+            for sign in [1.0, -1.0] {
+                let dir = cross * (sign * inv_len);
+                if constraints
+                    .iter()
+                    .all(|constraint| constraint.normal.dot(dir) >= -FALLBACK_PLANE_TOL)
+                {
+                    let position = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);
+                    let len2 = position.length_squared();
+                    if !len2.is_finite() || len2 < EXTRACT_DEGENERATE_LEN2 {
+                        continue;
+                    }
+                    push_all_constraints_vertex(
+                        &mut vertices,
+                        FallbackVertex {
+                            position: position * len2.sqrt().recip(),
+                            plane_a: a,
+                            plane_b: b,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    if vertices.len() < 3 {
+        return Err(CellFailure::NoValidSeed);
+    }
+
+    let basis = super::TangentBasis::new(generator);
+    vertices.sort_by(|a, b| {
+        let pa = DVec3::new(
+            a.position.x as f64,
+            a.position.y as f64,
+            a.position.z as f64,
+        );
+        let pb = DVec3::new(
+            b.position.x as f64,
+            b.position.y as f64,
+            b.position.z as f64,
+        );
+        let aa = pa.dot(basis.t2).atan2(pa.dot(basis.t1));
+        let ab = pb.dot(basis.t2).atan2(pb.dot(basis.t1));
+        aa.total_cmp(&ab)
+    });
+
+    buffer.clear();
+    buffer.vertices.reserve(vertices.len());
+    buffer.edge_neighbor_globals.reserve(vertices.len());
+    buffer.edge_neighbor_slots.reserve(vertices.len());
+    buffer.edge_neighbor_eps.reserve(vertices.len());
+
+    let gen_idx = generator_idx as u32;
+    for (i, vertex) in vertices.iter().copied().enumerate() {
+        let plane_a = &constraints[vertex.plane_a];
+        let plane_b = &constraints[vertex.plane_b];
+        buffer.vertices.push((
+            sort3_u32(
+                gen_idx,
+                plane_a.neighbor_idx as u32,
+                plane_b.neighbor_idx as u32,
+            ),
+            vertex.position,
+        ));
+
+        let next = vertices[(i + 1) % vertices.len()];
+        let Some(edge_plane) = shared_all_constraints_edge(vertex, next, constraints) else {
+            buffer.clear();
+            return Err(CellFailure::NoValidSeed);
+        };
+        let edge = &constraints[edge_plane];
+        buffer.edge_neighbor_globals.push(edge.neighbor_idx as u32);
+        buffer.edge_neighbor_slots.push(edge.neighbor_slot);
+        buffer.edge_neighbor_eps.push(edge.hp_eps.unwrap_or(0.0));
+    }
+
+    Ok(())
+}
+
+fn push_all_constraints_vertex(vertices: &mut Vec<FallbackVertex>, vertex: FallbackVertex) {
+    if vertices
+        .iter()
+        .any(|existing| (existing.position - vertex.position).length_squared() <= 1e-12)
+    {
+        return;
+    }
+    vertices.push(vertex);
+}
+
+fn shared_all_constraints_edge(
+    a: FallbackVertex,
+    b: FallbackVertex,
+    constraints: &[super::FallbackConstraint],
+) -> Option<usize> {
+    if let Some(plane) = [a.plane_a, a.plane_b]
+        .into_iter()
+        .find(|&plane| plane == b.plane_a || plane == b.plane_b)
+    {
+        return Some(plane);
+    }
+
+    let pos_a = DVec3::new(
+        a.position.x as f64,
+        a.position.y as f64,
+        a.position.z as f64,
+    );
+    let pos_b = DVec3::new(
+        b.position.x as f64,
+        b.position.y as f64,
+        b.position.z as f64,
+    );
+    constraints
+        .iter()
+        .enumerate()
+        .find_map(|(idx, constraint)| {
+            let normal = constraint.normal;
+            if normal.dot(pos_a).abs() <= FallbackBuilder::ON_PLANE_TOL
+                && normal.dot(pos_b).abs() <= FallbackBuilder::ON_PLANE_TOL
+            {
+                Some(idx)
+            } else {
+                None
+            }
+        })
 }

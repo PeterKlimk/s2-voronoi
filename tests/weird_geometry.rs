@@ -101,12 +101,12 @@ fn weird_geometry_contract_cases() {
         (
             "upper_hemisphere_large_cells",
             hemisphere_points(100, 42),
-            Expected::CleanFailure,
+            Expected::StrictSuccess,
         ),
         (
             "upper_hemisphere_dense_large_cells",
             hemisphere_points(500, 42),
-            Expected::CleanFailure,
+            Expected::StrictSuccess,
         ),
         (
             "anchored_clustered_cap",
@@ -225,16 +225,9 @@ fn classify_weird_geometry_failures() {
 }
 
 #[test]
-#[ignore = "future goal: no-fail weird geometries under welding/fallback mode"]
-fn future_no_fail_with_welding_targets() {
-    for (name, points) in [
-        ("pure_great_circle_rank2", great_circle_points(50, 0.0, 42)),
-        ("upper_hemisphere_large_cells", hemisphere_points(100, 42)),
-        (
-            "upper_hemisphere_dense_large_cells",
-            hemisphere_points(500, 42),
-        ),
-    ] {
+#[ignore = "future goal: no-fail rank-2 geometry under welding/fallback mode"]
+fn future_no_fail_rank2_with_welding_target() {
+    for (name, points) in [("pure_great_circle_rank2", great_circle_points(50, 0.0, 42))] {
         let diagram = compute_with(
             &points,
             VoronoiConfig {

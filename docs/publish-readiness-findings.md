@@ -23,13 +23,18 @@ In practice, only `InsufficientPoints` is returned today. The backend still pani
 
 - [`src/knn_clipping/live_dedup/build/process_cell.rs`](/home/pkzmbk/code/s2-voronoi/src/knn_clipping/live_dedup/build/process_cell.rs)
 
-This was confirmed by running the ignored hemisphere adversarial case:
+Historical note: this was originally confirmed by running the ignored hemisphere
+adversarial case:
 
 ```bash
 cargo test --release --test adversarial test_hemisphere_basic -- --ignored --nocapture
 ```
 
 That run failed with multiple worker-thread panics instead of returning `Err`.
+The upper-hemisphere path is no longer the reproducer: those fixtures now compute
+and validate through the cold all-constraints fallback. The broader finding
+remains relevant for any remaining backend panic/expect paths under unsupported
+or extreme inputs.
 
 Why this matters:
 

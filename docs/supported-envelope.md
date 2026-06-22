@@ -117,6 +117,7 @@ The backend is intended to support:
 - non-degenerate point sets large enough to form a Voronoi subdivision
 - many practical near-degenerate configurations, including:
   - small-jitter great-circle-like inputs
+  - upper-hemisphere inputs whose large cells require cold all-constraints extraction
   - clustered-cap inputs with reasonable anchoring
   - many near-cocircular and edge-reconciliation cases
 
@@ -130,10 +131,11 @@ high-degree, and welded-subresolution cases.
 The backend is expected to return a defined `Err(...)` for:
 
 - cells that cannot form a bounded generator-centered gnomonic polygon after
-  exhausting the neighbor stream. The pinned pure-great-circle and upper-hemisphere
-  fixtures currently fail this way. Rank-2 full-great-circle inputs can opt into
-  `DegenerateMode::PerturbGreatCircle`; upper-hemisphere / large-cell inputs need
-  a future all-constraints spherical fallback, not SoS.
+  exhausting the neighbor stream and cannot be reconstructed as a full-dimensional
+  spherical cell from all accepted constraints. The pinned pure-great-circle
+  fixture still fails this way in strict mode. Rank-2 full-great-circle inputs
+  can opt into `DegenerateMode::PerturbGreatCircle`; upper-hemisphere / large-cell
+  inputs are now handled by the cold all-constraints spherical fallback.
 - extreme scale/layout cases exceeding current packed/indexing capacity
 - cells whose intermediate clip polygon exceeds the fixed clipping vertex budget
   (`MAX_POLY_VERTICES` is currently 24): a cell genuinely bordering more than
@@ -265,8 +267,9 @@ unless it can state the failure reason honestly and specifically.
 The most likely future refinements to this contract are:
 
 - tightening which adversarial families are pinned as expected success vs expected failure
-- clarifying whether `UnboundedAfterExhaustion` can be narrowed beyond `ComputationFailed`
-- adding fallback strategies for currently unsupported geometry/workspace limits rather than only
+- adding an early trigger for the all-constraints fallback so large upper-hemisphere
+  cells do not need to wait for full neighbor-stream exhaustion
+- adding fallback strategies for remaining unsupported geometry/workspace limits rather than only
   failing cleanly
 - tightening the remaining bug-only extraction/reconciliation invariants without broadening the
   public error taxonomy prematurely

@@ -98,7 +98,13 @@ impl CellSubAccum {
     ) {
     }
     #[inline(always)]
-    pub fn add_fallbacks(&mut self, _projection: usize, _polygon_cap: usize) {}
+    pub fn add_fallbacks(
+        &mut self,
+        _projection: usize,
+        _polygon_cap: usize,
+        _all_constraints: usize,
+    ) {
+    }
     #[inline(always)]
     pub fn merge(&mut self, _other: &CellSubAccum) {}
     #[inline(always)]

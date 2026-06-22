@@ -8,32 +8,37 @@ For release-oriented concerns, see `docs/publish-readiness-findings.md`.
 
 ## Current findings
 
-### 1. Cells that extend beyond the generator hemisphere still need a fallback story
+### 1. Cells that extend beyond the generator hemisphere still need a complete fallback story
 
 The current clipping path relies on a gnomonic projection centered at the generator. That
 projection stops being valid once the cell extends beyond 90 degrees from the generator.
 
 This is not a normal case for well-spread inputs, but it is a real algorithm boundary and needs an
-explicit outcome rather than accidental failure. The explicit failure boundary now exists; the
-remaining gap is what the longer-term fallback/model story should be.
+explicit outcome rather than accidental failure. The explicit failure boundary now exists, and
+`UnboundedAfterExhaustion` has a cold all-constraints spherical extractor for known
+upper-hemisphere large-cell cases. The remaining gap is a complete fallback/model story for
+projection-invalid cells and an early trigger that avoids walking the full neighbor stream before
+taking the cold extractor.
 
 Current evidence:
 
-- `tests/adversarial.rs` already documents the limitation in the great-circle and hemisphere cases
-- `test_hemisphere_basic` and related ignored tests exercise this family of failures
+- `tests/adversarial.rs` pins upper-hemisphere cases as strict-success fixtures
+- `tests/weird_geometry.rs` keeps pure rank-2 great-circle inputs as clean failures in strict mode
 
 Current status:
 
 - the builder now detects proven hemisphere/projection invalidity explicitly
 - the public API returns `VoronoiError::UnsupportedGeometry` for that proven boundary
-- fallback projection/model support does not exist yet
+- unbounded-after-exhaustion hemisphere cells route through the cold all-constraints extractor
+- fallback projection/model support for every projection-invalid case does not exist yet
 
 Desired direction:
 
 - keep the explicit failure boundary honest
-- then either:
-  - continue failing cleanly with a real error, or
-  - route to a fallback that uses a projection/model that can represent the cell
+- add an early trigger for the all-constraints extractor once a cell has enough evidence that the
+  generator-centered chart is the wrong model
+- route remaining projection-invalid cases to a fallback that can represent the cell, or keep
+  returning a specific clean error
 
 This should be treated as a correctness boundary, not as a best-effort corner case.
 
@@ -123,7 +128,7 @@ Desired direction:
 
 - turn more adversarial cases into explicit contract tests
 - especially around:
-  - hemisphere / >90 degree cells
+  - projection-invalid / >90 degree cells not covered by exhaustion fallback
   - near-degenerate shared-edge disagreement
   - panic-vs-error behavior
 
