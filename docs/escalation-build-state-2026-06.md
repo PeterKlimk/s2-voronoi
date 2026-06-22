@@ -1,34 +1,109 @@
-# Escalation build — state & resume (2026-06-22)
+# Escalation build — state & resume (updated 2026-06-22)
 
 Resume anchor for the adaptive-canonical-clip / escalation work. Read this +
 `docs/adaptive-canonical-clip-design-2026-06.md` (design + measured GO/NO-GO) to
 pick up. Branch: `agent/canonical-predicate-topology`.
 
+> **CORRECTION (2026-06-22):** an earlier version of this doc presented
+> "rebuild a defect neighborhood as ONE exact `local_hull` and splice it back"
+> as the *proven local fix* and recommended re-running assembly with that rebuild
+> (route (a), local-hull source). **That conclusion was DISPROVEN.** The
+> local-hull splice DIVERGES, and the divergence was an artifact of using
+> `local_hull` as the oracle — not a real obstacle to local repair. The current
+> state, what is proven vs open, and the corrected recommended path are below.
+> Authoritative findings: memory notes `fast-clip-is-projected-delaunay` and
+> `route-a-splice-diverges`.
+
 ## One-line status
 
-The near-cocircular unpaired-edge residual (the "valid-or-error" regime) has a
-**proven local fix**: rebuild a defect neighborhood as ONE exact local Delaunay
-(`local_hull`) and read each generator's cell off the shared dual — cells pair
-by construction. Proven on real mega defects. **Remaining: splice the rebuilt
-cells back into the global diagram and run `validate`.**
+The near-cocircular unpaired-edge residual (the "valid-or-error" regime) is a
+**tiny, per-cell-chart f64-rounding error (~tens of cells, 0.01–0.02%, in every
+regime)** — NOT a metric difference and NOT an f32 resolution floor on the graph.
+Detect + repair with a **consistent exact oracle (raw `orient3d` in-circle)** is
+**viable and cheap**: it converges in ~1 round at the small defect set. Measured
+to make **4/5 mega-100k seeds strictly valid** (offline, behind a gate). The
+recommended path is now **reactive detect+repair (option B)** with a
+whole-diagram never-worse gate; clip-time exact-by-construction (option A) is
+demoted to a future EXACT/CANONICAL-output feature, not a prerequisite for the
+valid-diagram contract. **Nothing is committed to git**; the escalation lives
+behind `set_escalation_enabled` (off by default) and the `escalate_probe`
+feature.
 
-## Commits (this branch, newest last)
+## The corrected model — what the mega defect actually is
 
-- `8f5392d` GO/NO-GO instrumentation (`p5_shadow` probes) + design doc + verdict
-- `c661511` A: `local_hull` validated as the exact engine (tests only)
-- `e13724c` C slice: rebuild resolves real defects (a–b consistency)
-- `8f2a654` C: defect cells FULLY internally valid (all edges pair)
+(Authoritative: `fast-clip-is-projected-delaunay`.)
 
-## The settled design (don't relitigate — see design doc §6/§6b/§6c)
+1. **Projected ≡ raw Delaunay in EXACT arithmetic.** Gnomonic (per-cell clip),
+   stereographic (delaunator), and raw-3D `orient3d` (local_hull) all compute the
+   SAME spherical Voronoi/Delaunay in exact arithmetic; the differences are pure
+   f64 precision. Measured (`tests/escalate.rs::projection_theory_3way`, 12k
+   interior cells): uniform agrees to a 4-cell precision tail across all three.
+2. **The defect is per-cell-gnomonic-CHART f64 rounding.** A vertex (g,a,b) is
+   decided by 3 cells, each in its OWN tangent-plane chart (centered on g / a / b).
+   Exact ⇒ all three agree; at f64 each chart rounds the same keep/drop decision
+   differently ⇒ cross-cell disagreement ⇒ an unpaired edge (~tens of cells per
+   100k). A single GLOBAL chart (delaunator) evaluates each decision once ⇒ 0 such
+   defects. The true error is TINY in every regime, mega included.
+3. **The exact diagram does NOT disagree with fast on ~9% / "the whole cap is
+   invalid" — that was WRONG.** That figure was a `local_hull` IMPLEMENTATION
+   artifact: the global convex hull of points clustered on a sphere PATCH wraps
+   spurious "back faces" around the empty far hemisphere, corrupting
+   cluster-boundary cells. It is NOT a real projected-vs-raw metric difference
+   (uniform's 4-cell agreement proves it). With a real exact oracle (delaunator,
+   or deterministic-tie raw orient3d) the changed set is ~tens of cells everywhere.
 
-Pipeline: **detect residuals → connected component → rebuild the whole component
-as ONE `local_hull` → splice into the diagram → `validate` → grow until clean.**
+## The corrected recommended path
 
-Why it works where every reverted repair failed: a component is rebuilt as a
-SINGLE hull, so all its cells share one triangulation and pair by construction;
-the boundary is a WELL-CONDITIONED rim (fast == exact there), so there is no
-exact/approximate seam to stitch. The reverted pin-by-key/boundary repairs
-stitched AT the degeneracy, which is why they failed.
+**Option B — reactive detect + repair (fill-with-grow), the recommended path:**
+
+Pipeline: **post-assembly defect list (`unresolved_edge_pairs`,
+`compute.rs:146-199`, perfect-recall reactive trigger) → cluster the
+unpaired-incident (broken) ∪ malformed cells → replace each with the
+**consistent exact oracle's** cell, rim-pinned from trusted non-cluster neighbors
+→ grow until the rim is well-conditioned → `validate` with a whole-diagram
+never-worse gate (revert if not strictly better).**
+
+- **The consistent oracle = exact raw `orient3d` in-circle**
+  (`canonical::in_circle_sphere_sign`, already exists): a function of the 4 raw
+  points, identical from every cell, with no projection and no hemisphere issue.
+  This is the safest exact decision. (delaunator works as an oracle only because
+  it agrees with fast — single global chart, projected like fast — but it is NOT
+  canonical: its near-cocircular answer is stereographic-pole-dependent, so a
+  local delaunator with a different pole diverges. Use it as a *reference* in
+  tests, not as the production oracle.)
+- **Why it converges (does NOT explode):** with a consistent oracle the detected
+  defect cells, once replaced, pair immediately with their unchanged neighbors
+  (which already equal exact). Measured: `detect_fix_expand_delaunator` converges
+  in ONE round at repair_set 4–19 (mega 100k), 80 (mega 300k), 0 (uniform/
+  clustered). The historical local_hull-splice cascade (grew to ~2900 cells over
+  40 rounds) was caused by local_hull being an INCONSISTENT oracle (insertion-
+  order ties + per-gather cap artifacts + clustered back-faces) manufacturing
+  fresh disagreement at every rebuilt cell — NOT by a real obstacle.
+- **Measured repair status:** the `fill_cluster_pass` engine made mega-0.8 100k
+  s1/s3/s4/s5 strictly VALID; s2 regressed (3→5); 300k s3 partial (51→45);
+  uniform clean no-op. So **4/5 100k seeds fixed**. Holdout (s2) is a
+  non-manifold BOUNDARY-EXTRACTION issue (cell 15514: a 27-vertex boundary that
+  visits a generator's bisector in disconnected arcs — consecutive verts sharing
+  only one generator), NOT a cascade.
+- **Remaining work for B:** (1) swap the oracle to raw `orient3d` (consistent,
+  hemisphere-safe) instead of delaunator/local_hull; (2) add the whole-diagram
+  never-worse gate (validate before/after, revert unless strictly better) so the
+  regressing cases (s2, 300k) are safe; (3) robust boundary extraction for the
+  non-manifold holdout; (4) cost/scale (1m/2m) + interior-vertex f32-
+  realizability at scale are untested.
+
+**Option A — clip-time exact decision by construction ("primary clip"):** NOT
+required for the valid-diagram contract. The work is "identify the cells + repair
+with the raw-orient3d decision," not exact arithmetic in the hot clipper. A only
+matters as a future EXACT/CANONICAL-OUTPUT feature, and even then it is best
+framed as "flag + repair," not "exact clip by construction." Because the true
+error is ~tens of cells everywhere, A's canonicalization target is tiny and its
+cost is cheap everywhere (not the earlier "~+31% uniform / +48% mega" upper
+bound, which assumed exact-everywhere). The design doc's §2 "primary clip, NOT a
+repair" argument ("a repair can't stitch because exact meets approximate at the
+rim") is **UNDERCUT**: a rim-pinned repair with a consistent oracle has no such
+seam, and projected ≡ raw means there is barely any disagreement at the
+well-conditioned rim anyway.
 
 ## What is PROVEN (committed, tested)
 
@@ -36,87 +111,88 @@ Run: `cargo test --release --features escalate_probe --test escalate -- --nocapt
 and `cargo test --release --lib local_hull`.
 
 1. **Dual consistency** (`local_hull::tests::dual_cells_agree_on_shared_edges`):
-   every two generators sharing an edge, read from one hull, name the SAME two
-   endpoint triples, cyclically adjacent in both fans. THE core invariant.
-2. **Rebuild resolves real defects** (`tests/escalate.rs::rebuild_resolves_mega_defects`):
-   mega 100k s3's 9 defects → 9/9 rebuild to a consistent shared-edge state
-   (5 genuine edges, 4 spurious fast-path edges correctly removed). Stable
-   k=48..192 ⇒ coverage (step B) is NOT the bottleneck for mega.
-3. **Defect cells fully valid** (`tests/escalate.rs::defect_cells_are_internally_valid_after_rebuild`):
-   all 207 edges of the 9 defects' cells pair internally, 0 rim edges.
+   any two generators sharing an edge, read from one hull, name the SAME endpoint
+   triples, cyclically adjacent in both fans. (Holds within a SINGLE hull; this is
+   why a from-scratch local hull is internally consistent but, as a SPLICE oracle
+   against the fast diagram, is not — see refuted dead-ends.)
+2. **Rebuild resolves defects internally** (`rebuild_resolves_mega_defects`,
+   `defect_cells_are_internally_valid_after_rebuild`): a defect neighborhood
+   rebuilt as one hull is internally fully valid. This only ever proved
+   rebuilt-vs-rebuilt consistency — NEVER the splice against the fast diagram.
+3. **Projected ≡ raw, error is tiny** (`projection_theory_3way`,
+   `a0_exact_reference_delaunator`): exact diagram differs from fast on ~tens of
+   cells (0.01–0.02%) in every regime; mega differs only in that its changed
+   cells happen to cause unpaired defects (uniform's changed cells are benign).
+4. **Detect+fix+expand converges with a consistent oracle**
+   (`detect_fix_expand_delaunator`): 1 round, bounded, valid on mega 100k/300k.
+5. **Fill-with-grow makes 4/5 mega-100k seeds valid** (`fill_cluster_pass`,
+   wired-but-gated): see repair status above.
 
-So: **exact rebuild = fully-valid local subdivision.** UNTESTED: that the
-rebuilt rim matches the fast diagram (the splice).
+## What is NOT done / open
 
-## What is NOT done — the next step (the hard piece)
-
-**Global splice + `validate`.** Obstacle: representation mismatch.
-- The diagram (`src/diagram.rs`) stores cells as vertex-INDEX lists over a
-  shared `vertices: Vec<UnitVec3>` coord array.
-- Rebuilt cells (`escalate::RebuiltCell`) are global-id TRIPLES + circumcenters.
-- Splicing needs a triple→vertex-index map at the rim (reuse the fast index
-  where the triple already exists, mint a new vertex otherwise). The fast
-  diagram does NOT store triples.
-
-Two routes:
-- **(a) Re-run assembly with the rebuild integrated** (the production loop). The
-  rebuild emits triple-keyed cells; feed them through the SAME live-dedup /
-  edge-reconcile assembly the fast path uses (`src/live_dedup/`,
-  `src/knn_clipping/edge_reconcile.rs`), which already keys vertices by triple
-  (`VertexKey=[u32;3]`) and runs proximity-merge. RECOMMENDED — it reuses the
-  existing triple-keyed assembly and sidesteps the index-mapping problem.
-- **(b) Triple-indexed splice via reconstructing fast-cell triples from
-  `adjacency.rs`** — circular, because fast adjacency is broken AT the defects.
-  Avoid.
-
-Recommended first concrete task: take the rebuilt component cells (triple-keyed)
-+ the fast cells (already triple-keyed pre-assembly in
-`topo2d/builder/extract.rs:79`), replace the component's emitted cells, and run
-the existing assembly + `validation::validate` on the result for mega 100k s3 —
-target: 9 defects → strictly valid.
-
-## Code map
-
-- `src/knn_clipping/escalate.rs` — `gather_local` (brute-force k-NN; production
-  uses the grid / considered-neighbor set), `rebuild_cells` (one hull →
-  per-generator ordered global-id triples; skips broken-fan rim generators),
-  `RebuiltCell`, `shared_neighbor`, `check_cell_internally_paired`. `pub` via
-  the `escalate_probe` feature (`src/lib.rs`), dead-code until the loop lands.
-- `src/knn_clipping/local_hull.rs` — the exact engine: `build`, `faces`,
-  `face_circumcenter`, `cell_faces` (dual fan). Validated; no prod change needed.
-- `src/knn_clipping/p5_shadow.rs` — GO/NO-GO probes (`set_audit_cutoff`,
-  cross-cell/superset report). `tests/p5_shadow.rs` drives them.
-- `tests/escalate.rs` — the slice integration tests.
+- Swap the repair oracle to raw `orient3d` (consistent + hemisphere-safe).
+- Whole-diagram never-worse gate (validate before/after, revert if not strictly
+  better) — required before any repair can land safely (it regresses s2/300k).
+- Robust boundary extraction for the non-manifold holdout (s2, cell 15514).
+- Cost/scale at 1m/2m; interior-vertex f32-realizability at scale.
+- The representation/splice plumbing (triple-keyed cells → the shared
+  vertex-index diagram) is sound and reusable; the live-dedup / edge-reconcile
+  assembly already keys vertices by triple (`VertexKey=[u32;3]`).
 
 ## Refuted / settled — do NOT re-tread
 
-- **Exact-everywhere is NOT mandatory** (blind-adjudicated). Partial escalation
-  is viable because the fast/exact "seam" is avoidable: on a well-conditioned
-  shared edge fast == exact (cross-cell conflict tail ~1e-10). Cost of
-  exact-everywhere measured ~+31% uniform / +48% mega anyway — affordable, but
-  escalation pays it only on the degenerate component.
-- **Coverage / EPS_CERT is NOT the mega lever** (termination-pad ladder: 23×
-  more neighbors → byte-identical defects; and the k-invariance above). mega
-  defects are DECISION divergence.
-- **High-degree merge NOT needed** ([[high-degree-vertices-rationale]]): genuine
-  exact-cocircular vertices are ~unconstructable at f32; near-cocircular (mega)
-  gets a definite diagonal; the rare exact case is handled by existing
-  proximity-merge. Don't build a degree-k vertex representation.
+- **local_hull as a from-scratch SPLICE oracle is DEAD.** The local-hull splice
+  diverges (splice_set 4→…→2917 over 40 rounds, residual climbs monotonically).
+  Root cause is local_hull's INCONSISTENCY (insertion-order ties + per-gather cap
+  artifacts + clustered back-faces on a sphere patch), NOT a real obstacle. Do
+  not retry the local-hull source. (`route-a-splice-diverges`.)
+- **"Projected is a different metric" is FALSE.** Gnomonic/stereographic/raw-3D
+  are the same Delaunay in exact arithmetic; the mega defect is per-cell-chart
+  rounding, not a metric difference. Do not chase "fast is not the Delaunay dual."
+- **Chasing a canonical *delaunator-matching* local oracle is the wrong target.**
+  delaunator matches fast only because it is single-chart/projected like fast; it
+  is not canonical (pole-dependent near-cocircular answer). The canonical oracle
+  is raw `orient3d`, which is pole/chart-free.
+- **Surgical single-edge flip / whole-component Delaunay rebuild / neighbor
+  consensus all cascade or regress on the GENERAL mega defect.** They were tried;
+  the working mechanism is rim-pinned fill-with-grow with a consistent oracle.
+- **Exact-everywhere is NOT mandatory** and is NOT the cheap framing's premise.
+  Partial reactive escalation is viable; cost is paid only on the tiny defect set.
+- **Coverage / EPS_CERT is NOT the mega lever** (termination-pad ladder: 23× more
+  neighbors → byte-identical defects). mega defects are DECISION divergence.
+- **High-degree merge NOT needed** (`high-degree-vertices-rationale`): mega is
+  *near*-cocircular ⇒ a definite diagonal; the rare exact-cocircular case is
+  handled by existing proximity-merge.
 - **No cheap PROACTIVE complete flag exists** (missing-edge detection needs exact
-  local topology). Use the post-assembly defect list (`unresolved_edge_pairs`,
-  `compute.rs:146-199`) as a perfect-recall REACTIVE trigger.
-- **A drift-based / chart-margin flag is unreliable** (lerp drift). The
-  defect-driven reactive trigger sidesteps it.
+  local topology). Use the post-assembly defect list as a perfect-recall REACTIVE
+  trigger.
 
-## Backburner (see [[exact-valid-then-simplify]])
+## Backburner (see `exact-valid-then-simplify`)
 
-Once the exact valid graph is produced, reintroduce **epsilon-edge collapse** as
-a FEATURE on the valid structure (`exact valid → inexact valid` is easy;
-`inexact invalid → inexact valid` is the trap). The crate had epsilon-collapse
-before; resurrect it on the right foundation.
+Once the exact valid graph is produced, reintroduce **epsilon-edge collapse** as a
+FEATURE on the valid structure (`exact valid → inexact valid` is easy;
+`inexact invalid → inexact valid` is the trap).
+
+## Code map
+
+- `src/knn_clipping/escalate.rs` — `gather_local`, `rebuild_cells`, `RebuiltCell`,
+  `WorkingDiagram` (`malformed_cells`/`consensus_cycle`/`defect_cluster`/
+  `fill_cluster_pass`), `escalate_diagram`. `pub` via the `escalate_probe`
+  feature; gated by `set_escalation_enabled` (off by default).
+- `src/knn_clipping/local_hull.rs` — exact engine (`build`, `faces`,
+  `face_circumcenter`, `cell_faces`). Internally consistent; NOT a consistent
+  cross-diagram splice oracle on near-cocircular regimes.
+- `src/knn_clipping/canonical.rs` — `in_circle_sphere_sign` (the canonical raw
+  `orient3d` in-circle: the recommended consistent oracle).
+- `tests/escalate.rs` — the probe/slice tests + the exact-reference (delaunator)
+  diagnostics. Probes: `S2_ESCALATE_*` (DIST/N/SEED/SOURCE/PROBE_*/CLUSTER_K/
+  ROUNDS).
+- `src/knn_clipping/p5_shadow.rs` — GO/NO-GO probes.
 
 ## Relevant memory notes
 
+`fast-clip-is-projected-delaunay`, `route-a-splice-diverges`,
 `adaptive-canonical-clip-direction`, `mega-coverage-ruled-out`,
 `high-degree-vertices-rationale`, `exact-valid-then-simplify`,
-`mega-regime-concluded`, `reclip-fallback-review-2026-06`.
+`mega-regime-concluded` (superseded re: the "resolution floor" framing — see its
+UPDATE note).

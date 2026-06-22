@@ -3,6 +3,7 @@
 use glam::Vec3;
 
 use super::edge_reconcile;
+use super::escalate;
 use super::live_dedup;
 use super::timing::{Timer, TimingBuilder};
 use super::{
@@ -14,6 +15,12 @@ use crate::cube_grid::CubeMapGrid;
 use crate::cube_grid::CubeMapGridBuildTimings;
 use crate::diagram::VoronoiCell;
 use crate::{ComputeOutput, ComputeReport, PreprocessMode, PreprocessReport, VoronoiConfig};
+
+/// Per-seed neighbor count for the escalation local set (brute-force gather
+/// scaffold; production will pull from the grid / considered-neighbor set).
+const ESCALATE_GATHER_K: usize = 96;
+/// Grow-until-clean round cap per defect component.
+const ESCALATE_MAX_ROUNDS: usize = 12;
 
 pub(super) fn compute_voronoi_knn_clipping_owned_core(
     points: Vec<Vec3>,
@@ -135,7 +142,7 @@ fn compute_voronoi_knn_clipping_report_core(
         cell_indices,
         dedup_sub: _,
     } = assembled;
-    let (eff_cells, eff_cell_indices, post_repair_unpaired) = reconcile_edges(
+    let (mut eff_cells, mut eff_cell_indices, post_repair_unpaired) = reconcile_edges(
         &mut vertices,
         &vertex_keys,
         &unresolved_edges,
@@ -152,6 +159,44 @@ fn compute_voronoi_knn_clipping_report_core(
             key: live_dedup::pack_edge(a, b),
             origin: live_dedup::UnresolvedEdgeOrigin::PostRepairUnpaired,
         });
+    }
+
+    // Defect-driven escalation (opt-in; see docs/escalation-build-state-2026-06.md).
+    // Rebuild each residual near-cocircular neighborhood as one exact local
+    // subdivision and splice it back, in effective-generator space, before the
+    // diagram is materialized. Off by default — the production fast path is
+    // untouched until `escalate::set_escalation_enabled(true)`.
+    if escalate::escalation_enabled() {
+        // Drive off the actual returned-diagram residual (the edges that
+        // survived repair), not the wider detection set — re-touching cells the
+        // fast path already paired only risks regressing them.
+        let defect_pairs: Vec<(u32, u32)> = post_repair_unpaired
+            .iter()
+            .map(|&(a, b)| (a.min(b), a.max(b)))
+            .collect();
+        // The A0 de-risk probe measures the full-exact-vs-flag classification and
+        // must run even when there are no residual defects (e.g. small inputs).
+        let force_for_probe = std::env::var("S2_ESCALATE_PROBE_A0").is_ok();
+        if !defect_pairs.is_empty() || force_for_probe {
+            let mut work = escalate::WorkingDiagram::from_assembled(
+                &vertices,
+                &vertex_keys,
+                &eff_cells,
+                &eff_cell_indices,
+            );
+            let _stats = escalate::escalate_diagram(
+                effective_points_ref,
+                &mut work,
+                &defect_pairs,
+                ESCALATE_GATHER_K,
+                ESCALATE_MAX_ROUNDS,
+                escalate::rebuild_cells,
+            );
+            let (new_vertices, new_cells, new_cell_indices) = work.into_flat();
+            vertices = new_vertices;
+            eff_cells = new_cells;
+            eff_cell_indices = new_cell_indices;
+        }
     }
 
     let effective_diagram = if merge_result.is_some() {

@@ -197,6 +197,16 @@ In increasing order of strength; none block release, all are roadmap items:
    inherited bit-for-bit by both cells — makes graph validity independent of floating-point
    accuracy. One then proves determinism (a code-structure property) instead of error bounds.
    This would also root-fix the seam regime and shrink what edge reconciliation has to repair.
+
+   Update (2026-06-22): this diagnosis is now confirmed and sharpened. The near-cocircular
+   residual (the dense "mega" regime) is exactly this dependency biting — **per-cell tangent-plane
+   chart rounding**: a vertex (g,a,b) is decided by three cells in three different charts that
+   round the same near-cocircular keep/drop differently. The error is tiny (~tens of cells,
+   0.01–0.02%, in every regime), gnomonic/stereographic/raw-3D agree in exact arithmetic
+   (projected is not a different metric), and detect+repair with a **consistent exact oracle** (raw
+   `orient3d` in-circle, `canonical::in_circle_sphere_sign`) converges at the small defect set.
+   See memory notes `fast-clip-is-projected-delaunay` / `route-a-splice-diverges` and
+   `docs/escalation-build-state-2026-06.md`.
 3. **Exact oracle at small N.** A rational-arithmetic (or robust-predicate) reference
    implementation for N ≤ ~100, used as a combinatorial test oracle for boundary-region fuzzing
    (separations in [1e-8, 1e-6]).

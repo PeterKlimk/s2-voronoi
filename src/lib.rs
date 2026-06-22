@@ -139,7 +139,8 @@ pub mod p5_shadow {
 #[doc(hidden)]
 pub mod escalate_probe {
     pub use crate::knn_clipping::escalate::{
-        check_cell_internally_paired, gather_local, rebuild_cells, shared_neighbor, RebuiltCell,
+        check_cell_internally_paired, gather_local, rebuild_cells, set_escalation_enabled,
+        shared_neighbor, take_a0_fast, RebuiltCell,
     };
 }
 

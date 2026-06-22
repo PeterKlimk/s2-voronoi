@@ -156,21 +156,55 @@ Voronoi vertices end up closer than f32 can resolve. Below that floor a valid f3
 not exist for the input, so the backend prefers a loud error over a degenerate / non-manifold
 graph.
 
-This is an intrinsic finite-precision limit, not a fixable bug:
+> **UPDATE (2026-06-22): the "intrinsic resolution floor / not a fixable bug"
+> diagnosis below is SUPERSEDED — corrected by later investigation.** The shipped
+> contract is still valid-or-error (no repair is committed), so this section
+> remains accurate about *current behavior*, but the *cause* and *fixability* are
+> now understood differently:
+>
+> - The residual defect is NOT an f32 circumcenter-coordinate floor on the graph.
+>   It is **per-cell-gnomonic-CHART f64 rounding**: a Voronoi vertex (g,a,b) is
+>   decided independently by 3 cells, each in its own tangent-plane chart, which
+>   round the same near-cocircular keep/drop differently ⇒ cross-cell
+>   disagreement ⇒ an unpaired edge. A single global chart (e.g. delaunator) has 0
+>   such defects. Gnomonic, stereographic, and raw-3D `orient3d` all compute the
+>   SAME Delaunay in exact arithmetic — projected is NOT a different metric.
+> - The true error is **tiny in every regime (~tens of cells, 0.01–0.02%, mega
+>   included)**, not a pervasive "whole-cap invalid" condition. The earlier ~9%
+>   figure was a `local_hull` implementation artifact (clustered back-faces on a
+>   sphere patch).
+> - Detect + repair with a **consistent exact oracle** (raw `orient3d` in-circle,
+>   `canonical::in_circle_sphere_sign`) CONVERGES in ~1 round at the small defect
+>   set (does not cascade), and offline made 4/5 mega-100k seeds strictly valid.
+>   So this regime is repairable in principle; it is kept as a clean error today
+>   only because no repair is committed (it still needs a consistent oracle + a
+>   whole-diagram never-worse gate + robust boundary extraction).
+>
+> Authoritative: memory notes `fast-clip-is-projected-delaunay`,
+> `route-a-splice-diverges`; current state in
+> `docs/escalation-build-state-2026-06.md`. The (now-corrected) framing below is
+> retained for context.
 
-- It is a **construction** precision limit, orthogonal to **predicate** robustness. Exact /
-  adaptive predicates (CGAL, spade, `robust`) make the *Delaunay* combinatorially correct but do
-  not make circumcenters representable; libraries that extract a Voronoi from the Delaunay hit the
-  analogous wall (e.g. voronator documents thin-hull-triangle cells distorting or going missing).
-- Average point spacing does **not** predict failure; thin-triangle conditioning (roughly inverse
-  to the minimum triangle angle/altitude) does. So there is deliberately **no exposed density
-  threshold** — use `PreprocessMode::MergeWithin` to weld sub-resolution generators instead.
-- f64 vertex storage would extend the valid range by orders of magnitude, but any fixed precision
-  has such a floor.
+This is a finite-precision limit (current behavior; see the 2026-06-22 update
+above for the corrected cause):
 
-The full investigation (including why a post-hoc topological repair engine was prototyped and then
-dropped, and the planned hybrid alternative) is in
-`docs/reclip-hull-snap-experiment-2026-06.md`.
+- It was originally diagnosed as a **construction** precision limit, orthogonal
+  to **predicate** robustness. Exact / adaptive predicates (CGAL, spade,
+  `robust`) make the *Delaunay* combinatorially correct but do not make
+  circumcenters representable; libraries that extract a Voronoi from the Delaunay
+  hit the analogous wall (e.g. voronator documents thin-hull-triangle cells
+  distorting or going missing). (Update: the dominant residual is cross-cell
+  chart rounding, not circumcenter representability — see above.)
+- Average point spacing does **not** predict failure. So there is deliberately
+  **no exposed density threshold** — use `PreprocessMode::MergeWithin` to weld
+  sub-resolution generators instead.
+- f64 vertex storage would extend the valid coordinate range by orders of
+  magnitude, but any fixed precision has such a floor.
+
+The full investigation (including why a post-hoc topological repair engine was
+prototyped and then dropped, and the corrected detect+repair direction) is in
+`docs/reclip-hull-snap-experiment-2026-06.md` and
+`docs/escalation-build-state-2026-06.md`.
 
 ### Inputs still treated as outside the explicit contract
 

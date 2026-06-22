@@ -1,5 +1,49 @@
 # Adaptive canonical clip — design (2026-06-21)
 
+> ## CORRECTION / UPDATE (2026-06-22)
+>
+> Later investigation (memory notes `fast-clip-is-projected-delaunay` and
+> `route-a-splice-diverges`; probes in `tests/escalate.rs`) sharpened and partly
+> overturns the framing below. Read this first; the §1–§7 analysis is kept intact
+> for the record but should be read through these corrections:
+>
+> 1. **Projected ≡ raw Delaunay in EXACT arithmetic.** Gnomonic (per-cell clip),
+>    stereographic (delaunator), and raw-3D `orient3d` all compute the SAME
+>    spherical Delaunay/Voronoi exactly; differences are pure f64 precision
+>    (uniform 12k: a 4-cell tail across all three). §3's "no precision floor on
+>    the graph" intuition was RIGHT, but the framing changes: the residual defect
+>    is **per-cell-gnomonic-CHART f64 rounding** — a vertex (g,a,b) is decided by
+>    3 cells, each in its own tangent-plane chart, which round the same keep/drop
+>    differently. A single global chart has 0 such defects.
+> 2. **The true error is TINY everywhere (~tens of cells, 0.01–0.02%), mega
+>    included** (`a0_exact_reference_delaunator`). The earlier "~77% near-
+>    cocircular trip ⇒ A ≈ exact-everywhere ⇒ ~+31%/+48%" cost estimate (§6c) is a
+>    red herring: near-cocircular ≠ changed; fast gets ~all near-cocircular cells
+>    right. A's canonicalization target is small ⇒ A is cheap everywhere.
+> 3. **§2's "primary clip, NOT a repair" argument is UNDERCUT.** §2 argues a
+>    repair can't stitch because "exact meets approximate at the rim." That seam
+>    does not exist for a **rim-pinned repair with a CONSISTENT oracle**: on the
+>    well-conditioned rim projected ≡ raw, so fast == exact there and there is
+>    nothing to stitch. Detect+repair (`detect_fix_expand_delaunator`) CONVERGES
+>    in ~1 round at the tiny defect set — it does not cascade. The historical
+>    "repair can't stitch / whole cap invalid" was a `local_hull` INCONSISTENCY
+>    artifact (insertion-order ties + cap + clustered back-faces), not a property
+>    of repair.
+> 4. **A per-decision hot-path exact/flag mechanism is UNNECESSARY for the
+>    valid-diagram contract.** The work is "identify cells + repair with the raw
+>    `orient3d` decision," reactively, off the post-assembly defect list — not
+>    exact arithmetic in the clipper. Option A (clip-time exact by construction)
+>    is now demoted to a future EXACT/CANONICAL-OUTPUT feature; the recommended
+>    path is reactive detect+repair (option B) with a whole-diagram never-worse
+>    gate. See `docs/escalation-build-state-2026-06.md`.
+> 5. **The consistent oracle is raw `orient3d` (`canonical::in_circle_sphere_sign`),
+>    NOT delaunator and NOT bare `local_hull`.** delaunator matches fast only
+>    because it is single-chart/projected like fast — it is pole-dependent on
+>    near-cocircular ties, so it is a useful test REFERENCE but not canonical.
+>    Bare `local_hull` is inconsistent (the §6c/§2 cascades trace to it).
+>
+> Below: original DESIGN (2026-06-21), corrected by the above.
+
 Status: DESIGN. Supersedes the valid-or-error contract *for the mechanism it
 targets*. Goal: make the per-cell clip produce a **strictly-valid diagram by
 construction** across all regimes, with **no Tier-2 repair**, by sourcing the
