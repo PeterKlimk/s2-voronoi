@@ -1,5 +1,14 @@
 # Hull + Snap-to-Loop Resolver — Experiment Results (2026-06-21)
 
+> **UPDATE (2026-06-22): superseded diagnosis.** These measurements used the
+> local 3D hull oracle without first f64-renormalizing S2 input directions. The
+> apparent "whole cap" exact-vs-fast disagreement and unbounded local-hull grow
+> front were off-sphere radius artifacts, not projection drift. Normalized CGAL
+> and normalized `local_hull` probes now match the fast graph on tested uniform
+> and mega cases, and normalized local 3D repair is again a viable repair/escalation
+> candidate. Keep the detailed results below as historical debugging notes, not
+> as the current correctness model.
+
 Behind `S2_RECLIP_HULL` (selects an experimental Tier-2 resolver instead of the
 committed jitter path; opt-in, under `S2_RECLIP_REPAIR`). The goal was the
 near-Voronoi totality contract: rebuild a contested component `C` from the exact

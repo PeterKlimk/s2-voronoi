@@ -8,23 +8,24 @@
 
 mod support;
 
-use s2_voronoi::{compute_with_report, set_escalation_enabled, VoronoiConfig};
+use s2_voronoi::{compute, compute_with_report, RepairMode, UnresolvedEdgeOrigin, VoronoiConfig};
 use support::points::*;
 
 #[test]
 fn local_escalation_makes_mega_strictly_valid() {
-    let cfg = VoronoiConfig::default;
+    let off = || VoronoiConfig {
+        repair_mode: RepairMode::Disabled,
+        ..VoronoiConfig::default()
+    };
+    let on = VoronoiConfig::default;
     let mut fixed_at_least_one = false;
     for seed in [1u64, 2, 15] {
         let points = mega_points(100_000, 0.8, seed);
 
-        set_escalation_enabled(false);
-        let before = compute_with_report(&points, cfg()).expect("build");
+        let before = compute_with_report(&points, off()).expect("build");
         let before_valid = before.report.returned_validation.is_strictly_valid();
 
-        set_escalation_enabled(true);
-        let after = compute_with_report(&points, cfg()).expect("build");
-        set_escalation_enabled(false);
+        let after = compute_with_report(&points, on()).expect("build");
         let after_report = &after.report.returned_validation;
 
         println!(
@@ -52,13 +53,55 @@ fn local_escalation_makes_mega_strictly_valid() {
     );
 }
 
+#[test]
+fn default_compute_repairs_known_mega_defects() {
+    for seed in [1u64, 2, 15] {
+        let points = mega_points(100_000, 0.8, seed);
+        let diagram = compute(&points)
+            .unwrap_or_else(|e| panic!("mega 100k s{seed}: default compute failed: {e:?}"));
+        let report = s2_voronoi::validation::validate(&diagram);
+        assert!(
+            report.is_strictly_valid(),
+            "mega 100k s{seed}: default compute returned invalid diagram: {}",
+            report.headline()
+        );
+    }
+}
+
+#[test]
+fn accepted_default_repair_clears_surviving_residual_report() {
+    for seed in [1u64, 2, 15] {
+        let points = mega_points(100_000, 0.8, seed);
+        let out = compute_with_report(&points, VoronoiConfig::default())
+            .unwrap_or_else(|e| panic!("mega 100k s{seed}: report build failed: {e:?}"));
+        assert!(
+            out.report.returned_validation.is_strictly_valid(),
+            "mega 100k s{seed}: default repair was not accepted"
+        );
+        let post = out
+            .report
+            .unresolved_edge_pairs
+            .iter()
+            .filter(|(_, _, origin)| matches!(origin, UnresolvedEdgeOrigin::PostRepairUnpaired))
+            .count();
+        assert_eq!(
+            post, 0,
+            "mega 100k s{seed}: accepted repair left surviving residual records"
+        );
+    }
+}
+
 /// Broader parity sweep against the delaunator baseline: every defective input
 /// the global oracle resolved must also resolve with the local engine. Ignored
 /// (minutes at the larger sizes); run with `--ignored --nocapture`.
 #[test]
 #[ignore = "broad escalation sweep; run with --ignored --nocapture"]
 fn local_escalation_broad_sweep() {
-    let cfg = VoronoiConfig::default;
+    let off = || VoronoiConfig {
+        repair_mode: RepairMode::Disabled,
+        ..VoronoiConfig::default()
+    };
+    let on = VoronoiConfig::default;
     let mut cases: Vec<(String, Vec<_>)> = Vec::new();
     for seed in 1u64..=20 {
         cases.push((
@@ -90,13 +133,10 @@ fn local_escalation_broad_sweep() {
 
     let mut defects = 0usize;
     for (name, points) in &cases {
-        set_escalation_enabled(false);
-        let before = compute_with_report(points, cfg()).expect("build");
+        let before = compute_with_report(points, off()).expect("build");
         let before_valid = before.report.returned_validation.is_strictly_valid();
 
-        set_escalation_enabled(true);
-        let after = compute_with_report(points, cfg()).expect("build");
-        set_escalation_enabled(false);
+        let after = compute_with_report(points, on()).expect("build");
         let after_valid = after.report.returned_validation.is_strictly_valid();
 
         if !before_valid {

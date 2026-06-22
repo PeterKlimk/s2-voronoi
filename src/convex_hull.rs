@@ -30,7 +30,10 @@ impl ConvexHull {
         // qhull expects iterables of [f64; N]
         let pts: Vec<[f64; 3]> = points
             .iter()
-            .map(|p| [p.x as f64, p.y as f64, p.z as f64])
+            .map(|p| {
+                let q = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64).normalize();
+                [q.x, q.y, q.z]
+            })
             .collect();
 
         // Optimize for sphere points: all points are on the hull (no interior),
@@ -122,16 +125,23 @@ fn angle_in_tangent_plane(generator: Vec3, point: Vec3) -> f32 {
 ///
 /// This is slower than knn_clipping but serves as ground truth for testing.
 pub fn compute_voronoi_qhull(points: &[Vec3]) -> SphericalVoronoi {
-    let hull = ConvexHull::compute(points);
+    let normalized_points: Vec<Vec3> = points
+        .iter()
+        .map(|&p| {
+            let q = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64).normalize();
+            Vec3::new(q.x as f32, q.y as f32, q.z as f32)
+        })
+        .collect();
+    let hull = ConvexHull::compute(&normalized_points);
 
     // Compute Voronoi vertices (circumcenters of hull facets)
     let vertices: Vec<Vec3> = hull
         .facets
         .iter()
         .map(|facet| {
-            let a = points[facet.indices[0]];
-            let b = points[facet.indices[1]];
-            let c = points[facet.indices[2]];
+            let a = normalized_points[facet.indices[0]];
+            let b = normalized_points[facet.indices[1]];
+            let c = normalized_points[facet.indices[2]];
             circumcenter_on_sphere(a, b, c)
         })
         .collect();
@@ -148,7 +158,7 @@ pub fn compute_voronoi_qhull(points: &[Vec3]) -> SphericalVoronoi {
     }
 
     // Build cells by ordering vertices CCW around each generator
-    let generators: Vec<UnitVec3> = points
+    let generators: Vec<UnitVec3> = normalized_points
         .iter()
         .map(|&p| UnitVec3::new(p.x, p.y, p.z))
         .collect();
@@ -163,7 +173,7 @@ pub fn compute_voronoi_qhull(points: &[Vec3]) -> SphericalVoronoi {
 
     for point_idx in 0..points.len() {
         let facet_indices = point_to_facets.get(&point_idx).cloned().unwrap_or_default();
-        let ordered = order_vertices_ccw(points[point_idx], &facet_indices, &vertices);
+        let ordered = order_vertices_ccw(normalized_points[point_idx], &facet_indices, &vertices);
 
         let start = cell_indices.len() as u32;
         for idx in &ordered {

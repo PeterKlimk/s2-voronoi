@@ -155,8 +155,7 @@ toroidal graph.
 
 ## Configuration
 
-`VoronoiConfig` (spherical pipeline) controls preprocessing and the optional packed expansion
-stage:
+`VoronoiConfig` (spherical pipeline) controls preprocessing and cold-path local repair:
 
 - `preprocess_mode`: coincident-generator handling:
   - `PreprocessMode::Weld` (default): weld generators within the fixed weld radius (~1.4e-6
@@ -166,6 +165,12 @@ stage:
   - `PreprocessMode::MergeWithin(threshold)`: weld within an explicit threshold
   - `PreprocessMode::Disabled`: no welding (caller certifies generator separation above the
     weld radius)
+- `repair_mode`: post-assembly repair for rare near-degenerate topology defects:
+  - `RepairMode::Local3d` (default): rebuild the residual neighborhood as one normalized local
+    3D hull, then accept only if strict validation succeeds
+  - `RepairMode::LocalProjected`: diagnostic projected repair using one shared local
+    stereographic chart and exact 2D predicates
+  - `RepairMode::Disabled`: preserve the raw fast-path residual/error behavior for diagnostics
 
 The planar pipeline currently takes no configuration; its weld radius is fixed (see above).
 

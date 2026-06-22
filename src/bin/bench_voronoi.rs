@@ -16,7 +16,7 @@ use glam::Vec3;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use s2_voronoi::{PreprocessMode, UnitVec3, VoronoiConfig};
+use s2_voronoi::{PreprocessMode, RepairMode, UnitVec3, VoronoiConfig};
 use std::io::{self, Write};
 use std::time::Instant;
 
@@ -203,6 +203,10 @@ struct Args {
     /// Disable preprocessing (merge near-coincident points) for benchmarking.
     #[arg(long)]
     no_preprocess: bool,
+
+    /// Disable local repair for benchmarking raw fast-path behavior.
+    #[arg(long)]
+    no_repair: bool,
 
     /// Number of iterations to run (useful for profiling)
     #[arg(short = 'n', long, default_value_t = 1)]
@@ -525,6 +529,9 @@ fn main() {
     if args.no_preprocess {
         println!("  preprocess = disabled (no point merging)");
     }
+    if args.no_repair {
+        println!("  repair = disabled");
+    }
     if args.repeat > 1 {
         println!("  repeat = {}", args.repeat);
     }
@@ -556,6 +563,11 @@ fn main() {
                 PreprocessMode::Disabled
             } else {
                 PreprocessMode::Weld
+            },
+            repair_mode: if args.no_repair {
+                RepairMode::Disabled
+            } else {
+                RepairMode::Local3d
             },
         };
 

@@ -414,3 +414,43 @@ fn fallback_reconstruction_preserves_constraint_order_and_eps() {
     assert_eq!(builder.as_fallback().constraints[2].neighbor_slot, 23);
     assert_eq!(builder.as_fallback().constraints[2].hp_eps, Some(0.0));
 }
+
+#[test]
+fn fallback_reconstruction_normalizes_s2_constraints() {
+    let g = Vec3::new(0.0, 0.0, 1.0002);
+    let mut builder = Topo2DBuilder::new(0, g);
+
+    let h1 = Vec3::new(1.0, 0.0, 0.5).normalize() * 0.9997;
+    let h2 = Vec3::new(-0.5, 0.866, 0.5).normalize() * 1.0003;
+    let h3 = Vec3::new(-0.5, -0.866, 0.5).normalize() * 0.9998;
+
+    builder
+        .clip_with_slot_edgecheck_policy(11, 21, h1, 0.125)
+        .expect("edgecheck clip should apply");
+    builder
+        .clip_with_slot_policy(12, 22, h2)
+        .expect("normal clip should apply");
+    builder
+        .clip_with_slot_policy(13, 23, h3)
+        .expect("normal clip should apply");
+
+    let points = fallback_points(g, h1, h2, h3);
+    builder.enter_fallback(
+        &points,
+        BuilderFallbackRequest {
+            trigger: BuilderFallbackTrigger::ProjectionLimit,
+        },
+    );
+
+    let expected = |h: Vec3| {
+        glam::DVec3::new(g.x as f64, g.y as f64, g.z as f64).normalize()
+            - glam::DVec3::new(h.x as f64, h.y as f64, h.z as f64).normalize()
+    };
+    for (constraint, h) in builder.as_fallback().constraints.iter().zip([h1, h2, h3]) {
+        let diff = constraint.normal - expected(h);
+        assert!(
+            diff.length() < 1e-12,
+            "fallback constraint did not normalize S2 inputs: diff={diff:?}"
+        );
+    }
+}

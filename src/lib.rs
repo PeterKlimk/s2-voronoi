@@ -144,12 +144,11 @@ pub mod escalate_probe {
     };
 }
 
-/// Toggle the dependency-free, local exact defect-repair pass (the escalation
-/// engine). Off by default: when on, a build whose fast path leaves a
-/// near-cocircular residual rebuilds the defect neighborhood with the exact
-/// local oracle and splices it back, behind a valid-or-revert gate (the output
-/// is always either strictly valid or the original error-reported diagram).
-/// Doc-hidden: the production surface is expected to migrate to a config flag.
+/// Probe override for the dependency-free local repair pass.
+///
+/// Normal callers should use [`VoronoiConfig::repair_mode`]. This process-global
+/// hook remains only for diagnostic tests that need to force the repair path
+/// without rebuilding call sites.
 #[doc(hidden)]
 pub fn set_escalation_enabled(on: bool) {
     crate::knn_clipping::escalate::set_escalation_enabled(on);
@@ -180,6 +179,24 @@ pub enum PreprocessMode {
     Weld,
     /// Weld generators within an explicit Euclidean (chord) threshold.
     MergeWithin(f32),
+}
+
+/// Post-assembly repair policy for rare near-degenerate topology defects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepairMode {
+    /// Do not run local repair. Residual unpaired edges remain
+    /// observable through `compute_with_report` and make plain `compute` fail.
+    Disabled,
+    /// Rebuild residual near-degenerate neighborhoods with one normalized local
+    /// 3D hull and accept only if whole-diagram validation passes.
+    Local3d,
+    /// Rebuild residual near-degenerate neighborhoods with one shared local
+    /// stereographic Delaunay and accept only if whole-diagram validation passes.
+    ///
+    /// This remains available as a projected-oracle diagnostic path. The default
+    /// uses [`RepairMode::Local3d`], which avoids the large-chart failure mode of
+    /// projected repair in extreme closures.
+    LocalProjected,
 }
 
 /// Observable preprocessing outcome for a computation run.
@@ -280,12 +297,19 @@ pub struct VoronoiConfig {
     /// diagram rather than receiving duplicated boundaries, so strict
     /// validation passes whether or not welds occur.
     pub preprocess_mode: PreprocessMode,
+    /// Cold-path repair for rare near-degenerate clipping defects.
+    ///
+    /// The default tries normalized local 3D repair and accepts it only when strict
+    /// validation succeeds. Disable this for diagnostics or to reproduce the raw
+    /// fast-path residual/error behavior.
+    pub repair_mode: RepairMode,
 }
 
 impl Default for VoronoiConfig {
     fn default() -> Self {
         Self {
             preprocess_mode: PreprocessMode::Weld,
+            repair_mode: RepairMode::Local3d,
         }
     }
 }

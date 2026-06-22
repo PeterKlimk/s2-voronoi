@@ -1,179 +1,136 @@
-# Local repair oracle — current thinking, questions, uncertainty (2026-06-22)
+# Local Repair Oracle - Current Understanding (2026-06-22)
 
-Working notes on the **dependency-free, local exact defect repair** (the
-escalation engine). Companion to `docs/escalation-build-state-2026-06.md` (resume
-anchor) and `docs/adaptive-canonical-clip-design-2026-06.md` (design). Authoritative
-memory notes: `route-a-splice-diverges`, `fast-clip-is-projected-delaunay`.
+This note supersedes the earlier "projected oracle, not raw 3D" diagnosis.
+The root issue in the old 3D probes was **not projection drift**. It was that
+the exact 3D hull oracle was run on raw f32 coordinates with tiny radius drift,
+so it solved a Euclidean off-sphere hull problem instead of the crate's S2
+problem.
 
-Branch: `agent/canonical-predicate-topology`. Engine commit: `0e944dd`.
+The crate contract is spherical: inputs are meant to be unit-normalized, and the
+pipeline canonicalizes directions once at entry. Exact reference construction
+must do the same. For exact 3D hulls this is load-bearing: f32 radius error is
+small geometrically, but exact predicates preserve it and can flip hull facets.
 
-This doc deliberately records **what we believe, what we measured, what we only
-inferred, and what is still open** — so we don't re-collapse distinct facts again
-(we did exactly that once; see "The discrepancy" below).
+## Corrected Model
 
----
+- Exact 3D spherical Delaunay = convex hull of **normalized directions**.
+- Gnomonic, stereographic, and 3D hull references agree on the tested S2 inputs
+  once the 3D oracle renormalizes before exact predicates.
+- The earlier "raw 3D disagrees with fast" and "local 3D repair cascades"
+  results were artifacts of comparing against / repairing with an off-sphere
+  reference.
+- Projection is still part of the fast clipper implementation, but it is no
+  longer the active explanation for the observed local-repair failures.
 
-## 1. What is built and proven
+## Current Repair State
 
-- **Engine** (`src/knn_clipping/escalate.rs`):
-  - `local_delaunay_2d` — exact 2D Delaunay over a local gather via Bowyer–Watson,
-    using `robust` exact `incircle`/`orient2d` (already a dep — **no `delaunator`,
-    no new crate**).
-  - `local_exact_incident` — builds **ONE** triangulation in a **single shared
-    stereographic chart** over a 2-ring local gather; reads each closure
-    generator's incident fan off it.
-  - `repair_local_exact` — closure seeding (unpaired ∪ low-incidence), splice,
-    grow-until-clean; behind the caller's whole-diagram **valid-or-revert** gate.
-- **Wiring** (`compute.rs`): default (non-probe) path calls `repair_local_exact`.
-  The `escalate_probe` build keeps `repair_delaunator` as an A/B oracle behind
-  `S2_ESCALATE_DELAUNATOR`. `set_escalation_enabled` exported unconditionally
-  (doc-hidden); **OFF by default**.
-- **Proven** (`tests/escalate_local.rs`, default build, no probe / no delaunator):
-  broad sweep — **25/33 inputs defective, ALL repaired to strictly valid**: mega
-  100k s1–20, 300k/500k s1–3, 1m s1; clustered/bimodal already-valid stay valid.
-  Convergence **matches the delaunator baseline exactly** (same rounds, same
-  splice counts: s1=7, s2=15, s15=9). api 18 / correctness 12 pass; clippy clean.
+Production default repair is now `repair_local_hull`: one normalized local 3D
+hull over the implicated closure's gather, followed by grow/splice and a
+whole-diagram strict-valid gate. This avoids the single-chart/pole failure mode
+of projected repair in extreme closures.
 
-So: **correctness milestone met** — local + crate-free, parity with the global
-oracle scaffolding.
+Projected local repair (`repair_local_exact`) remains available as
+`RepairMode::LocalProjected` and as a probe/A-B path. On the known mega 100k
+defects normalized local 3D repair matches the projected repair's behavior:
 
----
+| seed | projected repair | normalized local 3D repair |
+|---:|---:|---:|
+| 1 | valid, 7 spliced, 2 rounds | valid, 7 spliced, 2 rounds |
+| 2 | valid, 15 spliced, 2 rounds | valid, 15 spliced, 2 rounds |
+| 15 | valid, 9 spliced, 2 rounds | valid, 9 spliced, 2 rounds |
 
-## 2. The core idea: the oracle must be PROJECTED, not raw-3D
+This makes normalized local 3D the right final backstop candidate: it is still
+local and dependency-free, but its exact oracle is the normalized S2 3D graph
+rather than a particular projected chart.
 
-In exact arithmetic **gnomonic ≡ stereographic ≡ raw-3D** — the same Delaunay
-triangulation. They differ only at **near-cocircular 4-tuples**, where rounding
-decides the diagonal. The asymmetry that matters for *repair*:
+With the normalized-truth result, there is no reason to broaden local repair.
+The right repair shape is still surgical:
 
-- The **fast clipper is projected** (gnomonic). At a near-cocircular vertex it
-  picks the "projected" diagonal.
-- A **projected oracle** (delaunator, or our single-chart `incircle`) picks the
-  **same** diagonal as fast almost everywhere.
-- **Raw `orient3d`** picks the **true-geometry** diagonal, which at a
-  near-cocircular tuple can be the *opposite* of the projected one.
+- trigger from real topology residuals (`post_repair_unpaired`) plus the existing
+  low-incidence backstop;
+- rebuild only the implicated closure;
+- accept only if whole-diagram strict validation succeeds;
+- keep projected repair available for A/B diagnostics, not as the final fallback
+  in extreme closures.
 
-Two counts must be kept separate (we previously collapsed them):
+## Reference Probes
 
-| count | meaning | size | who must touch it |
-|---|---|---|---|
-| **defective cells** | fast is *internally inconsistent* (the unpaired edges) | ~tens | both oracles must fix |
-| **diagonal-disagreement cells** | rebuild's diagonal ≠ fast's, *including valid cells* | projected: ≈ defects; raw: every near-cocircular tuple where true≠projected | raw rebuild disagrees with the fast rim on **all** of these |
+External CGAL probe:
 
-Consequence: a **raw** rebuild disagrees with the fast rim at many *non-defective*
-near-cocircular vertices, so the grow front never reaches a clean boundary and
-spreads (observed **closure 5→48, no convergence** on mega s1). A **projected**
-rebuild agrees with fast at exactly those self-consistent near-cocircular
-vertices, so it only repairs the genuine handful (**5→7, 2 rounds**).
+```bash
+g++ -O3 -std=c++17 scripts/cgal_hull3.cpp -lgmp -lmpfr -o /tmp/cgal_hull3
+```
 
-There are really **two independent consistency requirements** for a
-non-cascading repair:
+Fast vs normalized CGAL:
 
-1. **Internal consistency** — spliced cells agree with *each other* at shared
-   edges. Met by one shared triangulation (a pure-function-of-coords predicate
-   evaluated once per geometric question).
-2. **Rim consistency** — spliced cells agree with the *unspliced (fast)*
-   neighbors at the repaired region's boundary, so the region stays bounded.
-   Requires the oracle to match fast wherever fast is self-consistent → a
-   **projected** metric.
+```bash
+S2_CGAL_HULL3_BIN=/tmp/cgal_hull3 S2_ESCALATE_DIST=uniform S2_ESCALATE_N=1000000 \
+cargo test --release --features escalate_probe --test escalate \
+probe_fast_vs_cgal_hull3_reference -- --ignored --nocapture
+```
 
-Delaunator (global) and our local engine both satisfy (1) via one triangulation
-and (2) via the projected chart.
+Measured:
 
----
+| distribution | n | seed | changed vs normalized CGAL |
+|---|---:|---:|---:|
+| uniform | 100k | 3 | 0 |
+| uniform | 500k | 3 | 0 |
+| uniform | 1m | 3 | 0 |
+| mega | 12k | 3 | 0 |
+| mega | 100k | 3 | 1 |
 
-## 3. THE DISCREPANCY (the open empirical question)
+CGAL vs normalized `LocalHull` also matched at uniform 100k (`changed=0`), though
+the in-repo global `LocalHull` implementation is much slower than CGAL at that
+scale and should remain a diagnostic/probe path.
 
-> "I thought only a small % of cells disagreed with the 3D hull?"
+## Exact-By-Construction Detection
 
-This is the honest accounting:
+The starting point is not "make every clip exact"; the measured target set is too
+small for that to be the first move. The useful probe is:
 
-- **uniform**, fast Δ `local_hull` (raw 3D) = **4/12k ≈ 0.03%** — a real
-  fast-vs-raw number, but uniform has very few near-cocircular configs.
-- **mega**, fast Δ exact = **~tens of cells (0.01–0.02%)** — but this used
-  **delaunator (PROJECTED)**, not raw.
-- **mega**, fast Δ raw-3D — the only number we ever had was the **9%**, which we
-  **discarded as a `local_hull` back-face artifact**.
+```bash
+S2_CGAL_HULL3_BIN=/tmp/cgal_hull3 S2_ESCALATE_DIST=mega S2_ESCALATE_N=100000 \
+cargo test --release --features escalate_probe --test escalate \
+probe_cgal_hull3_flag_recall -- --ignored --nocapture
+```
 
-So: **we never cleanly measured fast-vs-raw-3D on mega.** The claim "raw disagrees
-with fast on *many* mega-cluster cells" is currently **inferred from the cascade
-behavior**, not directly measured.
+This compares fast cells against normalized CGAL truth, then sweeps a cheap
+normalized-3D near-cocircularity margin over the fast fan. On mega 100k seed 3:
 
-What the A/B *does* establish: holding the gather/candidate structure fixed and
-flipping only the predicate (raw `in_circle_sphere_sign` → single-chart
-`robust::incircle`) flips cascade → convergence. That isolates the **predicate
-metric** as the driver of *that* cascade. It does **not by itself** quantify the
-raw-vs-fast disagreement fraction in the dense cluster.
+- changed vs normalized CGAL: 1 cell (0.0010%);
+- topology-defect cells from the assembled fast graph: 2;
+- `flag ∪ topology_defect` recalled the changed cell even with no margin-band
+  trip;
+- a `1e-6` normalized 3D margin band also recalled it directly, flagging 4.746%
+  of cells on that case.
 
-The reconciliation we believe (but have not fully verified): the 0.03% is a
-uniform-dominated *global average*; inside a dense mega cluster the near-cocircular
-density — and hence raw-vs-projected diagonal disagreement — is a much larger
-*local* fraction. The cascade is consistent with that.
+That suggests the exact-by-construction path should be developed as a detector
+and escalation pipeline:
 
-### Open measurement to settle it
+1. keep the reactive topology-defect trigger as a guaranteed validity backstop;
+2. add a cheap normalized-3D near-cocircular flag probe for valid-but-wrong cells;
+3. rebuild flagged/defective cells with a normalized exact local oracle;
+4. measure recall against CGAL before attempting a hot-path exact clipper.
 
-Add a probe mirroring `a0_exact_reference_delaunator` but with a **per-cell raw-3D
-reference** diagram, and report on mega specifically:
+## Practical Rules
 
-- `fast Δ raw` (cell-level disagreement count and fraction), vs `fast Δ delaunator`
-  (projected) on the *same* input.
-- Spatial distribution: is the raw disagreement concentrated in the dense cluster?
-- Of the raw-vs-fast disagreements, how many are at **valid** (non-defective)
-  cells (i.e. true ≠ projected but fast self-consistent)?
+1. Any exact 3D reference or repair oracle must f64-renormalize the input
+   direction before exact predicates.
+2. Do not interpret raw f32 convex hull disagreement as spherical Delaunay
+   disagreement.
+3. Do not treat "local 3D repair cascades" as a settled result unless the probe
+   normalizes before exact predicates.
+4. The remaining decision is empirical: run the broad sweep with the new
+   `RepairMode::Local3d` default and compare closure/runtime against
+   `RepairMode::LocalProjected`.
 
-Expected if our model is right: `fast Δ raw` ≫ `fast Δ delaunator` on mega, with
-the excess concentrated in the cluster and mostly at valid cells.
+## Open Work
 
-If that prediction *fails* (raw and projected disagree with fast by similar
-amounts), then the 5→48 cascade was **not** primarily the metric — it would have
-been an internal-consistency bug in the per-g raw code (incomplete-gather
-over-admission), and the projected version "happened" to converge for another
-reason. That alternative is currently **not ruled out by direct measurement**,
-only made unlikely by the same-structure A/B.
-
----
-
-## 4. Other open questions / uncertainty
-
-- **On-by-default / config flag.** The engine is off by default behind a
-  doc-hidden toggle. Decision pending: expose as `VoronoiConfig` option? Default
-  on (it's gated valid-or-revert, so never worse)? Cost is cold-path only (fires
-  only on defective builds), but unmeasured at scale.
-- **Scale beyond 1m.** 1m s1 passes; 2m+ untested (the A0/perf notes mention 2m
-  OOMs under `perf`, unrelated, but triangulation cost at large defect clusters
-  is unprofiled). Bowyer–Watson here is O(n·triangles) on the *gather* (small),
-  but the gather is rebuilt per grow round.
-- **Gather sizing.** `ESCALATE_GATHER_K = 96`, `ring_k = gather_k.min(32)`,
-  2-ring seed. These were tuned to pass, not swept. A pathological defect cluster
-  larger than the gather would surface as a residual the gate reverts (safe but
-  unrepaired) — untested whether that ever happens.
-- **`PAIR_RING` is now dead.** The final code reads fans off the full
-  triangulation, so the old per-g `PAIR_RING` candidate cap is gone. (Mentioned
-  to avoid confusion with earlier intermediate versions.)
-- **Exact-cocircular ties.** `incircle == 0` is treated as "not inside" (triangle
-  kept). True 4-cocircular tuples are obscenely rare at f32; the gate catches any
-  resulting issue. Not a designed-for case.
-- **Single chart at the gather centroid.** Pole = antipode of the gather
-  centroid. Fine because defective inputs are clustered (small angular extent). A
-  defect cluster spanning a large angular region (≳ a hemisphere) could distort
-  the stereographic chart — untested, probably irrelevant for real inputs.
-- **Relationship to option A (clip-time exact).** Still optional, only for an
-  exact-OUTPUT feature. Note A would want **raw** orient3d (hemisphere-safe, true
-  topology) precisely *because* it's producing the canonical diagram, not pairing
-  with the fast one — the opposite of the repair's projected requirement.
-
----
-
-## 5. One-paragraph summary for a future reader
-
-We have a working, dependency-free, local repair: rebuild the defect neighborhood
-as one exact 2D Delaunay in a single shared stereographic chart and splice it
-back, behind a valid-or-revert gate; it reaches strict validity on every mega
-defect we have and matches the global delaunator oracle exactly. The non-obvious
-lesson is that the repair oracle must be a **projected** metric (matching the
-fast clipper), **not** raw 3D `orient3d` — even though raw is exact and internally
-consistent, it picks the *true* near-cocircular diagonal, which disagrees with the
-projected fast rim at many *valid* cells in a dense cluster and cascades. The one
-thing we assert but have **not directly measured** is the *size* of that
-raw-vs-fast disagreement on mega (we only have it for uniform, 0.03%, and a
-discarded artifact number for mega); a per-cell raw-3D reference probe would
-settle it.
+- Broad sweep normalized local 3D repair across the existing mega/clustered/
+  bimodal/adversarial cases, with `RepairMode::LocalProjected` as the A/B
+  comparator.
+- Sweep `probe_cgal_hull3_flag_recall` across larger uniform and mega seeds to
+  find the smallest band with zero changed-cell misses.
+- If exact-by-construction mode is pursued, start from `flag ∪ topology defect`
+  escalation using normalized 3D hull / local hull as the canonical graph
+  reference, with CGAL as the external audit oracle.

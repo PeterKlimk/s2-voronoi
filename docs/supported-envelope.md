@@ -156,37 +156,30 @@ Voronoi vertices end up closer than f32 can resolve. Below that floor a valid f3
 not exist for the input, so the backend prefers a loud error over a degenerate / non-manifold
 graph.
 
-> **UPDATE (2026-06-22): the "intrinsic resolution floor / not a fixable bug"
+> **UPDATE (2026-06-22): the "intrinsic resolution floor / projection drift"
 > diagnosis below is SUPERSEDED — corrected by later investigation.** The shipped
-> contract is still valid-or-error (no repair is committed), so this section
-> remains accurate about *current behavior*, but the *cause* and *fixability* are
-> now understood differently:
+> contract is now valid output with default local repair where the repair gate
+> accepts a strictly-valid replacement. The *cause* and *fixability* are now
+> understood differently:
 >
-> - The residual defect is NOT an f32 circumcenter-coordinate floor on the graph.
->   It is **per-cell-gnomonic-CHART f64 rounding**: a Voronoi vertex (g,a,b) is
->   decided independently by 3 cells, each in its own tangent-plane chart, which
->   round the same near-cocircular keep/drop differently ⇒ cross-cell
->   disagreement ⇒ an unpaired edge. A single global chart (e.g. delaunator) has 0
->   such defects. Gnomonic, stereographic, and raw-3D `orient3d` all compute the
->   SAME Delaunay in exact arithmetic — projected is NOT a different metric.
-> - The true error is **tiny in every regime (~tens of cells, 0.01–0.02%, mega
->   included)**, not a pervasive "whole-cap invalid" condition. The earlier ~9%
->   figure was a `local_hull` implementation artifact (clustered back-faces on a
->   sphere patch).
-> - Detect + repair with a **consistent exact oracle** (raw `orient3d` in-circle,
->   `canonical::in_circle_sphere_sign`) CONVERGES in ~1 round at the small defect
->   set (does not cascade), and offline made 4/5 mega-100k seeds strictly valid.
->   So this regime is repairable in principle; it is kept as a clean error today
->   only because no repair is committed (it still needs a consistent oracle + a
->   whole-diagram never-worse gate + robust boundary extraction).
+> - Exact 3D references must f64-renormalize directions before exact predicates.
+>   The earlier raw-3D disagreement and local-hull cascade measurements were
+>   artifacts of running exact hulls on raw f32 coordinates with tiny radius
+>   drift. That solves an off-sphere Euclidean hull problem, not the crate's S2
+>   contract.
+> - Once normalized, fast gnomonic output matched CGAL exact hull on tested
+>   uniform 100k/500k/1m and mega 12k inputs (`changed=0`), and normalized
+>   `LocalHull` matched CGAL at uniform 100k.
+> - Local repair is workable: normalized local 3D repair is default-on behind a
+>   strict-valid gate, and projected repair remains available as an A/B
+>   diagnostic path.
 >
-> Authoritative: memory notes `fast-clip-is-projected-delaunay`,
-> `route-a-splice-diverges`; current state in
-> `docs/escalation-build-state-2026-06.md`. The (now-corrected) framing below is
-> retained for context.
+> Current state: `docs/escalation-build-state-2026-06.md` and
+> `docs/local-repair-oracle-2026-06.md`. The older framing below is retained for
+> context only.
 
-This is a finite-precision limit (current behavior; see the 2026-06-22 update
-above for the corrected cause):
+This was the older finite-precision-limit framing; see the 2026-06-22 update
+above for the corrected cause:
 
 - It was originally diagnosed as a **construction** precision limit, orthogonal
   to **predicate** robustness. Exact / adaptive predicates (CGAL, spade,

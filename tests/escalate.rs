@@ -13,7 +13,7 @@ use glam::Vec3;
 use s2_voronoi::escalate_probe::{
     check_cell_internally_paired, gather_local, rebuild_cells, set_escalation_enabled, RebuiltCell,
 };
-use s2_voronoi::{compute_with_report, UnitVec3, VoronoiConfig};
+use s2_voronoi::{compute_with_report, RepairMode, UnitVec3, VoronoiConfig};
 use support::points::*;
 
 fn to_vec3(points: &[UnitVec3]) -> Vec<Vec3> {
@@ -357,6 +357,518 @@ fn exact_triples_delaunator(
     (exact, hull_region)
 }
 
+fn probe_points_from_env(default_n: usize) -> (String, u64, Vec<UnitVec3>) {
+    let seed: u64 = std::env::var("S2_ESCALATE_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3);
+    let n: usize = std::env::var("S2_ESCALATE_N")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default_n);
+    let dist = std::env::var("S2_ESCALATE_DIST").unwrap_or_else(|_| "uniform".to_string());
+    let points = match dist.as_str() {
+        "fib" => fibonacci_sphere_points(n, 0.0, seed),
+        "clustered" => clustered_cap_points(n, 0.3, seed),
+        "bimodal" => bimodal_density_points(n, 0.2, seed),
+        "mega" => mega_points(n, 0.8, seed),
+        _ => random_sphere_points(n, seed),
+    };
+    (dist, seed, points)
+}
+
+fn stash_fast_triples(points: &[UnitVec3]) -> (Vec<Vec3>, Vec<Vec<[u32; 3]>>) {
+    use s2_voronoi::escalate_probe::take_a0_fast;
+
+    std::env::set_var("S2_ESCALATE_PROBE_A0", "1");
+    set_escalation_enabled(true);
+    let _ = compute_with_report(points, VoronoiConfig::default()).expect("build");
+    set_escalation_enabled(false);
+    std::env::remove_var("S2_ESCALATE_PROBE_A0");
+    take_a0_fast().expect("A0 stash")
+}
+
+fn exact_triples_norm3d(pts: &[Vec3]) -> (Vec<std::collections::BTreeSet<[u32; 3]>>, Vec<bool>) {
+    use s2_voronoi::escalate_probe::rebuild_cells;
+    use std::collections::BTreeSet;
+
+    let m = pts.len();
+    let all: Vec<u32> = (0..m as u32).collect();
+    let mut exact: Vec<BTreeSet<[u32; 3]>> = vec![BTreeSet::new(); m];
+    let Some(cells) = rebuild_cells(pts, &all, &all) else {
+        return (exact, vec![false; m]);
+    };
+    let mut complete = vec![false; m];
+    for c in cells {
+        complete[c.generator as usize] = !c.vertices.is_empty();
+        exact[c.generator as usize] = c.vertices.into_iter().collect();
+    }
+    (exact, complete)
+}
+
+fn exact_triples_cgal_hull3(
+    pts: &[Vec3],
+) -> (Vec<std::collections::BTreeSet<[u32; 3]>>, Vec<bool>, String) {
+    use std::collections::BTreeSet;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let bin = std::env::var("S2_CGAL_HULL3_BIN")
+        .expect("set S2_CGAL_HULL3_BIN to scripts/cgal_hull3.cpp compiled binary");
+    let mut child = Command::new(bin)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn CGAL hull probe");
+    {
+        let stdin = child.stdin.as_mut().expect("CGAL hull probe stdin");
+        for (i, p) in pts.iter().enumerate() {
+            let q = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64).normalize();
+            writeln!(stdin, "{} {:.17e} {:.17e} {:.17e}", i, q.x, q.y, q.z)
+                .expect("write CGAL hull probe input");
+        }
+    }
+    let output = child.wait_with_output().expect("wait for CGAL hull probe");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        output.status.success(),
+        "CGAL hull probe failed with status {:?}: {stderr}",
+        output.status.code()
+    );
+
+    let mut exact: Vec<BTreeSet<[u32; 3]>> = vec![BTreeSet::new(); pts.len()];
+    let mut complete = vec![false; pts.len()];
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for (line_no, line) in stdout.lines().enumerate() {
+        let ids: Vec<u32> = line
+            .split_whitespace()
+            .map(|s| s.parse::<u32>())
+            .collect::<Result<_, _>>()
+            .unwrap_or_else(|err| panic!("parse CGAL hull output line {}: {err}", line_no + 1));
+        assert_eq!(
+            ids.len(),
+            3,
+            "CGAL hull output line {} was not a triangle: {line}",
+            line_no + 1
+        );
+        let tri = [ids[0], ids[1], ids[2]];
+        for &g in &tri {
+            exact[g as usize].insert(tri);
+            complete[g as usize] = true;
+        }
+    }
+    (exact, complete, stderr)
+}
+
+fn defect_cells_from_triples(fast_triples: &[Vec<[u32; 3]>]) -> Vec<bool> {
+    let mut dir: std::collections::HashMap<([u32; 3], [u32; 3]), u32> =
+        std::collections::HashMap::new();
+    for fan in fast_triples {
+        let f = fan.len();
+        if f < 3 {
+            continue;
+        }
+        for i in 0..f {
+            *dir.entry((fan[i], fan[(i + 1) % f])).or_default() += 1;
+        }
+    }
+
+    let mut defect = vec![false; fast_triples.len()];
+    for (g, fan) in fast_triples.iter().enumerate() {
+        let f = fan.len();
+        if f < 3 {
+            defect[g] = true;
+            continue;
+        }
+        for i in 0..f {
+            let (a, b) = (fan[i], fan[(i + 1) % f]);
+            let fwd = dir.get(&(a, b)).copied().unwrap_or(0);
+            let rev = dir.get(&(b, a)).copied().unwrap_or(0);
+            if fwd != 1 || rev != 1 {
+                defect[g] = true;
+            }
+        }
+    }
+    defect
+}
+
+fn sorted_set(v: &[[u32; 3]]) -> std::collections::BTreeSet<[u32; 3]> {
+    v.iter().copied().collect()
+}
+
+fn norm3d_quad_margin(pts: &[Vec3], g: u32, m: u32, x: u32, y: u32) -> f64 {
+    let p = |i: u32| {
+        let v = pts[i as usize];
+        glam::DVec3::new(v.x as f64, v.y as f64, v.z as f64).normalize()
+    };
+    let (g, m, x, y) = (p(g), p(m), p(x), p(y));
+    let a = m - g;
+    let b = x - g;
+    let c = y - g;
+    let denom = (a.length() * b.length() * c.length()).max(1e-300);
+    a.cross(b).dot(c).abs() / denom
+}
+
+fn min_fast_norm3d_quad_margin(pts: &[Vec3], g: u32, fan: &[[u32; 3]]) -> Option<f64> {
+    if fan.len() < 3 {
+        return None;
+    }
+    let mut best = f64::INFINITY;
+    for i in 0..fan.len() {
+        let t0 = fan[i];
+        let t1 = fan[(i + 1) % fan.len()];
+        let common: Vec<u32> = t0
+            .iter()
+            .copied()
+            .filter(|&v| v != g && t1.contains(&v))
+            .collect();
+        if common.len() != 1 {
+            continue;
+        }
+        let m = common[0];
+        let Some(x) = t0.iter().copied().find(|&v| v != g && v != m) else {
+            continue;
+        };
+        let Some(y) = t1.iter().copied().find(|&v| v != g && v != m) else {
+            continue;
+        };
+        best = best.min(norm3d_quad_margin(pts, g, m, x, y));
+    }
+    best.is_finite().then_some(best)
+}
+
+fn flag_bands_from_env() -> Vec<f64> {
+    let mut bands: Vec<f64> = std::env::var("S2_NORM3D_FLAG_BANDS")
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .filter_map(|v| v.trim().parse::<f64>().ok())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![1e-14, 1e-12, 1e-10, 1e-8, 1e-6, 1e-4, 1e-2]);
+    bands.sort_by(f64::total_cmp);
+    bands
+}
+
+fn print_norm3d_flag_recall(
+    label: &str,
+    dist: &str,
+    seed: u64,
+    pts: &[Vec3],
+    fast_triples: &[Vec<[u32; 3]>],
+    changed: &std::collections::BTreeSet<usize>,
+    defect: &[bool],
+) {
+    use std::collections::BTreeSet;
+
+    let m = pts.len();
+    let margins: Vec<Option<f64>> = (0..m)
+        .map(|g| min_fast_norm3d_quad_margin(pts, g as u32, &fast_triples[g]))
+        .collect();
+    let defect_set: BTreeSet<usize> = defect
+        .iter()
+        .enumerate()
+        .filter_map(|(g, &d)| d.then_some(g))
+        .collect();
+
+    println!(
+        "{label} dist={dist} n={m} seed={seed}: changed={} ({:.4}%) defect_cells={}",
+        changed.len(),
+        100.0 * changed.len() as f64 / m.max(1) as f64,
+        defect_set.len(),
+    );
+    println!("  band        flagged  hit  missed  recall%  false_pos  fp%     +defect_recall%");
+    for band in flag_bands_from_env() {
+        let flagged: BTreeSet<usize> = margins
+            .iter()
+            .enumerate()
+            .filter_map(|(g, m)| m.is_some_and(|v| v <= band).then_some(g))
+            .collect();
+        let hit = flagged.intersection(changed).count();
+        let missed = changed.len().saturating_sub(hit);
+        let false_pos = flagged.len().saturating_sub(hit);
+        let recall = 100.0 * hit as f64 / changed.len().max(1) as f64;
+        let fp = 100.0 * false_pos as f64 / m.saturating_sub(changed.len()).max(1) as f64;
+
+        let flagged_or_defect: BTreeSet<usize> = flagged.union(&defect_set).copied().collect();
+        let hit_plus = flagged_or_defect.intersection(changed).count();
+        let recall_plus = 100.0 * hit_plus as f64 / changed.len().max(1) as f64;
+        println!(
+            "  {band:9.1e} {:8} {:4} {:7} {:7.2} {:10} {:7.3} {:14.2}",
+            flagged.len(),
+            hit,
+            missed,
+            recall,
+            false_pos,
+            fp,
+            recall_plus,
+        );
+    }
+}
+
+fn fast_cell_neighbors(g: u32, fan: &[[u32; 3]]) -> Vec<u32> {
+    let mut out = Vec::new();
+    if fan.len() < 3 {
+        return out;
+    }
+    for i in 0..fan.len() {
+        let t0 = fan[i];
+        let t1 = fan[(i + 1) % fan.len()];
+        let common: Vec<u32> = t0
+            .iter()
+            .copied()
+            .filter(|&v| v != g && t1.contains(&v))
+            .collect();
+        if common.len() == 1 {
+            out.push(common[0]);
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+fn changed_component_summary(changed: &[bool], fast_triples: &[Vec<[u32; 3]>]) -> (usize, usize) {
+    let mut seen = vec![false; changed.len()];
+    let mut components = 0usize;
+    let mut max_size = 0usize;
+    for seed in 0..changed.len() {
+        if !changed[seed] || seen[seed] {
+            continue;
+        }
+        components += 1;
+        let mut stack = vec![seed as u32];
+        seen[seed] = true;
+        let mut size = 0usize;
+        while let Some(g) = stack.pop() {
+            size += 1;
+            for h in fast_cell_neighbors(g, &fast_triples[g as usize]) {
+                let hi = h as usize;
+                if hi < changed.len() && changed[hi] && !seen[hi] {
+                    seen[hi] = true;
+                    stack.push(h);
+                }
+            }
+        }
+        max_size = max_size.max(size);
+    }
+    (components, max_size)
+}
+
+/// Compare the fast gnomonic graph against a normalized 3D exact Delaunay
+/// reference (global `LocalHull`). This is the cell-error measurement for a
+/// future exact-by-construction mode. The normalization inside `LocalHull` is
+/// essential: raw f32 radius drift is not the S2 graph.
+///
+/// Example:
+///   S2_ESCALATE_DIST=uniform S2_ESCALATE_N=12000 S2_ESCALATE_SEED=3 \
+///     cargo test --release --features escalate_probe --test escalate \
+///     probe_fast_vs_norm3d_reference -- --ignored --nocapture
+#[test]
+#[ignore = "normalized 3D exact-reference probe; run with env + --ignored --nocapture"]
+fn probe_fast_vs_norm3d_reference() {
+    let (dist, seed, points) = probe_points_from_env(12_000);
+    let (pts, fast_triples) = stash_fast_triples(&points);
+    let m = pts.len();
+    let (exact, exact_complete) = exact_triples_norm3d(&pts);
+    let defect = defect_cells_from_triples(&fast_triples);
+
+    let mut eligible = 0usize;
+    let mut changed = 0usize;
+    let mut changed_defective = 0usize;
+    let mut changed_valid = 0usize;
+    let mut defect_cells = 0usize;
+    let mut defect_not_changed = 0usize;
+    let mut incomplete_exact = 0usize;
+    let mut changed_mask = vec![false; m];
+    for g in 0..m {
+        if defect[g] {
+            defect_cells += 1;
+        }
+        if !exact_complete[g] || fast_triples[g].is_empty() {
+            incomplete_exact += 1;
+            continue;
+        }
+        eligible += 1;
+        let ch = sorted_set(&fast_triples[g]) != exact[g];
+        if ch {
+            changed_mask[g] = true;
+            changed += 1;
+            if defect[g] {
+                changed_defective += 1;
+            } else {
+                changed_valid += 1;
+            }
+        } else if defect[g] {
+            defect_not_changed += 1;
+        }
+    }
+    let (changed_components, changed_max_component) =
+        changed_component_summary(&changed_mask, &fast_triples);
+    println!(
+        "NORM3D-REF dist={dist} n={m} seed={seed}: eligible={eligible} \
+         incomplete_exact={incomplete_exact} changed={changed} ({:.4}%) \
+         changed_defective={changed_defective} changed_valid={changed_valid} \
+         defect_cells={defect_cells} defect_not_changed={defect_not_changed} \
+         changed_components={changed_components} changed_max_component={changed_max_component}",
+        100.0 * changed as f64 / eligible.max(1) as f64,
+    );
+}
+
+#[test]
+#[ignore = "external CGAL exact hull probe; set S2_CGAL_HULL3_BIN and run with --ignored --nocapture"]
+fn probe_cgal_hull3_vs_local_hull_reference() {
+    let (dist, seed, points) = probe_points_from_env(2_000);
+    let pts = to_vec3(&points);
+    let (local, local_complete) = exact_triples_norm3d(&pts);
+    let (cgal, cgal_complete, cgal_log) = exact_triples_cgal_hull3(&pts);
+
+    let mut eligible = 0usize;
+    let mut changed = 0usize;
+    let mut local_incomplete = 0usize;
+    let mut cgal_incomplete = 0usize;
+    for g in 0..pts.len() {
+        if !local_complete[g] {
+            local_incomplete += 1;
+        }
+        if !cgal_complete[g] {
+            cgal_incomplete += 1;
+        }
+        if !local_complete[g] || !cgal_complete[g] {
+            continue;
+        }
+        eligible += 1;
+        changed += usize::from(local[g] != cgal[g]);
+    }
+
+    println!(
+        "CGAL-HULL3-vs-LOCAL dist={dist} n={} seed={seed}: eligible={eligible} \
+         changed={changed} ({:.4}%) local_incomplete={local_incomplete} \
+         cgal_incomplete={cgal_incomplete} | {}",
+        pts.len(),
+        100.0 * changed as f64 / eligible.max(1) as f64,
+        cgal_log.trim(),
+    );
+}
+
+#[test]
+#[ignore = "fast graph vs external CGAL exact hull probe; set S2_CGAL_HULL3_BIN and run with --ignored --nocapture"]
+fn probe_fast_vs_cgal_hull3_reference() {
+    let (dist, seed, points) = probe_points_from_env(12_000);
+    let (pts, fast_triples) = stash_fast_triples(&points);
+    let m = pts.len();
+    let (exact, exact_complete, cgal_log) = exact_triples_cgal_hull3(&pts);
+    let defect = defect_cells_from_triples(&fast_triples);
+
+    let mut eligible = 0usize;
+    let mut changed = 0usize;
+    let mut changed_defective = 0usize;
+    let mut changed_valid = 0usize;
+    let mut defect_cells = 0usize;
+    let mut defect_not_changed = 0usize;
+    let mut incomplete_exact = 0usize;
+    let mut changed_mask = vec![false; m];
+    for g in 0..m {
+        if defect[g] {
+            defect_cells += 1;
+        }
+        if !exact_complete[g] || fast_triples[g].is_empty() {
+            incomplete_exact += 1;
+            continue;
+        }
+        eligible += 1;
+        let ch = sorted_set(&fast_triples[g]) != exact[g];
+        if ch {
+            changed_mask[g] = true;
+            changed += 1;
+            if defect[g] {
+                changed_defective += 1;
+            } else {
+                changed_valid += 1;
+            }
+        } else if defect[g] {
+            defect_not_changed += 1;
+        }
+    }
+    let (changed_components, changed_max_component) =
+        changed_component_summary(&changed_mask, &fast_triples);
+    println!(
+        "CGAL-HULL3-REF dist={dist} n={m} seed={seed}: eligible={eligible} \
+         incomplete_exact={incomplete_exact} changed={changed} ({:.4}%) \
+         changed_defective={changed_defective} changed_valid={changed_valid} \
+         defect_cells={defect_cells} defect_not_changed={defect_not_changed} \
+         changed_components={changed_components} changed_max_component={changed_max_component} | {}",
+        100.0 * changed as f64 / eligible.max(1) as f64,
+        cgal_log.trim(),
+    );
+}
+
+/// Candidate flag recall against the normalized-3D changed-cell set. The flag
+/// here is deliberately simple: mark a cell if any consecutive pair of fast-cell
+/// vertices forms a near-cocircular normalized 3D quad with volume <= BAND.
+/// This tests whether a question-intrinsic S2 margin could be a viable cheap
+/// detector before trying to make it hot-path/provable.
+///
+/// Optional env:
+/// - `S2_NORM3D_FLAG_BANDS=1e-12,1e-10,1e-8,1e-6`
+#[test]
+#[ignore = "normalized 3D flag-recall probe; run with env + --ignored --nocapture"]
+fn probe_norm3d_flag_recall() {
+    use std::collections::BTreeSet;
+
+    let (dist, seed, points) = probe_points_from_env(12_000);
+    let (pts, fast_triples) = stash_fast_triples(&points);
+    let m = pts.len();
+    let (exact, exact_complete) = exact_triples_norm3d(&pts);
+    let defect = defect_cells_from_triples(&fast_triples);
+
+    let changed: BTreeSet<usize> = (0..m)
+        .filter(|&g| {
+            exact_complete[g]
+                && !fast_triples[g].is_empty()
+                && sorted_set(&fast_triples[g]) != exact[g]
+        })
+        .collect();
+    print_norm3d_flag_recall(
+        "NORM3D-FLAG",
+        &dist,
+        seed,
+        &pts,
+        &fast_triples,
+        &changed,
+        &defect,
+    );
+}
+
+#[test]
+#[ignore = "external CGAL truth flag-recall probe; set S2_CGAL_HULL3_BIN and run with --ignored --nocapture"]
+fn probe_cgal_hull3_flag_recall() {
+    use std::collections::BTreeSet;
+
+    let (dist, seed, points) = probe_points_from_env(12_000);
+    let (pts, fast_triples) = stash_fast_triples(&points);
+    let m = pts.len();
+    let (exact, complete, cgal_log) = exact_triples_cgal_hull3(&pts);
+    let defect = defect_cells_from_triples(&fast_triples);
+
+    let changed: BTreeSet<usize> = (0..m)
+        .filter(|&g| {
+            complete[g] && !fast_triples[g].is_empty() && sorted_set(&fast_triples[g]) != exact[g]
+        })
+        .collect();
+    print_norm3d_flag_recall(
+        "CGAL-HULL3-FLAG",
+        &dist,
+        seed,
+        &pts,
+        &fast_triples,
+        &changed,
+        &defect,
+    );
+    println!("  {}", cgal_log.trim());
+}
+
 /// Local exact Delaunay over a generator subset (gather), same metric as the
 /// global delaunator reference: stereographic-project the subset, triangulate,
 /// return each seed generator's triple-set in GLOBAL indices. A seed's fan is
@@ -406,9 +918,9 @@ fn local_delaunator_cell(
 }
 
 /// Does a LOCAL delaunator (over a generous gather) reproduce the GLOBAL
-/// delaunator on the repair cells? If yes, "local stereographic + delaunator"
-/// is the consistent local oracle the repair needs (matching the trusted global
-/// reference), unlike `local_hull` (wrong metric → never matches).
+/// delaunator on the repair cells? This was the first projected-oracle sanity
+/// check. After the normalized-CGAL finding, normalized local 3D hull is also a
+/// viable oracle candidate.
 #[test]
 #[ignore = "local-delaunator-vs-global; run with env + --ignored --nocapture"]
 fn local_delaunator_vs_global() {
@@ -466,13 +978,10 @@ fn local_delaunator_vs_global() {
     }
 }
 
-/// Tests the projection theory: the fast clipper (gnomonic chart) and delaunator
-/// (stereographic chart) both decide near-cocircular ties on PROJECTED coords,
-/// while `local_hull` uses exact `orient3d` on RAW 3D coords. Prediction: the two
-/// projected methods agree closely (small fast Δ delaunator) and both differ from
-/// the raw method (large fast Δ local_hull ≈ delaunator Δ local_hull). Computes
-/// all three on a small mega input and reports pairwise changed-cell counts over
-/// interior (non-projection-rim) cells.
+/// Tests the old projection-theory hypothesis. The normalized-CGAL probe showed
+/// that exact 3D hulls must renormalize f32 inputs back onto S2; once local_hull
+/// does that, fast, projected delaunator, and local_hull should agree on these
+/// interior cells.
 #[test]
 #[ignore = "projection-theory 3-way diagnostic; small n; env + --ignored --nocapture"]
 fn projection_theory_3way() {
@@ -505,7 +1014,7 @@ fn projection_theory_3way() {
     // delaunator (stereographic, projected) and its hull-region (incomplete fans)
     let (delan, hull_region) = exact_triples_delaunator(&pts);
 
-    // local_hull GLOBAL (raw 3D orient3d): ONE hull over all points, all cells.
+    // local_hull GLOBAL (normalized S2 orient3d): ONE hull over all points, all cells.
     let all: Vec<u32> = (0..m as u32).collect();
     let lh_cells = rebuild_cells(&pts, &all, &all).expect("global hull");
     let mut lh: Vec<BTreeSet<[u32; 3]>> = vec![BTreeSet::new(); m];
@@ -648,7 +1157,7 @@ fn detect_fix_expand_localhull() {
 }
 
 /// First goal for the repair: a LOCAL exact oracle whose cells match the global
-/// exact reference (delaunator). This measures how well the current `local_hull`
+/// exact reference (delaunator). This measures how well normalized `local_hull`
 /// (via `rebuild_cells` over a k-NN gather) matches delaunator on the cells that
 /// matter — the CHANGED cells (where fast ≠ exact, i.e. the repair targets) —
 /// across gather sizes. Mismatches diagnose what the oracle needs (completeness
@@ -824,12 +1333,14 @@ fn detect_fix_expand_delaunator() {
 #[test]
 #[ignore = "report-only sweep; run with --ignored --nocapture"]
 fn escalation_generalization_sweep() {
+    let off = || VoronoiConfig {
+        repair_mode: RepairMode::Disabled,
+        ..VoronoiConfig::default()
+    };
+    let on = VoronoiConfig::default;
     let run = |label: &str, pts: &[UnitVec3]| {
-        set_escalation_enabled(false);
-        let before = compute_with_report(pts, VoronoiConfig::default()).expect("build");
-        set_escalation_enabled(true);
-        let after = compute_with_report(pts, VoronoiConfig::default()).expect("build");
-        set_escalation_enabled(false);
+        let before = compute_with_report(pts, off()).expect("build");
+        let after = compute_with_report(pts, on()).expect("build");
         println!(
             "{label}: before={} after={}",
             if before.report.returned_validation.is_strictly_valid() {
@@ -869,18 +1380,19 @@ fn escalation_generalization_sweep() {
 /// the on/off builds below are reliable under parallel execution.
 #[test]
 fn escalation_repair_makes_mega_strictly_valid() {
-    let cfg = || VoronoiConfig::default();
+    let off = || VoronoiConfig {
+        repair_mode: RepairMode::Disabled,
+        ..VoronoiConfig::default()
+    };
+    let on = VoronoiConfig::default;
     let mut fixed_at_least_one = false;
     for seed in [1u64, 2, 15] {
         let points = mega_points(100_000, 0.8, seed);
 
-        set_escalation_enabled(false);
-        let before = compute_with_report(&points, cfg()).expect("build");
+        let before = compute_with_report(&points, off()).expect("build");
         let before_valid = before.report.returned_validation.is_strictly_valid();
 
-        set_escalation_enabled(true);
-        let after = compute_with_report(&points, cfg()).expect("build");
-        set_escalation_enabled(false);
+        let after = compute_with_report(&points, on()).expect("build");
         let after_report = &after.report.returned_validation;
 
         println!(

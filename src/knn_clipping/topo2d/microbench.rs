@@ -7,9 +7,111 @@
 pub fn run_clip_convex_microbench() {
     use super::clippers::{clip_convex, clip_convex_small_bool, EscalationCtx};
     use super::types::{plane_id, ClipResult, HalfPlane, PolyBuffer};
+    use glam::Vec3;
 
     use std::hint::black_box;
     use std::time::{Duration, Instant};
+
+    #[derive(Clone)]
+    struct SphericalPolyBench {
+        vertices: [Vec3; 64],
+        len: usize,
+    }
+
+    impl SphericalPolyBench {
+        fn new() -> Self {
+            Self {
+                vertices: [Vec3::ZERO; 64],
+                len: 0,
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn tangent_to_sphere(u: f64, v: f64) -> Vec3 {
+        Vec3::new(u as f32, v as f32, 1.0).normalize()
+    }
+
+    fn spherical_from_gnomonic(poly: &PolyBuffer) -> SphericalPolyBench {
+        let mut out = SphericalPolyBench::new();
+        out.len = poly.len;
+        for i in 0..poly.len {
+            out.vertices[i] = tangent_to_sphere(poly.us[i], poly.vs[i]);
+        }
+        out
+    }
+
+    #[inline(always)]
+    fn hp_to_spherical_normal(hp: &HalfPlane) -> Vec3 {
+        Vec3::new(hp.a as f32, hp.b as f32, hp.c as f32)
+    }
+
+    #[inline(always)]
+    fn push_spherical(out: &mut SphericalPolyBench, p: Vec3) {
+        if out.len < out.vertices.len() {
+            out.vertices[out.len] = p;
+            out.len += 1;
+        }
+    }
+
+    #[inline(always)]
+    fn spherical_edge_intersection(a: Vec3, b: Vec3, normal: Vec3) -> Vec3 {
+        let edge_normal = a.cross(b);
+        let cross = edge_normal.cross(normal);
+        let candidate = cross.normalize();
+        let midpoint = (a + b).normalize();
+        if candidate.dot(midpoint) >= 0.0 {
+            candidate
+        } else {
+            -candidate
+        }
+    }
+
+    #[inline(never)]
+    fn clip_spherical3d(
+        poly: &SphericalPolyBench,
+        normal: Vec3,
+        out: &mut SphericalPolyBench,
+    ) -> ClipResult {
+        if poly.len < 3 {
+            out.len = 0;
+            return ClipResult::Changed;
+        }
+
+        out.len = 0;
+        let mut changed = false;
+        for i in 0..poly.len {
+            let j = if i + 1 == poly.len { 0 } else { i + 1 };
+            let a = poly.vertices[i];
+            let b = poly.vertices[j];
+            let a_in = normal.dot(a) >= 0.0;
+            let b_in = normal.dot(b) >= 0.0;
+            match (a_in, b_in) {
+                (true, true) => push_spherical(out, a),
+                (true, false) => {
+                    push_spherical(out, a);
+                    push_spherical(out, spherical_edge_intersection(a, b, normal));
+                    changed = true;
+                }
+                (false, true) => {
+                    push_spherical(out, spherical_edge_intersection(a, b, normal));
+                    changed = true;
+                }
+                (false, false) => {
+                    changed = true;
+                }
+            }
+        }
+
+        if out.len < 3 {
+            return ClipResult::Changed;
+        }
+        if changed {
+            ClipResult::Changed
+        } else {
+            ClipResult::Unchanged
+        }
+    }
 
     let target_ms: u64 = std::env::var("S2_VORONOI_BENCH_TARGET_MS")
         .ok()
@@ -251,10 +353,15 @@ pub fn run_clip_convex_microbench() {
     fn run_for<const N: usize>(target: Duration, samples: usize, hp_pool_len: usize) {
         let poly = make_regular_poly_bounded::<N>(1.0);
         let (hps_changed, hps_unchanged, hps_combo) = build_hp_pools::<N>(&poly, hp_pool_len);
+        let sphere_poly = spherical_from_gnomonic(&poly);
+        let sphere_changed: Vec<Vec3> = hps_changed.iter().map(hp_to_spherical_normal).collect();
+        let sphere_unchanged: Vec<Vec3> =
+            hps_unchanged.iter().map(hp_to_spherical_normal).collect();
 
         // Pre-allocate output buffers.
         let mut out_baseline = PolyBuffer::new();
         let mut out_dispatch = PolyBuffer::new();
+        let mut out_sphere = SphericalPolyBench::new();
 
         // Sanity: ensure the intended regimes.
         assert!(matches!(
@@ -340,6 +447,19 @@ pub fn run_clip_convex_microbench() {
             }
         });
 
+        bench_ns_per_call("spherical3d mixed", target, samples, 1, |iters| {
+            let poly = black_box(&sphere_poly);
+            let hps = black_box(sphere_changed.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_sphere);
+            let mut s = 0x1234_5678_9ABC_DEF0u64;
+            for _ in 0..iters {
+                let hp = hps[next_idx(&mut s, hp_mask)];
+                let r = clip_spherical3d(poly, hp, out);
+                black_box(r);
+            }
+        });
+
         // (Temporarily disabled) Alternating keep/cut can be misleading for batch-friendly ideas.
         let _ = hps_combo;
 
@@ -365,6 +485,19 @@ pub fn run_clip_convex_microbench() {
             for _ in 0..iters {
                 let hp = &hps[next_idx(&mut s, hp_mask)];
                 let r = clip_convex(poly, hp, out, &EscalationCtx::disabled());
+                black_box(r);
+            }
+        });
+
+        bench_ns_per_call("spherical3d unchanged", target, samples, 1, |iters| {
+            let poly = black_box(&sphere_poly);
+            let hps = black_box(sphere_unchanged.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_sphere);
+            let mut s = 0x0BAD_F00D_1234_5678u64;
+            for _ in 0..iters {
+                let hp = hps[next_idx(&mut s, hp_mask)];
+                let r = clip_spherical3d(poly, hp, out);
                 black_box(r);
             }
         });

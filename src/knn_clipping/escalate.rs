@@ -1,18 +1,18 @@
 //! Defect-driven escalation (step C of the adaptive-canonical-clip plan, see
 //! `docs/adaptive-canonical-clip-design-2026-06.md`).
 //!
-//! Rebuilds a near-degenerate neighborhood as a SINGLE exact local Delaunay
-//! (`local_hull`) and reads each generator's Voronoi cell off the shared dual.
-//! Because every cell comes from one triangulation, they pair on shared edges
-//! by construction (see `local_hull::tests::dual_cells_agree_on_shared_edges`),
-//! which is the property the reverted per-cell/pin-by-key repairs lacked.
+//! Rebuilds a near-degenerate neighborhood as a SINGLE normalized local 3D hull
+//! and reads each generator's Voronoi cell off the shared dual.
+//! Because every repaired cell comes from one triangulation, they pair on shared
+//! edges by construction, which is the property the reverted per-cell/pin-by-key
+//! repairs lacked.
 //!
 //! This is the vertical-slice core: brute-force neighbor gather + rebuild + a
 //! consistency read. The production loop (connected-component growth, the
 //! considered-neighbor set, re-assembly, grow-until-clean-rim) builds on top.
 
-// The production consumer (the escalation loop) lands in a follow-up; until
-// then this is exercised by the escalate_probe integration test only.
+// Much of this module is diagnostic scaffolding for the older projected and
+// fill experiments. The active production repair path is `repair_local_hull`.
 #![allow(dead_code)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -233,14 +233,11 @@ pub fn reclip_cells(points: &[Vec3], local_ids: &[u32], seeds: &[u32]) -> Option
     Some(out)
 }
 
-/// PROJECTED exact oracle (feature `escalate_probe`): the exact spherical
-/// Delaunay via stereographic projection + `delaunator` (exact predicates),
-/// read as each seed's ordered Voronoi fan. Projected ⇒ agrees with the fast
-/// (gnomonic) diagram at well-conditioned rim edges ⇒ rebuilt rim triples reuse
-/// the existing fast vids and pair by construction (no cascade). Fans are
-/// ordered by COMBINATORIAL chaining of incident Delaunay triangles — no
-/// reliance on the ill-conditioned circumcenter coordinates of near-cocircular
-/// vertices. Drop-in for `rebuild_cells`/`reclip_cells`.
+/// Projected exact oracle (feature `escalate_probe`): exact 2D Delaunay via
+/// stereographic projection + `delaunator`, read as each seed's ordered Voronoi
+/// fan. This remains useful as an A/B reference for the local projected repair.
+/// Normalized local 3D hull is now also viable; older raw-3D cascade results
+/// were caused by exact predicates seeing f32 radius drift.
 #[cfg(feature = "escalate_probe")]
 pub fn delaunator_cells(
     points: &[Vec3],
@@ -327,12 +324,9 @@ pub fn delaunator_cells(
     Some(out)
 }
 
-/// Proper defect repair (feature `escalate_probe`): wholesale-splice the defect
-/// closure with the PROJECTED exact oracle (`delaunator_cells`) and grow until
-/// the residual closes. Because the oracle is projected, the rebuilt rim triples
-/// match the surrounding fast cells (reuse their vids) and pair by construction,
-/// so the closure stays bounded (converges in ~1 round). The whole-diagram
-/// never-worse gate lives in the caller.
+/// Probe defect repair with the projected external oracle (`delaunator_cells`).
+/// The production-style projected repair is `repair_local_exact`; this global
+/// oracle remains as an A/B scaffold in `escalate_probe`.
 #[cfg(feature = "escalate_probe")]
 pub fn repair_delaunator(
     points: &[Vec3],
@@ -670,16 +664,13 @@ fn local_exact_incident(
     let ring_k = gather_k.min(32);
     let local_ids: Vec<u32> = gather_local(points, &seeds2, ring_k);
 
-    // SINGLE shared stereographic chart over the gather. The oracle must be a
-    // PROJECTED metric, not raw 3D orient3d: the fast clipper is projected
-    // (gnomonic), so at a near-cocircular vertex it and a projected oracle pick
-    // the SAME diagonal — they only differ where the fast path's PER-CELL chart
-    // rounding is internally inconsistent (the defect). A raw-3D in-circle is
-    // exact but picks the TRUE diagonal, which disagrees with the fast rim at
-    // EVERY near-cocircular vertex (abundant in a dense mega cluster) → an
-    // unbounded grow front. One shared chart + exact 2D Delaunay reproduces
-    // delaunator's convergent behavior with no external crate. Conformal
-    // (circles↔circles) ⇒ empty-circumcircle in 2D ≡ empty-circumcap on sphere.
+    // SINGLE shared stereographic chart over the gather. This is the current
+    // production repair oracle: one exact 2D triangulation produces all closure
+    // fans, so repaired cells agree with each other. Normalized local 3D hull is
+    // now a viable equivalent oracle on tested S2 inputs; the previous raw-3D
+    // cascade diagnosis was an off-sphere f32-radius artifact, not projection
+    // drift. Keep this projected path as the default until the normalized local
+    // 3D broad sweep is complete.
     let mut centroid = Vec3::ZERO;
     for &id in &local_ids {
         centroid += points[id as usize];
@@ -716,6 +707,53 @@ fn local_exact_incident(
             if closureset.contains(&g) {
                 incident.get_mut(&g).unwrap().push(sorted);
             }
+        }
+    }
+    incident
+}
+
+fn local_hull_incident(
+    points: &[Vec3],
+    work: &WorkingDiagram,
+    closure: &[u32],
+    gather_k: usize,
+) -> FxHashMap<u32, Vec<[u32; 3]>> {
+    use std::collections::BTreeSet;
+
+    if closure.is_empty() {
+        return FxHashMap::default();
+    }
+
+    let cell_neighbors = |g: u32| -> Vec<u32> {
+        let mut ns: Vec<u32> = work.cells[g as usize]
+            .iter()
+            .flat_map(|&v| work.vkey[v as usize])
+            .filter(|&x| x != g && x != u32::MAX)
+            .collect();
+        ns.sort_unstable();
+        ns.dedup();
+        ns
+    };
+
+    let mut seeds2: BTreeSet<u32> = closure.iter().copied().collect();
+    for &g in closure {
+        seeds2.extend(cell_neighbors(g));
+    }
+    let seeds2: Vec<u32> = seeds2.into_iter().collect();
+    let ring_k = gather_k.min(32);
+    let local_ids: Vec<u32> = gather_local(points, &seeds2, ring_k);
+
+    let closureset: BTreeSet<u32> = closure.iter().copied().collect();
+    let mut incident: FxHashMap<u32, Vec<[u32; 3]>> = FxHashMap::default();
+    for &g in closure {
+        incident.entry(g).or_default();
+    }
+    if let Some(cells) = rebuild_cells(points, &local_ids, closure) {
+        for cell in cells {
+            if !closureset.contains(&cell.generator) {
+                continue;
+            }
+            incident.insert(cell.generator, cell.vertices);
         }
     }
     incident
@@ -817,6 +855,102 @@ pub(crate) fn repair_local_exact(
     if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
         eprintln!(
             "repair_local_exact: {:?}; final unpaired-implicated={}",
+            stats,
+            work.unpaired_generators().len()
+        );
+    }
+    stats
+}
+
+/// Dependency-free local 3D repair: use normalized local 3D hulls as the oracle
+/// instead of projected exact 2D Delaunay.
+///
+/// This is the preferred final-backstop shape because exact 3D construction has
+/// no single-chart/pole failure mode. `local_hull` normalizes S2 directions
+/// before exact predicates, so it solves the crate's spherical input problem
+/// rather than an off-sphere f32-radius hull problem.
+pub(crate) fn repair_local_hull(
+    points: &[Vec3],
+    work: &mut WorkingDiagram,
+    defect_pairs: &[(u32, u32)],
+    gather_k: usize,
+    max_rounds: usize,
+) -> EscalationStats {
+    use std::collections::BTreeSet;
+    let mut stats = EscalationStats::default();
+
+    let mut closure: BTreeSet<u32> = defect_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
+    let low_incidence_gens = |work: &WorkingDiagram| -> Vec<u32> {
+        let mut refcount: FxHashMap<u32, u32> = FxHashMap::default();
+        for list in &work.cells {
+            for &v in list {
+                *refcount.entry(v).or_default() += 1;
+            }
+        }
+        let mut out = Vec::new();
+        for (&v, &c) in &refcount {
+            if (1..3).contains(&c) {
+                out.extend(work.vkey[v as usize]);
+            }
+        }
+        out
+    };
+    for g in low_incidence_gens(work) {
+        closure.insert(g);
+    }
+    let defect_gens: BTreeSet<u32> = defect_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
+    let target_sign = work.winding_convention(points, &defect_gens);
+
+    let mut spliced: BTreeSet<u32> = BTreeSet::new();
+    for _ in 0..max_rounds {
+        if closure.is_empty() {
+            break;
+        }
+        stats.rounds += 1;
+        let closure_vec: Vec<u32> = closure.iter().copied().collect();
+        let incident = local_hull_incident(points, work, &closure_vec, gather_k);
+        for &g in &closure_vec {
+            let Some(fan) = incident.get(&g) else {
+                continue;
+            };
+            if fan.len() < 3 {
+                continue;
+            }
+            work.splice_generator(points, g, fan, target_sign);
+            spliced.insert(g);
+        }
+
+        let mut implicated: BTreeSet<u32> = work.unpaired_generators().into_iter().collect();
+        for g in low_incidence_gens(work) {
+            implicated.insert(g);
+        }
+        let new: Vec<u32> = implicated
+            .iter()
+            .copied()
+            .filter(|g| !closure.contains(g))
+            .collect();
+        if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+            eprintln!(
+                "  local hull repair round {}: closure={} spliced={} implicated={} new={}",
+                stats.rounds,
+                closure.len(),
+                spliced.len(),
+                implicated.len(),
+                new.len(),
+            );
+        }
+        if new.is_empty() {
+            stats.stuck_components = usize::from(!implicated.is_empty());
+            break;
+        }
+        for g in new {
+            closure.insert(g);
+        }
+    }
+    stats.spliced_generators = spliced.len();
+    if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+        eprintln!(
+            "repair_local_hull: {:?}; final unpaired-implicated={}",
             stats,
             work.unpaired_generators().len()
         );
@@ -2323,6 +2457,31 @@ thread_local! {
     /// A0 probe stash from the last build, for an exact-reference comparison
     /// test. See `take_a0_fast`.
     static A0_STASH: std::cell::RefCell<Option<A0Stash>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Stash the assembled fast per-cell triple fans for A0 exact-reference probes.
+pub(crate) fn stash_a0_fast(
+    points: &[Vec3],
+    keys: &ShardedVertexKeys,
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+) {
+    let mut vkey = vec![[u32::MAX; 3]; keys.len()];
+    keys.for_each(|vid, k| {
+        if let Some(slot) = vkey.get_mut(vid as usize) {
+            *slot = k;
+        }
+    });
+    let triples: Vec<Vec<[u32; 3]>> = cells
+        .iter()
+        .map(|c| {
+            cell_indices[c.vertex_start()..c.vertex_start() + c.vertex_count()]
+                .iter()
+                .map(|&v| vkey[v as usize])
+                .collect()
+        })
+        .collect();
+    A0_STASH.with(|s| *s.borrow_mut() = Some((points.to_vec(), triples)));
 }
 
 /// Take the A0 stash (effective points + fast per-cell triples) from the last

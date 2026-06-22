@@ -14,7 +14,9 @@ use crate::cube_grid::CubeMapGrid;
 #[cfg(feature = "timing")]
 use crate::cube_grid::CubeMapGridBuildTimings;
 use crate::diagram::VoronoiCell;
-use crate::{ComputeOutput, ComputeReport, PreprocessMode, PreprocessReport, VoronoiConfig};
+use crate::{
+    ComputeOutput, ComputeReport, PreprocessMode, PreprocessReport, RepairMode, VoronoiConfig,
+};
 
 /// Per-seed neighbor count for the escalation local set (brute-force gather
 /// scaffold; production will pull from the grid / considered-neighbor set).
@@ -26,6 +28,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     points: Vec<Vec3>,
     termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
+    repair_mode: RepairMode,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     validate_generator_capacity(points.len())?;
     validate_generator_finiteness(&points)?;
@@ -57,7 +60,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         cell_indices,
         dedup_sub: _,
     } = assembled;
-    let (eff_cells, eff_cell_indices, post_repair_unpaired) = reconcile_edges(
+    let (mut eff_cells, mut eff_cell_indices, post_repair_unpaired) = reconcile_edges(
         &mut vertices,
         &vertex_keys,
         &unresolved_edges,
@@ -65,9 +68,19 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         cell_indices,
         &mut tb,
     )?;
-    // Plain path: a residual is provably-invalid output and there is no
-    // report channel to surface it, so fail loud rather than ship it.
-    if !post_repair_unpaired.is_empty() {
+    let repair_accepted = maybe_repair_effective(
+        effective_points_ref,
+        &mut vertices,
+        &vertex_keys,
+        &mut eff_cells,
+        &mut eff_cell_indices,
+        &post_repair_unpaired,
+        repair_mode,
+    );
+    // Plain path: if local repair did not accept a strictly-valid replacement,
+    // a residual is provably-invalid output and there is no report channel to
+    // surface it, so fail loud rather than ship it.
+    if !repair_accepted && !post_repair_unpaired.is_empty() {
         return Err(edge_reconcile::residual_error(&post_repair_unpaired));
     }
 
@@ -96,7 +109,12 @@ pub fn compute_voronoi_knn_clipping_with_config_owned(
     config: &VoronoiConfig,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     let termination = TerminationConfig::default();
-    compute_voronoi_knn_clipping_owned_core(points, termination, config.preprocess_mode)
+    compute_voronoi_knn_clipping_owned_core(
+        points,
+        termination,
+        config.preprocess_mode,
+        config.repair_mode,
+    )
 }
 
 pub fn compute_voronoi_knn_clipping_with_report_owned(
@@ -104,13 +122,19 @@ pub fn compute_voronoi_knn_clipping_with_report_owned(
     config: &VoronoiConfig,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
     let termination = TerminationConfig::default();
-    compute_voronoi_knn_clipping_report_core(points, termination, config.preprocess_mode)
+    compute_voronoi_knn_clipping_report_core(
+        points,
+        termination,
+        config.preprocess_mode,
+        config.repair_mode,
+    )
 }
 
 fn compute_voronoi_knn_clipping_report_core(
     points: Vec<Vec3>,
     termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
+    repair_mode: RepairMode,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
     validate_generator_capacity(points.len())?;
     validate_generator_finiteness(&points)?;
@@ -150,99 +174,25 @@ fn compute_voronoi_knn_clipping_report_core(
         cell_indices,
         &mut tb,
     )?;
-    // Surface output-invariant residuals alongside the detection records:
-    // anything here survived both repair passes and is a real defect in
-    // the returned diagram.
+    let repair_accepted = maybe_repair_effective(
+        effective_points_ref,
+        &mut vertices,
+        &vertex_keys,
+        &mut eff_cells,
+        &mut eff_cell_indices,
+        &post_repair_unpaired,
+        repair_mode,
+    );
+    // Surface output-invariant residuals alongside the detection records. If
+    // local repair was accepted, the returned diagram is strictly valid and
+    // these residuals no longer survive to output.
     let mut unresolved_edges = unresolved_edges;
-    for &(a, b) in &post_repair_unpaired {
-        unresolved_edges.push(live_dedup::UnresolvedEdgeMismatch {
-            key: live_dedup::pack_edge(a, b),
-            origin: live_dedup::UnresolvedEdgeOrigin::PostRepairUnpaired,
-        });
-    }
-
-    // Defect-driven escalation (opt-in; see docs/escalation-build-state-2026-06.md).
-    // Rebuild each residual near-cocircular neighborhood as one exact local
-    // subdivision and splice it back, in effective-generator space, before the
-    // diagram is materialized. Off by default — the production fast path is
-    // untouched until `escalate::set_escalation_enabled(true)`.
-    if escalate::escalation_enabled() {
-        // Drive off the actual returned-diagram residual (the edges that
-        // survived repair), not the wider detection set — re-touching cells the
-        // fast path already paired only risks regressing them.
-        let defect_pairs: Vec<(u32, u32)> = post_repair_unpaired
-            .iter()
-            .map(|&(a, b)| (a.min(b), a.max(b)))
-            .collect();
-        // Also trigger on low-incidence vertices (degree 1/2): a sliver /
-        // near-coincident vertex can be a defect with NO unpaired edge, which the
-        // unpaired-only trigger misses. Cheap O(V+E) scan of the assembled cells.
-        let has_low_incidence = {
-            let mut cnt = vec![0u32; vertices.len()];
-            for &v in &eff_cell_indices {
-                cnt[v as usize] += 1;
-            }
-            cnt.iter().any(|&c| c == 1 || c == 2)
-        };
-        // The A0 de-risk probe measures the full-exact-vs-flag classification and
-        // must run even when there are no residual defects (e.g. small inputs).
-        let force_for_probe = std::env::var("S2_ESCALATE_PROBE_A0").is_ok();
-        if !defect_pairs.is_empty() || has_low_incidence || force_for_probe {
-            let mut work = escalate::WorkingDiagram::from_assembled(
-                &vertices,
-                &vertex_keys,
-                &eff_cells,
-                &eff_cell_indices,
-            );
-            // Dependency-free, local exact repair (production engine): the
-            // consistent oracle is `in_circle_sphere_sign` over a local gather —
-            // no external crate, no global triangulation. The probe build can A/B
-            // it against the global stereographic delaunator oracle.
-            #[cfg(feature = "escalate_probe")]
-            let _stats = if std::env::var("S2_ESCALATE_DELAUNATOR").is_ok() {
-                escalate::repair_delaunator(
-                    effective_points_ref,
-                    &mut work,
-                    &defect_pairs,
-                    ESCALATE_GATHER_K,
-                    ESCALATE_MAX_ROUNDS,
-                )
-            } else {
-                escalate::repair_local_exact(
-                    effective_points_ref,
-                    &mut work,
-                    &defect_pairs,
-                    ESCALATE_GATHER_K,
-                    ESCALATE_MAX_ROUNDS,
-                )
-            };
-            #[cfg(not(feature = "escalate_probe"))]
-            let _stats = escalate::repair_local_exact(
-                effective_points_ref,
-                &mut work,
-                &defect_pairs,
-                ESCALATE_GATHER_K,
-                ESCALATE_MAX_ROUNDS,
-            );
-            let (new_vertices, new_cells, new_cell_indices) = work.into_flat();
-
-            // Valid-or-revert gate: accept the repair only if it makes the
-            // diagram STRICTLY VALID. A repair that doesn't fully resolve the
-            // defects is reverted, so the output is always either strictly valid
-            // (repaired) or the original error-reported diagram — never a subtly
-            // invalid in-between. (Cheap: one O(E) validate on the cold path.)
-            let post = crate::validation::validate(&crate::SphericalVoronoi::from_raw_parts(
-                effective_points_ref.to_vec(),
-                new_vertices.clone(),
-                new_cells.clone(),
-                new_cell_indices.clone(),
-                None,
-            ));
-            if post.is_strictly_valid() {
-                vertices = new_vertices;
-                eff_cells = new_cells;
-                eff_cell_indices = new_cell_indices;
-            }
+    if !repair_accepted {
+        for &(a, b) in &post_repair_unpaired {
+            unresolved_edges.push(live_dedup::UnresolvedEdgeMismatch {
+                key: live_dedup::pack_edge(a, b),
+                origin: live_dedup::UnresolvedEdgeOrigin::PostRepairUnpaired,
+            });
         }
     }
 
@@ -291,6 +241,116 @@ fn compute_voronoi_knn_clipping_report_core(
                 .collect(),
         },
     })
+}
+
+fn has_low_incidence_vertices(vertex_count: usize, cell_indices: &[u32]) -> bool {
+    let mut cnt = vec![0u32; vertex_count];
+    for &v in cell_indices {
+        cnt[v as usize] += 1;
+    }
+    cnt.iter().any(|&c| c == 1 || c == 2)
+}
+
+/// Try the configured local repair and commit it only if whole-diagram strict
+/// validation succeeds. Returns true when the repaired effective diagram was
+/// accepted.
+fn maybe_repair_effective(
+    effective_points: &[Vec3],
+    vertices: &mut Vec<Vec3>,
+    vertex_keys: &live_dedup::ShardedVertexKeys,
+    eff_cells: &mut Vec<VoronoiCell>,
+    eff_cell_indices: &mut Vec<u32>,
+    post_repair_unpaired: &[(u32, u32)],
+    repair_mode: RepairMode,
+) -> bool {
+    // A0 probes need the fast assembled state, not the repaired one.
+    if std::env::var("S2_ESCALATE_PROBE_A0").is_ok() {
+        escalate::stash_a0_fast(effective_points, vertex_keys, eff_cells, eff_cell_indices);
+        return false;
+    }
+
+    let repair_enabled =
+        !matches!(repair_mode, RepairMode::Disabled) || escalate::escalation_enabled();
+    if !repair_enabled {
+        return false;
+    }
+
+    let defect_pairs: Vec<(u32, u32)> = post_repair_unpaired
+        .iter()
+        .map(|&(a, b)| (a.min(b), a.max(b)))
+        .collect();
+    let has_low_incidence = has_low_incidence_vertices(vertices.len(), eff_cell_indices);
+    if defect_pairs.is_empty() && !has_low_incidence {
+        return false;
+    }
+
+    let mut work = escalate::WorkingDiagram::from_assembled(
+        vertices,
+        vertex_keys,
+        eff_cells,
+        eff_cell_indices,
+    );
+    #[cfg(feature = "escalate_probe")]
+    let _stats = if std::env::var("S2_ESCALATE_DELAUNATOR").is_ok() {
+        escalate::repair_delaunator(
+            effective_points,
+            &mut work,
+            &defect_pairs,
+            ESCALATE_GATHER_K,
+            ESCALATE_MAX_ROUNDS,
+        )
+    } else if matches!(repair_mode, RepairMode::LocalProjected) {
+        escalate::repair_local_exact(
+            effective_points,
+            &mut work,
+            &defect_pairs,
+            ESCALATE_GATHER_K,
+            ESCALATE_MAX_ROUNDS,
+        )
+    } else {
+        escalate::repair_local_hull(
+            effective_points,
+            &mut work,
+            &defect_pairs,
+            ESCALATE_GATHER_K,
+            ESCALATE_MAX_ROUNDS,
+        )
+    };
+    #[cfg(not(feature = "escalate_probe"))]
+    let _stats = if matches!(repair_mode, RepairMode::LocalProjected) {
+        escalate::repair_local_exact(
+            effective_points,
+            &mut work,
+            &defect_pairs,
+            ESCALATE_GATHER_K,
+            ESCALATE_MAX_ROUNDS,
+        )
+    } else {
+        escalate::repair_local_hull(
+            effective_points,
+            &mut work,
+            &defect_pairs,
+            ESCALATE_GATHER_K,
+            ESCALATE_MAX_ROUNDS,
+        )
+    };
+    let (new_vertices, new_cells, new_cell_indices) = work.into_flat();
+
+    let post = crate::validation::validate(&crate::SphericalVoronoi::from_raw_parts(
+        effective_points.to_vec(),
+        new_vertices.clone(),
+        new_cells.clone(),
+        new_cell_indices.clone(),
+        None,
+    ));
+    if !post.is_strictly_valid() {
+        return false;
+    }
+
+    *vertices = new_vertices;
+    *eff_cells = new_cells;
+    *eff_cell_indices = new_cell_indices;
+    true
 }
 
 fn map_cell_build_error(

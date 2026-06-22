@@ -75,6 +75,7 @@ fn test_compute_with_explicit_preprocess_modes() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::Weld,
+            ..VoronoiConfig::default()
         },
     )
     .expect("density-based preprocessing should succeed");
@@ -84,6 +85,7 @@ fn test_compute_with_explicit_preprocess_modes() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::Disabled,
+            ..VoronoiConfig::default()
         },
     )
     .expect("disabled preprocessing should succeed");
@@ -98,6 +100,7 @@ fn test_compute_with_report_surfaces_preprocess_outcome() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::Weld,
+            ..VoronoiConfig::default()
         },
     )
     .expect("compute_with_report should succeed");
@@ -143,6 +146,7 @@ fn test_clustered_cap_tight_report_keeps_default_preprocessing_nonintrusive() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::Weld,
+            ..VoronoiConfig::default()
         },
     )
     .expect("clustered cap should still compute with default preprocessing");
@@ -189,6 +193,7 @@ fn test_clustered_cap_extreme_weld_keeps_returned_diagram_strictly_valid() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::MergeWithin(3.5e-4),
+            ..VoronoiConfig::default()
         },
     )
     .expect("clustered_cap_extreme should compute under coarse welding");
@@ -281,6 +286,7 @@ fn test_compute_with_report_exposes_effective_diagram_when_merges_occur() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::MergeWithin(0.001),
+            ..VoronoiConfig::default()
         },
     )
     .expect("explicit merge preprocessing should still compute");
@@ -418,6 +424,38 @@ fn test_qhull_available() {
 }
 
 #[test]
+#[cfg(feature = "qhull")]
+fn test_qhull_normalizes_inputs_before_exact_3d_hull() {
+    use glam::Vec3;
+    use s2_voronoi::compute_voronoi_qhull;
+
+    let points: Vec<Vec3> = vec![
+        Vec3::new(1.0001, 0.0, 0.0),
+        Vec3::new(-0.9999, 0.0, 0.0),
+        Vec3::new(0.0, 1.0002, 0.0),
+        Vec3::new(0.0, -0.9998, 0.0),
+        Vec3::new(0.0, 0.0, 1.0003),
+        Vec3::new(0.0, 0.0, -0.9997),
+    ];
+    let voronoi = compute_voronoi_qhull(&points);
+    assert_eq!(voronoi.num_cells(), 6);
+    for (i, g) in voronoi.generators().iter().enumerate() {
+        let len = (g.x * g.x + g.y * g.y + g.z * g.z).sqrt();
+        assert!(
+            (len - 1.0).abs() < 1e-6,
+            "qhull generator {i} was not normalized: {len}"
+        );
+    }
+    for (i, v) in voronoi.vertices().iter().enumerate() {
+        let len = (v.x * v.x + v.y * v.y + v.z * v.z).sqrt();
+        assert!(
+            (len - 1.0).abs() < 1e-6,
+            "qhull vertex {i} was not normalized: {len}"
+        );
+    }
+}
+
+#[test]
 fn test_adjacency_symmetric_complete_and_edge_aligned() {
     use std::collections::HashSet;
 
@@ -550,6 +588,7 @@ fn test_merge_within_large_radius_uses_standalone_detector() {
         &points,
         VoronoiConfig {
             preprocess_mode: PreprocessMode::MergeWithin(0.05),
+            ..VoronoiConfig::default()
         },
     )
     .expect("large MergeWithin radius should compute via the fallback path");

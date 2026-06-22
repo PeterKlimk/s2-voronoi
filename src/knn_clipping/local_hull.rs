@@ -7,11 +7,12 @@
 //! `(a,b,c)`. The dual (the ordered fan of faces around a generator) is that
 //! generator's Voronoi cell — one consistent local topology, by construction.
 //!
-//! Visibility is decided by the EXACT `robust::orient3d` predicate on the raw
-//! f32→f64 (exactly representable) coordinates, so there is no jitter and no
-//! tolerance. The local set is small (tens–low-hundreds), so this is a naive
-//! `O(n²)` incremental insertion with a directed-edge horizon walk — no
-//! point-location structure.
+//! Visibility is decided by the EXACT `robust::orient3d` predicate after
+//! f32→f64 conversion and f64 renormalization onto S2. The renormalization is
+//! load-bearing: exact predicates over tiny f32 radius drift solve a different
+//! Euclidean hull problem than the crate's spherical contract. The local set is
+//! small (tens–low-hundreds), so this is a naive `O(n²)` incremental insertion
+//! with a directed-edge horizon walk — no point-location structure.
 //!
 //! Exact `orient3d == 0` (a coplanar = exactly-cocircular set) is a high-degree
 //! degeneracy that needs explicit policy (deterministic split vs merge); it is
@@ -62,7 +63,7 @@ impl LocalHull {
         }
         let pts: Vec<DVec3> = points
             .iter()
-            .map(|p| DVec3::new(p.x as f64, p.y as f64, p.z as f64))
+            .map(|p| DVec3::new(p.x as f64, p.y as f64, p.z as f64).normalize())
             .collect();
 
         // --- seed: four affinely independent points -------------------------
