@@ -3,11 +3,12 @@
 mod support;
 
 use s2_voronoi::{
-    compute, compute_with, compute_with_report, validation::validate, PreprocessMode, UnitVec3,
-    VoronoiConfig, VoronoiError,
+    compute, compute_with, compute_with_report, validation::validate, DegenerateMode,
+    PreprocessMode, UnitVec3, VoronoiConfig, VoronoiError,
 };
 use support::points::{
-    clustered_cap_points, fibonacci_sphere_points, hemisphere_points, random_sphere_points,
+    clustered_cap_points, fibonacci_sphere_points, great_circle_points, hemisphere_points,
+    random_sphere_points,
 };
 
 #[test]
@@ -135,6 +136,52 @@ fn test_compute_with_report_surfaces_preprocess_outcome() {
     assert_eq!(
         output.preferred_diagram().num_cells(),
         output.diagram.num_cells()
+    );
+}
+
+#[test]
+fn test_rank2_great_circle_policy_is_explicit() {
+    let points = great_circle_points(50, 0.0, 42);
+
+    let strict = compute_with(
+        &points,
+        VoronoiConfig {
+            degenerate_mode: DegenerateMode::Strict,
+            ..VoronoiConfig::default()
+        },
+    );
+    assert!(
+        matches!(
+            strict,
+            Err(VoronoiError::UnsupportedGeometry { .. })
+                | Err(VoronoiError::ComputationFailed(_))
+                | Err(VoronoiError::DegenerateInput { .. })
+                | Err(VoronoiError::RepresentationLimit(_))
+        ),
+        "rank-2 great-circle input should fail cleanly in strict mode, got {strict:?}"
+    );
+
+    let perturbed = compute_with_report(
+        &points,
+        VoronoiConfig {
+            degenerate_mode: DegenerateMode::PerturbGreatCircle,
+            ..VoronoiConfig::default()
+        },
+    )
+    .expect("rank-2 great-circle perturbation mode should return a valid nearby diagram");
+
+    assert_eq!(
+        perturbed.report.degenerate.requested_mode,
+        DegenerateMode::PerturbGreatCircle
+    );
+    assert!(
+        perturbed.report.degenerate.perturbation_applied,
+        "rank-2 great-circle fixture should take the perturbation retry"
+    );
+    assert!(
+        perturbed.report.preferred_validation().is_strictly_valid(),
+        "perturbed rank-2 diagram should validate strictly: {}",
+        perturbed.report.preferred_validation().headline()
     );
 }
 

@@ -133,9 +133,10 @@ The backend is expected to return a defined `Err(...)` for:
 - cells that cannot form a bounded generator-centered gnomonic polygon after
   exhausting the neighbor stream and cannot be reconstructed as a full-dimensional
   spherical cell from all accepted constraints. The pinned pure-great-circle
-  fixture still fails this way in strict mode. Rank-2 full-great-circle inputs
-  can opt into `DegenerateMode::PerturbGreatCircle`; upper-hemisphere / large-cell
-  inputs are now handled by the cold all-constraints spherical fallback.
+  fixture still fails this way in strict mode. This is a rank-deficient input
+  class, not the ordinary large-cell case: upper-hemisphere / large-cell inputs
+  are now handled by the cold all-constraints spherical fallback in the named
+  fixture suite.
 - extreme scale/layout cases exceeding current packed/indexing capacity
 - cells whose intermediate clip polygon exceeds the fixed clipping vertex budget
   (`MAX_POLY_VERTICES` is currently 24): a cell genuinely bordering more than
@@ -156,7 +157,9 @@ Pure great-circle / coplanar cases are the clearest current example of supported
 than supported success under the default strict degenerate policy. Opt-in
 `DegenerateMode::PerturbGreatCircle` retries full great-circle rank-2 failures
 with a deterministic off-plane joggle and returns the nearby full-dimensional
-solved problem when that retry validates.
+solved problem when that retry validates. Welding is orthogonal to this policy:
+it handles subresolution coincidence by solving an effective generator set, but
+does not turn exact rank-2 input into a full-dimensional problem.
 
 ### Resolvability floor (why the dense near-cocircular regime errors)
 
@@ -215,17 +218,16 @@ prototyped and then dropped, and the corrected detect+repair direction) is in
 `docs/reclip-hull-snap-experiment-2026-06.md` and
 `docs/escalation-build-state-2026-06.md`.
 
-### Inputs still treated as outside the explicit contract
+### Inputs still treated as probes rather than contract rows
 
-Some stress inputs are still exploratory rather than pinned as contract success/failure.
-
-These remain in the adversarial suite as diagnostics or ignored stress runs rather than stable
-regression-oracle cases.
-
-The ignored `future_no_fail_with_welding_targets` test in
+Some stress inputs remain exploratory rather than pinned as stable
+success/failure-oracle cases. They live in ignored diagnostics and scheduled
+stress runs: high-volume fuzz, coincidence margin maps, large-cap scaling
+probes, fallback-incidence probes, and external exact-reference comparisons.
+The named rows in
 [`tests/weird_geometry.rs`](/home/pkzmbk/code/s2-voronoi/tests/weird_geometry.rs)
-is the current checklist for a future feature/flag that attempts to return a
-strictly valid diagram for every finite normalized input after welding.
+are the current contract boundary for weird geometries; ignored tests are probes,
+not disabled requirements waiting to be enabled.
 
 ## Validation Semantics
 

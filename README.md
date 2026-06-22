@@ -56,6 +56,11 @@ the measured safety margins behind it.
   Inputs are canonicalized once at entry (f64-renormalized, rounded back to f32), so the
   diagram's `generators()` may differ from the raw input by ~1 ulp, and inputs differing only
   radially (off-unit ulps) resolve to the same generator.
+- Default spherical computation is a valid-or-error contract for full-dimensional inputs.
+  Near-coincident generators are welded by default for graph validity. Exact rank-2
+  great-circle inputs fail cleanly in strict mode; callers that prefer a nearby valid
+  full-dimensional diagram can opt into `DegenerateMode::PerturbGreatCircle` and inspect
+  `ComputeReport::degenerate`.
 - For strict subdivision/invariant checks on computed output, use `validation::validate`.
 
 ## Quickstart

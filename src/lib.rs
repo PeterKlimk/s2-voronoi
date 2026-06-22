@@ -204,11 +204,14 @@ pub enum RepairMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DegenerateMode {
     /// Return the backend's ordinary clean error for unsupported degenerate
-    /// geometries.
+    /// geometries. This is the default valid-or-error contract.
     Strict,
     /// After an initial failure, detect rank-2 great-circle inputs and retry
     /// once with a deterministic small off-plane perturbation. This returns a
     /// nearby full-dimensional diagram, not an exact lower-dimensional one.
+    /// Welding does not imply this behavior; use this mode when rank-2
+    /// great-circle inputs should produce an approximate valid diagram instead
+    /// of a clean error.
     PerturbGreatCircle,
 }
 

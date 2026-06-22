@@ -206,6 +206,13 @@ The reference graph, when audited, is the convex hull / Delaunay graph of
 f64-renormalized S2 directions. Raw f32 radius drift is not part of the spherical
 contract.
 
+Welding and degenerate perturbation are separate policies. Welding resolves
+subresolution coincidence by solving an effective generator set and remapping
+welded twins onto canonical cells. It does not make lower-dimensional inputs
+full-dimensional. Rank-deficient great-circle inputs require the explicit
+degenerate policy below when the caller wants an approximate diagram instead of
+a clean error.
+
 ## Opt-in great-circle perturbation
 
 Pure great-circle inputs are rank-deficient: the exact diagram is a lower-dimensional
@@ -220,6 +227,11 @@ failure does it classify full great-circle rank-2 inputs and retry once with a
 deterministic off-plane joggle. The returned diagram is explicitly the nearby
 perturbed solved problem, and `ComputeReport::degenerate.perturbation_applied`
 records that fact.
+
+This mode is deterministic and validation-gated, but it is not symbolic SoS and
+does not claim to return the exact lower-dimensional Voronoi diagram. Its
+purpose is operational totality for a fragile input class whose exact output is
+not robust under f32 rounding or normalization.
 
 ## Paths to a stronger guarantee
 
@@ -246,6 +258,6 @@ These are optional hardening directions; none block release:
 - Not a promise of exact geometry. Users needing certified positions need exact arithmetic and a
   different performance class.
 - Not a promise about inputs outside the envelope: sub-weld coincidence (welded), non-finite
-  values (rejected), pure great-circle/coplanar sets and >90° cells (defined failure; see
-  `docs/supported-envelope.md`).
+  values (rejected), pure great-circle/coplanar sets in strict mode (defined failure or opt-in
+  perturbation; see `docs/supported-envelope.md`).
 - Not stable vertex ordering or index assignment across versions.
