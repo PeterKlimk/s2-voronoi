@@ -502,6 +502,328 @@ pub fn repair_delaunator(
     stats
 }
 
+/// Cyclically chain a generator's incident sorted-global triples into its
+/// Voronoi fan: each consecutive pair shares the edge `g–x` (two common
+/// generators). Returns `None` if the fan doesn't close (the generator is on the
+/// gather frontier — an incomplete neighborhood, deferred to the grow loop), so
+/// only genuinely-interior cells are spliced. Shared by the local and (probe)
+/// delaunator engines.
+fn chain_fan(tris: &[[u32; 3]]) -> Option<Vec<[u32; 3]>> {
+    let adj = |a: [u32; 3], b: [u32; 3]| a != b && a.iter().filter(|x| b.contains(x)).count() == 2;
+    let n = tris.len();
+    if n < 3 {
+        return None;
+    }
+    let mut used = vec![false; n];
+    let mut order = vec![tris[0]];
+    used[0] = true;
+    for _ in 1..n {
+        let cur = *order.last().unwrap();
+        let j = (0..n).find(|&j| !used[j] && adj(cur, tris[j]))?;
+        used[j] = true;
+        order.push(tris[j]);
+    }
+    if adj(*order.last().unwrap(), order[0]) {
+        Some(order)
+    } else {
+        None
+    }
+}
+
+/// Exact 2D Delaunay triangulation of `proj` via Bowyer–Watson incremental
+/// insertion (dependency-free: `robust` exact `incircle`/`orient2d`, already a
+/// crate dep). Returns CCW triangles as input-index triples; triangles touching
+/// the bounding super-triangle are dropped. The point set is small (a local
+/// gather), so the simple O(n·triangles) cavity walk is ample.
+///
+/// One triangulation makes every interior generator's incident triangles a
+/// closed, manifold fan by construction — the property a per-generator
+/// empty-circle enumeration can't guarantee for cluster-boundary cells (whose
+/// fans thread through far neighbors a per-cell candidate ring won't surface).
+fn local_delaunay_2d(proj: &[robust::Coord<f64>]) -> Vec<[usize; 3]> {
+    use robust::{incircle, orient2d, Coord};
+    let n = proj.len();
+    if n < 3 {
+        return Vec::new();
+    }
+    let (mut minx, mut miny, mut maxx, mut maxy) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    for c in proj {
+        minx = minx.min(c.x);
+        miny = miny.min(c.y);
+        maxx = maxx.max(c.x);
+        maxy = maxy.max(c.y);
+    }
+    let span = (maxx - minx).max(maxy - miny).max(1e-9);
+    let (midx, midy) = ((minx + maxx) * 0.5, (miny + maxy) * 0.5);
+    // Super-triangle vertices (indices n, n+1, n+2), generously enclosing all.
+    let big = span * 1000.0;
+    let mut pts: Vec<Coord<f64>> = proj.to_vec();
+    pts.push(Coord {
+        x: midx - 2.0 * big,
+        y: midy - big,
+    });
+    pts.push(Coord {
+        x: midx + 2.0 * big,
+        y: midy - big,
+    });
+    pts.push(Coord {
+        x: midx,
+        y: midy + 2.0 * big,
+    });
+    let ccw = |a: usize, b: usize, c: usize| -> [usize; 3] {
+        if orient2d(pts[a], pts[b], pts[c]) > 0.0 {
+            [a, b, c]
+        } else {
+            [a, c, b]
+        }
+    };
+    let mut tris: Vec<[usize; 3]> = vec![ccw(n, n + 1, n + 2)];
+    let mut bad_edges: FxHashMap<(usize, usize), u32> = FxHashMap::default();
+    for i in 0..n {
+        let p = pts[i];
+        // Triangles whose circumcircle contains p (each stored CCW).
+        bad_edges.clear();
+        let mut keep: Vec<[usize; 3]> = Vec::with_capacity(tris.len());
+        for &t in &tris {
+            if incircle(pts[t[0]], pts[t[1]], pts[t[2]], p) > 0.0 {
+                for &(u, v) in &[(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                    *bad_edges.entry((u, v)).or_default() += 1;
+                }
+            } else {
+                keep.push(t);
+            }
+        }
+        tris = keep;
+        // Re-triangulate the cavity: each boundary directed edge (u,v) — one whose
+        // reverse (v,u) is not also a bad edge — forms a new CCW triangle (u,v,i).
+        for (&(u, v), _) in bad_edges.iter() {
+            if !bad_edges.contains_key(&(v, u)) {
+                tris.push([u, v, i]);
+            }
+        }
+    }
+    tris.retain(|t| t.iter().all(|&v| v < n));
+    tris
+}
+
+/// Per-generator incident Delaunay triangles for `closure`, read off ONE exact
+/// 2D Delaunay (`robust::incircle`) built in a single shared stereographic chart
+/// over a local gather — the dependency-free, local analog of the global
+/// stereographic delaunator oracle.
+///
+/// A triple `(g,a,b)` is a Delaunay triangle (hence a Voronoi vertex of `g`) iff
+/// no other nearby generator `h` falls strictly inside its circumcircle —
+/// `in_circle_sphere_sign(g,a,b,h) <= 0` for all `h`. That predicate is a pure
+/// function of the four RAW points (Shewchuk-exact orient3d), so it returns the
+/// IDENTICAL verdict no matter which cell evaluates it. That cross-cell
+/// consistency is exactly what the per-cell gnomonic CHART f64 rounding lacks —
+/// resolving it here with no external crate and no global triangulation.
+///
+/// Correctness is local because a point inside a closure triangle's circumcircle
+/// lies within ~2× the cell radius, so it is present in the SHARED union gather
+/// `L` that every emptiness test scans — this is a proper restricted local
+/// Delaunay, not a set of per-generator triangle tests (which over-admit: a
+/// candidate whose intruder sits near `a`/`b` but outside `g`'s own list would be
+/// falsely accepted, giving a non-manifold incident set that never chains).
+///
+/// CLUSTER-BOUNDARY cells are the subtlety: a generator on the rim of a dense
+/// cluster has a Voronoi cell that reaches far into the sparse region, so its
+/// true fan includes FAR generators a kNN gather can't see — rebuilding from kNN
+/// alone leaves an open arc. The fix: seed each generator's candidate neighbors
+/// (and the union gather) from its CURRENT assembled cell's vertex triples. The
+/// fast path already found those far neighbors correctly; we keep them and only
+/// RE-DECIDE the contested near-cocircular vertices with the exact predicate. At
+/// the well-conditioned rim the exact sign equals the fast clipper's decision, so
+/// the rebuilt rim triples reuse the surrounding cells' vids and pair by
+/// construction. Any genuine shortfall surfaces as a residual the grow loop
+/// expands, behind the whole-diagram never-worse gate.
+fn local_exact_incident(
+    points: &[Vec3],
+    work: &WorkingDiagram,
+    closure: &[u32],
+    gather_k: usize,
+) -> FxHashMap<u32, Vec<[u32; 3]>> {
+    use robust::Coord;
+    use std::collections::BTreeSet;
+
+    // g's current Voronoi neighbors, read off its assembled cell's vertex triples.
+    let cell_neighbors = |g: u32| -> Vec<u32> {
+        let mut ns: Vec<u32> = work.cells[g as usize]
+            .iter()
+            .flat_map(|&v| work.vkey[v as usize])
+            .filter(|&x| x != g && x != u32::MAX)
+            .collect();
+        ns.sort_unstable();
+        ns.dedup();
+        ns
+    };
+
+    // Union gather (2-RING): the closure, each closure cell's neighbors (so a
+    // cluster-boundary cell's far Voronoi neighbors are present), then each of
+    // those seeds' kNN (so every gathered cell's own neighborhood is complete and
+    // its triangulated fan is the true Delaunay, not a gather-boundary artifact).
+    let mut seeds2: BTreeSet<u32> = closure.iter().copied().collect();
+    for &g in closure {
+        seeds2.extend(cell_neighbors(g));
+    }
+    let seeds2: Vec<u32> = seeds2.into_iter().collect();
+    let ring_k = gather_k.min(32);
+    let local_ids: Vec<u32> = gather_local(points, &seeds2, ring_k);
+
+    // SINGLE shared stereographic chart over the gather. The oracle must be a
+    // PROJECTED metric, not raw 3D orient3d: the fast clipper is projected
+    // (gnomonic), so at a near-cocircular vertex it and a projected oracle pick
+    // the SAME diagonal — they only differ where the fast path's PER-CELL chart
+    // rounding is internally inconsistent (the defect). A raw-3D in-circle is
+    // exact but picks the TRUE diagonal, which disagrees with the fast rim at
+    // EVERY near-cocircular vertex (abundant in a dense mega cluster) → an
+    // unbounded grow front. One shared chart + exact 2D Delaunay reproduces
+    // delaunator's convergent behavior with no external crate. Conformal
+    // (circles↔circles) ⇒ empty-circumcircle in 2D ≡ empty-circumcap on sphere.
+    let mut centroid = Vec3::ZERO;
+    for &id in &local_ids {
+        centroid += points[id as usize];
+    }
+    let pole = (-centroid).normalize();
+    let ax = if pole.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+    let e1 = (ax - pole * ax.dot(pole)).normalize();
+    let e2 = pole.cross(e1);
+    let proj: Vec<Coord<f64>> = local_ids
+        .iter()
+        .map(|&id| {
+            let p = points[id as usize];
+            let d = (1.0 - p.dot(pole)).max(1e-12);
+            Coord {
+                x: (p.dot(e1) / d) as f64,
+                y: (p.dot(e2) / d) as f64,
+            }
+        })
+        .collect();
+
+    // One Delaunay triangulation; read each closure generator's incident fan off
+    // it (the same triple seen from a/b's cells, so spliced cells pair).
+    let tri = local_delaunay_2d(&proj);
+    let closureset: BTreeSet<u32> = closure.iter().copied().collect();
+    let mut incident: FxHashMap<u32, Vec<[u32; 3]>> = FxHashMap::default();
+    for &g in closure {
+        incident.entry(g).or_default();
+    }
+    for t in &tri {
+        let gs = [local_ids[t[0]], local_ids[t[1]], local_ids[t[2]]];
+        let mut sorted = gs;
+        sorted.sort_unstable();
+        for &g in &gs {
+            if closureset.contains(&g) {
+                incident.get_mut(&g).unwrap().push(sorted);
+            }
+        }
+    }
+    incident
+}
+
+/// Dependency-free, local defect repair: the production escalation engine.
+///
+/// Same shape as the (probe-only) [`repair_delaunator`] — seed the closure from
+/// the unpaired-edge and low-incidence generators, splice each closure cell from
+/// the consistent exact oracle, grow on the residual until it closes, behind the
+/// caller's whole-diagram never-worse gate — but the oracle is
+/// [`local_exact_incident`]: one exact 2D Delaunay (`robust::incircle`) in a
+/// single shared stereographic chart over a LOCAL gather, instead of a global
+/// stereographic delaunator. No external crate, no global O(n log n)
+/// triangulation: a true local repair.
+pub(crate) fn repair_local_exact(
+    points: &[Vec3],
+    work: &mut WorkingDiagram,
+    defect_pairs: &[(u32, u32)],
+    gather_k: usize,
+    max_rounds: usize,
+) -> EscalationStats {
+    use std::collections::BTreeSet;
+    let mut stats = EscalationStats::default();
+
+    // Seed: the defect-pair generators UNION any low-incidence (degree 1/2)
+    // vertex's generators — a sliver vertex can be a defect with no unpaired edge.
+    let mut closure: BTreeSet<u32> = defect_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
+    let low_incidence_gens = |work: &WorkingDiagram| -> Vec<u32> {
+        let mut refcount: FxHashMap<u32, u32> = FxHashMap::default();
+        for list in &work.cells {
+            for &v in list {
+                *refcount.entry(v).or_default() += 1;
+            }
+        }
+        let mut out = Vec::new();
+        for (&v, &c) in &refcount {
+            if (1..3).contains(&c) {
+                out.extend(work.vkey[v as usize]);
+            }
+        }
+        out
+    };
+    for g in low_incidence_gens(work) {
+        closure.insert(g);
+    }
+    let defect_gens: BTreeSet<u32> = defect_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
+    let target_sign = work.winding_convention(points, &defect_gens);
+
+    let mut spliced: BTreeSet<u32> = BTreeSet::new();
+    for _ in 0..max_rounds {
+        if closure.is_empty() {
+            break;
+        }
+        stats.rounds += 1;
+        let closure_vec: Vec<u32> = closure.iter().copied().collect();
+        let incident = local_exact_incident(points, work, &closure_vec, gather_k);
+        for &g in &closure_vec {
+            let Some(tris) = incident.get(&g) else {
+                continue;
+            };
+            let Some(fan) = chain_fan(tris) else {
+                continue; // frontier generator — defer to a later, wider round
+            };
+            work.splice_generator(points, g, &fan, target_sign);
+            spliced.insert(g);
+        }
+        // Grow on the residual: generators named by any still-unpaired edge, plus
+        // low-incidence vertices left by re-fanning (a vertex an unspliced
+        // neighbor still references, now orphaned). A full scan sees both.
+        let mut implicated: BTreeSet<u32> = work.unpaired_generators().into_iter().collect();
+        for g in low_incidence_gens(work) {
+            implicated.insert(g);
+        }
+        let new: Vec<u32> = implicated
+            .iter()
+            .copied()
+            .filter(|g| !closure.contains(g))
+            .collect();
+        if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+            eprintln!(
+                "  local repair round {}: closure={} spliced={} implicated={} new={}",
+                stats.rounds,
+                closure.len(),
+                spliced.len(),
+                implicated.len(),
+                new.len(),
+            );
+        }
+        if new.is_empty() {
+            stats.stuck_components = usize::from(!implicated.is_empty());
+            break;
+        }
+        for g in new {
+            closure.insert(g);
+        }
+    }
+    stats.spliced_generators = spliced.len();
+    if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+        eprintln!(
+            "repair_local_exact: {:?}; final unpaired-implicated={}",
+            stats,
+            work.unpaired_generators().len()
+        );
+    }
+    stats
+}
+
 /// Select the active cell source from `S2_ESCALATE_SOURCE` (`reclip` | `hull`),
 /// defaulting to the passed-in `source`. Lets the probes A/B the local re-clip
 /// against the from-scratch hull without rewiring callers.

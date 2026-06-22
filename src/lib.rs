@@ -144,6 +144,17 @@ pub mod escalate_probe {
     };
 }
 
+/// Toggle the dependency-free, local exact defect-repair pass (the escalation
+/// engine). Off by default: when on, a build whose fast path leaves a
+/// near-cocircular residual rebuilds the defect neighborhood with the exact
+/// local oracle and splices it back, behind a valid-or-revert gate (the output
+/// is always either strictly valid or the original error-reported diagram).
+/// Doc-hidden: the production surface is expected to migrate to a config flag.
+#[doc(hidden)]
+pub fn set_escalation_enabled(on: bool) {
+    crate::knn_clipping::escalate::set_escalation_enabled(on);
+}
+
 pub use locate::{PlaneLocator, SphereLocator};
 pub use plane_diagram::{PlanarVoronoi, PlanePoint, PlanePointLike, PlaneRect, PlaneTopology};
 pub use types::{UnitVec3, UnitVec3Like};

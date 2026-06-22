@@ -194,24 +194,35 @@ fn compute_voronoi_knn_clipping_report_core(
                 &eff_cells,
                 &eff_cell_indices,
             );
-            // Projected exact oracle (delaunator) when available — proven to
-            // converge; falls back to the dependency-free local engine otherwise.
+            // Dependency-free, local exact repair (production engine): the
+            // consistent oracle is `in_circle_sphere_sign` over a local gather —
+            // no external crate, no global triangulation. The probe build can A/B
+            // it against the global stereographic delaunator oracle.
             #[cfg(feature = "escalate_probe")]
-            let _stats = escalate::repair_delaunator(
-                effective_points_ref,
-                &mut work,
-                &defect_pairs,
-                ESCALATE_GATHER_K,
-                ESCALATE_MAX_ROUNDS,
-            );
+            let _stats = if std::env::var("S2_ESCALATE_DELAUNATOR").is_ok() {
+                escalate::repair_delaunator(
+                    effective_points_ref,
+                    &mut work,
+                    &defect_pairs,
+                    ESCALATE_GATHER_K,
+                    ESCALATE_MAX_ROUNDS,
+                )
+            } else {
+                escalate::repair_local_exact(
+                    effective_points_ref,
+                    &mut work,
+                    &defect_pairs,
+                    ESCALATE_GATHER_K,
+                    ESCALATE_MAX_ROUNDS,
+                )
+            };
             #[cfg(not(feature = "escalate_probe"))]
-            let _stats = escalate::escalate_diagram(
+            let _stats = escalate::repair_local_exact(
                 effective_points_ref,
                 &mut work,
                 &defect_pairs,
                 ESCALATE_GATHER_K,
                 ESCALATE_MAX_ROUNDS,
-                escalate::rebuild_cells,
             );
             let (new_vertices, new_cells, new_cell_indices) = work.into_flat();
 
