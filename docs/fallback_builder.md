@@ -156,3 +156,43 @@ path that can start without a pre-existing bounded polygon.
   generator, and emit the same `(generator, neighbor_a, neighbor_b)` vertex keys.
 
 Until those are answered, the wrapper seam should remain small and explicit.
+
+## Exhaustion probe notes
+
+`UnboundedAfterExhaustion` is specifically "the neighbor stream ended while the
+builder still had an unbounded gnomonic polygon." Exhaustion alone is not an
+error: a cell can consume the whole stream, be bounded, extract vertices, and
+return successfully.
+
+The ignored unit probe
+`probe_unbounded_exhaustion_neighbor_counts` prints direct single-cell build
+statistics for representative cases:
+
+```bash
+cargo test --release probe_unbounded_exhaustion_neighbor_counts -- --ignored --nocapture
+```
+
+One run after the rank-2 perturbation work showed:
+
+- `fib_100`: every cell succeeded; neighbors processed p50=9, max=12
+- `fib_500`: every cell succeeded; p50=9, p99=39, max=45
+- `great_circle_50`: every cell failed `UnboundedAfterExhaustion`; each processed
+  49 neighbors
+- `great_circle_jitter_50`: every cell succeeded but each processed 48 neighbors
+- `hemisphere_100`: 96 cells succeeded, 4 failed; failing cells processed 99
+  neighbors
+- `hemisphere_500`: 496 cells succeeded, 4 failed; failing cells processed 499
+  neighbors
+- `latitude_ring_32` / `latitude_ring_64`: every cell succeeded, every cell
+  exhausted the stream, and the two pole cells triggered polygon-cap fallback
+
+Interpretation:
+
+- ordinary full-sphere cells terminate very early
+- rank-2 / near-rank-2 inputs are globally expensive because local termination
+  cannot prove enough in the generator chart
+- hemisphere failures are concentrated in a few cells, but those cells currently
+  walk the whole stream before failing
+- a future robust path should not wait for global exhaustion; it should enter the
+  all-constraints spherical extractor once a cell remains unbounded after enough
+  evidence that the generator-centered chart is the wrong model
