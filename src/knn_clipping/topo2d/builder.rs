@@ -289,6 +289,32 @@ impl Topo2DBuilder {
     pub(crate) fn is_fallback(&self) -> bool {
         matches!(self.inner, BuilderImpl::Fallback(_))
     }
+
+    #[cfg(test)]
+    pub(crate) fn accepted_spherical_constraints(
+        &self,
+        points: &[glam::Vec3],
+    ) -> Vec<FallbackConstraint> {
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => builder
+                .neighbor_indices
+                .iter()
+                .copied()
+                .zip(builder.neighbor_slots.iter().copied())
+                .zip(builder.half_planes.iter())
+                .map(|((neighbor_idx, neighbor_slot), plane)| {
+                    FallbackConstraint::from_neighbor(
+                        builder.generator,
+                        neighbor_idx,
+                        neighbor_slot,
+                        Some(plane.eps as f32),
+                        points[neighbor_idx],
+                    )
+                })
+                .collect(),
+            BuilderImpl::Fallback(builder) => builder.constraints.clone(),
+        }
+    }
 }
 
 impl FallbackBuilder {

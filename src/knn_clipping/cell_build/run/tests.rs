@@ -6,9 +6,10 @@ use super::{
 };
 use crate::cube_grid::{CubeMapGrid, DirectedEligibility, DirectedNeighborStream};
 use crate::knn_clipping::cell_build::CellFailure;
+use crate::knn_clipping::topo2d::builder::{sort3_u32, FallbackConstraint, TangentBasis};
 use crate::knn_clipping::topo2d::Topo2DBuilder;
 use crate::knn_clipping::TerminationConfig;
-use glam::Vec3;
+use glam::{DVec3, Vec3};
 
 fn octahedron_points() -> Vec<Vec3> {
     vec![Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z]
@@ -75,6 +76,8 @@ struct ProbeCell {
     bounded: bool,
     fallback_projection: usize,
     fallback_polygon_cap: usize,
+    spherical_extract_vertices: Option<usize>,
+    spherical_extract_edges: Option<usize>,
 }
 
 fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> ProbeCell {
@@ -120,6 +123,13 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
     }
 
     let result = finish_cell(&mut ctx, points, generator_idx, &trace, &mut counters);
+    let spherical_extract = if result.is_err() {
+        let constraints = ctx.builder.accepted_spherical_constraints(points);
+        extract_from_spherical_constraints(generator_idx, points[generator_idx], &constraints)
+            .map(|cell| (cell.vertices.len(), cell.edge_neighbors.len()))
+    } else {
+        None
+    };
     ProbeCell {
         generator: generator_idx,
         ok: result.is_ok(),
@@ -130,7 +140,118 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
         bounded: ctx.builder.is_bounded(),
         fallback_projection: counters.fallback_projection,
         fallback_polygon_cap: counters.fallback_polygon_cap,
+        spherical_extract_vertices: spherical_extract.map(|(vertices, _)| vertices),
+        spherical_extract_edges: spherical_extract.map(|(_, edges)| edges),
     }
+}
+
+#[derive(Debug, Clone)]
+struct ExtractedSphericalCell {
+    vertices: Vec<([u32; 3], Vec3)>,
+    edge_neighbors: Vec<u32>,
+}
+
+#[derive(Clone, Copy)]
+struct SphericalCandidate {
+    position: Vec3,
+    plane_a: usize,
+    plane_b: usize,
+}
+
+fn extract_from_spherical_constraints(
+    generator_idx: usize,
+    generator: Vec3,
+    constraints: &[FallbackConstraint],
+) -> Option<ExtractedSphericalCell> {
+    if constraints.len() < 3 {
+        return None;
+    }
+    let mut candidates = Vec::new();
+    for a in 0..constraints.len() {
+        for b in a + 1..constraints.len() {
+            let cross = constraints[a].normal.cross(constraints[b].normal);
+            let len2 = cross.length_squared();
+            if !len2.is_finite() || len2 <= 1e-24 {
+                continue;
+            }
+            let inv_len = len2.sqrt().recip();
+            for sign in [1.0, -1.0] {
+                let dir = cross * (sign * inv_len);
+                if constraints.iter().all(|constraint| {
+                    constraint.normal.dot(dir) >= -crate::tolerances::FALLBACK_PLANE_TOL
+                }) {
+                    let p = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32).normalize();
+                    push_spherical_candidate(
+                        &mut candidates,
+                        SphericalCandidate {
+                            position: p,
+                            plane_a: a,
+                            plane_b: b,
+                        },
+                    );
+                }
+            }
+        }
+    }
+    if candidates.len() < 3 {
+        return None;
+    }
+
+    let basis = TangentBasis::new(DVec3::new(
+        generator.x as f64,
+        generator.y as f64,
+        generator.z as f64,
+    ));
+    candidates.sort_by(|a, b| {
+        let pa = DVec3::new(
+            a.position.x as f64,
+            a.position.y as f64,
+            a.position.z as f64,
+        );
+        let pb = DVec3::new(
+            b.position.x as f64,
+            b.position.y as f64,
+            b.position.z as f64,
+        );
+        let aa = pa.dot(basis.t2).atan2(pa.dot(basis.t1));
+        let ab = pb.dot(basis.t2).atan2(pb.dot(basis.t1));
+        aa.total_cmp(&ab)
+    });
+
+    let gen_idx = generator_idx as u32;
+    let mut vertices = Vec::with_capacity(candidates.len());
+    let mut edge_neighbors = Vec::with_capacity(candidates.len());
+    for i in 0..candidates.len() {
+        let c = candidates[i];
+        let key = sort3_u32(
+            gen_idx,
+            constraints[c.plane_a].neighbor_idx as u32,
+            constraints[c.plane_b].neighbor_idx as u32,
+        );
+        vertices.push((key, c.position));
+
+        let next = candidates[(i + 1) % candidates.len()];
+        let shared = [c.plane_a, c.plane_b]
+            .into_iter()
+            .find(|&plane| plane == next.plane_a || plane == next.plane_b)?;
+        edge_neighbors.push(constraints[shared].neighbor_idx as u32);
+    }
+
+    Some(ExtractedSphericalCell {
+        vertices,
+        edge_neighbors,
+    })
+}
+
+fn push_spherical_candidate(out: &mut Vec<SphericalCandidate>, candidate: SphericalCandidate) {
+    const DEDUP_LEN2: f32 = 1e-12;
+    if out
+        .iter()
+        .any(|existing| (existing.position - candidate.position).length_squared() <= DEDUP_LEN2)
+    {
+        return;
+    }
+    out.push(candidate);
 }
 
 fn percentile(sorted: &[usize], p: f64) -> usize {
@@ -232,6 +353,18 @@ fn probe_unbounded_exhaustion_neighbor_counts() {
         let bounded_failures = cells.iter().filter(|c| !c.ok && c.bounded).count();
         let fallback_projection: usize = cells.iter().map(|c| c.fallback_projection).sum();
         let fallback_polygon_cap: usize = cells.iter().map(|c| c.fallback_polygon_cap).sum();
+        let spherical_extract_ok = cells
+            .iter()
+            .filter(|c| !c.ok && c.spherical_extract_vertices.is_some())
+            .count();
+        let mut spherical_extract_vertices: Vec<usize> = cells
+            .iter()
+            .filter_map(|c| c.spherical_extract_vertices)
+            .collect();
+        let mut spherical_extract_edges: Vec<usize> = cells
+            .iter()
+            .filter_map(|c| c.spherical_extract_edges)
+            .collect();
         let mut failure_counts = std::collections::BTreeMap::new();
         for failure in cells.iter().filter_map(|c| c.failure) {
             *failure_counts
@@ -256,7 +389,7 @@ fn probe_unbounded_exhaustion_neighbor_counts() {
             .collect();
         eprintln!(
             "CELLPROBE {name}: cells={} ok={} err={} exhausted={} bounded_failures={} \
-             fallback_projection={} fallback_polygon_cap={} failures={:?}",
+             fallback_projection={} fallback_polygon_cap={} spherical_extract_ok={} failures={:?}",
             points.len(),
             ok_neighbors.len(),
             fail_neighbors.len(),
@@ -264,6 +397,7 @@ fn probe_unbounded_exhaustion_neighbor_counts() {
             bounded_failures,
             fallback_projection,
             fallback_polygon_cap,
+            spherical_extract_ok,
             failure_counts
         );
         eprintln!(
@@ -278,6 +412,14 @@ fn probe_unbounded_exhaustion_neighbor_counts() {
             "CELLPROBE {name}: fail_neighbors {} top={}",
             summarize_usize(&mut fail_neighbors),
             top.join(",")
+        );
+        eprintln!(
+            "CELLPROBE {name}: spherical_extract_vertices {}",
+            summarize_usize(&mut spherical_extract_vertices)
+        );
+        eprintln!(
+            "CELLPROBE {name}: spherical_extract_edges {}",
+            summarize_usize(&mut spherical_extract_edges)
         );
     }
 }

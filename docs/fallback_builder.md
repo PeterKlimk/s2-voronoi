@@ -143,19 +143,37 @@ after `ProjectionInvalid` / `TooManyVertices` triggers. It does not cover
 `UnboundedAfterExhaustion`; that requires an all-constraints spherical extraction
 path that can start without a pre-existing bounded polygon.
 
-## Open design questions
+## Remaining design questions
 
 - What exact 2D or 3D representation should the fallback builder use?
 - Do seeded edge-check clips need explicit replay metadata beyond `(neighbor_idx, slot, eps)`?
 - Should repeated fallback-trigger conditions be cached to avoid reattempting gnomonic replay?
 - When fallback succeeds, do we preserve the same extraction and live-dedup contracts unchanged?
-- Should `UnboundedAfterExhaustion` route to a cold O(C³) all-pairs spherical
-  halfspace-intersection extractor? This is the likely path for hemisphere cells:
-  enumerate every pair of accepted bisector planes, keep the intersection
-  directions satisfying all constraints, deduplicate, cyclically order around the
-  generator, and emit the same `(generator, neighbor_a, neighbor_b)` vertex keys.
+- When should the unbounded fallback trigger before full neighbor-stream
+  exhaustion?
 
 Until those are answered, the wrapper seam should remain small and explicit.
+
+## All-constraints extractor probe
+
+For `UnboundedAfterExhaustion`, a test-only prototype now routes the accepted
+bisector constraints through a cold all-pairs spherical halfspace extractor:
+enumerate every pair of accepted planes, keep the two intersection directions
+that satisfy all accepted constraints, deduplicate, cyclically order around the
+generator, and derive each vertex key as `(generator, neighbor_a, neighbor_b)`.
+Adjacent vertices must share a constraint, producing the edge-neighbor cycle
+needed by the normal output path.
+
+That prototype reconstructs the currently failing upper-hemisphere cells:
+
+- `hemisphere_100`: all 4 failed cells extract 7 vertices and 7 edge neighbors
+- `hemisphere_500`: all 4 failed cells extract 9 vertices and 9 edge neighbors
+- `hemisphere_2k`: all 4 failed cells extract 11 vertices and 11 edge neighbors
+
+It intentionally does not solve exact rank-2 great-circle inputs: those have no
+full-dimensional spherical cell under the unperturbed constraints, so the
+all-pairs extractor finds no 3+ vertex polygon. The opt-in rank-2 perturbation
+mode is still the right route for that class.
 
 ## Exhaustion probe notes
 
