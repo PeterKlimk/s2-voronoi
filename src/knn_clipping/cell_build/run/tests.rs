@@ -1,10 +1,12 @@
 use super::failure::classify_terminal_failure;
 use super::fallback_detail;
 use super::{
-    build_cell_into, clip_seed_neighbors, consume_stream, finish_cell, BuildCounters, BuildTrace,
-    CellBuildContext, CellBuildRequest, StreamPhase,
+    build_cell_into, clip_batch, clip_seed_neighbors, consume_stream, finish_cell, probe_frontier,
+    BuildCounters, BuildTrace, CellBuildContext, CellBuildRequest, StreamPhase,
 };
-use crate::cube_grid::{CubeMapGrid, DirectedEligibility, DirectedNeighborStream};
+use crate::cube_grid::{
+    CubeMapGrid, DirectedEligibility, DirectedNeighborFrontier, DirectedNeighborStream,
+};
 use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::Topo2DBuilder;
 use crate::knn_clipping::TerminationConfig;
@@ -80,6 +82,33 @@ struct ProbeCell {
     spherical_extract_edges: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CellSignature {
+    vertex_keys: Vec<[u32; 3]>,
+    edge_neighbors: Vec<u32>,
+}
+
+#[derive(Debug, Clone)]
+struct EarlyExtractHit {
+    neighbors_processed: usize,
+    accepted_constraints: usize,
+    edges: usize,
+}
+
+#[derive(Debug, Clone)]
+struct EarlyProbeCell {
+    generator: usize,
+    ok: bool,
+    failure: Option<CellFailure>,
+    neighbors_processed: usize,
+    final_edges: usize,
+    knn_exhausted: bool,
+    fallback_all_constraints: usize,
+    first_success: Option<EarlyExtractHit>,
+    first_final_match: Option<EarlyExtractHit>,
+    successes: usize,
+}
+
 fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> ProbeCell {
     let policy = TerminationConfig::default().packed_policy(points.len());
     let fake_slot_map = vec![0u32; points.len()];
@@ -148,6 +177,187 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
     }
 }
 
+fn signature(buffer: &crate::live_dedup::CellOutputBuffer) -> CellSignature {
+    let mut vertex_keys: Vec<[u32; 3]> = buffer.vertices.iter().map(|(key, _)| *key).collect();
+    vertex_keys.sort_unstable();
+    let mut edge_neighbors = buffer.edge_neighbor_globals.clone();
+    edge_neighbors.sort_unstable();
+    CellSignature {
+        vertex_keys,
+        edge_neighbors,
+    }
+}
+
+fn early_probe_thresholds(n: usize) -> Vec<usize> {
+    let mut thresholds = vec![
+        8usize, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048,
+    ];
+    let tail = n.saturating_sub(1);
+    for divisor in [8usize, 4, 2] {
+        thresholds.push((tail / divisor).max(1));
+    }
+    thresholds.push(tail);
+    thresholds.retain(|&x| x > 0 && x <= tail);
+    thresholds.sort_unstable();
+    thresholds.dedup();
+    thresholds
+}
+
+fn maybe_record_early_extract(
+    points: &[Vec3],
+    builder: &Topo2DBuilder,
+    counters: &BuildCounters,
+    thresholds: &[usize],
+    next_threshold: &mut usize,
+    successes: &mut Vec<(EarlyExtractHit, CellSignature)>,
+) {
+    if *next_threshold >= thresholds.len()
+        || counters.neighbors_processed < thresholds[*next_threshold]
+        || builder.is_bounded()
+        || builder.is_failed()
+    {
+        return;
+    }
+    while *next_threshold + 1 < thresholds.len()
+        && counters.neighbors_processed >= thresholds[*next_threshold + 1]
+    {
+        *next_threshold += 1;
+    }
+    *next_threshold += 1;
+
+    let mut buffer = crate::live_dedup::CellOutputBuffer::default();
+    if builder
+        .to_vertex_data_from_all_constraints(points, &mut buffer)
+        .is_err()
+    {
+        return;
+    }
+
+    successes.push((
+        EarlyExtractHit {
+            neighbors_processed: counters.neighbors_processed,
+            accepted_constraints: builder.accepted_constraint_count(),
+            edges: buffer.vertices.len(),
+        },
+        signature(&buffer),
+    ));
+}
+
+fn probe_early_extraction_cell(
+    points: &[Vec3],
+    grid: &CubeMapGrid,
+    generator_idx: usize,
+) -> EarlyProbeCell {
+    let policy = TerminationConfig::default().packed_policy(points.len());
+    let fake_slot_map = vec![0u32; points.len()];
+    let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
+    let mut ctx = CellBuildContext::new(grid, policy);
+    let pos_slots = grid.point_pos_slots();
+    let mut trace = BuildTrace::new();
+    let mut counters = BuildCounters::new();
+    let thresholds = early_probe_thresholds(points.len());
+    let mut next_threshold = 0usize;
+    let mut successes = Vec::new();
+
+    ctx.builder.reset(generator_idx, points[generator_idx]);
+    ctx.attempted_neighbors.clear();
+    ctx.output_buffer.clear();
+
+    clip_seed_neighbors(&mut ctx, points, pos_slots, &[], &mut trace, &mut counters);
+
+    {
+        let mut stream = DirectedNeighborStream::new(
+            grid,
+            points,
+            generator_idx,
+            &mut ctx.scratch,
+            directed_ctx,
+            None,
+        );
+        while !counters.terminated && !ctx.builder.is_failed() {
+            let frontier = probe_frontier(
+                &mut stream,
+                &mut ctx.packed_chunk,
+                &mut counters.used_knn,
+                &mut counters.knn_stage,
+                &mut counters.knn_query_time,
+            );
+
+            match frontier {
+                DirectedNeighborFrontier::ExactBatch(batch) => {
+                    clip_batch(
+                        &mut StreamPhase {
+                            builder: &mut ctx.builder,
+                            packed_chunk: &mut ctx.packed_chunk,
+                            attempted_neighbors: &mut ctx.attempted_neighbors,
+                            force_fallback_after_neighbors_processed: &mut ctx
+                                .force_fallback_after_neighbors_processed,
+                        },
+                        batch,
+                        points,
+                        pos_slots,
+                        generator_idx,
+                        &mut trace,
+                        &mut counters,
+                    );
+                    stream.advance_frontier();
+                    maybe_record_early_extract(
+                        points,
+                        &ctx.builder,
+                        &counters,
+                        &thresholds,
+                        &mut next_threshold,
+                        &mut successes,
+                    );
+
+                    if !counters.terminated && !ctx.builder.is_failed() && ctx.builder.is_bounded()
+                    {
+                        counters.terminated = super::maybe_terminate_or_advance_frontier(
+                            &mut stream,
+                            &mut ctx.packed_chunk,
+                            &mut ctx.builder,
+                            pos_slots,
+                            &mut counters,
+                        );
+                    }
+                }
+                DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
+                    if ctx.builder.is_bounded() && ctx.builder.can_terminate(dot_upper_bound) {
+                        counters.terminated = true;
+                    } else {
+                        stream.advance_frontier();
+                    }
+                }
+                DirectedNeighborFrontier::Exhausted => break,
+            }
+        }
+        counters.absorb_stream(&stream);
+    }
+
+    let result = finish_cell(&mut ctx, points, generator_idx, &trace, &mut counters);
+    let final_signature = result.as_ref().ok().map(|_| signature(&ctx.output_buffer));
+    let first_success = successes.first().map(|(hit, _)| hit.clone());
+    let first_final_match = final_signature.and_then(|final_signature| {
+        successes
+            .iter()
+            .find(|(_, candidate)| *candidate == final_signature)
+            .map(|(hit, _)| hit.clone())
+    });
+
+    EarlyProbeCell {
+        generator: generator_idx,
+        ok: result.is_ok(),
+        failure: result.err().map(|err| err.failure),
+        neighbors_processed: counters.neighbors_processed,
+        final_edges: ctx.output_buffer.vertices.len(),
+        knn_exhausted: counters.knn_exhausted,
+        fallback_all_constraints: counters.fallback_all_constraints,
+        first_success,
+        first_final_match,
+        successes: successes.len(),
+    }
+}
+
 fn percentile(sorted: &[usize], p: f64) -> usize {
     if sorted.is_empty() {
         return 0;
@@ -172,6 +382,133 @@ fn summarize_usize(xs: &mut [usize]) -> String {
         xs[xs.len() - 1],
         sum as f64 / xs.len() as f64
     )
+}
+
+fn summarize_hits<'a>(
+    cells: impl Iterator<Item = &'a EarlyProbeCell>,
+    pick: impl Fn(&'a EarlyProbeCell) -> Option<&'a EarlyExtractHit>,
+) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+    let mut neighbors = Vec::new();
+    let mut constraints = Vec::new();
+    let mut edges = Vec::new();
+    for hit in cells.filter_map(pick) {
+        neighbors.push(hit.neighbors_processed);
+        constraints.push(hit.accepted_constraints);
+        edges.push(hit.edges);
+    }
+    (neighbors, constraints, edges)
+}
+
+#[test]
+#[ignore = "diagnostic: checkpointed all-constraints extraction before exhaustion"]
+fn probe_early_all_constraints_trigger_points() {
+    let mut cases = vec![
+        ("fib_100", fibonacci_points(100)),
+        ("fib_500", fibonacci_points(500)),
+        ("great_circle_50", great_circle_points(50, 0.0)),
+        ("great_circle_jitter_50", great_circle_points(50, 0.01)),
+        ("hemisphere_100", hemisphere_points(100)),
+        ("hemisphere_500", hemisphere_points(500)),
+        ("latitude_ring_64", pole_with_latitude_ring(64, 0.5)),
+    ];
+    if std::env::var_os("S2_PROBE_LARGE").is_some() {
+        cases.extend([
+            ("fib_2k", fibonacci_points(2_000)),
+            ("great_circle_200", great_circle_points(200, 0.0)),
+            ("great_circle_jitter_200", great_circle_points(200, 0.01)),
+            ("hemisphere_2k", hemisphere_points(2_000)),
+            ("latitude_ring_256", pole_with_latitude_ring(256, 0.5)),
+        ]);
+    }
+
+    for (name, points) in cases {
+        let grid = CubeMapGrid::new(&points, crate::policy::knn_grid_resolution(points.len()));
+        let mut cells: Vec<EarlyProbeCell> = (0..points.len())
+            .map(|generator_idx| probe_early_extraction_cell(&points, &grid, generator_idx))
+            .collect();
+        let ok = cells.iter().filter(|c| c.ok).count();
+        let err = cells.len() - ok;
+        let exhausted = cells.iter().filter(|c| c.knn_exhausted).count();
+        let all_constraints: usize = cells.iter().map(|c| c.fallback_all_constraints).sum();
+        let first_success_count = cells.iter().filter(|c| c.first_success.is_some()).count();
+        let first_match_count = cells
+            .iter()
+            .filter(|c| c.first_final_match.is_some())
+            .count();
+        let total_successes: usize = cells.iter().map(|c| c.successes).sum();
+        let mut failure_counts = std::collections::BTreeMap::new();
+        for failure in cells.iter().filter_map(|c| c.failure) {
+            *failure_counts
+                .entry(format!("{failure:?}"))
+                .or_insert(0usize) += 1;
+        }
+
+        let (mut success_neighbors, mut success_constraints, mut success_edges) =
+            summarize_hits(cells.iter(), |cell| cell.first_success.as_ref());
+        let (mut match_neighbors, mut match_constraints, mut match_edges) =
+            summarize_hits(cells.iter(), |cell| cell.first_final_match.as_ref());
+        cells.sort_by_key(|c| std::cmp::Reverse(c.neighbors_processed));
+        let top: Vec<String> = cells
+            .iter()
+            .take(5)
+            .map(|c| {
+                format!(
+                    "{}:{}:{}:edges={}{}{}",
+                    c.generator,
+                    c.neighbors_processed,
+                    if c.ok { "ok" } else { "err" },
+                    c.final_edges,
+                    c.first_success
+                        .as_ref()
+                        .map(|h| format!(":first={}c{}", h.neighbors_processed, h.edges))
+                        .unwrap_or_else(String::new),
+                    c.first_final_match
+                        .as_ref()
+                        .map(|h| format!(":match={}c{}", h.neighbors_processed, h.edges))
+                        .unwrap_or_else(String::new),
+                )
+            })
+            .collect();
+
+        eprintln!(
+            "EARLYPROBE {name}: cells={} ok={} err={} exhausted={} fallback_all_constraints={} \
+             first_success={} first_final_match={} total_successes={} failures={:?}",
+            points.len(),
+            ok,
+            err,
+            exhausted,
+            all_constraints,
+            first_success_count,
+            first_match_count,
+            total_successes,
+            failure_counts
+        );
+        eprintln!(
+            "EARLYPROBE {name}: first_success_neighbors {}",
+            summarize_usize(&mut success_neighbors)
+        );
+        eprintln!(
+            "EARLYPROBE {name}: first_success_constraints {}",
+            summarize_usize(&mut success_constraints)
+        );
+        eprintln!(
+            "EARLYPROBE {name}: first_success_edges {}",
+            summarize_usize(&mut success_edges)
+        );
+        eprintln!(
+            "EARLYPROBE {name}: first_final_match_neighbors {}",
+            summarize_usize(&mut match_neighbors)
+        );
+        eprintln!(
+            "EARLYPROBE {name}: first_final_match_constraints {}",
+            summarize_usize(&mut match_constraints)
+        );
+        eprintln!(
+            "EARLYPROBE {name}: first_final_match_edges {} top={}",
+            summarize_usize(&mut match_edges),
+            top.join(",")
+        );
+    }
 }
 
 #[test]

@@ -173,6 +173,45 @@ full-dimensional spherical cell under the unperturbed constraints, so the
 all-pairs extractor finds no 3+ vertex polygon. The opt-in rank-2 perturbation
 mode is still the right route for that class.
 
+## Early-trigger probe notes
+
+The ignored unit probe `probe_early_all_constraints_trigger_points` checkpoints
+unbounded cells during stream consumption. At each checkpoint it runs the cold
+all-constraints extractor, records the first checkpoint that emits any cell, and
+records the first checkpoint whose emitted vertex/edge-neighbor signature matches
+the completed final cell.
+
+```bash
+cargo test --release probe_early_all_constraints_trigger_points -- --ignored --nocapture
+S2_PROBE_LARGE=1 cargo test --release probe_early_all_constraints_trigger_points -- --ignored --nocapture
+```
+
+The key result is that "all-constraints extraction returned a polygon" is not a
+safe production trigger by itself:
+
+- `fib_2k`: 784 cells emitted an early all-constraints polygon while still
+  unbounded, but none matched the final cell.
+- `great_circle_jitter_200`: 43 cells emitted an early polygon, but none matched
+  the final cell.
+- `latitude_ring_256`: 256 cells emitted early polygons, but none matched the
+  final cell.
+- `hemisphere_2k`: 492 cells emitted early polygons; only the 4 eventual
+  all-constraints fallback cells had a final match.
+
+For the upper-hemisphere fallback cells, the first final-match checkpoint still
+arrived late:
+
+- `hemisphere_100`: 4 final matches; first-match neighbors min=66, max=99
+- `hemisphere_500`: 4 final matches; min=336, max=464
+- `hemisphere_2k`: 4 final matches; min=1349, max=1863
+
+Interpretation: early all-constraints extraction is easy to make valid but hard
+to make correct. A production early trigger needs an additional certificate that
+later unseen constraints cannot cut the extracted cell, or a targeted query that
+checks the extracted vertices/edges against the remaining spatial domain. Simple
+thresholds based on "extractor succeeded", accepted-constraint count, or emitted
+edge count are not enough.
+
 ## Exhaustion probe notes
 
 `UnboundedAfterExhaustion` is specifically "the neighbor stream ended while the
