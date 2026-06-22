@@ -188,7 +188,7 @@ fn bounded_nonfailed_cell_has_no_terminal_failure() {
 #[test]
 #[ignore = "diagnostic: per-cell neighbor counts before bounded success or unbounded exhaustion"]
 fn probe_unbounded_exhaustion_neighbor_counts() {
-    let cases = [
+    let mut cases = vec![
         ("fib_100", fibonacci_points(100)),
         ("fib_500", fibonacci_points(500)),
         ("great_circle_50", great_circle_points(50, 0.0)),
@@ -198,6 +198,15 @@ fn probe_unbounded_exhaustion_neighbor_counts() {
         ("latitude_ring_32", pole_with_latitude_ring(32, 0.5)),
         ("latitude_ring_64", pole_with_latitude_ring(64, 0.5)),
     ];
+    if std::env::var_os("S2_PROBE_LARGE").is_some() {
+        cases.extend([
+            ("fib_2k", fibonacci_points(2_000)),
+            ("great_circle_200", great_circle_points(200, 0.0)),
+            ("great_circle_jitter_200", great_circle_points(200, 0.01)),
+            ("hemisphere_2k", hemisphere_points(2_000)),
+            ("latitude_ring_256", pole_with_latitude_ring(256, 0.5)),
+        ]);
+    }
 
     for (name, points) in cases {
         let grid = CubeMapGrid::new(&points, crate::policy::knn_grid_resolution(points.len()));

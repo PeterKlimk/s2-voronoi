@@ -170,6 +170,7 @@ statistics for representative cases:
 
 ```bash
 cargo test --release probe_unbounded_exhaustion_neighbor_counts -- --ignored --nocapture
+S2_PROBE_LARGE=1 cargo test --release probe_unbounded_exhaustion_neighbor_counts -- --ignored --nocapture
 ```
 
 One run after the rank-2 perturbation work showed:
@@ -185,6 +186,17 @@ One run after the rank-2 perturbation work showed:
   neighbors
 - `latitude_ring_32` / `latitude_ring_64`: every cell succeeded, every cell
   exhausted the stream, and the two pole cells triggered polygon-cap fallback
+
+With `S2_PROBE_LARGE=1`:
+
+- `fib_2k`: every cell succeeded; neighbors processed p50=22, p99=28, max=29
+- `great_circle_200`: every cell failed `UnboundedAfterExhaustion`; each processed
+  199 neighbors
+- `great_circle_jitter_200`: every cell succeeded; p50=170, p90=198, max=198
+- `hemisphere_2k`: 1996 cells succeeded, 4 failed; failing cells processed 1999
+  neighbors
+- `latitude_ring_256`: every cell succeeded; nearly every cell exhausted the
+  stream, and the two pole cells triggered polygon-cap fallback
 
 Interpretation:
 
