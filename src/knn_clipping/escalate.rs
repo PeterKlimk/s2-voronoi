@@ -21,8 +21,16 @@ use glam::{DVec3, Vec3};
 use rustc_hash::FxHashMap;
 
 use super::local_hull::LocalHull;
+use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch, DirectedEligibility};
 use crate::diagram::VoronoiCell;
 use crate::live_dedup::ShardedVertexKeys;
+use crate::packed_layout::PackedSlotLayout;
+
+// Packed-slot layout params for the repair's grid kNN gather, mirroring the
+// point locator (see `locate.rs`). The grid is built over the effective points
+// with an identity slot→generator map, so a query emits every nearby point.
+const REPAIR_LOCAL_SHIFT: u32 = 24;
+const REPAIR_LOCAL_MASK: u32 = (1u32 << REPAIR_LOCAL_SHIFT) - 1;
 
 /// A generator's rebuilt Voronoi cell: its vertices as the ordered cyclic fan
 /// of sorted global-id triples (each triple = the three generators meeting at
@@ -72,6 +80,64 @@ pub fn gather_local(points: &[Vec3], seeds: &[u32], k: usize) -> Vec<u32> {
         // Partial sort: largest dot = nearest. (Test-scale brute force.)
         scored.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
         for &(_, id) in scored.iter().take(k + 1) {
+            set.insert(id);
+        }
+    }
+    set.into_iter().collect()
+}
+
+/// O(local) replacement for [`gather_local`]'s O(n) brute force, used by the
+/// production repair oracle. For each seed, walk the cube-map shell frontier
+/// nearest-first (the same machinery the point locator uses) and collect the
+/// `k + 1` nearest generators, unioned with the seeds — the same neighbor set as
+/// `gather_local` (modulo equal-dot tie-breaking), but proportional to the local
+/// neighborhood rather than to `n`.
+///
+/// `slot_gen_map` is an all-zero (all-emit) eligibility layout so every nearby
+/// point is emitted regardless of `n`; `grid.point_indices()[slot]` maps an
+/// emitted slot back to its generator id. The ring certificate (`unseen_bound`)
+/// bounds every unseen point's dot, so collection stops once the `k + 1` nearest
+/// seen are provably nearer than anything unseen.
+fn gather_knn_grid(
+    grid: &CubeMapGrid,
+    scratch: &mut CubeMapGridScratch,
+    slot_gen_map: &[u32],
+    points: &[Vec3],
+    seeds: &[u32],
+    k: usize,
+) -> Vec<u32> {
+    use std::collections::BTreeSet;
+    let mut set: BTreeSet<u32> = seeds.iter().copied().collect();
+    let n = slot_gen_map.len();
+    let mut batch: Vec<u32> = Vec::new();
+    let mut collected: Vec<(f32, u32)> = Vec::new();
+    for &s in seeds {
+        let query = points[s as usize];
+        let layout = PackedSlotLayout::new(slot_gen_map, REPAIR_LOCAL_SHIFT, REPAIR_LOCAL_MASK);
+        let ctx = DirectedEligibility::from_layout(1, 0, layout);
+        let mut frontier = grid.shell_frontier(query, n, scratch, ctx);
+        collected.clear();
+        while let Some(layer) = frontier.frontier(&mut batch) {
+            for &slot in &batch {
+                let id = grid.point_indices()[slot as usize];
+                let dot = query.dot(points[id as usize]);
+                collected.push((dot, id));
+            }
+            // Once we hold at least k+1 candidates, the (k+1)-th nearest's dot
+            // certifies completeness: if it is already >= the unseen bound, no
+            // unseen point can displace the top k+1, so stop.
+            if collected.len() >= k + 1 {
+                let idx = collected.len() - (k + 1);
+                collected.select_nth_unstable_by(idx, |a, b| a.0.partial_cmp(&b.0).unwrap());
+                if collected[idx].0 >= layer.unseen_bound {
+                    break;
+                }
+            }
+            frontier.advance();
+        }
+        // `collected` is a superset of the k+1 nearest; take exactly those.
+        collected.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        for &(_, id) in collected.iter().take(k + 1) {
             set.insert(id);
         }
     }
@@ -633,6 +699,9 @@ fn local_delaunay_2d(proj: &[robust::Coord<f64>]) -> Vec<[usize; 3]> {
 /// expands, behind the whole-diagram never-worse gate.
 fn local_exact_incident(
     points: &[Vec3],
+    grid: &CubeMapGrid,
+    scratch: &mut CubeMapGridScratch,
+    slot_gen_map: &[u32],
     work: &WorkingDiagram,
     closure: &[u32],
     gather_k: usize,
@@ -662,7 +731,7 @@ fn local_exact_incident(
     }
     let seeds2: Vec<u32> = seeds2.into_iter().collect();
     let ring_k = gather_k.min(32);
-    let local_ids: Vec<u32> = gather_local(points, &seeds2, ring_k);
+    let local_ids: Vec<u32> = gather_knn_grid(grid, scratch, slot_gen_map, points, &seeds2, ring_k);
 
     // SINGLE shared stereographic chart over the gather. This is the current
     // production repair oracle: one exact 2D triangulation produces all closure
@@ -714,6 +783,9 @@ fn local_exact_incident(
 
 fn local_hull_incident(
     points: &[Vec3],
+    grid: &CubeMapGrid,
+    scratch: &mut CubeMapGridScratch,
+    slot_gen_map: &[u32],
     work: &WorkingDiagram,
     closure: &[u32],
     gather_k: usize,
@@ -741,7 +813,7 @@ fn local_hull_incident(
     }
     let seeds2: Vec<u32> = seeds2.into_iter().collect();
     let ring_k = gather_k.min(32);
-    let local_ids: Vec<u32> = gather_local(points, &seeds2, ring_k);
+    let local_ids: Vec<u32> = gather_knn_grid(grid, scratch, slot_gen_map, points, &seeds2, ring_k);
 
     let closureset: BTreeSet<u32> = closure.iter().copied().collect();
     let mut incident: FxHashMap<u32, Vec<[u32; 3]>> = FxHashMap::default();
@@ -771,6 +843,9 @@ fn local_hull_incident(
 /// triangulation: a true local repair.
 pub(crate) fn repair_local_exact(
     points: &[Vec3],
+    grid: &CubeMapGrid,
+    scratch: &mut CubeMapGridScratch,
+    slot_gen_map: &[u32],
     work: &mut WorkingDiagram,
     defect_pairs: &[(u32, u32)],
     gather_k: usize,
@@ -810,7 +885,8 @@ pub(crate) fn repair_local_exact(
         }
         stats.rounds += 1;
         let closure_vec: Vec<u32> = closure.iter().copied().collect();
-        let incident = local_exact_incident(points, work, &closure_vec, gather_k);
+        let incident =
+            local_exact_incident(points, grid, scratch, slot_gen_map, work, &closure_vec, gather_k);
         for &g in &closure_vec {
             let Some(tris) = incident.get(&g) else {
                 continue;
@@ -871,6 +947,9 @@ pub(crate) fn repair_local_exact(
 /// rather than an off-sphere f32-radius hull problem.
 pub(crate) fn repair_local_hull(
     points: &[Vec3],
+    grid: &CubeMapGrid,
+    scratch: &mut CubeMapGridScratch,
+    slot_gen_map: &[u32],
     work: &mut WorkingDiagram,
     defect_pairs: &[(u32, u32)],
     gather_k: usize,
@@ -908,7 +987,8 @@ pub(crate) fn repair_local_hull(
         }
         stats.rounds += 1;
         let closure_vec: Vec<u32> = closure.iter().copied().collect();
-        let incident = local_hull_incident(points, work, &closure_vec, gather_k);
+        let incident =
+            local_hull_incident(points, grid, scratch, slot_gen_map, work, &closure_vec, gather_k);
         for &g in &closure_vec {
             let Some(fan) = incident.get(&g) else {
                 continue;

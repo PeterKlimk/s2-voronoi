@@ -71,6 +71,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     )?;
     let repair_accepted = maybe_repair_effective(
         effective_points_ref,
+        &grid,
         &mut vertices,
         &vertex_keys,
         &mut eff_cells,
@@ -230,6 +231,7 @@ fn compute_voronoi_knn_clipping_report_core(
     )?;
     let repair_accepted = maybe_repair_effective(
         effective_points_ref,
+        &grid,
         &mut vertices,
         &vertex_keys,
         &mut eff_cells,
@@ -350,6 +352,7 @@ fn has_low_incidence_vertices(
 /// accepted.
 fn maybe_repair_effective(
     effective_points: &[Vec3],
+    grid: &CubeMapGrid,
     vertices: &mut Vec<Vec3>,
     vertex_keys: &live_dedup::ShardedVertexKeys,
     eff_cells: &mut Vec<VoronoiCell>,
@@ -378,6 +381,17 @@ fn maybe_repair_effective(
         return false;
     }
 
+    // Local-neighbor gather index for the repair: O(local) shell-frontier kNN per
+    // seed instead of the old O(n) brute force (a closure of thousands on a
+    // dense-defect input made the brute force minutes-long). Reuse the construction
+    // `grid` (occupancy-tuned; `compact_welded` keeps it bit-equivalent to a fresh
+    // effective-point build) rather than rebuilding. Feed the gather an all-emit
+    // (all-zero) eligibility layout: repair wants every nearby generator, not the
+    // directed construction subset, and an all-zero map decodes to bin 0 (!= the
+    // query bin) at any n, so it stays all-emit even past 2^24 slots.
+    let mut repair_scratch = grid.make_scratch();
+    let repair_slot_map: Vec<u32> = vec![0u32; effective_points.len()];
+
     let mut work = escalate::WorkingDiagram::from_assembled(
         vertices,
         vertex_keys,
@@ -396,6 +410,9 @@ fn maybe_repair_effective(
     } else if matches!(repair_mode, RepairMode::LocalProjected) {
         escalate::repair_local_exact(
             effective_points,
+            grid,
+            &mut repair_scratch,
+            &repair_slot_map,
             &mut work,
             &defect_pairs,
             ESCALATE_GATHER_K,
@@ -404,6 +421,9 @@ fn maybe_repair_effective(
     } else {
         escalate::repair_local_hull(
             effective_points,
+            grid,
+            &mut repair_scratch,
+            &repair_slot_map,
             &mut work,
             &defect_pairs,
             ESCALATE_GATHER_K,
@@ -414,6 +434,9 @@ fn maybe_repair_effective(
     let stats = if matches!(repair_mode, RepairMode::LocalProjected) {
         escalate::repair_local_exact(
             effective_points,
+            grid,
+            &mut repair_scratch,
+            &repair_slot_map,
             &mut work,
             &defect_pairs,
             ESCALATE_GATHER_K,
@@ -422,6 +445,9 @@ fn maybe_repair_effective(
     } else {
         escalate::repair_local_hull(
             effective_points,
+            grid,
+            &mut repair_scratch,
+            &repair_slot_map,
             &mut work,
             &defect_pairs,
             ESCALATE_GATHER_K,
