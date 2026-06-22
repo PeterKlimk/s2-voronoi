@@ -12,6 +12,23 @@ Some of this contract is implemented today; some is the agreed target. Each sect
 No floating-point Voronoi implementation can promise "the mathematically exact diagram" — that
 requires exact arithmetic. Instead of pretending otherwise, this crate splits the promise in two:
 
+## Default spherical contract
+
+For finite normalized spherical inputs within representation capacity, the default configuration
+is intended to return a strictly valid subdivision. The default robustness policies are part of
+that contract:
+
+- `PreprocessMode::Weld` merges subresolution coincident generators and remaps welded twins onto
+  canonical cells.
+- `DegenerateMode::PerturbGreatCircle` deterministically perturbs exact full-great-circle rank-2
+  inputs into a nearby full-dimensional problem.
+- `RepairMode::Local3d` rebuilds rare residual topology-defect neighborhoods and accepts only a
+  strictly valid whole diagram.
+
+The opt-out modes (`PreprocessMode::Disabled`, `DegenerateMode::Strict`, and
+`RepairMode::Disabled`) exist for diagnostics, benchmarking, and callers that prefer clean errors
+or raw fast-path behavior over robust default recovery.
+
 ### 1. Topological guarantee (hard, machine-checked)
 
 For inputs inside the supported envelope, the output is a **strictly valid subdivision of the

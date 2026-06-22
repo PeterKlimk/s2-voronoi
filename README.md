@@ -37,15 +37,15 @@ and one coverage contract makes the two regimes compose. The full story:
 
 ## The correctness contract, in one paragraph
 
-The output is *essentially Voronoi*: the crate aims for a **hard topological guarantee** (the
-returned graph is a strictly valid subdivision of the sphere — checkable via
-`validation::validate` — or of the rectangle, via `validation::validate_plane`) and a **soft
-geometric guarantee** (vertex positions accurate to
-floating-point working precision; features at the resolution floor are handled by policy).
-Exactness in the mathematical sense is not promised — no floating-point implementation can — but
-graph validity is treated as non-negotiable and is fuzz-tested at multi-million point counts. See
-`docs/correctness-contract.md` for the precise statement, the coincident-input (weld) policy, and
-the measured safety margins behind it.
+The output is *essentially Voronoi*: by default, finite normalized spherical inputs within
+representation capacity are intended to return a **strictly valid subdivision of the sphere**.
+Near-coincident generators are welded, exact full-great-circle rank-2 inputs are deterministically
+perturbed into a nearby full-dimensional problem, and rare residual topology defects are rebuilt
+with normalized local 3D repair. Exact geometry is not promised — no floating-point
+implementation can promise that — but graph validity is treated as non-negotiable and is
+fuzz-tested at multi-million point counts. The planar APIs make the same strict-subdivision
+promise over their domains. See `docs/correctness-contract.md` and `docs/supported-envelope.md`
+for the precise statement and representation limits.
 
 ## Status / requirements
 

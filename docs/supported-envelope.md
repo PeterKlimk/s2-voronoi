@@ -2,8 +2,11 @@
 
 This document defines the current computation contract for the primary kNN + clipping backend.
 
-It is intentionally narrower than "all spherical Voronoi diagrams". The implementation supports a
-large practical subset of inputs, but it still has explicit geometric and representation limits.
+The default spherical configuration is the robust contract: finite normalized inputs within
+representation capacity are intended to return a strictly valid subdivision. The default includes
+welding for subresolution coincidence, normalized local 3D repair for rare residual topology
+defects, and deterministic perturbation for exact full-great-circle rank-2 inputs. Strict/raw
+diagnostic modes remain available, and explicit representation limits still return clean errors.
 
 For the conceptual contract (the hard-topological / soft-geometric split, the coincident-input
 weld policy, and the measured margins behind the envelope boundaries), see
@@ -20,10 +23,11 @@ The computation returns a diagram and the result is within the currently support
 Expected properties:
 
 - `compute` / `compute_with` / `compute_with_report` return `Ok(...)`
-- with preprocessing disabled, the returned diagram should be a strictly valid S2 subdivision
-- with preprocessing enabled and no merges, the same should hold
-- with preprocessing enabled and merges occurring, the **effective** diagram actually solved by the
-  backend should be strictly valid
+- default spherical output is a strictly valid S2 subdivision
+- with preprocessing merges occurring, the **effective** diagram actually solved by the backend
+  should be strictly valid, and welded twins in the returned diagram alias canonical cells
+- `compute_with_report` records any pre-repair mismatch diagnostics separately from post-repair
+  residuals
 
 This is the normal successful contract.
 
@@ -49,12 +53,13 @@ Current public failure classes:
   - used for terminal failure states that are understood operationally but are not yet promoted to
     a narrower public class
   - current examples:
-    - unbounded-after-exhaustion
-    - clipping vertex-budget exhaustion
-    - **edge-reconciliation residual**: surviving unpaired interior edge(s) after the cross-bin
-      stitch. The sphere has no boundary, so an unpaired interior edge means the produced graph is
-      not a valid subdivision; rather than ship it, `compute` errors. This is the
-      **under-resolved near-cocircular regime** — see "Resolvability floor" below.
+    - unbounded-after-exhaustion that is neither recoverable by all-constraints fallback nor
+      handled by the default rank-2 perturbation policy
+    - **post-repair edge residual**: surviving unpaired interior edge(s) after reconciliation and
+      local repair. The sphere has no boundary, so an unpaired interior edge means the produced
+      graph is not a valid subdivision; rather than ship it, `compute` errors. No such default
+      residual is currently pinned as a known input class; dense cap cases are a repair frontier
+      and validate under the default config.
 
 These are considered part of the supported contract. They should fail cleanly without panic.
 
