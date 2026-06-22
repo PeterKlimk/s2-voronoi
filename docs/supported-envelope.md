@@ -129,8 +129,11 @@ high-degree, and welded-subresolution cases.
 
 The backend is expected to return a defined `Err(...)` for:
 
-- cells that require the clipped feasible region to reach or exceed the generator hemisphere
-  boundary in the current gnomonic model
+- cells that cannot form a bounded generator-centered gnomonic polygon after
+  exhausting the neighbor stream. The pinned pure-great-circle and upper-hemisphere
+  fixtures currently fail this way. Rank-2 full-great-circle inputs can opt into
+  `DegenerateMode::PerturbGreatCircle`; upper-hemisphere / large-cell inputs need
+  a future all-constraints spherical fallback, not SoS.
 - extreme scale/layout cases exceeding current packed/indexing capacity
 - cells whose intermediate clip polygon exceeds the fixed clipping vertex budget
   (`MAX_POLY_VERTICES` is currently 24): a cell genuinely bordering more than

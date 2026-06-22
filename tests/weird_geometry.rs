@@ -73,6 +73,18 @@ fn latitude_ring_with_apex(n: usize) -> Vec<UnitVec3> {
     points
 }
 
+fn pole_with_latitude_ring(n: usize, z: f32) -> Vec<UnitVec3> {
+    let r = (1.0 - z * z).sqrt();
+    let mut points = Vec::with_capacity(n + 2);
+    points.push(u(0.0, 0.0, 1.0));
+    points.push(u(0.0, 0.0, -1.0));
+    for i in 0..n {
+        let t = 2.0 * PI * i as f32 / n as f32;
+        points.push(u(r * t.cos(), r * t.sin(), z));
+    }
+    points
+}
+
 #[test]
 fn weird_geometry_contract_cases() {
     let cases: [(&str, Vec<UnitVec3>, Expected); 8] = [
@@ -179,6 +191,37 @@ fn robust_great_circle_perturbation_solves_rank2_fixture() {
         "perturbed great-circle diagram should validate strictly: {}",
         output.report.preferred_validation().headline()
     );
+}
+
+#[test]
+#[ignore = "diagnostic: prints the current weird-geometry failure taxonomy"]
+fn classify_weird_geometry_failures() {
+    for (name, points) in [
+        ("pure_great_circle_rank2", great_circle_points(50, 0.0, 42)),
+        ("upper_hemisphere_large_cells", hemisphere_points(100, 42)),
+        (
+            "upper_hemisphere_dense_large_cells",
+            hemisphere_points(500, 42),
+        ),
+        (
+            "latitude_ring_32_near_north_pole",
+            pole_with_latitude_ring(32, 0.5),
+        ),
+        (
+            "latitude_ring_64_near_north_pole",
+            pole_with_latitude_ring(64, 0.5),
+        ),
+    ] {
+        match s2_voronoi::compute_with_report(&points, VoronoiConfig::default()) {
+            Ok(output) => eprintln!(
+                "WEIRDCASE {name}: ok cells={} validation={} unresolved={}",
+                output.preferred_diagram().num_cells(),
+                output.report.preferred_validation().headline(),
+                output.report.unresolved_edge_pairs.len()
+            ),
+            Err(err) => eprintln!("WEIRDCASE {name}: err {err:?}"),
+        }
+    }
 }
 
 #[test]

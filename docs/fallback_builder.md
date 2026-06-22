@@ -109,8 +109,15 @@ If replay cost becomes material, a later optimization can add a more compact tra
 The taxonomy should stay separated like this:
 
 - `ProjectionInvalid`: builder-specific representational limit, eligible for fallback
-- `UnboundedAfterExhaustion`: no proof of unsupported geometry, not a fallback trigger by itself
-- `TooManyVertices`: terminal builder/resource failure
+- `UnboundedAfterExhaustion`: no bounded gnomonic polygon was ever formed. This is
+  currently the terminal signal for the pinned pure-great-circle and upper-hemisphere
+  fixtures (`tests/weird_geometry.rs::classify_weird_geometry_failures`). It is
+  not handled by the existing handoff because the gnomonic polygon still contains
+  bounding-box sentinel edges; a fallback for this class must reconstruct the cell
+  directly from all accepted bisector constraints, not from a bounded gnomonic
+  polygon.
+- `TooManyVertices`: builder/resource failure; eligible for the bounded-polygon
+  spherical fallback handoff.
 - `ClippedAway`: terminal contradiction / invalid build path
 - `NoValidSeed`: terminal extraction invariant failure
 
@@ -131,8 +138,10 @@ Recommended constraints:
 - no attempt to share live clip state with `GnomonicBuilder`
 - deterministic replay of accepted neighbors before consuming new neighbors
 
-The current stub only covers the handoff/replay portion of that plan. It still reports the same
-terminal `ProjectionInvalid` outcome after handoff.
+The current fallback covers bounded-polygon handoff/replay and spherical clipping
+after `ProjectionInvalid` / `TooManyVertices` triggers. It does not cover
+`UnboundedAfterExhaustion`; that requires an all-constraints spherical extraction
+path that can start without a pre-existing bounded polygon.
 
 ## Open design questions
 
@@ -140,5 +149,10 @@ terminal `ProjectionInvalid` outcome after handoff.
 - Do seeded edge-check clips need explicit replay metadata beyond `(neighbor_idx, slot, eps)`?
 - Should repeated fallback-trigger conditions be cached to avoid reattempting gnomonic replay?
 - When fallback succeeds, do we preserve the same extraction and live-dedup contracts unchanged?
+- Should `UnboundedAfterExhaustion` route to a cold O(C³) all-pairs spherical
+  halfspace-intersection extractor? This is the likely path for hemisphere cells:
+  enumerate every pair of accepted bisector planes, keep the intersection
+  directions satisfying all constraints, deduplicate, cyclically order around the
+  generator, and emit the same `(generator, neighbor_a, neighbor_b)` vertex keys.
 
 Until those are answered, the wrapper seam should remain small and explicit.
