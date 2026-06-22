@@ -235,12 +235,6 @@ impl GnomonicBuilder {
         self.neighbor_indices.iter().copied()
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
-    pub(super) fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
-        self.termination_clearance(max_unseen_dot_bound)
-            .is_some_and(|clearance| clearance > 0.0)
-    }
-
     pub(super) fn termination_clearance(&mut self, max_unseen_dot_bound: f32) -> Option<f64> {
         if !self.is_bounded() || self.vertex_count() < 3 {
             return None;
@@ -293,10 +287,6 @@ impl FallbackBuilder {
     }
 
     #[inline]
-    pub(super) fn can_terminate(&mut self, _max_unseen_dot_bound: f32) -> bool {
-        false
-    }
-
     pub(super) fn termination_clearance(&mut self, _max_unseen_dot_bound: f32) -> Option<f64> {
         None
     }
@@ -366,11 +356,10 @@ impl Topo2DBuilder {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
+    #[cfg_attr(not(any(test, feature = "timing")), allow(dead_code))]
     pub fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
-        match &mut self.inner {
-            BuilderImpl::Gnomonic(builder) => builder.can_terminate(max_unseen_dot_bound),
-            BuilderImpl::Fallback(builder) => builder.can_terminate(max_unseen_dot_bound),
-        }
+        self.termination_clearance(max_unseen_dot_bound)
+            .is_some_and(|clearance| clearance > 0.0)
     }
 
     pub fn termination_clearance(&mut self, max_unseen_dot_bound: f32) -> Option<f64> {

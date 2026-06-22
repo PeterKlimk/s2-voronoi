@@ -166,6 +166,8 @@ pub(crate) struct CellBuildStats {
     #[cfg_attr(not(feature = "escalate_probe"), allow(dead_code))]
     termination_clearance_min: Option<f64>,
     #[cfg(feature = "escalate_probe")]
+    termination_bound_at_min_clearance: Option<f64>,
+    #[cfg(feature = "escalate_probe")]
     proactive_transition_delta_min: Option<f64>,
     #[cfg(feature = "escalate_probe")]
     proactive_early_unchanged_clearance_min: Option<f64>,
@@ -225,7 +227,15 @@ impl CellBuildStats {
                 fallback_projection: self.fallback_projection > 0,
                 fallback_polygon_cap: self.fallback_polygon_cap > 0,
                 terminated: self.termination_clearance_min.is_some(),
+                neighbors_processed: self.neighbors_processed,
+                final_edges: self.final_edges,
+                knn_exhausted: self.knn_exhausted,
+                used_knn: self.used_knn,
+                did_packed: self.did_packed,
+                packed_tail_used: self.packed_tail_used,
+                packed_safe_exhausted: self.packed_safe_exhausted,
                 termination_clearance: self.termination_clearance_min,
+                termination_bound: self.termination_bound_at_min_clearance,
                 transition_delta: self.proactive_transition_delta_min,
                 early_unchanged_clearance: self.proactive_early_unchanged_clearance_min,
             },
@@ -287,6 +297,8 @@ pub(super) struct BuildCounters {
     packed_tail_used: bool,
     packed_safe_exhausted: bool,
     termination_clearance_min: Option<f64>,
+    #[cfg(feature = "escalate_probe")]
+    termination_bound_at_min_clearance: Option<f64>,
     directional_shadow_checks: usize,
     directional_shadow_candidate_tests: usize,
     directional_shadow_hits: usize,
@@ -317,6 +329,8 @@ impl BuildCounters {
             packed_tail_used: false,
             packed_safe_exhausted: false,
             termination_clearance_min: None,
+            #[cfg(feature = "escalate_probe")]
+            termination_bound_at_min_clearance: None,
             directional_shadow_checks: 0,
             directional_shadow_candidate_tests: 0,
             directional_shadow_hits: 0,
@@ -358,10 +372,16 @@ impl BuildCounters {
         if clearance <= 0.0 {
             return false;
         }
-        self.termination_clearance_min = Some(
-            self.termination_clearance_min
-                .map_or(clearance, |old| old.min(clearance)),
-        );
+        let is_new_min = self
+            .termination_clearance_min
+            .is_none_or(|old| clearance < old);
+        if is_new_min {
+            self.termination_clearance_min = Some(clearance);
+            #[cfg(feature = "escalate_probe")]
+            {
+                self.termination_bound_at_min_clearance = Some(bound as f64);
+            }
+        }
         true
     }
 }
@@ -435,6 +455,7 @@ fn clip_seed_neighbors(
     ctx: &mut CellBuildContext,
     points: &[Vec3],
     pos_slots: &[crate::cube_grid::SlotPoint],
+    _generator_idx: usize,
     seed_neighbors: &[SeedNeighbor],
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
@@ -460,13 +481,34 @@ fn clip_seed_neighbors(
             neighbor,
             seed.hp_eps,
         ) {
-            Ok(BuilderStepOutcome::Applied) => {}
-            Ok(BuilderStepOutcome::NeedsFallback(request)) => {
-                trace.fallback_request = Some(request);
-                counters.record_fallback(request);
-                ctx.builder.enter_fallback(points, request);
+            Ok(BuilderStepOutcome::Applied) => {
+                #[cfg(feature = "escalate_probe")]
+                crate::knn_clipping::proactive_audit::record_watched_clip(
+                    _generator_idx,
+                    seed.neighbor_idx,
+                    crate::knn_clipping::proactive_audit::WatchedClipResult::Changed,
+                );
             }
-            Err(_) => break,
+            Ok(BuilderStepOutcome::NeedsFallback(fallback_request)) => {
+                #[cfg(feature = "escalate_probe")]
+                crate::knn_clipping::proactive_audit::record_watched_clip(
+                    _generator_idx,
+                    seed.neighbor_idx,
+                    crate::knn_clipping::proactive_audit::WatchedClipResult::NeedsFallback,
+                );
+                trace.fallback_request = Some(fallback_request);
+                counters.record_fallback(fallback_request);
+                ctx.builder.enter_fallback(points, fallback_request);
+            }
+            Err(_) => {
+                #[cfg(feature = "escalate_probe")]
+                crate::knn_clipping::proactive_audit::record_watched_clip(
+                    _generator_idx,
+                    seed.neighbor_idx,
+                    crate::knn_clipping::proactive_audit::WatchedClipResult::Error,
+                );
+                break;
+            }
         }
         counters.neighbors_processed += 1;
         #[cfg(test)]
@@ -533,14 +575,46 @@ fn clip_batch(
                 .builder
                 .clip_with_slot_result_policy(neighbor_idx, neighbor_slot, neighbor)
             {
-                Ok(BuilderClipOutcome::Applied(result)) => result,
+                Ok(BuilderClipOutcome::Applied(result)) => {
+                    #[cfg(feature = "escalate_probe")]
+                crate::knn_clipping::proactive_audit::record_watched_clip(
+                    generator_idx,
+                    neighbor_idx,
+                    match result {
+                        crate::knn_clipping::topo2d::types::ClipResult::Unchanged => {
+                            crate::knn_clipping::proactive_audit::WatchedClipResult::Unchanged
+                        }
+                        crate::knn_clipping::topo2d::types::ClipResult::Changed => {
+                            crate::knn_clipping::proactive_audit::WatchedClipResult::Changed
+                        }
+                        crate::knn_clipping::topo2d::types::ClipResult::TooManyVertices => {
+                            crate::knn_clipping::proactive_audit::WatchedClipResult::TooManyVertices
+                        }
+                    },
+                );
+                    result
+                }
                 Ok(BuilderClipOutcome::NeedsFallback(request)) => {
+                    #[cfg(feature = "escalate_probe")]
+                    crate::knn_clipping::proactive_audit::record_watched_clip(
+                        generator_idx,
+                        neighbor_idx,
+                        crate::knn_clipping::proactive_audit::WatchedClipResult::NeedsFallback,
+                    );
                     trace.fallback_request = Some(request);
                     counters.record_fallback(request);
                     phase.builder.enter_fallback(points, request);
                     crate::knn_clipping::topo2d::types::ClipResult::Changed
                 }
-                Err(_) => break,
+                Err(_) => {
+                    #[cfg(feature = "escalate_probe")]
+                    crate::knn_clipping::proactive_audit::record_watched_clip(
+                        generator_idx,
+                        neighbor_idx,
+                        crate::knn_clipping::proactive_audit::WatchedClipResult::Error,
+                    );
+                    break;
+                }
             };
 
         counters.neighbors_processed += 1;
@@ -579,7 +653,7 @@ fn clip_batch(
             } else {
                 batch.unseen_bound
             };
-            if phase.builder.can_terminate(bound) {
+            if counters.try_terminate(phase.builder, bound) {
                 counters.terminated = true;
                 break;
             }
@@ -723,6 +797,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         ctx,
         points,
         pos_slots,
+        generator_idx,
         request.seed_neighbors,
         &mut trace,
         &mut counters,
@@ -785,6 +860,8 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         packed_tail_used: counters.packed_tail_used,
         packed_safe_exhausted: counters.packed_safe_exhausted,
         termination_clearance_min: counters.termination_clearance_min,
+        #[cfg(feature = "escalate_probe")]
+        termination_bound_at_min_clearance: counters.termination_bound_at_min_clearance,
         #[cfg(feature = "escalate_probe")]
         proactive_transition_delta_min,
         #[cfg(feature = "escalate_probe")]

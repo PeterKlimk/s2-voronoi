@@ -143,7 +143,9 @@ pub mod escalate_probe {
         shared_neighbor, take_a0_fast, RebuiltCell,
     };
     pub use crate::knn_clipping::proactive_audit::{
-        reset as reset_proactive_audit, take as take_proactive_audit, CellAudit,
+        clear_watch_pairs, reset as reset_proactive_audit, set_watch_pairs,
+        take as take_proactive_audit, take_watched_clips, CellAudit, WatchedClip,
+        WatchedClipResult,
     };
 }
 

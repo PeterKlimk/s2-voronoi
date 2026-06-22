@@ -207,3 +207,44 @@ Remaining instrumentation gaps:
 
 - support-envelope clearance at timing-only skipped clips;
 - independent brute-force audit of near-threshold terminations.
+
+## Sweep Update
+
+After fixing the termination-clearance audit to include mid-batch accepted
+terminations, `near_term <= 1e-6` became very noisy in mega: about 79k of 100k
+cells. Raw minimum accepted termination clearance should therefore not be used
+directly as a production flag.
+
+CGAL sweep at 100k:
+
+| distribution | seeds | changed cells |
+|---|---|---:|
+| uniform | 0,1,2,3,4 | 0,0,0,0,0 |
+| mega | 0,1,2,3,4 | 1,10,11,1,10 |
+
+The mega disagreements are real coherent graph differences, not only topology
+defects. However, the watch-pair probe changes the diagnosis:
+
+- for `mega seed=1`, all 10 missing exact neighbor pairs were attempted by the
+  fast clipper and each initially changed the polygon;
+- for `mega seed=2`, all 10 missing exact neighbor pairs were attempted and each
+  initially changed the polygon;
+- for `mega seed=4`, 14 of 16 missing exact neighbor pairs were attempted, 13
+  changed the polygon, 1 was classified unchanged, and 2 were never attempted.
+
+So the main mega failure mode is **not** simply that kNN termination fails to
+present a true neighbor. In most cases the true neighbor is presented and has an
+effect, but later local clipping/topological evolution loses that exact
+normalized 3D edge. There is still a small never-attempted component in the
+most extreme seed-4 cluster; those cases sit in a very small
+`dot(missing) - termination_bound` band of about `5e-7`.
+
+Implications for a correct-by-construction mode:
+
+- topology defects and fallback are necessary but insufficient;
+- normalized 3D local repair remains the right backstop;
+- proactive flags should be based on normalized 3D local margins plus
+  transition/skip conditioning, not just kNN termination clearance;
+- a narrow kNN termination guard may still be needed for the seed-4 style
+  never-attempted cases, but it should be separated from the dominant
+  attempted-then-lost clip instability mode.

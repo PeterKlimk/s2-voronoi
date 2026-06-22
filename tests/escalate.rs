@@ -744,9 +744,27 @@ fn print_norm3d_flag_recall(
                 .map(|c| format!("{c:.3e}"))
                 .unwrap_or_else(|| "none".into());
             let fallback = audit.is_some_and(|r| r.fallback_projection || r.fallback_polygon_cap);
+            let bound = audit
+                .and_then(|r| r.termination_bound)
+                .map(|c| format!("{c:.3e}"))
+                .unwrap_or_else(|| "none".into());
+            let stream = audit
+                .map(|r| {
+                    format!(
+                        "processed={} edges={} exhausted={} used_knn={} packed_tail={} packed_safe={}",
+                        r.neighbors_processed,
+                        r.final_edges,
+                        r.knn_exhausted,
+                        r.used_knn,
+                        r.packed_tail_used,
+                        r.packed_safe_exhausted,
+                    )
+                })
+                .unwrap_or_else(|| "none".into());
             println!(
-                "    changed g={g}: defect={} margin={} fallback={} term={} transition={} early={}",
-                defect[g], margin, fallback, term, transition, early
+                "    changed g={g}: defect={} margin={} fallback={} term={} bound={} \
+                 transition={} early={} stream={}",
+                defect[g], margin, fallback, term, bound, transition, early, stream
             );
         }
     }
@@ -772,6 +790,169 @@ fn fast_cell_neighbors(g: u32, fan: &[[u32; 3]]) -> Vec<u32> {
     out.sort_unstable();
     out.dedup();
     out
+}
+
+fn exact_cell_neighbors(g: u32, fan: &std::collections::BTreeSet<[u32; 3]>) -> Vec<u32> {
+    let mut out = Vec::new();
+    for tri in fan {
+        for &v in tri {
+            if v != g {
+                out.push(v);
+            }
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+fn print_changed_neighbor_diffs(
+    pts: &[Vec3],
+    changed: &std::collections::BTreeSet<usize>,
+    fast_triples: &[Vec<[u32; 3]>],
+    exact: &[std::collections::BTreeSet<[u32; 3]>],
+    audit: Option<&[s2_voronoi::escalate_probe::CellAudit]>,
+) {
+    use std::collections::BTreeSet;
+
+    let audit_by_gen: Vec<Option<s2_voronoi::escalate_probe::CellAudit>> = audit
+        .map(|records| {
+            let mut by_gen = vec![None; pts.len()];
+            for &r in records {
+                if let Some(slot) = by_gen.get_mut(r.generator as usize) {
+                    *slot = Some(r);
+                }
+            }
+            by_gen
+        })
+        .unwrap_or_default();
+
+    let mut exact_match = 0usize;
+    let mut neighbor_diff = 0usize;
+    for &g in changed {
+        let g_u32 = g as u32;
+        let fast: BTreeSet<u32> = fast_cell_neighbors(g_u32, &fast_triples[g])
+            .into_iter()
+            .collect();
+        let exact: BTreeSet<u32> = exact_cell_neighbors(g_u32, &exact[g]).into_iter().collect();
+        if fast == exact {
+            exact_match += 1;
+        } else {
+            neighbor_diff += 1;
+        }
+    }
+
+    println!(
+        "  changed_neighbor_sets: same={} different={}",
+        exact_match, neighbor_diff
+    );
+
+    for &g in changed.iter().take(12) {
+        let g_u32 = g as u32;
+        let fast: BTreeSet<u32> = fast_cell_neighbors(g_u32, &fast_triples[g])
+            .into_iter()
+            .collect();
+        let exact: BTreeSet<u32> = exact_cell_neighbors(g_u32, &exact[g]).into_iter().collect();
+        if fast == exact {
+            println!("    changed g={g}: neighbor_set=same");
+        } else {
+            let missing: Vec<u32> = exact.difference(&fast).copied().collect();
+            let extra: Vec<u32> = fast.difference(&exact).copied().collect();
+            let generator = pts[g].normalize();
+            let max_missing_dot = missing
+                .iter()
+                .map(|&m| generator.dot(pts[m as usize].normalize()) as f64)
+                .max_by(f64::total_cmp);
+            let term_bound = audit_by_gen
+                .get(g)
+                .and_then(|r| *r)
+                .and_then(|r| r.termination_bound);
+            let bound_gap = max_missing_dot
+                .zip(term_bound)
+                .map(|(dot, bound)| dot - bound);
+            let max_missing_dot = max_missing_dot
+                .map(|d| format!("{d:.9e}"))
+                .unwrap_or_else(|| "none".into());
+            let term_bound = term_bound
+                .map(|d| format!("{d:.9e}"))
+                .unwrap_or_else(|| "none".into());
+            let bound_gap = bound_gap
+                .map(|d| format!("{d:.3e}"))
+                .unwrap_or_else(|| "none".into());
+            println!(
+                "    changed g={g}: missing_neighbors={:?} extra_neighbors={:?} \
+                 max_missing_dot={} term_bound={} dot_minus_bound={}",
+                missing, extra, max_missing_dot, term_bound, bound_gap
+            );
+        }
+    }
+}
+
+fn missing_neighbor_pairs(
+    changed: &std::collections::BTreeSet<usize>,
+    fast_triples: &[Vec<[u32; 3]>],
+    exact: &[std::collections::BTreeSet<[u32; 3]>],
+) -> Vec<(u32, u32)> {
+    use std::collections::BTreeSet;
+
+    let mut pairs = BTreeSet::new();
+    for &g in changed {
+        let g_u32 = g as u32;
+        let fast: BTreeSet<u32> = fast_cell_neighbors(g_u32, &fast_triples[g])
+            .into_iter()
+            .collect();
+        let exact: BTreeSet<u32> = exact_cell_neighbors(g_u32, &exact[g]).into_iter().collect();
+        pairs.extend(exact.difference(&fast).map(|&m| (g_u32, m)));
+    }
+    pairs.into_iter().collect()
+}
+
+fn print_watched_missing_neighbor_attempts(points: &[UnitVec3], pairs: &[(u32, u32)]) {
+    use s2_voronoi::escalate_probe::{
+        clear_watch_pairs, reset_proactive_audit, set_watch_pairs, take_watched_clips,
+        WatchedClipResult,
+    };
+    use std::collections::BTreeMap;
+
+    if pairs.is_empty() {
+        return;
+    }
+
+    reset_proactive_audit();
+    set_watch_pairs(pairs);
+    set_escalation_enabled(true);
+    let _ = compute_with_report(points, VoronoiConfig::default()).expect("watch-pair build");
+    set_escalation_enabled(false);
+    let watched = take_watched_clips();
+    clear_watch_pairs();
+
+    let mut by_pair: BTreeMap<(u32, u32), Vec<WatchedClipResult>> = BTreeMap::new();
+    for record in watched {
+        by_pair
+            .entry((record.generator, record.neighbor))
+            .or_default()
+            .push(record.result);
+    }
+    let attempted = pairs
+        .iter()
+        .filter(|pair| by_pair.contains_key(pair))
+        .count();
+    println!(
+        "  watched_missing_neighbors: pairs={} attempted={} never_attempted={}",
+        pairs.len(),
+        attempted,
+        pairs.len().saturating_sub(attempted),
+    );
+    for &pair in pairs.iter().take(16) {
+        match by_pair.get(&pair) {
+            Some(results) => {
+                println!("    watched {pair:?}: attempted {:?}", results);
+            }
+            None => {
+                println!("    watched {pair:?}: never_attempted");
+            }
+        }
+    }
 }
 
 fn changed_component_summary(changed: &[bool], fast_triples: &[Vec<[u32; 3]>]) -> (usize, usize) {
@@ -1013,6 +1194,9 @@ fn probe_cgal_hull3_flag_recall() {
         &defect,
         Some(&audit),
     );
+    print_changed_neighbor_diffs(&pts, &changed, &fast_triples, &exact, Some(&audit));
+    let missing_pairs = missing_neighbor_pairs(&changed, &fast_triples, &exact);
+    print_watched_missing_neighbor_attempts(&points, &missing_pairs);
     println!("  {}", cgal_log.trim());
 }
 
