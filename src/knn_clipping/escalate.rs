@@ -126,7 +126,7 @@ fn gather_knn_grid(
             // Once we hold at least k+1 candidates, the (k+1)-th nearest's dot
             // certifies completeness: if it is already >= the unseen bound, no
             // unseen point can displace the top k+1, so stop.
-            if collected.len() >= k + 1 {
+            if collected.len() > k {
                 let idx = collected.len() - (k + 1);
                 collected.select_nth_unstable_by(idx, |a, b| a.0.partial_cmp(&b.0).unwrap());
                 if collected[idx].0 >= layer.unseen_bound {
@@ -841,6 +841,7 @@ fn local_hull_incident(
 /// single shared stereographic chart over a LOCAL gather, instead of a global
 /// stereographic delaunator. No external crate, no global O(n log n)
 /// triangulation: a true local repair.
+#[allow(clippy::too_many_arguments)] // grid/scratch/slot_gen_map travel together as the gather index
 pub(crate) fn repair_local_exact(
     points: &[Vec3],
     grid: &CubeMapGrid,
@@ -945,6 +946,7 @@ pub(crate) fn repair_local_exact(
 /// no single-chart/pole failure mode. `local_hull` normalizes S2 directions
 /// before exact predicates, so it solves the crate's spherical input problem
 /// rather than an off-sphere f32-radius hull problem.
+#[allow(clippy::too_many_arguments)] // grid/scratch/slot_gen_map travel together as the gather index
 pub(crate) fn repair_local_hull(
     points: &[Vec3],
     grid: &CubeMapGrid,

@@ -350,6 +350,7 @@ fn has_low_incidence_vertices(
 /// Try the configured local repair and commit it only if whole-diagram strict
 /// validation succeeds. Returns true when the repaired effective diagram was
 /// accepted.
+#[allow(clippy::too_many_arguments)] // cohesive repair-entry state; splitting would obscure it
 fn maybe_repair_effective(
     effective_points: &[Vec3],
     grid: &CubeMapGrid,
