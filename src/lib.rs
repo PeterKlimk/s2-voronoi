@@ -199,6 +199,19 @@ pub enum RepairMode {
     LocalProjected,
 }
 
+/// Policy for degenerate spherical inputs that do not have a stable
+/// full-dimensional floating-point topology.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DegenerateMode {
+    /// Return the backend's ordinary clean error for unsupported degenerate
+    /// geometries.
+    Strict,
+    /// After an initial failure, detect rank-2 great-circle inputs and retry
+    /// once with a deterministic small off-plane perturbation. This returns a
+    /// nearby full-dimensional diagram, not an exact lower-dimensional one.
+    PerturbGreatCircle,
+}
+
 /// Observable preprocessing outcome for a computation run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreprocessReport {
@@ -229,11 +242,23 @@ impl PreprocessReport {
     }
 }
 
+/// Observable degenerate-input handling outcome for a computation run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DegenerateReport {
+    /// Requested degenerate-input policy.
+    pub requested_mode: DegenerateMode,
+    /// True when the computation retried with deterministic great-circle
+    /// perturbation and returned that perturbed solved problem.
+    pub perturbation_applied: bool,
+}
+
 /// Observable per-run report for Voronoi computation.
 #[derive(Debug, Clone)]
 pub struct ComputeReport {
     /// What preprocessing did to the input.
     pub preprocess: PreprocessReport,
+    /// What degenerate-input policy did to the input.
+    pub degenerate: DegenerateReport,
     /// Strict validation of the returned public diagram.
     pub returned_validation: validation::ValidationReport,
     /// Strict validation of the effective preprocessed diagram, when preprocessing
@@ -303,6 +328,13 @@ pub struct VoronoiConfig {
     /// validation succeeds. Disable this for diagnostics or to reproduce the raw
     /// fast-path residual/error behavior.
     pub repair_mode: RepairMode,
+    /// Opt-in handling for rank-deficient great-circle inputs.
+    ///
+    /// The default is [`DegenerateMode::Strict`], preserving the ordinary
+    /// valid-or-error contract. [`DegenerateMode::PerturbGreatCircle`] retries
+    /// rank-2 great-circle failures as a deterministic nearby full-dimensional
+    /// diagram and reports that choice through [`ComputeReport::degenerate`].
+    pub degenerate_mode: DegenerateMode,
 }
 
 impl Default for VoronoiConfig {
@@ -310,6 +342,7 @@ impl Default for VoronoiConfig {
         Self {
             preprocess_mode: PreprocessMode::Weld,
             repair_mode: RepairMode::Local3d,
+            degenerate_mode: DegenerateMode::Strict,
         }
     }
 }

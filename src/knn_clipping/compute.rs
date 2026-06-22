@@ -1,6 +1,6 @@
 //! Compute entry points for the kNN + clipping Voronoi backend.
 
-use glam::Vec3;
+use glam::{DVec3, Vec3};
 
 use super::edge_reconcile;
 use super::escalate;
@@ -15,7 +15,8 @@ use crate::cube_grid::CubeMapGrid;
 use crate::cube_grid::CubeMapGridBuildTimings;
 use crate::diagram::VoronoiCell;
 use crate::{
-    ComputeOutput, ComputeReport, PreprocessMode, PreprocessReport, RepairMode, VoronoiConfig,
+    ComputeOutput, ComputeReport, DegenerateMode, DegenerateReport, PreprocessMode,
+    PreprocessReport, RepairMode, VoronoiConfig,
 };
 
 /// Per-seed neighbor count for the escalation local set (brute-force gather
@@ -109,12 +110,32 @@ pub fn compute_voronoi_knn_clipping_with_config_owned(
     config: &VoronoiConfig,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     let termination = TerminationConfig::default();
-    compute_voronoi_knn_clipping_owned_core(
-        points,
+    if !matches!(config.degenerate_mode, DegenerateMode::PerturbGreatCircle) {
+        return compute_voronoi_knn_clipping_owned_core(
+            points,
+            termination,
+            config.preprocess_mode,
+            config.repair_mode,
+        );
+    }
+
+    match compute_voronoi_knn_clipping_owned_core(
+        points.clone(),
         termination,
         config.preprocess_mode,
         config.repair_mode,
-    )
+    ) {
+        Ok(diagram) => Ok(diagram),
+        Err(err) => match maybe_perturb_rank2_great_circle(&points, &err) {
+            Some(perturbed) => compute_voronoi_knn_clipping_owned_core(
+                perturbed,
+                termination,
+                config.preprocess_mode,
+                config.repair_mode,
+            ),
+            None => Err(err),
+        },
+    }
 }
 
 pub fn compute_voronoi_knn_clipping_with_report_owned(
@@ -122,12 +143,44 @@ pub fn compute_voronoi_knn_clipping_with_report_owned(
     config: &VoronoiConfig,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
     let termination = TerminationConfig::default();
-    compute_voronoi_knn_clipping_report_core(
-        points,
+    if !matches!(config.degenerate_mode, DegenerateMode::PerturbGreatCircle) {
+        return compute_voronoi_knn_clipping_report_core(
+            points,
+            termination,
+            config.preprocess_mode,
+            config.repair_mode,
+            DegenerateReport {
+                requested_mode: config.degenerate_mode,
+                perturbation_applied: false,
+            },
+        );
+    }
+
+    match compute_voronoi_knn_clipping_report_core(
+        points.clone(),
         termination,
         config.preprocess_mode,
         config.repair_mode,
-    )
+        DegenerateReport {
+            requested_mode: config.degenerate_mode,
+            perturbation_applied: false,
+        },
+    ) {
+        Ok(output) => Ok(output),
+        Err(err) => match maybe_perturb_rank2_great_circle(&points, &err) {
+            Some(perturbed) => compute_voronoi_knn_clipping_report_core(
+                perturbed,
+                termination,
+                config.preprocess_mode,
+                config.repair_mode,
+                DegenerateReport {
+                    requested_mode: config.degenerate_mode,
+                    perturbation_applied: true,
+                },
+            ),
+            None => Err(err),
+        },
+    }
 }
 
 fn compute_voronoi_knn_clipping_report_core(
@@ -135,6 +188,7 @@ fn compute_voronoi_knn_clipping_report_core(
     termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
     repair_mode: RepairMode,
+    degenerate_report: DegenerateReport,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
     validate_generator_capacity(points.len())?;
     validate_generator_finiteness(&points)?;
@@ -230,6 +284,7 @@ fn compute_voronoi_knn_clipping_report_core(
         effective_diagram,
         report: ComputeReport {
             preprocess: preprocess_report,
+            degenerate: degenerate_report,
             returned_validation,
             effective_validation,
             unresolved_edge_pairs: unresolved_edges
@@ -542,6 +597,139 @@ fn canonicalize_unit_points(points: &mut [Vec3]) {
     }
     #[cfg(not(feature = "parallel"))]
     canonicalize_chunk(points);
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Rank2GreatCircle {
+    normal: DVec3,
+}
+
+fn maybe_perturb_rank2_great_circle(
+    points: &[Vec3],
+    err: &crate::VoronoiError,
+) -> Option<Vec<Vec3>> {
+    if !matches!(
+        err,
+        crate::VoronoiError::UnsupportedGeometry { .. } | crate::VoronoiError::ComputationFailed(_)
+    ) {
+        return None;
+    }
+    let mut canonical = points.to_vec();
+    canonicalize_unit_points(&mut canonical);
+    let class = classify_rank2_great_circle(&canonical)?;
+    Some(perturb_great_circle_points(&canonical, class.normal))
+}
+
+fn classify_rank2_great_circle(points: &[Vec3]) -> Option<Rank2GreatCircle> {
+    if points.len() < 4 {
+        return None;
+    }
+
+    let mut best_cross = DVec3::ZERO;
+    let mut best_len2 = 0.0f64;
+    for i in 0..points.len() {
+        let a = dvec(points[i]);
+        for &b32 in &points[i + 1..] {
+            let cross = a.cross(dvec(b32));
+            let len2 = cross.length_squared();
+            if len2 > best_len2 {
+                best_len2 = len2;
+                best_cross = cross;
+            }
+        }
+    }
+    if best_len2 < 0.25 {
+        return None;
+    }
+
+    let normal = best_cross / best_len2.sqrt();
+    let mut max_abs_dot = 0.0f64;
+    let mut sum_dot2 = 0.0f64;
+    for &p in points {
+        let d = normal.dot(dvec(p)).abs();
+        max_abs_dot = max_abs_dot.max(d);
+        sum_dot2 += d * d;
+    }
+    let rms_dot = (sum_dot2 / points.len() as f64).sqrt();
+    if max_abs_dot > 2.0e-6 || rms_dot > 5.0e-7 {
+        return None;
+    }
+
+    if !covers_great_circle(points, normal) {
+        return None;
+    }
+
+    Some(Rank2GreatCircle { normal })
+}
+
+fn covers_great_circle(points: &[Vec3], normal: DVec3) -> bool {
+    let seed = if normal.x.abs() < 0.9 {
+        DVec3::X
+    } else {
+        DVec3::Y
+    };
+    let e1 = normal.cross(seed).normalize();
+    let e2 = normal.cross(e1).normalize();
+    let mut angles: Vec<f64> = points
+        .iter()
+        .map(|&p| {
+            let p = dvec(p);
+            p.dot(e2).atan2(p.dot(e1)).rem_euclid(std::f64::consts::TAU)
+        })
+        .collect();
+    angles.sort_by(|a, b| a.total_cmp(b));
+
+    let mut max_gap = 0.0f64;
+    for w in angles.windows(2) {
+        max_gap = max_gap.max(w[1] - w[0]);
+    }
+    if let (Some(first), Some(last)) = (angles.first(), angles.last()) {
+        max_gap = max_gap.max(first + std::f64::consts::TAU - last);
+    }
+
+    // A full great-circle set has no empty semicircle. Smaller arcs are better
+    // treated as hemisphere/large-cell fallback cases, not SoS perturbation.
+    max_gap < std::f64::consts::PI
+}
+
+fn perturb_great_circle_points(points: &[Vec3], normal: DVec3) -> Vec<Vec3> {
+    // This is a realized robust-mode joggle, not a symbolic-only SoS epsilon.
+    // The current f32 topology/validation path still sees near-antipodal pole
+    // edges for microscopic offsets on exact great-circle fixtures; 1e-2 rad is
+    // the already-tested small-jitter regime for these inputs.
+    let scale = 1.0e-2f64;
+    points
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| {
+            let amp = scale * stable_signed_unit(i as u64);
+            let q = (dvec(p) + normal * amp).normalize();
+            Vec3::new(q.x as f32, q.y as f32, q.z as f32)
+        })
+        .collect()
+}
+
+fn stable_signed_unit(mut x: u64) -> f64 {
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^= x >> 31;
+    let unit = ((x >> 11) as f64) * (1.0 / ((1u64 << 53) as f64));
+    let signed = 2.0 * unit - 1.0;
+    if signed.abs() < 0.125 {
+        if signed < 0.0 {
+            -0.125
+        } else {
+            0.125
+        }
+    } else {
+        signed
+    }
+}
+
+#[inline]
+fn dvec(p: Vec3) -> DVec3 {
+    DVec3::new(p.x as f64, p.y as f64, p.z as f64)
 }
 
 fn prepare_points_and_grid(

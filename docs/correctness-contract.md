@@ -206,6 +206,21 @@ The reference graph, when audited, is the convex hull / Delaunay graph of
 f64-renormalized S2 directions. Raw f32 radius drift is not part of the spherical
 contract.
 
+## Opt-in great-circle perturbation
+
+Pure great-circle inputs are rank-deficient: the exact diagram is a lower-dimensional
+lune decomposition with two antipodal high-degree Voronoi vertices. That output
+class is not robust under f32 input noise or normalization, where the same input
+usually becomes a nearby full-dimensional diagram with tiny pole fans.
+
+The default policy therefore remains strict: fail cleanly if the ordinary backend
+cannot produce a valid full-dimensional diagram. `DegenerateMode::PerturbGreatCircle`
+is an opt-in robust mode. It first lets the ordinary pipeline run; only after a
+failure does it classify full great-circle rank-2 inputs and retry once with a
+deterministic off-plane joggle. The returned diagram is explicitly the nearby
+perturbed solved problem, and `ComputeReport::degenerate.perturbation_applied`
+records that fact.
+
 ## Paths to a stronger guarantee
 
 These are optional hardening directions; none block release:

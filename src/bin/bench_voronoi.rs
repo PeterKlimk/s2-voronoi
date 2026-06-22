@@ -569,6 +569,7 @@ fn main() {
             } else {
                 RepairMode::Local3d
             },
+            ..VoronoiConfig::default()
         };
 
         for iter in 0..args.repeat {

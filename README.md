@@ -155,7 +155,8 @@ toroidal graph.
 
 ## Configuration
 
-`VoronoiConfig` (spherical pipeline) controls preprocessing and cold-path local repair:
+`VoronoiConfig` (spherical pipeline) controls preprocessing, cold-path local repair,
+and opt-in degenerate-input handling:
 
 - `preprocess_mode`: coincident-generator handling:
   - `PreprocessMode::Weld` (default): weld generators within the fixed weld radius (~1.4e-6
@@ -171,6 +172,11 @@ toroidal graph.
   - `RepairMode::LocalProjected`: diagnostic projected repair using one shared local
     stereographic chart and exact 2D predicates
   - `RepairMode::Disabled`: preserve the raw fast-path residual/error behavior for diagnostics
+- `degenerate_mode`: failure-triggered handling for rank-deficient spherical inputs:
+  - `DegenerateMode::Strict` (default): return the ordinary clean error
+  - `DegenerateMode::PerturbGreatCircle`: after an initial failure, detect full great-circle
+    rank-2 inputs and retry once with a deterministic off-plane joggle. The returned diagram is
+    the nearby perturbed solved problem, reported through `ComputeReport::degenerate`.
 
 The spherical backend is intentionally not an exact-predicate hot-path solver.
 The contract is that ordinary inputs are solved by the fast gnomonic clipper,
@@ -181,9 +187,10 @@ claiming a globally exact symbolic graph.
 
 The planar pipeline currently takes no configuration; its weld radius is fixed (see above).
 
-`compute_with_report` exposes whether preprocessing merged generators, the effective diagram the
-backend actually solved, and strict validation of both views; `report.preferred_validation()` and
-`output.preferred_diagram()` select the right view after a merged solve.
+`compute_with_report` exposes whether preprocessing merged generators, whether degenerate robust
+perturbation ran, the effective diagram the backend actually solved, and strict validation of both
+views; `report.preferred_validation()` and `output.preferred_diagram()` select the right view after
+a merged solve.
 
 ## Features
 

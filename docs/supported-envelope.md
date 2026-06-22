@@ -132,8 +132,9 @@ The backend is expected to return a defined `Err(...)` for:
 - cells that require the clipped feasible region to reach or exceed the generator hemisphere
   boundary in the current gnomonic model
 - extreme scale/layout cases exceeding current packed/indexing capacity
-- cells whose intermediate clip polygon exceeds the 64-vertex budget
-  (`MAX_POLY_VERTICES`): a cell genuinely bordering more than ~62 others.
+- cells whose intermediate clip polygon exceeds the fixed clipping vertex budget
+  (`MAX_POLY_VERTICES` is currently 24): a cell genuinely bordering more than
+  about 22 others before fallback/recovery can contain it.
   First concretely reached (2026-06) by a 1M-point cap of angular radius
   0.05 with 6 anchor generators — each anchor's cell borders the entire cap
   rim. Returns the vertex-budget `ComputationFailed`; the bound is a
@@ -147,7 +148,10 @@ The backend is expected to return a defined `Err(...)` for:
 - some terminal construction failures that are recognized but not yet classified more precisely
 
 Pure great-circle / coplanar cases are the clearest current example of supported failure rather
-than supported success.
+than supported success under the default strict degenerate policy. Opt-in
+`DegenerateMode::PerturbGreatCircle` retries full great-circle rank-2 failures
+with a deterministic off-plane joggle and returns the nearby full-dimensional
+solved problem when that retry validates.
 
 ### Resolvability floor (why the dense near-cocircular regime errors)
 

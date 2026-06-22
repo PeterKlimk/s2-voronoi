@@ -9,8 +9,8 @@
 mod support;
 
 use s2_voronoi::{
-    compute, compute_with, validation::validate, PreprocessMode, UnitVec3, VoronoiConfig,
-    VoronoiError,
+    compute, compute_with, validation::validate, DegenerateMode, PreprocessMode, UnitVec3,
+    VoronoiConfig, VoronoiError,
 };
 use std::f32::consts::PI;
 use support::points::{
@@ -154,6 +154,29 @@ fn welding_subradius_cluster_is_strictly_valid() {
     assert!(
         output.report.preferred_validation().is_strictly_valid(),
         "welded effective diagram should validate strictly: {}",
+        output.report.preferred_validation().headline()
+    );
+}
+
+#[test]
+fn robust_great_circle_perturbation_solves_rank2_fixture() {
+    let points = great_circle_points(50, 0.0, 42);
+    let output = s2_voronoi::compute_with_report(
+        &points,
+        VoronoiConfig {
+            degenerate_mode: DegenerateMode::PerturbGreatCircle,
+            ..VoronoiConfig::default()
+        },
+    )
+    .expect("robust great-circle perturbation should solve rank-2 fixture");
+
+    assert!(
+        output.report.degenerate.perturbation_applied,
+        "rank-2 fixture should take the perturbation retry"
+    );
+    assert!(
+        output.report.preferred_validation().is_strictly_valid(),
+        "perturbed great-circle diagram should validate strictly: {}",
         output.report.preferred_validation().headline()
     );
 }
