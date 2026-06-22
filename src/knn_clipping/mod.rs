@@ -20,6 +20,8 @@ pub(crate) mod local_hull;
 #[cfg(feature = "p5_shadow")]
 pub(crate) mod p5_shadow;
 pub(crate) mod preprocess;
+#[cfg(feature = "escalate_probe")]
+pub(crate) mod proactive_audit;
 // Timing instrumentation moved to the crate root (the live-dedup engine
 // uses it too); re-exported so existing paths keep working.
 pub(crate) use crate::timing;

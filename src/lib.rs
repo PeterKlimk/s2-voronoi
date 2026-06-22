@@ -142,6 +142,9 @@ pub mod escalate_probe {
         check_cell_internally_paired, gather_local, rebuild_cells, set_escalation_enabled,
         shared_neighbor, take_a0_fast, RebuiltCell,
     };
+    pub use crate::knn_clipping::proactive_audit::{
+        reset as reset_proactive_audit, take as take_proactive_audit, CellAudit,
+    };
 }
 
 /// Probe override for the dependency-free local repair pass.

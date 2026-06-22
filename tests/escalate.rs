@@ -388,6 +388,28 @@ fn stash_fast_triples(points: &[UnitVec3]) -> (Vec<Vec3>, Vec<Vec<[u32; 3]>>) {
     take_a0_fast().expect("A0 stash")
 }
 
+fn stash_fast_triples_with_audit(
+    points: &[UnitVec3],
+) -> (
+    Vec<Vec3>,
+    Vec<Vec<[u32; 3]>>,
+    Vec<s2_voronoi::escalate_probe::CellAudit>,
+) {
+    use s2_voronoi::escalate_probe::{reset_proactive_audit, take_a0_fast, take_proactive_audit};
+
+    reset_proactive_audit();
+    std::env::set_var("S2_PROACTIVE_AUDIT", "1");
+    std::env::set_var("S2_ESCALATE_PROBE_A0", "1");
+    set_escalation_enabled(true);
+    let _ = compute_with_report(points, VoronoiConfig::default()).expect("build");
+    set_escalation_enabled(false);
+    std::env::remove_var("S2_ESCALATE_PROBE_A0");
+    std::env::remove_var("S2_PROACTIVE_AUDIT");
+    let fast = take_a0_fast().expect("A0 stash");
+    let audit = take_proactive_audit();
+    (fast.0, fast.1, audit)
+}
+
 fn exact_triples_norm3d(pts: &[Vec3]) -> (Vec<std::collections::BTreeSet<[u32; 3]>>, Vec<bool>) {
     use s2_voronoi::escalate_probe::rebuild_cells;
     use std::collections::BTreeSet;
@@ -559,6 +581,7 @@ fn print_norm3d_flag_recall(
     fast_triples: &[Vec<[u32; 3]>],
     changed: &std::collections::BTreeSet<usize>,
     defect: &[bool],
+    audit: Option<&[s2_voronoi::escalate_probe::CellAudit]>,
 ) {
     use std::collections::BTreeSet;
 
@@ -578,6 +601,17 @@ fn print_norm3d_flag_recall(
         100.0 * changed.len() as f64 / m.max(1) as f64,
         defect_set.len(),
     );
+    let audit_by_gen: Vec<Option<s2_voronoi::escalate_probe::CellAudit>> = audit
+        .map(|records| {
+            let mut by_gen = vec![None; m];
+            for &r in records {
+                if let Some(slot) = by_gen.get_mut(r.generator as usize) {
+                    *slot = Some(r);
+                }
+            }
+            by_gen
+        })
+        .unwrap_or_default();
     println!("  band        flagged  hit  missed  recall%  false_pos  fp%     +defect_recall%");
     for band in flag_bands_from_env() {
         let flagged: BTreeSet<usize> = margins
@@ -604,6 +638,117 @@ fn print_norm3d_flag_recall(
             fp,
             recall_plus,
         );
+    }
+    if audit.is_some() {
+        let term_band = std::env::var("S2_TERM_FLAG_BAND")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(1e-6);
+        let transition_band = std::env::var("S2_TRANSITION_FLAG_BAND")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(1e-8);
+        let early_band = std::env::var("S2_EARLY_UNCHANGED_FLAG_BAND")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(1e-12);
+        let fallback: BTreeSet<usize> = audit_by_gen
+            .iter()
+            .enumerate()
+            .filter_map(|(g, r)| {
+                r.is_some_and(|r| r.fallback_projection || r.fallback_polygon_cap)
+                    .then_some(g)
+            })
+            .collect();
+        let near_term: BTreeSet<usize> = audit_by_gen
+            .iter()
+            .enumerate()
+            .filter_map(|(g, r)| {
+                r.and_then(|r| r.termination_clearance)
+                    .is_some_and(|c| c <= term_band)
+                    .then_some(g)
+            })
+            .collect();
+        let near_transition: BTreeSet<usize> = audit_by_gen
+            .iter()
+            .enumerate()
+            .filter_map(|(g, r)| {
+                r.and_then(|r| r.transition_delta)
+                    .is_some_and(|c| c <= transition_band)
+                    .then_some(g)
+            })
+            .collect();
+        let near_early: BTreeSet<usize> = audit_by_gen
+            .iter()
+            .enumerate()
+            .filter_map(|(g, r)| {
+                r.and_then(|r| r.early_unchanged_clearance)
+                    .is_some_and(|c| c <= early_band)
+                    .then_some(g)
+            })
+            .collect();
+        let margin_1e6: BTreeSet<usize> = margins
+            .iter()
+            .enumerate()
+            .filter_map(|(g, m)| m.is_some_and(|v| v <= 1e-6).then_some(g))
+            .collect();
+        let joined: BTreeSet<usize> = defect_set
+            .union(&fallback)
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .union(&near_term)
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .union(&near_transition)
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .union(&near_early)
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .union(&margin_1e6)
+            .copied()
+            .collect();
+        println!(
+            "  audit: fallback_cells={} near_term<={term_band:.1e}={} \
+             near_transition<={transition_band:.1e}={} near_early<={early_band:.1e}={}",
+            fallback.len(),
+            near_term.len(),
+            near_transition.len(),
+            near_early.len(),
+        );
+        println!(
+            "  audit_hits: defect/fallback/term/transition/early/margin1e-6/all={}/{}/{}/{}/{}/{}/{}",
+            defect_set.intersection(changed).count(),
+            fallback.intersection(changed).count(),
+            near_term.intersection(changed).count(),
+            near_transition.intersection(changed).count(),
+            near_early.intersection(changed).count(),
+            margin_1e6.intersection(changed).count(),
+            joined.intersection(changed).count(),
+        );
+        for &g in changed.iter().take(12) {
+            let margin = margins[g]
+                .map(|m| format!("{m:.3e}"))
+                .unwrap_or_else(|| "none".into());
+            let audit = audit_by_gen.get(g).and_then(|r| *r);
+            let term = audit
+                .and_then(|r| r.termination_clearance)
+                .map(|c| format!("{c:.3e}"))
+                .unwrap_or_else(|| "none".into());
+            let transition = audit
+                .and_then(|r| r.transition_delta)
+                .map(|c| format!("{c:.3e}"))
+                .unwrap_or_else(|| "none".into());
+            let early = audit
+                .and_then(|r| r.early_unchanged_clearance)
+                .map(|c| format!("{c:.3e}"))
+                .unwrap_or_else(|| "none".into());
+            let fallback = audit.is_some_and(|r| r.fallback_projection || r.fallback_polygon_cap);
+            println!(
+                "    changed g={g}: defect={} margin={} fallback={} term={} transition={} early={}",
+                defect[g], margin, fallback, term, transition, early
+            );
+        }
     }
 }
 
@@ -838,6 +983,7 @@ fn probe_norm3d_flag_recall() {
         &fast_triples,
         &changed,
         &defect,
+        None,
     );
 }
 
@@ -847,7 +993,7 @@ fn probe_cgal_hull3_flag_recall() {
     use std::collections::BTreeSet;
 
     let (dist, seed, points) = probe_points_from_env(12_000);
-    let (pts, fast_triples) = stash_fast_triples(&points);
+    let (pts, fast_triples, audit) = stash_fast_triples_with_audit(&points);
     let m = pts.len();
     let (exact, complete, cgal_log) = exact_triples_cgal_hull3(&pts);
     let defect = defect_cells_from_triples(&fast_triples);
@@ -865,6 +1011,7 @@ fn probe_cgal_hull3_flag_recall() {
         &fast_triples,
         &changed,
         &defect,
+        Some(&audit),
     );
     println!("  {}", cgal_log.trim());
 }

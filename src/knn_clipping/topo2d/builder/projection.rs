@@ -134,6 +134,10 @@ impl GnomonicBuilder {
             support_cache_valid: false,
             #[cfg(feature = "timing")]
             support_min_proj: [0.0; 64],
+            #[cfg(feature = "escalate_probe")]
+            proactive_min_transition_delta: None,
+            #[cfg(feature = "escalate_probe")]
+            proactive_min_early_unchanged_clearance: None,
         }
     }
 
@@ -160,6 +164,11 @@ impl GnomonicBuilder {
         #[cfg(feature = "timing")]
         {
             self.support_cache_valid = false;
+        }
+        #[cfg(feature = "escalate_probe")]
+        {
+            self.proactive_min_transition_delta = None;
+            self.proactive_min_early_unchanged_clearance = None;
         }
     }
 
@@ -228,14 +237,19 @@ impl GnomonicBuilder {
 
     #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
+        self.termination_clearance(max_unseen_dot_bound)
+            .is_some_and(|clearance| clearance > 0.0)
+    }
+
+    pub(super) fn termination_clearance(&mut self, max_unseen_dot_bound: f32) -> Option<f64> {
         if !self.is_bounded() || self.vertex_count() < 3 {
-            return false;
+            return None;
         }
 
         if !self.term_cache_valid {
             let min_cos = self.current_poly().min_cos();
             if min_cos <= 0.0 || min_cos > 1.0 {
-                return false;
+                return None;
             }
 
             let sin_theta = (1.0 - min_cos * min_cos).max(0.0).sqrt();
@@ -246,7 +260,7 @@ impl GnomonicBuilder {
             self.term_cache_valid = true;
         }
 
-        (max_unseen_dot_bound as f64) < self.term_threshold_cache
+        Some(self.term_threshold_cache - max_unseen_dot_bound as f64)
     }
 }
 
@@ -281,6 +295,10 @@ impl FallbackBuilder {
     #[inline]
     pub(super) fn can_terminate(&mut self, _max_unseen_dot_bound: f32) -> bool {
         false
+    }
+
+    pub(super) fn termination_clearance(&mut self, _max_unseen_dot_bound: f32) -> Option<f64> {
+        None
     }
 }
 
@@ -352,6 +370,24 @@ impl Topo2DBuilder {
         match &mut self.inner {
             BuilderImpl::Gnomonic(builder) => builder.can_terminate(max_unseen_dot_bound),
             BuilderImpl::Fallback(builder) => builder.can_terminate(max_unseen_dot_bound),
+        }
+    }
+
+    pub fn termination_clearance(&mut self, max_unseen_dot_bound: f32) -> Option<f64> {
+        match &mut self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.termination_clearance(max_unseen_dot_bound),
+            BuilderImpl::Fallback(builder) => builder.termination_clearance(max_unseen_dot_bound),
+        }
+    }
+
+    #[cfg(feature = "escalate_probe")]
+    pub fn proactive_clip_metrics(&self) -> (Option<f64>, Option<f64>) {
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => (
+                builder.proactive_min_transition_delta,
+                builder.proactive_min_early_unchanged_clearance,
+            ),
+            BuilderImpl::Fallback(_) => (None, None),
         }
     }
 }

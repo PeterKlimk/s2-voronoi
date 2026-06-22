@@ -163,6 +163,12 @@ pub(crate) struct CellBuildStats {
     did_packed: bool,
     packed_tail_used: bool,
     packed_safe_exhausted: bool,
+    #[cfg_attr(not(feature = "escalate_probe"), allow(dead_code))]
+    termination_clearance_min: Option<f64>,
+    #[cfg(feature = "escalate_probe")]
+    proactive_transition_delta_min: Option<f64>,
+    #[cfg(feature = "escalate_probe")]
+    proactive_early_unchanged_clearance_min: Option<f64>,
     knn_stage: crate::knn_clipping::timing::KnnCellStage,
 }
 
@@ -206,6 +212,23 @@ impl CellBuildStats {
             self.used_knn,
             self.incoming_seed_neighbors,
             self.edgecheck_seed_clips,
+        );
+    }
+}
+
+#[cfg(feature = "escalate_probe")]
+impl CellBuildStats {
+    pub(crate) fn record_proactive_audit(&self, generator_idx: usize) {
+        crate::knn_clipping::proactive_audit::record(
+            crate::knn_clipping::proactive_audit::CellAudit {
+                generator: generator_idx as u32,
+                fallback_projection: self.fallback_projection > 0,
+                fallback_polygon_cap: self.fallback_polygon_cap > 0,
+                terminated: self.termination_clearance_min.is_some(),
+                termination_clearance: self.termination_clearance_min,
+                transition_delta: self.proactive_transition_delta_min,
+                early_unchanged_clearance: self.proactive_early_unchanged_clearance_min,
+            },
         );
     }
 }
@@ -263,6 +286,7 @@ pub(super) struct BuildCounters {
     pub(super) did_packed: bool,
     packed_tail_used: bool,
     packed_safe_exhausted: bool,
+    termination_clearance_min: Option<f64>,
     directional_shadow_checks: usize,
     directional_shadow_candidate_tests: usize,
     directional_shadow_hits: usize,
@@ -292,6 +316,7 @@ impl BuildCounters {
             did_packed: false,
             packed_tail_used: false,
             packed_safe_exhausted: false,
+            termination_clearance_min: None,
             directional_shadow_checks: 0,
             directional_shadow_candidate_tests: 0,
             directional_shadow_hits: 0,
@@ -320,6 +345,24 @@ impl BuildCounters {
             BuilderFallbackTrigger::ProjectionLimit => self.fallback_projection += 1,
             BuilderFallbackTrigger::PolygonVertexLimit => self.fallback_polygon_cap += 1,
         }
+    }
+
+    pub(super) fn try_terminate(
+        &mut self,
+        builder: &mut crate::knn_clipping::topo2d::Topo2DBuilder,
+        bound: f32,
+    ) -> bool {
+        let Some(clearance) = builder.termination_clearance(bound) else {
+            return false;
+        };
+        if clearance <= 0.0 {
+            return false;
+        }
+        self.termination_clearance_min = Some(
+            self.termination_clearance_min
+                .map_or(clearance, |old| old.min(clearance)),
+        );
+        true
     }
 }
 
@@ -600,7 +643,9 @@ fn consume_stream(
             DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
                 // Only packed stages produce bounded-unknown frontiers; the
                 // takeover always emits exact layers.
-                if phase.builder.is_bounded() && phase.builder.can_terminate(dot_upper_bound) {
+                if phase.builder.is_bounded()
+                    && counters.try_terminate(phase.builder, dot_upper_bound)
+                {
                     counters.terminated = true;
                 } else {
                     stream.advance_frontier();
@@ -712,6 +757,9 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     }
 
     finish_cell(ctx, points, generator_idx, &trace, &mut counters)?;
+    #[cfg(feature = "escalate_probe")]
+    let (proactive_transition_delta_min, proactive_early_unchanged_clearance_min) =
+        ctx.builder.proactive_clip_metrics();
 
     Ok(CellBuildStats {
         knn_query: counters.knn_query_time,
@@ -736,6 +784,11 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         did_packed: counters.did_packed,
         packed_tail_used: counters.packed_tail_used,
         packed_safe_exhausted: counters.packed_safe_exhausted,
+        termination_clearance_min: counters.termination_clearance_min,
+        #[cfg(feature = "escalate_probe")]
+        proactive_transition_delta_min,
+        #[cfg(feature = "escalate_probe")]
+        proactive_early_unchanged_clearance_min,
         knn_stage: counters.knn_stage,
     })
 }

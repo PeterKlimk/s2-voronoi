@@ -175,3 +175,35 @@ fast clip
 
 The hard part is not the repair anymore. It is making the "no flags" condition a
 defensible certificate rather than just an empirical observation.
+
+## First Probe Layer
+
+Implemented under `escalate_probe`:
+
+- `S2_PROACTIVE_AUDIT=1` records per-cell fallback usage and accepted
+  termination clearance during the fast build.
+- The same audit now records minimum mixed-clip transition denominator
+  (`|d0-d1|`) and minimum early-unchanged clearance
+  (`c^2 - |ab|^2 max_r^2`) per cell.
+- `probe_cgal_hull3_flag_recall` now joins those audit records with CGAL
+  changed-cell truth and normalized 3D margin bands.
+
+Initial measurements:
+
+| distribution | n | seed | changed | defect cells | fallback cells | near-term (`<=1e-6`) | near-transition (`<=1e-8`) | near-early (`<=1e-12`) | changed caught by defect/fallback/term/transition/early/margin1e-6/all |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| uniform | 100k | 3 | 0 | 0 | 0 | 79 | 0 | 9 | 0/0/0/0/0/0/0 |
+| mega | 100k | 3 | 1 | 2 | 6 | 5379 | 6342 | 68698 | 1/1/0/0/0/1/1 |
+
+The current interesting changed cell (`mega 100k seed 3`, `g=11548`) is not a
+silent coherent miss: it is already topologically defective, used fallback, and
+is caught by the `1e-6` normalized 3D margin band.
+
+The first transition/early bands are intentionally crude. They are useful audit
+dimensions, but should not be promoted directly to production flags without
+tuning: the `near_early <= 1e-12` count is already very high in mega.
+
+Remaining instrumentation gaps:
+
+- support-envelope clearance at timing-only skipped clips;
+- independent brute-force audit of near-threshold terminations.
