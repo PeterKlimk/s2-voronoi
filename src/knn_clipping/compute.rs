@@ -316,10 +316,31 @@ fn compute_voronoi_knn_clipping_report_core(
     })
 }
 
-fn has_low_incidence_vertices(vertex_count: usize, cell_indices: &[u32]) -> bool {
+/// True if any vertex referenced by a live cell has degree 1 or 2 (a real
+/// sub-3-incidence defect the repair should examine).
+///
+/// Counts incidence over each cell's *live* window `[vertex_start ..
+/// vertex_start + vertex_count)`, NOT the raw `cell_indices` buffer. Edge
+/// reconciliation shrinks a cell's `vertex_count` in place without compacting
+/// the backing buffer (see `apply_merges_in_place` /
+/// `drop_degenerate_collinear_vertices` in `edge_reconcile`), so the buffer can
+/// retain stale tail slots that no live cell references. Scanning the whole
+/// buffer counts those stale slots as phantom degree-1/2 vertices and trips a
+/// no-op repair (a single stale slot cost ~13s of acceptance-gate work at
+/// 2.5M). Counting live windows matches the validators (`validate_impl`,
+/// `verify_sphere_fast`) and the repair's own `low_incidence_gens`.
+fn has_low_incidence_vertices(
+    vertex_count: usize,
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+) -> bool {
     let mut cnt = vec![0u32; vertex_count];
-    for &v in cell_indices {
-        cnt[v as usize] += 1;
+    for cell in cells {
+        let start = cell.vertex_start();
+        let end = start + cell.vertex_count();
+        for &v in &cell_indices[start..end] {
+            cnt[v as usize] += 1;
+        }
     }
     cnt.iter().any(|&c| c == 1 || c == 2)
 }
@@ -352,7 +373,7 @@ fn maybe_repair_effective(
         .iter()
         .map(|&(a, b)| (a.min(b), a.max(b)))
         .collect();
-    let has_low_incidence = has_low_incidence_vertices(vertices.len(), eff_cell_indices);
+    let has_low_incidence = has_low_incidence_vertices(vertices.len(), eff_cells, eff_cell_indices);
     if defect_pairs.is_empty() && !has_low_incidence {
         return false;
     }
@@ -364,7 +385,7 @@ fn maybe_repair_effective(
         eff_cell_indices,
     );
     #[cfg(feature = "escalate_probe")]
-    let _stats = if std::env::var("S2_ESCALATE_DELAUNATOR").is_ok() {
+    let stats = if std::env::var("S2_ESCALATE_DELAUNATOR").is_ok() {
         escalate::repair_delaunator(
             effective_points,
             &mut work,
@@ -390,7 +411,7 @@ fn maybe_repair_effective(
         )
     };
     #[cfg(not(feature = "escalate_probe"))]
-    let _stats = if matches!(repair_mode, RepairMode::LocalProjected) {
+    let stats = if matches!(repair_mode, RepairMode::LocalProjected) {
         escalate::repair_local_exact(
             effective_points,
             &mut work,
@@ -407,6 +428,14 @@ fn maybe_repair_effective(
             ESCALATE_MAX_ROUNDS,
         )
     };
+    // No splices means the repair did not modify `work` (a `splice_generator`
+    // call is the only mutation, tracked 1:1 by `spliced_generators`). Skip the
+    // flatten + full-diagram clone + validate of an unchanged diagram, which is
+    // the dominant cost of a no-op repair (~12.6s of a 15s tail at 2.5M).
+    if stats.spliced_generators == 0 {
+        return false;
+    }
+
     let (new_vertices, new_cells, new_cell_indices) = work.into_flat();
 
     let post = crate::validation::validate(&crate::SphericalVoronoi::from_raw_parts(
