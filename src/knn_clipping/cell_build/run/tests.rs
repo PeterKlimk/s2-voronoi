@@ -399,6 +399,36 @@ fn summarize_hits<'a>(
     (neighbors, constraints, edges)
 }
 
+fn env_usize(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(default)
+}
+
+fn parse_target_indices(n: usize) -> Vec<usize> {
+    if let Ok(raw) = std::env::var("S2_PROBE_TARGETS") {
+        let mut targets: Vec<usize> = raw
+            .split(',')
+            .filter_map(|part| part.trim().parse::<usize>().ok())
+            .filter(|&idx| idx < n)
+            .collect();
+        targets.sort_unstable();
+        targets.dedup();
+        return targets;
+    }
+
+    let mut targets: Vec<usize> = (0..n.min(12)).collect();
+    for idx in [n / 4, n / 2, 3 * n / 4, n.saturating_sub(1)] {
+        if idx < n {
+            targets.push(idx);
+        }
+    }
+    targets.sort_unstable();
+    targets.dedup();
+    targets
+}
+
 #[test]
 #[ignore = "diagnostic: checkpointed all-constraints extraction before exhaustion"]
 fn probe_early_all_constraints_trigger_points() {
@@ -509,6 +539,48 @@ fn probe_early_all_constraints_trigger_points() {
             top.join(",")
         );
     }
+}
+
+#[test]
+#[ignore = "diagnostic: targeted large-N hemisphere cells for exhaustion/fallback scaling"]
+fn probe_large_hemisphere_target_cells() {
+    let n = env_usize("S2_PROBE_N", 100_000);
+    let points = hemisphere_points(n);
+    let targets = parse_target_indices(n);
+    let grid = CubeMapGrid::new(&points, crate::policy::knn_grid_resolution(points.len()));
+
+    eprintln!(
+        "LARGEPROBE hemisphere: n={} targets={:?}",
+        points.len(),
+        targets
+    );
+    for generator_idx in targets {
+        let cell = probe_early_extraction_cell(&points, &grid, generator_idx);
+        eprintln!(
+            "LARGEPROBE hemisphere cell={}: ok={} failure={:?} neighbors={} final_edges={} \
+             exhausted={} fallback_all_constraints={} successes={} first_success={} first_match={}",
+            cell.generator,
+            cell.ok,
+            cell.failure,
+            cell.neighbors_processed,
+            cell.final_edges,
+            cell.knn_exhausted,
+            cell.fallback_all_constraints,
+            cell.successes,
+            format_hit(cell.first_success.as_ref()),
+            format_hit(cell.first_final_match.as_ref()),
+        );
+    }
+}
+
+fn format_hit(hit: Option<&EarlyExtractHit>) -> String {
+    hit.map(|hit| {
+        format!(
+            "neighbors:{} constraints:{} edges:{}",
+            hit.neighbors_processed, hit.accepted_constraints, hit.edges
+        )
+    })
+    .unwrap_or_else(|| "none".to_string())
 }
 
 #[test]

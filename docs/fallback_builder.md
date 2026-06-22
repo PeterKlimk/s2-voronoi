@@ -212,6 +212,35 @@ checks the extracted vertices/edges against the remaining spatial domain. Simple
 thresholds based on "extractor succeeded", accepted-constraint count, or emitted
 edge count are not enough.
 
+### Large-N targeted probe
+
+The all-cells early-trigger probe is useful at thousands of points, but the
+million-point concern is concentrated in a few carrier cells. The ignored
+`probe_large_hemisphere_target_cells` test builds a large upper-hemisphere input
+and probes selected cells only. Configure it with:
+
+```bash
+S2_PROBE_N=1000000 cargo test --release probe_large_hemisphere_target_cells -- --ignored --nocapture
+S2_PROBE_N=1000000 S2_PROBE_TARGETS=0,1,2,3,4 cargo test --release probe_large_hemisphere_target_cells -- --ignored --nocapture
+```
+
+One `S2_PROBE_N=1000000` run showed:
+
+- cells `0..11` all processed `999999` neighbors
+- cells `0..4` had final edges `16,16,17,17,17`
+- cells `0..4` all emitted early polygons after only `20..25` neighbors, but
+  those early polygons were not the final cell
+- cells `0..3` first matched the final all-constraints signature only at
+  exhaustion; cell `4` first matched at `505188` neighbors
+- control cells at indices `250000`, `500000`, and `750000` processed `45..53`
+  neighbors; the final cap-near cell `999999` processed `5659`
+
+Interpretation: at million scale, the cold fallback itself is not the cost
+center; the carrier cells still pay the full neighbor-stream proof. The final
+cells remain small, so a useful optimization should certify the extracted
+spherical cell against the remaining spatial frontier rather than continuing to
+enumerate every neighbor.
+
 ## Exhaustion probe notes
 
 `UnboundedAfterExhaustion` is specifically "the neighbor stream ended while the
