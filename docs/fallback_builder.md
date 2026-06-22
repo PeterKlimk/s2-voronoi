@@ -170,8 +170,9 @@ That extractor reconstructs the upper-hemisphere exhaustion cells:
 
 It intentionally does not solve exact rank-2 great-circle inputs: those have no
 full-dimensional spherical cell under the unperturbed constraints, so the
-all-pairs extractor finds no 3+ vertex polygon. The opt-in rank-2 perturbation
-mode is still the right route for that class.
+all-pairs extractor finds no 3+ vertex polygon. The default rank-2 perturbation
+mode is the right route for that class; `DegenerateMode::Strict` preserves the
+clean-error behavior for callers that want it.
 
 ## Early-trigger probe notes
 

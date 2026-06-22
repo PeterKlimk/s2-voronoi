@@ -161,14 +161,8 @@ fn test_rank2_great_circle_policy_is_explicit() {
         "rank-2 great-circle input should fail cleanly in strict mode, got {strict:?}"
     );
 
-    let perturbed = compute_with_report(
-        &points,
-        VoronoiConfig {
-            degenerate_mode: DegenerateMode::PerturbGreatCircle,
-            ..VoronoiConfig::default()
-        },
-    )
-    .expect("rank-2 great-circle perturbation mode should return a valid nearby diagram");
+    let perturbed = compute_with_report(&points, VoronoiConfig::default())
+        .expect("default rank-2 great-circle perturbation should return a valid nearby diagram");
 
     assert_eq!(
         perturbed.report.degenerate.requested_mode,

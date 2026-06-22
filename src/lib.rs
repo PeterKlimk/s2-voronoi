@@ -354,12 +354,13 @@ pub struct VoronoiConfig {
     /// validation succeeds. Disable this for diagnostics or to reproduce the raw
     /// fast-path residual/error behavior.
     pub repair_mode: RepairMode,
-    /// Opt-in handling for rank-deficient great-circle inputs.
+    /// Handling for rank-deficient great-circle inputs.
     ///
-    /// The default is [`DegenerateMode::Strict`], preserving the ordinary
-    /// valid-or-error contract. [`DegenerateMode::PerturbGreatCircle`] retries
-    /// rank-2 great-circle failures as a deterministic nearby full-dimensional
-    /// diagram and reports that choice through [`ComputeReport::degenerate`].
+    /// The default is [`DegenerateMode::PerturbGreatCircle`]: rank-2
+    /// great-circle failures retry as a deterministic nearby full-dimensional
+    /// diagram and report that choice through [`ComputeReport::degenerate`].
+    /// Use [`DegenerateMode::Strict`] to preserve the ordinary clean-error
+    /// behavior for these lower-dimensional inputs.
     pub degenerate_mode: DegenerateMode,
 }
 
@@ -368,7 +369,7 @@ impl Default for VoronoiConfig {
         Self {
             preprocess_mode: PreprocessMode::Weld,
             repair_mode: RepairMode::Local3d,
-            degenerate_mode: DegenerateMode::Strict,
+            degenerate_mode: DegenerateMode::PerturbGreatCircle,
         }
     }
 }

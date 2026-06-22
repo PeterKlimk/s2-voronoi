@@ -157,13 +157,15 @@ The backend is expected to return a defined `Err(...)` for:
   near-coincident generators rather than preserve subresolution structure
 - some terminal construction failures that are recognized but not yet classified more precisely
 
-Pure great-circle / coplanar cases are the clearest current example of supported failure rather
-than supported success under the default strict degenerate policy. Opt-in
-`DegenerateMode::PerturbGreatCircle` retries full great-circle rank-2 failures
-with a deterministic off-plane joggle and returns the nearby full-dimensional
-solved problem when that retry validates. Welding is orthogonal to this policy:
-it handles subresolution coincidence by solving an effective generator set, but
-does not turn exact rank-2 input into a full-dimensional problem.
+Pure great-circle / coplanar cases are the clearest example of default robust
+degenerate handling rather than exact lower-dimensional output.
+`DegenerateMode::PerturbGreatCircle` is the default: it retries full
+great-circle rank-2 failures with a deterministic off-plane joggle and returns
+the nearby full-dimensional solved problem when that retry validates. Use
+`DegenerateMode::Strict` to preserve the ordinary clean-error behavior. Welding
+is orthogonal to this policy: it handles subresolution coincidence by solving an
+effective generator set, but does not turn exact rank-2 input into a
+full-dimensional problem.
 
 ### Resolvability floor (why the dense near-cocircular regime errors)
 

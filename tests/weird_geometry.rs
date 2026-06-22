@@ -1,17 +1,16 @@
 //! Weird-geometry contract fixtures.
 //!
 //! These are not random stress tests. They are named geometric regimes that
-//! either already succeed through welding / fallback / stitching, or currently
-//! fail cleanly because the input asks for a lower-dimensional spherical diagram.
-//! Pure rank-2 great-circle input is a clean default failure; opt-in
-//! `DegenerateMode::PerturbGreatCircle` is the current no-fail contract for that
-//! class.
+//! either already succeed through welding / fallback / stitching, or use default
+//! robust perturbation for rank-deficient spherical input. Pure rank-2
+//! great-circle input is a clean failure only under explicit
+//! `DegenerateMode::Strict`.
 
 mod support;
 
 use s2_voronoi::{
     compute, validation::validate, DegenerateMode, PreprocessMode, RepairMode, UnitVec3,
-    VoronoiConfig, VoronoiError,
+    VoronoiConfig,
 };
 use std::f32::consts::PI;
 use support::points::{
@@ -19,42 +18,20 @@ use support::points::{
     hemisphere_points,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Expected {
-    StrictSuccess,
-    CleanFailure,
-}
-
 fn u(x: f32, y: f32, z: f32) -> UnitVec3 {
     let l = (x * x + y * y + z * z).sqrt();
     UnitVec3::new(x / l, y / l, z / l)
 }
 
-fn expect_case(name: &str, points: Vec<UnitVec3>, expected: Expected) {
-    let result = compute(&points);
-    match expected {
-        Expected::StrictSuccess => {
-            let diagram = result.unwrap_or_else(|err| panic!("{name}: expected success: {err:?}"));
-            let report = validate(&diagram);
-            assert!(
-                report.is_strictly_valid(),
-                "{name}: expected strict validity, got {}",
-                report.headline()
-            );
-        }
-        Expected::CleanFailure => {
-            assert!(
-                matches!(
-                    result,
-                    Err(VoronoiError::UnsupportedGeometry { .. })
-                        | Err(VoronoiError::ComputationFailed(_))
-                        | Err(VoronoiError::DegenerateInput { .. })
-                        | Err(VoronoiError::RepresentationLimit(_))
-                ),
-                "{name}: expected clean failure, got {result:?}"
-            );
-        }
-    }
+fn expect_strict_success(name: &str, points: Vec<UnitVec3>) {
+    let diagram =
+        compute(&points).unwrap_or_else(|err| panic!("{name}: expected success: {err:?}"));
+    let report = validate(&diagram);
+    assert!(
+        report.is_strictly_valid(),
+        "{name}: expected strict validity, got {}",
+        report.headline()
+    );
 }
 
 fn equator_with_poles(n: usize) -> Vec<UnitVec3> {
@@ -89,51 +66,31 @@ fn pole_with_latitude_ring(n: usize, z: f32) -> Vec<UnitVec3> {
 
 #[test]
 fn weird_geometry_contract_cases() {
-    let cases: [(&str, Vec<UnitVec3>, Expected); 8] = [
-        (
-            "pure_great_circle_rank2",
-            great_circle_points(50, 0.0, 42),
-            Expected::CleanFailure,
-        ),
+    let cases: [(&str, Vec<UnitVec3>); 8] = [
+        ("pure_great_circle_rank2", great_circle_points(50, 0.0, 42)),
         (
             "small_jitter_great_circle",
             great_circle_points(20, 0.01, 42),
-            Expected::StrictSuccess,
         ),
-        (
-            "upper_hemisphere_large_cells",
-            hemisphere_points(100, 42),
-            Expected::StrictSuccess,
-        ),
+        ("upper_hemisphere_large_cells", hemisphere_points(100, 42)),
         (
             "upper_hemisphere_dense_large_cells",
             hemisphere_points(500, 42),
-            Expected::StrictSuccess,
         ),
         (
             "anchored_clustered_cap",
             clustered_cap_points(100, 0.0175, 42),
-            Expected::StrictSuccess,
         ),
         (
             "cubed_sphere_degree4_grid",
             cubed_sphere_points(6 * 12 * 12, 0),
-            Expected::StrictSuccess,
         ),
-        (
-            "exact_cocircular_pyramid",
-            latitude_ring_with_apex(6),
-            Expected::StrictSuccess,
-        ),
-        (
-            "great_circle_with_two_poles",
-            equator_with_poles(24),
-            Expected::StrictSuccess,
-        ),
+        ("exact_cocircular_pyramid", latitude_ring_with_apex(6)),
+        ("great_circle_with_two_poles", equator_with_poles(24)),
     ];
 
-    for (name, points, expected) in cases {
-        expect_case(name, points, expected);
+    for (name, points) in cases {
+        expect_strict_success(name, points);
     }
 }
 
@@ -175,15 +132,13 @@ fn welding_subradius_cluster_is_strictly_valid() {
 #[test]
 fn robust_great_circle_perturbation_solves_rank2_fixture() {
     let points = great_circle_points(50, 0.0, 42);
-    let output = s2_voronoi::compute_with_report(
-        &points,
-        VoronoiConfig {
-            degenerate_mode: DegenerateMode::PerturbGreatCircle,
-            ..VoronoiConfig::default()
-        },
-    )
-    .expect("robust great-circle perturbation should solve rank-2 fixture");
+    let output = s2_voronoi::compute_with_report(&points, VoronoiConfig::default())
+        .expect("default great-circle perturbation should solve rank-2 fixture");
 
+    assert_eq!(
+        output.report.degenerate.requested_mode,
+        DegenerateMode::PerturbGreatCircle
+    );
     assert!(
         output.report.degenerate.perturbation_applied,
         "rank-2 fixture should take the perturbation retry"

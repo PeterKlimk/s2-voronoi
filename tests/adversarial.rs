@@ -20,17 +20,6 @@ fn expect_strict_success(name: &str, result: Result<s2_voronoi::SphericalVoronoi
     );
 }
 
-fn expect_defined_failure(name: &str, result: Result<s2_voronoi::SphericalVoronoi, VoronoiError>) {
-    assert!(
-        matches!(
-            result,
-            Err(VoronoiError::UnsupportedGeometry { .. }) | Err(VoronoiError::ComputationFailed(_))
-        ),
-        "{name} should fail cleanly with an explicit error, got {:?}",
-        result
-    );
-}
-
 // =============================================================================
 // Great Circle Tests (All Coplanar)
 //
@@ -56,10 +45,10 @@ fn test_great_circle_small_jitter() {
 
 #[test]
 fn test_great_circle_pure_degenerate() {
-    // Pure great circle with no jitter - maximally degenerate
-    // This CANNOT work with current algorithm - cells span 180°
+    // Pure great-circle input is maximally rank-deficient. The default robust
+    // mode returns a nearby full-dimensional perturbed diagram.
     let points = great_circle_points(50, 0.0, 42);
-    expect_defined_failure("great_circle_pure_degenerate", compute(&points));
+    expect_strict_success("great_circle_pure_degenerate", compute(&points));
 }
 
 // =============================================================================

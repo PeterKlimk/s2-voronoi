@@ -56,11 +56,10 @@ the measured safety margins behind it.
   Inputs are canonicalized once at entry (f64-renormalized, rounded back to f32), so the
   diagram's `generators()` may differ from the raw input by ~1 ulp, and inputs differing only
   radially (off-unit ulps) resolve to the same generator.
-- Default spherical computation is a valid-or-error contract for full-dimensional inputs.
-  Near-coincident generators are welded by default for graph validity. Exact rank-2
-  great-circle inputs fail cleanly in strict mode; callers that prefer a nearby valid
-  full-dimensional diagram can opt into `DegenerateMode::PerturbGreatCircle` and inspect
-  `ComputeReport::degenerate`.
+- Default spherical computation favors robust valid output: near-coincident generators are
+  welded by default for graph validity, and exact rank-2 great-circle inputs retry as a nearby
+  valid full-dimensional diagram. Callers that prefer lower-dimensional inputs to fail cleanly
+  can set `DegenerateMode::Strict`; perturbation is reported through `ComputeReport::degenerate`.
 - For strict subdivision/invariant checks on computed output, use `validation::validate`.
 
 ## Quickstart
@@ -161,7 +160,7 @@ toroidal graph.
 ## Configuration
 
 `VoronoiConfig` (spherical pipeline) controls preprocessing, cold-path local repair,
-and opt-in degenerate-input handling:
+and degenerate-input handling:
 
 - `preprocess_mode`: coincident-generator handling:
   - `PreprocessMode::Weld` (default): weld generators within the fixed weld radius (~1.4e-6
@@ -178,10 +177,10 @@ and opt-in degenerate-input handling:
     stereographic chart and exact 2D predicates
   - `RepairMode::Disabled`: preserve the raw fast-path residual/error behavior for diagnostics
 - `degenerate_mode`: failure-triggered handling for rank-deficient spherical inputs:
-  - `DegenerateMode::Strict` (default): return the ordinary clean error
-  - `DegenerateMode::PerturbGreatCircle`: after an initial failure, detect full great-circle
-    rank-2 inputs and retry once with a deterministic off-plane joggle. The returned diagram is
-    the nearby perturbed solved problem, reported through `ComputeReport::degenerate`.
+  - `DegenerateMode::PerturbGreatCircle` (default): after an initial failure, detect full
+    great-circle rank-2 inputs and retry once with a deterministic off-plane joggle. The returned
+    diagram is the nearby perturbed solved problem, reported through `ComputeReport::degenerate`.
+  - `DegenerateMode::Strict`: return the ordinary clean error for rank-deficient input.
 
 The spherical backend is intentionally not an exact-predicate hot-path solver.
 The contract is that ordinary inputs are solved by the fast gnomonic clipper,

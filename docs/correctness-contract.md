@@ -215,29 +215,29 @@ pre-repair mismatches; it must not have post-repair residuals.
 Welding and degenerate perturbation are separate policies. Welding resolves
 subresolution coincidence by solving an effective generator set and remapping
 welded twins onto canonical cells. It does not make lower-dimensional inputs
-full-dimensional. Rank-deficient great-circle inputs require the explicit
-degenerate policy below when the caller wants an approximate diagram instead of
-a clean error.
+full-dimensional. Rank-deficient great-circle inputs use the default degenerate
+policy below to return an approximate diagram; callers can opt into strict
+clean-error behavior with `DegenerateMode::Strict`.
 
-## Opt-in great-circle perturbation
+## Default great-circle perturbation
 
 Pure great-circle inputs are rank-deficient: the exact diagram is a lower-dimensional
 lune decomposition with two antipodal high-degree Voronoi vertices. That output
 class is not robust under f32 input noise or normalization, where the same input
 usually becomes a nearby full-dimensional diagram with tiny pole fans.
 
-The default policy therefore remains strict: fail cleanly if the ordinary backend
-cannot produce a valid full-dimensional diagram. `DegenerateMode::PerturbGreatCircle`
-is an opt-in robust mode. It first lets the ordinary pipeline run; only after a
-failure does it classify full great-circle rank-2 inputs and retry once with a
-deterministic off-plane joggle. The returned diagram is explicitly the nearby
-perturbed solved problem, and `ComputeReport::degenerate.perturbation_applied`
-records that fact.
+The default policy therefore returns a robust nearby full-dimensional diagram:
+`DegenerateMode::PerturbGreatCircle` first lets the ordinary pipeline run; only
+after a failure does it classify full great-circle rank-2 inputs and retry once
+with a deterministic off-plane joggle. The returned diagram is explicitly the
+nearby perturbed solved problem, and
+`ComputeReport::degenerate.perturbation_applied` records that fact.
 
 This mode is deterministic and validation-gated, but it is not symbolic SoS and
 does not claim to return the exact lower-dimensional Voronoi diagram. Its
 purpose is operational totality for a fragile input class whose exact output is
-not robust under f32 rounding or normalization.
+not robust under f32 rounding or normalization. Use `DegenerateMode::Strict`
+when that input class should instead return the ordinary clean error.
 
 ## Paths to a stronger guarantee
 
@@ -264,6 +264,6 @@ These are optional hardening directions; none block release:
 - Not a promise of exact geometry. Users needing certified positions need exact arithmetic and a
   different performance class.
 - Not a promise about inputs outside the envelope: sub-weld coincidence (welded), non-finite
-  values (rejected), pure great-circle/coplanar sets in strict mode (defined failure or opt-in
-  perturbation; see `docs/supported-envelope.md`).
+  values (rejected), pure great-circle/coplanar sets in strict mode (defined failure; default
+  mode perturbs full great-circle rank-2 input; see `docs/supported-envelope.md`).
 - Not stable vertex ordering or index assignment across versions.
