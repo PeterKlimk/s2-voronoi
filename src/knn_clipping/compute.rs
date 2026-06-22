@@ -438,14 +438,21 @@ fn maybe_repair_effective(
 
     let (new_vertices, new_cells, new_cell_indices) = work.into_flat();
 
-    let post = crate::validation::validate(&crate::SphericalVoronoi::from_raw_parts(
-        effective_points.to_vec(),
-        new_vertices.clone(),
-        new_cells.clone(),
-        new_cell_indices.clone(),
-        None,
-    ));
-    if !post.is_strictly_valid() {
+    // Whole-diagram never-worse gate: accept only if the repaired diagram is
+    // strictly valid. Validate the effective arrays in place via
+    // `verify_sphere_effective_strict` (same strict contract as `validate`,
+    // pinned by the `effective_strict_matches_fast` differential test) rather
+    // than cloning all of `effective_points`/vertices/cells/indices into a
+    // temporary `SphericalVoronoi` — the clone was the dominant cost of a
+    // committed repair. The validate itself stays whole-diagram (the repair's
+    // blast radius is vertex-triple-identity-wide, so a local gate is unsound).
+    if crate::validation::verify_sphere_effective_strict(
+        &new_vertices,
+        &new_cells,
+        &new_cell_indices,
+    )
+    .is_err()
+    {
         return false;
     }
 
