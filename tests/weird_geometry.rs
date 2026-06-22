@@ -2,15 +2,16 @@
 //!
 //! These are not random stress tests. They are named geometric regimes that
 //! either already succeed through welding / fallback / stitching, or currently
-//! fail cleanly because the input asks for a lower-dimensional or very large-cell
-//! spherical diagram. If we later add a "no fail with welding" mode, this file is
-//! the checklist of rows to promote from clean failure to strict success.
+//! fail cleanly because the input asks for a lower-dimensional spherical diagram.
+//! Pure rank-2 great-circle input is a clean default failure; opt-in
+//! `DegenerateMode::PerturbGreatCircle` is the current no-fail contract for that
+//! class.
 
 mod support;
 
 use s2_voronoi::{
-    compute, compute_with, validation::validate, DegenerateMode, PreprocessMode, UnitVec3,
-    VoronoiConfig, VoronoiError,
+    compute, validation::validate, DegenerateMode, PreprocessMode, UnitVec3, VoronoiConfig,
+    VoronoiError,
 };
 use std::f32::consts::PI;
 use support::points::{
@@ -221,26 +222,5 @@ fn classify_weird_geometry_failures() {
             ),
             Err(err) => eprintln!("WEIRDCASE {name}: err {err:?}"),
         }
-    }
-}
-
-#[test]
-#[ignore = "future goal: no-fail rank-2 geometry under welding/fallback mode"]
-fn future_no_fail_rank2_with_welding_target() {
-    for (name, points) in [("pure_great_circle_rank2", great_circle_points(50, 0.0, 42))] {
-        let diagram = compute_with(
-            &points,
-            VoronoiConfig {
-                preprocess_mode: PreprocessMode::Weld,
-                ..VoronoiConfig::default()
-            },
-        )
-        .unwrap_or_else(|err| panic!("{name}: future no-fail target still errors: {err:?}"));
-        let report = validate(&diagram);
-        assert!(
-            report.is_strictly_valid(),
-            "{name}: future no-fail target returned invalid diagram: {}",
-            report.headline()
-        );
     }
 }
