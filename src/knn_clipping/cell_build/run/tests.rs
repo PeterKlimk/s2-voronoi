@@ -66,6 +66,36 @@ fn pole_with_latitude_ring(n: usize, z: f32) -> Vec<Vec3> {
     points
 }
 
+fn cap_fibonacci_points(n: usize, radius_rad: f32) -> Vec<Vec3> {
+    let golden = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
+    let cos_min = radius_rad.cos();
+    (0..n)
+        .map(|i| {
+            let t = (i as f32 + 0.5) / n as f32;
+            let z = 1.0 - t * (1.0 - cos_min);
+            let r = (1.0 - z * z).sqrt();
+            let theta = golden * i as f32;
+            Vec3::new(r * theta.cos(), r * theta.sin(), z).normalize()
+        })
+        .collect()
+}
+
+fn cap_with_antipode(n: usize, radius_rad: f32) -> Vec<Vec3> {
+    let mut points = cap_fibonacci_points(n.saturating_sub(1), radius_rad);
+    points.push(-Vec3::Z);
+    points
+}
+
+fn cap_with_octahedral_anchors(n: usize, radius_rad: f32) -> Vec<Vec3> {
+    let anchors = octahedron_points();
+    let mut points = anchors;
+    points.extend(cap_fibonacci_points(
+        n.saturating_sub(points.len()),
+        radius_rad,
+    ));
+    points
+}
+
 #[derive(Debug, Clone)]
 struct ProbeCell {
     generator: usize,
@@ -727,6 +757,90 @@ fn probe_unbounded_exhaustion_neighbor_counts() {
         eprintln!(
             "CELLPROBE {name}: spherical_extract_edges {}",
             summarize_usize(&mut spherical_extract_edges)
+        );
+    }
+}
+
+#[test]
+#[ignore = "diagnostic: projection fallback incidence on cap-only and anchored-cap cases"]
+fn probe_projection_fallback_cases() {
+    let cases = [
+        ("cap_only_100_r0.1", cap_fibonacci_points(100, 0.1)),
+        ("cap_only_100_r0.5", cap_fibonacci_points(100, 0.5)),
+        ("cap_only_100_r1.0", cap_fibonacci_points(100, 1.0)),
+        ("cap_only_100_r1.5", cap_fibonacci_points(100, 1.5)),
+        ("cap_only_500_r0.1", cap_fibonacci_points(500, 0.1)),
+        ("cap_only_500_r1.0", cap_fibonacci_points(500, 1.0)),
+        ("cap_only_500_r1.5", cap_fibonacci_points(500, 1.5)),
+        ("cap_antipode_100_r0.1", cap_with_antipode(100, 0.1)),
+        ("cap_antipode_500_r0.1", cap_with_antipode(500, 0.1)),
+        ("cap_antipode_500_r1.0", cap_with_antipode(500, 1.0)),
+        ("cap_octa_500_r0.1", cap_with_octahedral_anchors(500, 0.1)),
+        ("cap_octa_500_r1.0", cap_with_octahedral_anchors(500, 1.0)),
+    ];
+
+    for (name, points) in cases {
+        let grid = CubeMapGrid::new(&points, crate::policy::knn_grid_resolution(points.len()));
+        let mut cells: Vec<ProbeCell> = (0..points.len())
+            .map(|generator_idx| probe_cell(&points, &grid, generator_idx))
+            .collect();
+        let ok = cells.iter().filter(|c| c.ok).count();
+        let err = cells.len() - ok;
+        let exhausted = cells.iter().filter(|c| c.knn_exhausted).count();
+        let fallback_projection: usize = cells.iter().map(|c| c.fallback_projection).sum();
+        let fallback_polygon_cap: usize = cells.iter().map(|c| c.fallback_polygon_cap).sum();
+        let fallback_all_constraints: usize =
+            cells.iter().map(|c| c.fallback_all_constraints).sum();
+        let mut neighbors: Vec<usize> = cells.iter().map(|c| c.neighbors_processed).collect();
+        let mut edges: Vec<usize> = cells
+            .iter()
+            .filter(|c| c.ok)
+            .map(|c| c.final_edges)
+            .collect();
+        let mut failure_counts = std::collections::BTreeMap::new();
+        for failure in cells.iter().filter_map(|c| c.failure) {
+            *failure_counts
+                .entry(format!("{failure:?}"))
+                .or_insert(0usize) += 1;
+        }
+        cells.sort_by_key(|c| std::cmp::Reverse(c.neighbors_processed));
+        let top: Vec<String> = cells
+            .iter()
+            .take(5)
+            .map(|c| {
+                format!(
+                    "{}:{}:{}:edges={}{}",
+                    c.generator,
+                    c.neighbors_processed,
+                    if c.ok { "ok" } else { "err" },
+                    c.final_edges,
+                    c.failure
+                        .map(|failure| format!(":{failure:?}"))
+                        .unwrap_or_else(String::new)
+                )
+            })
+            .collect();
+
+        eprintln!(
+            "PROJPROBE {name}: cells={} ok={} err={} exhausted={} fallback_projection={} \
+             fallback_polygon_cap={} fallback_all_constraints={} failures={:?}",
+            points.len(),
+            ok,
+            err,
+            exhausted,
+            fallback_projection,
+            fallback_polygon_cap,
+            fallback_all_constraints,
+            failure_counts
+        );
+        eprintln!(
+            "PROJPROBE {name}: neighbors {}",
+            summarize_usize(&mut neighbors)
+        );
+        eprintln!(
+            "PROJPROBE {name}: ok_edges {} top={}",
+            summarize_usize(&mut edges),
+            top.join(",")
         );
     }
 }

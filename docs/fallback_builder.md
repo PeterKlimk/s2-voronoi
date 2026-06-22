@@ -292,3 +292,31 @@ Interpretation:
 - a future robust path should not wait for global exhaustion; it should enter the
   all-constraints spherical extractor once a cell remains unbounded after enough
   evidence that the generator-centered chart is the wrong model
+
+## Projection fallback probe notes
+
+`ProjectionInvalid` is still structurally supported as a bounded-polygon handoff:
+when a changed gnomonic polygon is already bounded but reaches the projection
+radius limit, the builder enters the spherical fallback and replays accepted
+constraints. The ignored `probe_projection_fallback_cases` test checks whether
+natural cap-only and anchored-cap fixtures still exercise that path:
+
+```bash
+cargo test --release probe_projection_fallback_cases -- --ignored --nocapture
+```
+
+One sweep over cap-only Fibonacci inputs, cap-plus-antipode inputs, and
+octahedron-anchored caps at radii `0.1`, `0.5`, `1.0`, and `1.5` radians found:
+
+- all cases succeeded
+- `fallback_projection=0` in every case
+- cap-only cases used `fallback_all_constraints` on boundary cells instead
+- antipode-anchored and octahedron-anchored cases avoided all-constraints fallback
+  in the probed sizes, though some cells still processed almost the whole stream
+
+Interpretation: the currently observable large-cell weird geometries do not
+naturally hit the bounded `ProjectionInvalid` handoff. They either remain
+unbounded until exhaustion, or they are bounded enough for ordinary extraction.
+Projection fallback remains useful as a representation guard and forced-handoff
+test path, but the practical robustness/performance issue is still
+`UnboundedAfterExhaustion` and proof of irrelevance for unseen constraints.

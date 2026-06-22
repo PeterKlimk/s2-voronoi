@@ -8,7 +8,7 @@ For release-oriented concerns, see `docs/publish-readiness-findings.md`.
 
 ## Current findings
 
-### 1. Cells that extend beyond the generator hemisphere still need a complete fallback story
+### 1. Cells that extend beyond the generator hemisphere still need a proof-cost story
 
 The current clipping path relies on a gnomonic projection centered at the generator. That
 projection stops being valid once the cell extends beyond 90 degrees from the generator.
@@ -16,8 +16,8 @@ projection stops being valid once the cell extends beyond 90 degrees from the ge
 This is not a normal case for well-spread inputs, but it is a real algorithm boundary and needs an
 explicit outcome rather than accidental failure. The explicit failure boundary now exists, and
 `UnboundedAfterExhaustion` has a cold all-constraints spherical extractor for known
-upper-hemisphere large-cell cases. The remaining gap is a complete fallback/model story for
-projection-invalid cells and an early trigger that avoids walking the full neighbor stream before
+upper-hemisphere large-cell cases. The remaining reproducible gap is proof cost:
+at large N, a few carrier cells may still walk the full neighbor stream before
 taking the cold extractor.
 
 Current evidence:
@@ -28,17 +28,18 @@ Current evidence:
 Current status:
 
 - the builder now detects proven hemisphere/projection invalidity explicitly
-- the public API returns `VoronoiError::UnsupportedGeometry` for that proven boundary
+- bounded projection-limit cases are eligible for spherical fallback handoff
 - unbounded-after-exhaustion hemisphere cells route through the cold all-constraints extractor
-- fallback projection/model support for every projection-invalid case does not exist yet
+- natural cap-only and anchored-cap probes currently reproduce exhaustion/all-constraints behavior,
+  not terminal projection-invalid failures
 
 Desired direction:
 
 - keep the explicit failure boundary honest
 - add an early trigger for the all-constraints extractor once a cell has enough evidence that the
   generator-centered chart is the wrong model
-- route remaining projection-invalid cases to a fallback that can represent the cell, or keep
-  returning a specific clean error
+- certify the extracted spherical cell against the remaining spatial frontier rather than proving
+  irrelevance by enumerating every neighbor
 
 This should be treated as a correctness boundary, not as a best-effort corner case.
 
