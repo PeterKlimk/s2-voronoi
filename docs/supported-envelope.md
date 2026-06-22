@@ -121,6 +121,9 @@ The backend is intended to support:
   - many near-cocircular and edge-reconciliation cases
 
 This is reflected in the always-on contract tests in [`tests/adversarial.rs`](/home/pkzmbk/code/s2-voronoi/tests/adversarial.rs).
+The named weird-geometry fixture library in [`tests/weird_geometry.rs`](/home/pkzmbk/code/s2-voronoi/tests/weird_geometry.rs)
+collects the current success/failure boundary for rank-deficient, large-cell,
+high-degree, and welded-subresolution cases.
 
 ### Inputs expected to fail cleanly
 
@@ -209,6 +212,11 @@ Some stress inputs are still exploratory rather than pinned as contract success/
 
 These remain in the adversarial suite as diagnostics or ignored stress runs rather than stable
 regression-oracle cases.
+
+The ignored `future_no_fail_with_welding_targets` test in
+[`tests/weird_geometry.rs`](/home/pkzmbk/code/s2-voronoi/tests/weird_geometry.rs)
+is the current checklist for a future feature/flag that attempts to return a
+strictly valid diagram for every finite normalized input after welding.
 
 ## Validation Semantics
 
