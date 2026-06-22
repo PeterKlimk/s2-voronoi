@@ -112,6 +112,10 @@ and escalation pipeline:
 3. rebuild flagged/defective cells with a normalized exact local oracle;
 4. measure recall against CGAL before attempting a hot-path exact clipper.
 
+See `docs/proactive-correctness-audit-2026-06.md` for the flag/error-budget
+audit plan covering projection error, lerp drift, termination bounds, and KNN
+coverage.
+
 ## Practical Rules
 
 1. Any exact 3D reference or repair oracle must f64-renormalize the input
