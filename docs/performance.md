@@ -64,8 +64,7 @@ Each cell runs the commits interleaved with rotating start order (the paired
 protocol). The scripts default to pinned + single-threaded runs. The box is
 noisy — per-binary code-layout offsets alone are ~1-2% at 500k ST, so treat
 sub-1% deltas as noise (see docs/micro-optimization-matrix.md). For the current
-A/B workflow, see docs/perf-profiling-plan.md; the older per-commit timeline is
-archived in docs/perf-testing-timeline.md.
+A/B workflow, see docs/perf-profiling-plan.md.
 
 ## Policy profiling
 

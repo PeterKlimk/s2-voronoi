@@ -1028,8 +1028,8 @@ fn reconcile_edges(
     )?;
     // The simple cross-bin stitch above is the only repair pass: any surviving
     // unpaired interior edge is surfaced as a residual error by the caller
-    // (valid-or-error contract — see docs/reclip-hull-snap-experiment-2026-06.md
-    // for why post-hoc Tier-2 repair was investigated and dropped).
+    // (valid-or-error contract — see docs/correctness-contract.md; the dropped
+    // post-hoc Tier-2 repair investigation lives in git history).
     tb.set_edge_reconcile(t.elapsed());
     Ok((cells, cell_indices, post_repair_unpaired))
 }

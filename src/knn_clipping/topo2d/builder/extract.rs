@@ -404,8 +404,7 @@ impl FallbackBuilder {
                 // pragmatic availability call, not a proof it is within the
                 // approximate-Voronoi contract. Proper hardening (a synthetic
                 // detection record forcing the output-invariant scan so the wrong
-                // key is caught) is deferred; see
-                // docs/reclip-fallback-review-2026-06.md.
+                // key is caught) is deferred.
                 Self::push_fallback_vertex(
                     &mut vertices,
                     FallbackVertex {

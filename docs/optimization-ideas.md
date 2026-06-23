@@ -143,8 +143,8 @@ validity on `tests/high_degree.rs` and the `grid` campaign distribution.
 
 ### Tier-2 re-clip resolver — exact-predicate rework (deferred behind correctness)
 
-Deferred until the Tier-2 soundness fix lands (gate→validator; see
-`docs/reclip-repair-design.md` and `docs/reclip-fallback-review-2026-06.md` #O5).
+Deferred until the Tier-2 soundness fix lands (gate→validator; removed reclip
+design/review notes, item #O5, in git history).
 Today the resolver finds interior vertices by brute force — every all-component
 triple (`O(|G|³)`) tested for empty-circumcircle against the **full** local grid
 filter (`|filter|` ≈ 8.5k–9.4k on dense mega), and the whole attempt is re-run

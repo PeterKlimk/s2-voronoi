@@ -44,8 +44,8 @@ perturbed into a nearby full-dimensional problem, and rare residual topology def
 with normalized local 3D repair. Exact geometry is not promised — no floating-point
 implementation can promise that — but graph validity is treated as non-negotiable and is
 fuzz-tested at multi-million point counts. The planar APIs make the same strict-subdivision
-promise over their domains. See `docs/correctness-contract.md` and `docs/supported-envelope.md`
-for the precise statement and representation limits.
+promise over their domains. See `docs/correctness-contract.md`
+for the precise statement, outcome classes, and representation limits.
 
 ## Status / requirements
 
@@ -211,15 +211,20 @@ a merged solve.
 
 ## Documentation
 
+User-facing:
+
 - How it works (the algorithm, for readers): `docs/how-it-works.md`
-- Correctness contract + coincidence policy: `docs/correctness-contract.md`
+- Correctness contract — guarantees, outcome classes, coincidence policy, representation limits:
+  `docs/correctness-contract.md`
+- Performance + benchmarking: `docs/performance.md`
+
+Maintainer notes (design rationale and working ledgers; some are AI-assisted research records):
+
 - Design / algorithm notes (including the parallel-stitching consistency model):
   `docs/architecture.md`
-- Supported input / failure contract: `docs/supported-envelope.md`
-- Active roadmap / prioritized next steps: `docs/todo.md`
-- Performance + benchmarking: `docs/performance.md`
-- Optimization ideas ledger (incl. negative results): `docs/optimization-ideas.md`
 - Live vertex dedup and edge checks: `docs/live_dedup.md`
+- Active roadmap / prioritized next steps: `docs/todo.md`
+- Optimization ideas ledger (incl. negative results): `docs/optimization-ideas.md`
 - Engineering issues / findings log: `docs/engineering-findings.md`
 
 ## License

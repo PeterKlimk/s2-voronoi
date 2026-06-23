@@ -6,9 +6,8 @@ evaluation. If you want to know "what should we work on next?", start here.
 Related documents:
 
 - `docs/correctness-contract.md`: the "essentially Voronoi" contract this roadmap implements,
-  including the empirical coincidence/weld evidence.
+  including the outcome classification and the empirical coincidence/weld evidence.
 - `docs/engineering-findings.md`: the findings log (correctness/contract/organization issues).
-- `docs/supported-envelope.md`: outcome classification for the current backend.
 
 ## Guiding goal
 
@@ -74,7 +73,7 @@ The empirical groundwork is done (see correctness-contract.md); this is the impl
    proven unreachable (mixed cyclic masks always carry both transitions) and converted to a
    documented `unreachable!`; the fallback angle sort uses `total_cmp` (the old
    `partial_cmp + unwrap_or` could trip std::sort's total-order check on NaN). Remaining panics
-   are genuine bug traps per the supported-envelope contract.
+   are genuine bug traps per the correctness contract.
 4. ~~Zero-warning builds, `rust-version = "1.88"`, clippy-clean, `#[deny(missing_docs)]`~~
    **All done** (missing_docs now denied across all features).
 
@@ -200,9 +199,9 @@ Status block in `docs/p5-consistency-design.md` for the full rationale and the r
 ### Tier-2 re-clip repair (fallback hardening) — correctness-first
 
 Opt-in `S2_RECLIP_REPAIR` on `agent/fallback-incremental-clip`. **Gate now sound
-(landed); fuzzed.** Full review + two Codex passes:
-`docs/reclip-fallback-review-2026-06.md`; design + roadmap:
-`docs/reclip-repair-design.md`. The repair only fires on `mega` (unrepairable
+(landed); fuzzed.** Full review, design, and roadmap for this removed Tier-2
+prototype live in git history (the reclip design notes). The repair only fires on
+`mega` (unrepairable
 stitch errors are never observed outside it), so it is rare; its cost is an
 acceptable stopgap, and runtime always-on validation is rejected (kills perf).
 
@@ -224,8 +223,8 @@ Correctness-first work:
    residual ⟹ strictly valid`. Two sweeps: default (detection-completeness) and
    `RECLIP=1` mega (recovery rate, `post_repair` column).
 
-Resolver rework — **MEASURED, direction corrected** (see
-`docs/reclip-repair-design.md` roadmap #2). Prototyped the exact-predicate swap
+Resolver rework — **MEASURED, direction corrected** (removed reclip-repair
+design note, roadmap #2, in git history). Prototyped the exact-predicate swap
 and instrumented mega before investing: exact cocircular ties NEVER fire on mega
 (`in_circle==0` count = 0), the exact predicate REGRESSED recovery (jitter 4/6 →
 exact 2/6 clean, the jitter approximation was helping the assembly), and the real

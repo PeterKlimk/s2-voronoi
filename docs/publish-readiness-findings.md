@@ -174,4 +174,5 @@ Some of the highest-priority findings above have since been addressed in code an
   bug-only diagnostics rather than broad unchecked assumptions
 
 The current supported-success / supported-failure / preprocessing / invariant-failure split is
-documented in [`docs/supported-envelope.md`](/home/pkzmbk/code/s2-voronoi/docs/supported-envelope.md).
+documented in the "Outcome classes" section of
+[`docs/correctness-contract.md`](/home/pkzmbk/code/s2-voronoi/docs/correctness-contract.md).

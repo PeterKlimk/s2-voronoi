@@ -45,8 +45,8 @@ const ZERO: AtomicU64 = AtomicU64::new(0);
 static MARGIN_HIST: [AtomicU64; BUCKETS] = [ZERO; BUCKETS];
 static DISAGREE_HIST: [AtomicU64; BUCKETS] = [ZERO; BUCKETS];
 /// Exact ties (canonical == 0) bucketed by margin — a tie at margin `m` forces
-/// the superset BAND >= m just as a disagreement does (§5 of
-/// docs/adaptive-canonical-clip-design-2026-06.md).
+/// the superset BAND >= m just as a disagreement does (see
+/// docs/p5-consistency-design.md).
 static TIE_HIST: [AtomicU64; BUCKETS] = [ZERO; BUCKETS];
 
 /// Probe-settable margin below which `audit_clip` evaluates the exact

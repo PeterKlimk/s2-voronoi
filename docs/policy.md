@@ -15,8 +15,8 @@ The current policy layer covers:
 - packed count-model constants used to tighten packed thresholds
 
 It no longer owns packed `r=2` expansion. That stage was measured and removed
-from the live neighbor-source policy; see `docs/plan.md` for the archived design
-and `docs/optimization-ideas.md` for the rejection note.
+from the live neighbor-source policy; see `docs/optimization-ideas.md` for the
+rejection note (the archived expansion design lives in git history).
 
 ## Current decisions
 

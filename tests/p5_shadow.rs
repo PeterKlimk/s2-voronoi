@@ -49,7 +49,7 @@ fn probe_shadow_audit() {
 }
 
 /// GO/NO-GO for the adaptive canonical clip
-/// (docs/adaptive-canonical-clip-design-2026-06.md §5/§7): the SUPERSET-BAND
+/// (see docs/p5-consistency-design.md): the SUPERSET-BAND
 /// measurement. Raise the exact-eval cutoff so EVERY keep/drop decision is
 /// compared against the exact in-circle predicate, then read the smallest
 /// margin BAND that contains all disagreements + ties (the band the cheap SIMD
