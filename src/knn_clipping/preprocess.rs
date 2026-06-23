@@ -11,7 +11,7 @@ pub struct MergeResult {
     pub effective_points: Vec<Vec3>,
     /// Maps original point index -> representative index in effective_points.
     /// If no merges occurred, this is just identity (0, 1, 2, ...).
-    pub original_to_effective: Vec<usize>,
+    pub original_to_effective: Vec<u32>,
     /// Number of points that were merged (removed).
     pub num_merged: usize,
 }
@@ -95,7 +95,7 @@ impl WeldGrid {
 fn identity_result(points: &[Vec3]) -> MergeResult {
     MergeResult {
         effective_points: points.to_vec(),
-        original_to_effective: (0..points.len()).collect(),
+        original_to_effective: (0..points.len() as u32).collect(),
         num_merged: 0,
     }
 }
@@ -247,16 +247,16 @@ pub(crate) fn merge_result_from_pairs(
     // (`extend_from_slice` memcpy + a counter fill) instead of a per-element
     // push gated by a peek, and only branch at the few touched ids.
     let mut effective_points: Vec<Vec3> = Vec::with_capacity(n);
-    let mut original_to_effective = vec![0usize; n];
+    let mut original_to_effective = vec![0u32; n];
     let mut kept = vec![true; n];
 
     let fill_identity_run = |effective_points: &mut Vec<Vec3>,
-                             original_to_effective: &mut [usize],
+                             original_to_effective: &mut [u32],
                              run: std::ops::Range<usize>| {
-        let base = effective_points.len();
+        let base = effective_points.len() as u32;
         effective_points.extend_from_slice(&points[run.clone()]);
         for (k, oe) in original_to_effective[run].iter_mut().enumerate() {
-            *oe = base + k;
+            *oe = base + k as u32;
         }
     };
 
@@ -267,7 +267,7 @@ pub(crate) fn merge_result_from_pairs(
         }
         // `rep` is the class min and was assigned in an earlier run/iteration.
         if rep == id {
-            original_to_effective[id] = effective_points.len();
+            original_to_effective[id] = effective_points.len() as u32;
             effective_points.push(points[id]);
         } else {
             kept[id] = false;
@@ -338,7 +338,10 @@ mod tests {
             result.original_to_effective[1]
         );
         // Representative is the smallest original index.
-        assert_eq!(result.effective_points[result.original_to_effective[0]], p);
+        assert_eq!(
+            result.effective_points[result.original_to_effective[0] as usize],
+            p
+        );
     }
 
     #[test]

@@ -158,7 +158,7 @@ impl CubeMapGrid {
     pub(crate) fn compact_welded(
         &mut self,
         kept: &[bool],
-        original_to_effective: &[usize],
+        original_to_effective: &[u32],
         n_eff: usize,
     ) {
         let num_cells = 6 * self.res * self.res;
@@ -180,7 +180,7 @@ impl CubeMapGrid {
                     dropped_slots.push(r as u32);
                     continue;
                 }
-                let eff = original_to_effective[orig] as u32;
+                let eff = original_to_effective[orig];
                 let (x, y, z) = (
                     self.cell_points_x[r],
                     self.cell_points_y[r],

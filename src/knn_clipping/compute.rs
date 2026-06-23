@@ -581,7 +581,7 @@ fn original_index_for_effective(effective_idx: usize, merge_result: Option<&Merg
         Some(mr) => mr
             .original_to_effective
             .iter()
-            .position(|&e| e == effective_idx)
+            .position(|&e| e as usize == effective_idx)
             .unwrap_or(effective_idx),
         None => effective_idx,
     }
@@ -1052,7 +1052,7 @@ fn remap_cells_to_original_indices(
         let mut weld_map = Vec::with_capacity(points.len());
 
         for orig_idx in 0..points.len() {
-            let eff_idx = merge_result.original_to_effective[orig_idx];
+            let eff_idx = merge_result.original_to_effective[orig_idx] as usize;
             if eff_to_canonical[eff_idx] == u32::MAX {
                 eff_to_canonical[eff_idx] = orig_idx as u32;
             }
