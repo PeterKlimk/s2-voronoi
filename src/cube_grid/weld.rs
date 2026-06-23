@@ -149,9 +149,10 @@ impl CubeMapGrid {
     /// gives its effective index; `n_eff` is the effective point count.
     ///
     /// Only the point-dependent arrays change (offsets, indices, SoA
-    /// coordinates, per-point cells/slots); the per-cell geometry depends
-    /// only on `res`. Because the scatter is stable by original index and
-    /// survivors keep their relative order, the compacted grid is
+    /// coordinates, AoS positions, per-point cells/slots); the per-cell
+    /// geometry depends only on `res`. Survivors keep their relative (cell,
+    /// slot) order, so every array compacts with a single forward pass over its
+    /// own buffer — no reallocation and no random scatter. The result is
     /// bit-identical to a fresh build on the effective points at the same
     /// resolution (pinned by a test below).
     pub(crate) fn compact_welded(
@@ -161,7 +162,14 @@ impl CubeMapGrid {
         n_eff: usize,
     ) {
         let num_cells = 6 * self.res * self.res;
-        let mut new_point_cells = vec![0u32; n_eff];
+
+        // Slot-order stream compaction of the SoA + AoS arrays. A forward write
+        // cursor `w` packs survivors densely and remaps each stored index to its
+        // effective id; coordinates and the slot-ordered AoS are overwritten in
+        // place (`w <= r`, so the source slot `r` is never one already written).
+        // The dropped slots are recorded in ascending order for the slot
+        // renumber below.
+        let mut dropped_slots: Vec<u32> = Vec::new();
         let mut w = 0usize;
         let mut read_start = 0usize;
         for cell in 0..num_cells {
@@ -169,14 +177,23 @@ impl CubeMapGrid {
             for r in read_start..read_end {
                 let orig = self.point_indices[r] as usize;
                 if !kept[orig] {
+                    dropped_slots.push(r as u32);
                     continue;
                 }
                 let eff = original_to_effective[orig] as u32;
+                let (x, y, z) = (
+                    self.cell_points_x[r],
+                    self.cell_points_y[r],
+                    self.cell_points_z[r],
+                );
                 self.point_indices[w] = eff;
-                self.cell_points_x[w] = self.cell_points_x[r];
-                self.cell_points_y[w] = self.cell_points_y[r];
-                self.cell_points_z[w] = self.cell_points_z[r];
-                new_point_cells[eff as usize] = cell as u32;
+                self.cell_points_x[w] = x;
+                self.cell_points_y[w] = y;
+                self.cell_points_z[w] = z;
+                self.cell_points_aos[w] = super::SlotPoint {
+                    pos: Vec3::new(x, y, z),
+                    idx: eff,
+                };
                 w += 1;
             }
             self.cell_offsets[cell + 1] = w as u32;
@@ -187,21 +204,29 @@ impl CubeMapGrid {
         self.cell_points_x.truncate(w);
         self.cell_points_y.truncate(w);
         self.cell_points_z.truncate(w);
-        // Keep the AoS slot-ordered positions in sync with the compacted SoA.
-        self.cell_points_aos = super::build::build_pos_aos(
-            &self.cell_points_x,
-            &self.cell_points_y,
-            &self.cell_points_z,
-            &self.point_indices,
-        );
-        self.point_cells = new_point_cells;
+        self.cell_points_aos.truncate(w);
 
-        let mut point_slots = vec![u32::MAX; n_eff];
-        for (slot, &eff) in self.point_indices.iter().enumerate() {
-            point_slots[eff as usize] = slot as u32;
+        // Per-point arrays (indexed by point id). Cell membership is invariant
+        // under welding, so `point_cells` compacts by original id in place. A
+        // survivor's new slot is its old slot minus the dropped points ahead of
+        // it — a `partition_point` into the ascending `dropped_slots` (a single
+        // comparison in the common one-weld case). Both reuse their buffers; the
+        // effective id `e` never overtakes the read cursor `orig`, so neither
+        // pass reads a slot it has already overwritten.
+        let mut e = 0usize;
+        for (orig, &keep) in kept.iter().enumerate() {
+            if !keep {
+                continue;
+            }
+            let old_slot = self.point_slots[orig] as usize;
+            let drops_before = dropped_slots.partition_point(|&s| (s as usize) < old_slot);
+            self.point_cells[e] = self.point_cells[orig];
+            self.point_slots[e] = (old_slot - drops_before) as u32;
+            e += 1;
         }
-        debug_assert!(!point_slots.contains(&u32::MAX));
-        self.point_slots = point_slots;
+        debug_assert_eq!(e, n_eff, "per-point compaction kept-count mismatch");
+        self.point_cells.truncate(n_eff);
+        self.point_slots.truncate(n_eff);
 
         // The dense-cell side index is keyed to slot order and cell ranges,
         // both of which compaction just rewrote — rebuild it from the compacted

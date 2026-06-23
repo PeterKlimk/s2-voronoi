@@ -241,26 +241,42 @@ pub(crate) fn merge_result_from_pairs(
             (id as usize, rep)
         })
         .collect();
-    let mut touched = touched_reps.into_iter().peekable();
-
-    // Extract representatives, preserving original-index order.
-    let mut effective_points = Vec::new();
+    // Extract representatives, preserving original-index order. Welds are
+    // sparse, so `touched_reps` is tiny and the index space is dominated by
+    // long untouched runs (every id maps to itself). Copy those runs in bulk
+    // (`extend_from_slice` memcpy + a counter fill) instead of a per-element
+    // push gated by a peek, and only branch at the few touched ids.
+    let mut effective_points: Vec<Vec3> = Vec::with_capacity(n);
     let mut original_to_effective = vec![0usize; n];
     let mut kept = vec![true; n];
 
-    for i in 0..n {
-        let rep = if touched.peek().is_some_and(|&(id, _)| id == i) {
-            touched.next().expect("peeked touched id").1
-        } else {
-            i
-        };
-        if rep == i {
-            original_to_effective[i] = effective_points.len();
-            effective_points.push(points[rep]);
-        } else {
-            kept[i] = false;
-            original_to_effective[i] = original_to_effective[rep];
+    let fill_identity_run = |effective_points: &mut Vec<Vec3>,
+                             original_to_effective: &mut [usize],
+                             run: std::ops::Range<usize>| {
+        let base = effective_points.len();
+        effective_points.extend_from_slice(&points[run.clone()]);
+        for (k, oe) in original_to_effective[run].iter_mut().enumerate() {
+            *oe = base + k;
         }
+    };
+
+    let mut prev = 0usize;
+    for (id, rep) in touched_reps {
+        if id > prev {
+            fill_identity_run(&mut effective_points, &mut original_to_effective, prev..id);
+        }
+        // `rep` is the class min and was assigned in an earlier run/iteration.
+        if rep == id {
+            original_to_effective[id] = effective_points.len();
+            effective_points.push(points[id]);
+        } else {
+            kept[id] = false;
+            original_to_effective[id] = original_to_effective[rep];
+        }
+        prev = id + 1;
+    }
+    if prev < n {
+        fill_identity_run(&mut effective_points, &mut original_to_effective, prev..n);
     }
 
     let num_merged = n - effective_points.len();
