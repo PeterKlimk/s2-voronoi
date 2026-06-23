@@ -69,7 +69,7 @@ fn main() {
     let samples = 5;
 
     // Initialize rayon thread pool once
-    let _ = rayon::ThreadPoolBuilder::new()
+    rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads)
         .build_global()
         .unwrap();

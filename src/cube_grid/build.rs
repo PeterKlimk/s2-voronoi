@@ -324,7 +324,7 @@ impl CubeMapGrid {
         let t = std::time::Instant::now();
         let bounds = Self::compute_cell_bounds(res);
         #[cfg(feature = "timing")]
-        if let Some(timings) = timings.as_deref_mut() {
+        if let Some(timings) = timings {
             timings.cell_bounds += t.elapsed();
         }
 

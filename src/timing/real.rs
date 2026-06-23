@@ -224,6 +224,7 @@ impl CellSubAccum {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub fn add_cell_stage(
         &mut self,
         stage: KnnCellStage,
@@ -255,6 +256,7 @@ impl CellSubAccum {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub fn add_directional_shadow(
         &mut self,
         checks: usize,

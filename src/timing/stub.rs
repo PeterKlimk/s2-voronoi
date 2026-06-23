@@ -85,6 +85,7 @@ impl CellSubAccum {
     ) {
     }
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)] // mirrors the real timing API
     pub fn add_directional_shadow(
         &mut self,
         _checks: usize,

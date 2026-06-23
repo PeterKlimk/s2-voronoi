@@ -59,18 +59,17 @@ pub(super) fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
                 batch.first_dot
             };
             if builder.can_terminate(bound) {
-                true
-            } else {
-                #[cfg(feature = "timing")]
-                super::audit_directional_batch_skip(
-                    builder,
-                    &packed_chunk[..batch.n],
-                    batch.unseen_bound,
-                    _pos_slots,
-                    counters,
-                );
-                false
+                return true;
             }
+            #[cfg(feature = "timing")]
+            super::audit_directional_batch_skip(
+                builder,
+                &packed_chunk[..batch.n],
+                batch.unseen_bound,
+                _pos_slots,
+                counters,
+            );
+            false
         }
         DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
             if builder.can_terminate(dot_upper_bound) {

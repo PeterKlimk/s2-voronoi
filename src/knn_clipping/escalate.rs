@@ -886,8 +886,15 @@ pub(crate) fn repair_local_exact(
         }
         stats.rounds += 1;
         let closure_vec: Vec<u32> = closure.iter().copied().collect();
-        let incident =
-            local_exact_incident(points, grid, scratch, slot_gen_map, work, &closure_vec, gather_k);
+        let incident = local_exact_incident(
+            points,
+            grid,
+            scratch,
+            slot_gen_map,
+            work,
+            &closure_vec,
+            gather_k,
+        );
         for &g in &closure_vec {
             let Some(tris) = incident.get(&g) else {
                 continue;
@@ -989,8 +996,15 @@ pub(crate) fn repair_local_hull(
         }
         stats.rounds += 1;
         let closure_vec: Vec<u32> = closure.iter().copied().collect();
-        let incident =
-            local_hull_incident(points, grid, scratch, slot_gen_map, work, &closure_vec, gather_k);
+        let incident = local_hull_incident(
+            points,
+            grid,
+            scratch,
+            slot_gen_map,
+            work,
+            &closure_vec,
+            gather_k,
+        );
         for &g in &closure_vec {
             let Some(fan) = incident.get(&g) else {
                 continue;
