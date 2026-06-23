@@ -177,8 +177,8 @@ cases also returned strict-valid under the default config.
 
 Average point spacing does **not** predict failure, so there is deliberately no exposed density
 threshold; use `PreprocessMode::MergeWithin` to weld sub-resolution generators when the intended
-model should treat them as coincident. The full investigation lives in
-`docs/escalation-build-state-2026-06.md` and `docs/local-repair-oracle-2026-06.md`.
+model should treat them as coincident. The repair backstop is described in
+`docs/repair-design.md`.
 
 ### Inputs still treated as probes rather than contract rows
 

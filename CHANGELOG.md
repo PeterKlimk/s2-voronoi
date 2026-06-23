@@ -11,8 +11,8 @@ Initial release.
   site down to a ~1.7k-point fixture and exercises the in-bin and cross-bin
   detection/repair paths, asserting strict post-repair validity (see
   engineering-findings #13).
-- Micro-optimization batch from a screened 17-branch matrix
-  (docs/micro-optimization-matrix.md): paired-proven stack (~-36ms total
+- Micro-optimization batch from a screened 17-branch matrix:
+  paired-proven stack (~-36ms total
   at 500k ST, -120ms cell construction at 2M) plus eight prior-better
   merges (allocation removal in the frontier cache, integer-compare
   OrdF32 with the -0.0/NaN Eq/Ord fix, fixed-size SIMD chunk types,

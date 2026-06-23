@@ -6,7 +6,7 @@
 a quiet run. The queue below is now just a record of what's been measured / is
 pending, not a wait-list.
 
-Companion: `docs/multi-regime-perf.md` is the organizing frame.
+Companion: `docs/optimization-ideas.md` is the measured ledger and organizing frame.
 
 ## Strategy
 
@@ -70,8 +70,8 @@ Status: `pending` until run, then record the verdict inline.
 
 | item | what | status |
 |------|------|--------|
-| expand_r2 on/off across regimes | A/B the runtime toggle via a 2nd build forcing it on | **DONE 2026-06-14**: uniform −1.7% (neutral), splittable +645% (7.45×), mega >9× (single run 86s vs 9.5s). Never a win, catastrophic dense. → flip lib default to off / density-gate. See multi-regime-perf.md item 1. |
-| LTO + 1 CGU profile | thin-LTO + codegen-units=1 | **TRIED + REVERTED 2026-06-14** (was `f4c6426`, reverted). Showed uniform 500k −4.2% / 2M −2.7% vs no-LTO, but: (1) magnitude is layout-noise-confounded (the LTO+1CGU layout floor swung an unrelated neutral change ±8pts — see multi-regime-perf.md item 4 / measurement discipline), (2) never measured on dense/sparse regimes, (3) ~6× release build-time cost (8s→50s bench, 1m17s full test build). **Parked as an idea**: revisit only with a proper multi-regime sweep + diff-disjoint control to separate real LTO win from layout. Direction (LTO helps a few %) is likely real; exact figure is not trustworthy. |
+| expand_r2 on/off across regimes | A/B the runtime toggle via a 2nd build forcing it on | **DONE 2026-06-14**: uniform −1.7% (neutral), splittable +645% (7.45×), mega >9× (single run 86s vs 9.5s). Never a win, catastrophic dense. → flip lib default to off / density-gate. |
+| LTO + 1 CGU profile | thin-LTO + codegen-units=1 | **TRIED + REVERTED 2026-06-14** (was `f4c6426`, reverted). Showed uniform 500k −4.2% / 2M −2.7% vs no-LTO, but: (1) magnitude is layout-noise-confounded (the LTO+1CGU layout floor swung an unrelated neutral change ±8pts — measurement discipline), (2) never measured on dense/sparse regimes, (3) ~6× release build-time cost (8s→50s bench, 1m17s full test build). **Parked as an idea**: revisit only with a proper multi-regime sweep + diff-disjoint control to separate real LTO win from layout. Direction (LTO helps a few %) is likely real; exact figure is not trustworthy. |
 | MT 500ms @ 2.5M | the release-facing number; `--multi -s 2.5m` | **MEASURED 2026-06-14**: clean seed ~2.4s MT (busy box), bottleneck `cell_construction` ~1.6s (parallel); knn 0.15s, dedup 0.24s. 500ms target ~5× out via the core compute. **BUT** the bench *default* seed (12345) @ 2.5m is corrupted by the edge_reconcile bug below (12–21s) — always measure with an explicit clean seed at 2.5m. |
 | **edge_reconcile O(E) on any defect (HIGH)** | localize scans to affected cells | **FOUND + FIXED 2026-06-14**: at 2.5m, **3 edge_records → 6.7–21s** reconcile (clean seeds: 0 records → 0.004ms). Profiled: the dominant cost was the global `scan_unpaired_interior` (15M-entry SipHash map, ~17s), plus per-round `drop_degenerate_collinear_vertices` global sweep. **Fix**: both localized to `candidate_cells (∪ 1-ring)` with partner-verify, debug-asserted equal to the global scan. → edge_reconcile **~1.2s** (15× faster), output identical, valid; total MT 15s→2.7s. Residual ~1.2s = `collect_merges` `scan_dup_keys` (load-bearing global dup-key backstop, not localizable). See memory `edge-reconcile-global-scan`. |
 | micro-opt catalog tail | implement + measure: top-pick-5 u8 bin scratch, fmodf purge, PolyBuffer u32 narrowing | not implemented |

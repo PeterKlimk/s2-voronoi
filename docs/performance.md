@@ -63,8 +63,8 @@ structured CSV (`commit,size,dist,seed,metric,min/median/avg/max,spread`):
 Each cell runs the commits interleaved with rotating start order (the paired
 protocol). The scripts default to pinned + single-threaded runs. The box is
 noisy — per-binary code-layout offsets alone are ~1-2% at 500k ST, so treat
-sub-1% deltas as noise (see docs/micro-optimization-matrix.md). For the current
-A/B workflow, see docs/perf-profiling-plan.md.
+sub-1% deltas as noise. For the current A/B workflow, see
+docs/perf-profiling-plan.md.
 
 ## Policy profiling
 

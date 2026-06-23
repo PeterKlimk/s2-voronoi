@@ -19,7 +19,7 @@
 //! measured to never occur on random `mega`. `build` treats a strictly-positive
 //! orientation as "visible", so an exact tie is currently resolved by insertion
 //! order — callers that must handle exact cliques deterministically should
-//! detect `orient == 0` separately. See `docs/local-repair-oracle-2026-06.md`.
+//! detect `orient == 0` separately. See `docs/repair-design.md`.
 
 // The consumer (the Tier-2 resolver wiring) lands in a follow-up; until then the
 // hull core is exercised only by its unit tests, so silence dead-code in the

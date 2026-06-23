@@ -7,9 +7,8 @@
 # verdict. Optionally emits a structured CSV across the whole matrix.
 #
 # Defaults favor reproducibility (single-threaded + CPU pinning). The box is
-# noisy: per-binary code-layout offsets alone are ~1-2% at 500k ST (see
-# docs/micro-optimization-matrix.md), so treat sub-1% deltas as noise and use
-# a control commit when a result is close.
+# noisy: per-binary code-layout offsets alone are ~1-2% at 500k ST, so treat
+# sub-1% deltas as noise and use a control commit when a result is close.
 #
 # Examples:
 #   ./scripts/bench_run.sh -s 500k -r 20 -m total

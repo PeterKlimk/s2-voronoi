@@ -17,18 +17,17 @@ Measurement rules:
 
 ## Where Ideas Live
 
+This file is the surviving perf index. The fuller experiment ledgers (algorithmic
+ST headroom / Fade comparison, multi-regime strategy, paired micro-optimization
+matrix, raw micro-idea backlog, edge-check matching, post-clipping pipeline,
+research-level ideas, late-clip reduction) were compacted away; their transcripts
+live in git history.
+
 | topic | source |
 |---|---|
-| Algorithmic ST headroom, edge-passed information, candidate reuse | `docs/st-headroom-and-fade-comparison.md` |
-| Dense/sparse/non-uniform regime strategy | `docs/multi-regime-perf.md` |
 | Dense-cell local index summary | `docs/dense-cell-subindex-design.md` |
 | Punch 1 implemented center-cell band prune | `docs/punch1-center-cell-integration.md` |
-| Paired micro-optimization evidence | `docs/micro-optimization-matrix.md` |
-| Raw micro-idea backlog and clipper hot-path queue | `docs/micro-optimization-ideas.md` |
-| Edge-check matching (parked: near-optimal for sane regime) | `docs/edgecheck-matching-optimization.md` |
-| Post-clipping pipeline (cert + edge_emit: both rejected) | `docs/post-clipping-pipeline-optimization.md` |
-| Research-level: incremental support cert, dot reuse, batched clip | `docs/research-level-optimization.md` |
-| Late clip reduction: final-edge rank, candidate aperture, wedge certificates | `docs/late-clip-reduction-ideas.md` |
+| A/B measurement workflow + queue | `docs/perf-profiling-plan.md` |
 | Roadmap priorities | `docs/todo.md` |
 
 ## Current High-Value Threads
@@ -38,7 +37,7 @@ Measurement rules:
 | Dense-cell local index (`punch 1`) | implemented, review/merge-gated | Axis-sort center-cell band prune exists. It gives a large cap-pathology win and is kept neutral elsewhere by the rebuild gate. See `docs/punch1-center-cell-integration.md`. |
 | Directional shell/cap certificate | parked promising | Branch `agent/directional-certificates` (`f51523a`) / gated follow-up `agent/directional-cell-cap-gate-audit` (`3eaf1c4`) is roughly equal on fib and faster in mega; keep default-off until productized. |
 | Candidate-production certificate work | open, narrow | The remaining ST prize is avoiding candidate examination with already-available metadata, not another late per-candidate support probe. |
-| Regime-aware candidate engine | synthesis idea | Long-term shape where packed, shell, dense local index, and certificates share one frontier contract. See `docs/multi-regime-perf.md`. |
+| Regime-aware candidate engine | synthesis idea | Long-term shape where packed, shell, dense local index, and certificates share one frontier contract. |
 
 ## Occupancy Rebuild Re-Calibration
 
@@ -98,7 +97,7 @@ See `docs/punch1-center-cell-integration.md` for the implemented behavior and
 | Integrated sphere weld detection/compaction | Reused the query grid as the weld detector and compacted welded grids in place. Preprocess dropped from about 378 ms to 45 ms at 2M ST in the measured run. |
 | Sparse edge repair | Replaced dense union-find/rebuild repair with sparse/in-place repair. Defect-bearing 2M seed-1 repair dropped from about 382 ms to 0.06 ms. |
 | Strict zero clip epsilon sqrt removal | `HalfPlane::new_unnormalized_base_eps` skips the norm sqrt when `base_eps == 0.0`; semantics are identical in production. |
-| Micro-opt stack | Extract-inline-checks, shell-frontier scratch, no sentinel fill, reciprocal face projection, packed-tail hoist. See `docs/micro-optimization-matrix.md`. |
+| Micro-opt stack | Extract-inline-checks, shell-frontier scratch, no sentinel fill, reciprocal face projection, packed-tail hoist (paired-proven; transcript in git history). |
 | Vectorized clip distance pass | `fp::signed_dists_mask8` replaced scalar distance loops in clipper hot paths; measured positive after clean paired reruns. |
 | Small-N sorting networks | Promoted always-on after paired confirmation. |
 | Fused hi/tail split | Thresholds are computed before center pass; dead demotion/min-center bookkeeping removed. |
@@ -247,8 +246,8 @@ decision-grade.
 | Tiled cell storage order | Branch `codex/locality-tiled-storage` commit `41fb3e8` generalized `S2_VORONOI_CELL_STORAGE=tile{N}` / `tile{U}x{V}`. The best-looking timing probe was `tile4`, but non-timing counters rejected it: 2M fib ST default 18.10B instructions / 9.47B cycles / 141.1M L1D misses vs tile4 18.27B / 9.62B / 145.0M; 2M fib MT default 18.19B / 13.68B / 280.9M vs tile4 18.22B / 13.44B / 275.2M (noise-sized cycle/cache shift, no instruction win); 500k splittable ST default 10.60B / 5.09B / 79.2M vs tile4 10.96B / 5.12B / 77.7M. `tile2` also lost at 2M fib ST (18.28B / 9.57B / 144.5M). Tiling can trim some cache misses in clustered cases, but the extra decode/order overhead and reduced row prefetch erase it. |
 | Planar `S2_BIN_COUNT` increase | No shard-balance win; earlier apparent MT gap was a measurement-window artifact. |
 | Plane scatter/detect weld fusion | Rejected on analysis. Cross-cell wall-band pairs still require a pass, and fusing would lose parallelism. |
-| Candidate prefix/seed reuse | Negative or audit-negative. See `docs/st-headroom-and-fade-comparison.md`. |
-| Edgecheck endpoint/anchored seed ordering | Negative despite real geometric signal. See `docs/st-headroom-and-fade-comparison.md`. |
+| Candidate prefix/seed reuse | Negative or audit-negative (ST-headroom probe, git history). |
+| Edgecheck endpoint/anchored seed ordering | Negative despite real geometric signal. |
 | Distance-symmetry certificate seeding | No termination signal in tested regimes. |
 | Late known-batch directional support probing | The shadow signal is real, but the late support-probe path was too costly. The parked shell/cap certificate branches are the useful continuation point. |
 

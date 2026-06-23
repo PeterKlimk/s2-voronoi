@@ -43,7 +43,7 @@ S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_v
 # Distribution + size matrix with CSV (bench_voronoi --dist: fib uniform
 # clustered bimodal gradient outlier splittable mega; --dist-param tunes
 # gradient k / mega fraction). Clustered inputs need explicit dists — uniform
-# alone misses density-contrast regressions (see docs/multi-regime-perf.md).
+# alone misses density-contrast regressions (see docs/optimization-ideas.md).
 ./scripts/bench_run.sh -s "500k 2m" -d "uniform mega" --seeds "1 2 3" --csv /tmp/bench.csv
 ```
 

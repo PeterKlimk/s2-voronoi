@@ -34,7 +34,7 @@ be shared between cells, even when an underlying 3D plane is shared.
 
 The current `topo2d` builder now has an internal wrapper seam around the gnomonic implementation
 so future non-hemispheric handling can be introduced as an alternate builder rather than as
-special-case logic in `cell_build/`. See `docs/fallback_builder.md`.
+special-case logic in `cell_build/`.
 
 ## The planar backend
 
@@ -134,8 +134,6 @@ Today:
 
 That seam is intentionally small so a future non-hemispheric fallback builder can slot in without
 re-entangling clip representation, stream consumption, and terminal-failure classification.
-
-See `docs/fallback_builder.md`.
 
 ## Consistency model: why independently-built cells form one valid graph
 
