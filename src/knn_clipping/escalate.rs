@@ -1,5 +1,5 @@
 //! Defect-driven escalation (step C of the adaptive-canonical-clip plan; current
-//! state in `docs/repair-design.md`).
+//! state in `docs/correctness.md`).
 //!
 //! Rebuilds a near-degenerate neighborhood as a SINGLE normalized local 3D hull
 //! and reads each generator's Voronoi cell off the shared dual.

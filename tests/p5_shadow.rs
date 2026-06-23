@@ -48,8 +48,7 @@ fn probe_shadow_audit() {
     run_case("uniform_2m_s1", &random_sphere_points(2_000_000, 1));
 }
 
-/// GO/NO-GO for the adaptive canonical clip
-/// (see docs/p5-consistency-design.md): the SUPERSET-BAND
+/// GO/NO-GO for the adaptive canonical clip: the SUPERSET-BAND
 /// measurement. Raise the exact-eval cutoff so EVERY keep/drop decision is
 /// compared against the exact in-circle predicate, then read the smallest
 /// margin BAND that contains all disagreements + ties (the band the cheap SIMD

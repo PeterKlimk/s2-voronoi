@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sweep the query-grid target density across input sizes to fit the density
-# curve for docs/todo.md P3.2. Emits TIMING_KV lines (note neighbors_total /
+# curve. Emits TIMING_KV lines (note neighbors_total /
 # neighbors_max / grid_res / grid_max_occ for the explanatory model).
 #
 # Run on the reference machine (Ryzen 3600, target-cpu=native) for numbers

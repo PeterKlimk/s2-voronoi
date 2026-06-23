@@ -5,8 +5,7 @@
 //! points.
 //!
 //! Built only for cells with `occ > DENSE_CELL_THRESHOLD` (rare), so it is
-//! empty on uniform input and the fast path never touches it. See
-//! docs/dense-cell-subindex-design.md.
+//! empty on uniform input and the fast path never touches it.
 //!
 //! The packed center-cell path consults this via a conservative band query and
 //! reports coverage only down to the band's dot bound; shell takeover backstops

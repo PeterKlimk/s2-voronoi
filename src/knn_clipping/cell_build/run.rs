@@ -394,7 +394,7 @@ struct StreamPhase<'x> {
 }
 
 /// Phase 1: clip edge-check seed constraints forwarded by earlier same-bin
-/// cells (see "The stitching invariant" in docs/live_dedup.md).
+/// cells (see "The stitching invariant" in docs/architecture.md).
 fn clip_seed_neighbors(
     ctx: &mut CellBuildContext,
     points: &[Vec3],

@@ -1,5 +1,5 @@
 //! Shell-expansion takeover frontier: Chebyshev BFS layers over the cube-map
-//! cell adjacency, replacing the best-first heap cursor (see docs/todo.md P3).
+//! cell adjacency, replacing the best-first heap cursor.
 //!
 //! Like the cursor, this is a full re-coverage traversal: when the packed
 //! stages exhaust without proving safety, the takeover re-walks from the home

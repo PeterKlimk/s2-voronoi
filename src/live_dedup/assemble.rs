@@ -90,7 +90,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     let edge_checks_overflow_time = overflow_timing.sort + overflow_timing.match_;
 
     // Dev-only: tally unresolved-edge origins to see which path inflates the
-    // residual (within-bin vs cross-bin). See docs/correctness-contract.md.
+    // residual (within-bin vs cross-bin). See docs/correctness.md.
     if std::env::var("S2_UNPAIRED_ORIGINS").is_ok() {
         use super::types::UnresolvedEdgeOrigin as O;
         let mut c = [0usize; 8];

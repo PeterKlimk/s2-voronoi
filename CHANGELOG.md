@@ -67,12 +67,11 @@ Initial release.
   topology-aware measures enabling periodic Lloyd relaxation.
 - Spherical Voronoi diagrams on the unit sphere via kNN-driven half-space
   clipping: per-cell parallel construction stitched into one consistent graph
-  (see `docs/architecture.md` and the stitching invariant in
-  `docs/live_dedup.md`).
-- Correctness contract ("essentially Voronoi"): a hard topological guarantee
-  (strictly valid subdivision, fuzz-asserted at 2-4.5M points in CI) over a
-  soft geometric one; see `docs/correctness-contract.md` for the precise
-  statement and the measured coincidence margins behind the default weld.
+  (see `docs/architecture.md`).
+- Correctness contract: a hard topological guarantee (strictly valid
+  subdivision, fuzz-asserted at 2-4.5M points in CI) over a soft geometric one;
+  see `docs/correctness.md` for the precise statement and the measured
+  coincidence margins behind the default weld.
 - Delaunay export (`delaunay_triangles()` on both diagram types): the dual
   triangulation read off the stored graph — CCW winding (delaunator/CGAL
   convention), canonical indices, complete on the sphere (2c−4 triangles)

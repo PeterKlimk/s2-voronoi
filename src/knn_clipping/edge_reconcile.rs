@@ -272,7 +272,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         // early return. Soundness rests on a detection-completeness claim:
         // every unpaired interior edge produces >= 1 detection record, so an
         // empty record set implies a clean output. That follows from the
-        // coverage contract (docs/live_dedup.md "stitching invariant"): a
+        // coverage contract (docs/architecture.md "stitching invariant"): a
         // one-sided edge is either cross-bin (its overflow is a singleton or
         // a mismatch => record) or same-bin (a forwarded check goes unconsumed
         // => record); a same-bin later cell cannot be the lone owner. Rather
@@ -288,7 +288,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
                 unpaired.is_empty(),
                 "edge-reconcile early-return invariant violated: {} unpaired interior \
                  edge(s) with ZERO detection records — a defect escaped detection \
-                 (see docs/live_dedup.md stitching invariant)",
+                 (see docs/architecture.md stitching invariant)",
                 unpaired.len()
             );
         }
@@ -384,7 +384,7 @@ fn affected_cells_from_records(edge_records: &[EdgeRecord]) -> Vec<u32> {
 /// miss a defect. Every cell that owns a droppable degenerate vertex must be in
 /// `candidate_cells`; otherwise a degenerate (= unpaired-edge) defect exists
 /// that no detection record names — a detection-completeness contract violation
-/// (see docs/live_dedup.md "stitching invariant"), making localization unsafe.
+/// (see docs/architecture.md "stitching invariant"), making localization unsafe.
 /// O(total edges) but debug-only, so it costs nothing in release.
 #[cfg(debug_assertions)]
 fn assert_candidate_covers_droppable(
@@ -406,7 +406,7 @@ fn assert_candidate_covers_droppable(
             !owns_droppable || candidate_cells.binary_search(&(ci as u32)).is_ok(),
             "edge-reconcile localization gap: cell {ci} owns a droppable degenerate \
              vertex but no edge_record names it (detection-completeness contract \
-             violated; see docs/live_dedup.md stitching invariant)"
+             violated; see docs/architecture.md stitching invariant)"
         );
     }
 }
@@ -423,7 +423,7 @@ fn assert_candidate_covers_droppable(
 /// droppable degenerate vertex's owner cell is an endpoint of some unresolved
 /// edge, so the records' cells cover them all. This keeps a repair round
 /// O(defect size) instead of O(total vertices) per round — the latter made a
-/// 3-defect run cost seconds at 2.5M (see docs/perf-profiling-plan.md). Debug
+/// 3-defect run cost seconds at 2.5M. Debug
 /// builds assert the coverage via `assert_candidate_covers_droppable`.
 fn drop_degenerate_collinear_vertices(
     cells: &mut [VoronoiCell],
@@ -564,7 +564,7 @@ fn cell_spans_differ(
 /// (recovered from the endpoint keys) to reject edges whose real partner merely
 /// lies outside the scanned region. This makes the scan O(defect) instead of
 /// O(total edges) — the global scan cost ~17 s on a 2.5M run with only 3
-/// defects (see docs/perf-profiling-plan.md / memory `edge-reconcile-global-scan`).
+/// defects.
 ///
 /// Debug builds assert the localized result is identical to the global scan, so
 /// any gap in the locality argument is caught immediately at zero release cost.
@@ -589,7 +589,7 @@ pub(crate) fn scan_unpaired_interior(
         debug_assert_eq!(
             out, global,
             "edge-reconcile localized unpaired-scan disagrees with the global scan \
-             (locality argument violated; see docs/live_dedup.md stitching invariant)"
+             (locality argument violated; see docs/architecture.md stitching invariant)"
         );
     }
     Ok(out)

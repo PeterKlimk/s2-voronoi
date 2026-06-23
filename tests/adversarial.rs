@@ -274,8 +274,8 @@ fn test_multi_distribution_robustness() {
 //
 // Contract sweeps at large point counts (2-4.5M): every run must validate
 // strictly. Historical "bad edges" in this range were the pre-weld merge
-// remap duplicating cells (docs/engineering-findings.md #7); orphan vertices
-// are a documented representation note (finding #9), not an invalidity.
+// remap duplicating cells; orphan vertices
+// are a documented representation note, not an invalidity.
 // Marked #[ignore] for runtime only - suitable for scheduled CI.
 // Run with: cargo test --test adversarial fuzz -- --ignored --nocapture
 // =============================================================================
@@ -343,7 +343,7 @@ fn test_fuzz_sweep_sizes() {
 // Coincident-Input Weld Contract
 //
 // Sub-weld-radius configurations that break the raw pipeline (see
-// docs/correctness-contract.md margin data) must produce strictly valid
+// docs/correctness.md margin data) must produce strictly valid
 // diagrams under the default config, with welded twins sharing one cell.
 // =============================================================================
 
@@ -470,7 +470,7 @@ fn test_sub_weld_cluster_without_welding_is_degenerate_input() {
 
     // Sub-weld clusters (5 points scattered within ~1e-8) hard-fail
     // construction when welding is off (ClippedAway on the enclosed
-    // micro-cell, see docs/correctness-contract.md); that failure must
+    // micro-cell, see docs/correctness.md); that failure must
     // surface as an actionable DegenerateInput naming the coincident
     // generators, not a generic ComputationFailed. Same construction as the
     // margin-sweep probe that established the failure.

@@ -39,7 +39,6 @@ pub(crate) const KNN_GRID_TARGET_DENSITY: f64 = 24.0;
 /// point correctly. NOTE: an earlier value of 2000 (committed `33b4962`) was
 /// set from NOISY-box data that wildly overstated the effect (claimed 9× where
 /// the truth is ±15-20%) and put the crossover 4-7× too high — corrected here.
-/// See docs/optimization-ideas.md.
 pub(crate) const GRID_REBUILD_SUMSQ_PER_N: f64 = 500.0;
 
 /// Post-rebuild target for the fullest cell (drives the new resolution):
@@ -52,7 +51,7 @@ pub(crate) const GRID_MAX_CELLS_PER_POINT: f64 = 8.0;
 /// Per-cell occupancy above which a dense-cell sub-index ("punch 1") is worth
 /// building for that cell — the linear-scan vs sub-index crossover (distinct
 /// from the rebuild's Σocc²/n trigger). Placeholder pending the quiet-box
-/// calibration; see docs/dense-cell-subindex-design.md.
+/// calibration.
 pub(crate) const DENSE_CELL_THRESHOLD: usize = 512;
 
 /// Target nearest-neighbor count the dense-cell band gather aims to capture per
@@ -60,8 +59,7 @@ pub(crate) const DENSE_CELL_THRESHOLD: usize = 512;
 /// completeness bound; the shell takeover backstops queries whose cell needs
 /// neighbors beyond the band, so this only trades band width (work per query)
 /// against takeover frequency. Set comfortably above the typical
-/// neighbors-before-termination (~8) so takeover stays rare. See
-/// docs/punch1-center-cell-integration.md.
+/// neighbors-before-termination (~8) so takeover stays rare.
 pub(crate) const DENSE_BAND_TARGET_COUNT: usize = 128;
 
 /// Query-grid target density, with the sweep/tuning env override.

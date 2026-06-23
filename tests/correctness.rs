@@ -76,7 +76,7 @@ fn test_euler_characteristic_exact() {
     // For a spherical Voronoi diagram: V - E + F = 2, with F = num_cells,
     // V counted over referenced vertices (the representation may carry
     // unreferenced leftovers; see the orphan-vertices note in
-    // docs/correctness-contract.md), and E = sum(cell boundary lengths) / 2
+    // docs/correctness.md), and E = sum(cell boundary lengths) / 2
     // since each edge is shared by exactly 2 cells.
 
     let points = fibonacci_sphere_points(200, 0.1, 11111);

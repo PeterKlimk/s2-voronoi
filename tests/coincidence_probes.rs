@@ -5,7 +5,7 @@
 //! alignments, and the rotated control. They print validation outcomes
 //! rather than asserting, because they intentionally explore the regime
 //! *below* the supported envelope; the margin data they produce backs the
-//! weld radius in docs/correctness-contract.md. Re-run after changes to the
+//! weld radius in docs/correctness.md. Re-run after changes to the
 //! clipping/dedup numerics to detect boundary drift:
 //!
 //!   cargo test --release --test coincidence_probes -- --ignored --nocapture

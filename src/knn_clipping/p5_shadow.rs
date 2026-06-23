@@ -2,7 +2,7 @@
 //!
 //! Logs, with zero behavior change, how the chart-local clip decisions
 //! compare against the canonical exact in-circle predicate that P5 would
-//! escalate to (see `docs/p5-consistency-design.md`):
+//! escalate to:
 //!
 //! - a margin histogram of every audited vertex-vs-bisector decision
 //!   (normalized chart distance |d|/|n|, bucketed by decimal exponent),
@@ -45,8 +45,7 @@ const ZERO: AtomicU64 = AtomicU64::new(0);
 static MARGIN_HIST: [AtomicU64; BUCKETS] = [ZERO; BUCKETS];
 static DISAGREE_HIST: [AtomicU64; BUCKETS] = [ZERO; BUCKETS];
 /// Exact ties (canonical == 0) bucketed by margin — a tie at margin `m` forces
-/// the superset BAND >= m just as a disagreement does (see
-/// docs/p5-consistency-design.md).
+/// the superset BAND >= m just as a disagreement does.
 static TIE_HIST: [AtomicU64; BUCKETS] = [ZERO; BUCKETS];
 
 /// Probe-settable margin below which `audit_clip` evaluates the exact
@@ -175,7 +174,7 @@ pub(crate) fn escalation_factor_override() -> Option<f64> {
 /// Experimental clip-eps override (replaces CLIP_EPS_INSIDE at HalfPlane
 /// construction); u64::MAX bits = use the tolerances default. 0.0 turns the
 /// keep-bias `d >= -eps` into the strict antisymmetric tie rule `d >= 0`
-/// (successor candidate 1 in docs/p5-consistency-design.md). The edgecheck
+/// (successor candidate 1). The edgecheck
 /// eps-reuse path degrades cleanly: a forwarded eps of 0 routes through the
 /// ordinary construction path, which reads this override again. Probe-only.
 static CLIP_EPS_OVERRIDE_BITS: AtomicU64 = AtomicU64::new(u64::MAX);

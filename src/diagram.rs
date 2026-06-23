@@ -213,7 +213,7 @@ impl SphericalVoronoi {
     ///
     /// Edge repair may leave a handful of unreferenced vertices behind rather
     /// than paying this pass on every computation (see the orphan-vertices
-    /// representation note in `docs/correctness-contract.md`). Call this when
+    /// representation note in `docs/correctness.md`). Call this when
     /// a dense vertex array matters (serialization, GPU upload). Vertex
     /// indices are remapped; welded twins keep aliasing their canonical
     /// cell's boundary. Returns the number of vertices removed.

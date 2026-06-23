@@ -3,7 +3,7 @@
 //! Every value here is **empirical**: tuned against the validator, the
 //! adversarial corpus, and the coincidence margin probes
 //! (`tests/coincidence_probes.rs`), not derived from error analysis. That is
-//! a deliberate stance (see `docs/correctness-contract.md`): the topological
+//! a deliberate stance (see `docs/correctness.md`): the topological
 //! contract is enforced by strict validation over the supported envelope,
 //! and these constants are implementation detail behind it. The margin data
 //! backing the envelope: the worst adversarial construction that defeats the
@@ -39,7 +39,7 @@ pub(crate) fn coincident_distance() -> f32 {
 ///
 /// Generators closer than this are welded into one cell before construction.
 /// The value is the coincident-distance floor (~1.4e-6). Empirically (margin
-/// map in `docs/correctness-contract.md`), the worst adversarial
+/// map in `docs/correctness.md`), the worst adversarial
 /// construction that breaks the raw pipeline does so at ~1.2e-7 minimum
 /// pairwise separation, so this radius carries an order of magnitude of
 /// safety margin while staying far below the point spacing of any realistic
@@ -64,7 +64,7 @@ pub(crate) fn weld_radius() -> f32 {
 /// 4-set, both opposite-parity phrasings of the same in-circle question
 /// keep when |d| < eps, defeating the antisymmetry that correlated
 /// cross-chart errors otherwise provide. The 2026-06 tie-rule sweep
-/// (docs/p5-consistency-design.md, tie-rule findings) measured strict
+/// measured strict
 /// `d >= 0` eliminating the 3M-seed-3 defects (4 -> 0, zero quad
 /// contradictions across 8M quads) with no regressions, validity loss, or
 /// wall-time change anywhere in the battery. The surviving defects are
@@ -97,8 +97,7 @@ pub(crate) const CLIP_EPS_INSIDE: f64 = 0.0;
 /// the repair WORK. The bias's slivers-guard role is real and load-bearing
 /// for plane perf. (A future option to reclaim strict-plane: make
 /// `edge_reconcile` O(defects) instead of O(n) per round, so a few slivers
-/// cost little; see docs/optimization-ideas.md.) See
-/// docs/p5-consistency-design.md.
+/// cost little.)
 pub(crate) const PLANE_CLIP_EPS_INSIDE: f64 = 1e-12;
 
 /// Chart-validity floor: once the clipped polygon's minimum generator-dot
@@ -112,7 +111,7 @@ pub(crate) const MIN_PROJECTION_COS: f64 = 8.0 * f32::EPSILON as f64;
 /// eps (`CLIP_EPS_INSIDE * |n|`). **0.0 = escalation disabled — the
 /// production setting.**
 ///
-/// P5 stage 2a measured (docs/p5-consistency-design.md, stage-2a findings):
+/// P5 stage 2a measured:
 /// margin-gated escalation is unsound at ANY width, because the gate is
 /// evaluated per cell on displaced computed margins (the same question's
 /// margins differ ~100x across cells; local answers below ~1e-4 are ~50%

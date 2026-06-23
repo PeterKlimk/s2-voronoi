@@ -1,6 +1,6 @@
 //! Exact canonical predicates (P5): deterministic, shared answers for
 //! near-tie clip decisions, evaluated on the same raw f32 bits by every
-//! cell (docs/p5-consistency-design.md). Exactness (Shewchuk adaptive via
+//! cell. Exactness (Shewchuk adaptive via
 //! the `robust` crate) makes the signs permutation-coherent across the
 //! phrasings of a 4-point question — the property that kills the
 //! parity-contradiction defect class.

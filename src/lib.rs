@@ -168,7 +168,7 @@ pub enum PreprocessMode {
     ///
     /// Only safe when the caller certifies that no generators are closer than
     /// the weld radius; sub-radius clusters can otherwise fail construction.
-    /// See `docs/correctness-contract.md`.
+    /// See `docs/correctness.md`.
     Disabled,
     /// Weld generators within the library's fixed weld radius (default).
     ///

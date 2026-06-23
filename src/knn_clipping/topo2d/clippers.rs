@@ -8,7 +8,7 @@ use bitmask::clip_bitmask;
 use small::{clip_small_ptr, clip_small_ptr_d};
 
 /// Context for canonical escalation of near-margin clip decisions
-/// (P5 stage 2, docs/p5-consistency-design.md): the raw f32 positions every
+/// (P5 stage 2): the raw f32 positions every
 /// cell shares, so the exact in-circle predicate answers the same question
 /// with the same bits everywhere. `disabled()` (empty positions) keeps all
 /// decisions local — used by the planar builders (their canonical predicate

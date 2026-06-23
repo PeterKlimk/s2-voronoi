@@ -43,7 +43,7 @@ S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_v
 # Distribution + size matrix with CSV (bench_voronoi --dist: fib uniform
 # clustered bimodal gradient outlier splittable mega; --dist-param tunes
 # gradient k / mega fraction). Clustered inputs need explicit dists — uniform
-# alone misses density-contrast regressions (see docs/optimization-ideas.md).
+# alone misses density-contrast regressions (see docs/performance.md).
 ./scripts/bench_run.sh -s "500k 2m" -d "uniform mega" --seeds "1 2 3" --csv /tmp/bench.csv
 ```
 
@@ -72,11 +72,9 @@ The `qhull` backend is for comparison/testing, not primary production path.
 ## Documentation Map
 
 - `README.md`: user-facing overview and API summary.
-- `docs/how-it-works.md`: reader-oriented algorithm narrative + prior-art positioning.
-- `docs/architecture.md`: algorithm and module map.
+- `docs/architecture.md`: the algorithm (per-cell construction + stitching) and module map.
+- `docs/correctness.md`: guarantees, outcome classes, and limits.
 - `docs/performance.md`: benchmark guidance and perf knobs.
-- `docs/optimization-ideas.md`: perf backlog with evidence, incl. rejected ideas.
-- `docs/live_dedup.md`: live dedup and edge-check design.
 
 ## Module Map (Current)
 
@@ -132,7 +130,7 @@ src/
   `microbench` (harnesses), `simd_scalar` (non-`wide` 8-lane fallback),
   `fma` (mul_add; off by default, see ledger), `tools` (bench binaries),
   `bench_voronoice` (head-to-head planar comparison), `p5_shadow` (P5
-  stage-1 canonical-vs-local clip decision audit; see docs/p5-consistency-design.md).
+  stage-1 canonical-vs-local clip decision audit).
 
 ## Tests
 

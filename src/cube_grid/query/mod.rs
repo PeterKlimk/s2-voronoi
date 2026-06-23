@@ -84,8 +84,7 @@ impl CubeMapGrid {
     /// this grid. The band only pays off on the deep-certificate, un-splittable
     /// concentration that the occupancy rebuild fires on (and fails to split);
     /// on fast-closing moderate clusters that never trigger a rebuild it is a
-    /// net loss, so `build_query_grid` clears it there. See
-    /// docs/punch1-center-cell-integration.md.
+    /// net loss, so `build_query_grid` clears it there.
     pub(crate) fn clear_dense_index(&mut self) {
         self.dense_index = None;
     }

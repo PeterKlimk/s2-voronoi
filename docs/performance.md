@@ -1,135 +1,69 @@
-# Performance / benchmarking
+# Performance
 
-This crate is structured so that per-cell work is embarrassingly parallel, and most cross-cell
-coordination happens only during vertex deduplication.
+Per-cell construction is embarrassingly parallel; the only cross-cell work is vertex
+deduplication. Per-point cost is near constant in n, so the advantage over hull- and
+triangulation-based libraries grows with input size.
 
-## Useful features
+## Reference numbers
 
-- `--features timing`: prints timing breakdowns and optionally emits machine-readable `TIMING_KV`
-  lines when `S2_VORONOI_TIMING_KV` is set.
-- `--features qhull`: enables the convex hull backend for comparisons (slow).
-- `--features simd_clip`: uses SIMD small-N clippers in the main dispatch.
-- `--features fma`: prefers `mul_add` (changes results bit-wise). Measured a wash on FMA
-  hardware under `-C target-cpu=native`, and a large LOSS without `+fma` codegen (libm
-  fallback) — see the rejected list in optimization-ideas.md. Prefer plain
-  `RUSTFLAGS="-C target-cpu=native"`, which alone is worth ~6% on the reference Ryzen 3600.
-- `--features tools`: enables benchmark/utility binaries (they are not built by default).
+Ryzen 3600 (6 cores), uniform input, minimum of repeats:
 
-## Environment knobs
+| n  | sphere (MT) | plane (MT) | voronoice (plane) |
+|----|-------------|------------|-------------------|
+| 1M | ~330ms | ~430ms | ~1.4s |
+| 2M | ~720ms | ~1.0s | ~3.5s |
 
-- `RAYON_NUM_THREADS=1`: force single-threaded mode (useful for stable perf comparisons).
-- `S2_BIN_COUNT=<n>`: override bin/shard count (defaults to ~2x threads).
-- `S2_VORONOI_TIMING_KV=1`: enable `TIMING_KV ...` output (requires `timing` feature).
-- `S2_VORONOI_PLANE_GRID_DENSITY=<f>`: override the planar grid's points-per-cell target
-  (default 16; sweep data in `src/policy.rs`).
+Single-threaded, the two geometries are at parity per point (~1.8s at 1M). The `voronoice` gap
+grows with n because its delaunator core is O(n log n).
 
-## Bench binaries
+Peak resident memory per build is roughly linear, ~0.65 KB/point (500k ≈ 320 MB, 1M ≈ 660 MB,
+2M ≈ 1.3 GB). The working set frees when the diagram drops. A process that builds many diagrams in
+a loop will accumulate high-water RSS — glibc does not return freed arenas to the OS between
+builds, amplified by per-thread rayon arenas. This is allocator behavior, not a leak; build in a
+child process per job, set `MALLOC_ARENA_MAX=2`, or link jemalloc/mimalloc if it matters.
 
-- `cargo run --release --features tools --bin bench_voronoi -- 100k 500k 1m`
-- `cargo run --release --features tools,timing --bin bench_voronoi -- 500k --no-preprocess`
-- Distribution stress: `--dist {fib|uniform|clustered|bimodal|gradient|outlier|splittable|mega}`
-  (`--dist-param` tunes gradient steepness k / mega cap fraction). Density-contrast
-  distributions exercise the occupancy path that uniform input never touches.
-- `cargo run --release --features tools,qhull --bin bench_voronoi -- 50k --validate`
-- `cargo run --release --features tools --bin bench_plane -- 100k 1m 2m -n 6 --validate`
-- `cargo run --release --features bench_voronoice --bin bench_plane -- 1m 2m -n 6 --voronoice`
-  (head-to-head against the `voronoice` crate on identical inputs)
+## Building for speed
 
-## Planar reference numbers (Ryzen 3600, min of repeats, uniform)
+`RUSTFLAGS="-C target-cpu=native"` is worth ~6% on the reference machine and is the main build
+flag that matters. Run benchmarks in release.
 
-| n | plane (MT) | sphere (MT) | voronoice |
-|----|-----------|-------------|-----------|
-| 1M | ~430ms | ~330ms | ~1.4s |
-| 2M | ~1.0s | ~720ms | ~3.5s |
+## Running the benchmarks
 
-Single-threaded the two geometries are at parity per point (~1.8-1.9s at 1M); multithreaded
-they are within ~5-10% of each other when measured in interleaved A/B rounds (long benchmark
-sessions drift the machine by far more than that — always pair the runs you compare). The
-voronoice gap grows with n (their delaunator core is O(n log n); per-point cost here is near
-constant).
+The benchmark binaries need the `tools` feature:
 
-## Comparison scripts
+```bash
+cargo run --release --features tools --bin bench_voronoi -- 100k 500k 1m
+cargo run --release --features tools --bin bench_plane   -- 1m 2m -n 6 --validate
+```
 
-For inter-commit comparisons:
+Useful flags:
 
-- `./scripts/bench_build.sh --chain 6`
-- `./scripts/bench_run.sh -s 500k -r 20 -m total`
+- `--dist {fib|uniform|clustered|bimodal|gradient|outlier|splittable|mega}` and `--dist-param` —
+  non-uniform distributions exercise the density-adaptive paths that uniform input never reaches.
+  Benchmark across a few of these, not uniform alone.
+- `--validate` — run strict validation after each build.
+- `--no-preprocess` — skip welding (isolates construction cost).
+- head-to-head against `voronoice`: `--features bench_voronoice ... --voronoice`.
 
-`bench_run.sh` sweeps a matrix of sizes x distributions x seeds and can emit a
-structured CSV (`commit,size,dist,seed,metric,min/median/avg/max,spread`):
+## Knobs
 
-- `./scripts/bench_run.sh -s "500k 2m" -d "uniform mega" --seeds "1 2 3" --csv out.csv`
+- `RAYON_NUM_THREADS=1` — single-threaded, for stable comparisons.
+- `S2_BIN_COUNT=<n>` — shard count (default ~2x threads).
+- `S2_VORONOI_TIMING_KV=1` with `--features timing` — machine-readable phase timing.
+- `S2_VORONOI_GRID_DENSITY=<f>` / `S2_VORONOI_PLANE_GRID_DENSITY=<f>` — spatial-grid target
+  density (points per cell) for sweeps.
 
-Each cell runs the commits interleaved with rotating start order (the paired
-protocol). The scripts default to pinned + single-threaded runs. The box is
-noisy — per-binary code-layout offsets alone are ~1-2% at 500k ST, so treat
-sub-1% deltas as noise. For the current A/B workflow, see
-docs/perf-profiling-plan.md.
+## Comparing commits
 
-## Policy profiling
+The machine is noisy — per-binary code-layout shifts alone are ~1-2% at 500k single-threaded — so
+compare commits with interleaved paired runs, not back-to-back batches, and treat sub-1% deltas as
+noise:
 
-When evaluating heuristic changes, do not rely only on total time. Prefer timing-enabled runs that
-also show how work moved between packed neighbor sourcing and the shell-expansion takeover.
+```bash
+./scripts/bench_build.sh --chain 6
+./scripts/bench_run.sh -s "500k 2m" -d "uniform mega" --seeds "1 2 3" --csv out.csv
+```
 
-Useful commands:
-
-- `S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 100k --no-preprocess`
-- `S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_plane -- 500k`
-  (the planar pipelines emit the same KV schema; add `--periodic` for the torus)
-- `./scripts/bench_build.sh --timing HEAD`
-- `./scripts/bench_run.sh -s 100k -r 5 -c 1 -m total`
-
-Counters to watch:
-
-- `cells_used_knn`
-- `cells_packed_tail_used`
-- `packed_tail_builds`
-- `neighbors_total` / `neighbors_max`: candidates actually clipped or seed-applied before
-  termination.
-- `final_edges_total` / `final_edges_max`: final cell degrees after extraction.
-- `examine_per_edge`: `neighbors_total / final_edges_total`, the main counter for
-  examine-and-reject certificate headroom.
-- `dir_shadow_checks`, `dir_shadow_candidate_tests`, `dir_shadow_hits`,
-  `dir_shadow_saved`: timing-only known-batch direction-certificate shadow
-  probe; use as custom counters only, not wall-time evidence.
-- `dir_support_candidate_tests`, `dir_support_hits`, `dir_support_saved`,
-  `dir_support_false_positive_hits`: timing-only 64-sector support-envelope
-  subset of the shadow probe.
-- Branch-only angular/radius skip probes are recorded in
-  `docs/optimization-ideas.md`; they are experiment results, not current
-  mainline runtime knobs.
-
-For the current policy surface and change rules, see `docs/policy.md`.
-
-## Grid density tuning
-
-- `S2_VORONOI_GRID_DENSITY=<f>`: override the query-grid target density
-  (points per cell) for sweeps. The default is a known-imperfect constant; the
-  optimum varies with point count and distribution (see docs/todo.md P3.2).
-- `./scripts/sweep_grid_density.sh`: density x size sweep emitting `TIMING_KV`
-  lines. Watch `neighbors_total` (mean neighbors before termination =
-  total / n), `grid_res`, `grid_max_occ`, and `grid_rebuilt` alongside
-  `total_ms` when fitting.
-- Catastrophically concentrated inputs (Σocc²/n over `GRID_REBUILD_SUMSQ_PER_N`,
-  i.e. the dense region is the majority of points) trigger a one-step,
-  memory-bounded occupancy-feedback rebuild; `grid_rebuilt=1` in `TIMING_KV`
-  marks affected runs. Modest clusters do NOT trigger it — a global re-grid
-  de-tunes the background and is a net pessimization there (see the occupancy
-  rebuild re-calibration in docs/optimization-ideas.md).
-
-## Memory
-
-- Per-build peak RSS is roughly linear in point count, ~0.65 KB/point on
-  the Ryzen 3600 reference (measured: 500k≈320 MB, 1M≈660 MB, 2M≈1.3 GB,
-  3M≈2.3 GB). A single build's working set is freed when the diagram is
-  dropped.
-- **Long-running processes that build many diagrams**: glibc does not
-  return freed arenas to the OS between builds, so a process that loops
-  over many builds accumulates a high-water RSS (amplified by per-thread
-  arenas under rayon and fragmentation across mixed allocation sizes) that
-  can climb far above any single build's peak. This is a glibc allocator
-  behavior, not a leak in the crate. Mitigations, in order of preference:
-  build in a child process per job (the OS reclaims fully on exit — see
-  `scripts/robustness_campaign.sh` for the pattern); set
-  `MALLOC_ARENA_MAX=2`; or link a trimming allocator (jemalloc/mimalloc).
-  One-shot CLI usage (one build, then exit) is unaffected.
+`bench_run.sh` sweeps sizes x distributions x seeds, runs the commits interleaved, and emits a
+CSV. Prefer hardware counters (`perf stat`) over wall time for behavior decisions; wall time on
+this class of machine drifts more than most single optimizations are worth.

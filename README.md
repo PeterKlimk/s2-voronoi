@@ -1,66 +1,16 @@
 # s2-voronoi
 
-Fast spherical Voronoi diagrams on the unit sphere (S2) — and planar Voronoi diagrams over a
-bounded rectangle, through the same parallel engine.
+Spherical Voronoi diagrams on the unit sphere, and planar Voronoi diagrams over a bounded
+rectangle or torus, built by the same parallel engine.
 
-Most spherical Voronoi implementations go through a 3D convex hull (qhull, scipy) and slow down
-sharply past tens of thousands of points. This crate instead builds every cell independently by
-kNN-driven half-space clipping — the construction usually reserved for GPU implementations — and
-stitches the per-cell results into a single consistent graph on the CPU. Cell construction is
-embarrassingly parallel; cross-cell work is limited to sharded "live" vertex deduplication and a
-narrow reconciliation pass. The dedup/stitching engine is geometry-agnostic: the spherical and
-planar backends are two drivers over one core.
+Most spherical Voronoi code goes through a 3D convex hull (qhull, scipy) and slows down past tens
+of thousands of points. This crate builds each cell independently by clipping half-spaces of
+nearby points — the construction usually seen on the GPU — and stitches the per-cell results into
+one shared, validated graph on the CPU. Per-point cost is near constant, so the gap to hull-based
+code grows with n: roughly 4x faster than `voronoice` at 1M planar points, ~330ms for 1M sphere
+points multithreaded on a Ryzen 3600.
 
-Design target: 2.5M spherical points in under 500ms on a 6-core desktop CPU (Ryzen 3600 class) —
-roughly an order of magnitude faster than convex-hull approaches at that scale. Current measured
-upper bound on that machine: ~1.2s for 2.5M points multithreaded (taken on a loaded box; a
-quiet-box measurement is pending — see `docs/performance.md` for protocol and current numbers).
-The planar backend computes 2M cells in about a second on the same hardware, 3–4x faster than
-delaunator-based planar crates at that size (and the gap grows with n: per-point cost is near
-constant here versus their O(n log n)).
-
-## How it works
-
-Each cell is built independently — the *meshless* construction of [Ray et al. 2018 (Meshless
-Voronoi on the GPU)](https://doi.org/10.1145/3272127.3275092), here on CPU SIMD: clip a polygon
-by bisectors of nearby points, streamed nearest-first from a spatial grid whose ring bounds
-certify when the cell is provably complete (the classical "security radius" — typically after a
-few dozen candidates, independent of n). What the GPU paper deliberately doesn't do is the
-second half of this crate: stitching the independently-built cells into a single shared graph.
-Vertices are identified combinatorially (by generator triple, not by floating-point position)
-and deduplicated shard-locally with deferred cross-shard patching — no locks or global maps in
-the hot loop. Within a shard, cells build sequentially and exploit it: each shared edge is
-clipped once by the earlier cell and forwarded to the later one, halving the clip work and
-coordinating vertex indices at the same time; across shards, cells build fully independently,
-and one coverage contract makes the two regimes compose. The full story:
-[docs/how-it-works.md](docs/how-it-works.md).
-
-## The correctness contract, in one paragraph
-
-The output is *essentially Voronoi*: by default, finite normalized spherical inputs within
-representation capacity are intended to return a **strictly valid subdivision of the sphere**.
-Near-coincident generators are welded, exact full-great-circle rank-2 inputs are deterministically
-perturbed into a nearby full-dimensional problem, and rare residual topology defects are rebuilt
-with normalized local 3D repair. Exact geometry is not promised — no floating-point
-implementation can promise that — but graph validity is treated as non-negotiable and is
-fuzz-tested at multi-million point counts. The planar APIs make the same strict-subdivision
-promise over their domains. See `docs/correctness-contract.md`
-for the precise statement, outcome classes, and representation limits.
-
-## Status / requirements
-
-- Pre-release (0.1). The supported envelope is documented and test-backed, but the API is not yet
-  stable; see `docs/todo.md` for the path to release.
-- **Stable Rust** (MSRV 1.88). Explicit SIMD via the `wide` crate; nightly is no longer required.
-- Inputs are **assumed** to be unit-normalized (not enforced; may debug-assert in hot paths).
-  Inputs are canonicalized once at entry (f64-renormalized, rounded back to f32), so the
-  diagram's `generators()` may differ from the raw input by ~1 ulp, and inputs differing only
-  radially (off-unit ulps) resolve to the same generator.
-- Default spherical computation favors robust valid output: near-coincident generators are
-  welded by default for graph validity, and exact rank-2 great-circle inputs retry as a nearby
-  valid full-dimensional diagram. Callers that prefer lower-dimensional inputs to fail cleanly
-  can set `DegenerateMode::Strict`; perturbation is reported through `ComputeReport::degenerate`.
-- For strict subdivision/invariant checks on computed output, use `validation::validate`.
+Status: pre-release (0.1). The API is not yet stable. Stable Rust, MSRV 1.88.
 
 ## Quickstart
 
@@ -78,18 +28,22 @@ let points = vec![
 
 let diagram = compute(&points)?;
 for cell in diagram.iter_cells() {
-    let g = diagram.generator(cell.generator_index);
+    let generator = diagram.generator(cell.generator_index);
     let boundary = cell.vertex_indices.iter().map(|&i| diagram.vertex(i as usize));
-    let _ = (g, boundary);
+    let _ = (generator, boundary);
 }
 # Ok::<(), s2_voronoi::VoronoiError>(())
 ```
 
-## Planar Voronoi
+Inputs are assumed unit-normalized. They are canonicalized once at entry (renormalized in f64,
+rounded back to f32), so `generators()` may differ from the raw input by ~1 ulp.
 
-`compute_plane` produces a Voronoi diagram of a bounded axis-aligned rectangle: every cell is a
-convex polygon, hull cells are clipped to the rectangle (its walls act as virtual generators in
-the engine), and cell areas partition the rect exactly.
+## Planar and periodic
+
+`compute_plane` tiles a bounded rectangle; the walls act as virtual generators, so hull cells are
+clipped to the rect and cell areas partition it exactly. `compute_plane_periodic` identifies
+opposite edges into a torus: cells wrap, every edge is shared by two cells, and the diagram has no
+boundary.
 
 ```rust
 use s2_voronoi::{compute_plane, PlaneRect};
@@ -103,129 +57,65 @@ for i in 0..diagram.num_cells() {
 # Ok::<(), s2_voronoi::VoronoiError>(())
 ```
 
-- Accepts any point count >= 1 (a single generator owns the whole rect).
-- Generators within the planar weld radius (~1e-6 of the longer rect side) share one cell, exposed
-  via `PlanarVoronoi::weld_map()` — required for graph validity, like the sphere's weld; see
-  `docs/correctness-contract.md` for the probe data behind the radius.
-- The domain transform is uniform per axis (Voronoi structure is not invariant under anisotropic
-  scaling); high-aspect rects are supported, with grid sizing that follows the occupied band.
+## What you get
 
-### Periodic boundaries (rectangular torus)
+- `SphericalVoronoi` / `PlanarVoronoi`: shared vertex list, per-cell boundary indices, generators.
+- `cell_area(i)`, `cell_centroid(i)` — topology-aware on the sphere, rect, and torus.
+- `lloyd_step()` — one centroidal-relaxation iteration; the same loop on all three topologies.
+- `build_adjacency()` — per-cell Voronoi neighbors aligned with boundary edges (the Delaunay
+  edges of the generator set).
+- `delaunay_triangles()` — the dual triangulation as `Vec<[u32; 3]>`.
+- `build_locator()` — reusable point-location; `locate(q)` maps a point to its cell in
+  near-constant time, `locate_many(&[q])` batches across cores.
+- `validation::validate` / `validate_plane` — strict subdivision check.
+- `weld_map()` — generators merged as coincident (see Correctness).
 
-`compute_plane_periodic` identifies the rect's opposite edges: cells wrap, the diagram has no
-boundary, and every edge is shared by exactly two cells (`build_adjacency().is_complete()`).
-Vertex positions are stored canonically wrapped; `cell_polygon(i)` reconstructs a cell's
-contiguous polygon by unwrapping each vertex to within half a period of its generator.
-`cell_area`/`cell_centroid` are topology-aware, so **periodic Lloyd relaxation** (centroidal
-Voronoi tessellation in periodic domains — the standard physics/materials setup) is the same
-one-loop recipe. Every cell must be provably smaller than a quarter of the shorter period
-(nearest-image exactness); underpopulated domains fail with `UnsupportedGeometry` instead of
-producing wrong answers. Among existing libraries only voro++ handles periodic domains natively,
-and it returns independent per-cell polyhedra — this crate returns the deduplicated, validated
-toroidal graph.
+Configuration is through `compute_with(points, VoronoiConfig)`; `compute_with_report` additionally
+returns what was welded, perturbed, or repaired. Defaults handle coincident and degenerate inputs;
+see [docs/correctness.md](docs/correctness.md).
 
-## API overview
+## How it works
 
-- `compute(&[P]) -> Result<SphericalVoronoi, VoronoiError>`
-- `compute_with(&[P], VoronoiConfig)`
-- `compute_with_report(&[P], VoronoiConfig) -> Result<ComputeOutput, VoronoiError>`
-- `validation::validate(&SphericalVoronoi) -> ValidationReport`
-  Use `ValidationReport::is_strictly_valid()` and the explicit issue summaries.
-- `SphericalVoronoi`: `generators()`, `vertices()`, `iter_cells()`, `cell(i)`,
-  `build_adjacency()`, `cell_area(i)`, `cell_centroid(i)`, `weld_map()`, `compact_vertices()`
-- `CellView`: `vertex_indices`, `generator_index`, `len()`
-- `CellAdjacency`: per-cell Voronoi neighbors aligned with boundary edges (`neighbors_of(i)`);
-  the neighbor pairs are the Delaunay edges of the generator set
-- Planar: `compute_plane(&[P], PlaneRect) -> Result<PlanarVoronoi, VoronoiError>`;
-  `validation::validate_plane(&PlanarVoronoi) -> PlaneValidationReport`;
-  `compute_plane_periodic(&[P], PlaneRect)` for toroidal domains;
-  `PlanarVoronoi`: `generators()`, `vertices()`, `iter_cells()`, `cell(i)`, `cell_polygon(i)`,
-  `build_adjacency()`, `cell_area(i)`, `cell_centroid(i)`, `weld_map()`, `rect()`,
-  `topology()` — Lloyd relaxation is the same one-loop recipe on the sphere, rect, and torus
-- Lloyd relaxation (centroidal Voronoi tessellation) is one loop:
-  `points = diagram.lloyd_step()` and recompute — `lloyd_step()` is centroids in input order,
-  topology-aware on the sphere, rect, and torus.
-- Delaunay export: `diagram.delaunay_triangles()` returns the dual triangulation as
-  `Vec<[u32; 3]>` (CCW, canonical indices — the delaunator/CGAL convention). Complete on the
-  sphere (`2c - 4` triangles) and the torus (`2c`); on the bounded rect it is the subset of
-  Delaunay triangles whose circumcenter lies in the rect. Falls out of the combinatorial vertex
-  identity: a Voronoi vertex *is* a Delaunay triangle.
-- Point location: `diagram.build_locator()` returns a reusable locator
-  (`SphereLocator` / `PlaneLocator`); `locator.locate(query)` maps a point to
-  the cell containing it (its nearest generator's canonical cell) in
-  near-constant time per query, on all three topologies; `locate_many(&[q])`
-  batches queries across all cores. Periodic queries wrap; bounded-plane
-  queries may lie outside the rect.
+Each cell is the intersection of half-spaces, one per neighbor, bounded by the bisector between
+the generator and that neighbor. Candidates stream nearest-first from a spatial grid; the
+"security radius" certificate stops the stream once no unseen point can reach the current polygon
+(typically after clipping ~6-7 neighbors, independent of n). On the sphere a gnomonic projection
+turns great circles into straight lines, so cell construction is 2D convex-polygon clipping.
 
-## Configuration
+The per-cell construction follows Ray et al., *Meshless Voronoi on the GPU* (2018). The part this
+crate adds is stitching the independently-built cells into one consistent graph: vertices are
+identified combinatorially (by the triple of generators that meet there, never by position) and
+deduplicated shard-locally with no global lock. [docs/architecture.md](docs/architecture.md) has
+the full description.
 
-`VoronoiConfig` (spherical pipeline) controls preprocessing, cold-path local repair,
-and degenerate-input handling:
+## Correctness
 
-- `preprocess_mode`: coincident-generator handling:
-  - `PreprocessMode::Weld` (default): weld generators within the fixed weld radius (~1.4e-6
-    chord, derived from f32 rounding with measured margin — see
-    `docs/correctness-contract.md`). Welded inputs share one cell, exposed via
-    `SphericalVoronoi::weld_map()`.
-  - `PreprocessMode::MergeWithin(threshold)`: weld within an explicit threshold
-  - `PreprocessMode::Disabled`: no welding (caller certifies generator separation above the
-    weld radius)
-- `repair_mode`: post-assembly repair for rare near-degenerate topology defects:
-  - `RepairMode::Local3d` (default): rebuild the residual neighborhood as one normalized local
-    3D hull, then accept only if strict validation succeeds
-  - `RepairMode::LocalProjected`: diagnostic projected repair using one shared local
-    stereographic chart and exact 2D predicates
-  - `RepairMode::Disabled`: preserve the raw fast-path residual/error behavior for diagnostics
-- `degenerate_mode`: failure-triggered handling for rank-deficient spherical inputs:
-  - `DegenerateMode::PerturbGreatCircle` (default): after an initial failure, detect full
-    great-circle rank-2 inputs and retry once with a deterministic off-plane joggle. The returned
-    diagram is the nearby perturbed solved problem, reported through `ComputeReport::degenerate`.
-  - `DegenerateMode::Strict`: return the ordinary clean error for rank-deficient input.
+The output is a strictly valid subdivision — Euler characteristic holds, every edge is shared by
+exactly two cells, one connected component — checked by `validation::validate` and fuzz-tested at
+multi-million point counts. Geometry is accurate to floating-point precision, not exact: no f32
+implementation can promise exact positions. Near-coincident generators are welded, degenerate
+great-circle inputs are perturbed, and rare topology defects are repaired, all by default and all
+reported. [docs/correctness.md](docs/correctness.md) states the guarantees and limits precisely.
 
-The spherical backend is intentionally not an exact-predicate hot-path solver.
-The contract is that ordinary inputs are solved by the fast gnomonic clipper,
-rare suspicious regions are rebuilt by normalized local 3D repair, and returned
-diagrams must pass strict topology validation. In adversarial tie/degenerate
-regimes, the library prefers a valid repaired diagram or a loud error over
-claiming a globally exact symbolic graph.
+## Performance
 
-The planar pipeline currently takes no configuration; its weld radius is fixed (see above).
+Multithreaded on a Ryzen 3600 (6 cores), uniform input:
 
-`compute_with_report` exposes whether preprocessing merged generators, whether degenerate robust
-perturbation ran, the effective diagram the backend actually solved, and strict validation of both
-views; `report.preferred_validation()` and `output.preferred_diagram()` select the right view after
-a merged solve.
+| n  | sphere | plane | voronoice (plane) |
+|----|--------|-------|-------------------|
+| 1M | ~330ms | ~430ms | ~1.4s |
+| 2M | ~720ms | ~1.0s | ~3.5s |
+
+Single-threaded the two geometries are at parity (~1.8s at 1M). Per-build peak memory is roughly
+0.65 KB/point. [docs/performance.md](docs/performance.md) covers benchmarking and reproduction.
 
 ## Features
 
 - `parallel` (default): rayon parallelism in cell construction.
-- `glam`: public `UnitVec3Like` impl + conversions for `glam::Vec3` (glam is always an internal dep).
-- `serde`: Serialize/Deserialize for the diagram types — `SphericalVoronoi` and `PlanarVoronoi`
-  (weld map and topology included), `UnitVec3`, `PlanePoint`, `PlaneRect`, `PlaneTopology`, and
-  `CellAdjacency`.
-- `timing`: detailed phase/sub-phase timing reports.
-- `qhull`: convex hull backend used for tests/bench comparisons only.
-- Internal flags (`timing`, `profiling`, `microbench`, `simd_scalar`, `fma`, `tools`,
-  `bench_voronoice`, `p5_shadow`): benching/diagnostics only — not part of the public contract and may
-  change or disappear without a major version bump.
-
-## Documentation
-
-User-facing:
-
-- How it works (the algorithm, for readers): `docs/how-it-works.md`
-- Correctness contract — guarantees, outcome classes, coincidence policy, representation limits:
-  `docs/correctness-contract.md`
-- Performance + benchmarking: `docs/performance.md`
-
-Maintainer notes (design rationale and working ledgers; some are AI-assisted research records):
-
-- Design / algorithm notes (including the parallel-stitching consistency model):
-  `docs/architecture.md`
-- Live vertex dedup and edge checks: `docs/live_dedup.md`
-- Active roadmap / prioritized next steps: `docs/todo.md`
-- Optimization ideas ledger (incl. negative results): `docs/optimization-ideas.md`
-- Engineering issues / findings log: `docs/engineering-findings.md`
+- `glam`: `UnitVec3Like` impl and conversions for `glam::Vec3`.
+- `serde`: `Serialize`/`Deserialize` for the diagram types.
+- `qhull`: convex-hull backend, for test/bench comparison only.
+- `timing`: phase and sub-phase timing reports.
 
 ## License
 

@@ -8,8 +8,7 @@
 //! duplicates as benign orphans). The strict validator accepts degree-4+
 //! vertices, so the contract is just: strictly valid. These are a regression
 //! guard for the high-degeneracy regime and a heavy exerciser of the reconcile
-//! at O(n) defects (a structured grid produces thousands; see
-//! docs/optimization-ideas.md "structured high-degeneracy inputs").
+//! at O(n) defects (a structured grid produces thousands).
 
 mod support;
 use support::points::cubed_sphere_points;
@@ -88,7 +87,7 @@ fn cubed_sphere_grid_degree4_at_scale() {
     // Structured quad grid: O(n) degree-4 vertices at normal density. Produces
     // thousands of reconcile defects yet must stay strictly valid (the heavy
     // exerciser of the coincident-vertex merge path). Kept modest for CI; the
-    // full size sweep is manual (docs/optimization-ideas.md).
+    // full size sweep is manual.
     let pts = cubed_sphere_points(6 * 24 * 24, 0); // ~3.5k generators
     assert_valid("cubed_sphere_k24", &pts);
 }
@@ -128,7 +127,7 @@ fn hexagonal_pyramid_cocircular6() {
 /// starts leaving a residual. Run: `cargo test --release --test high_degree --
 /// --ignored cubed_sphere_scaling_probe --nocapture`.
 #[test]
-#[ignore = "manual scaling characterization — see docs/optimization-ideas.md"]
+#[ignore = "manual scaling characterization"]
 fn cubed_sphere_scaling_probe() {
     for k in [20usize, 40, 80, 120] {
         let pts = cubed_sphere_points(6 * k * k, 0);

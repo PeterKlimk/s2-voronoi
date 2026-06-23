@@ -654,7 +654,7 @@ fn validate_generator_finiteness(points: &[Vec3]) -> Result<(), crate::VoronoiEr
 /// and the P5 canonical predicates) sees identical bits per generator. The
 /// per-builder f64 renormalization is gone; without this pass the pipeline
 /// solved a ~1-ulp-perturbed, asymmetrically-treated point set (stage-1
-/// shadow findings, docs/p5-consistency-design.md). Out-of-band lengths
+/// shadow findings). Out-of-band lengths
 /// (contract-violating inputs) are left untouched and fail downstream as
 /// before, rather than being turned into NaNs here.
 fn canonicalize_unit_points(points: &mut [Vec3]) {
@@ -955,7 +955,7 @@ fn build_query_grid(
     // trip the rebuild close fast in the packed path, where the band + takeover
     // is a measured net loss (clustered 500k ~ -13%); disable it there. Scale-
     // invariant, unlike a fixed occupancy threshold (clustered occ grows with
-    // n). See docs/punch1-center-cell-integration.md.
+    // n).
     let mut grid = grid;
     if !rebuilt {
         grid.clear_dense_index();
@@ -1028,7 +1028,7 @@ fn reconcile_edges(
     )?;
     // The simple cross-bin stitch above is the only repair pass: any surviving
     // unpaired interior edge is surfaced as a residual error by the caller
-    // (valid-or-error contract — see docs/correctness-contract.md; the dropped
+    // (valid-or-error contract — see docs/correctness.md; the dropped
     // post-hoc Tier-2 repair investigation lives in git history).
     tb.set_edge_reconcile(t.elapsed());
     Ok((cells, cell_indices, post_repair_unpaired))

@@ -104,7 +104,7 @@ required-features = ["microbench"]
 # NOTE: thin-LTO + codegen-units=1 was tried (commit f4c6426) and reverted.
 # It showed a ~few% uniform win, but the magnitude is layout-noise-confounded,
 # it was never verified on other regimes, and it costs ~6x release build time.
-# Parked as a perf idea (docs/perf-profiling-plan.md) to revisit with a proper
+# Parked as a perf idea to revisit with a proper
 # multi-regime + diff-disjoint-control measurement.
 
 [profile.checked]
