@@ -55,6 +55,10 @@ pub(crate) mod policy;
 #[doc(hidden)]
 pub mod quality;
 pub(crate) mod sort;
+/// Internal small-N sorting-network entry point, exposed for microbenchmarking only.
+#[cfg(feature = "microbench")]
+#[doc(hidden)]
+pub use crate::sort::sort_small as bench_sort_small;
 pub(crate) mod timing;
 pub(crate) mod tolerances;
 mod types;

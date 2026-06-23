@@ -101,6 +101,11 @@ name = "microbench_packed_select"
 path = "src/bin/microbench_packed_select.rs"
 required-features = ["microbench"]
 
+[[bin]]
+name = "microbench_sort"
+path = "src/bin/microbench_sort.rs"
+required-features = ["microbench"]
+
 # NOTE: thin-LTO + codegen-units=1 was tried (commit f4c6426) and reverted.
 # It showed a ~few% uniform win, but the magnitude is layout-noise-confounded,
 # it was never verified on other regimes, and it costs ~6x release build time.
