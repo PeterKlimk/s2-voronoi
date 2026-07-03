@@ -1,14 +1,12 @@
 # s2-voronoi
 
-Spherical Voronoi diagrams on the unit sphere, and planar Voronoi diagrams over a bounded
-rectangle or torus, built by the same parallel engine.
+Fast spherical Voronoi diagrams on the unit sphere.
 
 Most spherical Voronoi code goes through a 3D convex hull (qhull, scipy) and slows down past tens
 of thousands of points. This crate builds each cell independently by clipping half-spaces of
 nearby points — the construction usually seen on the GPU — and stitches the per-cell results into
 one shared, validated graph on the CPU. Per-point cost is near constant, so the gap to hull-based
-code grows with n: roughly 4x faster than `voronoice` at 1M planar points, ~330ms for 1M sphere
-points multithreaded on a Ryzen 3600.
+code grows with n: ~330ms for 1M points multithreaded on a Ryzen 3600.
 
 Status: pre-release (0.1). The API is not yet stable. Stable Rust, MSRV 1.88.
 
@@ -38,36 +36,17 @@ for cell in diagram.iter_cells() {
 Inputs are assumed unit-normalized. They are canonicalized once at entry (renormalized in f64,
 rounded back to f32), so `generators()` may differ from the raw input by ~1 ulp.
 
-## Planar and periodic
-
-`compute_plane` tiles a bounded rectangle; the walls act as virtual generators, so hull cells are
-clipped to the rect and cell areas partition it exactly. `compute_plane_periodic` identifies
-opposite edges into a torus: cells wrap, every edge is shared by two cells, and the diagram has no
-boundary.
-
-```rust
-use s2_voronoi::{compute_plane, PlaneRect};
-
-let points = vec![[0.25f32, 0.25], [0.75, 0.25], [0.5, 0.8]];
-let diagram = compute_plane(&points, PlaneRect::unit())?;
-for i in 0..diagram.num_cells() {
-    let boundary = diagram.cell(i).iter().map(|&v| diagram.vertex(v as usize));
-    let _ = boundary;
-}
-# Ok::<(), s2_voronoi::VoronoiError>(())
-```
-
 ## What you get
 
-- `SphericalVoronoi` / `PlanarVoronoi`: shared vertex list, per-cell boundary indices, generators.
-- `cell_area(i)`, `cell_centroid(i)` — topology-aware on the sphere, rect, and torus.
-- `lloyd_step()` — one centroidal-relaxation iteration; the same loop on all three topologies.
+- `SphericalVoronoi`: shared vertex list, per-cell boundary indices, generators.
+- `cell_area(i)`, `cell_centroid(i)` — spherical areas and centroids.
+- `lloyd_step()` — one centroidal-relaxation iteration.
 - `build_adjacency()` — per-cell Voronoi neighbors aligned with boundary edges (the Delaunay
   edges of the generator set).
 - `delaunay_triangles()` — the dual triangulation as `Vec<[u32; 3]>`.
 - `build_locator()` — reusable point-location; `locate(q)` maps a point to its cell in
   near-constant time, `locate_many(&[q])` batches across cores.
-- `validation::validate` / `validate_plane` — strict subdivision check.
+- `validation::validate` — strict subdivision check.
 - `weld_map()` — generators merged as coincident (see Correctness).
 
 Configuration is through `compute_with(points, VoronoiConfig)`; `compute_with_report` additionally
@@ -101,13 +80,13 @@ reported. [docs/correctness.md](docs/correctness.md) states the guarantees and l
 
 Multithreaded on a Ryzen 3600 (6 cores), uniform input:
 
-| n  | sphere | plane | voronoice (plane) |
-|----|--------|-------|-------------------|
-| 1M | ~330ms | ~430ms | ~1.4s |
-| 2M | ~720ms | ~1.0s | ~3.5s |
+| n  | time |
+|----|------|
+| 1M | ~330ms |
+| 2M | ~720ms |
 
-Single-threaded the two geometries are at parity (~1.8s at 1M). Per-build peak memory is roughly
-0.65 KB/point. [docs/performance.md](docs/performance.md) covers benchmarking and reproduction.
+Single-threaded, ~1.8s at 1M. Per-build peak memory is roughly 0.65 KB/point.
+[docs/performance.md](docs/performance.md) covers benchmarking and reproduction.
 
 ## Features
 

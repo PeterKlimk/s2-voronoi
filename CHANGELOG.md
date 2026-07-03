@@ -51,20 +51,6 @@ Initial release.
   drops from ~382ms to ~0.06ms; the original full rebuild is retained as a
   differential oracle behind `S2_EDGE_REPAIR_REBUILD=1`, with tests pinning
   identical per-cell output between backends.
-- Planar Voronoi diagrams over a bounded rectangle (`compute_plane`,
-  `PlanarVoronoi`, `PlaneRect`): the same kNN-clipping engine on a flat 2D
-  grid, with rect walls handled as virtual generators so hull cells clip to
-  the domain and the strict-subdivision contract carries over (disk-topology
-  validation via `validation::validate_plane`; cell areas partition the
-  rect). Generators within the planar weld radius (~1e-6 of the longer
-  rect side, always including exact duplicates) are welded — required for
-  graph validity, like the sphere's weld; detection reuses the kNN grid so
-  duplicate-free inputs pay only a scan.
-- Periodic (toroidal) planar Voronoi (`compute_plane_periodic`): the rect's
-  opposite edges are identified; minimum-image clipping with a half-period
-  exactness guard, canonically wrapped vertex storage with a `cell_polygon`
-  unwrap helper, torus validation (V−E+F=0, every edge paired), and
-  topology-aware measures enabling periodic Lloyd relaxation.
 - Spherical Voronoi diagrams on the unit sphere via kNN-driven half-space
   clipping: per-cell parallel construction stitched into one consistent graph
   (see `docs/architecture.md`).
@@ -72,23 +58,15 @@ Initial release.
   subdivision, fuzz-asserted at 2-4.5M points in CI) over a soft geometric one;
   see `docs/correctness.md` for the precise statement and the measured
   coincidence margins behind the default weld.
-- Delaunay export (`delaunay_triangles()` on both diagram types): the dual
-  triangulation read off the stored graph — CCW winding (delaunator/CGAL
-  convention), canonical indices, complete on the sphere (2c−4 triangles)
-  and the torus (2c), circumcenter-in-rect subset on the bounded rect,
-  cocircular ties fan-triangulated.
-- Point location (`build_locator()` → `SphereLocator` / `PlaneLocator`):
-  reusable nearest-generator queries in near-constant time per query on all
-  three topologies; periodic queries wrap, bounded-plane queries may lie
-  outside the rect, welded inputs resolve to canonical cells; `locate_many`
-  batches queries across all cores.
-- Performance: the periodic pipeline runs the same packed SIMD kNN stage as
-  the bounded plane (~2x at 500k single-threaded, to within ~10% of the
-  bounded pipeline), and both planar pipelines emit the sphere's TIMING_KV
-  profiling schema under the `timing` feature.
+- Delaunay export (`delaunay_triangles()`): the dual triangulation read off
+  the stored graph — CCW winding (delaunator/CGAL convention), canonical
+  indices, complete (2c−4 triangles), cocircular ties fan-triangulated.
+- Point location (`build_locator()` → `SphereLocator`): reusable
+  nearest-generator queries in near-constant time per query; welded inputs
+  resolve to canonical cells; `locate_many` batches queries across all
+  cores.
 - API: `compute` / `compute_with` / `compute_with_report`, cell views,
-  edge-aligned neighbor adjacency (Delaunay edges), spherical and planar
-  cell areas and centroids with a one-call `lloyd_step()` (Lloyd relaxation
-  on sphere, rect, and torus), strict validation, vertex compaction, weld
-  introspection, optional serde for all diagram types.
+  edge-aligned neighbor adjacency (Delaunay edges), cell areas and
+  centroids with a one-call `lloyd_step()`, strict validation, vertex
+  compaction, weld introspection, optional serde for the diagram types.
 - Stable Rust (MSRV 1.88); explicit SIMD via `wide`.

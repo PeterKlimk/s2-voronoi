@@ -1,9 +1,8 @@
 # Architecture
 
-s2-voronoi computes Voronoi diagrams on the unit sphere and, with the same engine, on a bounded
-rectangle and a rectangular torus. The design builds every cell independently and in parallel,
-then stitches the cells into one shared graph. This document describes how that works and where
-the code lives.
+s2-voronoi computes Voronoi diagrams on the unit sphere. The design builds every cell
+independently and in parallel, then stitches the cells into one shared graph. This document
+describes how that works and where the code lives.
 
 ## The per-cell construction
 
@@ -15,8 +14,7 @@ On the sphere, bisectors are great circles. In a **gnomonic projection** centere
 generator — the tangent plane at that point — every great circle maps to a straight line, so
 spherical cell construction reduces to clipping a convex polygon by half-planes in 2D. The
 projection is different for every generator, which is why most 2D quantities cannot be shared
-between cells even when the underlying 3D bisector plane is shared. In the plane no projection is
-needed; clipping happens directly.
+between cells even when the underlying 3D bisector plane is shared.
 
 ### The security radius
 
@@ -48,8 +46,9 @@ above. They stop at independent cells — each thread holds its own polyhedron a
 shared, which is the right contract for Lloyd loops and flux integrals. Most uses of a Voronoi
 *diagram*, though, want a single graph: each vertex stored once, each edge knowing both its cells.
 Producing that from independently-built cells is the main work this crate adds, and the rest of
-the pipeline is geometry-agnostic — it is generic over the vertex position type and shared by all
-three geometries.
+the pipeline is geometry-agnostic — it is generic over the vertex position type, with the sphere
+contributing a thin driver (spatial index with certified distance bounds, bisector construction,
+termination predicate).
 
 Three mechanisms make it work without a global lock:
 
@@ -85,46 +84,20 @@ plus bounded repair yields a strictly valid subdivision. Geometric accuracy is b
 internally); validity only needs adjacent cells' combinatorial decisions to agree. Keep that
 explicit when touching any of the three mechanisms.
 
-## The three geometries
-
-Everything after clipping is geometry-agnostic. Each geometry contributes a thin driver: a spatial
-index with certified distance bounds, a bisector construction, and a termination predicate.
-
-**Sphere.** Cube-map grid; dot-product distance with conservative cap/plane upper bounds; gnomonic
-charts for clipping.
-
-**Bounded rectangle.** Flat grid; exact squared-distance bounds; no chart. The user rect is
-normalized with a uniform scale (Voronoi structure is not invariant under anisotropic scaling).
-The four walls enter as half-planes owned by virtual wall generators, so every cell is bounded
-from the seed, boundary vertices are ordinary three-generator keys, and the dedup/validation
-machinery never learns the domain has a boundary. Distance semantics are inverted relative to the
-sphere — squared Euclidean with lower-bound certificates rather than dot products with upper
-bounds — but the eligibility rules, packed layout, assembly, and reconciliation are shared.
-
-**Rectangular torus.** Same flat grid with rings that wrap modulo the resolution, minimum-image
-distances, and bisectors to each neighbor's nearest image (the wrap is bit-exactly antisymmetric,
-so both cells of a shared edge build the identical line). A half-period guard — every cell must be
-provably smaller than a quarter period — makes nearest-image clipping exact and keeps the vertex
-keys sound (without it three generators can define more than one circumcenter on a torus).
-Underpopulated domains fail loudly rather than wrap wrongly.
-
 ## Module map
 
-- `lib.rs` — public API. `diagram.rs`, `plane_diagram.rs` — diagram storage and views.
+- `lib.rs` — public API. `diagram.rs` — diagram storage and views.
 - `types.rs` — `UnitVec3`, `UnitVec3Like`. `tolerances.rs` — numerical slack, with per-constant
   justification. `policy.rs` — performance heuristics (grid density, packed sizing, termination
   cadence), kept separate from tolerances.
 - `live_dedup/` — the geometry-agnostic core: sharded vertex ownership, deferred-slot patching,
   edge-check propagation, assembly. Generic over the vertex position type.
 - `knn_clipping/` — the spherical backend: per-bin `driver.rs`, single-cell `cell_build/`,
-  gnomonic clipping in `topo2d/` (the 2D clip cores are shared with the plane), `preprocess.rs`
-  (weld), `edge_reconcile.rs` (shared), and cold-path topology repair in `escalate.rs` /
-  `local_hull.rs`.
-- `plane_clipping/` — the planar backend: domain normalization and grid-integrated weld, per-bin
-  driver, rect-seeded builder, and the periodic variants.
-- `cube_grid/` — cube-map spatial index and packed-kNN stage (sphere). `plane_grid/` — flat
-  index, packed-kNN stage, and shell frontier (plane).
+  gnomonic clipping in `topo2d/`, `preprocess.rs` (weld), `edge_reconcile.rs`, and cold-path
+  topology repair in `escalate.rs` / `local_hull.rs`.
+- `cube_grid/` — cube-map spatial index and packed-kNN stage: dot-product distance with
+  conservative cap/plane upper bounds, ring walk with per-ring certificates.
 - `locate.rs` — point location, reusing the grid shell frontiers to answer nearest-generator
-  queries. `validation.rs` — strict subdivision checks for all three topologies.
+  queries. `validation.rs` — strict subdivision checks.
 - `timing/` — optional instrumentation. `convex_hull.rs` — qhull dual backend, for comparison
   tests only.

@@ -16,8 +16,7 @@ valid subdivision of the sphere**:
 This is the property downstream code actually depends on — adjacency queries, meshing, rendering
 with shared vertex buffers all break on a non-manifold graph, not on a vertex that is 1e-7 off its
 true position. `validation::validate` checks it, and the test suite asserts it via fuzzing at
-2M-4M points across many seeds. The planar and toroidal APIs make the same promise over their
-domains (`validate_plane`; the torus uses `V - E + F = 0`).
+2M-4M points across many seeds.
 
 Geometry is a separate, softer matter. Vertex positions are accurate to floating-point working
 precision — inputs are f32, the clipping pipeline runs in f64, vertices are stored as f32. No f32
@@ -28,9 +27,9 @@ graph stays valid.
 
 ## Coincident generators (welding)
 
-Generators closer than a fixed radius are **welded** into one cell before construction: ~1.4e-6
-chord on the sphere, ~1e-6 of the longer side in the plane, both derived from f32 rounding with a
-measured safety margin (~8x on the sphere). Welded inputs share a canonical cell, exposed through
+Generators closer than a fixed radius (~1.4e-6 chord) are **welded** into one cell before
+construction; the radius is derived from f32 rounding with a measured safety margin (~8x over the
+worst adversarial construction). Welded inputs share a canonical cell, exposed through
 `weld_map()`.
 
 Welding is required for graph validity, not just input hygiene: three or more mutually-near

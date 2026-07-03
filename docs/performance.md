@@ -8,13 +8,12 @@ triangulation-based libraries grows with input size.
 
 Ryzen 3600 (6 cores), uniform input, minimum of repeats:
 
-| n  | sphere (MT) | plane (MT) | voronoice (plane) |
-|----|-------------|------------|-------------------|
-| 1M | ~330ms | ~430ms | ~1.4s |
-| 2M | ~720ms | ~1.0s | ~3.5s |
+| n  | multithreaded |
+|----|---------------|
+| 1M | ~330ms |
+| 2M | ~720ms |
 
-Single-threaded, the two geometries are at parity per point (~1.8s at 1M). The `voronoice` gap
-grows with n because its delaunator core is O(n log n).
+Single-threaded, ~1.8s at 1M.
 
 Peak resident memory per build is roughly linear, ~0.65 KB/point (500k ≈ 320 MB, 1M ≈ 660 MB,
 2M ≈ 1.3 GB). The working set frees when the diagram drops. A process that builds many diagrams in
@@ -33,7 +32,6 @@ The benchmark binaries need the `tools` feature:
 
 ```bash
 cargo run --release --features tools --bin bench_voronoi -- 100k 500k 1m
-cargo run --release --features tools --bin bench_plane   -- 1m 2m -n 6 --validate
 ```
 
 Useful flags:
@@ -41,9 +39,8 @@ Useful flags:
 - `--dist {fib|uniform|clustered|bimodal|gradient|outlier|splittable|mega}` and `--dist-param` —
   non-uniform distributions exercise the density-adaptive paths that uniform input never reaches.
   Benchmark across a few of these, not uniform alone.
-- `--validate` — run strict validation after each build.
+- `--validate` — compare against the convex-hull ground truth (slow; capped at 100k).
 - `--no-preprocess` — skip welding (isolates construction cost).
-- head-to-head against `voronoice`: `--features bench_voronoice ... --voronoice`.
 
 ## Knobs
 
