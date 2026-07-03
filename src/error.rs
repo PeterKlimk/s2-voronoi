@@ -4,6 +4,7 @@ use std::fmt;
 
 /// Errors that can occur during Voronoi computation.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum VoronoiError {
     /// Not enough points to form a valid Voronoi diagram on the sphere.
     /// Need at least 4 points for a non-degenerate result.

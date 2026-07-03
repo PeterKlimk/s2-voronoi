@@ -13,10 +13,7 @@ use support::points::*;
 
 #[test]
 fn local_escalation_makes_mega_strictly_valid() {
-    let off = || VoronoiConfig {
-        repair_mode: RepairMode::Disabled,
-        ..VoronoiConfig::default()
-    };
+    let off = || VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
     let on = VoronoiConfig::default;
     let mut fixed_at_least_one = false;
     for seed in [1u64, 2, 15] {
@@ -92,10 +89,7 @@ fn accepted_default_repair_clears_surviving_residual_report() {
 #[test]
 #[ignore = "broad escalation sweep; run with --ignored --nocapture"]
 fn local_escalation_broad_sweep() {
-    let off = || VoronoiConfig {
-        repair_mode: RepairMode::Disabled,
-        ..VoronoiConfig::default()
-    };
+    let off = || VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
     let on = VoronoiConfig::default;
     let mut cases: Vec<(String, Vec<_>)> = Vec::new();
     for seed in 1u64..=20 {

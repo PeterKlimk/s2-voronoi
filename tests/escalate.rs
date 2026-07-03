@@ -1333,10 +1333,7 @@ fn detect_fix_expand_delaunator() {
 #[test]
 #[ignore = "report-only sweep; run with --ignored --nocapture"]
 fn escalation_generalization_sweep() {
-    let off = || VoronoiConfig {
-        repair_mode: RepairMode::Disabled,
-        ..VoronoiConfig::default()
-    };
+    let off = || VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
     let on = VoronoiConfig::default;
     let run = |label: &str, pts: &[UnitVec3]| {
         let before = compute_with_report(pts, off()).expect("build");
@@ -1380,10 +1377,7 @@ fn escalation_generalization_sweep() {
 /// the on/off builds below are reliable under parallel execution.
 #[test]
 fn escalation_repair_makes_mega_strictly_valid() {
-    let off = || VoronoiConfig {
-        repair_mode: RepairMode::Disabled,
-        ..VoronoiConfig::default()
-    };
+    let off = || VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
     let on = VoronoiConfig::default;
     let mut fixed_at_least_one = false;
     for seed in [1u64, 2, 15] {

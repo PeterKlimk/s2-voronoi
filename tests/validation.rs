@@ -51,10 +51,7 @@ fn test_validation_clustered_cap_tight_without_preprocess_is_strictly_valid() {
     let points = clustered_cap_points(100, 0.0175, 42);
     let diagram = compute_with(
         &points,
-        VoronoiConfig {
-            preprocess_mode: PreprocessMode::Disabled,
-            ..VoronoiConfig::default()
-        },
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled),
     )
     .expect("clustered cap should compute without preprocessing");
     let report = validate(&diagram);

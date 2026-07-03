@@ -22,10 +22,7 @@ use s2_voronoi::{compute_with, validation::validate, PreprocessMode, UnitVec3, V
 use support::points::random_sphere_points;
 
 fn run(name: &str, points: &[UnitVec3]) {
-    let config = VoronoiConfig {
-        preprocess_mode: PreprocessMode::Disabled,
-        ..VoronoiConfig::default()
-    };
+    let config = VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled);
     match compute_with(points, config) {
         Ok(diagram) => {
             let report = validate(&diagram);

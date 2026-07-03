@@ -11,6 +11,7 @@ use crate::tolerances::{ANTIPODAL_DOT_EPS, VERTEX_ON_SPHERE_EPS};
 
 /// Detailed validation report for a spherical Voronoi diagram.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ValidationReport {
     /// Number of cells (faces) in the diagram.
     pub num_cells: usize,

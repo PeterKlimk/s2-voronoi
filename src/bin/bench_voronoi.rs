@@ -418,14 +418,11 @@ fn validate_against_hull(points: &[Vec3], preprocess: bool) {
     let t1 = Instant::now();
     let s2_diagram = s2_voronoi::compute_with(
         &unit_points,
-        VoronoiConfig {
-            preprocess_mode: if preprocess {
-                PreprocessMode::Weld
-            } else {
-                PreprocessMode::Disabled
-            },
-            ..VoronoiConfig::default()
-        },
+        VoronoiConfig::default().with_preprocess_mode(if preprocess {
+            PreprocessMode::Weld
+        } else {
+            PreprocessMode::Disabled
+        }),
     )
     .expect("s2-voronoi should succeed");
     let s2_time = t1.elapsed().as_secs_f64() * 1000.0;
@@ -558,19 +555,17 @@ fn main() {
         let mut times: Vec<f64> = Vec::with_capacity(args.repeat);
         let mut last_result: Option<BenchResult> = None;
 
-        let config = VoronoiConfig {
-            preprocess_mode: if args.no_preprocess {
+        let config = VoronoiConfig::default()
+            .with_preprocess_mode(if args.no_preprocess {
                 PreprocessMode::Disabled
             } else {
                 PreprocessMode::Weld
-            },
-            repair_mode: if args.no_repair {
+            })
+            .with_repair_mode(if args.no_repair {
                 RepairMode::Disabled
             } else {
                 RepairMode::Local3d
-            },
-            ..VoronoiConfig::default()
-        };
+            });
 
         for iter in 0..args.repeat {
             if args.repeat > 1 {

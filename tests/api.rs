@@ -74,20 +74,14 @@ fn test_compute_with_explicit_preprocess_modes() {
 
     let density = compute_with(
         &points,
-        VoronoiConfig {
-            preprocess_mode: PreprocessMode::Weld,
-            ..VoronoiConfig::default()
-        },
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Weld),
     )
     .expect("density-based preprocessing should succeed");
     assert_eq!(density.num_cells(), 50);
 
     let disabled = compute_with(
         &points,
-        VoronoiConfig {
-            preprocess_mode: PreprocessMode::Disabled,
-            ..VoronoiConfig::default()
-        },
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled),
     )
     .expect("disabled preprocessing should succeed");
     assert_eq!(disabled.num_cells(), 50);
@@ -99,10 +93,7 @@ fn test_compute_with_report_surfaces_preprocess_outcome() {
 
     let output = compute_with_report(
         &points,
-        VoronoiConfig {
-            preprocess_mode: PreprocessMode::Weld,
-            ..VoronoiConfig::default()
-        },
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Weld),
     )
     .expect("compute_with_report should succeed");
 
@@ -145,10 +136,7 @@ fn test_rank2_great_circle_policy_is_explicit() {
 
     let strict = compute_with(
         &points,
-        VoronoiConfig {
-            degenerate_mode: DegenerateMode::Strict,
-            ..VoronoiConfig::default()
-        },
+        VoronoiConfig::default().with_degenerate_mode(DegenerateMode::Strict),
     );
     assert!(
         matches!(
@@ -185,10 +173,7 @@ fn test_clustered_cap_tight_report_keeps_default_preprocessing_nonintrusive() {
 
     let output = compute_with_report(
         &points,
-        VoronoiConfig {
-            preprocess_mode: PreprocessMode::Weld,
-            ..VoronoiConfig::default()
-        },
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Weld),
     )
     .expect("clustered cap should still compute with default preprocessing");
 
@@ -232,10 +217,7 @@ fn test_clustered_cap_extreme_weld_keeps_returned_diagram_strictly_valid() {
     // (the default weld radius is far below its point spacing).
     let output = compute_with_report(
         &points,
-        VoronoiConfig {
-            preprocess_mode: PreprocessMode::MergeWithin(3.5e-4),
-            ..VoronoiConfig::default()
-        },
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::MergeWithin(3.5e-4)),
     )
     .expect("clustered_cap_extreme should compute under coarse welding");
 
@@ -325,10 +307,7 @@ fn test_compute_with_report_exposes_effective_diagram_when_merges_occur() {
 
     let output = compute_with_report(
         &points,
-        VoronoiConfig {
-            preprocess_mode: PreprocessMode::MergeWithin(0.001),
-            ..VoronoiConfig::default()
-        },
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::MergeWithin(0.001)),
     )
     .expect("explicit merge preprocessing should still compute");
 
@@ -625,10 +604,7 @@ fn test_merge_within_large_radius_uses_standalone_detector() {
 
     let output = compute_with_report(
         &points,
-        VoronoiConfig {
-            preprocess_mode: PreprocessMode::MergeWithin(0.05),
-            ..VoronoiConfig::default()
-        },
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::MergeWithin(0.05)),
     )
     .expect("large MergeWithin radius should compute via the fallback path");
 

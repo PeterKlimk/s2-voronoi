@@ -99,10 +99,7 @@ fn test_clustered_cap_small_no_preprocess() {
     use s2_voronoi::{compute_with, PreprocessMode, VoronoiConfig};
 
     let points = clustered_cap_points(100, 0.087, 42);
-    let config = VoronoiConfig {
-        preprocess_mode: PreprocessMode::Disabled,
-        ..VoronoiConfig::default()
-    };
+    let config = VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled);
     expect_strict_success(
         "clustered_cap_small_no_preprocess",
         compute_with(&points, config),
@@ -114,10 +111,7 @@ fn test_clustered_cap_tight_no_preprocess() {
     use s2_voronoi::{compute_with, PreprocessMode, VoronoiConfig};
 
     let points = clustered_cap_points(100, 0.0175, 42);
-    let config = VoronoiConfig {
-        preprocess_mode: PreprocessMode::Disabled,
-        ..VoronoiConfig::default()
-    };
+    let config = VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled);
     expect_strict_success(
         "clustered_cap_tight_no_preprocess",
         compute_with(&points, config),
@@ -129,10 +123,7 @@ fn test_cocircular_tight_no_preprocess() {
     use s2_voronoi::{compute_with, PreprocessMode, VoronoiConfig};
 
     let points = near_cocircular_stress_points(25, 0.001, 42);
-    let config = VoronoiConfig {
-        preprocess_mode: PreprocessMode::Disabled,
-        ..VoronoiConfig::default()
-    };
+    let config = VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled);
     expect_strict_success(
         "cocircular_tight_no_preprocess",
         compute_with(&points, config),
@@ -501,10 +492,7 @@ fn test_sub_weld_cluster_without_welding_is_degenerate_input() {
 
     let result = compute_with(
         &points,
-        VoronoiConfig {
-            preprocess_mode: PreprocessMode::Disabled,
-            ..VoronoiConfig::default()
-        },
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled),
     );
     match result {
         Err(VoronoiError::DegenerateInput {
@@ -564,10 +552,7 @@ fn test_above_weld_pairs_resolve_without_welding() {
         }
         let result = compute_with(
             &points,
-            VoronoiConfig {
-                preprocess_mode: PreprocessMode::Disabled,
-                ..VoronoiConfig::default()
-            },
+            VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled),
         );
         expect_strict_success(&format!("above_weld_pairs_sep_{sep:.0e}"), result);
     }
@@ -620,10 +605,7 @@ fn test_rotated_symmetric_pairs_resolve_without_welding() {
 
     let result = compute_with(
         &points,
-        VoronoiConfig {
-            preprocess_mode: PreprocessMode::Disabled,
-            ..VoronoiConfig::default()
-        },
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled),
     );
     expect_strict_success("rotated_symmetric_ulp_pairs", result);
 }

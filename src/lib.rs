@@ -50,6 +50,8 @@ pub(crate) mod generated;
 mod measures;
 mod packed_layout;
 pub(crate) mod policy;
+/// Diagnostic quality assessment (bench/comparison tooling only).
+#[cfg(any(feature = "qhull", feature = "tools"))]
 #[doc(hidden)]
 pub mod quality;
 pub(crate) mod sort;
@@ -144,16 +146,6 @@ pub mod escalate_probe {
     };
 }
 
-/// Probe override for the dependency-free local repair pass.
-///
-/// Normal callers should use [`VoronoiConfig::repair_mode`]. This process-global
-/// hook remains only for diagnostic tests that need to force the repair path
-/// without rebuilding call sites.
-#[doc(hidden)]
-pub fn set_escalation_enabled(on: bool) {
-    crate::knn_clipping::escalate::set_escalation_enabled(on);
-}
-
 pub use locate::SphereLocator;
 pub use types::{UnitVec3, UnitVec3Like};
 
@@ -162,6 +154,7 @@ pub use convex_hull::compute_voronoi_qhull;
 
 /// Preprocessing mode applied before Voronoi computation.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum PreprocessMode {
     /// Do not weld near-coincident generators.
     ///
@@ -182,6 +175,7 @@ pub enum PreprocessMode {
 
 /// Post-assembly repair policy for rare near-degenerate topology defects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RepairMode {
     /// Do not run local repair. Residual unpaired edges remain
     /// observable through `compute_with_report` and make plain `compute` fail.
@@ -201,6 +195,7 @@ pub enum RepairMode {
 /// Policy for degenerate spherical inputs that do not have a stable
 /// full-dimensional floating-point topology.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DegenerateMode {
     /// Return the backend's ordinary clean error for unsupported degenerate
     /// geometries. This is the default valid-or-error contract.
@@ -216,6 +211,7 @@ pub enum DegenerateMode {
 
 /// Observable preprocessing outcome for a computation run.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct PreprocessReport {
     /// Requested preprocessing mode.
     pub requested_mode: PreprocessMode,
@@ -246,6 +242,7 @@ impl PreprocessReport {
 
 /// Observable degenerate-input handling outcome for a computation run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DegenerateReport {
     /// Requested degenerate-input policy.
     pub requested_mode: DegenerateMode,
@@ -256,6 +253,7 @@ pub struct DegenerateReport {
 
 /// Observable per-run report for Voronoi computation.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ComputeReport {
     /// What preprocessing did to the input.
     pub preprocess: PreprocessReport,
@@ -314,6 +312,7 @@ impl ComputeReport {
 
 /// Output of `compute_with_report`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct ComputeOutput {
     /// The returned diagram (one cell per input point; welded twins share
     /// their canonical cell).
@@ -338,7 +337,12 @@ impl ComputeOutput {
 }
 
 /// Configuration for Voronoi computation.
+///
+/// Construct with [`VoronoiConfig::default`] and adjust through the
+/// `with_*` methods (or by assigning to the public fields); the struct is
+/// `#[non_exhaustive]`, so it cannot be built with struct-literal syntax.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct VoronoiConfig {
     /// Preprocessing applied before Voronoi computation.
     ///
@@ -370,6 +374,26 @@ impl Default for VoronoiConfig {
             repair_mode: RepairMode::Local3d,
             degenerate_mode: DegenerateMode::PerturbGreatCircle,
         }
+    }
+}
+
+impl VoronoiConfig {
+    /// Default config with the given [`PreprocessMode`].
+    pub fn with_preprocess_mode(mut self, mode: PreprocessMode) -> Self {
+        self.preprocess_mode = mode;
+        self
+    }
+
+    /// Default config with the given [`RepairMode`].
+    pub fn with_repair_mode(mut self, mode: RepairMode) -> Self {
+        self.repair_mode = mode;
+        self
+    }
+
+    /// Default config with the given [`DegenerateMode`].
+    pub fn with_degenerate_mode(mut self, mode: DegenerateMode) -> Self {
+        self.degenerate_mode = mode;
+        self
     }
 }
 

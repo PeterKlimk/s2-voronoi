@@ -114,10 +114,7 @@ fn welding_subradius_cluster_is_strictly_valid() {
 
     let output = s2_voronoi::compute_with_report(
         &points,
-        VoronoiConfig {
-            preprocess_mode: PreprocessMode::MergeWithin(1e-4),
-            ..VoronoiConfig::default()
-        },
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::MergeWithin(1e-4)),
     )
     .expect("explicit welding should solve the subradius cluster");
 
@@ -156,10 +153,7 @@ fn dense_cap_frontier_requires_repair_but_default_is_valid() {
 
     let raw = s2_voronoi::compute_with_report(
         &points,
-        VoronoiConfig {
-            repair_mode: RepairMode::Disabled,
-            ..VoronoiConfig::default()
-        },
+        VoronoiConfig::default().with_repair_mode(RepairMode::Disabled),
     )
     .expect("dense-cap raw path should build far enough to report the residual defect");
 
