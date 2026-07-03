@@ -1,11 +1,16 @@
 //! Disjoint-set (union-find) with path compression.
 
+/// Dense disjoint-set. No production caller since edge_reconcile moved to
+/// [`SparseUnionFind`]; retained as the semantics oracle for the sparse
+/// equivalence test.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug)]
 pub(crate) struct UnionFind {
     parent: Vec<u32>,
     rank: Vec<u8>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 impl UnionFind {
     pub fn new(n: usize) -> Self {
         let mut parent = Vec::with_capacity(n);
@@ -49,19 +54,6 @@ impl UnionFind {
             self.parent[rb_idx] = ra;
             self.rank[ra_idx] = self.rank[ra_idx].saturating_add(1);
         }
-        true
-    }
-
-    /// Order-dependent union: the smaller index always becomes the representative.
-    /// Returns `true` if `a` and `b` were in different sets.
-    pub fn union_keep_min(&mut self, a: u32, b: u32) -> bool {
-        let ra = self.find(a);
-        let rb = self.find(b);
-        if ra == rb {
-            return false;
-        }
-        let (min, max) = if ra <= rb { (ra, rb) } else { (rb, ra) };
-        self.parent[max as usize] = min;
         true
     }
 }
@@ -115,8 +107,7 @@ impl SparseUnionFind {
     }
 
     /// Order-dependent union: the smaller index always becomes the
-    /// representative (mirrors `UnionFind::union_keep_min`). Returns `true`
-    /// if `a` and `b` were in different sets.
+    /// representative. Returns `true` if `a` and `b` were in different sets.
     pub fn union_keep_min(&mut self, a: u32, b: u32) -> bool {
         let ra = self.find(a);
         let rb = self.find(b);

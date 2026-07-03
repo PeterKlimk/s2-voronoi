@@ -21,6 +21,8 @@ pub(crate) struct EscalationCtx<'a> {
 }
 
 impl EscalationCtx<'static> {
+    /// Context with escalation inert; test/microbench harness callers only.
+    #[cfg(any(test, feature = "microbench"))]
     pub(crate) fn disabled() -> Self {
         Self {
             generator_raw: glam::Vec3::ZERO,

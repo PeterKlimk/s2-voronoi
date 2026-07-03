@@ -155,57 +155,6 @@ impl Dots8 {
     }
 }
 
-/// Eight planar points (x, y lanes) for the planar packed-kNN hot loops;
-/// the 2D sibling of [`PointChunk8`].
-pub(crate) struct PlaneChunk8 {
-    x: backend::V,
-    y: backend::V,
-}
-
-/// Eight squared distances; planar semantics are "smaller is closer", so
-/// the mask is `mask_lt`.
-pub(crate) struct Dists8(backend::V);
-
-impl PlaneChunk8 {
-    #[inline(always)]
-    pub(crate) fn from_arrays(x: [f32; 8], y: [f32; 8]) -> Self {
-        Self {
-            x: backend::load_array(x),
-            y: backend::load_array(y),
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn from_array_refs(x: &[f32; 8], y: &[f32; 8]) -> Self {
-        Self::from_arrays(*x, *y)
-    }
-
-    /// Lane-wise squared Euclidean distances to a broadcast query point.
-    #[inline(always)]
-    pub(crate) fn dist_sqs(&self, qx: f32, qy: f32) -> Dists8 {
-        Dists8(backend::dist_sq2(self.x, self.y, qx, qy))
-    }
-
-    /// Lane-wise minimum-image squared distances on a torus.
-    #[inline(always)]
-    pub(crate) fn dist_sqs_wrapped(&self, qx: f32, qy: f32, px: f32, py: f32) -> Dists8 {
-        Dists8(backend::dist_sq2_wrapped(self.x, self.y, qx, qy, px, py))
-    }
-}
-
-impl Dists8 {
-    /// Bitmask of lanes with dist_sq < threshold (lane i -> bit i).
-    #[inline(always)]
-    pub(crate) fn mask_lt(&self, threshold: f32) -> u32 {
-        backend::mask_lt(self.0, threshold)
-    }
-
-    #[inline(always)]
-    pub(crate) fn to_array(&self) -> [f32; 8] {
-        backend::to_array(self.0)
-    }
-}
-
 /// Signed distances of the first 8 polygon vertices to a half-plane
 /// (`fma_f64(a, u, fma_f64(b, v, c))`, lane-exact with the scalar formula)
 /// plus the inside bitmask (`d >= neg_eps`, lane i -> bit i).
@@ -242,7 +191,7 @@ pub(crate) fn signed_dists_mask4(
 
 #[cfg(not(feature = "simd_scalar"))]
 mod backend {
-    use wide::{f32x8, f64x4, CmpGe, CmpGt, CmpLt};
+    use wide::{f32x8, f64x4, CmpGe, CmpGt};
 
     pub(super) type V = f32x8;
 
@@ -270,44 +219,6 @@ mod backend {
     #[inline(always)]
     pub(super) fn mask_gt(v: V, threshold: f32) -> u32 {
         v.cmp_gt(f32x8::splat(threshold)).move_mask() as u32 & 0xff
-    }
-
-    #[inline(always)]
-    pub(super) fn dist_sq2(x: V, y: V, qx: f32, qy: f32) -> V {
-        let dx = x - f32x8::splat(qx);
-        let dy = y - f32x8::splat(qy);
-        #[cfg(feature = "fma")]
-        {
-            dx.mul_add(dx, dy * dy)
-        }
-        #[cfg(not(feature = "fma"))]
-        {
-            dx * dx + dy * dy
-        }
-    }
-
-    /// Minimum-image squared distances on a torus with periods `(px, py)`.
-    /// Lane math mirrors `plane_grid::periodic::wrap_abs`: `|d|.min(p - |d|)`
-    /// per axis (coordinates and query are both inside `[0, p)`).
-    #[inline(always)]
-    pub(super) fn dist_sq2_wrapped(x: V, y: V, qx: f32, qy: f32, px: f32, py: f32) -> V {
-        let dx = (x - f32x8::splat(qx)).abs();
-        let dx = dx.min(f32x8::splat(px) - dx);
-        let dy = (y - f32x8::splat(qy)).abs();
-        let dy = dy.min(f32x8::splat(py) - dy);
-        #[cfg(feature = "fma")]
-        {
-            dx.mul_add(dx, dy * dy)
-        }
-        #[cfg(not(feature = "fma"))]
-        {
-            dx * dx + dy * dy
-        }
-    }
-
-    #[inline(always)]
-    pub(super) fn mask_lt(v: V, threshold: f32) -> u32 {
-        v.cmp_lt(f32x8::splat(threshold)).move_mask() as u32 & 0xff
     }
 
     #[inline(always)]
@@ -396,41 +307,6 @@ mod backend {
         let mut bits = 0u32;
         for (i, &d) in v.iter().enumerate() {
             bits |= u32::from(d > threshold) << i;
-        }
-        bits
-    }
-
-    #[inline(always)]
-    pub(super) fn dist_sq2(x: V, y: V, qx: f32, qy: f32) -> V {
-        let mut out = [0.0f32; 8];
-        for i in 0..8 {
-            let dx = x[i] - qx;
-            let dy = y[i] - qy;
-            out[i] = super::fma_f32(dx, dx, dy * dy);
-        }
-        out
-    }
-
-    /// Scalar twin of the wide backend's minimum-image distances (identical
-    /// lane math).
-    #[inline(always)]
-    pub(super) fn dist_sq2_wrapped(x: V, y: V, qx: f32, qy: f32, px: f32, py: f32) -> V {
-        let mut out = [0.0f32; 8];
-        for i in 0..8 {
-            let dx = (x[i] - qx).abs();
-            let dx = dx.min(px - dx);
-            let dy = (y[i] - qy).abs();
-            let dy = dy.min(py - dy);
-            out[i] = super::fma_f32(dx, dx, dy * dy);
-        }
-        out
-    }
-
-    #[inline(always)]
-    pub(super) fn mask_lt(v: V, threshold: f32) -> u32 {
-        let mut bits = 0u32;
-        for (i, &d) in v.iter().enumerate() {
-            bits |= u32::from(d < threshold) << i;
         }
         bits
     }

@@ -51,14 +51,13 @@ S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_v
 
 - `RAYON_NUM_THREADS=1`: force single-threaded mode (stable perf comparisons).
 - `S2_BIN_COUNT=<n>`: override sharded bin count (defaults to about 2x threads).
-- `S2_VORONOI_PLANE_GRID_DENSITY=<d>`: override the planar grid's points-per-cell target (default 4).
 - `S2_VORONOI_TIMING_KV=1`: emit machine-readable timing lines (`timing` feature).
-- `S2_VORONOI_VERIFY=1`: run the full topological validator after every build on the plain `compute`/`compute_plane` fast paths (which otherwise skip it) and return an error on any strict-validity failure. Off by default; O(E) cost per call. Belt-and-braces for callers wanting output validity machine-checked regardless of detection bookkeeping.
+- `S2_VORONOI_VERIFY=1`: run the full topological validator after every build on the plain `compute` fast path (which otherwise skips it) and return an error on any strict-validity failure. Off by default; O(E) cost per call. Belt-and-braces for callers wanting output validity machine-checked regardless of detection bookkeeping.
 - `S2_EDGE_REPAIR_REBUILD=1`: select the full-rewrite repair backend (differential oracle for the in-place default).
 
 ## Crate Overview
 
-`s2-voronoi` computes spherical Voronoi diagrams on the unit sphere (S2) using kNN-driven half-space clipping, plus planar Voronoi diagrams over a bounded rectangle through the same sharded dedup engine (`compute_plane`).
+`s2-voronoi` computes spherical Voronoi diagrams on the unit sphere (S2) using kNN-driven half-space clipping. (A planar/toroidal backend over the same dedup engine lives on the `parked/planar-backend` branch, removed from the release surface.)
 
 High-level flow per generator:
 
@@ -83,9 +82,8 @@ src/
 ├── lib.rs                         # Public API and feature-gated internal exports
 ├── types.rs                       # UnitVec3 / UnitVec3Like
 ├── diagram.rs                     # SphericalVoronoi storage
-├── plane_diagram.rs               # PlanarVoronoi / PlanePoint / PlaneRect storage
-├── validation.rs                  # Topology checks (sphere + plane variants)
-├── locate.rs                      # Point-location API (SphereLocator / PlaneLocator)
+├── validation.rs                  # Topology checks
+├── locate.rs                      # Point-location API (SphereLocator)
 ├── error.rs                       # VoronoiError
 ├── fp.rs                          # Numeric helper ops + OrdF32
 ├── tolerances.rs                  # Centralized numerical tolerances
@@ -104,11 +102,6 @@ src/
 │   ├── edge_reconcile.rs          # Post-assembly edge reconciliation (shared)
 │   ├── cell_build/                # Single-cell construction loop
 │   └── topo2d/                    # Gnomonic/topological clipping
-├── plane_clipping/                # Planar backend (bounded rect)
-│   ├── compute.rs                 # Domain normalization + orchestration
-│   ├── driver.rs                  # Per-bin cell-build driver (plane)
-│   └── builder.rs                 # Rect-seeded planar cell builder
-├── plane_grid/                    # Flat 2D spatial index + shell frontier
 ├── cube_grid/                     # Spherical spatial index + query stack
 │   ├── build.rs                   # Grid construction
 │   ├── projection.rs              # Face/uv/st conversion helpers
@@ -129,8 +122,7 @@ src/
 - Internal: `timing` (instrumentation), `profiling` (inline control),
   `microbench` (harnesses), `simd_scalar` (non-`wide` 8-lane fallback),
   `fma` (mul_add; off by default, see ledger), `tools` (bench binaries),
-  `bench_voronoice` (head-to-head planar comparison), `p5_shadow` (P5
-  stage-1 canonical-vs-local clip decision audit).
+  `p5_shadow` (P5 stage-1 canonical-vs-local clip decision audit).
 
 ## Tests
 

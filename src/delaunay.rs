@@ -18,7 +18,7 @@
 
 use glam::DVec3;
 
-use crate::{PlanarVoronoi, PlaneTopology, SphericalVoronoi};
+use crate::SphericalVoronoi;
 
 /// CSR incidence: for each vertex, the canonical cells whose boundary uses
 /// it. Twin cells alias canonical storage, so they are skipped to avoid
@@ -117,69 +117,5 @@ fn reference_axis(p: DVec3) -> DVec3 {
         DVec3::X
     } else {
         DVec3::Y
-    }
-}
-
-impl PlanarVoronoi {
-    /// The Delaunay triangulation dual to this diagram: one triangle per
-    /// interior Voronoi vertex, as `[a, b, c]` cell indices wound
-    /// counterclockwise.
-    ///
-    /// On a **periodic** diagram this is the complete Delaunay
-    /// triangulation of the torus (`2c` triangles for `c` canonical
-    /// cells); a triangle's corners are nearest images of each other, so
-    /// seam-straddling triangles unwrap the same way cells do. On a
-    /// **bounded** diagram it is the subset of Delaunay triangles whose
-    /// circumcenter lies inside the rect — triangles dual to vertices
-    /// clipped away by the walls are not present (the walls' virtual
-    /// generators are not real points to triangulate).
-    ///
-    /// Welded twins do not appear; every triangle edge is a neighbor pair
-    /// of [`Self::build_adjacency`].
-    pub fn delaunay_triangles(&self) -> Vec<[u32; 3]> {
-        let n = self.num_cells();
-        let (offsets, incident) =
-            incidence_from_cells(self.num_vertices(), n, self.weld_map(), |i| self.cell(i));
-
-        let rect = self.rect();
-        let (px, py) = (rect.width() as f64, rect.height() as f64);
-        let periodic = self.topology() == PlaneTopology::Periodic;
-
-        let mut triangles = Vec::with_capacity(self.num_vertices());
-        let mut ring: Vec<(f64, u32)> = Vec::new();
-        for v in 0..self.num_vertices() {
-            let cells = &incident[offsets[v] as usize..offsets[v + 1] as usize];
-            // Wall vertices (bounded) touch fewer than 3 real cells: a wall
-            // is not a generator, so no triangle is dual to them.
-            if cells.len() < 3 {
-                continue;
-            }
-            let p = self.vertex(v);
-            ring.clear();
-            for &c in cells {
-                let g = self.generator(c as usize);
-                let mut dx = g.x as f64 - p.x as f64;
-                let mut dy = g.y as f64 - p.y as f64;
-                if periodic {
-                    dx = wrap_half(dx, px);
-                    dy = wrap_half(dy, py);
-                }
-                ring.push((dy.atan2(dx), c));
-            }
-            ring.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
-            let sorted: Vec<u32> = ring.iter().map(|&(_, c)| c).collect();
-            emit_fan(&sorted, &mut triangles);
-        }
-        triangles
-    }
-}
-
-/// Wrap a displacement into `(-p/2, p/2]` (minimum image).
-fn wrap_half(d: f64, p: f64) -> f64 {
-    let w = d.rem_euclid(p);
-    if w > p / 2.0 {
-        w - p
-    } else {
-        w
     }
 }

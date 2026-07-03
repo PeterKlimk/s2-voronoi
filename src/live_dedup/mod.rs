@@ -18,9 +18,9 @@ mod types;
 
 pub use cell_output::{CellBuildError, CellFailure, CellOutputBuffer, VertexData, VertexKey};
 
+pub(crate) use binning::assign_bins;
 pub(crate) use binning::BinAssignment;
 pub(crate) use binning::PackedLayoutCapacityError;
-pub(crate) use binning::{assign_bins, assign_bins_with, target_bin_count};
 pub(crate) use edge_checks::unpack_edge_key;
 pub(crate) use emit::{checked_local_id, checked_u32, emit_cell_output, EdgeScratch, ShardContext};
 pub(crate) use packed::pack_edge;
@@ -112,8 +112,7 @@ pub(crate) struct ShardedCellsData<P = glam::Vec3> {
 }
 
 impl<P: VertexPosition> ShardedCellsData<P> {
-    /// Assemble from a geometry driver's output (the planar driver lives in
-    /// `plane_clipping` and builds shards through the pub(crate) seam).
+    /// Assemble from a geometry driver's output.
     pub(crate) fn from_parts(
         assignment: BinAssignment,
         shards: Vec<ShardState<P>>,

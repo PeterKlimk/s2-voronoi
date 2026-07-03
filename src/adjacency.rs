@@ -7,7 +7,7 @@
 //! alias their canonical cell's adjacency exactly like they alias its
 //! boundary.
 
-use crate::{PlanarVoronoi, SphericalVoronoi};
+use crate::SphericalVoronoi;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -151,26 +151,6 @@ impl SphericalVoronoi {
         build_adjacency_from_parts(
             self.num_cells(),
             |i| (self.cell_start(i), self.cell(i).len() as u16),
-            self.cell_indices_raw(),
-            |i| self.canonical_cell_index(i),
-        )
-    }
-}
-
-impl PlanarVoronoi {
-    /// Build the cell adjacency (Voronoi neighbor graph / clipped Delaunay
-    /// edges).
-    ///
-    /// Same alignment contract as the spherical version:
-    /// `adjacency.neighbors_of(i)[k]` lies across the boundary edge from
-    /// vertex `k` to vertex `k + 1` (cyclic) of cell `i`. Edges on the
-    /// domain rectangle's boundary carry [`NO_NEIGHBOR`]. The undirected
-    /// neighbor pairs over canonical cells are the Delaunay edges of the
-    /// generator set clipped to the rect.
-    pub fn build_adjacency(&self) -> CellAdjacency {
-        build_adjacency_from_parts(
-            self.num_cells(),
-            |i| self.cell_range(i),
             self.cell_indices_raw(),
             |i| self.canonical_cell_index(i),
         )

@@ -49,8 +49,6 @@ mod fp;
 pub(crate) mod generated;
 mod measures;
 mod packed_layout;
-mod plane_diagram;
-mod plane_measures;
 pub(crate) mod policy;
 #[doc(hidden)]
 pub mod quality;
@@ -100,8 +98,6 @@ pub(crate) mod cube_grid;
 pub(crate) mod knn_clipping;
 pub(crate) mod live_dedup;
 pub mod locate;
-pub(crate) mod plane_clipping;
-pub(crate) mod plane_grid;
 
 /// Run the internal convex-clip microbench harness (feature: `microbench`).
 #[cfg(feature = "microbench")]
@@ -130,9 +126,9 @@ pub use live_dedup::UnresolvedEdgeOrigin;
 pub mod p5_shadow {
     pub use crate::knn_clipping::p5_shadow::{
         paired_dump_involving, paired_quad_report, paired_question_summaries, paired_report,
-        paired_reset, plane_unresolved, plane_unresolved_reset, report, reset, set_audit_cutoff,
-        set_clip_eps_override, set_escalation_factor_override, set_pair_cutoff,
-        set_pair_key_filter, set_plane_clip_eps_override, set_term_pad_override,
+        paired_reset, report, reset, set_audit_cutoff, set_clip_eps_override,
+        set_escalation_factor_override, set_pair_cutoff, set_pair_key_filter,
+        set_term_pad_override,
     };
 }
 
@@ -158,8 +154,7 @@ pub fn set_escalation_enabled(on: bool) {
     crate::knn_clipping::escalate::set_escalation_enabled(on);
 }
 
-pub use locate::{PlaneLocator, SphereLocator};
-pub use plane_diagram::{PlanarVoronoi, PlanePoint, PlanePointLike, PlaneRect, PlaneTopology};
+pub use locate::SphereLocator;
 pub use types::{UnitVec3, UnitVec3Like};
 
 #[cfg(feature = "qhull")]
@@ -384,125 +379,6 @@ impl Default for VoronoiConfig {
 /// clipping model, or unrecoverable internal failures.
 pub fn compute<P: UnitVec3Like>(points: &[P]) -> Result<SphericalVoronoi, VoronoiError> {
     compute_with(points, VoronoiConfig::default())
-}
-
-/// Compute a planar Voronoi diagram over a bounded rectangle.
-///
-/// Every input point must lie inside `rect` (boundary inclusive); hull cells
-/// are clipped to the rect, whose walls behave like virtual generators. The
-/// result is a strict subdivision of the rect: cell areas sum to the rect
-/// area and every interior edge is shared by exactly two cells. Use
-/// [`validation::validate_plane`] for strict invariant checks.
-///
-/// Generators within the planar weld radius (~1e-6 of the longer rect
-/// side) are welded to one cell (see [`PlanarVoronoi::weld_map`]); this
-/// always includes exact duplicates. As on the sphere, the radius weld is
-/// required for graph validity, not input hygiene: probing shows clusters
-/// of 3+ generators within ~1 ulp of the domain scale produce invalid
-/// topology even though every individual bisector is well-formed. The weld
-/// detection reuses the kNN spatial grid, so duplicate-free inputs pay
-/// only a read-only scan.
-///
-/// Requires at least 1 point (a single generator owns the whole rect).
-///
-/// # Example
-///
-/// ```
-/// use s2_voronoi::{compute_plane, PlaneRect};
-///
-/// let points = vec![[0.25f32, 0.25], [0.75, 0.25], [0.5, 0.8]];
-/// let diagram = compute_plane(&points, PlaneRect::unit()).unwrap();
-/// assert_eq!(diagram.num_cells(), 3);
-/// ```
-pub fn compute_plane<P: PlanePointLike>(
-    points: &[P],
-    rect: PlaneRect,
-) -> Result<PlanarVoronoi, VoronoiError> {
-    plane_clipping::compute::compute_plane_impl(points, rect)
-}
-
-/// Observability for a planar computation (bounded or periodic).
-#[derive(Debug, Clone)]
-pub struct PlaneComputeReport {
-    /// Strict validation of the returned diagram.
-    pub validation: validation::PlaneValidationReport,
-    /// Post-repair unpaired interior edges as generator pairs (empty on a
-    /// valid result). These are the residuals the plain `compute_plane` /
-    /// `compute_plane_periodic` paths turn into an error; the report path
-    /// surfaces them instead. Indices are effective-generator indices
-    /// (equal to original input indices when no welding occurred).
-    pub unresolved_edge_pairs: Vec<(u32, u32)>,
-}
-
-/// Output of [`compute_plane_with_report`] / [`compute_plane_periodic_with_report`].
-#[derive(Debug, Clone)]
-pub struct PlaneComputeOutput {
-    /// The returned diagram (one cell per input point; welded twins share
-    /// their canonical cell).
-    pub diagram: PlanarVoronoi,
-    /// Validation and residual observability for this run.
-    pub report: PlaneComputeReport,
-}
-
-/// Compute a bounded planar Voronoi diagram and return observability
-/// metadata instead of erroring on a post-repair residual.
-///
-/// [`compute_plane`] fails loud if reconciliation leaves an unpaired
-/// interior edge (provably-invalid output with no other signal channel).
-/// This variant returns the diagram together with a [`PlaneComputeReport`]
-/// carrying strict validation and the residual generator pairs, so callers
-/// that want to inspect (rather than be interrupted by) a defect can.
-pub fn compute_plane_with_report<P: PlanePointLike>(
-    points: &[P],
-    rect: PlaneRect,
-) -> Result<PlaneComputeOutput, VoronoiError> {
-    plane_clipping::compute::compute_plane_with_report_impl(points, rect)
-}
-
-/// Compute a planar Voronoi diagram on a rectangular torus (periodic
-/// boundary conditions): the rect's opposite edges are identified, so cells
-/// wrap across them and the diagram has no boundary.
-///
-/// Vertex positions are stored canonically wrapped into the rect; use
-/// [`PlanarVoronoi::cell_polygon`] to reconstruct a cell's polygon (it
-/// unwraps each vertex to within half a period of the cell's generator).
-/// The result is a strict subdivision of the torus: every edge is shared by
-/// exactly two cells and `validation::validate_plane` checks the torus
-/// Euler relation.
-///
-/// Every cell must be provably smaller than a quarter of the shorter
-/// period for nearest-image clipping to be exact; underpopulated domains
-/// fail with [`VoronoiError::UnsupportedGeometry`] instead of producing
-/// wrong answers (roughly: dozens of reasonably spread generators are
-/// enough; 3 points on a torus are not).
-///
-/// # Example
-///
-/// ```
-/// use s2_voronoi::{compute_plane_periodic, PlaneRect};
-///
-/// let points: Vec<[f32; 2]> = (0..64)
-///     .map(|i| [((i % 8) as f32 + 0.5) / 8.0, ((i / 8) as f32 + 0.37) / 8.0])
-///     .collect();
-/// let diagram = compute_plane_periodic(&points, PlaneRect::unit()).unwrap();
-/// assert!(diagram.is_periodic());
-/// assert_eq!(diagram.num_cells(), 64);
-/// ```
-pub fn compute_plane_periodic<P: PlanePointLike>(
-    points: &[P],
-    rect: PlaneRect,
-) -> Result<PlanarVoronoi, VoronoiError> {
-    plane_clipping::compute::compute_plane_periodic_impl(points, rect)
-}
-
-/// Periodic counterpart of [`compute_plane_with_report`]: returns the torus
-/// diagram plus validation/residual observability instead of erroring on a
-/// post-repair residual.
-pub fn compute_plane_periodic_with_report<P: PlanePointLike>(
-    points: &[P],
-    rect: PlaneRect,
-) -> Result<PlaneComputeOutput, VoronoiError> {
-    plane_clipping::compute::compute_plane_periodic_with_report_impl(points, rect)
 }
 
 /// Compute a spherical Voronoi diagram with explicit configuration.

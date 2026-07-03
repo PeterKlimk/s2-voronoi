@@ -10,8 +10,6 @@ use crate::knn_clipping::topo2d::types::ClipResult;
 use glam::DVec3;
 
 pub use projection::TangentBasis;
-// Key construction helper shared with the planar builder.
-pub(crate) use projection::sort3_u32;
 
 // One long-lived instance per worker, reused via reset(); boxing the
 // large gnomonic variant would put indirection on the hot clip path.

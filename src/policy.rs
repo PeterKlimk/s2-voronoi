@@ -81,43 +81,6 @@ pub(crate) fn knn_grid_resolution(num_points: usize) -> usize {
     ((num_points as f64 / (6.0 * target)).sqrt() as usize).max(4)
 }
 
-/// Target points-per-cell for the planar kNN grid (see
-/// [`plane_grid_resolution`]); `S2_VORONOI_PLANE_GRID_DENSITY` overrides for
-/// experiments.
-///
-/// Ryzen 3600 sweeps (uniform 1M, min of repeats). Pre-packed (scalar shell
-/// expansion only) the optimum was ~4 (ST: d4 = 2003ms vs d24 = 3528ms).
-/// With the packed SIMD stage the batch economics move it up, exactly as on
-/// the sphere: ST d16 = 1765ms ~ d24 = 1750-1860ms (flat) vs d4 = 1989ms;
-/// MT 1M d16 = 410ms / d24 = 417ms / d4 = 441ms; MT 2M d16 = 1004ms.
-/// 16 takes the flat optimum at the smaller cell count.
-pub(crate) fn plane_grid_target_density() -> f64 {
-    static OVERRIDE: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
-    OVERRIDE
-        .get_or_init(|| {
-            std::env::var("S2_VORONOI_PLANE_GRID_DENSITY")
-                .ok()
-                .and_then(|v| v.parse::<f64>().ok())
-                .filter(|d| *d >= 1.0)
-        })
-        .unwrap_or(16.0)
-}
-
-/// Planar grid resolution (cells per axis over the normalized domain).
-///
-/// The plane has `res^2` cells but points occupy only `occupied_fraction`
-/// of the unit square (the normalized domain is `[0, sx] x [0, sy]` with
-/// the longer side 1, so the fraction is `sx * sy`). Sizing by occupied
-/// cells rather than total cells keeps per-cell occupancy at the target for
-/// high-aspect rects instead of multiplying it by the aspect ratio. Floor
-/// of 1 (a single cell is valid); the cap bounds the cell array for extreme
-/// aspect ratios, degrading occupancy gracefully past it.
-pub(crate) fn plane_grid_resolution(num_points: usize, occupied_fraction: f64) -> usize {
-    let target = plane_grid_target_density().max(1.0);
-    let fraction = occupied_fraction.clamp(f64::MIN_POSITIVE, 1.0);
-    ((num_points as f64 / (target * fraction)).sqrt() as usize).clamp(1, 4096)
-}
-
 /// Occupancy-feedback decision: given a built grid's max cell occupancy,
 /// return a higher resolution to rebuild at, or `None` to keep the grid.
 ///

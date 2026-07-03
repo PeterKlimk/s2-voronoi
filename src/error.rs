@@ -37,12 +37,6 @@ pub enum VoronoiError {
         message: String,
     },
 
-    /// The planar domain rectangle is unusable (non-finite or empty extent).
-    InvalidDomain {
-        /// What is wrong with it.
-        message: String,
-    },
-
     /// Computation exceeded a concrete representation or packing limit.
     ///
     /// This is not necessarily a logic bug; it means the current internal
@@ -84,9 +78,6 @@ impl fmt::Display for VoronoiError {
                     "degenerate input: {} coincident point pairs ({})",
                     coincident_pairs, message
                 )
-            }
-            VoronoiError::InvalidDomain { message } => {
-                write!(f, "invalid domain: {}", message)
             }
             VoronoiError::RepresentationLimit(msg) => {
                 write!(f, "representation limit exceeded: {}", msg)
