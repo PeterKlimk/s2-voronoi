@@ -238,7 +238,7 @@ struct EdgeStat {
 
 const INLINE_CELL_SIGNATURE_VERTS: usize = 8;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum CellSignature {
     Inline {
         len: u8,
@@ -367,6 +367,22 @@ struct EdgeUse {
 #[inline]
 fn edge_key(lo: u32, hi: u32) -> u64 {
     ((lo as u64) << 32) | hi as u64
+}
+
+/// Sort edge-use records by key — in parallel when available. This sort is the
+/// dominant cost of the strict verifiers at scale (~6M records at 1M cells).
+/// The downstream pairing scan only groups records by key and applies
+/// order-symmetric checks within a group (`len == 2`, opposite `forward`,
+/// commutative DSU union), so an unstable parallel sort is verdict-equivalent
+/// to the sequential one.
+fn sort_edge_uses(edge_uses: &mut [EdgeUse]) {
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::slice::ParallelSliceMut;
+        edge_uses.par_sort_unstable_by_key(|edge| edge.key);
+    }
+    #[cfg(not(feature = "parallel"))]
+    edge_uses.sort_unstable_by_key(|edge| edge.key);
 }
 
 /// Fast success-path verifier for `VORONOI_MESH_VERIFY`.
@@ -504,7 +520,7 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
         }
     }
 
-    edge_uses.sort_unstable_by_key(|edge| edge.key);
+    sort_edge_uses(&mut edge_uses);
 
     let mut dsu = DisjointSet::new(num_cells);
     let mut num_edges = 0usize;
@@ -552,38 +568,56 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Strict S2-subdivision check over raw effective arrays (no weld map),
-/// enforcing the SAME contract as [`verify_sphere_fast`].
-///
-/// Used as the local-repair acceptance gate in `maybe_repair_effective`: it
-/// validates the repaired effective arrays in place — independent of the
-/// `VORONOI_MESH_VERIFY` env flag and without cloning the diagram into a
-/// `SphericalVoronoi`. Effective index space has no welded twins, so every cell
-/// is its own face (`num_faces == num_cells`).
-///
-/// Pinned to `verify_sphere_fast` by the differential test
-/// `effective_strict_matches_fast`.
-pub(crate) fn verify_sphere_effective_strict(
+/// One chunk's cell-scan output: edge-use records, cell signatures for the
+/// cross-chunk duplicate-cell pass, and the chunk's lexicographically first
+/// error as `(cell, check_rank, message)`.
+struct CellScan {
+    edge_uses: Vec<EdgeUse>,
+    signatures: Vec<(CellSignature, u32)>,
+    err: Option<(u32, u8, &'static str)>,
+}
+
+/// Check ranks mirror the sequential validator's within-cell check order, so
+/// the lexicographic minimum over `(cell, rank)` reproduces the sequential
+/// first error exactly: span(0) → vertex-ref/duplicate-vertex(1) →
+/// degenerate(2) → duplicate-cell(3, needs cross-cell info) →
+/// self-loop/antipodal(4).
+const RANK_SPAN: u8 = 0;
+const RANK_VERTEX: u8 = 1;
+const RANK_DEGENERATE: u8 = 2;
+const RANK_DUP_CELL: u8 = 3;
+const RANK_EDGE: u8 = 4;
+
+/// Scan `range` of cells: per-cell structural checks, exact vertex-incidence
+/// counting into the shared atomics, and edge-use/signature collection. Stops
+/// at the first erroring cell — later cells in the chunk can only produce
+/// lexicographically larger errors, and dropped signatures/edge-uses are
+/// irrelevant once any error exists (see the duplicate-cell argument on
+/// `verify_sphere_effective_strict`).
+fn scan_cells_strict(
     vertices: &[glam::Vec3],
     cells: &[crate::diagram::VoronoiCell],
     cell_indices: &[u32],
-) -> Result<(), &'static str> {
-    let num_cells = cells.len();
+    range: std::ops::Range<usize>,
+    vertex_cell_count: &[std::sync::atomic::AtomicU32],
+) -> CellScan {
+    use std::sync::atomic::Ordering::Relaxed;
     let num_vertices = vertices.len();
-
-    let mut unique_cell_signatures: FxHashSet<CellSignature> =
-        FxHashSet::with_capacity_and_hasher(num_cells.max(1), Default::default());
-    let mut vertex_cell_count = vec![0u8; num_vertices];
-    let mut edge_uses = Vec::with_capacity(cell_indices.len());
-
-    for (ci, cell) in cells.iter().enumerate() {
+    let mut out = CellScan {
+        edge_uses: Vec::new(),
+        signatures: Vec::with_capacity(range.len()),
+        err: None,
+    };
+    'cells: for ci in range {
+        let cell = &cells[ci];
         let start = cell.vertex_start();
         let len = cell.vertex_count();
         let Some(span) = len
             .checked_add(start)
             .and_then(|end| cell_indices.get(start..end))
         else {
-            return Err("invalid cell span");
+            out.err = Some((ci as u32, RANK_SPAN, "invalid cell span"));
+            break 'cells;
         };
 
         let mut seen_stack = [0u32; 64];
@@ -597,7 +631,8 @@ pub(crate) fn verify_sphere_effective_strict(
 
         for &vi in span {
             if (vi as usize) >= num_vertices {
-                return Err("invalid vertex reference");
+                out.err = Some((ci as u32, RANK_VERTEX, "invalid vertex reference"));
+                break 'cells;
             }
             let is_duplicate = if use_spill {
                 if seen_spill.contains(&vi) {
@@ -614,10 +649,10 @@ pub(crate) fn verify_sphere_effective_strict(
                 false
             };
             if is_duplicate {
-                return Err("duplicate vertex in cell");
+                out.err = Some((ci as u32, RANK_VERTEX, "duplicate vertex in cell"));
+                break 'cells;
             }
-            let count = &mut vertex_cell_count[vi as usize];
-            *count = count.saturating_add(1);
+            vertex_cell_count[vi as usize].fetch_add(1, Relaxed);
         }
 
         let seen_valid_len = if use_spill {
@@ -626,43 +661,145 @@ pub(crate) fn verify_sphere_effective_strict(
             seen_stack_len
         };
         if seen_valid_len < 3 {
-            return Err("degenerate cell");
+            out.err = Some((ci as u32, RANK_DEGENERATE, "degenerate cell"));
+            break 'cells;
         }
 
+        // Signature emission mirrors the sequential insert point: after the
+        // rank-0..2 checks, before the edge checks — a cell that fails an edge
+        // check still participates in duplicate-cell detection.
         let signature = if use_spill {
             cell_signature(&seen_spill)
         } else {
             cell_signature(&seen_stack[..seen_stack_len])
         };
         if let Some(signature) = signature {
-            if !unique_cell_signatures.insert(signature) {
-                return Err("duplicate cell");
-            }
+            out.signatures.push((signature, ci as u32));
         }
 
         for edge_idx in 0..len {
             let a = span[edge_idx];
             let b = span[(edge_idx + 1) % len];
             if a == b {
-                return Err("self-loop edge");
+                out.err = Some((ci as u32, RANK_EDGE, "self-loop edge"));
+                break 'cells;
             }
             let va = vertices[a as usize];
             let vb = vertices[b as usize];
             let dot = va.x * vb.x + va.y * vb.y + va.z * vb.z;
             if dot <= -1.0 + ANTIPODAL_DOT_EPS {
-                return Err("antipodal edge");
+                out.err = Some((ci as u32, RANK_EDGE, "antipodal edge"));
+                break 'cells;
             }
             let (lo, hi, forward) = if a < b { (a, b, true) } else { (b, a, false) };
-            edge_uses.push(EdgeUse {
+            out.edge_uses.push(EdgeUse {
                 key: edge_key(lo, hi),
                 forward,
                 cell: ci as u32,
             });
         }
     }
+    out
+}
+
+/// Strict validation of effective arrays in place — the repair acceptance gate
+/// (also the plain-path contract check), sharing the strict contract of
+/// `verify_sphere_fast` without cloning the diagram into a `SphericalVoronoi`.
+/// Effective index space has no welded twins, so every cell is its own face
+/// (`num_faces == num_cells`).
+///
+/// The cell scan runs in parallel chunks (feature `parallel`); the verdict and
+/// the reported first error are IDENTICAL to the sequential scan. Per-cell
+/// checks are pure; vertex incidence uses exact shared atomics (read only
+/// after the scan); and the first error is the lexicographic minimum over
+/// `(cell, check_rank)`, which equals the sequential scan's first return.
+/// Duplicate-cell detection moves to a sort-based pass over the emitted
+/// signatures: a chunk stops emitting after its first error, but every
+/// dropped signature belongs to a cell past that error, so any duplicate-cell
+/// error it could have influenced is lexicographically dominated — the
+/// minimum is unchanged. Pinned to `verify_sphere_fast` (kept sequential as
+/// the independent reference) by the differential test
+/// `effective_strict_matches_fast`.
+pub(crate) fn verify_sphere_effective_strict(
+    vertices: &[glam::Vec3],
+    cells: &[crate::diagram::VoronoiCell],
+    cell_indices: &[u32],
+) -> Result<(), &'static str> {
+    use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+    let num_cells = cells.len();
+    let num_vertices = vertices.len();
+
+    // Exact incidence counters, shared across chunks; only read after the
+    // scan completes. (u32: cannot saturate — total increments are bounded by
+    // `cell_indices.len()`.)
+    let vertex_cell_count: Vec<AtomicU32> = (0..num_vertices).map(|_| AtomicU32::new(0)).collect();
+
+    #[cfg(feature = "parallel")]
+    let scans: Vec<CellScan> = {
+        use rayon::prelude::*;
+        let chunk = num_cells
+            .div_ceil(rayon::current_num_threads().max(1) * 4)
+            .max(1024);
+        (0..num_cells.div_ceil(chunk).max(1))
+            .into_par_iter()
+            .map(|i| {
+                let lo = i * chunk;
+                let hi = ((i + 1) * chunk).min(num_cells);
+                scan_cells_strict(vertices, cells, cell_indices, lo..hi, &vertex_cell_count)
+            })
+            .collect()
+    };
+    #[cfg(not(feature = "parallel"))]
+    let scans: Vec<CellScan> = vec![scan_cells_strict(
+        vertices,
+        cells,
+        cell_indices,
+        0..num_cells,
+        &vertex_cell_count,
+    )];
+
+    // Lexicographic-first error across chunks (chunks are disjoint ascending
+    // cell ranges, so per-chunk firsts merge by (cell, rank)).
+    let mut first_err: Option<(u32, u8, &'static str)> = None;
+    let lower = |cand: (u32, u8, &'static str), cur: &mut Option<(u32, u8, &'static str)>| {
+        if cur.is_none_or(|c| (cand.0, cand.1) < (c.0, c.1)) {
+            *cur = Some(cand);
+        }
+    };
+    for scan in &scans {
+        if let Some(e) = scan.err {
+            lower(e, &mut first_err);
+        }
+    }
+
+    // Duplicate-cell pass over the emitted signatures: sort by (signature,
+    // cell), then each equal-signature run's SECOND cell is where the
+    // sequential scan would have reported the duplicate.
+    let mut signatures: Vec<(CellSignature, u32)> = Vec::with_capacity(num_cells);
+    for scan in &scans {
+        signatures.extend_from_slice(&scan.signatures);
+    }
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::slice::ParallelSliceMut;
+        signatures.par_sort_unstable();
+    }
+    #[cfg(not(feature = "parallel"))]
+    signatures.sort_unstable();
+    for pair in signatures.windows(2) {
+        if pair[0].0 == pair[1].0 {
+            lower((pair[1].1, RANK_DUP_CELL, "duplicate cell"), &mut first_err);
+            // Runs are cell-ascending, so the first adjacent duplicate in a
+            // run is that run's minimal candidate; keep scanning other runs.
+        }
+    }
+    if let Some((_, _, msg)) = first_err {
+        return Err(msg);
+    }
 
     let mut used_vertices = 0usize;
-    for &count in &vertex_cell_count {
+    for count in &vertex_cell_count {
+        let count = count.load(Relaxed);
         if count > 0 {
             used_vertices += 1;
             if count < 3 {
@@ -678,7 +815,11 @@ pub(crate) fn verify_sphere_effective_strict(
         }
     }
 
-    edge_uses.sort_unstable_by_key(|edge| edge.key);
+    let mut edge_uses: Vec<EdgeUse> = Vec::with_capacity(cell_indices.len());
+    for scan in &scans {
+        edge_uses.extend_from_slice(&scan.edge_uses);
+    }
+    sort_edge_uses(&mut edge_uses);
 
     let mut dsu = DisjointSet::new(num_cells);
     let mut num_edges = 0usize;
@@ -1095,6 +1236,21 @@ mod verify_gate_tests {
             vec![0, 1, 0, 2],
             None,
         ));
+
+        // Invalid: two cells with identical boundaries (duplicate cell) — pins
+        // the sort-based duplicate-signature pass against the incremental
+        // hashset the sequential reference uses.
+        let (v, mut c, mut ci) = effective_arrays(&good);
+        let first = c[0];
+        ci.extend_from_within(first.vertex_start()..first.vertex_start() + first.vertex_count());
+        c.push(crate::diagram::VoronoiCell::new(
+            (ci.len() - first.vertex_count()) as u32,
+            first.vertex_count() as u16,
+        ));
+        let generators = vec![Vec3::new(0.0, 0.0, 1.0); c.len()];
+        let dup_cell = SphericalVoronoi::from_raw_parts(generators, v, c, ci, None);
+        assert!(verify_sphere_fast(&dup_cell).is_err());
+        assert_agree(&dup_cell);
 
         // Invalid: an off-sphere vertex on an otherwise-valid diagram. (The
         // validator does not read generator positions, so a placeholder vec of

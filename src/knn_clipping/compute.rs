@@ -503,9 +503,12 @@ fn maybe_repair_effective(
     // length) plus the full cell arrays. The base vertex array is extended in
     // place — and truncated back on rejection — so an accepted repair never
     // copies the base positions.
+    let t_flat = std::time::Instant::now();
     let (minted_vertices, new_cells, new_cell_indices) = work.into_flat();
     let base_vertex_count = vertices.len();
     vertices.extend(minted_vertices);
+    let flat_elapsed = t_flat.elapsed();
+    let t_gate = std::time::Instant::now();
 
     // Whole-diagram never-worse gate: accept only if the repaired diagram is
     // strictly valid. Validate the effective arrays in place via
@@ -515,9 +518,19 @@ fn maybe_repair_effective(
     // temporary `SphericalVoronoi` — the clone was the dominant cost of a
     // committed repair. The validate itself stays whole-diagram (the repair's
     // blast radius is vertex-triple-identity-wide, so a local gate is unsound).
-    if crate::validation::verify_sphere_effective_strict(vertices, &new_cells, &new_cell_indices)
-        .is_err()
-    {
+    let gate =
+        crate::validation::verify_sphere_effective_strict(vertices, &new_cells, &new_cell_indices);
+    if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
+        eprintln!(
+            "repair commit: into_flat {:?}, gate {:?} ({} verts, {} cells, gate {})",
+            flat_elapsed,
+            t_gate.elapsed(),
+            vertices.len(),
+            new_cells.len(),
+            if gate.is_ok() { "accepted" } else { "rejected" },
+        );
+    }
+    if gate.is_err() {
         vertices.truncate(base_vertex_count);
         return outcome(false);
     }
