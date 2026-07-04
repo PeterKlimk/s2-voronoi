@@ -952,9 +952,12 @@ impl<'a> WorkingDiagram<'a> {
     /// stale edges of any UNSPLICED neighbor still referencing `g`'s old defect
     /// vertices, and only a full scan sees those.
     fn unpaired_generators(&self) -> Vec<u32> {
-        let pack = |a: u32, b: u32| ((a as u64) << 32) | b as u64;
-        // Directed half-edge → count.
-        let mut dir: FxHashMap<u64, u32> = FxHashMap::default();
+        // One record per directed half-edge: (canonical undirected key, is
+        // lower-id direction). Sort + run-scan instead of a hashmap build —
+        // the map (unreserved, ~2E entries, rebuilt every grow round) was the
+        // dominant repair cost at scale (~1.3s/round at 1M cells; the sorted
+        // scan is ~10x cheaper and parallelizes).
+        let mut uses: Vec<(u64, bool)> = Vec::with_capacity(self.base_cell_indices.len() + 64);
         for g in 0..self.num_cells() as u32 {
             let list = self.boundary(g);
             let n = list.len();
@@ -962,22 +965,45 @@ impl<'a> WorkingDiagram<'a> {
                 continue;
             }
             for i in 0..n {
-                *dir.entry(pack(list[i], list[(i + 1) % n])).or_default() += 1;
+                let (a, b) = (list[i], list[(i + 1) % n]);
+                let (lo, hi, fwd) = if a <= b { (a, b, true) } else { (b, a, false) };
+                uses.push((((lo as u64) << 32) | hi as u64, fwd));
             }
         }
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::slice::ParallelSliceMut;
+            uses.par_sort_unstable();
+        }
+        #[cfg(not(feature = "parallel"))]
+        uses.sort_unstable();
+
         let mut grow: Vec<u32> = Vec::new();
-        for (&key, &fwd) in &dir {
-            let (a, b) = ((key >> 32) as u32, key as u32);
-            let rev = dir.get(&pack(b, a)).copied().unwrap_or(0);
-            // Visit each undirected edge once: from its lower-id direction, or
-            // from the only direction present when the reverse is absent.
-            if a > b && rev != 0 {
-                continue;
+        let mut i = 0usize;
+        while i < uses.len() {
+            let key = uses[i].0;
+            let mut fwd_count = 0usize;
+            let mut j = i;
+            while j < uses.len() && uses[j].0 == key {
+                fwd_count += usize::from(uses[j].1);
+                j += 1;
             }
-            if fwd != 1 || rev != 1 {
+            let group_len = j - i;
+            let (a, b) = ((key >> 32) as u32, key as u32);
+            // Paired = exactly two uses in opposite directions. A self-loop
+            // key (a == b) has both "directions" in one record, so a single
+            // use reads as paired — matching the directed-count map this
+            // replaces (the gate rejects self-loops regardless).
+            let paired = if a == b {
+                group_len == 1
+            } else {
+                group_len == 2 && fwd_count == 1
+            };
+            if !paired {
                 let (ka, kb) = (self.vkey(a), self.vkey(b));
                 grow.extend(ka.iter().chain(kb.iter()));
             }
+            i = j;
         }
         grow.sort_unstable();
         grow.dedup();
