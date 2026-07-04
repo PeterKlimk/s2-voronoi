@@ -61,11 +61,12 @@ the generator and that neighbor. Candidates stream nearest-first from a spatial 
 (typically after clipping ~6-7 neighbors, independent of n). On the sphere a gnomonic projection
 turns great circles into straight lines, so cell construction is 2D convex-polygon clipping.
 
-The per-cell construction follows Ray et al., *Meshless Voronoi on the GPU* (2018). The part this
-crate adds is stitching the independently-built cells into one consistent graph: vertices are
-identified combinatorially (by the triple of generators that meet there, never by position) and
-deduplicated shard-locally with no global lock. [docs/architecture.md](docs/architecture.md) has
-the full description.
+The per-cell construction follows Ray et al., *Meshless Voronoi on the GPU* (2018); other recent
+CPU implementations of that construction (e.g. [vortex](https://github.com/philipclaude/vortex))
+emit independent per-cell polygons. The part this crate adds is stitching the independently-built
+cells into one consistent graph: vertices are identified combinatorially (by the triple of
+generators that meet there, never by position) and deduplicated shard-locally with no global
+lock. [docs/architecture.md](docs/architecture.md) has the full description.
 
 ## Correctness
 
