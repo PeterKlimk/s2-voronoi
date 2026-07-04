@@ -499,7 +499,13 @@ fn maybe_repair_effective(
         return outcome(false);
     }
 
-    let (new_vertices, new_cells, new_cell_indices) = work.into_flat();
+    // Materialize the overlay: minted vertex positions (vids past the base
+    // length) plus the full cell arrays. The base vertex array is extended in
+    // place — and truncated back on rejection — so an accepted repair never
+    // copies the base positions.
+    let (minted_vertices, new_cells, new_cell_indices) = work.into_flat();
+    let base_vertex_count = vertices.len();
+    vertices.extend(minted_vertices);
 
     // Whole-diagram never-worse gate: accept only if the repaired diagram is
     // strictly valid. Validate the effective arrays in place via
@@ -509,17 +515,13 @@ fn maybe_repair_effective(
     // temporary `SphericalVoronoi` — the clone was the dominant cost of a
     // committed repair. The validate itself stays whole-diagram (the repair's
     // blast radius is vertex-triple-identity-wide, so a local gate is unsound).
-    if crate::validation::verify_sphere_effective_strict(
-        &new_vertices,
-        &new_cells,
-        &new_cell_indices,
-    )
-    .is_err()
+    if crate::validation::verify_sphere_effective_strict(vertices, &new_cells, &new_cell_indices)
+        .is_err()
     {
+        vertices.truncate(base_vertex_count);
         return outcome(false);
     }
 
-    *vertices = new_vertices;
     *eff_cells = new_cells;
     *eff_cell_indices = new_cell_indices;
     outcome(true)

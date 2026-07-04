@@ -382,9 +382,10 @@ fn gather_two_ring(
 
     // g's current Voronoi neighbors, read off its assembled cell's vertex triples.
     let cell_neighbors = |g: u32| -> Vec<u32> {
-        let mut ns: Vec<u32> = work.cells[g as usize]
+        let mut ns: Vec<u32> = work
+            .boundary(g)
             .iter()
-            .flat_map(|&v| work.vkey[v as usize])
+            .flat_map(|&v| work.vkey(v))
             .filter(|&x| x != g && x != u32::MAX)
             .collect();
         ns.sort_unstable();
@@ -726,77 +727,152 @@ fn triple_circumcenter(points: &[Vec3], t: [u32; 3]) -> Vec3 {
 /// sub-3-incidence defect (e.g. a sliver/near-coincident vertex) that can exist
 /// with NO unpaired edge, which the unpaired-only trigger would miss.
 fn low_incidence_gens(work: &WorkingDiagram) -> Vec<u32> {
-    let mut cnt = vec![0u32; work.vpos.len()];
-    for list in &work.cells {
-        for &v in list {
+    let mut cnt = vec![0u32; work.num_vertices()];
+    for g in 0..work.num_cells() as u32 {
+        for &v in work.boundary(g) {
             cnt[v as usize] += 1;
         }
     }
     let mut out = Vec::new();
     for (v, &c) in cnt.iter().enumerate() {
         if c == 1 || c == 2 {
-            out.extend(work.vkey[v]);
+            out.extend(work.vkey(v as u32));
         }
     }
     out
 }
 
-/// A mutable triple-keyed view of the assembled diagram, in effective-generator
-/// index space. Splicing replaces a generator's whole boundary with a rebuilt
-/// fan, minting vertices for any triple the fast path never produced.
-pub struct WorkingDiagram {
-    /// Vertex positions (grows as new triples are minted).
-    pub vpos: Vec<Vec3>,
-    /// Triple per vertex, parallel to `vpos`.
-    pub vkey: Vec<[u32; 3]>,
-    /// Per effective generator: its boundary as an ordered list of vertex ids.
-    pub cells: Vec<Vec<u32>>,
-    /// First vertex id that carries a given triple (mint-once cache).
+/// A triple-keyed OVERLAY view of the assembled diagram, in effective-generator
+/// index space. The base arrays are borrowed read-only; splicing records a
+/// per-generator boundary override, and freshly minted vertices live in side
+/// arrays (their vids continue past the base vertex count). Building the view
+/// is O(1) and splicing is O(defect region) — the repair's entry cost no longer
+/// scales with the diagram (the old form copied every vertex, built a
+/// triple→vid map over all of them, and materialized every cell as its own
+/// `Vec`, ~1s at 2.5M generators before a single defect was examined).
+pub struct WorkingDiagram<'a> {
+    base_vertices: &'a [Vec3],
+    base_keys: &'a ShardedVertexKeys,
+    base_cells: &'a [VoronoiCell],
+    base_cell_indices: &'a [u32],
+    /// Spliced boundaries: generator → replacement vertex-id list.
+    overrides: FxHashMap<u32, Vec<u32>>,
+    /// Positions of minted vertices (vid = base vertex count + index).
+    minted_pos: Vec<Vec3>,
+    /// Triples of minted vertices, parallel to `minted_pos`.
+    minted_key: Vec<[u32; 3]>,
+    /// Memoized triple → vid (resolved lazily from the owner cells; see
+    /// `vid_for`). Memoization also pins one deterministic answer per triple
+    /// across grow rounds, so all spliced cells agree on shared vertices.
     triple_to_vid: FxHashMap<[u32; 3], u32>,
 }
 
-impl WorkingDiagram {
-    /// Build from the assembled global arrays (post-reconcile). `keys` is the
+impl<'a> WorkingDiagram<'a> {
+    /// Overlay over the assembled global arrays (post-reconcile). `keys` is the
     /// per-vertex triple store; `cells`/`cell_indices` the flat CSR boundaries.
     pub fn from_assembled(
-        vertices: &[Vec3],
-        keys: &ShardedVertexKeys,
-        cells: &[VoronoiCell],
-        cell_indices: &[u32],
+        vertices: &'a [Vec3],
+        keys: &'a ShardedVertexKeys,
+        cells: &'a [VoronoiCell],
+        cell_indices: &'a [u32],
     ) -> Self {
-        let mut vkey = vec![[u32::MAX; 3]; vertices.len()];
-        keys.for_each(|vid, k| vkey[vid as usize] = k);
-
-        // First-vid-per-triple. A triple may recur at a few vids the
-        // proximity-merge missed; reusing the first is fine (same circumcenter).
-        let mut triple_to_vid: FxHashMap<[u32; 3], u32> =
-            FxHashMap::with_capacity_and_hasher(vertices.len(), Default::default());
-        for (vid, &k) in vkey.iter().enumerate() {
-            triple_to_vid.entry(k).or_insert(vid as u32);
-        }
-
-        let cell_lists = cells
-            .iter()
-            .map(|c| cell_indices[c.vertex_start()..c.vertex_start() + c.vertex_count()].to_vec())
-            .collect();
-
         Self {
-            vpos: vertices.to_vec(),
-            vkey,
-            cells: cell_lists,
-            triple_to_vid,
+            base_vertices: vertices,
+            base_keys: keys,
+            base_cells: cells,
+            base_cell_indices: cell_indices,
+            overrides: FxHashMap::default(),
+            minted_pos: Vec::new(),
+            minted_key: Vec::new(),
+            triple_to_vid: FxHashMap::default(),
         }
     }
 
-    /// Vertex id carrying triple `t`, minting (with the triple's circumcenter) if
-    /// the fast path never produced it.
+    /// Number of effective generators (splices never add generators).
+    fn num_cells(&self) -> usize {
+        self.base_cells.len()
+    }
+
+    /// Total vertex-id space: base vertices plus minted ones.
+    fn num_vertices(&self) -> usize {
+        self.base_vertices.len() + self.minted_pos.len()
+    }
+
+    /// Generator `g`'s current boundary: its override if spliced, else its live
+    /// CSR window in the base arrays.
+    fn boundary(&self, g: u32) -> &[u32] {
+        if let Some(list) = self.overrides.get(&g) {
+            return list;
+        }
+        let c = &self.base_cells[g as usize];
+        &self.base_cell_indices[c.vertex_start()..c.vertex_start() + c.vertex_count()]
+    }
+
+    /// Position of vertex `vid` (base or minted).
+    fn vpos(&self, vid: u32) -> Vec3 {
+        let base = self.base_vertices.len();
+        if (vid as usize) < base {
+            self.base_vertices[vid as usize]
+        } else {
+            self.minted_pos[vid as usize - base]
+        }
+    }
+
+    /// Triple of vertex `vid` (base or minted). A base vid past the key store
+    /// (a vertex appended by reconciliation without a key) reads as all-MAX,
+    /// matching the old flattened-array initialization.
+    fn vkey(&self, vid: u32) -> [u32; 3] {
+        let base = self.base_vertices.len();
+        if (vid as usize) < base {
+            self.base_keys.get(vid).unwrap_or([u32::MAX; 3])
+        } else {
+            self.minted_key[vid as usize - base]
+        }
+    }
+
+    /// Vertex id carrying triple `t`, minting (with the triple's circumcenter)
+    /// if no referenced vertex carries it.
+    ///
+    /// Lookup is LOCAL: a vertex keyed `(a,b,c)` can only be referenced by the
+    /// boundaries of cells `a`, `b`, `c` (per-cell emission puts the owning
+    /// generator in every key, and spliced fans preserve this), so scanning
+    /// those three boundaries finds any LIVE vertex with the triple — the
+    /// rim-reuse property that makes spliced cells pair with unspliced
+    /// neighbors. Ties (a triple at several vids, proximity-merge leftovers)
+    /// resolve to the smallest vid, deterministically.
+    ///
+    /// Divergence from the old global-map form, accepted under the valid-or-
+    /// error contract (the whole-diagram gate is unchanged): the global map
+    /// also indexed UNREFERENCED vertices — e.g. a vertex orphaned by a
+    /// reconciliation merge — and would resurrect such a vid instead of
+    /// minting a twin. Both choices leave the surrounding cells referencing a
+    /// different vid than the spliced cell, so both feed the same grow-or-
+    /// reject machinery; only the vertex id (and its f32-vs-recomputed
+    /// position) differs.
     fn vid_for(&mut self, points: &[Vec3], t: [u32; 3]) -> u32 {
         if let Some(&vid) = self.triple_to_vid.get(&t) {
             return vid;
         }
-        let vid = self.vpos.len() as u32;
-        self.vpos.push(triple_circumcenter(points, t));
-        self.vkey.push(t);
+        let mut found: Option<u32> = None;
+        for &g in &t {
+            if g == u32::MAX || g as usize >= self.num_cells() {
+                continue;
+            }
+            for &v in self.boundary(g) {
+                if self.vkey(v) == t {
+                    found = Some(match found {
+                        Some(best) => best.min(v),
+                        None => v,
+                    });
+                }
+            }
+        }
+        let vid = found.unwrap_or_else(|| {
+            let vid = self.num_vertices() as u32;
+            self.minted_pos.push(triple_circumcenter(points, t));
+            self.minted_key.push(t);
+            vid
+        });
         self.triple_to_vid.insert(t, vid);
         vid
     }
@@ -811,7 +887,7 @@ impl WorkingDiagram {
         if target_sign != 0.0 && self.polygon_sign(points, g, &list) * target_sign < 0.0 {
             list.reverse();
         }
-        self.cells[g as usize] = list;
+        self.overrides.insert(g, list);
     }
 
     /// Signed orientation of generator `g`'s boundary `list`: the sphere-surface
@@ -824,7 +900,7 @@ impl WorkingDiagram {
         }
         let mut acc = Vec3::ZERO;
         for i in 0..n {
-            acc += self.vpos[list[i] as usize].cross(self.vpos[list[(i + 1) % n] as usize]);
+            acc += self.vpos(list[i]).cross(self.vpos(list[(i + 1) % n]));
         }
         acc.dot(points[g as usize])
     }
@@ -835,11 +911,12 @@ impl WorkingDiagram {
     fn winding_convention(&self, points: &[Vec3], skip: &std::collections::BTreeSet<u32>) -> f32 {
         let mut pos = 0i32;
         let mut neg = 0i32;
-        for (g, list) in self.cells.iter().enumerate() {
-            if skip.contains(&(g as u32)) || list.len() < 3 {
+        for g in 0..self.num_cells() as u32 {
+            let list = self.boundary(g);
+            if skip.contains(&g) || list.len() < 3 {
                 continue;
             }
-            let s = self.polygon_sign(points, g as u32, list);
+            let s = self.polygon_sign(points, g, list);
             if s > 0.0 {
                 pos += 1;
             } else if s < 0.0 {
@@ -868,7 +945,8 @@ impl WorkingDiagram {
         let pack = |a: u32, b: u32| ((a as u64) << 32) | b as u64;
         // Directed half-edge → count.
         let mut dir: FxHashMap<u64, u32> = FxHashMap::default();
-        for list in &self.cells {
+        for g in 0..self.num_cells() as u32 {
+            let list = self.boundary(g);
             let n = list.len();
             if n < 3 {
                 continue;
@@ -887,7 +965,7 @@ impl WorkingDiagram {
                 continue;
             }
             if fwd != 1 || rev != 1 {
-                let (ka, kb) = (self.vkey[a as usize], self.vkey[b as usize]);
+                let (ka, kb) = (self.vkey(a), self.vkey(b));
                 grow.extend(ka.iter().chain(kb.iter()));
             }
         }
@@ -896,17 +974,27 @@ impl WorkingDiagram {
         grow
     }
 
-    /// Flatten back into assembled global arrays `(vertices, cells, cell_indices)`.
+    /// Materialize the overlay into flat cell arrays. Returns
+    /// `(minted_vertex_positions, cells, cell_indices)`: minted vids were
+    /// assigned past the base vertex count, so the caller appends the minted
+    /// positions to its base vertex array and swaps in the cell arrays on
+    /// acceptance (truncating the appended positions again on rejection).
     pub fn into_flat(self) -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>) {
-        let total: usize = self.cells.iter().map(|c| c.len()).sum();
-        let mut cells = Vec::with_capacity(self.cells.len());
-        let mut cell_indices = Vec::with_capacity(total);
-        for list in &self.cells {
+        let n = self.base_cells.len();
+        let mut cells = Vec::with_capacity(n);
+        let mut cell_indices = Vec::with_capacity(self.base_cell_indices.len());
+        for g in 0..n as u32 {
+            let list = if let Some(list) = self.overrides.get(&g) {
+                list.as_slice()
+            } else {
+                let c = &self.base_cells[g as usize];
+                &self.base_cell_indices[c.vertex_start()..c.vertex_start() + c.vertex_count()]
+            };
             let start = cell_indices.len() as u32;
             cell_indices.extend_from_slice(list);
             cells.push(VoronoiCell::new(start, list.len() as u16));
         }
-        (self.vpos, cells, cell_indices)
+        (self.minted_pos, cells, cell_indices)
     }
 }
 
