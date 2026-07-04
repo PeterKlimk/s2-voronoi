@@ -519,7 +519,11 @@ fn repair_grow_loop(
 
     let defect_gens: BTreeSet<u32> = defect_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
     let mut closure: BTreeSet<u32> = defect_gens.clone();
+    let t_seed = std::time::Instant::now();
     closure.extend(low_incidence_gens(work));
+    if debug {
+        eprintln!("  {debug_name} seed scan {:?}", t_seed.elapsed());
+    }
     let target_sign = work.winding_convention(points, &defect_gens);
 
     let mut spliced: BTreeSet<u32> = BTreeSet::new();
@@ -529,7 +533,9 @@ fn repair_grow_loop(
         }
         stats.rounds += 1;
         let closure_vec: Vec<u32> = closure.iter().copied().collect();
+        let t_oracle = std::time::Instant::now();
         let fans = fans_for(work, &closure_vec);
+        let oracle_elapsed = t_oracle.elapsed();
         for &g in &closure_vec {
             let Some(fan) = fans.get(&g) else {
                 continue; // frontier generator — defer to a later, wider round
@@ -543,6 +549,7 @@ fn repair_grow_loop(
         // Grow on the residual: generators named by any still-unpaired edge, plus
         // low-incidence vertices left by re-fanning (a vertex an unspliced
         // neighbor still references, now orphaned). A full scan sees both.
+        let t_scan = std::time::Instant::now();
         let mut implicated: BTreeSet<u32> = work.unpaired_generators().into_iter().collect();
         implicated.extend(low_incidence_gens(work));
         let new: Vec<u32> = implicated
@@ -552,12 +559,15 @@ fn repair_grow_loop(
             .collect();
         if debug {
             eprintln!(
-                "  {debug_name} round {}: closure={} spliced={} implicated={} new={}",
+                "  {debug_name} round {}: closure={} spliced={} implicated={} new={} \
+                 (oracle {:?}, residual scan {:?})",
                 stats.rounds,
                 closure.len(),
                 spliced.len(),
                 implicated.len(),
                 new.len(),
+                oracle_elapsed,
+                t_scan.elapsed(),
             );
         }
         if new.is_empty() {

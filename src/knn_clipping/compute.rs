@@ -409,7 +409,16 @@ fn maybe_repair_effective(
         .iter()
         .map(|&(a, b)| (a.min(b), a.max(b)))
         .collect();
+    let t_detect = std::time::Instant::now();
     let has_low_incidence = has_low_incidence_vertices(vertices.len(), eff_cells, eff_cell_indices);
+    if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
+        eprintln!(
+            "repair trigger: low-incidence scan {:?} (defect_pairs={}, low_incidence={})",
+            t_detect.elapsed(),
+            post_repair_unpaired.len(),
+            has_low_incidence,
+        );
+    }
     if defect_pairs.is_empty() && !has_low_incidence {
         return RepairOutcome::NOT_ATTEMPTED;
     }
