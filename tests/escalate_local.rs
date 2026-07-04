@@ -65,6 +65,26 @@ fn default_compute_repairs_known_mega_defects() {
     }
 }
 
+/// The projected-oracle diagnostic mode must also repair the known mega
+/// defects to strict validity (it shares the grow loop with the default
+/// `Local3d` mode but uses the shared-stereographic-chart exact 2D Delaunay
+/// oracle). Seeds proven defective-without-repair by
+/// `local_escalation_makes_mega_strictly_valid`.
+#[test]
+fn projected_repair_makes_mega_strictly_valid() {
+    let on = || VoronoiConfig::default().with_repair_mode(RepairMode::LocalProjected);
+    for seed in [1u64, 15] {
+        let points = mega_points(100_000, 0.8, seed);
+        let out = compute_with_report(&points, on())
+            .unwrap_or_else(|e| panic!("mega 100k s{seed}: projected build failed: {e:?}"));
+        assert!(
+            out.report.returned_validation.is_strictly_valid(),
+            "mega 100k s{seed}: LocalProjected repair did not reach strict validity: {}",
+            out.report.returned_validation.headline()
+        );
+    }
+}
+
 #[test]
 fn accepted_default_repair_clears_surviving_residual_report() {
     for seed in [1u64, 2, 15] {

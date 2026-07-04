@@ -69,7 +69,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         cell_indices,
         &mut tb,
     )?;
-    let repair_accepted = maybe_repair_effective(
+    let repair = maybe_repair_effective(
         effective_points_ref,
         &grid,
         &mut vertices,
@@ -82,8 +82,19 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     // Plain path: if local repair did not accept a strictly-valid replacement,
     // a residual is provably-invalid output and there is no report channel to
     // surface it, so fail loud rather than ship it.
-    if !repair_accepted && !post_repair_unpaired.is_empty() {
+    if !repair.accepted && !post_repair_unpaired.is_empty() {
         return Err(edge_reconcile::residual_error(&post_repair_unpaired));
+    }
+    // A low-incidence (degree-1/2) vertex defect is also strictly-invalid
+    // output, and it can exist with every edge paired — the guard above never
+    // sees it, so fail loud on it separately.
+    if !repair.accepted && repair.low_incidence_defect {
+        return Err(crate::VoronoiError::ComputationFailed(
+            "post-assembly repair could not resolve a residual low-incidence \
+             (degree-1/2) vertex defect — output is not a valid subdivision. \
+             Use compute_with_report to inspect, or report this input."
+                .to_string(),
+        ));
     }
 
     let t = Timer::start();
@@ -238,7 +249,8 @@ fn compute_voronoi_knn_clipping_report_core(
         &mut eff_cell_indices,
         &post_repair_unpaired,
         repair_mode,
-    );
+    )
+    .accepted;
     // Surface output-invariant residuals alongside the detection records. If
     // local repair was accepted, the returned diagram is strictly valid and
     // these residuals no longer survive to output.
@@ -347,9 +359,28 @@ fn has_low_incidence_vertices(
     cnt.iter().any(|&c| c == 1 || c == 2)
 }
 
+/// Outcome of the repair attempt, for the caller's fail-loud decision.
+struct RepairOutcome {
+    /// The repaired effective diagram passed the strict gate and was committed.
+    accepted: bool,
+    /// Detection found a low-incidence (degree-1/2) vertex defect. Such a
+    /// vertex is strictly-invalid output even when every edge pairs (it fails
+    /// `verify_sphere_effective_strict`'s "low-incidence vertex" check), so
+    /// when the repair was not accepted the plain path must fail loud on it —
+    /// there is no unpaired-edge residual to trip the existing guard.
+    low_incidence_defect: bool,
+}
+
+impl RepairOutcome {
+    const NOT_ATTEMPTED: RepairOutcome = RepairOutcome {
+        accepted: false,
+        low_incidence_defect: false,
+    };
+}
+
 /// Try the configured local repair and commit it only if whole-diagram strict
-/// validation succeeds. Returns true when the repaired effective diagram was
-/// accepted.
+/// validation succeeds. Reports whether the repaired effective diagram was
+/// accepted and whether detection saw a low-incidence defect.
 #[allow(clippy::too_many_arguments)] // cohesive repair-entry state; splitting would obscure it
 fn maybe_repair_effective(
     effective_points: &[Vec3],
@@ -360,18 +391,18 @@ fn maybe_repair_effective(
     eff_cell_indices: &mut Vec<u32>,
     post_repair_unpaired: &[(u32, u32)],
     repair_mode: RepairMode,
-) -> bool {
+) -> RepairOutcome {
     // A0 probes need the fast assembled state, not the repaired one.
     #[cfg(feature = "escalate_probe")]
     if std::env::var("VORONOI_MESH_ESCALATE_PROBE_A0").is_ok() {
         escalate::stash_a0_fast(effective_points, vertex_keys, eff_cells, eff_cell_indices);
-        return false;
+        return RepairOutcome::NOT_ATTEMPTED;
     }
 
     let repair_enabled =
         !matches!(repair_mode, RepairMode::Disabled) || escalate::escalation_enabled();
     if !repair_enabled {
-        return false;
+        return RepairOutcome::NOT_ATTEMPTED;
     }
 
     let defect_pairs: Vec<(u32, u32)> = post_repair_unpaired
@@ -380,8 +411,12 @@ fn maybe_repair_effective(
         .collect();
     let has_low_incidence = has_low_incidence_vertices(vertices.len(), eff_cells, eff_cell_indices);
     if defect_pairs.is_empty() && !has_low_incidence {
-        return false;
+        return RepairOutcome::NOT_ATTEMPTED;
     }
+    let outcome = |accepted: bool| RepairOutcome {
+        accepted,
+        low_incidence_defect: has_low_incidence,
+    };
 
     // Local-neighbor gather index for the repair: O(local) shell-frontier kNN per
     // seed instead of the old O(n) brute force (a closure of thousands on a
@@ -461,7 +496,7 @@ fn maybe_repair_effective(
     // flatten + full-diagram clone + validate of an unchanged diagram, which is
     // the dominant cost of a no-op repair (~12.6s of a 15s tail at 2.5M).
     if stats.spliced_generators == 0 {
-        return false;
+        return outcome(false);
     }
 
     let (new_vertices, new_cells, new_cell_indices) = work.into_flat();
@@ -481,13 +516,13 @@ fn maybe_repair_effective(
     )
     .is_err()
     {
-        return false;
+        return outcome(false);
     }
 
     *vertices = new_vertices;
     *eff_cells = new_cells;
     *eff_cell_indices = new_cell_indices;
-    true
+    outcome(true)
 }
 
 fn map_cell_build_error(

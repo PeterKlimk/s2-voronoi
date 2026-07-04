@@ -50,6 +50,16 @@ Useful flags:
 - `VORONOI_MESH_GRID_DENSITY=<f>` / `VORONOI_MESH_PLANE_GRID_DENSITY=<f>` — spatial-grid target
   density (points per cell) for sweeps.
 
+## Repair cold path
+
+The post-assembly local repair fires only on defect-bearing inputs (rare; near-cocircular
+clusters, e.g. the `mega` distribution) and is fast in the common case. One known cold path
+remains: when the defect sits on the boundary of an extremely dense cluster (most points inside a
+single grid cell), the repair's neighbor gather expands into the cluster and the repair can take
+seconds to minutes at millions of points. The output contract is unaffected — the result is still
+strictly valid or a clean error — only latency degrades. `RepairMode::Disabled` skips repair
+entirely (residual defects then fail plain `compute` loudly).
+
 ## Comparing commits
 
 The machine is noisy — per-binary code-layout shifts alone are ~1-2% at 500k single-threaded — so

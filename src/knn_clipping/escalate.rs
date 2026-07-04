@@ -220,11 +220,16 @@ pub fn rebuild_cells(
     let pos: Vec<Vec3> = local_ids.iter().map(|&g| points[g as usize]).collect();
     let hull = LocalHull::build(&pos)?;
 
-    let local_of = |g: u32| -> Option<usize> { local_ids.iter().position(|&x| x == g) };
+    // Seed → local index. On the deep-cascade cold path both `local_ids` and
+    // `seeds` reach thousands, so an O(L) scan per seed is a real cost there.
+    let local_of: FxHashMap<u32, usize> =
+        local_ids.iter().enumerate().map(|(i, &g)| (g, i)).collect();
 
     let mut out = Vec::with_capacity(seeds.len());
     for &g in seeds {
-        let Some(lg) = local_of(g) else { continue };
+        let Some(&lg) = local_of.get(&g) else {
+            continue;
+        };
         let fan = hull.cell_faces(lg);
         if fan.is_empty() {
             // Broken fan: a boundary generator of the local patch whose true
