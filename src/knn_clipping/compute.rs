@@ -19,9 +19,9 @@ use crate::{
     PreprocessReport, RepairMode, VoronoiConfig,
 };
 
-/// Per-seed neighbor count for the escalation local set (brute-force gather
-/// scaffold; production will pull from the grid / considered-neighbor set).
-const ESCALATE_GATHER_K: usize = 96;
+/// Per-seed neighbor count for the repair's grid kNN gather (the 2-ring gather
+/// collects each seed's `k + 1` nearest via the shell frontier).
+const ESCALATE_GATHER_K: usize = 32;
 /// Grow-until-clean round cap per defect component.
 const ESCALATE_MAX_ROUNDS: usize = 12;
 
@@ -362,6 +362,7 @@ fn maybe_repair_effective(
     repair_mode: RepairMode,
 ) -> bool {
     // A0 probes need the fast assembled state, not the repaired one.
+    #[cfg(feature = "escalate_probe")]
     if std::env::var("VORONOI_MESH_ESCALATE_PROBE_A0").is_ok() {
         escalate::stash_a0_fast(effective_points, vertex_keys, eff_cells, eff_cell_indices);
         return false;

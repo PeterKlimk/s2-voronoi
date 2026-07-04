@@ -126,42 +126,6 @@ fn defect_cells_are_internally_valid_after_rebuild() {
     );
 }
 
-/// Probe runner: build mega 100k at seed `VORONOI_MESH_ESCALATE_SEED` (default 3) with
-/// escalation enabled, so the env-gated probes inside `escalate_diagram`
-/// (VORONOI_MESH_ESCALATE_PROBE_*) fire on that seed. Asserts nothing.
-#[test]
-#[ignore = "probe driver; run with VORONOI_MESH_ESCALATE_PROBE_*=1 and --ignored --nocapture"]
-fn escalation_probe_runner() {
-    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(3);
-    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100_000);
-    let dist = std::env::var("VORONOI_MESH_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
-    let points = match dist.as_str() {
-        "uniform" => random_sphere_points(n, seed),
-        "fib" => fibonacci_sphere_points(n, 0.0, seed),
-        "clustered" => clustered_cap_points(n, 0.3, seed),
-        "bimodal" => bimodal_density_points(n, 0.2, seed),
-        _ => mega_points(n, 0.8, seed),
-    };
-    println!("dist={dist} seed={seed} n={n}");
-    set_escalation_enabled(true);
-    let out = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    set_escalation_enabled(false);
-    println!(
-        "seed={seed} n={n}: {}",
-        if out.report.returned_validation.is_strictly_valid() {
-            "VALID".to_string()
-        } else {
-            format!("{:?}", out.report.returned_validation.subdivision_issues())
-        }
-    );
-}
-
 /// A0 with an EXACT reference (delaunator, exact predicates) via stereographic
 /// projection. Stashes the fast per-cell triples from a build, computes the true
 /// spherical Delaunay, and classifies cells: which CHANGED (fast≠exact) and which
@@ -193,7 +157,7 @@ fn a0_exact_reference_delaunator() {
         _ => mega_points(n, 0.8, seed),
     };
 
-    // Trigger the stash inside escalate_diagram.
+    // Trigger the A0 stash inside maybe_repair_effective.
     std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
     set_escalation_enabled(true);
     let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
