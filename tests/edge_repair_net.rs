@@ -73,11 +73,11 @@
 
 mod support;
 
-use s2_voronoi::{
+use support::points::*;
+use voronoi_mesh::{
     compute_with_report, validation::validate, ComputeOutput, UnitVec3Like, UnresolvedEdgeOrigin,
     VoronoiConfig,
 };
-use support::points::*;
 
 /// The defect site discovered in uniform 2M seed 1 (generator 1948042's
 /// cluster): all three unresolved pairs share this generator. Only used as a
@@ -94,17 +94,17 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn with_env<R>(bin_count: Option<usize>, repair_rebuild: bool, f: impl FnOnce() -> R) -> R {
     let _guard = ENV_LOCK.lock().unwrap();
     match bin_count {
-        Some(n) => std::env::set_var("S2_BIN_COUNT", n.to_string()),
-        None => std::env::remove_var("S2_BIN_COUNT"),
+        Some(n) => std::env::set_var("VORONOI_MESH_BIN_COUNT", n.to_string()),
+        None => std::env::remove_var("VORONOI_MESH_BIN_COUNT"),
     }
     if repair_rebuild {
-        std::env::set_var("S2_EDGE_REPAIR_REBUILD", "1");
+        std::env::set_var("VORONOI_MESH_EDGE_REPAIR_REBUILD", "1");
     } else {
-        std::env::remove_var("S2_EDGE_REPAIR_REBUILD");
+        std::env::remove_var("VORONOI_MESH_EDGE_REPAIR_REBUILD");
     }
     let result = f();
-    std::env::remove_var("S2_BIN_COUNT");
-    std::env::remove_var("S2_EDGE_REPAIR_REBUILD");
+    std::env::remove_var("VORONOI_MESH_BIN_COUNT");
+    std::env::remove_var("VORONOI_MESH_EDGE_REPAIR_REBUILD");
     result
 }
 
@@ -117,7 +117,7 @@ fn mean_spacing() -> f32 {
 }
 
 /// The defect-site cap of the uniform-2M-seed-1 input.
-fn defect_window() -> Vec<s2_voronoi::UnitVec3> {
+fn defect_window() -> Vec<voronoi_mesh::UnitVec3> {
     let cos_window = (WINDOW_RADIUS_MULT * mean_spacing()).cos();
     let c = SITE_CENTER;
     random_sphere_points(SOURCE_N, 1)
@@ -131,7 +131,10 @@ fn defect_window() -> Vec<s2_voronoi::UnitVec3> {
 /// The scaffold size sets the grid resolution, which positions the
 /// bin-boundary lines relative to the site. Order matters: window first,
 /// scaffold second (the defect is input-order sensitive).
-fn with_scaffold(window: &[s2_voronoi::UnitVec3], scaffold_n: usize) -> Vec<s2_voronoi::UnitVec3> {
+fn with_scaffold(
+    window: &[voronoi_mesh::UnitVec3],
+    scaffold_n: usize,
+) -> Vec<voronoi_mesh::UnitVec3> {
     let cos_excl = (SCAFFOLD_EXCL_MULT * mean_spacing()).cos();
     let c = SITE_CENTER;
     let mut fixture = window.to_vec();
@@ -147,7 +150,7 @@ fn with_scaffold(window: &[s2_voronoi::UnitVec3], scaffold_n: usize) -> Vec<s2_v
 /// valid (both the effective and the returned diagram).
 fn compute_strict(
     name: &str,
-    points: &[s2_voronoi::UnitVec3],
+    points: &[voronoi_mesh::UnitVec3],
     bins: Option<usize>,
 ) -> ComputeOutput {
     let out = with_bin_count(bins, || {
@@ -260,7 +263,7 @@ fn net_cross_bin_single_sided() {
 // after numerics changes to look for a new pin.
 
 /// Full-pipeline differential: the surgical in-place repair (production
-/// default) and the original full-rebuild oracle (`S2_EDGE_REPAIR_REBUILD=1`)
+/// default) and the original full-rebuild oracle (`VORONOI_MESH_EDGE_REPAIR_REBUILD=1`)
 /// must produce semantically identical diagrams — same defects detected,
 /// same vertices, same per-cell vertex-id sequences — on every net fixture
 /// (in-bin and cross-bin defect routings).
@@ -325,7 +328,7 @@ fn net_repair_backends_agree() {
 #[test]
 #[ignore]
 fn probe_site_scan() {
-    let mut candidates: Vec<(String, Vec<s2_voronoi::UnitVec3>)> = Vec::new();
+    let mut candidates: Vec<(String, Vec<voronoi_mesh::UnitVec3>)> = Vec::new();
     for seed in 1..=10u64 {
         candidates.push((
             format!("uniform_2m_s{seed}"),
@@ -364,7 +367,7 @@ fn probe_site_scan() {
 #[test]
 #[ignore]
 fn probe_defect_rate_at_scale() {
-    let run = |name: &str, points: Vec<s2_voronoi::UnitVec3>| {
+    let run = |name: &str, points: Vec<voronoi_mesh::UnitVec3>| {
         let out = with_bin_count(None, || {
             compute_with_report(&points, VoronoiConfig::default())
         });
@@ -406,7 +409,7 @@ fn probe_defect_rate_at_scale() {
 #[test]
 #[ignore]
 fn probe_defect_rate_adversarial() {
-    let run = |name: &str, points: Vec<s2_voronoi::UnitVec3>| {
+    let run = |name: &str, points: Vec<voronoi_mesh::UnitVec3>| {
         let out = with_bin_count(None, || {
             compute_with_report(&points, VoronoiConfig::default())
         });

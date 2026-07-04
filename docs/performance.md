@@ -45,9 +45,9 @@ Useful flags:
 ## Knobs
 
 - `RAYON_NUM_THREADS=1` — single-threaded, for stable comparisons.
-- `S2_BIN_COUNT=<n>` — shard count (default ~2x threads).
-- `S2_VORONOI_TIMING_KV=1` with `--features timing` — machine-readable phase timing.
-- `S2_VORONOI_GRID_DENSITY=<f>` / `S2_VORONOI_PLANE_GRID_DENSITY=<f>` — spatial-grid target
+- `VORONOI_MESH_BIN_COUNT=<n>` — shard count (default ~2x threads).
+- `VORONOI_MESH_TIMING_KV=1` with `--features timing` — machine-readable phase timing.
+- `VORONOI_MESH_GRID_DENSITY=<f>` / `VORONOI_MESH_PLANE_GRID_DENSITY=<f>` — spatial-grid target
   density (points per cell) for sweeps.
 
 ## Comparing commits

@@ -4,8 +4,8 @@
 
 mod support;
 
-use s2_voronoi::{compute, UnitVec3};
 use support::points::random_sphere_points;
+use voronoi_mesh::{compute, UnitVec3};
 
 /// Distance-comparison slack: locator and brute force may round differently
 /// (normalized vs raw coordinates), so a tie can resolve to a different

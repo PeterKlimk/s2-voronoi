@@ -8,14 +8,14 @@
 
 mod support;
 
-use s2_voronoi::{
-    compute, validation::validate, DegenerateMode, PreprocessMode, RepairMode, UnitVec3,
-    VoronoiConfig,
-};
 use std::f32::consts::PI;
 use support::points::{
     benchmark_cap_points, clustered_cap_points, cubed_sphere_points, great_circle_points,
     hemisphere_points,
+};
+use voronoi_mesh::{
+    compute, validation::validate, DegenerateMode, PreprocessMode, RepairMode, UnitVec3,
+    VoronoiConfig,
 };
 
 fn u(x: f32, y: f32, z: f32) -> UnitVec3 {
@@ -112,7 +112,7 @@ fn welding_subradius_cluster_is_strictly_valid() {
         points.push(u(1.0, 1e-5 * t.cos(), 1e-5 * t.sin()));
     }
 
-    let output = s2_voronoi::compute_with_report(
+    let output = voronoi_mesh::compute_with_report(
         &points,
         VoronoiConfig::default().with_preprocess_mode(PreprocessMode::MergeWithin(1e-4)),
     )
@@ -129,7 +129,7 @@ fn welding_subradius_cluster_is_strictly_valid() {
 #[test]
 fn robust_great_circle_perturbation_solves_rank2_fixture() {
     let points = great_circle_points(50, 0.0, 42);
-    let output = s2_voronoi::compute_with_report(&points, VoronoiConfig::default())
+    let output = voronoi_mesh::compute_with_report(&points, VoronoiConfig::default())
         .expect("default great-circle perturbation should solve rank-2 fixture");
 
     assert_eq!(
@@ -151,7 +151,7 @@ fn robust_great_circle_perturbation_solves_rank2_fixture() {
 fn dense_cap_frontier_requires_repair_but_default_is_valid() {
     let points = benchmark_cap_points(50_000, 0.05, 7);
 
-    let raw = s2_voronoi::compute_with_report(
+    let raw = voronoi_mesh::compute_with_report(
         &points,
         VoronoiConfig::default().with_repair_mode(RepairMode::Disabled),
     )
@@ -170,7 +170,7 @@ fn dense_cap_frontier_requires_repair_but_default_is_valid() {
         "raw dense-cap defect should leave post-repair residuals when local repair is disabled"
     );
 
-    let repaired = s2_voronoi::compute_with_report(&points, VoronoiConfig::default())
+    let repaired = voronoi_mesh::compute_with_report(&points, VoronoiConfig::default())
         .expect("default repair should solve the dense-cap frontier fixture");
     assert!(
         repaired.report.returned_validation.is_strictly_valid(),
@@ -210,7 +210,7 @@ fn classify_weird_geometry_failures() {
             benchmark_cap_points(50_000, 0.05, 7),
         ),
     ] {
-        match s2_voronoi::compute_with_report(&points, VoronoiConfig::default()) {
+        match voronoi_mesh::compute_with_report(&points, VoronoiConfig::default()) {
             Ok(output) => eprintln!(
                 "WEIRDCASE {name}: ok cells={} validation={} pre_repair={}",
                 output.preferred_diagram().num_cells(),

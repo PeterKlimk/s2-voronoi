@@ -34,7 +34,7 @@ struct BinLayout {
     num_bins: usize,
 }
 
-/// Target shard count from threads (x2) with the `S2_BIN_COUNT` override,
+/// Target shard count from threads (x2) with the `VORONOI_MESH_BIN_COUNT` override,
 /// clamped to `[min_bins, 96]`. Shared by the spherical (min 6 — one per
 /// face) and planar (min 1) layouts so the env knob has one parser.
 pub(crate) fn target_bin_count(min_bins: usize) -> usize {
@@ -43,7 +43,7 @@ pub(crate) fn target_bin_count(min_bins: usize) -> usize {
     #[cfg(not(feature = "parallel"))]
     let threads = 1;
 
-    if let Ok(var) = std::env::var("S2_BIN_COUNT") {
+    if let Ok(var) = std::env::var("VORONOI_MESH_BIN_COUNT") {
         var.parse().unwrap_or(threads * 2)
     } else {
         threads * 2

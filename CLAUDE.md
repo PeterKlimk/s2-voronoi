@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) working in the `s2-voronoi` crate.
+This file provides guidance to Claude Code (claude.ai/code) working in the `voronoi-mesh` crate.
 For workspace-level guidance, see the repo-root `CLAUDE.md`.
 
 For user-facing crate docs, see `README.md` and `docs/`.
@@ -34,7 +34,7 @@ cargo test --release --test api --test correctness
 cargo run --release --features tools --bin bench_voronoi -- 100k 500k 1m
 
 # Detailed sub-phase timing
-S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 500k --no-preprocess
+VORONOI_MESH_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 500k --no-preprocess
 
 # Inter-commit perf comparisons (interleaved, paired, single-thread)
 ./scripts/bench_build.sh --chain 6
@@ -50,14 +50,14 @@ S2_VORONOI_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_v
 ## Environment Knobs
 
 - `RAYON_NUM_THREADS=1`: force single-threaded mode (stable perf comparisons).
-- `S2_BIN_COUNT=<n>`: override sharded bin count (defaults to about 2x threads).
-- `S2_VORONOI_TIMING_KV=1`: emit machine-readable timing lines (`timing` feature).
-- `S2_VORONOI_VERIFY=1`: run the full topological validator after every build on the plain `compute` fast path (which otherwise skips it) and return an error on any strict-validity failure. Off by default; O(E) cost per call. Belt-and-braces for callers wanting output validity machine-checked regardless of detection bookkeeping.
-- `S2_EDGE_REPAIR_REBUILD=1`: select the full-rewrite repair backend (differential oracle for the in-place default).
+- `VORONOI_MESH_BIN_COUNT=<n>`: override sharded bin count (defaults to about 2x threads).
+- `VORONOI_MESH_TIMING_KV=1`: emit machine-readable timing lines (`timing` feature).
+- `VORONOI_MESH_VERIFY=1`: run the full topological validator after every build on the plain `compute` fast path (which otherwise skips it) and return an error on any strict-validity failure. Off by default; O(E) cost per call. Belt-and-braces for callers wanting output validity machine-checked regardless of detection bookkeeping.
+- `VORONOI_MESH_EDGE_REPAIR_REBUILD=1`: select the full-rewrite repair backend (differential oracle for the in-place default).
 
 ## Crate Overview
 
-`s2-voronoi` computes spherical Voronoi diagrams on the unit sphere (S2) using kNN-driven half-space clipping. (A planar/toroidal backend over the same dedup engine lives on the `parked/planar-backend` branch, removed from the release surface.)
+`voronoi-mesh` computes spherical Voronoi diagrams on the unit sphere (S2) using kNN-driven half-space clipping. (A planar/toroidal backend over the same dedup engine lives on the `parked/planar-backend` branch, removed from the release surface.)
 
 High-level flow per generator:
 

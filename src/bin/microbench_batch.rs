@@ -1,3 +1,3 @@
 fn main() {
-    s2_voronoi::run_batch_clip_microbench();
+    voronoi_mesh::run_batch_clip_microbench();
 }

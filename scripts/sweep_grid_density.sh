@@ -21,7 +21,7 @@ RUSTFLAGS="${RUSTFLAGS:--C target-cpu=native}" \
 for rep in $(seq 1 "$REPS"); do
     for d in $DENSITIES; do
         for s in $SIZES; do
-            RAYON_NUM_THREADS=1 S2_VORONOI_TIMING_KV=1 S2_VORONOI_GRID_DENSITY="$d" \
+            RAYON_NUM_THREADS=1 VORONOI_MESH_TIMING_KV=1 VORONOI_MESH_GRID_DENSITY="$d" \
                 "$BIN" "$s" --no-preprocess 2>&1 |
                 grep TIMING_KV | sed "s/^/density=$d rep=$rep /"
         done

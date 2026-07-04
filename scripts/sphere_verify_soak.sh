@@ -3,7 +3,7 @@
 # Endless high-N spherical correctness soak.
 #
 # Builds bench_voronoi once, then runs a size x distribution matrix with
-# S2_VORONOI_VERIFY=1 until cancelled or the first failing case. This uses
+# VORONOI_MESH_VERIFY=1 until cancelled or the first failing case. This uses
 # Rayon normally; set RAYON_NUM_THREADS outside the script if you want a fixed
 # thread count.
 #
@@ -93,7 +93,7 @@ while :; do
 
             printf '[%s] round=%d case=%d size=%s dist=%s seed=%d\n' \
                 "$(date -Is)" "$round" "$case_idx" "$size" "$dist" "$seed"
-            S2_VORONOI_VERIFY=1 "$BIN" "${args[@]}"
+            VORONOI_MESH_VERIFY=1 "$BIN" "${args[@]}"
             printf '[%s] PASS round=%d case=%d size=%s dist=%s seed=%d\n\n' \
                 "$(date -Is)" "$round" "$case_idx" "$size" "$dist" "$seed"
 

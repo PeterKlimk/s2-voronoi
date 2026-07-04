@@ -18,8 +18,8 @@ mod support;
 use glam::DVec3;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use s2_voronoi::{compute_with, validation::validate, PreprocessMode, UnitVec3, VoronoiConfig};
 use support::points::random_sphere_points;
+use voronoi_mesh::{compute_with, validation::validate, PreprocessMode, UnitVec3, VoronoiConfig};
 
 fn run(name: &str, points: &[UnitVec3]) {
     let config = VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled);

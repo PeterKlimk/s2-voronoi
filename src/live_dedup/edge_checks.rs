@@ -251,7 +251,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                     // invariant violation. Release adopts the incoming id
                     // (last write wins) and the output-invariant scan + repair
                     // restore strict validity (verified by the plane battery
-                    // and the strict campaign); the validate / S2_VORONOI_VERIFY
+                    // and the strict campaign); the validate / VORONOI_MESH_VERIFY
                     // gates remain the production catch. Debug must not abort
                     // (this only makes debug match release behavior).
                     vertex_indices[local_idx] = check.indices[ck];

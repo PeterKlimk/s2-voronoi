@@ -314,7 +314,7 @@ pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
     validate_impl(diagram)
 }
 
-/// Opt-in post-build verification gate (env `S2_VORONOI_VERIFY=1`).
+/// Opt-in post-build verification gate (env `VORONOI_MESH_VERIFY=1`).
 ///
 /// The full topological validator is O(E) and is skipped by the plain
 /// `compute` fast path for speed (the report-returning
@@ -325,7 +325,7 @@ pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
 /// belt-and-braces for callers who want output validity machine-checked
 /// regardless of cost.
 pub(crate) fn verify_enabled() -> bool {
-    matches!(std::env::var("S2_VORONOI_VERIFY"), Ok(v) if v == "1")
+    matches!(std::env::var("VORONOI_MESH_VERIFY"), Ok(v) if v == "1")
 }
 
 /// Run the sphere validator and map a strict-validity failure to an error
@@ -339,8 +339,8 @@ pub(crate) fn verify_sphere_if_enabled(
     match verify_sphere_fast(diagram) {
         Ok(()) => return Ok(()),
         Err(reason) => {
-            if matches!(std::env::var("S2_VORONOI_VERIFY_TRACE"), Ok(v) if v == "1") {
-                eprintln!("S2_VORONOI_VERIFY fast path fell back: {reason}");
+            if matches!(std::env::var("VORONOI_MESH_VERIFY_TRACE"), Ok(v) if v == "1") {
+                eprintln!("VORONOI_MESH_VERIFY fast path fell back: {reason}");
             }
         }
     }
@@ -352,7 +352,7 @@ pub(crate) fn verify_sphere_if_enabled(
     let mut issues = report.subdivision_issues();
     issues.extend(report.invariant_issues());
     Err(crate::VoronoiError::ComputationFailed(format!(
-        "S2_VORONOI_VERIFY: returned diagram failed strict validation: {}",
+        "VORONOI_MESH_VERIFY: returned diagram failed strict validation: {}",
         issues.join("; ")
     )))
 }
@@ -369,7 +369,7 @@ fn edge_key(lo: u32, hi: u32) -> u64 {
     ((lo as u64) << 32) | hi as u64
 }
 
-/// Fast success-path verifier for `S2_VORONOI_VERIFY`.
+/// Fast success-path verifier for `VORONOI_MESH_VERIFY`.
 ///
 /// This checks the same strict sphere contract as [`validate_impl`], but does
 /// not build the detailed diagnostic report. On failure the caller reruns the
@@ -557,7 +557,7 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
 ///
 /// Used as the local-repair acceptance gate in `maybe_repair_effective`: it
 /// validates the repaired effective arrays in place — independent of the
-/// `S2_VORONOI_VERIFY` env flag and without cloning the diagram into a
+/// `VORONOI_MESH_VERIFY` env flag and without cloning the diagram into a
 /// `SphericalVoronoi`. Effective index space has no welded twins, so every cell
 /// is its own face (`num_faces == num_cells`).
 ///
@@ -1014,19 +1014,19 @@ mod verify_gate_tests {
         let diagram = invalid_diagram();
         assert!(!validate(&diagram).is_strictly_valid());
 
-        std::env::remove_var("S2_VORONOI_VERIFY");
+        std::env::remove_var("VORONOI_MESH_VERIFY");
         assert!(
             verify_sphere_if_enabled(&diagram).is_ok(),
             "disabled gate must not error even on an invalid diagram"
         );
 
-        std::env::set_var("S2_VORONOI_VERIFY", "1");
+        std::env::set_var("VORONOI_MESH_VERIFY", "1");
         let res = verify_sphere_if_enabled(&diagram);
-        std::env::remove_var("S2_VORONOI_VERIFY");
+        std::env::remove_var("VORONOI_MESH_VERIFY");
         let err = res.expect_err("enabled gate must error on an invalid diagram");
         match err {
             crate::VoronoiError::ComputationFailed(msg) => {
-                assert!(msg.contains("S2_VORONOI_VERIFY"), "message: {msg}");
+                assert!(msg.contains("VORONOI_MESH_VERIFY"), "message: {msg}");
             }
             other => panic!("unexpected error variant: {other:?}"),
         }

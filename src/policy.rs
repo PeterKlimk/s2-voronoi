@@ -12,7 +12,7 @@
 /// flat across that range, so a constant suffices for now. Mean
 /// neighbors-before-termination rises mildly with n (8.16 -> 8.44 from 100k
 /// to 2M) and is density-independent; revisit beyond ~4M points or for
-/// strongly non-uniform inputs. Use `S2_VORONOI_GRID_DENSITY` to override
+/// strongly non-uniform inputs. Use `VORONOI_MESH_GRID_DENSITY` to override
 /// for sweeps (scripts/sweep_grid_density.sh); the `neighbors_total` /
 /// `grid_*` TIMING_KV fields are the model inputs.
 pub(crate) const KNN_GRID_TARGET_DENSITY: f64 = 24.0;
@@ -67,7 +67,7 @@ pub(crate) fn knn_grid_target_density() -> f64 {
     static OVERRIDE: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
     OVERRIDE
         .get_or_init(|| {
-            std::env::var("S2_VORONOI_GRID_DENSITY")
+            std::env::var("VORONOI_MESH_GRID_DENSITY")
                 .ok()
                 .and_then(|v| v.parse::<f64>().ok())
                 .filter(|d| *d >= 1.0)

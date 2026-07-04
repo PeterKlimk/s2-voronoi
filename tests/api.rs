@@ -1,14 +1,14 @@
-//! Public API integration tests for s2-voronoi.
+//! Public API integration tests for voronoi-mesh.
 
 mod support;
 
-use s2_voronoi::{
-    compute, compute_with, compute_with_report, validation::validate, DegenerateMode,
-    PreprocessMode, UnitVec3, VoronoiConfig, VoronoiError,
-};
 use support::points::{
     clustered_cap_points, fibonacci_sphere_points, great_circle_points, hemisphere_points,
     random_sphere_points,
+};
+use voronoi_mesh::{
+    compute, compute_with, compute_with_report, validation::validate, DegenerateMode,
+    PreprocessMode, UnitVec3, VoronoiConfig, VoronoiError,
 };
 
 #[test]
@@ -427,7 +427,7 @@ fn test_compute_solves_upper_hemisphere_large_cells() {
 #[cfg(feature = "qhull")]
 fn test_qhull_available() {
     use glam::Vec3;
-    use s2_voronoi::compute_voronoi_qhull;
+    use voronoi_mesh::compute_voronoi_qhull;
 
     let points: Vec<Vec3> = vec![
         Vec3::new(1.0, 0.0, 0.0),
@@ -445,7 +445,7 @@ fn test_qhull_available() {
 #[cfg(feature = "qhull")]
 fn test_qhull_normalizes_inputs_before_exact_3d_hull() {
     use glam::Vec3;
-    use s2_voronoi::compute_voronoi_qhull;
+    use voronoi_mesh::compute_voronoi_qhull;
 
     let points: Vec<Vec3> = vec![
         Vec3::new(1.0001, 0.0, 0.0),
@@ -560,7 +560,7 @@ fn test_adjacency_with_welded_twins() {
 #[cfg(feature = "serde")]
 #[test]
 fn test_serde_roundtrip_preserves_diagram_and_welds() {
-    use s2_voronoi::SphericalVoronoi;
+    use voronoi_mesh::SphericalVoronoi;
 
     let mut points = random_sphere_points(500, 777);
     points.push(points[42]); // welded twin -> weld map must survive
@@ -586,7 +586,7 @@ fn test_serde_roundtrip_preserves_diagram_and_welds() {
     // Adjacency round-trips too.
     let adjacency = diagram.build_adjacency();
     let adj_json = serde_json::to_string(&adjacency).expect("serialize adjacency");
-    let adj_restored: s2_voronoi::CellAdjacency =
+    let adj_restored: voronoi_mesh::CellAdjacency =
         serde_json::from_str(&adj_json).expect("deserialize adjacency");
     for i in 0..diagram.num_cells() {
         assert_eq!(adj_restored.neighbors_of(i), adjacency.neighbors_of(i));

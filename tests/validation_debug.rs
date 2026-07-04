@@ -1,7 +1,7 @@
 mod support;
 
-use s2_voronoi::{compute, SphericalVoronoi};
 use std::collections::{HashMap, HashSet};
+use voronoi_mesh::{compute, SphericalVoronoi};
 
 /// For a d1 vertex V in cell A with triplet (A,B,C), check if cells B and C
 /// have A as a neighbor (i.e., have any vertex involving generator A).
@@ -253,7 +253,7 @@ fn analyze_position_duplicates(diagram: &SphericalVoronoi) -> (usize, usize, usi
     let grid_size = 1e-4_f32;
     let inv_grid = 1.0 / grid_size;
 
-    let grid_key = |v: &s2_voronoi::UnitVec3| -> (i32, i32, i32) {
+    let grid_key = |v: &voronoi_mesh::UnitVec3| -> (i32, i32, i32) {
         (
             (v.x * inv_grid) as i32,
             (v.y * inv_grid) as i32,

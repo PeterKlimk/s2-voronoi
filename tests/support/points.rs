@@ -3,8 +3,8 @@
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use s2_voronoi::UnitVec3;
 use std::f32::consts::PI;
+use voronoi_mesh::UnitVec3;
 
 /// Generate random points uniformly distributed on the unit sphere.
 pub fn random_sphere_points(n: usize, seed: u64) -> Vec<UnitVec3> {

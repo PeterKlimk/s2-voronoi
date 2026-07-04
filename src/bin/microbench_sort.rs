@@ -83,7 +83,7 @@ fn main() {
         work.copy_from_slice(&master);
         for seg in work.chunks_mut(n) {
             match which {
-                "net" => s2_voronoi::bench_sort_small(seg),
+                "net" => voronoi_mesh::bench_sort_small(seg),
                 "ins" => ins_sort(seg),
                 "std" => seg.sort_unstable(),
                 other => panic!("unknown impl {other:?} (use net|ins|std)"),

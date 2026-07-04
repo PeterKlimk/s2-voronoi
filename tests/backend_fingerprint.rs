@@ -3,8 +3,8 @@
 
 mod support;
 
-use s2_voronoi::compute;
 use support::points::random_sphere_points;
+use voronoi_mesh::compute;
 
 #[test]
 #[ignore = "cross-backend determinism check - run manually"]

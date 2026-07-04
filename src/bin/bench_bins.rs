@@ -1,8 +1,8 @@
 //! Benchmark different bin counts with fixed thread count.
-//! Set S2_BIN_COUNT env var to override default (threads * 2).
+//! Set VORONOI_MESH_BIN_COUNT env var to override default (threads * 2).
 
-use s2_voronoi::{compute, UnitVec3};
 use std::time::Instant;
+use voronoi_mesh::{compute, UnitVec3};
 
 fn generate_fibonacci_sphere(n: usize) -> Vec<UnitVec3> {
     let golden_ratio: f32 = (1.0 + 5.0f32.sqrt()) / 2.0;
@@ -40,7 +40,7 @@ fn compute_stats(samples: &[f64]) -> Stats {
 
 fn run_bench(n_points: usize, bin_count: usize, samples: usize) -> Stats {
     // Set bin count override
-    std::env::set_var("S2_BIN_COUNT", bin_count.to_string());
+    std::env::set_var("VORONOI_MESH_BIN_COUNT", bin_count.to_string());
 
     // Generate points once (reuse across samples)
     let points = generate_fibonacci_sphere(n_points);

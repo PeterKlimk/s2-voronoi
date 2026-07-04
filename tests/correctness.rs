@@ -1,14 +1,14 @@
-//! Geometric correctness tests for s2-voronoi.
+//! Geometric correctness tests for voronoi-mesh.
 //!
 //! These tests verify geometric invariants that should hold for any valid
 //! spherical Voronoi diagram.
 
 mod support;
 
-use s2_voronoi::compute;
 use std::collections::HashSet;
 use std::f32::consts::PI;
 use support::points::fibonacci_sphere_points;
+use voronoi_mesh::compute;
 
 #[test]
 fn test_vertices_on_unit_sphere() {
@@ -169,8 +169,8 @@ fn test_reproducibility() {
 #[cfg(feature = "qhull")]
 fn test_knn_matches_qhull_structure() {
     use glam::Vec3;
-    use s2_voronoi::compute_voronoi_qhull;
-    use s2_voronoi::quality::compare_cell_vertex_counts;
+    use voronoi_mesh::compute_voronoi_qhull;
+    use voronoi_mesh::quality::compare_cell_vertex_counts;
 
     // For well-spaced points, knn_clipping should produce similar structure to qhull
     let points = fibonacci_sphere_points(100, 0.05, 44444);
@@ -211,7 +211,7 @@ fn test_cell_areas_sum_to_sphere_area() {
 
 #[test]
 fn test_octahedron_cells_have_equal_areas() {
-    use s2_voronoi::UnitVec3;
+    use voronoi_mesh::UnitVec3;
     let points = vec![
         UnitVec3::new(1.0, 0.0, 0.0),
         UnitVec3::new(-1.0, 0.0, 0.0),
@@ -257,7 +257,7 @@ fn test_cell_centroids_unit_length_and_near_generator() {
 fn test_lloyd_relaxation_converges_toward_centroidal() {
     let mut points = fibonacci_sphere_points(500, 0.5, 99);
 
-    let mean_displacement = |diagram: &s2_voronoi::SphericalVoronoi| -> f64 {
+    let mean_displacement = |diagram: &voronoi_mesh::SphericalVoronoi| -> f64 {
         (0..diagram.num_cells())
             .map(|i| {
                 let g = diagram.generator(i);

@@ -91,7 +91,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
 
     // Dev-only: tally unresolved-edge origins to see which path inflates the
     // residual (within-bin vs cross-bin). See docs/correctness.md.
-    if std::env::var("S2_UNPAIRED_ORIGINS").is_ok() {
+    if std::env::var("VORONOI_MESH_UNPAIRED_ORIGINS").is_ok() {
         use super::types::UnresolvedEdgeOrigin as O;
         let mut c = [0usize; 8];
         for e in &unresolved_edges {

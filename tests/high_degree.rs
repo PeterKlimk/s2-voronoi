@@ -13,8 +13,8 @@
 mod support;
 use support::points::cubed_sphere_points;
 
-use s2_voronoi::{compute, compute_with_report, validation::validate, UnitVec3, VoronoiConfig};
 use std::f32::consts::PI;
+use voronoi_mesh::{compute, compute_with_report, validation::validate, UnitVec3, VoronoiConfig};
 
 fn u(x: f32, y: f32, z: f32) -> UnitVec3 {
     let l = (x * x + y * y + z * z).sqrt();

@@ -533,7 +533,7 @@ pub fn repair_delaunator(
             .copied()
             .filter(|g| !closure.contains(g))
             .collect();
-        if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+        if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
             eprintln!(
                 "  repair round {}: closure={} spliced={} implicated={} new={}",
                 stats.rounds,
@@ -552,7 +552,7 @@ pub fn repair_delaunator(
         }
     }
     stats.spliced_generators = spliced.len();
-    if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
         eprintln!(
             "repair_delaunator: {:?}; final unpaired-implicated={}",
             stats,
@@ -917,7 +917,7 @@ pub(crate) fn repair_local_exact(
             .copied()
             .filter(|g| !closure.contains(g))
             .collect();
-        if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+        if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
             eprintln!(
                 "  local repair round {}: closure={} spliced={} implicated={} new={}",
                 stats.rounds,
@@ -936,7 +936,7 @@ pub(crate) fn repair_local_exact(
         }
     }
     stats.spliced_generators = spliced.len();
-    if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
         eprintln!(
             "repair_local_exact: {:?}; final unpaired-implicated={}",
             stats,
@@ -1025,7 +1025,7 @@ pub(crate) fn repair_local_hull(
             .copied()
             .filter(|g| !closure.contains(g))
             .collect();
-        if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+        if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
             eprintln!(
                 "  local hull repair round {}: closure={} spliced={} implicated={} new={}",
                 stats.rounds,
@@ -1044,7 +1044,7 @@ pub(crate) fn repair_local_hull(
         }
     }
     stats.spliced_generators = spliced.len();
-    if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
         eprintln!(
             "repair_local_hull: {:?}; final unpaired-implicated={}",
             stats,
@@ -1054,11 +1054,11 @@ pub(crate) fn repair_local_hull(
     stats
 }
 
-/// Select the active cell source from `S2_ESCALATE_SOURCE` (`reclip` | `hull`),
+/// Select the active cell source from `VORONOI_MESH_ESCALATE_SOURCE` (`reclip` | `hull`),
 /// defaulting to the passed-in `source`. Lets the probes A/B the local re-clip
 /// against the from-scratch hull without rewiring callers.
 fn pick_source(default: CellSource) -> CellSource {
-    match std::env::var("S2_ESCALATE_SOURCE").as_deref() {
+    match std::env::var("VORONOI_MESH_ESCALATE_SOURCE").as_deref() {
         Ok("reclip") => reclip_cells,
         Ok("hull") => rebuild_cells,
         _ => default,
@@ -1186,7 +1186,7 @@ impl WorkingDiagram {
     /// its unspliced neighbor when both wind the same direction, so the fan is
     /// reversed if its signed orientation disagrees.
     fn splice_generator(&mut self, points: &[Vec3], g: u32, fan: &[[u32; 3]], target_sign: f32) {
-        if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+        if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
             let before = self.vpos.len();
             let reused = fan
                 .iter()
@@ -1562,11 +1562,11 @@ pub fn escalate_diagram(
     source: CellSource,
 ) -> EscalationStats {
     let source = pick_source(source);
-    let gather_k = std::env::var("S2_ESCALATE_K")
+    let gather_k = std::env::var("VORONOI_MESH_ESCALATE_K")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(gather_k);
-    let max_rounds = std::env::var("S2_ESCALATE_ROUNDS")
+    let max_rounds = std::env::var("VORONOI_MESH_ESCALATE_ROUNDS")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(max_rounds);
@@ -1579,11 +1579,11 @@ pub fn escalate_diagram(
         defect_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
     let target_sign = work.winding_convention(points, &defect_gens);
 
-    if std::env::var("S2_ESCALATE_PROBE_A0_LOCALHULL").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_A0_LOCALHULL").is_ok() {
         a0_full_exact_vs_flag(points, work, gather_k);
         return stats;
     }
-    if std::env::var("S2_ESCALATE_PROBE_A0").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_A0").is_ok() {
         // Stash the fast per-cell triples + effective points so a test can build
         // the TRUE exact reference (delaunator, exact predicates) and classify.
         let triples: Vec<Vec<[u32; 3]>> = work
@@ -1595,7 +1595,7 @@ pub fn escalate_diagram(
         return stats;
     }
 
-    if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
         // Aliasing: how many vids share a triple already used by an earlier vid?
         let mut seen: std::collections::HashSet<[u32; 3]> = std::collections::HashSet::new();
         let mut aliased = 0usize;
@@ -1617,7 +1617,7 @@ pub fn escalate_diagram(
     // and report how many new unpaired edges each creates. A correctly rebuilt
     // good cell is identical to its fast cell (pure reuse) and must create ZERO
     // new unpaired edges; a nonzero count is a pure splice bug (winding/order).
-    if std::env::var("S2_ESCALATE_PROBE_GOOD").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_GOOD").is_ok() {
         let base = work.unpaired_generators().len();
         let mut checked = 0;
         for g in 0..work.cells.len() as u32 {
@@ -1648,7 +1648,7 @@ pub fn escalate_diagram(
         return stats;
     }
 
-    if std::env::var("S2_ESCALATE_PROBE_FILL").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_FILL").is_ok() {
         // Proper cluster fill: pin each cluster cell's RIM from trusted (non-
         // cluster) neighbors (their attributed triples), and fill the INTERIOR
         // (cluster–cluster vertices the neighbors can't see) from the exact hull
@@ -1669,11 +1669,11 @@ pub fn escalate_diagram(
             return stats;
         }
         let base = work.unpaired_edges_and_cells().0.len();
-        let k = std::env::var("S2_ESCALATE_CLUSTER_K")
+        let k = std::env::var("VORONOI_MESH_ESCALATE_CLUSTER_K")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(64usize);
-        let max_grow = std::env::var("S2_ESCALATE_ROUNDS")
+        let max_grow = std::env::var("VORONOI_MESH_ESCALATE_ROUNDS")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(30usize);
@@ -1742,7 +1742,7 @@ pub fn escalate_diagram(
                 .copied()
                 .filter(|g| !cluster.contains(g))
                 .collect();
-            if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+            if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
                 eprintln!(
                     "  FILL round {round}: cluster={} implicated={} new={}",
                     cluster.len(),
@@ -1771,7 +1771,7 @@ pub fn escalate_diagram(
         return stats;
     }
 
-    if std::env::var("S2_ESCALATE_PROBE_CLUSTER").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_CLUSTER").is_ok() {
         // Test whether rebuilding the connected MALFORMED CLUSTER stays local.
         // Cluster = malformed cells connected via a shared vertex. Rebuild all
         // cluster cells from one exact hull over gather(cluster, k); splice only
@@ -1806,7 +1806,7 @@ pub fn escalate_diagram(
             clusters.entry(find(&mut parent, i)).or_default().push(g);
         }
         let _ = idx;
-        let k = std::env::var("S2_ESCALATE_CLUSTER_K")
+        let k = std::env::var("VORONOI_MESH_ESCALATE_CLUSTER_K")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(48usize);
@@ -1849,7 +1849,7 @@ pub fn escalate_diagram(
         return stats;
     }
 
-    if std::env::var("S2_ESCALATE_PROBE_CONSENSUS").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_CONSENSUS").is_ok() {
         // Probe C2: rebuild each MALFORMED cell from its NEIGHBORS' consensus —
         // the set of vertex triples that other cells attribute to it, ordered
         // into a cycle. This adopts the neighbors' (valid, possibly non-Delaunay)
@@ -1964,7 +1964,7 @@ pub fn escalate_diagram(
         return stats;
     }
 
-    if std::env::var("S2_ESCALATE_PROBE_MALFORMED").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_MALFORMED").is_ok() {
         // Probe C: a Voronoi cell is convex, so each neighbor's bisector gives at
         // most ONE boundary edge = exactly 2 vertices sharing that neighbor. A
         // neighbor appearing in >=3 of a cell's vertex triples ⇒ the f32 clip
@@ -2017,14 +2017,14 @@ pub fn escalate_diagram(
         return stats;
     }
 
-    if std::env::var("S2_ESCALATE_PROBE_STABLE").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_STABLE").is_ok() {
         // Path-A test: ONE fixed hull over a big neighborhood of the defect;
         // grow the spliced set WITHIN that fixed hull (cells' fans never shift
         // between rounds) until the rim pairs with the surrounding fast cells.
         // Converges at a bounded size ⇔ the near-cocircular component is bounded
         // and rebuild-the-component is viable. Diverges/exhausts ⇔ totality.
         let seeds: Vec<u32> = defect_gens.iter().copied().collect();
-        let big = std::env::var("S2_ESCALATE_BIG_K")
+        let big = std::env::var("VORONOI_MESH_ESCALATE_BIG_K")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(400usize);
@@ -2085,7 +2085,7 @@ pub fn escalate_diagram(
         return stats;
     }
 
-    if std::env::var("S2_ESCALATE_PROBE_DUMP").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_DUMP").is_ok() {
         use crate::knn_clipping::canonical::in_circle_sphere_sign;
         let (edges, broken) = work.unpaired_edges_and_cells();
         eprintln!(
@@ -2127,7 +2127,7 @@ pub fn escalate_diagram(
         return stats;
     }
 
-    if std::env::var("S2_ESCALATE_PROBE_SURGICAL").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_SURGICAL").is_ok() {
         // Codex's surgical-consensus test: for the residual unpaired edges,
         // compute the rewrite CLOSURE (all generators named by both endpoint
         // triples of every unpaired edge), rebuild ONLY those cells consistently
@@ -2146,7 +2146,7 @@ pub fn escalate_diagram(
             }
         }
         let closure_vec: Vec<u32> = closure.iter().copied().collect();
-        let k = std::env::var("S2_ESCALATE_CLOSURE_K")
+        let k = std::env::var("VORONOI_MESH_ESCALATE_CLOSURE_K")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(48usize);
@@ -2182,7 +2182,7 @@ pub fn escalate_diagram(
         return stats;
     }
 
-    if std::env::var("S2_ESCALATE_PROBE_CLASSIFY").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_CLASSIFY").is_ok() {
         // Step (b): on the UNSPLICED fast diagram, separate the defect patch into
         //   - ACTUALLY-UNPAIRED  : cells incident to a real boundary edge (defect)
         //   - PAIRED-NON-DELAUNAY: locally valid (all edges pair) but fan != exact
@@ -2234,11 +2234,11 @@ pub fn escalate_diagram(
 
         // Classify the defect patch's deep-interior cells against exact Delaunay.
         let seeds: Vec<u32> = defect_gens.iter().copied().collect();
-        let big = std::env::var("S2_ESCALATE_BIG_K")
+        let big = std::env::var("VORONOI_MESH_ESCALATE_BIG_K")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(600usize);
-        let core_k = std::env::var("S2_ESCALATE_CORE_K")
+        let core_k = std::env::var("VORONOI_MESH_ESCALATE_CORE_K")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(120usize);
@@ -2281,25 +2281,25 @@ pub fn escalate_diagram(
         return stats;
     }
 
-    if std::env::var("S2_ESCALATE_PROBE_REGION").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_REGION").is_ok() {
         // Gather a BIG neighborhood around all defect seeds, rebuild every
         // gathered cell, and count how many disagree with their fast fan. This
         // is the size of the fast≠exact region — i.e. how far out a clean rim
         // (where fast==exact) sits. Bloated fast cells are also tallied.
-        let seeds: Vec<u32> = match std::env::var("S2_ESCALATE_PROBE_SEED")
+        let seeds: Vec<u32> = match std::env::var("VORONOI_MESH_ESCALATE_PROBE_SEED")
             .ok()
             .and_then(|s| s.parse::<u32>().ok())
         {
             Some(s) => vec![s],
             None => defect_gens.iter().copied().collect(),
         };
-        let big = std::env::var("S2_ESCALATE_BIG_K")
+        let big = std::env::var("VORONOI_MESH_ESCALATE_BIG_K")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(400usize);
         let local = gather_local(points, &seeds, big);
         // Inner core: cells deep inside the big context hull (no cap artifact).
-        let core_k = std::env::var("S2_ESCALATE_CORE_K")
+        let core_k = std::env::var("VORONOI_MESH_ESCALATE_CORE_K")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(big / 4);
@@ -2342,7 +2342,7 @@ pub fn escalate_diagram(
         return stats;
     }
 
-    if std::env::var("S2_ESCALATE_PROBE_DEFECT").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_DEFECT").is_ok() {
         // Compare each defect cell's FAST fan (existing vids → triples) against
         // its REBUILT fan (exact-hull triples). How many triples match tells us
         // whether the disagreement is the localized broken edge(s) or a broad
@@ -2400,7 +2400,7 @@ pub fn escalate_diagram(
             .copied()
             .filter(|g| !cluster.contains(g))
             .collect();
-        if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+        if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
             eprintln!(
                 "  fill round {}: cluster={} implicated={} new={}",
                 stats.rounds,
@@ -2420,7 +2420,7 @@ pub fn escalate_diagram(
         }
     }
     stats.spliced_generators = spliced.len();
-    if std::env::var("S2_ESCALATE_DEBUG").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
         eprintln!(
             "escalate: {:?}; final unpaired edges={}",
             stats,
@@ -2581,7 +2581,7 @@ pub(crate) fn stash_a0_fast(
 }
 
 /// Take the A0 stash (effective points + fast per-cell triples) from the last
-/// build that ran with `S2_ESCALATE_PROBE_A0` set. Probe API.
+/// build that ran with `VORONOI_MESH_ESCALATE_PROBE_A0` set. Probe API.
 pub fn take_a0_fast() -> Option<A0Stash> {
     A0_STASH.with(|s| s.borrow_mut().take())
 }

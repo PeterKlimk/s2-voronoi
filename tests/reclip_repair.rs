@@ -1,13 +1,13 @@
-//! Tier-2 re-clip repair contract tests (opt-in `S2_RECLIP_REPAIR`).
+//! Tier-2 re-clip repair contract tests (opt-in `VORONOI_MESH_RECLIP_REPAIR`).
 //!
 //! The hot `compute` path never validates — that is the whole point — so these
 //! tests pin the repair's *valid-or-loud-error* contract on the one distribution
 //! (`mega`) that actually drives it, using the report API (which validates
-//! internally for diagnostics) plus the plain path. `S2_RECLIP_REPAIR` is
+//! internally for diagnostics) plus the plain path. `VORONOI_MESH_RECLIP_REPAIR` is
 //! process-global, so a mutex serializes set/remove across the cases in this
 //! binary; every `compute*` call runs while the lock is held.
 //!
-//! Cross-bin repair is exercised deterministically via `S2_BIN_COUNT` rather
+//! Cross-bin repair is exercised deterministically via `VORONOI_MESH_BIN_COUNT` rather
 //! than multi-threading (whose defect set varies run-to-run). Sizes are kept
 //! modest (100k) so the suite stays CI-friendly; the full seed/size/param/MT
 //! sweep lives in `scripts/robustness_campaign.sh`.
@@ -15,16 +15,16 @@
 mod support;
 use support::points::mega_points;
 
-use s2_voronoi::{compute, compute_with_report, ComputeReport, VoronoiConfig};
 use std::sync::Mutex;
+use voronoi_mesh::{compute, compute_with_report, ComputeReport, VoronoiConfig};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-/// Run `f` with `S2_RECLIP_REPAIR=1` (and optional extra env), serialized so no
+/// Run `f` with `VORONOI_MESH_RECLIP_REPAIR=1` (and optional extra env), serialized so no
 /// other case in this binary computes while the env is mutated.
 fn with_repair_env<T>(extra: &[(&str, &str)], f: impl FnOnce() -> T) -> T {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::set_var("S2_RECLIP_REPAIR", "1");
+    std::env::set_var("VORONOI_MESH_RECLIP_REPAIR", "1");
     for (k, v) in extra {
         std::env::set_var(k, v);
     }
@@ -32,7 +32,7 @@ fn with_repair_env<T>(extra: &[(&str, &str)], f: impl FnOnce() -> T) -> T {
     for (k, _) in extra {
         std::env::remove_var(k);
     }
-    std::env::remove_var("S2_RECLIP_REPAIR");
+    std::env::remove_var("VORONOI_MESH_RECLIP_REPAIR");
     out
 }
 
@@ -91,7 +91,7 @@ fn mega_plain_compute_errs_iff_residual_remains() {
                          {residual} residual(s)"
                     );
                     assert!(
-                        s2_voronoi::validation::validate(&diagram).is_strictly_valid(),
+                        voronoi_mesh::validation::validate(&diagram).is_strictly_valid(),
                         "mega seed {seed}: plain compute Ok but diagram is not strictly valid"
                     );
                 }
@@ -108,7 +108,7 @@ fn mega_plain_compute_errs_iff_residual_remains() {
 /// (exercises the cross-bin path deterministically, single process).
 #[test]
 fn mega_repair_cross_bin_contract() {
-    with_repair_env(&[("S2_BIN_COUNT", "48")], || {
+    with_repair_env(&[("VORONOI_MESH_BIN_COUNT", "48")], || {
         let pts = mega_points(N, 0.8, 2);
         let out = compute_with_report(&pts, VoronoiConfig::default())
             .expect("report path must not loud-fail");
@@ -134,7 +134,7 @@ fn mega_repair_is_deterministic_single_threaded() {
         .expect("1-thread pool");
     with_repair_env(&[], || {
         let pts = mega_points(N, 0.8, 2);
-        let layout = |pts: &[s2_voronoi::UnitVec3]| {
+        let layout = |pts: &[voronoi_mesh::UnitVec3]| {
             let out =
                 pool.install(|| compute_with_report(pts, VoronoiConfig::default()).expect("build"));
             let verts: Vec<(u32, u32, u32)> = out

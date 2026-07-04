@@ -437,7 +437,7 @@ fn env_usize(name: &str, default: usize) -> usize {
 }
 
 fn parse_target_indices(n: usize) -> Vec<usize> {
-    if let Ok(raw) = std::env::var("S2_PROBE_TARGETS") {
+    if let Ok(raw) = std::env::var("VORONOI_MESH_PROBE_TARGETS") {
         let mut targets: Vec<usize> = raw
             .split(',')
             .filter_map(|part| part.trim().parse::<usize>().ok())
@@ -471,7 +471,7 @@ fn probe_early_all_constraints_trigger_points() {
         ("hemisphere_500", hemisphere_points(500)),
         ("latitude_ring_64", pole_with_latitude_ring(64, 0.5)),
     ];
-    if std::env::var_os("S2_PROBE_LARGE").is_some() {
+    if std::env::var_os("VORONOI_MESH_PROBE_LARGE").is_some() {
         cases.extend([
             ("fib_2k", fibonacci_points(2_000)),
             ("great_circle_200", great_circle_points(200, 0.0)),
@@ -574,7 +574,7 @@ fn probe_early_all_constraints_trigger_points() {
 #[test]
 #[ignore = "diagnostic: targeted large-N hemisphere cells for exhaustion/fallback scaling"]
 fn probe_large_hemisphere_target_cells() {
-    let n = env_usize("S2_PROBE_N", 100_000);
+    let n = env_usize("VORONOI_MESH_PROBE_N", 100_000);
     let points = hemisphere_points(n);
     let targets = parse_target_indices(n);
     let grid = CubeMapGrid::new(&points, crate::policy::knn_grid_resolution(points.len()));
@@ -652,7 +652,7 @@ fn probe_unbounded_exhaustion_neighbor_counts() {
         ("latitude_ring_32", pole_with_latitude_ring(32, 0.5)),
         ("latitude_ring_64", pole_with_latitude_ring(64, 0.5)),
     ];
-    if std::env::var_os("S2_PROBE_LARGE").is_some() {
+    if std::env::var_os("VORONOI_MESH_PROBE_LARGE").is_some() {
         cases.extend([
             ("fib_2k", fibonacci_points(2_000)),
             ("great_circle_200", great_circle_points(200, 0.0)),

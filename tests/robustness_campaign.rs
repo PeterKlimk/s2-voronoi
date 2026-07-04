@@ -25,7 +25,7 @@
 //!   ./scripts/robustness_campaign.sh
 //!
 //! Run one case by hand:
-//!   S2_CASE_DIST=uniform S2_CASE_N=2000000 S2_CASE_SEED=1 \
+//!   VORONOI_MESH_CASE_DIST=uniform VORONOI_MESH_CASE_N=2000000 VORONOI_MESH_CASE_SEED=1 \
 //!     cargo test --release --test robustness_campaign -- --ignored \
 //!     campaign_case --nocapture
 
@@ -33,8 +33,8 @@ mod support;
 
 use std::collections::BTreeMap;
 
-use s2_voronoi::{compute_with_report, UnitVec3, UnresolvedEdgeOrigin, VoronoiConfig};
 use support::points::*;
+use voronoi_mesh::{compute_with_report, UnitVec3, UnresolvedEdgeOrigin, VoronoiConfig};
 
 /// Process peak RSS (high-water mark) in MB, from /proc/self/status.
 fn peak_rss_mb() -> u64 {
@@ -84,16 +84,16 @@ fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<UnitVec3> {
         // Clean structured quad grid: O(n) high-degree vertices at normal
         // density — the high-degeneracy/reconcile-load regime.
         "grid" => cubed_sphere_points(n, seed),
-        other => panic!("unknown S2_CASE_DIST '{other}'"),
+        other => panic!("unknown VORONOI_MESH_CASE_DIST '{other}'"),
     }
 }
 
 /// One campaign case, parameterized entirely by environment so the driver
 /// script can fork a fresh process per case:
-///   S2_CASE_DIST  (uniform|clustered|bimodal|cube|cocircular|fibonacci|mega)
-///   S2_CASE_N     point count (group count for cocircular)
-///   S2_CASE_SEED  rng seed
-///   S2_CASE_PARAM shape knob (f32; default 0.3 — for mega it is the cap fraction)
+///   VORONOI_MESH_CASE_DIST  (uniform|clustered|bimodal|cube|cocircular|fibonacci|mega)
+///   VORONOI_MESH_CASE_N     point count (group count for cocircular)
+///   VORONOI_MESH_CASE_SEED  rng seed
+///   VORONOI_MESH_CASE_PARAM shape knob (f32; default 0.3 — for mega it is the cap fraction)
 ///
 /// Emits a single machine-parseable `CASERESULT` line. A build that returns an
 /// error is recorded as `result=err` (documented out-of-envelope behavior)
@@ -106,10 +106,10 @@ fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<UnitVec3> {
 #[test]
 #[ignore]
 fn campaign_case() {
-    let dist = env_str("S2_CASE_DIST", "uniform");
-    let n: usize = env_parse("S2_CASE_N", 1_000_000usize);
-    let seed: u64 = env_parse("S2_CASE_SEED", 1u64);
-    let param: f32 = env_parse("S2_CASE_PARAM", 0.3f32);
+    let dist = env_str("VORONOI_MESH_CASE_DIST", "uniform");
+    let n: usize = env_parse("VORONOI_MESH_CASE_N", 1_000_000usize);
+    let seed: u64 = env_parse("VORONOI_MESH_CASE_SEED", 1u64);
+    let param: f32 = env_parse("VORONOI_MESH_CASE_PARAM", 0.3f32);
 
     let points = make_points(&dist, n, seed, param);
     let actual_n = points.len();
@@ -194,7 +194,7 @@ fn diag_memory_accumulation() {
 #[test]
 #[ignore]
 fn diag_single_build_peak() {
-    let n: usize = env_parse("S2_CASE_N", 1_000_000usize);
+    let n: usize = env_parse("VORONOI_MESH_CASE_N", 1_000_000usize);
     let pts = random_sphere_points(n, 1);
     let out = compute_with_report(&pts, VoronoiConfig::default()).expect("compute");
     let defects = out.report.unresolved_edge_pairs.len();

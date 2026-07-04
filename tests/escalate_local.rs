@@ -8,8 +8,8 @@
 
 mod support;
 
-use s2_voronoi::{compute, compute_with_report, RepairMode, VoronoiConfig};
 use support::points::*;
+use voronoi_mesh::{compute, compute_with_report, RepairMode, VoronoiConfig};
 
 #[test]
 fn local_escalation_makes_mega_strictly_valid() {
@@ -56,7 +56,7 @@ fn default_compute_repairs_known_mega_defects() {
         let points = mega_points(100_000, 0.8, seed);
         let diagram = compute(&points)
             .unwrap_or_else(|e| panic!("mega 100k s{seed}: default compute failed: {e:?}"));
-        let report = s2_voronoi::validation::validate(&diagram);
+        let report = voronoi_mesh::validation::validate(&diagram);
         assert!(
             report.is_strictly_valid(),
             "mega 100k s{seed}: default compute returned invalid diagram: {}",

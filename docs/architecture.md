@@ -1,6 +1,6 @@
 # Architecture
 
-s2-voronoi computes Voronoi diagrams on the unit sphere. The design builds every cell
+voronoi-mesh computes Voronoi diagrams on the unit sphere. The design builds every cell
 independently and in parallel, then stitches the cells into one shared graph. This document
 describes how that works and where the code lives.
 

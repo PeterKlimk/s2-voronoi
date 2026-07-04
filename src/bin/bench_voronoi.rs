@@ -1,4 +1,4 @@
-//! Benchmark s2-voronoi at large scales.
+//! Benchmark voronoi-mesh at large scales.
 //!
 //! Run with: cargo run --release --features tools --bin bench_voronoi
 //!
@@ -16,9 +16,9 @@ use glam::Vec3;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use s2_voronoi::{PreprocessMode, RepairMode, UnitVec3, VoronoiConfig};
 use std::io::{self, Write};
 use std::time::Instant;
+use voronoi_mesh::{PreprocessMode, RepairMode, UnitVec3, VoronoiConfig};
 
 fn parse_count(s: &str) -> Result<usize, String> {
     let s = s.to_lowercase();
@@ -168,7 +168,7 @@ fn lloyd_relax_kmeans<R: Rng>(
 
 #[derive(Parser)]
 #[command(name = "bench_voronoi")]
-#[command(about = "Benchmark s2-voronoi at various scales")]
+#[command(about = "Benchmark voronoi-mesh at various scales")]
 struct Args {
     /// Cell counts to benchmark (e.g., 100k, 1m, 10M)
     #[arg(value_parser = parse_count)]
@@ -364,11 +364,14 @@ fn splittable_points<R: Rng>(n: usize, rng: &mut R) -> Vec<Vec3> {
 fn mega_points<R: Rng>(n: usize, param: f64, rng: &mut R) -> Vec<Vec3> {
     let frac = if param > 0.0 { param } else { 0.8 };
     let bulk = ((n as f64) * frac) as usize;
-    // S2_BENCH_CAP_CENTER places the dense cap to stress bin-line straddling:
+    // VORONOI_MESH_BENCH_CAP_CENTER places the dense cap to stress bin-line straddling:
     // `pole` (default) = face +Z center, lands in one bin; `edge` = a cube-face
     // edge (two-face/bin seam through the cap); `corner` = a cube corner
     // (three-face straddle).
-    let center = match std::env::var("S2_BENCH_CAP_CENTER").ok().as_deref() {
+    let center = match std::env::var("VORONOI_MESH_BENCH_CAP_CENTER")
+        .ok()
+        .as_deref()
+    {
         Some("edge") => Vec3::new(1.0, 0.0, 1.0).normalize(),
         Some("corner") => Vec3::new(1.0, 1.0, 1.0).normalize(),
         _ => Vec3::new(0.0, 0.0, 1.0),
@@ -407,7 +410,7 @@ fn validate_against_hull(points: &[Vec3], preprocess: bool) {
     println!("\nValidating against convex hull ground truth...");
 
     let t0 = Instant::now();
-    let hull = s2_voronoi::convex_hull::compute_voronoi_qhull(points);
+    let hull = voronoi_mesh::convex_hull::compute_voronoi_qhull(points);
     let hull_time = t0.elapsed().as_secs_f64() * 1000.0;
 
     let unit_points: Vec<UnitVec3> = points
@@ -416,7 +419,7 @@ fn validate_against_hull(points: &[Vec3], preprocess: bool) {
         .collect();
 
     let t1 = Instant::now();
-    let s2_diagram = s2_voronoi::compute_with(
+    let s2_diagram = voronoi_mesh::compute_with(
         &unit_points,
         VoronoiConfig::default().with_preprocess_mode(if preprocess {
             PreprocessMode::Weld
@@ -424,15 +427,15 @@ fn validate_against_hull(points: &[Vec3], preprocess: bool) {
             PreprocessMode::Disabled
         }),
     )
-    .expect("s2-voronoi should succeed");
+    .expect("voronoi-mesh should succeed");
     let s2_time = t1.elapsed().as_secs_f64() * 1000.0;
-    let report = s2_voronoi::validation::validate(&s2_diagram);
-    let quality = s2_voronoi::quality::assess(&s2_diagram);
-    let comparison = s2_voronoi::quality::compare_cell_vertex_counts(&s2_diagram, &hull);
+    let report = voronoi_mesh::validation::validate(&s2_diagram);
+    let quality = voronoi_mesh::quality::assess(&s2_diagram);
+    let comparison = voronoi_mesh::quality::compare_cell_vertex_counts(&s2_diagram, &hull);
 
     println!("  Convex hull time: {:>8.1}ms", hull_time);
     println!(
-        "  s2-voronoi time:  {:>8.1}ms ({:.1}x faster)",
+        "  voronoi-mesh time:  {:>8.1}ms ({:.1}x faster)",
         s2_time,
         hull_time / s2_time
     );
@@ -474,12 +477,12 @@ fn run_benchmark_with_config(points: &[UnitVec3], config: VoronoiConfig) -> Benc
     let n = points.len();
 
     let t0 = Instant::now();
-    let diagram = s2_voronoi::compute_with(points, config).expect("s2-voronoi should succeed");
+    let diagram = voronoi_mesh::compute_with(points, config).expect("voronoi-mesh should succeed");
     let time_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     #[cfg(debug_assertions)]
     {
-        use s2_voronoi::validation::validate;
+        use voronoi_mesh::validation::validate;
         let report = validate(&diagram);
         if !report.is_strictly_valid() {
             eprintln!("WARNING: Validation failed for n={}: {}", n, report);
@@ -499,7 +502,7 @@ fn run_benchmark_with_config(points: &[UnitVec3], config: VoronoiConfig) -> Benc
 fn main() {
     let args = Args::parse();
 
-    println!("s2-voronoi Benchmark");
+    println!("voronoi-mesh Benchmark");
     println!("====================\n");
 
     let sizes: Vec<usize> = if args.sizes.is_empty() {

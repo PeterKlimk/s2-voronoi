@@ -49,7 +49,7 @@ Initial release.
   the cells that can reference a merged vertex (located via vertex-key
   triplets), in place. On a defect-bearing 2M single-threaded run the repair
   drops from ~382ms to ~0.06ms; the original full rebuild is retained as a
-  differential oracle behind `S2_EDGE_REPAIR_REBUILD=1`, with tests pinning
+  differential oracle behind `VORONOI_MESH_EDGE_REPAIR_REBUILD=1`, with tests pinning
   identical per-cell output between backends.
 - Spherical Voronoi diagrams on the unit sphere via kNN-driven half-space
   clipping: per-cell parallel construction stitched into one consistent graph

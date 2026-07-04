@@ -24,7 +24,7 @@
 //! # Example
 //!
 //! ```
-//! use s2_voronoi::{compute, UnitVec3};
+//! use voronoi_mesh::{compute, UnitVec3};
 //!
 //! // Generate some points on the unit sphere
 //! let points = vec![

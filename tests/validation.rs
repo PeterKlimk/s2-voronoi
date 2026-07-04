@@ -1,8 +1,8 @@
 mod support;
 
-use s2_voronoi::validation::validate;
-use s2_voronoi::{compute, compute_with, PreprocessMode, VoronoiConfig};
 use support::points::{clustered_cap_points, fibonacci_sphere_points};
+use voronoi_mesh::validation::validate;
+use voronoi_mesh::{compute, compute_with, PreprocessMode, VoronoiConfig};
 
 #[test]
 fn test_validation_basic() {

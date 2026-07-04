@@ -10,11 +10,11 @@ mod support;
 use std::collections::HashMap;
 
 use glam::Vec3;
-use s2_voronoi::escalate_probe::{
+use support::points::*;
+use voronoi_mesh::escalate_probe::{
     check_cell_internally_paired, gather_local, rebuild_cells, set_escalation_enabled, RebuiltCell,
 };
-use s2_voronoi::{compute_with_report, RepairMode, UnitVec3, VoronoiConfig};
-use support::points::*;
+use voronoi_mesh::{compute_with_report, RepairMode, UnitVec3, VoronoiConfig};
 
 fn to_vec3(points: &[UnitVec3]) -> Vec<Vec3> {
     points.iter().map(|p| Vec3::new(p.x, p.y, p.z)).collect()
@@ -126,21 +126,21 @@ fn defect_cells_are_internally_valid_after_rebuild() {
     );
 }
 
-/// Probe runner: build mega 100k at seed `S2_ESCALATE_SEED` (default 3) with
+/// Probe runner: build mega 100k at seed `VORONOI_MESH_ESCALATE_SEED` (default 3) with
 /// escalation enabled, so the env-gated probes inside `escalate_diagram`
-/// (S2_ESCALATE_PROBE_*) fire on that seed. Asserts nothing.
+/// (VORONOI_MESH_ESCALATE_PROBE_*) fire on that seed. Asserts nothing.
 #[test]
-#[ignore = "probe driver; run with S2_ESCALATE_PROBE_*=1 and --ignored --nocapture"]
+#[ignore = "probe driver; run with VORONOI_MESH_ESCALATE_PROBE_*=1 and --ignored --nocapture"]
 fn escalation_probe_runner() {
-    let seed: u64 = std::env::var("S2_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("S2_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100_000);
-    let dist = std::env::var("S2_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
+    let dist = std::env::var("VORONOI_MESH_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
     let points = match dist.as_str() {
         "uniform" => random_sphere_points(n, seed),
         "fib" => fibonacci_sphere_points(n, 0.0, seed),
@@ -168,24 +168,24 @@ fn escalation_probe_runner() {
 /// are DEFECTS (fast unpaired). Decides the clip-time-exact (A) cost/soundness:
 /// changed = cells A must canonicalize; defects ⊆ changed is required; the
 /// changed count vs defect-closure shows A (canonicalize-cap) vs B (surgical).
-///   S2_ESCALATE_DIST=mega S2_ESCALATE_N=100000 S2_ESCALATE_SEED=3 \
+///   VORONOI_MESH_ESCALATE_DIST=mega VORONOI_MESH_ESCALATE_N=100000 VORONOI_MESH_ESCALATE_SEED=3 \
 ///     cargo test --release --features escalate_probe --test escalate \
 ///     a0_exact_reference_delaunator -- --ignored --nocapture
 #[test]
 #[ignore = "A0 exact-reference probe; run individually with env + --ignored --nocapture"]
 fn a0_exact_reference_delaunator() {
-    use s2_voronoi::escalate_probe::take_a0_fast;
     use std::collections::BTreeSet;
+    use voronoi_mesh::escalate_probe::take_a0_fast;
 
-    let seed: u64 = std::env::var("S2_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("S2_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100_000);
-    let dist = std::env::var("S2_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
+    let dist = std::env::var("VORONOI_MESH_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
     let points = match dist.as_str() {
         "uniform" => random_sphere_points(n, seed),
         "fib" => fibonacci_sphere_points(n, 0.0, seed),
@@ -194,11 +194,11 @@ fn a0_exact_reference_delaunator() {
     };
 
     // Trigger the stash inside escalate_diagram.
-    std::env::set_var("S2_ESCALATE_PROBE_A0", "1");
+    std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
     set_escalation_enabled(true);
     let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
     set_escalation_enabled(false);
-    std::env::remove_var("S2_ESCALATE_PROBE_A0");
+    std::env::remove_var("VORONOI_MESH_ESCALATE_PROBE_A0");
     let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
     let m = pts.len();
 
@@ -358,15 +358,16 @@ fn exact_triples_delaunator(
 }
 
 fn probe_points_from_env(default_n: usize) -> (String, u64, Vec<UnitVec3>) {
-    let seed: u64 = std::env::var("S2_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("S2_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(default_n);
-    let dist = std::env::var("S2_ESCALATE_DIST").unwrap_or_else(|_| "uniform".to_string());
+    let dist =
+        std::env::var("VORONOI_MESH_ESCALATE_DIST").unwrap_or_else(|_| "uniform".to_string());
     let points = match dist.as_str() {
         "fib" => fibonacci_sphere_points(n, 0.0, seed),
         "clustered" => clustered_cap_points(n, 0.3, seed),
@@ -378,19 +379,19 @@ fn probe_points_from_env(default_n: usize) -> (String, u64, Vec<UnitVec3>) {
 }
 
 fn stash_fast_triples(points: &[UnitVec3]) -> (Vec<Vec3>, Vec<Vec<[u32; 3]>>) {
-    use s2_voronoi::escalate_probe::take_a0_fast;
+    use voronoi_mesh::escalate_probe::take_a0_fast;
 
-    std::env::set_var("S2_ESCALATE_PROBE_A0", "1");
+    std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
     set_escalation_enabled(true);
     let _ = compute_with_report(points, VoronoiConfig::default()).expect("build");
     set_escalation_enabled(false);
-    std::env::remove_var("S2_ESCALATE_PROBE_A0");
+    std::env::remove_var("VORONOI_MESH_ESCALATE_PROBE_A0");
     take_a0_fast().expect("A0 stash")
 }
 
 fn exact_triples_norm3d(pts: &[Vec3]) -> (Vec<std::collections::BTreeSet<[u32; 3]>>, Vec<bool>) {
-    use s2_voronoi::escalate_probe::rebuild_cells;
     use std::collections::BTreeSet;
+    use voronoi_mesh::escalate_probe::rebuild_cells;
 
     let m = pts.len();
     let all: Vec<u32> = (0..m as u32).collect();
@@ -413,8 +414,8 @@ fn exact_triples_cgal_hull3(
     use std::io::Write;
     use std::process::{Command, Stdio};
 
-    let bin = std::env::var("S2_CGAL_HULL3_BIN")
-        .expect("set S2_CGAL_HULL3_BIN to scripts/cgal_hull3.cpp compiled binary");
+    let bin = std::env::var("VORONOI_MESH_CGAL_HULL3_BIN")
+        .expect("set VORONOI_MESH_CGAL_HULL3_BIN to scripts/cgal_hull3.cpp compiled binary");
     let mut child = Command::new(bin)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -539,7 +540,7 @@ fn min_fast_norm3d_quad_margin(pts: &[Vec3], g: u32, fan: &[[u32; 3]]) -> Option
 }
 
 fn flag_bands_from_env() -> Vec<f64> {
-    let mut bands: Vec<f64> = std::env::var("S2_NORM3D_FLAG_BANDS")
+    let mut bands: Vec<f64> = std::env::var("VORONOI_MESH_NORM3D_FLAG_BANDS")
         .ok()
         .map(|s| {
             s.split(',')
@@ -662,7 +663,7 @@ fn changed_component_summary(changed: &[bool], fast_triples: &[Vec<[u32; 3]>]) -
 /// radius drift is not the S2 graph.
 ///
 /// Example:
-///   S2_ESCALATE_DIST=uniform S2_ESCALATE_N=12000 S2_ESCALATE_SEED=3 \
+///   VORONOI_MESH_ESCALATE_DIST=uniform VORONOI_MESH_ESCALATE_N=12000 VORONOI_MESH_ESCALATE_SEED=3 \
 ///     cargo test --release --features escalate_probe --test escalate \
 ///     probe_fast_vs_norm3d_reference -- --ignored --nocapture
 #[test]
@@ -717,7 +718,7 @@ fn probe_fast_vs_norm3d_reference() {
 }
 
 #[test]
-#[ignore = "external CGAL exact hull probe; set S2_CGAL_HULL3_BIN and run with --ignored --nocapture"]
+#[ignore = "external CGAL exact hull probe; set VORONOI_MESH_CGAL_HULL3_BIN and run with --ignored --nocapture"]
 fn probe_cgal_hull3_vs_local_hull_reference() {
     let (dist, seed, points) = probe_points_from_env(2_000);
     let pts = to_vec3(&points);
@@ -753,7 +754,7 @@ fn probe_cgal_hull3_vs_local_hull_reference() {
 }
 
 #[test]
-#[ignore = "fast graph vs external CGAL exact hull probe; set S2_CGAL_HULL3_BIN and run with --ignored --nocapture"]
+#[ignore = "fast graph vs external CGAL exact hull probe; set VORONOI_MESH_CGAL_HULL3_BIN and run with --ignored --nocapture"]
 fn probe_fast_vs_cgal_hull3_reference() {
     let (dist, seed, points) = probe_points_from_env(12_000);
     let (pts, fast_triples) = stash_fast_triples(&points);
@@ -811,7 +812,7 @@ fn probe_fast_vs_cgal_hull3_reference() {
 /// detector before trying to make it hot-path/provable.
 ///
 /// Optional env:
-/// - `S2_NORM3D_FLAG_BANDS=1e-12,1e-10,1e-8,1e-6`
+/// - `VORONOI_MESH_NORM3D_FLAG_BANDS=1e-12,1e-10,1e-8,1e-6`
 #[test]
 #[ignore = "normalized 3D flag-recall probe; run with env + --ignored --nocapture"]
 fn probe_norm3d_flag_recall() {
@@ -842,7 +843,7 @@ fn probe_norm3d_flag_recall() {
 }
 
 #[test]
-#[ignore = "external CGAL truth flag-recall probe; set S2_CGAL_HULL3_BIN and run with --ignored --nocapture"]
+#[ignore = "external CGAL truth flag-recall probe; set VORONOI_MESH_CGAL_HULL3_BIN and run with --ignored --nocapture"]
 fn probe_cgal_hull3_flag_recall() {
     use std::collections::BTreeSet;
 
@@ -924,24 +925,24 @@ fn local_delaunator_cell(
 #[test]
 #[ignore = "local-delaunator-vs-global; run with env + --ignored --nocapture"]
 fn local_delaunator_vs_global() {
-    use s2_voronoi::escalate_probe::{gather_local, take_a0_fast};
     use std::collections::BTreeSet;
+    use voronoi_mesh::escalate_probe::{gather_local, take_a0_fast};
 
-    let seed: u64 = std::env::var("S2_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("S2_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100_000);
     let points = mega_points(n, 0.8, seed);
 
-    std::env::set_var("S2_ESCALATE_PROBE_A0", "1");
+    std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
     set_escalation_enabled(true);
     let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
     set_escalation_enabled(false);
-    std::env::remove_var("S2_ESCALATE_PROBE_A0");
+    std::env::remove_var("VORONOI_MESH_ESCALATE_PROBE_A0");
     let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
 
     let (exact, hull_region) = exact_triples_delaunator(&pts);
@@ -985,29 +986,29 @@ fn local_delaunator_vs_global() {
 #[test]
 #[ignore = "projection-theory 3-way diagnostic; small n; env + --ignored --nocapture"]
 fn projection_theory_3way() {
-    use s2_voronoi::escalate_probe::{rebuild_cells, take_a0_fast};
     use std::collections::BTreeSet;
+    use voronoi_mesh::escalate_probe::{rebuild_cells, take_a0_fast};
 
-    let seed: u64 = std::env::var("S2_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("S2_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(12_000);
-    let dist = std::env::var("S2_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
+    let dist = std::env::var("VORONOI_MESH_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
     let points = match dist.as_str() {
         "uniform" => random_sphere_points(n, seed),
         "clustered" => clustered_cap_points(n, 0.3, seed),
         _ => mega_points(n, 0.8, seed),
     };
 
-    std::env::set_var("S2_ESCALATE_PROBE_A0", "1");
+    std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
     set_escalation_enabled(true);
     let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
     set_escalation_enabled(false);
-    std::env::remove_var("S2_ESCALATE_PROBE_A0");
+    std::env::remove_var("VORONOI_MESH_ESCALATE_PROBE_A0");
     let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
     let m = pts.len();
 
@@ -1060,32 +1061,32 @@ fn projection_theory_3way() {
 #[test]
 #[ignore = "detect+fix+expand with one-local_hull oracle; env + --ignored --nocapture"]
 fn detect_fix_expand_localhull() {
-    use s2_voronoi::escalate_probe::{gather_local, rebuild_cells, take_a0_fast};
     use std::collections::{BTreeSet, HashMap};
+    use voronoi_mesh::escalate_probe::{gather_local, rebuild_cells, take_a0_fast};
 
-    let seed: u64 = std::env::var("S2_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("S2_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100_000);
-    let k: usize = std::env::var("S2_ESCALATE_K")
+    let k: usize = std::env::var("VORONOI_MESH_ESCALATE_K")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(64);
-    let dist = std::env::var("S2_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
+    let dist = std::env::var("VORONOI_MESH_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
     let points = match dist.as_str() {
         "uniform" => random_sphere_points(n, seed),
         _ => mega_points(n, 0.8, seed),
     };
 
-    std::env::set_var("S2_ESCALATE_PROBE_A0", "1");
+    std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
     set_escalation_enabled(true);
     let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
     set_escalation_enabled(false);
-    std::env::remove_var("S2_ESCALATE_PROBE_A0");
+    std::env::remove_var("VORONOI_MESH_ESCALATE_PROBE_A0");
     let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
     let m = pts.len();
     let fast_set: Vec<BTreeSet<[u32; 3]>> = fast_triples
@@ -1165,24 +1166,24 @@ fn detect_fix_expand_localhull() {
 #[test]
 #[ignore = "local-oracle-vs-delaunator diagnostic; run with env + --ignored --nocapture"]
 fn local_oracle_vs_delaunator() {
-    use s2_voronoi::escalate_probe::{rebuild_cells, take_a0_fast};
     use std::collections::BTreeSet;
+    use voronoi_mesh::escalate_probe::{rebuild_cells, take_a0_fast};
 
-    let seed: u64 = std::env::var("S2_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("S2_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100_000);
     let points = mega_points(n, 0.8, seed);
 
-    std::env::set_var("S2_ESCALATE_PROBE_A0", "1");
+    std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
     set_escalation_enabled(true);
     let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
     set_escalation_enabled(false);
-    std::env::remove_var("S2_ESCALATE_PROBE_A0");
+    std::env::remove_var("VORONOI_MESH_ESCALATE_PROBE_A0");
     let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
 
     let (exact, hull_region) = exact_triples_delaunator(&pts);
@@ -1205,7 +1206,7 @@ fn local_oracle_vs_delaunator() {
     for k in [48usize, 96, 192, 384, 768] {
         let mut matched = 0usize;
         for &g in &targets {
-            let local = s2_voronoi::escalate_probe::gather_local(&pts3, &[g], k);
+            let local = voronoi_mesh::escalate_probe::gather_local(&pts3, &[g], k);
             let Some(cells) = rebuild_cells(&pts3, &local, &[g]) else {
                 continue;
             };
@@ -1233,29 +1234,29 @@ fn local_oracle_vs_delaunator() {
 #[test]
 #[ignore = "detect+fix+expand demonstration; run individually with env + --ignored --nocapture"]
 fn detect_fix_expand_delaunator() {
-    use s2_voronoi::escalate_probe::take_a0_fast;
     use std::collections::{BTreeSet, HashMap};
+    use voronoi_mesh::escalate_probe::take_a0_fast;
 
-    let seed: u64 = std::env::var("S2_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("S2_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100_000);
-    let dist = std::env::var("S2_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
+    let dist = std::env::var("VORONOI_MESH_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
     let points = match dist.as_str() {
         "uniform" => random_sphere_points(n, seed),
         "clustered" => clustered_cap_points(n, 0.3, seed),
         _ => mega_points(n, 0.8, seed),
     };
 
-    std::env::set_var("S2_ESCALATE_PROBE_A0", "1");
+    std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
     set_escalation_enabled(true);
     let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
     set_escalation_enabled(false);
-    std::env::remove_var("S2_ESCALATE_PROBE_A0");
+    std::env::remove_var("VORONOI_MESH_ESCALATE_PROBE_A0");
     let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
     let m = pts.len();
 

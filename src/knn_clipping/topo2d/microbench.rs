@@ -113,17 +113,17 @@ pub fn run_clip_convex_microbench() {
         }
     }
 
-    let target_ms: u64 = std::env::var("S2_VORONOI_BENCH_TARGET_MS")
+    let target_ms: u64 = std::env::var("VORONOI_MESH_BENCH_TARGET_MS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(200)
         .clamp(10, 10_000);
-    let samples: usize = std::env::var("S2_VORONOI_BENCH_SAMPLES")
+    let samples: usize = std::env::var("VORONOI_MESH_BENCH_SAMPLES")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(9)
         .clamp(3, 101);
-    let hp_pool_len: usize = std::env::var("S2_VORONOI_BENCH_HP_POOL")
+    let hp_pool_len: usize = std::env::var("VORONOI_MESH_BENCH_HP_POOL")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(1024)

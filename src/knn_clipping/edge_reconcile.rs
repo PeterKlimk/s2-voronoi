@@ -203,18 +203,18 @@ pub(crate) type ReconciledCells = (Vec<VoronoiCell>, Vec<u32>);
 /// `Rebuild` is the original full rewrite, retained as the differential
 /// oracle: the two backends must produce identical per-cell vertex
 /// sequences (pinned by the unit tests below and the full-pipeline
-/// differential in tests/edge_repair_net.rs via `S2_EDGE_REPAIR_REBUILD`).
+/// differential in tests/edge_repair_net.rs via `VORONOI_MESH_EDGE_REPAIR_REBUILD`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum RepairApply {
     InPlace,
     Rebuild,
 }
 
-/// Production apply mode: in-place unless `S2_EDGE_REPAIR_REBUILD=1`
+/// Production apply mode: in-place unless `VORONOI_MESH_EDGE_REPAIR_REBUILD=1`
 /// selects the rebuild oracle (diagnostic / differential-testing knob,
 /// read once per compute on the cold path).
 pub(crate) fn repair_apply_from_env() -> RepairApply {
-    match std::env::var("S2_EDGE_REPAIR_REBUILD") {
+    match std::env::var("VORONOI_MESH_EDGE_REPAIR_REBUILD") {
         Ok(v) if v == "1" => RepairApply::Rebuild,
         _ => RepairApply::InPlace,
     }
@@ -824,7 +824,7 @@ fn proximity_union_segments<P: crate::knn_clipping::live_dedup::VertexPosition>(
 /// localized BFS. Diagnostic / differential safety valve, read once on the cold
 /// defect path.
 fn dupscan_force_global() -> bool {
-    matches!(std::env::var("S2_EDGE_REPAIR_GLOBAL_DUPSCAN"), Ok(v) if v == "1")
+    matches!(std::env::var("VORONOI_MESH_EDGE_REPAIR_GLOBAL_DUPSCAN"), Ok(v) if v == "1")
 }
 
 /// Union all same-key vertex duplicates by a single O(V) pass over every key.
@@ -948,7 +948,7 @@ fn assert_localized_dupscan_complete(vertex_keys: VertexKeys<'_>, uf: &mut Spars
                 uf.find(i),
                 "edge-reconcile localized dup-scan gap: vertices {other} and {i} share a \
                  key but the localized BFS did not union them — the duplicate-connectivity \
-                 contract is violated (set S2_EDGE_REPAIR_GLOBAL_DUPSCAN=1 to fall back)"
+                 contract is violated (set VORONOI_MESH_EDGE_REPAIR_GLOBAL_DUPSCAN=1 to fall back)"
             );
         }
     });

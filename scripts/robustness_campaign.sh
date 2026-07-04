@@ -15,7 +15,7 @@
 #   MAX_N            cap on case size (default 3000000 — set higher only on
 #                    a box with RAM headroom; peak is ~0.65 KB/point)
 #   RAYON_NUM_THREADS  intra-build parallelism (default 6)
-#   S2_VORONOI_VERIFY  set to 1 for the always-on validator gate
+#   VORONOI_MESH_VERIFY  set to 1 for the always-on validator gate
 #
 # Each built case is asserted strictly valid; an invalid build fails that
 # case (and is flagged INVALID in the summary). Out-of-envelope errors are
@@ -58,8 +58,8 @@ run_case() { # dist n seed param
   # CASERESULT ..."), so match anywhere and extract from CASERESULT on.
   # RECLIP=1 enables the opt-in Tier-2 re-clip repair for this case (a no-op on
   # distributions without contested clusters; the point of the `mega` section).
-  line="$(S2_CASE_DIST="$dist" S2_CASE_N="$n" S2_CASE_SEED="$seed" S2_CASE_PARAM="$param" \
-    S2_RECLIP_REPAIR="${RECLIP:-}" \
+  line="$(VORONOI_MESH_CASE_DIST="$dist" VORONOI_MESH_CASE_N="$n" VORONOI_MESH_CASE_SEED="$seed" VORONOI_MESH_CASE_PARAM="$param" \
+    VORONOI_MESH_RECLIP_REPAIR="${RECLIP:-}" \
     "$BIN" --ignored --exact campaign_case --nocapture --test-threads=1 2>&1 \
     | grep -o 'CASERESULT .*' | head -1)"
   if [ -z "$line" ]; then

@@ -362,7 +362,7 @@ fn maybe_repair_effective(
     repair_mode: RepairMode,
 ) -> bool {
     // A0 probes need the fast assembled state, not the repaired one.
-    if std::env::var("S2_ESCALATE_PROBE_A0").is_ok() {
+    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_A0").is_ok() {
         escalate::stash_a0_fast(effective_points, vertex_keys, eff_cells, eff_cell_indices);
         return false;
     }
@@ -400,7 +400,7 @@ fn maybe_repair_effective(
         eff_cell_indices,
     );
     #[cfg(feature = "escalate_probe")]
-    let stats = if std::env::var("S2_ESCALATE_DELAUNATOR").is_ok() {
+    let stats = if std::env::var("VORONOI_MESH_ESCALATE_DELAUNATOR").is_ok() {
         escalate::repair_delaunator(
             effective_points,
             &mut work,

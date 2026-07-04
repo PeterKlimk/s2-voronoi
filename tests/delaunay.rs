@@ -5,8 +5,8 @@ mod support;
 
 use std::collections::BTreeSet;
 
-use s2_voronoi::{adjacency::NO_NEIGHBOR, compute};
 use support::points::random_sphere_points;
+use voronoi_mesh::{adjacency::NO_NEIGHBOR, compute};
 
 fn edge_set(triangles: &[[u32; 3]]) -> BTreeSet<(u32, u32)> {
     let mut set = BTreeSet::new();

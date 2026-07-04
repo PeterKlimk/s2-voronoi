@@ -1,4 +1,4 @@
-# s2-voronoi
+# voronoi-mesh
 
 Fast spherical Voronoi diagrams on the unit sphere.
 
@@ -13,7 +13,7 @@ Status: pre-release (0.1). The API is not yet stable. Stable Rust, MSRV 1.88.
 ## Quickstart
 
 ```rust
-use s2_voronoi::{compute, UnitVec3};
+use voronoi_mesh::{compute, UnitVec3};
 
 let points = vec![
     UnitVec3::new(1.0, 0.0, 0.0),
@@ -30,7 +30,7 @@ for cell in diagram.iter_cells() {
     let boundary = cell.vertex_indices.iter().map(|&i| diagram.vertex(i as usize));
     let _ = (generator, boundary);
 }
-# Ok::<(), s2_voronoi::VoronoiError>(())
+# Ok::<(), voronoi_mesh::VoronoiError>(())
 ```
 
 Inputs are assumed unit-normalized. They are canonicalized once at entry (renormalized in f64,
