@@ -25,19 +25,49 @@ const ESCALATE_GATHER_K: usize = 32;
 /// Grow-until-clean round cap per defect component.
 const ESCALATE_MAX_ROUNDS: usize = 12;
 
-pub(super) fn compute_voronoi_knn_clipping_owned_core(
+/// Everything the shared pipeline produces before the plain and report paths
+/// diverge: canonicalized inputs, the reconciled effective arrays, and the
+/// repair outcome. `TimingBuilder` rides along so the caller's final remap
+/// lands in the same timing report.
+struct PipelineState {
+    points: Vec<Vec3>,
+    effective_points: Option<Vec<Vec3>>,
+    merge_result: Option<MergeResult>,
+    preprocess_report: PreprocessReport,
+    vertices: Vec<Vec3>,
+    eff_cells: Vec<VoronoiCell>,
+    eff_cell_indices: Vec<u32>,
+    unresolved_edges: Vec<live_dedup::UnresolvedEdgeMismatch>,
+    post_repair_unpaired: Vec<(u32, u32)>,
+    repair: RepairOutcome,
+    tb: TimingBuilder,
+}
+
+impl PipelineState {
+    fn effective_points_ref(&self) -> &[Vec3] {
+        match &self.effective_points {
+            Some(v) => v.as_slice(),
+            None => self.points.as_slice(),
+        }
+    }
+}
+
+/// The shared front of both compute paths: validate → canonicalize → grid →
+/// per-cell shards → assemble → reconcile → repair. The plain path fails loud
+/// on residuals; the report path surfaces them in `ComputeReport`.
+fn run_core_pipeline(
     points: Vec<Vec3>,
     termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
     repair_mode: RepairMode,
-) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
+) -> Result<PipelineState, crate::VoronoiError> {
     validate_generator_capacity(points.len())?;
     validate_generator_finiteness(&points)?;
     let mut points = points;
     canonicalize_unit_points(&mut points);
     let mut tb = TimingBuilder::new();
 
-    let (effective_points, merge_result, _preprocess_report, grid) =
+    let (effective_points, merge_result, preprocess_report, grid) =
         prepare_points_and_grid(&points, preprocess_mode, &mut tb);
 
     let effective_points_ref: &[Vec3] = match &effective_points {
@@ -79,16 +109,38 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         &post_repair_unpaired,
         repair_mode,
     );
+    Ok(PipelineState {
+        points,
+        effective_points,
+        merge_result,
+        preprocess_report,
+        vertices,
+        eff_cells,
+        eff_cell_indices,
+        unresolved_edges,
+        post_repair_unpaired,
+        repair,
+        tb,
+    })
+}
+
+pub(super) fn compute_voronoi_knn_clipping_owned_core(
+    points: Vec<Vec3>,
+    termination: TerminationConfig,
+    preprocess_mode: PreprocessMode,
+    repair_mode: RepairMode,
+) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
+    let mut state = run_core_pipeline(points, termination, preprocess_mode, repair_mode)?;
     // Plain path: if local repair did not accept a strictly-valid replacement,
     // a residual is provably-invalid output and there is no report channel to
     // surface it, so fail loud rather than ship it.
-    if !repair.accepted && !post_repair_unpaired.is_empty() {
-        return Err(edge_reconcile::residual_error(&post_repair_unpaired));
+    if !state.repair.accepted && !state.post_repair_unpaired.is_empty() {
+        return Err(edge_reconcile::residual_error(&state.post_repair_unpaired));
     }
     // A low-incidence (degree-1/2) vertex defect is also strictly-invalid
     // output, and it can exist with every edge paired — the guard above never
     // sees it, so fail loud on it separately.
-    if !repair.accepted && repair.low_incidence_defect {
+    if !state.repair.accepted && state.repair.low_incidence_defect {
         return Err(crate::VoronoiError::ComputationFailed(
             "post-assembly repair could not resolve a residual low-incidence \
              (degree-1/2) vertex defect — output is not a valid subdivision. \
@@ -99,22 +151,48 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
 
     let t = Timer::start();
     let (cells, cell_indices, weld_map) = remap_cells_to_original_indices(
-        &points,
-        merge_result.as_ref(),
-        eff_cells,
-        eff_cell_indices,
+        &state.points,
+        state.merge_result.as_ref(),
+        state.eff_cells,
+        state.eff_cell_indices,
     );
 
-    let diagram =
-        crate::SphericalVoronoi::from_raw_parts(points, vertices, cells, cell_indices, weld_map);
-    tb.set_assemble(t.elapsed());
+    let diagram = crate::SphericalVoronoi::from_raw_parts(
+        state.points,
+        state.vertices,
+        cells,
+        cell_indices,
+        weld_map,
+    );
+    state.tb.set_assemble(t.elapsed());
 
     // Report timing if feature enabled
-    let timings = tb.finish();
+    let timings = state.tb.finish();
     timings.report(diagram.num_cells());
 
     crate::validation::verify_sphere_if_enabled(&diagram)?;
     Ok(diagram)
+}
+
+/// Run `attempt` once and — when the config opts into
+/// `DegenerateMode::PerturbGreatCircle` — retry a rank-2 great-circle failure
+/// once on the perturbed points. `attempt` receives `perturbation_applied`.
+fn with_rank2_perturb_retry<T>(
+    points: Vec<Vec3>,
+    degenerate_mode: DegenerateMode,
+    attempt: impl Fn(Vec<Vec3>, bool) -> Result<T, crate::VoronoiError>,
+) -> Result<T, crate::VoronoiError> {
+    if !matches!(degenerate_mode, DegenerateMode::PerturbGreatCircle) {
+        return attempt(points, false);
+    }
+
+    match attempt(points.clone(), false) {
+        Ok(value) => Ok(value),
+        Err(err) => match maybe_perturb_rank2_great_circle(&points, &err) {
+            Some(perturbed) => attempt(perturbed, true),
+            None => Err(err),
+        },
+    }
 }
 
 pub fn compute_voronoi_knn_clipping_with_config_owned(
@@ -122,32 +200,14 @@ pub fn compute_voronoi_knn_clipping_with_config_owned(
     config: &VoronoiConfig,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     let termination = TerminationConfig::default();
-    if !matches!(config.degenerate_mode, DegenerateMode::PerturbGreatCircle) {
-        return compute_voronoi_knn_clipping_owned_core(
+    with_rank2_perturb_retry(points, config.degenerate_mode, |points, _| {
+        compute_voronoi_knn_clipping_owned_core(
             points,
             termination,
             config.preprocess_mode,
             config.repair_mode,
-        );
-    }
-
-    match compute_voronoi_knn_clipping_owned_core(
-        points.clone(),
-        termination,
-        config.preprocess_mode,
-        config.repair_mode,
-    ) {
-        Ok(diagram) => Ok(diagram),
-        Err(err) => match maybe_perturb_rank2_great_circle(&points, &err) {
-            Some(perturbed) => compute_voronoi_knn_clipping_owned_core(
-                perturbed,
-                termination,
-                config.preprocess_mode,
-                config.repair_mode,
-            ),
-            None => Err(err),
-        },
-    }
+        )
+    })
 }
 
 pub fn compute_voronoi_knn_clipping_with_report_owned(
@@ -155,44 +215,22 @@ pub fn compute_voronoi_knn_clipping_with_report_owned(
     config: &VoronoiConfig,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
     let termination = TerminationConfig::default();
-    if !matches!(config.degenerate_mode, DegenerateMode::PerturbGreatCircle) {
-        return compute_voronoi_knn_clipping_report_core(
-            points,
-            termination,
-            config.preprocess_mode,
-            config.repair_mode,
-            DegenerateReport {
-                requested_mode: config.degenerate_mode,
-                perturbation_applied: false,
-            },
-        );
-    }
-
-    match compute_voronoi_knn_clipping_report_core(
-        points.clone(),
-        termination,
-        config.preprocess_mode,
-        config.repair_mode,
-        DegenerateReport {
-            requested_mode: config.degenerate_mode,
-            perturbation_applied: false,
-        },
-    ) {
-        Ok(output) => Ok(output),
-        Err(err) => match maybe_perturb_rank2_great_circle(&points, &err) {
-            Some(perturbed) => compute_voronoi_knn_clipping_report_core(
-                perturbed,
+    with_rank2_perturb_retry(
+        points,
+        config.degenerate_mode,
+        |points, perturbation_applied| {
+            compute_voronoi_knn_clipping_report_core(
+                points,
                 termination,
                 config.preprocess_mode,
                 config.repair_mode,
                 DegenerateReport {
                     requested_mode: config.degenerate_mode,
-                    perturbation_applied: true,
+                    perturbation_applied,
                 },
-            ),
-            None => Err(err),
+            )
         },
-    }
+    )
 }
 
 fn compute_voronoi_knn_clipping_report_core(
@@ -202,90 +240,45 @@ fn compute_voronoi_knn_clipping_report_core(
     repair_mode: RepairMode,
     degenerate_report: DegenerateReport,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
-    validate_generator_capacity(points.len())?;
-    validate_generator_finiteness(&points)?;
-    let mut points = points;
-    canonicalize_unit_points(&mut points);
-    let mut tb = TimingBuilder::new();
-
-    let (effective_points, merge_result, preprocess_report, grid) =
-        prepare_points_and_grid(&points, preprocess_mode, &mut tb);
-
-    let effective_points_ref: &[Vec3] = match &effective_points {
-        Some(v) => v.as_slice(),
-        None => points.as_slice(),
-    };
-
-    let sharded = construct_cell_shards(
-        effective_points_ref,
-        &grid,
-        termination,
-        merge_result.as_ref(),
-        &mut tb,
-    )?;
-    let assembled = assemble_shards(sharded, &mut tb)?;
-    let live_dedup::AssemblyResult {
-        mut vertices,
-        vertex_keys,
-        unresolved_edges,
-        cells,
-        cell_indices,
-        dedup_sub: _,
-    } = assembled;
-    let (mut eff_cells, mut eff_cell_indices, post_repair_unpaired) = reconcile_edges(
-        &mut vertices,
-        &vertex_keys,
-        &unresolved_edges,
-        cells,
-        cell_indices,
-        &mut tb,
-    )?;
-    let repair_accepted = maybe_repair_effective(
-        effective_points_ref,
-        &grid,
-        &mut vertices,
-        &vertex_keys,
-        &mut eff_cells,
-        &mut eff_cell_indices,
-        &post_repair_unpaired,
-        repair_mode,
-    )
-    .accepted;
+    let mut state = run_core_pipeline(points, termination, preprocess_mode, repair_mode)?;
+    let repair_accepted = state.repair.accepted;
     // Surface output-invariant residuals alongside the detection records. If
     // local repair was accepted, the returned diagram is strictly valid and
     // these residuals no longer survive to output.
-    let mut unresolved_edges = unresolved_edges;
-    let pre_repair_edge_mismatches: Vec<(u32, u32, live_dedup::UnresolvedEdgeOrigin)> =
-        unresolved_edges
-            .iter()
-            .map(|m| {
-                let (a, b) = edge_reconcile::unpack_edge(m.key.as_u64());
-                (a.min(b), a.max(b), m.origin)
-            })
-            .collect();
+    let pre_repair_edge_mismatches: Vec<(u32, u32, live_dedup::UnresolvedEdgeOrigin)> = state
+        .unresolved_edges
+        .iter()
+        .map(|m| {
+            let (a, b) = edge_reconcile::unpack_edge(m.key.as_u64());
+            (a.min(b), a.max(b), m.origin)
+        })
+        .collect();
     let post_repair_unpaired_edges: Vec<(u32, u32)> = if repair_accepted {
         Vec::new()
     } else {
-        post_repair_unpaired
+        state
+            .post_repair_unpaired
             .iter()
             .map(|&(a, b)| (a.min(b), a.max(b)))
             .collect()
     };
     if !repair_accepted {
-        for &(a, b) in &post_repair_unpaired {
-            unresolved_edges.push(live_dedup::UnresolvedEdgeMismatch {
-                key: live_dedup::pack_edge(a, b),
-                origin: live_dedup::UnresolvedEdgeOrigin::PostRepairUnpaired,
-            });
+        for &(a, b) in &state.post_repair_unpaired {
+            state
+                .unresolved_edges
+                .push(live_dedup::UnresolvedEdgeMismatch {
+                    key: live_dedup::pack_edge(a, b),
+                    origin: live_dedup::UnresolvedEdgeOrigin::PostRepairUnpaired,
+                });
         }
     }
 
-    let effective_diagram = if merge_result.is_some() {
+    let effective_diagram = if state.merge_result.is_some() {
         Some(crate::SphericalVoronoi::from_raw_parts(
-            effective_points_ref.to_vec(),
-            vertices.clone(),
-            eff_cells.clone(),
-            eff_cell_indices.clone(),
+            state.effective_points_ref().to_vec(),
+            state.vertices.clone(),
+            state.eff_cells.clone(),
+            state.eff_cell_indices.clone(),
             None,
         ))
     } else {
@@ -295,31 +288,37 @@ fn compute_voronoi_knn_clipping_report_core(
 
     let t = Timer::start();
     let (cells, cell_indices, weld_map) = remap_cells_to_original_indices(
-        &points,
-        merge_result.as_ref(),
-        eff_cells,
-        eff_cell_indices,
+        &state.points,
+        state.merge_result.as_ref(),
+        state.eff_cells,
+        state.eff_cell_indices,
     );
 
-    let diagram =
-        crate::SphericalVoronoi::from_raw_parts(points, vertices, cells, cell_indices, weld_map);
+    let diagram = crate::SphericalVoronoi::from_raw_parts(
+        state.points,
+        state.vertices,
+        cells,
+        cell_indices,
+        weld_map,
+    );
     let returned_validation = crate::validation::validate(&diagram);
-    tb.set_assemble(t.elapsed());
+    state.tb.set_assemble(t.elapsed());
 
-    let timings = tb.finish();
+    let timings = state.tb.finish();
     timings.report(diagram.num_cells());
 
     Ok(ComputeOutput {
         diagram,
         effective_diagram,
         report: ComputeReport {
-            preprocess: preprocess_report,
+            preprocess: state.preprocess_report,
             degenerate: degenerate_report,
             returned_validation,
             effective_validation,
             pre_repair_edge_mismatches,
             post_repair_unpaired_edges,
-            unresolved_edge_pairs: unresolved_edges
+            unresolved_edge_pairs: state
+                .unresolved_edges
                 .iter()
                 .map(|m| {
                     let (a, b) = edge_reconcile::unpack_edge(m.key.as_u64());
