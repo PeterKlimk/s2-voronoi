@@ -5,9 +5,9 @@ use crate::fp;
 
 impl PackedKnnCellScratch {
     #[cfg_attr(feature = "profiling", inline(never))]
-    // The parameter list is the SoA query context; bundling would add
-    // indirection to a hot path for no information gain.
-    #[allow(clippy::too_many_arguments)]
+    // Tail candidates were already partitioned into (hi, tail, unsafe) buckets
+    // during `prepare_group_directed`; bin/local decoding lives there, so no
+    // layout context is needed here.
     pub(super) fn ensure_tail_directed_for(
         &mut self,
         qi: usize,
@@ -15,15 +15,8 @@ impl PackedKnnCellScratch {
         group_gen: u32,
         tail_built_any: &mut bool,
         grid: &CubeMapGrid,
-        slot_gen_map: &[u32],
-        local_shift: u32,
-        local_mask: u32,
         timings: &mut PackedKnnTimings,
     ) {
-        // Tail candidates have already been partitioned into (hi, tail, unsafe) buckets
-        // during `prepare_group_directed`. Bin/local decoding is only needed there.
-        let _ = (slot_gen_map, local_shift, local_mask);
-
         let Some(gen) = self.tail_ready_gen.get(qi).copied() else {
             return;
         };

@@ -179,7 +179,6 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
     pub(crate) fn new(
         prepared: &'a mut PreparedPackedGroup<'p, 'g>,
         timings: &'a mut PackedKnnTimings,
-        _grid: &CubeMapGrid,
         query_index: usize,
         policy: PackedNeighborPolicy,
     ) -> Self {
@@ -195,11 +194,7 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
         }
     }
 
-    pub(crate) fn frontier(
-        &mut self,
-        _grid: &CubeMapGrid,
-        out: &mut Vec<u32>,
-    ) -> PackedNeighborFrontier {
+    pub(crate) fn frontier(&mut self, out: &mut Vec<u32>) -> PackedNeighborFrontier {
         if let Some(cached) = &self.cached_frontier {
             match cached {
                 CachedFrontier::ExactBatch(batch) => {

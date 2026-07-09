@@ -240,7 +240,7 @@ fn emit_generator_group<'c>(
             local,
         };
         let query = packed.as_mut().map(|(prepared, timings, policy)| {
-            PackedQuery::new(prepared, timings, grid_ctx.grid, offset, *policy)
+            PackedQuery::new(prepared, timings, offset, *policy)
         });
         build_and_emit_cell(
             sub_accum,

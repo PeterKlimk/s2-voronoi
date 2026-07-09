@@ -101,9 +101,6 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
             self.group_gen,
             &mut self.tail_built_any,
             grid,
-            self.group.slot_gen_map(),
-            self.group.local_shift(),
-            self.group.local_mask(),
             timings,
         );
     }

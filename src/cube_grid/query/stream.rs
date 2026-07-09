@@ -126,9 +126,8 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
         loop {
             match self.stage {
                 StreamStage::Packed => {
-                    let grid = self.grid;
                     let packed = self.packed_mut("frontier");
-                    match packed.frontier(grid, out) {
+                    match packed.frontier(out) {
                         PackedNeighborFrontier::ExactBatch(batch) => {
                             let source = match batch.source {
                                 PackedNeighborBatchSource::Chunk0 => {
@@ -341,7 +340,6 @@ mod tests {
         let packed = PackedQuery::new(
             &mut prepared,
             &mut packed_timings,
-            &grid,
             qi,
             PackedNeighborPolicy::for_point_count(points.len()),
         );
@@ -435,7 +433,6 @@ mod tests {
                     let packed = PackedQuery::new(
                         &mut prepared,
                         &mut packed_timings,
-                        &grid,
                         qi,
                         PackedNeighborPolicy::for_point_count(points.len()),
                     );
