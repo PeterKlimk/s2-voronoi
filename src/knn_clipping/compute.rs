@@ -343,20 +343,50 @@ fn compute_voronoi_knn_clipping_report_core(
 /// no-op repair (a single stale slot cost ~13s of acceptance-gate work at
 /// 2.5M). Counting live windows matches the validators (`validate_impl`,
 /// `verify_sphere_fast`) and the repair's own `low_incidence_gens`.
+/// This scan runs on EVERY build with repair enabled (the detection trigger
+/// cannot piggyback on reconcile, which early-returns when no edge is
+/// unresolved), so it is chunk-parallel like the acceptance gate's cell scan
+/// in `verify_sphere_effective_strict` — exact shared atomic counters, read
+/// only after the scan.
 fn has_low_incidence_vertices(
     vertex_count: usize,
     cells: &[VoronoiCell],
     cell_indices: &[u32],
 ) -> bool {
-    let mut cnt = vec![0u32; vertex_count];
-    for cell in cells {
-        let start = cell.vertex_start();
-        let end = start + cell.vertex_count();
-        for &v in &cell_indices[start..end] {
-            cnt[v as usize] += 1;
-        }
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+        // (u32: cannot saturate — total increments are bounded by
+        // `cell_indices.len()`.)
+        let cnt: Vec<AtomicU32> = (0..vertex_count).map(|_| AtomicU32::new(0)).collect();
+        let chunk = cells
+            .len()
+            .div_ceil(rayon::current_num_threads().max(1) * 4)
+            .max(1024);
+        cells.par_chunks(chunk).for_each(|cells_chunk| {
+            for cell in cells_chunk {
+                let start = cell.vertex_start();
+                let end = start + cell.vertex_count();
+                for &v in &cell_indices[start..end] {
+                    cnt[v as usize].fetch_add(1, Relaxed);
+                }
+            }
+        });
+        cnt.par_iter().any(|c| matches!(c.load(Relaxed), 1 | 2))
     }
-    cnt.iter().any(|&c| c == 1 || c == 2)
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut cnt = vec![0u32; vertex_count];
+        for cell in cells {
+            let start = cell.vertex_start();
+            let end = start + cell.vertex_count();
+            for &v in &cell_indices[start..end] {
+                cnt[v as usize] += 1;
+            }
+        }
+        cnt.iter().any(|&c| c == 1 || c == 2)
+    }
 }
 
 /// Outcome of the repair attempt, for the caller's fail-loud decision.
