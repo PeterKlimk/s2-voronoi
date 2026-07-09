@@ -69,7 +69,7 @@ impl UnionFind {
 #[derive(Debug, Default)]
 pub(crate) struct SparseUnionFind {
     /// `(parent, rank)`; a missing key reads as `(self, 0)`.
-    nodes: std::collections::HashMap<u32, (u32, u8)>,
+    nodes: rustc_hash::FxHashMap<u32, (u32, u8)>,
 }
 
 impl SparseUnionFind {

@@ -112,10 +112,10 @@ fn gather_knn_grid(
     let n = slot_gen_map.len();
     let mut batch: Vec<u32> = Vec::new();
     let mut collected: Vec<(f32, u32)> = Vec::new();
+    let layout = PackedSlotLayout::new(slot_gen_map, REPAIR_LOCAL_SHIFT, REPAIR_LOCAL_MASK);
+    let ctx = DirectedEligibility::from_layout(1, 0, layout);
     for &s in seeds {
         let query = points[s as usize];
-        let layout = PackedSlotLayout::new(slot_gen_map, REPAIR_LOCAL_SHIFT, REPAIR_LOCAL_MASK);
-        let ctx = DirectedEligibility::from_layout(1, 0, layout);
         let mut frontier = grid.shell_frontier(query, n, scratch, ctx);
         collected.clear();
         while let Some(layer) = frontier.frontier(&mut batch) {
