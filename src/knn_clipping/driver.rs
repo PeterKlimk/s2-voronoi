@@ -7,7 +7,8 @@ use glam::Vec3;
 use rayon::prelude::*;
 
 use crate::cube_grid::packed_knn::{
-    PackedGroupInput, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroupStatus,
+    PackedGroupInput, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroup,
+    PreparedPackedGroupStatus,
 };
 use crate::cube_grid::{CubeMapGrid, PackedQuery};
 use crate::knn_clipping::cell_build::{
@@ -142,56 +143,30 @@ pub(crate) fn build_cells_sharded_live_dedup(
 
                         match prepared {
                             PreparedPackedGroupStatus::Ready(mut prepared) => {
-                                for (offset, &global) in
-                                    my_generators[group_start..cursor].iter().enumerate()
-                                {
-                                    let local_idx = group_start + offset;
-                                    let local =
-                                        checked_local_id(local_idx, "shard-local generator index")?;
-                                    let mut shard_ctx = ShardContext {
-                                        shard: &mut shard,
-                                        bin,
-                                        local,
-                                    };
-                                    build_and_emit_cell(
-                                        &mut sub_accum,
-                                        &mut build_ctx,
-                                        &mut live_ctx,
-                                        &mut shard_ctx,
-                                        &grid_ctx,
-                                        global,
-                                        Some(PackedQuery::new(
-                                            &mut prepared,
-                                            &mut packed_timings,
-                                            grid,
-                                            offset,
-                                            packed_policy,
-                                        )),
-                                    )?;
-                                }
+                                emit_generator_group(
+                                    &mut sub_accum,
+                                    &mut build_ctx,
+                                    &mut live_ctx,
+                                    &mut shard,
+                                    bin,
+                                    &grid_ctx,
+                                    &my_generators[group_start..cursor],
+                                    group_start,
+                                    Some((&mut prepared, &mut packed_timings, packed_policy)),
+                                )?;
                             }
                             PreparedPackedGroupStatus::SlowPath => {
-                                for (offset, &global) in
-                                    my_generators[group_start..cursor].iter().enumerate()
-                                {
-                                    let local_idx = group_start + offset;
-                                    let local =
-                                        checked_local_id(local_idx, "shard-local generator index")?;
-                                    let mut shard_ctx = ShardContext {
-                                        shard: &mut shard,
-                                        bin,
-                                        local,
-                                    };
-                                    build_and_emit_cell(
-                                        &mut sub_accum,
-                                        &mut build_ctx,
-                                        &mut live_ctx,
-                                        &mut shard_ctx,
-                                        &grid_ctx,
-                                        global,
-                                        None,
-                                    )?;
-                                }
+                                emit_generator_group(
+                                    &mut sub_accum,
+                                    &mut build_ctx,
+                                    &mut live_ctx,
+                                    &mut shard,
+                                    bin,
+                                    &grid_ctx,
+                                    &my_generators[group_start..cursor],
+                                    group_start,
+                                    None,
+                                )?;
                             }
                         }
 
@@ -203,26 +178,17 @@ pub(crate) fn build_cells_sharded_live_dedup(
                         #[cfg(not(feature = "timing"))]
                         sub_accum.add_packed_knn(packed_elapsed);
                     } else {
-                        for (offset, &global) in
-                            my_generators[group_start..cursor].iter().enumerate()
-                        {
-                            let local_idx = group_start + offset;
-                            let local = checked_local_id(local_idx, "shard-local generator index")?;
-                            let mut shard_ctx = ShardContext {
-                                shard: &mut shard,
-                                bin,
-                                local,
-                            };
-                            build_and_emit_cell(
-                                &mut sub_accum,
-                                &mut build_ctx,
-                                &mut live_ctx,
-                                &mut shard_ctx,
-                                &grid_ctx,
-                                global,
-                                None,
-                            )?;
-                        }
+                        emit_generator_group(
+                            &mut sub_accum,
+                            &mut build_ctx,
+                            &mut live_ctx,
+                            &mut shard,
+                            bin,
+                            &grid_ctx,
+                            &my_generators[group_start..cursor],
+                            group_start,
+                            None,
+                        )?;
                     }
                 }
 
@@ -239,6 +205,49 @@ pub(crate) fn build_cells_sharded_live_dedup(
     }
 
     Ok(ShardedCellsData::from_parts(assignment, shards, merged_sub))
+}
+
+/// Emit every cell of one same-grid-cell generator group. The call sites
+/// (packed ready, packed slow-path, packed disabled) differ only in whether a
+/// prepared packed batch feeds each cell's `PackedQuery`; the per-cell setup
+/// lives here once.
+#[allow(clippy::too_many_arguments)]
+fn emit_generator_group<'c>(
+    sub_accum: &mut crate::timing::CellSubAccum,
+    build_ctx: &mut CellBuildContext,
+    live_ctx: &mut SphereCellScratch,
+    shard: &mut ShardState,
+    bin: BinId,
+    grid_ctx: &GridContext<'c>,
+    generators: &[usize],
+    group_start: usize,
+    mut packed: Option<(
+        &mut PreparedPackedGroup<'_, 'c>,
+        &mut PackedKnnTimings,
+        crate::policy::PackedNeighborPolicy,
+    )>,
+) -> Result<(), BuildCellsError> {
+    for (offset, &global) in generators.iter().enumerate() {
+        let local = checked_local_id(group_start + offset, "shard-local generator index")?;
+        let mut shard_ctx = ShardContext {
+            shard: &mut *shard,
+            bin,
+            local,
+        };
+        let query = packed.as_mut().map(|(prepared, timings, policy)| {
+            PackedQuery::new(prepared, timings, grid_ctx.grid, offset, *policy)
+        });
+        build_and_emit_cell(
+            sub_accum,
+            &mut *build_ctx,
+            &mut *live_ctx,
+            &mut shard_ctx,
+            grid_ctx,
+            global,
+            query,
+        )?;
+    }
+    Ok(())
 }
 
 fn build_and_emit_cell<'a, 'b, 'c>(
