@@ -405,22 +405,24 @@ pub fn compute<P: UnitVec3Like>(points: &[P]) -> Result<SphericalVoronoi, Vorono
     compute_with(points, VoronoiConfig::default())
 }
 
+/// Shared entry preamble: reject sub-4 inputs and convert to the backend's
+/// `Vec3` representation.
+fn backend_points<P: UnitVec3Like>(points: &[P]) -> Result<Vec<glam::Vec3>, VoronoiError> {
+    if points.len() < 4 {
+        return Err(VoronoiError::InsufficientPoints(points.len()));
+    }
+    Ok(points
+        .iter()
+        .map(|p| glam::Vec3::new(p.x(), p.y(), p.z()))
+        .collect())
+}
+
 /// Compute a spherical Voronoi diagram with explicit configuration.
 pub fn compute_with<P: UnitVec3Like>(
     points: &[P],
     config: VoronoiConfig,
 ) -> Result<SphericalVoronoi, VoronoiError> {
-    use glam::Vec3;
-
-    if points.len() < 4 {
-        return Err(VoronoiError::InsufficientPoints(points.len()));
-    }
-
-    let vec3_points: Vec<Vec3> = points
-        .iter()
-        .map(|p| Vec3::new(p.x(), p.y(), p.z()))
-        .collect();
-
+    let vec3_points = backend_points(points)?;
     knn_clipping::compute_voronoi_knn_clipping_with_config_owned(vec3_points, &config)
 }
 
@@ -430,18 +432,6 @@ pub fn compute_with_report<P: UnitVec3Like>(
     points: &[P],
     config: VoronoiConfig,
 ) -> Result<ComputeOutput, VoronoiError> {
-    use glam::Vec3;
-
-    if points.len() < 4 {
-        return Err(VoronoiError::InsufficientPoints(points.len()));
-    }
-
-    // Convert input points to Vec3 for the backend
-    let vec3_points: Vec<Vec3> = points
-        .iter()
-        .map(|p| Vec3::new(p.x(), p.y(), p.z()))
-        .collect();
-
-    // Call knn_clipping backend
+    let vec3_points = backend_points(points)?;
     knn_clipping::compute_voronoi_knn_clipping_with_report_owned(vec3_points, &config)
 }
