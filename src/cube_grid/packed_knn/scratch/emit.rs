@@ -127,80 +127,27 @@ impl PackedKnnCellScratch {
             self.security_thresholds[qi]
         };
 
+        let n_target = k.min(out.len());
+
         match stage {
             PackedStage::Chunk0 => {
-                let mut t = PackedLapTimer::start();
-                let keys = &mut self.chunk0_keys.get_mut(qi)?;
-                let start = *self.chunk0_pos.get(qi)?;
-                if start >= keys.len() {
-                    return None;
-                }
-                let remaining = &mut keys[start..];
-                let n_target = k.min(out.len());
-                if remaining.is_empty() {
-                    return None;
-                }
-                timings.add_select_query_prep(t.lap());
-
-                // If remaining candidates are close to the requested emission size,
-                // skip partition and just sort the remainder.
-                //
-                // Important: this must scale with `n_target` (k can shrink after the first
-                // packed chunk), otherwise we end up sorting large remainders when asking
-                // for small k (e.g. k=8).
-                if remaining.len() <= 2 * n_target {
-                    let emit = remaining.len().min(n_target);
-                    let sort_len = remaining.len();
-                    sort_keys_u64(remaining);
-                    timings.add_select_sort_sized(t.lap(), sort_len);
-                    for (dst, key) in out[..emit].iter_mut().zip(remaining.iter()) {
-                        *dst = key_to_idx(*key);
-                    }
-                    timings.add_select_scatter(t.lap());
-                    let first_dot = key_to_dot(remaining[0]);
-                    let last_dot = key_to_dot(remaining[emit - 1]);
-                    self.chunk0_pos[qi] = start + emit;
-                    let has_more = self.chunk0_pos[qi] < keys.len();
-                    let unseen_bound = if has_more {
-                        last_dot
-                    } else if self.tail_possible[qi] {
-                        self.thresholds[qi]
-                    } else {
-                        coverage_bound
-                    };
-                    return Some(PackedChunk {
-                        n: emit,
-                        first_dot,
-                        unseen_bound,
-                    });
-                }
-
-                // Large chunk: partition to extract top n, then sort those.
-                let n = n_target.min(remaining.len());
-                if remaining.len() > n {
-                    remaining.select_nth_unstable(n - 1);
-                    timings.add_select_partition(t.lap());
-                }
-                sort_keys_u64(&mut remaining[..n]);
-                timings.add_select_sort_sized(t.lap(), n);
-                for (dst, key) in out[..n].iter_mut().zip(remaining[..n].iter()) {
-                    *dst = key_to_idx(*key);
-                }
-                timings.add_select_scatter(t.lap());
-                let first_dot = key_to_dot(remaining[0]);
-                let last_dot = key_to_dot(remaining[n - 1]);
-                self.chunk0_pos[qi] = start + n;
-                let has_more = self.chunk0_pos[qi] < keys.len();
-                let unseen_bound = if has_more {
-                    last_dot
+                let run = emit_run::<true>(
+                    self.chunk0_keys.get_mut(qi)?,
+                    self.chunk0_pos.get_mut(qi)?,
+                    n_target,
+                    out,
+                    timings,
+                )?;
+                let unseen_bound = if run.has_more {
+                    run.last_dot
                 } else if self.tail_possible[qi] {
                     self.thresholds[qi]
                 } else {
                     coverage_bound
                 };
                 Some(PackedChunk {
-                    n,
-                    first_dot,
+                    n: run.n,
+                    first_dot: run.first_dot,
                     unseen_bound,
                 })
             }
@@ -209,39 +156,93 @@ impl PackedKnnCellScratch {
                     self.tail_ready_gen.get(qi).copied().unwrap_or(0) == group_gen,
                     "tail stage requested before ensure_tail"
                 );
-                let mut t = PackedLapTimer::start();
-                let keys = &mut self.tail_keys.get_mut(qi)?;
-                let start = *self.tail_pos.get(qi)?;
-                if start >= keys.len() {
-                    return None;
-                }
-                let remaining = &mut keys[start..];
-                let n = k.min(out.len()).min(remaining.len());
-                if n == 0 {
-                    return None;
-                }
-                timings.add_select_query_prep(t.lap());
-                if remaining.len() > n {
-                    remaining.select_nth_unstable(n - 1);
-                    timings.add_select_partition(t.lap());
-                }
-                sort_keys_u64(&mut remaining[..n]);
-                timings.add_select_sort_sized(t.lap(), n);
-                for (dst, key) in out[..n].iter_mut().zip(remaining[..n].iter()) {
-                    *dst = key_to_idx(*key);
-                }
-                timings.add_select_scatter(t.lap());
-                let first_dot = key_to_dot(remaining[0]);
-                let last_dot = key_to_dot(remaining[n - 1]);
-                self.tail_pos[qi] = start + n;
-                let has_more = self.tail_pos[qi] < keys.len();
-                let unseen_bound = if has_more { last_dot } else { coverage_bound };
+                let run = emit_run::<false>(
+                    self.tail_keys.get_mut(qi)?,
+                    self.tail_pos.get_mut(qi)?,
+                    n_target,
+                    out,
+                    timings,
+                )?;
+                let unseen_bound = if run.has_more {
+                    run.last_dot
+                } else {
+                    coverage_bound
+                };
                 Some(PackedChunk {
-                    n,
-                    first_dot,
+                    n: run.n,
+                    first_dot: run.first_dot,
                     unseen_bound,
                 })
             }
         }
     }
+}
+
+/// One emitted run of `emit_run`; the caller maps `has_more` to its stage's
+/// unseen-dot bound (Chunk0 falls through to tail/coverage bounds, Tail to
+/// the coverage bound).
+struct EmittedRun {
+    n: usize,
+    first_dot: f32,
+    last_dot: f32,
+    has_more: bool,
+}
+
+/// The partition→sort→scatter→advance sequence shared by the Chunk0
+/// (small/large remainder) and Tail paths: take the top `n_target` of
+/// `keys[*pos..]`, sort them ascending, scatter their slot indices into
+/// `out`, and advance the cursor past what was emitted.
+///
+/// `WHOLE_SORT_SMALL` (the Chunk0 small-remainder path): when the remainder
+/// is within 2× of `n_target`, skip the partition and sort it whole. This
+/// must scale with `n_target` — k can shrink after the first packed chunk,
+/// and partitioning is what keeps small-k asks from sorting large remainders
+/// (e.g. k=8). Const-generic + inline(always) so each call site keeps its
+/// pre-extraction codegen (an out-of-line call here measured +0.6%
+/// instructions on the whole build).
+#[inline(always)]
+fn emit_run<const WHOLE_SORT_SMALL: bool>(
+    keys: &mut [u64],
+    pos: &mut usize,
+    n_target: usize,
+    out: &mut [u32],
+    timings: &mut PackedKnnTimings,
+) -> Option<EmittedRun> {
+    let mut t = PackedLapTimer::start();
+    let total = keys.len();
+    let start = *pos;
+    if start >= total {
+        return None;
+    }
+    let remaining = &mut keys[start..];
+    timings.add_select_query_prep(t.lap());
+
+    let n = if WHOLE_SORT_SMALL && remaining.len() <= 2 * n_target {
+        let sort_len = remaining.len();
+        sort_keys_u64(remaining);
+        timings.add_select_sort_sized(t.lap(), sort_len);
+        remaining.len().min(n_target)
+    } else {
+        let n = n_target.min(remaining.len());
+        if remaining.len() > n {
+            remaining.select_nth_unstable(n - 1);
+            timings.add_select_partition(t.lap());
+        }
+        sort_keys_u64(&mut remaining[..n]);
+        timings.add_select_sort_sized(t.lap(), n);
+        n
+    };
+    for (dst, key) in out[..n].iter_mut().zip(remaining.iter()) {
+        *dst = key_to_idx(*key);
+    }
+    timings.add_select_scatter(t.lap());
+    let first_dot = key_to_dot(remaining[0]);
+    let last_dot = key_to_dot(remaining[n - 1]);
+    *pos = start + n;
+    Some(EmittedRun {
+        n,
+        first_dot,
+        last_dot,
+        has_more: *pos < total,
+    })
 }
