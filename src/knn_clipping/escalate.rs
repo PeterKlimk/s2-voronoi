@@ -550,8 +550,7 @@ fn repair_grow_loop(
         // low-incidence vertices left by re-fanning (a vertex an unspliced
         // neighbor still references, now orphaned). A full scan sees both.
         let t_scan = std::time::Instant::now();
-        let mut implicated: BTreeSet<u32> = work.unpaired_generators().into_iter().collect();
-        implicated.extend(low_incidence_gens(work));
+        let implicated: BTreeSet<u32> = work.residual_generators().into_iter().collect();
         let new: Vec<u32> = implicated
             .iter()
             .copied()
@@ -952,14 +951,39 @@ impl<'a> WorkingDiagram<'a> {
     /// stale edges of any UNSPLICED neighbor still referencing `g`'s old defect
     /// vertices, and only a full scan sees those.
     fn unpaired_generators(&self) -> Vec<u32> {
+        self.residual_scan(false)
+    }
+
+    /// Union of both whole-diagram residual signals the grow loop converges
+    /// against — `unpaired_generators` plus the generators of every degree-1/2
+    /// vertex (`low_incidence_gens`' criterion) — from ONE boundary walk.
+    /// The grow loop runs this every round; as two independent scans it paid
+    /// the boundary walk (and its per-cell override lookup) twice.
+    fn residual_generators(&self) -> Vec<u32> {
+        self.residual_scan(true)
+    }
+
+    fn residual_scan(&self, include_low_incidence: bool) -> Vec<u32> {
         // One record per directed half-edge: (canonical undirected key, is
         // lower-id direction). Sort + run-scan instead of a hashmap build —
         // the map (unreserved, ~2E entries, rebuilt every grow round) was the
         // dominant repair cost at scale (~1.3s/round at 1M cells; the sorted
         // scan is ~10x cheaper and parallelizes).
         let mut uses: Vec<(u64, bool)> = Vec::with_capacity(self.base_cell_indices.len() + 64);
+        // Per-vertex live-cell reference counts, matching `low_incidence_gens`
+        // (counts every boundary, including sub-3 ones the edge scan skips).
+        let mut cnt: Vec<u32> = if include_low_incidence {
+            vec![0u32; self.num_vertices()]
+        } else {
+            Vec::new()
+        };
         for g in 0..self.num_cells() as u32 {
             let list = self.boundary(g);
+            if include_low_incidence {
+                for &v in list {
+                    cnt[v as usize] += 1;
+                }
+            }
             let n = list.len();
             if n < 3 {
                 continue;
@@ -1004,6 +1028,11 @@ impl<'a> WorkingDiagram<'a> {
                 grow.extend(ka.iter().chain(kb.iter()));
             }
             i = j;
+        }
+        for (v, &c) in cnt.iter().enumerate() {
+            if c == 1 || c == 2 {
+                grow.extend(self.vkey(v as u32));
+            }
         }
         grow.sort_unstable();
         grow.dedup();
