@@ -239,6 +239,7 @@ unsafe fn bidirectional_merge_u64(v: *const u64, len: usize, dst: *mut u64) {
     }
 }
 
+#[cfg(test)]
 #[inline(always)]
 unsafe fn merge_up<T: Copy, F: FnMut(&T, &T) -> bool>(
     mut left_src: *const T,
@@ -259,6 +260,7 @@ unsafe fn merge_up<T: Copy, F: FnMut(&T, &T) -> bool>(
     (left_src, right_src, dst)
 }
 
+#[cfg(test)]
 #[inline(always)]
 unsafe fn merge_down<T: Copy, F: FnMut(&T, &T) -> bool>(
     mut left_src: *const T,
@@ -279,48 +281,7 @@ unsafe fn merge_down<T: Copy, F: FnMut(&T, &T) -> bool>(
     (left_src, right_src, dst)
 }
 
-/// Bidirectional merge with raw pointers (allows src/dst overlap).
-///
-/// # Safety
-/// - left_src and right_src must point to len valid elements
-/// - dst must point to 2*len valid elements
-/// - dst may overlap with left_src (for in-place merge to start)
-#[inline(always)]
-#[allow(dead_code)]
-unsafe fn bidirectional_same_size_merge_ptr<T: Copy, F>(
-    left_src: *const T,
-    right_src: *const T,
-    dst: *mut T,
-    len: usize,
-    is_less: &mut F,
-) where
-    F: FnMut(&T, &T) -> bool,
-{
-    if len == 0 {
-        return;
-    }
-
-    let mut left = left_src;
-    let mut right = right_src;
-    let mut out = dst;
-
-    let mut left_rev = left_src.add(len - 1);
-    let mut right_rev = right_src.add(len - 1);
-    let mut out_rev = dst.add(2 * len - 1);
-
-    for _ in 0..len {
-        (left, right, out) = merge_up(left, right, out, is_less);
-        (left_rev, right_rev, out_rev) = merge_down(left_rev, right_rev, out_rev, is_less);
-    }
-
-    let left_end = left_rev.wrapping_add(1);
-    let right_end = right_rev.wrapping_add(1);
-
-    if left != left_end || right != right_end {
-        panic_on_ord_violation();
-    }
-}
-
+#[cfg(test)]
 #[cfg_attr(not(panic = "immediate-abort"), inline(never), cold)]
 #[cfg_attr(panic = "immediate-abort", inline)]
 fn panic_on_ord_violation() -> ! {
