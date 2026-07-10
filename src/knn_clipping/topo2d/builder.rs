@@ -94,6 +94,9 @@ pub(crate) struct GnomonicBuilder {
     term_cos_pad: f64,
     term_threshold_cache: f64,
     term_cache_valid: bool,
+    /// Chart metric stretch bound folded into every angular-radius use
+    /// (near-pole tangent-basis distortion; see `chart_metric_r2_bound`).
+    chart_metric_r2_scale: f64,
     #[cfg(feature = "timing")]
     support_cache_valid: bool,
     #[cfg(feature = "timing")]

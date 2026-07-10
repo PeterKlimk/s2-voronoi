@@ -135,6 +135,7 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
                 -1.0
             } else {
                 (1.0 - 0.5 * next_min_dist_sq).clamp(-1.0, 1.0)
+                    + crate::tolerances::GRID_DOT_BOUND_PAD
             };
 
             if !self.scratch.pending.is_empty() {

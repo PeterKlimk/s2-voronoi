@@ -108,6 +108,12 @@ pub(crate) const TERMINATION_ANGLE_PAD: f64 = 8.0 * f32::EPSILON as f64;
 /// rounding in the double-angle computation of the certificate itself.
 pub(crate) const TERMINATION_THRESHOLD_GUARD: f64 = 3.0 * f32::EPSILON as f64;
 
+/// Norm envelope for a point normalized in f64 and rounded once to f32 by
+/// `canonicalize_unit_points`. Componentwise roundoff gives a tighter bound;
+/// one f32 epsilon is retained here so the termination certificate can map a
+/// normalized angular threshold back into the raw-dot space used by kNN.
+pub(crate) const CANONICAL_UNIT_NORM_SLACK: f64 = f32::EPSILON as f64;
+
 // === Spherical fallback (constraint replay past the chart limit) ===
 
 /// Constraint-satisfaction slack for fallback vertex candidates (a candidate
@@ -147,6 +153,15 @@ pub(crate) const GRID_PLANE_PAD: f32 = 1e-6;
 /// when precomputing conservative cell bounds, covering rounding in the
 /// bound construction.
 pub(crate) const GRID_SIN_EPS: f32 = 1e-5;
+
+/// Absolute inflation on dot bounds exported by the kNN stream. Some bounds
+/// are spherical-cosine/chord bounds while the stream ranks the once-rounded
+/// canonical f32 points by raw f32 dot. The norm conversion plus dot/bound
+/// arithmetic can otherwise leave a theoretical frontier one ulp below an
+/// unseen raw dot (caught by `nn_contract_dense_single_cell`). Four ulps keep
+/// the public internal contract genuinely upper-bounding, rather than relying
+/// on the termination certificate's separate guard.
+pub(crate) const GRID_DOT_BOUND_PAD: f32 = 4.0 * f32::EPSILON;
 
 // === Validation (exact-invariant checks) ===
 

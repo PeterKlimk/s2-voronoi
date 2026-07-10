@@ -159,7 +159,7 @@ impl GnomonicBuilder {
             bounded: !poly.has_bounding_ref(),
             poly_len: poly.len,
             has_bounding_ref: poly.has_bounding_ref(),
-            min_cos: poly.min_cos(),
+            min_cos: self.chart_min_cos_bound(poly.max_r2),
             half_plane_count: self.half_planes.len(),
             neighbor_index_count: self.neighbor_indices.len(),
             neighbor_slot_count: self.neighbor_slots.len(),

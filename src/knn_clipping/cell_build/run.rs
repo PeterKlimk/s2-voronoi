@@ -529,7 +529,10 @@ fn clip_batch(
                 // and consistent with the main gather above — points[next] would
                 // be a cold scattered read into the otherwise-unused points[]);
                 // bit-identical to points[point_indices[next_slot]].
-                let next_dot = points[generator_idx].dot(pos_slots[next_slot as usize].pos);
+                let query = points[generator_idx];
+                let next = pos_slots[next_slot as usize].pos;
+                let next_dot =
+                    crate::fp::dot3_f32(query.x, query.y, query.z, next.x, next.y, next.z);
                 // Shell layers are sorted within the layer, but the next
                 // layer can contain closer points than this layer's tail;
                 // the mid-batch bound must also cover them. (Packed batches

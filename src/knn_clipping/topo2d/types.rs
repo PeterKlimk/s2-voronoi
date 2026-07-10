@@ -164,14 +164,6 @@ impl PolyBuffer {
     }
 
     #[inline]
-    pub fn min_cos(&self) -> f64 {
-        if self.len == 0 {
-            return 1.0;
-        }
-        1.0 / (1.0 + self.max_r2).sqrt()
-    }
-
-    #[inline]
     pub fn has_bounding_ref(&self) -> bool {
         self.has_bounding_ref
     }

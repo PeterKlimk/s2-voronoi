@@ -39,7 +39,7 @@ use crate::policy::PackedNeighborPolicy;
 
 const LOCAL_SHIFT: u32 = 24;
 const LOCAL_MASK: u32 = (1u32 << LOCAL_SHIFT) - 1;
-const DOT_TOL: f32 = 1e-6;
+const DOT_TOL: f32 = 0.0;
 
 struct Harness {
     points: Vec<Vec3>,
@@ -89,7 +89,9 @@ impl Harness {
     fn slot_dot(&self, query_slot: u32, slot: u32) -> f32 {
         let qi = self.grid.point_indices()[query_slot as usize] as usize;
         let pi = self.grid.point_indices()[slot as usize] as usize;
-        self.points[qi].dot(self.points[pi])
+        let q = self.points[qi];
+        let p = self.points[pi];
+        crate::fp::dot3_f32(q.x, q.y, q.z, p.x, p.y, p.z)
     }
 
     /// Directed-eligible slots for a query, per the cell-mode rules.

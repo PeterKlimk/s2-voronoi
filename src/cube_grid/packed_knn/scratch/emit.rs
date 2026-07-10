@@ -125,7 +125,7 @@ impl PackedKnnCellScratch {
             self.center_bound[qi]
         } else {
             self.security_thresholds[qi]
-        };
+        } + crate::tolerances::GRID_DOT_BOUND_PAD;
 
         let n_target = k.min(out.len());
 
@@ -138,10 +138,15 @@ impl PackedKnnCellScratch {
                     out,
                     timings,
                 )?;
+                let post_chunk_bound = if self.tail_possible[qi] {
+                    self.thresholds[qi] + crate::tolerances::GRID_DOT_BOUND_PAD
+                } else {
+                    coverage_bound
+                };
                 let unseen_bound = if run.has_more {
-                    run.last_dot
+                    run.last_dot.max(post_chunk_bound)
                 } else if self.tail_possible[qi] {
-                    self.thresholds[qi]
+                    post_chunk_bound
                 } else {
                     coverage_bound
                 };
@@ -164,7 +169,7 @@ impl PackedKnnCellScratch {
                     timings,
                 )?;
                 let unseen_bound = if run.has_more {
-                    run.last_dot
+                    run.last_dot.max(coverage_bound)
                 } else {
                     coverage_bound
                 };

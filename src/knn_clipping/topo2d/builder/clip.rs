@@ -8,8 +8,6 @@ use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck, 
 use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane};
 use glam::Vec3;
 
-const MAX_PROJECTION_R2: f64 = (1.0 / (MIN_PROJECTION_COS * MIN_PROJECTION_COS)) - 1.0;
-
 impl GnomonicBuilder {
     pub(super) fn clip_with_slot(
         &mut self,
@@ -63,7 +61,8 @@ impl GnomonicBuilder {
             return Err(CellFailure::ClippedAway);
         }
         if !poly.has_bounding_ref()
-            && (!poly.max_r2.is_finite() || poly.max_r2 >= MAX_PROJECTION_R2)
+            && (!poly.max_r2.is_finite()
+                || self.chart_min_cos_bound(poly.max_r2) <= MIN_PROJECTION_COS)
         {
             self.failed = Some(CellFailure::ProjectionInvalid);
             return Err(CellFailure::ProjectionInvalid);

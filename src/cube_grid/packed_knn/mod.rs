@@ -264,7 +264,7 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
             self.prepared.tail_upper_bound(self.query_index)
         } else {
             self.prepared.resume_security(self.query_index)
-        };
+        } + crate::tolerances::GRID_DOT_BOUND_PAD;
         self.cached_frontier = Some(CachedFrontier::UnknownButBounded { dot_upper_bound });
         PackedNeighborFrontier::UnknownButBounded { dot_upper_bound }
     }

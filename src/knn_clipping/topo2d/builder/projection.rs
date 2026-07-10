@@ -92,6 +92,28 @@ impl FallbackConstraint {
 }
 
 impl GnomonicBuilder {
+    /// Upper bound on the chart's metric stretch: a Gershgorin bound on the
+    /// largest eigenvalue of the tangent-axis Gram matrix relative to
+    /// `|g|^2`, clamped to >= 1 and inflated for the rounding of these dots.
+    ///
+    /// `min_cos`/`can_terminate` interpret chart radius as `tan(angle)`,
+    /// which is exact only for an orthonormal basis and unit generator. The
+    /// closed-form ONB amplifies the f32 unit-norm slack `delta = |g|^2 - 1`
+    /// by `1/(1 + g.z)` (analytically: `|t1|^2 - 1 = x^2*delta*a^2`,
+    /// `t1.t2 = x*y*delta*a^2`, `a = 1/(1+g.z)`; the Gram-Schmidt step only
+    /// removes radial components) — up to ~1.8x squared-radius distortion for
+    /// legitimate normalized-f32 generators on the ring just above the pole
+    /// cutoff. A chart radius scaled by this bound dominates the true vertex
+    /// tangent in every direction, restoring the termination certificate's
+    /// soundness (see `polar_termination_certificate_soundness_elongated`).
+    fn chart_metric_r2_bound(basis: &TangentBasis, inv_two_gg: f64) -> f64 {
+        let inv_g2 = 2.0 * inv_two_gg;
+        let g11 = basis.t1.length_squared() * inv_g2;
+        let g22 = basis.t2.length_squared() * inv_g2;
+        let g12 = (basis.t1.dot(basis.t2) * inv_g2).abs();
+        (g11.max(g22) + g12).max(1.0) * (1.0 + 1e-12)
+    }
+
     pub(super) fn new(generator_idx: usize, generator: Vec3) -> Self {
         #[cfg(feature = "p5_shadow")]
         let angle_pad = crate::knn_clipping::p5_shadow::term_pad_override()
@@ -106,6 +128,7 @@ impl GnomonicBuilder {
         let inv_two_gg = 0.5 / gen64.length_squared();
         let basis = TangentBasis::new(gen64);
         let generator_dot_g = gen64.dot(basis.g);
+        let chart_metric_r2_scale = Self::chart_metric_r2_bound(&basis, inv_two_gg);
 
         let mut poly_a = PolyBuffer::new();
         poly_a.init_bounding(1e6);
@@ -130,6 +153,7 @@ impl GnomonicBuilder {
             term_cos_pad,
             term_threshold_cache: 0.0,
             term_cache_valid: false,
+            chart_metric_r2_scale,
             #[cfg(feature = "timing")]
             support_cache_valid: false,
             #[cfg(feature = "timing")]
@@ -146,6 +170,7 @@ impl GnomonicBuilder {
         self.inv_two_gg = 0.5 / gen64.length_squared();
         self.basis = TangentBasis::new(gen64);
         self.generator_dot_g = gen64.dot(self.basis.g);
+        self.chart_metric_r2_scale = Self::chart_metric_r2_bound(&self.basis, self.inv_two_gg);
         self.half_planes.clear();
         self.neighbor_indices.clear();
         self.neighbor_slots.clear();
@@ -201,6 +226,15 @@ impl GnomonicBuilder {
         }
     }
 
+    /// Conservative cosine of the farthest chart direction represented by a
+    /// polygon radius. Unlike the unscaled `1/sqrt(1 + max_r2)` chart formula,
+    /// this remains sound when the promoted f32 generator makes the closed-form
+    /// tangent axes slightly non-orthonormal near the south-pole cutoff.
+    #[inline]
+    pub(super) fn chart_min_cos_bound(&self, max_r2: f64) -> f64 {
+        1.0 / (1.0 + max_r2 * self.chart_metric_r2_scale).sqrt()
+    }
+
     #[inline]
     pub(super) fn is_bounded(&self) -> bool {
         !self.current_poly().has_bounding_ref()
@@ -233,7 +267,14 @@ impl GnomonicBuilder {
         }
 
         if !self.term_cache_valid {
-            let min_cos = self.current_poly().min_cos();
+            // Metric-corrected chart radius: `max_r2` scaled by the chart
+            // stretch bound dominates the true squared vertex tangent in
+            // every direction (see `chart_metric_r2_bound`).
+            let min_cos = if self.current_poly().len == 0 {
+                1.0
+            } else {
+                self.chart_min_cos_bound(self.current_poly().max_r2)
+            };
             if min_cos <= 0.0 || min_cos > 1.0 {
                 return false;
             }
@@ -242,7 +283,23 @@ impl GnomonicBuilder {
             let cos_theta_pad =
                 fp::fma_f64(min_cos, self.term_cos_pad, -sin_theta * self.term_sin_pad);
             let cos_2max = fp::fma_f64(2.0 * cos_theta_pad, cos_theta_pad, -1.0);
-            self.term_threshold_cache = cos_2max - crate::tolerances::TERMINATION_THRESHOLD_GUARD;
+
+            // kNN bounds raw f32 dots, not normalized cosines. Convert the
+            // angular threshold into that same space using this generator's
+            // exact promoted norm and the conservative global norm endpoint
+            // for once-rounded canonical points. The endpoint reverses for a
+            // negative cosine. Unequal site norms only add the non-negative
+            // radial term (|g|-|n|)^2/2 to a chord bisector, so the equal-norm
+            // angular separation remains a sufficient non-cutting condition.
+            let norm_slack = crate::tolerances::CANONICAL_UNIT_NORM_SLACK;
+            let unseen_norm = if cos_2max >= 0.0 {
+                1.0 - norm_slack
+            } else {
+                1.0 + norm_slack
+            };
+            let raw_dot_scale = self.generator.length() * unseen_norm;
+            self.term_threshold_cache =
+                cos_2max * raw_dot_scale - crate::tolerances::TERMINATION_THRESHOLD_GUARD;
             self.term_cache_valid = true;
         }
 
