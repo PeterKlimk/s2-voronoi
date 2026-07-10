@@ -23,8 +23,8 @@ cargo fmt
 Useful targeted checks:
 
 ```bash
-# Validate packed small-sort path compiles
-cargo check --release --features packed_knn_sort_small
+# Optimized codegen with internal debug assertions enabled
+cargo test --profile checked
 
 # API/correctness suites only
 cargo test --release --test api --test correctness
@@ -83,10 +83,11 @@ src/
 ├── knn_clipping/                  # Main backend
 │   ├── compute.rs                 # End-to-end backend orchestration
 │   ├── preprocess.rs              # Near-coincident merge pass
-│   ├── edge_repair.rs             # Post-assembly edge repairs
-│   ├── live_dedup/                # Sharded dedup + assembly
+│   ├── edge_reconcile.rs          # Post-assembly edge reconciliation
 │   ├── topo2d/                    # Gnomonic/topological clipping
-│   └── timing/                    # Timing feature plumbing
+│   └── p5_shadow.rs               # Canonical predicate audit plumbing
+├── live_dedup/                    # Sharded dedup + assembly
+├── timing/                        # Timing feature plumbing
 ├── cube_grid/                     # Spatial index + query stack
 │   ├── build.rs                   # Grid construction
 │   ├── projection.rs              # Face/uv/st conversion helpers
@@ -106,9 +107,7 @@ src/
 - `profiling`: helpers for profiling runs (e.g. inline control).
 - `microbench`: internal microbench harnesses.
 - `qhull`: convex-hull backend for comparison tests/bench.
-- `simd_clip`: SIMD small-N clippers in clipper dispatch.
 - `fma`: prefer fused multiply-add (`mul_add`) where used.
-- `packed_knn_sort_small`: enable internal small-sort path in packed kNN.
 - `tools`: benchmark/utility binaries.
 
 ## Tests
@@ -142,6 +141,5 @@ Primary integration tests in `tests/`:
 
 ## Known Limitations
 
-- Nightly Rust required.
 - Inputs should be unit-normalized.
 - Numerical edge cases can still produce degeneracies; use `validation::validate`.

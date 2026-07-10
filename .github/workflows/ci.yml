@@ -31,6 +31,12 @@ jobs:
         # The packed-kNN and grid code carry debug_asserts that only the dev
         # profile compiles; without this step they rot invisibly.
         run: cargo test
+      - name: Tests (optimized + debug assertions)
+        # Release optimization can expose different control flow/codegen than
+        # dev while debug assertions exercise the internal geometry and index
+        # invariants. This profile has caught defects hidden by either ordinary
+        # release tests or unoptimized debug tests alone.
+        run: cargo test --profile checked
       - name: Tests (serde + glam)
         run: cargo test --release --features serde,glam
       - name: Tests (p5_shadow canonical evaluator, lib)
