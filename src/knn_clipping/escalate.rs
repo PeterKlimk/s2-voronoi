@@ -554,6 +554,13 @@ fn repair_grow_loop(
             touched_vids.extend(work.boundary(g).iter().copied());
             spliced.insert(g);
         }
+        // Geometry is not a reliable winding oracle in the dense cases that
+        // reach repair: rounded/reconciled f32 circumcenters can make a tiny
+        // cell look self-crossing. Enforce the combinatorial invariant instead.
+        // Shared edges constrain two repaired cells to opposite directions;
+        // rim edges anchor each connected repaired component to an unspliced
+        // neighbor. This is a parity solve over the already-spliced overlay.
+        work.reconcile_override_winding(points, &spliced, target_sign);
         // Grow on the residual: generators named by any still-unpaired edge, plus
         // low-incidence vertices left by re-fanning (a vertex an unspliced
         // neighbor still references, now orphaned). The localized scan sees both
@@ -765,6 +772,80 @@ fn triple_circumcenter(points: &[Vec3], t: [u32; 3]) -> Vec3 {
     Vec3::new(n.x as f32, n.y as f32, n.z as f32)
 }
 
+/// Signed spherical polygon orientation, accumulated in f64. Repair is entered
+/// precisely for numerically difficult neighborhoods, and the O(radius²)
+/// polygon-area signal can be smaller than the rounding left by summing its
+/// O(radius) edge cross-products in f32.
+fn polygon_sign_f64(generator: Vec3, n: usize, mut vertex: impl FnMut(usize) -> Vec3) -> f64 {
+    if n < 3 {
+        return 0.0;
+    }
+    let mut acc = DVec3::ZERO;
+    for i in 0..n {
+        let a = vertex(i).as_dvec3();
+        let b = vertex((i + 1) % n).as_dvec3();
+        acc += a.cross(b);
+    }
+    acc.dot(generator.as_dvec3())
+}
+
+/// Solve cell-reversal parity constraints. An adjacency bit is the required
+/// XOR between its endpoint cells; an anchor bit is the required reversal of a
+/// cell next to an unmodified neighbor. `None` means the constraints conflict,
+/// in which case the caller leaves the winding correction unapplied for the
+/// strict gate to reject rather than guessing.
+fn solve_winding_parity(
+    nodes: &std::collections::BTreeSet<u32>,
+    adj: &FxHashMap<u32, Vec<(u32, bool)>>,
+    anchors: &FxHashMap<u32, Vec<bool>>,
+    mut unanchored_root_flip: impl FnMut(u32) -> bool,
+) -> Option<Vec<u32>> {
+    use std::collections::VecDeque;
+
+    let mut parity: FxHashMap<u32, bool> = FxHashMap::default();
+    let mut flips = Vec::new();
+    for &root in nodes {
+        if parity.contains_key(&root) {
+            continue;
+        }
+        parity.insert(root, false);
+        let mut component = Vec::new();
+        let mut queue = VecDeque::from([root]);
+        while let Some(g) = queue.pop_front() {
+            component.push(g);
+            let gp = parity[&g];
+            for &(m, xor) in adj.get(&g).map(Vec::as_slice).unwrap_or(&[]) {
+                if let Some(&mp) = parity.get(&m) {
+                    if mp != gp ^ xor {
+                        return None;
+                    }
+                } else {
+                    parity.insert(m, gp ^ xor);
+                    queue.push_back(m);
+                }
+            }
+        }
+
+        let mut root_flip = None;
+        for &g in &component {
+            for &required in anchors.get(&g).map(Vec::as_slice).unwrap_or(&[]) {
+                let candidate = required ^ parity[&g];
+                if root_flip.is_some_and(|existing| existing != candidate) {
+                    return None;
+                }
+                root_flip = Some(candidate);
+            }
+        }
+        let root_flip = root_flip.unwrap_or_else(|| unanchored_root_flip(root));
+        for g in component {
+            if root_flip ^ parity[&g] {
+                flips.push(g);
+            }
+        }
+    }
+    Some(flips)
+}
+
 /// Generators of every vertex referenced by exactly 1 or 2 live cells — a real
 /// sub-3-incidence defect (e.g. a sliver/near-coincident vertex) that can exist
 /// with NO unpaired edge, which the unpaired-only trigger would miss.
@@ -924,7 +1005,7 @@ impl<'a> WorkingDiagram<'a> {
     /// fan can come out either way; a rim edge only pairs with its unspliced
     /// neighbor when both wind the same direction, so the fan is reversed if its
     /// signed orientation disagrees.
-    fn splice_generator(&mut self, points: &[Vec3], g: u32, fan: &[[u32; 3]], target_sign: f32) {
+    fn splice_generator(&mut self, points: &[Vec3], g: u32, fan: &[[u32; 3]], target_sign: f64) {
         let mut list: Vec<u32> = fan.iter().map(|&t| self.vid_for(points, t)).collect();
         if target_sign != 0.0 && self.polygon_sign(points, g, &list) * target_sign < 0.0 {
             list.reverse();
@@ -932,25 +1013,94 @@ impl<'a> WorkingDiagram<'a> {
         self.overrides.insert(g, list);
     }
 
+    /// Make every shared edge in the repaired overlay run in opposite
+    /// directions, without consulting its numerically fragile vertex geometry.
+    /// Each cell reversal is a boolean; a same-direction edge requires exactly
+    /// one endpoint cell to reverse, while an already-opposite edge requires
+    /// equal reversal parity. Edges to unspliced cells anchor the component.
+    fn reconcile_override_winding(
+        &mut self,
+        points: &[Vec3],
+        active: &std::collections::BTreeSet<u32>,
+        target_sign: f64,
+    ) {
+        use std::collections::BTreeSet;
+
+        let nodes: BTreeSet<u32> = active
+            .iter()
+            .copied()
+            .filter(|g| self.overrides.contains_key(g))
+            .collect();
+        let mut adj: FxHashMap<u32, Vec<(u32, bool)>> = FxHashMap::default();
+        let mut anchors: FxHashMap<u32, Vec<bool>> = FxHashMap::default();
+
+        for &g in &nodes {
+            let list = self.boundary(g);
+            for i in 0..list.len() {
+                let (from, to) = (list[i], list[(i + 1) % list.len()]);
+                let (lo, hi, g_fwd) = if from <= to {
+                    (from, to, true)
+                } else {
+                    (to, from, false)
+                };
+                let (ka, kb) = (self.vkey(lo), self.vkey(hi));
+                let mut common = ka
+                    .iter()
+                    .copied()
+                    .filter(|&x| x != g && x != u32::MAX && kb.contains(&x));
+                let Some(m) = common.next() else {
+                    continue;
+                };
+                if common.next().is_some() || m as usize >= self.num_cells() {
+                    continue;
+                }
+                let other = self.boundary(m);
+                let mut m_fwd = None;
+                for j in 0..other.len() {
+                    let (a, b) = (other[j], other[(j + 1) % other.len()]);
+                    if a == lo && b == hi {
+                        m_fwd = Some(true);
+                        break;
+                    }
+                    if a == hi && b == lo {
+                        m_fwd = Some(false);
+                        break;
+                    }
+                }
+                let Some(m_fwd) = m_fwd else {
+                    continue;
+                };
+                let one_must_flip = g_fwd == m_fwd;
+                if nodes.contains(&m) {
+                    adj.entry(g).or_default().push((m, one_must_flip));
+                    adj.entry(m).or_default().push((g, one_must_flip));
+                } else {
+                    anchors.entry(g).or_default().push(one_must_flip);
+                }
+            }
+        }
+
+        if let Some(flips) = solve_winding_parity(&nodes, &adj, &anchors, |root| {
+            target_sign != 0.0
+                && self.polygon_sign(points, root, self.boundary(root)) * target_sign < 0.0
+        }) {
+            for g in flips {
+                self.overrides.get_mut(&g).unwrap().reverse();
+            }
+        }
+    }
+
     /// Signed orientation of generator `g`'s boundary `list`: the sphere-surface
     /// area normal dotted with the generator direction. Positive and negative
     /// distinguish CCW vs CW as seen from outside the sphere.
-    fn polygon_sign(&self, points: &[Vec3], g: u32, list: &[u32]) -> f32 {
-        let n = list.len();
-        if n < 3 {
-            return 0.0;
-        }
-        let mut acc = Vec3::ZERO;
-        for i in 0..n {
-            acc += self.vpos(list[i]).cross(self.vpos(list[(i + 1) % n]));
-        }
-        acc.dot(points[g as usize])
+    fn polygon_sign(&self, points: &[Vec3], g: u32, list: &[u32]) -> f64 {
+        polygon_sign_f64(points[g as usize], list.len(), |i| self.vpos(list[i]))
     }
 
     /// Majority signed-orientation of the existing (unspliced) cells — the
     /// global winding convention the spliced cells must match. Sampled over the
     /// first cells with a real boundary, skipping the defect generators.
-    fn winding_convention(&self, points: &[Vec3], skip: &std::collections::BTreeSet<u32>) -> f32 {
+    fn winding_convention(&self, points: &[Vec3], skip: &std::collections::BTreeSet<u32>) -> f64 {
         let mut pos = 0i32;
         let mut neg = 0i32;
         for g in 0..self.num_cells() as u32 {
@@ -1295,4 +1445,56 @@ pub fn set_escalation_enabled(on: bool) {
 /// Whether escalation is currently force-enabled.
 pub(crate) fn escalation_enabled() -> bool {
     ESCALATE_ENABLED.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tiny_polygon_winding_uses_f64_accumulation() {
+        let generator = Vec3::new(0.31, -0.27, 0.911_043_35);
+        let vertices = [
+            Vec3::new(0.310_181_26, -0.270_194_2, 0.911_472_8),
+            Vec3::new(0.310_227_72, -0.270_119_3, 0.911_479_2),
+            Vec3::new(0.310_170_1, -0.270_078_45, 0.911_510_9),
+            Vec3::new(0.310_107_02, -0.270_104_62, 0.911_524_6),
+            Vec3::new(0.310_113_82, -0.270_169_26, 0.911_503_14),
+        ];
+
+        // The former f32 accumulator reports the opposite winding for this
+        // small but otherwise ordinary convex spherical polygon.
+        let mut f32_acc = Vec3::ZERO;
+        for i in 0..vertices.len() {
+            f32_acc += vertices[i].cross(vertices[(i + 1) % vertices.len()]);
+        }
+        assert!(f32_acc.dot(generator) < 0.0);
+        assert!(polygon_sign_f64(generator, vertices.len(), |i| vertices[i]) > 0.0);
+    }
+
+    #[test]
+    fn winding_parity_propagates_rim_anchor() {
+        let nodes = [10, 20, 30].into_iter().collect();
+        let mut adj: FxHashMap<u32, Vec<(u32, bool)>> = FxHashMap::default();
+        // 10/20 already run oppositely (same flip parity); 20/30 currently
+        // run the same way (exactly one must flip).
+        adj.insert(10, vec![(20, false)]);
+        adj.insert(20, vec![(10, false), (30, true)]);
+        adj.insert(30, vec![(20, true)]);
+        let anchors = FxHashMap::from_iter([(10, vec![false])]);
+
+        let flips = solve_winding_parity(&nodes, &adj, &anchors, |_| {
+            panic!("anchored component must not use the geometric fallback")
+        })
+        .unwrap();
+        assert_eq!(flips, vec![30]);
+    }
+
+    #[test]
+    fn winding_parity_rejects_conflicting_rim() {
+        let nodes = [10, 20].into_iter().collect();
+        let adj = FxHashMap::from_iter([(10, vec![(20, false)]), (20, vec![(10, false)])]);
+        let anchors = FxHashMap::from_iter([(10, vec![false]), (20, vec![true])]);
+        assert!(solve_winding_parity(&nodes, &adj, &anchors, |_| false).is_none());
+    }
 }

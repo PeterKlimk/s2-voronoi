@@ -588,6 +588,9 @@ fn maybe_repair_effective(
             new_cells.len(),
             if gate.is_ok() { "accepted" } else { "rejected" },
         );
+        if let Err(err) = &gate {
+            eprintln!("  repair gate rejection: {err}");
+        }
     }
     if gate.is_err() {
         vertices.truncate(base_vertex_count);
