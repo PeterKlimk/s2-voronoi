@@ -130,6 +130,8 @@ impl GnomonicBuilder {
             term_cos_pad,
             term_threshold_cache: 0.0,
             term_cache_valid: false,
+            dir_w2: [0.0; super::directional::DIR_SECTORS],
+            dir_table_valid: false,
             #[cfg(feature = "timing")]
             support_cache_valid: false,
             #[cfg(feature = "timing")]
@@ -157,6 +159,7 @@ impl GnomonicBuilder {
         self.use_a = true;
         self.failed = None;
         self.term_cache_valid = false;
+        self.dir_table_valid = false;
         #[cfg(feature = "timing")]
         {
             self.support_cache_valid = false;
@@ -352,6 +355,18 @@ impl Topo2DBuilder {
         match &mut self.inner {
             BuilderImpl::Gnomonic(builder) => builder.can_terminate(max_unseen_dot_bound),
             BuilderImpl::Fallback(builder) => builder.can_terminate(max_unseen_dot_bound),
+        }
+    }
+
+    /// Directional non-cutting certificate for a known candidate; `true`
+    /// means the clip would provably be `Unchanged` (see `directional.rs`).
+    /// Callers must have already established a bounded polygon via
+    /// `can_terminate`-style gating; the fallback builder never certifies.
+    #[inline]
+    pub(crate) fn directional_reject(&mut self, neighbor: Vec3) -> bool {
+        match &mut self.inner {
+            BuilderImpl::Gnomonic(builder) => builder.directional_reject(neighbor),
+            BuilderImpl::Fallback(_) => false,
         }
     }
 }

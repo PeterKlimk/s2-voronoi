@@ -461,3 +461,76 @@ fn fallback_reconstruction_normalizes_s2_constraints() {
         );
     }
 }
+
+/// The directional non-cutting certificate must be sound against the exact
+/// strict clip predicate: any candidate it certifies must have every current
+/// polygon vertex strictly inside the candidate's half-plane (i.e. the clip
+/// would return `Unchanged`, so skipping it is byte-identical). Also checks
+/// the certificate is non-vacuous (far candidates certify readily once the
+/// cell is bounded).
+#[test]
+fn directional_certificate_implies_exact_unchanged() {
+    let points = generic_sphere_points(400);
+    let mut certified_total = 0usize;
+    let mut tested_total = 0usize;
+
+    for i in (0..points.len()).step_by(7) {
+        let mut builder = Topo2DBuilder::new(i, points[i]);
+        clip_all_neighbors(&mut builder, &points, i);
+        assert!(builder.is_bounded(), "cell {i} should be bounded");
+
+        for (j, &candidate) in points.iter().enumerate() {
+            if j == i {
+                continue;
+            }
+            tested_total += 1;
+            if !builder.directional_reject(candidate) {
+                continue;
+            }
+            certified_total += 1;
+
+            // Exact replay of the strict clip predicate for the identical
+            // half-plane coefficients.
+            let gnomonic = builder.as_gnomonic();
+            let (a, b, c) = gnomonic.bisector_coefficients(candidate);
+            let hp = HalfPlane::new_unnormalized(a, b, c, 0);
+            let poly = gnomonic.current_poly();
+            let neg_eps = -hp.eps;
+            for v in 0..poly.len {
+                let d = hp.signed_dist(poly.us[v], poly.vs[v]);
+                assert!(
+                    d >= neg_eps,
+                    "cell {i}: certified candidate {j} cuts vertex {v} \
+                     (signed_dist {d} < {neg_eps})"
+                );
+            }
+        }
+    }
+
+    // Non-vacuous: with whole-sphere candidate sets, the certificate must
+    // fire for the vast majority of far candidates.
+    assert!(
+        certified_total * 2 > tested_total,
+        "directional certificate is unexpectedly weak: {certified_total}/{tested_total}"
+    );
+}
+
+/// The certificate must never fire on an unbounded polygon's true cutters,
+/// and must behave (return false, not panic) right after reset.
+#[test]
+fn directional_certificate_handles_fresh_and_fallback_builders() {
+    let points = generic_sphere_points(64);
+    let mut builder = Topo2DBuilder::new(0, points[0]);
+    // Fresh builder: unbounded polygon — nothing should certify (W is huge).
+    assert!(!builder.directional_reject(points[1]));
+
+    // Fallback builder never certifies.
+    clip_all_neighbors(&mut builder, &points, 0);
+    builder.enter_fallback(
+        &points,
+        BuilderFallbackRequest {
+            trigger: BuilderFallbackTrigger::ProjectionLimit,
+        },
+    );
+    assert!(!builder.directional_reject(points[1]));
+}

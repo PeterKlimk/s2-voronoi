@@ -36,12 +36,31 @@ pub use preprocess::merge_close_points;
 pub type MergeResult = preprocess::MergeResult;
 
 #[derive(Debug, Clone, Copy, Default)]
-pub struct TerminationConfig {}
+pub struct TerminationConfig {
+    /// Directional (per-octant) non-cutting certificate for known in-batch
+    /// candidates: certified candidates are skipped without clipping, and a
+    /// fully-certified batch tail terminates the cell early. Output-neutral
+    /// (certified candidates are provably `Unchanged` clips). Default off
+    /// pending A/B; enable via `VORONOI_MESH_DIRECTIONAL_TERM=1`.
+    pub(crate) directional_termination: bool,
+}
 
 impl TerminationConfig {
     #[inline]
     pub(crate) fn packed_policy(&self, num_points: usize) -> PackedNeighborPolicy {
         PackedNeighborPolicy::for_point_count(num_points)
+    }
+
+    /// Default config with env overrides applied (the public entry points'
+    /// construction path).
+    pub(crate) fn from_env() -> Self {
+        static DIRECTIONAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let directional_termination = *DIRECTIONAL.get_or_init(
+            || matches!(std::env::var("VORONOI_MESH_DIRECTIONAL_TERM"), Ok(v) if v == "1"),
+        );
+        Self {
+            directional_termination,
+        }
     }
 }
 

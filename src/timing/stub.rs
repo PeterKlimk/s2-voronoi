@@ -99,6 +99,15 @@ impl CellSubAccum {
     ) {
     }
     #[inline(always)]
+    pub fn add_directional_term(
+        &mut self,
+        _attempts: usize,
+        _terminations: usize,
+        _saved: usize,
+        _certified: usize,
+    ) {
+    }
+    #[inline(always)]
     pub fn add_fallbacks(
         &mut self,
         _projection: usize,

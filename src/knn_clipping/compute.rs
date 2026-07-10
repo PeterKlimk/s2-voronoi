@@ -204,7 +204,7 @@ pub fn compute_voronoi_knn_clipping_with_config_owned(
     points: Vec<Vec3>,
     config: &VoronoiConfig,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
-    let termination = TerminationConfig::default();
+    let termination = TerminationConfig::from_env();
     with_rank2_perturb_retry(points, config.degenerate_mode, |points, _| {
         compute_voronoi_knn_clipping_owned_core(
             points,
@@ -219,7 +219,7 @@ pub fn compute_voronoi_knn_clipping_with_report_owned(
     points: Vec<Vec3>,
     config: &VoronoiConfig,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
-    let termination = TerminationConfig::default();
+    let termination = TerminationConfig::from_env();
     with_rank2_perturb_retry(
         points,
         config.degenerate_mode,
@@ -1183,6 +1183,84 @@ mod tests {
         build_query_grid, cell_sum_sq_per_n, map_build_cells_error, map_cell_build_error,
         max_cell_occupancy, validate_generator_capacity,
     };
+
+    /// The directional termination certificate only ever skips candidates it
+    /// proves would be `Unchanged` clips, so the output diagram must be
+    /// byte-identical with the certificate on and off.
+    #[test]
+    fn directional_termination_is_output_identical() {
+        use super::compute_voronoi_knn_clipping_owned_core;
+        use crate::knn_clipping::TerminationConfig;
+        use crate::{PreprocessMode, RepairMode};
+
+        fn sphere_points(n: usize, seed: u32) -> Vec<Vec3> {
+            // Deterministic jittered fibonacci sphere; includes a dense polar
+            // cluster to exercise near-boundary certificate decisions.
+            let golden_angle = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
+            let mut pts: Vec<Vec3> = (0..n)
+                .map(|i| {
+                    let y = 1.0 - (2.0 * i as f32 + 1.0) / n as f32;
+                    let radius = (1.0 - y * y).sqrt();
+                    let theta = golden_angle * i as f32 + seed as f32 * 0.618;
+                    let jitter = (((i as u32).wrapping_mul(2654435761).wrapping_add(seed)) % 1000)
+                        as f32
+                        / 1000.0
+                        * 0.004
+                        - 0.002;
+                    Vec3::new(radius * theta.cos() + jitter, y, radius * theta.sin()).normalize()
+                })
+                .collect();
+            for i in 0..(n / 20) {
+                let t = i as f32 / (n / 20).max(1) as f32;
+                pts.push(
+                    Vec3::new(0.02 * (t * 37.0).sin(), 1.0, 0.02 * (t * 53.0).cos()).normalize(),
+                );
+            }
+            pts
+        }
+
+        for seed in [1u32, 2, 3] {
+            let pts = sphere_points(1500, seed);
+            let base = compute_voronoi_knn_clipping_owned_core(
+                pts.clone(),
+                TerminationConfig {
+                    directional_termination: false,
+                },
+                PreprocessMode::Weld,
+                RepairMode::Local3d,
+            )
+            .expect("baseline compute");
+            let dir = compute_voronoi_knn_clipping_owned_core(
+                pts,
+                TerminationConfig {
+                    directional_termination: true,
+                },
+                PreprocessMode::Weld,
+                RepairMode::Local3d,
+            )
+            .expect("directional compute");
+
+            assert_eq!(base.num_cells(), dir.num_cells(), "seed {seed}: cell count");
+            assert_eq!(
+                base.num_vertices(),
+                dir.num_vertices(),
+                "seed {seed}: vertex count"
+            );
+            for (a, b) in base.vertices().iter().zip(dir.vertices()) {
+                assert_eq!(a.x.to_bits(), b.x.to_bits(), "seed {seed}: vertex x bits");
+                assert_eq!(a.y.to_bits(), b.y.to_bits(), "seed {seed}: vertex y bits");
+                assert_eq!(a.z.to_bits(), b.z.to_bits(), "seed {seed}: vertex z bits");
+            }
+            for i in 0..base.num_cells() {
+                assert_eq!(
+                    base.cell(i).vertex_indices,
+                    dir.cell(i).vertex_indices,
+                    "seed {seed}: cell {i} indices"
+                );
+            }
+            assert_eq!(base.weld_map(), dir.weld_map(), "seed {seed}: weld map");
+        }
+    }
     use crate::knn_clipping::cell_build::{CellBuildError, CellFailure};
     use crate::knn_clipping::live_dedup::{BuildCellsError, PackedLayoutCapacityError};
     use crate::VoronoiError;

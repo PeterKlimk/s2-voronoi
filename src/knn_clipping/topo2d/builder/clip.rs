@@ -36,6 +36,7 @@ impl GnomonicBuilder {
                 self.neighbor_indices.push(neighbor_idx);
                 self.neighbor_slots.push(neighbor_slot);
                 self.term_cache_valid = false;
+                self.dir_table_valid = false;
                 #[cfg(feature = "timing")]
                 {
                     self.support_cache_valid = false;
@@ -49,6 +50,7 @@ impl GnomonicBuilder {
                 self.neighbor_slots.push(neighbor_slot);
                 self.use_a = !self.use_a;
                 self.term_cache_valid = false;
+                self.dir_table_valid = false;
                 #[cfg(feature = "timing")]
                 {
                     self.support_cache_valid = false;

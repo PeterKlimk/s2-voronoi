@@ -67,6 +67,12 @@ impl AttemptedNeighbors {
         debug_assert!(slot < self.seen_stamp.len(), "neighbor slot out of bounds");
         self.seen_stamp[slot] = self.stamp;
     }
+
+    #[inline]
+    fn contains(&self, slot: usize) -> bool {
+        debug_assert!(slot < self.seen_stamp.len(), "neighbor slot out of bounds");
+        self.seen_stamp[slot] == self.stamp
+    }
 }
 
 pub(crate) struct CellBuildContext {
@@ -75,18 +81,24 @@ pub(crate) struct CellBuildContext {
     packed_chunk: Vec<u32>,
     output_buffer: CellOutputBuffer,
     attempted_neighbors: AttemptedNeighbors,
+    directional_term: bool,
     #[cfg(test)]
     force_fallback_after_neighbors_processed: Option<usize>,
 }
 
 impl CellBuildContext {
-    pub(crate) fn new(grid: &crate::cube_grid::CubeMapGrid, policy: PackedNeighborPolicy) -> Self {
+    pub(crate) fn new(
+        grid: &crate::cube_grid::CubeMapGrid,
+        policy: PackedNeighborPolicy,
+        directional_term: bool,
+    ) -> Self {
         Self {
             builder: crate::knn_clipping::topo2d::Topo2DBuilder::new(0, Vec3::ZERO),
             scratch: grid.make_scratch(),
             packed_chunk: Vec::with_capacity(policy.scratch_chunk_capacity()),
             output_buffer: CellOutputBuffer::with_capacity(MAX_POLY_VERTICES),
             attempted_neighbors: AttemptedNeighbors::new(grid.point_indices().len()),
+            directional_term,
             #[cfg(test)]
             force_fallback_after_neighbors_processed: None,
         }
@@ -154,6 +166,10 @@ pub(crate) struct CellBuildStats {
     directional_support_hits: usize,
     directional_support_saved: usize,
     directional_support_false_positive_hits: usize,
+    dir_term_attempts: usize,
+    dir_term_terminations: usize,
+    dir_term_saved: usize,
+    dir_term_certified: usize,
     fallback_projection: usize,
     fallback_polygon_cap: usize,
     fallback_all_constraints: usize,
@@ -182,6 +198,12 @@ impl CellBuildStats {
             self.directional_support_hits,
             self.directional_support_saved,
             self.directional_support_false_positive_hits,
+        );
+        cell_sub.add_directional_term(
+            self.dir_term_attempts,
+            self.dir_term_terminations,
+            self.dir_term_saved,
+            self.dir_term_certified,
         );
         cell_sub.add_fallbacks(
             self.fallback_projection,
@@ -276,6 +298,10 @@ pub(super) struct BuildCounters {
     directional_support_hits: usize,
     directional_support_saved: usize,
     directional_support_false_positive_hits: usize,
+    dir_term_attempts: usize,
+    dir_term_terminations: usize,
+    dir_term_saved: usize,
+    dir_term_certified: usize,
     fallback_projection: usize,
     fallback_polygon_cap: usize,
     fallback_all_constraints: usize,
@@ -306,6 +332,10 @@ impl BuildCounters {
             directional_support_hits: 0,
             directional_support_saved: 0,
             directional_support_false_positive_hits: 0,
+            dir_term_attempts: 0,
+            dir_term_terminations: 0,
+            dir_term_saved: 0,
+            dir_term_certified: 0,
             fallback_projection: 0,
             fallback_polygon_cap: 0,
             fallback_all_constraints: 0,
@@ -382,6 +412,39 @@ fn audit_directional_batch_skip(
     counters.directional_shadow_terminated = true;
 }
 
+/// Directional-certificate walk over known candidate `slots`: test each
+/// clip-eligible candidate against the builder's per-octant non-cutting
+/// certificate. `Ok(())` means every eligible candidate certified as a
+/// provably-`Unchanged` clip (with the beyond-batch scalar certificate the
+/// caller already checked, the cell may terminate); `Err(j)` is the index of
+/// the first candidate that could not be certified.
+fn directional_certify_slots(
+    builder: &mut crate::knn_clipping::topo2d::Topo2DBuilder,
+    slots: &[u32],
+    source: DirectedNeighborBatchSource,
+    pos_slots: &[crate::cube_grid::SlotPoint],
+    generator_idx: usize,
+    attempted_neighbors: &AttemptedNeighbors,
+) -> Result<(), usize> {
+    for (j, &slot) in slots.iter().enumerate() {
+        let slot_point = pos_slots[slot as usize];
+        if slot_point.idx as usize == generator_idx {
+            continue;
+        }
+        // Shell layers re-cover packed-served points; already-attempted slots
+        // will not be clipped, so they need no certificate.
+        if source == DirectedNeighborBatchSource::ShellExpand
+            && attempted_neighbors.contains(slot as usize)
+        {
+            continue;
+        }
+        if !builder.directional_reject(slot_point.pos) {
+            return Err(j);
+        }
+    }
+    Ok(())
+}
+
 /// The disjoint `CellBuildContext` borrows the stream-consumption phase needs
 /// (the stream itself holds the context's scratch for its whole life, so the
 /// remaining fields are threaded explicitly).
@@ -389,6 +452,7 @@ struct StreamPhase<'x> {
     builder: &'x mut crate::knn_clipping::topo2d::Topo2DBuilder,
     packed_chunk: &'x mut Vec<u32>,
     attempted_neighbors: &'x mut AttemptedNeighbors,
+    directional_term: bool,
     #[cfg(test)]
     force_fallback_after_neighbors_processed: &'x mut Option<usize>,
 }
@@ -460,6 +524,13 @@ fn clip_batch(
 ) {
     let t_clip = crate::knn_clipping::timing::Timer::start();
     let packed_chunk = &phase.packed_chunk[..batch.n];
+    // Directional-certificate state for this batch: candidates below
+    // `dir_skip_below` were certified non-cutting against the current polygon
+    // (skipped without clipping; sound under later shrinks too), and no new
+    // attempt runs until the loop passes `dir_min_pos` (the last blocker —
+    // with an unchanged polygon it would still block).
+    let mut dir_skip_below: usize = 0;
+    let mut dir_min_pos: usize = 0;
     for pos in 0..batch.n {
         let neighbor_slot = packed_chunk[pos];
         // One fused load gets both the global index and the position (one cache
@@ -467,6 +538,18 @@ fn clip_batch(
         let slot_point = pos_slots[neighbor_slot as usize];
         let neighbor_idx = slot_point.idx as usize;
         if neighbor_idx == generator_idx {
+            continue;
+        }
+
+        if pos < dir_skip_below {
+            // Certified provably-Unchanged by a directional attempt: skip the
+            // clip, but mark the slot attempted so a later shell layer will
+            // not re-serve it.
+            phase.attempted_neighbors.mark(neighbor_slot as usize);
+            #[cfg(feature = "timing")]
+            {
+                counters.dir_term_certified += 1;
+            }
             continue;
         }
 
@@ -521,6 +604,10 @@ fn clip_batch(
         // re-check when a clip left the polygon unchanged.
         let should_check_termination =
             clip_result == crate::knn_clipping::topo2d::types::ClipResult::Unchanged;
+        if !should_check_termination {
+            // The polygon changed: the previous blocker's verdict is stale.
+            dir_min_pos = 0;
+        }
 
         if phase.builder.is_bounded() && should_check_termination {
             let bound = if pos + 1 < batch.n {
@@ -546,6 +633,43 @@ fn clip_batch(
             if phase.builder.can_terminate(bound) {
                 counters.terminated = true;
                 break;
+            }
+            // Directional attempt: the scalar certificate covers everything
+            // beyond this batch, but close in-batch candidates block it. If
+            // every remaining known candidate certifies as non-cutting, the
+            // cell is complete; otherwise skip the certified prefix and go
+            // back to clipping at the blocker.
+            if phase.directional_term
+                && pos + 1 < batch.n
+                && pos + 1 >= dir_min_pos
+                && phase.builder.can_terminate(batch.unseen_bound)
+            {
+                #[cfg(feature = "timing")]
+                {
+                    counters.dir_term_attempts += 1;
+                }
+                match directional_certify_slots(
+                    phase.builder,
+                    &packed_chunk[pos + 1..batch.n],
+                    batch.source,
+                    pos_slots,
+                    generator_idx,
+                    phase.attempted_neighbors,
+                ) {
+                    Ok(()) => {
+                        #[cfg(feature = "timing")]
+                        {
+                            counters.dir_term_terminations += 1;
+                            counters.dir_term_saved += batch.n - (pos + 1);
+                        }
+                        counters.terminated = true;
+                        break;
+                    }
+                    Err(j) => {
+                        dir_skip_below = pos + 1 + j;
+                        dir_min_pos = pos + 2 + j;
+                    }
+                }
             }
             #[cfg(feature = "timing")]
             audit_directional_batch_skip(
@@ -597,9 +721,9 @@ fn consume_stream(
                 {
                     counters.terminated = maybe_terminate_or_advance_frontier(
                         stream,
-                        phase.packed_chunk,
-                        phase.builder,
+                        &mut phase,
                         pos_slots,
+                        generator_idx,
                         counters,
                     );
                 }
@@ -718,6 +842,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
                 builder: &mut ctx.builder,
                 packed_chunk: &mut ctx.packed_chunk,
                 attempted_neighbors: &mut ctx.attempted_neighbors,
+                directional_term: ctx.directional_term,
                 #[cfg(test)]
                 force_fallback_after_neighbors_processed: &mut ctx
                     .force_fallback_after_neighbors_processed,
@@ -747,6 +872,10 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         directional_support_hits: counters.directional_support_hits,
         directional_support_saved: counters.directional_support_saved,
         directional_support_false_positive_hits: counters.directional_support_false_positive_hits,
+        dir_term_attempts: counters.dir_term_attempts,
+        dir_term_terminations: counters.dir_term_terminations,
+        dir_term_saved: counters.dir_term_saved,
+        dir_term_certified: counters.dir_term_certified,
         fallback_projection: counters.fallback_projection,
         fallback_polygon_cap: counters.fallback_polygon_cap,
         fallback_all_constraints: counters.fallback_all_constraints,

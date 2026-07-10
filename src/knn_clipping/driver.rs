@@ -66,7 +66,8 @@ pub(crate) fn build_cells_sharded_live_dedup(
                 let mut shard = ShardState::new(my_generators.len());
 
                 let mut sub_accum = CellSubAccum::new();
-                let mut build_ctx = CellBuildContext::new(grid, policy);
+                let mut build_ctx =
+                    CellBuildContext::new(grid, policy, termination.directional_termination);
                 let mut live_ctx = SphereCellScratch::new(grid.point_indices().len());
                 let vertex_capacity = my_generators.len().saturating_mul(6);
                 shard.output.vertices.reserve(vertex_capacity);

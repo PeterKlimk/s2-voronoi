@@ -143,7 +143,7 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
     let policy = TerminationConfig::default().packed_policy(points.len());
     let fake_slot_map = vec![0u32; points.len()];
     let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
-    let mut ctx = CellBuildContext::new(grid, policy);
+    let mut ctx = CellBuildContext::new(grid, policy, false);
     let pos_slots = grid.point_pos_slots();
     let mut trace = BuildTrace::new();
     let mut counters = BuildCounters::new();
@@ -169,6 +169,7 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
                 builder: &mut ctx.builder,
                 packed_chunk: &mut ctx.packed_chunk,
                 attempted_neighbors: &mut ctx.attempted_neighbors,
+                directional_term: false,
                 force_fallback_after_neighbors_processed: &mut ctx
                     .force_fallback_after_neighbors_processed,
             },
@@ -281,7 +282,7 @@ fn probe_early_extraction_cell(
     let policy = TerminationConfig::default().packed_policy(points.len());
     let fake_slot_map = vec![0u32; points.len()];
     let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
-    let mut ctx = CellBuildContext::new(grid, policy);
+    let mut ctx = CellBuildContext::new(grid, policy, false);
     let pos_slots = grid.point_pos_slots();
     let mut trace = BuildTrace::new();
     let mut counters = BuildCounters::new();
@@ -320,6 +321,7 @@ fn probe_early_extraction_cell(
                             builder: &mut ctx.builder,
                             packed_chunk: &mut ctx.packed_chunk,
                             attempted_neighbors: &mut ctx.attempted_neighbors,
+                            directional_term: false,
                             force_fallback_after_neighbors_processed: &mut ctx
                                 .force_fallback_after_neighbors_processed,
                         },
@@ -344,9 +346,16 @@ fn probe_early_extraction_cell(
                     {
                         counters.terminated = super::maybe_terminate_or_advance_frontier(
                             &mut stream,
-                            &mut ctx.packed_chunk,
-                            &mut ctx.builder,
+                            &mut StreamPhase {
+                                builder: &mut ctx.builder,
+                                packed_chunk: &mut ctx.packed_chunk,
+                                attempted_neighbors: &mut ctx.attempted_neighbors,
+                                directional_term: false,
+                                force_fallback_after_neighbors_processed: &mut ctx
+                                    .force_fallback_after_neighbors_processed,
+                            },
                             pos_slots,
+                            generator_idx,
                             &mut counters,
                         );
                     }
@@ -850,7 +859,7 @@ fn direct_cursor_builds_normal_cell() {
     let points = octahedron_points();
     let grid = CubeMapGrid::new(&points, 4);
     let policy = TerminationConfig::default().packed_policy(points.len());
-    let mut ctx = CellBuildContext::new(&grid, policy);
+    let mut ctx = CellBuildContext::new(&grid, policy, false);
     let fake_slot_map = vec![0u32; points.len()];
     let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
 
@@ -909,7 +918,7 @@ fn forced_handoff_mid_build_still_finishes_the_cell() {
     let policy = TerminationConfig::default().packed_policy(points.len());
     let fake_slot_map = vec![0u32; points.len()];
     let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
-    let mut ctx = CellBuildContext::new(&grid, policy);
+    let mut ctx = CellBuildContext::new(&grid, policy, false);
     ctx.force_fallback_after_neighbors_processed = Some(2);
 
     let stats = build_cell_into(

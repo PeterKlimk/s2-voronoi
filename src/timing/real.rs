@@ -109,6 +109,12 @@ pub struct CellSubPhases {
     pub directional_support_hits: u64,
     pub directional_support_saved: u64,
     pub directional_support_false_positive_hits: u64,
+    /// Real directional-termination certificate counters (behavior path,
+    /// `VORONOI_MESH_DIRECTIONAL_TERM=1`).
+    pub dir_term_attempts: u64,
+    pub dir_term_terminations: u64,
+    pub dir_term_saved: u64,
+    pub dir_term_certified: u64,
 }
 
 /// Fine-grained dedup timing and a few size counters.
@@ -160,6 +166,10 @@ pub struct CellSubAccum {
     directional_support_hits: u64,
     directional_support_saved: u64,
     directional_support_false_positive_hits: u64,
+    dir_term_attempts: u64,
+    dir_term_terminations: u64,
+    dir_term_saved: u64,
+    dir_term_certified: u64,
 }
 
 impl CellSubAccum {
@@ -279,6 +289,20 @@ impl CellSubAccum {
     }
 
     #[inline]
+    pub fn add_directional_term(
+        &mut self,
+        attempts: usize,
+        terminations: usize,
+        saved: usize,
+        certified: usize,
+    ) {
+        self.dir_term_attempts += attempts as u64;
+        self.dir_term_terminations += terminations as u64;
+        self.dir_term_saved += saved as u64;
+        self.dir_term_certified += certified as u64;
+    }
+
+    #[inline]
     pub fn merge(&mut self, other: &CellSubAccum) {
         self.knn_query += other.knn_query;
         self.packed_knn += other.packed_knn;
@@ -322,6 +346,10 @@ impl CellSubAccum {
         self.directional_support_saved += other.directional_support_saved;
         self.directional_support_false_positive_hits +=
             other.directional_support_false_positive_hits;
+        self.dir_term_attempts += other.dir_term_attempts;
+        self.dir_term_terminations += other.dir_term_terminations;
+        self.dir_term_saved += other.dir_term_saved;
+        self.dir_term_certified += other.dir_term_certified;
     }
 
     #[inline]
@@ -365,6 +393,10 @@ impl CellSubAccum {
             directional_support_hits: self.directional_support_hits,
             directional_support_saved: self.directional_support_saved,
             directional_support_false_positive_hits: self.directional_support_false_positive_hits,
+            dir_term_attempts: self.dir_term_attempts,
+            dir_term_terminations: self.dir_term_terminations,
+            dir_term_saved: self.dir_term_saved,
+            dir_term_certified: self.dir_term_certified,
         }
     }
 }
@@ -604,6 +636,15 @@ impl PhaseTimings {
                     self.cell_sub.directional_support_false_positive_hits
                 );
             }
+            if self.cell_sub.dir_term_attempts > 0 {
+                eprintln!(
+                    "    dir_term: attempts={} terminations={} saved={} certified={}",
+                    self.cell_sub.dir_term_attempts,
+                    self.cell_sub.dir_term_terminations,
+                    self.cell_sub.dir_term_saved,
+                    self.cell_sub.dir_term_certified
+                );
+            }
         }
 
         eprintln!(
@@ -628,7 +669,7 @@ impl PhaseTimings {
 
         if std::env::var_os("VORONOI_MESH_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} dir_term_attempts={dta} dir_term_terminations={dtt} dir_term_saved={dts} dir_term_certified={dtc} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -661,6 +702,10 @@ impl PhaseTimings {
                 dph = self.cell_sub.directional_support_hits,
                 dps = self.cell_sub.directional_support_saved,
                 dpf = self.cell_sub.directional_support_false_positive_hits,
+                dta = self.cell_sub.dir_term_attempts,
+                dtt = self.cell_sub.dir_term_terminations,
+                dts = self.cell_sub.dir_term_saved,
+                dtc = self.cell_sub.dir_term_certified,
                 gr = self.grid_res,
                 gmo = self.grid_max_occupancy,
                 grb = self.grid_rebuilt as u8,

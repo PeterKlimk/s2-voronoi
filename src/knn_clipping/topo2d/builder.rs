@@ -1,4 +1,5 @@
 mod clip;
+mod directional;
 mod extract;
 mod projection;
 #[cfg(test)]
@@ -94,6 +95,10 @@ pub(crate) struct GnomonicBuilder {
     term_cos_pad: f64,
     term_threshold_cache: f64,
     term_cache_valid: bool,
+    /// Per-octant squared support bounds for the directional non-cutting
+    /// certificate; rebuilt lazily after polygon changes (see `directional.rs`).
+    dir_w2: [f64; directional::DIR_SECTORS],
+    dir_table_valid: bool,
     #[cfg(feature = "timing")]
     support_cache_valid: bool,
     #[cfg(feature = "timing")]
