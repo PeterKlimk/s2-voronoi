@@ -82,8 +82,13 @@ impl FallbackConstraint {
         // is deferred; see p5-consistency-design.md).
         let neighbor =
             DVec3::new(neighbor.x as f64, neighbor.y as f64, neighbor.z as f64).normalize();
+        let normal = generator.normalize() - neighbor;
         Self {
-            normal: generator.normalize() - neighbor,
+            // Normalize the chord-bisector plane so the fallback's absolute
+            // f64 tolerance has an angular meaning even for generators only a
+            // few f32 ulps apart. The unnormalized form made a 1e-9 plane band
+            // enormous relative to a microscopic cell.
+            normal: normal.normalize_or_zero(),
             neighbor_idx,
             neighbor_slot,
             hp_eps,

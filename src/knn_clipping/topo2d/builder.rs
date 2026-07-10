@@ -27,6 +27,7 @@ pub struct Topo2DBuilder {
 pub(crate) enum BuilderFallbackTrigger {
     ProjectionLimit,
     PolygonVertexLimit,
+    ClippedAway,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +42,7 @@ impl BuilderFallbackRequest {
         match self.trigger {
             BuilderFallbackTrigger::ProjectionLimit => CellFailure::ProjectionInvalid,
             BuilderFallbackTrigger::PolygonVertexLimit => CellFailure::TooManyVertices,
+            BuilderFallbackTrigger::ClippedAway => CellFailure::ClippedAway,
         }
     }
 }
@@ -121,7 +123,7 @@ pub(crate) struct SphericalPoly {
 
 #[derive(Clone, Copy)]
 pub(crate) struct SphericalPolyVertex {
-    pub(crate) position: glam::Vec3,
+    pub(crate) position: DVec3,
 }
 
 #[derive(Debug, Clone)]
@@ -190,9 +192,10 @@ impl Topo2DBuilder {
             CellFailure::TooManyVertices => Some(BuilderFallbackRequest {
                 trigger: BuilderFallbackTrigger::PolygonVertexLimit,
             }),
-            CellFailure::ClippedAway
-            | CellFailure::UnboundedAfterExhaustion
-            | CellFailure::NoValidSeed => None,
+            CellFailure::ClippedAway => Some(BuilderFallbackRequest {
+                trigger: BuilderFallbackTrigger::ClippedAway,
+            }),
+            CellFailure::UnboundedAfterExhaustion | CellFailure::NoValidSeed => None,
         }
     }
 
@@ -226,7 +229,7 @@ impl Topo2DBuilder {
         &mut self,
         points: &[glam::Vec3],
         request: BuilderFallbackRequest,
-    ) {
+    ) -> bool {
         let fallback = match &self.inner {
             BuilderImpl::Gnomonic(builder) => {
                 FallbackBuilder::from_gnomonic(builder, points, request.trigger)
@@ -235,7 +238,17 @@ impl Topo2DBuilder {
                 FallbackBuilder::from_fallback(builder, request.trigger)
             }
         };
+        // A gnomonic ClippedAway result has already committed the triggering
+        // constraint and reduced its f32 chart polygon below three vertices.
+        // Rebuild from the accepted f64 spherical constraints before switching.
+        // If those constraints are genuinely infeasible (e.g. coincident
+        // generators), keep the original failed builder so its ClippedAway
+        // classification survives to the public error path.
+        if request.trigger == BuilderFallbackTrigger::ClippedAway && fallback.poly.len() < 3 {
+            return false;
+        }
         self.inner = BuilderImpl::Fallback(fallback);
+        true
     }
 
     #[inline]
@@ -356,7 +369,26 @@ impl FallbackBuilder {
             trigger,
         };
 
-        if trigger == BuilderFallbackTrigger::PolygonVertexLimit {
+        if trigger == BuilderFallbackTrigger::ClippedAway {
+            // The failed chart polygon cannot seed a handoff. Start again from
+            // the same large bounding polygon in f64 spherical form and replay
+            // every accepted constraint, including the one that spuriously
+            // collapsed the gnomonic polygon. Sentinel bounding edges are
+            // allowed here; extraction rejects them unless later real
+            // bisectors fully bound the cell.
+            let seed = GnomonicBuilder::new(builder.generator_idx, builder.generator_raw);
+            fallback.poly = SphericalPoly::from_gnomonic(&seed);
+            for plane_idx in 0..fallback.constraints.len() {
+                fallback.poly = FallbackBuilder::clip_poly_with_constraint(
+                    &fallback.poly,
+                    &fallback.constraints[plane_idx],
+                    plane_idx,
+                );
+                if fallback.poly.len() < 3 {
+                    break;
+                }
+            }
+        } else if trigger == BuilderFallbackTrigger::PolygonVertexLimit {
             if let Some((plane_idx, constraint)) = fallback
                 .constraints
                 .len()
@@ -425,9 +457,8 @@ impl SphericalPoly {
                     crate::fp::fma_f64(v, builder.basis.t2.z, builder.basis.g.z),
                 ),
             );
-            let dir = glam::Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);
             let len2 = dir.length_squared();
-            if !len2.is_finite() || len2 < crate::tolerances::EXTRACT_DEGENERATE_LEN2 {
+            if !len2.is_finite() || len2 < crate::tolerances::EXTRACT_DEGENERATE_LEN2 as f64 {
                 return Self::empty();
             }
 

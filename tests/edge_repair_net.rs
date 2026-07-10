@@ -262,23 +262,24 @@ fn net_cross_bin_single_sided() {
 // detection branch remains; re-run probe_scaffold_sweep/probe_site_scan
 // after numerics changes to look for a new pin.
 
-/// Endpoint-key-mismatch detection: on a dense near-cocircular `mega` input,
-/// the fallback extract's split-plane corner resolution can strand the split
-/// plane in a vertex key when position dedup collapses the split micro-edge —
-/// leaving an edge whose endpoint triple does not name the edge's neighbor.
-/// The emitter must record this deterministically as `EndpointKeyMismatch`
-/// (not rely on the malformed side's "third" failing to match downstream),
-/// and repair must restore strict validity. Fixture found via the checked-
-/// profile broad sweep (mega 100k seed 11, cell 17010).
+/// Regression for the former endpoint-key mismatch: on this dense
+/// near-cocircular `mega` input, f32 fallback-position dedup used to collapse a
+/// real split micro-edge and strand the split plane in one endpoint key. The
+/// f64 fallback polygon must preserve that edge, while the remaining known
+/// mismatch families still exercise the repair net and strict validity.
 #[test]
-fn net_endpoint_key_mismatch_detection_and_repair() {
+fn fallback_f64_vertices_avoid_endpoint_key_mismatch() {
     let fixture = mega_points(100_000, 0.8, 11);
     let out = compute_strict("endpoint_key_mismatch", &fixture, None);
     let os = origins(&out);
     assert!(
-        os.contains(&UnresolvedEdgeOrigin::EndpointKeyMismatch),
-        "expected EndpointKeyMismatch on mega 100k s11, got {os:?} \
-         (numerics may have moved the fixture; scan mega seeds for a new pin)"
+        !os.contains(&UnresolvedEdgeOrigin::EndpointKeyMismatch),
+        "f64 fallback retained the former EndpointKeyMismatch: {os:?}"
+    );
+    assert!(
+        os.contains(&UnresolvedEdgeOrigin::InBinThirdsMismatch)
+            && os.contains(&UnresolvedEdgeOrigin::InBinUnconsumedCheck),
+        "repair-net control origins disappeared: {os:?}"
     );
 }
 

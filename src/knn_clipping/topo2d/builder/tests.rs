@@ -244,6 +244,49 @@ fn too_many_vertices_is_classified_as_polygon_fallback_handoff() {
 }
 
 #[test]
+fn clipped_away_is_classified_as_exact_fallback_handoff() {
+    assert_eq!(
+        Topo2DBuilder::classify_clip_result(Err(
+            crate::knn_clipping::cell_build::CellFailure::ClippedAway,
+        )),
+        Ok(BuilderClipOutcome::NeedsFallback(BuilderFallbackRequest {
+            trigger: BuilderFallbackTrigger::ClippedAway,
+        }))
+    );
+}
+
+#[test]
+fn clipped_away_handoff_rebuilds_from_constraints() {
+    let g = Vec3::Z;
+    let h1 = Vec3::new(1.0, 0.0, 0.5).normalize();
+    let h2 = Vec3::new(-0.5, 0.866, 0.5).normalize();
+    let h3 = Vec3::new(-0.5, -0.866, 0.5).normalize();
+    let mut builder = Topo2DBuilder::new(0, g);
+    builder.clip_with_slot_policy(11, 21, h1).unwrap();
+    builder.clip_with_slot_policy(12, 22, h2).unwrap();
+    builder.clip_with_slot_policy(13, 23, h3).unwrap();
+
+    // Model the gnomonic failure state: the accepted constraints are intact,
+    // but the rounded chart polygon has collapsed below three vertices.
+    let gnomonic = builder.as_gnomonic_mut();
+    gnomonic.poly_a.len = 0;
+    gnomonic.poly_b.len = 0;
+    gnomonic.failed = Some(crate::knn_clipping::cell_build::CellFailure::ClippedAway);
+
+    let switched = builder.enter_fallback(
+        &fallback_points(g, h1, h2, h3),
+        BuilderFallbackRequest {
+            trigger: BuilderFallbackTrigger::ClippedAway,
+        },
+    );
+    assert!(switched);
+    assert!(builder.is_bounded());
+    let mut buffer = CellOutputBuffer::default();
+    builder.to_vertex_data_full(&mut buffer).unwrap();
+    assert_eq!(buffer.vertices.len(), 3);
+}
+
+#[test]
 fn too_many_vertices_records_current_constraint_before_fallback() {
     let mut builder = Topo2DBuilder::new(0, Vec3::Z);
     let gnomonic = builder.as_gnomonic_mut();
@@ -450,8 +493,9 @@ fn fallback_reconstruction_normalizes_s2_constraints() {
     );
 
     let expected = |h: Vec3| {
-        glam::DVec3::new(g.x as f64, g.y as f64, g.z as f64).normalize()
-            - glam::DVec3::new(h.x as f64, h.y as f64, h.z as f64).normalize()
+        (glam::DVec3::new(g.x as f64, g.y as f64, g.z as f64).normalize()
+            - glam::DVec3::new(h.x as f64, h.y as f64, h.z as f64).normalize())
+        .normalize_or_zero()
     };
     for (constraint, h) in builder.as_fallback().constraints.iter().zip([h1, h2, h3]) {
         let diff = constraint.normal - expected(h);

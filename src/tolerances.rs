@@ -118,9 +118,10 @@ pub(crate) const CANONICAL_UNIT_NORM_SLACK: f64 = f32::EPSILON as f64;
 
 /// Constraint-satisfaction slack for fallback vertex candidates (a candidate
 /// direction must satisfy every half-space to within this dot tolerance).
-/// Absolute, in dot units: ~1e-9 admits vertices displaced by ~1e-9 rad from
-/// exact constraint intersections, far below the f32 output quantization.
-pub(crate) const FALLBACK_PLANE_TOL: f64 = 1e-9;
+/// Fallback plane normals are unit length, so this is also an angular-scale
+/// tolerance. It must remain below the half-separation of distinct f32 input
+/// directions; a 1e-9 band can straddle both sides of an ulp-scale bisector.
+pub(crate) const FALLBACK_PLANE_TOL: f64 = 1e-12;
 
 /// Fallback vertex dedup: candidate directions with mutual dot above this
 /// (within ~3e-3 rad) collapse to one vertex. Coarser than the clipping

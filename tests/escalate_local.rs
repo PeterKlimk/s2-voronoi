@@ -1,8 +1,9 @@
 //! Production-path regression for the dependency-free, local exact defect
 //! repair (the escalation engine). Unlike `escalate.rs`, this file is NOT gated
 //! on `escalate_probe` and pulls in NO `delaunator` crate — it exercises the
-//! exact path a default build ships, proving the local oracle reaches strict
-//! validity on the mega near-cocircular defects with no external dependency.
+//! exact path a default build ships. The cell fallback may now resolve the
+//! historical mega defects upstream; otherwise this proves the local oracle
+//! reaches strict validity with no external dependency.
 //!
 //!   cargo test --release --test escalate_local
 
@@ -15,7 +16,6 @@ use voronoi_mesh::{compute, compute_with_report, RepairMode, VoronoiConfig};
 fn local_escalation_makes_mega_strictly_valid() {
     let off = || VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
     let on = VoronoiConfig::default;
-    let mut fixed_at_least_one = false;
     for seed in [1u64, 2, 15] {
         let points = mega_points(100_000, 0.8, seed);
 
@@ -34,20 +34,15 @@ fn local_escalation_makes_mega_strictly_valid() {
                 format!("{:?}", after_report.subdivision_issues())
             }
         );
-        // The valid-or-revert gate guarantees output is never worse than the fast
-        // path; the meaningful bar is that the local repair actually reaches
-        // strict validity on these known defects.
+        // The fallback path can now resolve some formerly repair-only defects
+        // upstream. Whether repair runs or not, the meaningful contract is a
+        // strictly valid final diagram.
         assert!(
             after_report.is_strictly_valid(),
             "seed {seed}: local repair did not produce a strictly valid diagram: {:?}",
             after_report.subdivision_issues()
         );
-        fixed_at_least_one |= !before_valid;
     }
-    assert!(
-        fixed_at_least_one,
-        "expected at least one mega seed to be invalid without the repair"
-    );
 }
 
 #[test]
@@ -68,8 +63,8 @@ fn default_compute_repairs_known_mega_defects() {
 /// The projected-oracle diagnostic mode must also repair the known mega
 /// defects to strict validity (it shares the grow loop with the default
 /// `Local3d` mode but uses the shared-stereographic-chart exact 2D Delaunay
-/// oracle). Seeds proven defective-without-repair by
-/// `local_escalation_makes_mega_strictly_valid`.
+/// oracle). These seeds historically required repair, but may now resolve in
+/// the strengthened per-cell fallback before the repair trigger.
 #[test]
 fn projected_repair_makes_mega_strictly_valid() {
     let on = || VoronoiConfig::default().with_repair_mode(RepairMode::LocalProjected);
@@ -82,11 +77,11 @@ fn projected_repair_makes_mega_strictly_valid() {
             "mega 100k s{seed}: LocalProjected repair did not reach strict validity: {}",
             out.report.returned_validation.headline()
         );
-        // These seeds are proven defective without repair, so the stable
-        // coarse repair summary must show an attempted AND accepted pass.
+        // The strengthened cell fallback may resolve the defect before repair.
+        // If the coarse repair pass is triggered, it must be accepted.
         assert!(
-            out.report.repair.attempted && out.report.repair.accepted,
-            "mega 100k s{seed}: expected an attempted+accepted repair, got {:?}",
+            !out.report.repair.attempted || out.report.repair.accepted,
+            "mega 100k s{seed}: attempted repair was rejected: {:?}",
             out.report.repair
         );
     }

@@ -12,7 +12,7 @@ use crate::tolerances::{EXTRACT_DEGENERATE_LEN2, FALLBACK_PLANE_TOL};
 
 #[derive(Clone, Copy)]
 struct FallbackVertex {
-    position: Vec3,
+    position: DVec3,
     plane_a: usize,
     plane_b: usize,
 }
@@ -256,15 +256,9 @@ impl GnomonicBuilder {
 }
 
 impl FallbackBuilder {
-    /// On-plane membership tolerance for the f32 polygon corners produced by
-    /// the incremental clip. Corner positions carry ~1e-7 f32 noise at unit
-    /// scale, and `constraint.normal` is non-unit (|gen_unit - nbr_unit| up to
-    /// ~2), so a corner truly on a plane can show `|normal.dot(p)|` up to a few
-    /// 1e-7. A 1e-6 band recognizes those reliably; the much tighter
-    /// `FALLBACK_PLANE_TOL` (1e-9) is reserved for `satisfies_all_constraints`,
-    /// which tests exact f64 plane-pair directions, not f32 corners. Shared
-    /// with the incremental clip's `classify_vertex` (sibling `clip` module).
-    pub(super) const ON_PLANE_TOL: f64 = 1e-6;
+    /// On-plane membership tolerance for the normalized f64 fallback planes.
+    /// Shared with the incremental clip's `classify_vertex`.
+    pub(super) const ON_PLANE_TOL: f64 = FALLBACK_PLANE_TOL;
 
     pub(super) fn computed_vertex_count(&self) -> usize {
         self.poly.len()
@@ -273,7 +267,7 @@ impl FallbackBuilder {
     fn satisfies_all_constraints(&self, dir: DVec3) -> bool {
         self.constraints
             .iter()
-            .all(|constraint| constraint.normal.dot(dir) >= -FALLBACK_PLANE_TOL)
+            .all(|constraint| constraint.normal.dot(dir) >= -Self::ON_PLANE_TOL)
     }
 
     fn shared_edge_constraint(&self, a: FallbackVertex, b: FallbackVertex) -> Option<usize> {
@@ -288,18 +282,8 @@ impl FallbackBuilder {
             .enumerate()
             .find_map(|(idx, constraint)| {
                 let normal = constraint.normal;
-                let pos_a = DVec3::new(
-                    a.position.x as f64,
-                    a.position.y as f64,
-                    a.position.z as f64,
-                );
-                let pos_b = DVec3::new(
-                    b.position.x as f64,
-                    b.position.y as f64,
-                    b.position.z as f64,
-                );
-                if normal.dot(pos_a).abs() <= Self::ON_PLANE_TOL
-                    && normal.dot(pos_b).abs() <= Self::ON_PLANE_TOL
+                if normal.dot(a.position).abs() <= Self::ON_PLANE_TOL
+                    && normal.dot(b.position).abs() <= Self::ON_PLANE_TOL
                 {
                     Some(idx)
                 } else {
@@ -317,14 +301,10 @@ impl FallbackBuilder {
         }
 
         for (idx, constraint) in self.constraints.iter().enumerate() {
-            let touches = self.poly.vertices.iter().any(|vertex| {
-                let p = DVec3::new(
-                    vertex.position.x as f64,
-                    vertex.position.y as f64,
-                    vertex.position.z as f64,
-                );
-                constraint.normal.dot(p).abs() <= Self::ON_PLANE_TOL
-            });
+            let touches =
+                self.poly.vertices.iter().any(|vertex| {
+                    constraint.normal.dot(vertex.position).abs() <= Self::ON_PLANE_TOL
+                });
             if touches {
                 planes.push(idx);
             }
@@ -348,9 +328,8 @@ impl FallbackBuilder {
         for sign in [1.0, -1.0] {
             let dir = cross * (sign * inv_len);
             if self.satisfies_all_constraints(dir) {
-                let dir32 = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32).normalize();
                 return Some(FallbackVertex {
-                    position: dir32,
+                    position: dir,
                     plane_a,
                     plane_b,
                 });
@@ -362,7 +341,7 @@ impl FallbackBuilder {
     fn push_fallback_vertex(vertices: &mut Vec<FallbackVertex>, vertex: FallbackVertex) {
         if vertices
             .last()
-            .is_some_and(|last| (last.position - vertex.position).length_squared() <= 1e-12)
+            .is_some_and(|last| (last.position - vertex.position).length_squared() <= 1e-24)
         {
             return;
         }
@@ -394,15 +373,10 @@ impl FallbackBuilder {
             }
 
             let corner_pos = self.poly.vertices[i].position;
-            let corner_p = DVec3::new(
-                corner_pos.x as f64,
-                corner_pos.y as f64,
-                corner_pos.z as f64,
-            );
             let split = candidates.iter().copied().find(|&plane_c| {
                 plane_c != plane_a
                     && plane_c != plane_b
-                    && self.constraints[plane_c].normal.dot(corner_p).abs() <= Self::ON_PLANE_TOL
+                    && self.constraints[plane_c].normal.dot(corner_pos).abs() <= Self::ON_PLANE_TOL
                     && self.pair_vertex(plane_a, plane_c).is_some()
                     && self.pair_vertex(plane_c, plane_b).is_some()
             });
@@ -447,7 +421,7 @@ impl FallbackBuilder {
 
         if vertices.len() >= 2
             && (vertices[0].position - vertices[vertices.len() - 1].position).length_squared()
-                <= 1e-12
+                <= 1e-24
         {
             vertices.pop();
         }
@@ -475,7 +449,13 @@ impl FallbackBuilder {
                 plane_a.neighbor_idx as u32,
                 plane_b.neighbor_idx as u32,
             );
-            buffer.vertices.push((key, vertex.position));
+            let position = Vec3::new(
+                vertex.position.x as f32,
+                vertex.position.y as f32,
+                vertex.position.z as f32,
+            )
+            .normalize();
+            buffer.vertices.push((key, position));
 
             let next = vertices[(i + 1) % vertices.len()];
             let Some(edge_plane) = self.shared_edge_constraint(vertex, next) else {
@@ -604,64 +584,10 @@ fn extract_all_constraints_cell(
     constraints: &[super::FallbackConstraint],
     buffer: &mut CellOutputBuffer,
 ) -> Result<(), CellFailure> {
-    if constraints.len() < 3 {
-        return Err(CellFailure::NoValidSeed);
-    }
-
-    let mut vertices = Vec::new();
-    for a in 0..constraints.len() {
-        for b in a + 1..constraints.len() {
-            let cross = constraints[a].normal.cross(constraints[b].normal);
-            let len2 = cross.length_squared();
-            if !len2.is_finite() || len2 <= 1e-24 {
-                continue;
-            }
-
-            let inv_len = len2.sqrt().recip();
-            for sign in [1.0, -1.0] {
-                let dir = cross * (sign * inv_len);
-                if constraints
-                    .iter()
-                    .all(|constraint| constraint.normal.dot(dir) >= -FALLBACK_PLANE_TOL)
-                {
-                    let position = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);
-                    let len2 = position.length_squared();
-                    if !len2.is_finite() || len2 < EXTRACT_DEGENERATE_LEN2 {
-                        continue;
-                    }
-                    push_all_constraints_vertex(
-                        &mut vertices,
-                        FallbackVertex {
-                            position: position * len2.sqrt().recip(),
-                            plane_a: a,
-                            plane_b: b,
-                        },
-                    );
-                }
-            }
-        }
-    }
-
+    let vertices = all_constraints_vertices(generator, constraints);
     if vertices.len() < 3 {
         return Err(CellFailure::NoValidSeed);
     }
-
-    let basis = super::TangentBasis::new(generator);
-    vertices.sort_by(|a, b| {
-        let pa = DVec3::new(
-            a.position.x as f64,
-            a.position.y as f64,
-            a.position.z as f64,
-        );
-        let pb = DVec3::new(
-            b.position.x as f64,
-            b.position.y as f64,
-            b.position.z as f64,
-        );
-        let aa = pa.dot(basis.t2).atan2(pa.dot(basis.t1));
-        let ab = pb.dot(basis.t2).atan2(pb.dot(basis.t1));
-        aa.total_cmp(&ab)
-    });
 
     buffer.clear();
     buffer.vertices.reserve(vertices.len());
@@ -673,13 +599,19 @@ fn extract_all_constraints_cell(
     for (i, vertex) in vertices.iter().copied().enumerate() {
         let plane_a = &constraints[vertex.plane_a];
         let plane_b = &constraints[vertex.plane_b];
+        let position = Vec3::new(
+            vertex.position.x as f32,
+            vertex.position.y as f32,
+            vertex.position.z as f32,
+        )
+        .normalize();
         buffer.vertices.push((
             sort3_u32(
                 gen_idx,
                 plane_a.neighbor_idx as u32,
                 plane_b.neighbor_idx as u32,
             ),
-            vertex.position,
+            position,
         ));
 
         let next = vertices[(i + 1) % vertices.len()];
@@ -700,10 +632,55 @@ fn extract_all_constraints_cell(
     Ok(())
 }
 
+fn all_constraints_vertices(
+    generator: DVec3,
+    constraints: &[super::FallbackConstraint],
+) -> Vec<FallbackVertex> {
+    if constraints.len() < 3 {
+        return Vec::new();
+    }
+
+    let mut vertices = Vec::new();
+    for a in 0..constraints.len() {
+        for b in a + 1..constraints.len() {
+            let cross = constraints[a].normal.cross(constraints[b].normal);
+            let len2 = cross.length_squared();
+            if !len2.is_finite() || len2 <= 1e-24 {
+                continue;
+            }
+
+            let inv_len = len2.sqrt().recip();
+            for sign in [1.0, -1.0] {
+                let position = cross * (sign * inv_len);
+                if constraints.iter().all(|constraint| {
+                    constraint.normal.dot(position) >= -FallbackBuilder::ON_PLANE_TOL
+                }) {
+                    push_all_constraints_vertex(
+                        &mut vertices,
+                        FallbackVertex {
+                            position,
+                            plane_a: a,
+                            plane_b: b,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    let basis = super::TangentBasis::new(generator);
+    vertices.sort_by(|a, b| {
+        let aa = a.position.dot(basis.t2).atan2(a.position.dot(basis.t1));
+        let ab = b.position.dot(basis.t2).atan2(b.position.dot(basis.t1));
+        aa.total_cmp(&ab)
+    });
+    vertices
+}
+
 fn push_all_constraints_vertex(vertices: &mut Vec<FallbackVertex>, vertex: FallbackVertex) {
     if vertices
         .iter()
-        .any(|existing| (existing.position - vertex.position).length_squared() <= 1e-12)
+        .any(|existing| (existing.position - vertex.position).length_squared() <= 1e-24)
     {
         return;
     }
@@ -722,23 +699,13 @@ fn shared_all_constraints_edge(
         return Some(plane);
     }
 
-    let pos_a = DVec3::new(
-        a.position.x as f64,
-        a.position.y as f64,
-        a.position.z as f64,
-    );
-    let pos_b = DVec3::new(
-        b.position.x as f64,
-        b.position.y as f64,
-        b.position.z as f64,
-    );
     constraints
         .iter()
         .enumerate()
         .find_map(|(idx, constraint)| {
             let normal = constraint.normal;
-            if normal.dot(pos_a).abs() <= FallbackBuilder::ON_PLANE_TOL
-                && normal.dot(pos_b).abs() <= FallbackBuilder::ON_PLANE_TOL
+            if normal.dot(a.position).abs() <= FallbackBuilder::ON_PLANE_TOL
+                && normal.dot(b.position).abs() <= FallbackBuilder::ON_PLANE_TOL
             {
                 Some(idx)
             } else {

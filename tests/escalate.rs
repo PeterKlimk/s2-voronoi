@@ -1333,18 +1333,17 @@ fn escalation_generalization_sweep() {
     run("uniform 100k s7 (clean)", &random_sphere_points(100_000, 7));
 }
 
-/// Regression: defect-driven repair (projected delaunator oracle + grow on
-/// unpaired-edges & low-incidence vertices + valid-or-revert gate) turns the
-/// defective mega builds into STRICTLY VALID diagrams. Covers the formerly-hard
-/// seeds: s2 (cross-cell decision divergence between individually-valid cells)
-/// and s15 (a low-incidence-only defect with NO unpaired edge). Off by default;
+/// Regression: the repaired/default path returns STRICTLY VALID diagrams for
+/// the historically hard mega seeds: s2 (cross-cell decision divergence between
+/// individually-valid cells) and s15 (a low-incidence-only defect with NO
+/// unpaired edge). The strengthened cell fallback may now resolve these before
+/// repair is triggered. Off by default;
 /// `set_escalation_enabled` is a process-global toggle only THIS test flips, so
 /// the on/off builds below are reliable under parallel execution.
 #[test]
 fn escalation_repair_makes_mega_strictly_valid() {
     let off = || VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
     let on = VoronoiConfig::default;
-    let mut fixed_at_least_one = false;
     for seed in [1u64, 2, 15] {
         let points = mega_points(100_000, 0.8, seed);
 
@@ -1371,12 +1370,5 @@ fn escalation_repair_makes_mega_strictly_valid() {
             "seed {seed}: repair did not produce a strictly valid diagram: {:?}",
             after_report.subdivision_issues()
         );
-        fixed_at_least_one |= !before_valid;
     }
-    // Sanity: at least one of these seeds is a genuine defect the repair fixed
-    // (otherwise the test would pass trivially on already-valid inputs).
-    assert!(
-        fixed_at_least_one,
-        "expected at least one mega seed to be invalid without the repair"
-    );
 }

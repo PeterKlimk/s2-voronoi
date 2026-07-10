@@ -16,6 +16,14 @@ spherical cell construction reduces to clipping a convex polygon by half-planes 
 projection is different for every generator, which is why most 2D quantities cannot be shared
 between cells even when the underlying 3D bisector plane is shared.
 
+The gnomonic polygon is the fast path, not the final numerical authority. If projection range,
+polygon capacity, or a rounded `ClippedAway` decision prevents it from continuing, construction
+replays the accepted bisectors into a cold spherical fallback. That fallback keeps normalized
+bisector planes and polygon vertices in f64, resumes the same nearest-first candidate stream, and
+rounds only the final emitted vertex positions to the public f32 storage type. If the replayed
+constraints are genuinely infeasible (for example, indistinguishable generators), the original
+failure is retained rather than fabricating a cell.
+
 ### The security radius
 
 Clipping against every point would be O(n) per cell. It isn't necessary. After some clipping, let

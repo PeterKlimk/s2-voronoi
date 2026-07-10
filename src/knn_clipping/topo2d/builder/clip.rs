@@ -267,27 +267,17 @@ impl GnomonicBuilder {
     }
 }
 
-/// Squared-distance threshold for merging coincident vertices *during* the
-/// incremental clip (~1e-6 rad, matching extraction's `push_fallback_vertex`).
-/// Deliberately far tighter than `FALLBACK_DEDUP_DOT` (~4.5e-3 rad): that coarse
-/// value is for the final output-vertex dedup over exact all-pairs points, but
-/// applying it per-clip collapses short *real* edges and overwrites the dropped
-/// edge's neighbor plane, silently losing a true neighbor of the cell.
-const CLIP_DEDUP_LEN2: f32 = 1e-12;
+/// Squared-distance threshold for merging numerically identical f64 vertices
+/// during the cold fallback clip. This must stay well below the spacing of
+/// distinct f32 input generators; a larger f32-era threshold collapsed the
+/// microscopic cells that the ClippedAway fallback exists to preserve.
+const CLIP_DEDUP_LEN2: f64 = 1e-24;
 
 impl FallbackBuilder {
-    /// Inside test for the incremental clip. Operates on the f32 polygon
-    /// vertices (~1e-7 noise at unit scale), so it uses the f32-noise-tolerant
-    /// `ON_PLANE_TOL` band rather than the much tighter `FALLBACK_PLANE_TOL`
-    /// (1e-9) that extraction's `satisfies_all_constraints` applies to *exact
-    /// f64* pair-intersection directions. A 1e-9 slack here wrongly clips
-    /// near-boundary f32 vertices and can collapse the polygon below 3 vertices
-    /// (UnboundedAfterExhaustion). (`hp_eps` is gnomonic-chart scaled —
-    /// meaningless against this chord-scale dot — and is retained only as output
-    /// metadata.)
-    fn classify_vertex(constraint: &super::FallbackConstraint, position: Vec3) -> bool {
-        let p = glam::DVec3::new(position.x as f64, position.y as f64, position.z as f64);
-        constraint.normal.dot(p) >= -Self::ON_PLANE_TOL
+    /// Inside test for the f64 fallback polygon. (`hp_eps` is gnomonic-chart
+    /// scaled and is retained only as output metadata.)
+    fn classify_vertex(constraint: &super::FallbackConstraint, position: glam::DVec3) -> bool {
+        constraint.normal.dot(position) >= -Self::ON_PLANE_TOL
     }
 
     fn edge_intersection(
@@ -295,17 +285,7 @@ impl FallbackBuilder {
         b: SphericalPolyVertex,
         constraint: &super::FallbackConstraint,
     ) -> Option<SphericalPolyVertex> {
-        let a64 = glam::DVec3::new(
-            a.position.x as f64,
-            a.position.y as f64,
-            a.position.z as f64,
-        );
-        let b64 = glam::DVec3::new(
-            b.position.x as f64,
-            b.position.y as f64,
-            b.position.z as f64,
-        );
-        let edge_normal = a64.cross(b64);
+        let edge_normal = a.position.cross(b.position);
         let edge_len2 = edge_normal.length_squared();
         if !edge_len2.is_finite() || edge_len2 <= 1e-24 {
             return None;
@@ -317,14 +297,13 @@ impl FallbackBuilder {
             return None;
         }
         let candidate = cross * len2.sqrt().recip();
-        let midpoint = (a64 + b64).normalize_or_zero();
+        let midpoint = (a.position + b.position).normalize_or_zero();
         let dir = if candidate.dot(midpoint) >= 0.0 {
             candidate
         } else {
             -candidate
         };
-        let dir32 = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32).normalize();
-        Some(SphericalPolyVertex { position: dir32 })
+        Some(SphericalPolyVertex { position: dir })
     }
 
     fn push_output_vertex(
@@ -426,7 +405,9 @@ impl FallbackBuilder {
                 .vertices
                 .iter()
                 .zip(self.poly.vertices.iter())
-                .all(|(a, b)| a.position.dot(b.position) >= crate::tolerances::FALLBACK_DEDUP_DOT)
+                .all(|(a, b)| {
+                    a.position.dot(b.position) >= crate::tolerances::FALLBACK_DEDUP_DOT as f64
+                })
         {
             // The constraint cut nothing, so no edge references `plane_idx`;
             // drop it so it does not inflate the O(constraints) extraction

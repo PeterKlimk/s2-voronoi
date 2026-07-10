@@ -148,26 +148,23 @@ fn robust_great_circle_perturbation_solves_rank2_fixture() {
 }
 
 #[test]
-fn dense_cap_frontier_requires_repair_but_default_is_valid() {
+fn dense_cap_frontier_is_strict_without_repair() {
     let points = benchmark_cap_points(50_000, 0.05, 7);
 
     let raw = voronoi_mesh::compute_with_report(
         &points,
         VoronoiConfig::default().with_repair_mode(RepairMode::Disabled),
     )
-    .expect("dense-cap raw path should build far enough to report the residual defect");
+    .expect("dense-cap raw path should build");
 
     assert!(
-        !raw.report.returned_validation.is_strictly_valid(),
-        "dense-cap fixture should remain a raw fast-path defect; replace it if this becomes valid"
+        raw.report.returned_validation.is_strictly_valid(),
+        "f64 fallback should resolve the former dense-cap frontier defect upstream: {}",
+        raw.report.returned_validation.headline()
     );
     assert!(
-        !raw.report.pre_repair_edge_mismatches.is_empty(),
-        "raw dense-cap defect should be visible as pre-repair edge mismatches"
-    );
-    assert!(
-        raw.report.has_post_repair_residuals(),
-        "raw dense-cap defect should leave post-repair residuals when local repair is disabled"
+        !raw.report.has_post_repair_residuals(),
+        "raw dense-cap fallback left output-invariant residuals"
     );
 
     let repaired = voronoi_mesh::compute_with_report(&points, VoronoiConfig::default())
@@ -178,8 +175,8 @@ fn dense_cap_frontier_requires_repair_but_default_is_valid() {
         repaired.report.returned_validation.headline()
     );
     assert!(
-        !repaired.report.pre_repair_edge_mismatches.is_empty(),
-        "default dense-cap fixture should still exercise the repair path"
+        !repaired.report.repair.attempted,
+        "upstream-valid dense-cap fixture should not invoke repair"
     );
     assert!(
         !repaired.report.has_post_repair_residuals(),
