@@ -49,6 +49,41 @@ pub(super) fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> Option<
     (key.contains(&a) && key.contains(&b)).then(|| key[0] ^ key[1] ^ key[2] ^ a ^ b)
 }
 
+/// Unchecked XOR "third" — valid only for cells whose extractor guarantees
+/// key/edge consistency (`CellOutputBuffer::edge_keys_verified`); the hot
+/// path for every gnomonic-built cell. Measured +1.3% whole-build
+/// instructions when the membership checks ran here per edge instead.
+#[inline]
+fn xor_third(key: VertexKey, a: u32, b: u32) -> u32 {
+    key[0] ^ key[1] ^ key[2] ^ a ^ b
+}
+
+/// Both endpoint thirds for edge `key` on a VERIFIED cell (unchecked XOR).
+#[inline]
+fn thirds_verified(key: EdgeKey, endpoint_keys: [VertexKey; 2]) -> [u32; 2] {
+    let (a, b) = unpack_edge_key(key);
+    [
+        xor_third(endpoint_keys[0], a, b),
+        xor_third(endpoint_keys[1], a, b),
+    ]
+}
+
+/// Per-cell dispatcher: unchecked XOR thirds when the extractor verified
+/// key/edge consistency, the malformed-endpoint-recording path otherwise.
+#[inline]
+pub(super) fn thirds_for_emit(
+    keys_verified: bool,
+    unresolved: &mut Vec<UnresolvedEdgeMismatch>,
+    key: EdgeKey,
+    endpoint_keys: [VertexKey; 2],
+) -> [u32; 2] {
+    if keys_verified {
+        thirds_verified(key, endpoint_keys)
+    } else {
+        thirds_or_record(unresolved, key, endpoint_keys)
+    }
+}
+
 /// Both endpoint thirds for edge `key`, recording an `EndpointKeyMismatch`
 /// defect (once per side) when either endpoint's vertex key is malformed;
 /// malformed endpoints carry the inert [`MALFORMED_THIRD`] sentinel. Keeping
@@ -173,6 +208,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     let edge_neighbor_slots = &output_buffer.edge_neighbor_slots;
     let edge_neighbor_globals = &output_buffer.edge_neighbor_globals;
     let edge_neighbor_eps = &output_buffer.edge_neighbor_eps;
+    let keys_verified = output_buffer.edge_keys_verified;
 
     let n = cell_vertices.len();
     debug_assert_eq!(
@@ -289,7 +325,8 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                     matched_spill[found_idx - 64] = true;
                 }
 
-                let my_thirds = thirds_or_record(
+                let my_thirds = thirds_for_emit(
+                    keys_verified,
                     &mut shard.output.unresolved_edges,
                     edge_key,
                     [

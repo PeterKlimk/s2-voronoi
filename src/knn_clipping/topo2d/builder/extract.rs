@@ -17,6 +17,25 @@ struct FallbackVertex {
     plane_b: usize,
 }
 
+/// Whether every real edge's neighbor appears in BOTH endpoint vertex keys —
+/// the emit engine's key/edge-consistency precondition (see
+/// `CellOutputBuffer::edge_keys_verified`). The fallback extractors can
+/// violate it: split-plane corner resolution pushes `(B, X)` + `(X, C)` for a
+/// corner between edge planes B and C, and when position dedup collapses the
+/// split micro-edge the surviving vertex keeps X in its key while the edge
+/// sequence continues with C.
+fn edge_keys_consistent(buffer: &CellOutputBuffer) -> bool {
+    let n = buffer.vertices.len();
+    (0..n).all(|i| {
+        let en = buffer.edge_neighbor_globals[i];
+        en == u32::MAX
+            || (buffer.vertices[i].0.contains(&en)
+                && buffer.vertices[if i + 1 == n { 0 } else { i + 1 }]
+                    .0
+                    .contains(&en))
+    })
+}
+
 impl GnomonicBuilder {
     #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn to_vertex_data_full(
@@ -100,6 +119,16 @@ impl GnomonicBuilder {
                 buffer.edge_neighbor_eps.push(edge_hp.eps as f32);
             }
         }
+        // The incremental clip keeps vertex plane pairs and edge planes in
+        // lockstep (a clip's entry/exit vertices carry the pair {crossed
+        // edge's plane, new plane}; interior vertices and their edges are
+        // copied together), so key/edge consistency holds by construction —
+        // asserted rather than paid for per edge in release.
+        debug_assert!(
+            edge_keys_consistent(buffer),
+            "gnomonic extract broke key/edge consistency (generator {gen_idx})"
+        );
+        buffer.edge_keys_verified = true;
 
         Ok(())
     }
@@ -457,6 +486,10 @@ impl FallbackBuilder {
             buffer.edge_neighbor_slots.push(edge.neighbor_slot);
             buffer.edge_neighbor_eps.push(edge.hp_eps.unwrap_or(0.0));
         }
+        // Fallback cells are rare and defect-adjacent: verify key/edge
+        // consistency here (cold) so emit can record any malformed
+        // attribution deterministically instead of checking every cell.
+        buffer.edge_keys_verified = edge_keys_consistent(buffer);
 
         Ok(())
     }
@@ -659,6 +692,10 @@ fn extract_all_constraints_cell(
         buffer.edge_neighbor_slots.push(edge.neighbor_slot);
         buffer.edge_neighbor_eps.push(edge.hp_eps.unwrap_or(0.0));
     }
+    // Same rare-path verification as the fallback extract (see
+    // `edge_keys_consistent`): the all-pairs reconstruction shares the
+    // position-dedup wrong-attribution hazard.
+    buffer.edge_keys_verified = edge_keys_consistent(buffer);
 
     Ok(())
 }

@@ -59,12 +59,14 @@ impl EdgeScratch {
         cell_vertices: &[VertexData<P>],
         cell_start: u32,
         bin: BinId,
+        keys_verified: bool,
     ) {
-        use super::edge_checks::thirds_or_record;
+        use super::edge_checks::thirds_for_emit;
 
         for entry in self.edges_to_later.drain(..) {
             let locals = entry.locals;
-            let thirds = thirds_or_record(
+            let thirds = thirds_for_emit(
+                keys_verified,
                 &mut shard.output.unresolved_edges,
                 entry.key,
                 [
@@ -88,7 +90,8 @@ impl EdgeScratch {
 
         for entry in self.edges_overflow.drain(..) {
             let locals = entry.locals;
-            let thirds = thirds_or_record(
+            let thirds = thirds_for_emit(
+                keys_verified,
                 &mut shard.output.unresolved_edges,
                 entry.key,
                 [
@@ -212,7 +215,13 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
     }
     cell_sub.add_key_dedup(t_post.lap());
 
-    scratch.emit(shard, &output_buffer.vertices, cell_start, bin);
+    scratch.emit(
+        shard,
+        &output_buffer.vertices,
+        cell_start,
+        bin,
+        output_buffer.edge_keys_verified,
+    );
     cell_sub.add_edge_emit(t_post.lap());
 
     debug_assert_eq!(

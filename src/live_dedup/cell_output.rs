@@ -45,6 +45,16 @@ pub struct CellOutputBuffer<P = Vec3> {
     pub edge_neighbor_globals: Vec<u32>,
     pub edge_neighbor_slots: Vec<u32>,
     pub edge_neighbor_eps: Vec<f32>,
+    /// True when the extractor guarantees every real edge's neighbor appears
+    /// in BOTH endpoint vertex keys (the emit engine's key/edge-consistency
+    /// precondition). The incremental gnomonic clip maintains this by
+    /// construction and sets it unconditionally (debug-asserted); the
+    /// fallback extractors — whose split-plane corner resolution can strand
+    /// a foreign plane in a surviving key — verify per edge (cold path) and
+    /// set it accordingly. Emit uses the unchecked XOR "third" when set, and
+    /// the checked malformed-endpoint-recording path when clear, so the
+    /// common case pays nothing for the fallback's hazard.
+    pub edge_keys_verified: bool,
 }
 
 impl<P> CellOutputBuffer<P> {
@@ -54,6 +64,7 @@ impl<P> CellOutputBuffer<P> {
             edge_neighbor_globals: Vec::with_capacity(capacity),
             edge_neighbor_slots: Vec::with_capacity(capacity),
             edge_neighbor_eps: Vec::with_capacity(capacity),
+            edge_keys_verified: false,
         }
     }
 
@@ -62,5 +73,6 @@ impl<P> CellOutputBuffer<P> {
         self.edge_neighbor_globals.clear();
         self.edge_neighbor_slots.clear();
         self.edge_neighbor_eps.clear();
+        self.edge_keys_verified = false;
     }
 }
