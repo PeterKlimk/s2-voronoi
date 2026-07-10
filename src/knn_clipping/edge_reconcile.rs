@@ -192,6 +192,24 @@ use super::union_find::SparseUnionFind;
 /// Rebuilt cell table and index buffer after reconciliation.
 pub(crate) type ReconciledCells = (Vec<VoronoiCell>, Vec<u32>);
 
+/// Outcome of [`reconcile_unresolved_edges`].
+///
+/// `merge_affected_cells` exists for the repair's localized residual scan:
+/// identity merges remap vertex references in place, so a cell in this set can
+/// reference a surviving vertex whose key triple does not name it — the one
+/// production violation of the key-ownership invariant ("a vertex keyed
+/// `(a, b, c)` is referenced only by cells `a`, `b`, `c`"). Consumers relying
+/// on that invariant to localize must treat these cells as always in scope.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct ReconcileResult {
+    /// Surviving unpaired interior edges, as owning cell pairs for the
+    /// caller's report / repair trigger.
+    pub residual_pairs: Vec<(u32, u32)>,
+    /// Cells whose spans were rewritten by identity merges (sorted, deduped):
+    /// the union of key triples over every vertex id that entered a merge.
+    pub merge_affected_cells: Vec<u32>,
+}
+
 /// How reconciliation merges are applied to the cell arrays.
 ///
 /// `InPlace` is the production default: only cells naming a merged vertex
@@ -264,7 +282,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
     // between these vertex ids is legitimate (plane rect walls). The
     // sphere and the periodic plane have no boundary.
     is_boundary_edge: impl Fn(u32, u32) -> bool,
-) -> Result<Vec<(u32, u32)>, crate::VoronoiError> {
+) -> Result<ReconcileResult, crate::VoronoiError> {
     if edge_records.is_empty() {
         // Production fast path: with no detected mismatch there is nothing to
         // repair, and the O(total cell indices) output-invariant scan is
@@ -292,8 +310,17 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
                 unpaired.len()
             );
         }
-        return Ok(Vec::new());
+        return Ok(ReconcileResult::default());
     }
+    let mut merge_affected_cells: Vec<u32> = Vec::new();
+    let done = |residual_pairs: Vec<(u32, u32)>, mut affected: Vec<u32>| {
+        affected.sort_unstable();
+        affected.dedup();
+        ReconcileResult {
+            residual_pairs,
+            merge_affected_cells: affected,
+        }
+    };
     let primary_candidates = affected_cells_from_records(edge_records);
     run_repair_rounds(
         edge_records,
@@ -304,6 +331,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         degenerate_len_eps,
         apply,
         MergeMode::Primary,
+        &mut merge_affected_cells,
     )?;
 
     let unpaired = scan_unpaired_interior(
@@ -314,7 +342,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         &is_boundary_edge,
     )?;
     if unpaired.is_empty() {
-        return Ok(Vec::new());
+        return Ok(done(Vec::new(), merge_affected_cells));
     }
     let synth = synthesize_backstop_records(&unpaired, vertex_keys, cells.len());
     if !synth.is_empty() {
@@ -327,6 +355,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
             degenerate_len_eps,
             apply,
             MergeMode::ProximityOnly,
+            &mut merge_affected_cells,
         )?;
     }
     // Residual scan covers both passes' touched regions.
@@ -341,10 +370,13 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         &residual_candidates,
         &is_boundary_edge,
     )?;
-    Ok(residual
-        .iter()
-        .map(|&(va, vb, owner)| cell_pair_for_unpaired(va, vb, owner, vertex_keys))
-        .collect())
+    Ok(done(
+        residual
+            .iter()
+            .map(|&(va, vb, owner)| cell_pair_for_unpaired(va, vb, owner, vertex_keys))
+            .collect(),
+        merge_affected_cells,
+    ))
 }
 
 /// If `key` has exactly two distinct generators (one doubled), return the
@@ -474,6 +506,9 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
     degenerate_len_eps: f32,
     apply: RepairApply,
     mode: MergeMode,
+    // Accumulates the cells whose spans a merge apply may rewrite (see
+    // `ReconcileResult::merge_affected_cells`); the caller sorts/dedups.
+    merge_affected_cells: &mut Vec<u32>,
 ) -> Result<bool, crate::VoronoiError> {
     let mut any = false;
     // The only cells a round can need to touch are those named by the records.
@@ -506,6 +541,16 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
         let merged_changed = if merged == 0 {
             false
         } else {
+            // Record the cells this apply may rewrite: the key-triple union
+            // over every id that entered the union-find (the same coverage
+            // set `apply_merges_in_place` derives). Lenient on missing keys —
+            // the rebuild backend tolerates synthetic fixtures without them.
+            for v in uf.touched_ids() {
+                if let Some(key) = vertex_keys.get(v) {
+                    merge_affected_cells
+                        .extend(key.iter().copied().filter(|&g| (g as usize) < cells.len()));
+                }
+            }
             match apply {
                 RepairApply::Rebuild => {
                     let (new_cells, new_indices) =

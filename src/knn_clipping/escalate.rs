@@ -509,6 +509,7 @@ fn repair_grow_loop(
     points: &[Vec3],
     work: &mut WorkingDiagram,
     defect_pairs: &[(u32, u32)],
+    merge_affected: &[u32],
     max_rounds: usize,
     debug_name: &str,
     mut fans_for: impl FnMut(&WorkingDiagram, &[u32]) -> FxHashMap<u32, Vec<[u32; 3]>>,
@@ -526,6 +527,11 @@ fn repair_grow_loop(
     }
     let target_sign = work.winding_convention(points, &defect_gens);
 
+    // Every vertex id whose set of referencing boundaries may have changed:
+    // splicing is the loop's only mutation, so that is exactly the vids on a
+    // spliced cell's boundary, captured immediately before and after each
+    // splice. Feeds the localized residual scan's dirty region.
+    let mut touched_vids: BTreeSet<u32> = BTreeSet::new();
     let mut spliced: BTreeSet<u32> = BTreeSet::new();
     for _ in 0..max_rounds {
         if closure.is_empty() {
@@ -543,19 +549,40 @@ fn repair_grow_loop(
             if fan.len() < 3 {
                 continue;
             }
+            touched_vids.extend(work.boundary(g).iter().copied());
             work.splice_generator(points, g, fan, target_sign);
+            touched_vids.extend(work.boundary(g).iter().copied());
             spliced.insert(g);
         }
         // Grow on the residual: generators named by any still-unpaired edge, plus
         // low-incidence vertices left by re-fanning (a vertex an unspliced
-        // neighbor still references, now orphaned). A full scan sees both.
+        // neighbor still references, now orphaned). The localized scan sees both
+        // without walking the whole diagram (debug builds oracle-check it).
         let t_scan = std::time::Instant::now();
-        let implicated: BTreeSet<u32> = work.residual_generators().into_iter().collect();
+        let implicated = work.residual_generators_local(&closure, &touched_vids, merge_affected);
         let new: Vec<u32> = implicated
             .iter()
             .copied()
             .filter(|g| !closure.contains(g))
             .collect();
+        #[cfg(debug_assertions)]
+        {
+            // The locality argument (key-ownership invariant + merge-affected
+            // carve-out) says the localized scan finds every residual the
+            // whole-diagram scan would, up to generators already in the
+            // closure. Verify it exhaustively in debug builds — a divergence
+            // here means a defect class escaped the dirty region.
+            let global_new: Vec<u32> = work
+                .residual_generators()
+                .into_iter()
+                .filter(|g| !closure.contains(g))
+                .collect();
+            assert_eq!(
+                new, global_new,
+                "{debug_name}: localized residual scan diverges from the global scan \
+                 (key-ownership locality argument violated)"
+            );
+        }
         if debug {
             eprintln!(
                 "  {debug_name} round {}: closure={} spliced={} implicated={} new={} \
@@ -596,6 +623,7 @@ pub(crate) fn repair_local_hull(
     slot_gen_map: &[u32],
     work: &mut WorkingDiagram,
     defect_pairs: &[(u32, u32)],
+    merge_affected: &[u32],
     ring_k: usize,
     max_rounds: usize,
 ) -> EscalationStats {
@@ -603,6 +631,7 @@ pub(crate) fn repair_local_hull(
         points,
         work,
         defect_pairs,
+        merge_affected,
         max_rounds,
         "repair_local_hull",
         |work, closure| local_hull_fans(points, grid, scratch, slot_gen_map, work, closure, ring_k),
@@ -620,6 +649,7 @@ pub(crate) fn repair_local_exact(
     slot_gen_map: &[u32],
     work: &mut WorkingDiagram,
     defect_pairs: &[(u32, u32)],
+    merge_affected: &[u32],
     ring_k: usize,
     max_rounds: usize,
 ) -> EscalationStats {
@@ -627,6 +657,7 @@ pub(crate) fn repair_local_exact(
         points,
         work,
         defect_pairs,
+        merge_affected,
         max_rounds,
         "repair_local_exact",
         |work, closure| {
@@ -645,6 +676,7 @@ pub fn repair_delaunator(
     points: &[Vec3],
     work: &mut WorkingDiagram,
     defect_pairs: &[(u32, u32)],
+    merge_affected: &[u32],
     _gather_k: usize,
     max_rounds: usize,
 ) -> EscalationStats {
@@ -683,6 +715,7 @@ pub fn repair_delaunator(
         points,
         work,
         defect_pairs,
+        merge_affected,
         max_rounds,
         "repair_delaunator",
         |_work, closure| {
@@ -946,21 +979,150 @@ impl<'a> WorkingDiagram<'a> {
     /// diagram. An undirected edge `{va,vb}` is paired iff it is used by exactly
     /// two directed half-edges in opposite directions; anything else (one use,
     /// three+ uses, or two same-direction uses) is a defect, and the generators
-    /// named by the two endpoints' triples are returned. This is the source of
-    /// truth the grow loop converges against: rebuilding a cell `g` orphans the
-    /// stale edges of any UNSPLICED neighbor still referencing `g`'s old defect
-    /// vertices, and only a full scan sees those.
+    /// named by the two endpoints' triples are returned. Debug-print diagnostic.
     fn unpaired_generators(&self) -> Vec<u32> {
         self.residual_scan(false)
     }
 
-    /// Union of both whole-diagram residual signals the grow loop converges
+    /// Whole-diagram union of both residual signals the grow loop converges
     /// against — `unpaired_generators` plus the generators of every degree-1/2
     /// vertex (`low_incidence_gens`' criterion) — from ONE boundary walk.
-    /// The grow loop runs this every round; as two independent scans it paid
-    /// the boundary walk (and its per-cell override lookup) twice.
+    /// Reference form: the grow loop runs `residual_generators_local` and
+    /// debug builds assert it matches this scan.
+    #[cfg(debug_assertions)]
     fn residual_generators(&self) -> Vec<u32> {
         self.residual_scan(true)
+    }
+
+    /// The distinct generators that can legally reference vertex `vid`: the
+    /// non-sentinel entries of its key triple. Per-cell emission puts the
+    /// owning generator in every key and spliced fans preserve this, so a
+    /// vertex keyed `(a, b, c)` appears only in the boundaries of cells `a`,
+    /// `b`, `c` (the same invariant `vid_for`'s local lookup rests on). The
+    /// one production exception — reconcile merges remapping a reference into
+    /// a foreign cell — is carved out by the caller via `merge_affected`.
+    fn owners(&self, vid: u32) -> impl Iterator<Item = u32> + '_ {
+        let k = self.vkey(vid);
+        let n = self.num_cells();
+        (0..3).filter_map(move |i| {
+            let g = k[i];
+            ((g as usize) < n && !k[..i].contains(&g)).then_some(g)
+        })
+    }
+
+    /// Localized form of `residual_generators`: the same defect verdicts,
+    /// computed over the defect neighborhood instead of the whole diagram.
+    ///
+    /// Region construction (all sets O(defect region)):
+    /// - DIRTY — cells whose edge pairing or vertex incidence may have changed
+    ///   since the last scan: the closure (splices happen only there), the
+    ///   key-owners of every `touched_vids` entry (an unspliced neighbor's
+    ///   pairing changes only via a shared vertex, and it can share only
+    ///   vertices whose triples name it), and the reconcile merge-affected
+    ///   cells (whose references evade the key-ownership rule).
+    /// - EMIT — DIRTY plus the key-owners of every vertex on a DIRTY
+    ///   boundary. Any cell using an edge `{va, vb}` of a DIRTY cell
+    ///   references `va`, so it is a key-owner of `va` (or merge-affected):
+    ///   EMIT contains the complete use set of every evaluated edge, and the
+    ///   complete reference set of every DIRTY-boundary vertex.
+    ///
+    /// Edge groups with no DIRTY use are skipped: their users are unspliced,
+    /// so their status is unchanged, and any entry defect's owning cells are
+    /// already in the closure (seeded from the detection residuals). Verdicts
+    /// on evaluated groups are exact, so the grow set equals the global
+    /// scan's, up to generators already in the closure — asserted per round
+    /// against `residual_generators` in debug builds.
+    fn residual_generators_local(
+        &self,
+        closure: &std::collections::BTreeSet<u32>,
+        touched_vids: &std::collections::BTreeSet<u32>,
+        merge_affected: &[u32],
+    ) -> Vec<u32> {
+        use std::collections::BTreeSet;
+        let n_cells = self.num_cells();
+        let mut dirty: BTreeSet<u32> = closure
+            .iter()
+            .chain(merge_affected)
+            .copied()
+            .filter(|&g| (g as usize) < n_cells)
+            .collect();
+        for &v in touched_vids {
+            dirty.extend(self.owners(v));
+        }
+        let mut dirty_vids: BTreeSet<u32> = BTreeSet::new();
+        for &g in &dirty {
+            dirty_vids.extend(self.boundary(g).iter().copied());
+        }
+        let mut emit: BTreeSet<u32> = dirty.clone();
+        for &v in &dirty_vids {
+            emit.extend(self.owners(v));
+        }
+
+        // Same record scheme as `residual_scan`, plus a from-DIRTY bit; the
+        // incidence counts cover exactly the DIRTY-boundary vertices (their
+        // reference sets are complete within EMIT).
+        let mut uses: Vec<(u64, u8)> = Vec::new();
+        let mut cnt: FxHashMap<u32, u32> = dirty_vids.iter().map(|&v| (v, 0u32)).collect();
+        for &g in &emit {
+            let from_dirty = dirty.contains(&g);
+            let list = self.boundary(g);
+            for &v in list {
+                if let Some(c) = cnt.get_mut(&v) {
+                    *c += 1;
+                }
+            }
+            let n = list.len();
+            if n < 3 {
+                continue;
+            }
+            for i in 0..n {
+                let (a, b) = (list[i], list[(i + 1) % n]);
+                let (lo, hi, fwd) = if a <= b { (a, b, 1u8) } else { (b, a, 0u8) };
+                uses.push((
+                    ((lo as u64) << 32) | hi as u64,
+                    fwd | (u8::from(from_dirty) << 1),
+                ));
+            }
+        }
+        uses.sort_unstable();
+
+        let mut grow: Vec<u32> = Vec::new();
+        let mut i = 0usize;
+        while i < uses.len() {
+            let key = uses[i].0;
+            let mut fwd_count = 0usize;
+            let mut any_dirty = false;
+            let mut j = i;
+            while j < uses.len() && uses[j].0 == key {
+                fwd_count += usize::from(uses[j].1 & 1);
+                any_dirty |= uses[j].1 & 2 != 0;
+                j += 1;
+            }
+            let group_len = j - i;
+            if any_dirty {
+                let (a, b) = ((key >> 32) as u32, key as u32);
+                // Pairing verdict identical to `residual_scan` (self-loop
+                // single-use reads as paired; the gate rejects it regardless).
+                let paired = if a == b {
+                    group_len == 1
+                } else {
+                    group_len == 2 && fwd_count == 1
+                };
+                if !paired {
+                    let (ka, kb) = (self.vkey(a), self.vkey(b));
+                    grow.extend(ka.iter().chain(kb.iter()));
+                }
+            }
+            i = j;
+        }
+        for (&v, &c) in &cnt {
+            if c == 1 || c == 2 {
+                grow.extend(self.vkey(v));
+            }
+        }
+        grow.sort_unstable();
+        grow.dedup();
+        grow
     }
 
     fn residual_scan(&self, include_low_incidence: bool) -> Vec<u32> {

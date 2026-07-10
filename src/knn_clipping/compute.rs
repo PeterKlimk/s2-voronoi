@@ -91,7 +91,7 @@ fn run_core_pipeline(
         cell_indices,
         dedup_sub: _,
     } = assembled;
-    let (mut eff_cells, mut eff_cell_indices, post_repair_unpaired) = reconcile_edges(
+    let (mut eff_cells, mut eff_cell_indices, reconcile_result) = reconcile_edges(
         &mut vertices,
         &vertex_keys,
         &unresolved_edges,
@@ -99,6 +99,10 @@ fn run_core_pipeline(
         cell_indices,
         &mut tb,
     )?;
+    let edge_reconcile::ReconcileResult {
+        residual_pairs: post_repair_unpaired,
+        merge_affected_cells,
+    } = reconcile_result;
     let repair = maybe_repair_effective(
         effective_points_ref,
         &grid,
@@ -107,6 +111,7 @@ fn run_core_pipeline(
         &mut eff_cells,
         &mut eff_cell_indices,
         &post_repair_unpaired,
+        &merge_affected_cells,
         repair_mode,
     );
     Ok(PipelineState {
@@ -419,6 +424,7 @@ fn maybe_repair_effective(
     eff_cells: &mut Vec<VoronoiCell>,
     eff_cell_indices: &mut Vec<u32>,
     post_repair_unpaired: &[(u32, u32)],
+    merge_affected_cells: &[u32],
     repair_mode: RepairMode,
 ) -> RepairOutcome {
     // A0 probes need the fast assembled state, not the repaired one.
@@ -479,6 +485,7 @@ fn maybe_repair_effective(
             effective_points,
             &mut work,
             &defect_pairs,
+            merge_affected_cells,
             ESCALATE_GATHER_K,
             ESCALATE_MAX_ROUNDS,
         )
@@ -490,6 +497,7 @@ fn maybe_repair_effective(
             &repair_slot_map,
             &mut work,
             &defect_pairs,
+            merge_affected_cells,
             ESCALATE_GATHER_K,
             ESCALATE_MAX_ROUNDS,
         )
@@ -501,6 +509,7 @@ fn maybe_repair_effective(
             &repair_slot_map,
             &mut work,
             &defect_pairs,
+            merge_affected_cells,
             ESCALATE_GATHER_K,
             ESCALATE_MAX_ROUNDS,
         )
@@ -514,6 +523,7 @@ fn maybe_repair_effective(
             &repair_slot_map,
             &mut work,
             &defect_pairs,
+            merge_affected_cells,
             ESCALATE_GATHER_K,
             ESCALATE_MAX_ROUNDS,
         )
@@ -525,6 +535,7 @@ fn maybe_repair_effective(
             &repair_slot_map,
             &mut work,
             &defect_pairs,
+            merge_affected_cells,
             ESCALATE_GATHER_K,
             ESCALATE_MAX_ROUNDS,
         )
@@ -1086,9 +1097,11 @@ fn assemble_shards(
     Ok(assembled)
 }
 
-/// Reconciled cell arrays plus the post-repair output-invariant residuals
-/// (cell pairs whose shared edge stayed unpaired after both repair passes).
-type ReconciledWithResiduals = (Vec<VoronoiCell>, Vec<u32>, Vec<(u32, u32)>);
+/// Reconciled cell arrays plus the reconcile outcome: the post-repair
+/// output-invariant residuals (cell pairs whose shared edge stayed unpaired
+/// after both repair passes) and the merge-rewritten cells the local repair's
+/// residual scan must keep in scope.
+type ReconciledWithResiduals = (Vec<VoronoiCell>, Vec<u32>, edge_reconcile::ReconcileResult);
 
 fn reconcile_edges(
     vertices: &mut Vec<Vec3>,
@@ -1105,7 +1118,7 @@ fn reconcile_edges(
 
     let t = Timer::start();
     // The sphere has no boundary: every interior edge must pair.
-    let post_repair_unpaired = edge_reconcile::reconcile_unresolved_edges(
+    let reconcile_result = edge_reconcile::reconcile_unresolved_edges(
         &repair_edges_storage,
         vertices.as_slice(),
         &mut cells,
@@ -1120,7 +1133,7 @@ fn reconcile_edges(
     // (valid-or-error contract — see docs/correctness.md; the dropped
     // post-hoc Tier-2 repair investigation lives in git history).
     tb.set_edge_reconcile(t.elapsed());
-    Ok((cells, cell_indices, post_repair_unpaired))
+    Ok((cells, cell_indices, reconcile_result))
 }
 
 /// Map effective cells back to original input indices.
