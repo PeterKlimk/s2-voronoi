@@ -150,6 +150,15 @@ pub enum UnresolvedEdgeOrigin {
     /// reaching a cross-bin cell through two of its edges. The thirds may
     /// fully agree, so this is detectable only at the slot level.
     CrossBinSlotConflict,
+    /// An edge endpoint's vertex key does not name both edge endpoints — a
+    /// malformed triple attribution from a near-degenerate clip. Natural
+    /// trigger: the fallback extract's split-plane corner on dense
+    /// near-cocircular (`mega`) inputs, where position dedup collapses the
+    /// split micro-edge and strands the split plane in the surviving
+    /// vertex's key. Recorded at the site that computes the endpoint
+    /// "third", so detection is deterministic instead of relying on a
+    /// garbage third failing to match downstream.
+    EndpointKeyMismatch,
     /// Post-repair output-invariant backstop: an interior edge used by
     /// exactly one cell survived reconciliation. Reported, not force-fixed
     /// — the backstop's eps-bounded pass refuses to merge distant vertices
@@ -178,7 +187,11 @@ pub(crate) struct EdgeCheck {
     /// stable tolerance scale.
     pub(crate) hp_eps: f32,
     /// For edge (A, B), each endpoint vertex key is (A, B, T).
-    /// Store just the "third" generator T for each endpoint, in canonical order.
+    /// Store just the "third" generator T for each endpoint, in canonical
+    /// order. `u32::MAX` (`edge_checks::MALFORMED_THIRD`) marks an endpoint
+    /// whose key did not name both edge endpoints (recorded as an
+    /// `EndpointKeyMismatch` defect at the emitter); it never matches during
+    /// endpoint reconciliation.
     pub(super) thirds: [u32; 2],
     pub(super) indices: [u32; 2],
 }

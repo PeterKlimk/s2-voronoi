@@ -60,15 +60,18 @@ impl EdgeScratch {
         cell_start: u32,
         bin: BinId,
     ) {
-        use super::edge_checks::{third_for_edge_endpoint, unpack_edge_key};
+        use super::edge_checks::thirds_or_record;
 
         for entry in self.edges_to_later.drain(..) {
             let locals = entry.locals;
-            let (a, b) = unpack_edge_key(entry.key);
-            let thirds = [
-                third_for_edge_endpoint(cell_vertices[locals[0] as usize].0, a, b),
-                third_for_edge_endpoint(cell_vertices[locals[1] as usize].0, a, b),
-            ];
+            let thirds = thirds_or_record(
+                &mut shard.output.unresolved_edges,
+                entry.key,
+                [
+                    cell_vertices[locals[0] as usize].0,
+                    cell_vertices[locals[1] as usize].0,
+                ],
+            );
             shard.dedup.push_edge_check(
                 entry.local_b,
                 EdgeCheck {
@@ -85,11 +88,14 @@ impl EdgeScratch {
 
         for entry in self.edges_overflow.drain(..) {
             let locals = entry.locals;
-            let (a, b) = unpack_edge_key(entry.key);
-            let thirds = [
-                third_for_edge_endpoint(cell_vertices[locals[0] as usize].0, a, b),
-                third_for_edge_endpoint(cell_vertices[locals[1] as usize].0, a, b),
-            ];
+            let thirds = thirds_or_record(
+                &mut shard.output.unresolved_edges,
+                entry.key,
+                [
+                    cell_vertices[locals[0] as usize].0,
+                    cell_vertices[locals[1] as usize].0,
+                ],
+            );
             shard.output.edge_check_overflow.push(EdgeCheckOverflow {
                 key: entry.key,
                 side: entry.side,

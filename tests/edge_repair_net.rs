@@ -262,6 +262,26 @@ fn net_cross_bin_single_sided() {
 // detection branch remains; re-run probe_scaffold_sweep/probe_site_scan
 // after numerics changes to look for a new pin.
 
+/// Endpoint-key-mismatch detection: on a dense near-cocircular `mega` input,
+/// the fallback extract's split-plane corner resolution can strand the split
+/// plane in a vertex key when position dedup collapses the split micro-edge —
+/// leaving an edge whose endpoint triple does not name the edge's neighbor.
+/// The emitter must record this deterministically as `EndpointKeyMismatch`
+/// (not rely on the malformed side's "third" failing to match downstream),
+/// and repair must restore strict validity. Fixture found via the checked-
+/// profile broad sweep (mega 100k seed 11, cell 17010).
+#[test]
+fn net_endpoint_key_mismatch_detection_and_repair() {
+    let fixture = mega_points(100_000, 0.8, 11);
+    let out = compute_strict("endpoint_key_mismatch", &fixture, None);
+    let os = origins(&out);
+    assert!(
+        os.contains(&UnresolvedEdgeOrigin::EndpointKeyMismatch),
+        "expected EndpointKeyMismatch on mega 100k s11, got {os:?} \
+         (numerics may have moved the fixture; scan mega seeds for a new pin)"
+    );
+}
+
 /// Full-pipeline differential: the surgical in-place repair (production
 /// default) and the original full-rebuild oracle (`VORONOI_MESH_EDGE_REPAIR_REBUILD=1`)
 /// must produce semantically identical diagrams — same defects detected,

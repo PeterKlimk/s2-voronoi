@@ -93,7 +93,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     // residual (within-bin vs cross-bin). See docs/correctness.md.
     if std::env::var("VORONOI_MESH_UNPAIRED_ORIGINS").is_ok() {
         use super::types::UnresolvedEdgeOrigin as O;
-        let mut c = [0usize; 8];
+        let mut c = [0usize; 9];
         for e in &unresolved_edges {
             let i = match e.origin {
                 O::InBinMissingCheck => 0,
@@ -104,12 +104,13 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
                 O::CrossBinDuplicateSide => 5,
                 O::CrossBinSlotConflict => 6,
                 O::PostRepairUnpaired => 7,
+                O::EndpointKeyMismatch => 8,
             };
             c[i] += 1;
         }
         eprintln!(
             "[origins] total={} | InBin(miss={} thirds={} unconsumed={}) \
-             CrossBin(thirds={} single={} dup={} slot={})",
+             CrossBin(thirds={} single={} dup={} slot={}) endpoint_key={}",
             unresolved_edges.len(),
             c[0],
             c[1],
@@ -117,7 +118,8 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
             c[3],
             c[4],
             c[5],
-            c[6]
+            c[6],
+            c[8]
         );
     }
 

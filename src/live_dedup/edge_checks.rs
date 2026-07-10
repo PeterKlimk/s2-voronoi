@@ -21,19 +21,57 @@ pub(crate) fn unpack_edge_key(key: EdgeKey) -> (u32, u32) {
     (v as u32, (v >> 32) as u32)
 }
 
+/// Sentinel "third" for an endpoint whose vertex key does not name both edge
+/// endpoints. Never a valid generator id (keys hold real generator indices),
+/// and inert in `reconcile_edge_endpoints`: a malformed endpoint neither
+/// full-matches nor patches, so bad attribution can only widen the defect
+/// record set, never silently share a vertex id.
+pub(super) const MALFORMED_THIRD: u32 = u32::MAX;
+
+/// The endpoint's "third" generator — the key entry that is neither edge
+/// endpoint. When the key contains `{a, b, third}`, XOR is self-canceling
+/// (`x ^ x = 0`), so `key[0] ^ key[1] ^ key[2] ^ a ^ b = third`.
+///
+/// `None` when the key does NOT contain both endpoints: a malformed triple
+/// attribution from a near-degenerate clip. This was long believed
+/// unreachable (a debug assert aborted here), but dense near-cocircular
+/// `mega` inputs give it a natural trigger — the fallback extract resolves a
+/// corner via a split plane within tolerance, position dedup collapses the
+/// split micro-edge, and the surviving vertex keeps the split plane in its
+/// key while the edge sequence continues with the original neighbor. The
+/// wrong attribution is a handled defect (callers record it as
+/// `EndpointKeyMismatch`, feeding the reconcile + repair pipeline that
+/// provably restores strict validity), not an invariant violation — the same
+/// reachable-and-handled family as the four asserts demoted for the strict
+/// planar keep rule.
 #[inline]
-pub(super) fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> u32 {
-    // key contains {a, b, third} in sorted order
-    // XOR is self-canceling: x ^ x = 0
-    // So: key[0] ^ key[1] ^ key[2] ^ a ^ b = third
-    debug_assert!(
-        key.contains(&a) && key.contains(&b),
-        "vertex key {:?} does not contain edge endpoints ({}, {})",
-        key,
-        a,
-        b
-    );
-    key[0] ^ key[1] ^ key[2] ^ a ^ b
+pub(super) fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> Option<u32> {
+    (key.contains(&a) && key.contains(&b)).then(|| key[0] ^ key[1] ^ key[2] ^ a ^ b)
+}
+
+/// Both endpoint thirds for edge `key`, recording an `EndpointKeyMismatch`
+/// defect (once per side) when either endpoint's vertex key is malformed;
+/// malformed endpoints carry the inert [`MALFORMED_THIRD`] sentinel. Keeping
+/// the record at the site that computed the third makes detection
+/// deterministic — the alternative (shipping a garbage XOR value and relying
+/// on it failing to match the other side) is probabilistic in principle, and
+/// XOR of structured ids is not uniform.
+#[inline]
+pub(super) fn thirds_or_record(
+    unresolved: &mut Vec<UnresolvedEdgeMismatch>,
+    key: EdgeKey,
+    endpoint_keys: [VertexKey; 2],
+) -> [u32; 2] {
+    let (a, b) = unpack_edge_key(key);
+    let t0 = third_for_edge_endpoint(endpoint_keys[0], a, b);
+    let t1 = third_for_edge_endpoint(endpoint_keys[1], a, b);
+    if t0.is_none() || t1.is_none() {
+        unresolved.push(UnresolvedEdgeMismatch {
+            key,
+            origin: UnresolvedEdgeOrigin::EndpointKeyMismatch,
+        });
+    }
+    [t0.unwrap_or(MALFORMED_THIRD), t1.unwrap_or(MALFORMED_THIRD)]
 }
 
 /// Reconcile the two directed sides of a shared edge by their endpoint
@@ -46,20 +84,29 @@ pub(super) fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> u32 {
 /// `patch(my_k, other_k)` receives endpoint positions on each side; the
 /// in-shard path writes one direction, the cross-bin overflow path patches
 /// both sides from the same pairing.
+///
+/// [`MALFORMED_THIRD`] is inert: a malformed endpoint never full-matches and
+/// never patches (two malformed sides agreeing on the sentinel is not
+/// endpoint agreement), while the well-formed endpoint of a half-malformed
+/// edge still patches individually.
 #[inline]
 fn reconcile_edge_endpoints(
     my_thirds: [u32; 2],
     other_thirds: [u32; 2],
     mut patch: impl FnMut(usize, usize),
 ) -> bool {
-    if other_thirds[0] == my_thirds[1] && other_thirds[1] == my_thirds[0] {
+    if other_thirds[0] == my_thirds[1]
+        && other_thirds[1] == my_thirds[0]
+        && other_thirds[0] != MALFORMED_THIRD
+        && other_thirds[1] != MALFORMED_THIRD
+    {
         patch(0, 1);
         patch(1, 0);
         return true;
     }
     for (ok, other) in other_thirds.iter().enumerate() {
         for (mk, mine) in my_thirds.iter().enumerate() {
-            if other == mine {
+            if other == mine && *other != MALFORMED_THIRD {
                 patch(mk, ok);
             }
         }
@@ -160,13 +207,15 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     // Incoming checks were taken earlier (e.g. for geometry seeding).
     let incoming_count = incoming_checks.len();
 
-    // Track which incoming checks we've matched (bitmask, supports up to 64)
+    // Track which incoming checks have been consumed. The common case fits
+    // the u64 bitmask; a dense near-cocircular cell can receive more than 64
+    // checks (mega inputs produce >64-vertex cells), so the surplus spills to
+    // a Vec (no allocation in the common case). Exactness matters: the
+    // unmatched loop below is detection-critical, and a wrongly-"consumed"
+    // check (as the old release build's masked `1 << idx` shift could produce
+    // past 64) is a silently dropped defect record.
     let mut matched: u64 = 0;
-    debug_assert!(incoming_count <= 64, "more than 64 incoming edge checks");
-    debug_assert!(
-        n <= 64,
-        "cell has more than 64 vertices, matched bitmask unsafe"
-    );
+    let mut matched_spill: Vec<bool> = vec![false; incoming_count.saturating_sub(64)];
 
     let layout = PackedSlotLayout::new(
         &assignment.slot_gen_map,
@@ -234,13 +283,20 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                 // battery and the strict-plane campaign). So this is a
                 // handled defect, not an invariant violation; debug builds
                 // must not abort (this only makes debug match release).
-                matched |= 1u64 << found_idx;
+                if found_idx < 64 {
+                    matched |= 1u64 << found_idx;
+                } else {
+                    matched_spill[found_idx - 64] = true;
+                }
 
-                let (a, b) = unpack_edge_key(edge_key);
-                let my_thirds = [
-                    third_for_edge_endpoint(cell_vertices[locals[0] as usize].0, a, b),
-                    third_for_edge_endpoint(cell_vertices[locals[1] as usize].0, a, b),
-                ];
+                let my_thirds = thirds_or_record(
+                    &mut shard.output.unresolved_edges,
+                    edge_key,
+                    [
+                        cell_vertices[locals[0] as usize].0,
+                        cell_vertices[locals[1] as usize].0,
+                    ],
+                );
 
                 let full = reconcile_edge_endpoints(my_thirds, check.thirds, |mk, ck| {
                     let local_idx = locals[mk] as usize;
@@ -256,7 +312,14 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                     // (this only makes debug match release behavior).
                     vertex_indices[local_idx] = check.indices[ck];
                 });
-                if !full {
+                // A malformed endpoint on either side already produced an
+                // EndpointKeyMismatch record (here or at the emitter), and a
+                // sentinel-bearing side can never fully reconcile — recording
+                // the inevitable mismatch again would double-report the edge.
+                if !full
+                    && !my_thirds.contains(&MALFORMED_THIRD)
+                    && !check.thirds.contains(&MALFORMED_THIRD)
+                {
                     shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
                         key: edge_key,
                         origin: UnresolvedEdgeOrigin::InBinThirdsMismatch,
@@ -278,11 +341,17 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     } else {
         (1u64 << incoming_count) - 1
     };
-    let all_matched = incoming_count == 0 || matched == all_mask;
+    let all_matched =
+        incoming_count == 0 || (matched == all_mask && matched_spill.iter().all(|&m| m));
 
     if !all_matched {
         for (idx, check) in incoming_checks.iter().enumerate() {
-            if matched & (1u64 << idx) == 0 {
+            let consumed = if idx < 64 {
+                matched & (1u64 << idx) != 0
+            } else {
+                matched_spill[idx - 64]
+            };
+            if !consumed {
                 shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
                     key: check.key,
                     origin: UnresolvedEdgeOrigin::InBinUnconsumedCheck,
@@ -376,10 +445,17 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
                     }
                 });
                 if !full {
-                    unresolved_edges.push(UnresolvedEdgeMismatch {
-                        key: a.key,
-                        origin: UnresolvedEdgeOrigin::CrossBinThirdsMismatch,
-                    });
+                    // A malformed endpoint (MALFORMED_THIRD) was already
+                    // recorded as EndpointKeyMismatch by the emitting side and
+                    // can never fully reconcile — don't double-report it as a
+                    // thirds mismatch.
+                    if !a.thirds.contains(&MALFORMED_THIRD) && !b.thirds.contains(&MALFORMED_THIRD)
+                    {
+                        unresolved_edges.push(UnresolvedEdgeMismatch {
+                            key: a.key,
+                            origin: UnresolvedEdgeOrigin::CrossBinThirdsMismatch,
+                        });
+                    }
                 } else if conflict {
                     unresolved_edges.push(UnresolvedEdgeMismatch {
                         key: a.key,
@@ -401,5 +477,63 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
     OverflowResolveTiming {
         sort: edge_checks_overflow_sort_time,
         match_: edge_checks_overflow_match_time,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn third_requires_both_endpoints() {
+        assert_eq!(third_for_edge_endpoint([1, 5, 9], 1, 9), Some(5));
+        assert_eq!(third_for_edge_endpoint([1, 5, 9], 5, 1), Some(9));
+        // Malformed attribution: the key lacks one or both endpoints.
+        assert_eq!(third_for_edge_endpoint([1, 5, 9], 1, 7), None);
+        assert_eq!(third_for_edge_endpoint([1, 5, 9], 2, 3), None);
+    }
+
+    #[test]
+    fn malformed_thirds_never_reconcile() {
+        // Half-malformed edge: no full match (the sentinel side is inert),
+        // but the well-formed endpoint still patches individually.
+        let mut patched = Vec::new();
+        let full =
+            reconcile_edge_endpoints([MALFORMED_THIRD, 7], [7, MALFORMED_THIRD], |mk, ok| {
+                patched.push((mk, ok))
+            });
+        assert!(!full);
+        assert_eq!(patched, vec![(1, 0)]);
+
+        // Fully malformed on both sides: sentinel agreement is not endpoint
+        // agreement — nothing matches, nothing patches.
+        patched.clear();
+        let full = reconcile_edge_endpoints(
+            [MALFORMED_THIRD, MALFORMED_THIRD],
+            [MALFORMED_THIRD, MALFORMED_THIRD],
+            |mk, ok| patched.push((mk, ok)),
+        );
+        assert!(!full);
+        assert!(patched.is_empty());
+    }
+
+    #[test]
+    fn thirds_or_record_flags_malformed_endpoint() {
+        let key = pack_edge(10, 20);
+        let mut unresolved = Vec::new();
+        // Well-formed: both endpoint keys contain both edge endpoints.
+        let thirds = thirds_or_record(&mut unresolved, key, [[5, 10, 20], [10, 20, 30]]);
+        assert_eq!(thirds, [5, 30]);
+        assert!(unresolved.is_empty());
+
+        // One malformed endpoint: sentinel third + one EndpointKeyMismatch.
+        let thirds = thirds_or_record(&mut unresolved, key, [[5, 10, 20], [10, 25, 30]]);
+        assert_eq!(thirds, [5, MALFORMED_THIRD]);
+        assert_eq!(unresolved.len(), 1);
+        assert_eq!(
+            unresolved[0].origin,
+            UnresolvedEdgeOrigin::EndpointKeyMismatch
+        );
+        assert_eq!(unresolved[0].key, key);
     }
 }
