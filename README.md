@@ -70,12 +70,14 @@ lock. [docs/architecture.md](docs/architecture.md) has the full description.
 
 ## Correctness
 
-The output is a strictly valid subdivision — Euler characteristic holds, every edge is shared by
-exactly two cells, one connected component — checked by `validation::validate` and fuzz-tested at
-multi-million point counts. Geometry is accurate to floating-point precision, not exact: no f32
-implementation can promise exact positions. Near-coincident generators are welded, degenerate
-great-circle inputs are perturbed, and rare topology defects are repaired, all by default and all
-reported. [docs/correctness.md](docs/correctness.md) states the guarantees and limits precisely.
+Every successfully returned diagram is a strictly valid subdivision — Euler characteristic
+holds, every edge is shared by exactly two cells, and there is one connected component — checked
+by `validation::validate` and fuzz-tested at multi-million point counts. Inputs outside the
+supported numerical/model envelope return a defined error rather than a non-manifold diagram.
+Geometry is accurate to floating-point precision, not exact: no f32 implementation can promise
+exact positions. Near-coincident generators are welded, degenerate great-circle inputs are
+perturbed, and rare topology defects are repaired, all by default and all reported.
+[docs/correctness.md](docs/correctness.md) states the guarantees and limits precisely.
 
 ## Performance
 

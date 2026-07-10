@@ -5,31 +5,28 @@ API is pre-1.0 and marked `#[non_exhaustive]` where evolution is expected.
 
 ## 0.2 candidates
 
-**f64 input and output.** Inputs are currently rounded to f32 at entry, which
-sets the resolution floor (~1.4e-6 chord weld radius, ~6e-8 vertex
-quantization). The clipping math is already f64 and vertex identity is
-combinatorial (generator triples), so a full-precision mode is a bounded
-change, not a rewrite: keep the canonical generators in f64, keep the f32
-copy as the spatial-search accelerator (the search layer only proposes
-candidates — it never decides geometry), read f64 positions at the clip
-gather, and store f64 vertices. Work items: a conservative pad on the
-termination certificate to cover f32 mirror rounding, re-derived
-weld/coincidence tolerances at the f64 floor, and an adversarial re-fuzz
-(near-cocircular configurations get denser at f64 resolution).
+**f64 input and output (deferred TODO).** Inputs are currently rounded to f32
+at entry, which sets the resolution floor (~1.4e-6 chord weld radius, ~6e-8
+vertex quantization). The fallback and much of the clipping math are already
+f64 and vertex identity is combinatorial, so this is substantial but not a
+rewrite. Add parallel `UnitVec3d` / `SphericalVoronoi64` storage and f64 compute
+entry points; carry f64 through clipping, repair, validation, measures, and
+location; define an exact-duplicate policy and no-weld behavior for distinct
+generators. The kNN/grid path needs its own sound f64 certificate: a coarse f32
+mirror is acceptable only if bin coverage and unseen bounds conservatively
+cover its quantization, because search termination does decide which
+constraints reach geometry. Start scalar, differential-test against qhull and
+the f32 backend, establish multi-regime baselines, then decide whether a
+four-wide packed f64 kNN path is worth maintaining. Do not ship an f64 API that
+silently rounds inputs or stored vertices to f32.
 
-**Weld as policy, not correctness (exact-duplicates-only mode).** Today
-generators within a fixed radius are welded because sub-radius *clusters*
-(k >= 3) can enclose a micro-cell that clips away entirely and breaks the
-graph. But the failure is singular and loud, and the exact local repair
-(default since 0.1) can in principle rebuild such neighborhoods with exact
-predicates: let `ClippedAway` defer instead of abort, extend the repair
-splice to insert a never-formed cell, and only exact bit-duplicates (which
-have no defined bisector) still require merging. Output would contain
-combinatorially-real epsilon cells with degenerate f32 geometry, so this is
-an opt-in mode — the default weld stays, and welding/epsilon-collapse
-becomes a post-pass policy choice rather than a correctness requirement.
-Gate: the coincidence-probe corpus re-run with welding off and verification
-on, asserting valid-or-error on every historical failure construction.
+**Weld as policy, not correctness (exact-duplicates-only mode).** The 0.1
+fallback now lets a feasible `ClippedAway` cell replay its constraints in f64
+and resume construction. The remaining limit is f32 output topology: sufficiently
+tight multi-point clusters can still round distinct epsilon features together,
+while exact bit-duplicates have no defined bisector at all. Keep default welding
+for 0.1. Revisit exact-duplicates-only mode with f64 storage; gate it on the full
+coincidence-probe corpus with welding off and strict verification on.
 
 **Scaled-sphere convenience.** Voronoi structure on a sphere is purely
 angular, so radius/center support is pre/post scaling: normalize inputs

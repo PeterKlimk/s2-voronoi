@@ -4,6 +4,19 @@
 
 Initial release.
 
+- Hardened the geometric certificates used by polar chart termination and the
+  cube-grid kNN unseen bound; adversarial differential tests now check both
+  against exhaustive reference calculations. Rank-2 failure classification is
+  linear rather than accidentally all-pairs on million-point error paths.
+- Defect-driven repair now reconciles rebuilt-cell winding combinatorially,
+  anchored to the unmodified rim, instead of trusting rounded microscopic
+  vertex geometry. The former mega 1M seed-1 gate rejection is repaired to a
+  strict subdivision.
+- A gnomonic `ClippedAway` result can hand off to spherical constraint replay.
+  The cold fallback keeps normalized bisectors and polygon vertices in f64,
+  resumes the nearest-neighbor stream, and rounds only final stored positions.
+  This resolves former dense-cap and mega defects before post-assembly repair
+  without changing clean-path performance.
 - Edge-repair observability and coverage: `ComputeReport::unresolved_edge_pairs`
   reports each shared-edge mismatch that reached post-assembly reconciliation,
   tagged with an `UnresolvedEdgeOrigin` naming the detection path; a
@@ -54,8 +67,8 @@ Initial release.
 - Spherical Voronoi diagrams on the unit sphere via kNN-driven half-space
   clipping: per-cell parallel construction stitched into one consistent graph
   (see `docs/architecture.md`).
-- Correctness contract: a hard topological guarantee (strictly valid
-  subdivision, fuzz-asserted at 2-4.5M points in CI) over a soft geometric one;
+- Correctness contract: valid subdivision or a defined error, with strict
+  output topology fuzz-asserted at 2-4.5M points in CI, over a soft geometric one;
   see `docs/correctness.md` for the precise statement and the measured
   coincidence margins behind the default weld.
 - Delaunay export (`delaunay_triangles()`): the dual triangulation read off

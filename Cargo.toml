@@ -7,7 +7,14 @@ description = "Fast spherical Voronoi diagrams: parallel cell construction stitc
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/PeterKlimk/voronoi-mesh"
-exclude = [".github/", "scripts/"]
+exclude = [
+    ".github/",
+    ".vscode/",
+    "scripts/",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "TODO.md",
+]
 keywords = ["voronoi", "sphere", "delaunay", "geometry", "mesh"]
 categories = ["algorithms", "mathematics", "science::geo", "graphics"]
 

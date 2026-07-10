@@ -5,8 +5,8 @@ of what f32 can represent.
 
 ## The guarantee
 
-For finite, unit-normalized input within representation capacity, `compute` returns a **strictly
-valid subdivision of the sphere**:
+For finite, unit-normalized input within representation capacity, `compute` either returns a
+defined error or a **strictly valid subdivision of the sphere**:
 
 - Euler characteristic `V - E + F = 2`
 - every edge is shared by exactly two cells, with opposite orientation
