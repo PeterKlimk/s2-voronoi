@@ -82,6 +82,13 @@ fn projected_repair_makes_mega_strictly_valid() {
             "mega 100k s{seed}: LocalProjected repair did not reach strict validity: {}",
             out.report.returned_validation.headline()
         );
+        // These seeds are proven defective without repair, so the stable
+        // coarse repair summary must show an attempted AND accepted pass.
+        assert!(
+            out.report.repair.attempted && out.report.repair.accepted,
+            "mega 100k s{seed}: expected an attempted+accepted repair, got {:?}",
+            out.report.repair
+        );
     }
 }
 

@@ -593,6 +593,90 @@ fn test_serde_roundtrip_preserves_diagram_and_welds() {
     }
 }
 
+/// Deserialization is checked: structurally malformed wire data (spans past
+/// the index buffer, out-of-range vertex references, non-canonical weld maps)
+/// must fail with an error instead of constructing a diagram that panics on
+/// first access.
+#[cfg(feature = "serde")]
+#[test]
+fn test_serde_deserialize_rejects_malformed_data() {
+    use voronoi_mesh::SphericalVoronoi;
+
+    let points = random_sphere_points(50, 991);
+    let diagram = compute(&points).unwrap();
+    let json = serde_json::to_string(&diagram).expect("serialize");
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    let corrupt = |mutate: &dyn Fn(&mut serde_json::Value)| {
+        let mut v = value.clone();
+        mutate(&mut v);
+        serde_json::from_value::<SphericalVoronoi>(v)
+    };
+
+    // Cell span pushed past the index buffer.
+    let err = corrupt(&|v| {
+        v["cells"][0]["start"] = serde_json::json!(u32::MAX);
+    })
+    .expect_err("span past index buffer must be rejected");
+    assert!(err.to_string().contains("span"), "unexpected error: {err}");
+
+    // Live vertex reference out of range.
+    let err = corrupt(&|v| {
+        v["cell_indices"][0] = serde_json::json!(u32::MAX);
+    })
+    .expect_err("out-of-range vertex reference must be rejected");
+    assert!(
+        err.to_string().contains("vertex"),
+        "unexpected error: {err}"
+    );
+
+    // Weld map naming a non-canonical (later) cell.
+    let err = corrupt(&|v| {
+        let n = v["cells"].as_array().unwrap().len();
+        v["weld_map"] = serde_json::json!(vec![n as u32 - 1; n]);
+    })
+    .expect_err("non-canonical weld map must be rejected");
+    assert!(err.to_string().contains("weld"), "unexpected error: {err}");
+
+    // Cell count diverging from generator count.
+    let err = corrupt(&|v| {
+        v["generators"].as_array_mut().unwrap().pop();
+    })
+    .expect_err("cell/generator count mismatch must be rejected");
+    assert!(err.to_string().contains("count"), "unexpected error: {err}");
+
+    // The unmodified value still deserializes.
+    corrupt(&|_| {}).expect("unmodified wire data must round-trip");
+}
+
+/// The checked accessors return None out of bounds; the panicking forms are
+/// documented and consistent (canonical_cell_index historically returned the
+/// invalid index back on non-welded diagrams).
+#[test]
+fn test_checked_accessors_and_oob_contract() {
+    let points = random_sphere_points(100, 5150);
+    let diagram = compute(&points).unwrap();
+    let n = diagram.num_cells();
+
+    assert!(diagram.get_cell(n - 1).is_some());
+    assert!(diagram.get_cell(n).is_none());
+    assert_eq!(diagram.get_generator(0), Some(diagram.generator(0)));
+    assert!(diagram.get_generator(n).is_none());
+    assert_eq!(diagram.get_vertex(0), Some(diagram.vertex(0)));
+    assert!(diagram.get_vertex(diagram.num_vertices()).is_none());
+    assert_eq!(diagram.get_canonical_cell_index(0), Some(0));
+    assert!(diagram.get_canonical_cell_index(n).is_none());
+    let result = std::panic::catch_unwind(|| diagram.canonical_cell_index(n));
+    assert!(
+        result.is_err(),
+        "canonical_cell_index must panic out of bounds even without a weld map"
+    );
+
+    let adjacency = diagram.build_adjacency();
+    assert!(adjacency.get_neighbors_of(n - 1).is_some());
+    assert!(adjacency.get_neighbors_of(n).is_none());
+}
+
 #[test]
 fn test_merge_within_large_radius_uses_standalone_detector() {
     // A radius far above the grid-adjacency bound (1/(16*res)) must route

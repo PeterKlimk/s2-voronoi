@@ -26,11 +26,45 @@ pub const NO_NEIGHBOR: u32 = u32::MAX;
 /// Neighbor entries are **canonical** cell indices: edges belong to canonical
 /// cells, so a welded twin never appears as a neighbor (its canonical cell
 /// does), and querying a twin returns its canonical cell's list.
+///
+/// With the `serde` feature, deserialization is CHECKED (spans must lie
+/// inside the neighbor buffer); malformed input fails with an error instead
+/// of constructing an adjacency that panics later.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "CellAdjacencyWire"))]
 pub struct CellAdjacency {
     cells: Vec<(u32, u16)>,
     neighbors: Vec<u32>,
+}
+
+/// Wire mirror for checked deserialization; field names must match
+/// [`CellAdjacency`] (the derived `Serialize` defines the format).
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct CellAdjacencyWire {
+    cells: Vec<(u32, u16)>,
+    neighbors: Vec<u32>,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<CellAdjacencyWire> for CellAdjacency {
+    type Error = String;
+
+    fn try_from(w: CellAdjacencyWire) -> Result<Self, String> {
+        for (i, &(start, len)) in w.cells.iter().enumerate() {
+            if len != 0 && start as usize + len as usize > w.neighbors.len() {
+                return Err(format!(
+                    "adjacency cell {i} span [{start}..+{len}) exceeds neighbor buffer len {}",
+                    w.neighbors.len()
+                ));
+            }
+        }
+        Ok(CellAdjacency {
+            cells: w.cells,
+            neighbors: w.neighbors,
+        })
+    }
 }
 
 impl CellAdjacency {
@@ -38,13 +72,26 @@ impl CellAdjacency {
     ///
     /// Entry `k` is the cell across the edge from boundary vertex `k` to
     /// vertex `k + 1` (cyclic), or [`NO_NEIGHBOR`] for a defective edge.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `cell >= self.num_cells()`. Use [`Self::get_neighbors_of`]
+    /// for checked access to user-supplied indices.
     #[inline]
+    #[track_caller]
     pub fn neighbors_of(&self, cell: usize) -> &[u32] {
         let (start, len) = self.cells[cell];
         if len == 0 {
             return &[];
         }
         &self.neighbors[start as usize..start as usize + len as usize]
+    }
+
+    /// Checked form of [`Self::neighbors_of`]: `None` when `cell` is out of
+    /// bounds.
+    #[inline]
+    pub fn get_neighbors_of(&self, cell: usize) -> Option<&[u32]> {
+        (cell < self.cells.len()).then(|| self.neighbors_of(cell))
     }
 
     /// Number of cells (same as the source diagram).

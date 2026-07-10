@@ -320,6 +320,11 @@ fn compute_voronoi_knn_clipping_report_core(
             degenerate: degenerate_report,
             returned_validation,
             effective_validation,
+            pre_repair_edge_mismatch_count: pre_repair_edge_mismatches.len(),
+            repair: crate::RepairReport {
+                attempted: state.repair.attempted,
+                accepted: state.repair.accepted,
+            },
             pre_repair_edge_mismatches,
             post_repair_unpaired_edges,
             unresolved_edge_pairs: state
@@ -395,6 +400,9 @@ fn has_low_incidence_vertices(
 
 /// Outcome of the repair attempt, for the caller's fail-loud decision.
 struct RepairOutcome {
+    /// A repair pass ran: defects were detected and the configured mode is
+    /// enabled. False on clean builds and when repair is disabled.
+    attempted: bool,
     /// The repaired effective diagram passed the strict gate and was committed.
     accepted: bool,
     /// Detection found a low-incidence (degree-1/2) vertex defect. Such a
@@ -407,6 +415,7 @@ struct RepairOutcome {
 
 impl RepairOutcome {
     const NOT_ATTEMPTED: RepairOutcome = RepairOutcome {
+        attempted: false,
         accepted: false,
         low_incidence_defect: false,
     };
@@ -458,6 +467,7 @@ fn maybe_repair_effective(
         return RepairOutcome::NOT_ATTEMPTED;
     }
     let outcome = |accepted: bool| RepairOutcome {
+        attempted: true,
         accepted,
         low_incidence_defect: has_low_incidence,
     };

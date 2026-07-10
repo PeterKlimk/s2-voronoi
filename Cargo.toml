@@ -17,6 +17,10 @@ categories = ["algorithms", "mathematics", "science::geo", "graphics"]
 features = ["parallel", "glam", "serde"]
 
 [features]
+# Supported (semver-covered) features: parallel, glam, serde, qhull.
+# Every other feature is an internal instrumentation/benchmarking hook,
+# exempt from semver: items exposed by those features may change or
+# vanish in any release (see the crate-level docs, "Feature stability").
 default = ["parallel"]
 parallel = ["rayon"]
 glam = []  # Enable UnitVec3Like impl for glam::Vec3

@@ -8,8 +8,18 @@
 //! ## Requirements
 //!
 //! - Stable Rust (MSRV 1.88).
-//! - Input points are **assumed** to be unit length (not normalized by the API).
+//! - Input points are **assumed** to be unit length. They are canonicalized
+//!   once at entry (renormalized in f64 and rounded back to f32), which
+//!   absorbs mild off-unit drift; non-finite inputs are rejected with an
+//!   error. Inputs far from unit length are outside the supported contract.
 //! - At least 4 points are required to form a non-degenerate diagram.
+//!
+//! ## Feature stability
+//!
+//! The documented features are `parallel` (default), `glam`, `serde`, and
+//! `qhull`. Any other Cargo feature is an internal instrumentation or
+//! benchmarking hook, exempt from semver: items they expose may change or
+//! vanish in any release.
 //!
 //! ## Output
 //!
@@ -120,6 +130,9 @@ pub mod convex_hull;
 pub use adjacency::CellAdjacency;
 pub use diagram::{CellView, SphericalVoronoi};
 pub use error::VoronoiError;
+/// EXPERIMENTAL DIAGNOSTIC re-export — see the type's documentation; not
+/// part of the supported API surface (taxonomy may change in patch releases).
+#[doc(hidden)]
 pub use live_dedup::UnresolvedEdgeOrigin;
 
 /// P5 stage-1 shadow audit counters (feature `p5_shadow`); diagnostic only.
@@ -251,6 +264,18 @@ pub struct DegenerateReport {
     pub perturbation_applied: bool,
 }
 
+/// Observable outcome of the optional post-assembly local repair pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RepairReport {
+    /// A repair pass ran (defects were detected and the configured
+    /// [`RepairMode`] is not `Disabled`). False on clean builds.
+    pub attempted: bool,
+    /// The repaired diagram passed whole-diagram strict validation and was
+    /// committed. Always false when `attempted` is false.
+    pub accepted: bool,
+}
+
 /// Observable per-run report for Voronoi computation.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -264,28 +289,35 @@ pub struct ComputeReport {
     /// Strict validation of the effective preprocessed diagram, when preprocessing
     /// changed the solved generator set.
     pub effective_validation: Option<validation::ValidationReport>,
-    /// Shared-edge mismatches observed during live dedup before the
+    /// Number of shared-edge mismatches observed during live dedup before the
     /// post-assembly reconciliation and optional local repair passes.
     ///
-    /// These are useful diagnostics for proving that a near-degenerate input
-    /// exercised the repair machinery. They do not mean the returned diagram is
-    /// invalid; check [`ComputeReport::post_repair_unpaired_edges`] and
+    /// A non-zero count proves a near-degenerate input exercised the repair
+    /// machinery; it does not mean the returned diagram is invalid. Check
+    /// [`ComputeReport::post_repair_unpaired_edges`] and
     /// [`ComputeReport::preferred_validation`] for the output contract.
-    pub pre_repair_edge_mismatches: Vec<(u32, u32, UnresolvedEdgeOrigin)>,
+    pub pre_repair_edge_mismatch_count: usize,
+    /// What the local repair pass did this run.
+    pub repair: RepairReport,
     /// Interior edges that remained unpaired after reconciliation and were not
     /// cleared by an accepted local repair. `compute` turns these into a loud
     /// error; `compute_with_report` surfaces them for diagnostics.
     pub post_repair_unpaired_edges: Vec<(u32, u32)>,
-    /// Unresolved shared-edge mismatches that survived live dedup and were
-    /// handed to post-assembly edge reconciliation, as pairs of
-    /// effective-diagram generator indices plus the detection path that
-    /// recorded each. Historical aggregate: contains
-    /// [`ComputeReport::pre_repair_edge_mismatches`] plus
-    /// `PostRepairUnpaired` records when
-    /// [`ComputeReport::post_repair_unpaired_edges`] is non-empty.
-    ///
-    /// Diagnostic: tests use this to prove defect-forcing inputs actually
-    /// exercise the repair paths (see `tests/edge_repair_net.rs`).
+    /// EXPERIMENTAL DIAGNOSTIC (unsupported surface; taxonomy changes in
+    /// patch releases): the pre-repair mismatches behind
+    /// [`ComputeReport::pre_repair_edge_mismatch_count`], as effective-diagram
+    /// generator pairs plus the detection path that recorded each.
+    #[doc(hidden)]
+    pub pre_repair_edge_mismatches: Vec<(u32, u32, UnresolvedEdgeOrigin)>,
+    /// EXPERIMENTAL DIAGNOSTIC (unsupported surface; taxonomy changes in
+    /// patch releases): unresolved shared-edge mismatches handed to
+    /// post-assembly reconciliation, as effective-diagram generator pairs plus
+    /// detection origins. Historical aggregate: contains
+    /// `pre_repair_edge_mismatches` plus `PostRepairUnpaired` records when
+    /// [`ComputeReport::post_repair_unpaired_edges`] is non-empty. Tests use
+    /// this to prove defect-forcing inputs exercise each detection path (see
+    /// `tests/edge_repair_net.rs`).
+    #[doc(hidden)]
     pub unresolved_edge_pairs: Vec<(u32, u32, UnresolvedEdgeOrigin)>,
 }
 

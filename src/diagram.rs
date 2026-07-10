@@ -11,8 +11,19 @@ use glam::Vec3;
 /// - Cells (regions closest to each generator)
 ///
 /// Each cell is represented as a list of vertex indices forming a spherical polygon.
+///
+/// With the `serde` feature, deserialization is CHECKED: the wire data must
+/// satisfy the structural invariants the accessors rely on (cell spans inside
+/// the index buffer, live vertex indices in range, a well-formed weld map),
+/// and malformed input fails with a descriptive error instead of constructing
+/// a diagram that panics later. Semantic validity (edge pairing, Euler
+/// characteristic, …) is NOT re-checked on deserialization; run
+/// [`crate::validation::validate`] if the data's provenance is untrusted. The
+/// serialized form mirrors the storage layout and may change in minor
+/// releases pre-1.0.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "wire::SphericalVoronoiWire"))]
 pub struct SphericalVoronoi {
     /// Generator points (input), one per cell.
     generators: Vec<UnitVec3>,
@@ -146,7 +157,13 @@ impl SphericalVoronoi {
     }
 
     /// Get a view of a specific cell.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.num_cells()`. Use [`Self::get_cell`] for
+    /// checked access to user-supplied indices.
     #[inline]
+    #[track_caller]
     pub fn cell(&self, index: usize) -> CellView<'_> {
         let data = &self.cells[index];
         let start = data.start as usize;
@@ -157,21 +174,52 @@ impl SphericalVoronoi {
         }
     }
 
+    /// Checked form of [`Self::cell`]: `None` when `index` is out of bounds.
+    #[inline]
+    pub fn get_cell(&self, index: usize) -> Option<CellView<'_>> {
+        (index < self.num_cells()).then(|| self.cell(index))
+    }
+
     /// Iterate over all cells.
     pub fn iter_cells(&self) -> impl Iterator<Item = CellView<'_>> {
         (0..self.num_cells()).map(move |i| self.cell(i))
     }
 
     /// Get the generator (center point) of a cell.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.num_cells()`. Use [`Self::get_generator`] for
+    /// checked access to user-supplied indices.
     #[inline]
+    #[track_caller]
     pub fn generator(&self, index: usize) -> UnitVec3 {
         self.generators[index]
     }
 
-    /// Get a vertex by index.
+    /// Checked form of [`Self::generator`]: `None` when `index` is out of
+    /// bounds.
     #[inline]
+    pub fn get_generator(&self, index: usize) -> Option<UnitVec3> {
+        self.generators.get(index).copied()
+    }
+
+    /// Get a vertex by index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.num_vertices()`. Use [`Self::get_vertex`] for
+    /// checked access to user-supplied indices.
+    #[inline]
+    #[track_caller]
     pub fn vertex(&self, index: usize) -> UnitVec3 {
         self.vertices[index]
+    }
+
+    /// Checked form of [`Self::vertex`]: `None` when `index` is out of bounds.
+    #[inline]
+    pub fn get_vertex(&self, index: usize) -> Option<UnitVec3> {
+        self.vertices.get(index).copied()
     }
 
     /// Canonical cell index for a cell.
@@ -180,12 +228,34 @@ impl SphericalVoronoi {
     /// canonical index is the smallest input index in the weld class, and the
     /// welded cells alias the canonical cell's boundary. For non-welded cells
     /// (the overwhelmingly common case) this is the identity.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.num_cells()` (historically the no-weld case
+    /// silently returned the invalid index back). Use
+    /// [`Self::get_canonical_cell_index`] for checked access.
     #[inline]
+    #[track_caller]
     pub fn canonical_cell_index(&self, index: usize) -> usize {
-        match &self.weld_map {
+        self.get_canonical_cell_index(index).unwrap_or_else(|| {
+            panic!(
+                "cell index {index} out of bounds (num_cells {})",
+                self.num_cells()
+            )
+        })
+    }
+
+    /// Checked form of [`Self::canonical_cell_index`]: `None` when `index` is
+    /// out of bounds.
+    #[inline]
+    pub fn get_canonical_cell_index(&self, index: usize) -> Option<usize> {
+        if index >= self.num_cells() {
+            return None;
+        }
+        Some(match &self.weld_map {
             Some(map) => map[index] as usize,
             None => index,
-        }
+        })
     }
 
     /// Canonical-cell mapping when generators were welded, `None` otherwise.
@@ -281,6 +351,7 @@ impl SphericalVoronoi {
 
 /// A view into a single Voronoi cell.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct CellView<'a> {
     /// Index of the generator point for this cell.
     pub generator_index: usize,
@@ -330,6 +401,87 @@ impl VoronoiCell {
     #[inline]
     pub(crate) fn vertex_count(&self) -> usize {
         self.vertex_count as usize
+    }
+}
+
+/// Checked deserialization support: the wire mirror of the storage layout
+/// plus the structural validation that makes `Deserialize` safe on untrusted
+/// bytes. Field names must stay in lockstep with [`SphericalVoronoi`] — the
+/// derived `Serialize` on the real struct defines the format.
+#[cfg(feature = "serde")]
+mod wire {
+    use super::{CellData, SphericalVoronoi, UnitVec3};
+
+    #[derive(serde::Deserialize)]
+    pub struct SphericalVoronoiWire {
+        generators: Vec<UnitVec3>,
+        vertices: Vec<UnitVec3>,
+        cells: Vec<CellData>,
+        cell_indices: Vec<u32>,
+        weld_map: Option<Vec<u32>>,
+    }
+
+    impl TryFrom<SphericalVoronoiWire> for SphericalVoronoi {
+        type Error = String;
+
+        fn try_from(w: SphericalVoronoiWire) -> Result<Self, String> {
+            if w.cells.len() != w.generators.len() {
+                return Err(format!(
+                    "cell count {} does not match generator count {}",
+                    w.cells.len(),
+                    w.generators.len()
+                ));
+            }
+            for (i, c) in w.cells.iter().enumerate() {
+                let start = c.start as usize;
+                let end = start + c.len as usize;
+                if end > w.cell_indices.len() {
+                    return Err(format!(
+                        "cell {i} span [{start}..{end}) exceeds index buffer len {}",
+                        w.cell_indices.len()
+                    ));
+                }
+                // Only LIVE spans are validated: the in-place edge repair can
+                // legitimately leave stale never-read slots in the buffer tail.
+                if let Some(&vi) = w.cell_indices[start..end]
+                    .iter()
+                    .find(|&&vi| vi as usize >= w.vertices.len())
+                {
+                    return Err(format!(
+                        "cell {i} references vertex {vi} out of bounds (num_vertices {})",
+                        w.vertices.len()
+                    ));
+                }
+            }
+            if let Some(map) = &w.weld_map {
+                if map.len() != w.cells.len() {
+                    return Err(format!(
+                        "weld map len {} does not match cell count {}",
+                        map.len(),
+                        w.cells.len()
+                    ));
+                }
+                for (i, &c) in map.iter().enumerate() {
+                    let c = c as usize;
+                    // Canonical = smallest index in the weld class and a
+                    // fixpoint of the map — the invariants compact_vertices
+                    // and canonical-cell aliasing rely on.
+                    if c > i || map[c] as usize != c {
+                        return Err(format!(
+                            "weld map entry {i} -> {c} is not a canonical (self-mapped, \
+                             preceding) cell index"
+                        ));
+                    }
+                }
+            }
+            Ok(SphericalVoronoi {
+                generators: w.generators,
+                vertices: w.vertices,
+                cells: w.cells,
+                cell_indices: w.cell_indices,
+                weld_map: w.weld_map,
+            })
+        }
     }
 }
 

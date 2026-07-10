@@ -19,6 +19,11 @@ impl SphericalVoronoi {
     /// Computed as a signed triangle fan of solid angles
     /// (van Oosterom–Strackee) in f64; cells with fewer than 3 vertices
     /// report zero area.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.num_cells()` (see [`Self::cell`]).
+    #[track_caller]
     pub fn cell_area(&self, index: usize) -> f64 {
         let cell = self.cell(index);
         let n = cell.len();
@@ -48,6 +53,11 @@ impl SphericalVoronoi {
     /// cell's edges (arc angle times unit edge-plane normal), in f64.
     /// Degenerate cells (fewer than 3 vertices, or a vanishing integral)
     /// fall back to the generator itself.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= self.num_cells()` (see [`Self::cell`]).
+    #[track_caller]
     pub fn cell_centroid(&self, index: usize) -> UnitVec3 {
         let cell = self.cell(index);
         let n = cell.len();

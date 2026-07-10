@@ -10,6 +10,13 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::tolerances::{ANTIPODAL_DOT_EPS, VERTEX_ON_SPHERE_EPS};
 
 /// Detailed validation report for a spherical Voronoi diagram.
+///
+/// Stability: [`ValidationReport::is_strictly_valid`] is the authoritative
+/// verdict and the stable contract. The individual counters expose the
+/// current defect taxonomy for telemetry and tests; new fields may be added
+/// in minor releases (the struct is `#[non_exhaustive]`). Human-readable
+/// output ([`ValidationReport::headline`] and issue strings) is diagnostic
+/// only — its wording is not stable.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ValidationReport {

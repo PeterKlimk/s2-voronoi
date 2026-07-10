@@ -119,11 +119,15 @@ pub(crate) struct EdgeRecord {
 
 /// Which detection path recorded an unresolved shared-edge mismatch.
 ///
-/// Diagnostic only (cold path, rare records): lets tests prove that each
-/// detection path — the three within-bin cases and their cross-bin overflow
-/// analogues — is actually exercised, instead of inferring coverage from
-/// aggregate counts.
+/// EXPERIMENTAL DIAGNOSTIC — not part of the supported API surface. The
+/// variants name sharding/reconciliation implementation details (within-bin
+/// vs cross-bin, slot conflicts) and the taxonomy changes as the engine
+/// evolves, including in patch releases. It exists so tests can prove each
+/// detection path is exercised and so bug reports can carry precise origins;
+/// do not build application logic on specific variants. The stable surface
+/// is `ComputeReport`'s coarse summary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum UnresolvedEdgeOrigin {
     /// Within-bin: the later cell has an edge to an earlier same-bin
     /// neighbor, but no incoming edge check matched (the earlier cell
