@@ -420,18 +420,25 @@ fn fallback_reconstruction_normalizes_s2_constraints() {
     let g = Vec3::new(0.0, 0.0, 1.0002);
     let mut builder = Topo2DBuilder::new(0, g);
 
+    // Off-unit S2 positions: the property under test is that the fallback
+    // reconstruction normalizes what it reads from the `points` array
+    // (`FallbackConstraint::from_neighbor(.., points[neighbor_idx])`). The
+    // clip path itself has a canonicalized-unit precondition (debug-asserted
+    // in `bisector_coefficients`; production inputs pass through
+    // `canonicalize_unit_points`), so the clips receive the normalized forms
+    // and only `points` carries the off-unit values.
     let h1 = Vec3::new(1.0, 0.0, 0.5).normalize() * 0.9997;
     let h2 = Vec3::new(-0.5, 0.866, 0.5).normalize() * 1.0003;
     let h3 = Vec3::new(-0.5, -0.866, 0.5).normalize() * 0.9998;
 
     builder
-        .clip_with_slot_edgecheck_policy(11, 21, h1, 0.125)
+        .clip_with_slot_edgecheck_policy(11, 21, h1.normalize(), 0.125)
         .expect("edgecheck clip should apply");
     builder
-        .clip_with_slot_policy(12, 22, h2)
+        .clip_with_slot_policy(12, 22, h2.normalize())
         .expect("normal clip should apply");
     builder
-        .clip_with_slot_policy(13, 23, h3)
+        .clip_with_slot_policy(13, 23, h3.normalize())
         .expect("normal clip should apply");
 
     let points = fallback_points(g, h1, h2, h3);
