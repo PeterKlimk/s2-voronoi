@@ -816,24 +816,7 @@ fn classify_rank2_great_circle(points: &[Vec3]) -> Option<Rank2GreatCircle> {
         return None;
     }
 
-    let mut best_cross = DVec3::ZERO;
-    let mut best_len2 = 0.0f64;
-    for i in 0..points.len() {
-        let a = dvec(points[i]);
-        for &b32 in &points[i + 1..] {
-            let cross = a.cross(dvec(b32));
-            let len2 = cross.length_squared();
-            if len2 > best_len2 {
-                best_len2 = len2;
-                best_cross = cross;
-            }
-        }
-    }
-    if best_len2 < 0.25 {
-        return None;
-    }
-
-    let normal = best_cross / best_len2.sqrt();
+    let normal = stable_rank2_normal(points)?;
     let mut max_abs_dot = 0.0f64;
     let mut sum_dot2 = 0.0f64;
     for &p in points {
@@ -851,6 +834,51 @@ fn classify_rank2_great_circle(points: &[Vec3]) -> Option<Rank2GreatCircle> {
     }
 
     Some(Rank2GreatCircle { normal })
+}
+
+/// Find a numerically stable candidate normal in a fixed number of linear
+/// sweeps. The old implementation searched every pair for the largest cross
+/// product, making *any* failed million-point build fall into an O(n²)
+/// great-circle probe before it could return the original error.
+///
+/// This selection is deliberately conservative: failure to find a pair with
+/// enough angular separation merely declines the perturbation retry. It cannot
+/// create a false rank-2 classification because `classify_rank2_great_circle`
+/// subsequently checks every point against the candidate plane and verifies
+/// full-circle coverage. Re-pivoting at the farthest point handles ordered
+/// two-arc inputs where no pair involving `points[0]` is sufficiently stable.
+fn stable_rank2_normal(points: &[Vec3]) -> Option<DVec3> {
+    const SWEEPS: usize = 3;
+    const MIN_CROSS_LEN2: f64 = 0.25;
+
+    let mut pivot = 0usize;
+    let mut best_cross = DVec3::ZERO;
+    let mut best_len2 = 0.0f64;
+    for _ in 0..SWEEPS {
+        let a = dvec(points[pivot]);
+        let mut next_pivot = pivot;
+        let mut sweep_best_len2 = 0.0f64;
+        for (i, &b32) in points.iter().enumerate() {
+            let cross = a.cross(dvec(b32));
+            let len2 = cross.length_squared();
+            if len2 > sweep_best_len2 {
+                sweep_best_len2 = len2;
+                next_pivot = i;
+            }
+            if len2 > best_len2 {
+                best_len2 = len2;
+                best_cross = cross;
+            }
+        }
+        if next_pivot == pivot {
+            break;
+        }
+        pivot = next_pivot;
+    }
+    if best_len2 < MIN_CROSS_LEN2 {
+        return None;
+    }
+    Some(best_cross / best_len2.sqrt())
 }
 
 fn covers_great_circle(points: &[Vec3], normal: DVec3) -> bool {
@@ -1180,13 +1208,68 @@ fn remap_cells_to_original_indices(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_query_grid, cell_sum_sq_per_n, map_build_cells_error, map_cell_build_error,
-        max_cell_occupancy, validate_generator_capacity,
+        build_query_grid, cell_sum_sq_per_n, classify_rank2_great_circle, map_build_cells_error,
+        map_cell_build_error, max_cell_occupancy, stable_rank2_normal, validate_generator_capacity,
     };
     use crate::knn_clipping::cell_build::{CellBuildError, CellFailure};
     use crate::knn_clipping::live_dedup::{BuildCellsError, PackedLayoutCapacityError};
     use crate::VoronoiError;
     use glam::Vec3;
+
+    #[test]
+    fn stable_rank2_normal_repivots_for_two_arc_ordering() {
+        let points: Vec<Vec3> = [0.0f32, 20.0, 160.0, 180.0, 200.0, 340.0]
+            .into_iter()
+            .map(|degrees| {
+                let angle = degrees.to_radians();
+                Vec3::new(angle.cos(), angle.sin(), 0.0)
+            })
+            .collect();
+
+        // No pair involving the first point clears the stability threshold:
+        // the second sweep must re-pivot onto an arc endpoint.
+        let first = points[0];
+        assert!(
+            points
+                .iter()
+                .map(|&p| first.cross(p).length_squared())
+                .fold(0.0f32, f32::max)
+                < 0.25
+        );
+        let normal = stable_rank2_normal(&points).expect("stable pair should be found");
+        assert!(normal.z.abs() > 0.999_999);
+    }
+
+    #[test]
+    fn stable_rank2_normal_large_nonplanar_probe_is_linear() {
+        // Large enough that the former all-pairs implementation is
+        // impractical even as a unit test. The candidate plane is rejected by
+        // the caller's all-point plane check; this test pins bounded pair
+        // selection itself.
+        let points: Vec<Vec3> = (0..100_000)
+            .map(|i| match i % 3 {
+                0 => Vec3::X,
+                1 => Vec3::Y,
+                _ => Vec3::Z,
+            })
+            .collect();
+        assert!(stable_rank2_normal(&points).is_some());
+        assert!(classify_rank2_great_circle(&points).is_none());
+    }
+
+    #[test]
+    fn rank2_classifier_scales_to_large_great_circle() {
+        let n = 100_000usize;
+        let points: Vec<Vec3> = (0..n)
+            .map(|i| {
+                let angle = std::f32::consts::TAU * i as f32 / n as f32;
+                Vec3::new(angle.cos(), angle.sin(), 0.0)
+            })
+            .collect();
+        let class = classify_rank2_great_circle(&points)
+            .expect("full great-circle fixture should be classified as rank 2");
+        assert!(class.normal.z.abs() > 0.999_999);
+    }
 
     #[test]
     fn map_projection_invalid_to_unsupported_geometry() {
