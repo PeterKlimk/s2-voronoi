@@ -29,6 +29,7 @@ pub(crate) struct ShellFrontier<'a, 'b> {
     query_idx: usize,
     start_cell: u32,
     eligibility: DirectedEligibility<'b>,
+    initialized: bool,
     pending_bound: f32,
     has_pending: bool,
     exhausted: bool,
@@ -42,35 +43,40 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
         scratch: &'a mut CubeMapGridScratch,
         eligibility: DirectedEligibility<'b>,
     ) -> Self {
-        let start_cell = if query_idx < grid.point_cells.len() {
-            grid.point_cells[query_idx]
-        } else {
-            grid.point_to_cell(query) as u32
-        };
-
-        scratch.exhausted = false;
-        scratch.stamp = scratch.stamp.wrapping_add(1).max(1);
-        if scratch.stamp == u32::MAX {
-            scratch.visited_stamp.fill(0);
-            scratch.stamp = 1;
-        }
-        scratch.mark_visited(start_cell);
-        scratch.current.clear();
-        scratch.current.push(start_cell);
-        scratch.next.clear();
-        scratch.pending.clear();
-
         Self {
             grid,
             scratch,
             query,
             query_idx,
-            start_cell,
+            start_cell: u32::MAX,
             eligibility,
+            initialized: false,
             pending_bound: -1.0,
             has_pending: false,
             exhausted: false,
         }
+    }
+
+    #[inline]
+    fn initialize(&mut self) {
+        debug_assert!(!self.initialized);
+        self.start_cell = if self.query_idx < self.grid.point_cells.len() {
+            self.grid.point_cells[self.query_idx]
+        } else {
+            self.grid.point_to_cell(self.query) as u32
+        };
+        self.scratch.exhausted = false;
+        self.scratch.stamp = self.scratch.stamp.wrapping_add(1).max(1);
+        if self.scratch.stamp == u32::MAX {
+            self.scratch.visited_stamp.fill(0);
+            self.scratch.stamp = 1;
+        }
+        self.scratch.mark_visited(self.start_cell);
+        self.scratch.current.clear();
+        self.scratch.current.push(self.start_cell);
+        self.scratch.next.clear();
+        self.scratch.pending.clear();
+        self.initialized = true;
     }
 
     /// Gather the eligible points of one cell into `pending`.
@@ -154,6 +160,9 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
     /// Current frontier: fills `out` with the pending layer's slots.
     /// Returns `None` when the traversal is exhausted.
     pub(crate) fn frontier(&mut self, out: &mut Vec<u32>) -> Option<ShellBatch> {
+        if !self.initialized {
+            self.initialize();
+        }
         if !self.has_pending && !self.exhausted {
             self.build_pending();
         }
@@ -177,6 +186,11 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
     #[inline]
     pub(crate) fn is_exhausted(&self) -> bool {
         self.exhausted
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_initialized(&self) -> bool {
+        self.initialized
     }
 }
 

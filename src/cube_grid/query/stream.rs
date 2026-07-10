@@ -351,6 +351,7 @@ mod tests {
             ctx,
             Some(packed),
         );
+        assert!(!stream.takeover.is_initialized());
 
         let mut batch = Vec::new();
         let first = stream.frontier(&mut batch);
@@ -365,6 +366,7 @@ mod tests {
             batch, first_slots,
             "repeated frontier call should return the same exact batch without advancing"
         );
+        assert!(!stream.takeover.is_initialized());
 
         stream.advance_frontier();
         let third = stream.frontier(&mut batch);
