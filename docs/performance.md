@@ -146,6 +146,13 @@ instructions from 7.37B to 5.70B and cycles from 2.40B to 1.92B. At 50k clustere
 improved 23.6% over eight pairs. The 100k Fibonacci control has negligible shell time; its wall-time
 result was unresolved, while counters improved about 1.1% instructions and 1.2% cycles.
 
+Packed center passes test an emission mask before extracting SIMD lanes to a scalar array. The
+change is deliberately small: at 2M clustered it reduced retired instructions by 0.07–0.08% in
+three of three paired runs, while cycles remained neutral. A 1M Fibonacci control was structurally
+neutral. Splitting the experiment showed that the center-prepare guards account for nearly all of
+the saving; the requested-tail rescan guard alone was neutral. Retain this as a low-risk structural
+cleanup, not as a demonstrated wall-time improvement.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -154,10 +161,6 @@ measured results above or the retired list below. Do not bundle candidates befor
 
 High-priority, low-risk experiments:
 
-- **K1 — defer empty-mask SIMD extraction:** in packed center-tail and center-pass loops, test
-  `tail_bits` / `hi_bits` before `Dots8::to_array`. Release assembly currently stores lanes before
-  the empty-mask branch. Measure packed/query instructions on clustered and mega; Fibonacci is the
-  neutrality control.
 - **C1 — remove the large-clip cyclic divide:** replace `(i + 1) % n` in the output writer with
   increment-and-wrap. Release assembly contains an integer divide. Measure large-polygon clip
   microbenches and mega end to end.

@@ -393,13 +393,15 @@ impl PackedKnnCellScratch {
                         // post-hoc demotion loop is gone.
                         let hi_bits = dots.mask_gt(hi_thresholds[qi]) & mask_bits;
                         let band_bits = mask_bits & !hi_bits;
-                        let mut hi = hi_bits;
-                        let dots_arr = dots.to_array();
-                        while hi != 0 {
-                            let lane = hi.trailing_zeros() as usize;
-                            let slot = (center_soa_start + i + lane) as u32;
-                            chunk0_keys[qi].push(make_desc_key(dots_arr[lane], slot));
-                            hi &= hi - 1;
+                        if hi_bits != 0 {
+                            let mut hi = hi_bits;
+                            let dots_arr = dots.to_array();
+                            while hi != 0 {
+                                let lane = hi.trailing_zeros() as usize;
+                                let slot = (center_soa_start + i + lane) as u32;
+                                chunk0_keys[qi].push(make_desc_key(dots_arr[lane], slot));
+                                hi &= hi - 1;
+                            }
                         }
                         self.center_tail_counts[qi] += band_bits.count_ones() as usize;
                     }
@@ -439,13 +441,15 @@ impl PackedKnnCellScratch {
 
                         let hi_bits = dots.mask_gt(hi_thresholds[qi]) & mask_bits;
                         let band_bits = mask_bits & !hi_bits;
-                        let mut hi = hi_bits;
-                        let dots_arr = dots.to_array();
-                        while hi != 0 {
-                            let lane = hi.trailing_zeros() as usize;
-                            let slot = (center_soa_start + i + lane) as u32;
-                            chunk0_keys[qi].push(make_desc_key(dots_arr[lane], slot));
-                            hi &= hi - 1;
+                        if hi_bits != 0 {
+                            let mut hi = hi_bits;
+                            let dots_arr = dots.to_array();
+                            while hi != 0 {
+                                let lane = hi.trailing_zeros() as usize;
+                                let slot = (center_soa_start + i + lane) as u32;
+                                chunk0_keys[qi].push(make_desc_key(dots_arr[lane], slot));
+                                hi &= hi - 1;
+                            }
                         }
                         self.center_tail_counts[qi] += band_bits.count_ones() as usize;
                     }

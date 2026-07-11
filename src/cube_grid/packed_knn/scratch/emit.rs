@@ -69,6 +69,9 @@ impl PackedKnnCellScratch {
             );
             let dots = candidates.dots(qx_s, qy_s, qz_s);
             let mut tail_bits = dots.mask_gt(security_threshold) & !dots.mask_gt(threshold);
+            if tail_bits == 0 {
+                continue;
+            }
             let dots_arr = dots.to_array();
             while tail_bits != 0 {
                 let lane = tail_bits.trailing_zeros() as usize;
