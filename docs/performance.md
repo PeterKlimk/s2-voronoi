@@ -173,6 +173,14 @@ retain the atomic implementation. At 2M single-threaded it reduced retired instr
 on Fibonacci and 0.061% on uniform input, with effectively identical counts in all three paired
 runs. Cycles were too noisy to resolve; the default parallel control was structurally neutral.
 
+The N=3/4 small clipper keeps its four SIMD distances in a four-element array instead of padding an
+eight-element array with four zero stores. Escalation receives only the initialized slice; N=5–8
+retains the full eight-lane representation. Release code shrank by 208 bytes and no longer contains
+the two padded 16-byte stores. At 2M single-threaded, retired instructions fell about 0.062% on
+Fibonacci and 0.061% on uniform input in all three pairs. Fibonacci cycles improved in all pairs;
+uniform cycles were neutral. The default, microbench, `p5_shadow`, and escalation feature paths all
+share the initialized-slice invariant.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -187,9 +195,6 @@ Promising workload-specific experiments:
 - **K3 — vectorize interior security thresholds:** evaluate the four cell-wall planes in eight-query
   chunks while preserving dot association and nonfinite fallback behavior. Measure
   `packed_security` and compare thresholds bit-for-bit.
-- **C2 — avoid padded small-clip stores:** the ubiquitous N=3/4 path currently writes four unused
-  f64 zeros before escalation examines only live lanes. Any uninitialized representation must prove
-  all feature combinations, including `p5_shadow`, read only initialized lanes.
 - **C3 — use a four-lane large-clip tail:** for polygon lengths with a remainder at most four, avoid
   evaluating dead lanes. Measure N=9–12 and N=17–20 microbench cases before end-to-end testing.
 - **C4 — unswitch batch-source handling:** hoist the invariant packed-tail/chunk/shell source match

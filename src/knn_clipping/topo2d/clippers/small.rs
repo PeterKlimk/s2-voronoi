@@ -173,6 +173,42 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
     ClipResult::Changed
 }
 
+/// Initialized signed distances for one small-polygon SIMD evaluation.
+///
+/// The four-lane variant deliberately has no padded upper lanes: escalation
+/// receives only this initialized slice, and every transition index is below
+/// the const-generic live-lane count.
+enum SmallDists {
+    Four([f64; 4]),
+    Eight([f64; 8]),
+}
+
+impl SmallDists {
+    #[inline(always)]
+    fn as_slice(&self) -> &[f64] {
+        match self {
+            Self::Four(dists) => dists,
+            Self::Eight(dists) => dists,
+        }
+    }
+}
+
+#[inline(always)]
+fn eval_small_dists<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane) -> (SmallDists, u32) {
+    let neg_eps = -hp.eps;
+    let (us_chunks, _) = poly.us.as_chunks::<8>();
+    let (vs_chunks, _) = poly.vs.as_chunks::<8>();
+    if N <= 4 {
+        let (dists, mask) =
+            fp::signed_dists_mask4(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps);
+        (SmallDists::Four(dists), mask)
+    } else {
+        let (dists, mask) =
+            fp::signed_dists_mask8(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps);
+        (SmallDists::Eight(dists), mask)
+    }
+}
+
 /// Small-N clipper using modulo iteration (for N=4,8 where `% N` is a bitmask).
 #[inline(always)]
 #[allow(clippy::needless_range_loop)] // index drives 3 parallel outputs + pointer reads
@@ -185,8 +221,6 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
     debug_assert_eq!(poly.len, N);
     debug_assert!(N >= 3 && N <= 8);
 
-    let neg_eps = -hp.eps;
-
     let us = poly.us.as_ptr();
     let vs = poly.vs.as_ptr();
     let vps = poly.vertex_planes.as_ptr();
@@ -198,19 +232,12 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
     // stale-but-finite data and are masked down to the live N bits; lane math
     // is bit-identical to the scalar signed_dist formula.
     let full: u32 = (1u32 << N) - 1;
-    let (us_chunks, _) = poly.us.as_chunks::<8>();
-    let (vs_chunks, _) = poly.vs.as_chunks::<8>();
-    let (dists, inside_bits) = if N <= 4 {
-        let (d4, m4) =
-            fp::signed_dists_mask4(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps);
-        ([d4[0], d4[1], d4[2], d4[3], 0.0, 0.0, 0.0, 0.0], m4)
-    } else {
-        fp::signed_dists_mask8(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps)
-    };
+    let (dists, inside_bits) = eval_small_dists::<N>(poly, hp);
+    let dists = dists.as_slice();
     let mask = inside_bits & full;
     // P5 escalation: near-margin lanes are re-decided by the exact
     // canonical predicate (one abs+compare per live lane on the hot path).
-    let mask = super::maybe_escalate(mask as u64, &dists, N, hp, poly, esc) as u32;
+    let mask = super::maybe_escalate(mask as u64, dists, N, hp, poly, esc) as u32;
 
     if mask == 0 {
         out.len = 0;
@@ -330,8 +357,6 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
     debug_assert_eq!(poly.len, N);
     debug_assert!(N >= 3 && N <= 8);
 
-    let neg_eps = -hp.eps;
-
     let us = poly.us.as_ptr();
     let vs = poly.vs.as_ptr();
     let vps = poly.vertex_planes.as_ptr();
@@ -343,19 +368,12 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
     // stale-but-finite data and are masked down to the live N bits; lane math
     // is bit-identical to the scalar signed_dist formula.
     let full: u32 = (1u32 << N) - 1;
-    let (us_chunks, _) = poly.us.as_chunks::<8>();
-    let (vs_chunks, _) = poly.vs.as_chunks::<8>();
-    let (dists, inside_bits) = if N <= 4 {
-        let (d4, m4) =
-            fp::signed_dists_mask4(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps);
-        ([d4[0], d4[1], d4[2], d4[3], 0.0, 0.0, 0.0, 0.0], m4)
-    } else {
-        fp::signed_dists_mask8(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps)
-    };
+    let (dists, inside_bits) = eval_small_dists::<N>(poly, hp);
+    let dists = dists.as_slice();
     let mask = inside_bits & full;
     // P5 escalation: near-margin lanes are re-decided by the exact
     // canonical predicate (one abs+compare per live lane on the hot path).
-    let mask = super::maybe_escalate(mask as u64, &dists, N, hp, poly, esc) as u32;
+    let mask = super::maybe_escalate(mask as u64, dists, N, hp, poly, esc) as u32;
 
     if mask == 0 {
         out.len = 0;
