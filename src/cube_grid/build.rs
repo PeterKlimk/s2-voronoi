@@ -48,23 +48,33 @@ impl CubeMapGrid {
         #[cfg(feature = "timing")]
         let mut timings = CubeMapGridBuildTimings::default();
         #[cfg(feature = "timing")]
-        return Self::new_impl(points, res, Some(&mut timings));
+        return Self::new_impl(points, res, true, Some(&mut timings));
         #[cfg(not(feature = "timing"))]
-        return Self::new_impl(points, res, None);
+        return Self::new_impl(points, res, true, None);
+    }
+
+    /// Build a provisional query grid without the optional dense-cell side
+    /// index. The compute pipeline uses this while occupancy feedback and
+    /// preprocessing may still replace or compact the grid, then materializes
+    /// the index once on the retained layout.
+    #[cfg(not(feature = "timing"))]
+    pub(crate) fn new_deferred_dense(points: &[Vec3], res: usize) -> Self {
+        Self::new_impl(points, res, false, None)
     }
 
     #[cfg(feature = "timing")]
-    pub fn new_with_build_timings(
+    pub(crate) fn new_deferred_dense_with_build_timings(
         points: &[Vec3],
         res: usize,
         timings: &mut CubeMapGridBuildTimings,
     ) -> Self {
-        Self::new_impl(points, res, Some(timings))
+        Self::new_impl(points, res, false, Some(timings))
     }
 
     fn new_impl(
         points: &[Vec3],
         res: usize,
+        build_dense_index: bool,
         #[cfg(feature = "timing")] mut timings: Option<&mut CubeMapGridBuildTimings>,
         #[cfg(not(feature = "timing"))] _timings: Option<&mut CubeMapGridBuildTimings>,
     ) -> Self {
@@ -355,13 +365,17 @@ impl CubeMapGrid {
         );
         // Dense-cell side index (punch 1): built only for over-full cells, so
         // None on uniform input. Side structure; leaves the SoA untouched.
-        let dense_index = super::dense::DenseCellIndex::build(
-            &cell_offsets,
-            &cell_points_x,
-            &cell_points_y,
-            &cell_points_z,
-            crate::policy::DENSE_CELL_THRESHOLD,
-        );
+        let dense_index = if build_dense_index {
+            super::dense::DenseCellIndex::build(
+                &cell_offsets,
+                &cell_points_x,
+                &cell_points_y,
+                &cell_points_z,
+                crate::policy::DENSE_CELL_THRESHOLD,
+            )
+        } else {
+            None
+        };
 
         CubeMapGrid {
             res,

@@ -259,15 +259,20 @@ impl CubeMapGrid {
         self.point_slots.truncate(n_eff);
 
         // The dense-cell side index is keyed to slot order and cell ranges,
-        // both of which compaction just rewrote — rebuild it from the compacted
-        // arrays (matches a fresh build at this resolution).
-        self.dense_index = super::dense::DenseCellIndex::build(
-            &self.cell_offsets,
-            &self.cell_points_x,
-            &self.cell_points_y,
-            &self.cell_points_z,
-            crate::policy::DENSE_CELL_THRESHOLD,
-        );
+        // both of which compaction just rewrote. Rebuild only when this grid
+        // already materialized the optional index; provisional compute grids
+        // deliberately defer it until preprocessing selects the retained
+        // layout. Compaction cannot increase a cell's occupancy, so an absent
+        // index cannot become newly necessary here.
+        if self.dense_index.is_some() {
+            self.dense_index = super::dense::DenseCellIndex::build(
+                &self.cell_offsets,
+                &self.cell_points_x,
+                &self.cell_points_y,
+                &self.cell_points_z,
+                crate::policy::DENSE_CELL_THRESHOLD,
+            );
+        }
     }
 }
 

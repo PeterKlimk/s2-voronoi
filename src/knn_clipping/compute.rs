@@ -985,7 +985,7 @@ fn prepare_points_and_grid(
         PreprocessMode::MergeWithin(threshold) => Some(threshold),
     };
 
-    let mut grid = build_query_grid(points, tb);
+    let (mut grid, mut dense_index_eligible) = build_query_grid(points, tb);
 
     let t = Timer::start();
     let mut effective_points = None;
@@ -1027,13 +1027,23 @@ fn prepare_points_and_grid(
             })?;
             if result.num_merged > 0 {
                 let pts = std::mem::take(&mut result.effective_points);
-                grid = build_query_grid(&pts, tb);
+                (grid, dense_index_eligible) = build_query_grid(&pts, tb);
                 effective_points = Some(pts);
                 merge_result = Some(result);
             }
         }
     }
     tb.set_preprocess(t.elapsed());
+
+    // Every grid built above is provisional: occupancy feedback may replace
+    // it, and preprocessing may compact or rebuild it. Materialize the
+    // optional side index once, on the retained slot/cell layout, and only in
+    // the deep-concentration regime where the packed band path is enabled.
+    if dense_index_eligible {
+        let t_dense = Timer::start();
+        grid.build_dense_index();
+        tb.add_knn_build(t_dense.elapsed());
+    }
 
     let report = PreprocessReport {
         requested_mode: preprocess_mode,
@@ -1074,7 +1084,7 @@ fn cell_sum_sq_per_n(grid: &crate::cube_grid::CubeMapGrid, n: usize) -> f64 {
 fn build_query_grid(
     effective_points: &[Vec3],
     tb: &mut TimingBuilder,
-) -> crate::cube_grid::CubeMapGrid {
+) -> (crate::cube_grid::CubeMapGrid, bool) {
     let t = Timer::start();
     let n = effective_points.len();
     #[cfg(feature = "timing")]
@@ -1083,11 +1093,11 @@ fn build_query_grid(
     let build = |res: usize, #[cfg(feature = "timing")] timings: &mut CubeMapGridBuildTimings| {
         #[cfg(feature = "timing")]
         {
-            CubeMapGrid::new_with_build_timings(effective_points, res, timings)
+            CubeMapGrid::new_deferred_dense_with_build_timings(effective_points, res, timings)
         }
         #[cfg(not(feature = "timing"))]
         {
-            CubeMapGrid::new(effective_points, res)
+            CubeMapGrid::new_deferred_dense(effective_points, res)
         }
     };
 
@@ -1121,7 +1131,9 @@ fn build_query_grid(
             None => grid,
         };
 
-    // Gate the dense-cell band-prune on a rebuild having fired. The band only
+    // Gate the dense-cell band-prune on a rebuild having fired. The caller
+    // materializes the side index only after preprocessing selects this grid's
+    // final slot/cell layout. The band only
     // wins on deep-certificate, un-splittable concentration (cap-like), which
     // is exactly the regime that triggers the occupancy rebuild and survives
     // it (a cell still over the dense threshold). Moderate clusters that never
@@ -1129,16 +1141,11 @@ fn build_query_grid(
     // is a measured net loss (clustered 500k ~ -13%); disable it there. Scale-
     // invariant, unlike a fixed occupancy threshold (clustered occ grows with
     // n).
-    let mut grid = grid;
-    if !rebuilt {
-        grid.clear_dense_index();
-    }
-
     tb.set_knn_build(t.elapsed());
     tb.set_grid_stats(res, max_occupancy as u64, rebuilt);
     #[cfg(feature = "timing")]
     tb.set_knn_build_sub(grid_build_timings.clone());
-    grid
+    (grid, rebuilt)
 }
 
 fn construct_cell_shards(
@@ -1506,7 +1513,8 @@ mod tests {
         );
 
         let mut tb = TimingBuilder::new();
-        let grid = build_query_grid(&points, &mut tb);
+        let (grid, dense_index_eligible) = build_query_grid(&points, &mut tb);
+        assert!(dense_index_eligible);
         let rebuilt_occupancy = max_cell_occupancy(&grid);
         assert!(
             grid.res() > naive_res,
@@ -1521,6 +1529,42 @@ mod tests {
         // Memory budget: total cells stay O(n).
         let cells = 6 * grid.res() * grid.res();
         assert!(cells as f64 <= crate::policy::GRID_MAX_CELLS_PER_POINT * n as f64 * 1.1);
+    }
+
+    #[test]
+    fn dense_index_is_deferred_until_retained_grid_finalization() {
+        use crate::knn_clipping::timing::TimingBuilder;
+
+        // A sub-cell cap remains dense even after occupancy feedback reaches
+        // its resolution/memory limit, so the retained grid genuinely needs
+        // the side index. A small spiral avoids duplicate positions while
+        // keeping every point in the same final cell.
+        let n = 5_000usize;
+        let golden = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
+        let points: Vec<Vec3> = (0..n)
+            .map(|i| {
+                let r = 1.0e-4 * ((i as f32 + 0.5) / n as f32).sqrt();
+                let theta = golden * i as f32;
+                Vec3::new(r * theta.cos(), r * theta.sin(), 1.0).normalize()
+            })
+            .collect();
+
+        let mut tb = TimingBuilder::new();
+        let (mut grid, dense_index_eligible) = build_query_grid(&points, &mut tb);
+        assert!(dense_index_eligible, "sub-cell cap must trigger regridding");
+        let dense_cell = grid.point_index_to_cell(0) as u32;
+        assert!(grid.cell_points(dense_cell as usize).len() > crate::policy::DENSE_CELL_THRESHOLD);
+        assert_eq!(
+            grid.dense_band_radius(dense_cell, 64),
+            None,
+            "provisional grid must not build the dense side index"
+        );
+
+        grid.build_dense_index();
+        assert!(
+            grid.dense_band_radius(dense_cell, 64).is_some(),
+            "retained grid finalization must materialize the dense side index"
+        );
     }
 
     #[cfg(target_pointer_width = "64")]

@@ -13,17 +13,15 @@ fingerprints. Start with retired instructions and branches, then paired cycles; 
 `llvm-mca`, or `cargo asm` for attribution. Run `bench_run.sh --converge` when counters are
 inconclusive.
 
-1. **Defer dense-index construction until the retained grid is known.** Count discarded builds,
-   instructions, cycles, allocations, and peak RSS on clustered workloads.
-2. **Adaptive/batched ring-tail classification.** Measure tail possible/requested, empty rescans,
+1. **Adaptive/batched ring-tail classification.** Measure tail possible/requested, empty rescans,
    repeated dot evaluations, and unused stored bytes. Avoid unconditional eager tails.
-3. **Incremental shell-layer emission.** Measure layer size versus consumed prefix and mid-layer
+2. **Incremental shell-layer emission.** Measure layer size versus consumed prefix and mid-layer
    closure before designing a conservative next-dot bound.
-4. **Bound the first packed chunk and materialize the remainder lazily.** Compare retained keys,
+3. **Bound the first packed chunk and materialize the remainder lazily.** Compare retained keys,
    later requests, recomputation, and peak bytes.
-5. **Apply dense-band eligibility before the candidate cap.** Preserve the aggregate work budget
+4. **Apply dense-band eligibility before the candidate cap.** Preserve the aggregate work budget
    and shell certificate.
-6. **Batch shell takeover across same-cell queries.** Evaluate only as a whole-pipeline traversal
+5. **Batch shell takeover across same-cell queries.** Evaluate only as a whole-pipeline traversal
    and emission change.
 
 ## Do not broadly retry

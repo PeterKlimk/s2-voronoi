@@ -747,6 +747,10 @@ impl TimingBuilder {
         self.knn_build = d;
     }
 
+    pub fn add_knn_build(&mut self, d: Duration) {
+        self.knn_build += d;
+    }
+
     pub fn set_knn_build_sub(&mut self, sub: CubeMapGridBuildTimings) {
         self.knn_build_sub = Some(sub);
     }

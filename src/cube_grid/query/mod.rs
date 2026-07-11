@@ -80,13 +80,17 @@ impl CubeMapGrid {
         &self.neighbors[cell]
     }
 
-    /// Drop the dense-cell sub-index, disabling the band-prune center pass for
-    /// this grid. The band only pays off on the deep-certificate, un-splittable
-    /// concentration that the occupancy rebuild fires on (and fails to split);
-    /// on fast-closing moderate clusters that never trigger a rebuild it is a
-    /// net loss, so `build_query_grid` clears it there.
-    pub(crate) fn clear_dense_index(&mut self) {
-        self.dense_index = None;
+    /// Materialize the optional dense-cell side index on this grid's current
+    /// slot/cell layout. The compute pipeline calls this only after occupancy
+    /// feedback and preprocessing select the retained grid.
+    pub(crate) fn build_dense_index(&mut self) {
+        self.dense_index = super::dense::DenseCellIndex::build(
+            &self.cell_offsets,
+            &self.cell_points_x,
+            &self.cell_points_y,
+            &self.cell_points_z,
+            crate::policy::DENSE_CELL_THRESHOLD,
+        );
     }
 
     /// Suggested dense-cell band gather radius for `cell` targeting
