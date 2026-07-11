@@ -4,7 +4,7 @@
 //! It reports sampled ownership consistency and Voronoi residuals, but does not
 //! define pass/fail correctness.
 
-use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch, DirectedEligibility};
+use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch};
 use crate::SphericalVoronoi;
 use glam::Vec3;
 use std::collections::{HashMap, HashSet};
@@ -216,9 +216,8 @@ fn assess_sampled_ownership(
     }
 
     let grid = build_generator_grid(generators);
-    let fake_slot_map = vec![0u32; generators.len()];
-    let ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
     let mut scratch = grid.make_scratch();
+    let mut batch = Vec::new();
 
     let mut samples = 0usize;
     let mut mismatches = 0usize;
@@ -240,8 +239,7 @@ fn assess_sampled_ownership(
             }
 
             let sample = (g * 2.0 + vertices[a] + vertices[b]).normalize();
-            let Some(nearest) =
-                nearest_generator_index(&grid, generators, &mut scratch, ctx, sample)
+            let Some(nearest) = nearest_generator_index(&grid, &mut scratch, &mut batch, sample)
             else {
                 continue;
             };
@@ -455,27 +453,12 @@ fn build_generator_grid(generators: &[Vec3]) -> CubeMapGrid {
 
 fn nearest_generator_index(
     grid: &CubeMapGrid,
-    generators: &[Vec3],
     scratch: &mut CubeMapGridScratch,
-    ctx: DirectedEligibility<'_>,
+    batch: &mut Vec<u32>,
     query: Vec3,
 ) -> Option<usize> {
-    let mut frontier = grid.shell_frontier(query, generators.len(), scratch, ctx);
-    let mut batch: Vec<u32> = Vec::new();
-    let mut best: Option<(f32, u32)> = None;
-    while let Some(layer) = frontier.frontier(&mut batch) {
-        // Layers are sorted, so the layer's best candidate is its first slot.
-        let candidate = (layer.first_dot, batch[0]);
-        if best.is_none_or(|(dot, _)| candidate.0 > dot) {
-            best = Some(candidate);
-        }
-        // Proven nearest once no later layer can beat the best so far.
-        if best.is_some_and(|(dot, _)| dot >= layer.unseen_bound) {
-            break;
-        }
-        frontier.advance();
-    }
-    best.map(|(_, slot)| grid.point_indices()[slot as usize] as usize)
+    grid.nearest_unrestricted_slot(query, scratch, batch)
+        .map(|slot| grid.point_indices()[slot as usize] as usize)
 }
 
 #[cfg(test)]

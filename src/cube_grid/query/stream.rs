@@ -44,7 +44,7 @@ enum CachedFrontier {
 
 pub(crate) struct DirectedNeighborStream<'a, 'm, 'p, 'g> {
     grid: &'a CubeMapGrid,
-    takeover: ShellFrontier<'a, 'm>,
+    takeover: ShellFrontier<'a, DirectedEligibility<'m>>,
     packed: Option<PackedQuery<'p, 'g, 'm>>,
     stage: StreamStage,
     cached_frontier: Option<CachedFrontier>,

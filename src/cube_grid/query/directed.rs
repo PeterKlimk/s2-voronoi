@@ -13,9 +13,8 @@ pub(crate) struct DirectedEligibility<'a> {
 }
 
 impl<'a> DirectedEligibility<'a> {
-    /// Convenience constructor over `from_layout`; used by tests and the
-    /// `quality` diagnostics (production callers pass a shared layout).
-    #[cfg_attr(not(any(test, feature = "qhull", feature = "tools")), allow(dead_code))]
+    /// Convenience constructor over `from_layout`, used by tests.
+    #[cfg(test)]
     #[inline]
     pub(crate) fn new(
         query_bin: u8,

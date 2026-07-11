@@ -489,12 +489,10 @@ fn maybe_repair_effective(
     // seed instead of the old O(n) brute force (a closure of thousands on a
     // dense-defect input made the brute force minutes-long). Reuse the construction
     // `grid` (occupancy-tuned; `compact_welded` keeps it bit-equivalent to a fresh
-    // effective-point build) rather than rebuilding. Feed the gather an all-emit
-    // (all-zero) eligibility layout: repair wants every nearby generator, not the
-    // directed construction subset, and an all-zero map decodes to bin 0 (!= the
-    // query bin) at any n, so it stays all-emit even past 2^24 slots.
+    // effective-point build) rather than rebuilding. Repair uses the grid's
+    // unrestricted shell frontier because it wants every nearby generator, not
+    // the directed construction subset.
     let mut repair_scratch = grid.make_scratch();
-    let repair_slot_map: Vec<u32> = vec![0u32; effective_points.len()];
 
     let mut work = escalate::WorkingDiagram::from_assembled(
         vertices,
@@ -517,7 +515,6 @@ fn maybe_repair_effective(
             effective_points,
             grid,
             &mut repair_scratch,
-            &repair_slot_map,
             &mut work,
             &defect_pairs,
             merge_affected_cells,
@@ -529,7 +526,6 @@ fn maybe_repair_effective(
             effective_points,
             grid,
             &mut repair_scratch,
-            &repair_slot_map,
             &mut work,
             &defect_pairs,
             merge_affected_cells,
@@ -543,7 +539,6 @@ fn maybe_repair_effective(
             effective_points,
             grid,
             &mut repair_scratch,
-            &repair_slot_map,
             &mut work,
             &defect_pairs,
             merge_affected_cells,
@@ -555,7 +550,6 @@ fn maybe_repair_effective(
             effective_points,
             grid,
             &mut repair_scratch,
-            &repair_slot_map,
             &mut work,
             &defect_pairs,
             merge_affected_cells,

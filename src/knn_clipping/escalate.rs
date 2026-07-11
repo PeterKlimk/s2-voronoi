@@ -24,16 +24,9 @@ use glam::{DVec3, Vec3};
 use rustc_hash::FxHashMap;
 
 use super::local_hull::LocalHull;
-use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch, DirectedEligibility};
+use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch};
 use crate::diagram::VoronoiCell;
 use crate::live_dedup::ShardedVertexKeys;
-use crate::packed_layout::PackedSlotLayout;
-
-// Packed-slot layout params for the repair's grid kNN gather, mirroring the
-// point locator (see `locate.rs`). The grid is built over the effective points
-// with an identity slot→generator map, so a query emits every nearby point.
-const REPAIR_LOCAL_SHIFT: u32 = 24;
-const REPAIR_LOCAL_MASK: u32 = (1u32 << REPAIR_LOCAL_SHIFT) - 1;
 
 /// A generator's rebuilt Voronoi cell: its vertices as the ordered cyclic fan
 /// of sorted global-id triples (each triple = the three generators meeting at
@@ -95,29 +88,24 @@ pub fn gather_local(points: &[Vec3], seeds: &[u32], k: usize) -> Vec<u32> {
 /// locator uses) and collect the `k + 1` nearest generators, unioned with the
 /// seeds — proportional to the local neighborhood rather than to `n`.
 ///
-/// `slot_gen_map` is an all-zero (all-emit) eligibility layout so every nearby
-/// point is emitted regardless of `n`; `grid.point_indices()[slot]` maps an
-/// emitted slot back to its generator id. The ring certificate (`unseen_bound`)
-/// bounds every unseen point's dot, so collection stops once the `k + 1` nearest
-/// seen are provably nearer than anything unseen.
+/// `grid.point_indices()[slot]` maps an emitted slot back to its generator id.
+/// The ring certificate (`unseen_bound`) bounds every unseen point's dot, so
+/// collection stops once the `k + 1` nearest seen are provably nearer than
+/// anything unseen.
 fn gather_knn_grid(
     grid: &CubeMapGrid,
     scratch: &mut CubeMapGridScratch,
-    slot_gen_map: &[u32],
     points: &[Vec3],
     seeds: &[u32],
     k: usize,
 ) -> Vec<u32> {
     use std::collections::BTreeSet;
     let mut set: BTreeSet<u32> = seeds.iter().copied().collect();
-    let n = slot_gen_map.len();
     let mut batch: Vec<u32> = Vec::new();
     let mut collected: Vec<(f32, u32)> = Vec::new();
-    let layout = PackedSlotLayout::new(slot_gen_map, REPAIR_LOCAL_SHIFT, REPAIR_LOCAL_MASK);
-    let ctx = DirectedEligibility::from_layout(1, 0, layout);
     for &s in seeds {
         let query = points[s as usize];
-        let mut frontier = grid.shell_frontier(query, n, scratch, ctx);
+        let mut frontier = grid.unrestricted_shell_frontier(query, s as usize, scratch);
         collected.clear();
         while let Some(layer) = frontier.frontier(&mut batch) {
             for &slot in &batch {
@@ -374,7 +362,6 @@ fn gather_two_ring(
     points: &[Vec3],
     grid: &CubeMapGrid,
     scratch: &mut CubeMapGridScratch,
-    slot_gen_map: &[u32],
     work: &WorkingDiagram,
     closure: &[u32],
     ring_k: usize,
@@ -399,7 +386,7 @@ fn gather_two_ring(
         seeds2.extend(cell_neighbors(g));
     }
     let seeds2: Vec<u32> = seeds2.into_iter().collect();
-    gather_knn_grid(grid, scratch, slot_gen_map, points, &seeds2, ring_k)
+    gather_knn_grid(grid, scratch, points, &seeds2, ring_k)
 }
 
 /// Per-generator ready-to-splice fans for `closure`, read off ONE exact 2D
@@ -418,7 +405,6 @@ fn local_exact_fans(
     points: &[Vec3],
     grid: &CubeMapGrid,
     scratch: &mut CubeMapGridScratch,
-    slot_gen_map: &[u32],
     work: &WorkingDiagram,
     closure: &[u32],
     ring_k: usize,
@@ -426,7 +412,7 @@ fn local_exact_fans(
     use robust::Coord;
     use std::collections::BTreeSet;
 
-    let local_ids = gather_two_ring(points, grid, scratch, slot_gen_map, work, closure, ring_k);
+    let local_ids = gather_two_ring(points, grid, scratch, work, closure, ring_k);
 
     // SINGLE shared stereographic chart over the gather, pole at the antipode of
     // the local centroid. One exact 2D triangulation produces all closure fans,
@@ -481,7 +467,6 @@ fn local_hull_fans(
     points: &[Vec3],
     grid: &CubeMapGrid,
     scratch: &mut CubeMapGridScratch,
-    slot_gen_map: &[u32],
     work: &WorkingDiagram,
     closure: &[u32],
     ring_k: usize,
@@ -489,7 +474,7 @@ fn local_hull_fans(
     if closure.is_empty() {
         return FxHashMap::default();
     }
-    let local_ids = gather_two_ring(points, grid, scratch, slot_gen_map, work, closure, ring_k);
+    let local_ids = gather_two_ring(points, grid, scratch, work, closure, ring_k);
 
     let mut fans: FxHashMap<u32, Vec<[u32; 3]>> = FxHashMap::default();
     if let Some(cells) = rebuild_cells(points, &local_ids, closure) {
@@ -623,12 +608,11 @@ fn repair_grow_loop(
 
 /// Dependency-free local 3D repair (default, [`crate::RepairMode::Local3d`]):
 /// the grow loop over the normalized-local-3D-hull oracle ([`local_hull_fans`]).
-#[allow(clippy::too_many_arguments)] // grid/scratch/slot_gen_map travel together as the gather index
+#[allow(clippy::too_many_arguments)] // grid and scratch form the reusable gather index
 pub(crate) fn repair_local_hull(
     points: &[Vec3],
     grid: &CubeMapGrid,
     scratch: &mut CubeMapGridScratch,
-    slot_gen_map: &[u32],
     work: &mut WorkingDiagram,
     defect_pairs: &[(u32, u32)],
     merge_affected: &[u32],
@@ -642,19 +626,18 @@ pub(crate) fn repair_local_hull(
         merge_affected,
         max_rounds,
         "repair_local_hull",
-        |work, closure| local_hull_fans(points, grid, scratch, slot_gen_map, work, closure, ring_k),
+        |work, closure| local_hull_fans(points, grid, scratch, work, closure, ring_k),
     )
 }
 
 /// Projected local repair ([`crate::RepairMode::LocalProjected`]): the grow loop
 /// over the shared-stereographic-chart exact 2D Delaunay oracle
 /// ([`local_exact_fans`]). Kept as a projected-oracle diagnostic path.
-#[allow(clippy::too_many_arguments)] // grid/scratch/slot_gen_map travel together as the gather index
+#[allow(clippy::too_many_arguments)] // grid and scratch form the reusable gather index
 pub(crate) fn repair_local_exact(
     points: &[Vec3],
     grid: &CubeMapGrid,
     scratch: &mut CubeMapGridScratch,
-    slot_gen_map: &[u32],
     work: &mut WorkingDiagram,
     defect_pairs: &[(u32, u32)],
     merge_affected: &[u32],
@@ -668,9 +651,7 @@ pub(crate) fn repair_local_exact(
         merge_affected,
         max_rounds,
         "repair_local_exact",
-        |work, closure| {
-            local_exact_fans(points, grid, scratch, slot_gen_map, work, closure, ring_k)
-        },
+        |work, closure| local_exact_fans(points, grid, scratch, work, closure, ring_k),
     )
 }
 

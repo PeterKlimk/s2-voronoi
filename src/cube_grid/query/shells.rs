@@ -18,6 +18,39 @@ use super::super::{CubeMapGrid, CubeMapGridScratch};
 use super::directed::{DirectedCellMode, DirectedEligibility};
 use crate::fp::{self, OrdF32};
 
+pub(crate) trait ShellEligibility: Copy {
+    fn cell_mode(self, cell_offsets: &[u32], start_cell: u32, cell: usize) -> DirectedCellMode;
+
+    fn allows_center_slot(self, slot: u32) -> bool;
+}
+
+impl ShellEligibility for DirectedEligibility<'_> {
+    #[inline]
+    fn cell_mode(self, cell_offsets: &[u32], start_cell: u32, cell: usize) -> DirectedCellMode {
+        DirectedEligibility::cell_mode(self, cell_offsets, start_cell, cell)
+    }
+
+    #[inline]
+    fn allows_center_slot(self, slot: u32) -> bool {
+        DirectedEligibility::allows_center_slot(self, slot)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct UnrestrictedEligibility;
+
+impl ShellEligibility for UnrestrictedEligibility {
+    #[inline]
+    fn cell_mode(self, _cell_offsets: &[u32], _start_cell: u32, _cell: usize) -> DirectedCellMode {
+        DirectedCellMode::EmitAll
+    }
+
+    #[inline]
+    fn allows_center_slot(self, _slot: u32) -> bool {
+        true
+    }
+}
+
 fn sort_pending(pending: &mut [(OrdF32, u32)]) {
     pending.sort_unstable_by_key(|&(dot, slot)| (std::cmp::Reverse(dot), slot));
 }
@@ -44,13 +77,13 @@ pub(crate) struct ShellBatch {
     pub(crate) unseen_bound: f32,
 }
 
-pub(crate) struct ShellFrontier<'a, 'b> {
+pub(crate) struct ShellFrontier<'a, E: ShellEligibility> {
     grid: &'a CubeMapGrid,
     scratch: &'a mut CubeMapGridScratch,
     query: Vec3,
     query_idx: usize,
     start_cell: u32,
-    eligibility: DirectedEligibility<'b>,
+    eligibility: E,
     initialized: bool,
     pending_bound: f32,
     pending_pos: usize,
@@ -59,13 +92,13 @@ pub(crate) struct ShellFrontier<'a, 'b> {
     exhausted: bool,
 }
 
-impl<'a, 'b> ShellFrontier<'a, 'b> {
+impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
     pub(crate) fn new(
         grid: &'a CubeMapGrid,
         query: Vec3,
         query_idx: usize,
         scratch: &'a mut CubeMapGridScratch,
-        eligibility: DirectedEligibility<'b>,
+        eligibility: E,
     ) -> Self {
         Self {
             grid,
@@ -235,21 +268,59 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
 }
 
 impl CubeMapGrid {
+    /// Shell traversal that emits every grid point except `query_idx`.
+    /// Passing an out-of-range index treats `query` as external to the grid.
     #[inline]
-    pub(crate) fn shell_frontier<'a, 'b>(
+    pub(crate) fn unrestricted_shell_frontier<'a>(
         &'a self,
         query: Vec3,
         query_idx: usize,
         scratch: &'a mut CubeMapGridScratch,
-        eligibility: DirectedEligibility<'b>,
-    ) -> ShellFrontier<'a, 'b> {
-        ShellFrontier::new(self, query, query_idx, scratch, eligibility)
+    ) -> ShellFrontier<'a, UnrestrictedEligibility> {
+        ShellFrontier::new(self, query, query_idx, scratch, UnrestrictedEligibility)
+    }
+
+    /// Nearest grid slot to an external query, reusing `scratch` and `batch`.
+    pub(crate) fn nearest_unrestricted_slot(
+        &self,
+        query: Vec3,
+        scratch: &mut CubeMapGridScratch,
+        batch: &mut Vec<u32>,
+    ) -> Option<u32> {
+        let mut frontier =
+            self.unrestricted_shell_frontier(query, self.point_indices.len(), scratch);
+        let mut best: Option<(f32, u32)> = None;
+        while let Some(layer) = frontier.frontier(batch) {
+            let candidate = (layer.first_dot, batch[0]);
+            if best.is_none_or(|(dot, _)| candidate.0 > dot) {
+                best = Some(candidate);
+            }
+            if best.is_some_and(|(dot, _)| dot >= layer.unseen_bound) {
+                break;
+            }
+            frontier.advance();
+        }
+        best.map(|(_, slot)| slot)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture_points() -> Vec<Vec3> {
+        [
+            (1.0, 0.2, 0.1),
+            (-0.4, 1.0, 0.3),
+            (0.1, -0.6, 1.0),
+            (-1.0, -0.2, 0.4),
+            (0.3, 0.7, -1.0),
+            (0.8, -1.0, -0.5),
+        ]
+        .into_iter()
+        .map(|(x, y, z)| Vec3::new(x, y, z).normalize())
+        .collect()
+    }
 
     #[test]
     fn pending_order_breaks_equal_dots_by_slot() {
@@ -282,5 +353,56 @@ mod tests {
             pos += n;
         }
         assert_eq!(pending, expected);
+    }
+
+    #[test]
+    fn unrestricted_frontier_emits_every_other_point_with_safe_bounds() {
+        let points = fixture_points();
+        let grid = CubeMapGrid::new(&points, 3);
+        let query_idx = 0usize;
+        let query = points[query_idx];
+        let mut scratch = grid.make_scratch();
+        let mut frontier = grid.unrestricted_shell_frontier(query, query_idx, &mut scratch);
+        let mut batch = Vec::new();
+        let mut unseen = vec![true; points.len()];
+        unseen[query_idx] = false;
+
+        while let Some(layer) = frontier.frontier(&mut batch) {
+            for &slot in &batch {
+                let idx = grid.point_indices()[slot as usize] as usize;
+                assert_ne!(idx, query_idx);
+                assert!(std::mem::replace(&mut unseen[idx], false));
+            }
+            let max_unseen = unseen
+                .iter()
+                .enumerate()
+                .filter(|&(_, &is_unseen)| is_unseen)
+                .map(|(idx, _)| query.dot(points[idx]))
+                .fold(-1.0f32, f32::max);
+            assert!(max_unseen <= layer.unseen_bound + 1e-6);
+            frontier.advance();
+        }
+
+        assert!(unseen.iter().all(|&is_unseen| !is_unseen));
+    }
+
+    #[test]
+    fn nearest_unrestricted_slot_matches_brute_force() {
+        let points = fixture_points();
+        let grid = CubeMapGrid::new(&points, 3);
+        let query = Vec3::new(0.37, -0.21, 0.91).normalize();
+        let expected = points
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| query.dot(**a).total_cmp(&query.dot(**b)))
+            .map(|(idx, _)| idx)
+            .unwrap();
+        let mut scratch = grid.make_scratch();
+        let mut batch = Vec::new();
+        let slot = grid
+            .nearest_unrestricted_slot(query, &mut scratch, &mut batch)
+            .unwrap();
+
+        assert_eq!(grid.point_indices()[slot as usize] as usize, expected);
     }
 }
