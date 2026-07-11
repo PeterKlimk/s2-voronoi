@@ -74,8 +74,11 @@ impl SphericalVoronoi {
     /// This is the complete dual of the diagram — for a strictly valid
     /// diagram with `c` canonical cells it has exactly `2c - 4` triangles
     /// (cocircular degeneracies are fan-triangulated, preserving the
-    /// count). Welded twins do not appear; the triangle edges are exactly
-    /// the neighbor pairs of [`Self::build_adjacency`].
+    /// count). Welded twins do not appear. For non-degenerate vertices, the
+    /// triangle edges are exactly the neighbor pairs of
+    /// [`Self::build_adjacency`]. A cocircular vertex of degree four or more
+    /// adds fan diagonals as deterministic tie-breaking edges; those diagonals
+    /// are not Voronoi boundary adjacencies.
     pub fn delaunay_triangles(&self) -> Vec<[u32; 3]> {
         let (offsets, incident) = incidence_from_cells(
             self.num_vertices(),
@@ -117,5 +120,40 @@ fn reference_axis(p: DVec3) -> DVec3 {
         DVec3::X
     } else {
         DVec3::Y
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn degree_four_fan_adds_a_non_adjacency_diagonal() {
+        let ring = [0, 1, 2, 3];
+        let adjacency_edges: BTreeSet<(u32, u32)> =
+            [(0, 1), (1, 2), (2, 3), (0, 3)].into_iter().collect();
+        let mut triangles = Vec::new();
+        emit_fan(&ring, &mut triangles);
+
+        let triangle_edges: BTreeSet<(u32, u32)> = triangles
+            .iter()
+            .flat_map(|triangle| {
+                (0..3).map(|i| {
+                    let a = triangle[i];
+                    let b = triangle[(i + 1) % 3];
+                    (a.min(b), a.max(b))
+                })
+            })
+            .collect();
+
+        assert!(adjacency_edges.is_subset(&triangle_edges));
+        assert_eq!(
+            triangle_edges
+                .difference(&adjacency_edges)
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![(0, 2)]
+        );
     }
 }
