@@ -74,3 +74,16 @@ noise:
 `bench_run.sh` sweeps sizes x distributions x seeds, runs the commits interleaved, and emits a
 CSV. Prefer hardware counters (`perf stat`) over wall time for behavior decisions; wall time on
 this class of machine drifts more than most single optimizations are worth.
+
+For a first-pass hardware-counter comparison of the same built artifacts:
+
+```bash
+./scripts/bench_build.sh --chain 2
+./scripts/bench_perf.sh -s 500k -d fib -r 9 --csv /tmp/bench_perf.csv
+```
+
+The counter runner rotates version order, defaults to one Rayon thread pinned to CPU 0, and emits
+raw tidy CSV rather than prematurely aggregating results. Compare instructions first, then cycles,
+branches/misses, and cache behavior. Use the included context-switch and CPU-migration counts to
+identify contaminated samples. If counters do not resolve the decision, use `bench_run.sh
+--converge` for longer paired wall-time runs.
