@@ -65,6 +65,8 @@ pub struct PackedKnnTimings {
     pub center_tail_keys: u64,
     pub unused_center_tail_keys: u64,
     pub center_tail_dot_evaluations: u64,
+    pub chunk0_keys: u64,
+    pub unused_chunk0_keys: u64,
 }
 
 #[cfg(feature = "timing")]
@@ -94,6 +96,8 @@ impl Default for PackedKnnTimings {
             center_tail_keys: 0,
             unused_center_tail_keys: 0,
             center_tail_dot_evaluations: 0,
+            chunk0_keys: 0,
+            unused_chunk0_keys: 0,
         }
     }
 }
@@ -214,6 +218,16 @@ impl PackedKnnTimings {
     }
 
     #[inline]
+    pub fn add_chunk0_keys(&mut self, count: usize) {
+        self.chunk0_keys += count as u64;
+    }
+
+    #[inline]
+    pub fn add_unused_chunk0_keys(&mut self, count: usize) {
+        self.unused_chunk0_keys += count as u64;
+    }
+
+    #[inline]
     pub fn total(&self) -> Duration {
         self.setup
             + self.query_cache
@@ -276,4 +290,9 @@ impl PackedKnnTimings {
     pub fn add_unused_center_tail_keys(&mut self, _count: usize) {}
     #[inline(always)]
     pub fn add_center_tail_dot_evaluations(&mut self, _count: usize) {}
+    #[inline(always)]
+    pub fn add_chunk0_keys(&mut self, _count: usize) {}
+    #[inline(always)]
+    #[allow(dead_code)]
+    pub fn add_unused_chunk0_keys(&mut self, _count: usize) {}
 }

@@ -13,12 +13,9 @@ fingerprints. Start with retired instructions and branches, then paired cycles; 
 `llvm-mca`, or `cargo asm` for attribution. Run `bench_run.sh --converge` when counters are
 inconclusive.
 
-1. **Bound retained `chunk0_keys` and materialize later chunks lazily.** Center-tail keys are now
-   counted eagerly but materialized only on request. Measure unconsumed high-threshold keys before
-   applying the same recomputation tradeoff to later chunk-0 requests.
-2. **Apply dense-band eligibility before the candidate cap.** Preserve the aggregate work budget
+1. **Apply dense-band eligibility before the candidate cap.** Preserve the aggregate work budget
    and shell certificate.
-3. **Batch shell takeover across same-cell queries.** Evaluate only as a whole-pipeline traversal
+2. **Batch shell takeover across same-cell queries.** Evaluate only as a whole-pipeline traversal
    and emission change.
 
 ## Do not broadly retry
@@ -33,6 +30,9 @@ inconclusive.
 - eager/adaptive local ring-tail batching — only 3.8-9.6% of queries requested tails across 100k
   fib/uniform/clustered/bimodal; productive lazy rescans were about 1.5% of 500k clustered runtime;
   batching useful requests requires a whole-pipeline traversal redesign.
+- lazy recomputation of retained high-threshold `chunk0_keys` — despite 86.4% unused keys on 100k
+  clustered, 75,653 later requests rebuilt 15.75M keys; measured +28.3% instructions, +65.1%
+  branches, and +29.8% cycles. Keep the retained keys.
 
 ## Measurement tooling
 

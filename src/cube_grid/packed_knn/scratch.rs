@@ -127,6 +127,7 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
     #[cfg(feature = "timing")]
     pub(crate) fn record_tail_usage(&self, timings: &mut PackedKnnTimings) {
         let mut unused_center_keys = 0usize;
+        let mut unused_chunk0_keys = 0usize;
         for qi in 0..self.group.queries().len() {
             if self.scratch.tail_ready_gen.get(qi).copied().unwrap_or(0) != self.group_gen {
                 unused_center_keys += self
@@ -136,8 +137,12 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
                     .copied()
                     .unwrap_or(0);
             }
+            unused_chunk0_keys += self.scratch.chunk0_keys[qi]
+                .len()
+                .saturating_sub(self.scratch.chunk0_pos[qi]);
         }
         timings.add_unused_center_tail_keys(unused_center_keys);
+        timings.add_unused_chunk0_keys(unused_chunk0_keys);
     }
 }
 

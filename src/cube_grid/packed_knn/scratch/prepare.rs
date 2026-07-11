@@ -570,11 +570,13 @@ impl PackedKnnCellScratch {
             }
         }
         timings.add_ring_pass(t.lap());
+        let chunk0_candidates = chunk0_keys.iter().map(Vec::len).sum::<usize>();
         let keys = chunk0_keys.iter().map(Vec::len).sum::<usize>()
             + tail_keys.iter().map(Vec::len).sum::<usize>();
         let capacity = chunk0_keys.iter().map(Vec::capacity).sum::<usize>()
             + tail_keys.iter().map(Vec::capacity).sum::<usize>();
         timings.observe_key_storage(keys, capacity);
+        timings.add_chunk0_keys(chunk0_candidates);
         timings.add_tail_possible_queries(
             self.tail_possible[..num_queries]
                 .iter()
