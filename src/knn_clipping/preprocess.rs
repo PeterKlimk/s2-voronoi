@@ -1,6 +1,7 @@
 //! Preprocessing helpers (weld near-coincident generators).
 
 use glam::Vec3;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -107,17 +108,17 @@ fn identity_result(points: &[Vec3]) -> MergeResult {
 /// collapses into one class). The class representative is the smallest
 /// original index, and representatives keep their original relative order in
 /// `effective_points`.
-pub fn merge_close_points(points: &[Vec3], threshold: f32) -> MergeResult {
+pub fn try_merge_close_points(points: &[Vec3], threshold: f32) -> Result<MergeResult, usize> {
     let n = points.len();
     if n == 0 {
-        return MergeResult {
+        return Ok(MergeResult {
             effective_points: Vec::new(),
             original_to_effective: Vec::new(),
             num_merged: 0,
-        };
+        });
     }
     if threshold <= 0.0 {
-        return identity_result(points);
+        return Ok(identity_result(points));
     }
 
     let grid = WeldGrid::new(threshold);
@@ -156,6 +157,9 @@ pub fn merge_close_points(points: &[Vec3], threshold: f32) -> MergeResult {
                 for &(_, aj) in &keyed[(i + 1)..run_end] {
                     let dist_sq = (points[ai as usize] - points[aj as usize]).length_squared();
                     if dist_sq < threshold_sq {
+                        if pairs.len() == crate::cube_grid::MAX_RETAINED_WELD_PAIRS {
+                            return Err(crate::cube_grid::MAX_RETAINED_WELD_PAIRS + 1);
+                        }
                         pairs.push((ai, aj));
                     }
                 }
@@ -168,10 +172,15 @@ pub fn merge_close_points(points: &[Vec3], threshold: f32) -> MergeResult {
     // the cells across those walls. A pair split across a wall has both
     // endpoints within `threshold` of it, so gating on `nkey > key` makes
     // exactly one side do the check.
+    let retained = AtomicUsize::new(pairs.len());
+    let exceeded = AtomicBool::new(false);
     let scan_boundary = |range: std::ops::Range<usize>| -> Vec<(u32, u32)> {
         let mut local: Vec<(u32, u32)> = Vec::new();
         let mut neighbor_keys: Vec<u64> = Vec::new();
         for &(key, idx) in &keyed[range] {
+            if exceeded.load(Relaxed) {
+                break;
+            }
             let p = points[idx as usize];
             grid.boundary_neighbor_keys(p, &mut neighbor_keys);
             for &nkey in &neighbor_keys {
@@ -185,6 +194,15 @@ pub fn merge_close_points(points: &[Vec3], threshold: f32) -> MergeResult {
                     }
                     let dist_sq = (p - points[other as usize]).length_squared();
                     if dist_sq < threshold_sq {
+                        if retained
+                            .fetch_update(Relaxed, Relaxed, |n| {
+                                (n < crate::cube_grid::MAX_RETAINED_WELD_PAIRS).then_some(n + 1)
+                            })
+                            .is_err()
+                        {
+                            exceeded.store(true, Relaxed);
+                            break;
+                        }
                         local.push((idx, other));
                     }
                 }
@@ -207,11 +225,20 @@ pub fn merge_close_points(points: &[Vec3], threshold: f32) -> MergeResult {
     #[cfg(not(feature = "parallel"))]
     pairs.extend(scan_boundary(0..n));
 
-    if pairs.is_empty() {
-        return identity_result(points);
+    if exceeded.load(Relaxed) {
+        return Err(crate::cube_grid::MAX_RETAINED_WELD_PAIRS + 1);
     }
 
-    merge_result_from_pairs(points, &pairs).0
+    if pairs.is_empty() {
+        return Ok(identity_result(points));
+    }
+
+    Ok(merge_result_from_pairs(points, &pairs).0)
+}
+
+#[cfg(test)]
+fn merge_close_points(points: &[Vec3], threshold: f32) -> MergeResult {
+    try_merge_close_points(points, threshold).unwrap()
 }
 
 /// Build a `MergeResult` from detected sub-threshold pairs (any detector).

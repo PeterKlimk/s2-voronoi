@@ -8,7 +8,7 @@ use super::live_dedup;
 use super::timing::{Timer, TimingBuilder};
 use super::{
     cell_build::{CellBuildError, CellFailure},
-    merge_close_points, MergeResult, TerminationConfig,
+    try_merge_close_points, MergeResult, TerminationConfig,
 };
 use crate::cube_grid::CubeMapGrid;
 #[cfg(feature = "timing")]
@@ -1016,7 +1016,15 @@ fn prepare_points_and_grid(
         } else {
             // Radius too large for grid adjacency (large `MergeWithin`):
             // standalone detector, then rebuild the grid on the survivors.
-            let mut result = merge_close_points(points, threshold);
+            let mut result = try_merge_close_points(points, threshold).map_err(|coincident_pairs| {
+                crate::VoronoiError::DegenerateInput {
+                    coincident_pairs,
+                    message: format!(
+                        "standalone weld detection exceeded the retained-pair budget of {}; reduce the merge threshold or deduplicate the input",
+                        crate::cube_grid::MAX_RETAINED_WELD_PAIRS
+                    ),
+                }
+            })?;
             if result.num_merged > 0 {
                 let pts = std::mem::take(&mut result.effective_points);
                 grid = build_query_grid(&pts, tb);

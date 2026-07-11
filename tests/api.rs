@@ -82,6 +82,15 @@ fn test_dense_duplicate_cluster_returns_controlled_error() {
         err.to_string().contains("pair budget"),
         "unexpected error: {err}"
     );
+
+    let config = VoronoiConfig::default().with_preprocess_mode(PreprocessMode::MergeWithin(0.1));
+    let err = compute_with(&points, config)
+        .expect_err("standalone detector must share the controlled pair budget");
+    assert!(matches!(err, VoronoiError::DegenerateInput { .. }));
+    assert!(
+        err.to_string().contains("pair budget"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]

@@ -31,7 +31,7 @@ pub(crate) mod union_find;
 pub use compute::compute_voronoi_knn_clipping_with_config_owned;
 #[allow(unused_imports)]
 pub use compute::compute_voronoi_knn_clipping_with_report_owned;
-pub use preprocess::merge_close_points;
+pub use preprocess::try_merge_close_points;
 
 pub type MergeResult = preprocess::MergeResult;
 
