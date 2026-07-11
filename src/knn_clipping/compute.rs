@@ -62,10 +62,9 @@ fn run_core_pipeline(
     repair_mode: RepairMode,
 ) -> Result<PipelineState, crate::VoronoiError> {
     validate_generator_capacity(points.len())?;
-    validate_generator_finiteness(&points)?;
-    validate_preprocess_mode(preprocess_mode)?;
     let mut points = points;
-    canonicalize_unit_points(&mut points);
+    validate_and_canonicalize_unit_points(&mut points)?;
+    validate_preprocess_mode(preprocess_mode)?;
     let mut tb = TimingBuilder::new();
 
     let (effective_points, merge_result, preprocess_report, grid) =
@@ -738,28 +737,6 @@ fn validate_generator_capacity(num_points: usize) -> Result<(), crate::VoronoiEr
     )))
 }
 
-/// Reject inputs containing non-finite components with an index-bearing error.
-fn validate_generator_finiteness(points: &[Vec3]) -> Result<(), crate::VoronoiError> {
-    #[cfg(feature = "parallel")]
-    let first_bad = {
-        use rayon::prelude::*;
-        points.par_iter().position_first(|p| !p.is_finite())
-    };
-    #[cfg(not(feature = "parallel"))]
-    let first_bad = points.iter().position(|p| !p.is_finite());
-
-    match first_bad {
-        None => Ok(()),
-        Some(point_index) => Err(crate::VoronoiError::InvalidInput {
-            point_index,
-            message: format!(
-                "point has a non-finite component: ({}, {}, {})",
-                points[point_index].x, points[point_index].y, points[point_index].z
-            ),
-        }),
-    }
-}
-
 /// Preprocess (weld) and build the query grid in one step.
 ///
 /// The grid is built on the raw points and doubles as the weld detector
@@ -777,9 +754,14 @@ fn validate_generator_finiteness(points: &[Vec3]) -> Result<(), crate::VoronoiEr
 /// shadow findings). Out-of-band lengths
 /// (contract-violating inputs) are left untouched and fail downstream as
 /// before, rather than being turned into NaNs here.
-fn canonicalize_unit_points(points: &mut [Vec3]) {
-    fn canonicalize_chunk(chunk: &mut [Vec3]) {
-        for p in chunk.iter_mut() {
+fn canonicalize_and_find_first_non_finite(points: &mut [Vec3]) -> Option<usize> {
+    fn canonicalize_chunk(chunk: &mut [Vec3]) -> Option<usize> {
+        let mut first_bad = None;
+        for (i, p) in chunk.iter_mut().enumerate() {
+            if !p.is_finite() {
+                first_bad.get_or_insert(i);
+                continue;
+            }
             let v = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
             let len_sq = v.length_squared();
             if (0.25..=4.0).contains(&len_sq) {
@@ -787,6 +769,7 @@ fn canonicalize_unit_points(points: &mut [Vec3]) {
                 *p = Vec3::new(n.x as f32, n.y as f32, n.z as f32);
             }
         }
+        first_bad
     }
     // ~10ns/point scalar (f64 sqrt + div); parallel chunks so the default
     // build pays ~nothing. Measured ST cost: ~20ms at 2M (the bulk of stage
@@ -794,10 +777,38 @@ fn canonicalize_unit_points(points: &mut [Vec3]) {
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
-        points.par_chunks_mut(1 << 16).for_each(canonicalize_chunk);
+        const CHUNK: usize = 1 << 16;
+        points
+            .par_chunks_mut(CHUNK)
+            .enumerate()
+            .filter_map(|(chunk_idx, chunk)| {
+                canonicalize_chunk(chunk).map(|i| chunk_idx * CHUNK + i)
+            })
+            .min()
     }
     #[cfg(not(feature = "parallel"))]
-    canonicalize_chunk(points);
+    canonicalize_chunk(points)
+}
+
+/// Reject non-finite generators while canonicalizing valid ones in the same
+/// traversal. Invalid points are left untouched so the public error retains
+/// the exact original component formatting; the minimum global index makes
+/// the parallel result identical to the serial first-invalid result.
+fn validate_and_canonicalize_unit_points(points: &mut [Vec3]) -> Result<(), crate::VoronoiError> {
+    match canonicalize_and_find_first_non_finite(points) {
+        None => Ok(()),
+        Some(point_index) => Err(crate::VoronoiError::InvalidInput {
+            point_index,
+            message: format!(
+                "point has a non-finite component: ({}, {}, {})",
+                points[point_index].x, points[point_index].y, points[point_index].z
+            ),
+        }),
+    }
+}
+
+fn canonicalize_unit_points(points: &mut [Vec3]) {
+    let _ = canonicalize_and_find_first_non_finite(points);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1245,12 +1256,98 @@ fn remap_cells_to_original_indices(
 mod tests {
     use super::{
         build_query_grid, cell_sum_sq_per_n, classify_rank2_great_circle, map_build_cells_error,
-        map_cell_build_error, max_cell_occupancy, stable_rank2_normal, validate_generator_capacity,
+        map_cell_build_error, max_cell_occupancy, stable_rank2_normal,
+        validate_and_canonicalize_unit_points, validate_generator_capacity,
     };
     use crate::knn_clipping::cell_build::{CellBuildError, CellFailure};
     use crate::knn_clipping::live_dedup::{BuildCellsError, PackedLayoutCapacityError};
     use crate::VoronoiError;
     use glam::Vec3;
+
+    #[test]
+    fn fused_validation_reports_non_finite_at_start_middle_and_end() {
+        let invalids = [
+            (0usize, Vec3::new(f32::NAN, 2.0, 3.0)),
+            (2usize, Vec3::new(1.0, f32::INFINITY, 3.0)),
+            (4usize, Vec3::new(1.0, 2.0, f32::NEG_INFINITY)),
+        ];
+
+        for (bad_idx, bad) in invalids {
+            let mut points = vec![Vec3::new(0.5, 0.5, 0.5); 5];
+            points[bad_idx] = bad;
+            let err = validate_and_canonicalize_unit_points(&mut points)
+                .expect_err("non-finite generator must be rejected");
+            match err {
+                VoronoiError::InvalidInput {
+                    point_index,
+                    message,
+                } => {
+                    assert_eq!(point_index, bad_idx);
+                    assert_eq!(
+                        message,
+                        format!(
+                            "point has a non-finite component: ({}, {}, {})",
+                            bad.x, bad.y, bad.z
+                        )
+                    );
+                    assert_eq!(
+                        points[bad_idx].to_array().map(f32::to_bits),
+                        bad.to_array().map(f32::to_bits)
+                    );
+                }
+                other => panic!("expected InvalidInput, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn fused_validation_chooses_first_invalid_across_parallel_chunks() {
+        const CHUNK: usize = 1 << 16;
+        let first_bad = CHUNK + 7;
+        let mut points = vec![Vec3::new(0.5, 0.5, 0.5); 2 * CHUNK + 3];
+        points[first_bad] = Vec3::new(1.0, f32::NAN, 3.0);
+        points[2 * CHUNK + 1] = Vec3::new(f32::INFINITY, 2.0, 3.0);
+
+        let err = validate_and_canonicalize_unit_points(&mut points)
+            .expect_err("non-finite generators must be rejected");
+        assert!(matches!(
+            err,
+            VoronoiError::InvalidInput {
+                point_index,
+                ..
+            } if point_index == first_bad
+        ));
+    }
+
+    #[test]
+    fn fused_validation_preserves_canonicalization_bits() {
+        let mut points = vec![
+            Vec3::new(0.3, -0.7, 0.2),
+            Vec3::new(-0.4, 0.6, 0.8),
+            Vec3::new(3.0, 0.0, 0.0),
+        ];
+        let expected: Vec<Vec3> = points
+            .iter()
+            .map(|p| {
+                let v = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
+                let len_sq = v.length_squared();
+                if (0.25..=4.0).contains(&len_sq) {
+                    let n = v / len_sq.sqrt();
+                    Vec3::new(n.x as f32, n.y as f32, n.z as f32)
+                } else {
+                    *p
+                }
+            })
+            .collect();
+
+        validate_and_canonicalize_unit_points(&mut points).expect("finite points must pass");
+        for (got, expected) in points.iter().zip(&expected) {
+            assert_eq!(
+                got.to_array().map(f32::to_bits),
+                expected.to_array().map(f32::to_bits)
+            );
+        }
+    }
 
     #[test]
     fn stable_rank2_normal_repivots_for_two_arc_ordering() {

@@ -160,6 +160,13 @@ N=12, and 82.61 to 62.62 ns/call at N=20 (10%, 16%, and 24%). Fixed-work counter
 mega were neutral because large-polygon output is rare relative to the full build. Retain this as a
 clear local latency win; whole-program measurements describe its incidence, not its intrinsic cost.
 
+Generator finiteness validation and unit-vector canonicalization share one chunked traversal. The
+fused pass leaves invalid values untouched, reduces chunk-local first-invalid indices to the same
+minimum global index as the old validation pass, and uses the identical per-point f64 normalization
+arithmetic. At 2M single-threaded it reduced retired instructions by 0.18% on Fibonacci and 0.16%
+on uniform input in all three paired runs. Cycles improved 3.5–4.4% on Fibonacci and 2.3–3.9% on
+uniform. The same instruction reduction was visible in the default parallel build.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -168,9 +175,6 @@ measured results above or the retired list below. Do not bundle candidates befor
 
 High-priority, low-risk experiments:
 
-- **O1 — fuse finite validation and canonicalization:** combine the two input sweeps while
-  preserving the first-invalid index and error payload exactly. Measure single-threaded 500k–2M
-  with preprocessing disabled, plus invalid inputs at the beginning, middle, and end.
 - **O2 — non-atomic low-incidence scan for one worker:** use plain `u32` counts when Rayon has one
   worker and retain the atomic path for parallel builds. Measure the always-on repair gate in
   single-threaded ordinary and defect-bearing inputs.
