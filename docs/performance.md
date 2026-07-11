@@ -117,3 +117,8 @@ pair budget added approximately 0.8% instructions to a 500k normal-preprocessing
 paired cycles interval remained unresolved around no change. Revisit these thresholds only with
 both peak-storage telemetry and end-to-end counter measurements; optimizing away the fallback must
 not restore unbounded retained work.
+
+The normal 100k uniform packed-bound comparison remained unresolved after the maximum 160 paired
+wall-time rounds: candidate/base geometric mean `+0.3%`, 95% interval `[-1.1%, +1.8%]`, with the
+candidate faster in 82/160 rounds. This is below the 1% decision resolution on the reference host;
+do not describe it as either a performance win or a demonstrated regression.
