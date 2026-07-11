@@ -366,9 +366,25 @@ fn compute_voronoi_knn_clipping_report_core(
 /// `verify_sphere_fast`) and the repair's own `low_incidence_gens`.
 /// This scan runs on EVERY build with repair enabled (the detection trigger
 /// cannot piggyback on reconcile, which early-returns when no edge is
-/// unresolved), so it is chunk-parallel like the acceptance gate's cell scan
-/// in `verify_sphere_effective_strict` — exact shared atomic counters, read
-/// only after the scan.
+/// unresolved). Multi-threaded builds use exact shared atomic counters, read
+/// only after the chunk-parallel scan; a one-thread Rayon pool uses the same
+/// plain-counter path as a build without the `parallel` feature.
+fn has_low_incidence_vertices_scalar(
+    vertex_count: usize,
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+) -> bool {
+    let mut cnt = vec![0u32; vertex_count];
+    for cell in cells {
+        let start = cell.vertex_start();
+        let end = start + cell.vertex_count();
+        for &v in &cell_indices[start..end] {
+            cnt[v as usize] += 1;
+        }
+    }
+    cnt.iter().any(|&c| c == 1 || c == 2)
+}
+
 fn has_low_incidence_vertices(
     vertex_count: usize,
     cells: &[VoronoiCell],
@@ -378,13 +394,14 @@ fn has_low_incidence_vertices(
     {
         use rayon::prelude::*;
         use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+        let threads = rayon::current_num_threads().max(1);
+        if threads == 1 {
+            return has_low_incidence_vertices_scalar(vertex_count, cells, cell_indices);
+        }
         // (u32: cannot saturate — total increments are bounded by
         // `cell_indices.len()`.)
         let cnt: Vec<AtomicU32> = (0..vertex_count).map(|_| AtomicU32::new(0)).collect();
-        let chunk = cells
-            .len()
-            .div_ceil(rayon::current_num_threads().max(1) * 4)
-            .max(1024);
+        let chunk = cells.len().div_ceil(threads * 4).max(1024);
         cells.par_chunks(chunk).for_each(|cells_chunk| {
             for cell in cells_chunk {
                 let start = cell.vertex_start();
@@ -397,17 +414,7 @@ fn has_low_incidence_vertices(
         cnt.par_iter().any(|c| matches!(c.load(Relaxed), 1 | 2))
     }
     #[cfg(not(feature = "parallel"))]
-    {
-        let mut cnt = vec![0u32; vertex_count];
-        for cell in cells {
-            let start = cell.vertex_start();
-            let end = start + cell.vertex_count();
-            for &v in &cell_indices[start..end] {
-                cnt[v as usize] += 1;
-            }
-        }
-        cnt.iter().any(|&c| c == 1 || c == 2)
-    }
+    has_low_incidence_vertices_scalar(vertex_count, cells, cell_indices)
 }
 
 /// Outcome of the repair attempt, for the caller's fail-loud decision.
@@ -1255,14 +1262,80 @@ fn remap_cells_to_original_indices(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_query_grid, cell_sum_sq_per_n, classify_rank2_great_circle, map_build_cells_error,
-        map_cell_build_error, max_cell_occupancy, stable_rank2_normal,
-        validate_and_canonicalize_unit_points, validate_generator_capacity,
+        build_query_grid, cell_sum_sq_per_n, classify_rank2_great_circle,
+        has_low_incidence_vertices, map_build_cells_error, map_cell_build_error,
+        max_cell_occupancy, stable_rank2_normal, validate_and_canonicalize_unit_points,
+        validate_generator_capacity,
     };
+    use crate::diagram::VoronoiCell;
     use crate::knn_clipping::cell_build::{CellBuildError, CellFailure};
     use crate::knn_clipping::live_dedup::{BuildCellsError, PackedLayoutCapacityError};
     use crate::VoronoiError;
     use glam::Vec3;
+
+    #[test]
+    fn low_incidence_scan_counts_only_live_cell_windows() {
+        let cells = [
+            VoronoiCell::new(0, 1),
+            VoronoiCell::new(2, 1),
+            VoronoiCell::new(4, 1),
+        ];
+        // Vertex 0 is live in all three cells. Vertex 1 exists only in the
+        // stale tail slot following each live span and must not be counted.
+        let indices = [0, 1, 0, 1, 0, 1];
+        assert!(!has_low_incidence_vertices(2, &cells, &indices));
+
+        let low_cells = [VoronoiCell::new(0, 1), VoronoiCell::new(2, 1)];
+        assert!(has_low_incidence_vertices(2, &low_cells, &indices[..4]));
+    }
+
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn one_thread_scalar_low_incidence_matches_atomic_path() {
+        let one_thread = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .expect("one-thread pool");
+        let two_threads = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .expect("two-thread pool");
+
+        let cases = [
+            (
+                2,
+                vec![
+                    VoronoiCell::new(0, 1),
+                    VoronoiCell::new(2, 1),
+                    VoronoiCell::new(4, 1),
+                ],
+                vec![0, 1, 0, 1, 0, 1],
+            ),
+            (
+                3,
+                vec![VoronoiCell::new(0, 2), VoronoiCell::new(2, 2)],
+                vec![0, 1, 0, 2],
+            ),
+            (
+                1,
+                vec![
+                    VoronoiCell::new(0, 1),
+                    VoronoiCell::new(1, 1),
+                    VoronoiCell::new(2, 1),
+                    VoronoiCell::new(3, 1),
+                ],
+                vec![0, 0, 0, 0],
+            ),
+        ];
+
+        for (vertex_count, cells, indices) in cases {
+            let scalar =
+                one_thread.install(|| has_low_incidence_vertices(vertex_count, &cells, &indices));
+            let atomic =
+                two_threads.install(|| has_low_incidence_vertices(vertex_count, &cells, &indices));
+            assert_eq!(scalar, atomic);
+        }
+    }
 
     #[test]
     fn fused_validation_reports_non_finite_at_start_middle_and_end() {

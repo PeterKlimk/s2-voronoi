@@ -167,17 +167,17 @@ arithmetic. At 2M single-threaded it reduced retired instructions by 0.18% on Fi
 on uniform input in all three paired runs. Cycles improved 3.5–4.4% on Fibonacci and 2.3–3.9% on
 uniform. The same instruction reduction was visible in the default parallel build.
 
+The always-on low-incidence repair trigger uses plain `u32` counters when the active Rayon pool has
+one worker, avoiding atomic increments and the parallel final scan. Pools with more than one worker
+retain the atomic implementation. At 2M single-threaded it reduced retired instructions by 0.067%
+on Fibonacci and 0.061% on uniform input, with effectively identical counts in all three paired
+runs. Cycles were too noisy to resolve; the default parallel control was structurally neutral.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
 experiment: preserve its stated semantics, measure the named regime, and move it either into the
 measured results above or the retired list below. Do not bundle candidates before attribution.
-
-High-priority, low-risk experiments:
-
-- **O2 — non-atomic low-incidence scan for one worker:** use plain `u32` counts when Rayon has one
-  worker and retain the atomic path for parallel builds. Measure the always-on repair gate in
-  single-threaded ordinary and defect-bearing inputs.
 
 Promising workload-specific experiments:
 
