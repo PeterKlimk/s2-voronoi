@@ -119,7 +119,8 @@ fn maybe_force_fallback(
         trigger: crate::knn_clipping::topo2d::builder::BuilderFallbackTrigger::ProjectionLimit,
     };
     *fallback_request = Some(request);
-    builder.enter_fallback(points, request);
+    let entered = builder.try_enter_fallback(points, request);
+    debug_assert!(entered);
     *force_fallback_after_neighbors_processed = None;
 }
 
@@ -450,21 +451,24 @@ fn clip_seed_neighbors(
         }
 
         let neighbor = pos_slots[seed.neighbor_slot as usize].pos;
-        match ctx.builder.clip_with_slot_edgecheck_policy(
+        let fallback_rejected = match ctx.builder.clip_with_slot_edgecheck_policy(
             seed.neighbor_idx,
             seed.neighbor_slot,
             neighbor,
             seed.hp_eps,
         ) {
-            Ok(BuilderStepOutcome::Applied) => {}
+            Ok(BuilderStepOutcome::Applied) => false,
             Ok(BuilderStepOutcome::NeedsFallback(request)) => {
                 trace.fallback_request = Some(request);
                 counters.record_fallback(request);
-                ctx.builder.enter_fallback(points, request);
+                !ctx.builder.try_enter_fallback(points, request)
             }
             Err(_) => break,
-        }
+        };
         counters.neighbors_processed += 1;
+        if fallback_rejected {
+            break;
+        }
         #[cfg(test)]
         maybe_force_fallback(
             &mut ctx.builder,
@@ -530,22 +534,28 @@ fn clip_batch(
         // Position from the fused record loaded above (spatial order → clustered,
         // cache-friendly); bit-identical to points[neighbor_idx].
         let neighbor = slot_point.pos;
-        let clip_result =
+        let (clip_result, fallback_rejected) =
             match phase
                 .builder
                 .clip_with_slot_result_policy(neighbor_idx, neighbor_slot, neighbor)
             {
-                Ok(BuilderClipOutcome::Applied(result)) => result,
+                Ok(BuilderClipOutcome::Applied(result)) => (result, false),
                 Ok(BuilderClipOutcome::NeedsFallback(request)) => {
                     trace.fallback_request = Some(request);
                     counters.record_fallback(request);
-                    phase.builder.enter_fallback(points, request);
-                    crate::knn_clipping::topo2d::types::ClipResult::Changed
+                    let rejected = !phase.builder.try_enter_fallback(points, request);
+                    (
+                        crate::knn_clipping::topo2d::types::ClipResult::Changed,
+                        rejected,
+                    )
                 }
                 Err(_) => break,
             };
 
         counters.neighbors_processed += 1;
+        if fallback_rejected {
+            break;
+        }
         #[cfg(test)]
         maybe_force_fallback(
             phase.builder,

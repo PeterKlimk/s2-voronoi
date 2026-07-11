@@ -225,7 +225,12 @@ impl Topo2DBuilder {
         }
     }
 
-    pub(crate) fn enter_fallback(
+    /// Try to replace the current builder with the requested fallback.
+    /// Returns `false` when a `ClippedAway` replay is genuinely infeasible;
+    /// the original failed builder is retained so its failure classification
+    /// remains available to the caller.
+    #[must_use = "fallback rejection must terminate the current clip phase"]
+    pub(crate) fn try_enter_fallback(
         &mut self,
         points: &[glam::Vec3],
         request: BuilderFallbackRequest,

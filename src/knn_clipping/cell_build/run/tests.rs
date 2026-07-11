@@ -631,6 +631,11 @@ fn too_many_vertices_is_a_structured_failure() {
         classify_terminal_failure(true, Some(CellFailure::TooManyVertices), false),
         Some(CellFailure::TooManyVertices)
     );
+    assert_eq!(
+        classify_terminal_failure(false, Some(CellFailure::ClippedAway), true),
+        Some(CellFailure::ClippedAway),
+        "an explicit clipped-away failure must survive stream exhaustion"
+    );
 }
 
 #[test]

@@ -273,7 +273,7 @@ fn clipped_away_handoff_rebuilds_from_constraints() {
     gnomonic.poly_b.len = 0;
     gnomonic.failed = Some(crate::knn_clipping::cell_build::CellFailure::ClippedAway);
 
-    let switched = builder.enter_fallback(
+    let switched = builder.try_enter_fallback(
         &fallback_points(g, h1, h2, h3),
         BuilderFallbackRequest {
             trigger: BuilderFallbackTrigger::ClippedAway,
@@ -284,6 +284,43 @@ fn clipped_away_handoff_rebuilds_from_constraints() {
     let mut buffer = CellOutputBuffer::default();
     builder.to_vertex_data_full(&mut buffer).unwrap();
     assert_eq!(buffer.vertices.len(), 3);
+}
+
+#[test]
+fn clipped_away_handoff_rejection_preserves_failed_builder() {
+    let mut builder = Topo2DBuilder::new(0, Vec3::Z);
+    let gnomonic = builder.as_gnomonic_mut();
+    for (neighbor_idx, neighbor_slot) in [(11, 21), (12, 22), (13, 23), (14, 24)] {
+        gnomonic
+            .half_planes
+            .push(HalfPlane::new_unnormalized(1.0, 0.0, 0.0, neighbor_idx));
+        gnomonic.neighbor_indices.push(neighbor_idx);
+        gnomonic.neighbor_slots.push(neighbor_slot);
+    }
+    gnomonic.poly_a.len = 0;
+    gnomonic.poly_b.len = 0;
+    gnomonic.failed = Some(crate::knn_clipping::cell_build::CellFailure::ClippedAway);
+
+    let eps = f32::EPSILON;
+    let points = fallback_points4(
+        Vec3::Z,
+        Vec3::new(eps, 0.0, 1.0).normalize(),
+        Vec3::new(-eps, 0.0, 1.0).normalize(),
+        Vec3::new(0.0, eps, 1.0).normalize(),
+        Vec3::new(0.0, -eps, 1.0).normalize(),
+    );
+    assert!(!builder.try_enter_fallback(
+        &points,
+        BuilderFallbackRequest {
+            trigger: BuilderFallbackTrigger::ClippedAway,
+        },
+    ));
+    assert!(!builder.is_fallback());
+    assert!(builder.is_failed());
+    assert_eq!(
+        builder.failure(),
+        Some(crate::knn_clipping::cell_build::CellFailure::ClippedAway)
+    );
 }
 
 #[test]
@@ -333,12 +370,12 @@ fn polygon_vertex_limit_handoff_replays_overflowing_constraint() {
     );
 
     let points = fallback_points4(g, h1, h2, h3, h4);
-    builder.enter_fallback(
+    assert!(builder.try_enter_fallback(
         &points,
         BuilderFallbackRequest {
             trigger: BuilderFallbackTrigger::PolygonVertexLimit,
         },
-    );
+    ));
 
     assert_eq!(
         builder.as_fallback().trigger,
@@ -379,12 +416,12 @@ fn fallback_handoff_switches_builder_variant_and_replays_constraints() {
     ))
     .expect("projection invalid should be converted to a fallback handoff");
     let points = fallback_points(g, h1, h2, h3);
-    builder.enter_fallback(
+    assert!(builder.try_enter_fallback(
         &points,
         BuilderFallbackRequest {
             trigger: BuilderFallbackTrigger::ProjectionLimit,
         },
-    );
+    ));
 
     assert_eq!(
         outcome,
@@ -436,12 +473,12 @@ fn fallback_reconstruction_preserves_constraint_order_and_eps() {
     );
 
     let points = fallback_points(g, h1, h2, h3);
-    builder.enter_fallback(
+    assert!(builder.try_enter_fallback(
         &points,
         BuilderFallbackRequest {
             trigger: BuilderFallbackTrigger::ProjectionLimit,
         },
-    );
+    ));
 
     assert_eq!(builder.as_fallback().generator_idx, 0);
     assert_eq!(builder.as_fallback().constraints.len(), 3);
@@ -485,12 +522,12 @@ fn fallback_reconstruction_normalizes_s2_constraints() {
         .expect("normal clip should apply");
 
     let points = fallback_points(g, h1, h2, h3);
-    builder.enter_fallback(
+    assert!(builder.try_enter_fallback(
         &points,
         BuilderFallbackRequest {
             trigger: BuilderFallbackTrigger::ProjectionLimit,
         },
-    );
+    ));
 
     let expected = |h: Vec3| {
         (glam::DVec3::new(g.x as f64, g.y as f64, g.z as f64).normalize()
