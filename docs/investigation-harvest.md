@@ -13,9 +13,7 @@ fingerprints. Start with retired instructions and branches, then paired cycles; 
 `llvm-mca`, or `cargo asm` for attribution. Run `bench_run.sh --converge` when counters are
 inconclusive.
 
-1. **Apply dense-band eligibility before the candidate cap.** Preserve the aggregate work budget
-   and shell certificate.
-2. **Batch shell takeover across same-cell queries.** Evaluate only as a whole-pipeline traversal
+1. **Batch shell takeover across same-cell queries.** Evaluate only as a whole-pipeline traversal
    and emission change.
 
 ## Do not broadly retry
@@ -33,6 +31,9 @@ inconclusive.
 - lazy recomputation of retained high-threshold `chunk0_keys` — despite 86.4% unused keys on 100k
   clustered, 75,653 later requests rebuilt 15.75M keys; measured +28.3% instructions, +65.1%
   branches, and +29.8% cycles. Keep the retained keys.
+- dense-band eligibility before the raw candidate cap — although actual band work fit the existing
+  budget, admitting those groups regressed 5k cap by 0.7% instructions, 1.6% branches, and 1.4%
+  cycles; a 10k cap wall-time check was about 7% slower.
 
 ## Measurement tooling
 
