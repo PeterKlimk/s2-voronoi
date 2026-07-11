@@ -48,7 +48,7 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
     out: &mut PolyBuffer,
 ) -> ClipResult {
     debug_assert_eq!(poly.len, N);
-    debug_assert!(N >= 3 && N <= 8);
+    debug_assert!(N >= 3 && N <= super::super::types::MAX_POLY_VERTICES);
 
     let neg_eps = -hp.eps;
 

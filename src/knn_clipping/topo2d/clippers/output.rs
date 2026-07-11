@@ -52,7 +52,10 @@ pub(super) fn build_output(
         if i == exit_idx {
             break;
         }
-        i = (i + 1) % n;
+        i += 1;
+        if i == n {
+            i = 0;
+        }
     }
 
     push!(

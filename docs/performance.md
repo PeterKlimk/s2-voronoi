@@ -153,6 +153,13 @@ neutral. Splitting the experiment showed that the center-prepare guards account 
 the saving; the requested-tail rescan guard alone was neutral. Retain this as a low-risk structural
 cleanup, not as a demonstrated wall-time improvement.
 
+The large-polygon clip output writer uses an increment-and-wrap step instead of `(i + 1) % n`.
+Release code previously emitted an integer divide for every retained input vertex. An isolated
+mixed-clip microbenchmark improved from 48.12 to 43.27 ns/call at N=9, 59.36 to 49.73 ns/call at
+N=12, and 82.61 to 62.62 ns/call at N=20 (10%, 16%, and 24%). Fixed-work counters at 500k and 1M
+mega were neutral because large-polygon output is rare relative to the full build. Retain this as a
+clear local latency win; whole-program measurements describe its incidence, not its intrinsic cost.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -161,9 +168,6 @@ measured results above or the retired list below. Do not bundle candidates befor
 
 High-priority, low-risk experiments:
 
-- **C1 — remove the large-clip cyclic divide:** replace `(i + 1) % n` in the output writer with
-  increment-and-wrap. Release assembly contains an integer divide. Measure large-polygon clip
-  microbenches and mega end to end.
 - **B1 — fuse inverse-slot and AoS construction:** build `point_slots` while constructing
   `SlotPoint` records, eliminating one unconditional pass over `point_indices`. Measure grid-build
   instructions at 500k–2M across ordinary distributions.

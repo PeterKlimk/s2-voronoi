@@ -129,6 +129,9 @@ pub fn run_clip_convex_microbench() {
         .unwrap_or(1024)
         .clamp(32, 1 << 20)
         .next_power_of_two();
+    let large_only = std::env::var("VORONOI_MESH_BENCH_CASE")
+        .ok()
+        .is_some_and(|case| case == "large");
 
     fn median(mut xs: Vec<f64>) -> f64 {
         if xs.is_empty() {
@@ -270,7 +273,7 @@ pub fn run_clip_convex_microbench() {
         pool_len: usize,
     ) -> (Vec<HalfPlane>, Vec<HalfPlane>, Vec<HalfPlane>) {
         debug_assert!(pool_len.is_power_of_two());
-        let full_mask_val: u8 = ((1u16 << N) - 1) as u8;
+        let full_mask_val: u32 = (1u32 << N) - 1;
 
         #[derive(Clone, Copy)]
         struct Rng(u64);
@@ -296,12 +299,12 @@ pub fn run_clip_convex_microbench() {
         }
 
         #[inline(always)]
-        fn mask_for<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane) -> u8 {
-            let mut mask: u8 = 0;
+        fn mask_for<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane) -> u32 {
+            let mut mask: u32 = 0;
             let neg_eps = -hp.eps;
             for i in 0..N {
                 let d = hp.signed_dist(poly.us[i], poly.vs[i]);
-                mask |= ((d >= neg_eps) as u8) << i;
+                mask |= ((d >= neg_eps) as u32) << i;
             }
             mask
         }
@@ -503,7 +506,53 @@ pub fn run_clip_convex_microbench() {
         });
     }
 
+    fn run_large_for<const N: usize>(target: Duration, samples: usize, hp_pool_len: usize) {
+        let poly = make_regular_poly_bounded::<N>(1.0);
+        let (hps_changed, _, _) = build_hp_pools::<N>(&poly, hp_pool_len);
+        let mut out_reference = PolyBuffer::new();
+        let mut out_dispatch = PolyBuffer::new();
+
+        // A mixed mask at N > 8 must take the bitmask clipper's output-writer
+        // path. Check a representative prefix against the scalar reference
+        // before timing that path in isolation.
+        for (i, hp) in hps_changed.iter().take(64).enumerate() {
+            assert!(matches!(
+                clip_convex_small_bool::<N>(&poly, hp, &mut out_reference),
+                ClipResult::Changed
+            ));
+            assert!(matches!(
+                clip_convex(&poly, hp, &mut out_dispatch, &EscalationCtx::disabled()),
+                ClipResult::Changed
+            ));
+            assert_same_poly(
+                &format!("large dispatch (N={N}, i={i})"),
+                &out_reference,
+                &out_dispatch,
+            );
+        }
+
+        eprintln!("\nclip_convex large-output microbench (N={N})");
+        bench_ns_per_call("dispatch mixed", target, samples, 1, |iters| {
+            let poly = black_box(&poly);
+            let hps = black_box(hps_changed.as_slice());
+            let hp_mask = hps.len() - 1;
+            let out = black_box(&mut out_dispatch);
+            let mut s = 0x1234_5678_9ABC_DEF0u64;
+            for _ in 0..iters {
+                let hp = &hps[next_idx(&mut s, hp_mask)];
+                let result = clip_convex(poly, hp, out, &EscalationCtx::disabled());
+                black_box(result);
+            }
+        });
+    }
+
     let target = Duration::from_millis(target_ms);
+    if large_only {
+        run_large_for::<9>(target, samples, hp_pool_len);
+        run_large_for::<12>(target, samples, hp_pool_len);
+        run_large_for::<20>(target, samples, hp_pool_len);
+        return;
+    }
     run_for::<3>(target, samples, hp_pool_len);
     run_for::<4>(target, samples, hp_pool_len);
     run_for::<5>(target, samples, hp_pool_len);
