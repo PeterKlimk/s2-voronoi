@@ -411,7 +411,9 @@ mod tests {
     use crate::knn_clipping::live_dedup::binning::BinAssignment;
     use crate::knn_clipping::live_dedup::packed::pack_edge;
     use crate::knn_clipping::live_dedup::shard::ShardState;
-    use crate::knn_clipping::live_dedup::types::{EdgeCheckOverflow, LocalId};
+    use crate::knn_clipping::live_dedup::types::{
+        EdgeCheckOverflow, LocalId, UnresolvedEdgeOrigin,
+    };
     use crate::knn_clipping::live_dedup::{EdgeRecord, ShardedCellsData};
     use glam::Vec3;
     use std::collections::BTreeSet;
@@ -521,6 +523,77 @@ mod tests {
 
         assert_eq!(unresolved.len(), 1);
         assert_eq!(unresolved[0].key, edge_key);
+    }
+
+    #[test]
+    fn overflow_duplicate_runs_do_not_patch_an_arbitrary_pair() {
+        for sides in [[0u8, 0, 1], [0u8, 1, 1]] {
+            let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
+            shards[0].output.cell_indices = vec![DEFERRED; 4];
+            shards[1].output.cell_indices = vec![DEFERRED; 4];
+            let edge_key = pack_edge(0, 1);
+            let mut side_counts = [0usize; 2];
+            let mut overflow: Vec<EdgeCheckOverflow> = sides
+                .into_iter()
+                .map(|side| {
+                    let ordinal = side_counts[side as usize];
+                    side_counts[side as usize] += 1;
+                    EdgeCheckOverflow {
+                        key: edge_key,
+                        side,
+                        source_bin: bin(side as usize),
+                        thirds: if side == 0 { [2, 3] } else { [3, 2] },
+                        indices: [10 + ordinal as u32 * 2, 11 + ordinal as u32 * 2],
+                        slots: [ordinal as u32 * 2, ordinal as u32 * 2 + 1],
+                    }
+                })
+                .collect();
+            let mut unresolved = Vec::new();
+
+            resolve_edge_check_overflow(&mut shards, &mut overflow, &mut unresolved);
+
+            assert_eq!(unresolved.len(), 1, "sides={sides:?}");
+            assert_eq!(
+                unresolved[0].origin,
+                UnresolvedEdgeOrigin::CrossBinDuplicateSide,
+                "sides={sides:?}"
+            );
+            assert!(
+                shards
+                    .iter()
+                    .all(|shard| shard.output.cell_indices.iter().all(|&v| v == DEFERRED)),
+                "ambiguous run must be left to vertex-key fallback; sides={sides:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn overflow_duplicate_run_without_opposite_side_reports_both_defects() {
+        let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
+        shards[0].output.cell_indices = vec![DEFERRED; 6];
+        let edge_key = pack_edge(0, 1);
+        let mut overflow: Vec<EdgeCheckOverflow> = (0..3)
+            .map(|ordinal| EdgeCheckOverflow {
+                key: edge_key,
+                side: 0,
+                source_bin: bin(0),
+                thirds: [2, 3],
+                indices: [10 + ordinal * 2, 11 + ordinal * 2],
+                slots: [ordinal * 2, ordinal * 2 + 1],
+            })
+            .collect();
+        let mut unresolved = Vec::new();
+
+        resolve_edge_check_overflow(&mut shards, &mut overflow, &mut unresolved);
+
+        let origins: BTreeSet<_> = unresolved.iter().map(|entry| entry.origin).collect();
+        assert_eq!(
+            origins,
+            BTreeSet::from([
+                UnresolvedEdgeOrigin::CrossBinDuplicateSide,
+                UnresolvedEdgeOrigin::CrossBinSingleSided,
+            ])
+        );
     }
 
     #[test]

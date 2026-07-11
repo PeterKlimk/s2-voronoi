@@ -65,7 +65,7 @@
 //! InBinMissingCheck (believed unreachable by construction — an edge to an
 //! earlier same-bin neighbor only enters a cell via a replayed seed, and a
 //! seed implies its check is present; the branch remains as a conservative
-//! repair route) and CrossBinDuplicateSide (debug-asserted bug trap).
+//! repair route) and CrossBinDuplicateSide (handled duplicate-edge defect).
 //!
 //! If a numerics/tolerance/policy change shifts the defects and these tests
 //! fail, re-run the discovery probes (`probe_*`, ignored by default) to find

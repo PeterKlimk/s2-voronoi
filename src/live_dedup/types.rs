@@ -145,8 +145,8 @@ pub enum UnresolvedEdgeOrigin {
     CrossBinThirdsMismatch,
     /// Cross-bin: only one side emitted an overflow record for this edge key.
     CrossBinSingleSided,
-    /// Cross-bin: both overflow records carried the same side tag (bug trap;
-    /// debug-asserted).
+    /// Cross-bin: an equal-key overflow run contains duplicate records from at
+    /// least one side.
     CrossBinDuplicateSide,
     /// Cross-bin: endpoint patching tried to write two different concrete
     /// vertex references into the same cell slot — the signature of

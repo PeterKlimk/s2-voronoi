@@ -440,9 +440,19 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
     };
     let mut i = 0usize;
     while i < edge_check_overflow.len() {
-        if i + 1 < edge_check_overflow.len()
-            && edge_check_overflow[i].key == edge_check_overflow[i + 1].key
-        {
+        let key = edge_check_overflow[i].key;
+        let mut run_end = i + 1;
+        while run_end < edge_check_overflow.len() && edge_check_overflow[run_end].key == key {
+            run_end += 1;
+        }
+        let run = &edge_check_overflow[i..run_end];
+
+        if run.len() == 1 {
+            unresolved_edges.push(UnresolvedEdgeMismatch {
+                key,
+                origin: UnresolvedEdgeOrigin::CrossBinSingleSided,
+            });
+        } else if run.len() == 2 {
             let a = edge_check_overflow[i];
             let b = edge_check_overflow[i + 1];
             if a.side == b.side {
@@ -500,14 +510,25 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
                     });
                 }
             }
-            i += 2;
         } else {
+            // A normal cross-bin edge has exactly one record per side. Three
+            // or more records mean at least one cell emitted duplicate edges
+            // for this key. Pairing an arbitrary opposite-side subset would
+            // make patches depend on unstable ordering within a side, so leave
+            // the whole run to the deterministic vertex-key fallback.
             unresolved_edges.push(UnresolvedEdgeMismatch {
-                key: edge_check_overflow[i].key,
-                origin: UnresolvedEdgeOrigin::CrossBinSingleSided,
+                key,
+                origin: UnresolvedEdgeOrigin::CrossBinDuplicateSide,
             });
-            i += 1;
+            let first_side = run[0].side;
+            if run.iter().all(|entry| entry.side == first_side) {
+                unresolved_edges.push(UnresolvedEdgeMismatch {
+                    key,
+                    origin: UnresolvedEdgeOrigin::CrossBinSingleSided,
+                });
+            }
         }
+        i = run_end;
     }
 
     let edge_checks_overflow_match_time = t_edge_match.elapsed();
