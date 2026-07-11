@@ -101,3 +101,19 @@ the primary hardware-cost signal, and Cachegrind (`--branch-sim=yes`) or `llvm-m
 attribution. Treat hardware branch/cache misses as corroborating evidence rather than a standalone
 verdict on this machine. Effects below the cycles noise floor should proceed to longer paired
 `bench_run.sh --converge` runs.
+
+### Resource-bound calibration
+
+The timing feature reports `weld_pairs`, `weld_pair_capacity`,
+`packed_keys_materialized`, and `packed_key_capacity_peak` in `TIMING_KV`. Measurements leading to
+the initial packed aggregate-work bound found a 500k uniform peak capacity of 6,464 keys versus
+2,220,652 keys (~17.8 MiB of `u64` payload in one worker) for the clustered distribution. The 1M
+query×candidate budget reduced the clustered peak to 1,188,540 keys (~9.5 MiB of allocator
+capacity) and routes larger groups to the bounded shell fallback.
+
+That fallback is intentionally a reliability tradeoff: at 100k clustered it cost approximately
+23% more instructions and 15% more cycles; uniform work remained structurally neutral. The weld
+pair budget added approximately 0.8% instructions to a 500k normal-preprocessing control, while the
+paired cycles interval remained unresolved around no change. Revisit these thresholds only with
+both peak-storage telemetry and end-to-end counter measurements; optimizing away the fallback must
+not restore unbounded retained work.
