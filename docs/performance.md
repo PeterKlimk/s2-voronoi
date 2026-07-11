@@ -136,3 +136,29 @@ when that query requests the tail. At 100k clustered this reduced key materializ
 18.67M and peak capacity from 1,018,656 to 782,400 keys (about 1.9 MiB), while reducing instructions
 2.05%, branches 2.88%, and cycles 2.83%. Fibonacci improved by 1.20% instructions, 1.29% branches,
 and 3.55% cycles after the requested-query rescan was vectorized.
+
+### Retired experiments
+
+Do not broadly retry these without a materially different design or workload:
+
+- Per-(ring cell, query) spherical-cap pruning: adjacent caps rarely prune; measured net loss.
+- Packed-to-shell attempted-slot filtering: low duplicate coverage and extra branching.
+- Scalar shell dot-only SIMD: measured 6.5–8.5% slower.
+- Lower grid target density: density 24 beat 16 by 4.8–7.1%.
+- Packed partial-selection rewrite: measured 7–14% loss at 2M.
+- Whole-ring packed bound skipping: neutral or worse outside a narrow dense case.
+- Local packed radius-2 optimization: no winning regime; removed end to end.
+- Eager/adaptive local ring-tail batching: only 3.8–9.6% of queries requested tails across 100k
+  fib/uniform/clustered/bimodal, while productive lazy rescans were about 1.5% of 500k clustered
+  runtime. Batching only useful requests requires a traversal redesign.
+- Lazy recomputation of retained high-threshold `chunk0_keys`: despite 86.4% unused keys on 100k
+  clustered, 75,653 later requests rebuilt 15.75M keys, costing 28.3% instructions, 65.1% branches,
+  and 29.8% cycles. Keep the retained keys.
+- Dense-band eligibility before the raw candidate cap: admitting actual band work within the same
+  budget regressed a 5k cap by 0.7% instructions, 1.6% branches, and 1.4% cycles; a 10k cap
+  wall-time check was about 7% slower.
+
+Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
+Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
+later cells. Sharing traversal and emission across a group would therefore require a corresponding
+stitching/scheduling redesign; revisit it only as that larger architectural change.
