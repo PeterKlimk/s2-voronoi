@@ -3,13 +3,6 @@ use crate::sort::sort_small as sort_small_u64;
 use glam::Vec3;
 
 #[inline(always)]
-pub(super) fn unpack_bin_local(packed: u32, local_shift: u32, local_mask: u32) -> (u8, u32) {
-    let bin = (packed >> local_shift) as u8;
-    let local = packed & local_mask;
-    (bin, local)
-}
-
-#[inline(always)]
 fn f32_to_ordered_u32(val: f32) -> u32 {
     let b = val.to_bits();
     if b & 0x8000_0000 != 0 {

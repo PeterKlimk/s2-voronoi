@@ -64,18 +64,8 @@ impl<'a> PackedGroupInput<'a> {
     }
 
     #[inline]
-    pub(crate) fn slot_gen_map(self) -> &'a [u32] {
-        self.layout.slot_gen_map()
-    }
-
-    #[inline]
-    pub(crate) fn local_shift(self) -> u32 {
-        self.layout.local_shift()
-    }
-
-    #[inline]
-    pub(crate) fn local_mask(self) -> u32 {
-        self.layout.local_mask()
+    pub(crate) fn layout(self) -> PackedSlotLayout<'a> {
+        self.layout
     }
 
     #[cfg(debug_assertions)]

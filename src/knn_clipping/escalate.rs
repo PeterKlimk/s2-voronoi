@@ -17,6 +17,7 @@
 //! The caller (`maybe_repair_effective`) commits the result only if the whole
 //! repaired diagram passes strict validation — the never-worse gate.
 
+#[cfg(feature = "escalate_probe")]
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use glam::{DVec3, Vec3};
@@ -1434,6 +1435,7 @@ pub fn take_a0_fast() -> Option<A0Stash> {
 /// Process-global enable for the repair pass (probe / opt-in): forces the
 /// repair trigger on even when the configured [`crate::RepairMode`] is
 /// `Disabled`. Off by default; only the probe API sets it.
+#[cfg(feature = "escalate_probe")]
 static ESCALATE_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Enable or disable defect-driven escalation (probe API).
@@ -1443,8 +1445,15 @@ pub fn set_escalation_enabled(on: bool) {
 }
 
 /// Whether escalation is currently force-enabled.
+#[cfg(feature = "escalate_probe")]
 pub(crate) fn escalation_enabled() -> bool {
     ESCALATE_ENABLED.load(Ordering::Relaxed)
+}
+
+/// Escalation is opt-in through the probe feature.
+#[cfg(not(feature = "escalate_probe"))]
+pub(crate) const fn escalation_enabled() -> bool {
+    false
 }
 
 #[cfg(test)]

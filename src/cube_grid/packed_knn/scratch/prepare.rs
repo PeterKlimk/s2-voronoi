@@ -1,7 +1,5 @@
 use super::super::timing::PackedLapTimer;
-use super::helpers::{
-    make_desc_key, outside_max_dot_xyz, security_planes_3x3_interior, unpack_bin_local,
-};
+use super::helpers::{make_desc_key, outside_max_dot_xyz, security_planes_3x3_interior};
 use super::*;
 use crate::fp;
 use crate::policy::{
@@ -32,9 +30,7 @@ impl PackedKnnCellScratch {
 
         let queries = group.queries();
         let query_bin = group.query_bin();
-        let slot_gen_map = group.slot_gen_map();
-        let local_shift = group.local_shift();
-        let local_mask = group.local_mask();
+        let layout = group.layout();
         let num_queries = queries.len();
         let mut group_gen = self.next_group_gen.wrapping_add(1).max(1);
         if group_gen == u32::MAX {
@@ -69,7 +65,7 @@ impl PackedKnnCellScratch {
                 // This allows:
                 // - skipping same-bin neighbor cells strictly earlier than the center cell
                 // - avoiding per-point (bin,local) decoding for all other neighbor cells
-                let (bin_b, _) = unpack_bin_local(slot_gen_map[n_start], local_shift, local_mask);
+                let (bin_b, _) = layout.bin_local(n_start as u32);
                 let kind = if bin_b != query_bin {
                     PackedCellRangeKind::CrossBin
                 } else if ncell < cell as u32 {

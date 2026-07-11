@@ -471,6 +471,7 @@ struct BenchResult {
     time_ms: f64,
     num_vertices: usize,
     num_cells: usize,
+    mean_cell_vertices: f64,
 }
 
 fn run_benchmark_with_config(points: &[UnitVec3], config: VoronoiConfig) -> BenchResult {
@@ -496,6 +497,12 @@ fn run_benchmark_with_config(points: &[UnitVec3], config: VoronoiConfig) -> Benc
         time_ms,
         num_vertices: diagram.num_vertices(),
         num_cells: diagram.num_cells(),
+        mean_cell_vertices: if diagram.num_cells() == 0 {
+            0.0
+        } else {
+            diagram.iter_cells().map(|cell| cell.len()).sum::<usize>() as f64
+                / diagram.num_cells() as f64
+        },
     }
 }
 
@@ -606,10 +613,7 @@ fn main() {
         }
         println!("  Vertices:      {:>8}", format_num(result.num_vertices));
         println!("  Cells:         {:>8}", format_num(result.num_cells));
-        println!(
-            "  Avg verts/cell:{:>8.2}",
-            result.num_vertices as f64 * 3.0 / result.num_cells as f64
-        );
+        println!("  Avg verts/cell:{:>8.2}", result.mean_cell_vertices);
 
         if args.validate && *n <= 100_000 {
             validate_against_hull(&points, !args.no_preprocess);

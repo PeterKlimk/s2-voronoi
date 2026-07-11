@@ -3,14 +3,14 @@
 /// Dense disjoint-set. No production caller since edge_reconcile moved to
 /// [`SparseUnionFind`]; retained as the semantics oracle for the sparse
 /// equivalence test.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) struct UnionFind {
     parent: Vec<u32>,
     rank: Vec<u8>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 impl UnionFind {
     pub fn new(n: usize) -> Self {
         let mut parent = Vec::with_capacity(n);
@@ -37,7 +37,6 @@ impl UnionFind {
     ///
     /// No production caller since edge_reconcile moved to `SparseUnionFind`;
     /// retained as the semantics oracle for the sparse equivalence test.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn union(&mut self, a: u32, b: u32) -> bool {
         let ra = self.find(a);
         let rb = self.find(b);

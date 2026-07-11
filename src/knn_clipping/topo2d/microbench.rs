@@ -239,7 +239,7 @@ pub fn run_clip_convex_microbench() {
         // Warmup.
         f(10_000);
 
-        let iters = calibrate(target, |n| f(n));
+        let iters = calibrate(target, &mut f);
         for _ in 0..samples {
             let t0 = Instant::now();
             f(iters);
