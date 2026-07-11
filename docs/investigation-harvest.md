@@ -13,8 +13,9 @@ fingerprints. Start with retired instructions and branches, then paired cycles; 
 `llvm-mca`, or `cargo asm` for attribution. Run `bench_run.sh --converge` when counters are
 inconclusive.
 
-1. **Bound the first packed chunk and materialize the remainder lazily.** Compare retained keys,
-   later requests, recomputation, and peak bytes.
+1. **Bound retained `chunk0_keys` and materialize later chunks lazily.** Center-tail keys are now
+   counted eagerly but materialized only on request. Measure unconsumed high-threshold keys before
+   applying the same recomputation tradeoff to later chunk-0 requests.
 2. **Apply dense-band eligibility before the candidate cap.** Preserve the aggregate work budget
    and shell certificate.
 3. **Batch shell takeover across same-cell queries.** Evaluate only as a whole-pipeline traversal

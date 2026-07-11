@@ -99,6 +99,7 @@ pub struct CellSubPhases {
     pub ring_tail_dot_evaluations: u64,
     pub center_tail_keys: u64,
     pub unused_center_tail_keys: u64,
+    pub center_tail_dot_evaluations: u64,
     pub shell_layer_batches: u64,
     pub shell_layer_slots: u64,
     pub shell_layer_prefix_consumed: u64,
@@ -170,6 +171,7 @@ pub struct CellSubAccum {
     ring_tail_dot_evaluations: u64,
     center_tail_keys: u64,
     unused_center_tail_keys: u64,
+    center_tail_dot_evaluations: u64,
     shell_layer_batches: u64,
     shell_layer_slots: u64,
     shell_layer_prefix_consumed: u64,
@@ -227,6 +229,7 @@ impl CellSubAccum {
         self.ring_tail_dot_evaluations += timings.ring_tail_dot_evaluations;
         self.center_tail_keys += timings.center_tail_keys;
         self.unused_center_tail_keys += timings.unused_center_tail_keys;
+        self.center_tail_dot_evaluations += timings.center_tail_dot_evaluations;
     }
 
     #[inline]
@@ -368,6 +371,7 @@ impl CellSubAccum {
         self.ring_tail_dot_evaluations += other.ring_tail_dot_evaluations;
         self.center_tail_keys += other.center_tail_keys;
         self.unused_center_tail_keys += other.unused_center_tail_keys;
+        self.center_tail_dot_evaluations += other.center_tail_dot_evaluations;
         self.shell_layer_batches += other.shell_layer_batches;
         self.shell_layer_slots += other.shell_layer_slots;
         self.shell_layer_prefix_consumed += other.shell_layer_prefix_consumed;
@@ -427,6 +431,7 @@ impl CellSubAccum {
             ring_tail_dot_evaluations: self.ring_tail_dot_evaluations,
             center_tail_keys: self.center_tail_keys,
             unused_center_tail_keys: self.unused_center_tail_keys,
+            center_tail_dot_evaluations: self.center_tail_dot_evaluations,
             shell_layer_batches: self.shell_layer_batches,
             shell_layer_slots: self.shell_layer_slots,
             shell_layer_prefix_consumed: self.shell_layer_prefix_consumed,
@@ -610,8 +615,10 @@ impl PhaseTimings {
                         self.cell_sub.ring_tail_dot_evaluations,
                     );
                     eprintln!(
-                        "      center_tail_keys: stored={} unused={}",
-                        self.cell_sub.center_tail_keys, self.cell_sub.unused_center_tail_keys,
+                        "      center_tail_candidates: total={} unrequested={} recomputed_dots={}",
+                        self.cell_sub.center_tail_keys,
+                        self.cell_sub.unused_center_tail_keys,
+                        self.cell_sub.center_tail_dot_evaluations,
                     );
                 }
             }
@@ -729,7 +736,7 @@ impl PhaseTimings {
 
         if std::env::var_os("VORONOI_MESH_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -755,6 +762,7 @@ impl PhaseTimings {
                 rtd = self.cell_sub.ring_tail_dot_evaluations,
                 ctk = self.cell_sub.center_tail_keys,
                 uctk = self.cell_sub.unused_center_tail_keys,
+                ctd = self.cell_sub.center_tail_dot_evaluations,
                 slb = self.cell_sub.shell_layer_batches,
                 sls = self.cell_sub.shell_layer_slots,
                 slp = self.cell_sub.shell_layer_prefix_consumed,

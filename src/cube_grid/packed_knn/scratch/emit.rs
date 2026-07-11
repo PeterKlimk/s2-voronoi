@@ -30,8 +30,10 @@ impl PackedKnnCellScratch {
         }
         self.tail_ready_gen[qi] = group_gen;
 
-        // Keep any precomputed center-tail candidates already stored in `tail_keys[qi]` and
-        // append ring-tail candidates here.
+        // Materialize the directed center-tail suffix only for a query that
+        // actually requests it, then append the ring-tail candidates. The
+        // prepare pass counted these candidates for telemetry but deliberately
+        // avoided retaining the overwhelmingly-unused keys.
         self.tail_pos[qi] = 0;
         debug_assert!(self.tail_possible.get(qi).copied().unwrap_or(false));
 
@@ -45,6 +47,50 @@ impl PackedKnnCellScratch {
         let threshold = self.thresholds[qi];
         let tail_keys = &mut self.tail_keys[qi];
         let old_len = tail_keys.len();
+        let PackedCellRange {
+            soa_start: center_start,
+            soa_end: center_end,
+            ..
+        } = self.cell_ranges[0];
+        let center_pos = query_slot_usize - center_start;
+        let suffix_start = query_slot_usize + 1;
+        let xs = &grid.cell_points_x[suffix_start..center_end];
+        let ys = &grid.cell_points_y[suffix_start..center_end];
+        let zs = &grid.cell_points_z[suffix_start..center_end];
+        let full_chunks = xs.len() / 8;
+        let (x_chunks, _) = xs.as_chunks::<8>();
+        let (y_chunks, _) = ys.as_chunks::<8>();
+        let (z_chunks, _) = zs.as_chunks::<8>();
+        for chunk in 0..full_chunks {
+            let candidates = fp::PointChunk8::from_array_refs(
+                &x_chunks[chunk],
+                &y_chunks[chunk],
+                &z_chunks[chunk],
+            );
+            let dots = candidates.dots(qx_s, qy_s, qz_s);
+            let mut tail_bits = dots.mask_gt(security_threshold) & !dots.mask_gt(threshold);
+            let dots_arr = dots.to_array();
+            while tail_bits != 0 {
+                let lane = tail_bits.trailing_zeros() as usize;
+                let slot_pos = suffix_start + chunk * 8 + lane;
+                tail_keys.push(super::helpers::make_desc_key(
+                    dots_arr[lane],
+                    slot_pos as u32,
+                ));
+                tail_bits &= tail_bits - 1;
+            }
+        }
+        for i in (full_chunks * 8)..xs.len() {
+            let dot = fp::dot3_f32(xs[i], ys[i], zs[i], qx_s, qy_s, qz_s);
+            if dot > security_threshold && dot <= threshold {
+                tail_keys.push(super::helpers::make_desc_key(
+                    dot,
+                    (suffix_start + i) as u32,
+                ));
+            }
+        }
+        timings.add_center_tail_dot_evaluations(center_end - center_start - center_pos - 1);
+        let ring_old_len = tail_keys.len();
         let mut ring_dot_evaluations = 0usize;
         for r in &self.cell_ranges[1..] {
             if r.kind == PackedCellRangeKind::SameBinEarlier {
@@ -107,7 +153,8 @@ impl PackedKnnCellScratch {
         }
         timings.add_ring_fallback(t_tail.lap());
         let added = tail_keys.len() - old_len;
-        timings.add_ring_tail_rescan(added == 0, ring_dot_evaluations);
+        let ring_added = tail_keys.len() - ring_old_len;
+        timings.add_ring_tail_rescan(ring_added == 0, ring_dot_evaluations);
         let tail_empty = tail_keys.is_empty();
         let capacity = self.chunk0_keys[..group_queries.len()]
             .iter()

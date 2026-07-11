@@ -106,7 +106,7 @@ verdict on this machine. Effects below the cycles noise floor should proceed to 
 
 The timing feature reports `weld_pairs`, `weld_pair_capacity`,
 `packed_keys_materialized`, `packed_key_capacity_peak`, tail possible/requested counts, ring-tail
-rescan/dot counts, and stored/unused center-tail keys in `TIMING_KV`. Measurements leading to
+rescan/dot counts, and total/unrequested center-tail candidates in `TIMING_KV`. Measurements leading to
 the initial packed aggregate-work bound found a 500k uniform peak capacity of 6,464 keys versus
 2,220,652 keys (~17.8 MiB of `u64` payload in one worker) for the clustered distribution. The 1M
 query×candidate budget reduced the clustered peak to 1,188,540 keys (~9.5 MiB of allocator
@@ -129,3 +129,9 @@ partition-sorts 64-entry prefixes on demand. At 100k single-threaded it reduced 
 instructions by 3.05%, branches by 1.76%, and cycles by 3.52%; bimodal instructions fell 0.91% with
 neutral cycles. Fibonacci instructions/branches were structurally neutral-to-lower, while its
 0.83% cycle increase remained inside the reference host's noise interval.
+
+Center-tail candidates are counted during the initial SIMD pass but their keys are materialized only
+when that query requests the tail. At 100k clustered this reduced key materialization from 24.19M to
+18.67M and peak capacity from 1,018,656 to 782,400 keys (about 1.9 MiB), while reducing instructions
+2.05%, branches 2.88%, and cycles 2.83%. Fibonacci improved by 1.20% instructions, 1.29% branches,
+and 3.55% cycles after the requested-query rescan was vectorized.

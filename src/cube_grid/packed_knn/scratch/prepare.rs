@@ -193,6 +193,8 @@ impl PackedKnnCellScratch {
         self.tail_pos.clear();
         self.tail_pos.resize(num_queries, 0);
         self.tail_possible.resize(num_queries, false);
+        self.center_tail_counts.clear();
+        self.center_tail_counts.resize(num_queries, 0);
         if self.tail_ready_gen.len() < num_queries {
             self.tail_ready_gen.resize(num_queries, 0);
         }
@@ -305,7 +307,7 @@ impl PackedKnnCellScratch {
                             if dot > hi {
                                 chunk0_keys[qi].push(make_desc_key(dot, slot));
                             } else {
-                                tail_keys[qi].push(make_desc_key(dot, slot));
+                                self.center_tail_counts[qi] += 1;
                             }
                         }
                         continue;
@@ -394,7 +396,7 @@ impl PackedKnnCellScratch {
                         // and the [security, t] band (-> tail) in one pass; the old
                         // post-hoc demotion loop is gone.
                         let hi_bits = dots.mask_gt(hi_thresholds[qi]) & mask_bits;
-                        let mut band_bits = mask_bits & !hi_bits;
+                        let band_bits = mask_bits & !hi_bits;
                         let mut hi = hi_bits;
                         let dots_arr = dots.to_array();
                         while hi != 0 {
@@ -403,12 +405,7 @@ impl PackedKnnCellScratch {
                             chunk0_keys[qi].push(make_desc_key(dots_arr[lane], slot));
                             hi &= hi - 1;
                         }
-                        while band_bits != 0 {
-                            let lane = band_bits.trailing_zeros() as usize;
-                            let slot = (center_soa_start + i + lane) as u32;
-                            tail_keys[qi].push(make_desc_key(dots_arr[lane], slot));
-                            band_bits &= band_bits - 1;
-                        }
+                        self.center_tail_counts[qi] += band_bits.count_ones() as usize;
                     }
                 }
 
@@ -445,7 +442,7 @@ impl PackedKnnCellScratch {
                         }
 
                         let hi_bits = dots.mask_gt(hi_thresholds[qi]) & mask_bits;
-                        let mut band_bits = mask_bits & !hi_bits;
+                        let band_bits = mask_bits & !hi_bits;
                         let mut hi = hi_bits;
                         let dots_arr = dots.to_array();
                         while hi != 0 {
@@ -454,12 +451,7 @@ impl PackedKnnCellScratch {
                             chunk0_keys[qi].push(make_desc_key(dots_arr[lane], slot));
                             hi &= hi - 1;
                         }
-                        while band_bits != 0 {
-                            let lane = band_bits.trailing_zeros() as usize;
-                            let slot = (center_soa_start + i + lane) as u32;
-                            tail_keys[qi].push(make_desc_key(dots_arr[lane], slot));
-                            band_bits &= band_bits - 1;
-                        }
+                        self.center_tail_counts[qi] += band_bits.count_ones() as usize;
                     }
                 }
             }
@@ -468,10 +460,6 @@ impl PackedKnnCellScratch {
             if !tail_keys[qi].is_empty() {
                 self.tail_possible[qi] = true;
             }
-        }
-        self.center_tail_counts.resize(num_queries, 0);
-        for qi in 0..num_queries {
-            self.center_tail_counts[qi] = tail_keys[qi].len();
         }
         timings.add_center_pass(t.lap());
 
