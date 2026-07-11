@@ -506,6 +506,67 @@ fn fallback_reconstruction_normalizes_s2_constraints() {
     }
 }
 
+#[test]
+fn fallback_stale_corner_is_rebuilt_from_all_constraints() {
+    let t = 0.2;
+    let delta = 1.0e-6;
+    let normal = |x: f64, y: f64, z: f64| glam::DVec3::new(x, y, z).normalize();
+    let constraint = |normal: glam::DVec3, neighbor_idx: usize| FallbackConstraint {
+        normal,
+        neighbor_idx,
+        neighbor_slot: neighbor_idx as u32,
+        hp_eps: None,
+    };
+
+    // A/B/D/E bound a square around +Z. C cuts off the A/B corner, but the
+    // incremental polygon deliberately retains the stale pre-C corner and
+    // edge labels. This models the rare extraction fallthrough: exact A/B is
+    // outside C, while C is far enough from the stale corner that the local
+    // split-plane lookup does not attribute it.
+    let constraints = vec![
+        constraint(normal(1.0, 0.0, t), 11),               // A: x >= -t z
+        constraint(normal(0.0, 1.0, t), 12),               // B: y >= -t z
+        constraint(normal(-1.0, 0.0, t), 13),              // D: x <=  t z
+        constraint(normal(0.0, -1.0, t), 14),              // E: y <=  t z
+        constraint(normal(1.0, 1.0, 2.0 * t - delta), 15), // C
+    ];
+    let corner = |x: f64, y: f64| SphericalPolyVertex {
+        position: glam::DVec3::new(x, y, 1.0).normalize(),
+    };
+    let builder = FallbackBuilder {
+        generator_idx: 0,
+        generator: glam::DVec3::Z,
+        constraints,
+        poly: SphericalPoly {
+            vertices: vec![corner(-t, -t), corner(t, -t), corner(t, t), corner(-t, t)],
+            // Each entry labels the outgoing edge; A is therefore the
+            // incoming label at the first (stale) corner.
+            edge_planes: vec![1, 2, 3, 0],
+        },
+        trigger: BuilderFallbackTrigger::ProjectionLimit,
+    };
+
+    let mut buffer = CellOutputBuffer::default();
+    builder
+        .to_vertex_data_full(&mut buffer)
+        .expect("all-constraints retry should recover the cut corner");
+
+    assert_eq!(buffer.vertices.len(), 5);
+    assert!(!buffer.vertices.iter().any(|(key, _)| *key == [0, 11, 12]));
+    assert!(buffer.vertices.iter().any(|(key, _)| *key == [0, 11, 15]));
+    assert!(buffer.vertices.iter().any(|(key, _)| *key == [0, 12, 15]));
+    for (_, position) in &buffer.vertices {
+        let position = glam::DVec3::new(position.x as f64, position.y as f64, position.z as f64);
+        assert!(
+            builder
+                .constraints
+                .iter()
+                .all(|constraint| constraint.normal.dot(position) >= -1.0e-7),
+            "extracted vertex lies outside an accepted constraint: {position:?}"
+        );
+    }
+}
+
 /// Find an adversarial-but-legitimate f32 generator on the ring just above
 /// the TangentBasis pole cutoff: |g|² − 1 within ~1 ulp of the z component
 /// (any f32 normalization can land there), maximizing chart metric skew.

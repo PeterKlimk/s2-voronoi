@@ -355,6 +355,7 @@ impl FallbackBuilder {
 
         let candidates = self.active_candidate_planes();
         let mut vertices = Vec::new();
+        let mut used_raw_corner = false;
 
         for i in 0..self.poly.vertices.len() {
             let plane_a = self.poly.edge_planes
@@ -391,23 +392,11 @@ impl FallbackBuilder {
             } else if let Some(vertex) = self.pair_vertex(plane_a, plane_b) {
                 Self::push_fallback_vertex(&mut vertices, vertex);
             } else {
-                // `pair_vertex` found the (plane_a, plane_b) intersection just
-                // outside the cell and no split plane_c resolves the corner. We
-                // keep the raw f32 clip corner so the fallback still emits a
-                // bounded cell for the residual-detection + Tier-2 repair to
-                // reconcile — failing loud here instead breaks ALL mega repair
-                // (the fallthrough is load-bearing; measured 2026-06-20). The
-                // residual risk is a symmetric-fallthrough wrong KEY: two
-                // neighbours agreeing on the same approximate triple collapse by
-                // key-only dedup to one vertex. That vertex is on-sphere and the
-                // edges still pair, so the *topology* is valid (the validator
-                // accepts it; `validation` excludes Voronoi fidelity by design),
-                // but its position/attribution is geometrically wrong — an
-                // accuracy defect, not invalid topology. Keeping it is a
-                // pragmatic availability call, not a proof it is within the
-                // approximate-Voronoi contract. Proper hardening (a synthetic
-                // detection record forcing the output-invariant scan so the wrong
-                // key is caught) is deferred.
+                // The locally labelled pair is outside another accepted
+                // constraint and no touching split plane resolves it. Retain the
+                // raw corner provisionally so extraction stays available if the
+                // global reconstruction below cannot form a closed cell.
+                used_raw_corner = true;
                 Self::push_fallback_vertex(
                     &mut vertices,
                     FallbackVertex {
@@ -416,6 +405,30 @@ impl FallbackBuilder {
                         plane_b,
                     },
                 );
+            }
+        }
+
+        if used_raw_corner {
+            // A raw corner can carry a stale (plane_a, plane_b) key even when
+            // its cyclic edge labels remain self-consistent, so topology-only
+            // stitching cannot reliably detect the attribution error. This is
+            // already a cold defect path: rebuild from every accepted pair and
+            // prefer that exact attribution when it forms a closed cell. Keep
+            // the provisional raw result only when the rebuild itself is not
+            // usable; that last-resort fallthrough is load-bearing for known
+            // highly degenerate inputs.
+            let rebuilt = all_constraints_vertices(self.generator, &self.constraints);
+            let rebuilt_is_closed = rebuilt.len() >= 3
+                && (0..rebuilt.len()).all(|i| {
+                    shared_all_constraints_edge(
+                        rebuilt[i],
+                        rebuilt[(i + 1) % rebuilt.len()],
+                        &self.constraints,
+                    )
+                    .is_some()
+                });
+            if rebuilt_is_closed {
+                return rebuilt;
             }
         }
 

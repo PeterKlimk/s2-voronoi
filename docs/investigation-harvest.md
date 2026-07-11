@@ -3,14 +3,6 @@
 Trimmed at `7d3c83b` after the deterministic correctness and resource-bound work was harvested.
 This is a temporary handoff: delete it when the remaining findings are completed or transferred.
 
-## Correctness investigation
-
-### Raw-corner fallback attribution
-
-`src/knn_clipping/topo2d/builder/extract.rs:394-418` retains a raw corner/key when exact pair
-recovery fails. This is a plausible rare geometry-accuracy defect that topology validation may not
-detect. Build a targeted fallback fixture before changing the recovery logic.
-
 ## Test and contract hardening
 
 1. **Exercise the production bin/local layout in NN contracts.** Current synthetic harnesses use
