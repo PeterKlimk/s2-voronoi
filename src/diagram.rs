@@ -433,8 +433,14 @@ mod wire {
                 ));
             }
             for (i, c) in w.cells.iter().enumerate() {
+                let end = c.start.checked_add(c.len as u32).ok_or_else(|| {
+                    format!(
+                        "cell {i} span start {} + len {} overflows u32",
+                        c.start, c.len
+                    )
+                })?;
                 let start = c.start as usize;
-                let end = start + c.len as usize;
+                let end = end as usize;
                 if end > w.cell_indices.len() {
                     return Err(format!(
                         "cell {i} span [{start}..{end}) exceeds index buffer len {}",

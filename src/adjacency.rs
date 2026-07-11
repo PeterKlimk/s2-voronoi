@@ -53,7 +53,10 @@ impl TryFrom<CellAdjacencyWire> for CellAdjacency {
 
     fn try_from(w: CellAdjacencyWire) -> Result<Self, String> {
         for (i, &(start, len)) in w.cells.iter().enumerate() {
-            if len != 0 && start as usize + len as usize > w.neighbors.len() {
+            let end = start.checked_add(len as u32).ok_or_else(|| {
+                format!("adjacency cell {i} span start {start} + len {len} overflows u32")
+            })?;
+            if len != 0 && end as usize > w.neighbors.len() {
                 return Err(format!(
                     "adjacency cell {i} span [{start}..+{len}) exceeds neighbor buffer len {}",
                     w.neighbors.len()

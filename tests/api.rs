@@ -628,6 +628,12 @@ fn test_serde_roundtrip_preserves_diagram_and_welds() {
     for i in 0..diagram.num_cells() {
         assert_eq!(adj_restored.neighbors_of(i), adjacency.neighbors_of(i));
     }
+
+    let mut malformed: serde_json::Value = serde_json::from_str(&adj_json).unwrap();
+    malformed["cells"][0][0] = serde_json::json!(u32::MAX);
+    let err = serde_json::from_value::<voronoi_mesh::CellAdjacency>(malformed)
+        .expect_err("overflowing adjacency span must be rejected");
+    assert!(err.to_string().contains("span"), "unexpected error: {err}");
 }
 
 /// Deserialization is checked: structurally malformed wire data (spans past
