@@ -146,6 +146,77 @@ instructions from 7.37B to 5.70B and cycles from 2.40B to 1.92B. At 50k clustere
 improved 23.6% over eight pairs. The 100k Fibonacci control has negligible shell time; its wall-time
 result was unresolved, while counters improved about 1.1% instructions and 1.2% cycles.
 
+### Open optimization queue
+
+These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
+experiment: preserve its stated semantics, measure the named regime, and move it either into the
+measured results above or the retired list below. Do not bundle candidates before attribution.
+
+High-priority, low-risk experiments:
+
+- **K1 — defer empty-mask SIMD extraction:** in packed center-tail and center-pass loops, test
+  `tail_bits` / `hi_bits` before `Dots8::to_array`. Release assembly currently stores lanes before
+  the empty-mask branch. Measure packed/query instructions on clustered and mega; Fibonacci is the
+  neutrality control.
+- **C1 — remove the large-clip cyclic divide:** replace `(i + 1) % n` in the output writer with
+  increment-and-wrap. Release assembly contains an integer divide. Measure large-polygon clip
+  microbenches and mega end to end.
+- **B1 — fuse inverse-slot and AoS construction:** build `point_slots` while constructing
+  `SlotPoint` records, eliminating one unconditional pass over `point_indices`. Measure grid-build
+  instructions at 500k–2M across ordinary distributions.
+- **O1 — fuse finite validation and canonicalization:** combine the two input sweeps while
+  preserving the first-invalid index and error payload exactly. Measure single-threaded 500k–2M
+  with preprocessing disabled, plus invalid inputs at the beginning, middle, and end.
+- **O2 — non-atomic low-incidence scan for one worker:** use plain `u32` counts when Rayon has one
+  worker and retain the atomic path for parallel builds. Measure the always-on repair gate in
+  single-threaded ordinary and defect-bearing inputs.
+
+Promising workload-specific experiments:
+
+- **K2 — specialize shell scanning by cell mode:** remove per-slot global-id loads and mode checks
+  from directed center and non-center loops. Re-run the full directed/unrestricted nearest-neighbor
+  contracts and measure shell-heavy clustered/mega inputs.
+- **K3 — vectorize interior security thresholds:** evaluate the four cell-wall planes in eight-query
+  chunks while preserving dot association and nonfinite fallback behavior. Measure
+  `packed_security` and compare thresholds bit-for-bit.
+- **C2 — avoid padded small-clip stores:** the ubiquitous N=3/4 path currently writes four unused
+  f64 zeros before escalation examines only live lanes. Any uninitialized representation must prove
+  all feature combinations, including `p5_shadow`, read only initialized lanes.
+- **C3 — use a four-lane large-clip tail:** for polygon lengths with a remainder at most four, avoid
+  evaluating dead lanes. Measure N=9–12 and N=17–20 microbench cases before end-to-end testing.
+- **C4 — unswitch batch-source handling:** hoist the invariant packed-tail/chunk/shell source match
+  out of the per-neighbor loop. Keep bounds checks unless a separate safety argument and counter
+  result justify removing them.
+- **D1 — indexed incoming edge-check lookup:** retain linear search for small cells and test a
+  reusable tiny map or sort/merge above a measured incoming-count threshold. Preserve first-index
+  and duplicate semantics; measure high-degree, clustered, mega, and bin-count sweeps.
+- **D2 — reserve aggregate assembly vectors:** sum shard lengths before appending unresolved edges,
+  overflow checks, and deferred slots. Measure allocation counts, cycles, and peak RSS at high bin
+  counts; reject if the reservation merely increases simultaneous memory.
+- **D3 — compact high-degree consumed flags:** replace the per-cell byte vector above 64 incoming
+  checks with reusable bit words. First instrument activation frequency; ordinary cells should stay
+  on the existing inline mask.
+- **B2 — branchless `uv_to_st` sign selection:** the sign branch is balanced and remains in release
+  assembly; an `abs` plus bit-select prototype was bit-identical for finite f32 inputs. Require
+  paired branch, instruction, and cycle results because the added arithmetic may cancel the win.
+- **B3 — collapse dense-index build passes:** accumulate all axis ranges in one scan, hoist the
+  chosen coordinate slice, and materialize sorted slots/coordinates together. This is dense-only;
+  measure outlier/mega and synthetic cells above the 512-point threshold.
+- **O3 — reuse reconciliation segment scratch:** two temporary vectors are allocated per unresolved
+  record. Reuse two buffers per reconciliation round and measure allocations on high-degree defect
+  fixtures; the clean path must remain unchanged.
+
+Lower-confidence cleanup candidates, to attempt only with structural counters or activation data:
+
+- Remove the redundant per-cell output-buffer clear when all success writers clear before use.
+- Reserve live-dedup owned vertices nearer the observed ~2 vertices/generator instead of 6, while
+  tracking reallocations and RSS on irregular inputs.
+- Unroll weld wall-proximity tests without changing f64 arithmetic or pair-budget behavior.
+- Precompute standalone large-`MergeWithin` wall proximity; this does not affect default welding.
+- Replace the high-degree edge-check spill byte vector only if instrumentation shows it is live.
+- Consider unchecked endpoint/owner-bin access only after a measurable bounds-check cost and a
+  complete invariant audit; a sub-noise win does not justify converting a panic into possible UB.
+
 ### Retired experiments
 
 Do not broadly retry these without a materially different design or workload:
