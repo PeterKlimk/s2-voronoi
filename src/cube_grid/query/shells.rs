@@ -194,6 +194,19 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
     }
 }
 
+impl CubeMapGrid {
+    #[inline]
+    pub(crate) fn shell_frontier<'a, 'b>(
+        &'a self,
+        query: Vec3,
+        query_idx: usize,
+        scratch: &'a mut CubeMapGridScratch,
+        eligibility: DirectedEligibility<'b>,
+    ) -> ShellFrontier<'a, 'b> {
+        ShellFrontier::new(self, query, query_idx, scratch, eligibility)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,18 +222,5 @@ mod tests {
         sort_pending(&mut pending);
         let slots: Vec<u32> = pending.into_iter().map(|(_, slot)| slot).collect();
         assert_eq!(slots, vec![3, 9, 2, 7]);
-    }
-}
-
-impl CubeMapGrid {
-    #[inline]
-    pub(crate) fn shell_frontier<'a, 'b>(
-        &'a self,
-        query: Vec3,
-        query_idx: usize,
-        scratch: &'a mut CubeMapGridScratch,
-        eligibility: DirectedEligibility<'b>,
-    ) -> ShellFrontier<'a, 'b> {
-        ShellFrontier::new(self, query, query_idx, scratch, eligibility)
     }
 }

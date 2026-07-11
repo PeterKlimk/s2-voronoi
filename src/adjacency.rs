@@ -116,23 +116,6 @@ impl CellAdjacency {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn completeness_ignores_gaps_outside_live_cell_spans() {
-        let mut adjacency = CellAdjacency {
-            cells: vec![(1, 2), (4, 1)],
-            neighbors: vec![NO_NEIGHBOR, 1, 0, NO_NEIGHBOR, 0],
-        };
-        assert!(adjacency.is_complete());
-
-        adjacency.neighbors[2] = NO_NEIGHBOR;
-        assert!(!adjacency.is_complete());
-    }
-}
-
 /// Shared adjacency construction over raw cell layout: ranges into the flat
 /// index buffer plus the weld-canonical mapping. Purely combinatorial, so
 /// the spherical and planar diagrams use the same core.
@@ -231,4 +214,21 @@ impl SphericalVoronoi {
 #[inline]
 fn unpack(payload: u64) -> (usize, usize) {
     ((payload >> 16) as usize, (payload & 0xffff) as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completeness_ignores_gaps_outside_live_cell_spans() {
+        let mut adjacency = CellAdjacency {
+            cells: vec![(1, 2), (4, 1)],
+            neighbors: vec![NO_NEIGHBOR, 1, 0, NO_NEIGHBOR, 0],
+        };
+        assert!(adjacency.is_complete());
+
+        adjacency.neighbors[2] = NO_NEIGHBOR;
+        assert!(!adjacency.is_complete());
+    }
 }
