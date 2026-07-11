@@ -80,6 +80,8 @@ impl<'a> PackedGroupInput<'a> {
 
     #[cfg(debug_assertions)]
     pub(crate) fn debug_assert_matches_grid(self, grid: &CubeMapGrid) {
+        // Regression check: cell-major bin construction guarantees complete
+        // cells with contiguous, layout-matched slots and locals.
         let start = grid.cell_offsets()[self.cell] as usize;
         let end = grid.cell_offsets()[self.cell + 1] as usize;
         debug_assert_eq!(
