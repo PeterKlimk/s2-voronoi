@@ -18,6 +18,9 @@ pub enum VoronoiError {
         message: String,
     },
 
+    /// A computation option has an unsupported value.
+    InvalidConfiguration(String),
+
     /// The input induced geometry outside the currently supported clipping model.
     ///
     /// This is used for expected algorithm boundaries such as cells that extend beyond the
@@ -59,6 +62,9 @@ impl fmt::Display for VoronoiError {
                 message,
             } => {
                 write!(f, "invalid input at point {}: {}", point_index, message)
+            }
+            VoronoiError::InvalidConfiguration(msg) => {
+                write!(f, "invalid configuration: {}", msg)
             }
             VoronoiError::UnsupportedGeometry {
                 generator_index,

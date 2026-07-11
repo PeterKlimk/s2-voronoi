@@ -183,6 +183,9 @@ pub enum PreprocessMode {
     /// returned diagram (see [`SphericalVoronoi::weld_map`]).
     Weld,
     /// Weld generators within an explicit Euclidean (chord) threshold.
+    ///
+    /// The threshold must be finite, positive, and large enough that its
+    /// squared `f32` value is nonzero.
     MergeWithin(f32),
 }
 

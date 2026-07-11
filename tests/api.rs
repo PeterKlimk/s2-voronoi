@@ -40,6 +40,32 @@ fn test_compute_insufficient_points() {
 }
 
 #[test]
+fn test_merge_within_rejects_unsupported_thresholds() {
+    let points = fibonacci_sphere_points(8, 0.0, 0);
+    for threshold in [
+        f32::NAN,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        0.0,
+        -1.0,
+        f32::from_bits(1),
+    ] {
+        let config =
+            VoronoiConfig::default().with_preprocess_mode(PreprocessMode::MergeWithin(threshold));
+        let err = compute_with(&points, config.clone()).expect_err("threshold must be rejected");
+        assert!(
+            matches!(err, VoronoiError::InvalidConfiguration(_)),
+            "threshold {threshold:?}: {err:?}"
+        );
+        let err = compute_with_report(&points, config).expect_err("threshold must be rejected");
+        assert!(
+            matches!(err, VoronoiError::InvalidConfiguration(_)),
+            "threshold {threshold:?}: {err:?}"
+        );
+    }
+}
+
+#[test]
 fn test_compute_octahedron() {
     // 6 axis-aligned points form an octahedron
     let points = vec![

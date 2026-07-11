@@ -63,6 +63,7 @@ fn run_core_pipeline(
 ) -> Result<PipelineState, crate::VoronoiError> {
     validate_generator_capacity(points.len())?;
     validate_generator_finiteness(&points)?;
+    validate_preprocess_mode(preprocess_mode)?;
     let mut points = points;
     canonicalize_unit_points(&mut points);
     let mut tb = TimingBuilder::new();
@@ -127,6 +128,18 @@ fn run_core_pipeline(
         repair,
         tb,
     })
+}
+
+fn validate_preprocess_mode(mode: PreprocessMode) -> Result<(), crate::VoronoiError> {
+    let PreprocessMode::MergeWithin(threshold) = mode else {
+        return Ok(());
+    };
+    if !threshold.is_finite() || threshold <= 0.0 || threshold * threshold == 0.0 {
+        return Err(crate::VoronoiError::InvalidConfiguration(format!(
+            "MergeWithin threshold must be finite, positive, and large enough for its squared f32 distance to be nonzero; got {threshold:?}"
+        )));
+    }
+    Ok(())
 }
 
 pub(super) fn compute_voronoi_knn_clipping_owned_core(
