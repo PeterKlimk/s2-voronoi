@@ -16,6 +16,10 @@ use super::super::{CubeMapGrid, CubeMapGridScratch};
 use super::directed::{DirectedCellMode, DirectedEligibility};
 use crate::fp::{self, OrdF32};
 
+fn sort_pending(pending: &mut [(OrdF32, u32)]) {
+    pending.sort_unstable_by_key(|&(dot, slot)| (std::cmp::Reverse(dot), slot));
+}
+
 pub(crate) struct ShellBatch {
     pub(crate) n: usize,
     pub(crate) first_dot: f32,
@@ -65,7 +69,6 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
         } else {
             self.grid.point_to_cell(self.query) as u32
         };
-        self.scratch.exhausted = false;
         self.scratch.stamp = self.scratch.stamp.wrapping_add(1).max(1);
         if self.scratch.stamp == u32::MAX {
             self.scratch.visited_stamp.fill(0);
@@ -146,15 +149,12 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
 
             if !self.scratch.pending.is_empty() {
                 // Nearest-first within the layer.
-                self.scratch
-                    .pending
-                    .sort_unstable_by_key(|&(dot, _)| std::cmp::Reverse(dot));
+                sort_pending(&mut self.scratch.pending);
                 self.has_pending = true;
                 return;
             }
         }
         self.exhausted = true;
-        self.scratch.exhausted = true;
     }
 
     /// Current frontier: fills `out` with the pending layer's slots.
@@ -191,6 +191,24 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
     #[cfg(test)]
     pub(super) fn is_initialized(&self) -> bool {
         self.initialized
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_order_breaks_equal_dots_by_slot() {
+        let mut pending = vec![
+            (OrdF32::new(0.5), 7),
+            (OrdF32::new(0.75), 9),
+            (OrdF32::new(0.5), 2),
+            (OrdF32::new(0.75), 3),
+        ];
+        sort_pending(&mut pending);
+        let slots: Vec<u32> = pending.into_iter().map(|(_, slot)| slot).collect();
+        assert_eq!(slots, vec![3, 9, 2, 7]);
     }
 }
 

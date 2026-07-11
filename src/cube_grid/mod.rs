@@ -286,8 +286,6 @@ pub struct CubeMapGridScratch {
     next: Vec<u32>,
     /// Sorted (descending dot, slot) emission for the pending shell batch.
     pending: Vec<(crate::fp::OrdF32, u32)>,
-    /// If true, the current query has exhausted all unseen candidates.
-    exhausted: bool,
 }
 
 #[cfg(test)]

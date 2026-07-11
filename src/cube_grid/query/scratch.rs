@@ -8,7 +8,6 @@ impl CubeMapGridScratch {
             current: Vec::new(),
             next: Vec::new(),
             pending: Vec::new(),
-            exhausted: false,
         }
     }
 
