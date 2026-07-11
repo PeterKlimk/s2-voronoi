@@ -1181,6 +1181,35 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     Ok((uf, merged))
 }
 
+/// Result of normalizing one live cell span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SpanRewrite {
+    len: usize,
+    changed: bool,
+}
+
+/// Replace ids with their union-find representatives and retain the first
+/// occurrence of each representative, preserving order. The normalized live
+/// prefix is `span[..result.len]`; the remainder is intentionally unspecified.
+fn rewrite_merged_span(uf: &mut SparseUnionFind, span: &mut [u32]) -> SpanRewrite {
+    let mut w = 0usize;
+    let mut changed = false;
+    for r in 0..span.len() {
+        let orig = span[r];
+        let rep = uf.find(orig);
+        if rep != orig {
+            changed = true;
+        }
+        if !span[..w].contains(&rep) {
+            span[w] = rep;
+            w += 1;
+        } else {
+            changed = true;
+        }
+    }
+    SpanRewrite { len: w, changed }
+}
+
 /// Original full-rewrite apply: rebuild every cell span into fresh compacted
 /// arrays. O(diagram); retained as the differential oracle for `InPlace`.
 fn apply_merges_rebuild(
@@ -1191,17 +1220,12 @@ fn apply_merges_rebuild(
     let mut new_cells: Vec<VoronoiCell> = Vec::with_capacity(cells.len());
     let mut new_indices: Vec<u32> = Vec::with_capacity(cell_indices.len());
 
-    for (cell_idx, cell) in cells.iter().enumerate() {
+    for cell_idx in 0..cells.len() {
         let base = new_indices.len();
-        let mut seen: Vec<u32> = Vec::with_capacity(cell.vertex_count());
-        for &vi in cell_vertex_slice(cell_idx as u32, cells, cell_indices)? {
-            let rep = uf.find(vi);
-            if !seen.contains(&rep) {
-                seen.push(rep);
-                new_indices.push(rep);
-            }
-        }
-        let count = new_indices.len() - base;
+        new_indices.extend_from_slice(cell_vertex_slice(cell_idx as u32, cells, cell_indices)?);
+        let rewrite = rewrite_merged_span(uf, &mut new_indices[base..]);
+        new_indices.truncate(base + rewrite.len);
+        let count = rewrite.len;
         let count_u16 = u16::try_from(count).map_err(|_| {
             crate::VoronoiError::RepresentationLimit(
                 "reconciled cell vertex count exceeds u16 capacity".to_string(),
@@ -1265,25 +1289,10 @@ fn apply_merges_in_place(
             )));
         }
         let span = &mut cell_indices[start..end];
-        // In-place rewrite: w trails r, so reads are never clobbered; kept
-        // slots still get their representative written (id may change
-        // without any duplicate forming).
-        let mut w = 0usize;
-        for r in 0..count {
-            let orig = span[r];
-            let rep = uf.find(orig);
-            if rep != orig {
-                changed = true;
-            }
-            if !span[..w].contains(&rep) {
-                span[w] = rep;
-                w += 1;
-            } else {
-                changed = true;
-            }
-        }
-        if w != count {
-            cells[cell_idx_usize] = VoronoiCell::new(start as u32, w as u16);
+        let rewrite = rewrite_merged_span(uf, span);
+        changed |= rewrite.changed;
+        if rewrite.len != count {
+            cells[cell_idx_usize] = VoronoiCell::new(start as u32, rewrite.len as u16);
         }
     }
 
@@ -1315,6 +1324,33 @@ mod tests {
         EdgeRecord {
             key: (((b as u64) << 32) | a as u64).into(),
         }
+    }
+
+    #[test]
+    fn merged_span_rewrite_is_stable_and_reports_changes() {
+        let mut uf = SparseUnionFind::new();
+        assert!(uf.union(1, 3));
+        assert!(uf.union(2, 4));
+
+        let mut span = [3, 5, 1, 4, 2];
+        let rewrite = rewrite_merged_span(&mut uf, &mut span);
+        assert_eq!(
+            rewrite,
+            SpanRewrite {
+                len: 3,
+                changed: true
+            }
+        );
+        assert_eq!(&span[..rewrite.len], &[1, 5, 2]);
+
+        let mut normalized = [1, 5, 2];
+        assert_eq!(
+            rewrite_merged_span(&mut uf, &mut normalized),
+            SpanRewrite {
+                len: 3,
+                changed: false,
+            }
+        );
     }
 
     /// Per-cell vertex-id sequences — the representation-independent view
