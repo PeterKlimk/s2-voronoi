@@ -69,6 +69,32 @@ fn expected_safe_slots(
 }
 
 #[test]
+fn out_of_range_group_uses_slow_path_after_valid_prepare() {
+    let points = random_unit_points(64, 91);
+    let grid = CubeMapGrid::new(&points, 4);
+    let cell = fullest_cell(&grid);
+    let start = grid.cell_offsets()[cell] as usize;
+    let end = grid.cell_offsets()[cell + 1] as usize;
+    let queries: Vec<u32> = (start..end).map(|slot| slot as u32).collect();
+    let slot_gen_map: Vec<u32> = (0..points.len() as u32).collect();
+    let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
+    let mut scratch = PackedKnnCellScratch::new();
+    let mut timings = PackedKnnTimings::default();
+
+    let valid = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
+    assert!(matches!(
+        scratch.prepare_group_directed(&grid, valid, &mut timings),
+        PreparedPackedGroupStatus::Ready(_)
+    ));
+
+    let invalid = PackedGroupInput::new(6 * grid.res * grid.res, QUERY_BIN, &[], 0, layout);
+    assert!(matches!(
+        scratch.prepare_group_directed(&grid, invalid, &mut timings),
+        PreparedPackedGroupStatus::SlowPath
+    ));
+}
+
+#[test]
 fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
     const N: usize = 384;
     const RES: usize = 10;

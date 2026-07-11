@@ -22,9 +22,14 @@ impl PackedKnnCellScratch {
     ) -> PreparedPackedGroupStatus<'a, 'g> {
         timings.clear();
 
+        let cell = group.cell();
+        let num_cells = 6 * grid.res * grid.res;
+        if cell >= num_cells {
+            return PreparedPackedGroupStatus::SlowPath;
+        }
+
         group.debug_assert_matches_grid(grid);
 
-        let cell = group.cell();
         let queries = group.queries();
         let query_bin = group.query_bin();
         let slot_gen_map = group.slot_gen_map();
@@ -38,16 +43,6 @@ impl PackedKnnCellScratch {
             self.tail_ready_gen.fill(0);
         }
         self.next_group_gen = group_gen;
-
-        let num_cells = 6 * grid.res * grid.res;
-        if cell >= num_cells {
-            return PreparedPackedGroupStatus::Ready(PreparedPackedGroup {
-                scratch: self,
-                group,
-                group_gen,
-                tail_built_any: false,
-            });
-        }
 
         let mut t = PackedLapTimer::start();
         self.cell_ranges.clear();
