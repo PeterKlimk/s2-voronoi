@@ -5,12 +5,9 @@ This is a temporary handoff: delete it when the remaining findings are completed
 
 ## Test and contract hardening
 
-1. **Exercise the production bin/local layout in NN contracts.** Current synthetic harnesses use
-   simplified layouts. Build a real `assign_bins` result and rerun the brute-force frontier
-   contracts.
-2. **Add dense seam/corner coverage.** Add clusters above 512 points crossing cube-face edges and
+1. **Add dense seam/corner coverage.** Add clusters above 512 points crossing cube-face edges and
    corners, with populated neighboring cells.
-3. **Document the caller-owned frontier buffer protocol.** Exact frontier caching retains metadata,
+2. **Document the caller-owned frontier buffer protocol.** Exact frontier caching retains metadata,
    not slot contents. Document that the caller must preserve the buffer between repeated probes, or
    add misuse tests if that contract is intended to be detected.
 

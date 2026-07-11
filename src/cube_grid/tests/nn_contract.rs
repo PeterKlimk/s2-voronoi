@@ -34,6 +34,7 @@ use super::super::packed_knn::{
 use super::super::projection::{face_uv_to_3d, st_to_uv};
 use super::super::query::{DirectedEligibility, DirectedNeighborFrontier, DirectedNeighborStream};
 use super::super::CubeMapGrid;
+use crate::live_dedup::assign_bins;
 use crate::packed_layout::PackedSlotLayout;
 use crate::policy::PackedNeighborPolicy;
 
@@ -45,8 +46,9 @@ struct Harness {
     points: Vec<Vec3>,
     grid: CubeMapGrid,
     slot_gen_map: Vec<u32>,
+    local_shift: u32,
+    local_mask: u32,
     cell_of_slot: Vec<usize>,
-    bin_of_cell: Vec<u8>,
 }
 
 impl Harness {
@@ -77,13 +79,34 @@ impl Harness {
             points,
             grid,
             slot_gen_map,
+            local_shift: LOCAL_SHIFT,
+            local_mask: LOCAL_MASK,
             cell_of_slot,
-            bin_of_cell,
+        }
+    }
+
+    fn production(points: Vec<Vec3>, res: usize) -> Self {
+        let grid = CubeMapGrid::new(&points, res);
+        let assignment = assign_bins(&points, &grid).expect("production bin assignment");
+        let mut cell_of_slot = vec![0usize; points.len()];
+        for cell in 0..grid.cell_offsets().len() - 1 {
+            let start = grid.cell_offsets()[cell] as usize;
+            let end = grid.cell_offsets()[cell + 1] as usize;
+            cell_of_slot[start..end].fill(cell);
+        }
+
+        Harness {
+            points,
+            grid,
+            slot_gen_map: assignment.slot_gen_map,
+            local_shift: assignment.local_shift,
+            local_mask: assignment.local_mask,
+            cell_of_slot,
         }
     }
 
     fn layout(&self) -> PackedSlotLayout<'_> {
-        PackedSlotLayout::new(&self.slot_gen_map, LOCAL_SHIFT, LOCAL_MASK)
+        PackedSlotLayout::new(&self.slot_gen_map, self.local_shift, self.local_mask)
     }
 
     fn slot_dot(&self, query_slot: u32, slot: u32) -> f32 {
@@ -97,21 +120,20 @@ impl Harness {
     /// Directed-eligible slots for a query, per the cell-mode rules.
     fn brute_eligible(&self, query_slot: u32) -> Vec<u32> {
         let start_cell = self.cell_of_slot[query_slot as usize];
-        let qbin = self.bin_of_cell[start_cell];
-        let qlocal = query_slot; // local == slot in this layout
+        let (qbin, qlocal) = self.layout().bin_local(query_slot);
         (0..self.points.len() as u32)
             .filter(|&slot| {
                 if slot == query_slot {
                     return false;
                 }
                 let cell = self.cell_of_slot[slot as usize];
-                let bin = self.bin_of_cell[cell];
+                let (bin, local) = self.layout().bin_local(slot);
                 if bin != qbin {
                     return true;
                 }
                 match cell.cmp(&start_cell) {
                     std::cmp::Ordering::Less => false,
-                    std::cmp::Ordering::Equal => slot >= qlocal,
+                    std::cmp::Ordering::Equal => local >= qlocal,
                     std::cmp::Ordering::Greater => true,
                 }
             })
@@ -196,11 +218,8 @@ impl Harness {
         // Takeover-only path (packed = None).
         for slot in (0..n as u32).step_by(stride) {
             let query_idx = self.grid.point_indices()[slot as usize] as usize;
-            let ctx = DirectedEligibility::from_layout(
-                self.bin_of_cell[self.cell_of_slot[slot as usize]],
-                slot,
-                self.layout(),
-            );
+            let (query_bin, query_local) = self.layout().bin_local(slot);
+            let ctx = DirectedEligibility::from_layout(query_bin, query_local, self.layout());
             let mut scratch = self.grid.make_scratch();
             let stream = DirectedNeighborStream::new(
                 &self.grid,
@@ -222,13 +241,9 @@ impl Harness {
                 continue;
             }
             let queries: Vec<u32> = (start..end).map(|s| s as u32).collect();
-            let group = PackedGroupInput::new(
-                cell,
-                self.bin_of_cell[cell],
-                &queries,
-                start as u32,
-                self.layout(),
-            );
+            let (cell_bin, cell_start_local) = self.layout().bin_local(start as u32);
+            let group =
+                PackedGroupInput::new(cell, cell_bin, &queries, cell_start_local, self.layout());
             {
                 let mut packed_scratch = PackedKnnCellScratch::new();
                 let mut timings = PackedKnnTimings::default();
@@ -241,11 +256,9 @@ impl Harness {
                 for qi in 0..queries.len() {
                     let slot = queries[qi];
                     let query_idx = self.grid.point_indices()[slot as usize] as usize;
-                    let ctx = DirectedEligibility::from_layout(
-                        self.bin_of_cell[cell],
-                        slot,
-                        self.layout(),
-                    );
+                    let (query_bin, query_local) = self.layout().bin_local(slot);
+                    let ctx =
+                        DirectedEligibility::from_layout(query_bin, query_local, self.layout());
                     let mut scratch = self.grid.make_scratch();
                     let packed = PackedQuery::new(
                         &mut prepared,
@@ -336,6 +349,18 @@ fn symmetric_positions() -> Vec<Vec3> {
 fn nn_contract_uniform() {
     Harness::new(uniform(320, 5), 10, 1).check_all("uniform");
     Harness::new(uniform(320, 29), 10, 3).check_all("uniform_3bins");
+}
+
+#[test]
+fn nn_contract_production_bin_layout() {
+    // Exercise the same brute-force eligible-set and frontier-certificate
+    // oracle with the real spatial bin assignment, including its dynamic
+    // packed bin/local split and per-bin local numbering.
+    Harness::production(uniform(320, 79), 10).check_all("production_uniform");
+
+    let mut seams = symmetric_positions();
+    seams.extend(uniform(96, 83));
+    Harness::production(seams, 4).check_all("production_seams");
 }
 
 #[test]
