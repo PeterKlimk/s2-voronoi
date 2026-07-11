@@ -17,6 +17,7 @@ pub mod packed_knn;
 mod projection;
 mod query;
 mod weld;
+pub(crate) use weld::MAX_RETAINED_WELD_PAIRS;
 
 pub(crate) use packed_knn::PackedQuery;
 pub(crate) use projection::{cell_to_face_ij, face_uv_to_3d, st_to_uv};

@@ -66,6 +66,25 @@ fn test_merge_within_rejects_unsupported_thresholds() {
 }
 
 #[test]
+fn test_dense_duplicate_cluster_returns_controlled_error() {
+    let s = 1.0 / 3.0f32.sqrt();
+    let mut points = vec![
+        UnitVec3::new(s, s, s),
+        UnitVec3::new(s, -s, -s),
+        UnitVec3::new(-s, s, -s),
+        UnitVec3::new(-s, -s, s),
+    ];
+    points.extend(std::iter::repeat_n(points[0], 1_450));
+
+    let err = compute(&points).expect_err("pair budget must fail without allocation abort");
+    assert!(matches!(err, VoronoiError::DegenerateInput { .. }));
+    assert!(
+        err.to_string().contains("pair budget"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn test_report_residual_helper_includes_low_incidence_vertices() {
     let points = fibonacci_sphere_points(8, 0.0, 0);
     let mut output = compute_with_report(&points, VoronoiConfig::default()).unwrap();

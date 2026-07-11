@@ -7,11 +7,14 @@
 //! rebuilding. The zero-weld common case pays only the detection scan.
 
 use glam::Vec3;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::{cell_to_face_ij, CubeMapGrid};
+
+pub(crate) const MAX_RETAINED_WELD_PAIRS: usize = 1 << 20;
 
 impl CubeMapGrid {
     /// Conservative upper bound on a weld threshold detectable through 3x3
@@ -36,7 +39,7 @@ impl CubeMapGrid {
     /// contains the partner cell because `threshold` is far below the wall
     /// spacing (`max_grid_weld_threshold`). The `nc > cell` gate makes
     /// exactly one side of each cell pair do the scan.
-    pub(crate) fn collect_weld_pairs(&self, threshold: f32) -> Vec<(u32, u32)> {
+    pub(crate) fn collect_weld_pairs(&self, threshold: f32) -> Result<Vec<(u32, u32)>, usize> {
         debug_assert!(
             threshold <= self.max_grid_weld_threshold(),
             "weld threshold {} exceeds grid adjacency bound {}",
@@ -50,16 +53,31 @@ impl CubeMapGrid {
         // cost a redundant neighbor scan.
         let pad = threshold + 1e-6;
         let line_count = self.res + 1;
+        let retained = AtomicUsize::new(0);
+        let exceeded = AtomicBool::new(false);
 
         let scan_cell = |cell: usize, out: &mut Vec<(u32, u32)>| {
+            if exceeded.load(Relaxed) {
+                return;
+            }
             let start = self.cell_offsets[cell] as usize;
             let end = self.cell_offsets[cell + 1] as usize;
             if start == end {
                 return;
             }
 
-            let push = |out: &mut Vec<(u32, u32)>, a: u32, b: u32| {
+            let push = |out: &mut Vec<(u32, u32)>, a: u32, b: u32| -> bool {
+                if retained
+                    .fetch_update(Relaxed, Relaxed, |n| {
+                        (n < MAX_RETAINED_WELD_PAIRS).then_some(n + 1)
+                    })
+                    .is_err()
+                {
+                    exceeded.store(true, Relaxed);
+                    return false;
+                }
                 out.push((a.min(b), a.max(b)));
+                true
             };
 
             // Same-cell pairs.
@@ -73,8 +91,10 @@ impl CubeMapGrid {
                     let dx = xi - self.cell_points_x[j];
                     let dy = yi - self.cell_points_y[j];
                     let dz = zi - self.cell_points_z[j];
-                    if dx * dx + dy * dy + dz * dz < thr_sq {
-                        push(out, self.point_indices[i], self.point_indices[j]);
+                    if dx * dx + dy * dy + dz * dz < thr_sq
+                        && !push(out, self.point_indices[i], self.point_indices[j])
+                    {
+                        return;
                     }
                 }
             }
@@ -110,8 +130,10 @@ impl CubeMapGrid {
                         let dx = p.x - self.cell_points_x[j];
                         let dy = p.y - self.cell_points_y[j];
                         let dz = p.z - self.cell_points_z[j];
-                        if dx * dx + dy * dy + dz * dz < thr_sq {
-                            push(out, self.point_indices[i], self.point_indices[j]);
+                        if dx * dx + dy * dy + dz * dz < thr_sq
+                            && !push(out, self.point_indices[i], self.point_indices[j])
+                        {
+                            return;
                         }
                     }
                 }
@@ -131,7 +153,11 @@ impl CubeMapGrid {
                     local
                 })
                 .collect();
-            chunk_pairs.into_iter().flatten().collect()
+            if exceeded.load(Relaxed) {
+                Err(MAX_RETAINED_WELD_PAIRS + 1)
+            } else {
+                Ok(chunk_pairs.into_iter().flatten().collect())
+            }
         }
         #[cfg(not(feature = "parallel"))]
         {
@@ -139,7 +165,11 @@ impl CubeMapGrid {
             for cell in 0..num_cells {
                 scan_cell(cell, &mut pairs);
             }
-            pairs
+            if exceeded.load(Relaxed) {
+                Err(MAX_RETAINED_WELD_PAIRS + 1)
+            } else {
+                Ok(pairs)
+            }
         }
     }
 
@@ -304,7 +334,7 @@ mod tests {
             assert!(!expected.is_empty(), "fixture must contain pairs");
             for res in [1usize, 2, 4, 13, 64] {
                 let grid = CubeMapGrid::new(&points, res);
-                let mut got: Vec<(u32, u32)> = grid.collect_weld_pairs(threshold);
+                let mut got: Vec<(u32, u32)> = grid.collect_weld_pairs(threshold).unwrap();
                 got.sort_unstable();
                 got.dedup();
                 assert_eq!(
@@ -327,10 +357,21 @@ mod tests {
         for res in [1usize, 8] {
             let grid = CubeMapGrid::new(&points, res);
             assert_eq!(
-                grid.collect_weld_pairs(crate::tolerances::weld_radius()),
+                grid.collect_weld_pairs(crate::tolerances::weld_radius())
+                    .unwrap(),
                 vec![(1, 3)]
             );
         }
+    }
+
+    #[test]
+    fn dense_duplicate_cluster_stops_at_pair_budget() {
+        let points = vec![Vec3::Z; 1_450];
+        let grid = CubeMapGrid::new(&points, 4);
+        assert_eq!(
+            grid.collect_weld_pairs(crate::tolerances::weld_radius()),
+            Err(MAX_RETAINED_WELD_PAIRS + 1)
+        );
     }
 
     /// Compaction must produce a grid bit-identical to a fresh build on the
@@ -342,7 +383,7 @@ mod tests {
             let points = points_with_twins(300, 30, threshold * 0.4, seed);
             for res in [2usize, 9, 33] {
                 let mut grid = CubeMapGrid::new(&points, res);
-                let pairs = grid.collect_weld_pairs(threshold);
+                let pairs = grid.collect_weld_pairs(threshold).unwrap();
                 assert!(!pairs.is_empty());
                 let (result, kept) =
                     crate::knn_clipping::preprocess::merge_result_from_pairs(&points, &pairs);

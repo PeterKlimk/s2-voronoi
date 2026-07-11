@@ -69,7 +69,7 @@ fn run_core_pipeline(
     let mut tb = TimingBuilder::new();
 
     let (effective_points, merge_result, preprocess_report, grid) =
-        prepare_points_and_grid(&points, preprocess_mode, &mut tb);
+        prepare_points_and_grid(&points, preprocess_mode, &mut tb)?;
 
     let effective_points_ref: &[Vec3] = match &effective_points {
         Some(v) => v.as_slice(),
@@ -967,16 +967,18 @@ fn dvec(p: Vec3) -> DVec3 {
     DVec3::new(p.x as f64, p.y as f64, p.z as f64)
 }
 
-fn prepare_points_and_grid(
-    points: &[Vec3],
-    preprocess_mode: PreprocessMode,
-    tb: &mut TimingBuilder,
-) -> (
+type PreparedPointsAndGrid = (
     Option<Vec<Vec3>>,
     Option<MergeResult>,
     PreprocessReport,
     CubeMapGrid,
-) {
+);
+
+fn prepare_points_and_grid(
+    points: &[Vec3],
+    preprocess_mode: PreprocessMode,
+    tb: &mut TimingBuilder,
+) -> Result<PreparedPointsAndGrid, crate::VoronoiError> {
     let threshold = match preprocess_mode {
         PreprocessMode::Disabled => None,
         PreprocessMode::Weld => Some(crate::tolerances::weld_radius()),
@@ -990,7 +992,15 @@ fn prepare_points_and_grid(
     let mut merge_result = None;
     if let Some(threshold) = threshold {
         if threshold <= grid.max_grid_weld_threshold() {
-            let pairs = grid.collect_weld_pairs(threshold);
+            let pairs = grid.collect_weld_pairs(threshold).map_err(|coincident_pairs| {
+                crate::VoronoiError::DegenerateInput {
+                    coincident_pairs,
+                    message: format!(
+                        "weld detection exceeded the retained-pair budget of {}; reduce the merge threshold or deduplicate the input",
+                        crate::cube_grid::MAX_RETAINED_WELD_PAIRS
+                    ),
+                }
+            })?;
             tb.set_weld_pair_stats(pairs.len(), pairs.capacity());
             if !pairs.is_empty() {
                 let (mut result, kept) = super::preprocess::merge_result_from_pairs(points, &pairs);
@@ -1024,7 +1034,7 @@ fn prepare_points_and_grid(
         effective_points: effective_points.as_ref().map_or(points.len(), |p| p.len()),
         num_merged: merge_result.as_ref().map_or(0, |m| m.num_merged),
     };
-    (effective_points, merge_result, report, grid)
+    Ok((effective_points, merge_result, report, grid))
 }
 
 fn max_cell_occupancy(grid: &crate::cube_grid::CubeMapGrid) -> usize {
