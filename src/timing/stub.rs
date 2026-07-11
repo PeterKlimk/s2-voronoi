@@ -136,6 +136,9 @@ impl TimingBuilder {
     pub fn set_preprocess(&mut self, _d: Duration) {}
 
     #[inline(always)]
+    pub fn set_weld_pair_stats(&mut self, _len: usize, _capacity: usize) {}
+
+    #[inline(always)]
     pub fn set_knn_build(&mut self, _d: Duration) {}
 
     #[inline(always)]

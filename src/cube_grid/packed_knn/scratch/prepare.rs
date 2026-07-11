@@ -571,6 +571,11 @@ impl PackedKnnCellScratch {
             }
         }
         timings.add_ring_pass(t.lap());
+        let keys = chunk0_keys.iter().map(Vec::len).sum::<usize>()
+            + tail_keys.iter().map(Vec::len).sum::<usize>();
+        let capacity = chunk0_keys.iter().map(Vec::capacity).sum::<usize>()
+            + tail_keys.iter().map(Vec::capacity).sum::<usize>();
+        timings.observe_key_storage(keys, capacity);
 
         PreparedPackedGroupStatus::Ready(PreparedPackedGroup {
             scratch: self,

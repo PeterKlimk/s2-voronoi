@@ -55,6 +55,8 @@ pub struct PackedKnnTimings {
     pub select_scatter: Duration,
     /// Number of times tail candidates were built (per query, but counted at most once per group).
     pub tail_builds: u64,
+    pub keys_materialized: u64,
+    pub key_capacity_peak: u64,
 }
 
 #[cfg(feature = "timing")]
@@ -74,6 +76,8 @@ impl Default for PackedKnnTimings {
             select_sort: Duration::ZERO,
             select_scatter: Duration::ZERO,
             tail_builds: 0,
+            keys_materialized: 0,
+            key_capacity_peak: 0,
         }
     }
 }
@@ -156,6 +160,12 @@ impl PackedKnnTimings {
     }
 
     #[inline]
+    pub fn observe_key_storage(&mut self, added: usize, capacity: usize) {
+        self.keys_materialized += added as u64;
+        self.key_capacity_peak = self.key_capacity_peak.max(capacity as u64);
+    }
+
+    #[inline]
     pub fn total(&self) -> Duration {
         self.setup
             + self.query_cache
@@ -203,4 +213,6 @@ impl PackedKnnTimings {
     pub fn add_select_scatter(&mut self, _d: Duration) {}
     #[inline(always)]
     pub fn inc_tail_builds(&mut self) {}
+    #[inline(always)]
+    pub fn observe_key_storage(&mut self, _added: usize, _capacity: usize) {}
 }

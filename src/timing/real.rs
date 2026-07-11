@@ -90,6 +90,8 @@ pub struct CellSubPhases {
     pub fallback_polygon_cap: u64,
     pub fallback_all_constraints: u64,
     pub packed_tail_builds: u64,
+    pub packed_keys_materialized: u64,
+    pub packed_key_capacity_peak: u64,
     /// Sum of neighbors processed before termination across all cells
     /// (mean = total / n; input for the grid-density tuning model).
     pub neighbors_processed_total: u64,
@@ -148,6 +150,8 @@ pub struct CellSubAccum {
     fallback_polygon_cap: u64,
     fallback_all_constraints: u64,
     packed_tail_builds: u64,
+    packed_keys_materialized: u64,
+    packed_key_capacity_peak: u64,
     neighbors_processed_total: u64,
     neighbors_processed_max: u64,
     final_edges_total: u64,
@@ -191,6 +195,9 @@ impl CellSubAccum {
         self.packed_select_sort += timings.select_sort;
         self.packed_select_scatter += timings.select_scatter;
         self.packed_tail_builds += timings.tail_builds;
+        self.packed_keys_materialized += timings.keys_materialized;
+        self.packed_key_capacity_peak =
+            self.packed_key_capacity_peak.max(timings.key_capacity_peak);
     }
 
     #[inline]
@@ -307,6 +314,10 @@ impl CellSubAccum {
         self.fallback_polygon_cap += other.fallback_polygon_cap;
         self.fallback_all_constraints += other.fallback_all_constraints;
         self.packed_tail_builds += other.packed_tail_builds;
+        self.packed_keys_materialized += other.packed_keys_materialized;
+        self.packed_key_capacity_peak = self
+            .packed_key_capacity_peak
+            .max(other.packed_key_capacity_peak);
         self.neighbors_processed_total += other.neighbors_processed_total;
         self.neighbors_processed_max = self
             .neighbors_processed_max
@@ -353,6 +364,8 @@ impl CellSubAccum {
             fallback_polygon_cap: self.fallback_polygon_cap,
             fallback_all_constraints: self.fallback_all_constraints,
             packed_tail_builds: self.packed_tail_builds,
+            packed_keys_materialized: self.packed_keys_materialized,
+            packed_key_capacity_peak: self.packed_key_capacity_peak,
             neighbors_processed_total: self.neighbors_processed_total,
             neighbors_processed_max: self.neighbors_processed_max,
             final_edges_total: self.final_edges_total,
@@ -374,6 +387,8 @@ impl CellSubAccum {
 pub struct PhaseTimings {
     pub total: Duration,
     pub preprocess: Duration,
+    pub weld_pairs: u64,
+    pub weld_pair_capacity: u64,
     pub knn_build: Duration,
     pub knn_build_sub: Option<CubeMapGridBuildTimings>,
     pub cell_construction: Duration,
@@ -628,10 +643,12 @@ impl PhaseTimings {
 
         if std::env::var_os("VORONOI_MESH_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
+                wp = self.weld_pairs,
+                wpc = self.weld_pair_capacity,
                 kb = ms(self.knn_build),
                 cc = ms(self.cell_construction),
                 dd = ms(self.dedup),
@@ -643,6 +660,8 @@ impl PhaseTimings {
                 fpc = self.cell_sub.fallback_polygon_cap,
                 fac = self.cell_sub.fallback_all_constraints,
                 ptb = self.cell_sub.packed_tail_builds,
+                pkm = self.cell_sub.packed_keys_materialized,
+                pkp = self.cell_sub.packed_key_capacity_peak,
                 nt = self.cell_sub.neighbors_processed_total,
                 nm = self.cell_sub.neighbors_processed_max,
                 fet = self.cell_sub.final_edges_total,
@@ -673,6 +692,8 @@ impl PhaseTimings {
 pub struct TimingBuilder {
     t_start: std::time::Instant,
     preprocess: Duration,
+    weld_pairs: u64,
+    weld_pair_capacity: u64,
     knn_build: Duration,
     knn_build_sub: Option<CubeMapGridBuildTimings>,
     cell_construction: Duration,
@@ -691,6 +712,8 @@ impl TimingBuilder {
         Self {
             t_start: std::time::Instant::now(),
             preprocess: Duration::ZERO,
+            weld_pairs: 0,
+            weld_pair_capacity: 0,
             knn_build: Duration::ZERO,
             knn_build_sub: None,
             cell_construction: Duration::ZERO,
@@ -713,6 +736,11 @@ impl TimingBuilder {
 
     pub fn set_preprocess(&mut self, d: Duration) {
         self.preprocess = d;
+    }
+
+    pub fn set_weld_pair_stats(&mut self, len: usize, capacity: usize) {
+        self.weld_pairs = len as u64;
+        self.weld_pair_capacity = capacity as u64;
     }
 
     pub fn set_knn_build(&mut self, d: Duration) {
@@ -745,6 +773,8 @@ impl TimingBuilder {
         PhaseTimings {
             total: self.t_start.elapsed(),
             preprocess: self.preprocess,
+            weld_pairs: self.weld_pairs,
+            weld_pair_capacity: self.weld_pair_capacity,
             knn_build: self.knn_build,
             knn_build_sub: self.knn_build_sub,
             cell_construction: self.cell_construction,

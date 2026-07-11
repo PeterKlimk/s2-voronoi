@@ -43,6 +43,7 @@ impl PackedKnnCellScratch {
         let security_threshold = self.security_thresholds[qi];
         let threshold = self.thresholds[qi];
         let tail_keys = &mut self.tail_keys[qi];
+        let old_len = tail_keys.len();
         for r in &self.cell_ranges[1..] {
             if r.kind == PackedCellRangeKind::SameBinEarlier {
                 continue;
@@ -102,8 +103,19 @@ impl PackedKnnCellScratch {
             }
         }
         timings.add_ring_fallback(t_tail.lap());
+        let added = tail_keys.len() - old_len;
+        let tail_empty = tail_keys.is_empty();
+        let capacity = self.chunk0_keys[..group_queries.len()]
+            .iter()
+            .map(Vec::capacity)
+            .sum::<usize>()
+            + self.tail_keys[..group_queries.len()]
+                .iter()
+                .map(Vec::capacity)
+                .sum::<usize>();
+        timings.observe_key_storage(added, capacity);
 
-        if tail_keys.is_empty() {
+        if tail_empty {
             self.tail_possible[qi] = false;
         }
     }

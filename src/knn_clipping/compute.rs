@@ -991,6 +991,7 @@ fn prepare_points_and_grid(
     if let Some(threshold) = threshold {
         if threshold <= grid.max_grid_weld_threshold() {
             let pairs = grid.collect_weld_pairs(threshold);
+            tb.set_weld_pair_stats(pairs.len(), pairs.capacity());
             if !pairs.is_empty() {
                 let (mut result, kept) = super::preprocess::merge_result_from_pairs(points, &pairs);
                 grid.compact_welded(
