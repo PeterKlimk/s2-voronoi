@@ -13,15 +13,13 @@ fingerprints. Start with retired instructions and branches, then paired cycles; 
 `llvm-mca`, or `cargo asm` for attribution. Run `bench_run.sh --converge` when counters are
 inconclusive.
 
-1. **Adaptive/batched ring-tail classification.** Measure tail possible/requested, empty rescans,
-   repeated dot evaluations, and unused stored bytes. Avoid unconditional eager tails.
-2. **Incremental shell-layer emission.** Measure layer size versus consumed prefix and mid-layer
+1. **Incremental shell-layer emission.** Measure layer size versus consumed prefix and mid-layer
    closure before designing a conservative next-dot bound.
-3. **Bound the first packed chunk and materialize the remainder lazily.** Compare retained keys,
+2. **Bound the first packed chunk and materialize the remainder lazily.** Compare retained keys,
    later requests, recomputation, and peak bytes.
-4. **Apply dense-band eligibility before the candidate cap.** Preserve the aggregate work budget
+3. **Apply dense-band eligibility before the candidate cap.** Preserve the aggregate work budget
    and shell certificate.
-5. **Batch shell takeover across same-cell queries.** Evaluate only as a whole-pipeline traversal
+4. **Batch shell takeover across same-cell queries.** Evaluate only as a whole-pipeline traversal
    and emission change.
 
 ## Do not broadly retry
@@ -33,6 +31,9 @@ inconclusive.
 - packed partial-selection rewrite — measured 7-14% loss at 2M;
 - whole-ring packed bound skip — neutral or worse outside a narrow dense case;
 - local optimization of packed radius-2 expansion — no winning regime; removed end-to-end.
+- eager/adaptive local ring-tail batching — only 3.8-9.6% of queries requested tails across 100k
+  fib/uniform/clustered/bimodal; productive lazy rescans were about 1.5% of 500k clustered runtime;
+  batching useful requests requires a whole-pipeline traversal redesign.
 
 ## Measurement tooling
 

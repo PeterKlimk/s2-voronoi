@@ -57,6 +57,13 @@ pub struct PackedKnnTimings {
     pub tail_builds: u64,
     pub keys_materialized: u64,
     pub key_capacity_peak: u64,
+    pub tail_possible_queries: u64,
+    pub tail_requested_queries: u64,
+    pub ring_tail_rescans: u64,
+    pub ring_tail_empty_rescans: u64,
+    pub ring_tail_dot_evaluations: u64,
+    pub center_tail_keys: u64,
+    pub unused_center_tail_keys: u64,
 }
 
 #[cfg(feature = "timing")]
@@ -78,6 +85,13 @@ impl Default for PackedKnnTimings {
             tail_builds: 0,
             keys_materialized: 0,
             key_capacity_peak: 0,
+            tail_possible_queries: 0,
+            tail_requested_queries: 0,
+            ring_tail_rescans: 0,
+            ring_tail_empty_rescans: 0,
+            ring_tail_dot_evaluations: 0,
+            center_tail_keys: 0,
+            unused_center_tail_keys: 0,
         }
     }
 }
@@ -166,6 +180,33 @@ impl PackedKnnTimings {
     }
 
     #[inline]
+    pub fn add_tail_possible_queries(&mut self, count: usize) {
+        self.tail_possible_queries += count as u64;
+    }
+
+    #[inline]
+    pub fn inc_tail_requested_queries(&mut self) {
+        self.tail_requested_queries += 1;
+    }
+
+    #[inline]
+    pub fn add_ring_tail_rescan(&mut self, empty: bool, dot_evaluations: usize) {
+        self.ring_tail_rescans += 1;
+        self.ring_tail_empty_rescans += empty as u64;
+        self.ring_tail_dot_evaluations += dot_evaluations as u64;
+    }
+
+    #[inline]
+    pub fn add_center_tail_keys(&mut self, count: usize) {
+        self.center_tail_keys += count as u64;
+    }
+
+    #[inline]
+    pub fn add_unused_center_tail_keys(&mut self, count: usize) {
+        self.unused_center_tail_keys += count as u64;
+    }
+
+    #[inline]
     pub fn total(&self) -> Duration {
         self.setup
             + self.query_cache
@@ -215,4 +256,15 @@ impl PackedKnnTimings {
     pub fn inc_tail_builds(&mut self) {}
     #[inline(always)]
     pub fn observe_key_storage(&mut self, _added: usize, _capacity: usize) {}
+    #[inline(always)]
+    pub fn add_tail_possible_queries(&mut self, _count: usize) {}
+    #[inline(always)]
+    pub fn inc_tail_requested_queries(&mut self) {}
+    #[inline(always)]
+    pub fn add_ring_tail_rescan(&mut self, _empty: bool, _dot_evaluations: usize) {}
+    #[inline(always)]
+    pub fn add_center_tail_keys(&mut self, _count: usize) {}
+    #[inline(always)]
+    #[allow(dead_code)]
+    pub fn add_unused_center_tail_keys(&mut self, _count: usize) {}
 }

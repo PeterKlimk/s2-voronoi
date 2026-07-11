@@ -159,6 +159,8 @@ pub(crate) fn build_cells_sharded_live_dedup(
                                     group_start,
                                     Some((&mut prepared, &mut packed_timings, packed_policy)),
                                 )?;
+                                #[cfg(feature = "timing")]
+                                prepared.record_tail_usage(&mut packed_timings);
                             }
                             PreparedPackedGroupStatus::SlowPath => {
                                 emit_generator_group(

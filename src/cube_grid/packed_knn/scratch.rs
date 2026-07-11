@@ -25,6 +25,7 @@ pub struct PackedKnnCellScratch {
     tail_pos: Vec<usize>,
     tail_possible: Vec<bool>,
     tail_ready_gen: Vec<u32>,
+    center_tail_counts: Vec<usize>,
     security_thresholds: Vec<f32>,
     thresholds: Vec<f32>,
     /// Per-query completeness floor of the packed center coverage: the dot
@@ -122,6 +123,22 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
     pub(super) fn tail_upper_bound(&self, qi: usize) -> f32 {
         self.scratch.tail_upper_bound(qi)
     }
+
+    #[cfg(feature = "timing")]
+    pub(crate) fn record_tail_usage(&self, timings: &mut PackedKnnTimings) {
+        let mut unused_center_keys = 0usize;
+        for qi in 0..self.group.queries().len() {
+            if self.scratch.tail_ready_gen.get(qi).copied().unwrap_or(0) != self.group_gen {
+                unused_center_keys += self
+                    .scratch
+                    .center_tail_counts
+                    .get(qi)
+                    .copied()
+                    .unwrap_or(0);
+            }
+        }
+        timings.add_unused_center_tail_keys(unused_center_keys);
+    }
 }
 
 impl PackedKnnCellScratch {
@@ -135,6 +152,7 @@ impl PackedKnnCellScratch {
             tail_pos: Vec::new(),
             tail_possible: Vec::new(),
             tail_ready_gen: Vec::new(),
+            center_tail_counts: Vec::new(),
             security_thresholds: Vec::new(),
             thresholds: Vec::new(),
             center_bound: Vec::new(),

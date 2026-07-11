@@ -23,6 +23,7 @@ impl PackedKnnCellScratch {
         if gen == group_gen {
             return;
         }
+        timings.inc_tail_requested_queries();
         if !*tail_built_any {
             *tail_built_any = true;
             timings.inc_tail_builds();
@@ -44,6 +45,7 @@ impl PackedKnnCellScratch {
         let threshold = self.thresholds[qi];
         let tail_keys = &mut self.tail_keys[qi];
         let old_len = tail_keys.len();
+        let mut ring_dot_evaluations = 0usize;
         for r in &self.cell_ranges[1..] {
             if r.kind == PackedCellRangeKind::SameBinEarlier {
                 continue;
@@ -52,6 +54,7 @@ impl PackedKnnCellScratch {
             let soa_start = r.soa_start;
             let soa_end = r.soa_end;
             let range_len = soa_end - soa_start;
+            ring_dot_evaluations += range_len;
             let xs = &grid.cell_points_x[soa_start..soa_end];
             let ys = &grid.cell_points_y[soa_start..soa_end];
             let zs = &grid.cell_points_z[soa_start..soa_end];
@@ -104,6 +107,7 @@ impl PackedKnnCellScratch {
         }
         timings.add_ring_fallback(t_tail.lap());
         let added = tail_keys.len() - old_len;
+        timings.add_ring_tail_rescan(added == 0, ring_dot_evaluations);
         let tail_empty = tail_keys.is_empty();
         let capacity = self.chunk0_keys[..group_queries.len()]
             .iter()

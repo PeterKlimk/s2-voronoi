@@ -105,7 +105,8 @@ verdict on this machine. Effects below the cycles noise floor should proceed to 
 ### Resource-bound calibration
 
 The timing feature reports `weld_pairs`, `weld_pair_capacity`,
-`packed_keys_materialized`, and `packed_key_capacity_peak` in `TIMING_KV`. Measurements leading to
+`packed_keys_materialized`, `packed_key_capacity_peak`, tail possible/requested counts, ring-tail
+rescan/dot counts, and stored/unused center-tail keys in `TIMING_KV`. Measurements leading to
 the initial packed aggregate-work bound found a 500k uniform peak capacity of 6,464 keys versus
 2,220,652 keys (~17.8 MiB of `u64` payload in one worker) for the clustered distribution. The 1M
 query×candidate budget reduced the clustered peak to 1,188,540 keys (~9.5 MiB of allocator

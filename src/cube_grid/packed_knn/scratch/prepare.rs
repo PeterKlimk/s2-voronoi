@@ -469,6 +469,10 @@ impl PackedKnnCellScratch {
                 self.tail_possible[qi] = true;
             }
         }
+        self.center_tail_counts.resize(num_queries, 0);
+        for qi in 0..num_queries {
+            self.center_tail_counts[qi] = tail_keys[qi].len();
+        }
         timings.add_center_pass(t.lap());
 
         // === Ring pass: collect "hi" candidates into chunk0.
@@ -583,6 +587,13 @@ impl PackedKnnCellScratch {
         let capacity = chunk0_keys.iter().map(Vec::capacity).sum::<usize>()
             + tail_keys.iter().map(Vec::capacity).sum::<usize>();
         timings.observe_key_storage(keys, capacity);
+        timings.add_tail_possible_queries(
+            self.tail_possible[..num_queries]
+                .iter()
+                .filter(|&&possible| possible)
+                .count(),
+        );
+        timings.add_center_tail_keys(self.center_tail_counts[..num_queries].iter().sum::<usize>());
 
         PreparedPackedGroupStatus::Ready(PreparedPackedGroup {
             scratch: self,
