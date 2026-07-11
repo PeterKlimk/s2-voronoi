@@ -316,6 +316,48 @@ fn jitter(base: Vec3, scale: f32, r: &mut ChaCha8Rng) -> Vec3 {
     .normalize()
 }
 
+fn assert_dense_cross_face_fixture(
+    points: &[Vec3],
+    res: usize,
+    min_faces: usize,
+    min_occupied_cells: usize,
+) {
+    assert!(points.len() > crate::policy::DENSE_CELL_THRESHOLD);
+    let grid = CubeMapGrid::new(points, res);
+    let occupied: std::collections::HashSet<usize> = (0..points.len())
+        .map(|idx| grid.point_index_to_cell(idx))
+        .collect();
+    let max_occupancy = occupied
+        .iter()
+        .map(|&cell| grid.cell_points(cell).len())
+        .max()
+        .unwrap_or(0);
+    let faces: std::collections::HashSet<usize> =
+        occupied.iter().map(|&cell| cell / (res * res)).collect();
+    assert!(
+        faces.len() >= min_faces,
+        "dense cross-face fixture reached only {} faces: {faces:?}",
+        faces.len()
+    );
+    assert!(
+        occupied.len() >= min_occupied_cells,
+        "dense cross-face fixture populated only {} cells: {occupied:?}",
+        occupied.len()
+    );
+    assert!(
+        max_occupancy > crate::policy::DENSE_CELL_THRESHOLD,
+        "dense cross-face fixture max cell occupancy {max_occupancy} did not exceed {}",
+        crate::policy::DENSE_CELL_THRESHOLD
+    );
+    assert!(
+        occupied.iter().all(|&cell| grid
+            .cell_neighbors(cell)
+            .iter()
+            .any(|&neighbor| neighbor as usize != cell && occupied.contains(&(neighbor as usize)))),
+        "dense cross-face fixture left an occupied cell without an occupied neighbor"
+    );
+}
+
 /// The 26 symmetric positions: 8 corners, 12 edge midlines, 6 face centers.
 fn symmetric_positions() -> Vec<Vec3> {
     let inv3 = 1.0f32 / 3.0f32.sqrt();
@@ -513,6 +555,28 @@ fn nn_contract_dense_single_cell() {
     drop(probe);
 
     Harness::new(points, RES, 1).check_all("dense_single_cell");
+}
+
+#[test]
+fn nn_contract_dense_face_seam_and_corner_clusters() {
+    const RES: usize = 8;
+    let mut r = rng(107);
+
+    // The x/y dominance tie crosses a cube-face edge; z=0 also lies on a
+    // grid wall, populating neighboring cells along both sides of the seam.
+    let edge = Vec3::new(1.0, 1.0, 0.12).normalize();
+    let mut edge_points: Vec<Vec3> = (0..1200).map(|_| jitter(edge, 0.01, &mut r)).collect();
+    edge_points.extend((0..200).map(|_| jitter(edge, 0.08, &mut r)));
+    assert_dense_cross_face_fixture(&edge_points, RES, 2, 4);
+    Harness::production(edge_points, RES).check_all("dense_face_edge");
+
+    // Equal x/y/z dominance crosses all three faces meeting at a cube corner.
+    // The wider cap also fills cells neighboring the three corner cells.
+    let corner = Vec3::new(1.0, 1.0, 1.0).normalize();
+    let mut corner_points: Vec<Vec3> = (0..1800).map(|_| jitter(corner, 0.01, &mut r)).collect();
+    corner_points.extend((0..300).map(|_| jitter(corner, 0.18, &mut r)));
+    assert_dense_cross_face_fixture(&corner_points, RES, 3, 6);
+    Harness::production(corner_points, RES).check_all("dense_cube_corner");
 }
 
 #[test]

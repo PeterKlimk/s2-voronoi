@@ -5,9 +5,7 @@ This is a temporary handoff: delete it when the remaining findings are completed
 
 ## Test and contract hardening
 
-1. **Add dense seam/corner coverage.** Add clusters above 512 points crossing cube-face edges and
-   corners, with populated neighboring cells.
-2. **Document the caller-owned frontier buffer protocol.** Exact frontier caching retains metadata,
+1. **Document the caller-owned frontier buffer protocol.** Exact frontier caching retains metadata,
    not slot contents. Document that the caller must preserve the buffer between repeated probes, or
    add misuse tests if that contract is intended to be detected.
 
