@@ -87,3 +87,17 @@ raw tidy CSV rather than prematurely aggregating results. Compare instructions f
 branches/misses, and cache behavior. Use the included context-switch and CPU-migration counts to
 identify contaminated samples. If counters do not resolve the decision, use `bench_run.sh
 --converge` for longer paired wall-time runs.
+
+### Counter calibration on the noisy reference box
+
+A 2026-07 control run compared two 500k single-thread binaries with behaviorally identical release
+code over nine paired rounds. Retired instructions and branches were stable to a few parts per
+million. The paired cycles ratio had an approximately ±1.2% 95% interval; hardware cache counters
+were noisier. Hardware branch misses showed a false-looking ~0.8% separation, while Cachegrind's
+deterministic branch simulator differed by only 18 of ~704k predicted misses on a 10k run.
+
+Accordingly, use retired instructions/branches as the primary structural signal, paired cycles as
+the primary hardware-cost signal, and Cachegrind (`--branch-sim=yes`) or `llvm-mca`/`cargo asm` for
+attribution. Treat hardware branch/cache misses as corroborating evidence rather than a standalone
+verdict on this machine. Effects below the cycles noise floor should proceed to longer paired
+`bench_run.sh --converge` runs.
