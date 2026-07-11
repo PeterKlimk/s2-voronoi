@@ -69,7 +69,11 @@ impl CubeMapGrid {
         #[cfg(not(feature = "timing"))] _timings: Option<&mut CubeMapGridBuildTimings>,
     ) -> Self {
         assert!(res > 0, "CubeMapGrid requires res > 0");
-        let num_cells = 6 * res * res;
+        let num_cells = 6usize
+            .checked_mul(res)
+            .and_then(|cells| cells.checked_mul(res))
+            .filter(|&cells| cells <= u32::MAX as usize)
+            .expect("CubeMapGrid cell count must fit u32 cell identifiers");
 
         // Step 1: Classify points into cells (parallel).
         #[cfg(feature = "timing")]

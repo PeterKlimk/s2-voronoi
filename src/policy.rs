@@ -17,6 +17,10 @@
 /// `grid_*` TIMING_KV fields are the model inputs.
 pub(crate) const KNN_GRID_TARGET_DENSITY: f64 = 24.0;
 
+/// Largest cube-face resolution whose `6 * res²` cells fit the grid's `u32`
+/// cell identifiers.
+pub(crate) const MAX_GRID_RESOLUTION: usize = 26_754;
+
 /// Occupancy-feedback rebuild fires when the candidate-scan work proxy
 /// `Σocc²/n` exceeds this. `Σocc²` is the sum of squared per-cell
 /// occupancies — exactly the O(occ²) cost of scanning each cell's candidates
@@ -78,7 +82,7 @@ pub(crate) fn knn_grid_target_density() -> f64 {
 /// Query-grid resolution for a point count at the target density.
 pub(crate) fn knn_grid_resolution(num_points: usize) -> usize {
     let target = knn_grid_target_density().max(1.0);
-    ((num_points as f64 / (6.0 * target)).sqrt() as usize).max(4)
+    ((num_points as f64 / (6.0 * target)).sqrt() as usize).clamp(4, MAX_GRID_RESOLUTION)
 }
 
 /// Occupancy-feedback decision: given a built grid's max cell occupancy,
@@ -106,7 +110,7 @@ pub(crate) fn grid_occupancy_rebuild_resolution(
     let new_res = ((res as f64 * scale).ceil() as usize).max(res + 1);
 
     let max_cells = (GRID_MAX_CELLS_PER_POINT * num_points as f64).max(6.0 * 16.0);
-    let res_cap = ((max_cells / 6.0).sqrt() as usize).max(4);
+    let res_cap = ((max_cells / 6.0).sqrt() as usize).clamp(4, MAX_GRID_RESOLUTION);
     let new_res = new_res.min(res_cap);
     (new_res > res).then_some(new_res)
 }
@@ -212,6 +216,23 @@ mod tests {
         assert!(
             capped as f64 <= (GRID_MAX_CELLS_PER_POINT * 1_000.0).max(96.0) * 1.1,
             "rebuild resolution must respect the memory budget, got {capped} cells"
+        );
+    }
+
+    #[test]
+    fn grid_resolutions_fit_u32_cell_ids() {
+        let max = MAX_GRID_RESOLUTION as u64;
+        assert!(6 * max * max <= u32::MAX as u64);
+        assert!(6 * (max + 1) * (max + 1) > u32::MAX as u64);
+        assert_eq!(knn_grid_resolution(usize::MAX), MAX_GRID_RESOLUTION);
+        assert_eq!(
+            grid_occupancy_rebuild_resolution(
+                4,
+                usize::MAX,
+                usize::MAX,
+                GRID_REBUILD_SUMSQ_PER_N * 2.0,
+            ),
+            Some(MAX_GRID_RESOLUTION)
         );
     }
 
