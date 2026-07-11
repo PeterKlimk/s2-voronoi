@@ -8,13 +8,10 @@ pub(super) fn classify_terminal_failure(
     failure: Option<CellFailure>,
     knn_exhausted: bool,
 ) -> Option<CellFailure> {
-    if let Some(
-        failure @ (CellFailure::ProjectionInvalid
-        | CellFailure::TooManyVertices
-        | CellFailure::ClippedAway),
-    ) = failure
-    {
-        return Some(failure);
+    match failure {
+        Some(CellFailure::ProjectionInvalid) => return Some(CellFailure::ProjectionInvalid),
+        Some(CellFailure::TooManyVertices) => return Some(CellFailure::TooManyVertices),
+        _ => {}
     }
     if !bounded && knn_exhausted {
         return Some(CellFailure::UnboundedAfterExhaustion);
