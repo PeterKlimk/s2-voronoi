@@ -168,9 +168,6 @@ measured results above or the retired list below. Do not bundle candidates befor
 
 High-priority, low-risk experiments:
 
-- **B1 — fuse inverse-slot and AoS construction:** build `point_slots` while constructing
-  `SlotPoint` records, eliminating one unconditional pass over `point_indices`. Measure grid-build
-  instructions at 500k–2M across ordinary distributions.
 - **O1 — fuse finite validation and canonicalization:** combine the two input sweeps while
   preserving the first-invalid index and error payload exactly. Measure single-threaded 500k–2M
   with preprocessing disabled, plus invalid inputs at the beginning, middle, and end.
@@ -244,6 +241,10 @@ Do not broadly retry these without a materially different design or workload:
 - Dense-band eligibility before the raw candidate cap: admitting actual band work within the same
   budget regressed a 5k cap by 0.7% instructions, 1.6% branches, and 1.4% cycles; a 10k cap
   wall-time check was about 7% slower.
+- Fusing the inverse point-to-slot map with `SlotPoint` AoS construction: at 2M it did not reduce
+  retired instructions on Fibonacci or uniform input and was slightly higher in all Fibonacci
+  pairs. The separate pass likely keeps the random inverse-map stores out of the multi-stream AoS
+  construction loop; the candidate was reverted.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
