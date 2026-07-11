@@ -95,6 +95,26 @@ fn out_of_range_group_uses_slow_path_after_valid_prepare() {
 }
 
 #[test]
+fn aggregate_candidate_work_uses_slow_path() {
+    let points = vec![glam::Vec3::Z; 1_100];
+    let grid = CubeMapGrid::new(&points, 4);
+    let cell = fullest_cell(&grid);
+    let start = grid.cell_offsets()[cell] as usize;
+    let end = grid.cell_offsets()[cell + 1] as usize;
+    let queries: Vec<u32> = (start..end).map(|slot| slot as u32).collect();
+    let slot_gen_map: Vec<u32> = (0..points.len() as u32).collect();
+    let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
+    let group = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
+    let mut scratch = PackedKnnCellScratch::new();
+    let mut timings = PackedKnnTimings::default();
+
+    assert!(matches!(
+        scratch.prepare_group_directed(&grid, group, &mut timings),
+        PreparedPackedGroupStatus::SlowPath
+    ));
+}
+
+#[test]
 fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
     const N: usize = 384;
     const RES: usize = 10;

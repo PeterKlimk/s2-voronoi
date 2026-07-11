@@ -99,6 +99,13 @@ impl PackedKnnCellScratch {
             timings.add_setup(t.lap());
             return PreparedPackedGroupStatus::SlowPath;
         }
+        if num_queries
+            .checked_mul(num_candidates)
+            .is_none_or(|work| work > MAX_AGGREGATE_CANDIDATE_WORK)
+        {
+            timings.add_setup(t.lap());
+            return PreparedPackedGroupStatus::SlowPath;
+        }
         let mut ring_candidates_eligible = 0usize;
         let mut ring_candidates_all = 0usize;
         for r in &self.cell_ranges[1..] {

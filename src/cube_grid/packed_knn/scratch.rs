@@ -11,6 +11,9 @@ use super::{PackedChunk, PackedGroupInput, PackedKnnTimings, PackedStage};
 
 // Hard cap on total candidates in a 3x3 neighborhood to avoid pathological allocations.
 const MAX_CANDIDATES_HARD: usize = 65_536;
+// Bound aggregate per-group work and retained key storage, not just the 3x3
+// candidate population. Over-budget groups use the resumable shell fallback.
+const MAX_AGGREGATE_CANDIDATE_WORK: usize = 1 << 20;
 
 /// Reusable scratch buffers for packed per-cell group queries.
 pub struct PackedKnnCellScratch {
