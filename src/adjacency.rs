@@ -105,7 +105,28 @@ impl CellAdjacency {
     /// diagrams with boundary-touching cells are never complete (rect
     /// boundary edges have no neighbor by construction).
     pub fn is_complete(&self) -> bool {
-        self.neighbors.iter().all(|&n| n != NO_NEIGHBOR)
+        (0..self.cells.len()).all(|cell| {
+            self.neighbors_of(cell)
+                .iter()
+                .all(|&neighbor| neighbor != NO_NEIGHBOR)
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completeness_ignores_gaps_outside_live_cell_spans() {
+        let mut adjacency = CellAdjacency {
+            cells: vec![(1, 2), (4, 1)],
+            neighbors: vec![NO_NEIGHBOR, 1, 0, NO_NEIGHBOR, 0],
+        };
+        assert!(adjacency.is_complete());
+
+        adjacency.neighbors[2] = NO_NEIGHBOR;
+        assert!(!adjacency.is_complete());
     }
 }
 
