@@ -16,7 +16,7 @@ use glam::Vec3;
 
 use super::super::{CubeMapGrid, CubeMapGridScratch};
 use super::directed::{DirectedCellMode, DirectedEligibility};
-use crate::fp::{self, OrdF32};
+use crate::fp;
 
 pub(crate) trait ShellEligibility: Copy {
     fn cell_mode(self, cell_offsets: &[u32], start_cell: u32, cell: usize) -> DirectedCellMode;
@@ -51,21 +51,64 @@ impl ShellEligibility for UnrestrictedEligibility {
     }
 }
 
-fn sort_pending(pending: &mut [(OrdF32, u32)]) {
-    pending.sort_unstable_by_key(|&(dot, slot)| (std::cmp::Reverse(dot), slot));
+/// Sort key for one pending shell candidate.
+///
+/// The high word is the bitwise inverse of the standard ascending-total-order
+/// f32 key, so ascending `u64` order gives descending dot order. The low word
+/// is the slot, preserving the previous ascending-slot tie break exactly.
+type PendingKey = u64;
+
+#[inline(always)]
+fn f32_to_ordered_u32(value: f32) -> u32 {
+    let bits = value.to_bits();
+    if bits & 0x8000_0000 != 0 {
+        !bits
+    } else {
+        bits ^ 0x8000_0000
+    }
+}
+
+#[inline(always)]
+fn ordered_u32_to_f32(value: u32) -> f32 {
+    let bits = if value & 0x8000_0000 != 0 {
+        value ^ 0x8000_0000
+    } else {
+        !value
+    };
+    f32::from_bits(bits)
+}
+
+#[inline(always)]
+fn make_pending_key(dot: f32, slot: u32) -> PendingKey {
+    let descending_dot = !f32_to_ordered_u32(dot);
+    ((descending_dot as u64) << 32) | slot as u64
+}
+
+#[inline(always)]
+fn pending_key_dot(key: PendingKey) -> f32 {
+    ordered_u32_to_f32(!((key >> 32) as u32))
+}
+
+#[inline(always)]
+fn pending_key_slot(key: PendingKey) -> u32 {
+    key as u32
+}
+
+fn sort_pending(pending: &mut [PendingKey]) {
+    // Keep the standard sort here: unlike the packed-kNN key path, shell
+    // ordering does not reserve a sentinel value, so every u64 remains valid.
+    pending.sort_unstable();
 }
 
 const INCREMENTAL_LAYER_CHUNK: usize = 64;
 
-fn prepare_pending_prefix(pending: &mut [(OrdF32, u32)]) -> usize {
+fn prepare_pending_prefix(pending: &mut [PendingKey]) -> usize {
     if pending.len() <= 2 * INCREMENTAL_LAYER_CHUNK {
         sort_pending(pending);
         return pending.len();
     }
 
-    pending.select_nth_unstable_by_key(INCREMENTAL_LAYER_CHUNK, |&(dot, slot)| {
-        (std::cmp::Reverse(dot), slot)
-    });
+    pending.select_nth_unstable(INCREMENTAL_LAYER_CHUNK);
     let prefix_len = INCREMENTAL_LAYER_CHUNK;
     sort_pending(&mut pending[..prefix_len]);
     prefix_len
@@ -161,7 +204,7 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
                 continue;
             }
             let dot = fp::dot3_f32(xs[i], ys[i], zs[i], qx, qy, qz);
-            self.scratch.pending.push((OrdF32::new(dot), slot));
+            self.scratch.pending.push(make_pending_key(dot, slot));
         }
     }
 
@@ -233,15 +276,16 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
         let end = self.pending_pos + self.pending_prefix_len;
         let prefix = &self.scratch.pending[self.pending_pos..end];
         out.clear();
-        out.extend(prefix.iter().map(|&(_, slot)| slot));
+        out.extend(prefix.iter().map(|&key| pending_key_slot(key)));
         let same_layer_bound = if end < self.scratch.pending.len() {
-            prefix[self.pending_prefix_len - 1].0.get() + crate::tolerances::GRID_DOT_BOUND_PAD
+            pending_key_dot(prefix[self.pending_prefix_len - 1])
+                + crate::tolerances::GRID_DOT_BOUND_PAD
         } else {
             -1.0
         };
         Some(ShellBatch {
             n: self.pending_prefix_len,
-            first_dot: prefix[0].0.get(),
+            first_dot: pending_key_dot(prefix[0]),
             unseen_bound: self.pending_bound.max(same_layer_bound),
         })
     }
@@ -325,22 +369,62 @@ mod tests {
     #[test]
     fn pending_order_breaks_equal_dots_by_slot() {
         let mut pending = vec![
-            (OrdF32::new(0.5), 7),
-            (OrdF32::new(0.75), 9),
-            (OrdF32::new(0.5), 2),
-            (OrdF32::new(0.75), 3),
+            make_pending_key(0.5, 7),
+            make_pending_key(0.75, 9),
+            make_pending_key(0.5, 2),
+            make_pending_key(0.75, 3),
         ];
         sort_pending(&mut pending);
-        let slots: Vec<u32> = pending.into_iter().map(|(_, slot)| slot).collect();
+        let slots: Vec<u32> = pending.into_iter().map(pending_key_slot).collect();
         assert_eq!(slots, vec![3, 9, 2, 7]);
     }
 
     #[test]
+    fn pending_key_matches_previous_finite_total_order() {
+        let candidates = vec![
+            (f32::MIN, 5),
+            (-1.0, 8),
+            (-f32::MIN_POSITIVE, 11),
+            (f32::from_bits(0x8000_0001), 10),
+            (-0.0, 6),
+            (0.0, 7),
+            (f32::from_bits(1), 12),
+            (f32::MIN_POSITIVE, 4),
+            (0.5, 9),
+            (0.5, 2),
+            (1.0, 3),
+            (f32::MAX, 1),
+        ];
+        let mut expected = candidates.clone();
+        expected.sort_unstable_by(|&(dot_a, slot_a), &(dot_b, slot_b)| {
+            dot_b.total_cmp(&dot_a).then_with(|| slot_a.cmp(&slot_b))
+        });
+
+        let mut keys: Vec<PendingKey> = candidates
+            .iter()
+            .map(|&(dot, slot)| make_pending_key(dot, slot))
+            .collect();
+        sort_pending(&mut keys);
+        let actual: Vec<(u32, u32)> = keys
+            .into_iter()
+            .map(|key| (pending_key_dot(key).to_bits(), pending_key_slot(key)))
+            .collect();
+        let expected: Vec<(u32, u32)> = expected
+            .into_iter()
+            .map(|(dot, slot)| (dot.to_bits(), slot))
+            .collect();
+
+        assert_eq!(actual, expected);
+        assert!(make_pending_key(0.0, 0) < make_pending_key(-0.0, 0));
+        assert!(make_pending_key(0.5, 2) < make_pending_key(0.5, 7));
+    }
+
+    #[test]
     fn incremental_prefixes_match_full_layer_sort() {
-        let mut pending: Vec<(OrdF32, u32)> = (0..257u32)
+        let mut pending: Vec<PendingKey> = (0..257u32)
             .map(|slot| {
                 let dot = ((slot.wrapping_mul(73) % 41) as f32 - 20.0) / 20.0;
-                (OrdF32::new(dot), slot)
+                make_pending_key(dot, slot)
             })
             .collect();
         let mut expected = pending.clone();

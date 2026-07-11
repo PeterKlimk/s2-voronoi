@@ -285,8 +285,9 @@ pub struct CubeMapGridScratch {
     current: Vec<u32>,
     /// Layer discovered while emitting `current`.
     next: Vec<u32>,
-    /// Sorted (descending dot, slot) emission for the pending shell batch.
-    pending: Vec<(crate::fp::OrdF32, u32)>,
+    /// Packed `(descending total-order dot, ascending slot)` keys for the
+    /// pending shell batch.
+    pending: Vec<u64>,
 }
 
 #[cfg(test)]

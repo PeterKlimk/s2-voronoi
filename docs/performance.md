@@ -137,6 +137,15 @@ when that query requests the tail. At 100k clustered this reduced key materializ
 2.05%, branches 2.88%, and cycles 2.83%. Fibonacci improved by 1.20% instructions, 1.29% branches,
 and 3.55% cycles after the requested-query rescan was vectorized.
 
+Shell-frontier pending entries use one packed `u64` whose high word orders the dot descending and
+whose low word orders the slot ascending. This preserves the previous
+`(Reverse(total-order dot), slot)` selection policy while avoiding tuple-key construction and
+comparison. In a 20k mega run it reduced `knn_query` time by 18.4% and total time by 7.0% over 12
+paired interleaved rounds; the query phase won all 12 pairs. A 10k mega counter pair reduced retired
+instructions from 7.37B to 5.70B and cycles from 2.40B to 1.92B. At 50k clustered, `knn_query`
+improved 23.6% over eight pairs. The 100k Fibonacci control has negligible shell time; its wall-time
+result was unresolved, while counters improved about 1.1% instructions and 1.2% cycles.
+
 ### Retired experiments
 
 Do not broadly retry these without a materially different design or workload:

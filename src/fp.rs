@@ -15,45 +15,6 @@
 //! winning some runs), so the nightly requirement was dropped. The portable
 //! backend can be recovered from git history if `std::simd` stabilizes.
 
-/// An `f32` ordered via `total_cmp` (NaN ordered consistently, not rejected).
-///
-/// Shared by the spatial-grid frontiers for sorted (distance, slot) emission.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct OrdF32(i32);
-
-impl Eq for OrdF32 {}
-
-impl PartialOrd for OrdF32 {
-    #[inline]
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for OrdF32 {
-    #[inline]
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.cmp(&other.0)
-    }
-}
-
-impl OrdF32 {
-    #[inline]
-    pub(crate) fn new(v: f32) -> Self {
-        OrdF32(total_cmp_key(v.to_bits() as i32))
-    }
-
-    #[inline]
-    pub(crate) fn get(self) -> f32 {
-        f32::from_bits(total_cmp_key(self.0) as u32)
-    }
-}
-
-#[inline]
-fn total_cmp_key(bits: i32) -> i32 {
-    bits ^ ((((bits >> 31) as u32) >> 1) as i32)
-}
-
 // The `fma` feature is only sound when the SIMD backend actually fuses. On
 // x86/x86_64 the `wide` crate's `mul_add` lowers to a true FMA *only* when the
 // `fma` target feature is enabled; without it, `wide` does a two-rounding
@@ -354,34 +315,5 @@ mod backend {
             mask |= u32::from(d >= neg_eps) << i;
         }
         (dists, mask)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::OrdF32;
-
-    #[test]
-    fn ord_f32_matches_total_cmp_and_round_trips_bits() {
-        let values = [
-            f32::NEG_INFINITY,
-            -1.0,
-            -0.0,
-            0.0,
-            1.0,
-            f32::INFINITY,
-            f32::from_bits(0x7fc0_0001),
-            f32::from_bits(0xffc0_0001),
-        ];
-
-        for &v in &values {
-            assert_eq!(OrdF32::new(v).get().to_bits(), v.to_bits());
-        }
-
-        for &a in &values {
-            for &b in &values {
-                assert_eq!(OrdF32::new(a).cmp(&OrdF32::new(b)), a.total_cmp(&b));
-            }
-        }
     }
 }
