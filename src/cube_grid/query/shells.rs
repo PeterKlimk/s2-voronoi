@@ -8,7 +8,9 @@
 //! certificate after a layer is the conservative cap bound over the next BFS
 //! ring, which dominates everything beyond it for the same geometric reason
 //! the cursor's frontier-heap top does (cells behind the ring are farther
-//! from the query than the ring cells that occlude them).
+//! from the query than the ring cells that occlude them). Small layers are
+//! sorted whole; large layers are partitioned into nearest-first prefixes so
+//! mid-layer cell closure does not pay to sort an unused suffix.
 
 use glam::Vec3;
 
@@ -18,6 +20,22 @@ use crate::fp::{self, OrdF32};
 
 fn sort_pending(pending: &mut [(OrdF32, u32)]) {
     pending.sort_unstable_by_key(|&(dot, slot)| (std::cmp::Reverse(dot), slot));
+}
+
+const INCREMENTAL_LAYER_CHUNK: usize = 64;
+
+fn prepare_pending_prefix(pending: &mut [(OrdF32, u32)]) -> usize {
+    if pending.len() <= 2 * INCREMENTAL_LAYER_CHUNK {
+        sort_pending(pending);
+        return pending.len();
+    }
+
+    pending.select_nth_unstable_by_key(INCREMENTAL_LAYER_CHUNK, |&(dot, slot)| {
+        (std::cmp::Reverse(dot), slot)
+    });
+    let prefix_len = INCREMENTAL_LAYER_CHUNK;
+    sort_pending(&mut pending[..prefix_len]);
+    prefix_len
 }
 
 pub(crate) struct ShellBatch {
@@ -35,6 +53,8 @@ pub(crate) struct ShellFrontier<'a, 'b> {
     eligibility: DirectedEligibility<'b>,
     initialized: bool,
     pending_bound: f32,
+    pending_pos: usize,
+    pending_prefix_len: usize,
     has_pending: bool,
     exhausted: bool,
 }
@@ -56,6 +76,8 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
             eligibility,
             initialized: false,
             pending_bound: -1.0,
+            pending_pos: 0,
+            pending_prefix_len: 0,
             has_pending: false,
             exhausted: false,
         }
@@ -149,7 +171,8 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
 
             if !self.scratch.pending.is_empty() {
                 // Nearest-first within the layer.
-                sort_pending(&mut self.scratch.pending);
+                self.pending_pos = 0;
+                self.pending_prefix_len = 0;
                 self.has_pending = true;
                 return;
             }
@@ -157,7 +180,8 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
         self.exhausted = true;
     }
 
-    /// Current frontier: fills `out` with the pending layer's slots.
+    /// Current frontier: fills `out` with the pending layer's next sorted
+    /// prefix (or the whole layer when small).
     /// Returns `None` when the traversal is exhausted.
     pub(crate) fn frontier(&mut self, out: &mut Vec<u32>) -> Option<ShellBatch> {
         if !self.initialized {
@@ -169,18 +193,34 @@ impl<'a, 'b> ShellFrontier<'a, 'b> {
         if self.exhausted {
             return None;
         }
+        if self.pending_prefix_len == 0 {
+            self.pending_prefix_len =
+                prepare_pending_prefix(&mut self.scratch.pending[self.pending_pos..]);
+        }
+        let end = self.pending_pos + self.pending_prefix_len;
+        let prefix = &self.scratch.pending[self.pending_pos..end];
         out.clear();
-        out.extend(self.scratch.pending.iter().map(|&(_, slot)| slot));
+        out.extend(prefix.iter().map(|&(_, slot)| slot));
+        let same_layer_bound = if end < self.scratch.pending.len() {
+            prefix[self.pending_prefix_len - 1].0.get() + crate::tolerances::GRID_DOT_BOUND_PAD
+        } else {
+            -1.0
+        };
         Some(ShellBatch {
-            n: self.scratch.pending.len(),
-            first_dot: self.scratch.pending[0].0.get(),
-            unseen_bound: self.pending_bound,
+            n: self.pending_prefix_len,
+            first_dot: prefix[0].0.get(),
+            unseen_bound: self.pending_bound.max(same_layer_bound),
         })
     }
 
     pub(crate) fn advance(&mut self) {
-        self.has_pending = false;
-        self.scratch.pending.clear();
+        self.pending_pos += self.pending_prefix_len;
+        self.pending_prefix_len = 0;
+        if self.pending_pos >= self.scratch.pending.len() {
+            self.pending_pos = 0;
+            self.has_pending = false;
+            self.scratch.pending.clear();
+        }
     }
 
     #[inline]
@@ -222,5 +262,25 @@ mod tests {
         sort_pending(&mut pending);
         let slots: Vec<u32> = pending.into_iter().map(|(_, slot)| slot).collect();
         assert_eq!(slots, vec![3, 9, 2, 7]);
+    }
+
+    #[test]
+    fn incremental_prefixes_match_full_layer_sort() {
+        let mut pending: Vec<(OrdF32, u32)> = (0..257u32)
+            .map(|slot| {
+                let dot = ((slot.wrapping_mul(73) % 41) as f32 - 20.0) / 20.0;
+                (OrdF32::new(dot), slot)
+            })
+            .collect();
+        let mut expected = pending.clone();
+        sort_pending(&mut expected);
+
+        let mut pos = 0usize;
+        while pos < pending.len() {
+            let n = prepare_pending_prefix(&mut pending[pos..]);
+            assert!(n > 0);
+            pos += n;
+        }
+        assert_eq!(pending, expected);
     }
 }

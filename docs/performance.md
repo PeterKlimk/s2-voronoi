@@ -123,3 +123,9 @@ The normal 100k uniform packed-bound comparison remained unresolved after the ma
 wall-time rounds: candidate/base geometric mean `+0.3%`, 95% interval `[-1.1%, +1.8%]`, with the
 candidate faster in 82/160 rounds. This is below the 1% decision resolution on the reference host;
 do not describe it as either a performance win or a demonstrated regression.
+
+Incremental shell-layer emission keeps whole sorting for layers up to 128 entries and otherwise
+partition-sorts 64-entry prefixes on demand. At 100k single-threaded it reduced clustered retired
+instructions by 3.05%, branches by 1.76%, and cycles by 3.52%; bimodal instructions fell 0.91% with
+neutral cycles. Fibonacci instructions/branches were structurally neutral-to-lower, while its
+0.83% cycle increase remained inside the reference host's noise interval.

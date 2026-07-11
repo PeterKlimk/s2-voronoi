@@ -99,6 +99,10 @@ pub struct CellSubPhases {
     pub ring_tail_dot_evaluations: u64,
     pub center_tail_keys: u64,
     pub unused_center_tail_keys: u64,
+    pub shell_layer_batches: u64,
+    pub shell_layer_slots: u64,
+    pub shell_layer_prefix_consumed: u64,
+    pub shell_midlayer_terminations: u64,
     /// Sum of neighbors processed before termination across all cells
     /// (mean = total / n; input for the grid-density tuning model).
     pub neighbors_processed_total: u64,
@@ -166,6 +170,10 @@ pub struct CellSubAccum {
     ring_tail_dot_evaluations: u64,
     center_tail_keys: u64,
     unused_center_tail_keys: u64,
+    shell_layer_batches: u64,
+    shell_layer_slots: u64,
+    shell_layer_prefix_consumed: u64,
+    shell_midlayer_terminations: u64,
     neighbors_processed_total: u64,
     neighbors_processed_max: u64,
     final_edges_total: u64,
@@ -284,6 +292,20 @@ impl CellSubAccum {
     }
 
     #[inline]
+    pub fn add_shell_layer_usage(
+        &mut self,
+        batches: usize,
+        slots: usize,
+        prefix_consumed: usize,
+        midlayer_terminations: usize,
+    ) {
+        self.shell_layer_batches += batches as u64;
+        self.shell_layer_slots += slots as u64;
+        self.shell_layer_prefix_consumed += prefix_consumed as u64;
+        self.shell_midlayer_terminations += midlayer_terminations as u64;
+    }
+
+    #[inline]
     #[allow(clippy::too_many_arguments)]
     pub fn add_directional_shadow(
         &mut self,
@@ -346,6 +368,10 @@ impl CellSubAccum {
         self.ring_tail_dot_evaluations += other.ring_tail_dot_evaluations;
         self.center_tail_keys += other.center_tail_keys;
         self.unused_center_tail_keys += other.unused_center_tail_keys;
+        self.shell_layer_batches += other.shell_layer_batches;
+        self.shell_layer_slots += other.shell_layer_slots;
+        self.shell_layer_prefix_consumed += other.shell_layer_prefix_consumed;
+        self.shell_midlayer_terminations += other.shell_midlayer_terminations;
         self.neighbors_processed_total += other.neighbors_processed_total;
         self.neighbors_processed_max = self
             .neighbors_processed_max
@@ -401,6 +427,10 @@ impl CellSubAccum {
             ring_tail_dot_evaluations: self.ring_tail_dot_evaluations,
             center_tail_keys: self.center_tail_keys,
             unused_center_tail_keys: self.unused_center_tail_keys,
+            shell_layer_batches: self.shell_layer_batches,
+            shell_layer_slots: self.shell_layer_slots,
+            shell_layer_prefix_consumed: self.shell_layer_prefix_consumed,
+            shell_midlayer_terminations: self.shell_midlayer_terminations,
             neighbors_processed_total: self.neighbors_processed_total,
             neighbors_processed_max: self.neighbors_processed_max,
             final_edges_total: self.final_edges_total,
@@ -622,6 +652,15 @@ impl PhaseTimings {
                 self.cell_sub.cells_packed_tail_used,
                 self.cell_sub.cells_packed_safe_exhausted
             );
+            if self.cell_sub.shell_layer_batches > 0 {
+                eprintln!(
+                    "    shell_layers: batches={} slots={} prefix_consumed={} midlayer_terminations={}",
+                    self.cell_sub.shell_layer_batches,
+                    self.cell_sub.shell_layer_slots,
+                    self.cell_sub.shell_layer_prefix_consumed,
+                    self.cell_sub.shell_midlayer_terminations,
+                );
+            }
             if self.cell_sub.fallback_projection > 0
                 || self.cell_sub.fallback_polygon_cap > 0
                 || self.cell_sub.fallback_all_constraints > 0
@@ -690,7 +729,7 @@ impl PhaseTimings {
 
         if std::env::var_os("VORONOI_MESH_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} edge_repair_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -716,6 +755,10 @@ impl PhaseTimings {
                 rtd = self.cell_sub.ring_tail_dot_evaluations,
                 ctk = self.cell_sub.center_tail_keys,
                 uctk = self.cell_sub.unused_center_tail_keys,
+                slb = self.cell_sub.shell_layer_batches,
+                sls = self.cell_sub.shell_layer_slots,
+                slp = self.cell_sub.shell_layer_prefix_consumed,
+                slm = self.cell_sub.shell_midlayer_terminations,
                 nt = self.cell_sub.neighbors_processed_total,
                 nm = self.cell_sub.neighbors_processed_max,
                 fet = self.cell_sub.final_edges_total,

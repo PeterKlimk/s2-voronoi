@@ -154,6 +154,14 @@ pub(crate) struct CellBuildStats {
     directional_support_hits: usize,
     directional_support_saved: usize,
     directional_support_false_positive_hits: usize,
+    #[cfg(feature = "timing")]
+    shell_layer_batches: usize,
+    #[cfg(feature = "timing")]
+    shell_layer_slots: usize,
+    #[cfg(feature = "timing")]
+    shell_layer_prefix_consumed: usize,
+    #[cfg(feature = "timing")]
+    shell_midlayer_terminations: usize,
     fallback_projection: usize,
     fallback_polygon_cap: usize,
     fallback_all_constraints: usize,
@@ -187,6 +195,13 @@ impl CellBuildStats {
             self.fallback_projection,
             self.fallback_polygon_cap,
             self.fallback_all_constraints,
+        );
+        #[cfg(feature = "timing")]
+        cell_sub.add_shell_layer_usage(
+            self.shell_layer_batches,
+            self.shell_layer_slots,
+            self.shell_layer_prefix_consumed,
+            self.shell_midlayer_terminations,
         );
 
         let stage = if self.used_knn {
@@ -276,6 +291,14 @@ pub(super) struct BuildCounters {
     directional_support_hits: usize,
     directional_support_saved: usize,
     directional_support_false_positive_hits: usize,
+    #[cfg(feature = "timing")]
+    shell_layer_batches: usize,
+    #[cfg(feature = "timing")]
+    shell_layer_slots: usize,
+    #[cfg(feature = "timing")]
+    shell_layer_prefix_consumed: usize,
+    #[cfg(feature = "timing")]
+    shell_midlayer_terminations: usize,
     fallback_projection: usize,
     fallback_polygon_cap: usize,
     fallback_all_constraints: usize,
@@ -306,6 +329,14 @@ impl BuildCounters {
             directional_support_hits: 0,
             directional_support_saved: 0,
             directional_support_false_positive_hits: 0,
+            #[cfg(feature = "timing")]
+            shell_layer_batches: 0,
+            #[cfg(feature = "timing")]
+            shell_layer_slots: 0,
+            #[cfg(feature = "timing")]
+            shell_layer_prefix_consumed: 0,
+            #[cfg(feature = "timing")]
+            shell_midlayer_terminations: 0,
             fallback_projection: 0,
             fallback_polygon_cap: 0,
             fallback_all_constraints: 0,
@@ -461,7 +492,13 @@ fn clip_batch(
 ) {
     let t_clip = crate::knn_clipping::timing::Timer::start();
     let packed_chunk = &phase.packed_chunk[..batch.n];
+    #[cfg(feature = "timing")]
+    let mut prefix_consumed = 0usize;
     for pos in 0..batch.n {
+        #[cfg(feature = "timing")]
+        {
+            prefix_consumed = pos + 1;
+        }
         let neighbor_slot = packed_chunk[pos];
         // One fused load gets both the global index and the position (one cache
         // line) instead of two separate random by-slot loads.
@@ -560,6 +597,14 @@ fn clip_batch(
                 counters,
             );
         }
+    }
+    #[cfg(feature = "timing")]
+    if batch.source == DirectedNeighborBatchSource::ShellExpand {
+        counters.shell_layer_batches += 1;
+        counters.shell_layer_slots += batch.n;
+        counters.shell_layer_prefix_consumed += prefix_consumed;
+        counters.shell_midlayer_terminations +=
+            (counters.terminated && prefix_consumed < batch.n) as usize;
     }
     counters.clipping_time += t_clip.elapsed();
 }
@@ -751,6 +796,14 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         directional_support_hits: counters.directional_support_hits,
         directional_support_saved: counters.directional_support_saved,
         directional_support_false_positive_hits: counters.directional_support_false_positive_hits,
+        #[cfg(feature = "timing")]
+        shell_layer_batches: counters.shell_layer_batches,
+        #[cfg(feature = "timing")]
+        shell_layer_slots: counters.shell_layer_slots,
+        #[cfg(feature = "timing")]
+        shell_layer_prefix_consumed: counters.shell_layer_prefix_consumed,
+        #[cfg(feature = "timing")]
+        shell_midlayer_terminations: counters.shell_midlayer_terminations,
         fallback_projection: counters.fallback_projection,
         fallback_polygon_cap: counters.fallback_polygon_cap,
         fallback_all_constraints: counters.fallback_all_constraints,

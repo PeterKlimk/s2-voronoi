@@ -13,13 +13,11 @@ fingerprints. Start with retired instructions and branches, then paired cycles; 
 `llvm-mca`, or `cargo asm` for attribution. Run `bench_run.sh --converge` when counters are
 inconclusive.
 
-1. **Incremental shell-layer emission.** Measure layer size versus consumed prefix and mid-layer
-   closure before designing a conservative next-dot bound.
-2. **Bound the first packed chunk and materialize the remainder lazily.** Compare retained keys,
+1. **Bound the first packed chunk and materialize the remainder lazily.** Compare retained keys,
    later requests, recomputation, and peak bytes.
-3. **Apply dense-band eligibility before the candidate cap.** Preserve the aggregate work budget
+2. **Apply dense-band eligibility before the candidate cap.** Preserve the aggregate work budget
    and shell certificate.
-4. **Batch shell takeover across same-cell queries.** Evaluate only as a whole-pipeline traversal
+3. **Batch shell takeover across same-cell queries.** Evaluate only as a whole-pipeline traversal
    and emission change.
 
 ## Do not broadly retry
