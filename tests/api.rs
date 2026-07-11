@@ -66,6 +66,17 @@ fn test_merge_within_rejects_unsupported_thresholds() {
 }
 
 #[test]
+fn test_report_residual_helper_includes_low_incidence_vertices() {
+    let points = fibonacci_sphere_points(8, 0.0, 0);
+    let mut output = compute_with_report(&points, VoronoiConfig::default()).unwrap();
+    assert!(!output.report.has_post_repair_residuals());
+
+    output.report.post_repair_unpaired_edges.clear();
+    output.report.returned_validation.low_incidence_vertices = 1;
+    assert!(output.report.has_post_repair_residuals());
+}
+
+#[test]
 fn test_compute_octahedron() {
     // 6 axis-aligned points form an octahedron
     let points = vec![

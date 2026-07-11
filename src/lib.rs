@@ -342,6 +342,7 @@ impl ComputeReport {
     #[inline]
     pub fn has_post_repair_residuals(&self) -> bool {
         !self.post_repair_unpaired_edges.is_empty()
+            || self.preferred_validation().low_incidence_vertices > 0
     }
 }
 
