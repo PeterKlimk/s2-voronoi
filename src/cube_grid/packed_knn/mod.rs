@@ -196,6 +196,13 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
         }
     }
 
+    /// Return the current packed frontier.
+    ///
+    /// For an exact batch, the first probe writes slots to caller-owned `out`
+    /// and the cache retains metadata only. Repeated probes before
+    /// [`Self::advance_frontier`] do not rewrite the slots, so the caller must
+    /// preserve both the buffer length and contents. Bounded or exhausted
+    /// frontiers clear `out`.
     pub(crate) fn frontier(&mut self, out: &mut Vec<u32>) -> PackedNeighborFrontier {
         if let Some(cached) = &self.cached_frontier {
             match cached {
@@ -271,6 +278,8 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
         PackedNeighborFrontier::UnknownButBounded { dot_upper_bound }
     }
 
+    /// Consume the cached frontier. The caller-owned frontier buffer may be
+    /// cleared or reused after this call.
     pub(crate) fn advance_frontier(&mut self, grid: &CubeMapGrid) {
         let cached = self.cached_frontier.take();
         match cached {

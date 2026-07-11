@@ -99,6 +99,14 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
         }
     }
 
+    /// Return the current frontier, writing an exact batch into caller-owned
+    /// `out` when this is the first probe of that frontier.
+    ///
+    /// Exact-frontier caching retains only [`DirectedNeighborBatch`] metadata,
+    /// not the emitted slots. Until [`Self::advance_frontier`] is called, a
+    /// repeated probe returns the same metadata without rewriting `out`; the
+    /// caller must therefore preserve both its length and contents. Bounded or
+    /// exhausted frontiers clear `out` and do not carry this requirement.
     pub(crate) fn frontier(&mut self, out: &mut Vec<u32>) -> DirectedNeighborFrontier {
         if let Some(cached) = &self.cached_frontier {
             match cached {
@@ -184,6 +192,8 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
         }
     }
 
+    /// Consume the cached frontier. After this call the caller may freely
+    /// clear or reuse the buffer passed to [`Self::frontier`].
     pub(crate) fn advance_frontier(&mut self) {
         let cached = self.cached_frontier.take();
         match cached {

@@ -3,12 +3,6 @@
 Trimmed at `7d3c83b` after the deterministic correctness and resource-bound work was harvested.
 This is a temporary handoff: delete it when the remaining findings are completed or transferred.
 
-## Test and contract hardening
-
-1. **Document the caller-owned frontier buffer protocol.** Exact frontier caching retains metadata,
-   not slot contents. Document that the caller must preserve the buffer between repeated probes, or
-   add misuse tests if that contract is intended to be detected.
-
 Packed-group shape assertions are defensive regression checks: cell-major bin construction already
 guarantees complete cells with contiguous, layout-matched slots and locals.
 
