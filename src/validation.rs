@@ -9,6 +9,12 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::tolerances::{ANTIPODAL_DOT_EPS, VERTEX_ON_SPHERE_EPS};
 
+#[inline]
+fn vertex_is_on_sphere(x: f32, y: f32, z: f32) -> bool {
+    let len_sq = x * x + y * y + z * z;
+    len_sq.is_finite() && (len_sq - 1.0).abs() <= VERTEX_ON_SPHERE_EPS
+}
+
 /// Detailed validation report for a spherical Voronoi diagram.
 ///
 /// Stability: [`ValidationReport::is_strictly_valid`] is the authoritative
@@ -401,6 +407,14 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
     let num_cells = diagram.num_cells();
     let num_vertices = diagram.num_vertices();
 
+    if diagram
+        .vertices()
+        .iter()
+        .any(|v| !vertex_is_on_sphere(v.x, v.y, v.z))
+    {
+        return Err("off-sphere vertex");
+    }
+
     let mut welded_twin_cells = 0usize;
     let mut is_welded_twin = vec![false; num_cells];
     for (i, twin_flag) in is_welded_twin.iter_mut().enumerate() {
@@ -517,13 +531,6 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
             if count < 3 {
                 return Err("low-incidence vertex");
             }
-        }
-    }
-
-    for v in diagram.vertices() {
-        let len_sq = v.x * v.x + v.y * v.y + v.z * v.z;
-        if (len_sq - 1.0).abs() > VERTEX_ON_SPHERE_EPS {
-            return Err("off-sphere vertex");
         }
     }
 
@@ -736,6 +743,10 @@ pub(crate) fn verify_sphere_effective_strict(
     let num_cells = cells.len();
     let num_vertices = vertices.len();
 
+    if vertices.iter().any(|v| !vertex_is_on_sphere(v.x, v.y, v.z)) {
+        return Err("off-sphere vertex");
+    }
+
     // Exact incidence counters, shared across chunks; only read after the
     // scan completes. (u32: cannot saturate — total increments are bounded by
     // `cell_indices.len()`.)
@@ -812,13 +823,6 @@ pub(crate) fn verify_sphere_effective_strict(
             if count < 3 {
                 return Err("low-incidence vertex");
             }
-        }
-    }
-
-    for v in vertices {
-        let len_sq = v.x * v.x + v.y * v.y + v.z * v.z;
-        if (len_sq - 1.0).abs() > VERTEX_ON_SPHERE_EPS {
-            return Err("off-sphere vertex");
         }
     }
 
@@ -1094,8 +1098,7 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
 
     let mut vertices_off_sphere = 0usize;
     for v in vertices {
-        let len_sq = v.x * v.x + v.y * v.y + v.z * v.z;
-        if (len_sq - 1.0).abs() > VERTEX_ON_SPHERE_EPS {
+        if !vertex_is_on_sphere(v.x, v.y, v.z) {
             vertices_off_sphere += 1;
         }
     }
@@ -1268,5 +1271,19 @@ mod verify_gate_tests {
         let corrupted = SphericalVoronoi::from_raw_parts(generators, v, c, ci, None);
         assert!(verify_sphere_fast(&corrupted).is_err());
         assert_agree(&corrupted);
+
+        // Invalid: non-finite coordinates must not exploit NaN comparison
+        // semantics to pass either the report or strict validation paths.
+        for coordinate in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let (mut v, c, ci) = effective_arrays(&good);
+            v[0].x = coordinate;
+            let generators = vec![Vec3::new(0.0, 0.0, 1.0); c.len()];
+            let corrupted = SphericalVoronoi::from_raw_parts(generators, v, c, ci, None);
+            let report = validate(&corrupted);
+            assert_eq!(report.vertices_off_sphere, 1);
+            assert!(!report.is_strictly_valid());
+            assert_eq!(verify_sphere_fast(&corrupted), Err("off-sphere vertex"));
+            assert_agree(&corrupted);
+        }
     }
 }
