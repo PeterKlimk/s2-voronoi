@@ -355,6 +355,11 @@ Do not broadly retry these without a materially different design or workload:
   cycles regressed 0.66%. An earlier short-circuit form added 2.12% branches. LLVM's ordinary
   `Vec::push` paths are predicted better than the combined invariant machinery, so keep the three
   safe pushes.
+- Combining clip polygon size and bounding-reference state into one tuple match produced equivalent
+  native codegen (instructions +0.00011%, branches +0.00030%, mixed pair signs). A 1M Fibonacci
+  audit found N=3/4/5 account for 24.9%/31.4%/23.7% of clips, while bounded incidence falls from
+  86% at N=3 to 65% at N=4 and 34% at N=5. LLVM already optimizes the nested dispatch; future work
+  should target the N=3-5 kernels rather than rearranging the match.
 - Extending the conservative early-unchanged radius certificate from polygon sizes >=5 to N=4
   added 0.12–0.13% retired instructions and 0.28–0.31% branches on 500k single-threaded native
   Fibonacci and uniform, with every one of seven pairs worse on both structural counters. Cycles
