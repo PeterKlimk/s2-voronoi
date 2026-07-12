@@ -195,6 +195,14 @@ timing, tracing, and termination. At 2M single-threaded Fibonacci it reduced ret
 about 0.096%; at 500k clustered it reduced them by about 0.206%, consistently across three pairs.
 Cycles were neutral-to-lower overall.
 
+The quadratic cube projection computes one absolute-value square root and branchlessly selects the
+positive or negative result. It is bit-identical to the previous finite-input branches, including
+signed zero, subnormals, and grid-boundary-adjacent values. At 2M single-threaded it added about
+0.05% retired instructions but removed about 0.06% branches. Cycles improved in all three Fibonacci
+pairs and two of three uniform pairs, with the third uniform pair neutral; hardware branch misses
+were lower in all six pairs. This is a latency win from removing a balanced sign branch, not an
+instruction-count optimization.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -209,9 +217,6 @@ Promising workload-specific experiments:
 - **D3 — compact high-degree consumed flags:** replace the per-cell byte vector above 64 incoming
   checks with reusable bit words. First instrument activation frequency; ordinary cells should stay
   on the existing inline mask.
-- **B2 — branchless `uv_to_st` sign selection:** the sign branch is balanced and remains in release
-  assembly; an `abs` plus bit-select prototype was bit-identical for finite f32 inputs. Require
-  paired branch, instruction, and cycle results because the added arithmetic may cancel the win.
 - **B3 — collapse dense-index build passes:** accumulate all axis ranges in one scan, hoist the
   chosen coordinate slice, and materialize sorted slots/coordinates together. This is dense-only;
   measure outlier/mega and synthetic cells above the 512-point threshold.
