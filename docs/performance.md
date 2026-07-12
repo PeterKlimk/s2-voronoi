@@ -420,6 +420,17 @@ Do not broadly retry these without a materially different design or workload:
   rounding can affect proximity-based defect repair as well as public geometry. Revisit only with a
   stronger accuracy/repair audit or a workload showing broader latency benefit; retain exact
   `sqrt().recip()` for now.
+- Deferring `PolyBuffer::max_r2` maintenance while synthetic bounding vertices remain removed the
+  per-survivor radius arithmetic from bounded clips, then recomputed the exact radius once when the
+  final bounding reference disappeared. Native 1M Fibonacci instructions improved 0.103%, but the
+  required transition test added 1.89% branches; branch misses were neutral, and a 20-pair 100k
+  cycle run was neutral/slightly worse (11/20 candidate wins, about +0.2% mean cycles). The saved
+  arithmetic does not repay the predictable per-clip branch, so retain eager radius maintenance.
+  A related correctness refactor remains independently worthwhile: make the cached radius private,
+  expose an exact getter that debug-asserts the polygon is free of synthetic bounding references,
+  and have cold diagnostics recompute radius directly from live coordinates. This would enforce a
+  clearer invariant at compile/checked time without weakening diagnostics, but should be evaluated
+  and justified separately rather than bundled with the rejected lazy-radius optimization.
 - Extending the conservative early-unchanged radius certificate from polygon sizes >=5 to N=4
   added 0.12–0.13% retired instructions and 0.28–0.31% branches on 500k single-threaded native
   Fibonacci and uniform, with every one of seven pairs worse on both structural counters. Cycles
