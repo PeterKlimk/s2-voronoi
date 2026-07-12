@@ -323,6 +323,11 @@ Do not broadly retry these without a materially different design or workload:
   enumerated copied `find` produced identical retired instructions and branches (ratios
   0.999999–1.000000) on 500k native Fibonacci and uniform. LLVM already eliminates the apparent
   redundant lookup; cycle movement split by distribution and was layout noise.
+- Tightening packed prefix selection so every remainder larger than the requested prefix uses
+  `select_nth_unstable` (instead of whole-sorting remainders up to 2x the request) added 1.06–1.22%
+  instructions, 3.15–3.46% branches, and 8.2–9.3% branch misses on 500k native Fibonacci and
+  uniform. Clustered also regressed slightly. Keep the 2x whole-sort threshold: partitioning these
+  small 9–16 element remainders is substantially more branch-heavy than the sorting networks.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
