@@ -282,8 +282,8 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     let mut cell_starts_global: Vec<u32> = vec![0; num_cells + 1];
     let mut total_cell_indices = 0u32;
     for gen_idx in 0..num_cells {
-        let bin = data.assignment.generator_bin[gen_idx].as_usize();
-        let local = data.assignment.global_to_local[gen_idx];
+        let (bin, local) = data.assignment.generator_bin_local(gen_idx);
+        let bin = bin.as_usize();
         let count = finals[bin].output.cell_count(local) as u32;
         total_cell_indices = total_cell_indices.checked_add(count).ok_or_else(|| {
             crate::VoronoiError::RepresentationLimit(
@@ -349,8 +349,8 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     };
 
     maybe_par_into_iter!(0..num_cells).for_each(|gen_idx| {
-        let bin = data.assignment.generator_bin[gen_idx].as_usize();
-        let local = data.assignment.global_to_local[gen_idx];
+        let (bin, local) = data.assignment.generator_bin_local(gen_idx);
+        let bin = bin.as_usize();
         let shard = &finals[bin];
         let start = shard.output.cell_start(local) as usize;
         let count = shard.output.cell_count(local) as usize;
@@ -739,17 +739,10 @@ mod tests {
 
         let assignment = BinAssignment {
             generator_bin: vec![bin(0), bin(1), bin(0), bin(0), bin(1), bin(1)],
-            global_to_local: vec![
-                LocalId::from_usize(0),
-                LocalId::from_usize(0),
-                LocalId::from_usize(1),
-                LocalId::from_usize(2),
-                LocalId::from_usize(1),
-                LocalId::from_usize(2),
-            ],
+            generator_layout: vec![0, 1u32 << 31, 1, 2, (1u32 << 31) | 1, (1u32 << 31) | 2],
             slot_gen_map: Vec::new(),
-            local_shift: 0,
-            local_mask: 0,
+            local_shift: 31,
+            local_mask: (1u32 << 31) - 1,
             bin_generators: vec![vec![0, 2, 3], vec![1, 4, 5]],
             num_bins: 2,
         };

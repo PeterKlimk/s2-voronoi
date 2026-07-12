@@ -8,7 +8,8 @@ use super::types::{BinId, LocalId};
 
 pub(crate) struct BinAssignment {
     pub(crate) generator_bin: Vec<BinId>,
-    pub(crate) global_to_local: Vec<LocalId>,
+    /// Packed `(bin, local)` assignment indexed by generator id.
+    pub(crate) generator_layout: Vec<u32>,
     /// Packed slot_gen_map: each entry is `(bin << local_shift) | local`. Indexed by slot (SOA index).
     pub(crate) slot_gen_map: Vec<u32>,
     /// Precomputed shift for extracting bin from packed gen_map/slot_gen_map.
@@ -17,6 +18,23 @@ pub(crate) struct BinAssignment {
     pub(crate) local_mask: u32,
     pub(crate) bin_generators: Vec<Vec<usize>>,
     pub(crate) num_bins: usize,
+}
+
+impl BinAssignment {
+    #[inline(always)]
+    pub(crate) fn generator_bin_local(&self, generator: usize) -> (BinId, LocalId) {
+        let packed = self.generator_layout[generator];
+        (
+            BinId::from((packed >> self.local_shift) as u8),
+            LocalId::from(packed & self.local_mask),
+        )
+    }
+
+    #[cfg(any(debug_assertions, test))]
+    #[inline(always)]
+    pub(crate) fn generator_local(&self, generator: usize) -> LocalId {
+        LocalId::from(self.generator_layout[generator] & self.local_mask)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -153,7 +171,7 @@ pub(crate) fn assign_bins_with(
         .collect();
 
     let mut generator_bin: Vec<BinId> = vec![BinId::from(u8::MAX); n];
-    let mut global_to_local: Vec<LocalId> = vec![LocalId::from(u32::MAX); n];
+    let mut generator_layout: Vec<u32> = vec![u32::MAX; n];
     let mut slot_gen_map: Vec<u32> = vec![u32::MAX; n];
 
     let mut visited = 0usize;
@@ -162,7 +180,7 @@ pub(crate) fn assign_bins_with(
         let b = BinId::from_usize(b_usize);
         // Points of a cell occupy contiguous slots cell_start.. in this order,
         // so we can fill slot_gen_map inline here from each point's own (bin,
-        // local) — no separate O(n) pass, no generator_bin/global_to_local
+        // local) — no separate O(n) pass, no generator assignment
         // read-back.
         let cell_start = win[0] as usize;
         let cell_end = win[1] as usize;
@@ -176,7 +194,8 @@ pub(crate) fn assign_bins_with(
             bin_generators[b_usize].push(g);
 
             generator_bin[g] = b;
-            global_to_local[g] = local;
+            let packed = ((b.as_u8() as u32) << local_shift) | local.as_u32();
+            generator_layout[g] = packed;
 
             // Pack: (bin << local_shift) | local
             debug_assert!(
@@ -186,8 +205,7 @@ pub(crate) fn assign_bins_with(
                 local_shift,
                 local_mask
             );
-            slot_gen_map[cell_start + offset] =
-                ((b.as_u8() as u32) << local_shift) | local.as_u32();
+            slot_gen_map[cell_start + offset] = packed;
             visited += 1;
         }
     }
@@ -202,10 +220,8 @@ pub(crate) fn assign_bins_with(
         "unassigned generator bin entries"
     );
     debug_assert!(
-        !global_to_local
-            .iter()
-            .any(|&l| l == LocalId::from(u32::MAX)),
-        "unassigned global_to_local entries"
+        !generator_layout.contains(&u32::MAX),
+        "unassigned generator_layout entries"
     );
 
     // slot_gen_map is now filled inline during the scatter pass above
@@ -217,7 +233,7 @@ pub(crate) fn assign_bins_with(
 
     Ok(BinAssignment {
         generator_bin,
-        global_to_local,
+        generator_layout,
         slot_gen_map,
         local_shift,
         local_mask,
@@ -228,7 +244,7 @@ pub(crate) fn assign_bins_with(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_local_capacity;
+    use super::{assign_bins_with, validate_local_capacity};
 
     #[test]
     fn packed_local_capacity_accepts_values_within_mask() {
@@ -243,5 +259,18 @@ mod tests {
         assert_eq!(err.num_bins, 96);
         assert_eq!(err.local_shift, 8);
         assert_eq!(err.local_mask, 255);
+    }
+
+    #[test]
+    fn generator_layout_round_trips_bin_and_local() {
+        let assignment = assign_bins_with(4, 2, &[0, 2, 4], &[2, 0, 3, 1], 2, |cell| cell).unwrap();
+
+        let expected = [(0, 1), (1, 1), (0, 0), (1, 0)];
+        for (generator, &(bin, local)) in expected.iter().enumerate() {
+            let (actual_bin, actual_local) = assignment.generator_bin_local(generator);
+            assert_eq!(actual_bin.as_usize(), bin);
+            assert_eq!(actual_local.as_usize(), local);
+            assert_eq!(assignment.generator_local(generator), actual_local);
+        }
     }
 }
