@@ -224,6 +224,12 @@ before allocating scratch, and each repair round receives fresh buffers. Same-se
 timing moved from 13.884 ms to 12.804 ms; repeated candidate timing was noisy, so retain this for the
 certain structural allocation removal rather than the provisional 7.8% phase result.
 
+Cell construction no longer clears its reusable output buffer before building. Every successful
+writer—gnomonic, spherical fallback, and all-constraints recovery—clears before writing, while an
+error returns before the driver can consume the buffer. Poison-buffer tests cover all three writers
+and a terminal error retaining stale poison. At 2M single-threaded this reduced retired instructions
+by about 0.041% on Fibonacci and 0.038% on uniform input in all three pairs; cycles were unresolved.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -237,7 +243,6 @@ Promising workload-specific experiments:
   on the existing inline mask.
 Lower-confidence cleanup candidates, to attempt only with structural counters or activation data:
 
-- Remove the redundant per-cell output-buffer clear when all success writers clear before use.
 - Reserve live-dedup owned vertices nearer the observed ~2 vertices/generator instead of 6, while
   tracking reallocations and RSS on irregular inputs.
 - Unroll weld wall-proximity tests without changing f64 arithmetic or pair-budget behavior.

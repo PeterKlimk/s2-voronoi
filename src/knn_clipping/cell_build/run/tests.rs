@@ -17,6 +17,122 @@ fn octahedron_points() -> Vec<Vec3> {
     vec![Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z]
 }
 
+fn poison_output_buffer(ctx: &mut CellBuildContext) {
+    ctx.output_buffer.clear();
+    ctx.output_buffer
+        .vertices
+        .push(([u32::MAX; 3], Vec3::new(0.25, -0.5, 0.75)));
+    ctx.output_buffer.edge_neighbor_globals.push(u32::MAX - 1);
+    ctx.output_buffer.edge_neighbor_slots.push(u32::MAX - 2);
+    ctx.output_buffer.edge_neighbor_eps.push(f32::INFINITY);
+    ctx.output_buffer.edge_keys_verified = true;
+}
+
+fn assert_output_replaced(buffer: &crate::live_dedup::CellOutputBuffer) {
+    let n = buffer.vertices.len();
+    assert!(n >= 3);
+    assert_eq!(buffer.edge_neighbor_globals.len(), n);
+    assert_eq!(buffer.edge_neighbor_slots.len(), n);
+    assert_eq!(buffer.edge_neighbor_eps.len(), n);
+    assert!(buffer.vertices.iter().all(|(key, _)| *key != [u32::MAX; 3]));
+    assert!(buffer
+        .edge_neighbor_globals
+        .iter()
+        .all(|&neighbor| neighbor != u32::MAX - 1));
+    assert!(buffer
+        .edge_neighbor_slots
+        .iter()
+        .all(|&slot| slot != u32::MAX - 2));
+    assert!(buffer.edge_neighbor_eps.iter().all(|eps| eps.is_finite()));
+}
+
+fn assert_output_still_poisoned(buffer: &crate::live_dedup::CellOutputBuffer) {
+    assert_eq!(buffer.vertices.len(), 1);
+    assert_eq!(buffer.vertices[0].0, [u32::MAX; 3]);
+    assert_eq!(buffer.edge_neighbor_globals, [u32::MAX - 1]);
+    assert_eq!(buffer.edge_neighbor_slots, [u32::MAX - 2]);
+    assert_eq!(buffer.edge_neighbor_eps.len(), 1);
+    assert!(buffer.edge_neighbor_eps[0].is_infinite());
+    assert!(buffer.edge_keys_verified);
+}
+
+#[test]
+fn extraction_writers_replace_poison_and_errors_do_not_consume_it() {
+    let points = octahedron_points();
+    let grid = CubeMapGrid::new(&points, 4);
+    let policy = TerminationConfig::default().packed_policy(points.len());
+    let fake_slot_map = vec![0u32; points.len()];
+    let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
+
+    // Common gnomonic writer.
+    let mut ctx = CellBuildContext::new(&grid, policy);
+    poison_output_buffer(&mut ctx);
+    build_cell_into(
+        &mut ctx,
+        CellBuildRequest {
+            points: &points,
+            grid: &grid,
+            generator_idx: 0,
+            directed_ctx,
+            packed: None,
+            seed_neighbors: &[],
+        },
+    )
+    .expect("gnomonic cell should replace poisoned output");
+    assert_output_replaced(ctx.output_buffer());
+
+    // Exhaustion recovery uses the all-constraints writer. Invoke that writer
+    // on the accepted constraints from the same finished cell so the test does
+    // not depend on constructing a rare recoverable-exhaustion distribution.
+    poison_output_buffer(&mut ctx);
+    ctx.builder
+        .to_vertex_data_from_all_constraints(&points, &mut ctx.output_buffer)
+        .expect("all-constraints writer should replace poisoned output");
+    assert_output_replaced(ctx.output_buffer());
+
+    // Projection fallback writer, forced through the existing test hook.
+    let mut fallback_ctx = CellBuildContext::new(&grid, policy);
+    fallback_ctx.force_fallback_after_neighbors_processed = Some(2);
+    poison_output_buffer(&mut fallback_ctx);
+    build_cell_into(
+        &mut fallback_ctx,
+        CellBuildRequest {
+            points: &points,
+            grid: &grid,
+            generator_idx: 0,
+            directed_ctx,
+            packed: None,
+            seed_neighbors: &[],
+        },
+    )
+    .expect("fallback cell should replace poisoned output");
+    assert!(fallback_ctx.builder.is_fallback());
+    assert_output_replaced(fallback_ctx.output_buffer());
+
+    // A terminal failure may leave stale data in the reusable context, but the
+    // Err return prevents the production driver from reading or emitting it.
+    let failing_points = vec![Vec3::Z];
+    let failing_grid = CubeMapGrid::new(&failing_points, 4);
+    let failing_policy = TerminationConfig::default().packed_policy(failing_points.len());
+    let failing_slot_map = vec![0u32; failing_points.len()];
+    let failing_directed = DirectedEligibility::new(u8::MAX, 0, &failing_slot_map, 0, 0);
+    let mut failing_ctx = CellBuildContext::new(&failing_grid, failing_policy);
+    poison_output_buffer(&mut failing_ctx);
+    let result = build_cell_into(
+        &mut failing_ctx,
+        CellBuildRequest {
+            points: &failing_points,
+            grid: &failing_grid,
+            generator_idx: 0,
+            directed_ctx: failing_directed,
+            packed: None,
+            seed_neighbors: &[],
+        },
+    );
+    assert!(result.is_err());
+    assert_output_still_poisoned(failing_ctx.output_buffer());
+}
+
 #[test]
 fn source_specialized_attempted_neighbor_semantics() {
     let mut attempted = AttemptedNeighbors::new(4);

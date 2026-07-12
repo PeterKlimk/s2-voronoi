@@ -794,7 +794,10 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
 
     ctx.builder.reset(generator_idx, points[generator_idx]);
     ctx.attempted_neighbors.clear();
-    ctx.output_buffer.clear();
+    // Every successful finish path clears the reusable output before writing:
+    // gnomonic extraction, spherical fallback extraction, and all-constraints
+    // exhaustion recovery. Error results return before the driver can consume
+    // this buffer, so clearing here would only duplicate successful-path work.
 
     clip_seed_neighbors(
         ctx,
