@@ -495,6 +495,58 @@ fn clip_batch(
     counters: &mut BuildCounters,
 ) {
     let t_clip = crate::knn_clipping::timing::Timer::start();
+    match batch.source {
+        DirectedNeighborBatchSource::ShellExpand => clip_batch_source::<true>(
+            phase,
+            batch,
+            points,
+            pos_slots,
+            generator_idx,
+            trace,
+            counters,
+        ),
+        DirectedNeighborBatchSource::PackedChunk0 | DirectedNeighborBatchSource::PackedTail => {
+            clip_batch_source::<false>(
+                phase,
+                batch,
+                points,
+                pos_slots,
+                generator_idx,
+                trace,
+                counters,
+            )
+        }
+    }
+    counters.clipping_time += t_clip.elapsed();
+}
+
+#[inline(always)]
+fn should_clip_neighbor<const SHELL: bool>(
+    attempted_neighbors: &mut AttemptedNeighbors,
+    neighbor_slot: usize,
+) -> bool {
+    if SHELL {
+        // The takeover re-covers packed-served points; dedup on insertion.
+        attempted_neighbors.insert(neighbor_slot)
+    } else {
+        attempted_neighbors.mark(neighbor_slot);
+        true
+    }
+}
+
+/// Source-specialized batch loop. `SHELL` removes the invariant source match
+/// from each candidate while retaining one dispatch per exact batch above.
+#[cfg_attr(feature = "profiling", inline(never))]
+#[allow(clippy::too_many_arguments)]
+fn clip_batch_source<const SHELL: bool>(
+    phase: &mut StreamPhase<'_>,
+    batch: crate::cube_grid::DirectedNeighborBatch,
+    points: &[Vec3],
+    pos_slots: &[crate::cube_grid::SlotPoint],
+    generator_idx: usize,
+    trace: &mut BuildTrace,
+    counters: &mut BuildCounters,
+) {
     let packed_chunk = &phase.packed_chunk[..batch.n];
     #[cfg(feature = "timing")]
     let mut prefix_consumed = 0usize;
@@ -512,16 +564,8 @@ fn clip_batch(
             continue;
         }
 
-        let should_clip = match batch.source {
-            // The takeover re-covers packed-served points; dedup on insertion.
-            DirectedNeighborBatchSource::ShellExpand => {
-                phase.attempted_neighbors.insert(neighbor_slot as usize)
-            }
-            DirectedNeighborBatchSource::PackedChunk0 | DirectedNeighborBatchSource::PackedTail => {
-                phase.attempted_neighbors.mark(neighbor_slot as usize);
-                true
-            }
-        };
+        let should_clip =
+            should_clip_neighbor::<SHELL>(phase.attempted_neighbors, neighbor_slot as usize);
         if !should_clip {
             continue;
         }
@@ -586,7 +630,7 @@ fn clip_batch(
                 // the mid-batch bound must also cover them. (Packed batches
                 // dominate their unseen set, so next_dot alone is sound for
                 // those sources.)
-                if batch.source == DirectedNeighborBatchSource::ShellExpand {
+                if SHELL {
                     next_dot.max(batch.unseen_bound)
                 } else {
                     next_dot
@@ -609,14 +653,13 @@ fn clip_batch(
         }
     }
     #[cfg(feature = "timing")]
-    if batch.source == DirectedNeighborBatchSource::ShellExpand {
+    if SHELL {
         counters.shell_layer_batches += 1;
         counters.shell_layer_slots += batch.n;
         counters.shell_layer_prefix_consumed += prefix_consumed;
         counters.shell_midlayer_terminations +=
             (counters.terminated && prefix_consumed < batch.n) as usize;
     }
-    counters.clipping_time += t_clip.elapsed();
 }
 
 /// Phase 2: drive the neighbor stream to termination, failure, or exhaustion.

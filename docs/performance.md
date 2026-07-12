@@ -188,6 +188,13 @@ scalar. At 2M single-threaded, retired instructions fell about 0.058% on Fibonac
 uniform input in all three pairs. Cycles were unresolved. The wide and `simd_scalar` 100k backend
 fingerprints remained identical.
 
+Cell construction dispatches each exact neighbor batch once to a packed or shell-specialized loop.
+The packed loop marks every occurrence; the shell loop performs insertion-based deduplication. This
+removes the invariant source match from every candidate while preserving source-specific bounds,
+timing, tracing, and termination. At 2M single-threaded Fibonacci it reduced retired instructions by
+about 0.096%; at 500k clustered it reduced them by about 0.206%, consistently across three pairs.
+Cycles were neutral-to-lower overall.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -196,9 +203,6 @@ measured results above or the retired list below. Do not bundle candidates befor
 
 Promising workload-specific experiments:
 
-- **C4 — unswitch batch-source handling:** hoist the invariant packed-tail/chunk/shell source match
-  out of the per-neighbor loop. Keep bounds checks unless a separate safety argument and counter
-  result justify removing them.
 - **D2 — reserve aggregate assembly vectors:** sum shard lengths before appending unresolved edges,
   overflow checks, and deferred slots. Measure allocation counts, cycles, and peak RSS at high bin
   counts; reject if the reservation merely increases simultaneous memory.

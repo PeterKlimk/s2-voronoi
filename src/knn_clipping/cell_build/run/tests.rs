@@ -2,7 +2,8 @@ use super::failure::classify_terminal_failure;
 use super::fallback_detail;
 use super::{
     build_cell_into, clip_batch, clip_seed_neighbors, consume_stream, finish_cell, probe_frontier,
-    BuildCounters, BuildTrace, CellBuildContext, CellBuildRequest, StreamPhase,
+    should_clip_neighbor, AttemptedNeighbors, BuildCounters, BuildTrace, CellBuildContext,
+    CellBuildRequest, StreamPhase,
 };
 use crate::cube_grid::{
     CubeMapGrid, DirectedEligibility, DirectedNeighborFrontier, DirectedNeighborStream,
@@ -14,6 +15,25 @@ use glam::Vec3;
 
 fn octahedron_points() -> Vec<Vec3> {
     vec![Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z]
+}
+
+#[test]
+fn source_specialized_attempted_neighbor_semantics() {
+    let mut attempted = AttemptedNeighbors::new(4);
+
+    // Both packed sources use this specialization: every occurrence is
+    // clipped, and each slot is marked for a later shell takeover.
+    assert!(should_clip_neighbor::<false>(&mut attempted, 1));
+    assert!(should_clip_neighbor::<false>(&mut attempted, 1));
+    assert!(!should_clip_neighbor::<true>(&mut attempted, 1));
+
+    // Shell batches deduplicate both within the shell and against marks left
+    // by either packed source.
+    assert!(should_clip_neighbor::<true>(&mut attempted, 2));
+    assert!(!should_clip_neighbor::<true>(&mut attempted, 2));
+
+    attempted.clear();
+    assert!(should_clip_neighbor::<true>(&mut attempted, 1));
 }
 
 fn great_circle_points(n: usize, jitter: f32) -> Vec<Vec3> {
