@@ -383,6 +383,11 @@ Do not broadly retry these without a materially different design or workload:
   into one branchless-looking `u64` added 0.017% instructions, 0.215% branches, and 0.39% cycles.
   The original rotate/AND/two-`tzcnt` sequence is superior. A 1M mask audit also found no single
   dominant mixed mask, so a narrow pattern fast path is not justified.
+- Caching the promoted generator norm once per cell removed repeated square roots from termination
+  cache rebuilds and reduced native instructions 0.114% in all 60 pairs at 1M Fibonacci. However,
+  the added builder field regressed cycles 1.98% (thirds +0.26%/+3.44%/+2.26%; both execution orders
+  worse). Generic-target instructions/cycles improved, but the primary native layout rejects the
+  field; retain the recomputation.
 - Extending the conservative early-unchanged radius certificate from polygon sizes >=5 to N=4
   added 0.12–0.13% retired instructions and 0.28–0.31% branches on 500k single-threaded native
   Fibonacci and uniform, with every one of seven pairs worse on both structural counters. Cycles
