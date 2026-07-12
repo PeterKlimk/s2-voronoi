@@ -181,6 +181,13 @@ Fibonacci and 0.061% on uniform input in all three pairs. Fibonacci cycles impro
 uniform cycles were neutral. The default, microbench, `p5_shadow`, and escalation feature paths all
 share the initialized-slice invariant.
 
+Interior packed-kNN security thresholds evaluate each of the four boundary planes across eight
+queries with `PointChunk8`. Lane minima remain scalar and follow the original plane order, so the
+wide and scalar backends produce identical threshold bits; remainder and boundary-cell paths remain
+scalar. At 2M single-threaded, retired instructions fell about 0.058% on Fibonacci and 0.053% on
+uniform input in all three pairs. Cycles were unresolved. The wide and `simd_scalar` 100k backend
+fingerprints remained identical.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -189,9 +196,6 @@ measured results above or the retired list below. Do not bundle candidates befor
 
 Promising workload-specific experiments:
 
-- **K3 — vectorize interior security thresholds:** evaluate the four cell-wall planes in eight-query
-  chunks while preserving dot association and nonfinite fallback behavior. Measure
-  `packed_security` and compare thresholds bit-for-bit.
 - **C3 — use a four-lane large-clip tail:** for polygon lengths with a remainder at most four, avoid
   evaluating dead lanes. Measure N=9–12 and N=17–20 microbench cases before end-to-end testing.
 - **C4 — unswitch batch-source handling:** hoist the invariant packed-tail/chunk/shell source match

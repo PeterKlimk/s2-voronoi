@@ -7,6 +7,88 @@ use crate::policy::{
     PACKED_HI_BUDGET,
 };
 
+#[inline]
+fn finish_interior_security(
+    s_min: f32,
+    qx: f32,
+    qy: f32,
+    qz: f32,
+    ring2: &[u32],
+    grid: &CubeMapGrid,
+) -> f32 {
+    // For the interior single-face case, the nearest outside point is reached
+    // by crossing the closest boundary great circle. If we ever see a
+    // non-positive signed distance (numerical issues), fall back to the cap
+    // bound used by boundary cells.
+    if s_min > 0.0 && s_min.is_finite() {
+        let s = (s_min - crate::tolerances::GRID_PLANE_PAD).clamp(0.0, 1.0);
+        (1.0 - s * s).max(0.0).sqrt()
+    } else {
+        outside_max_dot_xyz(qx, qy, qz, ring2, grid)
+    }
+}
+
+#[inline]
+fn scalar_interior_security(
+    planes: &[glam::Vec3; 4],
+    qx: f32,
+    qy: f32,
+    qz: f32,
+    ring2: &[u32],
+    grid: &CubeMapGrid,
+) -> f32 {
+    let mut s_min = 1.0f32;
+    for n in planes {
+        s_min = s_min.min(fp::dot3_f32(n.x, n.y, n.z, qx, qy, qz));
+    }
+    finish_interior_security(s_min, qx, qy, qz, ring2, grid)
+}
+
+fn append_interior_security_thresholds(
+    out: &mut Vec<f32>,
+    planes: &[glam::Vec3; 4],
+    qx_src: &[f32],
+    qy_src: &[f32],
+    qz_src: &[f32],
+    ring2: &[u32],
+    grid: &CubeMapGrid,
+) {
+    debug_assert_eq!(qx_src.len(), qy_src.len());
+    debug_assert_eq!(qx_src.len(), qz_src.len());
+
+    let (x_chunks, x_rem) = qx_src.as_chunks::<8>();
+    let (y_chunks, y_rem) = qy_src.as_chunks::<8>();
+    let (z_chunks, z_rem) = qz_src.as_chunks::<8>();
+    for chunk in 0..x_chunks.len() {
+        let queries =
+            fp::PointChunk8::from_array_refs(&x_chunks[chunk], &y_chunks[chunk], &z_chunks[chunk]);
+        let mut s_min = [1.0f32; 8];
+        for n in planes {
+            let signed = queries.dots(n.x, n.y, n.z).to_array();
+            for lane in 0..8 {
+                s_min[lane] = s_min[lane].min(signed[lane]);
+            }
+        }
+        for lane in 0..8 {
+            out.push(finish_interior_security(
+                s_min[lane],
+                x_chunks[chunk][lane],
+                y_chunks[chunk][lane],
+                z_chunks[chunk][lane],
+                ring2,
+                grid,
+            ));
+        }
+    }
+
+    // Preserve the scalar path for the final partial chunk.
+    for i in 0..x_rem.len() {
+        out.push(scalar_interior_security(
+            planes, x_rem[i], y_rem[i], z_rem[i], ring2, grid,
+        ));
+    }
+}
+
 impl PackedKnnCellScratch {
     #[cfg_attr(feature = "profiling", inline(never))]
     // Loop indices address several parallel per-query arrays at once;
@@ -128,27 +210,15 @@ impl PackedKnnCellScratch {
         self.security_thresholds.reserve(num_queries);
         match interior_planes {
             Some(planes) => {
-                for qi in 0..num_queries {
-                    let qx = qx_src[qi];
-                    let qy = qy_src[qi];
-                    let qz = qz_src[qi];
-
-                    let mut s_min = 1.0f32;
-                    for n in &planes {
-                        s_min = s_min.min(fp::dot3_f32(n.x, n.y, n.z, qx, qy, qz));
-                    }
-
-                    // For the interior single-face case, the nearest outside point is reached
-                    // by crossing the closest boundary great circle. If we ever see a non-positive
-                    // signed distance (numerical issues), fall back to the existing cap bound.
-                    let security = if s_min > 0.0 && s_min.is_finite() {
-                        let s = (s_min - crate::tolerances::GRID_PLANE_PAD).clamp(0.0, 1.0);
-                        (1.0 - s * s).max(0.0).sqrt()
-                    } else {
-                        outside_max_dot_xyz(qx, qy, qz, ring2, grid)
-                    };
-                    self.security_thresholds.push(security);
-                }
+                append_interior_security_thresholds(
+                    &mut self.security_thresholds,
+                    &planes,
+                    qx_src,
+                    qy_src,
+                    qz_src,
+                    ring2,
+                    grid,
+                );
             }
             None => {
                 self.security_thresholds.extend(
@@ -591,5 +661,84 @@ impl PackedKnnCellScratch {
             group_gen,
             tail_built_any: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    fn interior_fixture() -> (Vec<glam::Vec3>, CubeMapGrid, usize) {
+        let base = glam::Vec3::new(1.0, 0.23, 0.27).normalize();
+        let points: Vec<glam::Vec3> = (0..17)
+            .map(|i| {
+                let y = (i as f32 - 8.0) * 1e-4;
+                let z = ((i * 7 % 17) as f32 - 8.0) * 1e-4;
+                (base + glam::Vec3::new(0.0, y, z)).normalize()
+            })
+            .collect();
+        let grid = CubeMapGrid::new(&points, 8);
+        let cell = grid.point_to_cell(base);
+        let start = grid.cell_offsets[cell] as usize;
+        let end = grid.cell_offsets[cell + 1] as usize;
+        assert_eq!(end - start, points.len());
+        assert!(security_planes_3x3_interior(cell, &grid).is_some());
+        (points, grid, cell)
+    }
+
+    fn assert_vector_matches_scalar(
+        grid: &CubeMapGrid,
+        cell: usize,
+        planes: &[glam::Vec3; 4],
+        qx: &[f32],
+        qy: &[f32],
+        qz: &[f32],
+    ) {
+        let ring2 = grid.cell_ring2(cell);
+        let mut vector = Vec::new();
+        append_interior_security_thresholds(&mut vector, planes, qx, qy, qz, ring2, grid);
+        let scalar: Vec<f32> = (0..qx.len())
+            .map(|i| scalar_interior_security(planes, qx[i], qy[i], qz[i], ring2, grid))
+            .collect();
+        assert_eq!(
+            vector.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            scalar.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn interior_security_chunks_match_scalar_bitwise_with_remainder() {
+        let (_points, grid, cell) = interior_fixture();
+        let start = grid.cell_offsets[cell] as usize;
+        let end = grid.cell_offsets[cell + 1] as usize;
+        let planes = security_planes_3x3_interior(cell, &grid).unwrap();
+        assert_vector_matches_scalar(
+            &grid,
+            cell,
+            &planes,
+            &grid.cell_points_x[start..end],
+            &grid.cell_points_y[start..end],
+            &grid.cell_points_z[start..end],
+        );
+    }
+
+    #[test]
+    fn interior_security_fallbacks_match_scalar_bitwise() {
+        let (_points, grid, cell) = interior_fixture();
+        let qx = [1.0f32; 8];
+        let qy = [0.0f32; 8];
+        let qz = [0.0f32; 8];
+        let signed_zero = [glam::Vec3::new(-0.0, -0.0, -0.0); 4];
+        assert_vector_matches_scalar(&grid, cell, &signed_zero, &qx, &qy, &qz);
+
+        let nonfinite = [glam::Vec3::new(f32::NEG_INFINITY, 0.0, 0.0); 4];
+        assert_vector_matches_scalar(&grid, cell, &nonfinite, &qx, &qy, &qz);
+    }
+
+    #[test]
+    fn boundary_cell_keeps_cap_security_path() {
+        let (_points, grid, _) = interior_fixture();
+        let boundary_cell = grid.point_to_cell(glam::Vec3::new(1.0, 0.99, 0.0).normalize());
+        assert!(security_planes_3x3_interior(boundary_cell, &grid).is_none());
     }
 }
