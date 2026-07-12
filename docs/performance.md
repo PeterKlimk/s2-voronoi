@@ -196,8 +196,6 @@ measured results above or the retired list below. Do not bundle candidates befor
 
 Promising workload-specific experiments:
 
-- **C3 — use a four-lane large-clip tail:** for polygon lengths with a remainder at most four, avoid
-  evaluating dead lanes. Measure N=9–12 and N=17–20 microbench cases before end-to-end testing.
 - **C4 — unswitch batch-source handling:** hoist the invariant packed-tail/chunk/shell source match
   out of the per-neighbor loop. Keep bounds checks unless a separate safety argument and counter
   result justify removing them.
@@ -261,6 +259,10 @@ Do not broadly retry these without a materially different design or workload:
   prefix slots split −0.94% / +0.80%. Candidate counts and timing telemetry were identical, so this
   is a genuine path/codegen tradeoff rather than changed work. All variants were reverted rather
   than introduce a distribution-sensitive heuristic.
+- Using a four-lane tail for large-clip remainders 1–4: N=9/12/20 mixed-clip microbench results were
+  neutral, and 500k mega instructions improved only about 0.005% while cycles were slightly worse
+  in all three pairs. The saved dead-lane arithmetic does not repay the remainder dispatch in the
+  production path; the candidate was reverted.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
