@@ -455,6 +455,11 @@ Do not broadly retry these without a materially different design or workload:
   Fibonacci (instructions -0.007%, branches +0.009%) but regressed 500k native clustered by 0.048%
   instructions, 0.106% branches, and 1.74% cycles. Most activated tail-rescan chunks have at least
   one security-safe lane, so keep computing the high-threshold mask without an extra branch.
+- Zipping the three equal-length threshold-selection streams saved about 0.19% instructions and
+  0.49% branches on native 1M Fibonacci (and comparable structural work on uniform), but native
+  cycles were worse in 6/8 rotated-order pairs on both distributions, often by several percent.
+  Generic-target cycles were also worse in 5/6 initial pairs. Keep the compact indexed loop: its
+  layout/register allocation is materially better despite the extra retired work.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
