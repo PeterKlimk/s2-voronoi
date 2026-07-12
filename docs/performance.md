@@ -460,6 +460,11 @@ Do not broadly retry these without a materially different design or workload:
   cycles were worse in 6/8 rotated-order pairs on both distributions, often by several percent.
   Generic-target cycles were also worse in 5/6 initial pairs. Keep the compact indexed loop: its
   layout/register allocation is materially better despite the extra retired work.
+- Hoisting shard-local `usize` to `u32` validation from every generator to once per grid-cell group
+  saved about 0.05% native instructions, but slightly increased native branches. Rotated 1M cycles
+  split by distribution: Fibonacci favored the candidate in 3/4 pairs while uniform rejected it in
+  3/4. Generic structural counters improved, but the primary native signal is too small and mixed
+  to justify extra group-validation machinery; retain the direct checked conversion per cell.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
