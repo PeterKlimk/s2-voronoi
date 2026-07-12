@@ -302,13 +302,67 @@ Promising workload-specific experiments:
 - **D3 — compact high-degree consumed flags:** replace the per-cell byte vector above 64 incoming
   checks with reusable bit words. First instrument activation frequency; ordinary cells should stay
   on the existing inline mask.
+
+Assembly/live-dedup swarm backlog (2026-07-13):
+
+- **Hoist the final-scatter vertex-offset slice:** the Rayon closure currently captures
+  `vertex_offsets` through `&Vec<_>`, and optimized assembly reloads its length and data pointer for
+  every packed vertex reference. Capture an `&[u32]` by value in an explicit `move` closure while
+  retaining ordinary checked indexing. Verify that the inner loop hoists the data pointer without
+  introducing spills; compare native and generic instructions/branches and keep release bounds
+  panics plus checked-profile assertions. This is the first code experiment from the swarm.
+- **Measure, then reduce owned-output reserve:** shard output currently reserves six positions and
+  vertex keys per local generator although total spherical output is ordinarily near two vertices
+  per generator. Instrument per-shard `len`, capacity, and reallocations across bin counts,
+  distributions, thread counts, and irregular inputs before choosing a factor: ownership by the
+  minimum endpoint key can skew individual shards, so the global ratio does not prove that 2x or 3x
+  is safe without reallocation. Track RSS and cache effects separately from retired work; 3x and 4x
+  are candidates, not established bounds. The six-per-generator cell-index reserve is normally
+  accurate and is not part of this experiment.
+- **Reuse final cell metadata as the prefix table:** `cell_starts_global` stores the same start/count
+  information later written to `VoronoiCell`. Writing cell metadata once during the checked prefix
+  pass and reading it during scatter could remove about four bytes per generator plus a stream and
+  duplicate metadata stores. Preserve checked `u32` accumulation, release spare-capacity
+  initialization, debug sentinels, and disjoint scatter ranges. Expected structural scope is small
+  (roughly 0.1--0.3%), so require consistent counters before accepting the extra unsafe complexity.
+- **Release shard vertex buffers during the global copy:** `all_vertices` is populated while all
+  per-shard position vectors remain live. Taking/dropping each source after its disjoint copy could
+  lower transient live heap by about 12 bytes per output vertex. Retain per-shard spans for debug
+  bounds checks and measure allocator live bytes as well as peak RSS, since the allocator may retain
+  freed pages. This is principally a memory-envelope experiment.
+- **Sort overflow edge checks by key only:** two independent audits found that side order is not
+  needed: two-record reconciliation is symmetric, same-side detection tests equality, and runs of
+  three or more are deferred as a whole. First instrument overflow record counts, key-run sizes, and
+  sort time at low and high bin counts; the path may be too cold for a whole-build gain. Compare
+  validation, repair summaries, and unresolved-record ordering as well as performance. If whole
+  40-byte record swaps dominate, a later experiment may sort compact key/side/index handles, trading
+  swap traffic for indirect record reads.
+- **Derive final scatter counts from contiguous prefix metadata:** the prefix pass already computes
+  each cell count. Reading adjacent global metadata in the scatter loop may be cheaper than a random
+  per-shard `cell_count` load, but it adds a second prefix load. Try only after the metadata/prefix
+  representation is settled and compare cache counters.
+- **Pack deferred source location:** `DeferredSlot` may be reducible from roughly 32 to 24 bytes by
+  packing `source_bin` and `source_slot`. Audit representation limits and preserve exact fallback
+  owner/slot mapping; measure deferred counts and memory traffic because the fallback itself is
+  normally cold even though deferred records are common.
+- **Instrument a same-owner-bin scatter fast path:** using the current cell's known vertex offset can
+  avoid unpack/lookup when a packed vertex owner bin equals the cell bin. Measure the hit fraction by
+  distribution and input ordering before adding a branch; do not reorder cells by bin because that
+  would turn sequential destination writes into scattered writes.
+- **Flatten per-local edge-check queues only as a memory redesign:** `Vec<Vec<EdgeCheck>>` pays a
+  `Vec` header per local generator. A node arena plus head/tail arrays could reduce empty-queue
+  metadata, but it loses the current zero-copy transfer and may add traversal/copy work. Require
+  queue-count telemetry and preserve exact directed enqueue order, repair origins, and high-degree
+  behavior before prototyping.
+- **Deduplicate repair work by unresolved edge key:** defect inputs can report multiple origins for
+  one edge. A repair-only unique-key view may avoid repeated reconciliation while retaining the full
+  diagnostic origin list. Existing large probes found only a few mismatch records, so this remains
+  a cold-path robustness idea rather than a production-speed candidate.
+
 Lower-confidence cleanup candidates, to attempt only with structural counters or activation data:
 
-- Reserve live-dedup owned vertices nearer the observed ~2 vertices/generator instead of 6, while
-  tracking reallocations and RSS on irregular inputs.
 - Unroll weld wall-proximity tests without changing f64 arithmetic or pair-budget behavior.
 - Precompute standalone large-`MergeWithin` wall proximity; this does not affect default welding.
-- Replace the high-degree edge-check spill byte vector only if instrumentation shows it is live.
 - Consider unchecked endpoint/owner-bin access only after a measurable bounds-check cost and a
   complete invariant audit; a sub-noise win does not justify converting a panic into possible UB.
 
