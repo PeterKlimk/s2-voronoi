@@ -210,6 +210,13 @@ with 96 bins this removed eight growth reallocations from each active vector, el
 79,936/54,656 to the exact 61,504/42,360 entries. Fixed-work instructions and peak RSS were neutral;
 cycles were neutral-to-lower. This is an allocation/capacity win, not a demonstrated total-time win.
 
+Dense-cell index construction computes all three coordinate ranges in one traversal, selects the
+sort coordinate slice once outside the comparator, and materializes sorted slots and coordinates
+together. Exact baseline-equivalence tests cover axis ties, equal and nonfinite coordinates, float
+bits, ordering, and band queries. Fixed-work 500k outlier and mega counters were neutral because
+dense-index construction is a small cold portion of the build. Retain this as a strictly local
+pass/branch reduction, not as a demonstrated end-to-end improvement.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -221,9 +228,6 @@ Promising workload-specific experiments:
 - **D3 — compact high-degree consumed flags:** replace the per-cell byte vector above 64 incoming
   checks with reusable bit words. First instrument activation frequency; ordinary cells should stay
   on the existing inline mask.
-- **B3 — collapse dense-index build passes:** accumulate all axis ranges in one scan, hoist the
-  chosen coordinate slice, and materialize sorted slots/coordinates together. This is dense-only;
-  measure outlier/mega and synthetic cells above the 512-point threshold.
 - **O3 — reuse reconciliation segment scratch:** two temporary vectors are allocated per unresolved
   record. Reuse two buffers per reconciliation round and measure allocations on high-degree defect
   fixtures; the clean path must remain unchanged.

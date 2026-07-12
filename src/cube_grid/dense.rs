@@ -67,20 +67,24 @@ impl DenseCellIndex {
                 2
             };
             let diag = (rx * rx + ry * ry + rz * rz).sqrt();
-            let coord = |i: usize| match axis {
-                0 => xs[i],
-                1 => ys[i],
-                _ => zs[i],
+            let coords = match axis {
+                0 => xs,
+                1 => ys,
+                _ => zs,
             };
 
             let mut order: Vec<u32> = (0..(end - start) as u32).collect();
             order.sort_unstable_by(|&a, &b| {
-                coord(a as usize)
-                    .partial_cmp(&coord(b as usize))
+                coords[a as usize]
+                    .partial_cmp(&coords[b as usize])
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            let sorted_slots: Vec<u32> = order.iter().map(|&i| start as u32 + i).collect();
-            let sorted_coord: Vec<f32> = order.iter().map(|&i| coord(i as usize)).collect();
+            let mut sorted_slots = Vec::with_capacity(order.len());
+            let mut sorted_coord = Vec::with_capacity(order.len());
+            for &i in &order {
+                sorted_slots.push(start as u32 + i);
+                sorted_coord.push(coords[i as usize]);
+            }
 
             cells.insert(
                 cell as u32,
@@ -159,21 +163,204 @@ impl DenseCellIndex {
 
 /// Per-axis coordinate ranges (max - min) over the cell's points.
 fn axis_ranges(xs: &[f32], ys: &[f32], zs: &[f32]) -> (f32, f32, f32) {
-    let range = |s: &[f32]| -> f32 {
-        let mut lo = f32::INFINITY;
-        let mut hi = f32::NEG_INFINITY;
-        for &v in s {
-            lo = lo.min(v);
-            hi = hi.max(v);
-        }
-        hi - lo
-    };
-    (range(xs), range(ys), range(zs))
+    debug_assert_eq!(xs.len(), ys.len());
+    debug_assert_eq!(xs.len(), zs.len());
+
+    let (mut x_lo, mut y_lo, mut z_lo) = (f32::INFINITY, f32::INFINITY, f32::INFINITY);
+    let (mut x_hi, mut y_hi, mut z_hi) = (f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for ((&x, &y), &z) in xs.iter().zip(ys).zip(zs) {
+        x_lo = x_lo.min(x);
+        x_hi = x_hi.max(x);
+        y_lo = y_lo.min(y);
+        y_hi = y_hi.max(y);
+        z_lo = z_lo.min(z);
+        z_hi = z_hi.max(z);
+    }
+    (x_hi - x_lo, y_hi - y_lo, z_hi - z_lo)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn baseline_axis_ranges(xs: &[f32], ys: &[f32], zs: &[f32]) -> (f32, f32, f32) {
+        let range = |s: &[f32]| -> f32 {
+            let mut lo = f32::INFINITY;
+            let mut hi = f32::NEG_INFINITY;
+            for &v in s {
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+            hi - lo
+        };
+        (range(xs), range(ys), range(zs))
+    }
+
+    fn baseline_build(
+        cell_offsets: &[u32],
+        cell_points_x: &[f32],
+        cell_points_y: &[f32],
+        cell_points_z: &[f32],
+        threshold: usize,
+    ) -> Option<DenseCellIndex> {
+        let mut cells = HashMap::new();
+        for cell in 0..cell_offsets.len().saturating_sub(1) {
+            let start = cell_offsets[cell] as usize;
+            let end = cell_offsets[cell + 1] as usize;
+            if end - start <= threshold {
+                continue;
+            }
+            let xs = &cell_points_x[start..end];
+            let ys = &cell_points_y[start..end];
+            let zs = &cell_points_z[start..end];
+            let (rx, ry, rz) = baseline_axis_ranges(xs, ys, zs);
+            let axis = if rx >= ry && rx >= rz {
+                0
+            } else if ry >= rz {
+                1
+            } else {
+                2
+            };
+            let diag = (rx * rx + ry * ry + rz * rz).sqrt();
+            let coord = |i: usize| match axis {
+                0 => xs[i],
+                1 => ys[i],
+                _ => zs[i],
+            };
+            let mut order: Vec<u32> = (0..(end - start) as u32).collect();
+            order.sort_unstable_by(|&a, &b| {
+                coord(a as usize)
+                    .partial_cmp(&coord(b as usize))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let sorted_slots = order.iter().map(|&i| start as u32 + i).collect();
+            let sorted_coord = order.iter().map(|&i| coord(i as usize)).collect();
+            cells.insert(
+                cell as u32,
+                DenseCellEntry {
+                    axis,
+                    sorted_slots,
+                    sorted_coord,
+                    diag,
+                },
+            );
+        }
+        (!cells.is_empty()).then_some(DenseCellIndex { cells })
+    }
+
+    fn assert_matches_baseline(
+        cell_offsets: &[u32],
+        xs: &[f32],
+        ys: &[f32],
+        zs: &[f32],
+        threshold: usize,
+    ) {
+        let actual = DenseCellIndex::build(cell_offsets, xs, ys, zs, threshold);
+        let expected = baseline_build(cell_offsets, xs, ys, zs, threshold);
+        assert_eq!(actual.is_some(), expected.is_some());
+        let (Some(actual), Some(expected)) = (actual, expected) else {
+            return;
+        };
+        assert_eq!(actual.cells.len(), expected.cells.len());
+
+        for cell in 0..cell_offsets.len().saturating_sub(1) as u32 {
+            let actual_entry = actual.cells.get(&cell);
+            let expected_entry = expected.cells.get(&cell);
+            assert_eq!(
+                actual_entry.is_some(),
+                expected_entry.is_some(),
+                "cell={cell}"
+            );
+            let (Some(actual_entry), Some(expected_entry)) = (actual_entry, expected_entry) else {
+                continue;
+            };
+            assert_eq!(actual_entry.axis, expected_entry.axis, "cell={cell}");
+            assert_eq!(
+                actual_entry.sorted_slots, expected_entry.sorted_slots,
+                "cell={cell}"
+            );
+            assert_eq!(
+                actual_entry
+                    .sorted_coord
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .collect::<Vec<_>>(),
+                expected_entry
+                    .sorted_coord
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .collect::<Vec<_>>(),
+                "cell={cell}"
+            );
+            assert_eq!(
+                actual_entry.diag.to_bits(),
+                expected_entry.diag.to_bits(),
+                "cell={cell}"
+            );
+
+            for target_count in [0, 1, 4, 128] {
+                assert_eq!(
+                    actual.band_radius(cell, target_count).map(f32::to_bits),
+                    expected.band_radius(cell, target_count).map(f32::to_bits),
+                    "cell={cell} target_count={target_count}"
+                );
+            }
+            for (qx, qy, qz, radius) in [
+                (0.0, 0.0, 0.0, 0.0),
+                (0.25, -0.5, 0.75, 0.2),
+                (-1.0, 1.0, -1.0, 2.0),
+            ] {
+                let mut actual_band = Vec::new();
+                let mut expected_band = Vec::new();
+                actual.band_slots(cell, qx, qy, qz, radius, &mut actual_band);
+                expected.band_slots(cell, qx, qy, qz, radius, &mut expected_band);
+                assert_eq!(actual_band, expected_band, "cell={cell}");
+            }
+        }
+    }
+
+    #[test]
+    fn dense_index_construction_and_queries_match_three_pass_baseline() {
+        let cell_offsets = [0, 4, 12, 20, 27];
+        let xs = [
+            0.0, 0.1, 0.2, 0.3, // threshold-sized sparse cell
+            -1.0, -1.0, 0.0, 0.0, 1.0, 1.0, 0.5, 0.5, // x/y range tie -> x
+            0.0, 0.1, 0.0, -0.1, 0.0, 0.1, 0.0, -0.1, // y dominant
+            0.0, 0.5, 0.0, -0.5, 0.25, -0.25, 0.0, // z dominant
+        ];
+        let ys = [
+            0.0, 0.0, 0.0, 0.0, // sparse
+            1.0, 1.0, 0.0, 0.0, -1.0, -1.0, 0.5, 0.5, // tied with x
+            -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 3.0, // y dominant + tie
+            0.0, 0.1, 0.0, -0.1, 0.05, -0.05, 0.0, // z dominant
+        ];
+        let zs = [
+            0.0, 0.0, 0.0, 0.0, // sparse
+            0.0, 0.1, 0.0, -0.1, 0.0, 0.1, 0.0, -0.1, // x dominant
+            0.0, 0.25, 0.0, -0.25, 0.1, -0.1, 0.0, 0.0, // y dominant
+            -4.0, -2.0, 0.0, 2.0, 4.0, 4.0, 0.0, // z dominant + ties
+        ];
+        assert_matches_baseline(&cell_offsets, &xs, &ys, &zs, 4);
+        assert_matches_baseline(&cell_offsets, &xs, &ys, &zs, 8);
+    }
+
+    #[test]
+    fn dense_index_nonfinite_comparisons_match_baseline() {
+        let offsets = [0, 8];
+        let xs = [-1.0, -0.5, 0.0, 0.5, 1.0, f32::NAN, 0.0, -0.0];
+        let ys = [
+            f32::NAN,
+            f32::NEG_INFINITY,
+            -1.0,
+            0.0,
+            1.0,
+            f32::INFINITY,
+            f32::from_bits(0xffc0_0001),
+            0.0,
+        ];
+        let zs = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7];
+        assert_matches_baseline(&offsets, &xs, &ys, &zs, 4);
+    }
 
     #[test]
     fn band_query_is_a_correct_superset() {
