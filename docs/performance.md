@@ -300,6 +300,16 @@ build reduced instructions 0.280%/0.260% and branches 0.121%/0.109% across four 
 hot Rayon helper grew by about 37 bytes, but the repeated closure-environment loads disappeared
 without inner-loop spills.
 
+The same assembly pass writes each final cell's `(start, count)` metadata during its checked prefix
+sum and then reads that immutable metadata during parallel scatter. This removes the separate
+`num_cells + 1` start vector, a prefix stream, duplicate cell-metadata stores, and the scatter-time
+random shard count load. Release initializes `VoronoiCell` spare capacity and publishes its length
+only after the checked prefix completes; debug retains full-coverage sentinels. At 1M
+single-threaded native, retired instructions fell 0.167% on Fibonacci and 0.155% on uniform, while
+branches fell 0.125% and 0.113%; all six pairs agreed. Generic-target instructions fell
+0.159%/0.148% and branches 0.121%/0.110% across four agreeing pairs. Cycles favored the candidate in
+four of six native pairs per distribution and were mixed in generic trials.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -314,12 +324,6 @@ Promising workload-specific experiments:
 
 Assembly/live-dedup swarm backlog (2026-07-13):
 
-- **Reuse final cell metadata as the prefix table:** `cell_starts_global` stores the same start/count
-  information later written to `VoronoiCell`. Writing cell metadata once during the checked prefix
-  pass and reading it during scatter could remove about four bytes per generator plus a stream and
-  duplicate metadata stores. Preserve checked `u32` accumulation, release spare-capacity
-  initialization, debug sentinels, and disjoint scatter ranges. Expected structural scope is small
-  (roughly 0.1--0.3%), so require consistent counters before accepting the extra unsafe complexity.
 - **Release shard vertex buffers during the global copy:** `all_vertices` is populated while all
   per-shard position vectors remain live. Taking/dropping each source after its disjoint copy could
   lower transient live heap by about 12 bytes per output vertex. Retain per-shard spans for debug
@@ -332,10 +336,6 @@ Assembly/live-dedup swarm backlog (2026-07-13):
   validation, repair summaries, and unresolved-record ordering as well as performance. If whole
   40-byte record swaps dominate, a later experiment may sort compact key/side/index handles, trading
   swap traffic for indirect record reads.
-- **Derive final scatter counts from contiguous prefix metadata:** the prefix pass already computes
-  each cell count. Reading adjacent global metadata in the scatter loop may be cheaper than a random
-  per-shard `cell_count` load, but it adds a second prefix load. Try only after the metadata/prefix
-  representation is settled and compare cache counters.
 - **Pack deferred source location:** `DeferredSlot` may be reducible from roughly 32 to 24 bytes by
   packing `source_bin` and `source_slot`. Audit representation limits and preserve exact fallback
   owner/slot mapping; measure deferred counts and memory traffic because the fallback itself is

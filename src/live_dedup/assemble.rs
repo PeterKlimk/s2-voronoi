@@ -279,26 +279,44 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     let t3 = Timer::start();
 
     // Phase 4: emit cells in generator index order (prefix-sum + direct fill).
-    let mut cell_starts_global: Vec<u32> = vec![0; num_cells + 1];
-    let mut total_cell_indices = 0u32;
-    for gen_idx in 0..num_cells {
-        let (bin, local) = data.assignment.generator_bin_local(gen_idx);
-        let bin = bin.as_usize();
-        let count = finals[bin].output.cell_count(local) as u32;
-        total_cell_indices = total_cell_indices.checked_add(count).ok_or_else(|| {
-            crate::VoronoiError::RepresentationLimit(
-                "assembled cell index buffer exceeds u32 capacity".to_string(),
-            )
-        })?;
-        cell_starts_global[gen_idx + 1] = total_cell_indices;
-    }
-
-    // Avoid redundant initialization passes in release builds.
-    // In debug builds, use sentinels to assert full coverage.
+    // Avoid redundant initialization passes in release builds. In debug builds, use sentinels to
+    // assert full coverage.
     #[cfg(debug_assertions)]
     let mut cells: Vec<VoronoiCell> = vec![VoronoiCell::new(u32::MAX, u16::MAX); num_cells];
     #[cfg(not(debug_assertions))]
     let mut cells: Vec<VoronoiCell> = Vec::with_capacity(num_cells);
+
+    let mut total_cell_indices = 0u32;
+    // The same index addresses initialized debug entries and release spare capacity below.
+    #[allow(clippy::needless_range_loop)]
+    for gen_idx in 0..num_cells {
+        let (bin, local) = data.assignment.generator_bin_local(gen_idx);
+        let bin = bin.as_usize();
+        let count = u16::from(finals[bin].output.cell_count(local));
+        let start = total_cell_indices;
+        total_cell_indices = total_cell_indices
+            .checked_add(u32::from(count))
+            .ok_or_else(|| {
+                crate::VoronoiError::RepresentationLimit(
+                    "assembled cell index buffer exceeds u32 capacity".to_string(),
+                )
+            })?;
+        #[cfg(debug_assertions)]
+        {
+            cells[gen_idx] = VoronoiCell::new(start, count);
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            cells.spare_capacity_mut()[gen_idx].write(VoronoiCell::new(start, count));
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    unsafe {
+        // Every spare-capacity entry was initialized in the checked prefix loop above. On an early
+        // error, the Vec retains length zero and VoronoiCell has no drop state.
+        cells.set_len(num_cells);
+    }
 
     #[cfg(debug_assertions)]
     let mut cell_indices: Vec<u32> = vec![u32::MAX; total_cell_indices as usize];
@@ -316,15 +334,22 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
             cell_indices.len(),
             "cell index count mismatch after prefix sum"
         );
-        debug_assert_eq!(
-            cell_starts_global[num_cells], total_cell_indices,
-            "prefix sum final total mismatch"
-        );
-        debug_assert_eq!(cell_starts_global[0], 0, "prefix sum must start at 0");
-        debug_assert!(
-            cell_starts_global.windows(2).all(|w| w[0] <= w[1]),
-            "prefix sum must be non-decreasing"
-        );
+        if let Some(last) = cells.last() {
+            debug_assert_eq!(cells[0].vertex_start(), 0, "prefix sum must start at 0");
+            debug_assert!(
+                cells
+                    .windows(2)
+                    .all(|w| w[0].vertex_start() <= w[1].vertex_start()),
+                "prefix sum must be non-decreasing"
+            );
+            debug_assert_eq!(
+                last.vertex_start() + last.vertex_count(),
+                total_cell_indices as usize,
+                "prefix sum final total mismatch"
+            );
+        } else {
+            debug_assert_eq!(total_cell_indices, 0);
+        }
     }
 
     let cell_indices_ptr: usize = {
@@ -337,31 +362,20 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
             cell_indices.spare_capacity_mut().as_mut_ptr() as usize
         }
     };
-    let cells_ptr: usize = {
-        #[cfg(debug_assertions)]
-        {
-            cells.as_mut_ptr() as usize
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            cells.spare_capacity_mut().as_mut_ptr() as usize
-        }
-    };
-
     // Capture slices by value so the parallel closure carries their data pointers directly instead
     // of reloading them through references to the owning Vecs in the per-vertex scatter loop.
     let assignment = &data.assignment;
     let finals_ref = finals.as_slice();
-    let cell_starts = cell_starts_global.as_slice();
+    let cells_ref = cells.as_slice();
     let vertex_offsets = vertex_offsets.as_slice();
     maybe_par_into_iter!(0..num_cells).for_each(move |gen_idx| {
         let (bin, local) = assignment.generator_bin_local(gen_idx);
         let bin = bin.as_usize();
         let shard = &finals_ref[bin];
         let start = shard.output.cell_start(local) as usize;
-        let count = shard.output.cell_count(local) as usize;
-
-        let dst_start = cell_starts[gen_idx] as usize;
+        let cell = &cells_ref[gen_idx];
+        let count = cell.vertex_count();
+        let dst_start = cell.vertex_start();
 
         #[cfg(debug_assertions)]
         {
@@ -398,17 +412,11 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
                 }
                 dst.add(i).write(vertex_offsets[vbin.as_usize()] + local);
             }
-
-            let count_u16 = u16::from(shard.output.cell_count(local));
-            (cells_ptr as *mut VoronoiCell)
-                .add(gen_idx)
-                .write(VoronoiCell::new(cell_starts[gen_idx], count_u16));
         }
     });
 
     #[cfg(not(debug_assertions))]
     unsafe {
-        cells.set_len(num_cells);
         cell_indices.set_len(total_cell_indices as usize);
     }
 
