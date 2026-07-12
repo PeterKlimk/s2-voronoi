@@ -144,9 +144,7 @@ impl GnomonicBuilder {
             basis,
             inv_two_gg,
             generator_dot_g,
-            half_planes: Vec::with_capacity(32),
-            neighbor_indices: Vec::with_capacity(32),
-            neighbor_slots: Vec::with_capacity(32),
+            constraints: Vec::with_capacity(32),
             poly_a,
             poly_b: PolyBuffer::new(),
             use_a: true,
@@ -176,9 +174,7 @@ impl GnomonicBuilder {
         self.basis = TangentBasis::new(gen64);
         self.generator_dot_g = gen64.dot(self.basis.g);
         self.chart_metric_r2_scale = Self::chart_metric_r2_bound(&self.basis, self.inv_two_gg);
-        self.half_planes.clear();
-        self.neighbor_indices.clear();
-        self.neighbor_slots.clear();
+        self.constraints.clear();
         self.generator_raw = generator;
         #[cfg(feature = "p5_shadow")]
         self.neighbor_positions_raw.clear();
@@ -262,7 +258,9 @@ impl GnomonicBuilder {
 
     #[inline]
     pub(super) fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
-        self.neighbor_indices.iter().copied()
+        self.constraints
+            .iter()
+            .map(|constraint| constraint.neighbor_idx)
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]

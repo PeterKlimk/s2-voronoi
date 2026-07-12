@@ -71,9 +71,7 @@ pub(crate) struct GnomonicBuilder {
     inv_two_gg: f64,
     generator_dot_g: f64,
 
-    half_planes: Vec<HalfPlane>,
-    neighbor_indices: Vec<usize>,
-    neighbor_slots: Vec<u32>,
+    constraints: Vec<GnomonicConstraint>,
 
     poly_a: PolyBuffer,
     poly_b: PolyBuffer,
@@ -103,6 +101,13 @@ pub(crate) struct GnomonicBuilder {
     support_cache_valid: bool,
     #[cfg(feature = "timing")]
     support_min_proj: [f64; 64],
+}
+
+#[derive(Clone, Copy)]
+struct GnomonicConstraint {
+    half_plane: HalfPlane,
+    neighbor_idx: usize,
+    neighbor_slot: u32,
 }
 
 pub(crate) struct FallbackBuilder {
@@ -275,7 +280,7 @@ impl Topo2DBuilder {
     #[inline]
     pub(crate) fn accepted_constraint_count(&self) -> usize {
         match &self.inner {
-            BuilderImpl::Gnomonic(builder) => builder.neighbor_indices.len(),
+            BuilderImpl::Gnomonic(builder) => builder.constraints.len(),
             BuilderImpl::Fallback(builder) => builder.constraints.len(),
         }
     }
@@ -323,18 +328,15 @@ impl Topo2DBuilder {
     ) -> Vec<FallbackConstraint> {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder
-                .neighbor_indices
+                .constraints
                 .iter()
-                .copied()
-                .zip(builder.neighbor_slots.iter().copied())
-                .zip(builder.half_planes.iter())
-                .map(|((neighbor_idx, neighbor_slot), plane)| {
+                .map(|constraint| {
                     FallbackConstraint::from_neighbor(
                         builder.generator,
-                        neighbor_idx,
-                        neighbor_slot,
-                        Some(plane.eps as f32),
-                        points[neighbor_idx],
+                        constraint.neighbor_idx,
+                        constraint.neighbor_slot,
+                        Some(constraint.half_plane.eps as f32),
+                        points[constraint.neighbor_idx],
                     )
                 })
                 .collect(),
@@ -350,18 +352,15 @@ impl FallbackBuilder {
         trigger: BuilderFallbackTrigger,
     ) -> Self {
         let constraints = builder
-            .neighbor_indices
+            .constraints
             .iter()
-            .copied()
-            .zip(builder.neighbor_slots.iter().copied())
-            .zip(builder.half_planes.iter())
-            .map(|((neighbor_idx, neighbor_slot), plane)| {
+            .map(|constraint| {
                 FallbackConstraint::from_neighbor(
                     builder.generator,
-                    neighbor_idx,
-                    neighbor_slot,
-                    Some(plane.eps as f32),
-                    points[neighbor_idx],
+                    constraint.neighbor_idx,
+                    constraint.neighbor_slot,
+                    Some(constraint.half_plane.eps as f32),
+                    points[constraint.neighbor_idx],
                 )
             })
             .collect();

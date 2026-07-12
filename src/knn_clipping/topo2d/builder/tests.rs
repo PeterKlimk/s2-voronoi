@@ -124,7 +124,7 @@ fn unchanged_clip_skips_projection_validation() {
     );
 
     assert_eq!(result, Ok(ClipResult::Unchanged));
-    assert_eq!(gnomonic.half_planes.len(), 0);
+    assert_eq!(gnomonic.constraints.len(), 0);
     assert_eq!(builder.failure(), None);
 }
 
@@ -305,11 +305,11 @@ fn clipped_away_handoff_rejection_preserves_failed_builder() {
     let mut builder = Topo2DBuilder::new(0, Vec3::Z);
     let gnomonic = builder.as_gnomonic_mut();
     for (neighbor_idx, neighbor_slot) in [(11, 21), (12, 22), (13, 23), (14, 24)] {
-        gnomonic
-            .half_planes
-            .push(HalfPlane::new_unnormalized(1.0, 0.0, 0.0, neighbor_idx));
-        gnomonic.neighbor_indices.push(neighbor_idx);
-        gnomonic.neighbor_slots.push(neighbor_slot);
+        gnomonic.constraints.push(super::GnomonicConstraint {
+            half_plane: HalfPlane::new_unnormalized(1.0, 0.0, 0.0, neighbor_idx),
+            neighbor_idx,
+            neighbor_slot,
+        });
     }
     gnomonic.poly_a.len = 0;
     gnomonic.poly_b.len = 0;
@@ -347,9 +347,9 @@ fn too_many_vertices_records_current_constraint_before_fallback() {
         gnomonic.commit_clip(ClipResult::TooManyVertices, hp, 11, 21,),
         Err(crate::knn_clipping::cell_build::CellFailure::TooManyVertices)
     );
-    assert_eq!(gnomonic.half_planes.len(), 1);
-    assert_eq!(gnomonic.neighbor_indices, vec![11]);
-    assert_eq!(gnomonic.neighbor_slots, vec![21]);
+    assert_eq!(gnomonic.constraints.len(), 1);
+    assert_eq!(gnomonic.constraints[0].neighbor_idx, 11);
+    assert_eq!(gnomonic.constraints[0].neighbor_slot, 21);
 }
 
 #[test]

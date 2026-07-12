@@ -1,7 +1,7 @@
 use super::projection::MIN_PROJECTION_COS;
 use super::{
     BuilderClipOutcome, BuilderImpl, BuilderStepOutcome, FallbackBuilder, GnomonicBuilder,
-    SphericalPoly, SphericalPolyVertex, Topo2DBuilder,
+    GnomonicConstraint, SphericalPoly, SphericalPolyVertex, Topo2DBuilder,
 };
 use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck, EscalationCtx};
@@ -30,9 +30,11 @@ impl GnomonicBuilder {
     ) -> Result<ClipResult, CellFailure> {
         match clip_result {
             ClipResult::TooManyVertices => {
-                self.half_planes.push(hp);
-                self.neighbor_indices.push(neighbor_idx);
-                self.neighbor_slots.push(neighbor_slot);
+                self.constraints.push(GnomonicConstraint {
+                    half_plane: hp,
+                    neighbor_idx,
+                    neighbor_slot,
+                });
                 self.term_cache_valid = false;
                 #[cfg(feature = "timing")]
                 {
@@ -42,9 +44,11 @@ impl GnomonicBuilder {
                 return Err(CellFailure::TooManyVertices);
             }
             ClipResult::Changed => {
-                self.half_planes.push(hp);
-                self.neighbor_indices.push(neighbor_idx);
-                self.neighbor_slots.push(neighbor_slot);
+                self.constraints.push(GnomonicConstraint {
+                    half_plane: hp,
+                    neighbor_idx,
+                    neighbor_slot,
+                });
                 self.use_a = !self.use_a;
                 self.term_cache_valid = false;
                 #[cfg(feature = "timing")]
@@ -84,7 +88,7 @@ impl GnomonicBuilder {
         }
 
         let (a, b, c) = self.bisector_coefficients(neighbor);
-        let plane_idx = self.half_planes.len();
+        let plane_idx = self.constraints.len();
         let hp = HalfPlane::new_unnormalized(a, b, c, plane_idx);
 
         #[cfg(feature = "p5_shadow")]
@@ -127,7 +131,11 @@ impl GnomonicBuilder {
             self.generator_raw,
             neighbor_idx,
             neighbor,
-            &self.neighbor_indices,
+            &self
+                .constraints
+                .iter()
+                .map(|constraint| constraint.neighbor_idx)
+                .collect::<Vec<_>>(),
             &self.neighbor_positions_raw,
             poly,
             hp,
@@ -145,13 +153,10 @@ impl GnomonicBuilder {
     fn sync_neighbor_positions(&mut self, neighbor: Vec3) {
         #[cfg(feature = "p5_shadow")]
         {
-            if self.neighbor_indices.len() > self.neighbor_positions_raw.len() {
+            if self.constraints.len() > self.neighbor_positions_raw.len() {
                 self.neighbor_positions_raw.push(neighbor);
             }
-            debug_assert_eq!(
-                self.neighbor_indices.len(),
-                self.neighbor_positions_raw.len()
-            );
+            debug_assert_eq!(self.constraints.len(), self.neighbor_positions_raw.len());
         }
     }
 
@@ -164,7 +169,7 @@ impl GnomonicBuilder {
             return false;
         }
         let (a, b, c) = self.bisector_coefficients(neighbor);
-        let hp = HalfPlane::new_unnormalized(a, b, c, self.half_planes.len());
+        let hp = HalfPlane::new_unnormalized(a, b, c, self.constraints.len());
         let poly = self.current_poly();
         let neg_eps = -hp.eps;
         for i in 0..poly.len {
@@ -215,7 +220,7 @@ impl GnomonicBuilder {
         }
 
         let (a, b, c) = self.bisector_coefficients(neighbor);
-        let hp = HalfPlane::new_unnormalized(a, b, c, self.half_planes.len());
+        let hp = HalfPlane::new_unnormalized(a, b, c, self.constraints.len());
         if hp.ab2 <= 0.0 || !hp.ab2.is_finite() {
             return hp.c >= -hp.eps;
         }
@@ -245,7 +250,7 @@ impl GnomonicBuilder {
         }
 
         let (a, b, c) = self.bisector_coefficients(neighbor);
-        let plane_idx = self.half_planes.len();
+        let plane_idx = self.constraints.len();
         let hp = HalfPlane::new_unnormalized_with_eps(a, b, c, plane_idx, hp_eps as f64);
 
         #[cfg(feature = "p5_shadow")]

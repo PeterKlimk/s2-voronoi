@@ -46,13 +46,6 @@ impl GnomonicBuilder {
         if !self.is_bounded() || poly.len < 3 {
             return Err(CellFailure::NoValidSeed);
         }
-        let half_plane_count = self.half_planes.len();
-        let neighbor_index_count = self.neighbor_indices.len();
-        let neighbor_slot_count = self.neighbor_slots.len();
-        if half_plane_count != neighbor_index_count || half_plane_count != neighbor_slot_count {
-            return Err(CellFailure::NoValidSeed);
-        }
-
         buffer.clear();
         buffer.vertices.reserve(poly.len);
         buffer.edge_neighbor_globals.reserve(poly.len);
@@ -96,10 +89,10 @@ impl GnomonicBuilder {
 
             let plane_a = plane_a as usize;
             let plane_b = plane_b as usize;
-            let Some(&n1) = self.neighbor_indices.get(plane_a) else {
+            let Some(n1) = self.constraints.get(plane_a).map(|c| c.neighbor_idx) else {
                 return Err(CellFailure::NoValidSeed);
             };
-            let Some(&n2) = self.neighbor_indices.get(plane_b) else {
+            let Some(n2) = self.constraints.get(plane_b).map(|c| c.neighbor_idx) else {
                 return Err(CellFailure::NoValidSeed);
             };
             let n1 = n1 as u32;
@@ -114,18 +107,12 @@ impl GnomonicBuilder {
                 edge_neighbor_eps[i].write(0.0);
             } else {
                 let edge_plane = edge_plane as usize;
-                let Some(&edge_neighbor) = self.neighbor_indices.get(edge_plane) else {
+                let Some(constraint) = self.constraints.get(edge_plane) else {
                     return Err(CellFailure::NoValidSeed);
                 };
-                let Some(&edge_slot) = self.neighbor_slots.get(edge_plane) else {
-                    return Err(CellFailure::NoValidSeed);
-                };
-                let Some(edge_hp) = self.half_planes.get(edge_plane) else {
-                    return Err(CellFailure::NoValidSeed);
-                };
-                edge_neighbor_globals[i].write(edge_neighbor as u32);
-                edge_neighbor_slots[i].write(edge_slot);
-                edge_neighbor_eps[i].write(edge_hp.eps as f32);
+                edge_neighbor_globals[i].write(constraint.neighbor_idx as u32);
+                edge_neighbor_slots[i].write(constraint.neighbor_slot);
+                edge_neighbor_eps[i].write(constraint.half_plane.eps as f32);
             }
         }
         // Every spare-capacity slot above is initialized on success. On any
@@ -153,7 +140,7 @@ impl GnomonicBuilder {
 
     pub(super) fn count_active_planes(&self) -> (usize, usize) {
         let poly = self.current_poly();
-        let mut active = vec![false; self.half_planes.len()];
+        let mut active = vec![false; self.constraints.len()];
 
         for i in 0..poly.len {
             let (pa, pb) = poly.vertex_planes[i];
@@ -168,7 +155,7 @@ impl GnomonicBuilder {
         }
 
         let active_count = active.iter().filter(|&&x| x).count();
-        (active_count, self.half_planes.len())
+        (active_count, self.constraints.len())
     }
 
     pub(crate) fn debug_state(&self) -> BuilderDebugState {
@@ -178,9 +165,9 @@ impl GnomonicBuilder {
             poly_len: poly.len,
             has_bounding_ref: poly.has_bounding_ref(),
             min_cos: self.chart_min_cos_bound(poly.max_r2),
-            half_plane_count: self.half_planes.len(),
-            neighbor_index_count: self.neighbor_indices.len(),
-            neighbor_slot_count: self.neighbor_slots.len(),
+            half_plane_count: self.constraints.len(),
+            neighbor_index_count: self.constraints.len(),
+            neighbor_slot_count: self.constraints.len(),
         }
     }
 
@@ -194,9 +181,9 @@ impl GnomonicBuilder {
             return Some(ExtractionInvariantFailure::TooFewVertices { poly_len: poly.len });
         }
 
-        let half_plane_count = self.half_planes.len();
-        let neighbor_index_count = self.neighbor_indices.len();
-        let neighbor_slot_count = self.neighbor_slots.len();
+        let half_plane_count = self.constraints.len();
+        let neighbor_index_count = self.constraints.len();
+        let neighbor_slot_count = self.constraints.len();
         if half_plane_count != neighbor_index_count || half_plane_count != neighbor_slot_count {
             return Some(ExtractionInvariantFailure::MetadataLengthMismatch {
                 half_plane_count,
