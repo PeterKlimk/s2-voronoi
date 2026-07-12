@@ -186,6 +186,23 @@ impl ShardDedup {
 /// edges_to_later and edges_overflow for the emit phase.
 ///
 /// This eliminates the edges_to_earlier intermediate vec
+#[inline(always)]
+fn assert_cell_output_lengths<P>(
+    output_buffer: &crate::knn_clipping::cell_build::CellOutputBuffer<P>,
+    vertex_indices_len: usize,
+) -> usize {
+    let n = output_buffer.vertices.len();
+    assert!(
+        n >= 2
+            && output_buffer.edge_neighbor_slots.len() == n
+            && output_buffer.edge_neighbor_globals.len() == n
+            && output_buffer.edge_neighbor_eps.len() == n
+            && vertex_indices_len == n,
+        "cell output arrays out of sync"
+    );
+    n
+}
+
 #[cfg_attr(feature = "profiling", inline(never))]
 // The argument list is the fused collect+resolve data flow; the two
 // output vecs are caller-owned scratch reused across cells.
@@ -210,26 +227,9 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     let edge_neighbor_eps = &output_buffer.edge_neighbor_eps;
     let keys_verified = output_buffer.edge_keys_verified;
 
-    let n = cell_vertices.len();
-    debug_assert_eq!(
-        edge_neighbor_slots.len(),
-        n,
-        "edge neighbor slot data out of sync"
-    );
-    debug_assert_eq!(
-        edge_neighbor_globals.len(),
-        n,
-        "edge neighbor global data out of sync"
-    );
-    debug_assert_eq!(
-        edge_neighbor_eps.len(),
-        n,
-        "edge neighbor eps data out of sync"
-    );
+    let n = assert_cell_output_lengths(output_buffer, vertex_indices.len());
     edges_to_later.clear();
     edges_overflow.clear();
-
-    debug_assert!(n >= 2, "cell has fewer than 2 vertices");
 
     #[cfg(debug_assertions)]
     {
@@ -262,21 +262,23 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     // Process all edges
     for i in 0..n {
         let j = if i + 1 == n { 0 } else { i + 1 };
-        let slot = edge_neighbor_slots[i];
+        // Length equality was checked once above; `i` and cyclic `j` are in
+        // `0..n`. Keep the hot edge loop free of repeated bounds checks.
+        let slot = unsafe { *edge_neighbor_slots.get_unchecked(i) };
 
         if slot == u32::MAX {
             continue;
         }
 
         // Derive global index from propagated array (sequential access)
-        let neighbor = edge_neighbor_globals[i];
+        let neighbor = unsafe { *edge_neighbor_globals.get_unchecked(i) };
         if neighbor == cell_idx {
             continue;
         }
 
         let locals = [i as u8, j as u8];
         let edge_key = pack_edge(cell_idx, neighbor);
-        let hp_eps = edge_neighbor_eps[i];
+        let hp_eps = unsafe { *edge_neighbor_eps.get_unchecked(i) };
 
         let (bin_b, local_b) = layout.bin_local(slot);
         let bin_b = BinId::from(bin_b);
@@ -329,10 +331,9 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                     keys_verified,
                     &mut shard.output.unresolved_edges,
                     edge_key,
-                    [
-                        cell_vertices[locals[0] as usize].0,
-                        cell_vertices[locals[1] as usize].0,
-                    ],
+                    [unsafe { cell_vertices.get_unchecked(i).0 }, unsafe {
+                        cell_vertices.get_unchecked(j).0
+                    }],
                 );
 
                 let full = reconcile_edge_endpoints(my_thirds, check.thirds, |mk, ck| {
@@ -347,7 +348,9 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                     // and the strict campaign); the validate / VORONOI_MESH_VERIFY
                     // gates remain the production catch. Debug must not abort
                     // (this only makes debug match release behavior).
-                    vertex_indices[local_idx] = check.indices[ck];
+                    unsafe {
+                        *vertex_indices.get_unchecked_mut(local_idx) = check.indices[ck];
+                    }
                 });
                 // A malformed endpoint on either side already produced an
                 // EndpointKeyMismatch record (here or at the emitter), and a
@@ -541,6 +544,17 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "cell output arrays out of sync")]
+    fn cell_output_length_mismatch_panics_before_collection() {
+        let mut output = crate::live_dedup::CellOutputBuffer::default();
+        output.vertices.resize(2, ([0, 1, 2], glam::Vec3::ZERO));
+        output.edge_neighbor_slots.resize(1, u32::MAX);
+        output.edge_neighbor_globals.resize(2, u32::MAX);
+        output.edge_neighbor_eps.resize(2, 0.0);
+        assert_cell_output_lengths(&output, 2);
+    }
 
     #[test]
     fn third_requires_both_endpoints() {

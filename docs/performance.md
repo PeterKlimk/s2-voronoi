@@ -252,6 +252,14 @@ reduced instructions by 1.11% and branches by 0.138% in all nine pairs with neut
 uniform reduced instructions by 1.06% and branches by 0.138% in all nine pairs. The generic-target
 build improved by 1.27% instructions, 0.36% branches, and 2.75% cycles on Fibonacci.
 
+Edge collection validates the four parallel cell-output lengths and vertex-index scratch length once
+per cell, then uses that proof to avoid repeated bounds checks in the hot edge loop. At 500k
+single-threaded with native instructions, Fibonacci reduced instructions by 1.06% and branches by
+2.62% in all nine pairs; cycles were noisy and are treated as neutral. Uniform reduced instructions
+by 1.00%, branches by 2.42%, and cycles by 1.04%. Cachegrind reported 1.04% fewer instructions at
+20k Fibonacci. The generic-target build reduced Fibonacci instructions by 0.71%, branches by 2.69%,
+and cycles by 3.86% in all seven pairs.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
