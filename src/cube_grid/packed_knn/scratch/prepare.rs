@@ -588,9 +588,16 @@ impl PackedKnnCellScratch {
                     &z_chunks[chunk],
                 );
 
-                for (qi, &query_slot) in queries.iter().enumerate() {
-                    let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
-                    let mut mask_bits = dots.mask_gt(thresholds[qi]);
+                for (((((&query_slot, &qx), &qy), &qz), &threshold), keys) in queries
+                    .iter()
+                    .zip(query_x)
+                    .zip(query_y)
+                    .zip(query_z)
+                    .zip(thresholds)
+                    .zip(chunk0_keys.iter_mut())
+                {
+                    let dots = candidates.dots(qx, qy, qz);
+                    let mut mask_bits = dots.mask_gt(threshold);
                     if mask_bits == 0 {
                         continue;
                     }
@@ -604,7 +611,7 @@ impl PackedKnnCellScratch {
                             "ring pass should never revisit the query slot"
                         );
                         let dot = dots_arr[lane];
-                        chunk0_keys[qi].push(make_desc_key(dot, slot));
+                        keys.push(make_desc_key(dot, slot));
                         mask_bits &= mask_bits - 1;
                     }
                 }
@@ -642,9 +649,16 @@ impl PackedKnnCellScratch {
                     )
                 };
 
-                for (qi, &query_slot) in queries.iter().enumerate() {
-                    let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
-                    let mut mask_bits = dots.mask_gt(thresholds[qi]) & valid_bits;
+                for (((((&query_slot, &qx), &qy), &qz), &threshold), keys) in queries
+                    .iter()
+                    .zip(query_x)
+                    .zip(query_y)
+                    .zip(query_z)
+                    .zip(thresholds)
+                    .zip(chunk0_keys.iter_mut())
+                {
+                    let dots = candidates.dots(qx, qy, qz);
+                    let mut mask_bits = dots.mask_gt(threshold) & valid_bits;
                     if mask_bits == 0 {
                         continue;
                     }
@@ -658,7 +672,7 @@ impl PackedKnnCellScratch {
                             "ring pass should never revisit the query slot"
                         );
                         let dot = dots_arr[lane];
-                        chunk0_keys[qi].push(make_desc_key(dot, slot));
+                        keys.push(make_desc_key(dot, slot));
                         mask_bits &= mask_bits - 1;
                     }
                 }
