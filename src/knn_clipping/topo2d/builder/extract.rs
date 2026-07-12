@@ -56,6 +56,10 @@ impl GnomonicBuilder {
         let edge_neighbor_globals = buffer.edge_neighbor_globals.spare_capacity_mut();
         let edge_neighbor_slots = buffer.edge_neighbor_slots.spare_capacity_mut();
         let edge_neighbor_eps = buffer.edge_neighbor_eps.spare_capacity_mut();
+        debug_assert!(vertices.len() >= poly.len);
+        debug_assert!(edge_neighbor_globals.len() >= poly.len);
+        debug_assert!(edge_neighbor_slots.len() >= poly.len);
+        debug_assert!(edge_neighbor_eps.len() >= poly.len);
 
         let gen_idx = self.generator_idx as u32;
         for i in 0..poly.len {
@@ -98,21 +102,33 @@ impl GnomonicBuilder {
             let n1 = n1 as u32;
             let n2 = n2 as u32;
             let key = sort3_u32(gen_idx, n1, n2);
-            vertices[i].write((key, v_pos));
+            // SAFETY: all four vectors were cleared and reserved for
+            // `poly.len` immediately above; `i` is in `0..poly.len`.
+            unsafe { vertices.get_unchecked_mut(i).write((key, v_pos)) };
 
             let edge_plane = poly.edge_planes[i];
             if edge_plane == INVALID_PLANE_ID {
-                edge_neighbor_globals[i].write(u32::MAX);
-                edge_neighbor_slots[i].write(u32::MAX);
-                edge_neighbor_eps[i].write(0.0);
+                unsafe {
+                    edge_neighbor_globals.get_unchecked_mut(i).write(u32::MAX);
+                    edge_neighbor_slots.get_unchecked_mut(i).write(u32::MAX);
+                    edge_neighbor_eps.get_unchecked_mut(i).write(0.0);
+                }
             } else {
                 let edge_plane = edge_plane as usize;
                 let Some(constraint) = self.constraints.get(edge_plane) else {
                     return Err(CellFailure::NoValidSeed);
                 };
-                edge_neighbor_globals[i].write(constraint.neighbor_idx as u32);
-                edge_neighbor_slots[i].write(constraint.neighbor_slot);
-                edge_neighbor_eps[i].write(constraint.half_plane.eps as f32);
+                unsafe {
+                    edge_neighbor_globals
+                        .get_unchecked_mut(i)
+                        .write(constraint.neighbor_idx as u32);
+                    edge_neighbor_slots
+                        .get_unchecked_mut(i)
+                        .write(constraint.neighbor_slot);
+                    edge_neighbor_eps
+                        .get_unchecked_mut(i)
+                        .write(constraint.half_plane.eps as f32);
+                }
             }
         }
         // Every spare-capacity slot above is initialized on success. On any
