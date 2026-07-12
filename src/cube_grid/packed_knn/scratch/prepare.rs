@@ -462,9 +462,24 @@ impl PackedKnnCellScratch {
                     // directed filter requires candidate_pos > query_pos, the
                     // query at i+7 has no eligible lane in this chunk.
                     let qi_end = (i + 7).min(num_queries);
-                    for qi in 0..qi_end {
-                        let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
-                        let mut mask_bits = dots.mask_gt(security_thresholds[qi]);
+                    for (
+                        qi,
+                        (((((&qx, &qy), &qz), &security), &hi_threshold), (keys, tail_count)),
+                    ) in query_x[..qi_end]
+                        .iter()
+                        .zip(&query_y[..qi_end])
+                        .zip(&query_z[..qi_end])
+                        .zip(&security_thresholds[..qi_end])
+                        .zip(&hi_thresholds[..qi_end])
+                        .zip(
+                            chunk0_keys[..qi_end]
+                                .iter_mut()
+                                .zip(&mut self.center_tail_counts[..qi_end]),
+                        )
+                        .enumerate()
+                    {
+                        let dots = candidates.dots(qx, qy, qz);
+                        let mut mask_bits = dots.mask_gt(security);
                         if mask_bits == 0 {
                             continue;
                         }
@@ -483,7 +498,7 @@ impl PackedKnnCellScratch {
                         // Split into hi (above the tightened threshold -> chunk0)
                         // and the [security, t] band (-> tail) in one pass; the old
                         // post-hoc demotion loop is gone.
-                        let hi_bits = dots.mask_gt(hi_thresholds[qi]) & mask_bits;
+                        let hi_bits = dots.mask_gt(hi_threshold) & mask_bits;
                         let band_bits = mask_bits & !hi_bits;
                         if hi_bits != 0 {
                             let mut hi = hi_bits;
@@ -491,11 +506,11 @@ impl PackedKnnCellScratch {
                             while hi != 0 {
                                 let lane = hi.trailing_zeros() as usize;
                                 let slot = (center_soa_start + i + lane) as u32;
-                                chunk0_keys[qi].push(make_desc_key(dots_arr[lane], slot));
+                                keys.push(make_desc_key(dots_arr[lane], slot));
                                 hi &= hi - 1;
                             }
                         }
-                        self.center_tail_counts[qi] += band_bits.count_ones() as usize;
+                        *tail_count += band_bits.count_ones() as usize;
                     }
                 }
 
@@ -516,9 +531,24 @@ impl PackedKnnCellScratch {
                     // The final valid candidate is at i+rem-1, so queries at
                     // or beyond that position have no eligible lane here.
                     let qi_end = (i + rem - 1).min(num_queries);
-                    for qi in 0..qi_end {
-                        let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
-                        let mut mask_bits = dots.mask_gt(security_thresholds[qi]) & valid_bits;
+                    for (
+                        qi,
+                        (((((&qx, &qy), &qz), &security), &hi_threshold), (keys, tail_count)),
+                    ) in query_x[..qi_end]
+                        .iter()
+                        .zip(&query_y[..qi_end])
+                        .zip(&query_z[..qi_end])
+                        .zip(&security_thresholds[..qi_end])
+                        .zip(&hi_thresholds[..qi_end])
+                        .zip(
+                            chunk0_keys[..qi_end]
+                                .iter_mut()
+                                .zip(&mut self.center_tail_counts[..qi_end]),
+                        )
+                        .enumerate()
+                    {
+                        let dots = candidates.dots(qx, qy, qz);
+                        let mut mask_bits = dots.mask_gt(security) & valid_bits;
                         if mask_bits == 0 {
                             continue;
                         }
@@ -534,7 +564,7 @@ impl PackedKnnCellScratch {
                             }
                         }
 
-                        let hi_bits = dots.mask_gt(hi_thresholds[qi]) & mask_bits;
+                        let hi_bits = dots.mask_gt(hi_threshold) & mask_bits;
                         let band_bits = mask_bits & !hi_bits;
                         if hi_bits != 0 {
                             let mut hi = hi_bits;
@@ -542,11 +572,11 @@ impl PackedKnnCellScratch {
                             while hi != 0 {
                                 let lane = hi.trailing_zeros() as usize;
                                 let slot = (center_soa_start + i + lane) as u32;
-                                chunk0_keys[qi].push(make_desc_key(dots_arr[lane], slot));
+                                keys.push(make_desc_key(dots_arr[lane], slot));
                                 hi &= hi - 1;
                             }
                         }
-                        self.center_tail_counts[qi] += band_bits.count_ones() as usize;
+                        *tail_count += band_bits.count_ones() as usize;
                     }
                 }
             }
