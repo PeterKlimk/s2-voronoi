@@ -217,6 +217,13 @@ bits, ordering, and band queries. Fixed-work 500k outlier and mega counters were
 dense-index construction is a small cold portion of the build. Retain this as a strictly local
 pass/branch reduction, not as a demonstrated end-to-end improvement.
 
+Edge reconciliation reuses two unrestricted segment vectors across unresolved records within each
+repair round. The previous path created two vectors per record; an 86,400-point high-degree fixture
+with 6,626 records therefore exposed 13,252 allocation opportunities. The clean path still returns
+before allocating scratch, and each repair round receives fresh buffers. Same-session defect-heavy
+timing moved from 13.884 ms to 12.804 ms; repeated candidate timing was noisy, so retain this for the
+certain structural allocation removal rather than the provisional 7.8% phase result.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -228,10 +235,6 @@ Promising workload-specific experiments:
 - **D3 — compact high-degree consumed flags:** replace the per-cell byte vector above 64 incoming
   checks with reusable bit words. First instrument activation frequency; ordinary cells should stay
   on the existing inline mask.
-- **O3 — reuse reconciliation segment scratch:** two temporary vectors are allocated per unresolved
-  record. Reuse two buffers per reconciliation round and measure allocations on high-degree defect
-  fixtures; the clean path must remain unchanged.
-
 Lower-confidence cleanup candidates, to attempt only with structural counters or activation data:
 
 - Remove the redundant per-cell output-buffer clear when all success writers clear before use.

@@ -132,6 +132,7 @@ fn cell_vertex_slice<'a>(
     Ok(&cell_indices[start..end])
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn edge_segments_for_neighbor(
     cell_idx: u32,
     neighbor: u32,
@@ -139,13 +140,33 @@ pub(crate) fn edge_segments_for_neighbor(
     cell_indices: &[u32],
     vertex_keys: VertexKeys<'_>,
 ) -> Result<Vec<(u32, u32)>, crate::VoronoiError> {
+    let mut out = Vec::new();
+    edge_segments_for_neighbor_into(
+        cell_idx,
+        neighbor,
+        cells,
+        cell_indices,
+        vertex_keys,
+        &mut out,
+    )?;
+    Ok(out)
+}
+
+fn edge_segments_for_neighbor_into(
+    cell_idx: u32,
+    neighbor: u32,
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: VertexKeys<'_>,
+    out: &mut Vec<(u32, u32)>,
+) -> Result<(), crate::VoronoiError> {
+    out.clear();
     let slice = cell_vertex_slice(cell_idx, cells, cell_indices)?;
     let n = slice.len();
     if n < 2 {
-        return Ok(Vec::new());
+        return Ok(());
     }
 
-    let mut out = Vec::new();
     for i in 0..n {
         let vi = slice[i];
         let vj = slice[(i + 1) % n];
@@ -167,7 +188,7 @@ pub(crate) fn edge_segments_for_neighbor(
             out.push((vi, vj));
         }
     }
-    Ok(out)
+    Ok(())
 }
 
 fn dist_sq<P: crate::knn_clipping::live_dedup::VertexPosition>(a: P, b: P) -> f32 {
@@ -1047,10 +1068,16 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
         }
     }
 
+    // Reuse exactly two segment buffers across every record in this repair
+    // round. Irregular edges may expose arbitrarily many segments, so the
+    // buffers retain their full contents and grow as needed rather than using
+    // a fixed-size/capped representation.
+    let mut seg_a = Vec::new();
+    let mut seg_b = Vec::new();
     for record in edge_records {
         let (a, b) = unpack_edge(record.key.as_u64());
-        let seg_a = edge_segments_for_neighbor(a, b, cells, cell_indices, vertex_keys)?;
-        let seg_b = edge_segments_for_neighbor(b, a, cells, cell_indices, vertex_keys)?;
+        edge_segments_for_neighbor_into(a, b, cells, cell_indices, vertex_keys, &mut seg_a)?;
+        edge_segments_for_neighbor_into(b, a, cells, cell_indices, vertex_keys, &mut seg_b)?;
         if mode == MergeMode::ProximityOnly {
             proximity_union_segments(
                 &seg_a,
@@ -1314,6 +1341,69 @@ mod tests {
     fn edge_record(a: u32, b: u32) -> EdgeRecord {
         EdgeRecord {
             key: (((b as u64) << 32) | a as u64).into(),
+        }
+    }
+
+    /// Pre-reuse collector retained as an independent test oracle.
+    fn edge_segments_allocating_baseline(
+        cell_idx: u32,
+        neighbor: u32,
+        cells: &[VoronoiCell],
+        cell_indices: &[u32],
+        vertex_keys: VertexKeys<'_>,
+    ) -> Vec<(u32, u32)> {
+        let slice = cell_vertex_slice(cell_idx, cells, cell_indices).expect("valid cell span");
+        let mut out = Vec::new();
+        for i in 0..slice.len() {
+            let vi = slice[i];
+            let vj = slice[(i + 1) % slice.len()];
+            let ki = vertex_keys.get(vi).expect("valid vertex key");
+            let kj = vertex_keys.get(vj).expect("valid vertex key");
+            if shared_neighbor(cell_idx, ki, kj) == Some(neighbor) {
+                out.push((vi, vj));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn reused_segment_buffers_match_allocating_baseline_across_records_and_rounds() {
+        let vertex_keys: Vec<VertexKey> = vec![
+            [0, 1, 2],
+            [0, 1, 3],
+            [0, 2, 4],
+            [0, 1, 4],
+            [0, 1, 5],
+            [0, 2, 5],
+        ];
+        let mut cells = vec![VoronoiCell::new(0, 6)];
+        cells.extend((1..6).map(|_| VoronoiCell::new(6, 0)));
+        let cell_indices = vec![0, 1, 2, 3, 4, 5];
+        let records = [edge_record(0, 1), edge_record(0, 2), edge_record(0, 4)];
+        let keys = VertexKeys::Flat(&vertex_keys);
+        let mut seg_a = Vec::new();
+        let mut seg_b = Vec::new();
+
+        for round in 0..2 {
+            for (record_idx, record) in records.iter().enumerate() {
+                let (a, b) = unpack_edge(record.key.as_u64());
+                let expected_a =
+                    edge_segments_allocating_baseline(a, b, &cells, &cell_indices, keys);
+                let expected_b =
+                    edge_segments_allocating_baseline(b, a, &cells, &cell_indices, keys);
+                edge_segments_for_neighbor_into(a, b, &cells, &cell_indices, keys, &mut seg_a)
+                    .expect("reused A collector");
+                edge_segments_for_neighbor_into(b, a, &cells, &cell_indices, keys, &mut seg_b)
+                    .expect("reused B collector");
+                assert_eq!(seg_a, expected_a, "round {round}, record {record_idx}, A");
+                assert_eq!(seg_b, expected_b, "round {round}, record {record_idx}, B");
+                if round == 0 && record_idx == 0 {
+                    assert_eq!(seg_a, [(0, 1), (3, 4)]);
+                }
+            }
+            // Model a productive repair round shrinking the live span. The
+            // second pass must clear stale segments while retaining capacity.
+            cells[0] = VoronoiCell::new(0, 5);
         }
     }
 
