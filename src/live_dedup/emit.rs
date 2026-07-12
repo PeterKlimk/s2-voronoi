@@ -63,7 +63,10 @@ impl EdgeScratch {
     ) {
         use super::edge_checks::thirds_for_emit;
 
-        for entry in self.edges_to_later.drain(..) {
+        // These scratch records are Copy and own no resources. Iterating by
+        // copy avoids Drain's per-element/unwind bookkeeping; successful
+        // emission clears the reusable buffer below.
+        for entry in self.edges_to_later.iter().copied() {
             let locals = entry.locals;
             let thirds = thirds_for_emit(
                 keys_verified,
@@ -87,8 +90,9 @@ impl EdgeScratch {
                 },
             );
         }
+        self.edges_to_later.clear();
 
-        for entry in self.edges_overflow.drain(..) {
+        for entry in self.edges_overflow.iter().copied() {
             let locals = entry.locals;
             let thirds = thirds_for_emit(
                 keys_verified,
@@ -111,6 +115,7 @@ impl EdgeScratch {
                 slots: [cell_start + locals[0] as u32, cell_start + locals[1] as u32],
             });
         }
+        self.edges_overflow.clear();
     }
 }
 

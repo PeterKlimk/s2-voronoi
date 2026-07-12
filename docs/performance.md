@@ -277,6 +277,13 @@ The ungated generic-target form reduced retired work but regressed cycles 3.76%,
 `simd_scalar` builds deliberately retain the original scalar finalization; their structural counters
 were unchanged within 0.00002% after gating.
 
+Edge emission iterates its `Copy`-only per-cell scratch records by reference and clears each buffer
+after successful forwarding, avoiding `Vec::drain` state and unwind bookkeeping. At 1M
+single-threaded native Fibonacci over 30 pairs, instructions fell 0.667% and branches 0.102% in
+every pair; cycles fell 3.22% in 26 of 30, though the magnitude remained layout-sensitive. At 500k
+native uniform, instructions fell 0.631% and branches 0.086% in all nine pairs. The generic-target
+Fibonacci build reduced instructions 0.642% in all nine pairs with neutral cycles.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
