@@ -348,14 +348,20 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
         }
     };
 
-    maybe_par_into_iter!(0..num_cells).for_each(|gen_idx| {
-        let (bin, local) = data.assignment.generator_bin_local(gen_idx);
+    // Capture slices by value so the parallel closure carries their data pointers directly instead
+    // of reloading them through references to the owning Vecs in the per-vertex scatter loop.
+    let assignment = &data.assignment;
+    let finals_ref = finals.as_slice();
+    let cell_starts = cell_starts_global.as_slice();
+    let vertex_offsets = vertex_offsets.as_slice();
+    maybe_par_into_iter!(0..num_cells).for_each(move |gen_idx| {
+        let (bin, local) = assignment.generator_bin_local(gen_idx);
         let bin = bin.as_usize();
-        let shard = &finals[bin];
+        let shard = &finals_ref[bin];
         let start = shard.output.cell_start(local) as usize;
         let count = shard.output.cell_count(local) as usize;
 
-        let dst_start = cell_starts_global[gen_idx] as usize;
+        let dst_start = cell_starts[gen_idx] as usize;
 
         #[cfg(debug_assertions)]
         {
@@ -386,7 +392,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
                 {
                     debug_assert!(vbin.as_usize() < num_bins, "packed vertex bin out of range");
                     debug_assert!(
-                        (local as usize) < finals[vbin.as_usize()].output.vertices.len(),
+                        (local as usize) < finals_ref[vbin.as_usize()].output.vertices.len(),
                         "packed vertex local index out of range"
                     );
                 }
@@ -396,7 +402,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
             let count_u16 = u16::from(shard.output.cell_count(local));
             (cells_ptr as *mut VoronoiCell)
                 .add(gen_idx)
-                .write(VoronoiCell::new(cell_starts_global[gen_idx], count_u16));
+                .write(VoronoiCell::new(cell_starts[gen_idx], count_u16));
         }
     });
 

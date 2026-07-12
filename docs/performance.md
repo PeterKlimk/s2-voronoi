@@ -291,6 +291,15 @@ forwarded edge. At 500k single-threaded native Fibonacci, instructions fell 0.41
 Fibonacci build reduced instructions 0.378% and branches 1.090% in all nine pairs, with neutral
 cycles.
 
+Final assembly captures its immutable scatter inputs as references and slices by value in the Rayon
+closure. In particular, this lets optimized code retain the vertex-offset slice's data pointer and
+length outside the packed-reference loop while preserving checked indexing and its release panic on
+corrupt input. At 1M single-threaded native, retired instructions fell 0.291% on Fibonacci and
+0.270% on uniform, while branches fell 0.124% and 0.112%; all six pairs agreed. The generic-target
+build reduced instructions 0.280%/0.260% and branches 0.121%/0.109% across four agreeing pairs. The
+hot Rayon helper grew by about 37 bytes, but the repeated closure-environment loads disappeared
+without inner-loop spills.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -305,12 +314,6 @@ Promising workload-specific experiments:
 
 Assembly/live-dedup swarm backlog (2026-07-13):
 
-- **Hoist the final-scatter vertex-offset slice:** the Rayon closure currently captures
-  `vertex_offsets` through `&Vec<_>`, and optimized assembly reloads its length and data pointer for
-  every packed vertex reference. Capture an `&[u32]` by value in an explicit `move` closure while
-  retaining ordinary checked indexing. Verify that the inner loop hoists the data pointer without
-  introducing spills; compare native and generic instructions/branches and keep release bounds
-  panics plus checked-profile assertions. This is the first code experiment from the swarm.
 - **Measure, then reduce owned-output reserve:** shard output currently reserves six positions and
   vertex keys per local generator although total spherical output is ordinarily near two vertices
   per generator. Instrument per-shard `len`, capacity, and reallocations across bin counts,
