@@ -315,6 +315,10 @@ Do not broadly retry these without a materially different design or workload:
 - Lazy recomputation of retained high-threshold `chunk0_keys`: despite 86.4% unused keys on 100k
   clustered, 75,653 later requests rebuilt 15.75M keys, costing 28.3% instructions, 65.1% branches,
   and 29.8% cycles. Keep the retained keys.
+- Clearing per-query packed tail buffers only when a generation actually requests its tail added
+  0.045% instructions and 0.059% branches on 500k native Fibonacci, and 0.085% instructions and
+  0.076% branches on uniform; every structural pairing regressed. Eagerly clearing the mostly-empty
+  inner vectors is cheaper than moving that work into the requested-tail path.
 - Dense-band eligibility before the raw candidate cap: admitting actual band work within the same
   budget regressed a 5k cap by 0.7% instructions, 1.6% branches, and 1.4% cycles; a 10k cap
   wall-time check was about 7% slower.
