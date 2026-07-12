@@ -284,6 +284,13 @@ every pair; cycles fell 3.22% in 26 of 30, though the magnitude remained layout-
 native uniform, instructions fell 0.631% and branches 0.086% in all nine pairs. The generic-target
 Fibonacci build reduced instructions 0.642% in all nine pairs with neutral cycles.
 
+The same edge-emission path validates its vertex-key and resolved-index lengths once per cell, then
+uses the producer's cyclic-local invariant to avoid four repeated endpoint bounds checks per
+forwarded edge. At 500k single-threaded native Fibonacci, instructions fell 0.413% and branches
+1.106% in all nine pairs; uniform fell 0.382% instructions and 1.025% branches. The generic-target
+Fibonacci build reduced instructions 0.378% and branches 1.090% in all nine pairs, with neutral
+cycles.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated

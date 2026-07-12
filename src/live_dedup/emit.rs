@@ -19,6 +19,16 @@ pub(crate) struct EdgeScratch {
     vertex_indices: Vec<u32>,
 }
 
+#[inline(always)]
+fn assert_endpoint_lengths<P>(cell_vertices: &[VertexData<P>], vertex_indices_len: usize) -> usize {
+    let vertex_count = cell_vertices.len();
+    assert_eq!(
+        vertex_indices_len, vertex_count,
+        "edge endpoint arrays out of sync"
+    );
+    vertex_count
+}
+
 impl EdgeScratch {
     pub(crate) fn new() -> Self {
         Self {
@@ -63,19 +73,36 @@ impl EdgeScratch {
     ) {
         use super::edge_checks::thirds_for_emit;
 
+        let vertex_count = assert_endpoint_lengths(cell_vertices, self.vertex_indices.len());
+
         // These scratch records are Copy and own no resources. Iterating by
         // copy avoids Drain's per-element/unwind bookkeeping; successful
         // emission clears the reusable buffer below.
         for entry in self.edges_to_later.iter().copied() {
             let locals = entry.locals;
+            let a = locals[0] as usize;
+            let b = locals[1] as usize;
+            debug_assert!(a < vertex_count && b < vertex_count);
+            // The sole record producer creates both locals from `i` and its
+            // cyclic successor in `0..vertex_count`; lengths were checked once
+            // above. Keep repeated bounds checks out of the forwarding loops.
+            let keys = unsafe {
+                [
+                    cell_vertices.get_unchecked(a).0,
+                    cell_vertices.get_unchecked(b).0,
+                ]
+            };
+            let indices = unsafe {
+                [
+                    *self.vertex_indices.get_unchecked(a),
+                    *self.vertex_indices.get_unchecked(b),
+                ]
+            };
             let thirds = thirds_for_emit(
                 keys_verified,
                 &mut shard.output.unresolved_edges,
                 entry.key,
-                [
-                    cell_vertices[locals[0] as usize].0,
-                    cell_vertices[locals[1] as usize].0,
-                ],
+                keys,
             );
             shard.dedup.push_edge_check(
                 entry.local_b,
@@ -83,10 +110,7 @@ impl EdgeScratch {
                     key: entry.key,
                     hp_eps: entry.hp_eps,
                     thirds,
-                    indices: [
-                        self.vertex_indices[locals[0] as usize],
-                        self.vertex_indices[locals[1] as usize],
-                    ],
+                    indices,
                 },
             );
         }
@@ -94,24 +118,34 @@ impl EdgeScratch {
 
         for entry in self.edges_overflow.iter().copied() {
             let locals = entry.locals;
+            let a = locals[0] as usize;
+            let b = locals[1] as usize;
+            debug_assert!(a < vertex_count && b < vertex_count);
+            // Same producer/range proof as the ordinary forwarding loop.
+            let keys = unsafe {
+                [
+                    cell_vertices.get_unchecked(a).0,
+                    cell_vertices.get_unchecked(b).0,
+                ]
+            };
+            let indices = unsafe {
+                [
+                    *self.vertex_indices.get_unchecked(a),
+                    *self.vertex_indices.get_unchecked(b),
+                ]
+            };
             let thirds = thirds_for_emit(
                 keys_verified,
                 &mut shard.output.unresolved_edges,
                 entry.key,
-                [
-                    cell_vertices[locals[0] as usize].0,
-                    cell_vertices[locals[1] as usize].0,
-                ],
+                keys,
             );
             shard.output.edge_check_overflow.push(EdgeCheckOverflow {
                 key: entry.key,
                 side: entry.side,
                 source_bin: bin,
                 thirds,
-                indices: [
-                    self.vertex_indices[locals[0] as usize],
-                    self.vertex_indices[locals[1] as usize],
-                ],
+                indices,
                 slots: [cell_start + locals[0] as u32, cell_start + locals[1] as u32],
             });
         }
@@ -240,7 +274,16 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
 
 #[cfg(test)]
 mod tests {
-    use super::{checked_local_id, checked_u32, checked_u8, BuildCellsError};
+    use super::{
+        assert_endpoint_lengths, checked_local_id, checked_u32, checked_u8, BuildCellsError,
+    };
+
+    #[test]
+    #[should_panic(expected = "edge endpoint arrays out of sync")]
+    fn endpoint_length_mismatch_panics_before_emit() {
+        let vertices = [([0, 1, 2], glam::Vec3::ZERO)];
+        assert_endpoint_lengths(&vertices, 0);
+    }
 
     #[cfg(target_pointer_width = "64")]
     #[test]
