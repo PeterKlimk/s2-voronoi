@@ -191,3 +191,84 @@ fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
         }
     }
 }
+
+#[test]
+fn directed_center_chunk_boundaries_match_safe_bruteforce() {
+    const EPS: f32 = 1e-5;
+
+    for n in 1..=40usize {
+        // Keep every point in one grid cell while mixing exact duplicates and
+        // f32-near-equal normalized positions. This exercises every modulo-8
+        // center remainder without relying on geometric separation.
+        let points: Vec<_> = (0..n)
+            .map(|i| {
+                if i % 7 == 0 {
+                    glam::Vec3::new(0.1, 0.15, 1.0).normalize()
+                } else {
+                    let x = 0.1 + ((i % 5) as f32 - 2.0) * 2.0e-6;
+                    let y = 0.15 + ((i % 3) as f32 - 1.0) * 3.0e-6;
+                    glam::Vec3::new(x, y, 1.0).normalize()
+                }
+            })
+            .collect();
+        let grid = CubeMapGrid::new(&points, 4);
+        let cell = fullest_cell(&grid);
+        let start = grid.cell_offsets()[cell] as usize;
+        let end = grid.cell_offsets()[cell + 1] as usize;
+        assert_eq!(end - start, n, "fixture split across cells for n={n}");
+
+        let queries: Vec<u32> = (start..end).map(|slot| slot as u32).collect();
+        let mut slot_gen_map = vec![0u32; n];
+        for (slot, &generator) in grid.point_indices()[start..end].iter().enumerate() {
+            slot_gen_map[generator as usize] =
+                ((QUERY_BIN as u32) << LOCAL_SHIFT) | (start + slot) as u32;
+        }
+        let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
+        let group = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
+        let mut scratch = PackedKnnCellScratch::new();
+        let mut timings = PackedKnnTimings::default();
+        let PreparedPackedGroupStatus::Ready(mut prepared) =
+            scratch.prepare_group_directed(&grid, group, &mut timings)
+        else {
+            panic!("packed prepare unexpectedly fell back for n={n}");
+        };
+
+        for qi in 0..n {
+            let query_slot = queries[qi];
+            let query_idx = grid.point_indices()[query_slot as usize] as usize;
+            let expected =
+                expected_safe_slots(&grid, &points, query_idx, query_slot, prepared.security(qi));
+            let mut emitted = Vec::new();
+            let mut prev_bound = 1.0f32;
+            let mut stage = PackedStage::Chunk0;
+
+            loop {
+                let k = match stage {
+                    PackedStage::Chunk0 => 16,
+                    PackedStage::Tail => 8,
+                };
+                let mut out = vec![u32::MAX; k];
+                match prepared.next_chunk(qi, stage, k, &mut out, &mut timings) {
+                    Some(chunk) => {
+                        assert!(
+                            chunk.unseen_bound <= prev_bound + EPS,
+                            "unseen bound increased for n={n}, qi={qi}"
+                        );
+                        prev_bound = chunk.unseen_bound;
+                        emitted.extend_from_slice(&out[..chunk.n]);
+                    }
+                    None if stage == PackedStage::Chunk0 && prepared.tail_possible(qi) => {
+                        prepared.ensure_tail_directed_for(qi, &grid, &mut timings);
+                        stage = PackedStage::Tail;
+                    }
+                    None => break,
+                }
+            }
+
+            assert_eq!(
+                emitted, expected,
+                "directed center mismatch for n={n}, qi={qi}"
+            );
+        }
+    }
+}
