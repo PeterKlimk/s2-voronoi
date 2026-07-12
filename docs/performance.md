@@ -388,6 +388,10 @@ Do not broadly retry these without a materially different design or workload:
   the added builder field regressed cycles 1.98% (thirds +0.26%/+3.44%/+2.26%; both execution orders
   worse). Generic-target instructions/cycles improved, but the primary native layout rejects the
   field; retain the recomputation.
+- Specializing incoming edge-check lookup for slice lengths 0 through 4 made the short common case
+  explicit but added dispatcher branches around the already-small linear search. At 1M native
+  Fibonacci it regressed instructions 0.095% and branches 0.479% in all 15 pairs, with cycles 0.95%
+  worse; retain the generic iterator search.
 - Extending the conservative early-unchanged radius certificate from polygon sizes >=5 to N=4
   added 0.12–0.13% retired instructions and 0.28–0.31% branches on 500k single-threaded native
   Fibonacci and uniform, with every one of seven pairs worse on both structural counters. Cycles
