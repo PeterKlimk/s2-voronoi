@@ -458,9 +458,10 @@ impl PackedKnnCellScratch {
                         &z_chunks[chunk],
                     );
 
-                    // Candidate positions in this chunk are [i, i+7]. A query at position qi only
-                    // needs to consider this chunk if qi <= i+7.
-                    let qi_end = (i + 8).min(num_queries);
+                    // Candidate positions in this chunk are [i, i+7]. Since the
+                    // directed filter requires candidate_pos > query_pos, the
+                    // query at i+7 has no eligible lane in this chunk.
+                    let qi_end = (i + 7).min(num_queries);
                     for qi in 0..qi_end {
                         let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
                         let mut mask_bits = dots.mask_gt(security_thresholds[qi]);
@@ -512,7 +513,10 @@ impl PackedKnnCellScratch {
                     zbuf[..rem].copy_from_slice(&zs[i..]);
 
                     let candidates = fp::PointChunk8::from_arrays(xbuf, ybuf, zbuf);
-                    for qi in 0..num_queries {
+                    // The final valid candidate is at i+rem-1, so queries at
+                    // or beyond that position have no eligible lane here.
+                    let qi_end = (i + rem - 1).min(num_queries);
+                    for qi in 0..qi_end {
                         let dots = candidates.dots(query_x[qi], query_y[qi], query_z[qi]);
                         let mut mask_bits = dots.mask_gt(security_thresholds[qi]) & valid_bits;
                         if mask_bits == 0 {
