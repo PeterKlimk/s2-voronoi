@@ -298,6 +298,13 @@ Do not broadly retry these without a materially different design or workload:
   in an entire run. No duplicate incoming keys occurred. Map setup cannot repay that activation, so
   D1 was retired without implementation. The same sweep saw no cells above 64 incoming checks, so
   the compact high-degree spill candidate remains fixture-only rather than production-motivated.
+- Combining the gnomonic builder's parallel half-plane, neighbor-index, and neighbor-slot vectors
+  into one accepted-constraint record reduced retired instructions by 0.775% and branches by 1.285%
+  on 500k single-threaded native Fibonacci (all nine pairs); Cachegrind independently measured a
+  0.754% instruction reduction at 20k. However, cache references rose 19.8%, cache misses rose 28.0%,
+  and cycles regressed 2.28% in eight of nine pairs. Uniform showed none of that cache penalty, but
+  the ordinary Fibonacci regression rejects the wider AoS record; keep the hot half-plane stream
+  separate from extraction metadata.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
