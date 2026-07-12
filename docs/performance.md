@@ -199,9 +199,6 @@ Promising workload-specific experiments:
 - **C4 — unswitch batch-source handling:** hoist the invariant packed-tail/chunk/shell source match
   out of the per-neighbor loop. Keep bounds checks unless a separate safety argument and counter
   result justify removing them.
-- **D1 — indexed incoming edge-check lookup:** retain linear search for small cells and test a
-  reusable tiny map or sort/merge above a measured incoming-count threshold. Preserve first-index
-  and duplicate semantics; measure high-degree, clustered, mega, and bin-count sweeps.
 - **D2 — reserve aggregate assembly vectors:** sum shard lengths before appending unresolved edges,
   overflow checks, and deferred slots. Measure allocation counts, cycles, and peak RSS at high bin
   counts; reject if the reservation merely increases simultaneous memory.
@@ -263,6 +260,13 @@ Do not broadly retry these without a materially different design or workload:
   neutral, and 500k mega instructions improved only about 0.005% while cycles were slightly worse
   in all three pairs. The saved dead-lane arithmetic does not repay the remainder dispatch in the
   production path; the candidate was reverted.
+- Replacing linear incoming edge-check lookup with a tiny index: a 500k sweep over Fibonacci,
+  clustered, and mega at 6 and 96 bins found 99.55–99.93% of cells had at most eight incoming
+  checks. Linear scans averaged only 2.4–2.7 contiguous comparisons per lookup. Cells above eight
+  accounted for 0.49–2.70% of comparisons; above sixteen accounted for at most 1,533 comparisons
+  in an entire run. No duplicate incoming keys occurred. Map setup cannot repay that activation, so
+  D1 was retired without implementation. The same sweep saw no cells above 64 incoming checks, so
+  the compact high-degree spill candidate remains fixture-only rather than production-motivated.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
