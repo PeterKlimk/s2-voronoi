@@ -360,6 +360,10 @@ Do not broadly retry these without a materially different design or workload:
   audit found N=3/4/5 account for 24.9%/31.4%/23.7% of clips, while bounded incidence falls from
   86% at N=3 to 65% at N=4 and 34% at N=5. LLVM already optimizes the nested dispatch; future work
   should target the N=3-5 kernels rather than rearranging the match.
+- Hoisting exit-intersection coordinate calculation beside the already-paired entry calculation in
+  the N=3-8 small kernels also produced equivalent native codegen (instructions and branches both
+  +0.00004%, mixed pair signs). LLVM already schedules the independent interpolation chains across
+  the survivor-copy loop; source-level reordering adds nothing.
 - Extending the conservative early-unchanged radius certificate from polygon sizes >=5 to N=4
   added 0.12–0.13% retired instructions and 0.28–0.31% branches on 500k single-threaded native
   Fibonacci and uniform, with every one of seven pairs worse on both structural counters. Cycles
