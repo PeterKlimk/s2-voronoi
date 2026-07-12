@@ -189,9 +189,6 @@ measured results above or the retired list below. Do not bundle candidates befor
 
 Promising workload-specific experiments:
 
-- **K2 — specialize shell scanning by cell mode:** remove per-slot global-id loads and mode checks
-  from directed center and non-center loops. Re-run the full directed/unrestricted nearest-neighbor
-  contracts and measure shell-heavy clustered/mega inputs.
 - **K3 — vectorize interior security thresholds:** evaluate the four cell-wall planes in eight-query
   chunks while preserving dot association and nonfinite fallback behavior. Measure
   `packed_security` and compare thresholds bit-for-bit.
@@ -254,6 +251,12 @@ Do not broadly retry these without a materially different design or workload:
   retired instructions on Fibonacci or uniform input and was slightly higher in all Fibonacci
   pairs. The separate pass likely keeps the random inverse-map stores out of the multi-stream AoS
   construction loop; the candidate was reverted.
+- Specializing shell scans by cell mode and slot order: the full version reduced 500k clustered
+  instructions by 1.04% but increased 500k mega instructions by 0.99%. Restricting specialization
+  to the directed center suffix still split −0.95% / +0.80%; requiring at least eight rejected
+  prefix slots split −0.94% / +0.80%. Candidate counts and timing telemetry were identical, so this
+  is a genuine path/codegen tradeoff rather than changed work. All variants were reverted rather
+  than introduce a distribution-sensitive heuristic.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
