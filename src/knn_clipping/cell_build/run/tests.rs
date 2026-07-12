@@ -1,9 +1,9 @@
 use super::failure::classify_terminal_failure;
 use super::fallback_detail;
 use super::{
-    build_cell_into, clip_batch, clip_seed_neighbors, consume_stream, finish_cell, probe_frontier,
-    should_clip_neighbor, AttemptedNeighbors, BuildCounters, BuildTrace, CellBuildContext,
-    CellBuildRequest, StreamPhase,
+    build_cell_into, clip_batch, clip_seed_neighbors, consume_stream, edgecheck_neighbor_idx,
+    finish_cell, probe_frontier, should_clip_neighbor, AttemptedNeighbors, BuildCounters,
+    BuildTrace, CellBuildContext, CellBuildRequest, StreamPhase,
 };
 use crate::cube_grid::{
     CubeMapGrid, DirectedEligibility, DirectedNeighborFrontier, DirectedNeighborStream,
@@ -12,6 +12,13 @@ use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::Topo2DBuilder;
 use crate::knn_clipping::TerminationConfig;
 use glam::Vec3;
+
+#[test]
+fn edgecheck_neighbor_decode_is_orientation_independent() {
+    let key = crate::live_dedup::pack_edge(7, 19);
+    assert_eq!(edgecheck_neighbor_idx(7, key), 19);
+    assert_eq!(edgecheck_neighbor_idx(19, key), 7);
+}
 
 fn octahedron_points() -> Vec<Vec3> {
     vec![Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z]
@@ -75,7 +82,7 @@ fn extraction_writers_replace_poison_and_errors_do_not_consume_it() {
             generator_idx: 0,
             directed_ctx,
             packed: None,
-            seed_neighbors: &[],
+            incoming_checks: &[],
         },
     )
     .expect("gnomonic cell should replace poisoned output");
@@ -102,7 +109,7 @@ fn extraction_writers_replace_poison_and_errors_do_not_consume_it() {
             generator_idx: 0,
             directed_ctx,
             packed: None,
-            seed_neighbors: &[],
+            incoming_checks: &[],
         },
     )
     .expect("fallback cell should replace poisoned output");
@@ -126,7 +133,7 @@ fn extraction_writers_replace_poison_and_errors_do_not_consume_it() {
             generator_idx: 0,
             directed_ctx: failing_directed,
             packed: None,
-            seed_neighbors: &[],
+            incoming_checks: &[],
         },
     );
     assert!(result.is_err());
@@ -288,7 +295,16 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
     ctx.attempted_neighbors.clear();
     ctx.output_buffer.clear();
 
-    clip_seed_neighbors(&mut ctx, points, pos_slots, &[], &mut trace, &mut counters);
+    clip_seed_neighbors(
+        &mut ctx,
+        points,
+        grid,
+        generator_idx as u32,
+        pos_slots,
+        &[],
+        &mut trace,
+        &mut counters,
+    );
 
     {
         let mut stream = DirectedNeighborStream::new(
@@ -429,7 +445,16 @@ fn probe_early_extraction_cell(
     ctx.attempted_neighbors.clear();
     ctx.output_buffer.clear();
 
-    clip_seed_neighbors(&mut ctx, points, pos_slots, &[], &mut trace, &mut counters);
+    clip_seed_neighbors(
+        &mut ctx,
+        points,
+        grid,
+        generator_idx as u32,
+        pos_slots,
+        &[],
+        &mut trace,
+        &mut counters,
+    );
 
     {
         let mut stream = DirectedNeighborStream::new(
@@ -998,7 +1023,7 @@ fn direct_cursor_builds_normal_cell() {
             generator_idx: 0,
             directed_ctx,
             packed: None,
-            seed_neighbors: &[],
+            incoming_checks: &[],
         },
     )
     .expect("cell build should succeed");
@@ -1056,7 +1081,7 @@ fn forced_handoff_mid_build_still_finishes_the_cell() {
             generator_idx: 0,
             directed_ctx,
             packed: None,
-            seed_neighbors: &[],
+            incoming_checks: &[],
         },
     )
     .expect("cell build should succeed even after forced mid-build fallback");

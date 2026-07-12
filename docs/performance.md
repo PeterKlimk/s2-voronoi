@@ -260,6 +260,14 @@ by 1.00%, branches by 2.42%, and cycles by 1.04%. Cachegrind reported 1.04% fewe
 20k Fibonacci. The generic-target build reduced Fibonacci instructions by 0.71%, branches by 2.69%,
 and cycles by 3.86% in all seven pairs.
 
+Cell construction consumes incoming edge checks directly when seeding the clipper instead of first
+copying each check into a temporary `SeedNeighbor` vector. Key orientation, seed order, slot lookup,
+and epsilon bits are unchanged. At 500k single-threaded with native instructions, Fibonacci reduced
+instructions by 0.99% and branches by 0.53% in all nine pairs; cycles fell 2.06% in eight of nine.
+Uniform reduced instructions by 0.94% and branches by 0.47% in all nine pairs, with neutral cycles.
+The 100k mega case reduced instructions by 0.22% in all seven pairs. The generic-target Fibonacci
+build reduced instructions by 0.80% and branches by 0.41% in all seven pairs, with neutral cycles.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated

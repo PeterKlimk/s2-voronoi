@@ -12,4 +12,4 @@ mod run;
 // so existing paths keep working.
 pub use crate::live_dedup::{CellBuildError, CellFailure, CellOutputBuffer, VertexKey};
 
-pub(crate) use run::{build_cell_into, CellBuildContext, CellBuildRequest, SeedNeighbor};
+pub(crate) use run::{build_cell_into, CellBuildContext, CellBuildRequest};

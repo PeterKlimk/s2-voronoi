@@ -11,13 +11,11 @@ use crate::cube_grid::packed_knn::{
     PreparedPackedGroupStatus,
 };
 use crate::cube_grid::{CubeMapGrid, PackedQuery};
-use crate::knn_clipping::cell_build::{
-    build_cell_into, CellBuildContext, CellBuildRequest, SeedNeighbor,
-};
+use crate::knn_clipping::cell_build::{build_cell_into, CellBuildContext, CellBuildRequest};
 use crate::knn_clipping::TerminationConfig;
 use crate::live_dedup::{
-    assign_bins, checked_local_id, checked_u32, emit_cell_output, unpack_edge_key, BinId,
-    BuildCellsError, EdgeScratch, ShardContext, ShardState, ShardedCellsData,
+    assign_bins, checked_local_id, checked_u32, emit_cell_output, BinId, BuildCellsError,
+    EdgeScratch, ShardContext, ShardState, ShardedCellsData,
 };
 use crate::packed_layout::PackedSlotLayout;
 
@@ -27,19 +25,14 @@ pub(super) struct GridContext<'a> {
     pub(super) assignment: &'a crate::live_dedup::BinAssignment,
 }
 
-/// Per-worker scratch: the shared edge-emission state plus the sphere
-/// driver's seed-neighbor staging (formerly live_dedup's
-/// LiveDedupCellScratch; each driver owns its seed storage now).
 struct SphereCellScratch {
     edge_scratch: EdgeScratch,
-    seed_neighbors: Vec<SeedNeighbor>,
 }
 
 impl SphereCellScratch {
-    fn new(num_points: usize) -> Self {
+    fn new() -> Self {
         Self {
             edge_scratch: EdgeScratch::new(),
-            seed_neighbors: Vec::with_capacity(num_points.min(16)),
         }
     }
 }
@@ -67,7 +60,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
 
                 let mut sub_accum = CellSubAccum::new();
                 let mut build_ctx = CellBuildContext::new(grid, policy);
-                let mut live_ctx = SphereCellScratch::new(grid.point_indices().len());
+                let mut live_ctx = SphereCellScratch::new();
                 let vertex_capacity = my_generators.len().saturating_mul(6);
                 shard.output.vertices.reserve(vertex_capacity);
                 shard.output.vertex_keys.reserve(vertex_capacity);
@@ -276,18 +269,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
         .set_cell_start(shard_ctx.local, cell_start);
 
     let incoming_checks = shard_ctx.shard.dedup.take_edge_checks(shard_ctx.local);
-    live_ctx.seed_neighbors.clear();
     let cell_idx = checked_u32(generator_idx, "generator index")?;
-    for check in &incoming_checks {
-        let (a, b) = unpack_edge_key(check.key);
-        let neighbor_idx = if a == cell_idx { b } else { a } as usize;
-        let neighbor_slot = grid_ctx.grid.point_index_to_slot(neighbor_idx);
-        live_ctx.seed_neighbors.push(SeedNeighbor {
-            neighbor_idx,
-            neighbor_slot,
-            hp_eps: check.hp_eps,
-        });
-    }
 
     let directed_ctx = crate::cube_grid::DirectedEligibility::from_layout(
         shard_ctx.bin.as_u8(),
@@ -306,7 +288,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
             generator_idx,
             directed_ctx,
             packed,
-            seed_neighbors: &live_ctx.seed_neighbors,
+            incoming_checks: &incoming_checks,
         },
     )
     .map_err(BuildCellsError::CellBuild)?;

@@ -27,7 +27,7 @@ pub(crate) use packed::pack_edge;
 pub(crate) use shard::ShardState;
 pub(crate) use types::BinId;
 pub use types::UnresolvedEdgeOrigin;
-pub(crate) use types::{EdgeKey, EdgeRecord, UnresolvedEdgeMismatch, VertexPosition};
+pub(crate) use types::{EdgeCheck, EdgeKey, EdgeRecord, UnresolvedEdgeMismatch, VertexPosition};
 
 /// Per-shard vertex keys kept un-concatenated.
 ///

@@ -12,6 +12,7 @@ use crate::knn_clipping::topo2d::types::MAX_POLY_VERTICES;
 use crate::knn_clipping::topo2d::{
     BuilderClipOutcome, BuilderFallbackRequest, BuilderFallbackTrigger, BuilderStepOutcome,
 };
+use crate::live_dedup::{unpack_edge_key, EdgeCheck};
 use crate::policy::PackedNeighborPolicy;
 
 use super::{CellBuildError, CellFailure, CellOutputBuffer};
@@ -124,20 +125,13 @@ fn maybe_force_fallback(
     *force_fallback_after_neighbors_processed = None;
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct SeedNeighbor {
-    pub(crate) neighbor_idx: usize,
-    pub(crate) neighbor_slot: u32,
-    pub(crate) hp_eps: f32,
-}
-
 pub(crate) struct CellBuildRequest<'a, 'm, 'p, 'g, 's> {
     pub(crate) points: &'a [Vec3],
     pub(crate) grid: &'a crate::cube_grid::CubeMapGrid,
     pub(crate) generator_idx: usize,
     pub(crate) directed_ctx: crate::cube_grid::DirectedEligibility<'m>,
     pub(crate) packed: Option<PackedQuery<'p, 'g, 'm>>,
-    pub(crate) seed_neighbors: &'s [SeedNeighbor],
+    pub(crate) incoming_checks: &'s [EdgeCheck],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -426,36 +420,46 @@ struct StreamPhase<'x> {
     force_fallback_after_neighbors_processed: &'x mut Option<usize>,
 }
 
+#[inline(always)]
+fn edgecheck_neighbor_idx(cell_idx: u32, key: crate::live_dedup::EdgeKey) -> usize {
+    let (a, b) = unpack_edge_key(key);
+    (if a == cell_idx { b } else { a }) as usize
+}
+
 /// Phase 1: clip edge-check seed constraints forwarded by earlier same-bin
 /// cells (see "The stitching invariant" in docs/architecture.md).
 fn clip_seed_neighbors(
     ctx: &mut CellBuildContext,
     points: &[Vec3],
+    grid: &crate::cube_grid::CubeMapGrid,
+    cell_idx: u32,
     pos_slots: &[crate::cube_grid::SlotPoint],
-    seed_neighbors: &[SeedNeighbor],
+    incoming_checks: &[EdgeCheck],
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
 ) {
-    if seed_neighbors.is_empty() {
+    if incoming_checks.is_empty() {
         return;
     }
     let t_clip = crate::knn_clipping::timing::Timer::start();
-    for seed in seed_neighbors {
-        trace.last_neighbor_idx = Some(seed.neighbor_idx);
-        trace.last_neighbor_slot = Some(seed.neighbor_slot);
+    for check in incoming_checks {
+        let neighbor_idx = edgecheck_neighbor_idx(cell_idx, check.key);
+        let neighbor_slot = grid.point_index_to_slot(neighbor_idx);
+        trace.last_neighbor_idx = Some(neighbor_idx);
+        trace.last_neighbor_slot = Some(neighbor_slot);
         trace.last_batch_source = None;
         trace.last_clip_phase = "edgecheck_seed";
 
-        if !ctx.attempted_neighbors.insert(seed.neighbor_slot as usize) {
+        if !ctx.attempted_neighbors.insert(neighbor_slot as usize) {
             continue;
         }
 
-        let neighbor = pos_slots[seed.neighbor_slot as usize].pos;
+        let neighbor = pos_slots[neighbor_slot as usize].pos;
         let fallback_rejected = match ctx.builder.clip_with_slot_edgecheck_policy(
-            seed.neighbor_idx,
-            seed.neighbor_slot,
+            neighbor_idx,
+            neighbor_slot,
             neighbor,
-            seed.hp_eps,
+            check.hp_eps,
         ) {
             Ok(BuilderStepOutcome::Applied) => false,
             Ok(BuilderStepOutcome::NeedsFallback(request)) => {
@@ -802,8 +806,10 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     clip_seed_neighbors(
         ctx,
         points,
+        grid,
+        generator_idx as u32,
         pos_slots,
-        request.seed_neighbors,
+        request.incoming_checks,
         &mut trace,
         &mut counters,
     );
@@ -863,7 +869,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         fallback_projection: counters.fallback_projection,
         fallback_polygon_cap: counters.fallback_polygon_cap,
         fallback_all_constraints: counters.fallback_all_constraints,
-        incoming_seed_neighbors: request.seed_neighbors.len(),
+        incoming_seed_neighbors: request.incoming_checks.len(),
         edgecheck_seed_clips: counters.edgecheck_seed_clips,
         knn_exhausted: counters.knn_exhausted,
         used_knn: counters.used_knn,
