@@ -1,4 +1,3 @@
-use super::projection::MIN_PROJECTION_COS;
 use super::{
     BuilderClipOutcome, BuilderImpl, BuilderStepOutcome, FallbackBuilder, GnomonicBuilder,
     GnomonicConstraint, SphericalPoly, SphericalPolyVertex, Topo2DBuilder,
@@ -65,8 +64,7 @@ impl GnomonicBuilder {
             return Err(CellFailure::ClippedAway);
         }
         if !poly.has_bounding_ref()
-            && (!poly.max_r2.is_finite()
-                || self.chart_min_cos_bound(poly.max_r2) <= MIN_PROJECTION_COS)
+            && (!poly.max_r2.is_finite() || self.exceeds_projection_limit(poly.max_r2))
         {
             self.failed = Some(CellFailure::ProjectionInvalid);
             return Err(CellFailure::ProjectionInvalid);

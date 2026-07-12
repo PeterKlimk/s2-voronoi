@@ -236,6 +236,23 @@ impl GnomonicBuilder {
         1.0 / (1.0 + max_r2 * self.chart_metric_r2_scale).sqrt()
     }
 
+    /// Whether the metric-corrected chart radius reaches the projection
+    /// limit. `MIN_PROJECTION_COS` is exactly 2^-20, so the first rejecting
+    /// representable input to `1 / sqrt(x) <= MIN_PROJECTION_COS` is exactly
+    /// x = 2^40. Keep the termination certificate on the cosine form above;
+    /// this squared comparison only replaces the projection-limit predicate.
+    #[inline]
+    pub(super) fn exceeds_projection_limit(&self, max_r2: f64) -> bool {
+        Self::projection_metric_exceeds_limit(1.0 + max_r2 * self.chart_metric_r2_scale)
+    }
+
+    #[inline]
+    pub(super) fn projection_metric_exceeds_limit(metric_r2_plus_one: f64) -> bool {
+        // Both operations are exact for the current power-of-two cosine.
+        const LIMIT: f64 = 1.0 / (MIN_PROJECTION_COS * MIN_PROJECTION_COS);
+        metric_r2_plus_one >= LIMIT
+    }
+
     #[inline]
     pub(super) fn is_bounded(&self) -> bool {
         !self.current_poly().has_bounding_ref()

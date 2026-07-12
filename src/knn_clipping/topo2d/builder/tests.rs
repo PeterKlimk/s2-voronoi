@@ -88,6 +88,21 @@ fn changed_clip_fails_when_bounded_polygon_reaches_projection_limit() {
 }
 
 #[test]
+fn squared_projection_limit_matches_legacy_boundary() {
+    let limit = 1_099_511_627_776.0_f64;
+    assert_eq!(MIN_PROJECTION_COS, 2.0_f64.powi(-20));
+    for bits in (limit.to_bits() - 4)..=(limit.to_bits() + 4) {
+        let metric = f64::from_bits(bits);
+        let legacy = metric.sqrt().recip() <= MIN_PROJECTION_COS;
+        assert_eq!(
+            GnomonicBuilder::projection_metric_exceeds_limit(metric),
+            legacy,
+            "projection boundary mismatch at {metric:?}"
+        );
+    }
+}
+
+#[test]
 fn changed_clip_allows_bounded_polygon_inside_projection_limit() {
     let mut builder = Topo2DBuilder::new(0, Vec3::Z);
     let gnomonic = builder.as_gnomonic_mut();
