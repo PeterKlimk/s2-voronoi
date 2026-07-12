@@ -314,6 +314,11 @@ Do not broadly retry these without a materially different design or workload:
   and cycles regressed 2.28% in eight of nine pairs. Uniform showed none of that cache penalty, but
   the ordinary Fibonacci regression rejects the wider AoS record; keep the hot half-plane stream
   separate from extraction metadata.
+- Extending the conservative early-unchanged radius certificate from polygon sizes >=5 to N=4
+  added 0.12–0.13% retired instructions and 0.28–0.31% branches on 500k single-threaded native
+  Fibonacci and uniform, with every one of seven pairs worse on both structural counters. Cycles
+  were noisy and distribution-dependent. Keep the >=5 cutoff: four-lane classification is cheap
+  enough that rare N=4 certificate hits do not repay the scalar precheck.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
