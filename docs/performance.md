@@ -203,6 +203,13 @@ pairs and two of three uniform pairs, with the third uniform pair neutral; hardw
 were lower in all six pairs. This is a latency win from removing a balanced sign branch, not an
 instruction-count optimization.
 
+Assembly pre-sums shard bookkeeping lengths and reserves exact aggregate capacity before appending
+overflow checks and deferred slots; unresolved edges reserve only when nonempty. At 500k Fibonacci
+with 96 bins this removed eight growth reallocations from each active vector, eliminated about
+3.14 MB and 1.70 MB of recopied overflow/deferred payload, and reduced final capacities from
+79,936/54,656 to the exact 61,504/42,360 entries. Fixed-work instructions and peak RSS were neutral;
+cycles were neutral-to-lower. This is an allocation/capacity win, not a demonstrated total-time win.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -211,9 +218,6 @@ measured results above or the retired list below. Do not bundle candidates befor
 
 Promising workload-specific experiments:
 
-- **D2 — reserve aggregate assembly vectors:** sum shard lengths before appending unresolved edges,
-  overflow checks, and deferred slots. Measure allocation counts, cycles, and peak RSS at high bin
-  counts; reject if the reservation merely increases simultaneous memory.
 - **D3 — compact high-degree consumed flags:** replace the per-cell byte vector above 64 incoming
   checks with reusable bit words. First instrument activation frequency; ordinary cells should stay
   on the existing inline mask.

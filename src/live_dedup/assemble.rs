@@ -61,6 +61,50 @@ fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
     Ok(())
 }
 
+struct CollectedShardBookkeeping<P> {
+    unresolved_edges: Vec<UnresolvedEdgeMismatch>,
+    edge_check_overflow: Vec<EdgeCheckOverflow>,
+    deferred_slots: Vec<DeferredSlot<P>>,
+}
+
+fn collect_shard_bookkeeping<P: super::types::VertexPosition>(
+    shards: &mut [super::shard::ShardState<P>],
+) -> CollectedShardBookkeeping<P> {
+    let unresolved_total: usize = shards
+        .iter()
+        .map(|shard| shard.output.unresolved_edges.len())
+        .sum();
+    let overflow_total: usize = shards
+        .iter()
+        .map(|shard| shard.output.edge_check_overflow.len())
+        .sum();
+    let deferred_total: usize = shards
+        .iter()
+        .map(|shard| shard.output.deferred_slots.len())
+        .sum();
+
+    let mut unresolved_edges = Vec::new();
+    if unresolved_total != 0 {
+        unresolved_edges.reserve_exact(unresolved_total);
+    }
+    let mut edge_check_overflow = Vec::new();
+    edge_check_overflow.reserve_exact(overflow_total);
+    let mut deferred_slots = Vec::new();
+    deferred_slots.reserve_exact(deferred_total);
+
+    for shard in shards {
+        unresolved_edges.append(&mut shard.output.unresolved_edges);
+        edge_check_overflow.append(&mut shard.output.edge_check_overflow);
+        deferred_slots.append(&mut shard.output.deferred_slots);
+    }
+
+    CollectedShardBookkeeping {
+        unresolved_edges,
+        edge_check_overflow,
+        deferred_slots,
+    }
+}
+
 pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     mut data: ShardedCellsData<P>,
 ) -> Result<super::AssemblyResult<P>, crate::VoronoiError> {
@@ -72,14 +116,11 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     let overflow_collect_time = t0.elapsed();
     let t1 = Timer::start();
 
-    let mut unresolved_edges: Vec<UnresolvedEdgeMismatch> = Vec::new();
-    let mut edge_check_overflow: Vec<EdgeCheckOverflow> = Vec::new();
-    let mut deferred_slots: Vec<DeferredSlot<P>> = Vec::new();
-    for shard in &mut data.shards {
-        unresolved_edges.append(&mut shard.output.unresolved_edges);
-        edge_check_overflow.append(&mut shard.output.edge_check_overflow);
-        deferred_slots.append(&mut shard.output.deferred_slots);
-    }
+    let CollectedShardBookkeeping {
+        mut unresolved_edges,
+        mut edge_check_overflow,
+        deferred_slots,
+    } = collect_shard_bookkeeping(&mut data.shards);
 
     let overflow_timing = resolve_edge_check_overflow(
         &mut data.shards,
@@ -420,6 +461,55 @@ mod tests {
 
     fn bin(value: usize) -> BinId {
         BinId::from_usize(value)
+    }
+
+    #[test]
+    fn shard_bookkeeping_collection_reserves_drains_and_preserves_order() {
+        let mut shards = vec![ShardState::<Vec3>::new(0), ShardState::<Vec3>::new(0)];
+        for (ordinal, shard) in shards.iter_mut().enumerate() {
+            let key = pack_edge(ordinal as u32, ordinal as u32 + 10);
+            shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
+                key,
+                origin: UnresolvedEdgeOrigin::InBinMissingCheck,
+            });
+            shard.output.edge_check_overflow.push(EdgeCheckOverflow {
+                key,
+                side: ordinal as u8,
+                source_bin: bin(ordinal),
+                thirds: [1, 2],
+                indices: [3, 4],
+                slots: [5, 6],
+            });
+            shard.output.deferred_slots.push(DeferredSlot {
+                key: [ordinal as u32, 20, 30],
+                pos: Vec3::new(ordinal as f32, 0.0, 1.0),
+                source_bin: bin(ordinal),
+                source_slot: ordinal as u32,
+            });
+        }
+
+        let collected = collect_shard_bookkeeping(&mut shards);
+
+        assert_eq!(collected.unresolved_edges.len(), 2);
+        assert_eq!(collected.edge_check_overflow.len(), 2);
+        assert_eq!(collected.deferred_slots.len(), 2);
+        assert!(collected.unresolved_edges.capacity() >= 2);
+        assert!(collected.edge_check_overflow.capacity() >= 2);
+        assert!(collected.deferred_slots.capacity() >= 2);
+        assert_eq!(collected.unresolved_edges[0].key, pack_edge(0, 10));
+        assert_eq!(collected.unresolved_edges[1].key, pack_edge(1, 11));
+        assert_eq!(collected.edge_check_overflow[0].source_bin, bin(0));
+        assert_eq!(collected.edge_check_overflow[1].source_bin, bin(1));
+        assert_eq!(collected.deferred_slots[0].key[0], 0);
+        assert_eq!(collected.deferred_slots[1].key[0], 1);
+        for shard in &shards {
+            assert!(shard.output.unresolved_edges.is_empty());
+            assert!(shard.output.edge_check_overflow.is_empty());
+            assert!(shard.output.deferred_slots.is_empty());
+        }
+
+        let empty_unresolved = collect_shard_bookkeeping(&mut shards);
+        assert_eq!(empty_unresolved.unresolved_edges.capacity(), 0);
     }
 
     #[test]
