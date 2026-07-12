@@ -314,14 +314,6 @@ Promising workload-specific experiments:
 
 Assembly/live-dedup swarm backlog (2026-07-13):
 
-- **Measure, then reduce owned-output reserve:** shard output currently reserves six positions and
-  vertex keys per local generator although total spherical output is ordinarily near two vertices
-  per generator. Instrument per-shard `len`, capacity, and reallocations across bin counts,
-  distributions, thread counts, and irregular inputs before choosing a factor: ownership by the
-  minimum endpoint key can skew individual shards, so the global ratio does not prove that 2x or 3x
-  is safe without reallocation. Track RSS and cache effects separately from retired work; 3x and 4x
-  are candidates, not established bounds. The six-per-generator cell-index reserve is normally
-  accurate and is not part of this experiment.
 - **Reuse final cell metadata as the prefix table:** `cell_starts_global` stores the same start/count
   information later written to `VoronoiCell`. Writing cell metadata once during the checked prefix
   pass and reading it during scatter could remove about four bytes per generator plus a stream and
@@ -373,6 +365,15 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Reducing the live-dedup position/key reserve from six to three or four entries per local generator
+  is a valid memory/performance tradeoff, but not a default speed win. A 1M sweep over Fibonacci,
+  uniform, clustered, and a successful 500k mega case found no shard above 2.03 owned vertices per
+  local generator, so neither factor reallocated. At 96 bins, 3x reduced peak RSS by 29--33 MB and
+  minor faults by 7--10%, but added 0.025% instructions/0.030% branches on Fibonacci and about
+  0.005%/0.004% on uniform. The 4x form saved only 12--13 MB and 2--4% of faults while still adding
+  roughly 0.006% Fibonacci instructions/branches; uniform was neutral. Six bins showed essentially
+  no RSS or counter effect. Retain 6x for the speed-oriented default; revisit a smaller factor only
+  as an explicit memory-mode policy.
 - Per-(ring cell, query) spherical-cap pruning: adjacent caps rarely prune; measured net loss.
 - Packed-to-shell attempted-slot filtering: low duplicate coverage and extra branching.
 - Scalar shell dot-only SIMD: measured 6.5–8.5% slower.
