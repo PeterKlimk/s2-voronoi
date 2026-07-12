@@ -208,6 +208,20 @@ fn extraction_failure_reports_invalid_vertex_plane_metadata() {
     gnomonic.poly_b.edge_planes[2] = INVALID_PLANE_ID;
     gnomonic.use_a = false;
 
+    let mut buffer = CellOutputBuffer::default();
+    buffer.vertices.push(([u32::MAX; 3], Vec3::X));
+    buffer.edge_neighbor_globals.push(u32::MAX);
+    buffer.edge_neighbor_slots.push(u32::MAX);
+    buffer.edge_neighbor_eps.push(f32::INFINITY);
+    assert_eq!(
+        gnomonic.to_vertex_data_full(&mut buffer),
+        Err(crate::knn_clipping::cell_build::CellFailure::NoValidSeed)
+    );
+    assert!(buffer.vertices.is_empty());
+    assert!(buffer.edge_neighbor_globals.is_empty());
+    assert!(buffer.edge_neighbor_slots.is_empty());
+    assert!(buffer.edge_neighbor_eps.is_empty());
+
     assert_eq!(
         builder.debug_extraction_failure(),
         Some(ExtractionInvariantFailure::InvalidVertexPlane {

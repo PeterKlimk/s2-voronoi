@@ -54,6 +54,15 @@ impl GnomonicBuilder {
         }
 
         buffer.clear();
+        buffer.vertices.reserve(poly.len);
+        buffer.edge_neighbor_globals.reserve(poly.len);
+        buffer.edge_neighbor_slots.reserve(poly.len);
+        buffer.edge_neighbor_eps.reserve(poly.len);
+
+        let vertices = buffer.vertices.spare_capacity_mut();
+        let edge_neighbor_globals = buffer.edge_neighbor_globals.spare_capacity_mut();
+        let edge_neighbor_slots = buffer.edge_neighbor_slots.spare_capacity_mut();
+        let edge_neighbor_eps = buffer.edge_neighbor_eps.spare_capacity_mut();
 
         let gen_idx = self.generator_idx as u32;
         for i in 0..poly.len {
@@ -96,13 +105,13 @@ impl GnomonicBuilder {
             let n1 = n1 as u32;
             let n2 = n2 as u32;
             let key = sort3_u32(gen_idx, n1, n2);
-            buffer.vertices.push((key, v_pos));
+            vertices[i].write((key, v_pos));
 
             let edge_plane = poly.edge_planes[i];
             if edge_plane == INVALID_PLANE_ID {
-                buffer.edge_neighbor_globals.push(u32::MAX);
-                buffer.edge_neighbor_slots.push(u32::MAX);
-                buffer.edge_neighbor_eps.push(0.0);
+                edge_neighbor_globals[i].write(u32::MAX);
+                edge_neighbor_slots[i].write(u32::MAX);
+                edge_neighbor_eps[i].write(0.0);
             } else {
                 let edge_plane = edge_plane as usize;
                 let Some(&edge_neighbor) = self.neighbor_indices.get(edge_plane) else {
@@ -114,10 +123,19 @@ impl GnomonicBuilder {
                 let Some(edge_hp) = self.half_planes.get(edge_plane) else {
                     return Err(CellFailure::NoValidSeed);
                 };
-                buffer.edge_neighbor_globals.push(edge_neighbor as u32);
-                buffer.edge_neighbor_slots.push(edge_slot);
-                buffer.edge_neighbor_eps.push(edge_hp.eps as f32);
+                edge_neighbor_globals[i].write(edge_neighbor as u32);
+                edge_neighbor_slots[i].write(edge_slot);
+                edge_neighbor_eps[i].write(edge_hp.eps as f32);
             }
+        }
+        // Every spare-capacity slot above is initialized on success. On any
+        // earlier error the public lengths remain zero, so partial output is
+        // neither observed nor dropped as initialized data.
+        unsafe {
+            buffer.vertices.set_len(poly.len);
+            buffer.edge_neighbor_globals.set_len(poly.len);
+            buffer.edge_neighbor_slots.set_len(poly.len);
+            buffer.edge_neighbor_eps.set_len(poly.len);
         }
         // The incremental clip keeps vertex plane pairs and edge planes in
         // lockstep (a clip's entry/exit vertices carry the pair {crossed

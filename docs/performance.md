@@ -236,6 +236,15 @@ production builds. On 500k single-threaded Fibonacci with native instructions, t
 dropped from 9.39B to 7.07B instructions and from 5.09B to 3.75B cycles. All audit counters were
 unchanged, including 1,300,400 support tests, 112,559 hits, and zero false positives.
 
+Gnomonic extraction writes its four parallel outputs into reserved spare capacity and publishes all
+four vector lengths once after every vertex validates. This removes four capacity branches and four
+length updates per output vertex while keeping partially initialized output unobservable on error.
+At 500k single-threaded with native instructions, Fibonacci retired instructions fell 1.59% in all
+nine pairs and cycles fell 1.13% in seven of nine; uniform instructions fell 1.49% in all seven
+pairs and cycles fell 2.50% in six of seven. Cachegrind independently measured 1.58% fewer
+instructions at 20k Fibonacci. Without native instructions, Fibonacci instructions fell 1.75% in
+all seven pairs while cycles were neutral. Valgrind Memcheck reported no errors end to end.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
