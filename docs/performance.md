@@ -319,6 +319,10 @@ Do not broadly retry these without a materially different design or workload:
   Fibonacci and uniform, with every one of seven pairs worse on both structural counters. Cycles
   were noisy and distribution-dependent. Keep the >=5 cutoff: four-lane classification is cheap
   enough that rare N=4 certificate hits do not repay the scalar precheck.
+- Rewriting the incoming edge-check linear search from `position` plus indexed copy to an
+  enumerated copied `find` produced identical retired instructions and branches (ratios
+  0.999999–1.000000) on 500k native Fibonacci and uniform. LLVM already eliminates the apparent
+  redundant lookup; cycle movement split by distribution and was layout noise.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
