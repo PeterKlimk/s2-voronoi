@@ -310,6 +310,15 @@ branches fell 0.125% and 0.113%; all six pairs agreed. Generic-target instructio
 0.159%/0.148% and branches 0.121%/0.110% across four agreeing pairs. Cycles favored the candidate in
 four of six native pairs per distribution and were mixed in generic trials.
 
+Cross-bin overflow checks sort by their scalar edge key rather than `(key, side)`. Resolution only
+needs contiguous equal-key runs: side equality and reverse-winding patching are symmetric for the
+normal two-record run, while duplicate runs of three or more are deferred without selecting a pair.
+At 1M, ordinary 6-bin Fibonacci/uniform inputs contained 18.9k/17.8k overflow records and reduced
+native retired instructions by 0.032%/0.026%. With 96 bins, 85.8k/83.8k records increased the gain to
+0.163%/0.142%. All four structural pairs agreed in each regime; generic-target builds showed the
+same scaling. Branch reductions were smaller, and cycles ranged from mixed to favorable on the noisy
+host.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -329,13 +338,10 @@ Assembly/live-dedup swarm backlog (2026-07-13):
   lower transient live heap by about 12 bytes per output vertex. Retain per-shard spans for debug
   bounds checks and measure allocator live bytes as well as peak RSS, since the allocator may retain
   freed pages. This is principally a memory-envelope experiment.
-- **Sort overflow edge checks by key only:** two independent audits found that side order is not
-  needed: two-record reconciliation is symmetric, same-side detection tests equality, and runs of
-  three or more are deferred as a whole. First instrument overflow record counts, key-run sizes, and
-  sort time at low and high bin counts; the path may be too cold for a whole-build gain. Compare
-  validation, repair summaries, and unresolved-record ordering as well as performance. If whole
-  40-byte record swaps dominate, a later experiment may sort compact key/side/index handles, trading
-  swap traffic for indirect record reads.
+- **Sort compact overflow handles:** whole 40-byte overflow records are still moved during the
+  key-only sort. Sorting compact key/index handles could reduce swap traffic at high bin counts, but
+  trades it for indirect record reads during resolution. Attribute it separately from the accepted
+  scalar-key comparator and preserve the same run-order independence.
 - **Pack deferred source location:** `DeferredSlot` may be reducible from roughly 32 to 24 bytes by
   packing `source_bin` and `source_slot`. Audit representation limits and preserve exact fallback
   owner/slot mapping; measure deferred counts and memory traffic because the fallback itself is

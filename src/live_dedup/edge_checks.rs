@@ -420,7 +420,9 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
     unresolved_edges: &mut Vec<UnresolvedEdgeMismatch>,
 ) -> OverflowResolveTiming {
     let t_edge_sort = Timer::start();
-    edge_check_overflow.sort_unstable_by_key(|entry| (entry.key, entry.side));
+    // Resolution only requires contiguous equal-key runs. Within a two-record run, side equality
+    // and reverse-winding endpoint patching are symmetric; larger runs are deferred as a whole.
+    edge_check_overflow.sort_unstable_by_key(|entry| entry.key);
     let edge_checks_overflow_sort_time = t_edge_sort.elapsed();
 
     let t_edge_match = Timer::start();
