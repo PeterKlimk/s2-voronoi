@@ -408,6 +408,11 @@ Do not broadly retry these without a materially different design or workload:
   binary text by about 880 bytes and regressed 1M native Fibonacci instructions 0.851% and branches
   0.691% in all 15 pairs (cycles +3.99%). The guarded path is not cold enough across real ordinary
   and edge-check clips, and LLVM's inline cross-specialization layout is superior; retain it inline.
+- Compile-time strict-epsilon specialization removed 1.13% whole-build instructions and 1.79%
+  branches on native 1M Fibonacci, but duplicated about 26 KiB of clip dispatch text. Over 45 pairs,
+  cache references rose 31.85% in every pair and cycles regressed 1.51% (all thirds and both orders
+  worse). Restricting strict arithmetic to N=3/4 did not narrow the binary because forced inlining
+  still copied the full dispatch and regressed cycles 2.51%; retain the compact runtime epsilon guard.
 - Extending the conservative early-unchanged radius certificate from polygon sizes >=5 to N=4
   added 0.12–0.13% retired instructions and 0.28–0.31% branches on 500k single-threaded native
   Fibonacci and uniform, with every one of seven pairs worse on both structural counters. Cycles
