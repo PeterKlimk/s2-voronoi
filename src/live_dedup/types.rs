@@ -220,8 +220,9 @@ pub(super) struct EdgeToLater {
     pub(super) key: EdgeKey,
     pub(super) local_b: LocalId,
     pub(super) locals: [u8; 2],
-    pub(crate) hp_eps: f32,
 }
+
+const _: () = assert!(std::mem::size_of::<EdgeToLater>() == 16);
 
 /// Flattened for size: 16 bytes instead of 24.
 /// Layout: key (8) + locals (2) + side (1) + 5 padding = 16

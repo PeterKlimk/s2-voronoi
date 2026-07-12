@@ -67,6 +67,7 @@ impl EdgeScratch {
         &mut self,
         shard: &mut ShardState<P>,
         cell_vertices: &[VertexData<P>],
+        edge_neighbor_eps: &[f32],
         cell_start: u32,
         bin: BinId,
         keys_verified: bool,
@@ -74,6 +75,7 @@ impl EdgeScratch {
         use super::edge_checks::thirds_for_emit;
 
         let vertex_count = assert_endpoint_lengths(cell_vertices, self.vertex_indices.len());
+        debug_assert_eq!(edge_neighbor_eps.len(), vertex_count);
 
         // These scratch records are Copy and own no resources. Iterating by
         // copy avoids Drain's per-element/unwind bookkeeping; successful
@@ -98,6 +100,7 @@ impl EdgeScratch {
                     *self.vertex_indices.get_unchecked(b),
                 ]
             };
+            let hp_eps = unsafe { *edge_neighbor_eps.get_unchecked(a) };
             let thirds = thirds_for_emit(
                 keys_verified,
                 &mut shard.output.unresolved_edges,
@@ -108,7 +111,7 @@ impl EdgeScratch {
                 entry.local_b,
                 EdgeCheck {
                     key: entry.key,
-                    hp_eps: entry.hp_eps,
+                    hp_eps,
                     thirds,
                     indices,
                 },
@@ -283,6 +286,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
     scratch.emit(
         shard,
         &output_buffer.vertices,
+        &output_buffer.edge_neighbor_eps,
         cell_start,
         bin,
         output_buffer.edge_keys_verified,

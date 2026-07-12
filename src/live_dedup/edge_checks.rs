@@ -224,7 +224,6 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     let cell_vertices = &output_buffer.vertices;
     let edge_neighbor_slots = &output_buffer.edge_neighbor_slots;
     let edge_neighbor_globals = &output_buffer.edge_neighbor_globals;
-    let edge_neighbor_eps = &output_buffer.edge_neighbor_eps;
     let keys_verified = output_buffer.edge_keys_verified;
 
     let n = assert_cell_output_lengths(output_buffer, vertex_indices.len());
@@ -278,8 +277,6 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
 
         let locals = [i as u8, j as u8];
         let edge_key = pack_edge(cell_idx, neighbor);
-        let hp_eps = unsafe { *edge_neighbor_eps.get_unchecked(i) };
-
         let (bin_b, local_b) = layout.bin_local(slot);
         let bin_b = BinId::from(bin_b);
         let local_b = LocalId::from(local_b);
@@ -298,7 +295,6 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                 key: edge_key,
                 local_b,
                 locals,
-                hp_eps,
             });
         } else {
             // Edge to earlier neighbor → resolve immediately.
