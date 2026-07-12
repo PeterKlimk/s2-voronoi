@@ -383,6 +383,12 @@ Do not broadly retry these without a materially different design or workload:
   into one branchless-looking `u64` added 0.017% instructions, 0.215% branches, and 0.39% cycles.
   The original rotate/AND/two-`tzcnt` sequence is superior. A 1M mask audit also found no single
   dominant mixed mask, so a narrow pattern fast path is not justified.
+- Evaluating only three scalar signed distances in the N=3 production clip kernel, while retaining
+  its existing mask, escalation, guarded interpolation, and output paths, regressed the native
+  clip microbench in both regimes: mixed clips moved from about 20.6 to 23.5 ns/call and unchanged
+  clips from about 4.7 to 6.2 ns/call. AVX2's four-lane evaluation is cheaper even with one dead
+  lane. The faster retained scalar reference omits other production work and is not a valid kernel
+  substitute.
 - Caching the promoted generator norm once per cell removed repeated square roots from termination
   cache rebuilds and reduced native instructions 0.114% in all 60 pairs at 1M Fibonacci. However,
   the added builder field regressed cycles 1.98% (thirds +0.26%/+3.44%/+2.26%; both execution orders
