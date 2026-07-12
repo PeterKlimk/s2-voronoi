@@ -116,6 +116,15 @@ impl Dots8 {
     }
 }
 
+/// Convert eight positive finite inward-plane distances to conservative
+/// outside-dot thresholds. The returned mask marks lanes where this interior
+/// formula is valid; callers retain their geometric fallback for other lanes.
+#[inline(always)]
+#[cfg(any(test, all(target_feature = "avx2", not(feature = "simd_scalar"))))]
+pub(crate) fn interior_security_thresholds8(s_min: [f32; 8], pad: f32) -> ([f32; 8], u32) {
+    backend::interior_security_thresholds8(backend::load_array(s_min), pad)
+}
+
 /// Signed distances of the first 8 polygon vertices to a half-plane
 /// (`fma_f64(a, u, fma_f64(b, v, c))`, lane-exact with the scalar formula)
 /// plus the inside bitmask (`d >= neg_eps`, lane i -> bit i).
@@ -152,6 +161,8 @@ pub(crate) fn signed_dists_mask4(
 
 #[cfg(not(feature = "simd_scalar"))]
 mod backend {
+    #[cfg(any(test, target_feature = "avx2"))]
+    use wide::CmpLe;
     use wide::{f32x8, f64x4, CmpGe, CmpGt};
 
     pub(super) type V = f32x8;
@@ -185,6 +196,16 @@ mod backend {
     #[inline(always)]
     pub(super) fn to_array(v: V) -> [f32; 8] {
         v.to_array()
+    }
+
+    #[inline(always)]
+    #[cfg(any(test, target_feature = "avx2"))]
+    pub(super) fn interior_security_thresholds8(v: V, pad: f32) -> ([f32; 8], u32) {
+        let zero = f32x8::ZERO;
+        let valid = v.cmp_gt(zero) & v.abs().cmp_le(f32x8::splat(f32::MAX));
+        let s = (v - f32x8::splat(pad)).max(zero).min(f32x8::ONE);
+        let threshold = (f32x8::ONE - s * s).max(zero).sqrt();
+        (threshold.to_array(), valid.move_mask() as u32 & 0xff)
     }
 
     #[inline(always)]
@@ -245,6 +266,36 @@ mod backend {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::interior_security_thresholds8;
+
+    #[test]
+    fn interior_security_simd_matches_scalar_and_marks_fallback_lanes() {
+        let pad = crate::tolerances::GRID_PLANE_PAD;
+        let input = [
+            0.5,
+            pad * 0.5,
+            1.0,
+            2.0,
+            f32::MIN_POSITIVE,
+            0.0,
+            -0.25,
+            f32::INFINITY,
+        ];
+        let (actual, mask) = interior_security_thresholds8(input, pad);
+        assert_eq!(mask, 0b0001_1111);
+        for lane in 0..5 {
+            let s = (input[lane] - pad).clamp(0.0, 1.0);
+            let expected = (1.0 - s * s).max(0.0).sqrt();
+            assert_eq!(actual[lane].to_bits(), expected.to_bits(), "lane {lane}");
+        }
+
+        let (_, nan_mask) = interior_security_thresholds8([f32::NAN; 8], pad);
+        assert_eq!(nan_mask, 0);
+    }
+}
+
 #[cfg(feature = "simd_scalar")]
 mod backend {
     pub(super) type V = [f32; 8];
@@ -275,6 +326,21 @@ mod backend {
     #[inline(always)]
     pub(super) fn to_array(v: V) -> [f32; 8] {
         v
+    }
+
+    #[inline(always)]
+    #[cfg(test)]
+    pub(super) fn interior_security_thresholds8(v: V, pad: f32) -> ([f32; 8], u32) {
+        let mut out = [0.0; 8];
+        let mut valid = 0u32;
+        for i in 0..8 {
+            if v[i] > 0.0 && v[i].is_finite() {
+                let s = (v[i] - pad).clamp(0.0, 1.0);
+                out[i] = (1.0 - s * s).max(0.0).sqrt();
+                valid |= 1 << i;
+            }
+        }
+        (out, valid)
     }
 
     #[inline(always)]

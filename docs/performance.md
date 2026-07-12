@@ -268,6 +268,15 @@ Uniform reduced instructions by 0.94% and branches by 0.47% in all nine pairs, w
 The 100k mega case reduced instructions by 0.22% in all seven pairs. The generic-target Fibonacci
 build reduced instructions by 0.80% and branches by 0.41% in all seven pairs, with neutral cycles.
 
+For AVX2 builds using the `wide` backend, packed interior-cell security thresholds finalize eight
+positive finite plane distances together; exceptional lanes retain the existing scalar geometric
+fallback. At 1M single-threaded native Fibonacci over 90 pairs, instructions fell 0.368% and
+branches 0.274% in every pair, while cycles were neutral (-0.055%, 53/90 favorable). At 1M uniform
+over 60 pairs, instructions fell 0.343% and branches 0.251% in every pair, and cycles fell 0.376%.
+The ungated generic-target form reduced retired work but regressed cycles 3.76%, so generic and
+`simd_scalar` builds deliberately retain the original scalar finalization; their structural counters
+were unchanged within 0.00002% after gating.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated

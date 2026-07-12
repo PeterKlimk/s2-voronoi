@@ -69,6 +69,27 @@ fn append_interior_security_thresholds(
                 s_min[lane] = s_min[lane].min(signed[lane]);
             }
         }
+        #[cfg(all(target_feature = "avx2", not(feature = "simd_scalar")))]
+        {
+            let (mut thresholds, valid_mask) =
+                fp::interior_security_thresholds8(s_min, crate::tolerances::GRID_PLANE_PAD);
+            if valid_mask != 0xff {
+                for lane in 0..8 {
+                    if valid_mask & (1 << lane) == 0 {
+                        thresholds[lane] = finish_interior_security(
+                            s_min[lane],
+                            x_chunks[chunk][lane],
+                            y_chunks[chunk][lane],
+                            z_chunks[chunk][lane],
+                            ring2,
+                            grid,
+                        );
+                    }
+                }
+            }
+            out.extend_from_slice(&thresholds);
+        }
+        #[cfg(not(all(target_feature = "avx2", not(feature = "simd_scalar"))))]
         for lane in 0..8 {
             out.push(finish_interior_security(
                 s_min[lane],
