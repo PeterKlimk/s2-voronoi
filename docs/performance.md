@@ -364,6 +364,11 @@ Do not broadly retry these without a materially different design or workload:
   the N=3-8 small kernels also produced equivalent native codegen (instructions and branches both
   +0.00004%, mixed pair signs). LLVM already schedules the independent interpolation chains across
   the survivor-copy loop; source-level reordering adds nothing.
+- Replacing N=3/N=4 cyclic-mask transition decoding with byte lookup tables reduced instructions
+  0.129% but added 0.456% branches. N=3 alone still added 0.215% branches; packing its eight entries
+  into one branchless-looking `u64` added 0.017% instructions, 0.215% branches, and 0.39% cycles.
+  The original rotate/AND/two-`tzcnt` sequence is superior. A 1M mask audit also found no single
+  dominant mixed mask, so a narrow pattern fast path is not justified.
 - Extending the conservative early-unchanged radius certificate from polygon sizes >=5 to N=4
   added 0.12–0.13% retired instructions and 0.28–0.31% branches on 500k single-threaded native
   Fibonacci and uniform, with every one of seven pairs worse on both structural counters. Cycles
