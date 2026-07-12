@@ -392,6 +392,10 @@ Do not broadly retry these without a materially different design or workload:
   explicit but added dispatcher branches around the already-small linear search. At 1M native
   Fibonacci it regressed instructions 0.095% and branches 0.479% in all 15 pairs, with cycles 0.95%
   worse; retain the generic iterator search.
+- Deriving final assembly's generator loop length from the packed assignment array, rather than the
+  parallel byte bin array, did not remove measurable bounds-check work: 1M native Fibonacci differed
+  by only +0.00014% instructions and +0.00017% branches over 15 pairs. LLVM already optimizes the
+  packed lookup equivalently; retain the more direct cell-count expression.
 - Extending the conservative early-unchanged radius certificate from polygon sizes >=5 to N=4
   added 0.12–0.13% retired instructions and 0.28–0.31% branches on 500k single-threaded native
   Fibonacci and uniform, with every one of seven pairs worse on both structural counters. Cycles
