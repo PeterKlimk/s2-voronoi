@@ -230,6 +230,12 @@ error returns before the driver can consume the buffer. Poison-buffer tests cove
 and a terminal error retaining stale poison. At 2M single-threaded this reduced retired instructions
 by about 0.041% on Fibonacci and 0.038% on uniform input in all three pairs; cycles were unresolved.
 
+The timing-only directional-support audit caches its 64 unit directions once instead of recomputing
+their sines and cosines whenever a polygon invalidates the support cache. This does not affect
+production builds. On 500k single-threaded Fibonacci with native instructions, the diagnostic build
+dropped from 9.39B to 7.07B instructions and from 5.09B to 3.75B cycles. All audit counters were
+unchanged, including 1,300,400 support tests, 112,559 hits, and zero false positives.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated

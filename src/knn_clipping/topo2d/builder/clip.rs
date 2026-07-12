@@ -177,11 +177,19 @@ impl GnomonicBuilder {
 
     #[cfg(feature = "timing")]
     fn rebuild_support_cache(&mut self) {
+        use std::sync::OnceLock;
+
         const K: usize = 64;
+        static DIRECTIONS: OnceLock<[(f64, f64); K]> = OnceLock::new();
+        let directions = DIRECTIONS.get_or_init(|| {
+            std::array::from_fn(|sector| {
+                let angle = (sector as f64) * std::f64::consts::TAU / K as f64;
+                let (sin, cos) = angle.sin_cos();
+                (sin, cos)
+            })
+        });
         let poly = self.current_poly().clone();
-        for sector in 0..K {
-            let angle = (sector as f64) * std::f64::consts::TAU / K as f64;
-            let (sin, cos) = angle.sin_cos();
+        for (sector, &(sin, cos)) in directions.iter().enumerate() {
             let mut min_proj = f64::INFINITY;
             for i in 0..poly.len {
                 min_proj = min_proj.min(cos * poly.us[i] + sin * poly.vs[i]);
