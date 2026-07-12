@@ -413,6 +413,13 @@ Do not broadly retry these without a materially different design or workload:
   cache references rose 31.85% in every pair and cycles regressed 1.51% (all thirds and both orders
   worse). Restricting strict arithmetic to N=3/4 did not narrow the binary because forced inlining
   still copied the full dispatch and regressed cycles 2.51%; retain the compact runtime epsilon guard.
+- **Promising, not rejected:** AVX2 `rsqrtss` plus one Newton refinement for extracted vertex
+  normalization improved 1M Fibonacci cycles 3.46% (14/15) but added 0.34% instructions. A 45-pair
+  uniform run was cycle-neutral (-0.20%, candidate lower 16/45) while adding 0.31% instructions in
+  every pair. Targeted correctness/validation/adversarial suites passed, but the changed vertex
+  rounding can affect proximity-based defect repair as well as public geometry. Revisit only with a
+  stronger accuracy/repair audit or a workload showing broader latency benefit; retain exact
+  `sqrt().recip()` for now.
 - Extending the conservative early-unchanged radius certificate from polygon sizes >=5 to N=4
   added 0.12–0.13% retired instructions and 0.28–0.31% branches on 500k single-threaded native
   Fibonacci and uniform, with every one of seven pairs worse on both structural counters. Cycles
