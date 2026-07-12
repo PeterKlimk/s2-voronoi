@@ -245,6 +245,13 @@ pairs and cycles fell 2.50% in six of seven. Cachegrind independently measured 1
 instructions at 20k Fibonacci. Without native instructions, Fibonacci instructions fell 1.75% in
 all seven pairs while cycles were neutral. Valgrind Memcheck reported no errors end to end.
 
+Convex clipping computes its two intersection parameters together. Zero-epsilon spherical clips
+return the raw, already-bracketed divisions; propagated-epsilon edge checks and diagnostic
+escalation retain finite checking and clamping. On 500k single-threaded native Fibonacci this
+reduced instructions by 1.11% and branches by 0.138% in all nine pairs with neutral cycles; native
+uniform reduced instructions by 1.06% and branches by 0.138% in all nine pairs. The generic-target
+build improved by 1.27% instructions, 0.36% branches, and 2.75% cycles on Fibonacci.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated

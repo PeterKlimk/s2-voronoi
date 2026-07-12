@@ -299,7 +299,10 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
     unsafe {
         let d_entry = *dists.get_unchecked(entry_idx);
         let d_entry_next = *dists.get_unchecked(entry_next);
-        let t_entry = super::lerp_t(d_entry, d_entry_next);
+        let d_exit = *dists.get_unchecked(exit_idx);
+        let d_exit_next = *dists.get_unchecked(exit_next);
+        let (t_entry, t_exit) =
+            super::lerp_t_pair(d_entry, d_entry_next, d_exit, d_exit_next, hp.eps);
         let entry_u = fp::fma_f64(
             t_entry,
             *us.add(entry_next) - *us.add(entry_idx),
@@ -322,9 +325,6 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
             i = (i + 1) % N;
         }
 
-        let d_exit = *dists.get_unchecked(exit_idx);
-        let d_exit_next = *dists.get_unchecked(exit_next);
-        let t_exit = super::lerp_t(d_exit, d_exit_next);
         let exit_u = fp::fma_f64(
             t_exit,
             *us.add(exit_next) - *us.add(exit_idx),
@@ -439,8 +439,8 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
         let d_exit = *dists.get_unchecked(exit_idx);
         let d_exit_next = *dists.get_unchecked(exit_next);
 
-        let t_entry = super::lerp_t(d_entry, d_entry_next);
-        let t_exit = super::lerp_t(d_exit, d_exit_next);
+        let (t_entry, t_exit) =
+            super::lerp_t_pair(d_entry, d_entry_next, d_exit, d_exit_next, hp.eps);
 
         let entry_u = fp::fma_f64(
             t_entry,

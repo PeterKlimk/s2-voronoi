@@ -128,13 +128,20 @@ fn maybe_escalate(
 /// fall back to the segment start on a degenerate 0/0. Identity for the
 /// ordinary bracketed case.
 #[inline(always)]
-fn lerp_t(d0: f64, d1: f64) -> f64 {
-    let t = d0 / (d0 - d1);
-    if t.is_finite() {
-        t.clamp(0.0, 1.0)
-    } else {
-        0.0
+fn lerp_t_pair(d0: f64, d1: f64, d2: f64, d3: f64, eps: f64) -> (f64, f64) {
+    let t0 = d0 / (d0 - d1);
+    let t1 = d2 / (d2 - d3);
+    if eps == 0.0 {
+        return (t0, t1);
     }
+    let guard = |t: f64| {
+        if t.is_finite() {
+            t.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    };
+    (guard(t0), guard(t1))
 }
 
 /// Dispatch clipping to the best specialization for the current polygon size.
@@ -266,3 +273,26 @@ pub(crate) fn clip_convex_edgecheck(
 #[cfg(any(test, feature = "microbench"))]
 #[allow(unused_imports)]
 pub(crate) use small::clip_convex_small_bool;
+
+#[cfg(test)]
+mod tests {
+    use super::lerp_t_pair;
+
+    #[test]
+    fn strict_lerp_pair_is_raw_division_bit_for_bit() {
+        let inputs = (3.0_f64, -2.0_f64, -7.0_f64, 5.0_f64);
+        let expected = (
+            inputs.0 / (inputs.0 - inputs.1),
+            inputs.2 / (inputs.2 - inputs.3),
+        );
+        let actual = lerp_t_pair(inputs.0, inputs.1, inputs.2, inputs.3, 0.0);
+        assert_eq!(actual.0.to_bits(), expected.0.to_bits());
+        assert_eq!(actual.1.to_bits(), expected.1.to_bits());
+    }
+
+    #[test]
+    fn guarded_lerp_pair_clamps_and_handles_degenerate_transitions() {
+        assert_eq!(lerp_t_pair(-1.0, -2.0, 2.0, 1.0, 1e-6), (0.0, 1.0));
+        assert_eq!(lerp_t_pair(0.0, 0.0, 0.0, 0.0, 1e-6), (0.0, 0.0));
+    }
+}

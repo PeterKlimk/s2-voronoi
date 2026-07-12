@@ -95,7 +95,7 @@ pub(super) fn clip_bitmask(
     let (entry_idx, entry_next_idx, entry_d0, entry_d1) = calc_transition(entry_next);
     let (exit_idx, exit_next_idx, exit_d0, exit_d1) = calc_transition(exit_next);
 
-    let t_entry = super::lerp_t(entry_d0, entry_d1);
+    let (t_entry, t_exit) = super::lerp_t_pair(entry_d0, entry_d1, exit_d0, exit_d1, hp.eps);
     let entry_u = fp::fma_f64(
         t_entry,
         poly.us[entry_next_idx] - poly.us[entry_idx],
@@ -108,7 +108,6 @@ pub(super) fn clip_bitmask(
     );
     let entry_edge_plane = poly.edge_planes[entry_idx];
 
-    let t_exit = super::lerp_t(exit_d0, exit_d1);
     let exit_u = fp::fma_f64(
         t_exit,
         poly.us[exit_next_idx] - poly.us[exit_idx],
