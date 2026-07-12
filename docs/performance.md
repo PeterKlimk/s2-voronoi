@@ -399,6 +399,11 @@ Do not broadly retry these without a materially different design or workload:
 - Replacing the paired vertex/resolved-index `zip` in key dedup with one length assertion plus an
   indexed unchecked loop regressed 1M native Fibonacci instructions 0.511% and branches 0.688% in
   all 15 pairs. LLVM's slice-zip lowering is better than the manual traversal here; retain `zip`.
+- Native assembly already hoists the packed cell-bin prefix, reducing `pack_ref(bin, local)` on the
+  resolved vertex path to an OR. It also eagerly loads the 24-byte vertex record before that path,
+  but sinking the load by changing copied-item zip to reference zip regressed instructions 0.054%
+  and branches 0.339% in all 15 native 1M Fibonacci pairs. The altered loop control outweighs the
+  saved loads; retain copied-item zip and the compiler-hoisted packing.
 - Extending the conservative early-unchanged radius certificate from polygon sizes >=5 to N=4
   added 0.12–0.13% retired instructions and 0.28–0.31% branches on 500k single-threaded native
   Fibonacci and uniform, with every one of seven pairs worse on both structural counters. Cycles
