@@ -226,24 +226,23 @@ pub(crate) fn clip_convex(
     const EARLY_UNCHANGED_MIN_N: usize = 5;
     if !has_bounding_ref && n >= EARLY_UNCHANGED_MIN_N {
         let max_r2 = poly.max_r2;
-        if max_r2 > 0.0 {
-            // Clearance must exceed the escalation band so an early
-            // Unchanged cannot skip a lane the canonical evaluator should
-            // see (no-op at the production factor of 0, where this is the
-            // legacy bound minus the eps slack — conservative direction).
-            // `CLIP_ESCALATION_FACTOR` is the compile-time const 0.0 in
-            // production, so `t` is just `hp.c`. The compiler can't fold the
-            // `hp.eps * 0.0` away (IEEE: an inf/nan `eps` would yield nan), so
-            // without this const guard it emits a dead mul+sub on every bounded
-            // early-unchanged check. Same const-fold trick as `maybe_escalate`.
-            let t = if crate::tolerances::CLIP_ESCALATION_FACTOR == 0.0 {
-                hp.c
-            } else {
-                hp.c - hp.eps * crate::tolerances::CLIP_ESCALATION_FACTOR
-            };
-            if t >= 0.0 && t * t >= hp.ab2 * max_r2 {
-                return ClipResult::Unchanged;
-            }
+        debug_assert!(max_r2 >= 0.0, "polygon max radius squared is invalid");
+        // Clearance must exceed the escalation band so an early
+        // Unchanged cannot skip a lane the canonical evaluator should
+        // see (no-op at the production factor of 0, where this is the
+        // legacy bound minus the eps slack — conservative direction).
+        // `CLIP_ESCALATION_FACTOR` is the compile-time const 0.0 in
+        // production, so `t` is just `hp.c`. The compiler can't fold the
+        // `hp.eps * 0.0` away (IEEE: an inf/nan `eps` would yield nan), so
+        // without this const guard it emits a dead mul+sub on every bounded
+        // early-unchanged check. Same const-fold trick as `maybe_escalate`.
+        let t = if crate::tolerances::CLIP_ESCALATION_FACTOR == 0.0 {
+            hp.c
+        } else {
+            hp.c - hp.eps * crate::tolerances::CLIP_ESCALATION_FACTOR
+        };
+        if t >= 0.0 && t * t >= hp.ab2 * max_r2 {
+            return ClipResult::Unchanged;
         }
     }
 
