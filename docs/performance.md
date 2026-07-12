@@ -337,6 +337,11 @@ Do not broadly retry these without a materially different design or workload:
   and cycles regressed 2.28% in eight of nine pairs. Uniform showed none of that cache penalty, but
   the ordinary Fibonacci regression rejects the wider AoS record; keep the hot half-plane stream
   separate from extraction metadata.
+- Publishing those same three vectors with one explicit capacity test and unchecked stores reduced
+  500k native Fibonacci instructions by 0.16%, but added 0.79% branches and 2.69% branch misses;
+  cycles regressed 0.66%. An earlier short-circuit form added 2.12% branches. LLVM's ordinary
+  `Vec::push` paths are predicted better than the combined invariant machinery, so keep the three
+  safe pushes.
 - Extending the conservative early-unchanged radius certificate from polygon sizes >=5 to N=4
   added 0.12–0.13% retired instructions and 0.28–0.31% branches on 500k single-threaded native
   Fibonacci and uniform, with every one of seven pairs worse on both structural counters. Cycles
