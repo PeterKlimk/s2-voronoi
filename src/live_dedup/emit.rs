@@ -227,8 +227,34 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
             {
                 shard.triplet_keys += 1;
             }
+            // Native AVX2 codegen benefits from testing the resolved index
+            // before the owner-map load. Generic x86 codegen regresses badly
+            // from this branch layout, so retain its owner-first shape below.
+            #[cfg(target_feature = "avx2")]
+            {
+                // A resolved index is necessarily local to this shard: in-bin
+                // edge checks carry shard-local ids, while cross-bin/deferred
+                // endpoints retain INVALID_INDEX until assembly.
+                if *vi != INVALID_INDEX {
+                    debug_assert!(
+                        (*vi as usize) < shard.output.vertices.len(),
+                        "resolved vertex index outside its shard"
+                    );
+                    shard.output.cell_indices.push(pack_ref(bin, *vi));
+                    continue;
+                }
+            }
+
             let owner_bin = assignment.generator_bin[key[0] as usize];
             if owner_bin == bin {
+                #[cfg(target_feature = "avx2")]
+                {
+                    let new_idx = checked_u32(shard.output.vertices.len(), "shard vertex index")?;
+                    shard.output.vertices.push(pos);
+                    shard.output.vertex_keys.push(key);
+                    *vi = new_idx;
+                }
+                #[cfg(not(target_feature = "avx2"))]
                 if *vi == INVALID_INDEX {
                     let new_idx = checked_u32(shard.output.vertices.len(), "shard vertex index")?;
                     shard.output.vertices.push(pos);
@@ -236,7 +262,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
                     *vi = new_idx;
                 }
                 let v_idx = *vi;
-                debug_assert!(v_idx != INVALID_INDEX, "missing on-shard vertex index");
+                debug_assert_ne!(v_idx, INVALID_INDEX, "missing on-shard vertex index");
                 shard.output.cell_indices.push(pack_ref(bin, v_idx));
             } else {
                 debug_assert_eq!(*vi, INVALID_INDEX, "received index for off-shard owner");
