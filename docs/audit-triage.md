@@ -753,6 +753,121 @@ the default Local3d repair to be attempted, accepted, residual-free, and strictl
 post-fix AUD-011 campaign, the former 100,000-site failure repaired all seven detected defects and
 had `6.866e-8 rad` maximum sampled edge cross-track error.
 
+### AUD-015 — Finite-chart no-op constraints are not spherical redundancy certificates
+
+- **Priority:** P1
+- **Class:** chart horizon / recovery correctness and pathological performance
+- **Confidence:** Confirmed mathematically and in the clipping/fallback data flow
+- **Status:** Resolved for correctness at actual exhaustion; early circuit breakers deferred
+
+The gnomonic builder clips a finite synthetic triangle `B` against real bisector half-planes. If
+`R` is the unbounded real-plane intersection, the stored polygon is `P = B ∩ R`. An unchanged clip
+proves only that `P` lies inside the candidate half-plane. While a synthetic edge remains, that does
+not prove that `R`, or the full spherical cell, lies inside it.
+
+For generator `g = (0,0,1)` and neighbor `h = (sin θ,0,cos θ)`, the pulled-back bisector is
+`u <= tan(θ/2)`. As `θ` approaches pi, its boundary moves arbitrarily far toward the chart horizon
+and can miss the finite synthetic triangle while remaining a real spherical boundary. At exact
+antipodality the constraint is a no-op throughout the open chart but defines the chart horizon on
+the sphere.
+
+The gnomonic implementation returns immediately on `Unchanged`, without retaining the
+neighbor. Fallback conversion and accepted-constraint exhaustion reconstruction both derive from
+the retained, chart-changing constraint vector, so neither can recover such a plane. Losing every
+synthetic reference is sufficient in exact convex geometry to make earlier no-ops retrospectively
+safe: the final real intersection is then contained inside `B` and inside every earlier finite-proxy
+no-op. Synthetic provenance propagation and zero-length degeneracies remain a focused regression
+target for that certificate.
+
+#### Recovery cost experiment
+
+Release probes counted pre-bounded no-ops and cells that were still synthetic after candidate-work
+budgets. Single-threaded production-stream measurements produced:
+
+| Distribution | Size | Pre-bounded no-ops | Cells synthetic at 128 | Existing exhaustion recovery |
+|---|---:|---:|---:|---:|
+| uniform, three seeds | 500k | 80,096–80,885 | 0 | 0 |
+| clustered, three seeds | 100k | 362,905–427,796 | 726–850 | 0 |
+| bimodal, three seeds | 100k | 23,207–23,746 | 15–19 | 0 |
+| hemisphere, three seeds | 50k | 270,890–294,851 | 29–38 | 5 |
+| perturbed latitude ring, three seeds | 5k | 509,206–536,109 | 114–122 | 114–122 |
+
+On representative seed 42, work performed after crossing 128 candidates while still synthetic was
+zero for 100k uniform, 307,138 candidates for 100k clustered, 6,552 for 100k bimodal, 1,337,330 for
+50k hemisphere, and 491,001 for the 5k ring. Those last two are 23% and 31% of their entire current
+candidate work. This is the work an early handoff has an opportunity to avoid; the actual saving
+depends on how soon the unrestricted spherical rebuild certifies and must be measured once that
+path exists.
+
+Lazy retention of every pre-bounded no-op was also A/B tested in one identical binary. On 200k
+uniform sites it stored 32,048 ids and added 341,287 retired instructions (`0.0102%`); elapsed cycles
+were below the measurement noise. The writes themselves are cheap. However, about 10% of normal
+uniform cells performed at least one ultimately unnecessary store, and uncapped horizon cases grew
+a per-worker vector toward `O(n)`. Once an early work budget is present, pure recalculation repeats
+at most roughly the budget-sized prefix per handed-off cell, while retaining changed real
+constraints. At a budget of 128, that idealized duplicate prefix is at most 1.6% of current candidate
+work in every measured regime (a batch-aligned implementation may overshoot by one batch). This
+bounds duplicated clipping of the prefix, not the cold query's total traversal or certification
+cost.
+
+The cost measurements originally motivated a possible early handoff. We are deliberately not
+shipping that policy yet: candidate count is not a geometric failure certificate, and the 128
+candidate experiment produced avoidable handoffs in clustered, bimodal, and hemisphere regimes.
+The implemented correctness policy is therefore:
+
+1. Keep the normal directed gnomonic path and its already-retained changed real constraints.
+2. If the directed stream actually exhausts while synthetic references remain, discard the finite
+   polygon and replay an unrestricted shell stream. Form the initial spherical polygon only from
+   real constraints, then clip it against every remaining generator before extraction.
+3. Never return a reconstruction made only from the gnomonic builder's accepted constraints: that
+   set omits the finite-proxy no-ops whose global relevance caused this issue.
+4. Do not retain pre-bounded no-op ids or switch at a fixed candidate budget on the fast path.
+   Reconsider a progress-aware circuit breaker only after measuring the implemented cold replay's
+   actual crossover against continued gnomonic clipping.
+
+The retained near-antipodal-tripod regression makes all three real constraints miss the finite
+gnomonic proxy, exhausts the directed stream, and verifies that unrestricted spherical replay
+returns the three correct owning edges and satisfies every replayed constraint. Deterministic
+hemisphere probes through 2,000 sites recovered four origin-outside cells per case; the complete
+500-site and 1,000-site public hemisphere diagrams remained strict-valid. The recovery is cold: it
+adds no candidate recording, allocation, or threshold branch to successful fast-path cells.
+
+There is a separate nonlocal regime that a synthetic-edge budget does not detect. Perturbed
+great-circle inputs became gnomonically bounded but processed 204,561 candidates at 1k sites,
+542,165 at 2k, and 2,735,916 at 5k; the maximum per-cell count was approximately `n`. This requires
+a total-query-work circuit breaker and Local3d/global-hull escalation rather than spherical chart
+recovery. The current Local3d entry point is post-assembly, so a genuine no-failure construction
+contract still requires a deferred pre-assembly cell/component recovery seam.
+
+### AUD-016 — Near-semicircle Voronoi edges conflict with the strict representation contract
+
+- **Priority:** P1
+- **Class:** structural return gate / large-cell representation policy
+- **Confidence:** Reproduced by the intrinsic small-`n` campaign
+- **Status:** Open; design decision required
+
+A valid, non-welded four-generator fixture with all sites in a common hemisphere returns a
+tetrahedral cell complex whose true large-cell boundaries contain edges very close to a
+semicircle. Two stored edge endpoint pairs fall within `ANTIPODAL_DOT_EPS`, so strict validation
+rejects them and excludes them from its edge count (`Euler=3`, two antipodal-edge invariants), even
+though the ordinary production return gate accepts the diagram. The intrinsic oracle also records
+the expected numerical sensitivity of these long arcs: about `3.3e-5` radians maximum ownership
+violation for the current stored-f32 vertices.
+
+This is not necessarily a wrong Local3d or clipping result. When the generator hull does not
+contain the origin, legitimate spherical Voronoi edges can approach pi in length; changing hull or
+clipping algorithms cannot remove that intrinsic regime. The contract must choose among:
+
+1. represent and validate an oriented near-pi arc using enough ownership/side information to make
+   its branch unambiguous;
+2. deterministically perturb and rebuild such inputs under the robust degeneracy policy; or
+3. classify the regime as unsupported and ensure the cheap return gate fails cleanly rather than
+   returning a strict-invalid diagram.
+
+The exhaustive uniform small-`n` campaign remains retained but ignored pending that decision. Its
+AUD-002 negative control and the structured small-`n` campaign remain active independently; the
+near-semicircle case must not be hidden by merely loosening the intrinsic oracle.
+
 ## Recommended implementation sequence
 
 1. **AUD-001:** resolved — removed unsafe-precondition violations.
@@ -772,11 +887,16 @@ had `6.866e-8 rad` maximum sampled edge cross-track error.
 10. **AUD-012:** resolved — retained and pinned strict computed-f32 transitive welding semantics.
 11. **AUD-011:** derive the remaining termination envelope and retain the measured fidelity
     baseline and boundary coverage.
+12. **AUD-015:** resolved for correctness — unrestricted spherical replay now occurs only after
+    genuine chart exhaustion; early performance handoff remains deferred.
+13. **AUD-016:** choose the near-semicircle edge contract, then make the production return gate and
+    strict validator agree with it.
 
 ## Cross-cutting test backlog
 
-- Add exhaustive small-`n` geometry tests. Existing quality fixtures around 100 sites missed the
-  five-site reconciliation failure.
+- Finish integrating the retained exhaustive small-`n` geometry campaign after AUD-016 selects the
+  near-semicircle representation policy. Existing quality fixtures around 100 sites missed both
+  its four-site large-cell case and the five-site reconciliation failure.
 - After any reconciliation or Local3d edit, assess incident-site equality and shared-edge bisector
   residuals in addition to strict topology.
 - Add negative-control diagrams: rotate vertices without generators, reverse one face, duplicate a
