@@ -113,9 +113,13 @@ fn assert_aud_002_voronoi_geometry() {
 #[test]
 fn aud_002_five_sites_preserve_voronoi_geometry() {
     let disabled = VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
-    assert!(
-        compute_with(&aud_002_points(), disabled).is_err(),
-        "a rejected distant pairing must fail loud when local repair is disabled"
-    );
+    if let Ok(diagram) = compute_with(&aud_002_points(), disabled) {
+        let validation = validate(&diagram);
+        assert!(
+            validation.is_strictly_valid(),
+            "repair-disabled construction may succeed directly, but never invalidly: {}",
+            validation.headline()
+        );
+    }
     assert_aud_002_voronoi_geometry();
 }

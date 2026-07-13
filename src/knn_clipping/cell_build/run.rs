@@ -352,9 +352,66 @@ impl BuildCounters {
         match request.trigger {
             BuilderFallbackTrigger::ProjectionLimit => self.fallback_projection += 1,
             BuilderFallbackTrigger::PolygonVertexLimit => self.fallback_polygon_cap += 1,
-            BuilderFallbackTrigger::ClippedAway => self.fallback_all_constraints += 1,
+            BuilderFallbackTrigger::ClippedAway | BuilderFallbackTrigger::ExhaustionRecovery => {
+                self.fallback_all_constraints += 1
+            }
         }
     }
+}
+
+/// Rebuild an actually exhausted, still-synthetic cell from an unrestricted
+/// spherical constraint stream. The initial spherical seed is formed only
+/// from real constraints; after that, ordinary spherical clipping is safe
+/// because every later halfspace can only shrink the real spherical polygon.
+fn recover_unbounded_after_exhaustion(
+    ctx: &mut CellBuildContext,
+    points: &[Vec3],
+    grid: &crate::cube_grid::CubeMapGrid,
+    generator_idx: usize,
+    counters: &mut BuildCounters,
+) -> bool {
+    let query = points[generator_idx];
+    let pos_slots = grid.point_pos_slots();
+    let mut seed_slots = Vec::new();
+    let mut seeded = false;
+    let mut frontier = grid.unrestricted_shell_frontier(query, generator_idx, &mut ctx.scratch);
+
+    while let Some(batch) = frontier.frontier(&mut ctx.packed_chunk) {
+        let slots = &ctx.packed_chunk[..batch.n];
+        counters.neighbors_processed += slots.len();
+
+        if !seeded {
+            seed_slots.extend_from_slice(slots);
+            if seed_slots.len() >= 3 {
+                seeded = ctx
+                    .builder
+                    .try_restart_spherical_from_neighbors(seed_slots.iter().map(|&slot| {
+                        let point = pos_slots[slot as usize];
+                        (point.idx as usize, slot, point.pos)
+                    }));
+            }
+        } else {
+            for &slot in slots {
+                let point = pos_slots[slot as usize];
+                if ctx
+                    .builder
+                    .clip_with_slot_result_policy(point.idx as usize, slot, point.pos)
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+        }
+
+        frontier.advance();
+    }
+
+    seeded
+        && ctx.builder.is_bounded()
+        && ctx
+            .builder
+            .to_vertex_data_full(&mut ctx.output_buffer)
+            .is_ok()
 }
 
 #[cfg(feature = "timing")]
@@ -713,6 +770,7 @@ fn consume_stream(
 fn finish_cell(
     ctx: &mut CellBuildContext,
     points: &[Vec3],
+    grid: &crate::cube_grid::CubeMapGrid,
     generator_idx: usize,
     trace: &BuildTrace,
     counters: &mut BuildCounters,
@@ -725,11 +783,9 @@ fn finish_cell(
         ) {
             if failure == CellFailure::UnboundedAfterExhaustion {
                 let t_cert = crate::knn_clipping::timing::Timer::start();
-                if ctx
-                    .builder
-                    .to_vertex_data_from_all_constraints(points, &mut ctx.output_buffer)
-                    .is_ok()
-                {
+                let recovered =
+                    recover_unbounded_after_exhaustion(ctx, points, grid, generator_idx, counters);
+                if recovered {
                     counters.fallback_all_constraints += 1;
                     counters.certification_time += t_cert.elapsed();
                     return Ok(());
@@ -826,7 +882,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         counters.absorb_stream(&stream);
     }
 
-    finish_cell(ctx, points, generator_idx, &trace, &mut counters)?;
+    finish_cell(ctx, points, grid, generator_idx, &trace, &mut counters)?;
 
     Ok(CellBuildStats {
         knn_query: counters.knn_query_time,

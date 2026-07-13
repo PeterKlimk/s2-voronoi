@@ -28,6 +28,7 @@ pub(crate) enum BuilderFallbackTrigger {
     ProjectionLimit,
     PolygonVertexLimit,
     ClippedAway,
+    ExhaustionRecovery,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +44,7 @@ impl BuilderFallbackRequest {
             BuilderFallbackTrigger::ProjectionLimit => CellFailure::ProjectionInvalid,
             BuilderFallbackTrigger::PolygonVertexLimit => CellFailure::TooManyVertices,
             BuilderFallbackTrigger::ClippedAway => CellFailure::ClippedAway,
+            BuilderFallbackTrigger::ExhaustionRecovery => CellFailure::UnboundedAfterExhaustion,
         }
     }
 }
@@ -311,6 +313,7 @@ impl Topo2DBuilder {
         matches!(self.inner, BuilderImpl::Fallback(_))
     }
 
+    #[cfg(test)]
     pub(crate) fn accepted_spherical_constraints(
         &self,
         points: &[glam::Vec3],

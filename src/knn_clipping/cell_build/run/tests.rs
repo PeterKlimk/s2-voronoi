@@ -320,7 +320,7 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
         counters.absorb_stream(&stream);
     }
 
-    let result = finish_cell(&mut ctx, points, generator_idx, &trace, &mut counters);
+    let result = finish_cell(&mut ctx, points, grid, generator_idx, &trace, &mut counters);
     let spherical_extract = if result.is_err() {
         let mut buffer = crate::live_dedup::CellOutputBuffer::default();
         ctx.builder
@@ -511,7 +511,7 @@ fn probe_early_extraction_cell(
         counters.absorb_stream(&stream);
     }
 
-    let result = finish_cell(&mut ctx, points, generator_idx, &trace, &mut counters);
+    let result = finish_cell(&mut ctx, points, grid, generator_idx, &trace, &mut counters);
     let final_signature = result.as_ref().ok().map(|_| signature(&ctx.output_buffer));
     let first_success = successes.first().map(|(hit, _)| hit.clone());
     let first_final_match = final_signature.and_then(|final_signature| {
@@ -1016,6 +1016,56 @@ fn direct_cursor_builds_normal_cell() {
 
     assert!(ctx.output_buffer().vertices.len() >= 3);
     assert!(!stats.knn_exhausted || !stats.did_packed);
+}
+
+#[test]
+fn exhausted_chart_replays_discarded_horizon_constraints_spherically() {
+    let delta = 4.0e-7f32;
+    let mut points = vec![Vec3::Z];
+    for i in 0..3 {
+        let angle = std::f32::consts::TAU * i as f32 / 3.0;
+        points.push(Vec3::new(delta * angle.cos(), delta * angle.sin(), -1.0).normalize());
+    }
+
+    let grid = CubeMapGrid::new(&points, 4);
+    let policy = TerminationConfig::default().packed_policy(points.len());
+    let fake_slot_map = vec![0u32; points.len()];
+    let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
+    let mut ctx = CellBuildContext::new(&grid, policy);
+
+    let stats = build_cell_into(
+        &mut ctx,
+        CellBuildRequest {
+            points: &points,
+            grid: &grid,
+            generator_idx: 0,
+            directed_ctx,
+            packed: None,
+            incoming_checks: &[],
+        },
+    )
+    .expect("unrestricted spherical replay should recover the horizon cell");
+
+    assert!(stats.knn_exhausted);
+    assert_eq!(stats.fallback_all_constraints, 1);
+    assert!(ctx.builder.is_fallback());
+    assert_eq!(ctx.output_buffer.vertices.len(), 3);
+
+    let mut edge_neighbors = ctx.output_buffer.edge_neighbor_globals.clone();
+    edge_neighbors.sort_unstable();
+    assert_eq!(edge_neighbors, [1, 2, 3]);
+
+    let generator = points[0].as_dvec3().normalize();
+    for &(_, vertex) in &ctx.output_buffer.vertices {
+        let vertex = vertex.as_dvec3().normalize();
+        for &neighbor in &points[1..] {
+            let neighbor = neighbor.as_dvec3().normalize();
+            assert!(
+                generator.dot(vertex) >= neighbor.dot(vertex) - 2.0e-6,
+                "recovered vertex violates a replayed spherical constraint"
+            );
+        }
+    }
 }
 
 #[test]

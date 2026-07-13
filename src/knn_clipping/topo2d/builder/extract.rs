@@ -1,7 +1,7 @@
 use super::projection::sort3_u32;
 use super::{
     BuilderDebugState, BuilderImpl, ExtractionInvariantFailure, FallbackBuilder, GnomonicBuilder,
-    Topo2DBuilder,
+    SphericalPoly, SphericalPolyVertex, Topo2DBuilder,
 };
 use crate::fp;
 use crate::knn_clipping::cell_build::{CellFailure, CellOutputBuffer};
@@ -571,7 +571,7 @@ impl Topo2DBuilder {
         }
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
+    #[cfg(test)]
     pub(crate) fn to_vertex_data_from_all_constraints(
         &self,
         points: &[Vec3],
@@ -579,6 +579,44 @@ impl Topo2DBuilder {
     ) -> Result<(), CellFailure> {
         let constraints = self.accepted_spherical_constraints(points);
         extract_all_constraints_cell(self.generator_idx(), self.generator(), &constraints, buffer)
+    }
+
+    /// Replace an exhausted finite-chart build with a spherical polygon formed
+    /// from an unrestricted prefix of real generator constraints.
+    ///
+    /// This deliberately does not seed from the finite gnomonic polygon: when
+    /// a synthetic edge survives exhaustion, that polygon may have discarded
+    /// a constraint which is redundant only inside the finite chart proxy.
+    pub(crate) fn try_restart_spherical_from_neighbors(
+        &mut self,
+        neighbors: impl IntoIterator<Item = (usize, u32, Vec3)>,
+    ) -> bool {
+        let generator_idx = self.generator_idx();
+        let generator = self.generator();
+        let constraints: Vec<_> = neighbors
+            .into_iter()
+            .filter(|(neighbor_idx, _, _)| *neighbor_idx != generator_idx)
+            .map(|(neighbor_idx, neighbor_slot, neighbor)| {
+                super::FallbackConstraint::from_neighbor(
+                    generator,
+                    neighbor_idx,
+                    neighbor_slot,
+                    neighbor,
+                )
+            })
+            .collect();
+        let Some(poly) = spherical_poly_from_all_constraints(generator, &constraints) else {
+            return false;
+        };
+
+        self.inner = BuilderImpl::Fallback(FallbackBuilder {
+            generator_idx,
+            generator,
+            constraints,
+            poly,
+            trigger: super::BuilderFallbackTrigger::ExhaustionRecovery,
+        });
+        true
     }
 
     pub fn count_active_planes(&self) -> (usize, usize) {
@@ -603,6 +641,7 @@ impl Topo2DBuilder {
     }
 }
 
+#[cfg(test)]
 fn extract_all_constraints_cell(
     generator_idx: usize,
     generator: DVec3,
@@ -698,6 +737,35 @@ fn all_constraints_vertices(
         aa.total_cmp(&ab)
     });
     vertices
+}
+
+fn spherical_poly_from_all_constraints(
+    generator: DVec3,
+    constraints: &[super::FallbackConstraint],
+) -> Option<SphericalPoly> {
+    let vertices = all_constraints_vertices(generator, constraints);
+    if vertices.len() < 3 {
+        return None;
+    }
+
+    let mut edge_planes = Vec::with_capacity(vertices.len());
+    for i in 0..vertices.len() {
+        edge_planes.push(shared_all_constraints_edge(
+            vertices[i],
+            vertices[(i + 1) % vertices.len()],
+            constraints,
+        )?);
+    }
+
+    Some(SphericalPoly {
+        vertices: vertices
+            .into_iter()
+            .map(|vertex| SphericalPolyVertex {
+                position: vertex.position,
+            })
+            .collect(),
+        edge_planes,
+    })
 }
 
 fn push_all_constraints_vertex(vertices: &mut Vec<FallbackVertex>, vertex: FallbackVertex) {
