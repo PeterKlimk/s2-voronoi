@@ -62,7 +62,9 @@ let world_vertex = embedded.vertex_world(0);
 World inputs use f64 and are interpreted by their direction from the center: their radial distance
 is deliberately discarded. The returned wrapper stores only the canonical unit diagram plus the
 embedding. World vertices, generators, spherical centroids, physical areas, Lloyd targets, and
-point-location queries are derived without duplicating the topology or geometry buffers.
+point-location queries are derived without duplicating the topology or geometry buffers. With the
+default `parallel` feature, world-input validation and projection run across the Rayon pool before
+the unchanged unit-sphere backend begins.
 
 ## What you get
 

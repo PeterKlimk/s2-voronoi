@@ -151,6 +151,7 @@ fn embedding_and_projection_errors_are_explicit() {
         .map(|&direction| embed(embedding.center(), direction, 1.0))
         .collect();
     world[2] = embedding.center();
+    world[4][0] = f64::NAN;
     assert!(matches!(
         compute_on_sphere(&world, embedding),
         Err(VoronoiError::InvalidInput { point_index: 2, .. })
@@ -205,6 +206,7 @@ fn world_locator_and_lloyd_targets_match_unit_space() {
     );
     let mut invalid = world.clone();
     invalid[4] = center;
+    invalid[5][1] = f64::INFINITY;
     let err = locator.locate_many_world(&invalid).unwrap_err();
     assert_eq!(err.point_index(), 4);
     assert_eq!(err.projection_error(), SphereProjectionError::PointAtCenter);
@@ -224,6 +226,22 @@ fn world_locator_and_lloyd_targets_match_unit_space() {
 fn physical_area_overflow_follows_ieee_semantics() {
     let embedding = SphereEmbedding::new([0.0; 3], 1e200).unwrap();
     assert!(embedding.solid_angle_to_area(1.0).is_infinite());
+}
+
+#[cfg(feature = "parallel")]
+#[test]
+fn parallel_projection_reports_lowest_invalid_index() {
+    let embedding = SphereEmbedding::new([0.0; 3], 1.0).unwrap();
+    let mut world = vec![[1.0, 0.0, 0.0]; 20_000];
+    world[17_000][2] = f64::NAN;
+    world[1_234] = embedding.center();
+    assert!(matches!(
+        compute_on_sphere(&world, embedding),
+        Err(VoronoiError::InvalidInput {
+            point_index: 1_234,
+            ..
+        })
+    ));
 }
 
 #[cfg(feature = "glam")]

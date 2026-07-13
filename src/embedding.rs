@@ -231,20 +231,33 @@ impl SphereEmbedding {
         self,
         point: &P,
     ) -> Result<[f64; 3], SphereProjectionError> {
-        let world = [point.x(), point.y(), point.z()];
+        let world = world_components(point);
+        self.validate_world_point(world)?;
+        Ok(self.project_validated_world(world))
+    }
+
+    #[inline]
+    fn validate_world_point(self, world: [f64; 3]) -> Result<(), SphereProjectionError> {
         for (component, &value) in world.iter().enumerate() {
             if !value.is_finite() {
                 return Err(SphereProjectionError::NonFinitePoint { component });
             }
         }
+        if world == self.center {
+            return Err(SphereProjectionError::PointAtCenter);
+        }
+        Ok(())
+    }
 
+    #[inline]
+    fn project_validated_world(self, world: [f64; 3]) -> [f64; 3] {
         let direct = [
             world[0] - self.center[0],
             world[1] - self.center[1],
             world[2] - self.center[2],
         ];
         if direct.iter().all(|v| v.is_finite()) {
-            return normalize_scaled(direct);
+            return normalize_scaled_valid(direct);
         }
 
         // Both operands are finite, but an opposite-sign subtraction can
@@ -257,7 +270,7 @@ impl SphereEmbedding {
             .map(|v| v.abs())
             .fold(0.0f64, f64::max);
         debug_assert!(operand_scale.is_finite() && operand_scale > 0.0);
-        normalize_scaled([
+        normalize_scaled_valid([
             world[0] / operand_scale - self.center[0] / operand_scale,
             world[1] / operand_scale - self.center[1] / operand_scale,
             world[2] / operand_scale - self.center[2] / operand_scale,
@@ -293,17 +306,21 @@ impl SphereEmbedding {
     }
 }
 
-fn normalize_scaled(mut v: [f64; 3]) -> Result<[f64; 3], SphereProjectionError> {
+#[inline]
+fn world_components<P: WorldVec3Like + ?Sized>(point: &P) -> [f64; 3] {
+    [point.x(), point.y(), point.z()]
+}
+
+#[inline]
+fn normalize_scaled_valid(mut v: [f64; 3]) -> [f64; 3] {
     let scale = v.iter().map(|x| x.abs()).fold(0.0f64, f64::max);
-    if scale == 0.0 {
-        return Err(SphereProjectionError::PointAtCenter);
-    }
+    debug_assert!(scale.is_finite() && scale > 0.0);
     for value in &mut v {
         *value /= scale;
     }
     let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
     debug_assert!(len.is_finite() && len >= 1.0);
-    Ok([v[0] / len, v[1] / len, v[2] / len])
+    [v[0] / len, v[1] / len, v[2] / len]
 }
 
 #[inline]
@@ -315,13 +332,54 @@ fn projected_unit_f32<P: WorldVec3Like + ?Sized>(
     Ok(UnitVec3::new(u[0] as f32, u[1] as f32, u[2] as f32))
 }
 
-fn project_points<P: WorldVec3Like>(
+fn project_points<P: WorldVec3Like + Sync>(
     points: &[P],
     embedding: SphereEmbedding,
 ) -> Result<Vec<glam::Vec3>, VoronoiError> {
     if points.len() < 4 {
         return Err(VoronoiError::InsufficientPoints(points.len()));
     }
+
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        const PARALLEL_PROJECTION_MIN_POINTS: usize = 1 << 14;
+        if points.len() >= PARALLEL_PROJECTION_MIN_POINTS {
+            // Indexed parallel collect preserves input order. Invalid inputs
+            // leave a never-observed zero placeholder and only contend on the
+            // cold-path atomic minimum; after the pool joins, that index
+            // reproduces the serial first-invalid contract.
+            let first_invalid = AtomicUsize::new(usize::MAX);
+            let projected: Vec<glam::Vec3> = points
+                .par_iter()
+                .enumerate()
+                .map(
+                    |(point_index, point)| match projected_unit_f32(embedding, point) {
+                        Ok(u) => glam::Vec3::new(u.x, u.y, u.z),
+                        Err(_) => {
+                            first_invalid.fetch_min(point_index, Ordering::Relaxed);
+                            glam::Vec3::ZERO
+                        }
+                    },
+                )
+                .collect();
+            let point_index = first_invalid.load(Ordering::Relaxed);
+            if point_index != usize::MAX {
+                let err = embedding
+                    .validate_world_point(world_components(&points[point_index]))
+                    .expect_err("parallel projection recorded an invalid point");
+                return Err(VoronoiError::InvalidInput {
+                    point_index,
+                    message: err.to_string(),
+                });
+            }
+
+            return Ok(projected);
+        }
+    }
+
     points
         .iter()
         .enumerate()
@@ -460,7 +518,7 @@ impl EmbeddedComputeOutput {
 }
 
 /// Compute an embedded spherical Voronoi diagram with default settings.
-pub fn compute_on_sphere<P: WorldVec3Like>(
+pub fn compute_on_sphere<P: WorldVec3Like + Sync>(
     points: &[P],
     embedding: SphereEmbedding,
 ) -> Result<EmbeddedSphericalVoronoi, VoronoiError> {
@@ -468,7 +526,7 @@ pub fn compute_on_sphere<P: WorldVec3Like>(
 }
 
 /// Compute an embedded spherical Voronoi diagram with explicit configuration.
-pub fn compute_on_sphere_with<P: WorldVec3Like>(
+pub fn compute_on_sphere_with<P: WorldVec3Like + Sync>(
     points: &[P],
     embedding: SphereEmbedding,
     config: VoronoiConfig,
@@ -480,7 +538,7 @@ pub fn compute_on_sphere_with<P: WorldVec3Like>(
 }
 
 /// Compute an embedded diagram and return preprocessing and validation metadata.
-pub fn compute_on_sphere_with_report<P: WorldVec3Like>(
+pub fn compute_on_sphere_with_report<P: WorldVec3Like + Sync>(
     points: &[P],
     embedding: SphereEmbedding,
     config: VoronoiConfig,
