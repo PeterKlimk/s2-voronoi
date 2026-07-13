@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use voronoi_mesh::{compute_with_report, validation::validate, UnitVec3, VoronoiConfig};
+use voronoi_mesh::{
+    compute_with, compute_with_report, validation::validate, RepairMode, UnitVec3, VoronoiConfig,
+};
 
 const HEALTHY_F32_DOT_RESIDUAL: f64 = 2.0e-6;
 
@@ -22,19 +24,20 @@ fn normalized_chord_sample(a: &UnitVec3, b: &UnitVec3, t: f64) -> UnitVec3 {
     )
 }
 
-#[test]
-#[ignore = "AUD-002: reconciliation currently returns strict-valid but materially non-Voronoi geometry"]
-fn aud_002_five_sites_preserve_voronoi_geometry() {
+fn aud_002_points() -> [UnitVec3; 5] {
     // Explicit public-input counterexample from docs/audit-triage.md. Keep the
     // coordinates here so changes to random fixture generation cannot hide it.
-    let points = [
+    [
         UnitVec3::new(0.580_496_5, -0.535_992_44, -0.612_973),
         UnitVec3::new(-0.953_108_8, -0.299_328_3, 0.044_567_585),
         UnitVec3::new(0.086_291_43, -0.342_774_1, -0.935_446_26),
         UnitVec3::new(0.526_091_1, -0.658_014_7, -0.538_743_73),
         UnitVec3::new(0.134_592_53, 0.759_519, -0.636_408_57),
-    ];
+    ]
+}
 
+fn assert_aud_002_voronoi_geometry() {
+    let points = aud_002_points();
     let output = compute_with_report(&points, VoronoiConfig::default())
         .expect("AUD-002 fixture should compute successfully");
     let diagram = &output.diagram;
@@ -105,4 +108,31 @@ fn aud_002_five_sites_preserve_voronoi_geometry() {
          max incident-site dot spread={max_incident_dot_spread:.10e}, \
          max shared-edge bisector residual={max_shared_edge_bisector_residual:.10e}"
     );
+}
+
+#[test]
+#[ignore = "AUD-002: default unbounded reconciliation returns strict-valid but materially non-Voronoi geometry"]
+fn aud_002_five_sites_preserve_voronoi_geometry() {
+    assert_aud_002_voronoi_geometry();
+}
+
+#[test]
+fn aud_002_epsilon_bounded_inferred_reconciliation_repairs_geometry() {
+    // This integration-test binary contains no other active environment-based
+    // tests, so the process-global diagnostic knob cannot race another test.
+    std::env::set_var("VORONOI_MESH_RECONCILE_BOUND_INFERRED", "1");
+    struct ClearBound;
+    impl Drop for ClearBound {
+        fn drop(&mut self) {
+            std::env::remove_var("VORONOI_MESH_RECONCILE_BOUND_INFERRED");
+        }
+    }
+    let _clear = ClearBound;
+
+    let disabled = VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
+    assert!(
+        compute_with(&aud_002_points(), disabled).is_err(),
+        "a rejected distant pairing must fail loud when local repair is disabled"
+    );
+    assert_aud_002_voronoi_geometry();
 }

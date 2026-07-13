@@ -53,6 +53,10 @@ Useful flags:
   equivalence components the current policy would create. This intentionally repeats cold-path
   reconciliation work and is for correctness audits, not performance measurements; clean builds
   skip even the environment lookup.
+- `VORONOI_MESH_RECONCILE_BOUND_INFERRED=1` — experimental counterfactual for correctness
+  campaigns: accept inferred 1x1 endpoint pairings only when every paired endpoint is within the
+  existing reconciliation epsilon. Rejected pairings remain residuals and therefore reach the
+  configured local repair or the ordinary fail-loud path. This is not yet the default policy.
 - `VORONOI_MESH_GRID_DENSITY=<f>` / `VORONOI_MESH_PLANE_GRID_DENSITY=<f>` — spatial-grid target
   density (points per cell) for sweeps.
 

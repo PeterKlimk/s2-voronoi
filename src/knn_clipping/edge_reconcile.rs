@@ -280,6 +280,23 @@ enum MergeMode {
     ProximityOnly,
 }
 
+/// Experimental counterfactual: constrain inferred endpoint correspondence
+/// to the same chord-distance scale used by proximity reconciliation. This is
+/// deliberately opt-in while telemetry establishes whether the policy is a
+/// safe replacement for the legacy unbounded 1x1 pairing behavior.
+fn inferred_pairing_bound_sq(degenerate_len_eps: f32) -> Option<f32> {
+    matches!(
+        std::env::var("VORONOI_MESH_RECONCILE_BOUND_INFERRED"),
+        Ok(value) if value == "1"
+    )
+    .then_some(degenerate_len_eps * degenerate_len_eps)
+}
+
+#[inline]
+fn inferred_pairing_allowed(bound_sq: Option<f32>, pair_distances_sq: &[f32]) -> bool {
+    bound_sq.is_none_or(|limit| pair_distances_sq.iter().all(|&distance| distance <= limit))
+}
+
 /// Reconcile unresolved shared-edge mismatches by merging vertex
 /// identities, patching `cells` / `cell_indices` via the chosen backend.
 ///
@@ -347,6 +364,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         }
     };
     let primary_candidates = affected_cells_from_records(edge_records);
+    let inferred_pair_bound_sq = inferred_pairing_bound_sq(degenerate_len_eps);
     run_repair_rounds(
         edge_records,
         vertices,
@@ -356,6 +374,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         degenerate_len_eps,
         apply,
         MergeMode::Primary,
+        inferred_pair_bound_sq,
         &mut merge_affected_cells,
     )?;
 
@@ -380,6 +399,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
             degenerate_len_eps,
             apply,
             MergeMode::ProximityOnly,
+            None,
             &mut merge_affected_cells,
         )?;
     }
@@ -531,6 +551,7 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
     degenerate_len_eps: f32,
     apply: RepairApply,
     mode: MergeMode,
+    inferred_pair_bound_sq: Option<f32>,
     // Accumulates the cells whose spans a merge apply may rewrite (see
     // `ReconcileResult::merge_affected_cells`); the caller sorts/dedups.
     merge_affected_cells: &mut Vec<u32>,
@@ -562,6 +583,7 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
             degenerate_len_eps,
             mode,
             scan_dup_keys,
+            inferred_pair_bound_sq,
         )?;
         let merged_changed = if merged == 0 {
             false
@@ -1034,6 +1056,7 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     degenerate_len_eps: f32,
     mode: MergeMode,
     scan_dup_keys: bool,
+    inferred_pair_bound_sq: Option<f32>,
 ) -> Result<(SparseUnionFind, usize), crate::VoronoiError> {
     // Sparse: only the handful of vertices named by defective edges ever
     // enter the structure, so clean and near-clean runs skip the O(V) init
@@ -1182,24 +1205,38 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
             } else {
                 (a0, b0)
             };
-            if uf.union(keep_a, keep_b) {
+            let distance_sq = if inferred_pair_bound_sq.is_some() {
+                Some(dist_sq(
+                    vertex_pos(vertices, keep_a)?,
+                    vertex_pos(vertices, keep_b)?,
+                ))
+            } else {
+                None
+            };
+            if inferred_pairing_allowed(inferred_pair_bound_sq, distance_sq.as_slice())
+                && uf.union(keep_a, keep_b)
+            {
                 merged += 1;
             }
             continue;
         }
 
-        let d00 = dist_sq(vertex_pos(vertices, a0)?, vertex_pos(vertices, b0)?)
-            + dist_sq(vertex_pos(vertices, a1)?, vertex_pos(vertices, b1)?);
-        let d01 = dist_sq(vertex_pos(vertices, a0)?, vertex_pos(vertices, b1)?)
-            + dist_sq(vertex_pos(vertices, a1)?, vertex_pos(vertices, b0)?);
+        let d00a = dist_sq(vertex_pos(vertices, a0)?, vertex_pos(vertices, b0)?);
+        let d00b = dist_sq(vertex_pos(vertices, a1)?, vertex_pos(vertices, b1)?);
+        let d01a = dist_sq(vertex_pos(vertices, a0)?, vertex_pos(vertices, b1)?);
+        let d01b = dist_sq(vertex_pos(vertices, a1)?, vertex_pos(vertices, b0)?);
+        let d00 = d00a + d00b;
+        let d01 = d01a + d01b;
         if d00 <= d01 {
-            if uf.union(a0, b0) {
-                merged += 1;
+            if inferred_pairing_allowed(inferred_pair_bound_sq, &[d00a, d00b]) {
+                if uf.union(a0, b0) {
+                    merged += 1;
+                }
+                if uf.union(a1, b1) {
+                    merged += 1;
+                }
             }
-            if uf.union(a1, b1) {
-                merged += 1;
-            }
-        } else {
+        } else if inferred_pairing_allowed(inferred_pair_bound_sq, &[d01a, d01b]) {
             if uf.union(a0, b1) {
                 merged += 1;
             }
@@ -1624,13 +1661,29 @@ mod tests {
             "fixture must start with mismatched shared-edge endpoint ids"
         );
 
-        let (changed, _, _, new_cells, new_indices) = run_both_backends(
-            &[edge_record(0, 1)],
+        let records = [edge_record(0, 1)];
+        let (_, bounded_merges) = collect_merges(
+            &records,
             &vertices,
             &cells,
             &cell_indices,
-            &vertex_keys,
+            VertexKeys::Flat(&vertex_keys),
+            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
+            MergeMode::Primary,
+            true,
+            Some(
+                crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS
+                    * crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
+            ),
+        )
+        .expect("bounded merge collection");
+        assert_eq!(
+            bounded_merges, 0,
+            "experimental epsilon policy must reject this deliberately distant fixture"
         );
+
+        let (changed, _, _, new_cells, new_indices) =
+            run_both_backends(&records, &vertices, &cells, &cell_indices, &vertex_keys);
         assert!(
             changed,
             "expected mismatched shared-edge endpoints to be reconciled"
