@@ -15,7 +15,6 @@ For user-facing crate docs, see `README.md` and `docs/`.
 
 ```bash
 cargo test --release
-cargo test --release --features qhull
 cargo clippy
 cargo fmt
 ```
@@ -61,8 +60,6 @@ High-level flow per generator:
 3. Clip cell in local gnomonic/topological 2D representation.
 4. Deduplicate/assemble shared vertices across cells.
 
-The `qhull` backend is for comparison/testing, not primary production path.
-
 ## Documentation Map
 
 - `README.md`: user-facing overview and API summary.
@@ -95,8 +92,7 @@ src/
 │   └── packed_knn/                # Packed batched directed kNN
 ├── generated/
 │   └── sort_nets.rs               # Auto-generated sorting network code
-├── sort.rs                        # Internal small-sort utilities (feature/test use)
-└── convex_hull.rs                 # qhull backend (feature: qhull)
+└── sort.rs                        # Internal small-sort utilities (feature/test use)
 ```
 
 ## Features
@@ -106,7 +102,6 @@ src/
 - `timing`: detailed timing instrumentation.
 - `profiling`: helpers for profiling runs (e.g. inline control).
 - `microbench`: internal microbench harnesses.
-- `qhull`: convex-hull backend for comparison tests/bench.
 - `fma`: prefer fused multiply-add (`mul_add`) where used.
 - `tools`: benchmark/utility binaries.
 

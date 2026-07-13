@@ -96,14 +96,6 @@ impl QualityReport {
     }
 }
 
-#[cfg(feature = "qhull")]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct QhullCellCountComparison {
-    pub total_cells: usize,
-    pub matching_cell_vertex_counts: usize,
-    pub match_ratio: f32,
-}
-
 pub fn assess(diagram: &SphericalVoronoi) -> QualityReport {
     assess_with_config(diagram, QualityConfig::default())
 }
@@ -178,30 +170,6 @@ pub fn assess_with_config(diagram: &SphericalVoronoi, config: QualityConfig) -> 
         vertex_dot_residuals,
         edge_dot_residuals,
         low_degree,
-    }
-}
-
-#[cfg(feature = "qhull")]
-pub fn compare_cell_vertex_counts(
-    diagram: &SphericalVoronoi,
-    reference: &SphericalVoronoi,
-) -> QhullCellCountComparison {
-    let total_cells = diagram.num_cells().min(reference.num_cells());
-    if total_cells == 0 {
-        return QhullCellCountComparison::default();
-    }
-
-    let mut matching = 0usize;
-    for i in 0..total_cells {
-        if diagram.cell(i).len() == reference.cell(i).len() {
-            matching += 1;
-        }
-    }
-
-    QhullCellCountComparison {
-        total_cells,
-        matching_cell_vertex_counts: matching,
-        match_ratio: matching as f32 / total_cells as f32,
     }
 }
 

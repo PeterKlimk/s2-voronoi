@@ -493,56 +493,6 @@ fn test_compute_solves_upper_hemisphere_large_cells() {
 }
 
 #[test]
-#[cfg(feature = "qhull")]
-fn test_qhull_available() {
-    use glam::Vec3;
-    use voronoi_mesh::compute_voronoi_qhull;
-
-    let points: Vec<Vec3> = vec![
-        Vec3::new(1.0, 0.0, 0.0),
-        Vec3::new(-1.0, 0.0, 0.0),
-        Vec3::new(0.0, 1.0, 0.0),
-        Vec3::new(0.0, -1.0, 0.0),
-        Vec3::new(0.0, 0.0, 1.0),
-        Vec3::new(0.0, 0.0, -1.0),
-    ];
-    let voronoi = compute_voronoi_qhull(&points);
-    assert_eq!(voronoi.num_cells(), 6);
-}
-
-#[test]
-#[cfg(feature = "qhull")]
-fn test_qhull_normalizes_inputs_before_exact_3d_hull() {
-    use glam::Vec3;
-    use voronoi_mesh::compute_voronoi_qhull;
-
-    let points: Vec<Vec3> = vec![
-        Vec3::new(1.0001, 0.0, 0.0),
-        Vec3::new(-0.9999, 0.0, 0.0),
-        Vec3::new(0.0, 1.0002, 0.0),
-        Vec3::new(0.0, -0.9998, 0.0),
-        Vec3::new(0.0, 0.0, 1.0003),
-        Vec3::new(0.0, 0.0, -0.9997),
-    ];
-    let voronoi = compute_voronoi_qhull(&points);
-    assert_eq!(voronoi.num_cells(), 6);
-    for (i, g) in voronoi.generators().iter().enumerate() {
-        let len = (g.x * g.x + g.y * g.y + g.z * g.z).sqrt();
-        assert!(
-            (len - 1.0).abs() < 1e-6,
-            "qhull generator {i} was not normalized: {len}"
-        );
-    }
-    for (i, v) in voronoi.vertices().iter().enumerate() {
-        let len = (v.x * v.x + v.y * v.y + v.z * v.z).sqrt();
-        assert!(
-            (len - 1.0).abs() < 1e-6,
-            "qhull vertex {i} was not normalized: {len}"
-        );
-    }
-}
-
-#[test]
 fn test_adjacency_symmetric_complete_and_edge_aligned() {
     use std::collections::HashSet;
 

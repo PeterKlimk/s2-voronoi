@@ -2,7 +2,7 @@
 
 Fast spherical Voronoi diagrams on the unit sphere.
 
-Most spherical Voronoi code goes through a 3D convex hull (qhull, scipy) and slows down past tens
+Most spherical Voronoi code goes through a global 3D convex hull and slows down past tens
 of thousands of points. This crate builds each cell independently by clipping half-spaces of
 nearby points — the construction usually seen on the GPU — and stitches the per-cell results into
 one shared, validated graph on the CPU. Per-point cost is near constant, so the gap to hull-based
@@ -135,7 +135,6 @@ Single-threaded, ~1.8s at 1M. Per-build peak memory is roughly 0.65 KB/point.
 - `parallel` (default): rayon parallelism in cell construction.
 - `glam`: `UnitVec3Like` impl and conversions for `glam::Vec3`.
 - `serde`: `Serialize`/`Deserialize` for the diagram types.
-- `qhull`: convex-hull backend, for test/bench comparison only.
 - `timing`: phase and sub-phase timing reports.
 
 ## License

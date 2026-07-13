@@ -15,7 +15,6 @@ For user-facing crate docs, see `README.md` and `docs/`.
 
 ```bash
 cargo test --release
-cargo test --release --features qhull
 cargo clippy
 cargo fmt
 ```
@@ -66,8 +65,6 @@ High-level flow per generator:
 3. Clip cell in local gnomonic/topological 2D representation.
 4. Deduplicate/assemble shared vertices across cells.
 
-The `qhull` backend is for comparison/testing, not primary production path.
-
 ## Documentation Map
 
 - `README.md`: user-facing overview and API summary.
@@ -109,8 +106,7 @@ src/
 │   └── packed_knn/                # Packed batched directed kNN
 ├── generated/
 │   └── sort_nets.rs               # Auto-generated sorting network code
-├── sort.rs                        # Internal small-sort utilities (feature/test use)
-└── convex_hull.rs                 # qhull backend (feature: qhull)
+└── sort.rs                        # Internal small-sort utilities (feature/test use)
 ```
 
 ## Features
@@ -118,7 +114,6 @@ src/
 - `parallel` (default): rayon-based parallel cell construction.
 - `glam`: public `UnitVec3Like` impl/conversions for `glam::Vec3`.
 - `serde`: Serialize/Deserialize for diagram types.
-- `qhull`: convex-hull backend for comparison tests/bench.
 - Internal: `timing` (instrumentation), `profiling` (inline control),
   `microbench` (harnesses), `simd_scalar` (non-`wide` 8-lane fallback),
   `fma` (mul_add; off by default, see ledger), `tools` (bench binaries),

@@ -41,6 +41,3 @@ impl TerminationConfig {
         PackedNeighborPolicy::for_point_count(num_points)
     }
 }
-
-// NOTE: benchmark_voronoi function was removed during crate extraction.
-// It compared knn_clipping vs qhull backends and belongs in hex3's benchmarks.

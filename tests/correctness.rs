@@ -166,29 +166,6 @@ fn test_reproducibility() {
 }
 
 #[test]
-#[cfg(feature = "qhull")]
-fn test_knn_matches_qhull_structure() {
-    use glam::Vec3;
-    use voronoi_mesh::compute_voronoi_qhull;
-    use voronoi_mesh::quality::compare_cell_vertex_counts;
-
-    // For well-spaced points, knn_clipping should produce similar structure to qhull
-    let points = fibonacci_sphere_points(100, 0.05, 44444);
-    let vec3_points: Vec<Vec3> = points.iter().map(|p| Vec3::new(p.x, p.y, p.z)).collect();
-
-    let knn_diagram = compute(&points).unwrap();
-    let qhull_output = compute_voronoi_qhull(&vec3_points);
-
-    assert_eq!(knn_diagram.num_cells(), qhull_output.num_cells());
-    let comparison = compare_cell_vertex_counts(&knn_diagram, &qhull_output);
-    assert!(
-        comparison.match_ratio > 0.95,
-        "at least 95% of cells should have matching vertex counts with qhull, got {:.1}%",
-        comparison.match_ratio * 100.0
-    );
-}
-
-#[test]
 fn test_cell_areas_sum_to_sphere_area() {
     let points = fibonacci_sphere_points(5_000, 0.1, 2024);
     let diagram = compute(&points).unwrap();

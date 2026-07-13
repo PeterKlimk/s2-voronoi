@@ -67,7 +67,7 @@ impl SphericalVoronoi {
         }
     }
 
-    #[cfg_attr(not(feature = "qhull"), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn from_cells_and_indices(
         generators: Vec<UnitVec3>,
         vertices: Vec<UnitVec3>,

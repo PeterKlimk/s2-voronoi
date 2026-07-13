@@ -55,7 +55,7 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 | AUD-010 | P2 | Policy decision | Fast, fallback, repair, and exact-predicate paths do not share one exact site model or SoS policy | Choose and document the intended model; align paths |
 | AUD-011 | P2 | Under-justified | Termination mathematics is sound, but its complete floating error envelope is empirical | Add a derived error budget and threshold-adjacent tests |
 | AUD-012 | P3 | Policy decision | Welding is a strict computed-f32 threshold graph with transitive classes | Pin equality and transitive-chain semantics in docs/tests |
-| AUD-013 | P2 | Policy decision | Qhull is not a robust correctness oracle and should be retired | Replace it with a robust reference and remove oracle-like uses |
+| AUD-013 | P2 | Resolved | Qhull was not a robust correctness oracle | Removed feature, dependency, public API, comparisons, and oracle-like tooling |
 
 ## Confirmed defects
 
@@ -522,33 +522,34 @@ Therefore:
 - **Priority:** P2
 - **Class:** reference implementation and feature policy
 - **Confidence:** Policy decision informed by prior robustness failures
+- **Status:** Resolved; qhull removed from the crate and tooling
 
-The `qhull` backend is useful for ordinary-case comparison, but it is not a source of truth for this
-audit. Qhull is not robust in the extreme, nearly degenerate, or exactly degenerate regimes where
-the production backend is most difficult to validate. Agreement cannot prove correctness, and a
-disagreement cannot be attributed to the production backend without an independent robust witness.
+The former `qhull` backend was useful for ordinary-case comparison, but it was not a source of
+truth for this audit. Qhull is not robust in the extreme, nearly degenerate, or exactly degenerate
+regimes where the production backend is most difficult to validate. Agreement cannot prove
+correctness, and a disagreement cannot be attributed to the production backend without an
+independent robust witness.
 
 This distinction matters because a non-robust reference can make a correct implementation look
 wrong, bless a shared or coincident failure, or conceal that the compared programs solve different
 degeneracy policies. It has produced misleading conclusions in prior work on this crate.
 
-The current repository already describes qhull as a comparison/testing backend rather than the
-primary production path. The remaining risk is treating its results as an oracle in correctness
-tests, audit harnesses, or issue triage. It is also exposed as a supported Cargo feature and public
-API, which gives the diagnostic backend more permanence than its trust level warrants.
+Before resolution, the repository described qhull as a comparison/testing backend rather than the
+primary production path, but still exposed it as a supported Cargo feature and public API. That
+gave the diagnostic backend more permanence than its trust level warranted and left a continuing
+risk that tests or issue triage would treat it as an oracle.
 
-**Proposed resolution**
+**Implemented resolution**
 
-1. Stop using qhull agreement as acceptance evidence. Existing comparisons should be labelled
-   diagnostic and limited to well-conditioned fixtures.
-2. Select a robust replacement capable of evaluating the canonical spherical problem with exact or
-   adaptive predicates over the normalized f32 inputs.
-3. Require an explicit, deterministic policy for exact coplanar/cocircular predicates. A robust
-   sign without compatible SoS semantics is not a complete reference.
-4. Compare combinatorial identities—hull facets, Delaunay triples, adjacency, and robust predicate
-   signs—rather than relying primarily on floating vertex coordinates.
-5. Retire the public qhull feature/API, or move it to clearly unsupported diagnostic tooling until
-   it can be removed without misleading users.
+- Removed the optional dependency, Cargo feature, implementation module, and public re-export.
+- Removed qhull-only API and structure-comparison tests plus the cell-count comparison helper.
+- Preserved `bench_voronoi --validate` as an intrinsic diagnostic: it now reruns the configured
+  production path and reports strict subdivision validation and sampled geometric quality.
+- Removed qhull from the supported feature and contributor documentation.
+
+No external replacement was selected as part of retirement. A future reference must first match
+the canonical site model and exact-zero/SoS decision from AUD-010; until then, intrinsic validation
+and focused mathematical checks remain the acceptance evidence.
 
 **Replacement acceptance criteria**
 
@@ -575,7 +576,8 @@ degeneracy guarantees, not merely on API convenience or ordinary random fixtures
 5. **AUD-006/AUD-007:** resolved — tightened accepted serialized representations.
 6. **AUD-008:** resolved — construction certifies edge agreement, the incidence pass supplies a
    fused Euler gate, and full strict validation remains optional/testing.
-7. **AUD-013:** remove qhull's oracle role and choose a robust reference strategy.
+7. **AUD-013:** resolved — removed qhull's oracle role and public/backend surface; robust reference
+   selection remains gated on AUD-010's canonical-model decision.
 8. **AUD-010/AUD-011/AUD-012:** settle the mathematical policy and derive the remaining numerical
    envelope.
 
@@ -590,13 +592,15 @@ degeneracy guarantees, not merely on API convenience or ordinary random fixtures
 - Compare semantic topology across thread counts, bin counts, default SIMD, scalar SIMD, and FMA.
 - Keep welding/joggle cases in separate expected-policy buckets rather than treating them as ordinary
   geometric errors.
-- Treat qhull as an ordinary-case diagnostic only, never as the deciding oracle.
+- Do not introduce an external comparison as deciding evidence without certified predicates and a
+  compatible exact-zero/SoS policy.
 - Use exact or certified-robust references only after excluding or explicitly resolving exact
   degeneracies under the same SoS policy.
 
 ## Audit validation performed
 
-The audit ran targeted release checks including:
+Before qhull retirement, the audit ran targeted release checks including (these historical commands
+are no longer runnable on the current feature surface):
 
 ```bash
 cargo test --release --features qhull quality::tests -- --nocapture

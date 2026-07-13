@@ -19,10 +19,10 @@
 //!
 //! ## Feature stability
 //!
-//! The documented features are `parallel` (default), `glam`, `serde`, and
-//! `qhull`. Any other Cargo feature is an internal instrumentation or
-//! benchmarking hook, exempt from semver: items they expose may change or
-//! vanish in any release.
+//! The documented features are `parallel` (default), `glam`, and `serde`.
+//! Any other Cargo feature is an internal instrumentation or benchmarking
+//! hook, exempt from semver: items they expose may change or vanish in any
+//! release.
 //!
 //! ## Output
 //!
@@ -65,7 +65,7 @@ mod measures;
 mod packed_layout;
 pub(crate) mod policy;
 /// Diagnostic quality assessment (bench/comparison tooling only).
-#[cfg(any(feature = "qhull", feature = "tools"))]
+#[cfg(feature = "tools")]
 #[doc(hidden)]
 pub mod quality;
 pub(crate) mod sort;
@@ -127,10 +127,6 @@ pub fn run_batch_clip_microbench() {
     knn_clipping::topo2d::run_batch_clip_microbench();
 }
 
-// Optional qhull backend (test/benchmark only)
-#[cfg(feature = "qhull")]
-pub mod convex_hull;
-
 pub use adjacency::CellAdjacency;
 pub use diagram::{CellView, SphericalVoronoi};
 pub use embedding::{
@@ -159,9 +155,6 @@ pub mod escalate_probe {
 
 pub use locate::SphereLocator;
 pub use types::{UnitVec3, UnitVec3Like};
-
-#[cfg(feature = "qhull")]
-pub use convex_hull::compute_voronoi_qhull;
 
 /// Preprocessing mode applied before Voronoi computation.
 #[derive(Debug, Clone, Copy, PartialEq)]

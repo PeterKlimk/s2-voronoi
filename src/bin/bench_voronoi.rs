@@ -196,7 +196,7 @@ struct Args {
     #[arg(long, default_value_t = 0.0)]
     dist_param: f64,
 
-    /// Compare against convex hull ground truth (slow, max 100k)
+    /// Rerun strict subdivision validation and sampled geometric quality checks
     #[arg(long)]
     validate: bool,
 
@@ -405,46 +405,34 @@ fn format_num(n: usize) -> String {
     }
 }
 
-#[cfg(feature = "qhull")]
-fn validate_against_hull(points: &[Vec3], preprocess: bool) {
-    println!("\nValidating against convex hull ground truth...");
-
-    let t0 = Instant::now();
-    let hull = voronoi_mesh::convex_hull::compute_voronoi_qhull(points);
-    let hull_time = t0.elapsed().as_secs_f64() * 1000.0;
-
+fn validate_output(points: &[Vec3], preprocess: bool, repair: bool) {
+    println!("\nRunning strict validation and sampled quality checks...");
     let unit_points: Vec<UnitVec3> = points
         .iter()
         .map(|p| UnitVec3::new(p.x, p.y, p.z))
         .collect();
 
-    let t1 = Instant::now();
+    let t0 = Instant::now();
     let s2_diagram = voronoi_mesh::compute_with(
         &unit_points,
-        VoronoiConfig::default().with_preprocess_mode(if preprocess {
-            PreprocessMode::Weld
-        } else {
-            PreprocessMode::Disabled
-        }),
+        VoronoiConfig::default()
+            .with_preprocess_mode(if preprocess {
+                PreprocessMode::Weld
+            } else {
+                PreprocessMode::Disabled
+            })
+            .with_repair_mode(if repair {
+                RepairMode::Local3d
+            } else {
+                RepairMode::Disabled
+            }),
     )
     .expect("voronoi-mesh should succeed");
-    let s2_time = t1.elapsed().as_secs_f64() * 1000.0;
+    let compute_time = t0.elapsed().as_secs_f64() * 1000.0;
     let report = voronoi_mesh::validation::validate(&s2_diagram);
     let quality = voronoi_mesh::quality::assess(&s2_diagram);
-    let comparison = voronoi_mesh::quality::compare_cell_vertex_counts(&s2_diagram, &hull);
 
-    println!("  Convex hull time: {:>8.1}ms", hull_time);
-    println!(
-        "  voronoi-mesh time:  {:>8.1}ms ({:.1}x faster)",
-        s2_time,
-        hull_time / s2_time
-    );
-    println!(
-        "  Exact matches:    {:>8} / {} ({:.2}%)",
-        comparison.matching_cell_vertex_counts,
-        comparison.total_cells,
-        comparison.match_ratio as f64 * 100.0
-    );
+    println!("  Recompute time:   {:>8.1}ms", compute_time);
     println!("  Validation:       {}", report.headline());
     println!("  Quality:          {}", quality.headline());
     if report.degenerate_cells > 0 {
@@ -459,11 +447,6 @@ fn validate_against_hull(points: &[Vec3], preprocess: bool) {
             report.cells_with_duplicate_vertices
         );
     }
-}
-
-#[cfg(not(feature = "qhull"))]
-fn validate_against_hull(_points: &[Vec3], _preprocess: bool) {
-    println!("\nValidation requires the `qhull` feature; rebuild with --features qhull.");
 }
 
 struct BenchResult {
@@ -615,10 +598,8 @@ fn main() {
         println!("  Cells:         {:>8}", format_num(result.num_cells));
         println!("  Avg verts/cell:{:>8.2}", result.mean_cell_vertices);
 
-        if args.validate && *n <= 100_000 {
-            validate_against_hull(&points, !args.no_preprocess);
-        } else if args.validate && *n > 100_000 {
-            println!("\n  (skipping validation for n > 100k - convex hull is slow)");
+        if args.validate {
+            validate_output(&points, !args.no_preprocess, !args.no_repair);
         }
 
         results.push(result);

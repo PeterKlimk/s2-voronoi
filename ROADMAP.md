@@ -15,10 +15,11 @@ location; define an exact-duplicate policy and no-weld behavior for distinct
 generators. The kNN/grid path needs its own sound f64 certificate: a coarse f32
 mirror is acceptable only if bin coverage and unseen bounds conservatively
 cover its quantization, because search termination does decide which
-constraints reach geometry. Start scalar, differential-test against qhull and
-the f32 backend, establish multi-regime baselines, then decide whether a
-four-wide packed f64 kNN path is worth maintaining. Do not ship an f64 API that
-silently rounds inputs or stored vertices to f32.
+constraints reach geometry. Start scalar, differential-test against an
+independent certified reference under the selected SoS policy and the f32
+backend, establish multi-regime baselines, then decide whether a four-wide
+packed f64 kNN path is worth maintaining. Do not ship an f64 API that silently
+rounds inputs or stored vertices to f32.
 
 **Weld as policy, not correctness (exact-duplicates-only mode).** The 0.1
 fallback now lets a feasible `ClippedAway` cell replay its constraints in f64

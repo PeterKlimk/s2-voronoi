@@ -132,5 +132,4 @@ of the mechanisms above.
   conservative cap/plane upper bounds, ring walk with per-ring certificates.
 - `locate.rs` — point location, reusing the grid shell frontiers to answer nearest-generator
   queries. `validation.rs` — strict subdivision checks.
-- `timing/` — optional instrumentation. `convex_hull.rs` — qhull dual backend, for comparison
-  tests only.
+- `timing/` — optional instrumentation.
