@@ -405,7 +405,7 @@ fn format_num(n: usize) -> String {
     }
 }
 
-fn validate_output(points: &[Vec3], preprocess: bool, repair: bool) {
+fn validate_output(points: &[Vec3], preprocess: bool, repair: bool, dist: &str, seed: u64) {
     println!("\nRunning strict validation and sampled quality checks...");
     let unit_points: Vec<UnitVec3> = points
         .iter()
@@ -413,7 +413,7 @@ fn validate_output(points: &[Vec3], preprocess: bool, repair: bool) {
         .collect();
 
     let t0 = Instant::now();
-    let s2_diagram = voronoi_mesh::compute_with(
+    let output = voronoi_mesh::compute_with_report(
         &unit_points,
         VoronoiConfig::default()
             .with_preprocess_mode(if preprocess {
@@ -429,12 +429,37 @@ fn validate_output(points: &[Vec3], preprocess: bool, repair: bool) {
     )
     .expect("voronoi-mesh should succeed");
     let compute_time = t0.elapsed().as_secs_f64() * 1000.0;
-    let report = voronoi_mesh::validation::validate(&s2_diagram);
-    let quality = voronoi_mesh::quality::assess(&s2_diagram);
+    let report = output.report.preferred_validation();
+    let mut quality = voronoi_mesh::quality::assess(output.preferred_diagram());
+    quality.canonicalization_angular_error =
+        voronoi_mesh::quality::assess_canonicalization(&unit_points, &output.diagram);
 
     println!("  Recompute time:   {:>8.1}ms", compute_time);
     println!("  Validation:       {}", report.headline());
     println!("  Quality:          {}", quality.headline());
+    for (i, bucket) in quality.edge_cross_track_error.buckets.iter().enumerate() {
+        if bucket.radians.samples == 0 {
+            continue;
+        }
+        let upper = if bucket.site_chord_upper.is_infinite() {
+            "inf".to_string()
+        } else {
+            format!("{:.0e}", bucket.site_chord_upper)
+        };
+        println!(
+            "    edge bucket {i} chord<{upper}: n={} max={:.2e}rad p99={:.2e}rad",
+            bucket.radians.samples, bucket.radians.max, bucket.radians.p99,
+        );
+    }
+    println!(
+        "FIDELITY_KV dist={dist} n={} seed={seed} valid={} pre_defects={} repair_attempted={} repair_accepted={} {}",
+        output.preferred_diagram().num_cells(),
+        report.is_strictly_valid(),
+        output.report.pre_repair_edge_mismatch_count,
+        output.report.repair.attempted,
+        output.report.repair.accepted,
+        quality.fidelity_kv_fields(),
+    );
     if report.degenerate_cells > 0 {
         println!(
             "  Invalid cells:    {:>8} (< 3 vertices)",
@@ -599,7 +624,13 @@ fn main() {
         println!("  Avg verts/cell:{:>8.2}", result.mean_cell_vertices);
 
         if args.validate {
-            validate_output(&points, !args.no_preprocess, !args.no_repair);
+            validate_output(
+                &points,
+                !args.no_preprocess,
+                !args.no_repair,
+                &args.dist,
+                args.seed,
+            );
         }
 
         results.push(result);

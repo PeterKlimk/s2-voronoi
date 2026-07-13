@@ -6,11 +6,12 @@
 
 use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch};
 use crate::SphericalVoronoi;
-use glam::Vec3;
+use glam::{DVec3, Vec3};
 use std::collections::{HashMap, HashSet};
 
 const GRID_TARGET_DENSITY: f64 = 16.0;
 const LOW_DEGREE_DUPLICATE_EPS: f32 = 1e-6;
+const SITE_CHORD_BUCKET_UPPERS: [f64; 5] = [2e-6, 1e-5, 1e-4, 1e-3, f64::INFINITY];
 
 #[derive(Debug, Clone, Copy)]
 pub struct QualityConfig {
@@ -33,6 +34,95 @@ pub struct ResidualStats {
     pub max_abs: f32,
     pub mean_abs: f32,
     pub p95_abs: f32,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct F64Stats {
+    pub samples: usize,
+    pub max: f64,
+    pub mean: f64,
+    pub p95: f64,
+    pub p99: f64,
+}
+
+impl F64Stats {
+    fn from_values(mut values: Vec<f64>) -> Self {
+        if values.is_empty() {
+            return Self::default();
+        }
+        let samples = values.len();
+        let sum: f64 = values.iter().copied().sum();
+        let max = values.iter().copied().fold(0.0f64, f64::max);
+        values.sort_by(f64::total_cmp);
+        let percentile = |percent: usize| values[(samples - 1) * percent / 100];
+        Self {
+            samples,
+            max,
+            mean: sum / samples as f64,
+            p95: percentile(95),
+            p99: percentile(99),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AngularConditionBucket {
+    pub site_chord_upper: f64,
+    pub radians: F64Stats,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConditionedAngularStats {
+    pub overall: F64Stats,
+    pub buckets: [AngularConditionBucket; SITE_CHORD_BUCKET_UPPERS.len()],
+}
+
+impl Default for ConditionedAngularStats {
+    fn default() -> Self {
+        Self {
+            overall: F64Stats::default(),
+            buckets: SITE_CHORD_BUCKET_UPPERS.map(|site_chord_upper| AngularConditionBucket {
+                site_chord_upper,
+                radians: F64Stats::default(),
+            }),
+        }
+    }
+}
+
+impl ConditionedAngularStats {
+    pub fn aggregate(&self) -> F64Stats {
+        self.overall
+    }
+}
+
+#[derive(Default)]
+struct ConditionedAngularValues {
+    overall: Vec<f64>,
+    buckets: [Vec<f64>; SITE_CHORD_BUCKET_UPPERS.len()],
+}
+
+impl ConditionedAngularValues {
+    fn push(&mut self, site_chord: f64, radians: f64) {
+        if !site_chord.is_finite() || !radians.is_finite() {
+            return;
+        }
+        self.overall.push(radians);
+        let bucket = SITE_CHORD_BUCKET_UPPERS
+            .iter()
+            .position(|&upper| site_chord < upper)
+            .unwrap_or(SITE_CHORD_BUCKET_UPPERS.len() - 1);
+        self.buckets[bucket].push(radians);
+    }
+
+    fn finish(self) -> ConditionedAngularStats {
+        ConditionedAngularStats {
+            overall: F64Stats::from_values(self.overall),
+            buckets: std::array::from_fn(|i| AngularConditionBucket {
+                site_chord_upper: SITE_CHORD_BUCKET_UPPERS[i],
+                radians: F64Stats::from_values(self.buckets[i].clone()),
+            }),
+        }
+    }
 }
 
 impl ResidualStats {
@@ -62,7 +152,8 @@ pub struct SampledOwnershipStats {
     pub sampled_cells: usize,
     pub samples: usize,
     pub mismatches: usize,
-    pub worst_margin_violation: f32,
+    pub worst_margin_violation: f64,
+    pub worst_cross_track_radians: f64,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -77,27 +168,84 @@ pub struct QualityReport {
     pub ownership: SampledOwnershipStats,
     pub vertex_dot_residuals: ResidualStats,
     pub edge_dot_residuals: ResidualStats,
+    pub canonicalization_angular_error: F64Stats,
+    pub vertex_norm_error: F64Stats,
+    pub vertex_cross_track_error: ConditionedAngularStats,
+    pub edge_cross_track_error: ConditionedAngularStats,
     pub low_degree: LowDegreeQualityStats,
 }
 
 impl QualityReport {
     pub fn headline(&self) -> String {
+        let vertex_angular = self.vertex_cross_track_error.aggregate();
+        let edge_angular = self.edge_cross_track_error.aggregate();
         format!(
-            "ownership mismatches={}/{}, vertex residual max={:.2e} p95={:.2e}, edge residual max={:.2e} p95={:.2e}, low-degree near-dupes={}/{}",
+            "ownership mismatches={}/{}, vertex cross-track max={:.2e}rad, edge cross-track max={:.2e}rad, vertex norm max={:.2e}, low-degree near-dupes={}/{}",
             self.ownership.mismatches,
             self.ownership.samples,
-            self.vertex_dot_residuals.max_abs,
-            self.vertex_dot_residuals.p95_abs,
-            self.edge_dot_residuals.max_abs,
-            self.edge_dot_residuals.p95_abs,
+            vertex_angular.max,
+            edge_angular.max,
+            self.vertex_norm_error.max,
             self.low_degree.near_duplicate_vertices,
             self.low_degree.low_degree_vertices,
         )
+    }
+
+    pub fn fidelity_kv_fields(&self) -> String {
+        let mut fields = format!(
+            "ownership_samples={} ownership_mismatches={} ownership_worst_margin={:.17e} ownership_worst_rad={:.17e} canonical_n={} canonical_max_rad={:.17e} canonical_p99_rad={:.17e} vertex_norm_n={} vertex_norm_max={:.17e} vertex_norm_p99={:.17e} vertex_cross_n={} vertex_cross_max_rad={:.17e} vertex_cross_p99_rad={:.17e} edge_cross_n={} edge_cross_max_rad={:.17e} edge_cross_p99_rad={:.17e}",
+            self.ownership.samples,
+            self.ownership.mismatches,
+            self.ownership.worst_margin_violation,
+            self.ownership.worst_cross_track_radians,
+            self.canonicalization_angular_error.samples,
+            self.canonicalization_angular_error.max,
+            self.canonicalization_angular_error.p99,
+            self.vertex_norm_error.samples,
+            self.vertex_norm_error.max,
+            self.vertex_norm_error.p99,
+            self.vertex_cross_track_error.overall.samples,
+            self.vertex_cross_track_error.overall.max,
+            self.vertex_cross_track_error.overall.p99,
+            self.edge_cross_track_error.overall.samples,
+            self.edge_cross_track_error.overall.max,
+            self.edge_cross_track_error.overall.p99,
+        );
+        for (i, bucket) in self.edge_cross_track_error.buckets.iter().enumerate() {
+            use std::fmt::Write;
+            write!(
+                fields,
+                " edge_b{i}_upper={:.17e} edge_b{i}_n={} edge_b{i}_max_rad={:.17e} edge_b{i}_p99_rad={:.17e}",
+                bucket.site_chord_upper,
+                bucket.radians.samples,
+                bucket.radians.max,
+                bucket.radians.p99,
+            )
+            .expect("writing to String cannot fail");
+        }
+        fields
     }
 }
 
 pub fn assess(diagram: &SphericalVoronoi) -> QualityReport {
     assess_with_config(diagram, QualityConfig::default())
+}
+
+pub fn assess_canonicalization<P: crate::UnitVec3Like>(
+    input: &[P],
+    returned_diagram: &SphericalVoronoi,
+) -> F64Stats {
+    let values = input
+        .iter()
+        .zip(returned_diagram.generators())
+        .filter_map(|(before, after)| {
+            let before = DVec3::new(before.x() as f64, before.y() as f64, before.z() as f64);
+            let after = DVec3::new(after.x as f64, after.y as f64, after.z as f64);
+            (before.length_squared() > 0.0 && after.length_squared() > 0.0)
+                .then(|| angular_separation(before.normalize(), after.normalize()))
+        })
+        .collect();
+    F64Stats::from_values(values)
 }
 
 pub fn assess_with_config(diagram: &SphericalVoronoi, config: QualityConfig) -> QualityReport {
@@ -111,6 +259,8 @@ pub fn assess_with_config(diagram: &SphericalVoronoi, config: QualityConfig) -> 
         .iter()
         .map(|v| Vec3::new(v.x, v.y, v.z))
         .collect();
+    let normalized_generators: Vec<DVec3> = generators.iter().copied().map(normalize_f64).collect();
+    let normalized_vertices: Vec<DVec3> = vertices.iter().copied().map(normalize_f64).collect();
 
     let sampled_cells = sampled_cell_indices(diagram.num_cells(), config.max_sampled_cells);
     let sampled_set: HashSet<usize> = sampled_cells.iter().copied().collect();
@@ -153,7 +303,13 @@ pub fn assess_with_config(diagram: &SphericalVoronoi, config: QualityConfig) -> 
         }
     }
 
-    let ownership = assess_sampled_ownership(diagram, &generators, &vertices, &sampled_cells);
+    let ownership = assess_sampled_ownership(
+        diagram,
+        &generators,
+        &vertices,
+        &normalized_generators,
+        &sampled_cells,
+    );
     let vertex_dot_residuals =
         assess_vertex_residuals(&vertices, &generators, &vertex_to_cells, &sampled_vertices);
     let edge_dot_residuals = assess_edge_residuals(
@@ -163,12 +319,30 @@ pub fn assess_with_config(diagram: &SphericalVoronoi, config: QualityConfig) -> 
         &sampled_edges,
         config.edge_samples_per_edge.max(1),
     );
+    let vertex_norm_error = assess_vertex_norm_error(&vertices, &sampled_vertices);
+    let vertex_cross_track_error = assess_vertex_cross_track(
+        &normalized_vertices,
+        &normalized_generators,
+        &vertex_to_cells,
+        &sampled_vertices,
+    );
+    let edge_cross_track_error = assess_edge_cross_track(
+        &normalized_vertices,
+        &normalized_generators,
+        &edge_to_cells,
+        &sampled_edges,
+        config.edge_samples_per_edge,
+    );
     let low_degree = analyze_low_degree_vertices(diagram);
 
     QualityReport {
         ownership,
         vertex_dot_residuals,
         edge_dot_residuals,
+        canonicalization_angular_error: F64Stats::default(),
+        vertex_norm_error,
+        vertex_cross_track_error,
+        edge_cross_track_error,
         low_degree,
     }
 }
@@ -177,6 +351,7 @@ fn assess_sampled_ownership(
     diagram: &SphericalVoronoi,
     generators: &[Vec3],
     vertices: &[Vec3],
+    normalized_generators: &[DVec3],
     sampled_cells: &[usize],
 ) -> SampledOwnershipStats {
     if generators.is_empty() || sampled_cells.is_empty() {
@@ -189,7 +364,8 @@ fn assess_sampled_ownership(
 
     let mut samples = 0usize;
     let mut mismatches = 0usize;
-    let mut worst_margin_violation = 0.0f32;
+    let mut worst_margin_violation = 0.0f64;
+    let mut worst_cross_track_radians = 0.0f64;
 
     for &cell_idx in sampled_cells {
         let cell = diagram.cell(cell_idx);
@@ -213,10 +389,22 @@ fn assess_sampled_ownership(
             };
             samples += 1;
             if nearest != cell_idx {
+                let sample = normalize_f64(sample);
+                let nearest_dot = sample.dot(normalized_generators[nearest]);
+                let owner_dot = sample.dot(normalized_generators[cell_idx]);
+                let violation = nearest_dot - owner_dot;
+                if violation <= 0.0 {
+                    continue;
+                }
                 mismatches += 1;
-                let nearest_dot = sample.dot(generators[nearest]);
-                let owner_dot = sample.dot(g);
-                worst_margin_violation = worst_margin_violation.max(nearest_dot - owner_dot);
+                worst_margin_violation = worst_margin_violation.max(violation);
+                if let Some((_, radians)) = cross_track_radians(
+                    sample,
+                    normalized_generators[cell_idx],
+                    normalized_generators[nearest],
+                ) {
+                    worst_cross_track_radians = worst_cross_track_radians.max(radians);
+                }
             }
         }
     }
@@ -226,7 +414,99 @@ fn assess_sampled_ownership(
         samples,
         mismatches,
         worst_margin_violation,
+        worst_cross_track_radians,
     }
+}
+
+fn normalize_f64(p: Vec3) -> DVec3 {
+    DVec3::new(p.x as f64, p.y as f64, p.z as f64).normalize()
+}
+
+fn angular_separation(a: DVec3, b: DVec3) -> f64 {
+    a.cross(b).length().atan2(a.dot(b).clamp(-1.0, 1.0))
+}
+
+fn cross_track_radians(p: DVec3, a: DVec3, b: DVec3) -> Option<(f64, f64)> {
+    let normal = a - b;
+    let site_chord = normal.length();
+    if site_chord == 0.0 || !site_chord.is_finite() {
+        return None;
+    }
+    let sine = (p.dot(normal) / site_chord).abs().min(1.0);
+    Some((site_chord, sine.asin()))
+}
+
+fn assess_vertex_norm_error(vertices: &[Vec3], sampled_vertices: &HashSet<u32>) -> F64Stats {
+    F64Stats::from_values(
+        sampled_vertices
+            .iter()
+            .filter_map(|&vi| vertices.get(vi as usize))
+            .map(|v| (DVec3::new(v.x as f64, v.y as f64, v.z as f64).length() - 1.0).abs())
+            .collect(),
+    )
+}
+
+fn assess_vertex_cross_track(
+    vertices: &[DVec3],
+    generators: &[DVec3],
+    vertex_to_cells: &[Vec<usize>],
+    sampled_vertices: &HashSet<u32>,
+) -> ConditionedAngularStats {
+    let mut values = ConditionedAngularValues::default();
+    for &vi in sampled_vertices {
+        let vi = vi as usize;
+        let Some(&p) = vertices.get(vi) else {
+            continue;
+        };
+        let mut cells = vertex_to_cells[vi].clone();
+        cells.sort_unstable();
+        cells.dedup();
+        for i in 0..cells.len() {
+            for j in i + 1..cells.len() {
+                if let Some((site_chord, radians)) =
+                    cross_track_radians(p, generators[cells[i]], generators[cells[j]])
+                {
+                    values.push(site_chord, radians);
+                }
+            }
+        }
+    }
+    values.finish()
+}
+
+fn assess_edge_cross_track(
+    vertices: &[DVec3],
+    generators: &[DVec3],
+    edge_to_cells: &HashMap<(u32, u32), Vec<usize>>,
+    sampled_edges: &HashSet<(u32, u32)>,
+    interior_samples_per_edge: usize,
+) -> ConditionedAngularStats {
+    let mut values = ConditionedAngularValues::default();
+    for &(a, b) in sampled_edges {
+        let Some(cells) = edge_to_cells.get(&(a, b)) else {
+            continue;
+        };
+        let mut cells = cells.clone();
+        cells.sort_unstable();
+        cells.dedup();
+        if cells.len() != 2 {
+            continue;
+        }
+        let (Some(&va), Some(&vb)) = (vertices.get(a as usize), vertices.get(b as usize)) else {
+            continue;
+        };
+        let denominator = (interior_samples_per_edge + 1) as f64;
+        for k in 0..=interior_samples_per_edge + 1 {
+            let t = k as f64 / denominator;
+            let p = (va * (1.0 - t) + vb * t).normalize();
+            if let Some((site_chord, radians)) =
+                cross_track_radians(p, generators[cells[0]], generators[cells[1]])
+            {
+                values.push(site_chord, radians);
+            }
+        }
+    }
+    values.finish()
 }
 
 fn assess_vertex_residuals(
@@ -477,6 +757,36 @@ mod tests {
     }
 
     #[test]
+    fn cross_track_formula_returns_angular_distance_to_bisector() {
+        let a = DVec3::X;
+        let b = DVec3::Y;
+        let normal = (a - b).normalize();
+        let delta = 2.5e-4_f64;
+        let on_bisector = DVec3::Z;
+        let p = (on_bisector * delta.cos() + normal * delta.sin()).normalize();
+        let (site_chord, measured) = cross_track_radians(p, a, b).unwrap();
+        assert!((site_chord - 2.0_f64.sqrt()).abs() < 1e-15);
+        assert!((measured - delta).abs() < 1e-15);
+        assert_eq!(cross_track_radians(on_bisector, a, a), None);
+    }
+
+    #[test]
+    fn conditioning_buckets_are_disjoint_at_boundaries() {
+        let mut values = ConditionedAngularValues::default();
+        for (i, &upper) in SITE_CHORD_BUCKET_UPPERS[..4].iter().enumerate() {
+            values.push(upper.next_down(), (i + 1) as f64);
+            values.push(upper, (i + 11) as f64);
+        }
+        let stats = values.finish();
+        assert_eq!(stats.overall.samples, 8);
+        assert_eq!(stats.buckets[0].radians.samples, 1);
+        assert_eq!(stats.buckets[1].radians.samples, 2);
+        assert_eq!(stats.buckets[2].radians.samples, 2);
+        assert_eq!(stats.buckets[3].radians.samples, 2);
+        assert_eq!(stats.buckets[4].radians.samples, 1);
+    }
+
+    #[test]
     fn healthy_input_has_small_quality_residuals() {
         let points = fibonacci_sphere_points(100, 0.01);
         let diagram = compute(&points).expect("compute should succeed");
@@ -496,6 +806,16 @@ mod tests {
         );
         assert!(
             report.edge_dot_residuals.max_abs < 1e-3,
+            "{}",
+            report.headline()
+        );
+        assert!(
+            report.vertex_cross_track_error.overall.max < 1e-5,
+            "{}",
+            report.headline()
+        );
+        assert!(
+            report.edge_cross_track_error.overall.max < 1e-5,
             "{}",
             report.headline()
         );
@@ -526,6 +846,16 @@ mod tests {
         );
         assert!(
             stressed_report.edge_dot_residuals.max_abs < 1e-3,
+            "{}",
+            stressed_report.headline()
+        );
+        assert!(
+            stressed_report.vertex_cross_track_error.overall.max < 1e-4,
+            "{}",
+            stressed_report.headline()
+        );
+        assert!(
+            stressed_report.edge_cross_track_error.overall.max < 1e-4,
             "{}",
             stressed_report.headline()
         );

@@ -53,9 +53,10 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 | AUD-008 | P1 | Resolved | Plain `compute` documentation exceeded its fast-path certificate | Edge-agreement construction certificate + fused Euler; strict validation optional/testing |
 | AUD-009 | P1 | Resolved | Reconciliation merges were not bounded to an epsilon-diameter feature | Transactionally diameter-gate components; escalate rejected chains |
 | AUD-010 | P2 | Resolved | Fast, fallback, repair, and exact-predicate paths do not share one exact site model or SoS policy | Structural production contract chosen; unified exact combinatorics deferred as an optional add-on |
-| AUD-011 | P2 | Active | Termination reserves and the output's geometric-fidelity envelope are empirical | Derive the termination budget and quantify normalized-site angular/ownership error |
+| AUD-011 | P2 | Active; fidelity measured | Termination reserves remain empirical; normalized-site geometric fidelity now has a campaign baseline | Derive the remaining termination budget; retain the fidelity campaign |
 | AUD-012 | P3 | Policy decision | Welding is a strict computed-f32 threshold graph with transitive classes | Pin equality and transitive-chain semantics in docs/tests |
 | AUD-013 | P2 | Resolved | Qhull was not a robust correctness oracle | Removed feature, dependency, public API, comparisons, and oracle-like tooling |
+| AUD-014 | P1 | Resolved | Local3d lost the hull-face sign and could mint the antipodal Voronoi vertex | Carry the oriented support normal through sorted-triple repair fans |
 
 ## Confirmed defects
 
@@ -476,7 +477,7 @@ error** without implying that the returned combinatorics are the exact diagram o
 
 - **Priority:** P2
 - **Class:** numerical proof and fidelity-measurement gap
-- **Confidence:** Under-justified, not falsified for production defaults
+- **Confidence:** Fidelity baseline established; termination forward-error budget remains under-justified
 
 Assuming its input `B` is a true upper bound on every unseen raw f32 dot, the radius-of-security
 derivation is mathematically sound:
@@ -535,6 +536,74 @@ unstable regime in one aggregate.
 
 Probe-only negative termination-pad overrides can intentionally violate the certificate and should
 remain outside the production correctness claim or be range-validated.
+
+**Implemented fidelity measurements**
+
+Let `C_i` be the returned once-rounded canonical f32 generator promoted exactly to f64, and define
+the diagnostic site `U_i = C_i / ||C_i||`. The diagnostic report now measures:
+
+- input/canonical-site angular displacement with `atan2(||A x U_i||, A . U_i)` after normalizing
+  the supplied direction `A` in f64;
+- stored-vertex norm error `abs(||V|| - 1)` before diagnostic normalization;
+- vertex and shared-edge cross-track angular error
+  `asin(min(1, abs(P . (U_a - U_b)) / ||U_a - U_b||))`, where `P` is a normalized stored vertex
+  or a normalized chord sample along the edge; and
+- sampled cell ownership at one generator-biased interior point per sampled cell edge.
+
+Cross-track values are bucketed by normalized-site chord distance at `2e-6`, `1e-5`, `1e-4`, and
+`1e-3`, with maxima and percentiles retained in stable key/value output. The ownership locator uses
+the production raw-f32 cube grid to propose the nearest site, then evaluates a proposed mismatch
+against `U_i` in f64. It is therefore a fast candidate-assisted diagnostic, not a certified
+exhaustive nearest-site oracle for the normalized-site problem; zero mismatches must be read with
+that limitation.
+
+[`scripts/fidelity_campaign.sh`](../scripts/fidelity_campaign.sh) runs each case in a fresh release
+test process and keeps the full record in a line-oriented ledger. It requires strict validation and
+no post-repair residual before emitting a result. Live progress is deliberately compact so the
+conditioning records do not make a healthy run appear hung.
+
+**2026-07-14 baseline**
+
+The retained campaign ran 32/32 cases successfully: three seeds each of uniform, Fibonacci,
+clustered, bimodal, cube/seam, near-cocircular, mega, hemisphere, cap, and welded input at about
+100k generators, plus a 99,846-site cubed-sphere grid and a 1,000-site exact great-circle policy
+fixture. It sampled 196,596 ownership points, 573,048 incident-site vertex pairs, and 963,920 edge
+points; canonicalization covered all 3,100,846 supplied sites.
+
+| Measurement | Campaign maximum | Largest per-case p99 |
+|---|---:|---:|
+| Canonicalization angle, ordinary/unperturbed | `4.864e-8 rad` | `4.051e-8 rad` |
+| Vertex norm error | `1.518e-7` | `1.138e-7` |
+| Vertex cross-track angle | `8.246e-8 rad` | `5.033e-8 rad` |
+| Edge cross-track angle | `7.846e-8 rad` | `4.578e-8 rad` |
+| Candidate-assisted ownership violations | `0 / 196,596` | n/a |
+
+The exact great-circle fixture is intentionally separate: its deterministic realized perturbation
+produced a `9.993e-3 rad` maximum input/output displacement, while its post-policy vertex and edge
+cross-track errors remained in the same f32-scale band as ordinary cases. This is policy movement,
+not accumulated clipping error.
+
+Default welding left no measured edges below `2e-6` site chord. The next buckets contained 315
+samples (`2e-6..1e-5`, maximum `3.815e-8 rad`), 30,460 samples (`1e-5..1e-4`, maximum
+`5.361e-8 rad`), 345,925 samples (`1e-4..1e-3`, maximum `6.920e-8 rad`), and 587,220 samples above
+`1e-3` (maximum `7.846e-8 rad`). This campaign found no close-site amplification; the closest
+surviving bucket was better, not worse, than the aggregate. That is empirical evidence under the
+default quotient policy, not a conditioning-independent worst-case proof.
+
+Five runs exercised pre-repair mismatch handling (3,630 records, of which the structured grid
+contributed 3,612). Reconciliation alone closed the clustered, cube, and grid cases. Two hemisphere
+runs escalated to Local3d and both were accepted. The first campaign attempt exposed AUD-014 before
+this clean baseline was recorded. Sixteen runs welded at least one pair, for 121 total merged sites.
+
+**Acceptance status**
+
+- [ ] Written forward-error budget for every termination reserve.
+- [ ] Threshold-neighbor tests across sign, norm endpoints, polar charts, SIMD/scalar, and FMA.
+- [x] Precise diagnostic `U_i` angular formulas and conditioning buckets.
+- [x] Retained multi-distribution campaign with strict-valid/no-residual prerequisites.
+- [x] Empirical maxima and per-case p99 baseline, separated from explicit perturbation policy.
+- [ ] Certified exhaustive normalized-site ownership search, if that stronger diagnostic is later
+  worth its cost.
 
 ### AUD-012 — Welding equality and transitive-class semantics
 
@@ -607,6 +676,37 @@ and focused mathematical checks remain the acceptance evidence.
 Replacement library selection is intentionally left open. It should be evaluated on predicate and
 degeneracy guarantees, not merely on API convenience or ordinary random fixtures.
 
+### AUD-014 — Local3d discarded the hull-face circumcenter sign
+
+- **Priority:** P1
+- **Class:** repair geometry / fail-loud robustness
+- **Confidence:** Confirmed on public hemisphere inputs
+- **Status:** Resolved; Local3d carries the oriented hull support normal through vertex minting
+
+Local3d correctly built one exact-predicate normalized 3D hull, but reduced its faces to sorted
+generator triples before splicing. A triple identifies which three sites meet but not which of its
+two antipodal circumcenters is the hull face's Voronoi vertex. The later minting path reconstructed
+the position by forcing the normal onto the same side as the generators.
+
+That sign rule only works when the origin lies inside the local hull. For an upper-hemisphere local
+gather, lower/rim hull faces have outward support normals whose dot with all three generators is
+negative. The old rule flipped those vertices to the opposite pole. The repaired combinatorics
+closed every residual edge, but the manufactured pole-to-pole edges made the whole-diagram strict
+gate reject the repair, so default computation still failed. The defect reproduced at 1,000 and
+100,000 hemisphere points with seed 1.
+
+The repair fan now carries an optional oracle-selected mint position alongside the unchanged sorted
+triple key. Local3d supplies the face's oriented outward support normal. Live triple-keyed rim
+vertices still take precedence, preserving the existing splice agreement rule; only genuinely new
+vertices use the position hint. Projected/probe oracles retain their previous deterministic
+triple-derived fallback.
+
+Unit tests prove that an origin-outside upper-hemisphere hull returns supporting outward normals
+and that minting preserves the selected antipodal sign. An end-to-end 1,000-site regression requires
+the default Local3d repair to be attempted, accepted, residual-free, and strictly valid. In the
+post-fix AUD-011 campaign, the former 100,000-site failure repaired all seven detected defects and
+had `6.866e-8 rad` maximum sampled edge cross-track error.
+
 ## Recommended implementation sequence
 
 1. **AUD-001:** resolved — removed unsafe-precondition violations.
@@ -622,8 +722,9 @@ degeneracy guarantees, not merely on API convenience or ordinary random fixtures
    selection remains gated on AUD-010's canonical-model decision.
 8. **AUD-010:** resolved — structural production contract selected; unified exact combinatorics is
    a deferred optional add-on.
-9. **AUD-011/AUD-012:** derive the remaining numerical/fidelity envelope, then settle welding's
-   exact documented threshold-graph semantics.
+9. **AUD-014:** resolved — preserved Local3d's oriented hull-face circumcenter through minting.
+10. **AUD-011/AUD-012:** derive the remaining termination envelope, retain the measured fidelity
+    baseline, then settle welding's exact documented threshold-graph semantics.
 
 ## Cross-cutting test backlog
 
