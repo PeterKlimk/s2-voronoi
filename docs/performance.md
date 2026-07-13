@@ -348,10 +348,6 @@ Assembly/live-dedup swarm backlog (2026-07-13):
   lower transient live heap by about 12 bytes per output vertex. Retain per-shard spans for debug
   bounds checks and measure allocator live bytes as well as peak RSS, since the allocator may retain
   freed pages. This is principally a memory-envelope experiment.
-- **Pack deferred source location:** `DeferredSlot` may be reducible from roughly 32 to 24 bytes by
-  packing `source_bin` and `source_slot`. Audit representation limits and preserve exact fallback
-  owner/slot mapping; measure deferred counts and memory traffic because the fallback itself is
-  normally cold even though deferred records are common.
 - **Instrument a same-owner-bin scatter fast path:** using the current cell's known vertex offset can
   avoid unpack/lookup when a packed vertex owner bin equals the cell bin. Measure the hit fraction by
   distribution and input ordering before adding a branch; do not reorder cells by bin because that
@@ -386,6 +382,11 @@ Do not broadly retry these without a materially different design or workload:
   roughly 0.006% Fibonacci instructions/branches; uniform was neutral. Six bins showed essentially
   no RSS or counter effect. Retain 6x for the speed-oriented default; revisit a smaller factor only
   as an explicit memory-mode policy.
+- Packing `DeferredSlot`'s `(source_bin: u8, source_slot: u32)` into a `u64` does not shrink the
+  32-byte record: the key and position consume 24 bytes and the packed field raises alignment to
+  eight. Packing both into `u32` could reach 28 bytes but would reduce the source-slot range to 24
+  bits, adding a representation limit to save only four bytes. Do not trade supported capacity for
+  this cold fallback-record layout.
 - Per-(ring cell, query) spherical-cap pruning: adjacent caps rarely prune; measured net loss.
 - Packed-to-shell attempted-slot filtering: low duplicate coverage and extra branching.
 - Scalar shell dot-only SIMD: measured 6.5–8.5% slower.
