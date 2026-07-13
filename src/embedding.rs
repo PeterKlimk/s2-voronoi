@@ -328,11 +328,20 @@ fn projected_unit_f32<P: WorldVec3Like + ?Sized>(
     embedding: SphereEmbedding,
     point: &P,
 ) -> Result<UnitVec3, SphereProjectionError> {
-    let u = embedding.project_world_to_unit(point)?;
+    projected_components_f32(embedding, world_components(point))
+}
+
+#[inline]
+fn projected_components_f32(
+    embedding: SphereEmbedding,
+    world: [f64; 3],
+) -> Result<UnitVec3, SphereProjectionError> {
+    embedding.validate_world_point(world)?;
+    let u = embedding.project_validated_world(world);
     Ok(UnitVec3::new(u[0] as f32, u[1] as f32, u[2] as f32))
 }
 
-fn project_points<P: WorldVec3Like + Sync>(
+fn project_points<P: WorldVec3Like>(
     points: &[P],
     embedding: SphereEmbedding,
 ) -> Result<Vec<glam::Vec3>, VoronoiError> {
@@ -342,34 +351,56 @@ fn project_points<P: WorldVec3Like + Sync>(
 
     #[cfg(feature = "parallel")]
     {
-        use rayon::prelude::*;
-        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::mpsc;
 
         const PARALLEL_PROJECTION_MIN_POINTS: usize = 1 << 14;
-        if points.len() >= PARALLEL_PROJECTION_MIN_POINTS {
-            // Indexed parallel collect preserves input order. Invalid inputs
-            // leave a never-observed zero placeholder and only contend on the
-            // cold-path atomic minimum; after the pool joins, that index
-            // reproduces the serial first-invalid contract.
-            let first_invalid = AtomicUsize::new(usize::MAX);
-            let projected: Vec<glam::Vec3> = points
-                .par_iter()
-                .enumerate()
-                .map(
-                    |(point_index, point)| match projected_unit_f32(embedding, point) {
-                        Ok(u) => glam::Vec3::new(u.x, u.y, u.z),
-                        Err(_) => {
-                            first_invalid.fetch_min(point_index, Ordering::Relaxed);
-                            glam::Vec3::ZERO
-                        }
-                    },
-                )
-                .collect();
-            let point_index = first_invalid.load(Ordering::Relaxed);
-            if point_index != usize::MAX {
-                let err = embedding
-                    .validate_world_point(world_components(&points[point_index]))
-                    .expect_err("parallel projection recorded an invalid point");
+        if points.len() >= PARALLEL_PROJECTION_MIN_POINTS && rayon::current_num_threads() > 1 {
+            // Match the core API's unconstrained input trait: read caller data
+            // once on this thread, then send owned chunks to the Rayon pool.
+            // This supports non-Sync and stateful implementations without a
+            // full-size snapshot or re-reading invalid points.
+            const CHUNK_POINTS: usize = 1 << 14;
+            let mut projected = vec![glam::Vec3::ZERO; points.len()];
+            let (error_tx, error_rx) = mpsc::channel();
+            let wave_points = CHUNK_POINTS * rayon::current_num_threads();
+            let mut remaining_output = projected.as_mut_slice();
+            for (wave_index, input_wave) in points.chunks(wave_points).enumerate() {
+                let wave_start = wave_index * wave_points;
+                let (output_wave, remaining) = remaining_output.split_at_mut(input_wave.len());
+                remaining_output = remaining;
+                rayon::in_place_scope(|scope| {
+                    let mut remaining_wave_output = output_wave;
+                    for (chunk_index, input_chunk) in input_wave.chunks(CHUNK_POINTS).enumerate() {
+                        let (output_chunk, remaining) =
+                            remaining_wave_output.split_at_mut(input_chunk.len());
+                        remaining_wave_output = remaining;
+                        let point_start = wave_start + chunk_index * CHUNK_POINTS;
+                        let world_points: Vec<[f64; 3]> =
+                            input_chunk.iter().map(world_components).collect();
+                        let error_tx = error_tx.clone();
+                        scope.spawn(move |_| {
+                            let mut first_error = None;
+                            for (offset, (&world, output)) in
+                                world_points.iter().zip(output_chunk.iter_mut()).enumerate()
+                            {
+                                match projected_components_f32(embedding, world) {
+                                    Ok(u) => *output = glam::Vec3::new(u.x, u.y, u.z),
+                                    Err(err) => {
+                                        if first_error.is_none() {
+                                            first_error = Some((point_start + offset, err));
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(error) = first_error {
+                                let _ = error_tx.send(error);
+                            }
+                        });
+                    }
+                });
+            }
+            drop(error_tx);
+            if let Some((point_index, err)) = error_rx.into_iter().min_by_key(|(index, _)| *index) {
                 return Err(VoronoiError::InvalidInput {
                     point_index,
                     message: err.to_string(),
@@ -518,7 +549,7 @@ impl EmbeddedComputeOutput {
 }
 
 /// Compute an embedded spherical Voronoi diagram with default settings.
-pub fn compute_on_sphere<P: WorldVec3Like + Sync>(
+pub fn compute_on_sphere<P: WorldVec3Like>(
     points: &[P],
     embedding: SphereEmbedding,
 ) -> Result<EmbeddedSphericalVoronoi, VoronoiError> {
@@ -526,7 +557,7 @@ pub fn compute_on_sphere<P: WorldVec3Like + Sync>(
 }
 
 /// Compute an embedded spherical Voronoi diagram with explicit configuration.
-pub fn compute_on_sphere_with<P: WorldVec3Like + Sync>(
+pub fn compute_on_sphere_with<P: WorldVec3Like>(
     points: &[P],
     embedding: SphereEmbedding,
     config: VoronoiConfig,
@@ -538,7 +569,7 @@ pub fn compute_on_sphere_with<P: WorldVec3Like + Sync>(
 }
 
 /// Compute an embedded diagram and return preprocessing and validation metadata.
-pub fn compute_on_sphere_with_report<P: WorldVec3Like + Sync>(
+pub fn compute_on_sphere_with_report<P: WorldVec3Like>(
     points: &[P],
     embedding: SphereEmbedding,
     config: VoronoiConfig,
@@ -577,7 +608,7 @@ impl EmbeddedSphereLocator {
     ///
     /// Conversion is performed deterministically before the existing parallel
     /// locator runs, so an error always identifies the lowest invalid index.
-    pub fn locate_many_world<P: WorldVec3Like + Sync>(
+    pub fn locate_many_world<P: WorldVec3Like>(
         &self,
         queries: &[P],
     ) -> Result<Vec<usize>, IndexedSphereProjectionError> {
@@ -649,5 +680,101 @@ mod wire {
                 Err(SphereEmbeddingError::UnrepresentableExtent { component: 0 })
             ));
         }
+    }
+}
+
+#[cfg(all(test, feature = "parallel"))]
+mod projection_tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    fn in_two_thread_pool<R: Send>(op: impl FnOnce() -> R + Send) -> R {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            assert_eq!(rayon::current_num_threads(), 2);
+            op()
+        })
+    }
+
+    fn non_axis_world_points(count: usize) -> Vec<[f64; 3]> {
+        let golden_angle = std::f64::consts::PI * (3.0 - 5.0f64.sqrt());
+        (0..count)
+            .map(|i| {
+                let z = 1.0 - 2.0 * (i as f64 + 0.5) / count as f64;
+                let radial = (1.0 - z * z).sqrt();
+                let theta = i as f64 * golden_angle;
+                [
+                    7.0 + radial * theta.cos() * 3.0,
+                    -11.0 + radial * theta.sin() * 3.0,
+                    13.0 + z * 3.0,
+                ]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn valid_parallel_projection_matches_scalar_order() {
+        let embedding = SphereEmbedding::new([7.0, -11.0, 13.0], 3.0).unwrap();
+        let world = non_axis_world_points(20_000);
+        let expected: Vec<glam::Vec3> = world
+            .iter()
+            .map(|point| {
+                let u = projected_unit_f32(embedding, point).unwrap();
+                glam::Vec3::new(u.x, u.y, u.z)
+            })
+            .collect();
+
+        let projected = in_two_thread_pool(|| project_points(&world, embedding).unwrap());
+        assert_eq!(projected, expected);
+    }
+
+    struct StatefulPoint {
+        xyz: [f64; 3],
+        first_x_bits: AtomicU64,
+    }
+
+    impl WorldVec3Like for StatefulPoint {
+        fn x(&self) -> f64 {
+            f64::from_bits(
+                self.first_x_bits
+                    .swap(self.xyz[0].to_bits(), Ordering::Relaxed),
+            )
+        }
+
+        fn y(&self) -> f64 {
+            self.xyz[1]
+        }
+
+        fn z(&self) -> f64 {
+            self.xyz[2]
+        }
+    }
+
+    #[test]
+    fn parallel_projection_snapshots_stateful_inputs_once() {
+        let embedding = SphereEmbedding::new([0.0; 3], 1.0).unwrap();
+        let world: Vec<StatefulPoint> = (0..20_000)
+            .map(|i| StatefulPoint {
+                xyz: [1.0, 0.0, 0.0],
+                first_x_bits: AtomicU64::new(if i == 1_234 {
+                    f64::NAN.to_bits()
+                } else {
+                    1.0f64.to_bits()
+                }),
+            })
+            .collect();
+
+        let result = in_two_thread_pool(|| project_points(&world, embedding));
+        assert!(matches!(
+            result,
+            Err(VoronoiError::InvalidInput {
+                point_index: 1_234,
+                ..
+            })
+        ));
     }
 }

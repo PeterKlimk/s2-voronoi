@@ -39,7 +39,7 @@ rounded back to f32), so `generators()` may differ from the raw input by ~1 ulp.
 ### Spheres in world coordinates
 
 Keep the geometric computation in stable unit-sphere coordinates while embedding the result at
-any finite center and positive radius:
+any finite center and positive radius whose axis-aligned extent remains representable in f64:
 
 ```rust
 use voronoi_mesh::{compute_on_sphere, SphereEmbedding};
@@ -63,8 +63,9 @@ World inputs use f64 and are interpreted by their direction from the center: the
 is deliberately discarded. The returned wrapper stores only the canonical unit diagram plus the
 embedding. World vertices, generators, spherical centroids, physical areas, Lloyd targets, and
 point-location queries are derived without duplicating the topology or geometry buffers. With the
-default `parallel` feature, world-input validation and projection run across the Rayon pool before
-the unchanged unit-sphere backend begins.
+default `parallel` feature and a multi-threaded Rayon pool, large world inputs are snapshotted once
+in bounded chunks and projected across the pool before the unchanged unit-sphere backend begins.
+Smaller inputs and single-threaded pools stay serial.
 
 ## What you get
 

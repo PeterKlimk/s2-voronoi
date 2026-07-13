@@ -1,7 +1,30 @@
+use std::cell::Cell;
+
 use voronoi_mesh::{
     compute, compute_on_sphere, compute_on_sphere_with_report, SphereEmbedding,
     SphereEmbeddingError, SphereProjectionError, UnitVec3, VoronoiConfig, VoronoiError,
+    WorldVec3Like,
 };
+
+struct NonSyncPoint {
+    xyz: [f64; 3],
+    marker: Cell<()>,
+}
+
+impl WorldVec3Like for NonSyncPoint {
+    fn x(&self) -> f64 {
+        self.marker.set(());
+        self.xyz[0]
+    }
+
+    fn y(&self) -> f64 {
+        self.xyz[1]
+    }
+
+    fn z(&self) -> f64 {
+        self.xyz[2]
+    }
+}
 
 fn octahedron_unit() -> Vec<UnitVec3> {
     vec![
@@ -12,6 +35,22 @@ fn octahedron_unit() -> Vec<UnitVec3> {
         UnitVec3::new(0.0, 0.0, 1.0),
         UnitVec3::new(0.0, 0.0, -1.0),
     ]
+}
+
+fn fibonacci_unit(count: usize) -> Vec<UnitVec3> {
+    let golden_angle = std::f64::consts::PI * (3.0 - 5.0f64.sqrt());
+    (0..count)
+        .map(|i| {
+            let z = 1.0 - 2.0 * (i as f64 + 0.5) / count as f64;
+            let radial = (1.0 - z * z).sqrt();
+            let theta = i as f64 * golden_angle;
+            UnitVec3::new(
+                (radial * theta.cos()) as f32,
+                (radial * theta.sin()) as f32,
+                z as f32,
+            )
+        })
+        .collect()
 }
 
 fn embed(center: [f64; 3], direction: UnitVec3, distance: f64) -> [f64; 3] {
@@ -55,6 +94,48 @@ fn translated_scaled_octahedron_matches_unit_computation() {
         .sum();
     let expected_area = 4.0 * std::f64::consts::PI * 16.0;
     assert!((total_area - expected_area).abs() / expected_area < 1e-6);
+}
+
+#[test]
+fn translated_scaled_non_axis_points_match_recovered_unit_computation() {
+    let unit = fibonacci_unit(257);
+    let center = [12.125, -98.75, 0.03125];
+    let embedding = SphereEmbedding::new(center, 11.5).unwrap();
+    let world: Vec<[f64; 3]> = unit
+        .iter()
+        .enumerate()
+        .map(|(i, &direction)| embed(center, direction, 0.25 + (i % 19) as f64))
+        .collect();
+    let recovered: Vec<UnitVec3> = world
+        .iter()
+        .map(|point| {
+            let u = embedding.project_world_to_unit(point).unwrap();
+            UnitVec3::new(u[0] as f32, u[1] as f32, u[2] as f32)
+        })
+        .collect();
+
+    let canonical = compute(&recovered).unwrap();
+    let embedded = compute_on_sphere(&world, embedding).unwrap();
+    assert_same_diagram(&canonical, embedded.diagram());
+}
+
+#[test]
+fn embedded_compute_and_locator_accept_non_sync_point_types() {
+    let embedding = SphereEmbedding::new([2.0, 3.0, 5.0], 7.0).unwrap();
+    let world: Vec<NonSyncPoint> = octahedron_unit()
+        .into_iter()
+        .map(|direction| NonSyncPoint {
+            xyz: embed(embedding.center(), direction, embedding.radius()),
+            marker: Cell::new(()),
+        })
+        .collect();
+
+    let embedded = compute_on_sphere(&world, embedding).unwrap();
+    let locator = embedded.build_locator_world();
+    assert_eq!(
+        locator.locate_many_world(&world).unwrap(),
+        (0..6).collect::<Vec<_>>()
+    );
 }
 
 #[test]
