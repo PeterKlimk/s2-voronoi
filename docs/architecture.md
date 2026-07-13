@@ -103,10 +103,17 @@ earlier rounds, must have f64-measured diameter no larger than the reconciliatio
 component that would grow through a chain past that bound is left untouched and explicitly seeds
 Local3d repair. The disputed feature is epsilon-scale, so both paths remain local.
 
-The validity argument is the central design idea: combinatorial identity plus the directed order
-plus bounded repair yields a strictly valid subdivision. Geometric accuracy is best-effort (f64
-internally); validity only needs adjacent cells' combinatorial decisions to agree. Keep that
-explicit when touching any of the three mechanisms.
+The fast-path validity argument is the central design idea: combinatorial identity plus directed
+edge checks certify exact multiplicity and opposite orientation without rebuilding and sorting a
+second global edge list. Cross-bin equal-key runs enforce one record per side; in-bin checks enforce
+one consumption per side and reverse endpoint order. Bounded reconciliation runs only on recorded
+defects and rechecks complete edge agreement over its touched region. The already-required
+incidence pass supplies `V` and the live half-edge count `H`, so `V - H/2 + F = 2` adds no second
+topology traversal. Full connectivity and diagnostic validation remain optional/testing checks.
+
+Geometric accuracy is best-effort (f64 internally, f32 storage); topological coherence only needs
+adjacent cells' combinatorial decisions to agree. Keep that distinction explicit when touching any
+of the mechanisms above.
 
 ## Module map
 

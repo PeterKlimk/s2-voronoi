@@ -67,7 +67,7 @@ fn reconcile_state_error(message: impl Into<String>) -> crate::VoronoiError {
 
 /// Error for post-repair residuals on the plain compute paths: a non-empty
 /// residual list means the output is provably not a valid subdivision (some
-/// interior edge stays unpaired), and those paths have no report channel to
+/// interior edge stays unpaired, overused, or misoriented), and those paths have no report channel to
 /// surface it — so they fail loud rather than return a known-invalid
 /// diagram. `pairs` are the offending cell/generator pairs (capped in the
 /// message). Never constructed on clean runs (the list is empty).
@@ -83,7 +83,8 @@ pub(crate) fn residual_error(pairs: &[(u32, u32)]) -> crate::VoronoiError {
         String::new()
     };
     crate::VoronoiError::ComputationFailed(format!(
-        "edge reconciliation left {} unpaired interior edge(s) — output is not a valid \
+        "edge reconciliation left {} bad interior edge(s) (unpaired, overused, or \
+         misoriented) — output is not a valid \
          subdivision: {}{more}. Use compute_with_report to inspect, or report this input.",
         pairs.len(),
         shown.join(" ")
@@ -247,8 +248,8 @@ pub(crate) type ReconciledCells = (Vec<VoronoiCell>, Vec<u32>);
 /// on that invariant to localize must treat these cells as always in scope.
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct ReconcileResult {
-    /// Surviving unpaired interior edges, as owning cell pairs for the
-    /// caller's report / repair trigger.
+    /// Surviving bad interior edges (unpaired, overused, or misoriented), as
+    /// owning cell pairs for the caller's report / repair trigger.
     pub residual_pairs: Vec<(u32, u32)>,
     /// Cell pairs whose proposed tolerance component exceeded the configured
     /// diameter. These are explicit Local3d seeds even when the unmodified
@@ -373,7 +374,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         // repair, and the O(total cell indices) output-invariant scan is
         // skipped — avoiding it on clean runs is the whole point of this
         // early return. Soundness rests on a detection-completeness claim:
-        // every unpaired interior edge produces >= 1 detection record, so an
+        // every bad interior edge produces >= 1 detection record, so an
         // empty record set implies a clean output. That follows from the
         // coverage contract (docs/architecture.md "stitching invariant"): a
         // one-sided edge is either cross-bin (its overflow is a singleton or
@@ -389,7 +390,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
             let unpaired = scan_unpaired_interior_global(cells, cell_indices, &is_boundary_edge)?;
             assert!(
                 unpaired.is_empty(),
-                "edge-reconcile early-return invariant violated: {} unpaired interior \
+                "edge-reconcile early-return invariant violated: {} bad interior \
                  edge(s) with ZERO detection records — a defect escaped detection \
                  (see docs/architecture.md stitching invariant)",
                 unpaired.len()
@@ -709,15 +710,15 @@ fn cell_spans_differ(
     Ok(false)
 }
 
-/// Output-invariant scan: interior undirected edges used by exactly one cell
-/// (and not a legitimate boundary). Returns (vertex_a, vertex_b, owning cell),
-/// sorted.
+/// Output-invariant scan: every non-boundary undirected edge must have exactly
+/// two uses in opposite directions. Returns one sorted
+/// `(vertex_a, vertex_b, owning_cell)` record per bad edge.
 ///
 /// Localized to the repair's touched region: reconciliation modifies only the
 /// cells named by the detection records (`candidate_cells`) and the vertices
 /// they share, so only those cells and their 1-ring can be incident to a
 /// post-repair unpaired edge. We build the edge-use map over that region, then
-/// partner-verify each singleton against the true neighbor cell's span
+/// partner-verify each locally-single use against the true neighbor cell's span
 /// (recovered from the endpoint keys) to reject edges whose real partner merely
 /// lies outside the scanned region. This makes the scan O(defect) instead of
 /// O(total edges) — the global scan cost ~17 s on a 2.5M run with only 3
@@ -782,7 +783,8 @@ fn scan_unpaired_interior_localized(
     region.sort_unstable();
     region.dedup();
 
-    let mut uses: HashMap<(u32, u32), (u32, u32)> = HashMap::default();
+    // value = (use count, lower->higher count, first owner)
+    let mut uses: HashMap<(u32, u32), (u32, u32, u32)> = HashMap::default();
     for &ci in &region {
         let span = cell_vertex_slice(ci, cells, cell_indices)?;
         let n = span.len();
@@ -794,62 +796,77 @@ fn scan_unpaired_interior_localized(
         for k in 0..n {
             let a = span[k];
             let b = span[if k + 1 == n { 0 } else { k + 1 }];
-            if a == b {
-                continue;
-            }
             let key = (a.min(b), a.max(b));
-            uses.entry(key).or_insert((0, ci)).0 += 1;
+            let use_ = uses.entry(key).or_insert((0, 0, ci));
+            use_.0 += 1;
+            use_.1 += u32::from(a < b);
         }
     }
 
     let mut out: Vec<(u32, u32, u32)> = Vec::new();
-    for ((a, b), (count, owner)) in uses {
-        if count != 1 || is_boundary_edge(a, b) {
+    for ((a, b), (count, forward_count, owner)) in uses {
+        if is_boundary_edge(a, b) {
             continue;
         }
-        // Partner-verify: a singleton within the scanned region is genuinely
-        // unpaired only if the edge's *other* cell does not carry it. Recover
-        // the true cell pair from the endpoint keys; if the partner (the cell
-        // of the pair that is not `owner`) carries this edge, it was paired all
-        // along and simply lay outside the scanned region.
-        if let (Some(ka), Some(kb)) = (vertex_keys.get(a), vertex_keys.get(b)) {
-            if let Some((g1, g2)) = key_common_pair(ka, kb) {
-                let partner = if g1 == owner { g2 } else { g1 };
-                if partner != owner && cell_has_edge(partner, a, b, cells, cell_indices)? {
-                    continue;
+        let mut total_count = count;
+        let mut total_forward = forward_count;
+        if a != b && count == 1 {
+            // A single use within the localized region may have its real
+            // partner just outside it. Recover that cell from the endpoint
+            // keys, then include every occurrence and direction from its span.
+            if let (Some(ka), Some(kb)) = (vertex_keys.get(a), vertex_keys.get(b)) {
+                if let Some((g1, g2)) = key_common_pair(ka, kb) {
+                    let partner = if g1 == owner {
+                        Some(g2)
+                    } else if g2 == owner {
+                        Some(g1)
+                    } else {
+                        None
+                    };
+                    if let Some(partner) = partner.filter(|&p| p != owner) {
+                        let (partner_count, partner_forward) =
+                            cell_edge_uses(partner, a, b, cells, cell_indices)?;
+                        total_count += partner_count;
+                        total_forward += partner_forward;
+                    }
                 }
             }
         }
-        out.push((a, b, owner));
+        if a == b || total_count != 2 || total_forward != 1 {
+            out.push((a, b, owner));
+        }
     }
     out.sort_unstable();
     Ok(out)
 }
 
-/// Whether `cell_id`'s boundary cycle contains the undirected edge (a, b).
-fn cell_has_edge(
+/// `(use count, lower->higher count)` for edge `(a,b)` in one cell.
+fn cell_edge_uses(
     cell_id: u32,
     a: u32,
     b: u32,
     cells: &[VoronoiCell],
     cell_indices: &[u32],
-) -> Result<bool, crate::VoronoiError> {
+) -> Result<(u32, u32), crate::VoronoiError> {
     if (cell_id as usize) >= cells.len() {
-        return Ok(false);
+        return Ok((0, 0));
     }
     let span = cell_vertex_slice(cell_id, cells, cell_indices)?;
     let n = span.len();
     if n < 3 {
-        return Ok(false);
+        return Ok((0, 0));
     }
+    let mut count = 0u32;
+    let mut forward = 0u32;
     for k in 0..n {
         let x = span[k];
         let y = span[if k + 1 == n { 0 } else { k + 1 }];
         if (x == a && y == b) || (x == b && y == a) {
-            return Ok(true);
+            count += 1;
+            forward += u32::from(x < y);
         }
     }
-    Ok(false)
+    Ok((count, forward))
 }
 
 /// Global O(total edges) reference scan — the debug differential for the
@@ -862,7 +879,7 @@ fn scan_unpaired_interior_global(
     is_boundary_edge: &impl Fn(u32, u32) -> bool,
 ) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
     use rustc_hash::FxHashMap as HashMap;
-    let mut uses: HashMap<(u32, u32), (u32, u32)> = HashMap::default();
+    let mut uses: HashMap<(u32, u32), (u32, u32, u32)> = HashMap::default();
     for ci in 0..cells.len() {
         let span = cell_vertex_slice(ci as u32, cells, cell_indices)?;
         let n = span.len();
@@ -872,17 +889,18 @@ fn scan_unpaired_interior_global(
         for k in 0..n {
             let a = span[k];
             let b = span[if k + 1 == n { 0 } else { k + 1 }];
-            if a == b {
-                continue;
-            }
             let key = (a.min(b), a.max(b));
-            uses.entry(key).or_insert((0, ci as u32)).0 += 1;
+            let use_ = uses.entry(key).or_insert((0, 0, ci as u32));
+            use_.0 += 1;
+            use_.1 += u32::from(a < b);
         }
     }
     let mut out: Vec<(u32, u32, u32)> = uses
         .into_iter()
-        .filter(|&((a, b), (count, _))| count == 1 && !is_boundary_edge(a, b))
-        .map(|((a, b), (_, owner))| (a, b, owner))
+        .filter(|&((a, b), (count, forward, _))| {
+            !is_boundary_edge(a, b) && (a == b || count != 2 || forward != 1)
+        })
+        .map(|((a, b), (_, _, owner))| (a, b, owner))
         .collect();
     out.sort_unstable();
     Ok(out)
@@ -1560,6 +1578,69 @@ mod tests {
         EdgeRecord {
             key: (((b as u64) << 32) | a as u64).into(),
         }
+    }
+
+    #[test]
+    fn localized_residual_scan_enforces_multiplicity_and_orientation() {
+        let keys = vec![[0, 1, 2]; 3];
+
+        let cells = vec![VoronoiCell::new(0, 3), VoronoiCell::new(3, 3)];
+        let opposite = vec![0, 1, 2, 2, 1, 0];
+        assert!(scan_unpaired_interior(
+            &cells,
+            &opposite,
+            VertexKeys::Flat(&keys),
+            &[0, 1],
+            &|_, _| false,
+        )
+        .expect("valid paired scan")
+        .is_empty());
+
+        let same_direction = vec![0, 1, 2, 0, 1, 2];
+        assert_eq!(
+            scan_unpaired_interior(
+                &cells,
+                &same_direction,
+                VertexKeys::Flat(&keys),
+                &[0, 1],
+                &|_, _| false,
+            )
+            .expect("same-direction scan")
+            .len(),
+            3,
+            "every shared edge is misoriented"
+        );
+
+        let cells = vec![
+            VoronoiCell::new(0, 3),
+            VoronoiCell::new(3, 3),
+            VoronoiCell::new(6, 3),
+        ];
+        let overused = vec![0, 1, 2, 2, 1, 0, 0, 1, 2];
+        assert_eq!(
+            scan_unpaired_interior(
+                &cells,
+                &overused,
+                VertexKeys::Flat(&keys),
+                &[0, 1, 2],
+                &|_, _| false,
+            )
+            .expect("overused scan")
+            .len(),
+            3,
+            "every shared edge has a third use"
+        );
+
+        let self_loop = vec![0, 1, 2, 0, 0, 2];
+        let bad = scan_unpaired_interior(
+            &cells[..2],
+            &self_loop,
+            VertexKeys::Flat(&keys),
+            &[0, 1],
+            &|_, _| false,
+        )
+        .expect("self-loop scan");
+        assert!(bad.iter().any(|&(a, b, _)| a == b));
     }
 
     /// Pre-reuse collector retained as an independent test oracle.

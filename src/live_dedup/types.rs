@@ -155,6 +155,11 @@ pub enum UnresolvedEdgeOrigin {
     /// "third" generators do not fully reconcile (the cells disagree on
     /// endpoint identity).
     InBinThirdsMismatch,
+    /// Within-bin: two edges of the later cell consumed the same incoming
+    /// check from one earlier neighbor. A normal shared generator pair has
+    /// exactly one edge per side; accepting both would silently lose an edge
+    /// multiplicity defect when both endpoint comparisons happen to match.
+    InBinDuplicateSide,
     /// Within-bin: an incoming edge check was never matched by any of the
     /// later cell's edges (the later cell concluded the edge does not exist).
     InBinUnconsumedCheck,

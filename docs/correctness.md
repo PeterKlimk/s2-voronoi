@@ -6,24 +6,37 @@ of what f32 can represent.
 ## The guarantee
 
 For finite, unit-normalized input within representation capacity, `compute` either returns a
-defined error or a **strictly valid subdivision of the sphere**:
+defined error or a **construction-certified, edge-agreeing spherical mesh**:
 
-- Euler characteristic `V - E + F = 2`
 - every edge is shared by exactly two cells, with opposite orientation
-- no self-loops, no overused edges, no dangling references
-- one connected component
+- no detected low-incidence or post-reconciliation edge defect survives
+- Euler characteristic `V - E + F = 2`
+- representation invariants required by the safe accessors hold
 
-This is the property downstream code actually depends on — adjacency queries, meshing, rendering
-with shared vertex buffers all break on a non-manifold graph, not on a vertex that is 1e-7 off its
-true position. `validation::validate` checks it, and the test suite asserts it via fuzzing at
-2M-4M points across many seeds.
+Edge agreement is certified by the construction bookkeeping rather than by rebuilding and sorting
+all output edges. Within a bin, every forwarded check must be consumed exactly once and endpoint
+identity must match in reverse order. Across bins, sorted equal-key runs must contain exactly one
+record from each side. Any recorded defect enters reconciliation; its post-pass checks exact
+multiplicity and orientation over the touched region. The existing incidence pass also supplies
+`V` and the live half-edge count, making the Euler check effectively free.
+
+This is the production contract graphical consumers depend on: cracks, overused boundaries, and
+orientation disagreement fail loudly or repair. `validation::validate` is the stronger diagnostic
+contract. It additionally checks connectivity, duplicate faces/vertices, antipodal edges, and
+other global representation properties. `compute_with_report` runs it unconditionally;
+`VORONOI_MESH_VERIFY=1` enables it as a return gate for plain `compute`. Robustness campaigns and
+tests use that gate, but ordinary production does not pay for its second global edge sort.
 
 Geometry is a separate, softer matter. Vertex positions are accurate to floating-point working
-precision — inputs are f32, the clipping pipeline runs in f64, vertices are stored as f32. No f32
-implementation can return mathematically exact positions, and this one does not claim to. Features
-near the resolution floor (epsilon-length edges, vertices from near-cocircular generators) may be
-kept or collapsed; which one happens is a policy choice, not a correctness bug, as long as the
-graph stays valid. Reconciliation collapses a positional equivalence component only when its full
+precision — inputs are canonicalized f32 directions, clipping uses f64, and vertices are stored as
+f32. “The exact Voronoi diagram” is ambiguous without first choosing whether the mathematical sites
+are the incoming f32 vectors, their canonicalized rounded vectors, or ideal renormalizations of
+those vectors, plus one policy for exact predicate ties. The current pipeline does not claim exact
+positions, exact combinatorics for one unified site model, or a global backward-error witness.
+
+Features near the resolution floor (epsilon-length edges, vertices from near-cocircular generators)
+may be kept or collapsed; which one happens is a policy choice, not a correctness bug, as long as
+the graph stays coherent. Reconciliation collapses a positional equivalence component only when its full
 diameter over stored vertices is at most `RECONCILE_DEGENERATE_LEN_EPS`; pairwise chains cannot
 extend that bound. Rejected components escalate to Local3d under the default repair policy.
 
@@ -51,19 +64,18 @@ it in the report. `DegenerateMode::Strict` returns a clean error instead.
 
 ## Repair
 
-The fast clipper is nearly always graph-correct. In rare near-degenerate regions, two cells can
+The fast clipper is nearly always edge-agreeing. In rare near-degenerate regions, two cells can
 disagree on an epsilon-scale combinatorial decision and leave a topology defect. `RepairMode::Local3d`
 (the default) rebuilds the implicated neighborhood as one normalized local 3D hull and accepts the
 result only if the whole diagram then validates; otherwise the computation fails loudly rather
-than return a non-manifold graph. The guarantee is **valid subdivision or error** — exact graph
-equality in adversarial tie regimes is an empirical property of the repair, not a symbolic
-promise.
+than return a known-bad graph. The guarantee is **edge-agreeing mesh or error**; exact graph
+equality with one ideal Voronoi construction in adversarial tie regimes is not a symbolic promise.
 
 ## Outcomes
 
 A call resolves to one of:
 
-- **Success** — a valid diagram. With welding, the *effective* diagram the backend solved is the
+- **Success** — an edge-agreeing, Euler-valid diagram. With welding, the *effective* diagram the backend solved is the
   authoritative one; `compute_with_report` exposes both the effective and the remapped views.
 - **Defined error** — `UnsupportedGeometry` (a proven model limit, e.g. a cell reaching the
   generator hemisphere boundary), `RepresentationLimit` (storage/index capacity), `DegenerateInput`

@@ -109,8 +109,7 @@ fn run_core_pipeline(
     // trigger. Compute it even when repair is disabled so that mode cannot
     // suppress a known-invalid low-incidence output.
     let t_low_incidence = std::time::Instant::now();
-    let has_low_incidence =
-        has_low_incidence_vertices(vertices.len(), &eff_cells, &eff_cell_indices);
+    let topology = summarize_topology(vertices.len(), &eff_cells, &eff_cell_indices);
     let low_incidence_scan_time = t_low_incidence.elapsed();
     let repair = maybe_repair_effective(
         effective_points_ref,
@@ -122,7 +121,7 @@ fn run_core_pipeline(
         &post_repair_unpaired,
         &reconciliation_escalations,
         &merge_affected_cells,
-        has_low_incidence,
+        topology,
         low_incidence_scan_time,
         repair_mode,
     );
@@ -358,8 +357,33 @@ fn compute_voronoi_knn_clipping_report_core(
     })
 }
 
-/// True if any vertex referenced by a live cell has degree 1 or 2 (a real
-/// sub-3-incidence defect the repair should examine).
+/// Cheap topology facts collected by the incidence pass already required for
+/// the repair trigger and plain-return safety gate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TopologySummary {
+    used_vertices: usize,
+    live_half_edges: usize,
+    low_incidence: bool,
+}
+
+impl TopologySummary {
+    /// Euler characteristic implied by exact edge agreement (`E = H / 2`).
+    /// An odd half-edge count cannot describe a closed paired subdivision.
+    fn paired_euler_characteristic(self, num_cells: usize) -> Option<i128> {
+        if !self.live_half_edges.is_multiple_of(2) {
+            return None;
+        }
+        Some(self.used_vertices as i128 - (self.live_half_edges / 2) as i128 + num_cells as i128)
+    }
+
+    fn has_sphere_euler(self, num_cells: usize) -> bool {
+        self.paired_euler_characteristic(num_cells) == Some(2)
+    }
+}
+
+/// Summarize referenced vertices and live half-edges, including whether any
+/// referenced vertex has degree 1 or 2 (a real defect the repair should
+/// examine).
 ///
 /// Counts incidence over each cell's *live* window `[vertex_start ..
 /// vertex_start + vertex_count)`, NOT the raw `cell_indices` buffer. Edge
@@ -376,52 +400,81 @@ fn compute_voronoi_knn_clipping_report_core(
 /// early-returns when no edge is unresolved. Multi-threaded builds use exact
 /// shared atomic counters, read only after the chunk-parallel scan; a one-thread
 /// Rayon pool uses the same plain-counter path as a build without `parallel`.
-fn has_low_incidence_vertices_scalar(
+fn summarize_topology_scalar(
     vertex_count: usize,
     cells: &[VoronoiCell],
     cell_indices: &[u32],
-) -> bool {
+) -> TopologySummary {
     let mut cnt = vec![0u32; vertex_count];
+    let mut live_half_edges = 0usize;
     for cell in cells {
         let start = cell.vertex_start();
         let end = start + cell.vertex_count();
+        live_half_edges += cell.vertex_count();
         for &v in &cell_indices[start..end] {
             cnt[v as usize] += 1;
         }
     }
-    cnt.iter().any(|&c| c == 1 || c == 2)
+    let mut used_vertices = 0usize;
+    let mut low_incidence = false;
+    for count in cnt {
+        used_vertices += usize::from(count != 0);
+        low_incidence |= count == 1 || count == 2;
+    }
+    TopologySummary {
+        used_vertices,
+        live_half_edges,
+        low_incidence,
+    }
 }
 
-fn has_low_incidence_vertices(
+fn summarize_topology(
     vertex_count: usize,
     cells: &[VoronoiCell],
     cell_indices: &[u32],
-) -> bool {
+) -> TopologySummary {
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
         use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
         let threads = rayon::current_num_threads().max(1);
         if threads == 1 {
-            return has_low_incidence_vertices_scalar(vertex_count, cells, cell_indices);
+            return summarize_topology_scalar(vertex_count, cells, cell_indices);
         }
         // (u32: cannot saturate — total increments are bounded by
         // `cell_indices.len()`.)
         let cnt: Vec<AtomicU32> = (0..vertex_count).map(|_| AtomicU32::new(0)).collect();
         let chunk = cells.len().div_ceil(threads * 4).max(1024);
-        cells.par_chunks(chunk).for_each(|cells_chunk| {
-            for cell in cells_chunk {
-                let start = cell.vertex_start();
-                let end = start + cell.vertex_count();
-                for &v in &cell_indices[start..end] {
-                    cnt[v as usize].fetch_add(1, Relaxed);
+        let live_half_edges = cells
+            .par_chunks(chunk)
+            .map(|cells_chunk| {
+                let mut half_edges = 0usize;
+                for cell in cells_chunk {
+                    let start = cell.vertex_start();
+                    let end = start + cell.vertex_count();
+                    half_edges += cell.vertex_count();
+                    for &v in &cell_indices[start..end] {
+                        cnt[v as usize].fetch_add(1, Relaxed);
+                    }
                 }
-            }
-        });
-        cnt.par_iter().any(|c| matches!(c.load(Relaxed), 1 | 2))
+                half_edges
+            })
+            .sum();
+        let (used_vertices, low_incidence) = cnt
+            .par_iter()
+            .map(|c| {
+                let count = c.load(Relaxed);
+                (usize::from(count != 0), count == 1 || count == 2)
+            })
+            .reduce(|| (0, false), |a, b| (a.0 + b.0, a.1 || b.1));
+        TopologySummary {
+            used_vertices,
+            live_half_edges,
+            low_incidence,
+        }
     }
     #[cfg(not(feature = "parallel"))]
-    has_low_incidence_vertices_scalar(vertex_count, cells, cell_indices)
+    summarize_topology_scalar(vertex_count, cells, cell_indices)
 }
 
 /// Outcome of the repair attempt, for the caller's fail-loud decision.
@@ -438,14 +491,19 @@ struct RepairOutcome {
     /// when the repair was not accepted the plain path must fail loud on it —
     /// there is no unpaired-edge residual to trip the existing guard.
     low_incidence_defect: bool,
+    /// The cheap `V - H/2 + F` check failed (or `H` was odd). This catches
+    /// global topology defects at no additional traversal once exact edge
+    /// agreement is supplied by construction.
+    euler_defect: bool,
 }
 
 impl RepairOutcome {
-    const fn not_attempted(low_incidence_defect: bool) -> RepairOutcome {
+    const fn not_attempted(low_incidence_defect: bool, euler_defect: bool) -> RepairOutcome {
         RepairOutcome {
             attempted: false,
             accepted: false,
             low_incidence_defect,
+            euler_defect,
         }
     }
 }
@@ -480,6 +538,14 @@ fn check_plain_return_signals(
                 .to_string(),
         ));
     }
+    if repair.euler_defect {
+        return Err(crate::VoronoiError::ComputationFailed(
+            "post-assembly topology summary failed the spherical Euler check; \
+             output is not a single valid spherical subdivision. Use \
+             compute_with_report to inspect, or report this input."
+                .to_string(),
+        ));
+    }
     Ok(())
 }
 
@@ -497,21 +563,23 @@ fn maybe_repair_effective(
     post_repair_unpaired: &[(u32, u32)],
     reconciliation_escalations: &[(u32, u32)],
     merge_affected_cells: &[u32],
-    has_low_incidence: bool,
+    topology: TopologySummary,
     low_incidence_scan_time: std::time::Duration,
     repair_mode: RepairMode,
 ) -> RepairOutcome {
+    let has_low_incidence = topology.low_incidence;
+    let euler_defect = !topology.has_sphere_euler(eff_cells.len());
     // A0 probes need the fast assembled state, not the repaired one.
     #[cfg(feature = "escalate_probe")]
     if std::env::var("VORONOI_MESH_ESCALATE_PROBE_A0").is_ok() {
         escalate::stash_a0_fast(effective_points, vertex_keys, eff_cells, eff_cell_indices);
-        return RepairOutcome::not_attempted(has_low_incidence);
+        return RepairOutcome::not_attempted(has_low_incidence, euler_defect);
     }
 
     let repair_enabled =
         !matches!(repair_mode, RepairMode::Disabled) || escalate::escalation_enabled();
     if !repair_enabled {
-        return RepairOutcome::not_attempted(has_low_incidence);
+        return RepairOutcome::not_attempted(has_low_incidence, euler_defect);
     }
 
     let mut defect_pairs: Vec<(u32, u32)> = post_repair_unpaired
@@ -532,12 +600,13 @@ fn maybe_repair_effective(
         );
     }
     if defect_pairs.is_empty() && !has_low_incidence {
-        return RepairOutcome::not_attempted(false);
+        return RepairOutcome::not_attempted(false, euler_defect);
     }
     let outcome = |accepted: bool| RepairOutcome {
         attempted: true,
         accepted,
         low_incidence_defect: has_low_incidence,
+        euler_defect,
     };
 
     // Local-neighbor gather index for the repair: O(local) shell-frontier kNN per
@@ -1325,8 +1394,8 @@ fn remap_cells_to_original_indices(
 mod tests {
     use super::{
         build_query_grid, cell_sum_sq_per_n, check_plain_return_signals,
-        classify_rank2_great_circle, has_low_incidence_vertices, map_build_cells_error,
-        map_cell_build_error, max_cell_occupancy, stable_rank2_normal,
+        classify_rank2_great_circle, map_build_cells_error, map_cell_build_error,
+        max_cell_occupancy, stable_rank2_normal, summarize_topology,
         validate_and_canonicalize_unit_points, validate_generator_capacity, RepairOutcome,
     };
     use crate::diagram::VoronoiCell;
@@ -1345,22 +1414,31 @@ mod tests {
         // Vertex 0 is live in all three cells. Vertex 1 exists only in the
         // stale tail slot following each live span and must not be counted.
         let indices = [0, 1, 0, 1, 0, 1];
-        assert!(!has_low_incidence_vertices(2, &cells, &indices));
+        let summary = summarize_topology(2, &cells, &indices);
+        assert_eq!(summary.used_vertices, 1);
+        assert_eq!(summary.live_half_edges, 3);
+        assert!(!summary.low_incidence);
 
         let low_cells = [VoronoiCell::new(0, 1), VoronoiCell::new(2, 1)];
-        assert!(has_low_incidence_vertices(2, &low_cells, &indices[..4]));
+        let summary = summarize_topology(2, &low_cells, &indices[..4]);
+        assert_eq!(summary.used_vertices, 1);
+        assert_eq!(summary.live_half_edges, 2);
+        assert!(summary.low_incidence);
     }
 
     #[test]
     fn disabled_repair_cannot_hide_low_incidence_from_plain_return_gate() {
         let cells = [VoronoiCell::new(0, 1), VoronoiCell::new(1, 1)];
         let indices = [0, 0];
-        let low_incidence = has_low_incidence_vertices(1, &cells, &indices);
-        assert!(low_incidence);
+        let topology = summarize_topology(1, &cells, &indices);
+        assert!(topology.low_incidence);
 
         // This is the outcome produced by RepairMode::Disabled: no repair was
         // attempted, but the independently-computed safety signal survives.
-        let repair = RepairOutcome::not_attempted(low_incidence);
+        let repair = RepairOutcome::not_attempted(
+            topology.low_incidence,
+            !topology.has_sphere_euler(cells.len()),
+        );
         assert!(!repair.attempted);
         assert!(!repair.accepted);
         let err = check_plain_return_signals(repair, &[], &[])
@@ -1374,6 +1452,7 @@ mod tests {
             attempted: true,
             accepted: true,
             low_incidence_defect: true,
+            euler_defect: true,
         };
         check_plain_return_signals(repair, &[(1, 2)], &[(2, 3)])
             .expect("accepted repair was already strictly validated");
@@ -1406,6 +1485,18 @@ mod tests {
         (vertices, cells, diagram.cell_indices_raw().to_vec())
     }
 
+    fn unaccepted_outcome(
+        vertices: &[Vec3],
+        cells: &[VoronoiCell],
+        cell_indices: &[u32],
+    ) -> RepairOutcome {
+        let topology = summarize_topology(vertices.len(), cells, cell_indices);
+        RepairOutcome::not_attempted(
+            topology.low_incidence,
+            !topology.has_sphere_euler(cells.len()),
+        )
+    }
+
     fn assert_signal_free_gap(
         name: &str,
         vertices: &[Vec3],
@@ -1416,11 +1507,7 @@ mod tests {
             crate::validation::verify_sphere_effective_strict(vertices, cells, cell_indices);
         assert!(strict.is_err(), "{name}: injected defect must be invalid");
 
-        let repair = RepairOutcome::not_attempted(has_low_incidence_vertices(
-            vertices.len(),
-            cells,
-            cell_indices,
-        ));
+        let repair = unaccepted_outcome(vertices, cells, cell_indices);
         let gate = check_plain_return_signals(repair, &[], &[]);
         assert!(
             gate.is_ok(),
@@ -1440,14 +1527,45 @@ mod tests {
                 .is_err(),
             "{name}: injected defect must be invalid"
         );
-        let repair = RepairOutcome::not_attempted(has_low_incidence_vertices(
-            vertices.len(),
-            cells,
-            cell_indices,
-        ));
+        let topology = summarize_topology(vertices.len(), cells, cell_indices);
+        assert!(
+            topology.low_incidence,
+            "{name}: fixture must be low-incidence"
+        );
+        let repair = RepairOutcome::not_attempted(
+            topology.low_incidence,
+            !topology.has_sphere_euler(cells.len()),
+        );
         assert!(
             check_plain_return_signals(repair, &[], &[]).is_err(),
             "{name}: low-incidence mutation must be rejected by the plain gate"
+        );
+    }
+
+    fn assert_euler_summary_catches(
+        name: &str,
+        vertices: &[Vec3],
+        cells: &[VoronoiCell],
+        cell_indices: &[u32],
+    ) {
+        assert!(
+            crate::validation::verify_sphere_effective_strict(vertices, cells, cell_indices)
+                .is_err(),
+            "{name}: injected defect must be invalid"
+        );
+        let topology = summarize_topology(vertices.len(), cells, cell_indices);
+        assert!(
+            !topology.has_sphere_euler(cells.len()),
+            "{name}: fixture must fail the paired Euler summary"
+        );
+        assert!(
+            check_plain_return_signals(
+                RepairOutcome::not_attempted(topology.low_incidence, true),
+                &[],
+                &[],
+            )
+            .is_err(),
+            "{name}: Euler summary must reject the mutation"
         );
     }
 
@@ -1456,7 +1574,7 @@ mod tests {
     /// pipeline naturally emits each state: they identify the exact properties
     /// whose safety currently rests on construction/detection completeness.
     #[test]
-    fn fault_injection_maps_signal_free_plain_gate_gaps() {
+    fn fault_injection_maps_plain_gate_coverage_and_gaps() {
         let good = crate::compute(&fib_sphere(64)).expect("valid baseline");
         let (base_vertices, base_cells, base_indices) = effective_arrays(&good);
         crate::validation::verify_sphere_effective_strict(
@@ -1522,7 +1640,7 @@ mod tests {
         let start = indices.len();
         indices.extend_from_slice(&[a, b, x]);
         cells.push(VoronoiCell::new(start as u32, 3));
-        assert_signal_free_gap("overused edge", &vertices, &cells, &indices);
+        assert_euler_summary_catches("overused edge", &vertices, &cells, &indices);
 
         // Duplicate a face span. Counts only increase, so low incidence cannot
         // reveal the duplicate.
@@ -1537,7 +1655,7 @@ mod tests {
         let start = indices.len();
         indices.extend_from_slice(span);
         cells.push(VoronoiCell::new(start as u32, span.len() as u16));
-        assert_signal_free_gap("duplicate cell", &vertices, &cells, &indices);
+        assert_euler_summary_catches("duplicate cell", &vertices, &cells, &indices);
 
         // Two disjoint copies are locally well-formed spheres. Their union has
         // two components and Euler characteristic 4, with no low incidence.
@@ -1553,7 +1671,7 @@ mod tests {
             indices.extend(span.iter().map(|&v| v + vertex_offset));
             cells.push(VoronoiCell::new(start as u32, span.len() as u16));
         }
-        assert_signal_free_gap("disconnected/Euler", &vertices, &cells, &indices);
+        assert_euler_summary_catches("disconnected/Euler", &vertices, &cells, &indices);
 
         // Geometry-only corruption leaves all topological signals unchanged.
         let (mut vertices, cells, indices) = (
@@ -1588,7 +1706,8 @@ mod tests {
             "corrupt weld alias must fail strict validation"
         );
         assert!(
-            check_plain_return_signals(RepairOutcome::not_attempted(false), &[], &[]).is_ok(),
+            check_plain_return_signals(RepairOutcome::not_attempted(false, false), &[], &[])
+                .is_ok(),
             "weld-map validity is not represented by a pre-remap repair signal"
         );
     }
@@ -1633,10 +1752,8 @@ mod tests {
         ];
 
         for (vertex_count, cells, indices) in cases {
-            let scalar =
-                one_thread.install(|| has_low_incidence_vertices(vertex_count, &cells, &indices));
-            let atomic =
-                two_threads.install(|| has_low_incidence_vertices(vertex_count, &cells, &indices));
+            let scalar = one_thread.install(|| summarize_topology(vertex_count, &cells, &indices));
+            let atomic = two_threads.install(|| summarize_topology(vertex_count, &cells, &indices));
             assert_eq!(scalar, atomic);
         }
     }

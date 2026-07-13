@@ -155,6 +155,23 @@ fn reconcile_edge_endpoints(
     false
 }
 
+/// Mark one incoming in-bin check as consumed. Returns true when this check
+/// was already consumed by an earlier edge of the same cell — a duplicate
+/// side, not another successful agreement.
+#[inline]
+fn mark_incoming_consumed(idx: usize, matched: &mut u64, matched_spill: &mut [bool]) -> bool {
+    if idx < 64 {
+        let bit = 1u64 << idx;
+        let duplicate = *matched & bit != 0;
+        *matched |= bit;
+        duplicate
+    } else {
+        let duplicate = matched_spill[idx - 64];
+        matched_spill[idx - 64] = true;
+        duplicate
+    }
+}
+
 impl ShardDedup {
     pub(super) fn push_edge_check(&mut self, local: LocalId, check: EdgeCheck) {
         let local_idx = local.as_usize();
@@ -322,10 +339,11 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                 // battery and the strict-plane campaign). So this is a
                 // handled defect, not an invariant violation; debug builds
                 // must not abort (this only makes debug match release).
-                if found_idx < 64 {
-                    matched |= 1u64 << found_idx;
-                } else {
-                    matched_spill[found_idx - 64] = true;
+                if mark_incoming_consumed(found_idx, &mut matched, &mut matched_spill) {
+                    shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
+                        key: edge_key,
+                        origin: UnresolvedEdgeOrigin::InBinDuplicateSide,
+                    });
                 }
 
                 let my_thirds = thirds_for_emit(
@@ -606,6 +624,83 @@ mod tests {
         );
         assert!(!full);
         assert!(patched.is_empty());
+    }
+
+    #[test]
+    fn endpoint_agreement_requires_reverse_orientation() {
+        let mut patched = Vec::new();
+        assert!(reconcile_edge_endpoints([2, 3], [3, 2], |mine, other| {
+            patched.push((mine, other));
+        }));
+        assert_eq!(patched, [(0, 1), (1, 0)]);
+
+        patched.clear();
+        assert!(!reconcile_edge_endpoints([2, 3], [2, 3], |mine, other| {
+            patched.push((mine, other));
+        }));
+        assert_eq!(patched, [(0, 0), (1, 1)]);
+    }
+
+    #[test]
+    fn repeated_in_bin_check_consumption_is_a_duplicate_side() {
+        let mut matched = 0u64;
+        let mut spill = vec![false; 2];
+
+        assert!(!mark_incoming_consumed(7, &mut matched, &mut spill));
+        assert!(mark_incoming_consumed(7, &mut matched, &mut spill));
+        assert!(!mark_incoming_consumed(65, &mut matched, &mut spill));
+        assert!(mark_incoming_consumed(65, &mut matched, &mut spill));
+    }
+
+    #[test]
+    fn in_bin_duplicate_side_reaches_unresolved_repair_signal() {
+        let assignment = BinAssignment {
+            generator_bin: vec![BinId::from(0), BinId::from(0)],
+            generator_layout: vec![0, 1],
+            slot_gen_map: vec![0, 1],
+            local_shift: 1,
+            local_mask: 1,
+            bin_generators: vec![vec![0, 1]],
+            num_bins: 1,
+        };
+        let mut shard = ShardState::<glam::Vec3>::new(2);
+        let mut shard_ctx = super::super::emit::ShardContext {
+            shard: &mut shard,
+            bin: BinId::from(0),
+            local: LocalId::from(1),
+        };
+        let output = crate::live_dedup::CellOutputBuffer {
+            vertices: vec![([0, 1, 2], glam::Vec3::X); 3],
+            edge_neighbor_globals: vec![0, 0, u32::MAX],
+            edge_neighbor_slots: vec![0, 0, u32::MAX],
+            edge_keys_verified: true,
+        };
+        let incoming = vec![EdgeCheck {
+            neighbor_idx: 0,
+            thirds: [2, 2],
+            indices: [7, 8],
+        }];
+        let mut vertex_indices = vec![INVALID_INDEX; 3];
+        let mut to_later = Vec::new();
+        let mut overflow = Vec::new();
+
+        collect_and_resolve_cell_edges(
+            1,
+            &mut shard_ctx,
+            &output,
+            &assignment,
+            incoming,
+            &mut vertex_indices,
+            &mut to_later,
+            &mut overflow,
+        );
+
+        assert_eq!(shard.output.unresolved_edges.len(), 1);
+        assert_eq!(
+            shard.output.unresolved_edges[0].origin,
+            UnresolvedEdgeOrigin::InBinDuplicateSide
+        );
+        assert_eq!(shard.output.unresolved_edges[0].key, pack_edge(0, 1));
     }
 
     #[test]

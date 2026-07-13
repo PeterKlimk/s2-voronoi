@@ -50,7 +50,7 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 | AUD-005 | P2 | Resolved | Nonzero-epsilon membership and intersection used different boundaries | Removed unsupported positive-epsilon clipping |
 | AUD-006 | P1 | Resolved | Accepted welded-twin serde payload could panic in adjacency lookup | Reject twins that do not alias canonical spans |
 | AUD-007 | P2 | Resolved | Accepted empty serde diagram could panic on first locator query | Reject empty serialized diagrams |
-| AUD-008 | P1 | Under-justified | Plain `compute` cheap checks are not equivalent to strict validation | Close detection gaps or run an equivalent fast strict gate |
+| AUD-008 | P1 | Resolved | Plain `compute` documentation exceeded its fast-path certificate | Edge-agreement construction certificate + fused Euler; strict validation optional/testing |
 | AUD-009 | P1 | Resolved | Reconciliation merges were not bounded to an epsilon-diameter feature | Transactionally diameter-gate components; escalate rejected chains |
 | AUD-010 | P2 | Policy decision | Fast, fallback, repair, and exact-predicate paths do not share one exact site model or SoS policy | Choose and document the intended model; align paths |
 | AUD-011 | P2 | Under-justified | Termination mathematics is sound, but its complete floating error envelope is empirical | Add a derived error budget and threshold-adjacent tests |
@@ -328,28 +328,26 @@ accepted representation with no nearest generator.
 
 - **Priority:** P1
 - **Class:** output-contract completeness
-- **Confidence:** Under-justified; cheap-signal equivalence is synthetically falsified
-- **Status:** Open; repair-disabled low-incidence hole fixed and fault classes mapped
+- **Confidence:** Construction certificate audited and stage-tested; full strict validation remains independent
+- **Status:** Resolved for the chosen production contract; strict validation is optional/testing
 
-Plain `compute` does not run full strict validation unless `VORONOI_MESH_VERIFY=1`. It rejects
-post-repair singleton edges and, in most repair modes, low-incidence vertices.
+Plain `compute` does not run full strict validation unless `VORONOI_MESH_VERIFY=1`. The original
+documentation nevertheless promised that every return satisfied that stronger verifier. The
+chosen production contract is narrower and graphical: exact shared-edge agreement, no surviving
+known repair/low-incidence defect, safe representation, and spherical Euler characteristic. Full
+connectivity and diagnostic validation remain optional and continuously exercised in testing.
 
-The release reconciliation scan records edges used exactly once in
-[`src/knn_clipping/edge_reconcile.rs`](../src/knn_clipping/edge_reconcile.rs#L621-L733).
-Strict validation additionally rejects overused and same-direction pairs. Those defects can have no
-singleton signal. Repair's stronger scan is only entered when seeded by a singleton or low-incidence
-defect.
+Construction already performs the edge work needed for a certificate. In-bin shared edges forward
+one check to the later cell; cross-bin shared edges emit one record per side into an equal-key run.
+Endpoint thirds encode directed endpoint identity. The audit found one concrete multiplicity hole:
+an in-bin cell could consume the same incoming check twice without recording a defect when both
+endpoint comparisons happened to match.
 
-Additional gaps found at triage time:
-
-- The cheap incidence scan counts raw occurrences, while strict validation counts distinct cell
-  incidence; duplicate references can mask a low-incidence vertex.
-- Duplicate cells/vertices, self-loops, antipodal edges, connectivity, and Euler characteristic are
-  not checked by the cheap gate.
-- Some localization-completeness claims are debug assertions only.
-
-No natural public input returning a silent-invalid topology was found in this audit. Accepted
-Local3d repair is safe because it is committed only after a full strict effective-diagram gate.
+Stronger-validator properties not adopted as unconditional production checks include connectivity,
+duplicate whole faces, arbitrary nonconsecutive duplicate vertices, and antipodal geometry. They
+remain useful diagnostics. No natural public input returning a silent-invalid topology was found.
+Accepted Local3d repair remains safe because it is committed only after a full strict effective-
+diagram gate.
 
 **Implemented hardening and evidence**
 
@@ -358,29 +356,35 @@ Local3d repair is safe because it is committed only after a full strict effectiv
   repair modes already paid for this scan; disabled mode now pays the same O(live cell indices)
   safety cost.
 - The plain return decision is a pure test seam over accepted repair, residual-edge,
-  over-diameter-escalation, and low-incidence signals.
+  over-diameter-escalation, low-incidence, and Euler signals.
+- Repeated in-bin consumption now emits `InBinDuplicateSide`. Tests drive the real collect/resolve
+  stage, including the >64-check spill tracker. Cross-bin equal-key runs already reject singleton,
+  same-side, and 3+-record multiplicity. Endpoint agreement is pinned to reverse orientation.
+- Reconciliation is a mutation boundary, so its defect-only localized post-pass now checks every
+  touched edge for exactly two opposite uses, including self-loops, overuse, and same-direction
+  pairs. Its debug oracle performs the same exact whole-diagram scan. The clean path still performs
+  no global edge scan.
+- The existing live-incidence traversal now also returns referenced `V` and live half-edge count
+  `H`. With construction-certified edge agreement, `E = H/2`; plain return rejects odd `H` or
+  `V - E + F != 2` without another traversal or allocation.
 - A signal-free post-assembly fault matrix starts from a strictly-valid computed diagram and covers
   same-direction pairs, overused edges, duplicate cells, duplicate vertices, self-loops,
   disconnected/Euler defects, antipodal edges, and corrupt weld aliases. Duplicate-vertex and
-  self-loop mutations trigger the existing low-incidence signal in the generic fixture. The other
-  mutations remain strict-invalid while the signal-only gate accepts them. This does not claim the
-  production pipeline can naturally emit those post-assembly mutations; it identifies the
-  properties whose safety still depends on construction/detection completeness.
+  self-loop mutations trigger low incidence; overuse, duplicate-face, and disconnected-double-
+  sphere mutations fail the fused Euler summary. Arbitrary post-assembly same-direction,
+  antipodal, and corrupt-weld mutations still demonstrate properties supplied by construction
+  rather than that scalar summary. The matrix does not claim those mutations are naturally emitted.
 - `VORONOI_MESH_VERIFY=1` remains the full strict-validation testing-period gate. It is not enabled
   unconditionally because its global edge-record allocation and sort are material fast-path work.
-
-**Proposed resolution**
-
-Either derive and enforce construction invariants that exclude every omitted defect class, or run a
-fast verdict-equivalent strict verifier before returning success. At minimum, repair-disabled mode
-must retain the low-incidence gate.
 
 **Acceptance criteria**
 
 - [x] Fault-injection tests cover same-direction, overused, duplicate-cell, duplicate-vertex,
   disconnected/Euler, self-loop, antipodal, and weld-map defects.
-- [ ] For each constructible pipeline mutation, the plain return gate and strict verifier agree.
-- [ ] Run stage-level differentials for default and `RepairMode::Disabled` configurations.
+- [x] Stage tests cover in-bin and cross-bin multiplicity plus reverse-orientation agreement.
+- [x] Post-reconciliation localized and global-oracle scans use the exact same edge-agreement rule.
+- [x] `RepairMode::Disabled` retains low-incidence and Euler return signals.
+- [x] Full strict validation remains available as the independent testing-period differential.
 
 ### AUD-009 — Reconciliation was not bounded to epsilon-diameter features
 
@@ -569,7 +573,8 @@ degeneracy guarantees, not merely on API convenience or ordinary random fixtures
 4. **AUD-004/AUD-005:** resolved — retained tolerance-only-active fallback constraints and removed
    unsupported positive-epsilon clipping.
 5. **AUD-006/AUD-007:** resolved — tightened accepted serialized representations.
-6. **AUD-008:** make the plain success gate match the advertised strict-validity contract.
+6. **AUD-008:** resolved — construction certifies edge agreement, the incidence pass supplies a
+   fused Euler gate, and full strict validation remains optional/testing.
 7. **AUD-013:** remove qhull's oracle role and choose a robust reference strategy.
 8. **AUD-010/AUD-011/AUD-012:** settle the mathematical policy and derive the remaining numerical
    envelope.

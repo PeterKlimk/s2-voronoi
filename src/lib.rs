@@ -300,9 +300,10 @@ pub struct ComputeReport {
     pub pre_repair_edge_mismatch_count: usize,
     /// What the local repair pass did this run.
     pub repair: RepairReport,
-    /// Interior edges that remained unpaired after reconciliation and were not
-    /// cleared by an accepted local repair. `compute` turns these into a loud
-    /// error; `compute_with_report` surfaces them for diagnostics.
+    /// Interior edges that remained unpaired, overused, or misoriented after
+    /// reconciliation and were not cleared by an accepted local repair.
+    /// Historical field name retained for API stability. `compute` turns these
+    /// into a loud error; `compute_with_report` surfaces them for diagnostics.
     pub post_repair_unpaired_edges: Vec<(u32, u32)>,
     /// EXPERIMENTAL DIAGNOSTIC: reconciliation cell pairs rejected by the
     /// no-chain diameter policy and not cleared by an accepted Local3d repair.
@@ -345,7 +346,7 @@ impl ComputeReport {
     pub fn has_post_repair_residuals(&self) -> bool {
         !self.post_repair_unpaired_edges.is_empty()
             || !self.post_repair_escalation_pairs.is_empty()
-            || self.preferred_validation().low_incidence_vertices > 0
+            || !self.preferred_validation().is_strictly_valid()
             || (self.repair.attempted && !self.repair.accepted)
     }
 }
