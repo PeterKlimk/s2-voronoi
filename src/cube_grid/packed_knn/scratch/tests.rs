@@ -10,6 +10,10 @@ const QUERY_BIN: u8 = 0;
 const LOCAL_SHIFT: u32 = 24;
 const LOCAL_MASK: u32 = (1u32 << LOCAL_SHIFT) - 1;
 
+fn raw_dot(a: glam::Vec3, b: glam::Vec3) -> f32 {
+    crate::fp::dot3_f32(a.x, a.y, a.z, b.x, b.y, b.z)
+}
+
 fn random_unit_points(n: usize, seed: u64) -> Vec<glam::Vec3> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let mut points = Vec::with_capacity(n);
@@ -59,7 +63,7 @@ fn expected_safe_slots(
         if (slot as u32) < query_local {
             continue;
         }
-        let dot = query.dot(points[neighbor_idx]);
+        let dot = raw_dot(query, points[neighbor_idx]);
         if dot > security {
             candidates.push((dot, slot as u32));
         }
@@ -169,7 +173,7 @@ fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
 
                         if let Some(&next_slot) = expected.get(emitted.len()) {
                             let next_idx = grid.point_indices()[next_slot as usize] as usize;
-                            let next_dot = points[query_idx].dot(points[next_idx]);
+                            let next_dot = raw_dot(points[query_idx], points[next_idx]);
                             assert!(
                                 next_dot <= chunk.unseen_bound + EPS,
                                 "unseen bound was not conservative for seed={seed}, qi={qi}"

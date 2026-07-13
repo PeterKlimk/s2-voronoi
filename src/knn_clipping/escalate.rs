@@ -122,7 +122,19 @@ fn gather_knn_grid(
         while let Some(layer) = frontier.frontier(&mut batch) {
             for &slot in &batch {
                 let id = grid.point_indices()[slot as usize];
-                let dot = query.dot(points[id as usize]);
+                let candidate = points[id as usize];
+                // The shell frontier certifies the crate's canonical raw-f32
+                // dot operation. Scoring with glam's independently associated
+                // `Vec3::dot` could round across `layer.unseen_bound` and stop
+                // the repair gather before its actual k-th candidate was seen.
+                let dot = crate::fp::dot3_f32(
+                    query.x,
+                    query.y,
+                    query.z,
+                    candidate.x,
+                    candidate.y,
+                    candidate.z,
+                );
                 collected.push((dot, id));
             }
             // Once we hold at least k+1 candidates, the (k+1)-th nearest's dot
