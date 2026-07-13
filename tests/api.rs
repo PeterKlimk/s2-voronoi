@@ -651,6 +651,10 @@ fn test_serde_roundtrip_preserves_diagram_and_welds() {
     assert_eq!(restored.weld_map(), diagram.weld_map());
     assert_eq!(restored.canonical_cell_index(500), 42);
     assert!(validate(&restored).is_strictly_valid());
+    let restored_adjacency = restored.build_adjacency();
+    for i in 0..restored.num_cells() {
+        restored_adjacency.neighbors_of(i);
+    }
 
     // Adjacency round-trips too.
     let adjacency = diagram.build_adjacency();
@@ -722,6 +726,58 @@ fn test_serde_deserialize_rejects_malformed_data() {
 
     // The unmodified value still deserializes.
     corrupt(&|_| {}).expect("unmodified wire data must round-trip");
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn test_serde_rejects_welded_twin_with_different_cell_span() {
+    use voronoi_mesh::SphericalVoronoi;
+
+    let mut points = random_sphere_points(50, 992);
+    points.push(points[7]);
+    let diagram = compute(&points).unwrap();
+    let weld_map = diagram
+        .weld_map()
+        .expect("duplicate should create weld map");
+    let (twin, canonical) = weld_map
+        .iter()
+        .enumerate()
+        .find_map(|(i, &c)| (i != c as usize).then_some((i, c as usize)))
+        .expect("duplicate should create a welded twin");
+
+    let mut value = serde_json::to_value(&diagram).expect("serialize");
+    let cells = value["cells"].as_array_mut().expect("cells array");
+    let replacement = (0..cells.len())
+        .find(|&i| i != canonical && cells[i] != cells[canonical])
+        .expect("fixture should contain a different valid cell span");
+    cells[twin] = cells[replacement].clone();
+
+    let err = serde_json::from_value::<SphericalVoronoi>(value)
+        .expect_err("welded twins must alias their canonical cell span");
+    assert!(
+        err.to_string().contains("welded cell"),
+        "unexpected error: {err}"
+    );
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn test_serde_rejects_empty_diagram() {
+    use voronoi_mesh::SphericalVoronoi;
+
+    let value = serde_json::json!({
+        "generators": [],
+        "vertices": [],
+        "cells": [],
+        "cell_indices": [],
+        "weld_map": null
+    });
+    let err = serde_json::from_value::<SphericalVoronoi>(value)
+        .expect_err("empty diagrams cannot support locator queries");
+    assert!(
+        err.to_string().contains("generator"),
+        "unexpected error: {err}"
+    );
 }
 
 /// The checked accessors return None out of bounds; the panicking forms are

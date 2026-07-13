@@ -13,10 +13,11 @@ use glam::Vec3;
 /// Each cell is represented as a list of vertex indices forming a spherical polygon.
 ///
 /// With the `serde` feature, deserialization is CHECKED: the wire data must
-/// satisfy the structural invariants the accessors rely on (cell spans inside
-/// the index buffer, live vertex indices in range, a well-formed weld map),
-/// and malformed input fails with a descriptive error instead of constructing
-/// a diagram that panics later. Semantic validity (edge pairing, Euler
+/// satisfy the structural invariants the accessors rely on (a nonempty site
+/// set, cell spans inside the index buffer, live vertex indices in range, and
+/// welded twins aliasing their canonical cell span), and malformed input fails
+/// with a descriptive error instead of constructing a diagram that panics
+/// later. Semantic validity (edge pairing, Euler
 /// characteristic, …) is NOT re-checked on deserialization; run
 /// [`crate::validation::validate`] if the data's provenance is untrusted. The
 /// serialized form mirrors the storage layout and may change in minor
@@ -43,7 +44,7 @@ pub struct SphericalVoronoi {
     weld_map: Option<Vec<u32>>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct CellData {
     start: u32,
@@ -425,6 +426,9 @@ mod wire {
         type Error = String;
 
         fn try_from(w: SphericalVoronoiWire) -> Result<Self, String> {
+            if w.generators.is_empty() {
+                return Err("diagram must contain at least one generator".to_owned());
+            }
             if w.cells.len() != w.generators.len() {
                 return Err(format!(
                     "cell count {} does not match generator count {}",
@@ -476,6 +480,11 @@ mod wire {
                         return Err(format!(
                             "weld map entry {i} -> {c} is not a canonical (self-mapped, \
                              preceding) cell index"
+                        ));
+                    }
+                    if w.cells[i] != w.cells[c] {
+                        return Err(format!(
+                            "welded cell {i} does not alias canonical cell {c}'s span"
                         ));
                     }
                 }

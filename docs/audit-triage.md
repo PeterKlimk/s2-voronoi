@@ -43,13 +43,13 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 
 | ID | Priority | Confidence | Finding | Immediate action |
 |---|---:|---|---|---|
-| AUD-001 | P0 | Confirmed | Parallel vectors expose uninitialized elements with premature `set_len` | Replace with `MaybeUninit`/spare-capacity construction |
+| AUD-001 | P0 | Resolved | Parallel vectors exposed uninitialized elements with premature `set_len` | Keep length zero through parallel initialization |
 | AUD-002 | P0 | Resolved | Five ordinary sites produced a strictly valid but materially non-Voronoi diagram | Epsilon-gate inferred endpoint pairing; escalate rejected mismatches |
-| AUD-003 | P1 | Confirmed | Packed pre-/mid-batch termination drops part of `unseen_bound` | Preserve `max(candidate_dot, unseen_bound)` |
+| AUD-003 | P1 | Resolved | Packed pre-/mid-batch termination dropped part of `unseen_bound` | Preserve `max(candidate_dot, unseen_bound)` |
 | AUD-004 | P1 | Algorithmically confirmed | Fallback may classify an active constraint `Unchanged` and discard it | Retain tolerant constraints or make tolerance semantics explicit |
 | AUD-005 | P2 | Algorithmically confirmed | Nonzero-epsilon membership and intersection use different boundaries | Interpolate at `d = -eps` or remove unsupported epsilon path |
-| AUD-006 | P1 | Confirmed | Accepted welded-twin serde payload can panic in adjacency lookup | Validate or canonicalize twin spans |
-| AUD-007 | P2 | Confirmed | Accepted empty serde diagram can panic on first locator query | Reject empty diagrams or make locator construction/query fallible |
+| AUD-006 | P1 | Resolved | Accepted welded-twin serde payload could panic in adjacency lookup | Reject twins that do not alias canonical spans |
+| AUD-007 | P2 | Resolved | Accepted empty serde diagram could panic on first locator query | Reject empty serialized diagrams |
 | AUD-008 | P1 | Under-justified | Plain `compute` cheap checks are not equivalent to strict validation | Close detection gaps or run an equivalent fast strict gate |
 | AUD-009 | P1 | Resolved | Reconciliation merges were not bounded to an epsilon-diameter feature | Transactionally diameter-gate components; escalate rejected chains |
 | AUD-010 | P2 | Policy decision | Fast, fallback, repair, and exact-predicate paths do not share one exact site model or SoS policy | Choose and document the intended model; align paths |
@@ -64,8 +64,11 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 - **Priority:** P0
 - **Class:** memory safety
 - **Confidence:** Confirmed unsafe-precondition violation
+- **Status:** Resolved; parallel initialization retains vector length zero until all disjoint
+  writes have joined.
 
-Two parallel paths set a vector's length before the newly exposed elements have been initialized:
+Before the fix, two parallel paths set a vector's length before the newly exposed elements had been
+initialized:
 
 - cube-grid scatter in [`src/cube_grid/build.rs`](../src/cube_grid/build.rs#L164-L217);
 - parallel vertex concatenation in
@@ -79,14 +82,11 @@ that requirement.
 Other assembly scatters keep length zero while writing spare capacity and set the length only after
 the parallel join; those do not share this finding.
 
-**Proposed resolution**
+**Implemented resolution**
 
-Use one of:
-
-1. `Vec<MaybeUninit<T>>` whose elements are initialized by the parallel scatter, followed by a
-   single assume-initialized conversion after full coverage is proved;
-2. a spare-capacity design that retains length zero until the join completes; or
-3. initialized buffers, if the initialization cost is acceptable.
+Both affected scatters now write into reserved spare capacity while the vectors retain length zero.
+They publish the initialized length only after the parallel join returns successfully. A panic or
+unwind before that point therefore cannot expose or drop uninitialized elements.
 
 **Acceptance criteria**
 
@@ -169,12 +169,14 @@ Rejected fixture pairings repair in one Local3d round; repair-disabled computati
 - **Priority:** P1
 - **Class:** conservative-bound correctness
 - **Confidence:** Confirmed reachable contract violation; no end-to-end omitted cutter yet
+- **Status:** Resolved; every exact packed checkpoint now preserves both the batch-remainder and
+  post-batch unseen bounds.
 
-Packed post-batch production correctly includes its geometric coverage floor and
-`GRID_DOT_BOUND_PAD`. Pre-batch consumption instead assumes that `first_dot` dominates the packed
-unseen set, unlike the shell path, which takes a maximum. See
+Packed post-batch production correctly included its geometric coverage floor and
+`GRID_DOT_BOUND_PAD`. Pre-batch consumption instead assumed that `first_dot` dominated the packed
+unseen set, unlike the shell path, which took a maximum. See
 [`src/knn_clipping/cell_build/run/frontier.rs`](../src/knn_clipping/cell_build/run/frontier.rs#L49-L61).
-The analogous assumption appears in the packed mid-batch logic in
+The analogous assumption appeared in the packed mid-batch logic in
 [`src/knn_clipping/cell_build/run.rs`](../src/knn_clipping/cell_build/run.rs#L615-L638).
 
 A deterministic reachable dense-cell fixture produced:
@@ -191,9 +193,10 @@ jitter `1e-3`, ChaCha8 seed 101, grid resolution 8, query slot 81.
 The termination guards masked this particular one-ulp ordering violation, so it did not reproduce
 an omitted cutting constraint. The bound contract is nevertheless false.
 
-**Proposed resolution**
+**Implemented resolution**
 
-Use the conservative maximum for every source:
+The shared `complete_exact_bound` helper takes the conservative maximum for every source and is
+used by both frontier and mid-batch termination:
 
 ```rust
 batch.first_dot.max(batch.unseen_bound)
@@ -270,20 +273,22 @@ affected. The issue applies to positive-epsilon edge-check/replay or diagnostic 
 - **Priority:** P1
 - **Class:** public robustness/panic safety
 - **Confidence:** Confirmed
+- **Status:** Resolved; checked deserialization rejects a welded twin whose `CellData` differs from
+  its canonical cell.
 
-Checked deserialization validates live spans and weld-map canonicality but does not require a
-welded twin's cell span to equal its canonical cell's span. See
+Before the fix, checked deserialization validated live spans and weld-map canonicality but did not
+require a welded twin's cell span to equal its canonical cell's span. See
 [`src/diagram.rs`](../src/diagram.rs#L427-L489).
 
-A payload with two generators, valid duplicated cell spans, and `weld_map = [0, 0]` is accepted.
-`build_adjacency` sizes neighbor storage from canonical spans but preserves the twin's different
-span; `neighbors_of(1)` then slices past the allocation in
+A payload with two generators, valid duplicated cell spans, and `weld_map = [0, 0]` was accepted.
+`build_adjacency` sized neighbor storage from canonical spans but preserved the twin's different
+span; `neighbors_of(1)` then sliced past the allocation in
 [`src/adjacency.rs`](../src/adjacency.rs#L85-L90) and panics.
 
-**Proposed resolution**
+**Implemented resolution**
 
-Reject any payload for which a twin's `CellData` differs from its canonical cell, or canonicalize
-twin spans while building the deserialized representation.
+Reject any payload for which a twin's `CellData` differs from its canonical cell. Valid welded
+round-trips are exercised through adjacency construction for every restored cell.
 
 **Acceptance criteria**
 
@@ -295,16 +300,16 @@ twin spans while building the deserialized representation.
 - **Priority:** P2
 - **Class:** public robustness/panic safety
 - **Confidence:** Confirmed
+- **Status:** Resolved; checked deserialization rejects an empty generator set.
 
-An empty diagram with empty generators, vertices, cells, and indices passes checked
-deserialization. `build_locator` accepts it, while the first query panics at
+An empty diagram with empty generators, vertices, cells, and indices passed checked
+deserialization. `build_locator` accepted it, while the first query panicked at
 [`src/locate.rs`](../src/locate.rs#L122-L124).
 
-**Proposed resolution**
+**Implemented resolution**
 
-Reject empty serialized diagrams, or make locator construction/query fallible for an empty
-generator set. Rejecting the payload most closely matches `compute`, which rejects fewer than four
-generators.
+Reject empty serialized diagrams. This preserves the infallible locator API while closing the only
+accepted representation with no nearest generator.
 
 ## Guarantee and policy gaps
 
@@ -529,11 +534,12 @@ degeneracy guarantees, not merely on API convenience or ordinary random fixtures
 
 ## Recommended implementation sequence
 
-1. **AUD-001:** remove unsafe-precondition violations.
-2. **AUD-002/AUD-009:** add the five-site regression and bound/escalate reconciliation edits.
-3. **AUD-003:** preserve the complete packed unseen bound.
+1. **AUD-001:** resolved — removed unsafe-precondition violations.
+2. **AUD-002/AUD-009:** resolved — added the five-site regression and bounded/escalated
+   reconciliation edits.
+3. **AUD-003:** resolved — preserved the complete packed unseen bound.
 4. **AUD-004/AUD-005:** make fallback and epsilon clipping internally consistent.
-5. **AUD-006/AUD-007:** tighten accepted serialized representations.
+5. **AUD-006/AUD-007:** resolved — tightened accepted serialized representations.
 6. **AUD-008:** make the plain success gate match the advertised strict-validity contract.
 7. **AUD-013:** remove qhull's oracle role and choose a robust reference strategy.
 8. **AUD-010/AUD-011/AUD-012:** settle the mathematical policy and derive the remaining numerical
@@ -572,3 +578,7 @@ All of those targeted existing tests passed. The qhull-enabled results are recor
 diagnostic comparisons, not correctness certification. Temporary read-only audit harnesses
 reproduced AUD-002, AUD-003, AUD-006, and AUD-007; those harnesses were not retained in the
 repository.
+
+Post-resolution validation for AUD-006/AUD-007 included the complete release suite with serde
+enabled. Retained regressions reject empty diagrams and mismatched welded-twin spans, while a valid
+welded round-trip builds and queries adjacency for every restored cell.
