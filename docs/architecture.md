@@ -4,6 +4,19 @@ voronoi-mesh computes Voronoi diagrams on the unit sphere. The design builds eve
 independently and in parallel, then stitches the cells into one shared graph. This document
 describes how that works and where the code lives.
 
+## World-space embedding
+
+`SphereEmbedding` keeps translation and uniform scale outside the geometric backend. World-space
+sites are converted in f64 to directions from the declared center, normalized with scale-safe
+arithmetic, rounded to the backend's canonical f32 unit directions, and then processed by the
+unchanged pipeline below. `EmbeddedSphericalVoronoi` stores that unit diagram plus the center and
+radius; world positions and physical areas are derived on demand.
+
+Radial distance from the center is intentionally not part of site identity. Translation and
+uniform scaling preserve spherical Voronoi topology, while non-uniform transforms, weighted sites,
+and sites whose different radii affect distance do not. Those are different geometric problems,
+not embedding modes of this backend.
+
 ## The per-cell construction
 
 A Voronoi cell is the intersection of half-spaces: one per neighbor, bounded by the perpendicular
@@ -98,6 +111,8 @@ explicit when touching any of the three mechanisms.
 - `types.rs` — `UnitVec3`, `UnitVec3Like`. `tolerances.rs` — numerical slack, with per-constant
   justification. `policy.rs` — performance heuristics (grid density, packed sizing, termination
   cadence), kept separate from tolerances.
+- `embedding.rs` — f64 world-coordinate projection, `SphereEmbedding`, embedded diagram/report
+  wrappers, and world-space point location; delegates all geometry to the unit backend.
 - `live_dedup/` — the geometry-agnostic core: sharded vertex ownership, deferred-slot patching,
   edge-check propagation, assembly. Generic over the vertex position type.
 - `knn_clipping/` — the spherical backend: per-bin `driver.rs`, single-cell `cell_build/`,

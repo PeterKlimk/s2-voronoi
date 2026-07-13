@@ -36,6 +36,37 @@ for cell in diagram.iter_cells() {
 Inputs are assumed unit-normalized. They are canonicalized once at entry (renormalized in f64,
 rounded back to f32), so `generators()` may differ from the raw input by ~1 ulp.
 
+### Spheres in world coordinates
+
+Keep the geometric computation in stable unit-sphere coordinates while embedding the result at
+any finite center and positive radius whose axis-aligned extent remains representable in f64:
+
+```rust
+use voronoi_mesh::{compute_on_sphere, SphereEmbedding};
+
+let sphere = SphereEmbedding::new([10.0, -5.0, 2.0], 3.0)?;
+let points = [
+    [13.0, -5.0, 2.0],
+    [7.0, -5.0, 2.0],
+    [10.0, -2.0, 2.0],
+    [10.0, -8.0, 2.0],
+    [10.0, -5.0, 5.0],
+    [10.0, -5.0, -1.0],
+];
+let embedded = compute_on_sphere(&points, sphere)?;
+let world_vertex = embedded.vertex_world(0);
+# let _ = world_vertex;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+World inputs use f64 and are interpreted by their direction from the center: their radial distance
+is deliberately discarded. The returned wrapper stores only the canonical unit diagram plus the
+embedding. World vertices, generators, spherical centroids, physical areas, Lloyd targets, and
+point-location queries are derived without duplicating the topology or geometry buffers. With the
+default `parallel` feature and a multi-threaded Rayon pool, large world inputs are snapshotted once
+in bounded chunks and projected across the pool before the unchanged unit-sphere backend begins.
+Smaller inputs and single-threaded pools stay serial.
+
 ## What you get
 
 - `SphericalVoronoi`: shared vertex list, per-cell boundary indices, generators.
@@ -46,6 +77,8 @@ rounded back to f32), so `generators()` may differ from the raw input by ~1 ulp.
 - `delaunay_triangles()` — the dual triangulation as `Vec<[u32; 3]>`.
 - `build_locator()` — reusable point-location; `locate(q)` maps a point to its cell in
   near-constant time, `locate_many(&[q])` batches across cores.
+- `SphereEmbedding` / `compute_on_sphere` — translated and uniformly scaled world-space spheres
+  backed by the same canonical unit diagram.
 - `validation::validate` — strict subdivision check.
 - `weld_map()` — generators merged as coincident (see Correctness).
 
