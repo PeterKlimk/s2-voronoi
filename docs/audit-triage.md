@@ -53,7 +53,7 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 | AUD-008 | P1 | Resolved | Plain `compute` documentation exceeded its fast-path certificate | Edge-agreement construction certificate + fused Euler; strict validation optional/testing |
 | AUD-009 | P1 | Resolved | Reconciliation merges were not bounded to an epsilon-diameter feature | Transactionally diameter-gate components; escalate rejected chains |
 | AUD-010 | P2 | Resolved | Fast, fallback, repair, and exact-predicate paths do not share one exact site model or SoS policy | Structural production contract chosen; unified exact combinatorics deferred as an optional add-on |
-| AUD-011 | P2 | Active; fidelity measured | Termination reserves remain empirical; normalized-site geometric fidelity now has a campaign baseline | Derive the remaining termination budget; retain the fidelity campaign |
+| AUD-011 | P2 | Active; theorem/frontiers audited, fidelity measured | Termination reserves remain empirical; normalized-site geometric fidelity now has a campaign baseline | Derive the remaining termination budget; retain the boundary tests and fidelity campaign |
 | AUD-012 | P3 | Policy decision | Welding is a strict computed-f32 threshold graph with transitive classes | Pin equality and transitive-chain semantics in docs/tests |
 | AUD-013 | P2 | Resolved | Qhull was not a robust correctness oracle | Removed feature, dependency, public API, comparisons, and oracle-like tooling |
 | AUD-014 | P1 | Resolved | Local3d lost the hull-face sign and could mint the antipodal Voronoi vertex | Carry the oriented support normal through sorted-triple repair fans |
@@ -497,6 +497,18 @@ The remaining gap is a complete forward-error derivation for:
 - raw f32 dot evaluation; and
 - the final signed-distance evaluation.
 
+The frontier audit separately confirmed that shell and packed checkpoints pass the maximum of the
+known batch remainder and post-batch unseen certificate. It found no reversed inequality or
+`<`/`<=` defect: equality can denote a tangent cutter, so termination must remain strict. Release
+contract tests passed for the default SIMD backend, scalar SIMD, and FMA arithmetic modes.
+
+One repair-only implementation mismatch was found during that audit. Local3d's grid gather scored
+candidates with `glam::Vec3::dot`, while the shell bound is certified for the crate's canonical
+raw-f32 dot operation. Different association or FMA behavior could therefore round a candidate
+across the unseen bound. The gather now uses `fp::dot3_f32`, matching the certificate it consumes.
+This did not falsify the main termination theorem, but it closes an avoidable arithmetic seam in
+the accepted escalation path.
+
 Current constants are explicitly empirical in [`src/tolerances.rs`](../src/tolerances.rs#L1-L15).
 That proof obligation is distinct from output fidelity: a sound termination certificate can return
 a mesh whose f32 vertex positions and near-degenerate combinatorics still differ slightly from the
@@ -536,6 +548,22 @@ unstable regime in one aggregate.
 
 Probe-only negative termination-pad overrides can intentionally violate the certificate and should
 remain outside the production correctness claim or be range-validated.
+
+**Implemented termination boundary coverage**
+
+Builder tests now exercise the production cached threshold at the adjacent f32 values around it,
+including literal equality, repeated cache use, cache invalidation after a changed clip, positive
+and negative `cos(2 theta)`, and both sides of its zero transition. Deterministically searched
+once-rounded canonical vectors cover observed norms below and above one and pin the
+sign-dependent endpoint formula. SIMD/scalar dot-mask parity and packed frontier composition tests
+also pin equality and adjacent-value behavior.
+
+These tests establish the implemented comparison policy and arithmetic consistency; they do not
+replace the missing composed proof. In particular, the remaining derivation must account jointly
+for cube-cap/grid construction, downward rounding of stored polygon radius, Gram/tangency
+residuals, double-angle arithmetic, raw-dot rounding, generator norm rounding, and final
+signed-distance cancellation. No counterexample was found in these audits, so AUD-011 remains a
+proof gap rather than a confirmed unsound bound.
 
 **Implemented fidelity measurements**
 

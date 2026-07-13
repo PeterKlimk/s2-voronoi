@@ -58,6 +58,215 @@ fn fallback_points4(g: Vec3, h1: Vec3, h2: Vec3, h3: Vec3, h4: Vec3) -> Vec<Vec3
     points
 }
 
+fn install_bounded_radius(builder: &mut Topo2DBuilder, max_r2: f64) {
+    let gnomonic = builder.as_gnomonic_mut();
+    gnomonic.poly_a.clear();
+    gnomonic.poly_a.len = 3;
+    gnomonic.poly_a.has_bounding_ref = false;
+    gnomonic.poly_a.max_r2 = max_r2;
+    gnomonic.use_a = true;
+    gnomonic.term_cache_valid = false;
+}
+
+fn termination_formula(gnomonic: &GnomonicBuilder, max_r2: f64) -> (f64, f64) {
+    let min_cos = gnomonic.chart_min_cos_bound(max_r2);
+    let sin_theta = (1.0 - min_cos * min_cos).max(0.0).sqrt();
+    let cos_theta_pad = crate::fp::fma_f64(
+        min_cos,
+        gnomonic.term_cos_pad,
+        -sin_theta * gnomonic.term_sin_pad,
+    );
+    let cos_2max = crate::fp::fma_f64(2.0 * cos_theta_pad, cos_theta_pad, -1.0);
+    let unseen_norm = if cos_2max >= 0.0 {
+        1.0 - crate::tolerances::CANONICAL_UNIT_NORM_SLACK
+    } else {
+        1.0 + crate::tolerances::CANONICAL_UNIT_NORM_SLACK
+    };
+    let raw_dot_scale = gnomonic.generator.length() * unseen_norm;
+    let threshold = cos_2max * raw_dot_scale - crate::tolerances::TERMINATION_THRESHOLD_GUARD;
+    (cos_2max, threshold)
+}
+
+fn max_r2_for_theta(gnomonic: &GnomonicBuilder, theta: f64) -> f64 {
+    theta.tan().powi(2) / gnomonic.chart_metric_r2_scale
+}
+
+/// Return the adjacent f32 values that straddle a finite f64 threshold.
+fn f32_straddling(threshold: f64) -> (f32, f32) {
+    let rounded = threshold as f32;
+    if (rounded as f64) < threshold {
+        (rounded, rounded.next_up())
+    } else {
+        (rounded.next_down(), rounded)
+    }
+}
+
+#[test]
+fn cached_termination_threshold_is_strict_across_cos2_regimes() {
+    let angle_pad = crate::tolerances::TERMINATION_ANGLE_PAD;
+    let regimes = [
+        (0.20, Ordering::Greater, "positive"),
+        (
+            std::f64::consts::FRAC_PI_4 - angle_pad - 1.0e-10,
+            Ordering::Greater,
+            "near-zero positive",
+        ),
+        (
+            std::f64::consts::FRAC_PI_4 - angle_pad + 1.0e-10,
+            Ordering::Less,
+            "near-zero negative",
+        ),
+        (1.00, Ordering::Less, "negative"),
+    ];
+
+    for (theta, expected_sign, label) in regimes {
+        let mut builder = Topo2DBuilder::new(0, Vec3::Z);
+        let max_r2 = max_r2_for_theta(builder.as_gnomonic(), theta);
+        install_bounded_radius(&mut builder, max_r2);
+
+        // Populate the real production cache, then verify it was computed by
+        // the expected sign regime and is stable across repeated probes.
+        assert!(!builder.can_terminate(1.0));
+        let (cos_2max, expected_threshold) = termination_formula(builder.as_gnomonic(), max_r2);
+        assert_eq!(cos_2max.partial_cmp(&0.0), Some(expected_sign), "{label}");
+        assert_eq!(
+            builder.as_gnomonic().term_threshold_cache.to_bits(),
+            expected_threshold.to_bits(),
+            "{label} cache formula"
+        );
+        assert!(
+            cos_2max.abs() < 1.0e-8 || !label.starts_with("near-zero"),
+            "{label} fixture is not close to the sign transition: {cos_2max}"
+        );
+
+        let cache = builder.as_gnomonic().term_threshold_cache;
+        let (below, at_or_above) = f32_straddling(cache);
+        assert!((below as f64) < cache, "{label}: lower bracket");
+        assert!((at_or_above as f64) >= cache, "{label}: upper bracket");
+        assert!(builder.can_terminate(below), "{label}: strictly below");
+        assert!(builder.can_terminate(below), "{label}: cached repeat");
+        assert!(
+            !builder.can_terminate(at_or_above),
+            "{label}: equality-or-above must not terminate"
+        );
+
+        // Exercise literal equality and both adjacent f32 values. Snapping the
+        // already-computed cache to a representable value isolates the final
+        // strict comparison from the formula's ordinary f64 result.
+        let pivot = cache as f32;
+        builder.as_gnomonic_mut().term_threshold_cache = pivot as f64;
+        assert!(
+            builder.can_terminate(pivot.next_down()),
+            "{label}: next_down"
+        );
+        assert!(!builder.can_terminate(pivot), "{label}: equality");
+        assert!(!builder.can_terminate(pivot.next_up()), "{label}: next_up");
+    }
+}
+
+fn canonical_norm_extrema() -> (Vec3, Vec3) {
+    let mut state = 0x8a5c_d789_635d_2dff_u64;
+    let mut min = (f64::INFINITY, Vec3::ZERO);
+    let mut max = (f64::NEG_INFINITY, Vec3::ZERO);
+    for _ in 0..50_000 {
+        let mut sample = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state as i64) as f64
+        };
+        let raw = glam::DVec3::new(sample(), sample(), sample());
+        let unit = raw.normalize();
+        let canonical = Vec3::new(unit.x as f32, unit.y as f32, unit.z as f32);
+        let promoted = glam::DVec3::new(canonical.x as f64, canonical.y as f64, canonical.z as f64);
+        let norm = promoted.length();
+        if norm < min.0 {
+            min = (norm, canonical);
+        }
+        if norm > max.0 {
+            max = (norm, canonical);
+        }
+    }
+    (min.1, max.1)
+}
+
+#[test]
+fn termination_uses_sign_dependent_canonical_norm_endpoint() {
+    let (min_norm_point, max_norm_point) = canonical_norm_extrema();
+    let promoted_norm = |p: Vec3| glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64).length();
+    let min_norm = promoted_norm(min_norm_point);
+    let max_norm = promoted_norm(max_norm_point);
+    let slack = crate::tolerances::CANONICAL_UNIT_NORM_SLACK;
+    assert!(min_norm < 1.0 && min_norm >= 1.0 - slack, "min={min_norm}");
+    assert!(max_norm > 1.0 && max_norm <= 1.0 + slack, "max={max_norm}");
+    assert!(1.0 - min_norm > 0.25 * slack, "weak minimum fixture");
+    assert!(max_norm - 1.0 > 0.25 * slack, "weak maximum fixture");
+
+    // Prove both extrema are actual once-rounded canonical fixed points.
+    for p in [min_norm_point, max_norm_point] {
+        let d = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64).normalize();
+        let roundtrip = Vec3::new(d.x as f32, d.y as f32, d.z as f32);
+        assert_eq!(
+            roundtrip.to_array().map(f32::to_bits),
+            p.to_array().map(f32::to_bits)
+        );
+    }
+
+    for generator in [min_norm_point, max_norm_point] {
+        for (theta, positive) in [(0.20, true), (1.00, false)] {
+            let mut builder = Topo2DBuilder::new(0, generator);
+            let max_r2 = max_r2_for_theta(builder.as_gnomonic(), theta);
+            install_bounded_radius(&mut builder, max_r2);
+            assert!(!builder.can_terminate(1.0));
+
+            let gnomonic = builder.as_gnomonic();
+            let (cos_2max, expected) = termination_formula(gnomonic, max_r2);
+            assert_eq!(cos_2max >= 0.0, positive);
+            assert_eq!(gnomonic.term_threshold_cache.to_bits(), expected.to_bits());
+
+            let wrong_unseen_norm = if positive { 1.0 + slack } else { 1.0 - slack };
+            let wrong_raw_dot_scale = gnomonic.generator.length() * wrong_unseen_norm;
+            let wrong =
+                cos_2max * wrong_raw_dot_scale - crate::tolerances::TERMINATION_THRESHOLD_GUARD;
+            assert_ne!(
+                expected.to_bits(),
+                wrong.to_bits(),
+                "endpoint branch must matter"
+            );
+            assert!(expected < wrong, "selected endpoint must be conservative");
+        }
+    }
+}
+
+#[test]
+fn changed_clip_invalidates_cached_termination_threshold() {
+    let mut builder = Topo2DBuilder::new(0, Vec3::Z);
+    install_bounded_radius(&mut builder, 0.1);
+    assert!(!builder.can_terminate(1.0));
+    let old = builder.as_gnomonic().term_threshold_cache;
+    assert!(builder.as_gnomonic().term_cache_valid);
+
+    // commit_clip(Changed) consumes the already-written alternate buffer.
+    let gnomonic = builder.as_gnomonic_mut();
+    gnomonic.poly_b.clear();
+    gnomonic.poly_b.len = 3;
+    gnomonic.poly_b.has_bounding_ref = false;
+    gnomonic.poly_b.max_r2 = 0.4;
+    assert_eq!(
+        gnomonic.commit_clip(ClipResult::Changed, 1, u32::MAX),
+        Ok(ClipResult::Changed)
+    );
+    assert!(!gnomonic.term_cache_valid);
+
+    assert!(!builder.can_terminate(1.0));
+    let new = builder.as_gnomonic().term_threshold_cache;
+    assert_ne!(new.to_bits(), old.to_bits());
+    assert_eq!(
+        new.to_bits(),
+        termination_formula(builder.as_gnomonic(), 0.4).1.to_bits()
+    );
+}
+
 #[test]
 fn changed_clip_fails_when_bounded_polygon_reaches_projection_limit() {
     let mut builder = Topo2DBuilder::new(0, Vec3::Z);

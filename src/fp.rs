@@ -268,7 +268,54 @@ mod backend {
 
 #[cfg(test)]
 mod tests {
-    use super::interior_security_thresholds8;
+    use super::{dot3_f32, interior_security_thresholds8, PointChunk8};
+
+    #[test]
+    fn point_chunk_dot_and_strict_mask_match_scalar_at_adjacent_thresholds() {
+        let xs = [
+            1.0,
+            -1.0,
+            0.577_350_26,
+            -0.577_350_26,
+            0.999_999_94,
+            1.0e-7,
+            -0.75,
+            0.3125,
+        ];
+        let ys = [
+            0.0,
+            1.0e-7,
+            -0.577_350_26,
+            0.577_350_26,
+            -3.0e-4,
+            -1.0,
+            0.5,
+            -0.9375,
+        ];
+        let zs = [
+            1.0e-7,
+            0.0,
+            0.577_350_26,
+            0.577_350_26,
+            2.0e-4,
+            3.0e-7,
+            -0.433_012_7,
+            0.15625,
+        ];
+        let (qx, qy, qz) = (0.577_350_26, -0.707_106_77, 0.408_248_3);
+        let dots = PointChunk8::from_arrays(xs, ys, zs).dots(qx, qy, qz);
+        let lanes = dots.to_array();
+
+        for lane in 0..8 {
+            let scalar = dot3_f32(xs[lane], ys[lane], zs[lane], qx, qy, qz);
+            assert_eq!(lanes[lane].to_bits(), scalar.to_bits(), "lane {lane}");
+
+            let bit = 1u32 << lane;
+            assert_ne!(dots.mask_gt(scalar.next_down()) & bit, 0, "lane {lane}");
+            assert_eq!(dots.mask_gt(scalar) & bit, 0, "lane {lane}");
+            assert_eq!(dots.mask_gt(scalar.next_up()) & bit, 0, "lane {lane}");
+        }
+    }
 
     #[test]
     fn interior_security_simd_matches_scalar_and_marks_fallback_lanes() {

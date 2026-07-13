@@ -97,27 +97,29 @@ mod tests {
 
     #[test]
     fn packed_exact_bounds_keep_the_post_batch_certificate() {
-        let post_batch_bound = 0.75;
-
         for source in [
             DirectedNeighborBatchSource::PackedChunk0,
             DirectedNeighborBatchSource::PackedTail,
         ] {
-            let batch = DirectedNeighborBatch {
-                n: 2,
-                first_dot: 0.25,
-                unseen_bound: post_batch_bound,
-                source,
-            };
+            for (first_dot, unseen_bound) in [(0.25, 0.75), (0.75, 0.75), (0.75, 0.25)] {
+                let batch = DirectedNeighborBatch {
+                    n: 2,
+                    first_dot,
+                    unseen_bound,
+                    source,
+                };
 
-            assert_eq!(exact_frontier_bound(batch), post_batch_bound);
+                assert_eq!(exact_frontier_bound(batch), first_dot.max(unseen_bound));
+            }
         }
 
         // The same composition is used after consuming a packed prefix, where
         // the known remainder is represented by next_dot instead of first_dot.
-        assert_eq!(
-            complete_exact_bound(0.5, post_batch_bound),
-            post_batch_bound
-        );
+        for (next_dot, unseen_bound) in [(0.5, 0.75), (0.75, 0.75), (0.75, 0.5)] {
+            assert_eq!(
+                complete_exact_bound(next_dot, unseen_bound),
+                next_dot.max(unseen_bound)
+            );
+        }
     }
 }

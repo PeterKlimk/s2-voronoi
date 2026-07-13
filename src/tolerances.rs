@@ -80,8 +80,10 @@ pub(crate) const MIN_PROJECTION_COS: f64 = 8.0 * f32::EPSILON as f64;
 /// bounds). Same f32-granularity scale as `MIN_PROJECTION_COS`.
 pub(crate) const TERMINATION_ANGLE_PAD: f64 = 8.0 * f32::EPSILON as f64;
 
-/// Absolute guard subtracted from the cached termination threshold, covering
-/// rounding in the double-angle computation of the certificate itself.
+/// Absolute guard subtracted from the cached termination threshold. This is
+/// the empirical combined reserve for the double-angle/scale computation and
+/// the raw-f32 dot comparison; AUD-011 tracks the remaining composed
+/// forward-error derivation.
 pub(crate) const TERMINATION_THRESHOLD_GUARD: f64 = 3.0 * f32::EPSILON as f64;
 
 /// Norm envelope for a point normalized in f64 and rounded once to f32 by
