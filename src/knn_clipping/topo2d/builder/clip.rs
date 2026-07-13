@@ -206,6 +206,29 @@ impl GnomonicBuilder {
 /// microscopic cells that the ClippedAway fallback exists to preserve.
 const CLIP_DEDUP_LEN2: f64 = 1e-24;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FallbackClipDisposition {
+    /// The nominal halfspace contains every current vertex, so the constraint
+    /// is redundant for this convex polygon and need not be retained.
+    Redundant,
+    /// Tolerant classification left the working polygon unchanged, but the
+    /// nominal halfspace excludes at least one vertex. Retain the constraint
+    /// so extraction and all-constraints reconstruction can enforce it.
+    RetainedUnchanged,
+    /// The working polygon changed and the constraint owns boundary geometry.
+    Changed,
+}
+
+impl FallbackClipDisposition {
+    #[inline]
+    fn clip_result(self) -> ClipResult {
+        match self {
+            Self::Redundant | Self::RetainedUnchanged => ClipResult::Unchanged,
+            Self::Changed => ClipResult::Changed,
+        }
+    }
+}
+
 impl FallbackBuilder {
     /// Inside test for the f64 fallback polygon.
     fn classify_vertex(constraint: &super::FallbackConstraint, position: glam::DVec3) -> bool {
@@ -318,7 +341,7 @@ impl FallbackBuilder {
         neighbor_idx: usize,
         neighbor_slot: u32,
         neighbor: Vec3,
-    ) -> ClipResult {
+    ) -> FallbackClipDisposition {
         let constraint = super::FallbackConstraint::from_neighbor(
             self.generator,
             neighbor_idx,
@@ -328,6 +351,11 @@ impl FallbackBuilder {
         let plane_idx = self.constraints.len();
         self.constraints.push(constraint);
         let constraint = &self.constraints[plane_idx];
+        let nominally_redundant = self
+            .poly
+            .vertices
+            .iter()
+            .all(|vertex| constraint.normal.dot(vertex.position) >= 0.0);
         let clipped = Self::clip_poly_with_constraint(&self.poly, constraint, plane_idx);
         if clipped.len() == self.poly.len()
             && clipped.edge_planes == self.poly.edge_planes
@@ -339,15 +367,21 @@ impl FallbackBuilder {
                     a.position.dot(b.position) >= crate::tolerances::FALLBACK_DEDUP_DOT as f64
                 })
         {
-            // The constraint cut nothing, so no edge references `plane_idx`;
-            // drop it so it does not inflate the O(constraints) extraction
-            // scans. Mirrors the gnomonic path, which never records an
-            // `Unchanged` clip as an accepted half-plane.
-            self.constraints.pop();
-            ClipResult::Unchanged
+            if nominally_redundant {
+                // The nominal halfspace contains the convex polygon, so this
+                // constraint cannot become active after later clipping.
+                self.constraints.pop();
+                FallbackClipDisposition::Redundant
+            } else {
+                // The tolerance is an uncertainty band around the nominal
+                // great circle, not permission to forget that constraint.
+                // It has no incremental edge yet, but extraction's candidate
+                // scan sees the retained plane and can reconstruct it.
+                FallbackClipDisposition::RetainedUnchanged
+            }
         } else {
             self.poly = clipped;
-            ClipResult::Changed
+            FallbackClipDisposition::Changed
         }
     }
 
@@ -370,7 +404,9 @@ impl FallbackBuilder {
         neighbor_slot: u32,
         neighbor: Vec3,
     ) -> Result<ClipResult, CellFailure> {
-        Ok(self.push_constraint(neighbor_idx, neighbor_slot, neighbor))
+        Ok(self
+            .push_constraint(neighbor_idx, neighbor_slot, neighbor)
+            .clip_result())
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -518,5 +554,90 @@ impl Topo2DBuilder {
                 builder.candidate_would_be_unchanged_support(neighbor)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod fallback_tolerance_tests {
+    use super::*;
+    use glam::DVec3;
+
+    fn constraint(normal: DVec3) -> super::super::FallbackConstraint {
+        super::super::FallbackConstraint {
+            normal,
+            neighbor_idx: 1,
+            neighbor_slot: 1,
+        }
+    }
+
+    #[test]
+    fn fallback_membership_boundary_is_inclusive_at_negative_tolerance() {
+        let constraint = constraint(DVec3::X);
+        let boundary = -FallbackBuilder::ON_PLANE_TOL;
+        for (margin, expected) in [
+            (boundary.next_up(), true),
+            (boundary, true),
+            (boundary.next_down(), false),
+        ] {
+            assert_eq!(
+                FallbackBuilder::classify_vertex(&constraint, DVec3::new(margin, 0.0, 0.0)),
+                expected,
+                "unexpected classification at margin {margin:.17e}"
+            );
+        }
+    }
+
+    fn point_with_margin(normal: DVec3, tangent: DVec3, margin: f64) -> DVec3 {
+        normal * margin + tangent * (1.0 - margin * margin).sqrt()
+    }
+
+    fn fallback_for_neighbor(margins: [f64; 3], neighbor: Vec3) -> FallbackBuilder {
+        let generator = DVec3::Z;
+        let candidate = super::super::FallbackConstraint::from_neighbor(generator, 1, 1, neighbor);
+        let normal = candidate.normal;
+        let t1 = DVec3::Y;
+        let t2 = normal.cross(t1).normalize();
+        let tangents = [t1, (t2 - t1).normalize(), (-t2 - t1).normalize()];
+        FallbackBuilder {
+            generator_idx: 0,
+            generator,
+            constraints: Vec::new(),
+            poly: SphericalPoly {
+                vertices: margins
+                    .into_iter()
+                    .zip(tangents)
+                    .map(|(margin, tangent)| SphericalPolyVertex {
+                        position: point_with_margin(normal, tangent, margin),
+                    })
+                    .collect(),
+                edge_planes: vec![usize::MAX; 3],
+            },
+            trigger: super::super::BuilderFallbackTrigger::ProjectionLimit,
+        }
+    }
+
+    #[test]
+    fn tolerance_kept_nominally_active_constraint_is_retained() {
+        let neighbor = Vec3::X;
+        let mut fallback =
+            fallback_for_neighbor([-0.5 * FallbackBuilder::ON_PLANE_TOL, 0.1, 0.1], neighbor);
+
+        assert_eq!(
+            fallback.push_constraint(1, 1, neighbor),
+            FallbackClipDisposition::RetainedUnchanged
+        );
+        assert_eq!(fallback.constraints.len(), 1);
+    }
+
+    #[test]
+    fn nominally_redundant_constraint_is_discarded() {
+        let neighbor = Vec3::X;
+        let mut fallback = fallback_for_neighbor([0.05, 0.1, 0.1], neighbor);
+
+        assert_eq!(
+            fallback.push_constraint(1, 1, neighbor),
+            FallbackClipDisposition::Redundant
+        );
+        assert!(fallback.constraints.is_empty());
     }
 }

@@ -46,7 +46,7 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 | AUD-001 | P0 | Resolved | Parallel vectors exposed uninitialized elements with premature `set_len` | Keep length zero through parallel initialization |
 | AUD-002 | P0 | Resolved | Five ordinary sites produced a strictly valid but materially non-Voronoi diagram | Epsilon-gate inferred endpoint pairing; escalate rejected mismatches |
 | AUD-003 | P1 | Resolved | Packed pre-/mid-batch termination dropped part of `unseen_bound` | Preserve `max(candidate_dot, unseen_bound)` |
-| AUD-004 | P1 | Algorithmically confirmed | Fallback may classify an active constraint `Unchanged` and discard it | Retain tolerant constraints or make tolerance semantics explicit |
+| AUD-004 | P1 | Resolved | Fallback could classify an active constraint `Unchanged` and discard it | Retain nominally active constraints through tolerant no-ops |
 | AUD-005 | P2 | Resolved | Nonzero-epsilon membership and intersection used different boundaries | Removed unsupported positive-epsilon clipping |
 | AUD-006 | P1 | Resolved | Accepted welded-twin serde payload could panic in adjacency lookup | Reject twins that do not alias canonical spans |
 | AUD-007 | P2 | Resolved | Accepted empty serde diagram could panic on first locator query | Reject empty serialized diagrams |
@@ -215,11 +215,13 @@ next_dot.max(batch.unseen_bound)
 - **Priority:** P1
 - **Class:** local clipping correctness
 - **Confidence:** Algorithmically confirmed
+- **Status:** Resolved; the fallback tolerance is an uncertainty band around the nominal great
+  circle, and a tolerant no-op no longer erases a nominally active constraint.
 
 Fallback membership keeps points with normalized plane distance at least `-1e-12`, using
 `FALLBACK_PLANE_TOL` from [`src/tolerances.rs`](../src/tolerances.rs#L117-L130). After clipping,
-`push_constraint` may declare the polygon `Unchanged` when vertex count, edge labels, and a coarse
-positional equivalence test agree; it then pops the constraint in
+`push_constraint` previously declared the polygon `Unchanged` when vertex count, edge labels, and a
+coarse positional equivalence test agreed; it then popped the constraint in
 [`src/knn_clipping/topo2d/builder/clip.rs`](../src/knn_clipping/topo2d/builder/clip.rs#L395-L431).
 
 For a plane `x >= 0`, a finite spherical polygon with one vertex at `x = -0.5e-12` is exactly cut by
@@ -230,20 +232,25 @@ Fallback never performs radius-of-security termination, which limits the immedia
 but losing an accepted constraint makes final replay/extraction incomplete relative to exact
 half-space clipping.
 
-**Proposed resolution**
+**Implemented resolution**
 
-Choose one explicit policy:
+Fallback clipping now distinguishes three internal outcomes:
 
-- retain every constraint that is exact-active even when tolerance keeps all current vertices;
-- define the fallback as solving tolerant halfspaces and retain enough metadata to enforce that
-  tolerant problem consistently; or
-- distinguish geometrically inactive, tolerance-only active, and exactly active outcomes.
+- `Redundant`: every current vertex satisfies the nominal `d >= 0` halfspace, so the constraint may
+  be discarded for the convex polygon;
+- `RetainedUnchanged`: tolerant classification leaves the working polygon unchanged, but at least
+  one nominal margin is negative, so the constraint remains available to extraction and
+  all-constraints reconstruction;
+- `Changed`: the constraint changes the working polygon and is retained normally.
+
+The returned `ClipResult` still reports whether the polygon buffer moved; the private disposition
+separately records whether an unchanged constraint was retained.
 
 **Acceptance criteria**
 
-- Direct tests at `-tol`, `next_up(-tol)`, and `next_down(-tol)`.
-- A tolerance-kept but exact-active constraint cannot silently disappear.
-- Handoff/replay and final extraction enforce the same constraint set.
+- Direct tests pin `-tol`, `next_up(-tol)`, and `next_down(-tol)` membership.
+- A tolerance-kept but nominally active constraint is retained.
+- A genuinely nominally redundant constraint is still discarded, preserving cold-path scan costs.
 
 ### AUD-005 — Nonzero-epsilon transition uses the wrong boundary
 
@@ -542,8 +549,8 @@ degeneracy guarantees, not merely on API convenience or ordinary random fixtures
 2. **AUD-002/AUD-009:** resolved — added the five-site regression and bounded/escalated
    reconciliation edits.
 3. **AUD-003:** resolved — preserved the complete packed unseen bound.
-4. **AUD-004:** retain tolerance-only-active fallback constraints. **AUD-005 is resolved** by
-   removing unsupported positive-epsilon clipping.
+4. **AUD-004/AUD-005:** resolved — retained tolerance-only-active fallback constraints and removed
+   unsupported positive-epsilon clipping.
 5. **AUD-006/AUD-007:** resolved — tightened accepted serialized representations.
 6. **AUD-008:** make the plain success gate match the advertised strict-validity contract.
 7. **AUD-013:** remove qhull's oracle role and choose a robust reference strategy.
@@ -587,3 +594,8 @@ repository.
 Post-resolution validation for AUD-006/AUD-007 included the complete release suite with serde
 enabled. Retained regressions reject empty diagrams and mismatched welded-twin spans, while a valid
 welded round-trip builds and queries adjacency for every restored cell.
+
+Post-resolution validation for AUD-004/AUD-005 also included the complete release suite with serde
+enabled plus all-target compilation of the timing, microbench, and escalation-probe features.
+Boundary regressions pin fallback classification on both sides of `-FALLBACK_PLANE_TOL` and the
+retained-versus-redundant constraint dispositions.

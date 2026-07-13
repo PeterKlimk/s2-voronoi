@@ -51,23 +51,22 @@ pub(crate) fn weld_radius() -> f32 {
 
 // === Gnomonic clipping (per-cell chart) ===
 
-/// Gnomonic half-plane clipping uses the strict antisymmetric keep rule
-/// `d >= 0`.
-///
-/// The historical value 1e-12 (hex3 import) kept epsilon-grazing vertices
-/// inside, biasing both cells of a shared edge toward agreeing a marginal
-/// vertex exists. The quad-coherence analysis showed that bias to be the
-/// direct cause of tie-regime parity contradictions: for a near-cocircular
-/// 4-set, both opposite-parity phrasings of the same in-circle question
-/// keep when |d| < eps, defeating the antisymmetry that correlated
-/// cross-chart errors otherwise provide. The 2026-06 tie-rule sweep
-/// measured strict
-/// `d >= 0` eliminating the 3M-seed-3 defects (4 -> 0, zero quad
-/// contradictions across 8M quads) with no regressions, validity loss, or
-/// wall-time change anywhere in the battery. The surviving defects are
-/// error-regime contradictions (computed-sign errors at 1.5e-11..4.6e-11,
-/// above any tie band) that no local rule can fix; edge checks and
-/// reconciliation own those residuals.
+// Gnomonic half-plane clipping uses the strict antisymmetric keep rule
+// `d >= 0`.
+//
+// The historical value 1e-12 (hex3 import) kept epsilon-grazing vertices
+// inside, biasing both cells of a shared edge toward agreeing a marginal
+// vertex exists. The quad-coherence analysis showed that bias to be the
+// direct cause of tie-regime parity contradictions: for a near-cocircular
+// 4-set, both opposite-parity phrasings of the same in-circle question
+// keep when |d| < eps, defeating the antisymmetry that correlated
+// cross-chart errors otherwise provide. The 2026-06 tie-rule sweep measured
+// strict `d >= 0` eliminating the 3M-seed-3 defects (4 -> 0, zero quad
+// contradictions across 8M quads) with no regressions, validity loss, or
+// wall-time change anywhere in the battery. The surviving defects are
+// error-regime contradictions (computed-sign errors at 1.5e-11..4.6e-11,
+// above any tie band) that no local rule can fix; edge checks and
+// reconciliation own those residuals.
 
 /// Chart-validity floor: once the clipped polygon's minimum generator-dot
 /// reaches this, the feasible region is effectively at the generator's
