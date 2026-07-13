@@ -10,9 +10,13 @@
 //! - shared-edge endpoint identity mismatches, typically from near-degenerate vertex ownership
 //!   choices where adjacent polygons pick different generator triplets for the same corner
 
+mod telemetry;
+
 use super::live_dedup::{EdgeKey, EdgeRecord, ShardedVertexKeys};
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::cell_build::VertexKey;
+
+pub(crate) use telemetry::emit_primary_reconcile_telemetry;
 
 /// Read-only view of vertex keys passed to reconciliation. `Flat` backs the
 /// unit tests (and any caller holding a contiguous array); `Sharded` is the

@@ -47,6 +47,12 @@ Useful flags:
 - `RAYON_NUM_THREADS=1` — single-threaded, for stable comparisons.
 - `VORONOI_MESH_BIN_COUNT=<n>` — shard count (default ~2x threads).
 - `VORONOI_MESH_TIMING_KV=1` with `--features timing` — machine-readable phase timing.
+- `VORONOI_MESH_RECONCILE_TELEMETRY=1` — on defect-bearing builds, emit a read-only
+  `RECONCILE_KV` simulation of the primary reconciliation round before mutation. It reports
+  inferred endpoint-pair distances, origin-specific histograms, and the diameter of the vertex
+  equivalence components the current policy would create. This intentionally repeats cold-path
+  reconciliation work and is for correctness audits, not performance measurements; clean builds
+  skip even the environment lookup.
 - `VORONOI_MESH_GRID_DENSITY=<f>` / `VORONOI_MESH_PLANE_GRID_DENSITY=<f>` — spatial-grid target
   density (points per cell) for sweeps.
 

@@ -1203,6 +1203,20 @@ fn reconcile_edges(
     mut cell_indices: Vec<u32>,
     tb: &mut TimingBuilder,
 ) -> Result<ReconciledWithResiduals, crate::VoronoiError> {
+    // Keep the clean production path free of even an environment lookup.
+    // `ComputeReport` already records that a zero-record case was clean; the
+    // detailed reconciliation telemetry is useful only on defect runs.
+    if !unresolved_edges.is_empty() {
+        edge_reconcile::emit_primary_reconcile_telemetry(
+            unresolved_edges,
+            vertices.as_slice(),
+            &cells,
+            &cell_indices,
+            edge_reconcile::VertexKeys::Sharded(vertex_keys),
+            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
+        );
+    }
+
     let repair_edges_storage: Vec<live_dedup::EdgeRecord> = unresolved_edges
         .iter()
         .map(|b| live_dedup::EdgeRecord { key: b.key })
