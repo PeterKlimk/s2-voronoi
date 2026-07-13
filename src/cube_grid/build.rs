@@ -79,6 +79,10 @@ impl CubeMapGrid {
         #[cfg(not(feature = "timing"))] _timings: Option<&mut CubeMapGridBuildTimings>,
     ) -> Self {
         assert!(res > 0, "CubeMapGrid requires res > 0");
+        assert!(
+            points.len() <= u32::MAX as usize,
+            "CubeMapGrid point count must fit u32 indices"
+        );
         let num_cells = 6usize
             .checked_mul(res)
             .and_then(|cells| cells.checked_mul(res))
@@ -168,18 +172,13 @@ impl CubeMapGrid {
             let mut cell_points_y = Vec::<f32>::with_capacity(n);
             let mut cell_points_z = Vec::<f32>::with_capacity(n);
 
-            // Unsafe resize to allow parallel random writes.
-            unsafe {
-                point_indices.set_len(n);
-                cell_points_x.set_len(n);
-                cell_points_y.set_len(n);
-                cell_points_z.set_len(n);
-            }
-
-            let ptr_indices_addr = point_indices.as_mut_ptr() as usize;
-            let ptr_x_addr = cell_points_x.as_mut_ptr() as usize;
-            let ptr_y_addr = cell_points_y.as_mut_ptr() as usize;
-            let ptr_z_addr = cell_points_z.as_mut_ptr() as usize;
+            // Keep the Vec lengths at zero while the parallel scatter initializes
+            // their spare capacity. If a worker panics, unwinding therefore never
+            // observes or drops partially initialized elements.
+            let ptr_indices_addr = point_indices.spare_capacity_mut().as_mut_ptr() as usize;
+            let ptr_x_addr = cell_points_x.spare_capacity_mut().as_mut_ptr() as usize;
+            let ptr_y_addr = cell_points_y.spare_capacity_mut().as_mut_ptr() as usize;
+            let ptr_z_addr = cell_points_z.spare_capacity_mut().as_mut_ptr() as usize;
 
             // Let's stick to the `zip` approach but fix the index issue.
             // We can calculate the start index: zip with `(0..num_chunks)`.
@@ -215,6 +214,17 @@ impl CubeMapGrid {
                         }
                     },
                 );
+
+            // SAFETY: The prefix sums partition `0..n` into disjoint ranges for
+            // every (chunk, cell) pair. Each input point advances exactly one
+            // cursor in its pair's range, so the completed scatter initialized
+            // every slot exactly once. Rayon has joined all workers at this point.
+            unsafe {
+                point_indices.set_len(n);
+                cell_points_x.set_len(n);
+                cell_points_y.set_len(n);
+                cell_points_z.set_len(n);
+            }
 
             #[cfg(feature = "timing")]
             if let Some(timings) = timings.as_deref_mut() {

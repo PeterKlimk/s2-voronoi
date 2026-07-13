@@ -219,18 +219,13 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     // *keys* are only consulted by edge reconciliation (for at most the defect
     // region), so they are NOT concatenated — kept per-shard in
     // `ShardedVertexKeys` below.
-    // `P: Copy` (no Drop), and the parallel scatter below writes every slot
-    // exactly once via the partitioned `vertex_offsets`, so reserving then
-    // `set_len` over uninitialized-but-fully-overwritten `Copy` memory is sound.
+    // `P: Copy`, and the parallel scatter below writes every slot exactly once
+    // via the partitioned `vertex_offsets`. Keep the Vec length at zero until
+    // the scatter completes so no uninitialized `P` is ever exposed as a value.
     #[cfg(feature = "parallel")]
-    #[allow(clippy::uninit_vec)]
     let all_vertices = {
         let mut all_vertices = Vec::<P>::with_capacity(total_vertices);
-        // Safety: We will write to every element in the parallel loop below.
-        unsafe {
-            all_vertices.set_len(total_vertices);
-        }
-        let vertices_ptr = all_vertices.as_mut_ptr() as usize;
+        let vertices_ptr = all_vertices.spare_capacity_mut().as_mut_ptr() as usize;
         finals
             .par_iter()
             .zip(vertex_offsets.par_iter())
@@ -248,6 +243,12 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
                     }
                 }
             });
+        // SAFETY: `vertex_offsets` is the prefix sum of all shard lengths, so
+        // each copy targets a disjoint range and their union is `0..total_vertices`.
+        // Rayon has joined all workers, and thus every element is initialized.
+        unsafe {
+            all_vertices.set_len(total_vertices);
+        }
         all_vertices
     };
 
