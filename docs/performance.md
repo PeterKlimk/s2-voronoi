@@ -348,6 +348,10 @@ These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is a
 experiment: preserve its stated semantics, measure the named regime, and move it either into the
 measured results above or the retired list below. Do not bundle candidates before attribution.
 
+The broader memory-layout and memory-traffic backlog, including regime-dependent tradeoffs,
+hybrid fast-path/fallback designs, and a shared experiment matrix, lives in
+[`memory-layout-ideas.md`](memory-layout-ideas.md).
+
 Promising workload-specific experiments:
 
 - **D3 — compact high-degree consumed flags:** replace the per-cell byte vector above 64 incoming
