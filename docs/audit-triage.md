@@ -51,7 +51,7 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 | AUD-006 | P1 | Confirmed | Accepted welded-twin serde payload can panic in adjacency lookup | Validate or canonicalize twin spans |
 | AUD-007 | P2 | Confirmed | Accepted empty serde diagram can panic on first locator query | Reject empty diagrams or make locator construction/query fallible |
 | AUD-008 | P1 | Under-justified | Plain `compute` cheap checks are not equivalent to strict validation | Close detection gaps or run an equivalent fast strict gate |
-| AUD-009 | P1 | Confirmed policy mismatch | Reconciliation merges are not bounded to an epsilon-diameter feature | Bound/escalate merges or document threshold-graph quotient semantics |
+| AUD-009 | P1 | Resolved | Reconciliation merges were not bounded to an epsilon-diameter feature | Transactionally diameter-gate components; escalate rejected chains |
 | AUD-010 | P2 | Policy decision | Fast, fallback, repair, and exact-predicate paths do not share one exact site model or SoS policy | Choose and document the intended model; align paths |
 | AUD-011 | P2 | Under-justified | Termination mathematics is sound, but its complete floating error envelope is empirical | Add a derived error budget and threshold-adjacent tests |
 | AUD-012 | P3 | Policy decision | Welding is a strict computed-f32 threshold graph with transitive classes | Pin equality and transitive-chain semantics in docs/tests |
@@ -349,26 +349,37 @@ must retain the low-incidence gate.
 - For each mutation, the plain return gate and strict verifier agree.
 - Run the differential for default and `RepairMode::Disabled` configurations.
 
-### AUD-009 — Reconciliation is not bounded to epsilon-diameter features
+### AUD-009 — Reconciliation was not bounded to epsilon-diameter features
 
 - **Priority:** P1
 - **Class:** repair semantics
 - **Confidence:** Confirmed implementation behavior; policy mismatch
+- **Status:** Resolved; positional components retain membership across rounds and must satisfy a
+  full f64-measured epsilon-diameter bound.
 
-Ordinary endpoint proximity uses inclusive `distance_squared <= epsilon_squared`, then closes those
+Before the fix, ordinary endpoint proximity used inclusive `distance_squared <= epsilon_squared`, then closed those
 pairs transitively with a disjoint-set union. A chain at `0`, `0.75 eps`, `1.5 eps`, and so on
-becomes one identity even though the component diameter exceeds epsilon. Primary one-vs-one
-mismatches are more permissive still: endpoint unions have no absolute distance bound.
+became one identity even though the component diameter exceeded epsilon. Primary one-vs-one
+mismatches were more permissive still: endpoint unions had no absolute distance bound.
 
-The implemented operation is therefore a threshold-graph quotient plus unconditional
+The implemented operation was therefore a threshold-graph quotient plus unconditional
 record-directed unions, not strictly an “epsilon-scale feature collapse.”
 
-**Proposed resolution**
+**Implemented resolution**
 
-- If epsilon is intended as a feature-diameter bound, track component diameter or reject/escalate
-  unions that exceed it.
-- If threshold-graph connectivity is intended, document that class diameter is unbounded.
-- Bound primary record-directed unions independently of the proximity DSU.
+- Primary record-directed endpoint proposals are individually epsilon-bounded.
+- Every round first collects proposals without mutating cells, expands them through a sparse ledger
+  of all members retained from earlier rounds, and accepts a component only if every member pair is
+  within epsilon. The diameter comparison is accumulated in f64 over stored f32 coordinates.
+- An over-diameter component is rejected as a whole, so iteration order cannot select an arbitrary
+  safe prefix. Its cell pairs explicitly seed Local3d even if no unpaired edge remains visible.
+- Tests cover same-round chains, a cross-round hidden-member chain, transactional rejection, and
+  escalation-seed propagation.
+
+A post-change 40-case campaign through 500k points covered uniform, cocircular, cube, bimodal,
+Fibonacci, and mega distributions: all cases succeeded, validated strictly, and left zero repair
+residuals. A separate 99,846-site structured high-degree grid carried 3,612 mismatch records and
+also completed strictly valid with no surviving residual or no-chain escalation.
 
 AUD-002 supplies a concrete reason not to leave the primary path unbounded.
 

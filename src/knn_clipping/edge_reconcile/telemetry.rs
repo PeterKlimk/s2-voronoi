@@ -10,8 +10,8 @@ use std::time::Instant;
 use rustc_hash::FxHashMap;
 
 use super::{
-    collect_merges, dist_sq, edge_segments_for_neighbor_into, unpack_edge, vertex_pos, MergeMode,
-    VertexKeys,
+    bound_merge_components, collect_merges, dist_sq, edge_segments_for_neighbor_into, unpack_edge,
+    vertex_pos, MergeLedger, MergeMode, VertexKeys,
 };
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::live_dedup::{
@@ -119,6 +119,7 @@ struct PrimaryTelemetry {
     one_sided_edge: DistanceStats,
     origins: BTreeMap<UnresolvedEdgeOrigin, OriginStats>,
     simulated_unions: usize,
+    rejected_components: usize,
     components: ComponentStats,
 }
 
@@ -253,7 +254,7 @@ fn analyze_primary<P: VertexPosition>(
             .iter()
             .map(|record| EdgeRecord { key: record.key })
             .collect();
-        let (mut uf, simulated_unions) = collect_merges(
+        let (mut proposed, _) = collect_merges(
             &records,
             vertices,
             cells,
@@ -263,7 +264,10 @@ fn analyze_primary<P: VertexPosition>(
             MergeMode::Primary,
             true,
         )?;
+        let (mut uf, simulated_unions, rejected_components) =
+            bound_merge_components(&mut proposed, vertices, &mut MergeLedger::default(), eps)?;
         stats.simulated_unions = simulated_unions;
+        stats.rejected_components = rejected_components.len();
         stats.components = component_stats(&mut uf, vertices)?;
     }
 
@@ -371,13 +375,13 @@ fn vertex_distance_sq<P: VertexPosition>(
 
 fn emit_stats(stats: &PrimaryTelemetry, eps: f32, analysis_ms: f64) {
     eprintln!(
-        "RECONCILE_KV status=ok records={} unique_keys={} eps={eps:.9e} inferred_gate=epsilon irregular={} \
+        "RECONCILE_KV status=ok records={} unique_keys={} eps={eps:.9e} inferred_gate=epsilon component_gate=diameter irregular={} \
          one_sided={} already_matched={} one_shared={} distinct_endpoints={} \
          inferred_count={} inferred_within_eps={} inferred_over_eps={} \
          inferred_min={:.9e} inferred_max={:.9e} inferred_hist={} \
          proximity_evals={} proximity_within_eps={} proximity_max={:.9e} \
          one_sided_edge_count={} one_sided_edge_within_eps={} one_sided_edge_max={:.9e} \
-         sum_minimax_disagree={} simulated_unions={} touched_vertices={} components={} \
+         sum_minimax_disagree={} simulated_unions={} rejected_components={} touched_vertices={} components={} \
          max_component_size={} approximate_components={} component_diameter_lower={:.9e} \
          component_diameter_upper={:.9e} analysis_ms={analysis_ms:.6}",
         stats.records,
@@ -401,6 +405,7 @@ fn emit_stats(stats: &PrimaryTelemetry, eps: f32, analysis_ms: f64) {
         stats.one_sided_edge.max,
         stats.sum_minimax_disagreements,
         stats.simulated_unions,
+        stats.rejected_components,
         stats.components.touched_vertices,
         stats.components.components,
         stats.components.max_component_size,

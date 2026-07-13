@@ -50,9 +50,9 @@ Useful flags:
 - `VORONOI_MESH_RECONCILE_TELEMETRY=1` — on defect-bearing builds, emit a read-only
   `RECONCILE_KV` simulation of the primary reconciliation round before mutation. It reports
   inferred endpoint-pair distances, origin-specific histograms, and the diameter of the vertex
-  equivalence components the current policy would create. This intentionally repeats cold-path
-  reconciliation work and is for correctness audits, not performance measurements; clean builds
-  skip even the environment lookup.
+  equivalence components the current policy would create, plus the number rejected by the
+  no-chain diameter gate. This intentionally repeats cold-path reconciliation work and is for
+  correctness audits, not performance measurements; clean builds skip even the environment lookup.
 - `VORONOI_MESH_GRID_DENSITY=<f>` / `VORONOI_MESH_PLANE_GRID_DENSITY=<f>` — spatial-grid target
   density (points per cell) for sweeps.
 
@@ -229,6 +229,11 @@ with 6,626 records therefore exposed 13,252 allocation opportunities. The clean 
 before allocating scratch, and each repair round receives fresh buffers. Same-session defect-heavy
 timing moved from 13.884 ms to 12.804 ms; repeated candidate timing was noisy, so retain this for the
 certain structural allocation removal rather than the provisional 7.8% phase result.
+
+Tolerance reconciliation retains a sparse membership ledger only on defect-bearing runs. Proposed
+threshold-graph components are checked transactionally in f64 against every original member, so a
+later round cannot hide a transitive diameter violation behind an earlier representative. Rejected
+components seed Local3d. Clean builds allocate neither the ledger nor proposal state.
 
 Cell construction no longer clears its reusable output buffer before building. Every successful
 writer—gnomonic, spherical fallback, and all-constraints recovery—clears before writing, while an

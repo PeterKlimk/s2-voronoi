@@ -90,6 +90,26 @@ pub(crate) fn residual_error(pairs: &[(u32, u32)]) -> crate::VoronoiError {
     ))
 }
 
+/// Error used only when the no-chain policy requested Local3d escalation and
+/// the configured repair path did not accept a replacement.
+pub(crate) fn escalation_error(pairs: &[(u32, u32)]) -> crate::VoronoiError {
+    let shown: Vec<String> = pairs
+        .iter()
+        .take(8)
+        .map(|&(a, b)| format!("({a},{b})"))
+        .collect();
+    let more = if pairs.len() > 8 {
+        format!(" and {} more", pairs.len() - 8)
+    } else {
+        String::new()
+    };
+    crate::VoronoiError::ComputationFailed(format!(
+        "reconciliation rejected epsilon-chain component(s) near cell pair(s) {}{} and Local3d did not accept a replacement",
+        shown.join(", "),
+        more,
+    ))
+}
+
 #[inline]
 pub(crate) fn unpack_edge(key: u64) -> (u32, u32) {
     (key as u32, (key >> 32) as u32)
@@ -230,9 +250,50 @@ pub(crate) struct ReconcileResult {
     /// Surviving unpaired interior edges, as owning cell pairs for the
     /// caller's report / repair trigger.
     pub residual_pairs: Vec<(u32, u32)>,
+    /// Cell pairs whose proposed tolerance component exceeded the configured
+    /// diameter. These are explicit Local3d seeds even when the unmodified
+    /// output happens not to expose an unpaired edge.
+    pub escalation_pairs: Vec<(u32, u32)>,
     /// Cells whose spans were rewritten by identity merges (sorted, deduped):
     /// the union of key triples over every vertex id that entered a merge.
     pub merge_affected_cells: Vec<u32>,
+}
+
+/// Original vertex ids represented by a surviving id after accepted
+/// reconciliation rounds. Keeping this ledger across rounds prevents a later
+/// short link from extending an earlier component beyond the epsilon-diameter
+/// policy after the earlier members have disappeared from the cell spans.
+#[derive(Default)]
+struct MergeLedger {
+    members: rustc_hash::FxHashMap<u32, Vec<u32>>,
+}
+
+struct RejectedMergeComponent {
+    current_ids: Vec<u32>,
+    member_ids: Vec<u32>,
+}
+
+impl MergeLedger {
+    fn expanded_members(&self, current_ids: &[u32]) -> Vec<u32> {
+        let mut expanded = Vec::new();
+        for &id in current_ids {
+            if let Some(members) = self.members.get(&id) {
+                expanded.extend_from_slice(members);
+            } else {
+                expanded.push(id);
+            }
+        }
+        expanded.sort_unstable();
+        expanded.dedup();
+        expanded
+    }
+
+    fn commit(&mut self, representative: u32, current_ids: &[u32], expanded: Vec<u32>) {
+        for &id in current_ids {
+            self.members.remove(&id);
+        }
+        self.members.insert(representative, expanded);
+    }
 }
 
 /// How reconciliation merges are applied to the cell arrays.
@@ -337,11 +398,18 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         return Ok(ReconcileResult::default());
     }
     let mut merge_affected_cells: Vec<u32> = Vec::new();
-    let done = |residual_pairs: Vec<(u32, u32)>, mut affected: Vec<u32>| {
+    let mut escalation_pairs: Vec<(u32, u32)> = Vec::new();
+    let mut merge_ledger = MergeLedger::default();
+    let done = |residual_pairs: Vec<(u32, u32)>,
+                mut escalation_pairs: Vec<(u32, u32)>,
+                mut affected: Vec<u32>| {
+        escalation_pairs.sort_unstable();
+        escalation_pairs.dedup();
         affected.sort_unstable();
         affected.dedup();
         ReconcileResult {
             residual_pairs,
+            escalation_pairs,
             merge_affected_cells: affected,
         }
     };
@@ -355,6 +423,8 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         degenerate_len_eps,
         apply,
         MergeMode::Primary,
+        &mut merge_ledger,
+        &mut escalation_pairs,
         &mut merge_affected_cells,
     )?;
 
@@ -366,7 +436,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         &is_boundary_edge,
     )?;
     if unpaired.is_empty() {
-        return Ok(done(Vec::new(), merge_affected_cells));
+        return Ok(done(Vec::new(), escalation_pairs, merge_affected_cells));
     }
     let synth = synthesize_backstop_records(&unpaired, vertex_keys, cells.len());
     if !synth.is_empty() {
@@ -379,6 +449,8 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
             degenerate_len_eps,
             apply,
             MergeMode::ProximityOnly,
+            &mut merge_ledger,
+            &mut escalation_pairs,
             &mut merge_affected_cells,
         )?;
     }
@@ -399,6 +471,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
             .iter()
             .map(|&(va, vb, owner)| cell_pair_for_unpaired(va, vb, owner, vertex_keys))
             .collect(),
+        escalation_pairs,
         merge_affected_cells,
     ))
 }
@@ -530,6 +603,8 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
     degenerate_len_eps: f32,
     apply: RepairApply,
     mode: MergeMode,
+    merge_ledger: &mut MergeLedger,
+    escalation_pairs: &mut Vec<(u32, u32)>,
     // Accumulates the cells whose spans a merge apply may rewrite (see
     // `ReconcileResult::merge_affected_cells`); the caller sorts/dedups.
     merge_affected_cells: &mut Vec<u32>,
@@ -552,7 +627,7 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
         let dropped =
             drop_degenerate_collinear_vertices(cells, cell_indices, vertex_keys, &candidate_cells);
         let scan_dup_keys = mode == MergeMode::Primary && round == 0;
-        let (mut uf, merged) = collect_merges(
+        let (mut proposed, _) = collect_merges(
             edge_records,
             vertices,
             cells,
@@ -562,6 +637,19 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
             mode,
             scan_dup_keys,
         )?;
+        let (mut uf, merged, rejected_components) =
+            bound_merge_components(&mut proposed, vertices, merge_ledger, degenerate_len_eps)?;
+        if !rejected_components.is_empty() {
+            record_rejected_component_seeds(
+                &rejected_components,
+                edge_records,
+                cells,
+                cell_indices,
+                vertex_keys,
+                escalation_pairs,
+                merge_affected_cells,
+            )?;
+        }
         let merged_changed = if merged == 0 {
             false
         } else {
@@ -1216,6 +1304,128 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     Ok((uf, merged))
 }
 
+/// Convert the threshold-graph proposals from one round into accepted merge
+/// components. A component is accepted only when every pair of original
+/// members represented across all prior rounds is within `eps`; otherwise the
+/// entire component is rejected transactionally and handed to Local3d by the
+/// caller. Distances are accumulated in f64 over the stored f32 coordinates so
+/// the policy is a defensible bound rather than another f32 rounding layer.
+fn bound_merge_components<P: crate::knn_clipping::live_dedup::VertexPosition>(
+    proposed: &mut SparseUnionFind,
+    vertices: &[P],
+    ledger: &mut MergeLedger,
+    eps: f32,
+) -> Result<(SparseUnionFind, usize, Vec<RejectedMergeComponent>), crate::VoronoiError> {
+    let touched = proposed.touched_ids();
+    let mut groups = std::collections::BTreeMap::<u32, Vec<u32>>::new();
+    for id in touched {
+        groups.entry(proposed.find(id)).or_default().push(id);
+    }
+
+    let eps_sq = f64::from(eps) * f64::from(eps);
+    let mut accepted = SparseUnionFind::new();
+    let mut accepted_merges = 0usize;
+    let mut rejected_components = Vec::new();
+
+    for (representative, current_ids) in groups {
+        let expanded = ledger.expanded_members(&current_ids);
+        let mut within_diameter = true;
+        'pairs: for i in 0..expanded.len() {
+            let a = vertex_pos(vertices, expanded[i])?;
+            for &b_id in &expanded[(i + 1)..] {
+                let b = vertex_pos(vertices, b_id)?;
+                if a.dist_sq_f64(b) > eps_sq {
+                    within_diameter = false;
+                    break 'pairs;
+                }
+            }
+        }
+
+        if !within_diameter {
+            rejected_components.push(RejectedMergeComponent {
+                current_ids,
+                member_ids: expanded,
+            });
+            continue;
+        }
+
+        for &id in &current_ids {
+            if id != representative && accepted.union(representative, id) {
+                accepted_merges += 1;
+            }
+        }
+        ledger.commit(representative, &current_ids, expanded);
+    }
+
+    Ok((accepted, accepted_merges, rejected_components))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_rejected_component_seeds(
+    rejected: &[RejectedMergeComponent],
+    edge_records: &[EdgeRecord],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    vertex_keys: VertexKeys<'_>,
+    escalation_pairs: &mut Vec<(u32, u32)>,
+    merge_affected_cells: &mut Vec<u32>,
+) -> Result<(), crate::VoronoiError> {
+    use rustc_hash::FxHashSet;
+
+    let mut seg_a = Vec::new();
+    let mut seg_b = Vec::new();
+    for component in rejected {
+        let current_ids: FxHashSet<u32> = component.current_ids.iter().copied().collect();
+        for &id in &component.member_ids {
+            if let Some(key) = vertex_keys.get(id) {
+                merge_affected_cells
+                    .extend(key.iter().copied().filter(|&g| (g as usize) < cells.len()));
+            }
+        }
+
+        let seeds_before = escalation_pairs.len();
+        for record in edge_records {
+            let (a, b) = unpack_edge(record.key.as_u64());
+            edge_segments_for_neighbor_into(a, b, cells, cell_indices, vertex_keys, &mut seg_a)?;
+            edge_segments_for_neighbor_into(b, a, cells, cell_indices, vertex_keys, &mut seg_b)?;
+            let touches_rejected = seg_a
+                .iter()
+                .chain(&seg_b)
+                .any(|&(v0, v1)| current_ids.contains(&v0) || current_ids.contains(&v1));
+            if touches_rejected {
+                escalation_pairs.push((a.min(b), a.max(b)));
+            }
+        }
+
+        // Same-key duplicate proposals can be discovered through the localized
+        // identity scan without appearing on the recorded edge's current
+        // segment. Seed those components from their own generator keys.
+        if escalation_pairs.len() == seeds_before {
+            for &id in &component.member_ids {
+                let Some(key) = vertex_keys.get(id) else {
+                    continue;
+                };
+                for i in 0..key.len() {
+                    for j in (i + 1)..key.len() {
+                        let (a, b) = (key[i].min(key[j]), key[i].max(key[j]));
+                        if a != b && (b as usize) < cells.len() {
+                            escalation_pairs.push((a, b));
+                        }
+                    }
+                }
+            }
+        }
+        if escalation_pairs.len() == seeds_before {
+            if let Some(record) = edge_records.first() {
+                let (a, b) = unpack_edge(record.key.as_u64());
+                escalation_pairs.push((a.min(b), a.max(b)));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Original full-rewrite apply: rebuild every cell span into fresh compacted
 /// arrays. O(diagram); retained as the differential oracle for `InPlace`.
 fn apply_merges_rebuild(
@@ -1493,6 +1703,110 @@ mod tests {
             canon.entry(r).and_modify(|m| *m = (*m).min(v)).or_insert(v);
         }
         (0..n).map(|v| canon[&root[v as usize]]).collect()
+    }
+
+    #[test]
+    fn diameter_gate_rejects_a_transitive_component_transactionally() {
+        let eps = crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS;
+        let vertices = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.75 * eps, 0.0, 0.0),
+            Vec3::new(1.5 * eps, 0.0, 0.0),
+        ];
+        let mut proposed = SparseUnionFind::new();
+        assert!(proposed.union(0, 1));
+        assert!(proposed.union(1, 2));
+
+        let mut ledger = MergeLedger::default();
+        let (accepted, merges, rejected) =
+            bound_merge_components(&mut proposed, &vertices, &mut ledger, eps)
+                .expect("diameter gate");
+
+        assert_eq!(merges, 0, "no order-dependent prefix may be accepted");
+        assert_eq!(rejected.len(), 1);
+        assert!(accepted.touched_ids().is_empty());
+        assert!(ledger.members.is_empty());
+    }
+
+    #[test]
+    fn diameter_gate_remembers_members_across_rounds() {
+        let eps = crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS;
+        let vertices = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.75 * eps, 0.0, 0.0),
+            Vec3::new(-0.5 * eps, 0.0, 0.0),
+        ];
+        let mut ledger = MergeLedger::default();
+
+        let mut first = SparseUnionFind::new();
+        assert!(first.union(0, 1));
+        let (_, first_merges, first_rejected) =
+            bound_merge_components(&mut first, &vertices, &mut ledger, eps)
+                .expect("first-round diameter gate");
+        assert_eq!(first_merges, 1);
+        assert!(first_rejected.is_empty());
+
+        // The surviving representative 0 is close to 2, but the hidden prior
+        // member 1 is 1.25 eps away. A per-round-only gate would miss this.
+        let mut second = SparseUnionFind::new();
+        assert!(second.union(0, 2));
+        let (accepted, second_merges, second_rejected) =
+            bound_merge_components(&mut second, &vertices, &mut ledger, eps)
+                .expect("second-round diameter gate");
+        assert_eq!(second_merges, 0);
+        assert_eq!(second_rejected.len(), 1);
+        assert!(accepted.touched_ids().is_empty());
+        assert_eq!(ledger.members.get(&0), Some(&vec![0, 1]));
+    }
+
+    #[test]
+    fn rejected_chain_becomes_an_explicit_escalation_seed() {
+        let eps = crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS;
+        let vertices = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.75 * eps, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.5 * eps, 0.0, 0.0),
+            Vec3::new(10.0 * eps, 0.0, 0.0),
+            Vec3::new(0.0, -1.0, 0.0),
+        ];
+        let vertex_keys: Vec<VertexKey> = vec![
+            [0, 1, 2],
+            [0, 1, 3],
+            [0, 2, 4],
+            [0, 1, 4],
+            [0, 1, 5],
+            [0, 2, 5],
+        ];
+        let mut cells = vec![VoronoiCell::new(0, 6)];
+        cells.extend((1..6).map(|_| VoronoiCell::new(6, 0)));
+        let mut cell_indices = vec![0, 1, 2, 3, 4, 5];
+        let records = [edge_record(0, 1)];
+        let before = cell_sequences(&cells, &cell_indices);
+        let mut ledger = MergeLedger::default();
+        let mut escalations = Vec::new();
+        let mut affected = Vec::new();
+
+        run_repair_rounds(
+            &records,
+            &vertices,
+            &mut cells,
+            &mut cell_indices,
+            VertexKeys::Flat(&vertex_keys),
+            eps,
+            RepairApply::InPlace,
+            MergeMode::Primary,
+            &mut ledger,
+            &mut escalations,
+            &mut affected,
+        )
+        .expect("chain reconciliation");
+
+        affected.sort_unstable();
+        affected.dedup();
+        assert_eq!(cell_sequences(&cells, &cell_indices), before);
+        assert_eq!(escalations, [(0, 1)]);
+        assert_eq!(affected, [0, 1, 2, 3, 4]);
     }
 
     /// The localized BFS dup-scan must union the same components as the global

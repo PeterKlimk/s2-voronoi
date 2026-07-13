@@ -102,6 +102,10 @@ fn test_report_residual_helper_includes_low_incidence_vertices() {
     output.report.post_repair_unpaired_edges.clear();
     output.report.returned_validation.low_incidence_vertices = 1;
     assert!(output.report.has_post_repair_residuals());
+
+    output.report.returned_validation.low_incidence_vertices = 0;
+    output.report.post_repair_escalation_pairs.push((0, 1));
+    assert!(output.report.has_post_repair_residuals());
 }
 
 #[test]

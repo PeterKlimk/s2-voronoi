@@ -39,6 +39,7 @@ struct PipelineState {
     eff_cell_indices: Vec<u32>,
     unresolved_edges: Vec<live_dedup::UnresolvedEdgeMismatch>,
     post_repair_unpaired: Vec<(u32, u32)>,
+    reconciliation_escalations: Vec<(u32, u32)>,
     repair: RepairOutcome,
     tb: TimingBuilder,
 }
@@ -101,6 +102,7 @@ fn run_core_pipeline(
     )?;
     let edge_reconcile::ReconcileResult {
         residual_pairs: post_repair_unpaired,
+        escalation_pairs: reconciliation_escalations,
         merge_affected_cells,
     } = reconcile_result;
     let repair = maybe_repair_effective(
@@ -111,6 +113,7 @@ fn run_core_pipeline(
         &mut eff_cells,
         &mut eff_cell_indices,
         &post_repair_unpaired,
+        &reconciliation_escalations,
         &merge_affected_cells,
         repair_mode,
     );
@@ -124,6 +127,7 @@ fn run_core_pipeline(
         eff_cell_indices,
         unresolved_edges,
         post_repair_unpaired,
+        reconciliation_escalations,
         repair,
         tb,
     })
@@ -153,6 +157,11 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     // surface it, so fail loud rather than ship it.
     if !state.repair.accepted && !state.post_repair_unpaired.is_empty() {
         return Err(edge_reconcile::residual_error(&state.post_repair_unpaired));
+    }
+    if !state.repair.accepted && !state.reconciliation_escalations.is_empty() {
+        return Err(edge_reconcile::escalation_error(
+            &state.reconciliation_escalations,
+        ));
     }
     // A low-incidence (degree-1/2) vertex defect is also strictly-invalid
     // output, and it can exist with every edge paired — the guard above never
@@ -279,6 +288,11 @@ fn compute_voronoi_knn_clipping_report_core(
             .map(|&(a, b)| (a.min(b), a.max(b)))
             .collect()
     };
+    let post_repair_escalation_pairs = if repair_accepted {
+        Vec::new()
+    } else {
+        state.reconciliation_escalations.clone()
+    };
     if !repair_accepted {
         for &(a, b) in &state.post_repair_unpaired {
             state
@@ -339,6 +353,7 @@ fn compute_voronoi_knn_clipping_report_core(
             },
             pre_repair_edge_mismatches,
             post_repair_unpaired_edges,
+            post_repair_escalation_pairs,
             unresolved_edge_pairs: state
                 .unresolved_edges
                 .iter()
@@ -452,6 +467,7 @@ fn maybe_repair_effective(
     eff_cells: &mut Vec<VoronoiCell>,
     eff_cell_indices: &mut Vec<u32>,
     post_repair_unpaired: &[(u32, u32)],
+    reconciliation_escalations: &[(u32, u32)],
     merge_affected_cells: &[u32],
     repair_mode: RepairMode,
 ) -> RepairOutcome {
@@ -468,17 +484,22 @@ fn maybe_repair_effective(
         return RepairOutcome::NOT_ATTEMPTED;
     }
 
-    let defect_pairs: Vec<(u32, u32)> = post_repair_unpaired
+    let mut defect_pairs: Vec<(u32, u32)> = post_repair_unpaired
         .iter()
+        .chain(reconciliation_escalations)
         .map(|&(a, b)| (a.min(b), a.max(b)))
         .collect();
+    defect_pairs.sort_unstable();
+    defect_pairs.dedup();
     let t_detect = std::time::Instant::now();
     let has_low_incidence = has_low_incidence_vertices(vertices.len(), eff_cells, eff_cell_indices);
     if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
         eprintln!(
-            "repair trigger: low-incidence scan {:?} (defect_pairs={}, low_incidence={})",
+            "repair trigger: low-incidence scan {:?} (defect_pairs={}, unpaired={}, no_chain={}, low_incidence={})",
             t_detect.elapsed(),
+            defect_pairs.len(),
             post_repair_unpaired.len(),
+            reconciliation_escalations.len(),
             has_low_incidence,
         );
     }

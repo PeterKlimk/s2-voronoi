@@ -11,6 +11,9 @@ use glam::{Vec2, Vec3};
 pub(crate) trait VertexPosition: Copy + Send + Sync + std::fmt::Debug + 'static {
     /// Squared Euclidean distance (chord distance on the unit sphere).
     fn dist_sq(self, other: Self) -> f32;
+
+    /// Squared distance accumulated in f64 for cold-path policy bounds.
+    fn dist_sq_f64(self, other: Self) -> f64;
 }
 
 impl VertexPosition for Vec3 {
@@ -18,12 +21,27 @@ impl VertexPosition for Vec3 {
     fn dist_sq(self, other: Self) -> f32 {
         (self - other).length_squared()
     }
+
+    #[inline]
+    fn dist_sq_f64(self, other: Self) -> f64 {
+        let dx = f64::from(self.x) - f64::from(other.x);
+        let dy = f64::from(self.y) - f64::from(other.y);
+        let dz = f64::from(self.z) - f64::from(other.z);
+        dx * dx + dy * dy + dz * dz
+    }
 }
 
 impl VertexPosition for Vec2 {
     #[inline]
     fn dist_sq(self, other: Self) -> f32 {
         (self - other).length_squared()
+    }
+
+    #[inline]
+    fn dist_sq_f64(self, other: Self) -> f64 {
+        let dx = f64::from(self.x) - f64::from(other.x);
+        let dy = f64::from(self.y) - f64::from(other.y);
+        dx * dx + dy * dy
     }
 }
 

@@ -23,7 +23,9 @@ precision — inputs are f32, the clipping pipeline runs in f64, vertices are st
 implementation can return mathematically exact positions, and this one does not claim to. Features
 near the resolution floor (epsilon-length edges, vertices from near-cocircular generators) may be
 kept or collapsed; which one happens is a policy choice, not a correctness bug, as long as the
-graph stays valid.
+graph stays valid. Reconciliation collapses a positional equivalence component only when its full
+diameter over stored vertices is at most `RECONCILE_DEGENERATE_LEN_EPS`; pairwise chains cannot
+extend that bound. Rejected components escalate to Local3d under the default repair policy.
 
 ## Coincident generators (welding)
 

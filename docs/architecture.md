@@ -98,7 +98,10 @@ by exactly one mechanism — makes the hybrid sound.
 A final **edge reconciliation** pass handles the residue: where two cells made *different*
 combinatorial decisions about an epsilon-scale feature (one kept a sliver edge, the other
 collapsed it — each evaluates predicates in its own chart), the disagreement is detected and
-repaired. The disputed feature is epsilon-scale, so the repair is local.
+repaired. Positional merges are transactional: the complete component, including aliases from
+earlier rounds, must have f64-measured diameter no larger than the reconciliation epsilon. A
+component that would grow through a chain past that bound is left untouched and explicitly seeds
+Local3d repair. The disputed feature is epsilon-scale, so both paths remain local.
 
 The validity argument is the central design idea: combinatorial identity plus the directed order
 plus bounded repair yields a strictly valid subdivision. Geometric accuracy is best-effort (f64

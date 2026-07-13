@@ -95,14 +95,10 @@ fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<UnitVec3> {
 ///   VORONOI_MESH_CASE_SEED  rng seed
 ///   VORONOI_MESH_CASE_PARAM shape knob (f32; default 0.3 — for mega it is the cap fraction)
 ///
-/// Emits a single machine-parseable `CASERESULT` line. A build that returns an
-/// error is recorded as `result=err` (documented out-of-envelope behavior)
-/// WITHOUT failing the test. The contract checked is the silent-invalid guard:
-/// a returned diagram with NO surviving `PostRepairUnpaired` residual must be
-/// strictly valid — otherwise the test fails (a real, newly found
-/// silent-invalid bug). A diagram that left a residual is out-of-envelope on
-/// this report API (the hot `compute` path loud-fails on it) and is recorded,
-/// not failed.
+/// Emits a single machine-parseable `CASERESULT` line. Every matrix case is a
+/// supported finite/default-preprocessed input and therefore must succeed,
+/// clear every reconciliation/repair residual, and validate strictly. Errors
+/// or surviving diagnostics are campaign failures, not accepted outcomes.
 #[test]
 #[ignore]
 fn campaign_case() {
@@ -122,11 +118,8 @@ fn campaign_case() {
             }
             let valid = out.report.preferred_validation().is_strictly_valid();
             let defects = out.report.unresolved_edge_pairs.len();
-            // Residuals that survived to the RETURNED diagram. `compute` (the
-            // hot path) loud-fails on these; `compute_with_report` returns them
-            // as diagnostics instead. Their absence is the silent-invalid
-            // contract: no surviving residual MUST mean a strictly-valid graph.
-            let post_repair = out.report.post_repair_unpaired_edges.len();
+            let no_chain = out.report.post_repair_escalation_pairs.len();
+            let post_repair = out.report.post_repair_unpaired_edges.len() + no_chain;
             let origins_str = if origins.is_empty() {
                 "none".to_string()
             } else {
@@ -138,29 +131,24 @@ fn campaign_case() {
             };
             println!(
                 "CASERESULT dist={dist} n={actual_n} seed={seed} param={param} \
-                 result=ok defects={defects} post_repair={post_repair} valid={valid} \
+                 result=ok defects={defects} post_repair={post_repair} no_chain={no_chain} valid={valid} \
                  peak_mb={} origins={origins_str}",
                 peak_rss_mb()
             );
-            // THE contract: a returned diagram with NO surviving residual must be
-            // strictly valid. A diagram that left a `PostRepairUnpaired` residual
-            // is out-of-envelope on the report API (the hot `compute` path
-            // loud-fails on it) — recorded, not a fuzzer failure.
             assert!(
-                valid || post_repair > 0,
-                "{dist} n={actual_n} seed={seed}: returned diagram is NOT strictly valid \
-                 yet left NO post-repair residual (origins {origins_str}) — a SILENT \
-                 invalid-output defect"
+                valid && post_repair == 0,
+                "{dist} n={actual_n} seed={seed}: default repair did not produce a clean, \
+                 strictly valid diagram (valid={valid}, post_repair={post_repair}, \
+                 origins={origins_str})"
             );
         }
         Err(e) => {
-            // Out-of-envelope (e.g. vertex-budget overflow on pathological
-            // density). Recorded, not a correctness failure.
             println!(
                 "CASERESULT dist={dist} n={actual_n} seed={seed} param={param} \
                  result=err defects=- valid=- peak_mb={} origins=err:{e:?}",
                 peak_rss_mb()
             );
+            panic!("{dist} n={actual_n} seed={seed}: supported campaign case failed: {e}");
         }
     }
 }

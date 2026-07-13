@@ -17,9 +17,9 @@
 #   RAYON_NUM_THREADS  intra-build parallelism (default 6)
 #   VORONOI_MESH_VERIFY  set to 1 for the always-on validator gate
 #
-# Each built case is asserted strictly valid; an invalid build fails that
-# case (and is flagged INVALID in the summary). Out-of-envelope errors are
-# recorded as `err`, not failures.
+# Each matrix case must succeed, clear all repair residuals, and validate
+# strictly. Errors, surviving residuals, invalid output, and process death all
+# fail the campaign.
 
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -40,7 +40,7 @@ echo "Binary: $BIN"
 echo "Output: $OUT  (MAX_N=$MAX_N, RAYON_NUM_THREADS=$RAYON_NUM_THREADS)"
 echo
 
-echo "dist,n,seed,param,result,defects,post_repair,valid,peak_mb,origins" > "$OUT"
+echo "dist,n,seed,param,result,defects,post_repair,no_chain,valid,peak_mb,origins" > "$OUT"
 
 invalid=0
 errored=0
@@ -56,35 +56,33 @@ run_case() { # dist n seed param
   local line
   # libtest with --nocapture prefixes the line ("test campaign_case ...
   # CASERESULT ..."), so match anywhere and extract from CASERESULT on.
-  # RECLIP=1 enables the opt-in Tier-2 re-clip repair for this case (a no-op on
-  # distributions without contested clusters; the point of the `mega` section).
   line="$(VORONOI_MESH_CASE_DIST="$dist" VORONOI_MESH_CASE_N="$n" VORONOI_MESH_CASE_SEED="$seed" VORONOI_MESH_CASE_PARAM="$param" \
-    VORONOI_MESH_RECLIP_REPAIR="${RECLIP:-}" \
     "$BIN" --ignored --exact campaign_case --nocapture --test-threads=1 2>&1 \
     | grep -o 'CASERESULT .*' | head -1)"
   if [ -z "$line" ]; then
     echo "  FAIL $dist n=$n seed=$seed (no CASERESULT — process died, likely OOM)"
-    echo "$dist,$n,$seed,$param,died,-,-,-,-,-" >> "$OUT"
+    echo "$dist,$n,$seed,$param,died,-,-,-,-,-,-" >> "$OUT"
     invalid=$((invalid + 1))
     return
   fi
   # Parse "key=value" tokens.
-  local result defects post_repair valid peak origins
+  local result defects post_repair no_chain valid peak origins
   result="$(sed -n 's/.* result=\([^ ]*\).*/\1/p' <<<"$line")"
   defects="$(sed -n 's/.* defects=\([^ ]*\).*/\1/p' <<<"$line")"
   post_repair="$(sed -n 's/.* post_repair=\([^ ]*\).*/\1/p' <<<"$line")"
   post_repair="${post_repair:--}"
+  no_chain="$(sed -n 's/.* no_chain=\([^ ]*\).*/\1/p' <<<"$line")"
+  no_chain="${no_chain:--}"
   valid="$(sed -n 's/.* valid=\([^ ]*\).*/\1/p' <<<"$line")"
   peak="$(sed -n 's/.* peak_mb=\([^ ]*\).*/\1/p' <<<"$line")"
   origins="$(sed -n 's/.* origins=\(.*\)$/\1/p' <<<"$line")"
-  echo "$dist,$n,$seed,$param,$result,$defects,$post_repair,$valid,$peak,$origins" >> "$OUT"
-  printf "  %-11s n=%-8s seed=%-3s result=%-3s defects=%-4s post_repair=%-4s valid=%-5s peak=%sMB\n" \
-    "$dist" "$n" "$seed" "$result" "$defects" "$post_repair" "$valid" "$peak"
-  [ "$result" = "err" ] && errored=$((errored + 1))
-  # A genuine silent-invalid is valid=false with NO surviving residual; valid=false
-  # WITH a residual (post_repair>0) is documented out-of-envelope (the hot path
-  # loud-fails on it), not a fuzzer failure.
-  if [ "$valid" = "false" ] && [ "$post_repair" = "0" ]; then
+  echo "$dist,$n,$seed,$param,$result,$defects,$post_repair,$no_chain,$valid,$peak,$origins" >> "$OUT"
+  printf "  %-11s n=%-8s seed=%-3s result=%-3s defects=%-4s post_repair=%-4s no_chain=%-3s valid=%-5s peak=%sMB\n" \
+    "$dist" "$n" "$seed" "$result" "$defects" "$post_repair" "$no_chain" "$valid" "$peak"
+  if [ "$result" = "err" ]; then
+    errored=$((errored + 1))
+    invalid=$((invalid + 1))
+  elif [ "$valid" != "true" ] || [ "$post_repair" != "0" ]; then
     invalid=$((invalid + 1))
   fi
 }
@@ -119,24 +117,19 @@ for seed in 1 2 3 4 5; do
   run_case fibonacci  500000 "$seed" 0.001
 done
 
-# Mega (a `param` fraction of points in a tiny cap) is the only distribution that
-# produces the contested high-degree clusters the Tier-2 re-clip repair acts on.
-# Run it WITH repair (RECLIP=1): the contract is then "repaired-to-strict-valid
-# OR a surviving residual" (the latter is documented out-of-envelope — the hot
-# `compute` path loud-fails on it). The `post_repair` column is the recovery
-# signal: 0 means fully repaired. Override sizes with MEGA_SIZES.
+# Mega (a `param` fraction of points in a tiny cap) exercises the default
+# Local3d escalation path. It has the same clean-success requirement as every
+# other supported matrix case. Override sizes with MEGA_SIZES.
 MEGA_SIZES="${MEGA_SIZES:-100000 500000 1000000}"
-echo "== mega (Tier-2 re-clip repair, RECLIP=1) =="
-RECLIP=1
+echo "== mega (default Local3d repair) =="
 for n in $MEGA_SIZES; do
   for seed in 1 2 3 4 5; do
     run_case mega "$n" "$seed" 0.8
   done
 done
-RECLIP=
 
 echo
-echo "SUMMARY: $total cases run, $invalid invalid, $errored out-of-envelope errors"
+echo "SUMMARY: $total cases run, $invalid failed, $errored errors"
 echo "Per-case rows in $OUT"
 if [ "$invalid" -gt 0 ]; then
   echo "!! $invalid case(s) produced an invalid diagram or died — investigate" >&2
