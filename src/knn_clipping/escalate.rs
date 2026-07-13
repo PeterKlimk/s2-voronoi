@@ -31,6 +31,7 @@ use crate::live_dedup::ShardedVertexKeys;
 /// A generator's rebuilt Voronoi cell: its vertices as the ordered cyclic fan
 /// of sorted global-id triples (each triple = the three generators meeting at
 /// that Voronoi vertex). Same identity space as the production `VertexKey`.
+#[cfg(feature = "escalate_probe")]
 #[derive(Debug, Clone)]
 pub struct RebuiltCell {
     /// The generator (global id) whose Voronoi cell this is.
@@ -38,6 +39,17 @@ pub struct RebuiltCell {
     /// The cell's vertices, in cyclic fan order, each a sorted global-id triple.
     pub vertices: Vec<[u32; 3]>,
 }
+
+#[derive(Clone, Copy)]
+struct RepairVertex {
+    key: [u32; 3],
+    /// Oracle-selected position for a newly minted vertex. Local3d supplies
+    /// the oriented hull support normal; other diagnostic oracles retain the
+    /// historical triple-derived fallback by leaving this as `None`.
+    mint_pos: Option<Vec3>,
+}
+
+type RepairFan = Vec<RepairVertex>;
 
 #[cfg(feature = "escalate_probe")]
 impl RebuiltCell {
@@ -201,11 +213,30 @@ pub fn check_cell_internally_paired(
 /// Rebuild the `seeds`' Voronoi cells from one exact local hull over
 /// `local_ids`. Returns one [`RebuiltCell`] per seed, or `None` if the local
 /// set has no 3D hull (all generators coplanar — a measure-zero pathology).
+#[cfg(feature = "escalate_probe")]
 pub fn rebuild_cells(
     points: &[Vec3],
     local_ids: &[u32],
     seeds: &[u32],
 ) -> Option<Vec<RebuiltCell>> {
+    rebuild_hull_cells(points, local_ids, seeds).map(|cells| {
+        cells
+            .into_iter()
+            .map(|(generator, fan)| RebuiltCell {
+                generator,
+                vertices: fan.into_iter().map(|v| v.key).collect(),
+            })
+            .collect()
+    })
+}
+
+/// Internal Local3d form of [`rebuild_cells`], retaining the hull face's
+/// oriented support normal alongside the sorted triple identity.
+fn rebuild_hull_cells(
+    points: &[Vec3],
+    local_ids: &[u32],
+    seeds: &[u32],
+) -> Option<Vec<(u32, RepairFan)>> {
     let pos: Vec<Vec3> = local_ids.iter().map(|&g| points[g as usize]).collect();
     let hull = LocalHull::build(&pos)?;
 
@@ -232,13 +263,14 @@ pub fn rebuild_cells(
                 let [a, b, c] = hull.faces()[fi];
                 let mut t = [local_ids[a], local_ids[b], local_ids[c]];
                 t.sort_unstable();
-                t
+                let n = hull.face_circumcenter(fi);
+                RepairVertex {
+                    key: t,
+                    mint_pos: Some(Vec3::new(n.x as f32, n.y as f32, n.z as f32)),
+                }
             })
             .collect();
-        out.push(RebuiltCell {
-            generator: g,
-            vertices,
-        });
+        out.push((g, vertices));
     }
     Some(out)
 }
@@ -268,6 +300,15 @@ fn chain_fan(tris: &[[u32; 3]]) -> Option<Vec<[u32; 3]>> {
     } else {
         None
     }
+}
+
+fn unpositioned_fan(keys: Vec<[u32; 3]>) -> RepairFan {
+    keys.into_iter()
+        .map(|key| RepairVertex {
+            key,
+            mint_pos: None,
+        })
+        .collect()
 }
 
 /// Exact 2D Delaunay triangulation of `proj` via Bowyer–Watson incremental
@@ -408,7 +449,7 @@ fn local_exact_fans(
     work: &WorkingDiagram,
     closure: &[u32],
     ring_k: usize,
-) -> FxHashMap<u32, Vec<[u32; 3]>> {
+) -> FxHashMap<u32, RepairFan> {
     use robust::Coord;
     use std::collections::BTreeSet;
 
@@ -454,7 +495,7 @@ fn local_exact_fans(
     }
     incident
         .into_iter()
-        .filter_map(|(g, tris)| chain_fan(&tris).map(|fan| (g, fan)))
+        .filter_map(|(g, tris)| chain_fan(&tris).map(|fan| (g, unpositioned_fan(fan))))
         .collect()
 }
 
@@ -470,16 +511,16 @@ fn local_hull_fans(
     work: &WorkingDiagram,
     closure: &[u32],
     ring_k: usize,
-) -> FxHashMap<u32, Vec<[u32; 3]>> {
+) -> FxHashMap<u32, RepairFan> {
     if closure.is_empty() {
         return FxHashMap::default();
     }
     let local_ids = gather_two_ring(points, grid, scratch, work, closure, ring_k);
 
-    let mut fans: FxHashMap<u32, Vec<[u32; 3]>> = FxHashMap::default();
-    if let Some(cells) = rebuild_cells(points, &local_ids, closure) {
-        for cell in cells {
-            fans.insert(cell.generator, cell.vertices);
+    let mut fans: FxHashMap<u32, RepairFan> = FxHashMap::default();
+    if let Some(cells) = rebuild_hull_cells(points, &local_ids, closure) {
+        for (generator, fan) in cells {
+            fans.insert(generator, fan);
         }
     }
     fans
@@ -498,7 +539,7 @@ fn repair_grow_loop(
     merge_affected: &[u32],
     max_rounds: usize,
     debug_name: &str,
-    mut fans_for: impl FnMut(&WorkingDiagram, &[u32]) -> FxHashMap<u32, Vec<[u32; 3]>>,
+    mut fans_for: impl FnMut(&WorkingDiagram, &[u32]) -> FxHashMap<u32, RepairFan>,
 ) -> EscalationStats {
     use std::collections::BTreeSet;
     let mut stats = EscalationStats::default();
@@ -714,7 +755,7 @@ pub fn repair_delaunator(
                     incident
                         .get(&g)
                         .and_then(|tris| chain_fan(tris))
-                        .map(|fan| (g, fan))
+                        .map(|fan| (g, unpositioned_fan(fan)))
                 })
                 .collect()
         },
@@ -737,9 +778,10 @@ pub fn repair_delaunator(
 // ===========================================================================
 
 /// The f64 spherical circumcenter of a generator triple, as a (near-)unit
-/// `Vec3` — the Voronoi vertex of the three generators. Used to position a
-/// freshly minted vertex; deterministic and source-independent (any producer of
-/// the same triple agrees on its position).
+/// `Vec3` — one of the two antipodal circumcenters of the three generators.
+/// This same-generator-side choice remains the fallback for projected/probe
+/// oracles. Local3d instead supplies the hull-winding-selected support normal,
+/// which is essential when the local hull does not contain the origin.
 fn triple_circumcenter(points: &[Vec3], t: [u32; 3]) -> Vec3 {
     let p = |i: u32| {
         let v = points[i as usize];
@@ -954,7 +996,8 @@ impl<'a> WorkingDiagram<'a> {
     /// different vid than the spliced cell, so both feed the same grow-or-
     /// reject machinery; only the vertex id (and its f32-vs-recomputed
     /// position) differs.
-    fn vid_for(&mut self, points: &[Vec3], t: [u32; 3]) -> u32 {
+    fn vid_for(&mut self, points: &[Vec3], vertex: RepairVertex) -> u32 {
+        let t = vertex.key;
         if let Some(&vid) = self.triple_to_vid.get(&t) {
             return vid;
         }
@@ -974,7 +1017,11 @@ impl<'a> WorkingDiagram<'a> {
         }
         let vid = found.unwrap_or_else(|| {
             let vid = self.num_vertices() as u32;
-            self.minted_pos.push(triple_circumcenter(points, t));
+            self.minted_pos.push(
+                vertex
+                    .mint_pos
+                    .unwrap_or_else(|| triple_circumcenter(points, t)),
+            );
             self.minted_key.push(t);
             vid
         });
@@ -987,8 +1034,17 @@ impl<'a> WorkingDiagram<'a> {
     /// fan can come out either way; a rim edge only pairs with its unspliced
     /// neighbor when both wind the same direction, so the fan is reversed if its
     /// signed orientation disagrees.
-    fn splice_generator(&mut self, points: &[Vec3], g: u32, fan: &[[u32; 3]], target_sign: f64) {
-        let mut list: Vec<u32> = fan.iter().map(|&t| self.vid_for(points, t)).collect();
+    fn splice_generator(
+        &mut self,
+        points: &[Vec3],
+        g: u32,
+        fan: &[RepairVertex],
+        target_sign: f64,
+    ) {
+        let mut list: Vec<u32> = fan
+            .iter()
+            .map(|&vertex| self.vid_for(points, vertex))
+            .collect();
         if target_sign != 0.0 && self.polygon_sign(points, g, &list) * target_sign < 0.0 {
             list.reverse();
         }
@@ -1440,6 +1496,41 @@ pub(crate) const fn escalation_enabled() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn u(x: f32, y: f32, z: f32) -> Vec3 {
+        Vec3::new(x, y, z).normalize()
+    }
+
+    #[test]
+    fn local3d_mint_preserves_hull_selected_circumcenter_sign() {
+        let points = [
+            u(0.70, 0.00, 0.714),
+            u(-0.35, 0.61, 0.714),
+            u(-0.35, -0.61, 0.714),
+            u(0.18, 0.12, 0.976),
+            u(-0.12, 0.16, 0.980),
+        ];
+        let ids = [0, 1, 2, 3, 4];
+        let cells = rebuild_hull_cells(&points, &ids, &ids).unwrap();
+        let vertex = cells
+            .iter()
+            .flat_map(|(_, fan)| fan)
+            .copied()
+            .find(|v| {
+                v.mint_pos
+                    .is_some_and(|p| p.dot(points[v.key[0] as usize]) < 0.0)
+            })
+            .expect("origin-outside hull must have an opposing support normal");
+        let expected = vertex.mint_pos.unwrap();
+        assert!(triple_circumcenter(&points, vertex.key).dot(expected) < -0.999_999);
+
+        let keys = ShardedVertexKeys::new(vec![0], vec![]);
+        let cells = vec![VoronoiCell::new(0, 0); points.len()];
+        let mut work = WorkingDiagram::from_assembled(&[], &keys, &cells, &[]);
+        let vid = work.vid_for(&points, vertex);
+        assert_eq!(work.vkey(vid), vertex.key);
+        assert_eq!(work.vpos(vid), expected);
+    }
 
     #[test]
     fn tiny_polygon_winding_uses_f64_accumulation() {

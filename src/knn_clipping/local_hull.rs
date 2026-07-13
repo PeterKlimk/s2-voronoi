@@ -155,13 +155,14 @@ impl LocalHull {
     pub(crate) fn face_circumcenter(&self, f: usize) -> DVec3 {
         let [a, b, c] = self.faces[f];
         let n = (self.pts[b] - self.pts[a]).cross(self.pts[c] - self.pts[a]);
-        let n = n.normalize();
-        // Outward = same side as the face vertices (positive dot with a).
-        if n.dot(self.pts[a]) >= 0.0 {
-            n
-        } else {
-            -n
-        }
+        // Face winding, not the origin, defines outward. In a local gather
+        // contained in a hemisphere the origin can lie outside the hull, and
+        // the outward support normal of a rim face then has a negative dot
+        // with all three generators.
+        // `robust::orient3d(a,b,c,p)` has the opposite sign to
+        // `(b-a)×(c-a) · (p-a)`, so the hull's `orient <= 0` interior is on
+        // the positive cross-product side. Outward is therefore `-n`.
+        -n.normalize()
     }
 
     /// The ordered cyclic fan of face indices incident to generator `i` — the
@@ -332,6 +333,37 @@ mod tests {
                 "equidistant"
             );
         }
+    }
+
+    #[test]
+    fn upper_hemisphere_face_circumcenters_are_support_normals() {
+        // This hull does not contain the origin. Its lower/rim faces have
+        // outward normals opposite the generators, so choosing the normal by
+        // `normal.dot(generator) >= 0` would flip them antipodally.
+        let pts = [
+            u(0.70, 0.00, 0.714),
+            u(-0.35, 0.61, 0.714),
+            u(-0.35, -0.61, 0.714),
+            u(0.18, 0.12, 0.976),
+            u(-0.12, 0.16, 0.980),
+        ];
+        let h = LocalHull::build(&pts).unwrap();
+        let mut saw_origin_outside_face = false;
+        for (fi, f) in h.faces().iter().enumerate() {
+            let n = h.face_circumcenter(fi);
+            let support = n.dot(h.pts[f[0]]);
+            saw_origin_outside_face |= support < 0.0;
+            for (pi, &p) in h.pts.iter().enumerate() {
+                assert!(
+                    n.dot(p) <= support + 1e-12,
+                    "face {fi} normal is not outward support: point {pi} exceeds {support}"
+                );
+            }
+        }
+        assert!(
+            saw_origin_outside_face,
+            "fixture must exercise a face whose outward normal opposes its generators"
+        );
     }
 
     /// Canonical triangulation: each face mapped to a sorted triple of ORIGINAL

@@ -204,6 +204,24 @@ fn test_hemisphere_dense() {
     expect_strict_success("hemisphere_dense", compute(&points));
 }
 
+#[test]
+fn test_hemisphere_local3d_preserves_outward_face_sign() {
+    use voronoi_mesh::{compute_with_report, VoronoiConfig};
+
+    // This origin-outside hull deterministically reaches Local3d at modest
+    // scale. Losing the hull face's oriented normal flips newly minted south-
+    // pole vertices to their north-pole antipodes and makes the repair gate
+    // reject an otherwise closed rebuild.
+    let points = hemisphere_points(1_000, 1);
+    let output = compute_with_report(&points, VoronoiConfig::default())
+        .expect("hemisphere Local3d regression should compute");
+    assert!(output.report.pre_repair_edge_mismatch_count > 0);
+    assert!(output.report.repair.attempted);
+    assert!(output.report.repair.accepted);
+    assert!(!output.report.has_post_repair_residuals());
+    assert!(output.report.preferred_validation().is_strictly_valid());
+}
+
 // =============================================================================
 // Bimodal Density Tests
 // =============================================================================
