@@ -319,6 +319,16 @@ native retired instructions by 0.032%/0.026%. With 96 bins, 85.8k/83.8k records 
 same scaling. Branch reductions were smaller, and cycles ranged from mixed to favorable on the noisy
 host.
 
+Overflow resolution then narrows sort movement further by sorting 16-byte `(key, record index)`
+handles while leaving the 40-byte records immutable. Handle construction and allocation are included
+in the measured path; resolution pays one indirect record read after grouping. Relative to sorting
+the records directly by scalar key, 1M native instructions fell another 0.021%/0.017% on 6-bin
+Fibonacci/uniform and 0.116%/0.099% at 96 bins; branches fell 0.011%/0.009% and 0.061%/0.050%.
+Generic-target gains were 0.030%/0.025% at 6 bins and 0.165%/0.141% at 96 bins. All structural pairs
+agreed; default-bin native cycles improved in all eight pairs, while high-bin results ranged from
+mixed to favorable. The private resolver accepts an immutable record slice, making its independence
+from record permutation explicit.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -338,10 +348,6 @@ Assembly/live-dedup swarm backlog (2026-07-13):
   lower transient live heap by about 12 bytes per output vertex. Retain per-shard spans for debug
   bounds checks and measure allocator live bytes as well as peak RSS, since the allocator may retain
   freed pages. This is principally a memory-envelope experiment.
-- **Sort compact overflow handles:** whole 40-byte overflow records are still moved during the
-  key-only sort. Sorting compact key/index handles could reduce swap traffic at high bin counts, but
-  trades it for indirect record reads during resolution. Attribute it separately from the accepted
-  scalar-key comparator and preserve the same run-order independence.
 - **Pack deferred source location:** `DeferredSlot` may be reducible from roughly 32 to 24 bytes by
   packing `source_bin` and `source_slot`. Audit representation limits and preserve exact fallback
   owner/slot mapping; measure deferred counts and memory traffic because the fallback itself is

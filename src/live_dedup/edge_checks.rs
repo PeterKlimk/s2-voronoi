@@ -416,13 +416,27 @@ pub(super) struct OverflowResolveTiming {
 #[cfg_attr(feature = "profiling", inline(never))]
 pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
     shards: &mut [ShardState<P>],
-    edge_check_overflow: &mut [EdgeCheckOverflow],
+    edge_check_overflow: &[EdgeCheckOverflow],
     unresolved_edges: &mut Vec<UnresolvedEdgeMismatch>,
 ) -> OverflowResolveTiming {
+    #[derive(Clone, Copy)]
+    struct SortHandle {
+        key: EdgeKey,
+        index: usize,
+    }
+
     let t_edge_sort = Timer::start();
     // Resolution only requires contiguous equal-key runs. Within a two-record run, side equality
     // and reverse-winding endpoint patching are symmetric; larger runs are deferred as a whole.
-    edge_check_overflow.sort_unstable_by_key(|entry| entry.key);
+    let mut sorted: Vec<SortHandle> = edge_check_overflow
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| SortHandle {
+            key: entry.key,
+            index,
+        })
+        .collect();
+    sorted.sort_unstable_by_key(|entry| entry.key);
     let edge_checks_overflow_sort_time = t_edge_sort.elapsed();
 
     let t_edge_match = Timer::start();
@@ -440,22 +454,22 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
         conflict
     };
     let mut i = 0usize;
-    while i < edge_check_overflow.len() {
-        let key = edge_check_overflow[i].key;
+    while i < sorted.len() {
+        let key = sorted[i].key;
         let mut run_end = i + 1;
-        while run_end < edge_check_overflow.len() && edge_check_overflow[run_end].key == key {
+        while run_end < sorted.len() && sorted[run_end].key == key {
             run_end += 1;
         }
-        let run = &edge_check_overflow[i..run_end];
+        let run_len = run_end - i;
 
-        if run.len() == 1 {
+        if run_len == 1 {
             unresolved_edges.push(UnresolvedEdgeMismatch {
                 key,
                 origin: UnresolvedEdgeOrigin::CrossBinSingleSided,
             });
-        } else if run.len() == 2 {
-            let a = edge_check_overflow[i];
-            let b = edge_check_overflow[i + 1];
+        } else if run_len == 2 {
+            let a = edge_check_overflow[sorted[i].index];
+            let b = edge_check_overflow[sorted[i + 1].index];
             if a.side == b.side {
                 // Two same-side overflow checks for one edge key: a
                 // duplicate cross-bin attribution (a marginal corner kept by
@@ -521,8 +535,11 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
                 key,
                 origin: UnresolvedEdgeOrigin::CrossBinDuplicateSide,
             });
-            let first_side = run[0].side;
-            if run.iter().all(|entry| entry.side == first_side) {
+            let first_side = edge_check_overflow[sorted[i].index].side;
+            if sorted[i..run_end]
+                .iter()
+                .all(|entry| edge_check_overflow[entry.index].side == first_side)
+            {
                 unresolved_edges.push(UnresolvedEdgeMismatch {
                     key,
                     origin: UnresolvedEdgeOrigin::CrossBinSingleSided,
