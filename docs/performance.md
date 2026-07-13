@@ -180,12 +180,11 @@ on Fibonacci and 0.061% on uniform input, with effectively identical counts in a
 runs. Cycles were too noisy to resolve; the default parallel control was structurally neutral.
 
 The N=3/4 small clipper keeps its four SIMD distances in a four-element array instead of padding an
-eight-element array with four zero stores. Escalation receives only the initialized slice; N=5–8
-retains the full eight-lane representation. Release code shrank by 208 bytes and no longer contains
+eight-element array with four zero stores; N=5–8 retains the full eight-lane representation.
+Release code shrank by 208 bytes and no longer contains
 the two padded 16-byte stores. At 2M single-threaded, retired instructions fell about 0.062% on
 Fibonacci and 0.061% on uniform input in all three pairs. Fibonacci cycles improved in all pairs;
-uniform cycles were neutral. The default, microbench, `p5_shadow`, and escalation feature paths all
-share the initialized-slice invariant.
+uniform cycles were neutral. The default and microbench paths share the initialized-slice invariant.
 
 Interior packed-kNN security thresholds evaluate each of the four boundary planes across eight
 queries with `PointChunk8`. Lane minima remain scalar and follow the original plane order, so the

@@ -44,7 +44,6 @@ pub struct CellOutputBuffer<P = Vec3> {
     pub vertices: Vec<VertexData<P>>,
     pub edge_neighbor_globals: Vec<u32>,
     pub edge_neighbor_slots: Vec<u32>,
-    pub edge_neighbor_eps: Vec<f32>,
     /// True when the extractor guarantees every real edge's neighbor appears
     /// in BOTH endpoint vertex keys (the emit engine's key/edge-consistency
     /// precondition). The incremental gnomonic clip maintains this by
@@ -63,7 +62,6 @@ impl<P> CellOutputBuffer<P> {
             vertices: Vec::with_capacity(capacity),
             edge_neighbor_globals: Vec::with_capacity(capacity),
             edge_neighbor_slots: Vec::with_capacity(capacity),
-            edge_neighbor_eps: Vec::with_capacity(capacity),
             edge_keys_verified: false,
         }
     }
@@ -72,7 +70,6 @@ impl<P> CellOutputBuffer<P> {
         self.vertices.clear();
         self.edge_neighbor_globals.clear();
         self.edge_neighbor_slots.clear();
-        self.edge_neighbor_eps.clear();
         self.edge_keys_verified = false;
     }
 }

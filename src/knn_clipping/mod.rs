@@ -14,11 +14,8 @@ pub(crate) mod edge_reconcile;
 // and serves both the spherical and planar drivers); re-exported so
 // existing paths keep working.
 pub(crate) use crate::live_dedup;
-pub(crate) mod canonical;
 pub(crate) mod escalate;
 pub(crate) mod local_hull;
-#[cfg(feature = "p5_shadow")]
-pub(crate) mod p5_shadow;
 pub(crate) mod preprocess;
 // Timing instrumentation moved to the crate root (the live-dedup engine
 // uses it too); re-exported so existing paths keep working.

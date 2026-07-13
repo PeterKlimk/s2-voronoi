@@ -50,16 +50,13 @@ impl GnomonicBuilder {
         buffer.vertices.reserve(poly.len);
         buffer.edge_neighbor_globals.reserve(poly.len);
         buffer.edge_neighbor_slots.reserve(poly.len);
-        buffer.edge_neighbor_eps.reserve(poly.len);
 
         let vertices = buffer.vertices.spare_capacity_mut();
         let edge_neighbor_globals = buffer.edge_neighbor_globals.spare_capacity_mut();
         let edge_neighbor_slots = buffer.edge_neighbor_slots.spare_capacity_mut();
-        let edge_neighbor_eps = buffer.edge_neighbor_eps.spare_capacity_mut();
         debug_assert!(vertices.len() >= poly.len);
         debug_assert!(edge_neighbor_globals.len() >= poly.len);
         debug_assert!(edge_neighbor_slots.len() >= poly.len);
-        debug_assert!(edge_neighbor_eps.len() >= poly.len);
 
         let gen_idx = self.generator_idx as u32;
         for i in 0..poly.len {
@@ -102,7 +99,7 @@ impl GnomonicBuilder {
             let n1 = n1 as u32;
             let n2 = n2 as u32;
             let key = sort3_u32(gen_idx, n1, n2);
-            // SAFETY: all four vectors were cleared and reserved for
+            // SAFETY: all three vectors were cleared and reserved for
             // `poly.len` immediately above; `i` is in `0..poly.len`.
             unsafe { vertices.get_unchecked_mut(i).write((key, v_pos)) };
 
@@ -111,7 +108,6 @@ impl GnomonicBuilder {
                 unsafe {
                     edge_neighbor_globals.get_unchecked_mut(i).write(u32::MAX);
                     edge_neighbor_slots.get_unchecked_mut(i).write(u32::MAX);
-                    edge_neighbor_eps.get_unchecked_mut(i).write(0.0);
                 }
             } else {
                 let edge_plane = edge_plane as usize;
@@ -125,9 +121,6 @@ impl GnomonicBuilder {
                     edge_neighbor_slots
                         .get_unchecked_mut(i)
                         .write(constraint.neighbor_slot);
-                    edge_neighbor_eps
-                        .get_unchecked_mut(i)
-                        .write(constraint.half_plane.eps as f32);
                 }
             }
         }
@@ -138,7 +131,6 @@ impl GnomonicBuilder {
             buffer.vertices.set_len(poly.len);
             buffer.edge_neighbor_globals.set_len(poly.len);
             buffer.edge_neighbor_slots.set_len(poly.len);
-            buffer.edge_neighbor_eps.set_len(poly.len);
         }
         // The incremental clip keeps vertex plane pairs and edge planes in
         // lockstep (a clip's entry/exit vertices carry the pair {crossed
@@ -498,7 +490,6 @@ impl FallbackBuilder {
             let edge = &self.constraints[edge_plane];
             buffer.edge_neighbor_globals.push(edge.neighbor_idx as u32);
             buffer.edge_neighbor_slots.push(edge.neighbor_slot);
-            buffer.edge_neighbor_eps.push(edge.hp_eps.unwrap_or(0.0));
         }
         // Fallback cells are rare and defect-adjacent: verify key/edge
         // consistency here (cold) so emit can record any malformed
@@ -627,7 +618,6 @@ fn extract_all_constraints_cell(
     buffer.vertices.reserve(vertices.len());
     buffer.edge_neighbor_globals.reserve(vertices.len());
     buffer.edge_neighbor_slots.reserve(vertices.len());
-    buffer.edge_neighbor_eps.reserve(vertices.len());
 
     let gen_idx = generator_idx as u32;
     for (i, vertex) in vertices.iter().copied().enumerate() {
@@ -656,7 +646,6 @@ fn extract_all_constraints_cell(
         let edge = &constraints[edge_plane];
         buffer.edge_neighbor_globals.push(edge.neighbor_idx as u32);
         buffer.edge_neighbor_slots.push(edge.neighbor_slot);
-        buffer.edge_neighbor_eps.push(edge.hp_eps.unwrap_or(0.0));
     }
     // Same rare-path verification as the fallback extract (see
     // `edge_keys_consistent`): the all-pairs reconstruction shares the

@@ -774,12 +774,11 @@ fn validate_generator_capacity(num_points: usize) -> Result<(), crate::VoronoiEr
 /// sweeps. The standalone quantized-key detector remains only for
 /// `MergeWithin` radii too large for grid adjacency. The resolution policy
 /// sees the raw count; welds are far too few to shift it.
-/// P5 stage 0: canonicalize input points once at entry — f64-normalize and
+/// Canonicalize input points once at entry — f64-normalize and
 /// round back to f32 — so every consumer (grid, weld, charts, certificates,
-/// and the P5 canonical predicates) sees identical bits per generator. The
+/// and repair) sees identical bits per generator. The
 /// per-builder f64 renormalization is gone; without this pass the pipeline
-/// solved a ~1-ulp-perturbed, asymmetrically-treated point set (stage-1
-/// shadow findings). Out-of-band lengths
+/// solved a ~1-ulp-perturbed, asymmetrically-treated point set. Out-of-band lengths
 /// (contract-violating inputs) are left untouched and fail downstream as
 /// before, rather than being turned into NaNs here.
 fn canonicalize_and_find_first_non_finite(points: &mut [Vec3]) -> Option<usize> {

@@ -448,20 +448,19 @@ fn clip_seed_neighbors(
         }
 
         let neighbor = pos_slots[neighbor_slot as usize].pos;
-        let fallback_rejected = match ctx.builder.clip_with_slot_edgecheck_policy(
-            neighbor_idx,
-            neighbor_slot,
-            neighbor,
-            check.hp_eps,
-        ) {
-            Ok(BuilderStepOutcome::Applied) => false,
-            Ok(BuilderStepOutcome::NeedsFallback(request)) => {
-                trace.fallback_request = Some(request);
-                counters.record_fallback(request);
-                !ctx.builder.try_enter_fallback(points, request)
-            }
-            Err(_) => break,
-        };
+        let fallback_rejected =
+            match ctx
+                .builder
+                .clip_with_slot_edgecheck_policy(neighbor_idx, neighbor_slot, neighbor)
+            {
+                Ok(BuilderStepOutcome::Applied) => false,
+                Ok(BuilderStepOutcome::NeedsFallback(request)) => {
+                    trace.fallback_request = Some(request);
+                    counters.record_fallback(request);
+                    !ctx.builder.try_enter_fallback(points, request)
+                }
+                Err(_) => break,
+            };
         counters.neighbors_processed += 1;
         if fallback_rejected {
             break;

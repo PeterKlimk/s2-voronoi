@@ -1,14 +1,7 @@
 /// General clipper for large polygons (N > 8) using u64 bitmask.
-pub(super) fn clip_bitmask(
-    poly: &PolyBuffer,
-    hp: &HalfPlane,
-    out: &mut PolyBuffer,
-    esc: &super::EscalationCtx<'_>,
-) -> ClipResult {
+pub(super) fn clip_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
     let n = poly.len;
     debug_assert!(n <= 64, "Polygon too large for u64 bitmask");
-
-    let neg_eps = -hp.eps;
 
     let mut dists: [core::mem::MaybeUninit<f64>; MAX_POLY_VERTICES] =
         unsafe { core::mem::MaybeUninit::uninit().assume_init() };
@@ -24,25 +17,14 @@ pub(super) fn clip_bitmask(
     let (vs_chunks, _) = poly.vs.as_chunks::<8>();
     for chunk in 0..n.div_ceil(8) {
         let i = chunk * 8;
-        let (d8, m8) = fp::signed_dists_mask8(
-            hp.a,
-            hp.b,
-            hp.c,
-            &us_chunks[chunk],
-            &vs_chunks[chunk],
-            neg_eps,
-        );
+        let (d8, m8) =
+            fp::signed_dists_mask8(hp.a, hp.b, hp.c, &us_chunks[chunk], &vs_chunks[chunk], 0.0);
         for (lane, &d) in d8.iter().enumerate() {
             dists[i + lane].write(d);
         }
         mask |= (m8 as u64) << i;
     }
     mask &= full_mask;
-
-    // P5 escalation: near-margin lanes re-decided canonically. All lanes
-    // 0..n were written above.
-    let dists_slice = unsafe { core::slice::from_raw_parts(dists.as_ptr() as *const f64, n) };
-    mask = super::maybe_escalate(mask, dists_slice, n, hp, poly, esc);
 
     if mask == 0 {
         out.len = 0;
@@ -95,7 +77,7 @@ pub(super) fn clip_bitmask(
     let (entry_idx, entry_next_idx, entry_d0, entry_d1) = calc_transition(entry_next);
     let (exit_idx, exit_next_idx, exit_d0, exit_d1) = calc_transition(exit_next);
 
-    let (t_entry, t_exit) = super::lerp_t_pair(entry_d0, entry_d1, exit_d0, exit_d1, hp.eps);
+    let (t_entry, t_exit) = super::lerp_t_pair(entry_d0, entry_d1, exit_d0, exit_d1);
     let entry_u = fp::fma_f64(
         t_entry,
         poly.us[entry_next_idx] - poly.us[entry_idx],
@@ -165,12 +147,7 @@ mod tests {
         // Keep u >= 0: crosses the polygon, keeps about half the vertices.
         let hp = HalfPlane::new_unnormalized(1.0, 0.0, 0.0, MAX_POLY_VERTICES);
         let mut out = PolyBuffer::new();
-        let result = clip_bitmask(
-            &poly,
-            &hp,
-            &mut out,
-            &crate::knn_clipping::topo2d::clippers::EscalationCtx::disabled(),
-        );
+        let result = clip_bitmask(&poly, &hp, &mut out);
         assert_eq!(result, ClipResult::Changed);
         assert!(
             out.len >= 3 && out.len <= MAX_POLY_VERTICES,

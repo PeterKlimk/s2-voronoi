@@ -73,13 +73,11 @@ impl FallbackConstraint {
         generator: DVec3,
         neighbor_idx: usize,
         neighbor_slot: u32,
-        hp_eps: Option<f32>,
         neighbor: Vec3,
     ) -> Self {
         // The fallback builder is a separate algorithm (ProjectionLimit
         // path) whose plane math expects unit vectors; it keeps the legacy
-        // f64 normalization of both sides (P5 canonicalization of this path
-        // is deferred; see p5-consistency-design.md).
+        // f64 normalization of both sides.
         let neighbor =
             DVec3::new(neighbor.x as f64, neighbor.y as f64, neighbor.z as f64).normalize();
         let normal = generator.normalize() - neighbor;
@@ -91,7 +89,6 @@ impl FallbackConstraint {
             normal: normal.normalize_or_zero(),
             neighbor_idx,
             neighbor_slot,
-            hp_eps,
         }
     }
 }
@@ -120,15 +117,11 @@ impl GnomonicBuilder {
     }
 
     pub(super) fn new(generator_idx: usize, generator: Vec3) -> Self {
-        #[cfg(feature = "p5_shadow")]
-        let angle_pad = crate::knn_clipping::p5_shadow::term_pad_override()
-            .unwrap_or(crate::tolerances::TERMINATION_ANGLE_PAD);
-        #[cfg(not(feature = "p5_shadow"))]
         let angle_pad = crate::tolerances::TERMINATION_ANGLE_PAD;
         let (term_sin_pad, term_cos_pad) = angle_pad.sin_cos();
-        // P5 stage 0: promote the canonicalized f32 bits exactly — no
+        // Promote the canonicalized f32 bits exactly — no
         // renormalization (the old per-builder normalize made each chart
-        // solve a ~1-ulp-perturbed point set; see p5-consistency-design.md).
+        // solve a ~1-ulp-perturbed point set).
         let gen64 = DVec3::new(generator.x as f64, generator.y as f64, generator.z as f64);
         let inv_two_gg = 0.5 / gen64.length_squared();
         let basis = TangentBasis::new(gen64);
@@ -150,8 +143,6 @@ impl GnomonicBuilder {
             use_a: true,
             failed: None,
             generator_raw: generator,
-            #[cfg(feature = "p5_shadow")]
-            neighbor_positions_raw: Vec::with_capacity(32),
             term_sin_pad,
             term_cos_pad,
             term_threshold_cache: 0.0,
@@ -166,7 +157,7 @@ impl GnomonicBuilder {
 
     #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn reset(&mut self, generator_idx: usize, generator: Vec3) {
-        // P5 stage 0: exact f32 bits, no renormalization (see new()).
+        // Preserve the canonicalized f32 bits exactly; do not renormalize.
         let gen64 = DVec3::new(generator.x as f64, generator.y as f64, generator.z as f64);
         self.generator_idx = generator_idx;
         self.generator = gen64;
@@ -176,8 +167,6 @@ impl GnomonicBuilder {
         self.chart_metric_r2_scale = Self::chart_metric_r2_bound(&self.basis, self.inv_two_gg);
         self.constraints.clear();
         self.generator_raw = generator;
-        #[cfg(feature = "p5_shadow")]
-        self.neighbor_positions_raw.clear();
         self.poly_a.init_bounding(1e6);
         self.poly_b.clear();
         self.use_a = true;

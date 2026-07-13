@@ -24,7 +24,6 @@ fn poison_output_buffer(ctx: &mut CellBuildContext) {
         .push(([u32::MAX; 3], Vec3::new(0.25, -0.5, 0.75)));
     ctx.output_buffer.edge_neighbor_globals.push(u32::MAX - 1);
     ctx.output_buffer.edge_neighbor_slots.push(u32::MAX - 2);
-    ctx.output_buffer.edge_neighbor_eps.push(f32::INFINITY);
     ctx.output_buffer.edge_keys_verified = true;
 }
 
@@ -33,7 +32,6 @@ fn assert_output_replaced(buffer: &crate::live_dedup::CellOutputBuffer) {
     assert!(n >= 3);
     assert_eq!(buffer.edge_neighbor_globals.len(), n);
     assert_eq!(buffer.edge_neighbor_slots.len(), n);
-    assert_eq!(buffer.edge_neighbor_eps.len(), n);
     assert!(buffer.vertices.iter().all(|(key, _)| *key != [u32::MAX; 3]));
     assert!(buffer
         .edge_neighbor_globals
@@ -43,7 +41,6 @@ fn assert_output_replaced(buffer: &crate::live_dedup::CellOutputBuffer) {
         .edge_neighbor_slots
         .iter()
         .all(|&slot| slot != u32::MAX - 2));
-    assert!(buffer.edge_neighbor_eps.iter().all(|eps| eps.is_finite()));
 }
 
 fn assert_output_still_poisoned(buffer: &crate::live_dedup::CellOutputBuffer) {
@@ -51,8 +48,6 @@ fn assert_output_still_poisoned(buffer: &crate::live_dedup::CellOutputBuffer) {
     assert_eq!(buffer.vertices[0].0, [u32::MAX; 3]);
     assert_eq!(buffer.edge_neighbor_globals, [u32::MAX - 1]);
     assert_eq!(buffer.edge_neighbor_slots, [u32::MAX - 2]);
-    assert_eq!(buffer.edge_neighbor_eps.len(), 1);
-    assert!(buffer.edge_neighbor_eps[0].is_infinite());
     assert!(buffer.edge_keys_verified);
 }
 
@@ -1033,7 +1028,7 @@ fn projection_invalid_detail_includes_replay_payload_summary() {
     let h3 = Vec3::new(-0.5, -0.866, 0.5).normalize();
 
     builder
-        .clip_with_slot_edgecheck_policy(11, 21, h1, 0.125)
+        .clip_with_slot_edgecheck_policy(11, 21, h1)
         .expect("edgecheck clip should apply");
     builder
         .clip_with_slot_policy(12, 22, h2)

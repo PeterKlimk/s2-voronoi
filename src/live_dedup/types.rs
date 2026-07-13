@@ -206,12 +206,6 @@ pub(crate) struct EdgeCheck {
     /// edge key is losslessly reconstructed with `pack_edge(destination,
     /// neighbor_idx)` when a diagnostic record needs it.
     pub(crate) neighbor_idx: u32,
-    /// Half-plane epsilon to use when clipping this neighbor as an edgecheck-derived seed.
-    ///
-    /// This is stored to avoid recomputing a normalization-dependent epsilon (sqrt) in the hot
-    /// edgecheck seeding path. Tiny cross-side differences are not important; we only need a
-    /// stable tolerance scale.
-    pub(crate) hp_eps: f32,
     /// For edge (A, B), each endpoint vertex key is (A, B, T).
     /// Store just the "third" generator T for each endpoint, in canonical
     /// order. `u32::MAX` (`edge_checks::MALFORMED_THIRD`) marks an endpoint
@@ -222,7 +216,7 @@ pub(crate) struct EdgeCheck {
     pub(super) indices: [u32; 2],
 }
 
-const _: () = assert!(std::mem::size_of::<EdgeCheck>() == 24);
+const _: () = assert!(std::mem::size_of::<EdgeCheck>() == 20);
 
 #[derive(Clone, Copy)]
 pub(super) struct EdgeCheckOverflow {

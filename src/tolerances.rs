@@ -51,9 +51,8 @@ pub(crate) fn weld_radius() -> f32 {
 
 // === Gnomonic clipping (per-cell chart) ===
 
-/// Base inside-slack for half-plane clipping, scaled by the plane's normal
-/// magnitude at use (`eps = CLIP_EPS_INSIDE * |n|`). **0.0 = the strict
-/// antisymmetric keep rule `d >= 0` — the production setting.**
+/// Gnomonic half-plane clipping uses the strict antisymmetric keep rule
+/// `d >= 0`.
 ///
 /// The historical value 1e-12 (hex3 import) kept epsilon-grazing vertices
 /// inside, biasing both cells of a shared edge toward agreeing a marginal
@@ -69,7 +68,6 @@ pub(crate) fn weld_radius() -> f32 {
 /// error-regime contradictions (computed-sign errors at 1.5e-11..4.6e-11,
 /// above any tie band) that no local rule can fix; edge checks and
 /// reconciliation own those residuals.
-pub(crate) const CLIP_EPS_INSIDE: f64 = 0.0;
 
 /// Chart-validity floor: once the clipped polygon's minimum generator-dot
 /// reaches this, the feasible region is effectively at the generator's
@@ -77,27 +75,6 @@ pub(crate) const CLIP_EPS_INSIDE: f64 = 0.0;
 /// fallback. Sized to f32 input granularity (inputs are f32; 8 ulps of
 /// slack), conservative for the f64 chart math.
 pub(crate) const MIN_PROJECTION_COS: f64 = 8.0 * f32::EPSILON as f64;
-
-/// Canonical-escalation band width as a multiple of a half-plane's stored
-/// eps (`CLIP_EPS_INSIDE * |n|`). **0.0 = escalation disabled — the
-/// production setting.**
-///
-/// P5 stage 2a measured:
-/// margin-gated escalation is unsound at ANY width, because the gate is
-/// evaluated per cell on displaced computed margins (the same question's
-/// margins differ ~100x across cells; local answers below ~1e-4 are ~50%
-/// anti-correlated with canonical while near-perfectly correlated with
-/// each other). Mixing canonical answers into the correlated-local system
-/// manufactures cross-cell contradictions at the band boundary: factor
-/// 1e4 turned 0/4 natural defects into 10/200 (500k/3M); factors 16..128
-/// fixed the three watched sites but elevated 4.5M from 3 to 6-11. The
-/// clipper machinery is kept (probe-overridable via
-/// `p5_shadow::set_escalation_factor_override`) as the test rig for
-/// successor designs (question-intrinsic gating / antisymmetric tie rule).
-/// Note: with `CLIP_EPS_INSIDE = 0.0` the band `factor * hp.eps` is zero
-/// regardless of factor; escalation experiments must also set
-/// `p5_shadow::set_clip_eps_override` to a nonzero eps.
-pub(crate) const CLIP_ESCALATION_FACTOR: f64 = 0.0;
 
 /// Angular padding folded into the termination certificate (the polygon's
 /// angular extent is widened by this before comparing against unseen-dot
@@ -192,12 +169,10 @@ mod tests {
     #[test]
     #[allow(clippy::assertions_on_constants)] // pinning the constant hierarchy is the point
     fn tolerance_ordering_sanity() {
-        // The hierarchy the pipeline relies on: the strict antisymmetric
-        // keep rule (clipping slack zero); the extraction floor sits below
-        // the error-regime contradiction scale (~1e-11).
-        assert!(CLIP_EPS_INSIDE == 0.0);
+        // The extraction floor sits below the error-regime contradiction
+        // scale (~1e-11); reconciliation remains within the weld scale.
         assert!((EXTRACT_DEGENERATE_LEN2 as f64).sqrt() < 1e-11);
-        assert!(CLIP_EPS_INSIDE < MIN_PROJECTION_COS);
+        assert!(MIN_PROJECTION_COS > 0.0);
         assert!(RECONCILE_DEGENERATE_LEN_EPS <= weld_radius());
         assert!(FALLBACK_DEDUP_DOT < 1.0);
     }

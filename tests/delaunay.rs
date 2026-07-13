@@ -90,7 +90,7 @@ fn sphere_delaunay_empty_circumcircle() {
         }
         let r_dot = cc.dot(a);
         // Candidates come from the diagram's own generators: the pipeline
-        // canonicalizes inputs at entry (P5 stage 0), so the raw input
+        // canonicalizes inputs at entry, so the raw input
         // points differ from the solved generator set by up to ~1 ulp.
         for i in 0..diagram.num_cells() {
             assert!(

@@ -70,12 +70,7 @@ fn changed_clip_fails_when_bounded_polygon_reaches_projection_limit() {
 
     let err = builder
         .as_gnomonic_mut()
-        .commit_clip(
-            ClipResult::Changed,
-            HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0),
-            1,
-            u32::MAX,
-        )
+        .commit_clip(ClipResult::Changed, 1, u32::MAX)
         .expect_err("expected projection-invalid bounded cell to fail");
     assert_eq!(
         err,
@@ -112,12 +107,9 @@ fn changed_clip_allows_bounded_polygon_inside_projection_limit() {
     let valid_min_cos = MIN_PROJECTION_COS * 2.0;
     gnomonic.poly_b.max_r2 = (1.0 / (valid_min_cos * valid_min_cos)) - 1.0;
 
-    let result = builder.as_gnomonic_mut().commit_clip(
-        ClipResult::Changed,
-        HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0),
-        1,
-        u32::MAX,
-    );
+    let result = builder
+        .as_gnomonic_mut()
+        .commit_clip(ClipResult::Changed, 1, u32::MAX);
     assert_eq!(result, Ok(ClipResult::Changed));
     assert_eq!(builder.failure(), None);
 }
@@ -131,12 +123,7 @@ fn unchanged_clip_skips_projection_validation() {
     gnomonic.poly_a.has_bounding_ref = false;
     gnomonic.poly_a.max_r2 = f64::INFINITY;
 
-    let result = gnomonic.commit_clip(
-        ClipResult::Unchanged,
-        HalfPlane::new_unnormalized(1.0, 0.0, 1.0, 0),
-        1,
-        u32::MAX,
-    );
+    let result = gnomonic.commit_clip(ClipResult::Unchanged, 1, u32::MAX);
 
     assert_eq!(result, Ok(ClipResult::Unchanged));
     assert_eq!(gnomonic.constraints.len(), 0);
@@ -227,7 +214,6 @@ fn extraction_failure_reports_invalid_vertex_plane_metadata() {
     buffer.vertices.push(([u32::MAX; 3], Vec3::X));
     buffer.edge_neighbor_globals.push(u32::MAX);
     buffer.edge_neighbor_slots.push(u32::MAX);
-    buffer.edge_neighbor_eps.push(f32::INFINITY);
     assert_eq!(
         gnomonic.to_vertex_data_full(&mut buffer),
         Err(crate::knn_clipping::cell_build::CellFailure::NoValidSeed)
@@ -235,7 +221,6 @@ fn extraction_failure_reports_invalid_vertex_plane_metadata() {
     assert!(buffer.vertices.is_empty());
     assert!(buffer.edge_neighbor_globals.is_empty());
     assert!(buffer.edge_neighbor_slots.is_empty());
-    assert!(buffer.edge_neighbor_eps.is_empty());
 
     assert_eq!(
         builder.debug_extraction_failure(),
@@ -321,7 +306,6 @@ fn clipped_away_handoff_rejection_preserves_failed_builder() {
     let gnomonic = builder.as_gnomonic_mut();
     for (neighbor_idx, neighbor_slot) in [(11, 21), (12, 22), (13, 23), (14, 24)] {
         gnomonic.constraints.push(super::GnomonicConstraint {
-            half_plane: HalfPlane::new_unnormalized(1.0, 0.0, 0.0, neighbor_idx),
             neighbor_idx,
             neighbor_slot,
         });
@@ -356,10 +340,8 @@ fn clipped_away_handoff_rejection_preserves_failed_builder() {
 fn too_many_vertices_records_current_constraint_before_fallback() {
     let mut builder = Topo2DBuilder::new(0, Vec3::Z);
     let gnomonic = builder.as_gnomonic_mut();
-    let hp = HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0);
-
     assert_eq!(
-        gnomonic.commit_clip(ClipResult::TooManyVertices, hp, 11, 21,),
+        gnomonic.commit_clip(ClipResult::TooManyVertices, 11, 21),
         Err(crate::knn_clipping::cell_build::CellFailure::TooManyVertices)
     );
     assert_eq!(gnomonic.constraints.len(), 1);
@@ -378,7 +360,7 @@ fn polygon_vertex_limit_handoff_replays_overflowing_constraint() {
     let h4 = Vec3::new(0.0, 1.0, 0.75).normalize();
 
     assert_eq!(
-        builder.clip_with_slot_edgecheck_policy(11, 21, h1, 0.125),
+        builder.clip_with_slot_edgecheck_policy(11, 21, h1),
         Ok(BuilderStepOutcome::Applied)
     );
     assert_eq!(
@@ -390,11 +372,10 @@ fn polygon_vertex_limit_handoff_replays_overflowing_constraint() {
         Ok(BuilderStepOutcome::Applied)
     );
 
-    let hp = HalfPlane::new_unnormalized(1.0, 0.0, 0.0, builder.accepted_constraint_count());
     assert_eq!(
         builder
             .as_gnomonic_mut()
-            .commit_clip(ClipResult::TooManyVertices, hp, 14, 24,),
+            .commit_clip(ClipResult::TooManyVertices, 14, 24),
         Err(crate::knn_clipping::cell_build::CellFailure::TooManyVertices)
     );
 
@@ -431,7 +412,7 @@ fn fallback_handoff_switches_builder_variant_and_replays_constraints() {
     let h3 = Vec3::new(-0.5, -0.866, 0.5).normalize();
 
     builder
-        .clip_with_slot_edgecheck_policy(11, 21, h1, 0.125)
+        .clip_with_slot_edgecheck_policy(11, 21, h1)
         .expect("edgecheck clip should apply");
     builder
         .clip_with_slot_policy(12, 22, h2)
@@ -468,7 +449,6 @@ fn fallback_handoff_switches_builder_variant_and_replays_constraints() {
     assert_eq!(builder.as_fallback().constraints.len(), 3);
     assert_eq!(builder.as_fallback().constraints[0].neighbor_idx, 11);
     assert_eq!(builder.as_fallback().constraints[0].neighbor_slot, 21);
-    assert_eq!(builder.as_fallback().constraints[0].hp_eps, Some(0.125));
     assert_eq!(builder.as_fallback().constraints[1].neighbor_idx, 12);
     assert_eq!(builder.as_fallback().constraints[2].neighbor_idx, 13);
 
@@ -480,7 +460,7 @@ fn fallback_handoff_switches_builder_variant_and_replays_constraints() {
 }
 
 #[test]
-fn fallback_reconstruction_preserves_constraint_order_and_eps() {
+fn fallback_reconstruction_preserves_constraint_order() {
     let g = Vec3::new(0.0, 0.0, 1.0);
     let mut builder = Topo2DBuilder::new(0, g);
 
@@ -489,7 +469,7 @@ fn fallback_reconstruction_preserves_constraint_order_and_eps() {
     let h3 = Vec3::new(-0.5, -0.866, 0.5).normalize();
 
     assert_eq!(
-        builder.clip_with_slot_edgecheck_policy(11, 21, h1, 0.125),
+        builder.clip_with_slot_edgecheck_policy(11, 21, h1),
         Ok(BuilderStepOutcome::Applied)
     );
     assert_eq!(
@@ -513,15 +493,10 @@ fn fallback_reconstruction_preserves_constraint_order_and_eps() {
     assert_eq!(builder.as_fallback().constraints.len(), 3);
     assert_eq!(builder.as_fallback().constraints[0].neighbor_idx, 11);
     assert_eq!(builder.as_fallback().constraints[0].neighbor_slot, 21);
-    assert_eq!(builder.as_fallback().constraints[0].hp_eps, Some(0.125));
     assert_eq!(builder.as_fallback().constraints[1].neighbor_idx, 12);
     assert_eq!(builder.as_fallback().constraints[1].neighbor_slot, 22);
-    // Ordinary clips carry the strict-rule eps (CLIP_EPS_INSIDE = 0.0),
-    // preserved exactly through reconstruction.
-    assert_eq!(builder.as_fallback().constraints[1].hp_eps, Some(0.0));
     assert_eq!(builder.as_fallback().constraints[2].neighbor_idx, 13);
     assert_eq!(builder.as_fallback().constraints[2].neighbor_slot, 23);
-    assert_eq!(builder.as_fallback().constraints[2].hp_eps, Some(0.0));
 }
 
 #[test]
@@ -541,7 +516,7 @@ fn fallback_reconstruction_normalizes_s2_constraints() {
     let h3 = Vec3::new(-0.5, -0.866, 0.5).normalize() * 0.9998;
 
     builder
-        .clip_with_slot_edgecheck_policy(11, 21, h1.normalize(), 0.125)
+        .clip_with_slot_edgecheck_policy(11, 21, h1.normalize())
         .expect("edgecheck clip should apply");
     builder
         .clip_with_slot_policy(12, 22, h2.normalize())
@@ -581,7 +556,6 @@ fn fallback_stale_corner_is_rebuilt_from_all_constraints() {
         normal,
         neighbor_idx,
         neighbor_slot: neighbor_idx as u32,
-        hp_eps: None,
     };
 
     // A/B/D/E bound a square around +Z. C cuts off the A/B corner, but the
@@ -701,12 +675,7 @@ fn polar_projection_limit_uses_chart_metric_bound() {
     gnomonic.poly_b.max_r2 = (1.0 / (legacy_min_cos * legacy_min_cos)) - 1.0;
 
     let err = gnomonic
-        .commit_clip(
-            ClipResult::Changed,
-            HalfPlane::new_unnormalized(1.0, 0.0, 0.0, 0),
-            1,
-            u32::MAX,
-        )
+        .commit_clip(ClipResult::Changed, 1, u32::MAX)
         .expect_err("metric-stretched chart must hand off at the projection limit");
     assert_eq!(
         err,
@@ -816,8 +785,7 @@ fn polar_termination_certificate_soundness() {
         let (a, b, cc) = gn.bisector_coefficients(c32);
         let hp = HalfPlane::new_unnormalized(a, b, cc, 0);
         let poly = gn.current_poly();
-        let neg_eps = -hp.eps;
-        let cuts = (0..poly.len).any(|i| hp.signed_dist(poly.us[i], poly.vs[i]) < neg_eps);
+        let cuts = (0..poly.len).any(|i| hp.signed_dist(poly.us[i], poly.vs[i]) < 0.0);
         if cuts {
             violations += 1;
         }
@@ -896,8 +864,7 @@ fn polar_termination_certificate_soundness_elongated() {
             let (a, b, cc) = gn.bisector_coefficients(c32);
             let hp = HalfPlane::new_unnormalized(a, b, cc, 0);
             let poly = gn.current_poly();
-            let neg_eps = -hp.eps;
-            if (0..poly.len).any(|i| hp.signed_dist(poly.us[i], poly.vs[i]) < neg_eps) {
+            if (0..poly.len).any(|i| hp.signed_dist(poly.us[i], poly.vs[i]) < 0.0) {
                 violations += 1;
                 first.get_or_insert(gamma);
             }

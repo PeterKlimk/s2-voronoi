@@ -568,7 +568,7 @@ fn test_rotated_symmetric_pairs_resolve_without_welding() {
     // at generic (rotated) positions, must resolve without welding.
     //
     // Twins are placed *tangentially* (~3e-7, sub-weld): entry
-    // canonicalization (P5 stage 0) erases radial-only ulp distinctions by
+    // input canonicalization erases radial-only ulp distinctions by
     // design — a radial ulp is the same direction on the sphere — and a
     // collapsed pair is an exact bit-duplicate, which `Disabled` has never
     // supported (its contract requires no sub-weld pairs).

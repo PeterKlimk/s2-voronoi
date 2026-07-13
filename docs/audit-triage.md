@@ -47,7 +47,7 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 | AUD-002 | P0 | Resolved | Five ordinary sites produced a strictly valid but materially non-Voronoi diagram | Epsilon-gate inferred endpoint pairing; escalate rejected mismatches |
 | AUD-003 | P1 | Resolved | Packed pre-/mid-batch termination dropped part of `unseen_bound` | Preserve `max(candidate_dot, unseen_bound)` |
 | AUD-004 | P1 | Algorithmically confirmed | Fallback may classify an active constraint `Unchanged` and discard it | Retain tolerant constraints or make tolerance semantics explicit |
-| AUD-005 | P2 | Algorithmically confirmed | Nonzero-epsilon membership and intersection use different boundaries | Interpolate at `d = -eps` or remove unsupported epsilon path |
+| AUD-005 | P2 | Resolved | Nonzero-epsilon membership and intersection used different boundaries | Removed unsupported positive-epsilon clipping |
 | AUD-006 | P1 | Resolved | Accepted welded-twin serde payload could panic in adjacency lookup | Reject twins that do not alias canonical spans |
 | AUD-007 | P2 | Resolved | Accepted empty serde diagram could panic on first locator query | Reject empty serialized diagrams |
 | AUD-008 | P1 | Under-justified | Plain `compute` cheap checks are not equivalent to strict validation | Close detection gaps or run an equivalent fast strict gate |
@@ -250,8 +250,10 @@ Choose one explicit policy:
 - **Priority:** P2
 - **Class:** local clipping correctness; currently mostly dormant
 - **Confidence:** Algorithmically confirmed
+- **Status:** Resolved by retiring the legacy `p5_shadow` experiment and removing positive
+  gnomonic epsilon from the clipper and edge-check transport.
 
-For nonzero half-plane epsilon, membership uses `d >= -eps`, but segment interpolation uses
+Before removal, nonzero half-plane epsilon membership used `d >= -eps`, but segment interpolation used
 `t = d0 / (d0 - d1)`, which targets `d = 0`. The correct interpolation for the selected tolerant
 boundary is `(d0 + eps) / (d0 - d1)`.
 
@@ -259,14 +261,16 @@ For example, with `eps = 1`, `d0 = -0.5`, and `d1 = -2`, the intended tolerant-b
 intersection is `t = 1/3`; the current formula produces `-1/3` and clamps to the segment start.
 The emitted point is then attributed to the new plane despite not lying on the selected boundary.
 
-Production ordinary spherical constraints currently use zero epsilon, so the strict path is not
-affected. The issue applies to positive-epsilon edge-check/replay or diagnostic configurations.
+Production ordinary spherical constraints already used zero epsilon, so removing the diagnostic
+override and its transported metadata does not change the selected strict halfspace model.
 
-**Acceptance criteria**
+**Implemented resolution**
 
-- Decide whether positive epsilon is supported.
-- If supported, classification, interpolation, metadata, and replay use the same boundary.
-- If unsupported, prevent positive epsilon from reaching the clipper and remove misleading paths.
+- Gnomonic clipping structurally implements only `d >= 0` with intersections at `d = 0`.
+- The legacy shadow module, feature, public diagnostic API, overrides, and probes were removed.
+- Edge-check seeds no longer carry or replay half-plane epsilon metadata.
+- Input canonicalization and Local3d's robust predicates remain production behavior and were not
+  removed with the legacy experiment.
 
 ### AUD-006 — Welded-twin serde payload can panic adjacency lookup
 
@@ -538,7 +542,8 @@ degeneracy guarantees, not merely on API convenience or ordinary random fixtures
 2. **AUD-002/AUD-009:** resolved — added the five-site regression and bounded/escalated
    reconciliation edits.
 3. **AUD-003:** resolved — preserved the complete packed unseen bound.
-4. **AUD-004/AUD-005:** make fallback and epsilon clipping internally consistent.
+4. **AUD-004:** retain tolerance-only-active fallback constraints. **AUD-005 is resolved** by
+   removing unsupported positive-epsilon clipping.
 5. **AUD-006/AUD-007:** resolved — tightened accepted serialized representations.
 6. **AUD-008:** make the plain success gate match the advertised strict-validity contract.
 7. **AUD-013:** remove qhull's oracle role and choose a robust reference strategy.

@@ -31,7 +31,7 @@
 //! Bin boundaries lie on grid-cell lines, and grid resolution is a function
 //! of total point count — so the scaffold size steers bin boundaries across
 //! the (fixed) defect site without touching its bits. Pinned by probe sweep
-//! (re-pinned after P5 stage 0 moved the fingerprint): scaffold 280k+bins 12
+//! (re-pinned after input canonicalization moved the fingerprint): scaffold 280k+bins 12
 //! shows InBinUnconsumedCheck; scaffold 360k (also 560k) + bins 36-54 puts
 //! the one-sided defect cross-bin (CrossBinSingleSided).
 //!
@@ -382,7 +382,7 @@ fn probe_site_scan() {
 
 /// Post-stage-0 defect-rate survey: natural defect counts at 3-4.5M scale
 /// (the finding-#12 regime where f32 threshold pressure grows) and on
-/// adversarial distributions, to size the remaining payload of P5 stages
+/// adversarial distributions, to size the remaining repair payload
 /// 2-4. Run with
 /// `cargo test --release --test edge_repair_net probe_defect_rate -- --ignored --nocapture`
 #[test]

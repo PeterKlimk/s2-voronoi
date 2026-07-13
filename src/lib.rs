@@ -145,18 +145,6 @@ pub use error::VoronoiError;
 #[doc(hidden)]
 pub use live_dedup::UnresolvedEdgeOrigin;
 
-/// P5 stage-1 shadow audit counters (feature `p5_shadow`); diagnostic only.
-#[cfg(feature = "p5_shadow")]
-#[doc(hidden)]
-pub mod p5_shadow {
-    pub use crate::knn_clipping::p5_shadow::{
-        paired_dump_involving, paired_quad_report, paired_question_summaries, paired_report,
-        paired_reset, report, reset, set_audit_cutoff, set_clip_eps_override,
-        set_escalation_factor_override, set_pair_cutoff, set_pair_key_filter,
-        set_term_pad_override,
-    };
-}
-
 /// Defect-driven escalation probe (feature `escalate_probe`); lets an
 /// integration test drive the exact local rebuild over real defect sites.
 /// Diagnostic only.

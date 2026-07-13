@@ -202,7 +202,6 @@ fn assert_cell_output_lengths<P>(
         n >= 2
             && output_buffer.edge_neighbor_slots.len() == n
             && output_buffer.edge_neighbor_globals.len() == n
-            && output_buffer.edge_neighbor_eps.len() == n
             && vertex_indices_len == n,
         "cell output arrays out of sync"
     );
@@ -313,7 +312,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
             if let Some((found_idx, check)) = found {
                 // One incoming check matching two of this cell's edges
                 // (duplicate side) was long believed impossible. The strict
-                // planar keep rule (PLANE_CLIP_EPS_INSIDE = 0.0) makes it
+                // strict keep rule makes it
                 // reachable: a sliver can give a cell two edges to one
                 // neighbor. Release has no assert here and already produces
                 // strictly-valid output on these inputs (the duplicate
@@ -343,7 +342,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                     // A local endpoint already carrying a DIFFERENT global id
                     // is a vertex-identity sliver (one corner committed under
                     // two triple attributions) — reachable under the strict
-                    // planar keep rule (PLANE_CLIP_EPS_INSIDE = 0.0), not an
+                    // strict keep rule, not an
                     // invariant violation. Release adopts the incoming id
                     // (last write wins) and the output-invariant scan + repair
                     // restore strict validity (verified by the plane battery
@@ -480,7 +479,7 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
                 // Two same-side overflow checks for one edge key: a
                 // duplicate cross-bin attribution (a marginal corner kept by
                 // an extra cell). Long believed unreachable, but the strict
-                // planar keep rule (PLANE_CLIP_EPS_INSIDE = 0.0) gives it a
+                // strict keep rule gives it a
                 // natural trigger — e.g. the bounded-plane fixture in the
                 // `locate` suite. It is recorded as CrossBinDuplicateSide and
                 // repaired to strict validity, so it is a handled defect, not
@@ -573,7 +572,6 @@ mod tests {
         output.vertices.resize(2, ([0, 1, 2], glam::Vec3::ZERO));
         output.edge_neighbor_slots.resize(1, u32::MAX);
         output.edge_neighbor_globals.resize(2, u32::MAX);
-        output.edge_neighbor_eps.resize(2, 0.0);
         assert_cell_output_lengths(&output, 2);
     }
 
@@ -634,7 +632,6 @@ mod tests {
     fn compact_check_reconstructs_canonical_key() {
         let check = EdgeCheck {
             neighbor_idx: 19,
-            hp_eps: 0.0,
             thirds: [3, 5],
             indices: [7, 11],
         };

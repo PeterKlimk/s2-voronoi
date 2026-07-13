@@ -4,7 +4,7 @@ mod projection;
 #[cfg(test)]
 mod tests;
 
-use super::types::{HalfPlane, PolyBuffer, INVALID_PLANE_ID};
+use super::types::{PolyBuffer, INVALID_PLANE_ID};
 use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::types::ClipResult;
 use glam::DVec3;
@@ -78,18 +78,9 @@ pub(crate) struct GnomonicBuilder {
     use_a: bool,
 
     failed: Option<CellFailure>,
-    /// Raw f32 generator coordinates — the exact input bits the canonical
-    /// escalation predicate consumes (`generator` above is the f64
-    /// promotion; P5 stage 2).
+    /// Raw canonicalized f32 generator coordinates, retained so fallback
+    /// reconstruction can seed an equivalent builder.
     pub(crate) generator_raw: glam::Vec3,
-    /// Raw f32 neighbor positions, parallel to `neighbor_indices` /
-    /// `half_planes`; consumed by canonical escalation and the shadow audit.
-    /// In production `CLIP_ESCALATION_FACTOR == 0.0`, so the escalation path is
-    /// dead (see `maybe_escalate`) and this list is never read — it exists only
-    /// for the `p5_shadow` audit/override build, so it (and its per-clip
-    /// maintenance in `sync_neighbor_positions`) is gated off otherwise.
-    #[cfg(feature = "p5_shadow")]
-    pub(crate) neighbor_positions_raw: Vec<glam::Vec3>,
     term_sin_pad: f64,
     term_cos_pad: f64,
     term_threshold_cache: f64,
@@ -105,7 +96,6 @@ pub(crate) struct GnomonicBuilder {
 
 #[derive(Clone, Copy)]
 struct GnomonicConstraint {
-    half_plane: HalfPlane,
     neighbor_idx: usize,
     neighbor_slot: u32,
 }
@@ -136,7 +126,6 @@ pub(crate) struct FallbackConstraint {
     pub(crate) normal: DVec3,
     pub(crate) neighbor_idx: usize,
     pub(crate) neighbor_slot: u32,
-    pub(crate) hp_eps: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -335,7 +324,6 @@ impl Topo2DBuilder {
                         builder.generator,
                         constraint.neighbor_idx,
                         constraint.neighbor_slot,
-                        Some(constraint.half_plane.eps as f32),
                         points[constraint.neighbor_idx],
                     )
                 })
@@ -359,7 +347,6 @@ impl FallbackBuilder {
                     builder.generator,
                     constraint.neighbor_idx,
                     constraint.neighbor_slot,
-                    Some(constraint.half_plane.eps as f32),
                     points[constraint.neighbor_idx],
                 )
             })

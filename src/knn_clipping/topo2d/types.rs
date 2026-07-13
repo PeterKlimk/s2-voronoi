@@ -1,6 +1,5 @@
 use crate::fp;
 
-use crate::tolerances::CLIP_EPS_INSIDE;
 pub const MAX_POLY_VERTICES: usize = 24;
 pub type PlaneId = u32;
 pub const INVALID_PLANE_ID: PlaneId = PlaneId::MAX;
@@ -27,57 +26,11 @@ pub struct HalfPlane {
     pub c: f64,
     pub ab2: f64,
     pub plane_idx: PlaneId,
-    pub eps: f64,
 }
 
 impl HalfPlane {
-    /// Spherical-backend constructor: applies the `CLIP_EPS_INSIDE` base
-    /// slack (strict rule; probe-overridable under `p5_shadow`).
+    /// Construct the strict half-plane `a*u + b*v + c >= 0`.
     pub fn new_unnormalized(a: f64, b: f64, c: f64, plane_idx: usize) -> Self {
-        #[cfg(feature = "p5_shadow")]
-        let base = crate::knn_clipping::p5_shadow::clip_eps_override().unwrap_or(CLIP_EPS_INSIDE);
-        #[cfg(not(feature = "p5_shadow"))]
-        let base = CLIP_EPS_INSIDE;
-        Self::new_unnormalized_base_eps(a, b, c, plane_idx, base)
-    }
-
-    /// Construct an unnormalized half-plane with an explicit base
-    /// inside-slack (`eps = base_eps * |n|`). The planar backends pass
-    /// `PLANE_CLIP_EPS_INSIDE` (the keep-bias; see tolerances.rs).
-    pub fn new_unnormalized_base_eps(
-        a: f64,
-        b: f64,
-        c: f64,
-        plane_idx: usize,
-        base_eps: f64,
-    ) -> Self {
-        let ab2: f64 = fp::fma_f64(a, a, b * b);
-        // eps = base_eps * |n|, |n| = sqrt(ab2). The SPHERE uses base_eps = 0
-        // (strict CLIP_EPS_INSIDE), so eps is identically 0.0 and the per-clip
-        // sqrt is pure waste — skip it. The PLANE (PLANE_CLIP_EPS_INSIDE =
-        // 1e-12, the bias) and the p5_shadow override pass nonzero base_eps and
-        // take the exact path. Multiply-by-zero is exact, so this shifts no
-        // clip decision (and avoids a 0.0 * inf = NaN on a huge-normal plane).
-        let eps = if base_eps == 0.0 {
-            0.0
-        } else {
-            base_eps * (ab2 as f32).sqrt() as f64
-        };
-        HalfPlane {
-            a,
-            b,
-            c,
-            ab2,
-            plane_idx: plane_id(plane_idx),
-            eps,
-        }
-    }
-
-    /// Construct an unnormalized half-plane while supplying an external epsilon.
-    ///
-    /// This is intended for edgecheck-derived seed constraints where we want to reuse an
-    /// epsilon computed on the opposite side of the same undirected edge, avoiding an extra sqrt.
-    pub fn new_unnormalized_with_eps(a: f64, b: f64, c: f64, plane_idx: usize, eps: f64) -> Self {
         let ab2: f64 = fp::fma_f64(a, a, b * b);
         HalfPlane {
             a,
@@ -85,7 +38,6 @@ impl HalfPlane {
             c,
             ab2,
             plane_idx: plane_id(plane_idx),
-            eps,
         }
     }
 

@@ -3,11 +3,12 @@ use super::{
     GnomonicConstraint, SphericalPoly, SphericalPolyVertex, Topo2DBuilder,
 };
 use crate::knn_clipping::cell_build::CellFailure;
-use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck, EscalationCtx};
+use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck};
 use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane};
 use glam::Vec3;
 
 impl GnomonicBuilder {
+    #[cfg(test)]
     pub(super) fn clip_with_slot(
         &mut self,
         neighbor_idx: usize,
@@ -23,14 +24,12 @@ impl GnomonicBuilder {
     pub(super) fn commit_clip(
         &mut self,
         clip_result: ClipResult,
-        hp: HalfPlane,
         neighbor_idx: usize,
         neighbor_slot: u32,
     ) -> Result<ClipResult, CellFailure> {
         match clip_result {
             ClipResult::TooManyVertices => {
                 self.constraints.push(GnomonicConstraint {
-                    half_plane: hp,
                     neighbor_idx,
                     neighbor_slot,
                 });
@@ -44,7 +43,6 @@ impl GnomonicBuilder {
             }
             ClipResult::Changed => {
                 self.constraints.push(GnomonicConstraint {
-                    half_plane: hp,
                     neighbor_idx,
                     neighbor_slot,
                 });
@@ -89,73 +87,16 @@ impl GnomonicBuilder {
         let plane_idx = self.constraints.len();
         let hp = HalfPlane::new_unnormalized(a, b, c, plane_idx);
 
-        #[cfg(feature = "p5_shadow")]
-        self.shadow_audit(neighbor_idx, neighbor, &hp);
-
-        let esc = EscalationCtx {
-            generator_raw: self.generator_raw,
-            neighbor_raw: neighbor,
-            #[cfg(feature = "p5_shadow")]
-            neighbor_positions: &self.neighbor_positions_raw,
-            #[cfg(not(feature = "p5_shadow"))]
-            neighbor_positions: &[],
-        };
         let clip_result = if self.use_a {
-            clip_convex(&self.poly_a, &hp, &mut self.poly_b, &esc)
+            clip_convex(&self.poly_a, &hp, &mut self.poly_b)
         } else {
-            clip_convex(&self.poly_b, &hp, &mut self.poly_a, &esc)
+            clip_convex(&self.poly_b, &hp, &mut self.poly_a)
         };
 
         if clip_result == ClipResult::Unchanged {
             return Ok(ClipResult::Unchanged);
         }
-        let committed = self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot);
-        self.sync_neighbor_positions(neighbor);
-        committed
-    }
-
-    /// Shadow audit (P5 stage 1): compare near-margin local decisions
-    /// against the canonical exact predicate before the clip is applied.
-    /// No behavior change; compiled out without the feature.
-    #[cfg(feature = "p5_shadow")]
-    fn shadow_audit(&self, neighbor_idx: usize, neighbor: Vec3, hp: &HalfPlane) {
-        let poly = if self.use_a {
-            &self.poly_a
-        } else {
-            &self.poly_b
-        };
-        crate::knn_clipping::p5_shadow::audit_clip(
-            self.generator_idx,
-            self.generator_raw,
-            neighbor_idx,
-            neighbor,
-            &self
-                .constraints
-                .iter()
-                .map(|constraint| constraint.neighbor_idx)
-                .collect::<Vec<_>>(),
-            &self.neighbor_positions_raw,
-            poly,
-            hp,
-        );
-    }
-
-    /// Keep the raw position list parallel to `neighbor_indices`
-    /// (a `Changed` commit pushed a constraint — including commits that then
-    /// fail with `ClippedAway`, so this runs on the error path too).
-    ///
-    /// Only the `p5_shadow` build reads `neighbor_positions_raw` (production
-    /// keeps escalation dead), so this is a no-op otherwise.
-    #[cfg_attr(not(feature = "p5_shadow"), allow(unused_variables))]
-    #[inline]
-    fn sync_neighbor_positions(&mut self, neighbor: Vec3) {
-        #[cfg(feature = "p5_shadow")]
-        {
-            if self.constraints.len() > self.neighbor_positions_raw.len() {
-                self.neighbor_positions_raw.push(neighbor);
-            }
-            debug_assert_eq!(self.constraints.len(), self.neighbor_positions_raw.len());
-        }
+        self.commit_clip(clip_result, neighbor_idx, neighbor_slot)
     }
 
     /// Shadow/profiling helper: test whether a candidate's bisector would leave
@@ -169,9 +110,8 @@ impl GnomonicBuilder {
         let (a, b, c) = self.bisector_coefficients(neighbor);
         let hp = HalfPlane::new_unnormalized(a, b, c, self.constraints.len());
         let poly = self.current_poly();
-        let neg_eps = -hp.eps;
         for i in 0..poly.len {
-            if hp.signed_dist(poly.us[i], poly.vs[i]) < neg_eps {
+            if hp.signed_dist(poly.us[i], poly.vs[i]) < 0.0 {
                 return false;
             }
         }
@@ -220,7 +160,7 @@ impl GnomonicBuilder {
         let (a, b, c) = self.bisector_coefficients(neighbor);
         let hp = HalfPlane::new_unnormalized(a, b, c, self.constraints.len());
         if hp.ab2 <= 0.0 || !hp.ab2.is_finite() {
-            return hp.c >= -hp.eps;
+            return hp.c >= 0.0;
         }
 
         let angle = b.atan2(a).rem_euclid(std::f64::consts::TAU);
@@ -229,7 +169,7 @@ impl GnomonicBuilder {
         let radius = poly.max_r2.max(0.0).sqrt();
         let support_lb = self.support_min_proj[sector] - SECTOR_PENALTY * radius;
         let hp_len = hp.ab2.sqrt();
-        hp_len * support_lb + hp.c >= -hp.eps
+        hp_len * support_lb + hp.c >= 0.0
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -238,42 +178,24 @@ impl GnomonicBuilder {
         neighbor_idx: usize,
         neighbor_slot: u32,
         neighbor: Vec3,
-        hp_eps: f32,
     ) -> Result<(), CellFailure> {
-        if !hp_eps.is_finite() || hp_eps <= 0.0 {
-            return self.clip_with_slot(neighbor_idx, neighbor_slot, neighbor);
-        }
         if let Some(f) = self.failed {
             return Err(f);
         }
 
         let (a, b, c) = self.bisector_coefficients(neighbor);
         let plane_idx = self.constraints.len();
-        let hp = HalfPlane::new_unnormalized_with_eps(a, b, c, plane_idx, hp_eps as f64);
-
-        #[cfg(feature = "p5_shadow")]
-        self.shadow_audit(neighbor_idx, neighbor, &hp);
-
-        let esc = EscalationCtx {
-            generator_raw: self.generator_raw,
-            neighbor_raw: neighbor,
-            #[cfg(feature = "p5_shadow")]
-            neighbor_positions: &self.neighbor_positions_raw,
-            #[cfg(not(feature = "p5_shadow"))]
-            neighbor_positions: &[],
-        };
+        let hp = HalfPlane::new_unnormalized(a, b, c, plane_idx);
         let clip_result = if self.use_a {
-            clip_convex_edgecheck(&self.poly_a, &hp, &mut self.poly_b, &esc)
+            clip_convex_edgecheck(&self.poly_a, &hp, &mut self.poly_b)
         } else {
-            clip_convex_edgecheck(&self.poly_b, &hp, &mut self.poly_a, &esc)
+            clip_convex_edgecheck(&self.poly_b, &hp, &mut self.poly_a)
         };
 
         if clip_result == ClipResult::Unchanged {
             return Ok(());
         }
-        let committed = self.commit_clip(clip_result, hp, neighbor_idx, neighbor_slot);
-        self.sync_neighbor_positions(neighbor);
-        committed?;
+        self.commit_clip(clip_result, neighbor_idx, neighbor_slot)?;
         Ok(())
     }
 }
@@ -285,8 +207,7 @@ impl GnomonicBuilder {
 const CLIP_DEDUP_LEN2: f64 = 1e-24;
 
 impl FallbackBuilder {
-    /// Inside test for the f64 fallback polygon. (`hp_eps` is gnomonic-chart
-    /// scaled and is retained only as output metadata.)
+    /// Inside test for the f64 fallback polygon.
     fn classify_vertex(constraint: &super::FallbackConstraint, position: glam::DVec3) -> bool {
         constraint.normal.dot(position) >= -Self::ON_PLANE_TOL
     }
@@ -397,13 +318,11 @@ impl FallbackBuilder {
         neighbor_idx: usize,
         neighbor_slot: u32,
         neighbor: Vec3,
-        hp_eps: Option<f32>,
     ) -> ClipResult {
         let constraint = super::FallbackConstraint::from_neighbor(
             self.generator,
             neighbor_idx,
             neighbor_slot,
-            hp_eps,
             neighbor,
         );
         let plane_idx = self.constraints.len();
@@ -451,7 +370,7 @@ impl FallbackBuilder {
         neighbor_slot: u32,
         neighbor: Vec3,
     ) -> Result<ClipResult, CellFailure> {
-        Ok(self.push_constraint(neighbor_idx, neighbor_slot, neighbor, None))
+        Ok(self.push_constraint(neighbor_idx, neighbor_slot, neighbor))
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
@@ -460,14 +379,8 @@ impl FallbackBuilder {
         neighbor_idx: usize,
         neighbor_slot: u32,
         neighbor: Vec3,
-        hp_eps: f32,
     ) -> Result<(), CellFailure> {
-        let replay_hp_eps = if hp_eps.is_finite() && hp_eps > 0.0 {
-            Some(hp_eps)
-        } else {
-            None
-        };
-        self.push_constraint(neighbor_idx, neighbor_slot, neighbor, replay_hp_eps);
+        self.push_constraint(neighbor_idx, neighbor_slot, neighbor);
         Ok(())
     }
 
@@ -573,14 +486,13 @@ impl Topo2DBuilder {
         neighbor_idx: usize,
         neighbor_slot: u32,
         neighbor: Vec3,
-        hp_eps: f32,
     ) -> Result<BuilderStepOutcome, CellFailure> {
         let result = match &mut self.inner {
             BuilderImpl::Gnomonic(builder) => {
-                builder.clip_with_slot_edgecheck(neighbor_idx, neighbor_slot, neighbor, hp_eps)
+                builder.clip_with_slot_edgecheck(neighbor_idx, neighbor_slot, neighbor)
             }
             BuilderImpl::Fallback(builder) => {
-                builder.clip_with_slot_edgecheck(neighbor_idx, neighbor_slot, neighbor, hp_eps)
+                builder.clip_with_slot_edgecheck(neighbor_idx, neighbor_slot, neighbor)
             }
         };
         Self::handle_step_result(result)

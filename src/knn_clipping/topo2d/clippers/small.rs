@@ -50,8 +50,6 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
     debug_assert_eq!(poly.len, N);
     debug_assert!(N >= 3 && N <= super::super::types::MAX_POLY_VERTICES);
 
-    let neg_eps = -hp.eps;
-
     // SAFETY: `[MaybeUninit<f64>; N]` is valid in an uninitialized state.
     let mut dists: [core::mem::MaybeUninit<f64>; N] =
         unsafe { core::mem::MaybeUninit::uninit().assume_init() };
@@ -67,7 +65,7 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
         for i in 0..N {
             let d = hp.signed_dist(*us.add(i), *vs.add(i));
             dists.get_unchecked_mut(i).write(d);
-            let is_inside = d >= neg_eps;
+            let is_inside = d >= 0.0;
             inside[i] = is_inside;
             any_inside |= is_inside;
             all_inside &= is_inside;
@@ -195,16 +193,15 @@ impl SmallDists {
 
 #[inline(always)]
 fn eval_small_dists<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane) -> (SmallDists, u32) {
-    let neg_eps = -hp.eps;
     let (us_chunks, _) = poly.us.as_chunks::<8>();
     let (vs_chunks, _) = poly.vs.as_chunks::<8>();
     if N <= 4 {
         let (dists, mask) =
-            fp::signed_dists_mask4(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps);
+            fp::signed_dists_mask4(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], 0.0);
         (SmallDists::Four(dists), mask)
     } else {
         let (dists, mask) =
-            fp::signed_dists_mask8(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], neg_eps);
+            fp::signed_dists_mask8(hp.a, hp.b, hp.c, &us_chunks[0], &vs_chunks[0], 0.0);
         (SmallDists::Eight(dists), mask)
     }
 }
@@ -216,7 +213,6 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
     poly: &PolyBuffer,
     hp: &HalfPlane,
     out: &mut PolyBuffer,
-    esc: &super::EscalationCtx<'_>,
 ) -> ClipResult {
     debug_assert_eq!(poly.len, N);
     debug_assert!(N >= 3 && N <= 8);
@@ -235,10 +231,6 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
     let (dists, inside_bits) = eval_small_dists::<N>(poly, hp);
     let dists = dists.as_slice();
     let mask = inside_bits & full;
-    // P5 escalation: near-margin lanes are re-decided by the exact
-    // canonical predicate (one abs+compare per live lane on the hot path).
-    let mask = super::maybe_escalate(mask as u64, dists, N, hp, poly, esc) as u32;
-
     if mask == 0 {
         out.len = 0;
         out.max_r2 = 0.0;
@@ -301,8 +293,7 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
         let d_entry_next = *dists.get_unchecked(entry_next);
         let d_exit = *dists.get_unchecked(exit_idx);
         let d_exit_next = *dists.get_unchecked(exit_next);
-        let (t_entry, t_exit) =
-            super::lerp_t_pair(d_entry, d_entry_next, d_exit, d_exit_next, hp.eps);
+        let (t_entry, t_exit) = super::lerp_t_pair(d_entry, d_entry_next, d_exit, d_exit_next);
         let entry_u = fp::fma_f64(
             t_entry,
             *us.add(entry_next) - *us.add(entry_idx),
@@ -352,7 +343,6 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
     poly: &PolyBuffer,
     hp: &HalfPlane,
     out: &mut PolyBuffer,
-    esc: &super::EscalationCtx<'_>,
 ) -> ClipResult {
     debug_assert_eq!(poly.len, N);
     debug_assert!(N >= 3 && N <= 8);
@@ -371,10 +361,6 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
     let (dists, inside_bits) = eval_small_dists::<N>(poly, hp);
     let dists = dists.as_slice();
     let mask = inside_bits & full;
-    // P5 escalation: near-margin lanes are re-decided by the exact
-    // canonical predicate (one abs+compare per live lane on the hot path).
-    let mask = super::maybe_escalate(mask as u64, dists, N, hp, poly, esc) as u32;
-
     if mask == 0 {
         out.len = 0;
         out.max_r2 = 0.0;
@@ -439,8 +425,7 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
         let d_exit = *dists.get_unchecked(exit_idx);
         let d_exit_next = *dists.get_unchecked(exit_next);
 
-        let (t_entry, t_exit) =
-            super::lerp_t_pair(d_entry, d_entry_next, d_exit, d_exit_next, hp.eps);
+        let (t_entry, t_exit) = super::lerp_t_pair(d_entry, d_entry_next, d_exit, d_exit_next);
 
         let entry_u = fp::fma_f64(
             t_entry,

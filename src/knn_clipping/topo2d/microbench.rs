@@ -5,7 +5,7 @@
 
 #[cfg(feature = "microbench")]
 pub fn run_clip_convex_microbench() {
-    use super::clippers::{clip_convex, clip_convex_small_bool, EscalationCtx};
+    use super::clippers::{clip_convex, clip_convex_small_bool};
     use super::types::{plane_id, ClipResult, HalfPlane, PolyBuffer};
     use glam::Vec3;
 
@@ -301,10 +301,9 @@ pub fn run_clip_convex_microbench() {
         #[inline(always)]
         fn mask_for<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane) -> u32 {
             let mut mask: u32 = 0;
-            let neg_eps = -hp.eps;
             for i in 0..N {
                 let d = hp.signed_dist(poly.us[i], poly.vs[i]);
-                mask |= ((d >= neg_eps) as u32) << i;
+                mask |= ((d >= 0.0) as u32) << i;
             }
             mask
         }
@@ -372,12 +371,7 @@ pub fn run_clip_convex_microbench() {
             ClipResult::Changed
         ));
         assert!(matches!(
-            clip_convex(
-                &poly,
-                &hps_changed[0],
-                &mut out_dispatch,
-                &EscalationCtx::disabled()
-            ),
+            clip_convex(&poly, &hps_changed[0], &mut out_dispatch),
             ClipResult::Changed
         ));
 
@@ -392,12 +386,7 @@ pub fn run_clip_convex_microbench() {
             ClipResult::Unchanged
         ));
         assert!(matches!(
-            clip_convex(
-                &poly,
-                &hps_unchanged[0],
-                &mut out_dispatch,
-                &EscalationCtx::disabled()
-            ),
+            clip_convex(&poly, &hps_unchanged[0], &mut out_dispatch),
             ClipResult::Unchanged
         ));
 
@@ -414,7 +403,7 @@ pub fn run_clip_convex_microbench() {
 
             assert!(
                 matches!(
-                    clip_convex(&poly, hp, &mut out_dispatch, &EscalationCtx::disabled()),
+                    clip_convex(&poly, hp, &mut out_dispatch),
                     ClipResult::Changed
                 ),
                 "dispatch unexpectedly not Changed (N={N}, i={i})"
@@ -445,7 +434,7 @@ pub fn run_clip_convex_microbench() {
             let mut s = 0x1234_5678_9ABC_DEF0u64;
             for _ in 0..iters {
                 let hp = &hps[next_idx(&mut s, hp_mask)];
-                let r = clip_convex(poly, hp, out, &EscalationCtx::disabled());
+                let r = clip_convex(poly, hp, out);
                 black_box(r);
             }
         });
@@ -487,7 +476,7 @@ pub fn run_clip_convex_microbench() {
             let mut s = 0x0BAD_F00D_1234_5678u64;
             for _ in 0..iters {
                 let hp = &hps[next_idx(&mut s, hp_mask)];
-                let r = clip_convex(poly, hp, out, &EscalationCtx::disabled());
+                let r = clip_convex(poly, hp, out);
                 black_box(r);
             }
         });
@@ -521,7 +510,7 @@ pub fn run_clip_convex_microbench() {
                 ClipResult::Changed
             ));
             assert!(matches!(
-                clip_convex(&poly, hp, &mut out_dispatch, &EscalationCtx::disabled()),
+                clip_convex(&poly, hp, &mut out_dispatch),
                 ClipResult::Changed
             ));
             assert_same_poly(
@@ -540,7 +529,7 @@ pub fn run_clip_convex_microbench() {
             let mut s = 0x1234_5678_9ABC_DEF0u64;
             for _ in 0..iters {
                 let hp = &hps[next_idx(&mut s, hp_mask)];
-                let result = clip_convex(poly, hp, out, &EscalationCtx::disabled());
+                let result = clip_convex(poly, hp, out);
                 black_box(result);
             }
         });
