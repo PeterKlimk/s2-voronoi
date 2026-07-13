@@ -111,24 +111,7 @@ fn assert_aud_002_voronoi_geometry() {
 }
 
 #[test]
-#[ignore = "AUD-002: default unbounded reconciliation returns strict-valid but materially non-Voronoi geometry"]
 fn aud_002_five_sites_preserve_voronoi_geometry() {
-    assert_aud_002_voronoi_geometry();
-}
-
-#[test]
-fn aud_002_epsilon_bounded_inferred_reconciliation_repairs_geometry() {
-    // This integration-test binary contains no other active environment-based
-    // tests, so the process-global diagnostic knob cannot race another test.
-    std::env::set_var("VORONOI_MESH_RECONCILE_BOUND_INFERRED", "1");
-    struct ClearBound;
-    impl Drop for ClearBound {
-        fn drop(&mut self) {
-            std::env::remove_var("VORONOI_MESH_RECONCILE_BOUND_INFERRED");
-        }
-    }
-    let _clear = ClearBound;
-
     let disabled = VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
     assert!(
         compute_with(&aud_002_points(), disabled).is_err(),

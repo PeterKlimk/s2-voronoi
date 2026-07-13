@@ -721,8 +721,8 @@ mod tests {
         shard0.output.set_cell_count(LocalId::from_usize(0), 3);
 
         shard1.output.vertices = vec![
-            Vec3::new(1.0 + 1.0e-5, 2.0e-6, 0.0),
-            Vec3::new(2.0e-6, 1.0 + 1.0e-5, 0.0),
+            Vec3::new(1.0 + 2.0e-7, 4.0e-8, 0.0),
+            Vec3::new(4.0e-8, 1.0 + 2.0e-7, 0.0),
         ];
         shard1.output.vertex_keys = vec![[0, 1, 4], [0, 1, 5]];
         shard1.output.cell_indices = vec![pack_ref(bin(1), 0), pack_ref(bin(1), 1), DEFERRED];

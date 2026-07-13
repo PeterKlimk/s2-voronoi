@@ -15,7 +15,7 @@ The audit covered:
 - the plain-`compute` validity gate;
 - deserialization and unsafe parallel assembly.
 
-No fixes were made as part of the audit.
+The initial source audit was read-only. Resolutions implemented afterward are tracked inline below.
 
 ## Triage vocabulary
 
@@ -44,7 +44,7 @@ No fixes were made as part of the audit.
 | ID | Priority | Confidence | Finding | Immediate action |
 |---|---:|---|---|---|
 | AUD-001 | P0 | Confirmed | Parallel vectors expose uninitialized elements with premature `set_len` | Replace with `MaybeUninit`/spare-capacity construction |
-| AUD-002 | P0 | Confirmed | Five ordinary sites produce a strictly valid but materially non-Voronoi diagram | Add fixture; prevent unbounded reconciliation unions |
+| AUD-002 | P0 | Resolved | Five ordinary sites produced a strictly valid but materially non-Voronoi diagram | Epsilon-gate inferred endpoint pairing; escalate rejected mismatches |
 | AUD-003 | P1 | Confirmed | Packed pre-/mid-batch termination drops part of `unseen_bound` | Preserve `max(candidate_dot, unseen_bound)` |
 | AUD-004 | P1 | Algorithmically confirmed | Fallback may classify an active constraint `Unchanged` and discard it | Retain tolerant constraints or make tolerance semantics explicit |
 | AUD-005 | P2 | Algorithmically confirmed | Nonzero-epsilon membership and intersection use different boundaries | Interpolate at `d = -eps` or remove unsupported epsilon path |
@@ -102,6 +102,8 @@ Use one of:
 - **Priority:** P0
 - **Class:** geometric correctness
 - **Confidence:** Confirmed public-input counterexample
+- **Status:** Resolved; the default path now epsilon-gates inferred 1x1 endpoint correspondence
+  and routes rejected mismatches to Local3d/error.
 
 The following ordinary random fixture is `random_sphere_points(5, 2)`:
 
@@ -113,7 +115,7 @@ The following ordinary random fixture is `random_sphere_points(5, 2)`:
 4 ( 0.13459253, 0.75951900, -0.63640857)
 ```
 
-Default `compute_with_report` reports strict validity and four
+Before the fix, default `compute_with_report` reported strict validity and four
 `CrossBinThirdsMismatch` records, with no Local3d repair attempt. The returned geometry measures:
 
 ```text
@@ -127,24 +129,32 @@ positive winding, area sum, and the qhull comparison triangle set do not expose 
 is included only as a diagnostic observation, not as correctness evidence; see AUD-013. The
 realized shared vertex/edge geometry is wrong.
 
-The leading cause is the unconditional primary mismatch pairing in
+The leading cause was the unconditional primary mismatch pairing in
 [`src/knn_clipping/edge_reconcile.rs`](../src/knn_clipping/edge_reconcile.rs#L1163-L1205):
 
-- with one shared endpoint, the other endpoints are unioned without a distance bound;
-- with no shared endpoint, the cheaper pairing is chosen and both pairs are unioned without an
+- with one shared endpoint, the other endpoints were unioned without a distance bound;
+- with no shared endpoint, the cheaper pairing was chosen and both pairs were unioned without an
   absolute bound.
 
 `RepairMode::Disabled` returns the same corrupted geometry, confirming that the destructive edit
 occurs in reconciliation before optional Local3d repair.
 
-**Proposed resolution**
+**Implemented resolution**
 
-- Add the five-site fixture before changing reconciliation.
-- Require primary endpoint unions to satisfy an explicit geometric bound, or escalate the affected
-  component to Local3d/error when they do not.
+- The five-site fixture is a normal geometric regression.
+- Primary inferred endpoint unions require every paired endpoint to lie within
+  `RECONCILE_DEGENERATE_LEN_EPS`; otherwise the mismatch remains visible to Local3d/error.
+- Tests distinguish epsilon-close endpoint mismatch acceptance from distant mismatch rejection,
+  including both repair-enabled and fail-loud behavior.
 - Preserve mismatch origin through reconciliation so malformed-key/duplicate-side evidence need
-  not receive the same policy as an ordinary epsilon-scale disagreement.
+  not receive the same policy as an ordinary epsilon-scale disagreement (remaining refinement).
 - Consider a cheap post-reconciliation incident/bisector residual gate for edited components.
+
+The gate-enabled campaign covered 79 isolated cases: 41 uniform cases through 4.5M points and 38
+grid/mega/cocircular/cube/bimodal/Fibonacci cases. Across 17,479 mismatch records and 12,472
+inferred pairings, every campaign pairing was within epsilon; the largest pairing/component
+diameter was `1.712e-7`. The bad fixture's inferred distances were `1.935e-2` to `2.179e-1`.
+Rejected fixture pairings repair in one Local3d round; repair-disabled computation fails loudly.
 
 **Acceptance criteria**
 

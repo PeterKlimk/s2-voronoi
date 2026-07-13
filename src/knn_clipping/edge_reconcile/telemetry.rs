@@ -10,8 +10,8 @@ use std::time::Instant;
 use rustc_hash::FxHashMap;
 
 use super::{
-    collect_merges, dist_sq, edge_segments_for_neighbor_into, inferred_pairing_bound_sq,
-    unpack_edge, vertex_pos, MergeMode, VertexKeys,
+    collect_merges, dist_sq, edge_segments_for_neighbor_into, unpack_edge, vertex_pos, MergeMode,
+    VertexKeys,
 };
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::live_dedup::{
@@ -262,7 +262,6 @@ fn analyze_primary<P: VertexPosition>(
             eps,
             MergeMode::Primary,
             true,
-            inferred_pairing_bound_sq(eps),
         )?;
         stats.simulated_unions = simulated_unions;
         stats.components = component_stats(&mut uf, vertices)?;
@@ -371,13 +370,8 @@ fn vertex_distance_sq<P: VertexPosition>(
 }
 
 fn emit_stats(stats: &PrimaryTelemetry, eps: f32, analysis_ms: f64) {
-    let inferred_gate = if inferred_pairing_bound_sq(eps).is_some() {
-        "epsilon"
-    } else {
-        "unbounded"
-    };
     eprintln!(
-        "RECONCILE_KV status=ok records={} unique_keys={} eps={eps:.9e} inferred_gate={inferred_gate} irregular={} \
+        "RECONCILE_KV status=ok records={} unique_keys={} eps={eps:.9e} inferred_gate=epsilon irregular={} \
          one_sided={} already_matched={} one_shared={} distinct_endpoints={} \
          inferred_count={} inferred_within_eps={} inferred_over_eps={} \
          inferred_min={:.9e} inferred_max={:.9e} inferred_hist={} \

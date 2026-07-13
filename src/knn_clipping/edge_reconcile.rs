@@ -270,31 +270,13 @@ const MAX_REPAIR_ROUNDS: usize = 8;
 /// How a repair pass interprets its records when pairing endpoints.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MergeMode {
-    /// Bookkeeping-driven records (live-dedup detection): full pairing
-    /// semantics, including the forced nearest-endpoint pairing for
-    /// 1-1 segment mismatches.
+    /// Bookkeeping-driven records (live-dedup detection): identity and
+    /// epsilon-bounded nearest-endpoint pairing for 1-1 segment mismatches.
     Primary,
     /// Output-invariant backstop records (synthesized from unpaired
     /// interior edges): eps-bounded proximity unions only — never
     /// force-merge distant vertices on synthesized evidence.
     ProximityOnly,
-}
-
-/// Experimental counterfactual: constrain inferred endpoint correspondence
-/// to the same chord-distance scale used by proximity reconciliation. This is
-/// deliberately opt-in while telemetry establishes whether the policy is a
-/// safe replacement for the legacy unbounded 1x1 pairing behavior.
-fn inferred_pairing_bound_sq(degenerate_len_eps: f32) -> Option<f32> {
-    matches!(
-        std::env::var("VORONOI_MESH_RECONCILE_BOUND_INFERRED"),
-        Ok(value) if value == "1"
-    )
-    .then_some(degenerate_len_eps * degenerate_len_eps)
-}
-
-#[inline]
-fn inferred_pairing_allowed(bound_sq: Option<f32>, pair_distances_sq: &[f32]) -> bool {
-    bound_sq.is_none_or(|limit| pair_distances_sq.iter().all(|&distance| distance <= limit))
 }
 
 /// Reconcile unresolved shared-edge mismatches by merging vertex
@@ -364,7 +346,6 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         }
     };
     let primary_candidates = affected_cells_from_records(edge_records);
-    let inferred_pair_bound_sq = inferred_pairing_bound_sq(degenerate_len_eps);
     run_repair_rounds(
         edge_records,
         vertices,
@@ -374,7 +355,6 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         degenerate_len_eps,
         apply,
         MergeMode::Primary,
-        inferred_pair_bound_sq,
         &mut merge_affected_cells,
     )?;
 
@@ -399,7 +379,6 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
             degenerate_len_eps,
             apply,
             MergeMode::ProximityOnly,
-            None,
             &mut merge_affected_cells,
         )?;
     }
@@ -551,7 +530,6 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
     degenerate_len_eps: f32,
     apply: RepairApply,
     mode: MergeMode,
-    inferred_pair_bound_sq: Option<f32>,
     // Accumulates the cells whose spans a merge apply may rewrite (see
     // `ReconcileResult::merge_affected_cells`); the caller sorts/dedups.
     merge_affected_cells: &mut Vec<u32>,
@@ -583,7 +561,6 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
             degenerate_len_eps,
             mode,
             scan_dup_keys,
-            inferred_pair_bound_sq,
         )?;
         let merged_changed = if merged == 0 {
             false
@@ -1056,7 +1033,6 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
     degenerate_len_eps: f32,
     mode: MergeMode,
     scan_dup_keys: bool,
-    inferred_pair_bound_sq: Option<f32>,
 ) -> Result<(SparseUnionFind, usize), crate::VoronoiError> {
     // Sparse: only the handful of vertices named by defective edges ever
     // enter the structure, so clean and near-clean runs skip the O(V) init
@@ -1205,17 +1181,8 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
             } else {
                 (a0, b0)
             };
-            let distance_sq = if inferred_pair_bound_sq.is_some() {
-                Some(dist_sq(
-                    vertex_pos(vertices, keep_a)?,
-                    vertex_pos(vertices, keep_b)?,
-                ))
-            } else {
-                None
-            };
-            if inferred_pairing_allowed(inferred_pair_bound_sq, distance_sq.as_slice())
-                && uf.union(keep_a, keep_b)
-            {
+            let distance_sq = dist_sq(vertex_pos(vertices, keep_a)?, vertex_pos(vertices, keep_b)?);
+            if distance_sq <= degenerate_len_eps_sq && uf.union(keep_a, keep_b) {
                 merged += 1;
             }
             continue;
@@ -1228,7 +1195,7 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
         let d00 = d00a + d00b;
         let d01 = d01a + d01b;
         if d00 <= d01 {
-            if inferred_pairing_allowed(inferred_pair_bound_sq, &[d00a, d00b]) {
+            if d00a <= degenerate_len_eps_sq && d00b <= degenerate_len_eps_sq {
                 if uf.union(a0, b0) {
                     merged += 1;
                 }
@@ -1236,7 +1203,7 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
                     merged += 1;
                 }
             }
-        } else if inferred_pairing_allowed(inferred_pair_bound_sq, &[d01a, d01b]) {
+        } else if d01a <= degenerate_len_eps_sq && d01b <= degenerate_len_eps_sq {
             if uf.union(a0, b1) {
                 merged += 1;
             }
@@ -1625,14 +1592,16 @@ mod tests {
         assert_eq!(cells_rebuild[0].vertex_count(), 2);
     }
 
-    #[test]
-    fn repair_reconciles_mismatched_shared_edge_endpoints() {
+    fn mismatched_shared_edge_fixture(
+        dx: f32,
+        dy: f32,
+    ) -> (Vec<Vec3>, Vec<VertexKey>, Vec<VoronoiCell>, Vec<u32>) {
         let vertices = vec![
             Vec3::new(1.0, 0.0, 0.0),
             Vec3::new(0.0, 1.0, 0.0),
             Vec3::new(0.0, 0.0, 1.0),
-            Vec3::new(1.0 + 1.0e-5, 2.0e-6, 0.0),
-            Vec3::new(2.0e-6, 1.0 + 1.0e-5, 0.0),
+            Vec3::new(1.0 + dx, dy, 0.0),
+            Vec3::new(dy, 1.0 + dx, 0.0),
             Vec3::new(-1.0, 0.0, 0.0),
         ];
         let vertex_keys = vec![
@@ -1645,6 +1614,54 @@ mod tests {
         ];
         let cells = vec![VoronoiCell::new(0, 3), VoronoiCell::new(3, 3)];
         let cell_indices = vec![0, 1, 2, 3, 4, 5];
+        (vertices, vertex_keys, cells, cell_indices)
+    }
+
+    fn one_shared_endpoint_fixture(
+        dx: f32,
+    ) -> (Vec<Vec3>, Vec<VertexKey>, Vec<VoronoiCell>, Vec<u32>) {
+        let vertices = vec![
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(dx, 1.0, 0.0),
+            Vec3::new(-1.0, 0.0, 0.0),
+        ];
+        let vertex_keys = vec![[0, 1, 2], [0, 1, 3], [0, 2, 3], [0, 1, 4], [1, 4, 5]];
+        let cells = vec![VoronoiCell::new(0, 3), VoronoiCell::new(3, 3)];
+        let cell_indices = vec![0, 1, 2, 0, 3, 4];
+        (vertices, vertex_keys, cells, cell_indices)
+    }
+
+    #[test]
+    fn repair_bounds_one_shared_endpoint_inference() {
+        let records = [edge_record(0, 1)];
+        let eps = crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS;
+
+        for (dx, expected_merges) in [(0.5 * eps, 1), (2.0 * eps, 0)] {
+            let (vertices, vertex_keys, cells, cell_indices) = one_shared_endpoint_fixture(dx);
+            let (_, merges) = collect_merges(
+                &records,
+                &vertices,
+                &cells,
+                &cell_indices,
+                VertexKeys::Flat(&vertex_keys),
+                eps,
+                MergeMode::Primary,
+                false,
+            )
+            .expect("one-shared-endpoint merge collection");
+            assert_eq!(
+                merges, expected_merges,
+                "one-shared-endpoint inference at distance {dx}"
+            );
+        }
+    }
+
+    #[test]
+    fn repair_reconciles_epsilon_close_shared_edge_endpoints() {
+        let (vertices, vertex_keys, cells, cell_indices) =
+            mismatched_shared_edge_fixture(2.0e-7, 4.0e-8);
 
         let seg_a_before =
             edge_segments_for_neighbor(0, 1, &cells, &cell_indices, VertexKeys::Flat(&vertex_keys))
@@ -1662,26 +1679,6 @@ mod tests {
         );
 
         let records = [edge_record(0, 1)];
-        let (_, bounded_merges) = collect_merges(
-            &records,
-            &vertices,
-            &cells,
-            &cell_indices,
-            VertexKeys::Flat(&vertex_keys),
-            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-            MergeMode::Primary,
-            true,
-            Some(
-                crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS
-                    * crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-            ),
-        )
-        .expect("bounded merge collection");
-        assert_eq!(
-            bounded_merges, 0,
-            "experimental epsilon policy must reject this deliberately distant fixture"
-        );
-
         let (changed, _, _, new_cells, new_indices) =
             run_both_backends(&records, &vertices, &cells, &cell_indices, &vertex_keys);
         assert!(
@@ -1712,6 +1709,40 @@ mod tests {
         assert_eq!(
             set_a, set_b,
             "reconciled shared edge should use the same endpoint ids on both sides"
+        );
+    }
+
+    #[test]
+    fn repair_refuses_distant_shared_edge_endpoints() {
+        let (vertices, vertex_keys, cells, cell_indices) =
+            mismatched_shared_edge_fixture(1.0e-5, 2.0e-6);
+        let records = [edge_record(0, 1)];
+
+        let (changed, _, _, _, _) =
+            run_both_backends(&records, &vertices, &cells, &cell_indices, &vertex_keys);
+        assert!(!changed, "distant endpoint identities must not be merged");
+
+        let mut reconciled_cells = cells.clone();
+        let mut reconciled_indices = cell_indices.clone();
+        let result = reconcile_unresolved_edges(
+            &records,
+            &vertices,
+            &mut reconciled_cells,
+            &mut reconciled_indices,
+            VertexKeys::Flat(&vertex_keys),
+            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
+            RepairApply::InPlace,
+            |_, _| false,
+        )
+        .expect("distant mismatch should remain a controlled residual");
+        assert!(
+            !result.residual_pairs.is_empty(),
+            "rejected endpoint pairing must remain visible to repair/error handling"
+        );
+        assert_eq!(
+            cell_sequences(&reconciled_cells, &reconciled_indices),
+            cell_sequences(&cells, &cell_indices),
+            "rejecting a distant pairing must not mutate cell boundaries"
         );
     }
 }
