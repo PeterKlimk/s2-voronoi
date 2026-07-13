@@ -388,8 +388,12 @@ Do not broadly retry these without a materially different design or workload:
   bins and 99.02--99.42% at 96 bins across Fibonacci, uniform, clustered, and mega. Loading the
   current bin's offset once per cell and branching per packed reference nevertheless added about
   0.195% native instructions and 0.25% branches on both Fibonacci and uniform, consistently at both
-  bin counts. A branchless select would still load the indexed offset and cannot realize the intended
-  saving; retain the simple lookup.
+  bin counts. On a quieter machine, 40 rotated 1M Fibonacci rounds with three inner builds measured
+  3.21% worse cycles (95% interval +1.79% to +4.65%, candidate won 6/40); candidate-first and
+  candidate-second subsets independently regressed about 3%. Thirty equivalent uniform rounds were
+  0.93% worse overall (10/30 wins), though an execution-order split remained. Neither run recorded
+  context switches or CPU migrations. A branchless select would still load the indexed offset and
+  cannot realize the intended saving; retain the simple lookup.
 - Per-(ring cell, query) spherical-cap pruning: adjacent caps rarely prune; measured net loss.
 - Packed-to-shell attempted-slot filtering: low duplicate coverage and extra branching.
 - Scalar shell dot-only SIMD: measured 6.5–8.5% slower.
