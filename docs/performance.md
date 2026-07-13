@@ -348,10 +348,6 @@ Assembly/live-dedup swarm backlog (2026-07-13):
   lower transient live heap by about 12 bytes per output vertex. Retain per-shard spans for debug
   bounds checks and measure allocator live bytes as well as peak RSS, since the allocator may retain
   freed pages. This is principally a memory-envelope experiment.
-- **Instrument a same-owner-bin scatter fast path:** using the current cell's known vertex offset can
-  avoid unpack/lookup when a packed vertex owner bin equals the cell bin. Measure the hit fraction by
-  distribution and input ordering before adding a branch; do not reorder cells by bin because that
-  would turn sequential destination writes into scattered writes.
 - **Flatten per-local edge-check queues only as a memory redesign:** `Vec<Vec<EdgeCheck>>` pays a
   `Vec` header per local generator. A node arena plus head/tail arrays could reduce empty-queue
   metadata, but it loses the current zero-copy transfer and may add traversal/copy work. Require
@@ -387,6 +383,13 @@ Do not broadly retry these without a materially different design or workload:
   eight. Packing both into `u32` could reach 28 bytes but would reduce the source-slot range to 24
   bits, adding a representation limit to save only four bytes. Do not trade supported capacity for
   this cold fallback-record layout.
+- A same-owner-bin fast path in final scatter has an exceptionally high hit rate but still loses to
+  the unconditional indexed offset load. Same-owner references accounted for 99.78--99.88% at six
+  bins and 99.02--99.42% at 96 bins across Fibonacci, uniform, clustered, and mega. Loading the
+  current bin's offset once per cell and branching per packed reference nevertheless added about
+  0.195% native instructions and 0.25% branches on both Fibonacci and uniform, consistently at both
+  bin counts. A branchless select would still load the indexed offset and cannot realize the intended
+  saving; retain the simple lookup.
 - Per-(ring cell, query) spherical-cap pruning: adjacent caps rarely prune; measured net loss.
 - Packed-to-shell attempted-slot filtering: low duplicate coverage and extra branching.
 - Scalar shell dot-only SIMD: measured 6.5–8.5% slower.
