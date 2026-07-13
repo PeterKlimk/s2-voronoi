@@ -52,8 +52,8 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 | AUD-007 | P2 | Resolved | Accepted empty serde diagram could panic on first locator query | Reject empty serialized diagrams |
 | AUD-008 | P1 | Resolved | Plain `compute` documentation exceeded its fast-path certificate | Edge-agreement construction certificate + fused Euler; strict validation optional/testing |
 | AUD-009 | P1 | Resolved | Reconciliation merges were not bounded to an epsilon-diameter feature | Transactionally diameter-gate components; escalate rejected chains |
-| AUD-010 | P2 | Policy decision | Fast, fallback, repair, and exact-predicate paths do not share one exact site model or SoS policy | Choose and document the intended model; align paths |
-| AUD-011 | P2 | Under-justified | Termination mathematics is sound, but its complete floating error envelope is empirical | Add a derived error budget and threshold-adjacent tests |
+| AUD-010 | P2 | Resolved | Fast, fallback, repair, and exact-predicate paths do not share one exact site model or SoS policy | Structural production contract chosen; unified exact combinatorics deferred as an optional add-on |
+| AUD-011 | P2 | Active | Termination reserves and the output's geometric-fidelity envelope are empirical | Derive the termination budget and quantify normalized-site angular/ownership error |
 | AUD-012 | P3 | Policy decision | Welding is a strict computed-f32 threshold graph with transitive classes | Pin equality and transitive-chain semantics in docs/tests |
 | AUD-013 | P2 | Resolved | Qhull was not a robust correctness oracle | Removed feature, dependency, public API, comparisons, and oracle-like tooling |
 
@@ -425,6 +425,7 @@ AUD-002 supplies a concrete reason not to leave the primary path unbounded.
 - **Priority:** P2
 - **Class:** mathematical contract
 - **Confidence:** Policy decision backed by confirmed path differences
+- **Status:** Resolved at the contract level; exact unified combinatorics is backburnered
 
 Let `C_i` be the once-rounded canonical f32 site promoted exactly to f64, and let
 `U_i = normalize(C_i)`.
@@ -445,9 +446,7 @@ Current paths use different models:
 Consequently, the full pipeline is not presently the exact Voronoi diagram of one common site set,
 nor is a single global backward-error witness established.
 
-**Decision required**
-
-Choose the desired promise:
+Three possible promises were considered:
 
 1. **Structural only:** valid subdivision or error, with geometry best-effort.
 2. **Forced-sign correctness:** for a chosen canonical site model, every predicate outside a
@@ -455,13 +454,28 @@ Choose the desired promise:
 3. **Global backward stability:** there exists one jointly perturbed site set inside a stated bound
    whose exact diagram is returned.
 
-The audit recommends option 2 as a useful near-term target. Option 3 is substantially stronger and
-would require a global realizability argument, not independent per-predicate tolerance.
+**Decision**
 
-### AUD-011 — Termination error envelope is empirical
+The project chooses option 1 for its production contract: construction-certified edge agreement,
+Euler validity, and measured geometric fidelity. Exact combinatorics for one unified `U_i` model is
+not a core aim and is deferred as a possible future add-on. This matches the public correctness
+documentation; it does not weaken the existing fail-loud topology policy.
+
+The deferred add-on would require more than normalizing the fast-path bisectors. A credible design
+would need filtered exact clipping signs, a re-derived normalized-site kNN termination certificate,
+one exact-zero/SoS policy, exact handling of non-simplicial (>3-generator) vertices, and removal of
+tolerance merging as an authority that can change exact combinatorics. Local3d and plane provenance
+provide useful infrastructure, but repair alone cannot catch a topologically consistent wrong edge
+flip. A future prototype should measure the filter hit rate and fast-path overhead before this is
+reconsidered.
+
+AUD-011 may use `U_i = normalize(f64(C_i))` as a **diagnostic reference for measuring geometric
+error** without implying that the returned combinatorics are the exact diagram of that site set.
+
+### AUD-011 — Numerical and geometric error envelopes are empirical
 
 - **Priority:** P2
-- **Class:** numerical proof gap
+- **Class:** numerical proof and fidelity-measurement gap
 - **Confidence:** Under-justified, not falsified for production defaults
 
 Assuming its input `B` is a true upper bound on every unseen raw f32 dot, the radius-of-security
@@ -483,6 +497,28 @@ The remaining gap is a complete forward-error derivation for:
 - the final signed-distance evaluation.
 
 Current constants are explicitly empirical in [`src/tolerances.rs`](../src/tolerances.rs#L1-L15).
+That proof obligation is distinct from output fidelity: a sound termination certificate can return
+a mesh whose f32 vertex positions and near-degenerate combinatorics still differ slightly from the
+diagnostic normalized-site problem.
+
+The existing internal quality report already samples ownership and measures incident-site and
+shared-edge dot residuals. It should be extended or supplemented to quantify fidelity against the
+diagnostic `U_i` sites in geometrically meaningful units:
+
+- canonicalization displacement from the supplied f32 direction to `U_i`;
+- vertex unit-norm error;
+- incident-site equidistance residual at every or sampled Voronoi vertex;
+- shared-edge cross-track angular error at endpoints and interior samples, normalizing raw dot
+  residual by the bisector normal magnitude;
+- ownership violation margin for samples inside each cell; and
+- separate distributions for clean, reconciled, Local3d-repaired, welded, fallback, and explicitly
+  perturbed outputs.
+
+One unconditional worst-case angular bound is unlikely to be informative near coincident or
+near-cocircular inputs: positional sensitivity diverges as the defining bisector/vertex system
+becomes ill-conditioned. Results should therefore include conditioning buckets (at minimum site
+separation or bisector-normal magnitude) and report percentiles plus maxima rather than hiding the
+unstable regime in one aggregate.
 
 **Acceptance criteria**
 
@@ -490,6 +526,12 @@ Current constants are explicitly empirical in [`src/tolerances.rs`](../src/toler
 - Builder-level tests select candidates at `next_up`/`next_down` of the cached threshold.
 - Cover both signs of `cos(2 theta)`, canonical norm endpoints, elongated polar charts, scalar SIMD,
   and FMA.
+- Define the diagnostic `U_i` computations and angular residual formulas precisely in f64.
+- Run the fidelity measurements across uniform, Fibonacci, clustered, bimodal, cube/seam,
+  cocircular, mega, high-degree, welded, and repaired fixtures, with conditioning buckets.
+- Establish empirical baseline percentiles/maxima and retain focused regressions for any outlier;
+  do not turn empirical thresholds into a mandatory production gate without separate cost and
+  false-positive analysis.
 
 Probe-only negative termination-pad overrides can intentionally violate the certificate and should
 remain outside the production correctness claim or be range-validated.
@@ -578,8 +620,10 @@ degeneracy guarantees, not merely on API convenience or ordinary random fixtures
    fused Euler gate, and full strict validation remains optional/testing.
 7. **AUD-013:** resolved — removed qhull's oracle role and public/backend surface; robust reference
    selection remains gated on AUD-010's canonical-model decision.
-8. **AUD-010/AUD-011/AUD-012:** settle the mathematical policy and derive the remaining numerical
-   envelope.
+8. **AUD-010:** resolved — structural production contract selected; unified exact combinatorics is
+   a deferred optional add-on.
+9. **AUD-011/AUD-012:** derive the remaining numerical/fidelity envelope, then settle welding's
+   exact documented threshold-graph semantics.
 
 ## Cross-cutting test backlog
 
