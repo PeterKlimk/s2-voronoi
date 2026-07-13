@@ -12,6 +12,9 @@
 //!   once at entry (renormalized in f64 and rounded back to f32), which
 //!   absorbs mild off-unit drift; non-finite inputs are rejected with an
 //!   error. Inputs far from unit length are outside the supported contract.
+//!   For f64 world positions on a translated or scaled sphere, use
+//!   [`compute_on_sphere`] with a [`SphereEmbedding`]; that API projects every
+//!   non-center input radially before delegating to this unit-sphere backend.
 //! - At least 4 points are required to form a non-degenerate diagram.
 //!
 //! ## Feature stability
@@ -53,6 +56,7 @@
 pub mod adjacency;
 mod delaunay;
 mod diagram;
+mod embedding;
 mod error;
 mod fp;
 #[allow(clippy::too_many_arguments)] // generated sorting networks
@@ -129,6 +133,12 @@ pub mod convex_hull;
 
 pub use adjacency::CellAdjacency;
 pub use diagram::{CellView, SphericalVoronoi};
+pub use embedding::{
+    compute_on_sphere, compute_on_sphere_with, compute_on_sphere_with_report,
+    EmbeddedComputeOutput, EmbeddedSphereLocator, EmbeddedSphericalVoronoi,
+    IndexedSphereProjectionError, SphereEmbedding, SphereEmbeddingError, SphereProjectionError,
+    WorldVec3Like,
+};
 pub use error::VoronoiError;
 /// EXPERIMENTAL DIAGNOSTIC re-export — see the type's documentation; not
 /// part of the supported API surface (taxonomy may change in patch releases).

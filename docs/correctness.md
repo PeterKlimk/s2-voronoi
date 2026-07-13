@@ -80,3 +80,30 @@ A call resolves to one of:
 Unit-length input is assumed, not enforced (it is canonicalized once at entry, so output
 generators may differ from the raw input by ~1 ulp). Non-finite components are rejected with an
 index-bearing `InvalidInput`.
+
+## Embedded spheres
+
+`compute_on_sphere` extends the coordinate contract, not the geometric model. A validated
+`SphereEmbedding` supplies a finite f64 center and positive radius. Each finite world input other
+than the center is interpreted only by its ray from that center and normalized in f64 before the
+ordinary f32 unit-sphere computation. Consequently:
+
+- off-shell inputs are radially projected rather than rejected;
+- `generator_world` reconstructs the backend's canonicalized shell generator, not the original
+  world input;
+- topology and reports describe the recovered f32 directions, so embeddings that lose direction
+  information during world-coordinate rounding cannot promise bit-identical results;
+- core areas remain steradians, while embedded areas multiply them by `radius²` and may be
+  positive infinity if the mathematical physical area exceeds finite f64 range;
+- `MergeWithin` and the default weld radius retain dimensionless unit-chord semantics;
+- the world centroid is the on-shell spherical/Lloyd target, not an unconstrained Euclidean center
+  of mass.
+
+World-input conversion failures use the original slice index in `InvalidInput`. Once conversion
+succeeds, backend errors and report diagnostics retain the same original-versus-effective index
+domains documented by `compute_with_report`; embedding does not remap those diagnostics.
+
+The embedding constructor ensures shell coordinates are finite, but a very small radius can still
+round away when added to a much larger center. Using f64 transformations cannot recover detail
+already lost in source coordinates. Ellipsoids, sphere fitting, weighted sites, and unequal radial
+site distances are outside this API's contract.

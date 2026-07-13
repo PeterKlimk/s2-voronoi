@@ -30,7 +30,7 @@ features = ["parallel", "glam", "serde"]
 # vanish in any release (see the crate-level docs, "Feature stability").
 default = ["parallel"]
 parallel = ["rayon"]
-glam = []  # Enable UnitVec3Like impl for glam::Vec3
+glam = []  # Enable public glam::Vec3 / DVec3 input interop
 timing = []  # Enable detailed timing instrumentation
 profiling = [] # Profiling helpers (e.g. disable inlining on hot functions)
 microbench = ["dep:rand", "dep:rand_chacha"] # Enable internal microbench harnesses
