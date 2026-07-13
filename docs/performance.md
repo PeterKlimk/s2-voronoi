@@ -329,6 +329,19 @@ agreed; default-bin native cycles improved in all eight pairs, while high-bin re
 mixed to favorable. The private resolver accepts an immutable record slice, making its independence
 from record permutation explicit.
 
+Within-bin forwarded edge checks store the earlier neighbor's 32-bit generator id instead of the
+canonical 64-bit edge key. The destination generator is already known at both consumers, so defect
+records reconstruct the exact key with `pack_edge(destination, neighbor)`; seed clipping also avoids
+decoding the key. This shrinks the hot queue record from 32 to 24 bytes without changing enqueue
+order, matching, diagnostics, or repair inputs. At 1M single-threaded native, retired instructions
+fell 0.189% on Fibonacci and 0.187% on uniform across six agreeing pairs; branches were neutral.
+Generic-target instructions fell 0.178%/0.175% and branches 0.366%/0.326% across four agreeing
+pairs. Longer native cycle matrices remained below the host's decision floor: Fibonacci measured
++0.78% with 10/24 candidate wins and a roughly -1.44% to +3.06% interval; uniform measured +0.45%
+with 5/16 wins and a roughly -0.05% to +0.97% interval. The lossless record shrink and consistent
+structural reductions were retained rather than treating unresolved layout-sensitive cycles as a
+regression.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated

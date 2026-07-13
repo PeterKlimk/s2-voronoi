@@ -68,6 +68,7 @@ impl EdgeScratch {
         shard: &mut ShardState<P>,
         cell_vertices: &[VertexData<P>],
         edge_neighbor_eps: &[f32],
+        cell_idx: u32,
         cell_start: u32,
         bin: BinId,
         keys_verified: bool,
@@ -110,7 +111,7 @@ impl EdgeScratch {
             shard.dedup.push_edge_check(
                 entry.local_b,
                 EdgeCheck {
-                    key: entry.key,
+                    neighbor_idx: cell_idx,
                     hp_eps,
                     thirds,
                     indices,
@@ -287,6 +288,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
         shard,
         &output_buffer.vertices,
         &output_buffer.edge_neighbor_eps,
+        cell_idx,
         cell_start,
         bin,
         output_buffer.edge_keys_verified,

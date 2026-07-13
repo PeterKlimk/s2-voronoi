@@ -21,7 +21,6 @@ pub use cell_output::{CellBuildError, CellFailure, CellOutputBuffer, VertexData,
 pub(crate) use binning::assign_bins;
 pub(crate) use binning::BinAssignment;
 pub(crate) use binning::PackedLayoutCapacityError;
-pub(crate) use edge_checks::unpack_edge_key;
 pub(crate) use emit::{checked_local_id, checked_u32, emit_cell_output, EdgeScratch, ShardContext};
 pub(crate) use packed::pack_edge;
 pub(crate) use shard::ShardState;

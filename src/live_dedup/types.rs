@@ -183,7 +183,11 @@ pub(crate) struct UnresolvedEdgeMismatch {
 
 #[derive(Clone, Copy)]
 pub(crate) struct EdgeCheck {
-    pub(crate) key: EdgeKey,
+    /// The earlier same-bin generator that forwarded this check. The
+    /// destination generator is known by every consumer, so the canonical
+    /// edge key is losslessly reconstructed with `pack_edge(destination,
+    /// neighbor_idx)` when a diagnostic record needs it.
+    pub(crate) neighbor_idx: u32,
     /// Half-plane epsilon to use when clipping this neighbor as an edgecheck-derived seed.
     ///
     /// This is stored to avoid recomputing a normalization-dependent epsilon (sqrt) in the hot
@@ -199,6 +203,8 @@ pub(crate) struct EdgeCheck {
     pub(super) thirds: [u32; 2],
     pub(super) indices: [u32; 2],
 }
+
+const _: () = assert!(std::mem::size_of::<EdgeCheck>() == 24);
 
 #[derive(Clone, Copy)]
 pub(super) struct EdgeCheckOverflow {

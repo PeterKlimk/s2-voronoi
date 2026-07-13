@@ -16,9 +16,15 @@ use crate::timing::Timer;
 use std::time::Duration;
 
 #[inline]
-pub(crate) fn unpack_edge_key(key: EdgeKey) -> (u32, u32) {
+pub(super) fn unpack_edge_key(key: EdgeKey) -> (u32, u32) {
     let v: u64 = key.into();
     (v as u32, (v >> 32) as u32)
+}
+
+/// Recover the canonical key omitted from the compact in-bin check record.
+#[inline]
+fn edge_check_key(cell_idx: u32, check: EdgeCheck) -> EdgeKey {
+    pack_edge(cell_idx, check.neighbor_idx)
 }
 
 /// Sentinel "third" for an endpoint whose vertex key does not name both edge
@@ -301,7 +307,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
             // Search Vec for matching check (cache-friendly sequential access)
             let found = incoming_checks
                 .iter()
-                .position(|check| check.key == edge_key)
+                .position(|check| check.neighbor_idx == neighbor)
                 .map(|idx| (idx, incoming_checks[idx]));
 
             if let Some((found_idx, check)) = found {
@@ -389,7 +395,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
             };
             if !consumed {
                 shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
-                    key: check.key,
+                    key: edge_check_key(cell_idx, *check),
                     origin: UnresolvedEdgeOrigin::InBinUnconsumedCheck,
                 });
             }
@@ -622,5 +628,17 @@ mod tests {
             UnresolvedEdgeOrigin::EndpointKeyMismatch
         );
         assert_eq!(unresolved[0].key, key);
+    }
+
+    #[test]
+    fn compact_check_reconstructs_canonical_key() {
+        let check = EdgeCheck {
+            neighbor_idx: 19,
+            hp_eps: 0.0,
+            thirds: [3, 5],
+            indices: [7, 11],
+        };
+        assert_eq!(edge_check_key(7, check), pack_edge(7, 19));
+        assert_eq!(edge_check_key(23, check), pack_edge(19, 23));
     }
 }

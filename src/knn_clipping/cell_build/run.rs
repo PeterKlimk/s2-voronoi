@@ -12,7 +12,7 @@ use crate::knn_clipping::topo2d::types::MAX_POLY_VERTICES;
 use crate::knn_clipping::topo2d::{
     BuilderClipOutcome, BuilderFallbackRequest, BuilderFallbackTrigger, BuilderStepOutcome,
 };
-use crate::live_dedup::{unpack_edge_key, EdgeCheck};
+use crate::live_dedup::EdgeCheck;
 use crate::policy::PackedNeighborPolicy;
 
 use super::{CellBuildError, CellFailure, CellOutputBuffer};
@@ -420,19 +420,12 @@ struct StreamPhase<'x> {
     force_fallback_after_neighbors_processed: &'x mut Option<usize>,
 }
 
-#[inline(always)]
-fn edgecheck_neighbor_idx(cell_idx: u32, key: crate::live_dedup::EdgeKey) -> usize {
-    let (a, b) = unpack_edge_key(key);
-    (if a == cell_idx { b } else { a }) as usize
-}
-
 /// Phase 1: clip edge-check seed constraints forwarded by earlier same-bin
 /// cells (see "The stitching invariant" in docs/architecture.md).
 fn clip_seed_neighbors(
     ctx: &mut CellBuildContext,
     points: &[Vec3],
     grid: &crate::cube_grid::CubeMapGrid,
-    cell_idx: u32,
     pos_slots: &[crate::cube_grid::SlotPoint],
     incoming_checks: &[EdgeCheck],
     trace: &mut BuildTrace,
@@ -443,7 +436,7 @@ fn clip_seed_neighbors(
     }
     let t_clip = crate::knn_clipping::timing::Timer::start();
     for check in incoming_checks {
-        let neighbor_idx = edgecheck_neighbor_idx(cell_idx, check.key);
+        let neighbor_idx = check.neighbor_idx as usize;
         let neighbor_slot = grid.point_index_to_slot(neighbor_idx);
         trace.last_neighbor_idx = Some(neighbor_idx);
         trace.last_neighbor_slot = Some(neighbor_slot);
@@ -807,7 +800,6 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         ctx,
         points,
         grid,
-        generator_idx as u32,
         pos_slots,
         request.incoming_checks,
         &mut trace,
