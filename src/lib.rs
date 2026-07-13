@@ -170,13 +170,18 @@ pub enum PreprocessMode {
     ///
     /// The radius (~1.4e-6 chord distance) is derived from f32 input rounding
     /// with a measured safety margin; welding below it is required for graph
-    /// validity, not input hygiene. Welded generators share one cell in the
-    /// returned diagram (see [`SphericalVoronoi::weld_map`]).
+    /// validity, not input hygiene. Pairs are classified by a strict computed
+    /// f32 squared-distance comparison; equality is not welded. Connected
+    /// components are welded transitively to their lowest original index, so
+    /// a chain's endpoints need not lie within one radius. Welded generators
+    /// share one cell in the returned diagram (see
+    /// [`SphericalVoronoi::weld_map`]).
     Weld,
     /// Weld generators within an explicit Euclidean (chord) threshold.
     ///
     /// The threshold must be finite, positive, and large enough that its
-    /// squared `f32` value is nonzero.
+    /// squared `f32` value is nonzero. It uses the same strict, transitive
+    /// threshold-graph semantics as [`PreprocessMode::Weld`].
     MergeWithin(f32),
 }
 

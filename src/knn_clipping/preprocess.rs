@@ -101,24 +101,15 @@ fn identity_result(points: &[Vec3]) -> MergeResult {
     }
 }
 
-/// Find and weld coincident (near-identical) generators.
-///
-/// Strict radius-based welding: any pair within `threshold` ends up in the
-/// same weld class. Welding is transitive (a chain of sub-threshold steps
-/// collapses into one class). The class representative is the smallest
-/// original index, and representatives keep their original relative order in
-/// `effective_points`.
-pub fn try_merge_close_points(points: &[Vec3], threshold: f32) -> Result<MergeResult, usize> {
+/// Collect the strict computed-f32 threshold-graph edges with the standalone
+/// quantized-key detector.
+pub(crate) fn try_collect_close_pairs(
+    points: &[Vec3],
+    threshold: f32,
+) -> Result<Vec<(u32, u32)>, usize> {
     let n = points.len();
-    if n == 0 {
-        return Ok(MergeResult {
-            effective_points: Vec::new(),
-            original_to_effective: Vec::new(),
-            num_merged: 0,
-        });
-    }
-    if threshold <= 0.0 {
-        return Ok(identity_result(points));
+    if n == 0 || threshold <= 0.0 {
+        return Ok(Vec::new());
     }
 
     let grid = WeldGrid::new(threshold);
@@ -156,7 +147,7 @@ pub fn try_merge_close_points(points: &[Vec3], threshold: f32) -> Result<MergeRe
                 let ai = keyed[i].1;
                 for &(_, aj) in &keyed[(i + 1)..run_end] {
                     let dist_sq = (points[ai as usize] - points[aj as usize]).length_squared();
-                    if dist_sq < threshold_sq {
+                    if crate::cube_grid::is_weld_pair(dist_sq, threshold_sq) {
                         if pairs.len() == crate::cube_grid::MAX_RETAINED_WELD_PAIRS {
                             return Err(crate::cube_grid::MAX_RETAINED_WELD_PAIRS + 1);
                         }
@@ -193,7 +184,7 @@ pub fn try_merge_close_points(points: &[Vec3], threshold: f32) -> Result<MergeRe
                         break;
                     }
                     let dist_sq = (p - points[other as usize]).length_squared();
-                    if dist_sq < threshold_sq {
+                    if crate::cube_grid::is_weld_pair(dist_sq, threshold_sq) {
                         if retained
                             .fetch_update(Relaxed, Relaxed, |n| {
                                 (n < crate::cube_grid::MAX_RETAINED_WELD_PAIRS).then_some(n + 1)
@@ -229,6 +220,18 @@ pub fn try_merge_close_points(points: &[Vec3], threshold: f32) -> Result<MergeRe
         return Err(crate::cube_grid::MAX_RETAINED_WELD_PAIRS + 1);
     }
 
+    Ok(pairs)
+}
+
+/// Find and weld coincident (near-identical) generators.
+///
+/// An edge exists when the computed f32 squared distance is strictly less
+/// than the computed f32 squared `threshold`. Weld classes are transitive
+/// connected components of that graph. The class representative is the
+/// smallest original index, and representatives keep their original relative
+/// order in `effective_points`.
+pub fn try_merge_close_points(points: &[Vec3], threshold: f32) -> Result<MergeResult, usize> {
+    let pairs = try_collect_close_pairs(points, threshold)?;
     if pairs.is_empty() {
         return Ok(identity_result(points));
     }
@@ -321,9 +324,83 @@ pub(crate) fn merge_result_from_pairs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
+    use std::collections::BTreeSet;
 
     fn unit(x: f32, y: f32, z: f32) -> Vec3 {
         Vec3::new(x, y, z).normalize()
+    }
+
+    fn brute_force_pairs(points: &[Vec3], threshold: f32) -> BTreeSet<(u32, u32)> {
+        let radius_squared = threshold * threshold;
+        let mut pairs = BTreeSet::new();
+        for i in 0..points.len() {
+            for j in (i + 1)..points.len() {
+                let distance_squared = (points[i] - points[j]).length_squared();
+                if distance_squared < radius_squared {
+                    pairs.insert((i as u32, j as u32));
+                }
+            }
+        }
+        pairs
+    }
+
+    fn standalone_pair_set(points: &[Vec3], threshold: f32) -> BTreeSet<(u32, u32)> {
+        try_collect_close_pairs(points, threshold)
+            .unwrap()
+            .into_iter()
+            .map(|(a, b)| (a.min(b), a.max(b)))
+            .collect()
+    }
+
+    fn random_unit(rng: &mut ChaCha8Rng) -> Vec3 {
+        loop {
+            let p = Vec3::new(
+                rng.gen_range(-1.0f32..1.0),
+                rng.gen_range(-1.0f32..1.0),
+                rng.gen_range(-1.0f32..1.0),
+            );
+            if p.length_squared() > 1e-6 {
+                return p.normalize();
+            }
+        }
+    }
+
+    #[test]
+    fn weld_radius_comparison_is_strict_at_adjacent_values() {
+        let distance = 0.5f32;
+        let points = [Vec3::ZERO, Vec3::new(distance, 0.0, 0.0)];
+        assert!(standalone_pair_set(&points, distance.next_down()).is_empty());
+        assert!(standalone_pair_set(&points, distance).is_empty());
+        assert_eq!(
+            standalone_pair_set(&points, distance.next_up()),
+            BTreeSet::from([(0, 1)])
+        );
+    }
+
+    #[test]
+    fn standalone_detector_matches_computed_f32_oracle() {
+        for threshold in [crate::tolerances::weld_radius(), 1e-3f32] {
+            for seed in [1u64, 7, 42] {
+                let mut rng = ChaCha8Rng::seed_from_u64(seed);
+                let mut points: Vec<Vec3> = (0..240).map(|_| random_unit(&mut rng)).collect();
+                for i in 0..30 {
+                    let base = points[i * 7];
+                    let direction = random_unit(&mut rng);
+                    points.push((base + direction * (0.4 * threshold)).normalize());
+                    points.push((base + direction * (1.4 * threshold)).normalize());
+                }
+
+                let expected = brute_force_pairs(&points, threshold);
+                assert!(!expected.is_empty(), "fixture has no pairs");
+                assert_eq!(
+                    standalone_pair_set(&points, threshold),
+                    expected,
+                    "threshold={threshold:e} seed={seed}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -392,6 +469,26 @@ mod tests {
         let eff = result.original_to_effective[0];
         assert_eq!(result.original_to_effective[1], eff);
         assert_eq!(result.original_to_effective[2], eff);
+    }
+
+    #[test]
+    fn long_weld_chain_uses_minimum_index_without_a_diameter_bound() {
+        let threshold = 1e-3f32;
+        let step = 0.75 * threshold;
+        let mut points = vec![Vec3::new(-0.5, 0.5, 0.5)];
+        // Put an interior chain point first: the representative policy is
+        // original index, not a geometric endpoint or centroid choice.
+        points.push(Vec3::new(5.0 * step, 0.5, 0.5));
+        points.extend((0..12).map(|i| Vec3::new(i as f32 * step, 0.5, 0.5)));
+
+        let result = merge_close_points(&points, threshold);
+        assert_eq!(result.num_merged, 12);
+        let representative = result.original_to_effective[1];
+        for &mapped in &result.original_to_effective[1..] {
+            assert_eq!(mapped, representative);
+        }
+        assert_eq!(result.effective_points[representative as usize], points[1]);
+        assert!((points[2] - points[13]).length() > 8.0 * threshold);
     }
 
     #[test]

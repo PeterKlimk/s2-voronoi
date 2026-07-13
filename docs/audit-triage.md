@@ -54,7 +54,7 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 | AUD-009 | P1 | Resolved | Reconciliation merges were not bounded to an epsilon-diameter feature | Transactionally diameter-gate components; escalate rejected chains |
 | AUD-010 | P2 | Resolved | Fast, fallback, repair, and exact-predicate paths do not share one exact site model or SoS policy | Structural production contract chosen; unified exact combinatorics deferred as an optional add-on |
 | AUD-011 | P2 | Active; theorem/frontiers audited, fidelity measured | Termination reserves remain empirical; normalized-site geometric fidelity now has a campaign baseline | Derive the remaining termination budget; retain the boundary tests and fidelity campaign |
-| AUD-012 | P3 | Policy decision | Welding is a strict computed-f32 threshold graph with transitive classes | Pin equality and transitive-chain semantics in docs/tests |
+| AUD-012 | P3 | Resolved | Welding is intentionally a strict computed-f32 threshold graph with transitive classes | Retain boundary and detector-oracle tests |
 | AUD-013 | P2 | Resolved | Qhull was not a robust correctness oracle | Removed feature, dependency, public API, comparisons, and oracle-like tooling |
 | AUD-014 | P1 | Resolved | Local3d lost the hull-face sign and could mint the antipodal Voronoi vertex | Carry the oriented support normal through sorted-triple repair fans |
 
@@ -626,7 +626,7 @@ this clean baseline was recorded. Sixteen runs welded at least one pair, for 121
 **Acceptance status**
 
 - [ ] Written forward-error budget for every termination reserve.
-- [ ] Threshold-neighbor tests across sign, norm endpoints, polar charts, SIMD/scalar, and FMA.
+- [x] Threshold-neighbor tests across sign, norm endpoints, polar charts, SIMD/scalar, and FMA.
 - [x] Precise diagnostic `U_i` angular formulas and conditioning buckets.
 - [x] Retained multi-distribution campaign with strict-valid/no-residual prerequisites.
 - [x] Empirical maxima and per-case p99 baseline, separated from explicit perturbation policy.
@@ -638,6 +638,7 @@ this clean baseline was recorded. Sixteen runs welded at least one pair, for 121
 - **Priority:** P3
 - **Class:** documented policy precision
 - **Confidence:** Confirmed implementation behavior
+- **Status:** Resolved; the threshold-graph quotient is intentional and pinned in public docs/tests
 
 Welding compares computed f32 squared distance with computed f32 squared radius using strict `<`.
 Exact computed equality is not welded. Classes are connected components of the strict-threshold
@@ -652,9 +653,26 @@ Therefore:
 
 **Acceptance criteria**
 
-- Pin `next_down`, equality, and `next_up` behavior around both radius and squared radius.
-- Differentially compare grid and standalone detectors against the exact implemented f32 oracle.
-- Document whether transitive threshold-graph quotient semantics are intentional.
+- [x] Pin `next_down`, equality, and `next_up` behavior around both radius and squared radius.
+- [x] Differentially compare grid and standalone detectors against the exact implemented f32
+  oracle.
+- [x] Document that transitive threshold-graph quotient semantics are intentional.
+
+**Decision and implemented resolution**
+
+The existing policy is retained. Welding and reconciliation serve different purposes:
+reconciliation edits realized output geometry and therefore diameter-gates positional components,
+whereas preprocessing defines the effective input by quotienting every detected sub-threshold
+pair. Splitting a welding component to impose a diameter bound would either leave a detected
+near-coincident pair in separate classes or require an additional arbitrary partition policy,
+both of which work against preprocessing's fail-avoidance role.
+
+Both detectors now share one inlined strict squared-distance predicate. Tests pin adjacent radius
+and squared-radius values, compare the grid-integrated and standalone pair sets with the exact
+computed-f32 brute-force oracle, and retain a long-chain regression proving transitivity, unbounded
+endpoint span, and lowest-index representation. The public `PreprocessMode` docs and correctness
+contract state that this is a quotient policy rather than a bounded perturbation claim. These
+changes add no production validation pass or fast-path work beyond the already-inlined comparison.
 
 ### AUD-013 — Retire qhull as a correctness reference
 
@@ -751,8 +769,9 @@ had `6.866e-8 rad` maximum sampled edge cross-track error.
 8. **AUD-010:** resolved — structural production contract selected; unified exact combinatorics is
    a deferred optional add-on.
 9. **AUD-014:** resolved — preserved Local3d's oriented hull-face circumcenter through minting.
-10. **AUD-011/AUD-012:** derive the remaining termination envelope, retain the measured fidelity
-    baseline, then settle welding's exact documented threshold-graph semantics.
+10. **AUD-012:** resolved — retained and pinned strict computed-f32 transitive welding semantics.
+11. **AUD-011:** derive the remaining termination envelope and retain the measured fidelity
+    baseline and boundary coverage.
 
 ## Cross-cutting test backlog
 

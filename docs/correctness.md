@@ -54,6 +54,13 @@ contains sub-radius pairs by birthday statistics around the low millions of poin
 output is normal at scale, not exceptional. Callers who certify their own separation can disable
 it (`PreprocessMode::Disabled`); `MergeWithin(r)` sets an explicit radius.
 
+Precisely, welding forms a graph whose edges satisfy
+`computed_f32_distance_squared < computed_f32_radius_squared`. Exact computed equality is not an
+edge. Weld classes are the graph's transitive connected components, represented by their lowest
+original input index. This is an explicit quotient policy, not a promise that every class member
+lies within one radius of its representative: a chain of individually sub-radius pairs can have
+endpoints much farther apart. The report and `weld_map()` expose the resulting quotient.
+
 ## Degenerate input
 
 Pure great-circle (coplanar) input is rank-deficient: its exact diagram is a lower-dimensional

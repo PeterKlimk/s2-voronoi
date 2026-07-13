@@ -16,6 +16,12 @@ use super::{cell_to_face_ij, CubeMapGrid};
 
 pub(crate) const MAX_RETAINED_WELD_PAIRS: usize = 1 << 20;
 
+/// The exact computed-f32 edge predicate for the welding threshold graph.
+#[inline(always)]
+pub(crate) fn is_weld_pair(distance_squared: f32, radius_squared: f32) -> bool {
+    distance_squared < radius_squared
+}
+
 impl CubeMapGrid {
     /// Conservative upper bound on a weld threshold detectable through 3x3
     /// cell adjacency: a sub-threshold pair must never span non-adjacent
@@ -91,7 +97,7 @@ impl CubeMapGrid {
                     let dx = xi - self.cell_points_x[j];
                     let dy = yi - self.cell_points_y[j];
                     let dz = zi - self.cell_points_z[j];
-                    if dx * dx + dy * dy + dz * dz < thr_sq
+                    if is_weld_pair(dx * dx + dy * dy + dz * dz, thr_sq)
                         && !push(out, self.point_indices[i], self.point_indices[j])
                     {
                         return;
@@ -130,7 +136,7 @@ impl CubeMapGrid {
                         let dx = p.x - self.cell_points_x[j];
                         let dy = p.y - self.cell_points_y[j];
                         let dz = p.z - self.cell_points_z[j];
-                        if dx * dx + dy * dy + dz * dz < thr_sq
+                        if is_weld_pair(dx * dx + dy * dy + dz * dz, thr_sq)
                             && !push(out, self.point_indices[i], self.point_indices[j])
                         {
                             return;
@@ -323,6 +329,14 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn squared_weld_predicate_is_strict_at_adjacent_values() {
+        let radius_squared = 0.25f32;
+        assert!(is_weld_pair(radius_squared.next_down(), radius_squared));
+        assert!(!is_weld_pair(radius_squared, radius_squared));
+        assert!(!is_weld_pair(radius_squared.next_up(), radius_squared));
     }
 
     /// Grid detection must match brute force exactly, across resolutions
