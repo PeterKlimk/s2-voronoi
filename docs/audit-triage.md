@@ -55,6 +55,7 @@ No fixes were made as part of the audit.
 | AUD-010 | P2 | Policy decision | Fast, fallback, repair, and exact-predicate paths do not share one exact site model or SoS policy | Choose and document the intended model; align paths |
 | AUD-011 | P2 | Under-justified | Termination mathematics is sound, but its complete floating error envelope is empirical | Add a derived error budget and threshold-adjacent tests |
 | AUD-012 | P3 | Policy decision | Welding is a strict computed-f32 threshold graph with transitive classes | Pin equality and transitive-chain semantics in docs/tests |
+| AUD-013 | P2 | Policy decision | Qhull is not a robust correctness oracle and should be retired | Replace it with a robust reference and remove oracle-like uses |
 
 ## Confirmed defects
 
@@ -122,8 +123,9 @@ absolute area-sum error            4.58e-7
 ```
 
 The error is far outside f32 rounding or a plausible near-cocircular ambiguity band. Topology,
-positive winding, area sum, and even the qhull Delaunay triangle set do not expose it. The realized
-shared vertex/edge geometry is wrong.
+positive winding, area sum, and the qhull comparison triangle set do not expose it. Qhull agreement
+is included only as a diagnostic observation, not as correctness evidence; see AUD-013. The
+realized shared vertex/edge geometry is wrong.
 
 The leading cause is the unconditional primary mismatch pairing in
 [`src/knn_clipping/edge_reconcile.rs`](../src/knn_clipping/edge_reconcile.rs#L1163-L1205):
@@ -457,6 +459,53 @@ Therefore:
 - Differentially compare grid and standalone detectors against the exact implemented f32 oracle.
 - Document whether transitive threshold-graph quotient semantics are intentional.
 
+### AUD-013 — Retire qhull as a correctness reference
+
+- **Priority:** P2
+- **Class:** reference implementation and feature policy
+- **Confidence:** Policy decision informed by prior robustness failures
+
+The `qhull` backend is useful for ordinary-case comparison, but it is not a source of truth for this
+audit. Qhull is not robust in the extreme, nearly degenerate, or exactly degenerate regimes where
+the production backend is most difficult to validate. Agreement cannot prove correctness, and a
+disagreement cannot be attributed to the production backend without an independent robust witness.
+
+This distinction matters because a non-robust reference can make a correct implementation look
+wrong, bless a shared or coincident failure, or conceal that the compared programs solve different
+degeneracy policies. It has produced misleading conclusions in prior work on this crate.
+
+The current repository already describes qhull as a comparison/testing backend rather than the
+primary production path. The remaining risk is treating its results as an oracle in correctness
+tests, audit harnesses, or issue triage. It is also exposed as a supported Cargo feature and public
+API, which gives the diagnostic backend more permanence than its trust level warrants.
+
+**Proposed resolution**
+
+1. Stop using qhull agreement as acceptance evidence. Existing comparisons should be labelled
+   diagnostic and limited to well-conditioned fixtures.
+2. Select a robust replacement capable of evaluating the canonical spherical problem with exact or
+   adaptive predicates over the normalized f32 inputs.
+3. Require an explicit, deterministic policy for exact coplanar/cocircular predicates. A robust
+   sign without compatible SoS semantics is not a complete reference.
+4. Compare combinatorial identities—hull facets, Delaunay triples, adjacency, and robust predicate
+   signs—rather than relying primarily on floating vertex coordinates.
+5. Retire the public qhull feature/API, or move it to clearly unsupported diagnostic tooling until
+   it can be removed without misleading users.
+
+**Replacement acceptance criteria**
+
+- Exact or certified-adaptive predicate signs for the canonical site representation.
+- Explicit handling of exact zero predicates and the crate's selected SoS policy.
+- No silent topology production after a failed/uncertain predicate.
+- A small-N independent brute-force reference to cross-check the replacement itself.
+- Adversarial coverage for near-cocircular groups, exact cocircular cliques, great circles,
+  near-coincident sites, cube seams, and large dynamic-range predicate margins.
+- Differential results classify ambiguity and reference failure instead of assuming one side is
+  correct.
+
+Replacement library selection is intentionally left open. It should be evaluated on predicate and
+degeneracy guarantees, not merely on API convenience or ordinary random fixtures.
+
 ## Recommended implementation sequence
 
 1. **AUD-001:** remove unsafe-precondition violations.
@@ -465,7 +514,8 @@ Therefore:
 4. **AUD-004/AUD-005:** make fallback and epsilon clipping internally consistent.
 5. **AUD-006/AUD-007:** tighten accepted serialized representations.
 6. **AUD-008:** make the plain success gate match the advertised strict-validity contract.
-7. **AUD-010/AUD-011/AUD-012:** settle the mathematical policy and derive the remaining numerical
+7. **AUD-013:** remove qhull's oracle role and choose a robust reference strategy.
+8. **AUD-010/AUD-011/AUD-012:** settle the mathematical policy and derive the remaining numerical
    envelope.
 
 ## Cross-cutting test backlog
@@ -479,7 +529,9 @@ Therefore:
 - Compare semantic topology across thread counts, bin counts, default SIMD, scalar SIMD, and FMA.
 - Keep welding/joggle cases in separate expected-policy buckets rather than treating them as ordinary
   geometric errors.
-- Use exact or robust references only after excluding or explicitly resolving exact degeneracies.
+- Treat qhull as an ordinary-case diagnostic only, never as the deciding oracle.
+- Use exact or certified-robust references only after excluding or explicitly resolving exact
+  degeneracies under the same SoS policy.
 
 ## Audit validation performed
 
@@ -495,5 +547,7 @@ cargo test --release --test escalate_local \
   local_escalation_makes_mega_strictly_valid -- --nocapture
 ```
 
-All of those targeted existing tests passed. Temporary read-only audit harnesses reproduced
-AUD-002, AUD-003, AUD-006, and AUD-007; those harnesses were not retained in the repository.
+All of those targeted existing tests passed. The qhull-enabled results are recorded only as
+diagnostic comparisons, not correctness certification. Temporary read-only audit harnesses
+reproduced AUD-002, AUD-003, AUD-006, and AUD-007; those harnesses were not retained in the
+repository.
