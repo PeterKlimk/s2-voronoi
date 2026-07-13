@@ -1,8 +1,22 @@
 use std::time::Duration;
 
 use crate::cube_grid::{
-    DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream,
+    DirectedNeighborBatch, DirectedNeighborBatchSource, DirectedNeighborFrontier,
+    DirectedNeighborStream,
 };
+
+/// Combine the best known dot in an exact batch remainder with the bound for
+/// everything after that batch. Neither set is allowed to disappear from the
+/// termination certificate, regardless of how the batch was produced.
+#[inline(always)]
+pub(super) fn complete_exact_bound(batch_remainder_bound: f32, unseen_bound: f32) -> f32 {
+    batch_remainder_bound.max(unseen_bound)
+}
+
+#[inline(always)]
+fn exact_frontier_bound(batch: DirectedNeighborBatch) -> f32 {
+    complete_exact_bound(batch.first_dot, batch.unseen_bound)
+}
 
 #[inline]
 pub(super) fn probe_frontier<'a, 'm, 'p, 'g>(
@@ -49,15 +63,8 @@ pub(super) fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
     match frontier {
         DirectedNeighborFrontier::ExactBatch(batch) => {
             // Termination before consuming a batch must bound everything
-            // unseen: the batch itself plus what lies beyond. Packed batches
-            // dominate their unseen set, so first_dot suffices; shell layers
-            // do not (the next layer can beat this layer's best), so combine
-            // with the layer certificate.
-            let bound = if batch.source == DirectedNeighborBatchSource::ShellExpand {
-                batch.first_dot.max(batch.unseen_bound)
-            } else {
-                batch.first_dot
-            };
+            // unseen: the batch itself plus what lies beyond it.
+            let bound = exact_frontier_bound(batch);
             if builder.can_terminate(bound) {
                 return true;
             }
@@ -80,5 +87,37 @@ pub(super) fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
             }
         }
         DirectedNeighborFrontier::Exhausted => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{complete_exact_bound, exact_frontier_bound};
+    use crate::cube_grid::{DirectedNeighborBatch, DirectedNeighborBatchSource};
+
+    #[test]
+    fn packed_exact_bounds_keep_the_post_batch_certificate() {
+        let post_batch_bound = 0.75;
+
+        for source in [
+            DirectedNeighborBatchSource::PackedChunk0,
+            DirectedNeighborBatchSource::PackedTail,
+        ] {
+            let batch = DirectedNeighborBatch {
+                n: 2,
+                first_dot: 0.25,
+                unseen_bound: post_batch_bound,
+                source,
+            };
+
+            assert_eq!(exact_frontier_bound(batch), post_batch_bound);
+        }
+
+        // The same composition is used after consuming a packed prefix, where
+        // the known remainder is represented by next_dot instead of first_dot.
+        assert_eq!(
+            complete_exact_bound(0.5, post_batch_bound),
+            post_batch_bound
+        );
     }
 }

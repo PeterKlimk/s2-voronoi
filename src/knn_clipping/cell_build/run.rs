@@ -17,7 +17,7 @@ use crate::policy::PackedNeighborPolicy;
 
 use super::{CellBuildError, CellFailure, CellOutputBuffer};
 use failure::{classify_terminal_failure, unexpected_failure_error};
-use frontier::{maybe_terminate_or_advance_frontier, probe_frontier};
+use frontier::{complete_exact_bound, maybe_terminate_or_advance_frontier, probe_frontier};
 
 use glam::Vec3;
 
@@ -622,16 +622,9 @@ fn clip_batch_source<const SHELL: bool>(
                 let next = pos_slots[next_slot as usize].pos;
                 let next_dot =
                     crate::fp::dot3_f32(query.x, query.y, query.z, next.x, next.y, next.z);
-                // Shell layers are sorted within the layer, but the next
-                // layer can contain closer points than this layer's tail;
-                // the mid-batch bound must also cover them. (Packed batches
-                // dominate their unseen set, so next_dot alone is sound for
-                // those sources.)
-                if SHELL {
-                    next_dot.max(batch.unseen_bound)
-                } else {
-                    next_dot
-                }
+                // The remainder bound must cover both the rest of this sorted
+                // batch and everything after the batch, for every source.
+                complete_exact_bound(next_dot, batch.unseen_bound)
             } else {
                 batch.unseen_bound
             };
