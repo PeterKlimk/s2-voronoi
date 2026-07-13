@@ -34,7 +34,10 @@ mod support;
 use std::collections::BTreeMap;
 
 use support::points::*;
-use voronoi_mesh::{compute_with_report, UnitVec3, UnresolvedEdgeOrigin, VoronoiConfig};
+use voronoi_mesh::{
+    compute_with, compute_with_report, validation::validate, RepairMode, UnitVec3,
+    UnresolvedEdgeOrigin, VoronoiConfig,
+};
 
 /// Process peak RSS (high-water mark) in MB, from /proc/self/status.
 fn peak_rss_mb() -> u64 {
@@ -120,6 +123,8 @@ fn campaign_case() {
             let defects = out.report.unresolved_edge_pairs.len();
             let no_chain = out.report.post_repair_escalation_pairs.len();
             let post_repair = out.report.post_repair_unpaired_edges.len() + no_chain;
+            let repair_attempted = out.report.repair.attempted;
+            let repair_accepted = out.report.repair.accepted;
             let origins_str = if origins.is_empty() {
                 "none".to_string()
             } else {
@@ -132,6 +137,7 @@ fn campaign_case() {
             println!(
                 "CASERESULT dist={dist} n={actual_n} seed={seed} param={param} \
                  result=ok defects={defects} post_repair={post_repair} no_chain={no_chain} valid={valid} \
+                 repair_attempted={repair_attempted} repair_accepted={repair_accepted} \
                  peak_mb={} origins={origins_str}",
                 peak_rss_mb()
             );
@@ -150,6 +156,46 @@ fn campaign_case() {
             );
             panic!("{dist} n={actual_n} seed={seed}: supported campaign case failed: {e}");
         }
+    }
+}
+
+/// Smaller differential for the actual plain-API contract with repair
+/// disabled. A clean error is allowed because this mode deliberately refuses
+/// Local3d repair; any returned diagram must still satisfy the strict sphere
+/// validator. This is separate from `campaign_case`, whose default-repair
+/// matrix requires success for every supported input.
+#[test]
+#[ignore]
+fn campaign_disabled_case() {
+    let dist = env_str("VORONOI_MESH_CASE_DIST", "uniform");
+    let n: usize = env_parse("VORONOI_MESH_CASE_N", 1_000_000usize);
+    let seed: u64 = env_parse("VORONOI_MESH_CASE_SEED", 1u64);
+    let param: f32 = env_parse("VORONOI_MESH_CASE_PARAM", 0.3f32);
+
+    let points = make_points(&dist, n, seed, param);
+    let actual_n = points.len();
+    let config = VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
+
+    match compute_with(&points, config) {
+        Ok(diagram) => {
+            let report = validate(&diagram);
+            let valid = report.is_strictly_valid();
+            println!(
+                "DISABLEDRESULT dist={dist} n={actual_n} seed={seed} param={param} \
+                 result=ok valid={valid} peak_mb={}",
+                peak_rss_mb()
+            );
+            assert!(
+                valid,
+                "{dist} n={actual_n} seed={seed}: disabled-mode plain compute \
+                 returned a diagram that failed strict validation: {report}"
+            );
+        }
+        Err(e) => println!(
+            "DISABLEDRESULT dist={dist} n={actual_n} seed={seed} param={param} \
+             result=err valid=- peak_mb={} error={e:?}",
+            peak_rss_mb()
+        ),
     }
 }
 

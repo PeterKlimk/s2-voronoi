@@ -40,7 +40,7 @@ echo "Binary: $BIN"
 echo "Output: $OUT  (MAX_N=$MAX_N, RAYON_NUM_THREADS=$RAYON_NUM_THREADS)"
 echo
 
-echo "dist,n,seed,param,result,defects,post_repair,no_chain,valid,peak_mb,origins" > "$OUT"
+echo "dist,n,seed,param,result,defects,post_repair,no_chain,valid,repair_attempted,repair_accepted,peak_mb,origins" > "$OUT"
 
 invalid=0
 errored=0
@@ -61,12 +61,12 @@ run_case() { # dist n seed param
     | grep -o 'CASERESULT .*' | head -1)"
   if [ -z "$line" ]; then
     echo "  FAIL $dist n=$n seed=$seed (no CASERESULT — process died, likely OOM)"
-    echo "$dist,$n,$seed,$param,died,-,-,-,-,-,-" >> "$OUT"
+    echo "$dist,$n,$seed,$param,died,-,-,-,-,-,-,-,-" >> "$OUT"
     invalid=$((invalid + 1))
     return
   fi
   # Parse "key=value" tokens.
-  local result defects post_repair no_chain valid peak origins
+  local result defects post_repair no_chain valid repair_attempted repair_accepted peak origins
   result="$(sed -n 's/.* result=\([^ ]*\).*/\1/p' <<<"$line")"
   defects="$(sed -n 's/.* defects=\([^ ]*\).*/\1/p' <<<"$line")"
   post_repair="$(sed -n 's/.* post_repair=\([^ ]*\).*/\1/p' <<<"$line")"
@@ -74,11 +74,15 @@ run_case() { # dist n seed param
   no_chain="$(sed -n 's/.* no_chain=\([^ ]*\).*/\1/p' <<<"$line")"
   no_chain="${no_chain:--}"
   valid="$(sed -n 's/.* valid=\([^ ]*\).*/\1/p' <<<"$line")"
+  repair_attempted="$(sed -n 's/.* repair_attempted=\([^ ]*\).*/\1/p' <<<"$line")"
+  repair_attempted="${repair_attempted:--}"
+  repair_accepted="$(sed -n 's/.* repair_accepted=\([^ ]*\).*/\1/p' <<<"$line")"
+  repair_accepted="${repair_accepted:--}"
   peak="$(sed -n 's/.* peak_mb=\([^ ]*\).*/\1/p' <<<"$line")"
   origins="$(sed -n 's/.* origins=\(.*\)$/\1/p' <<<"$line")"
-  echo "$dist,$n,$seed,$param,$result,$defects,$post_repair,$no_chain,$valid,$peak,$origins" >> "$OUT"
-  printf "  %-11s n=%-8s seed=%-3s result=%-3s defects=%-4s post_repair=%-4s no_chain=%-3s valid=%-5s peak=%sMB\n" \
-    "$dist" "$n" "$seed" "$result" "$defects" "$post_repair" "$no_chain" "$valid" "$peak"
+  echo "$dist,$n,$seed,$param,$result,$defects,$post_repair,$no_chain,$valid,$repair_attempted,$repair_accepted,$peak,$origins" >> "$OUT"
+  printf "  %-11s n=%-8s seed=%-3s result=%-3s defects=%-4s post_repair=%-4s no_chain=%-3s valid=%-5s repair=%s/%s peak=%sMB\n" \
+    "$dist" "$n" "$seed" "$result" "$defects" "$post_repair" "$no_chain" "$valid" "$repair_attempted" "$repair_accepted" "$peak"
   if [ "$result" = "err" ]; then
     errored=$((errored + 1))
     invalid=$((invalid + 1))

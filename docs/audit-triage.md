@@ -621,3 +621,30 @@ Post-resolution validation for AUD-004/AUD-005 also included the complete releas
 enabled plus all-target compilation of the timing, microbench, and escalation-probe features.
 Boundary regressions pin fallback classification on both sides of `-FALLBACK_PLANE_TOL` and the
 retained-versus-redundant constraint dispositions.
+
+### Post-AUD-008 strict-validation soak (2026-07-14)
+
+The strengthened edge-agreement certificate and fused Euler gate were exercised without qhull in
+an 85-case, one-process-per-case release campaign with `VORONOI_MESH_VERIFY=1`. The matrix covered
+50 uniform cases from 100k through 3M sites (ten seeds per size), five seeds each of cocircular,
+cube-clustered, bimodal, and Fibonacci inputs, and 15 mega density-contrast cases through 1M sites.
+
+- All 85 default-repair cases succeeded, passed full strict validation, and left zero
+  post-repair and no-chain residuals.
+- Fourteen cases produced 90 construction mismatch records: 71 `InBinThirdsMismatch` and 19
+  `InBinUnconsumedCheck`. Reconciliation cleared every record before return.
+- Representative defect-bearing reruns recorded `repair.attempted = false`; these cases were
+  resolved by bounded reconciliation without paying for Local3d. Local3d remains an acceptable
+  escalation, but this campaign did not need it.
+- A focused 1M-site clustered cap produced seven mismatch records and returned strict-valid. A
+  99,846-site cubed-sphere grid exercised 3,612 in-bin and cross-bin mismatch records and also
+  returned strict-valid with no residuals.
+- A smaller `RepairMode::Disabled` differential used the plain API on 2M uniform, 500k mega, 200k
+  clustered, and 99,846-site grid inputs. All four returned `Ok` and independently passed strict
+  validation. The retained harness permits a clean error in disabled mode but rejects any invalid
+  success.
+
+No strict-validation or Euler-only failure appeared. This is empirical evidence that the cheap
+certificate and strict validator agree over the sampled envelope, not a proof that an Euler-only
+failure is unreachable. `tests/robustness_campaign.rs` now records Local3d attempted/accepted
+telemetry and retains the disabled-mode plain-API differential for future campaigns.
