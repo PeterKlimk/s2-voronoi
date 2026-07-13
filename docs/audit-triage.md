@@ -329,6 +329,7 @@ accepted representation with no nearest generator.
 - **Priority:** P1
 - **Class:** output-contract completeness
 - **Confidence:** Under-justified; cheap-signal equivalence is synthetically falsified
+- **Status:** Open; repair-disabled low-incidence hole fixed and fault classes mapped
 
 Plain `compute` does not run full strict validation unless `VORONOI_MESH_VERIFY=1`. It rejects
 post-repair singleton edges and, in most repair modes, low-incidence vertices.
@@ -339,10 +340,8 @@ Strict validation additionally rejects overused and same-direction pairs. Those 
 singleton signal. Repair's stronger scan is only entered when seeded by a singleton or low-incidence
 defect.
 
-Additional gaps:
+Additional gaps found at triage time:
 
-- `RepairMode::Disabled` returns before computing the low-incidence signal in
-  [`src/knn_clipping/compute.rs`](../src/knn_clipping/compute.rs#L454-L491).
 - The cheap incidence scan counts raw occurrences, while strict validation counts distinct cell
   incidence; duplicate references can mask a low-incidence vertex.
 - Duplicate cells/vertices, self-loops, antipodal edges, connectivity, and Euler characteristic are
@@ -352,6 +351,24 @@ Additional gaps:
 No natural public input returning a silent-invalid topology was found in this audit. Accepted
 Local3d repair is safe because it is committed only after a full strict effective-diagram gate.
 
+**Implemented hardening and evidence**
+
+- Low-incidence detection now runs before the repair-mode decision. `RepairMode::Disabled` retains
+  the signal and plain `compute` fails rather than returning the known-invalid diagram. Default
+  repair modes already paid for this scan; disabled mode now pays the same O(live cell indices)
+  safety cost.
+- The plain return decision is a pure test seam over accepted repair, residual-edge,
+  over-diameter-escalation, and low-incidence signals.
+- A signal-free post-assembly fault matrix starts from a strictly-valid computed diagram and covers
+  same-direction pairs, overused edges, duplicate cells, duplicate vertices, self-loops,
+  disconnected/Euler defects, antipodal edges, and corrupt weld aliases. Duplicate-vertex and
+  self-loop mutations trigger the existing low-incidence signal in the generic fixture. The other
+  mutations remain strict-invalid while the signal-only gate accepts them. This does not claim the
+  production pipeline can naturally emit those post-assembly mutations; it identifies the
+  properties whose safety still depends on construction/detection completeness.
+- `VORONOI_MESH_VERIFY=1` remains the full strict-validation testing-period gate. It is not enabled
+  unconditionally because its global edge-record allocation and sort are material fast-path work.
+
 **Proposed resolution**
 
 Either derive and enforce construction invariants that exclude every omitted defect class, or run a
@@ -360,10 +377,10 @@ must retain the low-incidence gate.
 
 **Acceptance criteria**
 
-- Fault-injection tests cover same-direction, overused, duplicate-cell, duplicate-vertex,
+- [x] Fault-injection tests cover same-direction, overused, duplicate-cell, duplicate-vertex,
   disconnected/Euler, self-loop, antipodal, and weld-map defects.
-- For each mutation, the plain return gate and strict verifier agree.
-- Run the differential for default and `RepairMode::Disabled` configurations.
+- [ ] For each constructible pipeline mutation, the plain return gate and strict verifier agree.
+- [ ] Run stage-level differentials for default and `RepairMode::Disabled` configurations.
 
 ### AUD-009 — Reconciliation was not bounded to epsilon-diameter features
 

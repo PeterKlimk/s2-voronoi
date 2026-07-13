@@ -105,6 +105,13 @@ fn run_core_pipeline(
         escalation_pairs: reconciliation_escalations,
         merge_affected_cells,
     } = reconcile_result;
+    // This is part of the plain-return safety gate, not merely a repair
+    // trigger. Compute it even when repair is disabled so that mode cannot
+    // suppress a known-invalid low-incidence output.
+    let t_low_incidence = std::time::Instant::now();
+    let has_low_incidence =
+        has_low_incidence_vertices(vertices.len(), &eff_cells, &eff_cell_indices);
+    let low_incidence_scan_time = t_low_incidence.elapsed();
     let repair = maybe_repair_effective(
         effective_points_ref,
         &grid,
@@ -115,6 +122,8 @@ fn run_core_pipeline(
         &post_repair_unpaired,
         &reconciliation_escalations,
         &merge_affected_cells,
+        has_low_incidence,
+        low_incidence_scan_time,
         repair_mode,
     );
     Ok(PipelineState {
@@ -152,28 +161,11 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     repair_mode: RepairMode,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     let mut state = run_core_pipeline(points, termination, preprocess_mode, repair_mode)?;
-    // Plain path: if local repair did not accept a strictly-valid replacement,
-    // a residual is provably-invalid output and there is no report channel to
-    // surface it, so fail loud rather than ship it.
-    if !state.repair.accepted && !state.post_repair_unpaired.is_empty() {
-        return Err(edge_reconcile::residual_error(&state.post_repair_unpaired));
-    }
-    if !state.repair.accepted && !state.reconciliation_escalations.is_empty() {
-        return Err(edge_reconcile::escalation_error(
-            &state.reconciliation_escalations,
-        ));
-    }
-    // A low-incidence (degree-1/2) vertex defect is also strictly-invalid
-    // output, and it can exist with every edge paired — the guard above never
-    // sees it, so fail loud on it separately.
-    if !state.repair.accepted && state.repair.low_incidence_defect {
-        return Err(crate::VoronoiError::ComputationFailed(
-            "post-assembly repair could not resolve a residual low-incidence \
-             (degree-1/2) vertex defect — output is not a valid subdivision. \
-             Use compute_with_report to inspect, or report this input."
-                .to_string(),
-        ));
-    }
+    check_plain_return_signals(
+        state.repair,
+        &state.post_repair_unpaired,
+        &state.reconciliation_escalations,
+    )?;
 
     let t = Timer::start();
     let (cells, cell_indices, weld_map) = remap_cells_to_original_indices(
@@ -379,11 +371,11 @@ fn compute_voronoi_knn_clipping_report_core(
 /// no-op repair (a single stale slot cost ~13s of acceptance-gate work at
 /// 2.5M). Counting live windows matches the validators (`validate_impl`,
 /// `verify_sphere_fast`) and the repair's own `low_incidence_gens`.
-/// This scan runs on EVERY build with repair enabled (the detection trigger
-/// cannot piggyback on reconcile, which early-returns when no edge is
-/// unresolved). Multi-threaded builds use exact shared atomic counters, read
-/// only after the chunk-parallel scan; a one-thread Rayon pool uses the same
-/// plain-counter path as a build without the `parallel` feature.
+/// This scan runs on EVERY build as a plain-return safety signal (and, when
+/// enabled, a repair trigger). It cannot piggyback on reconcile, which
+/// early-returns when no edge is unresolved. Multi-threaded builds use exact
+/// shared atomic counters, read only after the chunk-parallel scan; a one-thread
+/// Rayon pool uses the same plain-counter path as a build without `parallel`.
 fn has_low_incidence_vertices_scalar(
     vertex_count: usize,
     cells: &[VoronoiCell],
@@ -433,6 +425,7 @@ fn has_low_incidence_vertices(
 }
 
 /// Outcome of the repair attempt, for the caller's fail-loud decision.
+#[derive(Clone, Copy)]
 struct RepairOutcome {
     /// A repair pass ran: defects were detected and the configured mode is
     /// enabled. False on clean builds and when repair is disabled.
@@ -448,11 +441,46 @@ struct RepairOutcome {
 }
 
 impl RepairOutcome {
-    const NOT_ATTEMPTED: RepairOutcome = RepairOutcome {
-        attempted: false,
-        accepted: false,
-        low_incidence_defect: false,
-    };
+    const fn not_attempted(low_incidence_defect: bool) -> RepairOutcome {
+        RepairOutcome {
+            attempted: false,
+            accepted: false,
+            low_incidence_defect,
+        }
+    }
+}
+
+/// Reject defect signals that cannot be surfaced by the plain compute API.
+///
+/// Kept as one pure decision seam so fault-injection tests can pin the exact
+/// production return policy independently of repair mechanics.
+fn check_plain_return_signals(
+    repair: RepairOutcome,
+    post_repair_unpaired: &[(u32, u32)],
+    reconciliation_escalations: &[(u32, u32)],
+) -> Result<(), crate::VoronoiError> {
+    // A committed repair has already passed whole-diagram strict validation,
+    // so pre-repair signals no longer describe the returned geometry.
+    if repair.accepted {
+        return Ok(());
+    }
+    if !post_repair_unpaired.is_empty() {
+        return Err(edge_reconcile::residual_error(post_repair_unpaired));
+    }
+    if !reconciliation_escalations.is_empty() {
+        return Err(edge_reconcile::escalation_error(reconciliation_escalations));
+    }
+    // A low-incidence (degree-1/2) defect can exist with every edge paired,
+    // so it needs a signal independent of the edge-residual checks above.
+    if repair.low_incidence_defect {
+        return Err(crate::VoronoiError::ComputationFailed(
+            "post-assembly repair could not resolve a residual low-incidence \
+             (degree-1/2) vertex defect — output is not a valid subdivision. \
+             Use compute_with_report to inspect, or report this input."
+                .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Try the configured local repair and commit it only if whole-diagram strict
@@ -469,19 +497,21 @@ fn maybe_repair_effective(
     post_repair_unpaired: &[(u32, u32)],
     reconciliation_escalations: &[(u32, u32)],
     merge_affected_cells: &[u32],
+    has_low_incidence: bool,
+    low_incidence_scan_time: std::time::Duration,
     repair_mode: RepairMode,
 ) -> RepairOutcome {
     // A0 probes need the fast assembled state, not the repaired one.
     #[cfg(feature = "escalate_probe")]
     if std::env::var("VORONOI_MESH_ESCALATE_PROBE_A0").is_ok() {
         escalate::stash_a0_fast(effective_points, vertex_keys, eff_cells, eff_cell_indices);
-        return RepairOutcome::NOT_ATTEMPTED;
+        return RepairOutcome::not_attempted(has_low_incidence);
     }
 
     let repair_enabled =
         !matches!(repair_mode, RepairMode::Disabled) || escalate::escalation_enabled();
     if !repair_enabled {
-        return RepairOutcome::NOT_ATTEMPTED;
+        return RepairOutcome::not_attempted(has_low_incidence);
     }
 
     let mut defect_pairs: Vec<(u32, u32)> = post_repair_unpaired
@@ -491,12 +521,10 @@ fn maybe_repair_effective(
         .collect();
     defect_pairs.sort_unstable();
     defect_pairs.dedup();
-    let t_detect = std::time::Instant::now();
-    let has_low_incidence = has_low_incidence_vertices(vertices.len(), eff_cells, eff_cell_indices);
     if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
         eprintln!(
             "repair trigger: low-incidence scan {:?} (defect_pairs={}, unpaired={}, no_chain={}, low_incidence={})",
-            t_detect.elapsed(),
+            low_incidence_scan_time,
             defect_pairs.len(),
             post_repair_unpaired.len(),
             reconciliation_escalations.len(),
@@ -504,7 +532,7 @@ fn maybe_repair_effective(
         );
     }
     if defect_pairs.is_empty() && !has_low_incidence {
-        return RepairOutcome::NOT_ATTEMPTED;
+        return RepairOutcome::not_attempted(false);
     }
     let outcome = |accepted: bool| RepairOutcome {
         attempted: true,
@@ -1296,10 +1324,10 @@ fn remap_cells_to_original_indices(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_query_grid, cell_sum_sq_per_n, classify_rank2_great_circle,
-        has_low_incidence_vertices, map_build_cells_error, map_cell_build_error,
-        max_cell_occupancy, stable_rank2_normal, validate_and_canonicalize_unit_points,
-        validate_generator_capacity,
+        build_query_grid, cell_sum_sq_per_n, check_plain_return_signals,
+        classify_rank2_great_circle, has_low_incidence_vertices, map_build_cells_error,
+        map_cell_build_error, max_cell_occupancy, stable_rank2_normal,
+        validate_and_canonicalize_unit_points, validate_generator_capacity, RepairOutcome,
     };
     use crate::diagram::VoronoiCell;
     use crate::knn_clipping::cell_build::{CellBuildError, CellFailure};
@@ -1321,6 +1349,248 @@ mod tests {
 
         let low_cells = [VoronoiCell::new(0, 1), VoronoiCell::new(2, 1)];
         assert!(has_low_incidence_vertices(2, &low_cells, &indices[..4]));
+    }
+
+    #[test]
+    fn disabled_repair_cannot_hide_low_incidence_from_plain_return_gate() {
+        let cells = [VoronoiCell::new(0, 1), VoronoiCell::new(1, 1)];
+        let indices = [0, 0];
+        let low_incidence = has_low_incidence_vertices(1, &cells, &indices);
+        assert!(low_incidence);
+
+        // This is the outcome produced by RepairMode::Disabled: no repair was
+        // attempted, but the independently-computed safety signal survives.
+        let repair = RepairOutcome::not_attempted(low_incidence);
+        assert!(!repair.attempted);
+        assert!(!repair.accepted);
+        let err = check_plain_return_signals(repair, &[], &[])
+            .expect_err("known-invalid output must not escape when repair is disabled");
+        assert!(matches!(err, VoronoiError::ComputationFailed(_)));
+    }
+
+    #[test]
+    fn accepted_strict_repair_supersedes_pre_repair_signals() {
+        let repair = RepairOutcome {
+            attempted: true,
+            accepted: true,
+            low_incidence_defect: true,
+        };
+        check_plain_return_signals(repair, &[(1, 2)], &[(2, 3)])
+            .expect("accepted repair was already strictly validated");
+    }
+
+    fn fib_sphere(n: usize) -> Vec<[f32; 3]> {
+        let golden = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
+        (0..n)
+            .map(|i| {
+                let y = 1.0 - (i as f32 / (n as f32 - 1.0)) * 2.0;
+                let r = (1.0 - y * y).max(0.0).sqrt();
+                let theta = golden * i as f32;
+                let v = Vec3::new(theta.cos() * r, y, theta.sin() * r).normalize();
+                [v.x, v.y, v.z]
+            })
+            .collect()
+    }
+
+    fn effective_arrays(
+        diagram: &crate::SphericalVoronoi,
+    ) -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>) {
+        let vertices = diagram
+            .vertices()
+            .iter()
+            .map(|v| Vec3::new(v.x, v.y, v.z))
+            .collect();
+        let cells = (0..diagram.num_cells())
+            .map(|i| VoronoiCell::new(diagram.cell_start(i), diagram.cell(i).len() as u16))
+            .collect();
+        (vertices, cells, diagram.cell_indices_raw().to_vec())
+    }
+
+    fn assert_signal_free_gap(
+        name: &str,
+        vertices: &[Vec3],
+        cells: &[VoronoiCell],
+        cell_indices: &[u32],
+    ) {
+        let strict =
+            crate::validation::verify_sphere_effective_strict(vertices, cells, cell_indices);
+        assert!(strict.is_err(), "{name}: injected defect must be invalid");
+
+        let repair = RepairOutcome::not_attempted(has_low_incidence_vertices(
+            vertices.len(),
+            cells,
+            cell_indices,
+        ));
+        let gate = check_plain_return_signals(repair, &[], &[]);
+        assert!(
+            gate.is_ok(),
+            "{name}: expected this mutation to isolate a missing certificate; \
+             existing return signals rejected it instead: {gate:?}"
+        );
+    }
+
+    fn assert_low_incidence_signal_catches(
+        name: &str,
+        vertices: &[Vec3],
+        cells: &[VoronoiCell],
+        cell_indices: &[u32],
+    ) {
+        assert!(
+            crate::validation::verify_sphere_effective_strict(vertices, cells, cell_indices)
+                .is_err(),
+            "{name}: injected defect must be invalid"
+        );
+        let repair = RepairOutcome::not_attempted(has_low_incidence_vertices(
+            vertices.len(),
+            cells,
+            cell_indices,
+        ));
+        assert!(
+            check_plain_return_signals(repair, &[], &[]).is_err(),
+            "{name}: low-incidence mutation must be rejected by the plain gate"
+        );
+    }
+
+    /// Mutate a known-valid output after assembly while deliberately supplying
+    /// no edge-reconciliation signal. These are not claims that the production
+    /// pipeline naturally emits each state: they identify the exact properties
+    /// whose safety currently rests on construction/detection completeness.
+    #[test]
+    fn fault_injection_maps_signal_free_plain_gate_gaps() {
+        let good = crate::compute(&fib_sphere(64)).expect("valid baseline");
+        let (base_vertices, base_cells, base_indices) = effective_arrays(&good);
+        crate::validation::verify_sphere_effective_strict(
+            &base_vertices,
+            &base_cells,
+            &base_indices,
+        )
+        .expect("baseline must be strictly valid");
+
+        // Reversing one cell preserves every undirected edge use and every
+        // incidence count, but makes all of its shared pairs same-direction.
+        let (vertices, cells, mut indices) = (
+            base_vertices.clone(),
+            base_cells.clone(),
+            base_indices.clone(),
+        );
+        let start = cells[0].vertex_start();
+        let end = start + cells[0].vertex_count();
+        indices[start..end].reverse();
+        assert_signal_free_gap("same-direction pairs", &vertices, &cells, &indices);
+
+        // Repeating a non-adjacent vertex removes one ordinary degree-3 use;
+        // the existing low-incidence signal catches this class.
+        let (vertices, cells, mut indices) = (
+            base_vertices.clone(),
+            base_cells.clone(),
+            base_indices.clone(),
+        );
+        let cell = cells
+            .iter()
+            .find(|cell| cell.vertex_count() >= 4)
+            .copied()
+            .expect("baseline cell with four vertices");
+        let start = cell.vertex_start();
+        indices[start + 2] = indices[start];
+        assert_low_incidence_signal_catches("duplicate vertex", &vertices, &cells, &indices);
+
+        // A direct self-loop is also a repeated vertex and removes the former
+        // endpoint's degree-3 use, so it reaches the same existing signal.
+        let (vertices, cells, mut indices) = (
+            base_vertices.clone(),
+            base_cells.clone(),
+            base_indices.clone(),
+        );
+        let start = cells[0].vertex_start();
+        indices[start + 1] = indices[start];
+        assert_low_incidence_signal_catches("self-loop", &vertices, &cells, &indices);
+
+        // Add another use of an existing edge. All referenced vertices already
+        // have degree >= 3, so the incidence signal remains clean.
+        let (vertices, mut cells, mut indices) = (
+            base_vertices.clone(),
+            base_cells.clone(),
+            base_indices.clone(),
+        );
+        let first = &indices[base_cells[0].vertex_start()
+            ..base_cells[0].vertex_start() + base_cells[0].vertex_count()];
+        let a = first[0];
+        let b = first[1];
+        let x = (0..vertices.len() as u32)
+            .find(|&v| v != a && v != b && !first.contains(&v))
+            .expect("unrelated existing vertex");
+        let start = indices.len();
+        indices.extend_from_slice(&[a, b, x]);
+        cells.push(VoronoiCell::new(start as u32, 3));
+        assert_signal_free_gap("overused edge", &vertices, &cells, &indices);
+
+        // Duplicate a face span. Counts only increase, so low incidence cannot
+        // reveal the duplicate.
+        let (vertices, mut cells, mut indices) = (
+            base_vertices.clone(),
+            base_cells.clone(),
+            base_indices.clone(),
+        );
+        let source = base_cells[0];
+        let span =
+            &base_indices[source.vertex_start()..source.vertex_start() + source.vertex_count()];
+        let start = indices.len();
+        indices.extend_from_slice(span);
+        cells.push(VoronoiCell::new(start as u32, span.len() as u16));
+        assert_signal_free_gap("duplicate cell", &vertices, &cells, &indices);
+
+        // Two disjoint copies are locally well-formed spheres. Their union has
+        // two components and Euler characteristic 4, with no low incidence.
+        let mut vertices = base_vertices.clone();
+        let vertex_offset = vertices.len() as u32;
+        vertices.extend_from_slice(&base_vertices);
+        let mut cells = base_cells.clone();
+        let mut indices = base_indices.clone();
+        for cell in &base_cells {
+            let span =
+                &base_indices[cell.vertex_start()..cell.vertex_start() + cell.vertex_count()];
+            let start = indices.len();
+            indices.extend(span.iter().map(|&v| v + vertex_offset));
+            cells.push(VoronoiCell::new(start as u32, span.len() as u16));
+        }
+        assert_signal_free_gap("disconnected/Euler", &vertices, &cells, &indices);
+
+        // Geometry-only corruption leaves all topological signals unchanged.
+        let (mut vertices, cells, indices) = (
+            base_vertices.clone(),
+            base_cells.clone(),
+            base_indices.clone(),
+        );
+        let span =
+            &indices[cells[0].vertex_start()..cells[0].vertex_start() + cells[0].vertex_count()];
+        vertices[span[1] as usize] = -vertices[span[0] as usize];
+        assert_signal_free_gap("antipodal edge", &vertices, &cells, &indices);
+
+        // Weld maps are created after the effective-space gate. An arbitrary
+        // corrupt alias is strictly invalid but has no pre-remap repair signal;
+        // its production safety rests on `remap_cells_to_original_indices`.
+        let generators = good
+            .generators()
+            .iter()
+            .map(|g| Vec3::new(g.x, g.y, g.z))
+            .collect();
+        let mut weld_map: Vec<u32> = (0..base_cells.len() as u32).collect();
+        weld_map[1] = 0;
+        let bad_weld = crate::SphericalVoronoi::from_raw_parts(
+            generators,
+            base_vertices,
+            base_cells,
+            base_indices,
+            Some(weld_map),
+        );
+        assert!(
+            !crate::validation::validate(&bad_weld).is_strictly_valid(),
+            "corrupt weld alias must fail strict validation"
+        );
+        assert!(
+            check_plain_return_signals(RepairOutcome::not_attempted(false), &[], &[]).is_ok(),
+            "weld-map validity is not represented by a pre-remap repair signal"
+        );
     }
 
     #[cfg(feature = "parallel")]
