@@ -179,6 +179,23 @@ often receive the slot or cell directly from their group.
 - Track separately the eliminated allocation/pass, inverse-map lifetime, and scattered generator
   gathers.
 
+### Experimental result (2026-07-15)
+
+The first progression step is implemented on `agent/slot-native-packed-groups`. A packed group now
+stores its contiguous slot start and query count instead of borrowing a materialized `Vec<u32>`.
+The hot ring pass does not reconstruct slots it only used for a redundant debug assertion; the
+group-boundary assertions still verify complete-cell coverage, slot order, and bin/local mapping.
+
+At one million Fibonacci generators, retired instructions fell about 0.36% and branches about
+0.64%. The same instruction reduction held for uniform input with 96 bins. Cachegrind at 20k showed
+0.44% fewer instruction references, 0.31% fewer data references, 2.6% fewer D1 misses, and 2.1%
+fewer last-level data misses. It also showed about 11% more L1 instruction misses and 1.8% more
+simulated branch mispredictions, so quiet-machine cycle and wall-time measurements remain required.
+
+Peak RSS at two million Fibonacci generators was repeatably about 548,000 KiB versus 575,000 KiB,
+a reduction of roughly 27 MiB. The full checked test suite passes. Keep later progression steps on
+separate branches so their gather and inverse-map effects remain attributable.
+
 ## 5. Thin per-local edge-check queues
 
 ### Current cost
@@ -236,4 +253,3 @@ ceiling:
 - Do not add a per-reference same-owner branch to the existing `u64` stream. The measured hit rate
   was extremely high and the branch still regressed; a successful compact-reference experiment must
   actually narrow the primary stream and isolate sparse exceptions.
-
