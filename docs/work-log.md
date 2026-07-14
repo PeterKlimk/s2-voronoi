@@ -48,7 +48,7 @@ optional output-policy decisions.
 | ID | Priority | Status | Next gate |
 |---|---:|---|---|
 | WORK-002 | P2 | Ongoing | Exercise after construction/repair changes |
-| RES-001 | P2 | Decision | Specify the public spherical cell-mesh surface |
+| RES-001 | P2 | Decision | Review/approve the proposed public cell-mesh contract |
 | RES-002 | P2 | Blocked | Decide RES-001 |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
@@ -108,10 +108,17 @@ default `Preserve` behavior.
   validation; its maximum forced-merge cross-track deviation is `1.861e-8 rad`. The welded fixture
   maps original inputs `[1, 10, 18]` to `None`. Pinched links, disagreeing rotations, and whole-mesh
   collapse are rejected.
+- **Proposed public surface:** a consuming `ComputeOutput::into_elided_cell_mesh` conversion owns
+  the cold global transaction and returns a distinct `SphericalCellMesh`, compact provenance
+  mappings, the original `ComputeReport`, and an elision report. The first surface exposes geometry,
+  ordered cell cycles, source attribution, combinatorial adjacency, compaction, and generic S2-mesh
+  validation. Locator, Delaunay, Lloyd, and conditioned area/centroid APIs remain Voronoi-only until
+  separate semantics are justified. Unsafe conversion is all-or-error through a distinct
+  `CellElisionError`; there is no implicit Preserve fallback. Embedded parity is a thin unit-mesh
+  wrapper without locator/Lloyd claims.
 - **Decisions required:**
-  - the minimal generic operations exposed by the distinct cell-mesh type;
-  - public elision error and report fields; and
-  - embedded-sphere wrapper parity.
+  - approve or revise the proposed surface before production implementation; and
+  - decide the generic spherical-arc contract before adding cell-mesh area/centroid methods.
 - **Invariant:** `Preserve` remains the default and never silently removes an effective generator.
 - **Regression foundation:** an end-to-end 18-site fixture disables preprocessing welding while
   retaining distinct f32 generators. It returns a strict-valid mesh with three preserved
@@ -129,9 +136,9 @@ default `Preserve` behavior.
 - **Decisions required:**
   - canonical threshold units (squared chord internally, with or without an angular convenience
     API);
-  - same diagram type plus report metadata versus a distinct simplified-mesh wrapper;
+  - positive-threshold option/report fields on the distinct cell-mesh conversion;
   - whether pre-storage f64 collision telemetry is useful; and
-  - interaction with cell-killing outcomes.
+  - the component-diameter and geometric-deviation certificate.
 - **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
   exact Voronoi diagram of the original generators.
 - **Reference:** [`output-resolution-policy.md`](output-resolution-policy.md).

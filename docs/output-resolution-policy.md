@@ -138,6 +138,105 @@ nearest-generator location or geometric-Delaunay claims that the simplified boun
 support. Unsafe quotients return a defined elision error rather than silently falling back to
 `Preserve`.
 
+### Proposed public cell-mesh surface
+
+The first public version should remain exact-zero-specific. A positive collapse threshold is a
+separate approximation feature and should not make the baseline API generic prematurely. The
+recommended entry point is a consuming conversion on the report-bearing result:
+
+```rust,ignore
+impl ComputeOutput {
+    pub fn into_elided_cell_mesh(self)
+        -> Result<CellMeshOutput, CellElisionError>;
+}
+```
+
+Requiring `ComputeOutput` rather than an arbitrary `SphericalVoronoi` provides the effective
+preprocessed diagram, original-input weld aliases, and the authoritative validation report. The
+operation first rejects a source with post-repair residuals or a non-strict preferred validation.
+It then applies one global, deterministic transaction to the effective diagram and composes the
+result back to original input indices. A source with no cell-killing exact-zero component succeeds
+as an identity conversion to the distinct mesh type. The method is consuming so an implementation
+can discard the duplicated returned/effective diagram and reuse large buffers; callers that need
+the preserved diagram after a failed conversion can clone it explicitly. This remains a requested
+cold `O(V + E + F)` operation and never runs from `compute` or `compute_with_report` implicitly.
+
+The proposed minimal types are conceptually:
+
+```rust,ignore
+pub struct SphericalCellMesh {
+    // compact spherical geometry and ordered face cycles
+    vertices: Vec<UnitVec3>,
+    cells: Vec<CellData>,
+    cell_indices: Vec<u32>,
+
+    // provenance, not a nearest-site claim
+    cell_source_sites: Vec<UnitVec3>,
+    cell_to_input: Vec<u32>,
+    input_to_cell: Vec<u32>, // private NO_CELL sentinel
+}
+
+pub struct CellMeshOutput {
+    pub mesh: SphericalCellMesh,
+    pub compute_report: ComputeReport,
+    pub elision_report: CellElisionReport,
+}
+```
+
+The private sentinel keeps the input mapping at four bytes per input while accessors expose
+`Option<usize>` rather than the sentinel. Required mapping accessors are:
+
+- `num_source_inputs()`;
+- `cell_for_input(input) -> Option<usize>` plus a checked out-of-range form;
+- `source_input_index(cell) -> usize` plus a checked form; and
+- `source_site(cell) -> UnitVec3` plus a checked form.
+
+Welded inputs all map to the same `Some(cell)`. If their effective cell is elided, every original
+member maps to `None`. `source_input_index(cell)` is the smallest original index in the surviving
+weld class. `source_site` is the stored canonicalized (and possibly deterministically perturbed)
+direction that produced the source cell; it is retained for attribution only. It does not imply
+that every returned edge is its bisector or that the source site remains suitable for a locator.
+
+The initial mesh operations should be limited to:
+
+- vertex and ordered-cell-cycle access (`num_vertices`, `vertices`, `vertex`, `num_cells`, `cell`,
+  checked variants, and iteration);
+- provenance mapping above;
+- vertex compaction;
+- combinatorial cell adjacency aligned with boundary edges; and
+- a cell-mesh validator whose stable verdict means a connected, oriented, closed S2 subdivision
+  with valid unit vertices, simple faces, single-cycle vertex links, paired edges, and Euler
+  characteristic two.
+
+The mesh cell view should use `cell_index`, not reuse `CellView::generator_index`. Existing
+`CellAdjacency` storage and construction can be shared, but its mesh documentation must say only
+"cell across this boundary edge"; the Delaunay interpretation remains exclusive to
+`SphericalVoronoi::build_adjacency`.
+
+The first surface deliberately omits `build_locator`, Delaunay export, and `lloyd_step`. Spherical
+area and centroid are also deferred until their generic arc contract is explicit: current
+near-semicircle conditioning recovers an edge's supporting plane from its two Voronoi generators,
+which need not remain valid after simplification. The cell-mesh representation either needs a
+shorter-arc-only contract with exact antipodes rejected, or explicit supporting-arc metadata before
+those measures can be promised generally.
+
+`CellElisionReport` should record the detected exact-zero edge/component counts, effective and
+original input cells elided, degree-two vertices suppressed, unused vertices removed, and the
+maximum cross-track residual of a suppressed vertex against its replacement great circle. That
+last value is transaction telemetry, not a global Voronoi or Hausdorff error bound. The mapping is
+the authoritative list of which inputs were elided.
+
+`CellElisionError` should be a separate non-exhaustive postprocessing error, not a
+`VoronoiError`. Its stable top-level categories need only distinguish an invalid source, an unsafe
+quotient, and a representation limit; detailed link/rotation/validation diagnostics can remain an
+unstable message. The conversion is all-or-error: it never returns a partially simplified mesh and
+never substitutes `Preserve` on rejection.
+
+Embedded parity should be a thin wrapper over the same unit-sphere transaction:
+`EmbeddedComputeOutput::into_elided_cell_mesh` returns an `EmbeddedSphericalCellMesh` plus the same
+mappings and reports. The wrapper maps vertices and source sites into world space, but deliberately
+does not provide an embedded locator or Lloyd operation.
+
 ## Dimension 2: edge-collapse scope
 
 ### Exact stored-zero (baseline)
@@ -340,7 +439,8 @@ prototype is compiled only for tests and adds no production or fast-path code.
 
 ## Deferred decisions
 
-Generator-elision remapping, cell-killing commit certificates, threshold units, pre-storage
-telemetry, and the simplified-output type are grouped under RES-001 and RES-002 in
-[`work-log.md`](work-log.md). `Preserve`/`Error` naming and error-side mapping are now settled. This
-document remains the design rationale rather than a second task list.
+Production generator elision, positive-threshold units, and pre-storage telemetry are grouped under
+RES-001 and RES-002 in [`work-log.md`](work-log.md). `Preserve`/`Error` naming, error-side mapping,
+the cell-killing quotient prototype, and a proposed simplified-output surface are now recorded.
+The public surface still requires review before implementation. This document remains the design
+rationale rather than a second task list.
