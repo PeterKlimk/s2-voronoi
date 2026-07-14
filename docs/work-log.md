@@ -48,7 +48,7 @@ optional output-policy decisions.
 | ID | Priority | Status | Next gate |
 |---|---:|---|---|
 | WORK-002 | P2 | Ongoing | Exercise after construction/repair changes |
-| RES-001 | P2 | Decision | Design `Elide` remapping and transaction semantics |
+| RES-001 | P2 | Decision | Specify the public spherical cell-mesh surface |
 | RES-002 | P2 | Blocked | Decide RES-001 |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
@@ -100,11 +100,18 @@ default `Preserve` behavior.
 - **Implemented:** `CellKillingPolicy::{Preserve, Error}` applies equally to plain, report-bearing,
   and embedded computations. `CellEliminationRequired` reports original input indices, expanding
   affected preprocessing weld classes, after all safe exact-zero contractions.
+- **Elision prototype:** the agreed direction is an explicit postprocess returning a distinct
+  spherical cell mesh with `input -> Option<cell>` and `cell -> canonical input` mappings. A
+  test-only global transaction elides the two cells in the 18-site fixture, then necessarily
+  suppresses two degree-two boundary vertices under opposite owner-rotation checks. The final
+  16-face quotient has no zero edges, single-cycle vertex links, complete adjacency, and strict
+  validation; its maximum forced-merge cross-track deviation is `1.861e-8 rad`. The welded fixture
+  maps original inputs `[1, 10, 18]` to `None`. Pinched links, disagreeing rotations, and whole-mesh
+  collapse are rejected.
 - **Decisions required:**
-  - whether an elided generator maps to `None`, a richer outcome, or a documented noncanonical
-    representative;
-  - the link/owner-rotation certificate required before a cell-killing transaction commits; and
-  - elision report composition with preprocessing welds and deterministic perturbation.
+  - the minimal generic operations exposed by the distinct cell-mesh type;
+  - public elision error and report fields; and
+  - embedded-sphere wrapper parity.
 - **Invariant:** `Preserve` remains the default and never silently removes an effective generator.
 - **Regression foundation:** an end-to-end 18-site fixture disables preprocessing welding while
   retaining distinct f32 generators. It returns a strict-valid mesh with three preserved

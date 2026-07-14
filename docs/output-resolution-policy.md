@@ -130,6 +130,14 @@ an original generator to no returned cell rather than inventing an alias.
 Eliding a cell that is zero only after f32 storage returns a diagram chosen for the output
 resolution, not the exact Voronoi diagram of every original effective generator.
 
+The agreed API direction is therefore an explicit postprocessing operation over a successful
+report-bearing computation, returning a distinct spherical cell-mesh type rather than adding an
+`Elide` arm to `VoronoiConfig`. The compact result maps each original input to `Some(final_cell)`
+or `None`, maps each final cell back to its canonical original input, and does not expose
+nearest-generator location or geometric-Delaunay claims that the simplified boundaries no longer
+support. Unsafe quotients return a defined elision error rather than silently falling back to
+`Preserve`.
+
 ## Dimension 2: edge-collapse scope
 
 ### Exact stored-zero (baseline)
@@ -318,6 +326,17 @@ for endpoint identity, cell-killing escalation, and bounded components. Oriented
 cover maximal trees, cycles, safe and cell-killing shared-cell interactions, 96 structural
 permutations, and 64 randomized forest assemblies. Localized and exhaustive discovery must produce
 identical reports and quotients, and every terminal fixture must validate strictly.
+
+A test-only global elision prototype now exercises the 18-site cell-killing fixture after the
+ordinary repaired/validated pipeline. Directly deleting its two collapsed effective cells leaves
+two degree-two boundary vertices, demonstrating that face deletion alone is not a complete
+transaction. Deterministic suppression of each such vertex is accepted only when its two surviving
+owners have opposite rotations; the resulting 16-face mesh has no exact-zero edges, has single-cycle
+vertex links and complete adjacency, and passes strict validation. The maximum measured
+cross-track deviation of those forced boundary merges is `1.861e-8 rad`. The welded extension
+composes to original inputs `[1, 10, 18] -> None`. Negative fixtures reject disagreeing owner
+rotations, a pinched two-sphere vertex link, and a quotient that consumes the whole mesh. This
+prototype is compiled only for tests and adds no production or fast-path code.
 
 ## Deferred decisions
 

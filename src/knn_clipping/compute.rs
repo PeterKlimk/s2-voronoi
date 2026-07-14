@@ -1702,7 +1702,7 @@ mod tests {
         build_query_grid, canonicalize_pipeline_exact_zero_edges, cell_sum_sq_per_n,
         check_plain_return_signals, classify_exact_affine_circle, classify_near_great_circle,
         map_build_cells_error, map_cell_build_error, max_cell_occupancy,
-        resolution_discovery_decision, stable_rank2_normal, summarize_topology,
+        resolution_discovery_decision, run_core_pipeline, stable_rank2_normal, summarize_topology,
         validate_and_canonicalize_unit_points, validate_generator_capacity, RepairOutcome,
     };
     use crate::diagram::VoronoiCell;
@@ -1710,7 +1710,7 @@ mod tests {
     use crate::knn_clipping::live_dedup::{
         BuildCellsError, PackedLayoutCapacityError, ShardedVertexKeys,
     };
-    use crate::VoronoiError;
+    use crate::{PreprocessMode, RepairMode, VoronoiError};
     use glam::Vec3;
 
     fn zero_edge_cube_fixture() -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>, ShardedVertexKeys) {
@@ -1754,6 +1754,129 @@ mod tests {
             ]],
         );
         (vertices, cells, indices, keys)
+    }
+
+    fn disabled_weld_cell_killing_points() -> Vec<Vec3> {
+        fn displaced(mut b: [f64; 3], theta: f64, phi: f64) -> Vec3 {
+            let bl = (b[0] * b[0] + b[1] * b[1] + b[2] * b[2]).sqrt();
+            for x in &mut b {
+                *x /= bl;
+            }
+            let el = (b[0] * b[0] + b[1] * b[1]).sqrt();
+            let e = [-b[1] / el, b[0] / el, 0.0];
+            let f = [
+                b[1] * e[2] - b[2] * e[1],
+                b[2] * e[0] - b[0] * e[2],
+                b[0] * e[1] - b[1] * e[0],
+            ];
+            let c = theta.cos();
+            let s = theta.sin();
+            Vec3::new(
+                (c * b[0] + s * (phi.cos() * e[0] + phi.sin() * f[0])) as f32,
+                (c * b[1] + s * (phi.cos() * e[1] + phi.sin() * f[1])) as f32,
+                (c * b[2] + s * (phi.cos() * e[2] + phi.sin() * f[2])) as f32,
+            )
+            .normalize()
+        }
+
+        let base = [-0.61, -0.27, 0.74];
+        let theta = 9.0e-8;
+        let phase = 3.0 * 0.071;
+        let ring = 8;
+        let mut points = vec![displaced(base, 0.0, 0.0)];
+        for k in 0..ring {
+            points.push(displaced(
+                base,
+                theta,
+                phase + std::f64::consts::TAU * k as f64 / ring as f64,
+            ));
+        }
+        let local = points.clone();
+        points.extend(local.into_iter().map(|point| -point));
+        points
+    }
+
+    #[test]
+    fn exact_zero_elision_prototype_rebuilds_a_strict_compact_mesh() {
+        let points = disabled_weld_cell_killing_points();
+        let state = run_core_pipeline(
+            points.clone(),
+            super::TerminationConfig::default(),
+            PreprocessMode::Disabled,
+            RepairMode::Local3d,
+        )
+        .expect("cell-killing fixture should reach output resolution");
+        assert_eq!(state.cell_killing_generators, [1, 10]);
+        assert_eq!(state.output_resolution.cell_killing_components_preserved, 3);
+
+        let elision = super::output_resolution::prototype_elide_exact_zero_cells(
+            state.effective_points_ref(),
+            &state.vertices,
+            &state.eff_cells,
+            &state.eff_cell_indices,
+        )
+        .expect("global exact-zero elision quotient should be a valid cell mesh");
+        assert_eq!(elision.zero_edges_before, 3);
+        assert_eq!(elision.zero_components_before, 3);
+        assert_eq!(elision.effective_cells_elided, 2);
+        assert_eq!(elision.degree_two_vertices_suppressed, 2);
+        assert!(
+            elision.max_suppression_cross_track_radians.is_finite()
+                && elision.max_suppression_cross_track_radians <= 1.0e-6,
+            "forced boundary merge moved off its replacement great circle by {:.3e} rad",
+            elision.max_suppression_cross_track_radians,
+        );
+        assert_eq!(elision.diagram.num_cells(), points.len() - 2);
+        assert_eq!(elision.effective_to_cell[1], None);
+        assert_eq!(elision.effective_to_cell[10], None);
+        assert_eq!(
+            elision
+                .effective_to_cell
+                .iter()
+                .filter(|cell| cell.is_none())
+                .count(),
+            2
+        );
+        assert_eq!(elision.cell_to_effective.len(), elision.diagram.num_cells());
+        assert!(elision.diagram.build_adjacency().is_complete());
+        let validation = crate::validation::validate(&elision.diagram);
+        assert!(validation.is_strictly_valid(), "{}", validation.headline());
+        assert_eq!(validation.zero_length_edges, 0);
+
+        let mut welded_points = points;
+        welded_points.push(welded_points[1]);
+        let welded_state = run_core_pipeline(
+            welded_points.clone(),
+            super::TerminationConfig::default(),
+            PreprocessMode::MergeWithin(1.0e-10),
+            RepairMode::Local3d,
+        )
+        .expect("welded extension should reach output resolution");
+        let merge = welded_state
+            .merge_result
+            .as_ref()
+            .expect("duplicate generator should be welded");
+        let welded_elision = super::output_resolution::prototype_elide_exact_zero_cells(
+            welded_state.effective_points_ref(),
+            &welded_state.vertices,
+            &welded_state.eff_cells,
+            &welded_state.eff_cell_indices,
+        )
+        .expect("welded effective mesh should admit the same quotient");
+        let original_to_cell: Vec<Option<u32>> = merge
+            .original_to_effective
+            .iter()
+            .map(|&effective| welded_elision.effective_to_cell[effective as usize])
+            .collect();
+        let elided_originals: Vec<usize> = original_to_cell
+            .iter()
+            .enumerate()
+            .filter_map(|(original, cell)| cell.is_none().then_some(original))
+            .collect();
+        assert_eq!(elided_originals, [1, 10, 18]);
+        assert_eq!(welded_elision.diagram.num_cells(), 16);
+        assert_eq!(welded_elision.effective_cells_elided, 2);
+        assert_eq!(welded_elision.degree_two_vertices_suppressed, 2);
     }
 
     #[test]
