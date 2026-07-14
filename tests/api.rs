@@ -223,7 +223,7 @@ fn test_rank2_great_circle_policy_is_explicit() {
 
     assert_eq!(
         perturbed.report.degenerate.requested_mode,
-        DegenerateMode::PerturbGreatCircle
+        DegenerateMode::PerturbCoplanar
     );
     assert!(
         perturbed.report.degenerate.perturbation_applied,
@@ -232,6 +232,44 @@ fn test_rank2_great_circle_policy_is_explicit() {
     assert!(
         perturbed.report.preferred_validation().is_strictly_valid(),
         "perturbed rank-2 diagram should validate strictly: {}",
+        perturbed.report.preferred_validation().headline()
+    );
+}
+
+#[test]
+fn test_exact_small_circle_uses_coplanar_perturbation_policy() {
+    let points = [
+        UnitVec3::new(0.8, 0.0, 0.6),
+        UnitVec3::new(0.0, 0.8, 0.6),
+        UnitVec3::new(-0.8, 0.0, 0.6),
+        UnitVec3::new(0.0, -0.8, 0.6),
+    ];
+
+    let strict = compute_with(
+        &points,
+        VoronoiConfig::default().with_degenerate_mode(DegenerateMode::Strict),
+    );
+    assert!(
+        matches!(
+            strict,
+            Err(VoronoiError::UnsupportedGeometry { .. })
+                | Err(VoronoiError::ComputationFailed(_))
+                | Err(VoronoiError::DegenerateInput { .. })
+                | Err(VoronoiError::RepresentationLimit(_))
+        ),
+        "exact small-circle input should fail cleanly in strict mode, got {strict:?}"
+    );
+
+    let perturbed = compute_with_report(&points, VoronoiConfig::default())
+        .expect("default coplanar perturbation should resolve an exact small circle");
+    assert_eq!(
+        perturbed.report.degenerate.requested_mode,
+        DegenerateMode::PerturbCoplanar
+    );
+    assert!(perturbed.report.degenerate.perturbation_applied);
+    assert!(
+        perturbed.report.preferred_validation().is_strictly_valid(),
+        "perturbed exact small-circle diagram should validate strictly: {}",
         perturbed.report.preferred_validation().headline()
     );
 }

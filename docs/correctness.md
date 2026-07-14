@@ -63,11 +63,14 @@ endpoints much farther apart. The report and `weld_map()` expose the resulting q
 
 ## Degenerate input
 
-Pure great-circle (coplanar) input is rank-deficient: its exact diagram is a lower-dimensional
-shape that is not stable under f32 rounding. By default (`DegenerateMode::PerturbGreatCircle`) the
-pipeline runs normally, and only on failure detects this class and retries once with a
-deterministic off-plane perturbation, returning the nearby full-dimensional diagram and recording
-it in the report. `DegenerateMode::Strict` returns a clean error instead.
+Affinely coplanar spherical input is rank-deficient: all generators lie on one great or small
+circle, and its exact endpoint-pair diagram is either lower-dimensional or contains ambiguous
+exact-pi lune edges. By default (`DegenerateMode::PerturbCoplanar`) the pipeline runs normally and,
+only on failure, certifies exact affine coplanarity over the canonical f32 generators and retries
+once with a deterministic off-plane perturbation. A conservative compatibility classifier also
+retains support for nominal full great circles whose f32 canonicalization prevents an exact
+certificate. The returned diagram is a nearby full-dimensional one and the report records that
+perturbation. `DegenerateMode::Strict` returns a clean error instead.
 
 ## Repair
 

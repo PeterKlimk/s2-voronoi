@@ -844,7 +844,7 @@ contract still requires a deferred pre-assembly cell/component recovery seam.
 - **Priority:** P1
 - **Class:** structural return gate / large-cell representation policy
 - **Confidence:** Reproduced by the intrinsic small-`n` campaign
-- **Status:** Structural validation resolved; consumer stabilization and exact-pi SoS remain open
+- **Status:** Structural validation and exact-pi SoS resolved; consumer stabilization remains open
 
 A valid, non-welded four-generator fixture with all sites in a common hemisphere returns a
 tetrahedral cell complex whose true large-cell boundaries contain edges very close to a
@@ -871,12 +871,17 @@ four-site regression is strict-valid with `Euler=2`, and the owner-plane intrins
 the exhaustive uniform `n=4..32`, seeds `0..63` campaign to run normally. The tolerance remains a
 conditioning trigger, not an acceptance relaxation.
 
-Remaining work is deliberately split from the structural fix. Public area/centroid and diagnostic
-edge sampling still use endpoint-cross or chord formulas that become inaccurate near pi; migrating
-them requires an efficient way to supply the neighboring owner without adding per-edge fast-path
-storage by default. Exact affine small-circle degeneracy is also not covered by the current
-rank-2/great-circle perturb retry: its SoS trigger must use certified affine coplanarity rather than
-classifying merely near-pi floating-point output as exact.
+Exact affine-circle failures now take the generalized `PerturbCoplanar` cold retry. It selects a
+stable plane in linear time, certifies every canonical f32 generator with exact `orient3d == 0`,
+and only then applies the deterministic off-plane perturbation. A one-f32-ulp negative control pins
+that this is not a tolerance classification. The prior conservative tolerance classifier remains
+only for nominal full great circles whose canonical rounding prevents an exact certificate. Strict
+mode still returns the original clean error.
+
+Remaining work is deliberately split from the structural and SoS fixes. Public area/centroid and
+diagnostic edge sampling still use endpoint-cross or chord formulas that become inaccurate near pi;
+migrating them requires an efficient way to supply the neighboring owner without adding per-edge
+fast-path storage by default.
 
 ## Recommended implementation sequence
 
@@ -899,8 +904,8 @@ classifying merely near-pi floating-point output as exact.
     baseline and boundary coverage.
 12. **AUD-015:** resolved for correctness — unrestricted spherical replay now occurs only after
     genuine chart exhaustion; early performance handoff remains deferred.
-13. **AUD-016:** structural near-pi contract resolved; stabilize geometry consumers and extend the
-    explicit SoS path to certified exact-pi affine degeneracies.
+13. **AUD-016:** structural near-pi contract and certified exact-pi SoS resolved; stabilize the
+    remaining geometry consumers.
 
 ## Cross-cutting test backlog
 

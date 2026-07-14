@@ -211,15 +211,15 @@ pub enum RepairMode {
 #[non_exhaustive]
 pub enum DegenerateMode {
     /// Return the backend's ordinary clean error for unsupported degenerate
-    /// geometries. This is the default valid-or-error contract.
+    /// geometries without applying a perturbation.
     Strict,
-    /// After an initial failure, detect rank-2 great-circle inputs and retry
-    /// once with a deterministic small off-plane perturbation. This returns a
-    /// nearby full-dimensional diagram, not an exact lower-dimensional one.
-    /// Welding does not imply this behavior; use this mode when rank-2
-    /// great-circle inputs should produce an approximate valid diagram instead
-    /// of a clean error.
-    PerturbGreatCircle,
+    /// After an initial failure, detect affinely coplanar spherical inputs and
+    /// retry once with a deterministic small off-plane perturbation. Exact
+    /// affine coplanarity is certified over the canonical f32 generators;
+    /// near-coplanar full great-circle inputs retain a conservative tolerance
+    /// classifier. This returns a nearby full-dimensional diagram, not an
+    /// exact lower-dimensional one.
+    PerturbCoplanar,
 }
 
 /// Observable preprocessing outcome for a computation run.
@@ -397,13 +397,14 @@ pub struct VoronoiConfig {
     /// validation succeeds. Disable this for diagnostics or to reproduce the raw
     /// fast-path residual/error behavior.
     pub repair_mode: RepairMode,
-    /// Handling for rank-deficient great-circle inputs.
+    /// Handling for rank-deficient coplanar inputs.
     ///
-    /// The default is [`DegenerateMode::PerturbGreatCircle`]: rank-2
-    /// great-circle failures retry as a deterministic nearby full-dimensional
-    /// diagram and report that choice through [`ComputeReport::degenerate`].
-    /// Use [`DegenerateMode::Strict`] to preserve the ordinary clean-error
-    /// behavior for these lower-dimensional inputs.
+    /// The default is [`DegenerateMode::PerturbCoplanar`]: certified affine
+    /// circle and conservatively detected full great-circle failures retry as
+    /// a deterministic nearby full-dimensional diagram and report that choice
+    /// through [`ComputeReport::degenerate`]. Use [`DegenerateMode::Strict`] to
+    /// preserve the ordinary clean-error behavior for these lower-dimensional
+    /// inputs.
     pub degenerate_mode: DegenerateMode,
 }
 
@@ -412,7 +413,7 @@ impl Default for VoronoiConfig {
         Self {
             preprocess_mode: PreprocessMode::Weld,
             repair_mode: RepairMode::Local3d,
-            degenerate_mode: DegenerateMode::PerturbGreatCircle,
+            degenerate_mode: DegenerateMode::PerturbCoplanar,
         }
     }
 }

@@ -134,7 +134,7 @@ fn robust_great_circle_perturbation_solves_rank2_fixture() {
 
     assert_eq!(
         output.report.degenerate.requested_mode,
-        DegenerateMode::PerturbGreatCircle
+        DegenerateMode::PerturbCoplanar
     );
     assert!(
         output.report.degenerate.perturbation_applied,

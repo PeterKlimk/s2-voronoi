@@ -192,20 +192,21 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
 }
 
 /// Run `attempt` once and — when the config opts into
-/// `DegenerateMode::PerturbGreatCircle` — retry a rank-2 great-circle failure
-/// once on the perturbed points. `attempt` receives `perturbation_applied`.
-fn with_rank2_perturb_retry<T>(
+/// `DegenerateMode::PerturbCoplanar` — retry a certified affine-circle or
+/// conservatively detected full-great-circle failure once on perturbed points.
+/// `attempt` receives `perturbation_applied`.
+fn with_coplanar_perturb_retry<T>(
     points: Vec<Vec3>,
     degenerate_mode: DegenerateMode,
     attempt: impl Fn(Vec<Vec3>, bool) -> Result<T, crate::VoronoiError>,
 ) -> Result<T, crate::VoronoiError> {
-    if !matches!(degenerate_mode, DegenerateMode::PerturbGreatCircle) {
+    if !matches!(degenerate_mode, DegenerateMode::PerturbCoplanar) {
         return attempt(points, false);
     }
 
     match attempt(points.clone(), false) {
         Ok(value) => Ok(value),
-        Err(err) => match maybe_perturb_rank2_great_circle(&points, &err) {
+        Err(err) => match maybe_perturb_coplanar(&points, &err) {
             Some(perturbed) => attempt(perturbed, true),
             None => Err(err),
         },
@@ -217,7 +218,7 @@ pub fn compute_voronoi_knn_clipping_with_config_owned(
     config: &VoronoiConfig,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     let termination = TerminationConfig::default();
-    with_rank2_perturb_retry(points, config.degenerate_mode, |points, _| {
+    with_coplanar_perturb_retry(points, config.degenerate_mode, |points, _| {
         compute_voronoi_knn_clipping_owned_core(
             points,
             termination,
@@ -232,7 +233,7 @@ pub fn compute_voronoi_knn_clipping_with_report_owned(
     config: &VoronoiConfig,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
     let termination = TerminationConfig::default();
-    with_rank2_perturb_retry(
+    with_coplanar_perturb_retry(
         points,
         config.degenerate_mode,
         |points, perturbation_applied| {
@@ -940,14 +941,11 @@ fn canonicalize_unit_points(points: &mut [Vec3]) {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Rank2GreatCircle {
+struct CoplanarClass {
     normal: DVec3,
 }
 
-fn maybe_perturb_rank2_great_circle(
-    points: &[Vec3],
-    err: &crate::VoronoiError,
-) -> Option<Vec<Vec3>> {
+fn maybe_perturb_coplanar(points: &[Vec3], err: &crate::VoronoiError) -> Option<Vec<Vec3>> {
     if !matches!(
         err,
         crate::VoronoiError::UnsupportedGeometry { .. } | crate::VoronoiError::ComputationFailed(_)
@@ -956,11 +954,89 @@ fn maybe_perturb_rank2_great_circle(
     }
     let mut canonical = points.to_vec();
     canonicalize_unit_points(&mut canonical);
-    let class = classify_rank2_great_circle(&canonical)?;
-    Some(perturb_great_circle_points(&canonical, class.normal))
+    let class = classify_exact_affine_circle(&canonical)
+        .or_else(|| classify_near_great_circle(&canonical))?;
+    Some(perturb_coplanar_points(&canonical, class.normal))
 }
 
-fn classify_rank2_great_circle(points: &[Vec3]) -> Option<Rank2GreatCircle> {
+/// Certify affine coplanarity in the actual canonical f32 model. The seed
+/// plane is selected with bounded linear sweeps for a stable perturbation
+/// direction; `orient3d == 0` then decides coplanarity exactly for those
+/// binary input coordinates. No tolerance can turn a merely near-coplanar
+/// ordinary input into this class.
+fn classify_exact_affine_circle(points: &[Vec3]) -> Option<CoplanarClass> {
+    if points.len() < 4 {
+        return None;
+    }
+    let ([a, b, c], normal) = stable_affine_plane(points)?;
+    let a = robust_coord(dvec(points[a]));
+    let b = robust_coord(dvec(points[b]));
+    let c = robust_coord(dvec(points[c]));
+    if points
+        .iter()
+        .all(|&p| robust::orient3d(a, b, c, robust_coord(dvec(p))) == 0.0)
+    {
+        Some(CoplanarClass { normal })
+    } else {
+        None
+    }
+}
+
+/// Choose a well-spread affine plane seed in a fixed number of linear sweeps.
+/// Returns `None` only when fewer than three distinct, non-collinear points are
+/// available or the input is non-finite.
+fn stable_affine_plane(points: &[Vec3]) -> Option<([usize; 3], DVec3)> {
+    fn farthest_from(points: &[Vec3], pivot: usize) -> Option<usize> {
+        let a = dvec(points[pivot]);
+        let mut best = None;
+        let mut best_distance2 = 0.0f64;
+        for (i, &p) in points.iter().enumerate() {
+            let distance2 = (dvec(p) - a).length_squared();
+            if distance2.is_finite() && distance2 > best_distance2 {
+                best_distance2 = distance2;
+                best = Some(i);
+            }
+        }
+        best
+    }
+
+    let mut a = 0usize;
+    let mut b = farthest_from(points, a)?;
+    a = farthest_from(points, b)?;
+    b = farthest_from(points, a)?;
+
+    let pa = dvec(points[a]);
+    let ab = dvec(points[b]) - pa;
+    let mut c = None;
+    let mut best_cross = DVec3::ZERO;
+    let mut best_area2 = 0.0f64;
+    for (i, &p) in points.iter().enumerate() {
+        let cross = ab.cross(dvec(p) - pa);
+        let area2 = cross.length_squared();
+        if area2.is_finite() && area2 > best_area2 {
+            best_area2 = area2;
+            best_cross = cross;
+            c = Some(i);
+        }
+    }
+    let c = c?;
+    Some(([a, b, c], best_cross / best_area2.sqrt()))
+}
+
+#[inline]
+fn robust_coord(p: DVec3) -> robust::Coord3D<f64> {
+    robust::Coord3D {
+        x: p.x,
+        y: p.y,
+        z: p.z,
+    }
+}
+
+/// Compatibility classifier for nominal great-circle input whose canonical
+/// f32 rounding prevents exact affine certification. Unlike the exact path,
+/// this tolerance classifier requires full-circle coverage so an ordinary
+/// large cell in a hemisphere cannot be misclassified as a degeneracy.
+fn classify_near_great_circle(points: &[Vec3]) -> Option<CoplanarClass> {
     if points.len() < 4 {
         return None;
     }
@@ -982,7 +1058,7 @@ fn classify_rank2_great_circle(points: &[Vec3]) -> Option<Rank2GreatCircle> {
         return None;
     }
 
-    Some(Rank2GreatCircle { normal })
+    Some(CoplanarClass { normal })
 }
 
 /// Find a numerically stable candidate normal in a fixed number of linear
@@ -992,7 +1068,7 @@ fn classify_rank2_great_circle(points: &[Vec3]) -> Option<Rank2GreatCircle> {
 ///
 /// This selection is deliberately conservative: failure to find a pair with
 /// enough angular separation merely declines the perturbation retry. It cannot
-/// create a false rank-2 classification because `classify_rank2_great_circle`
+/// create a false rank-2 classification because `classify_near_great_circle`
 /// subsequently checks every point against the candidate plane and verifies
 /// full-circle coverage. Re-pivoting at the farthest point handles ordered
 /// two-arc inputs where no pair involving `points[0]` is sufficiently stable.
@@ -1060,7 +1136,7 @@ fn covers_great_circle(points: &[Vec3], normal: DVec3) -> bool {
     max_gap < std::f64::consts::PI
 }
 
-fn perturb_great_circle_points(points: &[Vec3], normal: DVec3) -> Vec<Vec3> {
+fn perturb_coplanar_points(points: &[Vec3], normal: DVec3) -> Vec<Vec3> {
     // This is a realized robust-mode joggle, not a symbolic-only SoS epsilon.
     // The current f32 topology/validation path still sees near-antipodal pole
     // edges for microscopic offsets on exact great-circle fixtures; 1e-2 rad is
@@ -1398,8 +1474,8 @@ fn remap_cells_to_original_indices(
 mod tests {
     use super::{
         build_query_grid, cell_sum_sq_per_n, check_plain_return_signals,
-        classify_rank2_great_circle, map_build_cells_error, map_cell_build_error,
-        max_cell_occupancy, stable_rank2_normal, summarize_topology,
+        classify_exact_affine_circle, classify_near_great_circle, map_build_cells_error,
+        map_cell_build_error, max_cell_occupancy, stable_rank2_normal, summarize_topology,
         validate_and_canonicalize_unit_points, validate_generator_capacity, RepairOutcome,
     };
     use crate::diagram::VoronoiCell;
@@ -1908,7 +1984,7 @@ mod tests {
             })
             .collect();
         assert!(stable_rank2_normal(&points).is_some());
-        assert!(classify_rank2_great_circle(&points).is_none());
+        assert!(classify_near_great_circle(&points).is_none());
     }
 
     #[test]
@@ -1920,9 +1996,29 @@ mod tests {
                 Vec3::new(angle.cos(), angle.sin(), 0.0)
             })
             .collect();
-        let class = classify_rank2_great_circle(&points)
+        let class = classify_near_great_circle(&points)
             .expect("full great-circle fixture should be classified as rank 2");
         assert!(class.normal.z.abs() > 0.999_999);
+    }
+
+    #[test]
+    fn exact_affine_circle_classifier_uses_exact_canonical_model() {
+        let coplanar = [
+            Vec3::new(0.8, 0.0, 0.6),
+            Vec3::new(0.0, 0.8, 0.6),
+            Vec3::new(-0.8, 0.0, 0.6),
+            Vec3::new(0.0, -0.8, 0.6),
+        ];
+        let class = classify_exact_affine_circle(&coplanar)
+            .expect("constant-z canonical points are exactly affinely coplanar");
+        assert!(class.normal.z.abs() > 0.999_999);
+
+        let mut noncoplanar = coplanar;
+        noncoplanar[3].z = f32::from_bits(noncoplanar[3].z.to_bits() + 1);
+        assert!(
+            classify_exact_affine_circle(&noncoplanar).is_none(),
+            "one f32 ulp off the plane must not tolerance-classify as exact"
+        );
     }
 
     #[test]
