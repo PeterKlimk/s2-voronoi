@@ -209,6 +209,22 @@ larger always-live array.
   and allocation count. This is primarily a memory-envelope proposal until a design also preserves
   or improves traversal cycles.
 
+### Experimental result (2026-07-15)
+
+The `agent/thin-edge-check-queues` branch prototypes a one-pointer local slot using
+`Option<Box<Vec<EdgeCheck>>>`. Queue headers and payload capacity move together through the existing
+take/recycle path, while empty locals retain only the nullable pointer. At two million Fibonacci
+generators, peak RSS fell repeatably from about 575,000 KiB to 554,600 KiB, a reduction of roughly
+20 MiB.
+
+The extra indirection is too expensive for the default throughput path. At one million Fibonacci
+generators, retired instructions rose about 0.9% and branches about 2.1%. Cachegrind at 20k reported
+1.0% more instruction references, 1.4% more data references, 1.6% more branches, 8.6% more simulated
+branch mispredictions, and 22% more L1 instruction misses. D1 misses fell 1.0% and last-level data
+misses fell 6.1%, but those savings do not offset the deterministic front-end work. Retain this only
+as a possible explicit memory-mode design or as evidence for evaluating a lower-overhead custom
+thin allocation; it is not a default-path candidate.
+
 ## 6. Lower-priority local layout experiments
 
 These may remove load uops or L1 traffic but are less likely to move a true multithreaded memory
@@ -236,4 +252,3 @@ ceiling:
 - Do not add a per-reference same-owner branch to the existing `u64` stream. The measured hit rate
   was extremely high and the branch still regressed; a successful compact-reference experiment must
   actually narrow the primary stream and isolate sparse exceptions.
-

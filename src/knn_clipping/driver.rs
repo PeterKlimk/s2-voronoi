@@ -313,7 +313,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
             generator_idx,
             directed_ctx,
             packed,
-            incoming_checks: &incoming_checks,
+            incoming_checks: incoming_checks.as_slice(),
         },
     )
     .map_err(BuildCellsError::CellBuild)?;

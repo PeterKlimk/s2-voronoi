@@ -6,18 +6,60 @@ use glam::Vec3;
 
 use super::types::VertexPosition;
 
+/// One-pointer per-local queue handle. The `Vec` header lives only for
+/// populated queues and moves intact through take/recycle.
+#[allow(clippy::box_collection)] // the outer box is the one-pointer thin handle
+pub(crate) struct EdgeCheckQueue(Option<Box<Vec<EdgeCheck>>>);
+
+#[allow(clippy::box_collection)]
+impl EdgeCheckQueue {
+    #[inline]
+    pub(super) fn from_box(queue: Option<Box<Vec<EdgeCheck>>>) -> Self {
+        Self(queue)
+    }
+
+    #[inline]
+    pub(crate) fn as_slice(&self) -> &[EdgeCheck] {
+        self.0.as_deref().map_or(&[], Vec::as_slice)
+    }
+
+    #[inline]
+    pub(super) fn into_box(self) -> Option<Box<Vec<EdgeCheck>>> {
+        self.0
+    }
+}
+
+impl From<Vec<EdgeCheck>> for EdgeCheckQueue {
+    fn from(queue: Vec<EdgeCheck>) -> Self {
+        if queue.is_empty() {
+            Self(None)
+        } else {
+            Self(Some(Box::new(queue)))
+        }
+    }
+}
+
+impl std::ops::Deref for EdgeCheckQueue {
+    type Target = [EdgeCheck];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
 /// Data only needed during vertex deduplication (dropped after overflow flush).
+#[allow(clippy::box_collection, clippy::vec_box)] // intentional thin-queue experiment
 pub(crate) struct ShardDedup {
-    /// Per-local edge checks (Vec-based for cache locality)
-    pub(super) edge_checks: Vec<Vec<EdgeCheck>>,
-    /// Pool of reusable Vecs with existing capacity
-    pub(super) edge_check_pool: Vec<Vec<EdgeCheck>>,
+    /// Per-local one-pointer handles; only populated queues allocate a header.
+    pub(super) edge_checks: Vec<Option<Box<Vec<EdgeCheck>>>>,
+    /// Pool of reusable queue headers and their existing payload capacity.
+    pub(super) edge_check_pool: Vec<Box<Vec<EdgeCheck>>>,
 }
 
 impl ShardDedup {
     pub(super) fn new(num_local_generators: usize) -> Self {
         Self {
-            edge_checks: (0..num_local_generators).map(|_| Vec::new()).collect(),
+            edge_checks: (0..num_local_generators).map(|_| None).collect(),
             edge_check_pool: Vec::new(),
         }
     }

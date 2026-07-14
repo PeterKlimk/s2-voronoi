@@ -7,6 +7,7 @@ use glam::Vec3;
 use super::binning::BinAssignment;
 use super::edge_checks::collect_and_resolve_cell_edges;
 use super::packed::{pack_ref, DEFERRED, INVALID_INDEX};
+use super::shard::EdgeCheckQueue;
 use super::shard::ShardState;
 use super::types::{
     BinId, DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeOverflowLocal, EdgeToLater, LocalId,
@@ -52,7 +53,7 @@ impl EdgeScratch {
         shard_ctx: &mut ShardContext<'_, P>,
         output_buffer: &CellOutputBuffer<P>,
         assignment: &BinAssignment,
-        incoming_checks: Vec<EdgeCheck>,
+        incoming_checks: EdgeCheckQueue,
     ) {
         self.vertex_indices.clear();
         self.vertex_indices
@@ -200,7 +201,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
     cell_idx: u32,
     cell_start: u32,
     output_buffer: &CellOutputBuffer<P>,
-    incoming_checks: Vec<EdgeCheck>,
+    incoming_checks: EdgeCheckQueue,
 ) -> Result<(), BuildCellsError> {
     let mut t_post = crate::timing::LapTimer::start();
     scratch.collect_and_resolve(

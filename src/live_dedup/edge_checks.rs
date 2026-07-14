@@ -1,7 +1,5 @@
 //! Edge-check bookkeeping helpers for live dedup.
 
-use std::mem;
-
 use super::binning::BinAssignment;
 use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
@@ -181,26 +179,30 @@ impl ShardDedup {
         );
 
         let slot = &mut self.edge_checks[local_idx];
-        if slot.capacity() == 0 {
-            if let Some(mut v) = self.edge_check_pool.pop() {
-                v.clear();
-                *slot = v;
-            }
+        if slot.is_none() {
+            let mut queue = self
+                .edge_check_pool
+                .pop()
+                .unwrap_or_else(|| Box::new(Vec::new()));
+            queue.clear();
+            *slot = Some(queue);
         }
-        slot.push(check);
+        slot.as_mut().unwrap().push(check);
     }
 
-    pub(crate) fn take_edge_checks(&mut self, local: LocalId) -> Vec<EdgeCheck> {
+    pub(crate) fn take_edge_checks(&mut self, local: LocalId) -> super::shard::EdgeCheckQueue {
         let local_idx = local.as_usize();
         debug_assert!(
             local_idx < self.edge_checks.len(),
             "edge check local out of bounds"
         );
-        mem::take(&mut self.edge_checks[local_idx])
+        super::shard::EdgeCheckQueue::from_box(self.edge_checks[local_idx].take())
     }
 
-    pub(super) fn recycle_edge_checks(&mut self, v: Vec<EdgeCheck>) {
-        self.edge_check_pool.push(v);
+    pub(super) fn recycle_edge_checks(&mut self, queue: super::shard::EdgeCheckQueue) {
+        if let Some(queue) = queue.into_box() {
+            self.edge_check_pool.push(queue);
+        }
     }
 }
 
@@ -234,7 +236,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     shard_ctx: &mut super::emit::ShardContext<'_, P>,
     output_buffer: &crate::knn_clipping::cell_build::CellOutputBuffer<P>,
     assignment: &BinAssignment,
-    incoming_checks: Vec<EdgeCheck>,
+    incoming_checks: super::shard::EdgeCheckQueue,
     vertex_indices: &mut [u32],
     edges_to_later: &mut Vec<EdgeToLater>,
     edges_overflow: &mut Vec<EdgeOverflowLocal>,
@@ -689,7 +691,7 @@ mod tests {
             &mut shard_ctx,
             &output,
             &assignment,
-            incoming,
+            incoming.into(),
             &mut vertex_indices,
             &mut to_later,
             &mut overflow,
