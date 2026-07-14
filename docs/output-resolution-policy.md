@@ -45,6 +45,42 @@ short positive edge appear to have zero angle.
 Equality in the stored representation is not proof that the ideal f64 construction vertices were
 equal. Collapsing such an edge is an output-resolution decision.
 
+## Relation to preprocessing welding
+
+Input welding and output edge collapse remain separate policies, even though the default weld
+radius gives useful evidence about whole-cell collapse.
+
+If the sites of an exact spherical Voronoi problem have minimum geodesic separation `alpha`, the
+cell of each site contains the spherical cap of radius `alpha / 2` centered on that site. For any
+point inside that cap, the triangle inequality makes the owning site strictly closer than every
+other site. Consequently, a true separation floor gives every ideal cell a positive inradius and
+area.
+
+Conditionally interpreting the default weld chord radius (`~1.3487e-6`) as a true separation floor
+would give an inradius of about `6.74e-7` radians and a cap-area floor of about `1.43e-12`
+steradians. It would rule out an exactly zero ideal cell for a surviving effective generator.
+
+It does not give a lower bound on every Voronoi edge or on the separation between adjacent Voronoi
+vertices. Four well-separated sites can approach cocircularity while one dual Voronoi edge tends
+continuously to zero. Welding therefore does not address the ordinary, non-cell-killing zero-edge
+case that motivated this policy.
+
+The current implementation also does not promote the conditional ideal-cell argument to a
+finite-precision certificate. The weld predicate and radius are computed-f32/empirical; the
+construction passes through f64 clipping and f32 storage; and reconciliation can merge stored
+vertices within its own tolerance. No composed proof currently shows that all of those errors stay
+below the ideal inradius floor. The existing constant relationship between the reconciliation and
+weld radii is a sanity check, not that proof.
+
+Accordingly:
+
+- `Preserve`/`Error`/`Elide` still applies to every cell-killing transaction, including with default
+  welding enabled;
+- a cell-killing exact-zero contraction under default welding is a suspicious diagnostic event and
+  a useful target for an eventual separation/error proof; and
+- an optional positive edge threshold deliberately permits removal of genuine features whose
+  generators are well separated, so it cannot be inferred from the weld radius.
+
 ## Dimension 1: generator outcome
 
 The generator outcome applies only when an otherwise requested contraction would make a cell
@@ -156,13 +192,30 @@ by the selected generator outcome, not by asking Local3d to restore the pre-simp
 
 The final policy must apply globally, whether or not repair ran. Repair-local tolerance welding
 cannot be the only way a tiny edge is collapsed; otherwise an unrelated topology defect can change
-the resolution of the returned mesh. The existing fast-repair weld path must be audited against
-this rule:
+the resolution of the returned mesh.
 
-- repair may establish the endpoint equivalence needed for edge agreement;
+Repair currently uses distance for two different effects, which must be classified before a merge
+component is committed:
+
+1. **Endpoint identity reconciliation:** two cells emitted nearby realizations of one intended
+   logical vertex. Repair may use its internal, diameter-bounded correspondence tolerance for this
+   operation. That tolerance need not equal a consumer's edge-collapse threshold.
+2. **Logical edge collapse:** a proposed union identifies two consecutive vertices of a cell and
+   destroys the edge between them. Exact stored-zero edges are authorized by the baseline policy;
+   positive edges are authorized only by the configured positive edge threshold.
+
+Policy is therefore tied to the effect of a union, not to the mere use of a distance comparison.
+If repair needs to destroy a positive logical edge which the configured scope does not authorize,
+it must escalate to Local3d rather than silently simplify. If the scope does authorize the edge,
+fast repair may take the same shortcut that the final global pass would take. Every cell-killing
+result additionally consults `Preserve`/`Error`/`Elide`.
+
+The existing fast-repair weld path must be audited and, where necessary, split along this boundary:
+
+- identity repair may establish the endpoint equivalence needed for edge agreement;
 - it must not silently eliminate a generator under `Preserve`;
-- any approximate simplification it performs must obey the same threshold and generator outcome
-  as the final global pass; and
+- every edge-destroying approximate merge must obey the same threshold and generator outcome as
+  the final global pass; and
 - the global pass remains authoritative for repaired and unrepaired diagrams alike.
 
 If later work introduces another repair after this stage, the resolution stage must run again
@@ -222,7 +275,8 @@ after explicit simplification,” not “Voronoi diagram of the original generat
    without changing the generator count.
 4. Add `Preserve`, `Error`, and `Elide` behavior for components that would eliminate cells,
    including explicit generator-remapping/report semantics.
-5. Audit repair-local welding for path independence.
+5. Split repair merge proposals into endpoint-identity and logical-edge-collapse effects; route an
+   unauthorized positive collapse to Local3d and enforce the generator outcome before commit.
 6. Add optional positive-threshold collapse only after the exact-zero policy is stable.
 7. Benchmark the no-candidate scan and keep all component reconstruction on the cold path.
 
