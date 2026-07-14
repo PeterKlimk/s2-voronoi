@@ -56,9 +56,16 @@ flags local x-separations through `2 * 1e-6` (plus one threshold ULP). Dedup sim
 certifies, in f64 over the stored f32 values, that every selected representative's x coordinate is
 within `1e-6` of that cell-local realization. By the triangle inequality, a final exact-zero edge
 must then have been flagged. If any in-shard or deferred/off-shard substitution exceeds the bound,
-the terminal stage performs an exhaustive scan instead. Reconciliation is invoked on every build;
-nonempty unresolved records conservatively mean that it may have changed the cycles and therefore
-force an exhaustive terminal scan. Any attempted Local3d repair does the same.
+the terminal stage performs an exhaustive scan instead.
+
+Post-assembly topology mutation is localized rather than treated as a global invalidation.
+Reconciliation reports every cell covered by an accepted merge or collinear drop; an accepted
+Local3d repair reports every spliced generator cell. The terminal stage scans those final cell
+cycles exactly and combines the results with rechecked construction-hint neighborhoods. A cycle
+rewrite cannot create an edge in an untouched cycle, and Local3d only appends vertices referenced
+by its spliced cells. A future mutator that changes an existing vertex position must instead report
+every cell incident to that vertex. Only representative-drift failure or incomplete provenance
+requires a whole-diagram discovery scan.
 
 Complete representative coverage depends on the live-dedup ownership lifecycle. A canonical
 generator-triplet `VertexKey` determines the owner bin. Reuse inside that shard is checked while
@@ -67,8 +74,8 @@ overflow resolution patches those slots before the deferred check, so an already
 compared with its final representative. If no owner-side record resolved the key, the first
 fallback realization becomes the representative and every later realization with the same key is
 checked against it. A malformed key, conflicting slot, or incomplete edge pairing produces an
-unresolved record, which disables the certificate and selects exhaustive discovery. Concatenating
-the shards does not subsequently change positions.
+unresolved record; if the resulting provenance cannot localize discovery, the terminal stage
+selects the whole-diagram scan. Concatenating the shards does not subsequently change positions.
 
 Existing generator-triplet keys identify every cell incident to a confirmed component, so
 classification and the quotient certificate remain local after discovery. `compute_with_report`

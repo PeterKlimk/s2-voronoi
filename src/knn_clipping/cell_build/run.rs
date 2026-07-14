@@ -81,6 +81,11 @@ pub(crate) struct CellBuildContext {
 }
 
 impl CellBuildContext {
+    // Keep worker setup folded into the shard driver. This and the phase
+    // annotations below pin the previously measured release-codegen shape;
+    // unrelated cold-pipeline growth otherwise caused LLVM to outline the
+    // per-generator driver and regress retired instructions by about 1%.
+    #[inline(always)]
     pub(crate) fn new(grid: &crate::cube_grid::CubeMapGrid, policy: PackedNeighborPolicy) -> Self {
         Self {
             builder: crate::knn_clipping::topo2d::Topo2DBuilder::new(0, Vec3::ZERO),
@@ -500,6 +505,9 @@ struct StreamPhase<'x> {
 
 /// Phase 1: clip edge-check seed constraints forwarded by earlier same-bin
 /// cells (see "The stitching invariant" in docs/architecture.md).
+// These phase seams are organizational; all three belong to one hot
+// per-generator operation and should remain flattened into its caller.
+#[inline(always)]
 fn clip_seed_neighbors(
     ctx: &mut CellBuildContext,
     points: &[Vec3],
@@ -743,6 +751,7 @@ fn clip_batch_source<const SHELL: bool>(
 
 /// Phase 2: drive the neighbor stream to termination, failure, or exhaustion.
 #[allow(clippy::too_many_arguments)]
+#[inline(always)]
 fn consume_stream(
     stream: &mut DirectedNeighborStream<'_, '_, '_, '_>,
     mut phase: StreamPhase<'_>,
@@ -802,6 +811,7 @@ fn consume_stream(
 }
 
 /// Phase 3: classify terminal failure, or extract the finished cell.
+#[inline(always)]
 fn finish_cell(
     ctx: &mut CellBuildContext,
     points: &[Vec3],
@@ -860,6 +870,7 @@ fn finish_cell(
     Ok(())
 }
 
+#[inline(always)]
 pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     ctx: &'a mut CellBuildContext,
     mut request: CellBuildRequest<'a, 'm, 'p, 'g, 's>,

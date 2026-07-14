@@ -484,8 +484,8 @@ pub struct PhaseTimings {
     pub grid_rebuilt: bool,
     pub resolution_certified_hint: bool,
     pub resolution_drift_fallback: bool,
-    pub resolution_unresolved_fallback: bool,
-    pub resolution_repair_fallback: bool,
+    pub resolution_reconcile_scan_cells: u64,
+    pub resolution_repair_scan_cells: u64,
     pub resolution_hint_cells: u64,
     pub resolution_hinted_candidates: u64,
     pub resolution_detected_edges: u64,
@@ -755,15 +755,15 @@ impl PhaseTimings {
             pct(self.assemble)
         );
         eprintln!(
-            "  output_resolution: mode={} fallback(drift={},unresolved={},repair={}) hint_cells={} hinted_candidates={} detected_edges={}",
+            "  output_resolution: mode={} drift_fallback={} local_scan(reconcile_cells={},repair_cells={}) hint_cells={} hinted_candidates={} detected_edges={}",
             if self.resolution_certified_hint {
                 "certified_hint"
             } else {
                 "exhaustive"
             },
             self.resolution_drift_fallback as u8,
-            self.resolution_unresolved_fallback as u8,
-            self.resolution_repair_fallback as u8,
+            self.resolution_reconcile_scan_cells,
+            self.resolution_repair_scan_cells,
             self.resolution_hint_cells,
             self.resolution_hinted_candidates,
             self.resolution_detected_edges,
@@ -771,7 +771,7 @@ impl PhaseTimings {
 
         if std::env::var_os("VORONOI_MESH_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_fallback_unresolved={rfu} resolution_fallback_repair={rfr} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_reconcile_scan_cells={rrsc} resolution_repair_scan_cells={rpsc} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -784,8 +784,8 @@ impl PhaseTimings {
                 asmb = ms(self.assemble),
                 rch = self.resolution_certified_hint as u8,
                 rfd = self.resolution_drift_fallback as u8,
-                rfu = self.resolution_unresolved_fallback as u8,
-                rfr = self.resolution_repair_fallback as u8,
+                rrsc = self.resolution_reconcile_scan_cells,
+                rpsc = self.resolution_repair_scan_cells,
                 rhc = self.resolution_hint_cells,
                 rhcand = self.resolution_hinted_candidates,
                 rde = self.resolution_detected_edges,
@@ -856,8 +856,8 @@ pub struct TimingBuilder {
     grid_rebuilt: bool,
     resolution_certified_hint: bool,
     resolution_drift_fallback: bool,
-    resolution_unresolved_fallback: bool,
-    resolution_repair_fallback: bool,
+    resolution_reconcile_scan_cells: u64,
+    resolution_repair_scan_cells: u64,
     resolution_hint_cells: u64,
     resolution_hinted_candidates: u64,
     resolution_detected_edges: u64,
@@ -883,8 +883,8 @@ impl TimingBuilder {
             grid_rebuilt: false,
             resolution_certified_hint: false,
             resolution_drift_fallback: false,
-            resolution_unresolved_fallback: false,
-            resolution_repair_fallback: false,
+            resolution_reconcile_scan_cells: 0,
+            resolution_repair_scan_cells: 0,
             resolution_hint_cells: 0,
             resolution_hinted_candidates: 0,
             resolution_detected_edges: 0,
@@ -941,16 +941,16 @@ impl TimingBuilder {
         &mut self,
         certified_hint: bool,
         drift_fallback: bool,
-        unresolved_fallback: bool,
-        repair_fallback: bool,
+        reconcile_scan_cells: usize,
+        repair_scan_cells: usize,
         hint_cells: usize,
         hinted_candidates: usize,
         detected_edges: usize,
     ) {
         self.resolution_certified_hint = certified_hint;
         self.resolution_drift_fallback = drift_fallback;
-        self.resolution_unresolved_fallback = unresolved_fallback;
-        self.resolution_repair_fallback = repair_fallback;
+        self.resolution_reconcile_scan_cells = reconcile_scan_cells as u64;
+        self.resolution_repair_scan_cells = repair_scan_cells as u64;
         self.resolution_hint_cells = hint_cells as u64;
         self.resolution_hinted_candidates = hinted_candidates as u64;
         self.resolution_detected_edges = detected_edges as u64;
@@ -975,8 +975,8 @@ impl TimingBuilder {
             grid_rebuilt: self.grid_rebuilt,
             resolution_certified_hint: self.resolution_certified_hint,
             resolution_drift_fallback: self.resolution_drift_fallback,
-            resolution_unresolved_fallback: self.resolution_unresolved_fallback,
-            resolution_repair_fallback: self.resolution_repair_fallback,
+            resolution_reconcile_scan_cells: self.resolution_reconcile_scan_cells,
+            resolution_repair_scan_cells: self.resolution_repair_scan_cells,
             resolution_hint_cells: self.resolution_hint_cells,
             resolution_hinted_candidates: self.resolution_hinted_candidates,
             resolution_detected_edges: self.resolution_detected_edges,
@@ -991,12 +991,12 @@ mod tests {
     #[test]
     fn output_resolution_discovery_fields_survive_finish() {
         let mut builder = TimingBuilder::new();
-        builder.set_output_resolution_discovery(false, true, true, false, 11, 7, 3);
+        builder.set_output_resolution_discovery(false, true, 13, 5, 11, 7, 3);
         let timings = builder.finish();
         assert!(!timings.resolution_certified_hint);
         assert!(timings.resolution_drift_fallback);
-        assert!(timings.resolution_unresolved_fallback);
-        assert!(!timings.resolution_repair_fallback);
+        assert_eq!(timings.resolution_reconcile_scan_cells, 13);
+        assert_eq!(timings.resolution_repair_scan_cells, 5);
         assert_eq!(timings.resolution_hint_cells, 11);
         assert_eq!(timings.resolution_hinted_candidates, 7);
         assert_eq!(timings.resolution_detected_edges, 3);

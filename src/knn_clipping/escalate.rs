@@ -1406,6 +1406,12 @@ impl<'a> WorkingDiagram<'a> {
     /// assigned past the base vertex count, so the caller appends the minted
     /// positions to its base vertex array and swaps in the cell arrays on
     /// acceptance (truncating the appended positions again on rejection).
+    pub(crate) fn overridden_cells(&self) -> Vec<u32> {
+        let mut cells: Vec<u32> = self.overrides.keys().copied().collect();
+        cells.sort_unstable();
+        cells
+    }
+
     pub fn into_flat(self) -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>) {
         let n = self.base_cells.len();
         let mut cells = Vec::with_capacity(n);
@@ -1542,6 +1548,31 @@ mod tests {
         let vid = work.vid_for(&points, vertex);
         assert_eq!(work.vkey(vid), vertex.key);
         assert_eq!(work.vpos(vid), expected);
+    }
+
+    #[test]
+    fn local3d_overlay_reports_every_spliced_cell_for_resolution_scan() {
+        let points = [Vec3::X, Vec3::Y, Vec3::Z];
+        let keys = ShardedVertexKeys::new(vec![0], vec![]);
+        let cells = vec![VoronoiCell::new(0, 0); points.len()];
+        let mut work = WorkingDiagram::from_assembled(&[], &keys, &cells, &[]);
+        let fan = [
+            RepairVertex {
+                key: [0, 1, 2],
+                mint_pos: Some(Vec3::X),
+            },
+            RepairVertex {
+                key: [0, 1, 2],
+                mint_pos: Some(Vec3::Y),
+            },
+            RepairVertex {
+                key: [0, 1, 2],
+                mint_pos: Some(Vec3::Z),
+            },
+        ];
+        work.splice_generator(&points, 2, &fan, 0.0);
+        work.splice_generator(&points, 0, &fan, 0.0);
+        assert_eq!(work.overridden_cells(), [0, 2]);
     }
 
     #[test]

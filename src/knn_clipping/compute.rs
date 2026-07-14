@@ -59,20 +59,12 @@ impl PipelineState {
 struct ResolutionDiscoveryDecision {
     certified_hint: bool,
     drift_fallback: bool,
-    unresolved_fallback: bool,
-    repair_fallback: bool,
 }
 
-fn resolution_discovery_decision(
-    resolution_drift_exceeded: bool,
-    has_unresolved_edges: bool,
-    repair_attempted: bool,
-) -> ResolutionDiscoveryDecision {
+fn resolution_discovery_decision(resolution_drift_exceeded: bool) -> ResolutionDiscoveryDecision {
     ResolutionDiscoveryDecision {
-        certified_hint: !resolution_drift_exceeded && !has_unresolved_edges && !repair_attempted,
+        certified_hint: !resolution_drift_exceeded,
         drift_fallback: resolution_drift_exceeded,
-        unresolved_fallback: has_unresolved_edges,
-        repair_fallback: repair_attempted,
     }
 }
 
@@ -82,15 +74,25 @@ fn canonicalize_pipeline_exact_zero_edges(
     cells: &mut [VoronoiCell],
     cell_indices: &mut [u32],
     hinted_candidates: Vec<(u32, u32)>,
+    mutation_scan_cells: &[u32],
     decision: ResolutionDiscoveryDecision,
 ) -> Result<crate::OutputResolutionReport, crate::VoronoiError> {
-    let localized_candidate_cells = if decision.certified_hint {
-        let mut incident_cells = Vec::with_capacity(hinted_candidates.len() * 6);
+    let (exact_zero_candidates, localized_candidate_cells) = if decision.certified_hint {
+        // Construction hints name pre-reconciliation edges. Re-scan their
+        // degree-local incident cells in the terminal diagram so a repair
+        // cannot leave a stale candidate, and add the complete footprint of
+        // every post-assembly mutation. Untouched cells retain the original
+        // construction certificate.
+        let mut discovery_cells: Vec<usize> = mutation_scan_cells
+            .iter()
+            .map(|&cell| cell as usize)
+            .collect();
+        discovery_cells.reserve(hinted_candidates.len() * 6);
         let mut complete = true;
         for &(a, b) in &hinted_candidates {
             for vertex in [a, b] {
                 if let Some(key) = vertex_keys.get(vertex) {
-                    incident_cells.extend(key.map(|generator| generator as usize));
+                    discovery_cells.extend(key.map(|generator| generator as usize));
                 } else {
                     complete = false;
                     break;
@@ -101,21 +103,55 @@ fn canonicalize_pipeline_exact_zero_edges(
             }
         }
         if complete {
-            incident_cells.sort_unstable();
-            incident_cells.dedup();
-            Some(incident_cells)
+            discovery_cells.sort_unstable();
+            discovery_cells.dedup();
+            let candidates = output_resolution::collect_zero_edges_in_cells(
+                vertices,
+                cells,
+                cell_indices,
+                &discovery_cells,
+            )?;
+
+            // A repaired/minted endpoint may not exist in the assembly key
+            // store. In that rare case candidate discovery is still local and
+            // complete, but quotient classification conservatively considers
+            // every cell. Otherwise include every key owner so all references
+            // rewritten by a contraction are in scope.
+            let mut candidate_cells = discovery_cells;
+            for &(a, b) in &candidates {
+                for vertex in [a, b] {
+                    if let Some(key) = vertex_keys.get(vertex) {
+                        candidate_cells.extend(key.map(|generator| generator as usize));
+                    } else {
+                        complete = false;
+                        break;
+                    }
+                }
+                if !complete {
+                    break;
+                }
+            }
+            if complete {
+                candidate_cells.sort_unstable();
+                candidate_cells.dedup();
+                (Some(candidates), Some(candidate_cells))
+            } else {
+                (Some(candidates), None)
+            }
         } else {
-            None
+            // Missing provenance invalidates localization. Fall back to the
+            // terminal whole-diagram scan rather than guess.
+            (None, None)
         }
     } else {
-        None
+        (None, None)
     };
 
     output_resolution::canonicalize_exact_zero_edges(
         vertices,
         cells,
         cell_indices,
-        decision.certified_hint.then_some(hinted_candidates),
+        exact_zero_candidates,
         localized_candidate_cells,
     )
 }
@@ -174,6 +210,7 @@ fn run_core_pipeline(
         residual_pairs: post_repair_unpaired,
         escalation_pairs: reconciliation_escalations,
         merge_affected_cells,
+        resolution_scan_cells: reconcile_resolution_scan_cells,
     } = reconcile_result;
     // This is part of the plain-return safety gate, not merely a repair
     // trigger. Compute it even when repair is disabled so that mode cannot
@@ -181,7 +218,10 @@ fn run_core_pipeline(
     let t_low_incidence = std::time::Instant::now();
     let topology = summarize_topology(vertices.len(), &eff_cells, &eff_cell_indices);
     let low_incidence_scan_time = t_low_incidence.elapsed();
-    let repair = maybe_repair_effective(
+    let RepairResult {
+        outcome: repair,
+        resolution_scan_cells: repair_resolution_scan_cells,
+    } = maybe_repair_effective(
         effective_points_ref,
         &grid,
         &mut vertices,
@@ -195,11 +235,14 @@ fn run_core_pipeline(
         low_incidence_scan_time,
         repair_mode,
     );
-    let resolution_decision = resolution_discovery_decision(
-        resolution_drift_exceeded,
-        !unresolved_edges.is_empty(),
-        repair.attempted,
-    );
+    let reconcile_resolution_scan_cell_count = reconcile_resolution_scan_cells.len();
+    let repair_resolution_scan_cell_count = repair_resolution_scan_cells.len();
+    let mut mutation_scan_cells = reconcile_resolution_scan_cells;
+    mutation_scan_cells.extend(repair_resolution_scan_cells);
+    mutation_scan_cells.sort_unstable();
+    mutation_scan_cells.dedup();
+
+    let resolution_decision = resolution_discovery_decision(resolution_drift_exceeded);
     let hinted_candidate_count = exact_zero_edge_candidates.len();
     let output_resolution = canonicalize_pipeline_exact_zero_edges(
         &vertices,
@@ -207,13 +250,14 @@ fn run_core_pipeline(
         &mut eff_cells,
         &mut eff_cell_indices,
         exact_zero_edge_candidates,
+        &mutation_scan_cells,
         resolution_decision,
     )?;
     tb.set_output_resolution_discovery(
         resolution_decision.certified_hint,
         resolution_decision.drift_fallback,
-        resolution_decision.unresolved_fallback,
-        resolution_decision.repair_fallback,
+        reconcile_resolution_scan_cell_count,
+        repair_resolution_scan_cell_count,
         exact_zero_edge_hint_cells,
         hinted_candidate_count,
         output_resolution.exact_zero_edges_detected,
@@ -604,6 +648,22 @@ impl RepairOutcome {
     }
 }
 
+struct RepairResult {
+    outcome: RepairOutcome,
+    /// Cells whose final cycles were replaced by an accepted Local3d splice.
+    /// Newly minted vertices are referenced only from these cells.
+    resolution_scan_cells: Vec<u32>,
+}
+
+impl RepairResult {
+    fn unchanged(outcome: RepairOutcome) -> Self {
+        Self {
+            outcome,
+            resolution_scan_cells: Vec::new(),
+        }
+    }
+}
+
 /// Reject defect signals that cannot be surfaced by the plain compute API.
 ///
 /// Kept as one pure decision seam so fault-injection tests can pin the exact
@@ -646,8 +706,8 @@ fn check_plain_return_signals(
 }
 
 /// Try the configured local repair and commit it only if whole-diagram strict
-/// validation succeeds. Reports whether the repaired effective diagram was
-/// accepted and whether detection saw a low-incidence defect.
+/// validation succeeds. Reports both the public repair outcome and the exact
+/// local footprint whose final cycles changed on an accepted splice.
 #[allow(clippy::too_many_arguments)] // cohesive repair-entry state; splitting would obscure it
 fn maybe_repair_effective(
     effective_points: &[Vec3],
@@ -662,20 +722,26 @@ fn maybe_repair_effective(
     topology: TopologySummary,
     low_incidence_scan_time: std::time::Duration,
     repair_mode: RepairMode,
-) -> RepairOutcome {
+) -> RepairResult {
     let has_low_incidence = topology.low_incidence;
     let euler_defect = !topology.has_sphere_euler(eff_cells.len());
     // A0 probes need the fast assembled state, not the repaired one.
     #[cfg(feature = "escalate_probe")]
     if std::env::var("VORONOI_MESH_ESCALATE_PROBE_A0").is_ok() {
         escalate::stash_a0_fast(effective_points, vertex_keys, eff_cells, eff_cell_indices);
-        return RepairOutcome::not_attempted(has_low_incidence, euler_defect);
+        return RepairResult::unchanged(RepairOutcome::not_attempted(
+            has_low_incidence,
+            euler_defect,
+        ));
     }
 
     let repair_enabled =
         !matches!(repair_mode, RepairMode::Disabled) || escalate::escalation_enabled();
     if !repair_enabled {
-        return RepairOutcome::not_attempted(has_low_incidence, euler_defect);
+        return RepairResult::unchanged(RepairOutcome::not_attempted(
+            has_low_incidence,
+            euler_defect,
+        ));
     }
 
     let mut defect_pairs: Vec<(u32, u32)> = post_repair_unpaired
@@ -696,7 +762,7 @@ fn maybe_repair_effective(
         );
     }
     if defect_pairs.is_empty() && !has_low_incidence {
-        return RepairOutcome::not_attempted(false, euler_defect);
+        return RepairResult::unchanged(RepairOutcome::not_attempted(false, euler_defect));
     }
     let outcome = |accepted: bool| RepairOutcome {
         attempted: true,
@@ -782,7 +848,7 @@ fn maybe_repair_effective(
     // flatten + full-diagram clone + validate of an unchanged diagram, which is
     // the dominant cost of a no-op repair (~12.6s of a 15s tail at 2.5M).
     if stats.spliced_generators == 0 {
-        return outcome(false);
+        return RepairResult::unchanged(outcome(false));
     }
 
     // Materialize the overlay: minted vertex positions (vids past the base
@@ -790,6 +856,7 @@ fn maybe_repair_effective(
     // place — and truncated back on rejection — so an accepted repair never
     // copies the base positions.
     let t_flat = std::time::Instant::now();
+    let resolution_scan_cells = work.overridden_cells();
     let (minted_vertices, new_cells, mut new_cell_indices) = work.into_flat();
     // The in-place and rebuild reconciliation oracles can present the same
     // cyclic boundary with different starting slots. Local3d preserves that
@@ -831,12 +898,15 @@ fn maybe_repair_effective(
     }
     if gate.is_err() {
         vertices.truncate(base_vertex_count);
-        return outcome(false);
+        return RepairResult::unchanged(outcome(false));
     }
 
     *eff_cells = new_cells;
     *eff_cell_indices = new_cell_indices;
-    outcome(true)
+    RepairResult {
+        outcome: outcome(true),
+        resolution_scan_cells,
+    }
 }
 
 fn canonicalize_cell_cycle_starts(cells: &[VoronoiCell], cell_indices: &mut [u32]) {
@@ -1643,23 +1713,17 @@ mod tests {
     }
 
     #[test]
-    fn resolution_discovery_decision_preserves_every_fallback_reason() {
+    fn resolution_discovery_decision_falls_back_only_on_global_drift() {
         for drift in [false, true] {
-            for unresolved in [false, true] {
-                for repair in [false, true] {
-                    let decision = resolution_discovery_decision(drift, unresolved, repair);
-                    assert_eq!(decision.certified_hint, !(drift || unresolved || repair));
-                    assert_eq!(decision.drift_fallback, drift);
-                    assert_eq!(decision.unresolved_fallback, unresolved);
-                    assert_eq!(decision.repair_fallback, repair);
-                }
-            }
+            let decision = resolution_discovery_decision(drift);
+            assert_eq!(decision.certified_hint, !drift);
+            assert_eq!(decision.drift_fallback, drift);
         }
     }
 
     #[test]
     fn drift_violation_forces_exhaustive_zero_edge_discovery() {
-        let decision = resolution_discovery_decision(true, false, false);
+        let decision = resolution_discovery_decision(true);
         assert!(!decision.certified_hint);
         assert!(decision.drift_fallback);
 
@@ -1671,6 +1735,7 @@ mod tests {
             &mut exhaustive_cells,
             &mut exhaustive_indices,
             Vec::new(),
+            &[],
             decision,
         )
         .expect("drift fallback should run exhaustive discovery");
@@ -1685,7 +1750,8 @@ mod tests {
             &mut hinted_cells,
             &mut hinted_indices,
             vec![(0, 1)],
-            resolution_discovery_decision(false, false, false),
+            &[],
+            resolution_discovery_decision(false),
         )
         .expect("certified candidate should produce the same quotient");
         assert_eq!(hinted_report, report);
@@ -1696,6 +1762,31 @@ mod tests {
             let es = exhaustive.vertex_start();
             assert_eq!(
                 &hinted_indices[hs..hs + hinted.vertex_count()],
+                &exhaustive_indices[es..es + exhaustive.vertex_count()]
+            );
+        }
+
+        // Model a post-construction repair which creates the zero edge in one
+        // rewritten cell. It was absent from construction hints, but the local
+        // mutation footprint is sufficient to discover the same quotient.
+        let (_, mut repaired_cells, mut repaired_indices, repaired_keys) = zero_edge_cube_fixture();
+        let repaired_report = canonicalize_pipeline_exact_zero_edges(
+            &vertices,
+            &repaired_keys,
+            &mut repaired_cells,
+            &mut repaired_indices,
+            Vec::new(),
+            &[0],
+            resolution_discovery_decision(false),
+        )
+        .expect("local mutation scan should discover an unhinted zero edge");
+        assert_eq!(repaired_report, report);
+        for (repaired, exhaustive) in repaired_cells.iter().zip(&exhaustive_cells) {
+            assert_eq!(repaired.vertex_count(), exhaustive.vertex_count());
+            let rs = repaired.vertex_start();
+            let es = exhaustive.vertex_start();
+            assert_eq!(
+                &repaired_indices[rs..rs + repaired.vertex_count()],
                 &exhaustive_indices[es..es + exhaustive.vertex_count()]
             );
         }

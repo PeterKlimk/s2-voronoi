@@ -1086,17 +1086,18 @@ cell; exact equality over assembled positions is checked only for flagged cells.
 f64 that each chosen representative's stored x coordinate moved by at most `r = 1e-6` from every
 cell-local realization. The hot hint covers `2r` plus one threshold ULP, so the triangle inequality
 proves that a final exact-zero edge was flagged. In-shard reused representatives and deferred/
-off-shard winners are both checked. Any certificate violation, nonempty reconciliation defect set,
-or attempted repair selects a cold exhaustive scan of the terminal diagram. A pipeline-stage
-regression supplies a drift violation with no hinted candidates, proves that exhaustive discovery
-contracts the synthetic zero edge, and compares the result with certified hinted discovery.
-Boundary tests pin `+r`/`-r`, signed zero, exact, and adjacent-f32 threshold cases.
+off-shard winners are both checked. Representative-drift violation selects a cold exhaustive scan
+of the terminal diagram. Reconciliation and accepted Local3d repair instead report complete
+changed-cell footprints; the terminal stage exactly scans those final cycles and rechecks every
+construction-candidate neighborhood. Direct regressions pin both repair footprints and prove that
+an unhinted zero edge created in a rewritten cell canonicalizes identically to global discovery.
+A separate pipeline-stage drift regression proves the global fallback. Boundary tests pin
+`+r`/`-r`, signed zero, exact, and adjacent-f32 threshold cases.
 
-With the `timing` feature, `TIMING_KV` reports certified versus exhaustive discovery, each fallback
-reason (representative drift, unresolved reconciliation records, and attempted repair), hint-cell
-and exact-candidate counts, and detected exact-zero edges. The default build retains an inlined
-no-op setter, so collecting these diagnostics adds no environment lookup or telemetry work to the
-ordinary path.
+With the `timing` feature, `TIMING_KV` reports certified versus exhaustive discovery, drift
+fallback, reconciliation/Local3d cells scanned locally, hint-cell and exact-candidate counts, and
+detected exact-zero edges. The default build retains an inlined no-op setter, so collecting these
+diagnostics adds no environment lookup or telemetry work to the ordinary path.
 
 Existing generator-triplet keys recover the complete incident neighborhood after a candidate is
 confirmed, keeping component work sparse. At 500k sites, eight-round interleaved single-thread

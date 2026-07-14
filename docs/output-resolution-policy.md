@@ -226,7 +226,8 @@ The existing fast-repair weld path must be audited and, where necessary, split a
   flagged cells. Dedup certifies every representative substitution against the same cell-local
   realization. With representative x drift bounded by `r`, the hot threshold is `t + 2r`, where
   the implemented exact-zero baseline has `t = 0` and `r = 1e-6`. A bound violation switches to a
-  conservative full terminal scan. Reconciliation or Local3d also selects that full scan.
+  conservative full terminal scan. Reconciliation and accepted Local3d repair instead report the
+  complete cells whose final cycles changed; those cells are rescanned exactly after mutation.
 
 This makes clean-path exact-zero discovery exhaustive without imposing a whole-edge scan on the
 ordinary constructor. Generator-triplet vertex keys recover the complete incident neighborhood of
@@ -263,14 +264,15 @@ the collapsed diagonal.
 
 The baseline implementation uses a cold transactional in-place rewrite of only affected cell
 spans. It builds sparse zero components and derives affected cells from the existing vertex keys;
-any representative-drift violation, reconciliation defect, or repair attempt falls back to a full
-terminal scan. Component construction, link checks, rollback state, and cold transaction telemetry
-stay off the no-candidate path.
+representative-drift violation or incomplete provenance falls back to a full terminal scan.
+Reconciliation and Local3d pay only for an exact scan of their changed-cell footprints. Component
+construction, link checks, rollback state, and cold transaction telemetry stay off the
+no-candidate path.
 
 When built with `timing`, `TIMING_KV` exposes whether discovery used the certified sparse hint or
-the exhaustive fallback, the drift/unresolved/repair fallback reasons, and hint-cell, candidate,
-and detected-edge counts. These fields are campaign diagnostics rather than public resolution
-policy. The default non-timing implementation compiles the setter to an inlined no-op.
+the exhaustive drift fallback, reconciliation/repair cells scanned locally, and hint-cell,
+candidate, and detected-edge counts. These fields are campaign diagnostics rather than public
+resolution policy. The default non-timing implementation compiles the setter to an inlined no-op.
 
 ## Reporting and consumer contract
 

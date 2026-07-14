@@ -347,7 +347,7 @@ fn restore_cells(saved: &[(usize, Vec<u32>)], cells: &mut [VoronoiCell], cell_in
     }
 }
 
-fn collect_zero_edges_in_cells(
+pub(super) fn collect_zero_edges_in_cells(
     vertices: &[Vec3],
     cells: &[VoronoiCell],
     cell_indices: &[u32],

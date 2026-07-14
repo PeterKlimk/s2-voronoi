@@ -16,6 +16,8 @@ policy documents. An unchecked item elsewhere should either be moved here or tre
   or a defined error. It is not exact combinatorial equality with one ideal normalized-site model.
 - Exact stored-zero edges are detected after final repair and safely contracted when doing so does
   not remove an effective generator cell.
+- Every current post-assembly mutator reports a complete changed-cell footprint for terminal
+  exact-zero scanning; only globally uncertified representative drift forces global discovery.
 - Qhull and the legacy P5 shadow path have been retired.
 - Full strict validation remains available for testing and campaigns without burdening the default
   fast path.
@@ -64,9 +66,9 @@ telemetry for the new output-resolution certificate.
   reviewed. Their remaining risk is future lifecycle drift rather than a known false-negative.
 - **Scope:**
   - run timing-enabled adversarial campaigns and record certified versus exhaustive discovery,
-    fallback reasons, hinted cells/candidates, and detected edges;
+    drift fallback, locally scanned repair cells, hinted cells/candidates, and detected edges;
   - add maximal zero-component fixtures covering trees, cycles, shared-cell interactions,
-    permutations, and repaired terminal output;
+    and permutations;
   - compare hinted discovery with exhaustive discovery on randomized synthetic assemblies; and
   - keep signed-zero and adjacent-f32 threshold cases pinned.
 - **Acceptance:** no invalid success, hinted and exhaustive canonicalization agree, all successful
@@ -194,6 +196,24 @@ duplicated here.
 5. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
 
 ## Closed and retired work
+
+### WORK-003 — Post-construction zero-edge invalidation
+
+- **Priority:** P2
+- **Status:** Completed 2026-07-15
+- **Resolution:** reconciliation reports the exact local cover for accepted merges and collinear
+  drops; accepted Local3d reports every spliced cell. Terminal discovery rescans those final cycles
+  and rechecks construction-candidate neighborhoods before canonicalization.
+- **Locality rule:** a cycle rewrite can only create an edge in a rewritten cycle. A mutator that
+  changes an existing vertex position must report every incident cell. Representative-drift or
+  missing provenance retains the whole-diagram fallback.
+- **Regression:** an unhinted zero edge attributed to a post-construction mutation produces the
+  same report and quotient as exhaustive discovery; direct tests pin reconciliation and Local3d
+  footprint reporting.
+- **Fast path:** 10-round, 500k, single-thread perf counters versus `43a125a` measured
+  instruction/branch ratios of `1.00126`/`1.00172` for Fibonacci and `0.99943`/`1.00174` for
+  uniform. The repair footprints were empty in ordinary runs; release inlining at the existing
+  per-generator phase seams is pinned to prevent unrelated cold-path codegen perturbation.
 
 - AUD-001 through AUD-017: closed; see [`audit-triage.md`](audit-triage.md).
 - Exact stored-zero baseline and discovery certificate: implemented and reviewed.

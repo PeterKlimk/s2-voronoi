@@ -258,6 +258,11 @@ pub(crate) struct ReconcileResult {
     /// Cells whose spans were rewritten by identity merges (sorted, deduped):
     /// the union of key triples over every vertex id that entered a merge.
     pub merge_affected_cells: Vec<u32>,
+    /// Complete local footprint whose final cycles must be rescanned for exact
+    /// stored-zero edges after reconciliation. Empty when no span changed.
+    /// Includes record-owner cells for collinear drops and key-owner cells for
+    /// accepted identity merges.
+    pub resolution_scan_cells: Vec<u32>,
 }
 
 /// Original vertex ids represented by a surviving id after accepted
@@ -403,19 +408,26 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
     let mut merge_ledger = MergeLedger::default();
     let done = |residual_pairs: Vec<(u32, u32)>,
                 mut escalation_pairs: Vec<(u32, u32)>,
-                mut affected: Vec<u32>| {
+                mut affected: Vec<u32>,
+                mut resolution_scan_cells: Vec<u32>| {
         escalation_pairs.sort_unstable();
         escalation_pairs.dedup();
         affected.sort_unstable();
         affected.dedup();
+        if !resolution_scan_cells.is_empty() {
+            resolution_scan_cells.extend_from_slice(&affected);
+        }
+        resolution_scan_cells.sort_unstable();
+        resolution_scan_cells.dedup();
         ReconcileResult {
             residual_pairs,
             escalation_pairs,
             merge_affected_cells: affected,
+            resolution_scan_cells,
         }
     };
     let primary_candidates = affected_cells_from_records(edge_records);
-    run_repair_rounds(
+    let primary_changed = run_repair_rounds(
         edge_records,
         vertices,
         cells,
@@ -428,6 +440,11 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         &mut escalation_pairs,
         &mut merge_affected_cells,
     )?;
+    let mut resolution_scan_cells = if primary_changed {
+        primary_candidates.clone()
+    } else {
+        Vec::new()
+    };
 
     let unpaired = scan_unpaired_interior(
         cells,
@@ -437,11 +454,16 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         &is_boundary_edge,
     )?;
     if unpaired.is_empty() {
-        return Ok(done(Vec::new(), escalation_pairs, merge_affected_cells));
+        return Ok(done(
+            Vec::new(),
+            escalation_pairs,
+            merge_affected_cells,
+            resolution_scan_cells,
+        ));
     }
     let synth = synthesize_backstop_records(&unpaired, vertex_keys, cells.len());
     if !synth.is_empty() {
-        run_repair_rounds(
+        let synth_changed = run_repair_rounds(
             &synth,
             vertices,
             cells,
@@ -454,6 +476,9 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
             &mut escalation_pairs,
             &mut merge_affected_cells,
         )?;
+        if synth_changed {
+            resolution_scan_cells.extend(affected_cells_from_records(&synth));
+        }
     }
     // Residual scan covers both passes' touched regions.
     let mut residual_candidates = primary_candidates;
@@ -474,6 +499,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
             .collect(),
         escalation_pairs,
         merge_affected_cells,
+        resolution_scan_cells,
     ))
 }
 
@@ -2191,6 +2217,23 @@ mod tests {
             set_a, set_b,
             "reconciled shared edge should use the same endpoint ids on both sides"
         );
+
+        let mut footprint_cells = cells.clone();
+        let mut footprint_indices = cell_indices.clone();
+        let result = reconcile_unresolved_edges(
+            &records,
+            &vertices,
+            &mut footprint_cells,
+            &mut footprint_indices,
+            VertexKeys::Flat(&vertex_keys),
+            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
+            RepairApply::InPlace,
+            |_, _| false,
+        )
+        .expect("reconciliation should report its mutation footprint");
+        assert!(!result.resolution_scan_cells.is_empty());
+        assert!(result.resolution_scan_cells.contains(&0));
+        assert!(result.resolution_scan_cells.contains(&1));
     }
 
     #[test]
@@ -2219,6 +2262,10 @@ mod tests {
         assert!(
             !result.residual_pairs.is_empty(),
             "rejected endpoint pairing must remain visible to repair/error handling"
+        );
+        assert!(
+            result.resolution_scan_cells.is_empty(),
+            "a rejected non-mutating proposal needs no resolution rescan"
         );
         assert_eq!(
             cell_sequences(&reconciled_cells, &reconciled_indices),

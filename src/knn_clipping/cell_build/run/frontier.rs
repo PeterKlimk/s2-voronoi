@@ -8,6 +8,8 @@ use crate::cube_grid::{
 /// Combine the best known dot in an exact batch remainder with the bound for
 /// everything after that batch. Neither set is allowed to disappear from the
 /// termination certificate, regardless of how the batch was produced.
+// This sits inside the per-generator frontier loop; outlining it was visible
+// in retired-instruction and branch counters.
 #[inline(always)]
 pub(super) fn complete_exact_bound(batch_remainder_bound: f32, unseen_bound: f32) -> f32 {
     batch_remainder_bound.max(unseen_bound)
@@ -18,7 +20,7 @@ fn exact_frontier_bound(batch: DirectedNeighborBatch) -> f32 {
     complete_exact_bound(batch.first_dot, batch.unseen_bound)
 }
 
-#[inline]
+#[inline(always)]
 pub(super) fn probe_frontier<'a, 'm, 'p, 'g>(
     stream: &mut DirectedNeighborStream<'a, 'm, 'p, 'g>,
     packed_chunk: &mut Vec<u32>,
