@@ -160,6 +160,20 @@ impl TimingBuilder {
     pub fn set_assemble(&mut self, _d: Duration) {}
 
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_output_resolution_discovery(
+        &mut self,
+        _certified_hint: bool,
+        _drift_fallback: bool,
+        _unresolved_fallback: bool,
+        _repair_fallback: bool,
+        _hint_cells: usize,
+        _hinted_candidates: usize,
+        _detected_edges: usize,
+    ) {
+    }
+
+    #[inline(always)]
     pub fn finish(self) -> PhaseTimings {
         PhaseTimings
     }

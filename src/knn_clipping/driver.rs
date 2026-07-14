@@ -358,6 +358,23 @@ mod resolution_hint_tests {
             vertex(1, bound),
             vertex(2, 1.0),
         ]));
+        let representative_bound = crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS;
+        assert!(has_zero_edge_candidate(&[
+            vertex(0, representative_bound),
+            vertex(1, -representative_bound),
+            vertex(2, 1.0),
+        ]));
+        assert!(has_zero_edge_candidate(&[
+            vertex(0, 0.0),
+            vertex(1, -0.0),
+            vertex(2, 1.0),
+        ]));
+        let just_outside = f32::from_bits(bound.to_bits() + 1);
+        assert!(!has_zero_edge_candidate(&[
+            vertex(0, 0.0),
+            vertex(1, just_outside),
+            vertex(2, -1.0),
+        ]));
         assert!(!has_zero_edge_candidate(&[
             vertex(0, -1.0),
             vertex(1, 0.0),

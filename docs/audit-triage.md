@@ -1089,8 +1089,17 @@ cell; exact equality over assembled positions is checked only for flagged cells.
 f64 that each chosen representative's stored x coordinate moved by at most `r = 1e-6` from every
 cell-local realization. The hot hint covers `2r` plus one threshold ULP, so the triangle inequality
 proves that a final exact-zero edge was flagged. In-shard reused representatives and deferred/
-off-shard winners are both checked. Any certificate violation, reconciliation, or repair selects a
-cold exhaustive scan of the terminal diagram.
+off-shard winners are both checked. Any certificate violation, nonempty reconciliation defect set,
+or attempted repair selects a cold exhaustive scan of the terminal diagram. A pipeline-stage
+regression supplies a drift violation with no hinted candidates, proves that exhaustive discovery
+contracts the synthetic zero edge, and compares the result with certified hinted discovery.
+Boundary tests pin `+r`/`-r`, signed zero, exact, and adjacent-f32 threshold cases.
+
+With the `timing` feature, `TIMING_KV` reports certified versus exhaustive discovery, each fallback
+reason (representative drift, unresolved reconciliation records, and attempted repair), hint-cell
+and exact-candidate counts, and detected exact-zero edges. The default build retains an inlined
+no-op setter, so collecting these diagnostics adds no environment lookup or telemetry work to the
+ordinary path.
 
 Existing generator-triplet keys recover the complete incident neighborhood after a candidate is
 confirmed, keeping component work sparse. At 500k sites, eight-round interleaved single-thread
@@ -1100,6 +1109,15 @@ movement was noisy and split by distribution (`+0.54%` Fibonacci, `-0.20%` unifo
 the former non-exhaustive clean hint with a proof-complete discovery path at roughly 0.35% retired-
 instruction cost; it does not change the separate `Preserve` behavior for a contraction that would
 kill a cell.
+
+The simplest proof-complete alternative—checking exact endpoint coordinates while the mandatory
+topology summary already traverses every live halfedge—was implemented and measured directly
+against the hardened certificate. It was rejected: on 500k single-threaded native Fibonacci it
+added 2.91% retired instructions, 3.32% branches, and about 6.0% branch misses; uniform added 2.65%,
+3.25%, and about 5.58%, respectively. Avoiding another traversal did not repay the irregular
+vertex-position loads, comparisons, and per-worker candidate collection. The sparse certificate
+therefore remains the selected fast path, with exhaustive scanning confined to uncertified builds.
+
 The separate generator `Error`/`Elide` choices and an optional positive edge threshold remain
 backburner API work in [`output-resolution-policy.md`](output-resolution-policy.md).
 

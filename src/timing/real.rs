@@ -482,6 +482,13 @@ pub struct PhaseTimings {
     pub grid_res: usize,
     pub grid_max_occupancy: u64,
     pub grid_rebuilt: bool,
+    pub resolution_certified_hint: bool,
+    pub resolution_drift_fallback: bool,
+    pub resolution_unresolved_fallback: bool,
+    pub resolution_repair_fallback: bool,
+    pub resolution_hint_cells: u64,
+    pub resolution_hinted_candidates: u64,
+    pub resolution_detected_edges: u64,
 }
 
 impl PhaseTimings {
@@ -747,10 +754,24 @@ impl PhaseTimings {
             ms(self.assemble),
             pct(self.assemble)
         );
+        eprintln!(
+            "  output_resolution: mode={} fallback(drift={},unresolved={},repair={}) hint_cells={} hinted_candidates={} detected_edges={}",
+            if self.resolution_certified_hint {
+                "certified_hint"
+            } else {
+                "exhaustive"
+            },
+            self.resolution_drift_fallback as u8,
+            self.resolution_unresolved_fallback as u8,
+            self.resolution_repair_fallback as u8,
+            self.resolution_hint_cells,
+            self.resolution_hinted_candidates,
+            self.resolution_detected_edges,
+        );
 
         if std::env::var_os("VORONOI_MESH_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} assemble_ms={asmb:.3} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_fallback_unresolved={rfu} resolution_fallback_repair={rfr} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -761,6 +782,13 @@ impl PhaseTimings {
                 dd = ms(self.dedup),
                 er = ms(self.edge_reconcile),
                 asmb = ms(self.assemble),
+                rch = self.resolution_certified_hint as u8,
+                rfd = self.resolution_drift_fallback as u8,
+                rfu = self.resolution_unresolved_fallback as u8,
+                rfr = self.resolution_repair_fallback as u8,
+                rhc = self.resolution_hint_cells,
+                rhcand = self.resolution_hinted_candidates,
+                rde = self.resolution_detected_edges,
                 cuk = self.cell_sub.cells_used_knn,
                 cpt = self.cell_sub.cells_packed_tail_used,
                 fpj = self.cell_sub.fallback_projection,
@@ -826,6 +854,13 @@ pub struct TimingBuilder {
     grid_res: usize,
     grid_max_occupancy: u64,
     grid_rebuilt: bool,
+    resolution_certified_hint: bool,
+    resolution_drift_fallback: bool,
+    resolution_unresolved_fallback: bool,
+    resolution_repair_fallback: bool,
+    resolution_hint_cells: u64,
+    resolution_hinted_candidates: u64,
+    resolution_detected_edges: u64,
 }
 
 impl TimingBuilder {
@@ -846,6 +881,13 @@ impl TimingBuilder {
             grid_res: 0,
             grid_max_occupancy: 0,
             grid_rebuilt: false,
+            resolution_certified_hint: false,
+            resolution_drift_fallback: false,
+            resolution_unresolved_fallback: false,
+            resolution_repair_fallback: false,
+            resolution_hint_cells: 0,
+            resolution_hinted_candidates: 0,
+            resolution_detected_edges: 0,
         }
     }
 
@@ -894,6 +936,26 @@ impl TimingBuilder {
         self.assemble = d;
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_output_resolution_discovery(
+        &mut self,
+        certified_hint: bool,
+        drift_fallback: bool,
+        unresolved_fallback: bool,
+        repair_fallback: bool,
+        hint_cells: usize,
+        hinted_candidates: usize,
+        detected_edges: usize,
+    ) {
+        self.resolution_certified_hint = certified_hint;
+        self.resolution_drift_fallback = drift_fallback;
+        self.resolution_unresolved_fallback = unresolved_fallback;
+        self.resolution_repair_fallback = repair_fallback;
+        self.resolution_hint_cells = hint_cells as u64;
+        self.resolution_hinted_candidates = hinted_candidates as u64;
+        self.resolution_detected_edges = detected_edges as u64;
+    }
+
     pub fn finish(self) -> PhaseTimings {
         PhaseTimings {
             total: self.t_start.elapsed(),
@@ -911,6 +973,32 @@ impl TimingBuilder {
             grid_res: self.grid_res,
             grid_max_occupancy: self.grid_max_occupancy,
             grid_rebuilt: self.grid_rebuilt,
+            resolution_certified_hint: self.resolution_certified_hint,
+            resolution_drift_fallback: self.resolution_drift_fallback,
+            resolution_unresolved_fallback: self.resolution_unresolved_fallback,
+            resolution_repair_fallback: self.resolution_repair_fallback,
+            resolution_hint_cells: self.resolution_hint_cells,
+            resolution_hinted_candidates: self.resolution_hinted_candidates,
+            resolution_detected_edges: self.resolution_detected_edges,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TimingBuilder;
+
+    #[test]
+    fn output_resolution_discovery_fields_survive_finish() {
+        let mut builder = TimingBuilder::new();
+        builder.set_output_resolution_discovery(false, true, true, false, 11, 7, 3);
+        let timings = builder.finish();
+        assert!(!timings.resolution_certified_hint);
+        assert!(timings.resolution_drift_fallback);
+        assert!(timings.resolution_unresolved_fallback);
+        assert!(!timings.resolution_repair_fallback);
+        assert_eq!(timings.resolution_hint_cells, 11);
+        assert_eq!(timings.resolution_hinted_candidates, 7);
+        assert_eq!(timings.resolution_detected_edges, 3);
     }
 }

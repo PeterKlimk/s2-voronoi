@@ -556,6 +556,12 @@ Do not broadly retry these without a materially different design or workload:
   instructions, 3.15–3.46% branches, and 8.2–9.3% branch misses on 500k native Fibonacci and
   uniform. Clustered also regressed slightly. Keep the 2x whole-sort threshold: partitioning these
   small 9–16 element remainders is substantially more branch-heavy than the sorting networks.
+- Fusing exact-zero endpoint comparison into the mandatory topology-summary halfedge pass avoided
+  a separate traversal but added irregular vertex loads, comparisons, and per-worker candidate
+  collection. Against the hardened sparse certificate at 500k single-threaded native, Fibonacci
+  added 2.91% instructions, 3.32% branches, and about 6.0% branch misses; uniform added 2.65%,
+  3.25%, and about 5.58%. Keep the degree-local necessary-coordinate hint plus representative-
+  drift certificate, and reserve exhaustive scanning for uncertified builds.
 - Short-circuiting packed tail SIMD chunks when their security mask is empty was neutral on
   Fibonacci (instructions -0.007%, branches +0.009%) but regressed 500k native clustered by 0.048%
   instructions, 0.106% branches, and 1.74% cycles. Most activated tail-rescan chunks have at least

@@ -56,8 +56,19 @@ flags local x-separations through `2 * 1e-6` (plus one threshold ULP). Dedup sim
 certifies, in f64 over the stored f32 values, that every selected representative's x coordinate is
 within `1e-6` of that cell-local realization. By the triangle inequality, a final exact-zero edge
 must then have been flagged. If any in-shard or deferred/off-shard substitution exceeds the bound,
-the terminal stage performs an exhaustive scan instead. A path that entered reconciliation or
-Local3d likewise scans the final cycles.
+the terminal stage performs an exhaustive scan instead. Reconciliation is invoked on every build;
+nonempty unresolved records conservatively mean that it may have changed the cycles and therefore
+force an exhaustive terminal scan. Any attempted Local3d repair does the same.
+
+Complete representative coverage depends on the live-dedup ownership lifecycle. A canonical
+generator-triplet `VertexKey` determines the owner bin. Reuse inside that shard is checked while
+the cell is emitted. Every off-shard realization retains its local position in a deferred slot;
+overflow resolution patches those slots before the deferred check, so an already-resolved slot is
+compared with its final representative. If no owner-side record resolved the key, the first
+fallback realization becomes the representative and every later realization with the same key is
+checked against it. A malformed key, conflicting slot, or incomplete edge pairing produces an
+unresolved record, which disables the certificate and selects exhaustive discovery. Concatenating
+the shards does not subsequently change positions.
 
 Existing generator-triplet keys identify every cell incident to a confirmed component, so
 classification and the quotient certificate remain local after discovery. `compute_with_report`

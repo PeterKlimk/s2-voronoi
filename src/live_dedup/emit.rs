@@ -339,6 +339,25 @@ mod tests {
             origin,
             Vec3::new(f32::NAN, 0.0, 0.0)
         ));
+        assert!(!exceeds_resolution_drift(
+            Vec3::new(0.0, 1.0, 1.0),
+            Vec3::new(-0.0, -1.0, -1.0)
+        ));
+
+        // At 0.5, 16 upward f32 ULPs remain inside the bound and 17 are
+        // outside. This pins the f64-over-stored-f32 subtraction away from
+        // zero, where cancellation could otherwise obscure the boundary.
+        let offset = 0.5f32;
+        let inside = f32::from_bits(offset.to_bits() + 16);
+        let outside = f32::from_bits(offset.to_bits() + 17);
+        assert!(!exceeds_resolution_drift(
+            Vec3::new(offset, 0.0, 0.0),
+            Vec3::new(inside, 0.0, 0.0)
+        ));
+        assert!(exceeds_resolution_drift(
+            Vec3::new(offset, 0.0, 0.0),
+            Vec3::new(outside, 0.0, 0.0)
+        ));
     }
 
     #[test]

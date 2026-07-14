@@ -445,6 +445,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     for shard in &finals {
         exact_zero_edge_hint_cells.extend_from_slice(&shard.output.exact_zero_edge_hint_cells);
     }
+    let exact_zero_edge_hint_cell_count = exact_zero_edge_hint_cells.len();
     let mut exact_zero_edge_candidates = Vec::new();
     for cell_idx in exact_zero_edge_hint_cells {
         let cell = &cells[cell_idx as usize];
@@ -499,6 +500,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
         cells,
         cell_indices,
         exact_zero_edge_candidates,
+        exact_zero_edge_hint_cells: exact_zero_edge_hint_cell_count,
         resolution_drift_exceeded,
         dedup_sub: sub_phases,
     })

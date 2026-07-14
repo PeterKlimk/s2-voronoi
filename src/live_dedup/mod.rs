@@ -103,6 +103,9 @@ pub(crate) struct AssemblyResult<P = glam::Vec3> {
     /// Exact stored-zero candidates recovered from cells flagged while their
     /// extracted f32 realizations were already hot.
     pub exact_zero_edge_candidates: Vec<(u32, u32)>,
+    /// Number of cells selected by the widened hot hint before final-position
+    /// confirmation.
+    pub exact_zero_edge_hint_cells: usize,
     /// Whether some final representative moved farther from a cell-local
     /// realization than the hot-hint certificate permits.
     pub resolution_drift_exceeded: bool,

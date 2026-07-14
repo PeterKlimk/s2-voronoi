@@ -55,6 +55,71 @@ impl PipelineState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ResolutionDiscoveryDecision {
+    certified_hint: bool,
+    drift_fallback: bool,
+    unresolved_fallback: bool,
+    repair_fallback: bool,
+}
+
+fn resolution_discovery_decision(
+    resolution_drift_exceeded: bool,
+    has_unresolved_edges: bool,
+    repair_attempted: bool,
+) -> ResolutionDiscoveryDecision {
+    ResolutionDiscoveryDecision {
+        certified_hint: !resolution_drift_exceeded && !has_unresolved_edges && !repair_attempted,
+        drift_fallback: resolution_drift_exceeded,
+        unresolved_fallback: has_unresolved_edges,
+        repair_fallback: repair_attempted,
+    }
+}
+
+fn canonicalize_pipeline_exact_zero_edges(
+    vertices: &[Vec3],
+    vertex_keys: &live_dedup::ShardedVertexKeys,
+    cells: &mut [VoronoiCell],
+    cell_indices: &mut [u32],
+    hinted_candidates: Vec<(u32, u32)>,
+    decision: ResolutionDiscoveryDecision,
+) -> Result<crate::OutputResolutionReport, crate::VoronoiError> {
+    let localized_candidate_cells = if decision.certified_hint {
+        let mut incident_cells = Vec::with_capacity(hinted_candidates.len() * 6);
+        let mut complete = true;
+        for &(a, b) in &hinted_candidates {
+            for vertex in [a, b] {
+                if let Some(key) = vertex_keys.get(vertex) {
+                    incident_cells.extend(key.map(|generator| generator as usize));
+                } else {
+                    complete = false;
+                    break;
+                }
+            }
+            if !complete {
+                break;
+            }
+        }
+        if complete {
+            incident_cells.sort_unstable();
+            incident_cells.dedup();
+            Some(incident_cells)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    output_resolution::canonicalize_exact_zero_edges(
+        vertices,
+        cells,
+        cell_indices,
+        decision.certified_hint.then_some(hinted_candidates),
+        localized_candidate_cells,
+    )
+}
+
 /// The shared front of both compute paths: validate → canonicalize → grid →
 /// per-cell shards → assemble → reconcile → repair. The plain path fails loud
 /// on residuals; the report path surfaces them in `ComputeReport`.
@@ -93,6 +158,7 @@ fn run_core_pipeline(
         cells,
         cell_indices,
         exact_zero_edge_candidates,
+        exact_zero_edge_hint_cells,
         resolution_drift_exceeded,
         dedup_sub: _,
     } = assembled;
@@ -129,45 +195,29 @@ fn run_core_pipeline(
         low_incidence_scan_time,
         repair_mode,
     );
-    let clean_resolution_path = unresolved_edges.is_empty() && !repair.attempted;
-    let certified_resolution_hint = clean_resolution_path && !resolution_drift_exceeded;
-    let localized_resolution_cells = if certified_resolution_hint {
-        let mut incident_cells = Vec::with_capacity(exact_zero_edge_candidates.len() * 6);
-        let mut complete = true;
-        for &(a, b) in &exact_zero_edge_candidates {
-            for vertex in [a, b] {
-                if let Some(key) = vertex_keys.get(vertex) {
-                    incident_cells.extend(key.map(|generator| generator as usize));
-                } else {
-                    complete = false;
-                    break;
-                }
-            }
-            if !complete {
-                break;
-            }
-        }
-        if complete {
-            incident_cells.sort_unstable();
-            incident_cells.dedup();
-            Some(incident_cells)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    let output_resolution = output_resolution::canonicalize_exact_zero_edges(
+    let resolution_decision = resolution_discovery_decision(
+        resolution_drift_exceeded,
+        !unresolved_edges.is_empty(),
+        repair.attempted,
+    );
+    let hinted_candidate_count = exact_zero_edge_candidates.len();
+    let output_resolution = canonicalize_pipeline_exact_zero_edges(
         &vertices,
+        &vertex_keys,
         &mut eff_cells,
         &mut eff_cell_indices,
-        if certified_resolution_hint {
-            Some(exact_zero_edge_candidates)
-        } else {
-            None
-        },
-        localized_resolution_cells,
+        exact_zero_edge_candidates,
+        resolution_decision,
     )?;
+    tb.set_output_resolution_discovery(
+        resolution_decision.certified_hint,
+        resolution_decision.drift_fallback,
+        resolution_decision.unresolved_fallback,
+        resolution_decision.repair_fallback,
+        exact_zero_edge_hint_cells,
+        hinted_candidate_count,
+        output_resolution.exact_zero_edges_detected,
+    );
     Ok(PipelineState {
         points,
         effective_points,
@@ -1535,16 +1585,121 @@ fn remap_cells_to_original_indices(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_query_grid, cell_sum_sq_per_n, check_plain_return_signals,
-        classify_exact_affine_circle, classify_near_great_circle, map_build_cells_error,
-        map_cell_build_error, max_cell_occupancy, stable_rank2_normal, summarize_topology,
+        build_query_grid, canonicalize_pipeline_exact_zero_edges, cell_sum_sq_per_n,
+        check_plain_return_signals, classify_exact_affine_circle, classify_near_great_circle,
+        map_build_cells_error, map_cell_build_error, max_cell_occupancy,
+        resolution_discovery_decision, stable_rank2_normal, summarize_topology,
         validate_and_canonicalize_unit_points, validate_generator_capacity, RepairOutcome,
     };
     use crate::diagram::VoronoiCell;
     use crate::knn_clipping::cell_build::{CellBuildError, CellFailure};
-    use crate::knn_clipping::live_dedup::{BuildCellsError, PackedLayoutCapacityError};
+    use crate::knn_clipping::live_dedup::{
+        BuildCellsError, PackedLayoutCapacityError, ShardedVertexKeys,
+    };
     use crate::VoronoiError;
     use glam::Vec3;
+
+    fn zero_edge_cube_fixture() -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>, ShardedVertexKeys) {
+        let unit = |x: f32, y: f32, z: f32| Vec3::new(x, y, z).normalize();
+        let mut vertices = vec![
+            unit(-1.0, -1.0, -1.0),
+            unit(1.0, -1.0, -1.0),
+            unit(1.0, 1.0, -1.0),
+            unit(-1.0, 1.0, -1.0),
+            unit(-1.0, -1.0, 1.0),
+            unit(1.0, -1.0, 1.0),
+            unit(1.0, 1.0, 1.0),
+            unit(-1.0, 1.0, 1.0),
+        ];
+        vertices[1] = vertices[0];
+        let cycles: [&[u32]; 6] = [
+            &[0, 3, 2, 1],
+            &[4, 5, 6, 7],
+            &[0, 1, 5, 4],
+            &[3, 7, 6, 2],
+            &[0, 4, 7, 3],
+            &[1, 2, 6, 5],
+        ];
+        let mut cells = Vec::new();
+        let mut indices = Vec::new();
+        for cycle in cycles {
+            cells.push(VoronoiCell::new(indices.len() as u32, cycle.len() as u16));
+            indices.extend_from_slice(cycle);
+        }
+        let keys = ShardedVertexKeys::new(
+            vec![0, 8],
+            vec![vec![
+                [0, 2, 4],
+                [0, 2, 5],
+                [0, 3, 5],
+                [0, 3, 4],
+                [1, 2, 4],
+                [1, 2, 5],
+                [1, 3, 5],
+                [1, 3, 4],
+            ]],
+        );
+        (vertices, cells, indices, keys)
+    }
+
+    #[test]
+    fn resolution_discovery_decision_preserves_every_fallback_reason() {
+        for drift in [false, true] {
+            for unresolved in [false, true] {
+                for repair in [false, true] {
+                    let decision = resolution_discovery_decision(drift, unresolved, repair);
+                    assert_eq!(decision.certified_hint, !(drift || unresolved || repair));
+                    assert_eq!(decision.drift_fallback, drift);
+                    assert_eq!(decision.unresolved_fallback, unresolved);
+                    assert_eq!(decision.repair_fallback, repair);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn drift_violation_forces_exhaustive_zero_edge_discovery() {
+        let decision = resolution_discovery_decision(true, false, false);
+        assert!(!decision.certified_hint);
+        assert!(decision.drift_fallback);
+
+        let (vertices, mut exhaustive_cells, mut exhaustive_indices, keys) =
+            zero_edge_cube_fixture();
+        let report = canonicalize_pipeline_exact_zero_edges(
+            &vertices,
+            &keys,
+            &mut exhaustive_cells,
+            &mut exhaustive_indices,
+            Vec::new(),
+            decision,
+        )
+        .expect("drift fallback should run exhaustive discovery");
+        assert_eq!(report.exact_zero_edges_detected, 1);
+        assert_eq!(report.exact_zero_edges_contracted, 1);
+        assert_eq!(report.exact_zero_edges_remaining, 0);
+
+        let (_, mut hinted_cells, mut hinted_indices, hinted_keys) = zero_edge_cube_fixture();
+        let hinted_report = canonicalize_pipeline_exact_zero_edges(
+            &vertices,
+            &hinted_keys,
+            &mut hinted_cells,
+            &mut hinted_indices,
+            vec![(0, 1)],
+            resolution_discovery_decision(false, false, false),
+        )
+        .expect("certified candidate should produce the same quotient");
+        assert_eq!(hinted_report, report);
+        assert_eq!(hinted_cells.len(), exhaustive_cells.len());
+        for (hinted, exhaustive) in hinted_cells.iter().zip(&exhaustive_cells) {
+            assert_eq!(hinted.vertex_count(), exhaustive.vertex_count());
+            let hs = hinted.vertex_start();
+            let es = exhaustive.vertex_start();
+            assert_eq!(
+                &hinted_indices[hs..hs + hinted.vertex_count()],
+                &exhaustive_indices[es..es + exhaustive.vertex_count()]
+            );
+        }
+    }
 
     #[test]
     fn low_incidence_scan_counts_only_live_cell_windows() {

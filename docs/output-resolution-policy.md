@@ -263,8 +263,14 @@ the collapsed diagonal.
 
 The baseline implementation uses a cold transactional in-place rewrite of only affected cell
 spans. It builds sparse zero components and derives affected cells from the existing vertex keys;
-the rare repaired path falls back to a full post-repair scan. Component construction, link checks,
-rollback state, telemetry, and environment lookups stay off the no-candidate path.
+any representative-drift violation, reconciliation defect, or repair attempt falls back to a full
+terminal scan. Component construction, link checks, rollback state, and cold transaction telemetry
+stay off the no-candidate path.
+
+When built with `timing`, `TIMING_KV` exposes whether discovery used the certified sparse hint or
+the exhaustive fallback, the drift/unresolved/repair fallback reasons, and hint-cell, candidate,
+and detected-edge counts. These fields are campaign diagnostics rather than public resolution
+policy. The default non-timing implementation compiles the setter to an inlined no-op.
 
 ## Reporting and consumer contract
 
