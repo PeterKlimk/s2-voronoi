@@ -597,14 +597,17 @@ The raw-f32 dot calculation alone admits a standard `gamma_5` bound of approxima
 `0.4999986 epsilon` for every other unaccounted contribution. No attack consumed that margin, but
 the narrow unallocated remainder is why the written derivation remains open.
 
-Highest-value permanent additions are a reduced all-omitted-generator replay oracle, a real-cutter
-adjacent-threshold test, and checkpoint telemetry proving that pre-, mid-, and post-batch packed
-termination are each covered. The frontier cap arithmetic should not be changed merely to appear
-outward-rounded: independently perturbing stored sine and cosine can move the cap expression in
-the wrong direction for some signs. If proof-oriented hardening becomes necessary, evaluate the
-complete cap expression in promoted f64 and outward-round its final dot/distance, then benchmark
-the query-time cost. Likewise, changing the three-epsilon downstream guard remains a design choice
-until either the composed derivation or a counterexample justifies it.
+Permanent coverage now retains a reduced all-omitted-generator replay oracle for shell and packed
+construction, a real-cutter adjacent-threshold test, and test-only checkpoint labels proving that
+pre-, mid-, and post-batch packed termination are each exercised. The retained corpus passes under
+default SIMD, `simd_scalar`, and FMA and adds no production instrumentation or runtime branch.
+
+The frontier cap arithmetic should not be changed merely to appear outward-rounded: independently
+perturbing stored sine and cosine can move the cap expression in the wrong direction for some
+signs. If proof-oriented hardening becomes necessary, evaluate the complete cap expression in
+promoted f64 and outward-round its final dot/distance, then benchmark the query-time cost.
+Likewise, changing the three-epsilon downstream guard remains a design choice until either the
+composed derivation or a counterexample justifies it.
 
 **Implemented fidelity measurements**
 

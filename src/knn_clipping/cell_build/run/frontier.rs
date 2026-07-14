@@ -66,6 +66,14 @@ pub(super) fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
             // unseen: the batch itself plus what lies beyond it.
             let bound = exact_frontier_bound(batch);
             if builder.can_terminate(bound) {
+                #[cfg(test)]
+                counters.record_termination_checkpoint(match batch.source {
+                    DirectedNeighborBatchSource::ShellExpand => super::TerminationCheckpoint::Shell,
+                    DirectedNeighborBatchSource::PackedChunk0
+                    | DirectedNeighborBatchSource::PackedTail => {
+                        super::TerminationCheckpoint::PackedPreBatch
+                    }
+                });
                 return true;
             }
             #[cfg(feature = "timing")]
@@ -80,6 +88,9 @@ pub(super) fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
         }
         DirectedNeighborFrontier::UnknownButBounded { dot_upper_bound } => {
             if builder.can_terminate(dot_upper_bound) {
+                #[cfg(test)]
+                counters
+                    .record_termination_checkpoint(super::TerminationCheckpoint::PackedPostBatch);
                 true
             } else {
                 stream.advance_frontier();

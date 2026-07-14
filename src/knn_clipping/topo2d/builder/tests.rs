@@ -1085,3 +1085,144 @@ fn polar_termination_certificate_soundness_elongated() {
         "can_terminate accepted a bound while a candidate at that bound still cuts the cell"
     );
 }
+
+fn canonicalize_test_candidate(p: glam::DVec3) -> Vec3 {
+    let input = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
+    let unit = input.as_dvec3().normalize();
+    Vec3::new(unit.x as f32, unit.y as f32, unit.z as f32)
+}
+
+#[test]
+fn threshold_adjacent_real_cutters_are_unchanged() {
+    let fixtures = [
+        (Vec3::Z, 1.0e-5, "tiny"),
+        (Vec3::Z, 0.20, "cos2-positive"),
+        (
+            Vec3::Z,
+            std::f64::consts::FRAC_PI_4 - crate::tolerances::TERMINATION_ANGLE_PAD - 2.0e-7,
+            "cos2-near-positive",
+        ),
+        (
+            Vec3::Z,
+            std::f64::consts::FRAC_PI_4 - crate::tolerances::TERMINATION_ANGLE_PAD + 2.0e-7,
+            "cos2-near-negative",
+        ),
+        (worst_ring_generator(), 0.01, "polar"),
+    ];
+
+    let mut accepted_total = 0usize;
+    for (generator, theta, label) in fixtures {
+        let mut builder = Topo2DBuilder::new(0, generator);
+        clip_ring_neighbors(&mut builder, generator, theta, 8);
+        assert!(builder.is_bounded(), "{label}: bounded fixture");
+        assert!(!builder.is_fallback(), "{label}: gnomonic fixture");
+
+        // Populate the production threshold cache before borrowing the
+        // polygon used to aim candidates at every extremal direction.
+        assert!(!builder.can_terminate(1.0));
+        let threshold_f64 = builder.as_gnomonic().term_threshold_cache;
+        let threshold = threshold_f64 as f32;
+        let directions = {
+            let gnomonic = builder.as_gnomonic();
+            let polygon = gnomonic.current_poly();
+            let generator_unit = gnomonic.generator.normalize();
+            (0..polygon.len)
+                .map(|i| {
+                    let vertex = (gnomonic.basis.g
+                        + gnomonic.basis.t1 * polygon.us[i]
+                        + gnomonic.basis.t2 * polygon.vs[i])
+                        .normalize();
+                    (vertex - generator_unit * vertex.dot(generator_unit)).normalize()
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let generator_unit = generator.as_dvec3().normalize();
+        // Aim at the raw-dot comparison boundary itself. The absolute guard
+        // intentionally moves this farther out than the purely geometric
+        // 2*cell-radius boundary, especially for a tiny cell where d(cos)/dθ
+        // is small.
+        let boundary = (threshold_f64 / generator.as_dvec3().length())
+            .clamp(-1.0, 1.0)
+            .acos();
+        let angular_step = (f32::EPSILON as f64) / boundary.sin().abs().max(1.0e-6) / 4.0;
+        let mut accepted_near = 0usize;
+        let mut seen = std::collections::HashSet::new();
+        for direction in directions {
+            for step in -96..=96 {
+                let gamma = boundary + step as f64 * angular_step;
+                let candidate = canonicalize_test_candidate(
+                    generator_unit * gamma.cos() + direction * gamma.sin(),
+                );
+                let variants = [
+                    candidate,
+                    canonicalize_test_candidate(glam::DVec3::new(
+                        candidate.x.next_down() as f64,
+                        candidate.y as f64,
+                        candidate.z as f64,
+                    )),
+                    canonicalize_test_candidate(glam::DVec3::new(
+                        candidate.x.next_up() as f64,
+                        candidate.y as f64,
+                        candidate.z as f64,
+                    )),
+                    canonicalize_test_candidate(glam::DVec3::new(
+                        candidate.x as f64,
+                        candidate.y.next_down() as f64,
+                        candidate.z as f64,
+                    )),
+                    canonicalize_test_candidate(glam::DVec3::new(
+                        candidate.x as f64,
+                        candidate.y.next_up() as f64,
+                        candidate.z as f64,
+                    )),
+                    canonicalize_test_candidate(glam::DVec3::new(
+                        candidate.x as f64,
+                        candidate.y as f64,
+                        candidate.z.next_down() as f64,
+                    )),
+                    canonicalize_test_candidate(glam::DVec3::new(
+                        candidate.x as f64,
+                        candidate.y as f64,
+                        candidate.z.next_up() as f64,
+                    )),
+                ];
+
+                for candidate in variants {
+                    if !seen.insert(candidate.to_array().map(f32::to_bits)) {
+                        continue;
+                    }
+                    let dot = crate::fp::dot3_f32(
+                        generator.x,
+                        generator.y,
+                        generator.z,
+                        candidate.x,
+                        candidate.y,
+                        candidate.z,
+                    );
+                    if !builder.can_terminate(dot) {
+                        continue;
+                    }
+                    accepted_total += 1;
+                    if (dot - threshold).abs() <= 32.0 * f32::EPSILON {
+                        accepted_near += 1;
+                    }
+                    assert!(
+                        builder.candidate_would_be_unchanged(candidate),
+                        "{label}: accepted threshold candidate cuts: \
+                         dot={dot:?}, threshold={threshold:?}, gamma={gamma:?}, \
+                         candidate={candidate:?}"
+                    );
+                }
+            }
+        }
+        assert!(
+            accepted_near > 0,
+            "{label}: fixture did not accept a threshold-adjacent candidate"
+        );
+    }
+    assert!(
+        accepted_total > 100,
+        "candidate corpus was unexpectedly small"
+    );
+}

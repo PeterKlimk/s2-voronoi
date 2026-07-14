@@ -168,6 +168,17 @@ pub(crate) struct CellBuildStats {
     packed_tail_used: bool,
     packed_safe_exhausted: bool,
     knn_stage: crate::knn_clipping::timing::KnnCellStage,
+    #[cfg(test)]
+    termination_checkpoint: Option<TerminationCheckpoint>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum TerminationCheckpoint {
+    PackedPreBatch,
+    PackedMidBatch,
+    PackedPostBatch,
+    Shell,
 }
 
 impl CellBuildStats {
@@ -300,6 +311,8 @@ pub(super) struct BuildCounters {
     #[cfg(feature = "timing")]
     directional_shadow_terminated: bool,
     terminated: bool,
+    #[cfg(test)]
+    termination_checkpoint: Option<TerminationCheckpoint>,
 }
 
 impl BuildCounters {
@@ -338,7 +351,15 @@ impl BuildCounters {
             #[cfg(feature = "timing")]
             directional_shadow_terminated: false,
             terminated: false,
+            #[cfg(test)]
+            termination_checkpoint: None,
         }
+    }
+
+    #[cfg(test)]
+    fn record_termination_checkpoint(&mut self, checkpoint: TerminationCheckpoint) {
+        debug_assert!(self.termination_checkpoint.is_none());
+        self.termination_checkpoint = Some(checkpoint);
     }
 
     fn absorb_stream(&mut self, stream: &DirectedNeighborStream<'_, '_, '_, '_>) {
@@ -685,6 +706,18 @@ fn clip_batch_source<const SHELL: bool>(
                 batch.unseen_bound
             };
             if phase.builder.can_terminate(bound) {
+                #[cfg(test)]
+                counters.record_termination_checkpoint(match batch.source {
+                    DirectedNeighborBatchSource::ShellExpand => TerminationCheckpoint::Shell,
+                    DirectedNeighborBatchSource::PackedChunk0
+                    | DirectedNeighborBatchSource::PackedTail => {
+                        if pos + 1 < batch.n {
+                            TerminationCheckpoint::PackedMidBatch
+                        } else {
+                            TerminationCheckpoint::PackedPostBatch
+                        }
+                    }
+                });
                 counters.terminated = true;
                 break;
             }
@@ -756,6 +789,8 @@ fn consume_stream(
                 // Only packed stages produce bounded-unknown frontiers; the
                 // takeover always emits exact layers.
                 if phase.builder.is_bounded() && phase.builder.can_terminate(dot_upper_bound) {
+                    #[cfg(test)]
+                    counters.record_termination_checkpoint(TerminationCheckpoint::PackedPostBatch);
                     counters.terminated = true;
                 } else {
                     stream.advance_frontier();
@@ -917,5 +952,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         packed_tail_used: counters.packed_tail_used,
         packed_safe_exhausted: counters.packed_safe_exhausted,
         knn_stage: counters.knn_stage,
+        #[cfg(test)]
+        termination_checkpoint: counters.termination_checkpoint,
     })
 }

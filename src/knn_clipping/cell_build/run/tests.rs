@@ -3,7 +3,10 @@ use super::fallback_detail;
 use super::{
     build_cell_into, clip_batch, clip_seed_neighbors, consume_stream, finish_cell, probe_frontier,
     should_clip_neighbor, AttemptedNeighbors, BuildCounters, BuildTrace, CellBuildContext,
-    CellBuildRequest, StreamPhase,
+    CellBuildRequest, StreamPhase, TerminationCheckpoint,
+};
+use crate::cube_grid::packed_knn::{
+    PackedGroupInput, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroupStatus,
 };
 use crate::cube_grid::{
     CubeMapGrid, DirectedEligibility, DirectedNeighborFrontier, DirectedNeighborStream,
@@ -11,6 +14,8 @@ use crate::cube_grid::{
 use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::Topo2DBuilder;
 use crate::knn_clipping::TerminationConfig;
+use crate::packed_layout::PackedSlotLayout;
+use crate::policy::PackedNeighborPolicy;
 use glam::Vec3;
 
 fn octahedron_points() -> Vec<Vec3> {
@@ -1016,6 +1021,204 @@ fn direct_cursor_builds_normal_cell() {
 
     assert!(ctx.output_buffer().vertices.len() >= 3);
     assert!(!stats.knn_exhausted || !stats.did_packed);
+}
+
+fn canonical_test_point(p: glam::DVec3) -> Vec3 {
+    let unit = p.normalize();
+    let input = Vec3::new(unit.x as f32, unit.y as f32, unit.z as f32);
+    let canonical = input.as_dvec3().normalize();
+    Vec3::new(canonical.x as f32, canonical.y as f32, canonical.z as f32)
+}
+
+fn audit_uniform_points(seed: u64, n: usize) -> Vec<Vec3> {
+    let mut state = seed;
+    let mut sample = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        ((state >> 11) as f64) * (2.0 / ((1_u64 << 53) as f64)) - 1.0
+    };
+    (0..n)
+        .map(|_| loop {
+            let p = glam::DVec3::new(sample(), sample(), sample());
+            if p.length_squared() > 1.0e-12 {
+                break canonical_test_point(p);
+            }
+        })
+        .collect()
+}
+
+fn audit_clustered_points(seed: u64, n: usize) -> Vec<Vec3> {
+    let mut points = audit_uniform_points(seed ^ 0xd1b5_4a32_d192_ed03, n);
+    let center = glam::DVec3::new(0.31, 0.52, 0.79).normalize();
+    let mut state = seed;
+    let mut sample = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        ((state >> 11) as f64) * (2.0 / ((1_u64 << 53) as f64)) - 1.0
+    };
+    for point in points.iter_mut().take(n / 3) {
+        let jitter = glam::DVec3::new(sample(), sample(), sample()) * 0.025;
+        *point = canonical_test_point(center + jitter);
+    }
+    points
+}
+
+fn assert_all_omitted_constraints_are_unchanged(
+    ctx: &CellBuildContext,
+    points: &[Vec3],
+    generator_idx: usize,
+) -> usize {
+    assert!(ctx.builder.is_bounded());
+    assert!(
+        !ctx.builder.is_fallback(),
+        "oracle fixture unexpectedly fell back"
+    );
+    let accepted: std::collections::HashSet<usize> = ctx.builder.neighbor_indices_iter().collect();
+    let mut replayed = 0usize;
+    for (neighbor_idx, &neighbor) in points.iter().enumerate() {
+        if neighbor_idx == generator_idx || accepted.contains(&neighbor_idx) {
+            continue;
+        }
+        replayed += 1;
+        assert!(
+            ctx.builder.candidate_would_be_unchanged(neighbor),
+            "termination omitted a cutting constraint: generator={generator_idx}, \
+             neighbor={neighbor_idx}, accepted={}",
+            accepted.len()
+        );
+    }
+    replayed
+}
+
+#[test]
+fn shell_termination_survives_all_omitted_constraints() {
+    let cases = [
+        audit_uniform_points(0x9e37_79b9_7f4a_7c15, 96),
+        audit_clustered_points(0xa076_1d64_78bd_642f, 120),
+    ];
+    let mut cells = 0usize;
+    let mut replayed = 0usize;
+    let mut terminated = 0usize;
+
+    for points in cases {
+        let grid = CubeMapGrid::new(&points, 8);
+        let policy = TerminationConfig::default().packed_policy(points.len());
+        let slot_map = vec![0_u32; points.len()];
+        for generator_idx in 0..points.len() {
+            let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &slot_map, 24, (1 << 24) - 1);
+            let mut ctx = CellBuildContext::new(&grid, policy);
+            let stats = build_cell_into(
+                &mut ctx,
+                CellBuildRequest {
+                    points: &points,
+                    grid: &grid,
+                    generator_idx,
+                    directed_ctx,
+                    packed: None,
+                    incoming_checks: &[],
+                },
+            )
+            .expect("shell oracle cell should build");
+            cells += 1;
+            replayed += assert_all_omitted_constraints_are_unchanged(&ctx, &points, generator_idx);
+            terminated +=
+                usize::from(stats.termination_checkpoint == Some(TerminationCheckpoint::Shell));
+        }
+    }
+
+    assert_eq!(
+        terminated, cells,
+        "every oracle cell should terminate by certificate"
+    );
+    assert!(replayed > cells, "oracle must replay omitted constraints");
+}
+
+#[test]
+#[allow(clippy::default_constructed_unit_structs)]
+fn packed_termination_checkpoints_survive_all_omitted_constraints() {
+    let mut checkpoints = std::collections::HashSet::new();
+    let mut replayed = 0usize;
+
+    for seed in 0..64_u64 {
+        let points = audit_clustered_points(0xe703_7ed1_a0b4_28db ^ seed, 288);
+        let grid = CubeMapGrid::new(&points, 8);
+        let (cell, start, end) = (0..grid.cell_offsets().len() - 1)
+            .map(|cell| {
+                let start = grid.cell_offsets()[cell] as usize;
+                let end = grid.cell_offsets()[cell + 1] as usize;
+                (cell, start, end)
+            })
+            .max_by_key(|&(_, start, end)| end - start)
+            .expect("grid has cells");
+        assert!(
+            end - start >= 16,
+            "packed fixture did not form a dense group"
+        );
+
+        let queries: Vec<u32> = (start..end).map(|slot| slot as u32).collect();
+        let mut slot_map = vec![1_u32 << 24; points.len()];
+        for (local, slot) in (start..end).enumerate() {
+            slot_map[slot] = local as u32;
+        }
+        let layout = PackedSlotLayout::new(&slot_map, 24, (1 << 24) - 1);
+        let group = PackedGroupInput::new(cell, 0, &queries, 0, layout);
+        let mut packed_scratch = PackedKnnCellScratch::new();
+        let mut timings = PackedKnnTimings::default();
+        let PreparedPackedGroupStatus::Ready(mut prepared) =
+            packed_scratch.prepare_group_directed(&grid, group, &mut timings)
+        else {
+            panic!("packed oracle group unexpectedly chose the slow path");
+        };
+
+        // The first query local has no earlier same-bin center points, so its
+        // directed eligible set is the complete generator set.
+        let query_slot = queries[0];
+        let generator_idx = grid.point_indices()[query_slot as usize] as usize;
+        let directed_ctx = DirectedEligibility::from_layout(0, 0, layout);
+        let policy = PackedNeighborPolicy::for_point_count(points.len());
+        let packed = crate::cube_grid::PackedQuery::new(&mut prepared, &mut timings, 0, policy);
+        let mut ctx = CellBuildContext::new(&grid, policy);
+        let stats = build_cell_into(
+            &mut ctx,
+            CellBuildRequest {
+                points: &points,
+                grid: &grid,
+                generator_idx,
+                directed_ctx,
+                packed: Some(packed),
+                incoming_checks: &[],
+            },
+        )
+        .expect("packed oracle cell should build");
+        assert!(stats.did_packed);
+        replayed += assert_all_omitted_constraints_are_unchanged(&ctx, &points, generator_idx);
+        if let Some(checkpoint) = stats.termination_checkpoint {
+            checkpoints.insert(checkpoint);
+        }
+        if checkpoints.contains(&TerminationCheckpoint::PackedPreBatch)
+            && checkpoints.contains(&TerminationCheckpoint::PackedMidBatch)
+            && checkpoints.contains(&TerminationCheckpoint::PackedPostBatch)
+        {
+            break;
+        }
+    }
+
+    assert!(
+        replayed > 0,
+        "packed oracle must replay omitted constraints"
+    );
+    for expected in [
+        TerminationCheckpoint::PackedPreBatch,
+        TerminationCheckpoint::PackedMidBatch,
+        TerminationCheckpoint::PackedPostBatch,
+    ] {
+        assert!(
+            checkpoints.contains(&expected),
+            "packed corpus did not exercise {expected:?}; saw {checkpoints:?}"
+        );
+    }
 }
 
 #[test]

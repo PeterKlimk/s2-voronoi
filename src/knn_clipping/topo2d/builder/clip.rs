@@ -102,7 +102,7 @@ impl GnomonicBuilder {
     /// Shadow/profiling helper: test whether a candidate's bisector would leave
     /// the current polygon unchanged. This mirrors the ordinary clipper's
     /// all-inside decision without mutating builder state.
-    #[cfg(feature = "timing")]
+    #[cfg(any(feature = "timing", test))]
     pub(super) fn candidate_would_be_unchanged(&self, neighbor: Vec3) -> bool {
         if !self.is_bounded() || self.vertex_count() < 3 {
             return false;
@@ -444,7 +444,7 @@ impl FallbackBuilder {
     }
 
     #[inline]
-    #[cfg(feature = "timing")]
+    #[cfg(any(feature = "timing", test))]
     pub(super) fn candidate_would_be_unchanged(&self, _neighbor: Vec3) -> bool {
         false
     }
@@ -558,7 +558,7 @@ impl Topo2DBuilder {
     }
 
     #[inline]
-    #[cfg(feature = "timing")]
+    #[cfg(any(feature = "timing", test))]
     pub(crate) fn candidate_would_be_unchanged(&self, neighbor: Vec3) -> bool {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder.candidate_would_be_unchanged(neighbor),
