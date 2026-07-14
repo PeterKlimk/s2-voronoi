@@ -147,6 +147,25 @@ layout proposal realizes the width reduction and keeps the primary loop uncondit
 - Measure foreign incidence, sidecar bytes, patch locality, live memory, and assembly cycles by
   distribution and bin count.
 
+### Experimental result (2026-07-15)
+
+Implemented on `agent/compact-cell-refs` with a `u32` primary stream and a sparse sidecar keyed by
+source slot. The final local-reference conversion is unconditional; foreign references are patched
+afterward. Overflow matching and deferred fallback retain last-patch-wins behavior, and the full
+checked test suite passes.
+
+At one million Fibonacci-distributed generators, only 28,192 of about six million incidences used
+the foreign sidecar (0.47%). Peak RSS at two million generators fell from about 638,500 KiB to
+568,512 KiB, a reduction of roughly 68 MiB. Cache behavior also improved: Cachegrind at 20k showed
+2.6% fewer D1 misses and 4.3% fewer last-level data misses, while hardware counters at one million
+showed 6--12% fewer cache misses across the sampled distributions.
+
+The current implementation is not yet a demonstrated throughput win. Retired-instruction counts
+rose about 1.5%, branch counts rose 2.5--2.9%, and Cachegrind reported about 2.0% more instruction
+references and 5.0% more branch mispredictions. Keep the branch for quiet-machine cycle and wall-time
+comparison, and profile the source-slot-to-cell mapping and sparse patch construction before
+considering it for the default path.
+
 ## 4. Slot-native packed groups and cell construction
 
 ### Current cost
@@ -236,4 +255,3 @@ ceiling:
 - Do not add a per-reference same-owner branch to the existing `u64` stream. The measured hit rate
   was extremely high and the branch still regressed; a successful compact-reference experiment must
   actually narrow the primary stream and isolate sparse exceptions.
-

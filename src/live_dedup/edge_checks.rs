@@ -3,7 +3,7 @@
 use std::mem;
 
 use super::binning::BinAssignment;
-use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
+use super::packed::{pack_edge, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
 use super::types::{
     BinId, EdgeCheck, EdgeCheckOverflow, EdgeKey, EdgeOverflowLocal, EdgeToLater, LocalId,
@@ -467,14 +467,37 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
     // reference (duplicate same-key vertices reaching this cell through two
     // edges); the caller records the conflict so repair sees the site even
     // when the thirds fully agree.
-    let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| -> bool {
-        let packed = pack_ref(owner_bin, idx);
+    let mut patched_slots: Vec<rustc_hash::FxHashMap<u32, (BinId, u32)>> =
+        (0..shards.len()).map(|_| Default::default()).collect();
+    let patch_slot = |output: &mut super::shard::ShardOutput<P>,
+                      patched: &mut rustc_hash::FxHashMap<u32, (BinId, u32)>,
+                      source_slot: u32,
+                      owner_bin: BinId,
+                      idx: u32|
+     -> bool {
         // A slot already holding a DIFFERENT concrete reference is a real,
         // handled defect (recorded by the caller as CrossBinSlotConflict so
         // repair sees the site); not an invariant violation, so no assert.
-        let conflict = *slot != DEFERRED && *slot != packed;
-        *slot = packed;
-        conflict
+        match patched.insert(source_slot, (owner_bin, idx)) {
+            Some(existing) => {
+                let sidecar = output
+                    .foreign_refs
+                    .iter_mut()
+                    .find(|entry| entry.source_slot == source_slot)
+                    .expect("patched foreign slot must have a sidecar entry");
+                sidecar.owner_bin = owner_bin;
+                sidecar.owner_local = idx;
+                existing != (owner_bin, idx)
+            }
+            None => {
+                output.foreign_refs.push(super::types::ForeignRef {
+                    source_slot,
+                    owner_bin,
+                    owner_local: idx,
+                });
+                false
+            }
+        }
     };
     let mut i = 0usize;
     while i < sorted.len() {
@@ -509,6 +532,11 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
             } else {
                 let (a_shard, b_shard) =
                     with_two_mut(shards, a.source_bin.as_usize(), b.source_bin.as_usize());
+                let (a_patched, b_patched) = with_two_mut(
+                    &mut patched_slots,
+                    a.source_bin.as_usize(),
+                    b.source_bin.as_usize(),
+                );
 
                 // The two sides traverse the edge in reverse winding;
                 // every endpoint pairing patches both shards symmetrically.
@@ -516,14 +544,18 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
                 let full = reconcile_edge_endpoints(b.thirds, a.thirds, |bk, ak| {
                     if a.indices[ak] != INVALID_INDEX {
                         conflict |= patch_slot(
-                            &mut b_shard.output.cell_indices[b.slots[bk] as usize],
+                            &mut b_shard.output,
+                            b_patched,
+                            b.slots[bk],
                             a.source_bin,
                             a.indices[ak],
                         );
                     }
                     if b.indices[bk] != INVALID_INDEX {
                         conflict |= patch_slot(
-                            &mut a_shard.output.cell_indices[a.slots[ak] as usize],
+                            &mut a_shard.output,
+                            a_patched,
+                            a.slots[ak],
                             b.source_bin,
                             b.indices[bk],
                         );

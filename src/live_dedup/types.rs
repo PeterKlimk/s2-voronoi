@@ -121,6 +121,14 @@ impl From<LocalId> for u32 {
     }
 }
 
+/// Sparse replacement for an off-shard entry in the primary local-id stream.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ForeignRef {
+    pub(crate) source_slot: u32,
+    pub(crate) owner_bin: BinId,
+    pub(crate) owner_local: u32,
+}
+
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub(crate) struct EdgeKey(u64);

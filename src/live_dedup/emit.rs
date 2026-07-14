@@ -6,7 +6,7 @@ use glam::Vec3;
 
 use super::binning::BinAssignment;
 use super::edge_checks::collect_and_resolve_cell_edges;
-use super::packed::{pack_ref, DEFERRED, INVALID_INDEX};
+use super::packed::INVALID_INDEX;
 use super::shard::ShardState;
 use super::types::{
     BinId, DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeOverflowLocal, EdgeToLater, LocalId,
@@ -251,7 +251,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
                         unsafe { *shard.output.vertices.get_unchecked(*vi as usize) };
                     shard.output.resolution_drift_exceeded |=
                         exceeds_resolution_drift(representative, pos);
-                    shard.output.cell_indices.push(pack_ref(bin, *vi));
+                    shard.output.cell_indices.push(*vi);
                     continue;
                 }
             }
@@ -279,12 +279,14 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
                 }
                 let v_idx = *vi;
                 debug_assert_ne!(v_idx, INVALID_INDEX, "missing on-shard vertex index");
-                shard.output.cell_indices.push(pack_ref(bin, v_idx));
+                shard.output.cell_indices.push(v_idx);
             } else {
                 debug_assert_eq!(*vi, INVALID_INDEX, "received index for off-shard owner");
                 let source_slot =
                     checked_u32(shard.output.cell_indices.len(), "deferred source slot")?;
-                shard.output.cell_indices.push(DEFERRED);
+                // The primary value is ignored for deferred entries; the
+                // sparse foreign sidecar remains authoritative.
+                shard.output.cell_indices.push(0);
                 shard.output.deferred_slots.push(DeferredSlot {
                     key,
                     pos,

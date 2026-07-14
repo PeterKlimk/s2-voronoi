@@ -1,6 +1,8 @@
 //! Shard-local state for live dedup.
 
-use super::types::{DeferredSlot, EdgeCheck, EdgeCheckOverflow, LocalId, UnresolvedEdgeMismatch};
+use super::types::{
+    DeferredSlot, EdgeCheck, EdgeCheckOverflow, ForeignRef, LocalId, UnresolvedEdgeMismatch,
+};
 use crate::knn_clipping::cell_build::VertexKey;
 use glam::Vec3;
 
@@ -31,7 +33,11 @@ pub(crate) struct ShardOutput<P = Vec3> {
     pub(super) edge_check_overflow: Vec<EdgeCheckOverflow>,
     /// Cell slots whose owner bin is off-shard and must be patched during assembly.
     pub(crate) deferred_slots: Vec<DeferredSlot<P>>,
-    pub(crate) cell_indices: Vec<u64>,
+    /// Primary cell-reference stream. Every concrete entry is local to this
+    /// shard; off-shard entries use an arbitrary placeholder and are replaced
+    /// through `foreign_refs` during final assembly.
+    pub(crate) cell_indices: Vec<u32>,
+    pub(crate) foreign_refs: Vec<ForeignRef>,
     pub(super) cell_starts: Vec<u32>,
     pub(super) cell_counts: Vec<u8>,
     pub(crate) exact_zero_edge_hint_cells: Vec<u32>,
@@ -47,6 +53,7 @@ impl<P: VertexPosition> ShardOutput<P> {
             edge_check_overflow: Vec::new(),
             deferred_slots: Vec::new(),
             cell_indices: Vec::new(),
+            foreign_refs: Vec::new(),
             cell_starts: vec![0; num_local_generators],
             cell_counts: vec![0; num_local_generators],
             exact_zero_edge_hint_cells: Vec::new(),

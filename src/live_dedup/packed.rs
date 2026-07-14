@@ -1,22 +1,8 @@
 //! Packed identifiers and helper functions for live dedup.
 
-use super::types::{BinId, EdgeKey};
+use super::types::EdgeKey;
 
-pub(super) const DEFERRED: u64 = u64::MAX;
 pub(super) const INVALID_INDEX: u32 = u32::MAX;
-
-#[inline]
-pub(super) fn pack_ref(bin: BinId, local: u32) -> u64 {
-    ((bin.as_u8() as u64) << 32) | (local as u64)
-}
-
-#[inline]
-pub(super) fn unpack_ref(packed: u64) -> (BinId, u32) {
-    (
-        BinId::from((packed >> 32) as u8),
-        (packed & 0xFFFF_FFFF) as u32,
-    )
-}
 
 #[inline]
 fn pack_bc(b: u32, c: u32) -> u64 {
