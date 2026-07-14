@@ -137,6 +137,13 @@ Single-threaded, ~1.8s at 1M. Per-build peak memory is roughly 0.65 KB/point.
 - `serde`: `Serialize`/`Deserialize` for the diagram types.
 - `timing`: phase and sub-phase timing reports.
 
+## Development documents
+
+- [Active triage and work log](docs/work-log.md)
+- [Roadmap](ROADMAP.md)
+- [Correctness and safety audit record](docs/audit-triage.md)
+- [Output-resolution policy](docs/output-resolution-policy.md)
+
 ## License
 
 MIT OR Apache-2.0

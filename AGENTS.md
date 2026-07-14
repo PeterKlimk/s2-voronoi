@@ -66,6 +66,8 @@ High-level flow per generator:
 - `docs/architecture.md`: the algorithm (per-cell construction + stitching) and module map.
 - `docs/correctness.md`: guarantees, outcome classes, and limits.
 - `docs/performance.md`: benchmark guidance and perf knobs.
+- `docs/work-log.md`: authoritative active triage, dependencies, and backburner.
+- `docs/audit-triage.md`: closed July 2026 correctness/safety audit record.
 
 ## Module Map (Current)
 
@@ -75,14 +77,23 @@ src/
 ├── types.rs                       # UnitVec3 / UnitVec3Like
 ├── diagram.rs                     # SphericalVoronoi storage
 ├── validation.rs                  # Topology/consistency checks
+├── locate.rs                      # Point-location API
+├── measures.rs                    # Area, centroid, and Lloyd geometry
+├── spherical_arc.rs               # Owner-conditioned spherical edge geometry
 ├── error.rs                       # VoronoiError
 ├── fp.rs                          # Numeric helper ops
+├── tolerances.rs                  # Centralized numerical tolerances
+├── policy.rs                      # Grid and query policy
 ├── knn_clipping/                  # Main backend
 │   ├── compute.rs                 # End-to-end backend orchestration
+│   ├── driver.rs                  # Per-bin cell construction
 │   ├── preprocess.rs              # Near-coincident merge pass
 │   ├── edge_reconcile.rs          # Post-assembly edge reconciliation
-│   ├── topo2d/                    # Gnomonic/topological clipping
-│   └── p5_shadow.rs               # Canonical predicate audit plumbing
+│   ├── output_resolution.rs       # Exact stored-zero canonicalization
+│   ├── escalate.rs                # Local3d repair orchestration
+│   ├── local_hull.rs              # Robust local 3D hull
+│   ├── cell_build/                # Single-cell construction loop
+│   └── topo2d/                    # Gnomonic/topological clipping
 ├── live_dedup/                    # Sharded dedup + assembly
 ├── timing/                        # Timing feature plumbing
 ├── cube_grid/                     # Spatial index + query stack

@@ -293,16 +293,19 @@ after explicit simplification,” not “Voronoi diagram of the original generat
 
 ## Implementation state
 
-1. [x] Add detection and reporting for exact stored-zero edges after the final repair.
-2. [x] Implement transactional non-cell-killing zero-edge contraction over maximal components.
-3. [x] Reproduce the downstream zero-edge incident and confirm it succeeds under default
-   `Preserve` without changing the generator count.
-4. [ ] Add public `Error` and `Elide` behavior for components that would eliminate cells,
-   including explicit generator-remapping/report semantics.
-5. [x] Diameter-bound repair components and transactionally reject cell-killing/non-simple
-   effects; retain defect-local positive diagonal collapse for degree-4+ reconciliation.
-6. [ ] Add optional positive-threshold collapse only after the exact-zero policy is stable.
-7. [x] Keep the final-cell hint degree-local and component reconstruction sparse/cold.
+The exact stored-zero baseline is complete:
+
+- detection and reporting run after final repair;
+- maximal non-cell-killing zero components contract transactionally;
+- the minimized downstream incident succeeds under default `Preserve` without changing generator
+  count;
+- repair components are diameter-bounded and cell-killing/non-simple proposals escalate; and
+- clean discovery uses the degree-local hint and representative-drift certificate, with exhaustive
+  terminal scanning whenever that certificate is unavailable.
+
+The active follow-ups and their dependencies are tracked only as WORK-001, RES-001, and RES-002 in
+[`work-log.md`](work-log.md). In particular, public generator elision and positive-threshold
+simplification are optional extensions, not incomplete pieces of the baseline.
 
 The baseline retains synthetic non-cell-killing and triangle-to-digon tests, a minimized version of
 the downstream Hex3 incident, a weld-radius cell-survival sweep, and focused reconciliation tests
@@ -310,15 +313,9 @@ for endpoint identity, cell-killing escalation, and bounded components. Broader 
 cycles, permutation, and repaired-output cases remain useful hardening work before exposing
 positive-threshold or generator-elision policy.
 
-## Decisions still open
+## Deferred decisions
 
-- Public type and variant names.
-- Whether resolution-elided generators map to `None`, a richer outcome enum, or an explicitly
-  noncanonical deterministic representative.
-- The exact local link predicate used before transactional whole-diagram validation.
-- Whether to add pre-storage f64 collision telemetry; baseline decisions use stored f32 positions
-  exclusively.
-- Threshold units and whether a convenience angular API converts to the canonical squared-chord
-  representation.
-- Whether positive-threshold output is stored in the same diagram type with report metadata or a
-  distinct simplified-mesh wrapper.
+Public naming, generator-remapping semantics, cell-killing link checks, threshold units,
+pre-storage telemetry, and the simplified-output type are grouped under RES-001 and RES-002 in
+[`work-log.md`](work-log.md). This document remains the design rationale rather than a second task
+list.

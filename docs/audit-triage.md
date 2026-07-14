@@ -1,8 +1,10 @@
 # Correctness and Safety Audit Triage
 
-This document tracks findings from the July 2026 source audit of the spherical Voronoi pipeline.
-It is a triage document, not a statement that every suspected issue is reachable from the public
-API. Each item distinguishes confirmed behavior from proof gaps and contract decisions.
+This document is the historical record of findings from the July 2026 source audit of the
+spherical Voronoi pipeline. It is not the active task tracker and does not imply that every
+suspected issue was reachable from the public API. Each item distinguishes confirmed behavior from
+proof gaps and contract decisions. Unfinished work is tracked only in
+[`work-log.md`](work-log.md).
 
 The audit covered:
 
@@ -63,7 +65,9 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 
 ## Audit closure state
 
-There are no open correctness or policy findings in this audit.
+There are no open correctness or policy findings in this audit. Follow-up hardening, optional
+policy extensions, performance ideas, and research are triaged in
+[`work-log.md`](work-log.md).
 
 The AUD-011 grid-frontier derivation now covers cell containment, forward-map/wall association,
 the packed ring-2 and interior-plane certificates, the dense-band chord certificate, and the final
@@ -71,16 +75,9 @@ four-epsilon export pad. Conventional IEEE round-to-nearest behavior plus a one-
 `f64::sin_cos`/`sqrt` implementation is adopted as an explicit platform premise; its assumptions
 and reserves are recorded in the finding below and in `docs/correctness.md`.
 
-The following are recorded backburner ideas, not blockers for the selected production contract:
-
-- unified exact normalized-site combinatorics and a shared exact-zero/SoS model;
-- a certified exhaustive normalized-site ownership diagnostic;
-- an early total-query-work circuit breaker for pathological but successful constructions; and
-- selection of an external certified-robust comparison implementation; and
-- public generator `Error`/`Elide` outcomes and optional positive-threshold edge collapse recorded
-  in [`output-resolution-policy.md`](output-resolution-policy.md).
-
-The cross-cutting campaigns below are continuing regression policy, not unfinished audit findings.
+The backburner ideas formerly listed here have moved to the work log so this closed record cannot
+accidentally become a second active queue. The cross-cutting campaigns below are retained as audit
+evidence; their continuing form is WORK-002 in the work log.
 
 ### Fast-path accounting at audit close
 
@@ -771,9 +768,9 @@ this clean baseline was recorded. Sixteen runs welded at least one pair, for 121
 
 - [x] Written downstream forward-error budget for the three-epsilon guard under the stated
   IEEE/libm assumptions.
-- [ ] Written grid-frontier containment/association budget for the internal pads and final
+- [x] Written grid-frontier containment/association budget for the internal pads and final
   four-epsilon export reserve.
-- [ ] Accept and document the ordinary libm premise, or replace it with a controlled implementation
+- [x] Accept and document the ordinary libm premise, or replace it with a controlled implementation
   whose error bound can be stated.
 - [x] Threshold-neighbor tests across sign, norm endpoints, polar charts, SIMD/scalar, and FMA.
 - [x] Precise diagnostic `U_i` angular formulas and conditioning buckets.

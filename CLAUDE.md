@@ -71,6 +71,8 @@ High-level flow per generator:
 - `docs/architecture.md`: the algorithm (per-cell construction + stitching) and module map.
 - `docs/correctness.md`: guarantees, outcome classes, and limits.
 - `docs/performance.md`: benchmark guidance and perf knobs.
+- `docs/work-log.md`: authoritative active triage, dependencies, and backburner.
+- `docs/audit-triage.md`: closed July 2026 correctness/safety audit record.
 
 ## Module Map (Current)
 
@@ -116,8 +118,8 @@ src/
 - `serde`: Serialize/Deserialize for diagram types.
 - Internal: `timing` (instrumentation), `profiling` (inline control),
   `microbench` (harnesses), `simd_scalar` (non-`wide` 8-lane fallback),
-  `fma` (mul_add; off by default, see ledger), `tools` (bench binaries),
-  `p5_shadow` (P5 stage-1 canonical-vs-local clip decision audit).
+  `fma` (mul_add; off by default, see ledger), `tools` (bench binaries), and
+  `escalate_probe` (Local3d integration-test seam).
 
 ## Tests
 

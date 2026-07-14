@@ -1,0 +1,206 @@
+# Triage and Work Log
+
+**Status:** active
+
+**Last reorganized:** 2026-07-15
+
+This is the authoritative list of unfinished correctness, robustness, and design work. Historical
+investigations stay in [`audit-triage.md`](audit-triage.md); design rationale stays in the linked
+policy documents. An unchecked item elsewhere should either be moved here or treated as stale.
+
+## Current state
+
+- The July 2026 correctness and safety audit is closed. AUD-001 through AUD-017 have no open
+  correctness or policy finding under the documented production contract.
+- The production promise is a construction-certified, edge-agreeing, Euler-valid spherical mesh
+  or a defined error. It is not exact combinatorial equality with one ideal normalized-site model.
+- Exact stored-zero edges are detected after final repair and safely contracted when doing so does
+  not remove an effective generator cell.
+- Qhull and the legacy P5 shadow path have been retired.
+- Full strict validation remains available for testing and campaigns without burdening the default
+  fast path.
+
+There is no active P0/P1 correctness defect. The nearest useful work is regression hardening and
+telemetry for the new output-resolution certificate.
+
+## Triage vocabulary
+
+**Status**
+
+- **Ready** — scoped enough to implement without another design decision.
+- **Decision** — implementation should wait for explicit policy agreement.
+- **Ongoing** — retained campaign or maintenance practice, not a finite feature task.
+- **Backburner** — recorded idea with no current commitment.
+- **Blocked** — depends on a concrete unresolved prerequisite.
+
+**Priority**
+
+- **P0** — memory safety or a successful ordinary computation returning materially corrupted data.
+- **P1** — release-blocking safety or correctness contract work.
+- **P2** — worthwhile robustness, policy, or capability work.
+- **P3** — optional diagnostics, research, or workload-specific optimization.
+
+## Queue summary
+
+| ID | Priority | Status | Next gate |
+|---|---:|---|---|
+| WORK-001 | P2 | Ready | Run telemetry soak and broaden component fixtures |
+| WORK-002 | P2 | Ongoing | Exercise after construction/repair changes |
+| RES-001 | P2 | Decision | Agree generator-remapping and transaction semantics |
+| RES-002 | P2 | Blocked | Complete WORK-001 and decide RES-001 |
+| PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
+| RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
+| RESEARCH-002 | P3 | Backburner | Justify diagnostic cost and conditioning policy |
+| RESEARCH-003 | P3 | Backburner | First choose a compatible exact-zero/SoS model |
+| RESEARCH-004 | P3 | Backburner | Commit to full f64 representation and search bounds |
+
+## Ready work
+
+### WORK-001 — Output-resolution certificate soak and component hardening
+
+- **Priority:** P2
+- **Status:** Ready
+- **Motivation:** The exact-zero baseline and clean-path discovery certificate are implemented and
+  reviewed. Their remaining risk is future lifecycle drift rather than a known false-negative.
+- **Scope:**
+  - run timing-enabled adversarial campaigns and record certified versus exhaustive discovery,
+    fallback reasons, hinted cells/candidates, and detected edges;
+  - add maximal zero-component fixtures covering trees, cycles, shared-cell interactions,
+    permutations, and repaired terminal output;
+  - compare hinted discovery with exhaustive discovery on randomized synthetic assemblies; and
+  - keep signed-zero and adjacent-f32 threshold cases pinned.
+- **Acceptance:** no invalid success, hinted and exhaustive canonicalization agree, all successful
+  outputs validate strictly, and ordinary workloads remain overwhelmingly on certified discovery.
+- **References:** AUD-017 in [`audit-triage.md`](audit-triage.md),
+  [`output-resolution-policy.md`](output-resolution-policy.md).
+
+### WORK-002 — Construction-certificate differential maintenance
+
+- **Priority:** P2
+- **Status:** Ongoing
+- **Scope:**
+  - keep the exhaustive uniform small-`n` geometry campaign active;
+  - after reconciliation or Local3d edits, check owner equality and edge-bisector residuals as well
+    as topology;
+  - retain negative controls for reversed faces, duplicate faces/references, moved vertices, and
+    disconnected unions of closed complexes;
+  - compare semantic topology across thread counts, bin counts, default/scalar SIMD, and FMA; and
+  - keep welding and deterministic perturbation in separate expected-policy buckets.
+- **Acceptance:** every supported successful result passes the relevant strict and intrinsic
+  geometry checks; Local3d escalation remains a valid success rather than a failure count.
+
+## Decision-gated output policy
+
+These tasks are optional extensions. The Hex3 exact-zero incident is already resolved under the
+default `Preserve` behavior.
+
+### RES-001 — Public cell-killing outcomes
+
+- **Priority:** P2
+- **Status:** Decision
+- **Goal:** expose `Error` and `Elide` behavior when satisfying output resolution would remove an
+  effective generator cell.
+- **Decisions required:**
+  - public type and variant names;
+  - whether an elided generator maps to `None`, a richer outcome, or a documented noncanonical
+    representative;
+  - the link/owner-rotation certificate required before a cell-killing transaction commits; and
+  - report composition with preprocessing welds and deterministic perturbation.
+- **Invariant:** `Preserve` remains the default and never silently removes an effective generator.
+- **Reference:** [`output-resolution-policy.md`](output-resolution-policy.md).
+
+### RES-002 — Optional positive-threshold edge simplification
+
+- **Priority:** P2
+- **Status:** Blocked
+- **Dependencies:** RES-001 and WORK-001
+- **Goal:** let graphical or physics consumers explicitly remove represented nonzero slivers.
+- **Decisions required:**
+  - canonical threshold units (squared chord internally, with or without an angular convenience
+    API);
+  - same diagram type plus report metadata versus a distinct simplified-mesh wrapper;
+  - whether pre-storage f64 collision telemetry is useful; and
+  - interaction with cell-killing outcomes.
+- **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
+  exact Voronoi diagram of the original generators.
+- **Reference:** [`output-resolution-policy.md`](output-resolution-policy.md).
+
+## Performance robustness
+
+### PERF-001 — Total-query-work circuit breaker
+
+- **Priority:** P3
+- **Status:** Backburner
+- **Motivation:** Perturbed great-circle inputs can become gnomonically bounded yet process nearly
+  every generator for some cells. The existing exhaustion replay is correct but does not detect
+  this successful high-work regime.
+- **Candidate direction:** a progress-aware total-work budget followed by unrestricted spherical,
+  Local3d, or global-hull escalation.
+- **Before implementation:** measure the actual cold-replay crossover, avoid a fixed candidate
+  count such as 128, and prove that the handoff cannot turn a valid success into a failure.
+- **Reference:** AUD-015 in [`audit-triage.md`](audit-triage.md).
+
+The remaining code-specific performance experiments are maintained separately in the open queue in
+[`performance.md`](performance.md) and the memory backlog in
+[`memory-layout-ideas.md`](memory-layout-ideas.md). They are not correctness tasks and are not
+duplicated here.
+
+## Research backburner
+
+### RESEARCH-001 — Unified exact normalized-site combinatorics
+
+- **Priority:** P3
+- **Status:** Backburner
+- **Scope if revived:** choose one normalized site model, add filtered exact clipping signs, derive
+  compatible kNN termination bounds, share one exact-zero/SoS policy, handle non-simplicial
+  (>3-generator) vertices, and prevent tolerance repair from becoming an authority over exact
+  combinatorics.
+- **Gate:** first measure exact-filter activation and fast-path cost. This is an optional add-on,
+  not the core graphical contract.
+
+### RESEARCH-002 — Certified exhaustive ownership diagnostic
+
+- **Priority:** P3
+- **Status:** Backburner
+- **Goal:** independently search normalized-site ownership without claiming that the production
+  combinatorics use that same model.
+- **Gate:** justify its cost and define conditioning/degeneracy buckets before treating differences
+  as failures.
+
+### RESEARCH-003 — Independent certified reference
+
+- **Priority:** P3
+- **Status:** Backburner
+- **Goal:** select or build a comparison implementation with certified-adaptive predicates and an
+  explicit exact-zero/SoS policy compatible with RESEARCH-001.
+- **Rule:** a reference result is not deciding evidence merely because it comes from another
+  library. Qhull is explicitly not a correctness oracle.
+
+### RESEARCH-004 — f64 input and output
+
+- **Priority:** P3
+- **Status:** Backburner
+- **Scope:** parallel f64 site/output types, f64 clipping/repair/validation/measures, a sound f64
+  search certificate, and an exact-duplicate policy. An f64 API must not silently round through the
+  existing f32 representation.
+- **Reference:** [`../ROADMAP.md`](../ROADMAP.md).
+
+## Suggested order
+
+1. WORK-001 telemetry soak and component regressions.
+2. Continue WORK-002 whenever construction, reconciliation, or Local3d changes.
+3. If a consumer needs generator removal or mesh conditioning, decide RES-001 before RES-002.
+4. Revisit PERF-001 only with a motivating workload and crossover measurements.
+5. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
+
+## Closed and retired work
+
+- AUD-001 through AUD-017: closed; see [`audit-triage.md`](audit-triage.md).
+- Exact stored-zero baseline and discovery certificate: implemented and reviewed.
+- Near-pi owner-plane validation and geometry consumers: implemented.
+- Actual-exhaustion spherical reconstruction: implemented; fixed-budget early handoff rejected for
+  now.
+- Qhull comparison backend and P5 shadow audit plumbing: removed.
+- Rejected optimization experiments and their measurements remain in
+  [`performance.md`](performance.md); do not reopen them without a materially different design or
+  workload.
