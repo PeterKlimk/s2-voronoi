@@ -53,10 +53,47 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 | AUD-008 | P1 | Resolved | Plain `compute` documentation exceeded its fast-path certificate | Edge-agreement construction certificate + fused Euler; strict validation optional/testing |
 | AUD-009 | P1 | Resolved | Reconciliation merges were not bounded to an epsilon-diameter feature | Transactionally diameter-gate components; escalate rejected chains |
 | AUD-010 | P2 | Resolved | Fast, fallback, repair, and exact-predicate paths do not share one exact site model or SoS policy | Structural production contract chosen; unified exact combinatorics deferred as an optional add-on |
-| AUD-011 | P2 | Active; theorem/frontiers audited and aggressively falsified, fidelity measured | Termination reserves remain empirical; normalized-site geometric fidelity now has a campaign baseline | Derive the remaining termination budget; retain the boundary/oracle tests and fidelity campaign |
+| AUD-011 | P2 | Active; downstream guard derived conditionally, shell defect fixed, packed/grid lemmas open | The three-epsilon downstream reserve closes under stated IEEE/libm assumptions; packed frontier containment remains under-justified | Derive the remaining grid containment/association budget and decide the libm platform premise |
 | AUD-012 | P3 | Resolved | Welding is intentionally a strict computed-f32 threshold graph with transitive classes | Retain boundary and detector-oracle tests |
 | AUD-013 | P2 | Resolved | Qhull was not a robust correctness oracle | Removed feature, dependency, public API, comparisons, and oracle-like tooling |
 | AUD-014 | P1 | Resolved | Local3d lost the hull-face sign and could mint the antipodal Voronoi vertex | Carry the oriented support normal through sorted-triple repair fans |
+| AUD-015 | P1 | Resolved for correctness; performance policy deferred | Finite-chart no-ops were not spherical redundancy certificates | Replay unrestricted spherical constraints only after genuine chart exhaustion |
+| AUD-016 | P1 | Resolved | Near-semicircle Voronoi edges conflicted with the strict representation contract | Use owner-plane conditioning; reserve SoS for exact-pi degeneracy |
+
+## Audit closure state
+
+There are no open P0 or P1 correctness findings in this audit. One P2 proof item remains active:
+
+- **AUD-011 grid frontier:** derive complete cell containment and forward-map/wall association for
+  the packed ring-2 certificate, including `GRID_PLANE_PAD`, `GRID_SIN_EPS`, the dense-band chord
+  certificate, and the final four-epsilon export pad. The shell's demonstrated antipodal endpoint
+  failure is fixed; no packed counterexample is known.
+- **AUD-011 platform premise:** decide whether conventional IEEE round-to-nearest behavior plus a
+  one-ulp-or-better `f64::sin_cos`/`sqrt` implementation is an accepted platform assumption. Rust
+  does not itself specify a useful worst-case transcendental error bound.
+
+The following are recorded backburner ideas, not blockers for the selected production contract:
+
+- unified exact normalized-site combinatorics and a shared exact-zero/SoS model;
+- a certified exhaustive normalized-site ownership diagnostic;
+- an early total-query-work circuit breaker for pathological but successful constructions; and
+- selection of an external certified-robust comparison implementation.
+
+The cross-cutting campaigns below are continuing regression policy, not unfinished audit findings.
+
+### Fast-path accounting at audit close
+
+Ordinary release binaries were compared with pinned, single-threaded `perf stat` runs and
+preprocessing disabled. Against pre-resolution `main` (`554aec0`), the audit branch (`4619d22`)
+retired fewer instructions and branches in every paired run: `-1.655%/-1.543%` on 500k Fibonacci,
+`-1.668%/-1.526%` on 500k uniform, and `-0.637%/-0.436%` on 100k clustered. Cycles remained the
+secondary signal because machine noise and cache outliers were substantial.
+
+The final near-antipodal shell fix was also isolated over 15 paired 500k uniform runs. It added
+`0.0255%` retired instructions, removed `0.1025%` branches, and had unresolved cycles. Its common
+state cost is one f64 inverse norm per grid cell (about 0.33 bytes per input point at ordinary
+occupancy); query normalization and f64 cap evaluation occur only after shell takeover. Full strict
+validation remains optional and was not included in these production-path measurements.
 
 ## Confirmed defects
 
@@ -686,13 +723,19 @@ this clean baseline was recorded. Sixteen runs welded at least one pair, for 121
 
 **Acceptance status**
 
-- [ ] Written forward-error budget for every termination reserve.
+- [x] Written downstream forward-error budget for the three-epsilon guard under the stated
+  IEEE/libm assumptions.
+- [ ] Written grid-frontier containment/association budget for the internal pads and final
+  four-epsilon export reserve.
+- [ ] Accept and document the ordinary libm premise, or replace it with a controlled implementation
+  whose error bound can be stated.
 - [x] Threshold-neighbor tests across sign, norm endpoints, polar charts, SIMD/scalar, and FMA.
 - [x] Precise diagnostic `U_i` angular formulas and conditioning buckets.
 - [x] Retained multi-distribution campaign with strict-valid/no-residual prerequisites.
 - [x] Empirical maxima and per-case p99 baseline, separated from explicit perturbation policy.
-- [ ] Certified exhaustive normalized-site ownership search, if that stronger diagnostic is later
-  worth its cost.
+
+Deferred optional add-on: a certified exhaustive normalized-site ownership search, if that stronger
+diagnostic is later worth its cost.
 
 ### AUD-012 — Welding equality and transitive-class semantics
 
@@ -980,14 +1023,14 @@ loop (-11%). These are on-demand measure costs; diagram construction is unchange
    a deferred optional add-on.
 9. **AUD-014:** resolved — preserved Local3d's oriented hull-face circumcenter through minting.
 10. **AUD-012:** resolved — retained and pinned strict computed-f32 transitive welding semantics.
-11. **AUD-011:** derive the remaining termination envelope and retain the measured fidelity
-    baseline and boundary coverage.
+11. **AUD-011:** derive the packed/grid containment and association lemmas, decide the explicit
+    libm premise, and retain the measured fidelity baseline and boundary coverage.
 12. **AUD-015:** resolved for correctness — unrestricted spherical replay now occurs only after
     genuine chart exhaustion; early performance handoff remains deferred.
 13. **AUD-016:** resolved — owner-plane validation, exact-pi SoS, conditioned measures/diagnostics,
     and retained-plane spherical fallback intersections are covered by focused regressions.
 
-## Cross-cutting test backlog
+## Ongoing cross-cutting regression policy
 
 - Keep the exhaustive uniform small-`n` geometry campaign active. Existing quality fixtures around
   100 sites missed both its four-site large-cell case and the five-site reconciliation failure.
