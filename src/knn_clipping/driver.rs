@@ -89,6 +89,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                 let vertex_capacity = my_generators.len().saturating_mul(6);
                 shard.output.vertices.reserve(vertex_capacity);
                 shard.output.vertex_keys.reserve(vertex_capacity);
+                shard.output.vertex_incidence.reserve(vertex_capacity);
                 shard
                     .output
                     .cell_indices

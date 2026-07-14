@@ -41,6 +41,8 @@ inexact pathological path.
 
 ## 1. Lazy attempted-neighbor stamps
 
+**Status: retired after experiment (2026-07-15).**
+
 ### Current cost
 
 Every bin's `CellBuildContext` constructs an `N`-entry `u32` generation-stamp table. At one million
@@ -77,12 +79,36 @@ robust there but wasteful on the packed common path.
 - Compare the lazy transition, table allocation count, attempted-list maximum, and number of cells
   that materialize the table.
 
+### Experiment result
+
+The lazy transition was implemented in three forms: a reusable `Vec<u32>`, an adaptive
+shell-pressure fallback, and a 32-slot inline buffer with a reusable overflow vector. Exact work
+counters and output sizes were unchanged. On one-million-point Fibonacci, only 18 cells
+materialized dense state, 14 of 24 contexts allocated a table, and the maximum pre-shell list was
+23 slots, confirming the sparsity hypothesis.
+
+The bookkeeping cost nevertheless outweighed the avoided spatial stamp stores. For the inline
+variant, deterministic one-thread Cachegrind at 20k reported 2.30% more instruction references,
+2.19% more branches, 5.84% more branch mispredicts, and 44.3% more L1 instruction misses. It did
+reduce data writes by 1.23% and D1 misses by 2.97%, but last-level data misses were effectively
+flat. Hardware retired-instruction counts at scale likewise increased for both the vector and
+inline forms. The pressure fallback did not materially improve the shell-heavy shape and added
+ordinary per-cell work.
+
+Wall time and cycle counters were too noisy during this experiment to support a throughput claim.
+The deterministic counters are already unfavorable enough to retire the design: do not replace
+the packed path's unconditional spatial stamp store with a per-candidate growable/inline stream
+unless a future stream representation removes its capacity and recording control flow.
+
 ## 2. Owner-local vertex-incidence accounting
+
+**Status: implemented experimentally; quiet-machine cycle/time acceptance pending (2026-07-15).**
 
 ### Current cost
 
-With repair enabled, every build performs a post-assembly low-incidence scan over the live cell
-windows. The parallel path allocates one `AtomicU32` per assembled vertex and performs roughly six
+Every build performs a post-assembly low-incidence scan over the live cell windows. It is part of
+the plain-return safety gate as well as the repair trigger, so disabling repair no longer disables
+the scan. The parallel path allocates one `AtomicU32` per assembled vertex and performs roughly six
 random atomic increments per input point. On a two-million-point reference run the scalar scan took
 about 22.7 ms and the twelve-thread atomic scan about 25.0 ms: the pass did not scale and became
 slightly slower in parallel.
@@ -104,12 +130,35 @@ slightly slower in parallel.
 - Expected win: clean multithreaded builds with repair enabled.
 - Obvious edge cases: reconciliation mutations, repair acceptance/rejection, welded inputs, and
   high cross-bin incidence.
-- Disable the added accounting when `RepairMode::Disabled`; that configuration currently pays no
-  low-incidence scan.
+- Keep the accounting active under `RepairMode::Disabled`; the topology summary is an independent
+  plain-return safety signal.
 - Measure whether moving one cheap increment per incidence into the dominant construction/dedup
   phase offsets the removed tail pass.
 - A saturating byte is valid only for the boolean repair trigger. Do not reuse it for exact degree
   reporting without changing the representation and tests.
+
+### Provisional experiment result
+
+The candidate stores a saturating byte parallel to each shard's vertices, initializes newly
+created vertices at incidence one, increments resolved on-shard references during emission, and
+applies every deferred reference once at its final owner. Clean assembly reduces these private
+counters. Any reconciliation that reports a changed live-cell footprint discards the summary and
+runs the existing exact scan. Checked builds recompute the scalar live-window summary on the clean
+path and assert equality.
+
+Deterministic one-thread Cachegrind at 20k Fibonacci was close to instruction-neutral (+0.01%
+instruction references) while reducing branches by 2.19%, D1 misses by 2.76%, and last-level data
+misses by 1.73%; data references increased 0.31% and branch mispredicts increased 1.12%. At one
+million uniform points and 96 bins, seven-round hardware-counter means showed 0.32% fewer retired
+instructions, 1.72% fewer branches, 1.65% fewer branch misses, 3.45% fewer cache references, and
+10.4% fewer cache misses. One-thread 500k Fibonacci remained near neutral in instructions (+0.13%)
+with mixed cache movement. A 2M Fibonacci peak-RSS probe measured about 1.5 MiB more RSS, so this is
+not currently a memory-envelope win.
+
+The full `checked` test profile passes, including reconciliation and Local3d repair fixtures. Do
+not promote or commit the experiment based on these attribution counters alone: final acceptance
+still requires paired cycle/time measurements on a quiet machine, including regular and
+high-cross-bin regimes.
 
 ## 3. Compact shard-local cell-reference stream
 
@@ -236,4 +285,3 @@ ceiling:
 - Do not add a per-reference same-owner branch to the existing `u64` stream. The measured hit rate
   was extremely high and the branch still regressed; a successful compact-reference experiment must
   actually narrow the primary stream and isolate sparse exceptions.
-

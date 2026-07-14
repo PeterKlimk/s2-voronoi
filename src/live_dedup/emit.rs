@@ -251,6 +251,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
                         unsafe { *shard.output.vertices.get_unchecked(*vi as usize) };
                     shard.output.resolution_drift_exceeded |=
                         exceeds_resolution_drift(representative, pos);
+                    shard.output.add_vertex_incidence(*vi);
                     shard.output.cell_indices.push(pack_ref(bin, *vi));
                     continue;
                 }
@@ -263,6 +264,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
                     let new_idx = checked_u32(shard.output.vertices.len(), "shard vertex index")?;
                     shard.output.vertices.push(pos);
                     shard.output.vertex_keys.push(key);
+                    shard.output.vertex_incidence.push(1);
                     *vi = new_idx;
                 }
                 #[cfg(not(target_feature = "avx2"))]
@@ -270,12 +272,14 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
                     let new_idx = checked_u32(shard.output.vertices.len(), "shard vertex index")?;
                     shard.output.vertices.push(pos);
                     shard.output.vertex_keys.push(key);
+                    shard.output.vertex_incidence.push(1);
                     *vi = new_idx;
                 } else {
                     let representative =
                         unsafe { *shard.output.vertices.get_unchecked(*vi as usize) };
                     shard.output.resolution_drift_exceeded |=
                         exceeds_resolution_drift(representative, pos);
+                    shard.output.add_vertex_incidence(*vi);
                 }
                 let v_idx = *vi;
                 debug_assert_ne!(v_idx, INVALID_INDEX, "missing on-shard vertex index");
