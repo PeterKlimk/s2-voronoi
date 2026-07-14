@@ -27,6 +27,10 @@ impl ShardDedup {
 pub(crate) struct ShardOutput<P = Vec3> {
     pub(crate) vertices: Vec<P>,
     pub(crate) vertex_keys: Vec<VertexKey>,
+    /// Saturating live-cell incidence, parallel to `vertices`. Construction
+    /// owns this shard exclusively; deferred off-shard references are applied
+    /// at their owner before final assembly.
+    pub(crate) vertex_incidence: Vec<u8>,
     pub(super) unresolved_edges: Vec<UnresolvedEdgeMismatch>,
     pub(super) edge_check_overflow: Vec<EdgeCheckOverflow>,
     /// Cell slots whose owner bin is off-shard and must be patched during assembly.
@@ -43,6 +47,7 @@ impl<P: VertexPosition> ShardOutput<P> {
         Self {
             vertices: Vec::new(),
             vertex_keys: Vec::new(),
+            vertex_incidence: Vec::new(),
             unresolved_edges: Vec::new(),
             edge_check_overflow: Vec::new(),
             deferred_slots: Vec::new(),
@@ -72,6 +77,12 @@ impl<P: VertexPosition> ShardOutput<P> {
     #[inline(always)]
     pub(super) fn cell_count(&self, local: LocalId) -> u8 {
         self.cell_counts[local.as_usize()]
+    }
+
+    #[inline(always)]
+    pub(super) fn add_vertex_incidence(&mut self, local: u32) {
+        let count = &mut self.vertex_incidence[local as usize];
+        *count = (*count + 1).min(3);
     }
 }
 

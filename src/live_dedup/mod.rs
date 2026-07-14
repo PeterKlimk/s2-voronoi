@@ -83,6 +83,14 @@ impl ShardedVertexKeys {
     }
 }
 
+/// Construction-time topology facts derived from shard-owner incidence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct IncidenceSummary {
+    pub(crate) used_vertices: usize,
+    pub(crate) live_half_edges: usize,
+    pub(crate) low_incidence: bool,
+}
+
 /// Result of assembling sharded live-dedup data into global arrays.
 pub(crate) struct AssemblyResult<P = glam::Vec3> {
     /// All Voronoi vertex positions (global, concatenated from shards).
@@ -109,6 +117,9 @@ pub(crate) struct AssemblyResult<P = glam::Vec3> {
     /// Whether some final representative moved farther from a cell-local
     /// realization than the hot-hint certificate permits.
     pub resolution_drift_exceeded: bool,
+    /// Construction-time topology summary, exact until a later pass mutates a
+    /// live cell window.
+    pub incidence_summary: IncidenceSummary,
     /// Timing sub-phases for the dedup stage.
     pub dedup_sub: crate::timing::DedupSubPhases,
 }
