@@ -93,6 +93,7 @@ fn run_core_pipeline(
         cells,
         cell_indices,
         exact_zero_edge_candidates,
+        resolution_drift_exceeded,
         dedup_sub: _,
     } = assembled;
     let (mut eff_cells, mut eff_cell_indices, reconcile_result) = reconcile_edges(
@@ -129,7 +130,8 @@ fn run_core_pipeline(
         repair_mode,
     );
     let clean_resolution_path = unresolved_edges.is_empty() && !repair.attempted;
-    let localized_resolution_cells = if clean_resolution_path {
+    let certified_resolution_hint = clean_resolution_path && !resolution_drift_exceeded;
+    let localized_resolution_cells = if certified_resolution_hint {
         let mut incident_cells = Vec::with_capacity(exact_zero_edge_candidates.len() * 6);
         let mut complete = true;
         for &(a, b) in &exact_zero_edge_candidates {
@@ -159,7 +161,7 @@ fn run_core_pipeline(
         &vertices,
         &mut eff_cells,
         &mut eff_cell_indices,
-        if clean_resolution_path {
+        if certified_resolution_hint {
             Some(exact_zero_edge_candidates)
         } else {
             None

@@ -51,20 +51,21 @@ Thus the default preserves one cell per effective generator, but can still retur
 zero-geometry features when fixed output precision cannot embed that topology injectively.
 
 Clean construction performs one degree-local necessary-coordinate scan after each cell's final f32
-extraction, then checks complete final assembled positions only for flagged cells. Existing
-generator-triplet keys identify every cell incident to a confirmed component, so classification
-and the quotient certificate remain local. A path that entered reconciliation or Local3d instead
-performs a cold scan of the final cycles. `compute_with_report` and testing subsequently apply the
-full strict validator. `OutputResolutionReport` records detected, contracted, declined, and
-remaining exact-zero features; validation's independent `zero_length_edges` count is a
-representation note rather than a topology failure.
+extraction, then checks complete final assembled positions only for flagged cells. The hot scan
+flags local x-separations through `2 * 1e-6` (plus one threshold ULP). Dedup simultaneously
+certifies, in f64 over the stored f32 values, that every selected representative's x coordinate is
+within `1e-6` of that cell-local realization. By the triangle inequality, a final exact-zero edge
+must then have been flagged. If any in-shard or deferred/off-shard substitution exceeds the bound,
+the terminal stage performs an exhaustive scan instead. A path that entered reconciliation or
+Local3d likewise scans the final cycles.
 
-The clean-path scan is deliberately a low-cost discovery policy, not an exhaustive proof over
-alternate per-cell realizations of a deduplicated key. A selected shared-vertex realization can in
-principle differ from the realization that supplied a cell's hot hint. Consumers requiring an
-authoritative absence check should inspect `ValidationReport::zero_length_edges`; unresolved
-features remain structurally valid under `Preserve`. An exhaustive terminal scan is deferred with
-the broader output-resolution API rather than charged to every fast construction.
+Existing generator-triplet keys identify every cell incident to a confirmed component, so
+classification and the quotient certificate remain local after discovery. `compute_with_report`
+and testing subsequently apply the full strict validator. `OutputResolutionReport` records
+detected, contracted, declined, and remaining exact-zero features; validation's independent
+`zero_length_edges` count remains a representation note rather than a topology failure. The
+certificate concerns exact stored-zero discovery only; it does not yet enable the deferred public
+positive-edge-collapse policy.
 
 Reconciliation collapses a positional equivalence component only when its full diameter over
 stored vertices is at most `RECONCILE_DEGENERATE_LEN_EPS`; pairwise chains cannot extend that

@@ -13,6 +13,13 @@ use super::types::{
 };
 use super::{BuildCellsError, CellOutputBuffer, VertexData};
 
+#[inline(always)]
+fn exceeds_resolution_drift<P: super::types::VertexPosition>(representative: P, local: P) -> bool {
+    let delta = representative.resolution_axis_delta(local);
+    !delta.is_finite()
+        || delta > f64::from(crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS)
+}
+
 pub(crate) struct EdgeScratch {
     edges_to_later: Vec<EdgeToLater>,
     edges_overflow: Vec<EdgeOverflowLocal>,
@@ -240,6 +247,10 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
                         (*vi as usize) < shard.output.vertices.len(),
                         "resolved vertex index outside its shard"
                     );
+                    let representative =
+                        unsafe { *shard.output.vertices.get_unchecked(*vi as usize) };
+                    shard.output.resolution_drift_exceeded |=
+                        exceeds_resolution_drift(representative, pos);
                     shard.output.cell_indices.push(pack_ref(bin, *vi));
                     continue;
                 }
@@ -260,6 +271,11 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
                     shard.output.vertices.push(pos);
                     shard.output.vertex_keys.push(key);
                     *vi = new_idx;
+                } else {
+                    let representative =
+                        unsafe { *shard.output.vertices.get_unchecked(*vi as usize) };
+                    shard.output.resolution_drift_exceeded |=
+                        exceeds_resolution_drift(representative, pos);
                 }
                 let v_idx = *vi;
                 debug_assert_ne!(v_idx, INVALID_INDEX, "missing on-shard vertex index");
@@ -302,8 +318,28 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
 #[cfg(test)]
 mod tests {
     use super::{
-        assert_endpoint_lengths, checked_local_id, checked_u32, checked_u8, BuildCellsError,
+        assert_endpoint_lengths, checked_local_id, checked_u32, checked_u8,
+        exceeds_resolution_drift, BuildCellsError,
     };
+    use glam::Vec3;
+
+    #[test]
+    fn resolution_drift_guard_is_inclusive_and_rejects_non_finite() {
+        let eps = crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS;
+        let origin = Vec3::ZERO;
+        assert!(!exceeds_resolution_drift(
+            origin,
+            Vec3::new(eps, 100.0, -100.0)
+        ));
+        assert!(exceeds_resolution_drift(
+            origin,
+            Vec3::new(f32::from_bits(eps.to_bits() + 1), 0.0, 0.0)
+        ));
+        assert!(exceeds_resolution_drift(
+            origin,
+            Vec3::new(f32::NAN, 0.0, 0.0)
+        ));
+    }
 
     #[test]
     #[should_panic(expected = "edge endpoint arrays out of sync")]

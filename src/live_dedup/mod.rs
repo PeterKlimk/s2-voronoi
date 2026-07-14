@@ -103,6 +103,9 @@ pub(crate) struct AssemblyResult<P = glam::Vec3> {
     /// Exact stored-zero candidates recovered from cells flagged while their
     /// extracted f32 realizations were already hot.
     pub exact_zero_edge_candidates: Vec<(u32, u32)>,
+    /// Whether some final representative moved farther from a cell-local
+    /// realization than the hot-hint certificate permits.
+    pub resolution_drift_exceeded: bool,
     /// Timing sub-phases for the dedup stage.
     pub dedup_sub: crate::timing::DedupSubPhases,
 }

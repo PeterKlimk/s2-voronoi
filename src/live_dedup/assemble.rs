@@ -17,7 +17,7 @@ fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
     shards: &mut [super::shard::ShardState<P>],
     generator_bin: &[BinId],
     deferred_slots: Vec<DeferredSlot<P>>,
-) -> Result<(), crate::VoronoiError> {
+) -> Result<bool, crate::VoronoiError> {
     let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| {
         let packed = pack_ref(owner_bin, idx);
         if *slot == DEFERRED {
@@ -28,16 +28,28 @@ fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
     };
 
     let mut fallback_map: FxHashMap<VertexKey, (BinId, u32)> = FxHashMap::default();
+    let mut resolution_drift_exceeded = false;
     for entry in deferred_slots {
         let source_bin = entry.source_bin.as_usize();
         let source_slot = entry.source_slot as usize;
-        if shards[source_bin].output.cell_indices[source_slot] != DEFERRED {
+        let existing = shards[source_bin].output.cell_indices[source_slot];
+        if existing != DEFERRED {
+            let (representative_bin, representative_local) = unpack_ref(existing);
+            let representative = shards[representative_bin.as_usize()].output.vertices
+                [representative_local as usize];
+            let delta = representative.resolution_axis_delta(entry.pos);
+            resolution_drift_exceeded |= !delta.is_finite()
+                || delta > f64::from(crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS);
             continue;
         }
 
         let owner_bin = generator_bin[entry.key[0] as usize];
         let idx = if let Some(&(bin, idx)) = fallback_map.get(&entry.key) {
             debug_assert_eq!(bin, owner_bin, "fallback owner bin mismatch");
+            let representative = shards[owner_bin.as_usize()].output.vertices[idx as usize];
+            let delta = representative.resolution_axis_delta(entry.pos);
+            resolution_drift_exceeded |= !delta.is_finite()
+                || delta > f64::from(crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS);
             idx
         } else {
             let new_idx = {
@@ -58,7 +70,7 @@ fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
         let slot = &mut shards[source_bin].output.cell_indices[source_slot];
         patch_slot(slot, owner_bin, idx);
     }
-    Ok(())
+    Ok(resolution_drift_exceeded)
 }
 
 struct CollectedShardBookkeeping<P> {
@@ -167,11 +179,16 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     }
 
     let t_deferred = Timer::start();
-    patch_deferred_slots_with_fallback(
+    let deferred_resolution_drift_exceeded = patch_deferred_slots_with_fallback(
         &mut data.shards,
         &data.assignment.generator_bin,
         deferred_slots,
     )?;
+    let resolution_drift_exceeded = deferred_resolution_drift_exceeded
+        || data
+            .shards
+            .iter()
+            .any(|shard| shard.output.resolution_drift_exceeded);
     #[allow(unused_variables)]
     let deferred_fallback_time = t_deferred.elapsed();
 
@@ -482,6 +499,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
         cells,
         cell_indices,
         exact_zero_edge_candidates,
+        resolution_drift_exceeded,
         dedup_sub: sub_phases,
     })
 }
@@ -563,7 +581,7 @@ mod tests {
         let key = [0, 1, 2];
         let pos = Vec3::new(0.0, 0.0, 1.0);
 
-        patch_deferred_slots_with_fallback(
+        let drift_exceeded = patch_deferred_slots_with_fallback(
             &mut shards,
             &generator_bin,
             vec![
@@ -583,10 +601,34 @@ mod tests {
         )
         .expect("fallback patching should succeed without capacity overflow");
 
+        assert!(!drift_exceeded);
         assert_eq!(shards[1].output.vertices.len(), 1);
         assert_eq!(shards[1].output.vertex_keys, vec![key]);
         assert_eq!(shards[0].output.cell_indices[0], pack_ref(bin(1), 0));
         assert_eq!(shards[0].output.cell_indices[1], pack_ref(bin(1), 0));
+    }
+
+    #[test]
+    fn deferred_patch_reports_representative_drift_beyond_guard() {
+        let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
+        shards[0].output.cell_indices = vec![pack_ref(bin(1), 0)];
+        shards[1].output.vertices = vec![Vec3::ZERO];
+        shards[1].output.vertex_keys = vec![[0, 1, 2]];
+        let eps = crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS;
+
+        let drift_exceeded = patch_deferred_slots_with_fallback(
+            &mut shards,
+            &[bin(1), bin(0), bin(0)],
+            vec![DeferredSlot {
+                key: [0, 1, 2],
+                pos: Vec3::new(f32::from_bits(eps.to_bits() + 1), 0.0, 0.0),
+                source_bin: bin(0),
+                source_slot: 0,
+            }],
+        )
+        .expect("prepatched deferred slot should be checked");
+
+        assert!(drift_exceeded);
     }
 
     #[test]
@@ -733,6 +775,7 @@ mod tests {
     fn assembly_then_reconcile_handles_overflow_fallback_and_unresolved_edge() {
         let mut shard0 = ShardState::new(3);
         let mut shard1 = ShardState::new(3);
+        shard0.output.resolution_drift_exceeded = true;
 
         shard0.output.vertices = vec![
             Vec3::new(1.0, 0.0, 0.0),
@@ -796,6 +839,7 @@ mod tests {
         };
 
         let assembled = assemble_sharded_live_dedup(sharded).expect("assembly should succeed");
+        assert!(assembled.resolution_drift_exceeded);
         assert_eq!(assembled.unresolved_edges.len(), 1);
         assert_eq!(assembled.unresolved_edges[0].key, edge_key);
         assert_eq!(assembled.cells.len(), 6);

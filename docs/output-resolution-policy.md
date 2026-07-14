@@ -221,17 +221,19 @@ The existing fast-repair weld path must be audited and, where necessary, split a
 - it must not silently eliminate a generator under `Preserve`;
 - every approximate merge must obey the repair diameter bound and generator outcome; a future
   global positive threshold remains separately reported; and
-- clean construction records a necessary one-coordinate hint in one degree-local scan of each
-  final extracted f32 cell, then checks all three final assembled coordinates only for flagged
-  cells. Generator-triplet vertex keys recover the complete incident neighborhood of a confirmed
-  component. If reconciliation or Local3d can have changed those cycles, the terminal stage
-  instead performs a conservative full scan of the post-repair diagram.
+- clean construction records a widened necessary one-coordinate hint in one degree-local scan of
+  each final extracted f32 cell, then checks all three final assembled coordinates only for
+  flagged cells. Dedup certifies every representative substitution against the same cell-local
+  realization. With representative x drift bounded by `r`, the hot threshold is `t + 2r`, where
+  the implemented exact-zero baseline has `t = 0` and `r = 1e-6`. A bound violation switches to a
+  conservative full terminal scan. Reconciliation or Local3d also selects that full scan.
 
-The clean-path hint is not an exhaustive certificate over alternate realizations of one
-deduplicated key: assembly may select a shared realization different from the one examined while a
-particular cell was hot. The independent validator is authoritative for remaining exact-zero
-geometry. Making terminal discovery exhaustive is optional strict/output-policy work; it should
-not silently impose a whole-edge scan on the default fast constructor.
+This makes clean-path exact-zero discovery exhaustive without imposing a whole-edge scan on the
+ordinary constructor. Generator-triplet vertex keys recover the complete incident neighborhood of
+a confirmed component after discovery. The certificate is deliberately one-coordinate: final
+chord length `<= t` implies final x-separation `<= t`, which is sufficient for the triangle-
+inequality argument while keeping the hot scan cheap. A future positive threshold should extend
+the same `t + 2r` rule rather than introduce an unrelated discovery tolerance.
 
 If later work introduces another repair after this stage, the resolution stage must run again
 after the final repair. The simpler design is to keep it terminal.

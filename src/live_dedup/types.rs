@@ -14,6 +14,10 @@ pub(crate) trait VertexPosition: Copy + Send + Sync + std::fmt::Debug + 'static 
 
     /// Squared distance accumulated in f64 for cold-path policy bounds.
     fn dist_sq_f64(self, other: Self) -> f64;
+
+    /// Absolute difference along the coordinate used by the clean-path
+    /// output-resolution certificate.
+    fn resolution_axis_delta(self, other: Self) -> f64;
 }
 
 impl VertexPosition for Vec3 {
@@ -29,6 +33,11 @@ impl VertexPosition for Vec3 {
         let dz = f64::from(self.z) - f64::from(other.z);
         dx * dx + dy * dy + dz * dz
     }
+
+    #[inline]
+    fn resolution_axis_delta(self, other: Self) -> f64 {
+        (f64::from(self.x) - f64::from(other.x)).abs()
+    }
 }
 
 impl VertexPosition for Vec2 {
@@ -42,6 +51,11 @@ impl VertexPosition for Vec2 {
         let dx = f64::from(self.x) - f64::from(other.x);
         let dy = f64::from(self.y) - f64::from(other.y);
         dx * dx + dy * dy
+    }
+
+    #[inline]
+    fn resolution_axis_delta(self, other: Self) -> f64 {
+        (f64::from(self.x) - f64::from(other.x)).abs()
     }
 }
 

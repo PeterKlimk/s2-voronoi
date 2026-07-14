@@ -121,6 +121,19 @@ pub(crate) const EXTRACT_DEGENERATE_LEN2: f32 = 1e-28;
 /// for epsilon-scale geometry.
 pub(crate) const RECONCILE_DEGENERATE_LEN_EPS: f32 = 1e-6;
 
+/// Maximum per-endpoint x-coordinate change permitted when certifying the
+/// clean-path output-resolution hint. If dedup selects a realization farther
+/// away than this, output resolution falls back to an exhaustive final scan.
+pub(crate) const OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS: f32 = RECONCILE_DEGENERATE_LEN_EPS;
+
+/// Local x-separation covered by the exact-zero hot hint. If both endpoint
+/// realizations move by at most the representative bound above, a final exact
+/// zero necessarily had local x-separation at most twice that bound. One ULP
+/// at the resulting threshold makes the rounded hot subtraction conservative.
+const OUTPUT_RESOLUTION_ZERO_HINT_X_BASE: f32 = 2.0 * OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS;
+pub(crate) const OUTPUT_RESOLUTION_ZERO_HINT_X_EPS: f32 =
+    f32::from_bits(OUTPUT_RESOLUTION_ZERO_HINT_X_BASE.to_bits() + 1);
+
 // === Cube-grid conservative bounds ===
 
 /// Slack subtracted from security-plane distances when deriving per-query

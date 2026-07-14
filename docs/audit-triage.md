@@ -1084,17 +1084,22 @@ scalable wholesale replacement. The transaction now declines and escalates a com
 kill or fold a cell. This defect-local repair policy is distinct from opting a clean output into
 consumer-controlled positive epsilon collapse.
 
-Candidate discovery uses a branchless one-coordinate necessary condition over each final extracted
-cell; exact equality over assembled positions is checked only for flagged cells. Existing
-generator-triplet keys recover the complete incident neighborhood, keeping component work sparse.
-Any path that may have changed cycles during reconciliation or repair uses a cold scan of the
-terminal diagram. At 500k sites, interleaved single-thread perf counters versus the pre-change
-baseline measured paired instruction ratios of `1.00121` for Fibonacci (including one committed
-contraction) and `1.00074` for no-candidate uniform seed 12345.
-Because dedup can select another cell's realization of a shared key, the clean-path hint is not an
-exhaustive final-position certificate; `ValidationReport::zero_length_edges` is the authoritative
-postcondition check. A proof-complete terminal scan remains optional strict-policy work rather than
-default fast-path cost.
+Candidate discovery uses a widened one-coordinate necessary condition over each final extracted
+cell; exact equality over assembled positions is checked only for flagged cells. Dedup certifies in
+f64 that each chosen representative's stored x coordinate moved by at most `r = 1e-6` from every
+cell-local realization. The hot hint covers `2r` plus one threshold ULP, so the triangle inequality
+proves that a final exact-zero edge was flagged. In-shard reused representatives and deferred/
+off-shard winners are both checked. Any certificate violation, reconciliation, or repair selects a
+cold exhaustive scan of the terminal diagram.
+
+Existing generator-triplet keys recover the complete incident neighborhood after a candidate is
+confirmed, keeping component work sparse. At 500k sites, eight-round interleaved single-thread
+native perf counters versus the former hot-hint baseline measured instruction/branch ratios of
+`1.00360`/`1.00079` for Fibonacci and `1.00344`/`1.00079` for uniform seed 12345. Branch-miss
+movement was noisy and split by distribution (`+0.54%` Fibonacci, `-0.20%` uniform). This replaces
+the former non-exhaustive clean hint with a proof-complete discovery path at roughly 0.35% retired-
+instruction cost; it does not change the separate `Preserve` behavior for a contraction that would
+kill a cell.
 The separate generator `Error`/`Elide` choices and an optional positive edge threshold remain
 backburner API work in [`output-resolution-policy.md`](output-resolution-policy.md).
 
