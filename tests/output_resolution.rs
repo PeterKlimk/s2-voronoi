@@ -1,6 +1,9 @@
 //! Output-resolution regressions, including the minimized Hex3 zero-edge core.
 
-use voronoi_mesh::{compute_with_report, PreprocessMode, UnitVec3, VoronoiConfig};
+use voronoi_mesh::{
+    compute_on_sphere_with_report, compute_with, compute_with_report, CellKillingPolicy,
+    PreprocessMode, SphereEmbedding, UnitVec3, VoronoiConfig, VoronoiError,
+};
 
 fn point(x: f32, y: f32, z: f32) -> UnitVec3 {
     UnitVec3::new(x, y, z)
@@ -50,6 +53,19 @@ fn hex3_four_generator_core_contracts_stored_zero_edge() {
     );
     assert_eq!(output.report.returned_validation.zero_length_edges, 0);
     assert_eq!(output.diagram.num_cells(), points.len());
+
+    let strict_resolution = compute_with_report(
+        &points,
+        VoronoiConfig::default().with_cell_killing_policy(CellKillingPolicy::Error),
+    )
+    .expect("Error policy must still accept generator-preserving contractions");
+    assert_eq!(
+        strict_resolution
+            .report
+            .output_resolution
+            .exact_zero_edges_remaining,
+        0
+    );
 }
 
 #[test]
@@ -199,4 +215,64 @@ fn disabled_welding_preserves_cell_killing_zero_components() {
         has_triangle_witness,
         "fixture must contain a cell-killing zero edge"
     );
+}
+
+#[test]
+fn error_policy_names_generators_with_unrepresentable_cells() {
+    fn check(error: VoronoiError, point_count: usize) -> Vec<usize> {
+        match error {
+            VoronoiError::CellEliminationRequired {
+                generator_indices,
+                remaining_exact_zero_edges,
+            } => {
+                assert_eq!(remaining_exact_zero_edges, 3);
+                assert!(!generator_indices.is_empty());
+                assert!(generator_indices.windows(2).all(|pair| pair[0] < pair[1]));
+                assert!(generator_indices.iter().all(|&index| index < point_count));
+                generator_indices
+            }
+            other => panic!("unexpected error policy result: {other}"),
+        }
+    }
+
+    let points = disabled_weld_cell_killing_points();
+    let config = || {
+        VoronoiConfig::default()
+            .with_preprocess_mode(PreprocessMode::Disabled)
+            .with_cell_killing_policy(CellKillingPolicy::Error)
+    };
+    let report_error = compute_with_report(&points, config())
+        .expect_err("report path must reject cell-killing exact-zero output");
+    let plain_error =
+        compute_with(&points, config()).expect_err("plain path must enforce the same policy");
+    let report_generators = check(report_error, points.len());
+    let plain_generators = check(plain_error, points.len());
+    assert_eq!(report_generators, plain_generators);
+    assert_eq!(report_generators, [1, 10]);
+
+    let world_points: Vec<[f64; 3]> = points
+        .iter()
+        .map(|p| [p.x as f64, p.y as f64, p.z as f64])
+        .collect();
+    let embedded_error = compute_on_sphere_with_report(
+        &world_points,
+        SphereEmbedding::new([0.0; 3], 1.0).unwrap(),
+        config(),
+    )
+    .expect_err("embedded report path must enforce the same policy");
+    assert_eq!(check(embedded_error, points.len()), [1, 10]);
+
+    // Error indices use the caller's original input space. If an affected
+    // effective cell represents a welded class, every original member of that
+    // class is named rather than exposing an internal compacted index.
+    let mut welded_points = points.clone();
+    welded_points.push(points[1]);
+    let welded_error = compute_with_report(
+        &welded_points,
+        VoronoiConfig::default()
+            .with_preprocess_mode(PreprocessMode::MergeWithin(1.0e-10))
+            .with_cell_killing_policy(CellKillingPolicy::Error),
+    )
+    .expect_err("welded input aliases of an affected cell must be reported");
+    assert_eq!(check(welded_error, welded_points.len()), [1, 10, 18]);
 }

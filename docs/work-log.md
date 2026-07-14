@@ -48,7 +48,7 @@ optional output-policy decisions.
 | ID | Priority | Status | Next gate |
 |---|---:|---|---|
 | WORK-002 | P2 | Ongoing | Exercise after construction/repair changes |
-| RES-001 | P2 | Decision | Agree generator-remapping and transaction semantics |
+| RES-001 | P2 | Decision | Design `Elide` remapping and transaction semantics |
 | RES-002 | P2 | Blocked | Decide RES-001 |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
@@ -96,13 +96,15 @@ default `Preserve` behavior.
 - **Priority:** P2
 - **Status:** Decision
 - **Goal:** expose `Error` and `Elide` behavior when satisfying output resolution would remove an
-  effective generator cell.
+  effective generator cell. `Error` is implemented; `Elide` remains decision-gated.
+- **Implemented:** `CellKillingPolicy::{Preserve, Error}` applies equally to plain, report-bearing,
+  and embedded computations. `CellEliminationRequired` reports original input indices, expanding
+  affected preprocessing weld classes, after all safe exact-zero contractions.
 - **Decisions required:**
-  - public type and variant names;
   - whether an elided generator maps to `None`, a richer outcome, or a documented noncanonical
     representative;
   - the link/owner-rotation certificate required before a cell-killing transaction commits; and
-  - report composition with preprocessing welds and deterministic perturbation.
+  - elision report composition with preprocessing welds and deterministic perturbation.
 - **Invariant:** `Preserve` remains the default and never silently removes an effective generator.
 - **Regression foundation:** an end-to-end 18-site fixture disables preprocessing welding while
   retaining distinct f32 generators. It returns a strict-valid mesh with three preserved

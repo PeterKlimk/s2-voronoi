@@ -16,8 +16,8 @@ use crate::cube_grid::CubeMapGrid;
 use crate::cube_grid::CubeMapGridBuildTimings;
 use crate::diagram::VoronoiCell;
 use crate::{
-    ComputeOutput, ComputeReport, DegenerateMode, DegenerateReport, PreprocessMode,
-    PreprocessReport, RepairMode, VoronoiConfig,
+    CellKillingPolicy, ComputeOutput, ComputeReport, DegenerateMode, DegenerateReport,
+    PreprocessMode, PreprocessReport, RepairMode, VoronoiConfig,
 };
 
 /// Per-seed neighbor count for the repair's grid kNN gather (the 2-ring gather
@@ -43,6 +43,7 @@ struct PipelineState {
     reconciliation_escalations: Vec<(u32, u32)>,
     repair: RepairOutcome,
     output_resolution: crate::OutputResolutionReport,
+    cell_killing_generators: Vec<usize>,
     tb: TimingBuilder,
 }
 
@@ -76,7 +77,7 @@ fn canonicalize_pipeline_exact_zero_edges(
     hinted_candidates: Vec<(u32, u32)>,
     mutation_scan_cells: &[u32],
     decision: ResolutionDiscoveryDecision,
-) -> Result<crate::OutputResolutionReport, crate::VoronoiError> {
+) -> Result<output_resolution::CanonicalizationOutcome, crate::VoronoiError> {
     let (exact_zero_candidates, localized_candidate_cells) = if decision.certified_hint {
         // Construction hints name pre-reconciliation edges. Re-scan their
         // degree-local incident cells in the terminal diagram so a repair
@@ -244,7 +245,7 @@ fn run_core_pipeline(
 
     let resolution_decision = resolution_discovery_decision(resolution_drift_exceeded);
     let hinted_candidate_count = exact_zero_edge_candidates.len();
-    let output_resolution = canonicalize_pipeline_exact_zero_edges(
+    let resolution_outcome = canonicalize_pipeline_exact_zero_edges(
         &vertices,
         &vertex_keys,
         &mut eff_cells,
@@ -260,7 +261,7 @@ fn run_core_pipeline(
         repair_resolution_scan_cell_count,
         exact_zero_edge_hint_cells,
         hinted_candidate_count,
-        output_resolution.exact_zero_edges_detected,
+        resolution_outcome.report.exact_zero_edges_detected,
     );
     Ok(PipelineState {
         points,
@@ -274,8 +275,45 @@ fn run_core_pipeline(
         post_repair_unpaired,
         reconciliation_escalations,
         repair,
-        output_resolution,
+        output_resolution: resolution_outcome.report,
+        cell_killing_generators: resolution_outcome.cell_killing_generators,
         tb,
+    })
+}
+
+fn enforce_cell_killing_policy(
+    state: &PipelineState,
+    policy: CellKillingPolicy,
+) -> Result<(), crate::VoronoiError> {
+    if state.cell_killing_generators.is_empty() {
+        return Ok(());
+    }
+
+    match policy {
+        CellKillingPolicy::Preserve => return Ok(()),
+        CellKillingPolicy::Error => {}
+    }
+
+    let generator_indices = if let Some(merge) = &state.merge_result {
+        merge
+            .original_to_effective
+            .iter()
+            .enumerate()
+            .filter_map(|(original, &effective)| {
+                state
+                    .cell_killing_generators
+                    .binary_search(&(effective as usize))
+                    .is_ok()
+                    .then_some(original)
+            })
+            .collect()
+    } else {
+        state.cell_killing_generators.clone()
+    };
+
+    Err(crate::VoronoiError::CellEliminationRequired {
+        generator_indices,
+        remaining_exact_zero_edges: state.output_resolution.exact_zero_edges_remaining,
     })
 }
 
@@ -296,6 +334,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
     repair_mode: RepairMode,
+    cell_killing_policy: CellKillingPolicy,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
     let mut state = run_core_pipeline(points, termination, preprocess_mode, repair_mode)?;
     check_plain_return_signals(
@@ -303,6 +342,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         &state.post_repair_unpaired,
         &state.reconciliation_escalations,
     )?;
+    enforce_cell_killing_policy(&state, cell_killing_policy)?;
 
     let t = Timer::start();
     let (cells, cell_indices, weld_map) = remap_cells_to_original_indices(
@@ -362,6 +402,7 @@ pub fn compute_voronoi_knn_clipping_with_config_owned(
             termination,
             config.preprocess_mode,
             config.repair_mode,
+            config.cell_killing_policy,
         )
     })
 }
@@ -380,6 +421,7 @@ pub fn compute_voronoi_knn_clipping_with_report_owned(
                 termination,
                 config.preprocess_mode,
                 config.repair_mode,
+                config.cell_killing_policy,
                 DegenerateReport {
                     requested_mode: config.degenerate_mode,
                     perturbation_applied,
@@ -394,9 +436,11 @@ fn compute_voronoi_knn_clipping_report_core(
     termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
     repair_mode: RepairMode,
+    cell_killing_policy: CellKillingPolicy,
     degenerate_report: DegenerateReport,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
     let mut state = run_core_pipeline(points, termination, preprocess_mode, repair_mode)?;
+    enforce_cell_killing_policy(&state, cell_killing_policy)?;
     let repair_accepted = state.repair.accepted;
     // Surface output-invariant residuals alongside the detection records. If
     // local repair was accepted, the returned diagram is strictly valid and
@@ -1739,9 +1783,10 @@ mod tests {
             decision,
         )
         .expect("drift fallback should run exhaustive discovery");
-        assert_eq!(report.exact_zero_edges_detected, 1);
-        assert_eq!(report.exact_zero_edges_contracted, 1);
-        assert_eq!(report.exact_zero_edges_remaining, 0);
+        assert_eq!(report.report.exact_zero_edges_detected, 1);
+        assert_eq!(report.report.exact_zero_edges_contracted, 1);
+        assert_eq!(report.report.exact_zero_edges_remaining, 0);
+        assert!(report.cell_killing_generators.is_empty());
 
         let (_, mut hinted_cells, mut hinted_indices, hinted_keys) = zero_edge_cube_fixture();
         let hinted_report = canonicalize_pipeline_exact_zero_edges(

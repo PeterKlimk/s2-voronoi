@@ -84,7 +84,9 @@ Smaller inputs and single-threaded pools stay serial.
 
 Configuration is through `compute_with(points, VoronoiConfig)`; `compute_with_report` additionally
 returns what was welded, perturbed, or repaired. Defaults handle coincident and degenerate inputs;
-see [docs/correctness.md](docs/correctness.md).
+`CellKillingPolicy::Error` is available when a consumer requires exact stored-zero resolution to
+fail rather than preserve an unrepresentable generator cell. See
+[docs/correctness.md](docs/correctness.md).
 
 ## How it works
 

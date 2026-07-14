@@ -1,6 +1,7 @@
 # Output Resolution and Edge Collapse Policy
 
-**Status:** exact stored-zero baseline implemented; broader public policy deferred
+**Status:** exact stored-zero baseline and `Preserve`/`Error` implemented; `Elide` and positive
+threshold deferred
 
 **Date:** 2026-07-14
 
@@ -108,7 +109,9 @@ cannot embed it injectively.
   without eliminating a cell.
 
 This is appropriate for consumers that require both stable generator cardinality and an
-injectively embedded output mesh.
+injectively embedded output mesh. This outcome is exposed as `CellKillingPolicy::Error` and
+`VoronoiError::CellEliminationRequired`. The error lists original input generator indices; when
+preprocessing welded an affected effective cell, all original members of that class are included.
 
 ### Elide
 
@@ -318,7 +321,7 @@ identical reports and quotients, and every terminal fixture must validate strict
 
 ## Deferred decisions
 
-Public naming, generator-remapping semantics, cell-killing link checks, threshold units,
-pre-storage telemetry, and the simplified-output type are grouped under RES-001 and RES-002 in
-[`work-log.md`](work-log.md). This document remains the design rationale rather than a second task
-list.
+Generator-elision remapping, cell-killing commit certificates, threshold units, pre-storage
+telemetry, and the simplified-output type are grouped under RES-001 and RES-002 in
+[`work-log.md`](work-log.md). `Preserve`/`Error` naming and error-side mapping are now settled. This
+document remains the design rationale rather than a second task list.

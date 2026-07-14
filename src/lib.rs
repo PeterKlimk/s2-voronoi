@@ -222,6 +222,19 @@ pub enum DegenerateMode {
     PerturbCoplanar,
 }
 
+/// Policy when resolving exact stored-zero edges would eliminate an effective
+/// generator cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CellKillingPolicy {
+    /// Retain the zero geometry so every effective generator keeps a cell.
+    /// This is the default.
+    Preserve,
+    /// Return [`VoronoiError::CellEliminationRequired`] after performing every
+    /// safe exact-zero contraction.
+    Error,
+}
+
 /// Observable preprocessing outcome for a computation run.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -437,6 +450,13 @@ pub struct VoronoiConfig {
     /// preserve the ordinary clean-error behavior for these lower-dimensional
     /// inputs.
     pub degenerate_mode: DegenerateMode,
+    /// Handling for exact stored-zero contractions that would leave an
+    /// effective generator with fewer than three boundary vertices.
+    ///
+    /// The default is [`CellKillingPolicy::Preserve`]. This policy is
+    /// independent of preprocessing welding: welding changes the solved input
+    /// set, while this policy handles geometry lost at output resolution.
+    pub cell_killing_policy: CellKillingPolicy,
 }
 
 impl Default for VoronoiConfig {
@@ -445,6 +465,7 @@ impl Default for VoronoiConfig {
             preprocess_mode: PreprocessMode::Weld,
             repair_mode: RepairMode::Local3d,
             degenerate_mode: DegenerateMode::PerturbCoplanar,
+            cell_killing_policy: CellKillingPolicy::Preserve,
         }
     }
 }
@@ -465,6 +486,12 @@ impl VoronoiConfig {
     /// Default config with the given [`DegenerateMode`].
     pub fn with_degenerate_mode(mut self, mode: DegenerateMode) -> Self {
         self.degenerate_mode = mode;
+        self
+    }
+
+    /// Default config with the given [`CellKillingPolicy`].
+    pub fn with_cell_killing_policy(mut self, policy: CellKillingPolicy) -> Self {
+        self.cell_killing_policy = policy;
         self
     }
 }

@@ -47,6 +47,18 @@ pub enum VoronoiError {
     /// storage/layout could not represent the requested computation.
     RepresentationLimit(String),
 
+    /// Exact-zero output resolution could not be completed without removing
+    /// one or more effective generator cells.
+    CellEliminationRequired {
+        /// Original input generator indices whose effective cells would have
+        /// to be removed. If preprocessing welded a class, every original
+        /// generator in the affected class is included.
+        generator_indices: Vec<usize>,
+        /// Exact stored-zero edges left after all generator-preserving
+        /// contractions were performed.
+        remaining_exact_zero_edges: usize,
+    },
+
     /// Internal or otherwise unclassified computation failure.
     ComputationFailed(String),
 }
@@ -88,6 +100,23 @@ impl fmt::Display for VoronoiError {
             }
             VoronoiError::RepresentationLimit(msg) => {
                 write!(f, "representation limit exceeded: {}", msg)
+            }
+            VoronoiError::CellEliminationRequired {
+                generator_indices,
+                remaining_exact_zero_edges,
+            } => {
+                let preview_len = generator_indices.len().min(8);
+                write!(
+                    f,
+                    "output resolution would eliminate one or more effective generator cells while resolving {} remaining exact-zero edge(s); {} affected input generator(s) {:?}",
+                    remaining_exact_zero_edges,
+                    generator_indices.len(),
+                    &generator_indices[..preview_len],
+                )?;
+                if preview_len < generator_indices.len() {
+                    write!(f, " (and {} more)", generator_indices.len() - preview_len)?;
+                }
+                Ok(())
             }
             VoronoiError::ComputationFailed(msg) => {
                 write!(f, "computation failed: {}", msg)

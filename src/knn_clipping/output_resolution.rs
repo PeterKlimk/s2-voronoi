@@ -59,6 +59,14 @@ struct ZeroComponent {
     edge_count: usize,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct CanonicalizationOutcome {
+    pub report: OutputResolutionReport,
+    /// Effective generator cells that would become unrepresentable if their
+    /// interacting exact-zero transaction were committed.
+    pub cell_killing_generators: Vec<usize>,
+}
+
 #[inline]
 fn same_stored_direction(a: Vec3, b: Vec3) -> bool {
     // `==` deliberately canonicalizes signed zero. Non-finite output vertices
@@ -384,13 +392,13 @@ fn vertex_pos_for_resolution(vertices: &[Vec3], vertex: u32) -> Result<Vec3, cra
 
 /// Canonicalize exact stored-zero edges under the default generator-preserving
 /// policy. Work beyond the initial edge scan is cold-path only.
-pub(crate) fn canonicalize_exact_zero_edges(
+pub(super) fn canonicalize_exact_zero_edges(
     vertices: &[Vec3],
     cells: &mut [VoronoiCell],
     cell_indices: &mut [u32],
     hinted_candidates: Option<Vec<(u32, u32)>>,
     localized_candidate_cells: Option<Vec<usize>>,
-) -> Result<OutputResolutionReport, crate::VoronoiError> {
+) -> Result<CanonicalizationOutcome, crate::VoronoiError> {
     let zero_edges = match hinted_candidates {
         Some(candidates) => candidates,
         None => collect_zero_edges(vertices, cells, cell_indices)?,
@@ -400,7 +408,10 @@ pub(crate) fn canonicalize_exact_zero_edges(
         ..OutputResolutionReport::default()
     };
     if zero_edges.is_empty() {
-        return Ok(report);
+        return Ok(CanonicalizationOutcome {
+            report,
+            cell_killing_generators: Vec::new(),
+        });
     }
 
     let (components, component_for_vertex) = build_components(&zero_edges);
@@ -426,6 +437,7 @@ pub(crate) fn canonicalize_exact_zero_edges(
     // rebuilding and strictly validating the whole diagram per component.
     let mut group_failure = vec![None; groups.len()];
     let mut cells_by_group = vec![Vec::<usize>::new(); groups.len()];
+    let mut cell_killing_generators = Vec::new();
     for &cell_idx in &candidate_cells {
         let span = cell_span(cell_idx, cells, cell_indices)?;
         let mut touched_group = None;
@@ -446,6 +458,9 @@ pub(crate) fn canonicalize_exact_zero_edges(
             cells_by_group[group_idx].push(cell_idx);
         }
         if let (Some(group_idx), Err(failure)) = (touched_group, rewritten) {
+            if failure == RewriteFailure::CellKilling {
+                cell_killing_generators.push(cell_idx);
+            }
             group_failure[group_idx] = Some(match (group_failure[group_idx], failure) {
                 (Some(RewriteFailure::CellKilling), _) | (_, RewriteFailure::CellKilling) => {
                     RewriteFailure::CellKilling
@@ -545,7 +560,12 @@ pub(crate) fn canonicalize_exact_zero_edges(
             report.exact_zero_edges_remaining,
         );
     }
-    Ok(report)
+    cell_killing_generators.sort_unstable();
+    cell_killing_generators.dedup();
+    Ok(CanonicalizationOutcome {
+        report,
+        cell_killing_generators,
+    })
 }
 
 #[cfg(test)]
@@ -780,19 +800,19 @@ mod tests {
             "{context}: quotient mismatch"
         );
         assert_eq!(
-            exhaustive.exact_zero_edges_detected, expected.edges,
+            exhaustive.report.exact_zero_edges_detected, expected.edges,
             "{context}"
         );
         assert_eq!(
-            exhaustive.exact_zero_components_detected, expected.components,
+            exhaustive.report.exact_zero_components_detected, expected.components,
             "{context}"
         );
         assert_eq!(
-            exhaustive.exact_zero_edges_contracted, expected.contracted_edges,
+            exhaustive.report.exact_zero_edges_contracted, expected.contracted_edges,
             "{context}"
         );
         assert_eq!(
-            exhaustive.cell_killing_components_preserved, expected.preserved_components,
+            exhaustive.report.cell_killing_components_preserved, expected.preserved_components,
             "{context}"
         );
 
@@ -855,10 +875,11 @@ mod tests {
         let report =
             canonicalize_exact_zero_edges(&vertices, &mut cells, &mut indices, None, None).unwrap();
 
-        assert_eq!(report.exact_zero_edges_detected, 1);
-        assert_eq!(report.exact_zero_edges_contracted, 1);
-        assert_eq!(report.exact_zero_components_contracted, 1);
-        assert_eq!(report.exact_zero_edges_remaining, 0);
+        assert_eq!(report.report.exact_zero_edges_detected, 1);
+        assert_eq!(report.report.exact_zero_edges_contracted, 1);
+        assert_eq!(report.report.exact_zero_components_contracted, 1);
+        assert_eq!(report.report.exact_zero_edges_remaining, 0);
+        assert!(report.cell_killing_generators.is_empty());
         assert_eq!(cells[0].vertex_count(), 3);
         assert_eq!(cells[2].vertex_count(), 3);
         assert!(crate::validation::verify_sphere_effective_strict(
@@ -890,10 +911,11 @@ mod tests {
         let report =
             canonicalize_exact_zero_edges(&vertices, &mut cells, &mut indices, None, None).unwrap();
 
-        assert_eq!(report.exact_zero_edges_detected, 1);
-        assert_eq!(report.exact_zero_edges_contracted, 0);
-        assert_eq!(report.cell_killing_components_preserved, 1);
-        assert_eq!(report.exact_zero_edges_remaining, 1);
+        assert_eq!(report.report.exact_zero_edges_detected, 1);
+        assert_eq!(report.report.exact_zero_edges_contracted, 0);
+        assert_eq!(report.report.cell_killing_components_preserved, 1);
+        assert_eq!(report.report.exact_zero_edges_remaining, 1);
+        assert_eq!(report.cell_killing_generators, [0, 1]);
         assert_eq!(indices, original);
         assert!(cells.iter().all(|cell| cell.vertex_count() == 3));
     }

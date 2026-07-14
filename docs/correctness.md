@@ -48,7 +48,11 @@ maximal components of distinct vertex IDs with exactly equal stored f32 coordina
 quotient leaves every effective cell representable and structurally valid. It preserves and
 reports a component that would reduce a cell below three vertices or fail the quotient checks.
 Thus the default preserves one cell per effective generator, but can still return reported
-zero-geometry features when fixed output precision cannot embed that topology injectively.
+zero-geometry features when fixed output precision cannot embed that topology injectively. A
+caller that requires cell-killing zero geometry to fail can select `CellKillingPolicy::Error`;
+after every safe contraction, a remaining cell-killing transaction returns
+`VoronoiError::CellEliminationRequired` with affected original input indices. If preprocessing
+welded an affected effective cell, every original member of that weld class is named.
 
 Clean construction performs one degree-local necessary-coordinate scan after each cell's final f32
 extraction, then checks complete final assembled positions only for flagged cells. The hot scan
@@ -91,8 +95,8 @@ bound. Repair may also collapse a positive but bounded triangulation diagonal wh
 observed topology defect; exact degree-4+ grids require this established tolerance policy. The
 transaction rejects a result that would kill or fold a cell and escalates that component to
 Local3d. This defect-local repair is distinct from applying a consumer epsilon threshold to a clean
-diagram. The broader `Error`/`Elide` generator outcomes and optional global positive edge threshold
-remain deferred, as recorded in
+diagram. The `Error` generator outcome is implemented; `Elide` and an optional global positive edge
+threshold remain deferred, as recorded in
 [`output-resolution-policy.md`](output-resolution-policy.md).
 
 ## Coincident generators (welding)
@@ -156,9 +160,10 @@ A call resolves to one of:
   authoritative one; `compute_with_report` exposes both the effective and the remapped views.
 - **Defined error** — `UnsupportedGeometry` (a proven model limit, e.g. a cell reaching the
   generator hemisphere boundary), `RepresentationLimit` (storage/index capacity), `DegenerateInput`
-  (sub-weld coincidence, naming the offending generators), or `ComputationFailed` (a terminal
-  state not yet given a narrower class, including a surviving post-repair unpaired edge). These
-  fail cleanly, without panic.
+  (sub-weld coincidence, naming the offending generators), `CellEliminationRequired` (the selected
+  output policy cannot remove zero geometry without deleting named generator cells), or
+  `ComputationFailed` (a terminal state not yet given a narrower class, including a surviving
+  post-repair unpaired edge). These fail cleanly, without panic.
 - **Panic** — reserved for internal invariant violations that indicate a bug, not an input class.
 
 ## Not promised
