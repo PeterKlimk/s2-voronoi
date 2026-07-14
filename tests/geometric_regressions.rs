@@ -142,4 +142,29 @@ fn aud_016_near_pi_edge_is_a_strict_valid_edge() {
     );
     assert_eq!(validation.euler_characteristic, 2);
     assert_eq!(validation.antipodal_edges, 0);
+
+    let area_sum: f64 = (0..output.diagram.num_cells())
+        .map(|i| {
+            let area = output.diagram.cell_area(i);
+            assert!(area > 0.0, "AUD-016 cell {i} must have positive area");
+            area
+        })
+        .sum();
+    assert!(
+        (area_sum - 4.0 * std::f64::consts::PI).abs() < 1.0e-4,
+        "AUD-016 areas must sum to 4*pi within stored-f32 error, got {area_sum}"
+    );
+    let lloyd = output.diagram.lloyd_step();
+    for i in 0..output.diagram.num_cells() {
+        let centroid = output.diagram.cell_centroid(i);
+        assert_eq!(centroid, lloyd[i]);
+        let owner = output.diagram.generator(i);
+        let owner_dot = centroid.dot(owner);
+        for j in 0..output.diagram.num_cells() {
+            assert!(
+                owner_dot >= centroid.dot(output.diagram.generator(j)) - 2.0e-6,
+                "AUD-016 centroid {i} must lie in its owner cell"
+            );
+        }
+    }
 }

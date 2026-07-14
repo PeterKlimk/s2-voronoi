@@ -377,6 +377,7 @@ impl FallbackBuilder {
                     &fallback.poly,
                     &fallback.constraints[plane_idx],
                     plane_idx,
+                    &fallback.constraints,
                 );
                 if fallback.poly.len() < 3 {
                     break;
@@ -393,6 +394,7 @@ impl FallbackBuilder {
                     &fallback.poly,
                     constraint,
                     plane_idx,
+                    &fallback.constraints,
                 );
             }
         }

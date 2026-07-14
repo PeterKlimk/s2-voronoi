@@ -81,6 +81,18 @@ result only if the whole diagram then validates; otherwise the computation fails
 than return a known-bad graph. The guarantee is **edge-agreeing mesh or error**; exact graph
 equality with one ideal Voronoi construction in adversarial tie regimes is not a symbolic promise.
 
+## Near-semicircle derived geometry
+
+Legitimate Voronoi edges may approach pi when the generators lie in a common hemisphere. Endpoint
+cross products and normalized chord interpolation are ill-conditioned there. Strict validation,
+area, centroid, Lloyd targets, and optional quality sampling recover the supporting bisector plane
+from the edge's two owning generators. Exact-pi endpoint pairs remain unrepresentable without an
+arc identity and therefore take the explicit coplanar perturbation policy described above.
+
+The diagram does not retain neighbor ids solely for these rare measures. Ordinary calls stay
+degree-local; observing a near-pi edge triggers a cold sparse scan for only the requested owner
+pairs, and `lloyd_step` batches all affected cells into one such scan.
+
 ## Outcomes
 
 A call resolves to one of:

@@ -209,6 +209,30 @@ fn test_octahedron_cells_have_equal_areas() {
 }
 
 #[test]
+fn test_welded_twins_share_conditioned_measure_results() {
+    use voronoi_mesh::UnitVec3;
+
+    let points = vec![
+        UnitVec3::new(1.0, 0.0, 0.0),
+        UnitVec3::new(-1.0, 0.0, 0.0),
+        UnitVec3::new(0.0, 1.0, 0.0),
+        UnitVec3::new(0.0, -1.0, 0.0),
+        UnitVec3::new(0.0, 0.0, 1.0),
+        UnitVec3::new(0.0, 0.0, -1.0),
+        UnitVec3::new(1.0, 0.0, 0.0),
+    ];
+    let diagram = compute(&points).unwrap();
+    assert_eq!(diagram.canonical_cell_index(6), 0);
+    assert_eq!(
+        diagram.cell_area(6).to_bits(),
+        diagram.cell_area(0).to_bits()
+    );
+    assert_eq!(diagram.cell_centroid(6), diagram.cell_centroid(0));
+    let lloyd = diagram.lloyd_step();
+    assert_eq!(lloyd[6], lloyd[0]);
+}
+
+#[test]
 fn test_cell_centroids_unit_length_and_near_generator() {
     let points = fibonacci_sphere_points(2_000, 0.1, 4096);
     let diagram = compute(&points).unwrap();

@@ -5,6 +5,8 @@
 //! define pass/fail correctness.
 
 use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch};
+use crate::spherical_arc::resolve_owner_arc;
+use crate::tolerances::ANTIPODAL_DOT_EPS;
 use crate::SphericalVoronoi;
 use glam::{DVec3, Vec3};
 use std::collections::{HashMap, HashSet};
@@ -495,10 +497,26 @@ fn assess_edge_cross_track(
         let (Some(&va), Some(&vb)) = (vertices.get(a as usize), vertices.get(b as usize)) else {
             continue;
         };
+        let arc = resolve_owner_arc(
+            va,
+            vb,
+            generators[cells[0]],
+            generators[cells[1]],
+            ANTIPODAL_DOT_EPS as f64,
+        )
+        .ok();
         let denominator = (interior_samples_per_edge + 1) as f64;
         for k in 0..=interior_samples_per_edge + 1 {
             let t = k as f64 / denominator;
-            let p = (va * (1.0 - t) + vb * t).normalize();
+            let p = if k == 0 {
+                va
+            } else if k == interior_samples_per_edge + 1 {
+                vb
+            } else if let Some(arc) = arc {
+                arc.sample(t)
+            } else {
+                (va * (1.0 - t) + vb * t).normalize()
+            };
             if let Some((site_chord, radians)) =
                 cross_track_radians(p, generators[cells[0]], generators[cells[1]])
             {
@@ -570,11 +588,23 @@ fn assess_edge_residuals(
         let vb = vertices[b];
         let ga = generators[uniq_cells[0]];
         let gb = generators[uniq_cells[1]];
+        let arc = resolve_owner_arc(
+            va.as_dvec3(),
+            vb.as_dvec3(),
+            ga.as_dvec3(),
+            gb.as_dvec3(),
+            ANTIPODAL_DOT_EPS as f64,
+        )
+        .ok();
 
         for k in 1..=samples_per_edge {
             let t = k as f32 / (samples_per_edge + 1) as f32;
-            let p = (va * (1.0 - t) + vb * t).normalize();
-            residuals.push((p.dot(ga) - p.dot(gb)).abs());
+            let p = if let Some(arc) = arc {
+                arc.sample(t as f64)
+            } else {
+                (va * (1.0 - t) + vb * t).normalize().as_dvec3()
+            };
+            residuals.push((p.dot(ga.as_dvec3()) - p.dot(gb.as_dvec3())).abs() as f32);
         }
     }
 
@@ -816,6 +846,34 @@ mod tests {
         );
         assert!(
             report.edge_cross_track_error.overall.max < 1e-5,
+            "{}",
+            report.headline()
+        );
+    }
+
+    #[test]
+    fn near_pi_edge_sampling_uses_owner_plane() {
+        let points = [
+            UnitVec3::new(-0.346_064_27, -0.758_758, -0.551_838_64),
+            UnitVec3::new(0.672_760_4, -0.217_307_08, -0.707_227_7),
+            UnitVec3::new(-0.753_194_45, 0.368_890_3, 0.544_626_5),
+            UnitVec3::new(-0.661_814_2, -0.681_742_25, -0.311_816_45),
+        ];
+        let diagram = compute(&points).expect("near-pi fixture should compute");
+        let report = assess_with_config(
+            &diagram,
+            QualityConfig {
+                max_sampled_cells: points.len(),
+                edge_samples_per_edge: 4,
+            },
+        );
+        assert!(
+            report.edge_cross_track_error.overall.max < 1.0e-6,
+            "{}",
+            report.headline()
+        );
+        assert!(
+            report.edge_dot_residuals.max_abs < 1.0e-6,
             "{}",
             report.headline()
         );

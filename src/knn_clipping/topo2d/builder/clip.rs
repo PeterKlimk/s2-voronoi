@@ -238,12 +238,23 @@ impl FallbackBuilder {
     fn edge_intersection(
         a: SphericalPolyVertex,
         b: SphericalPolyVertex,
+        retained_edge_normal: Option<glam::DVec3>,
         constraint: &super::FallbackConstraint,
     ) -> Option<SphericalPolyVertex> {
-        let edge_normal = a.position.cross(b.position);
+        let mut edge_normal = retained_edge_normal
+            .unwrap_or_else(|| a.position.cross(b.position))
+            .normalize_or_zero();
         let edge_len2 = edge_normal.length_squared();
         if !edge_len2.is_finite() || edge_len2 <= 1e-24 {
             return None;
+        }
+
+        // Orient the retained supporting plane from `a` toward `b`. Unlike
+        // `a × b`, this remains conditioned when the edge approaches pi.
+        let mut tangent = edge_normal.cross(a.position).normalize_or_zero();
+        if tangent.dot(b.position) < 0.0 {
+            edge_normal = -edge_normal;
+            tangent = -tangent;
         }
 
         let cross = edge_normal.cross(constraint.normal);
@@ -252,8 +263,15 @@ impl FallbackBuilder {
             return None;
         }
         let candidate = cross * len2.sqrt().recip();
-        let midpoint = (a.position + b.position).normalize_or_zero();
-        let dir = if candidate.dot(midpoint) >= 0.0 {
+        let total_angle = tangent
+            .dot(b.position)
+            .max(0.0)
+            .atan2(a.position.dot(b.position).clamp(-1.0, 1.0));
+        let candidate_angle = tangent
+            .dot(candidate)
+            .atan2(a.position.dot(candidate).clamp(-1.0, 1.0))
+            .rem_euclid(std::f64::consts::TAU);
+        let dir = if candidate_angle <= total_angle + 1.0e-12 {
             candidate
         } else {
             -candidate
@@ -283,6 +301,7 @@ impl FallbackBuilder {
         poly: &SphericalPoly,
         constraint: &super::FallbackConstraint,
         clip_plane: usize,
+        constraints: &[super::FallbackConstraint],
     ) -> SphericalPoly {
         let n = poly.vertices.len();
         if n < 3 {
@@ -296,6 +315,7 @@ impl FallbackBuilder {
             let a = poly.vertices[i];
             let b = poly.vertices[j];
             let edge_plane = poly.edge_planes[i];
+            let retained_edge_normal = constraints.get(edge_plane).map(|edge| edge.normal);
             let a_in = Self::classify_vertex(constraint, a.position);
             let b_in = Self::classify_vertex(constraint, b.position);
 
@@ -305,12 +325,14 @@ impl FallbackBuilder {
                 }
                 (true, false) => {
                     Self::push_output_vertex(&mut out_vertices, &mut out_edges, a, edge_plane);
-                    if let Some(x) = Self::edge_intersection(a, b, constraint) {
+                    if let Some(x) = Self::edge_intersection(a, b, retained_edge_normal, constraint)
+                    {
                         Self::push_output_vertex(&mut out_vertices, &mut out_edges, x, clip_plane);
                     }
                 }
                 (false, true) => {
-                    if let Some(x) = Self::edge_intersection(a, b, constraint) {
+                    if let Some(x) = Self::edge_intersection(a, b, retained_edge_normal, constraint)
+                    {
                         Self::push_output_vertex(&mut out_vertices, &mut out_edges, x, edge_plane);
                     }
                 }
@@ -356,7 +378,8 @@ impl FallbackBuilder {
             .vertices
             .iter()
             .all(|vertex| constraint.normal.dot(vertex.position) >= 0.0);
-        let clipped = Self::clip_poly_with_constraint(&self.poly, constraint, plane_idx);
+        let clipped =
+            Self::clip_poly_with_constraint(&self.poly, constraint, plane_idx, &self.constraints);
         if clipped.len() == self.poly.len()
             && clipped.edge_planes == self.poly.edge_planes
             && clipped
@@ -585,6 +608,24 @@ mod fallback_tolerance_tests {
                 "unexpected classification at margin {margin:.17e}"
             );
         }
+    }
+
+    #[test]
+    fn near_pi_intersection_uses_retained_edge_plane() {
+        // Endpoint cross is dominated by the endpoint z residuals,
+        // while the retained boundary plane still identifies the intended
+        // positive-Y semicircle and its x=0 intersection.
+        let a = SphericalPolyVertex {
+            position: DVec3::new(1.0, 0.0, 1.0e-8).normalize(),
+        };
+        let b = SphericalPolyVertex {
+            position: DVec3::new(-1.0, 1.0e-10, 1.0e-8).normalize(),
+        };
+        let cut = constraint(DVec3::X);
+        let intersection = FallbackBuilder::edge_intersection(a, b, Some(DVec3::Z), &cut)
+            .expect("conditioned edge planes should intersect");
+        assert!(intersection.position.dot(DVec3::Y) > 0.999_999);
+        assert!(intersection.position.dot(DVec3::X).abs() < 1.0e-12);
     }
 
     fn point_with_margin(normal: DVec3, tangent: DVec3, margin: f64) -> DVec3 {

@@ -844,7 +844,7 @@ contract still requires a deferred pre-assembly cell/component recovery seam.
 - **Priority:** P1
 - **Class:** structural return gate / large-cell representation policy
 - **Confidence:** Reproduced by the intrinsic small-`n` campaign
-- **Status:** Structural validation and exact-pi SoS resolved; consumer stabilization remains open
+- **Status:** Resolved
 
 A valid, non-welded four-generator fixture with all sites in a common hemisphere returns a
 tetrahedral cell complex whose true large-cell boundaries contain edges very close to a
@@ -878,10 +878,26 @@ that this is not a tolerance classification. The prior conservative tolerance cl
 only for nominal full great circles whose canonical rounding prevents an exact certificate. Strict
 mode still returns the original clean error.
 
-Remaining work is deliberately split from the structural and SoS fixes. Public area/centroid and
-diagnostic edge sampling still use endpoint-cross or chord formulas that become inaccurate near pi;
-migrating them requires an efficient way to supply the neighboring owner without adding per-edge
-fast-path storage by default.
+The remaining geometric consumers now share the same owner-plane arc primitive. Quality sampling
+uses Rodrigues interpolation on the owning bisector; centroid integration uses the stabilized
+oriented plane and angle; and area uses a generator-centered triangle fan that splits a near-pi
+boundary at its conditioned midpoint. On the four-site fixture, summed-area error fell from about
+`1.1e-2` to `3.8e-5` steradians and sampled edge residuals are about `3e-8`.
+
+No neighbor ids were added to the stored diagram. Individual measures first run their ordinary
+degree-local pass; only an actually observed near-pi edge triggers a sparse whole-mesh owner scan.
+`lloyd_step` batches every affected key into one scan and recomputes only those canonical cells.
+Measured serial scans over 600k, 3M, and 6M halfedges took 2.6ms, 22.6ms, and 66.9ms respectively,
+with memory proportional only to the rare requested keys. This avoids the full adjacency build's
+measured 21.5ms, 124ms, and 271ms plus roughly 130–170MB transient storage at one million sites.
+The spherical fallback clipper likewise uses its already-retained edge constraint plane for
+near-pi intersections instead of reconstructing the plane and branch from an unstable endpoint
+cross/midpoint.
+
+On a one-million-site uniform release probe, computing every area took 319ms versus 243ms for the
+old vertex-zero fan (+31%, reflecting the robust generator fan's two additional triangles per
+ordinary six-edge cell). A full `lloyd_step` took 328ms versus 369ms for the old per-cell centroid
+loop (-11%). These are on-demand measure costs; diagram construction is unchanged.
 
 ## Recommended implementation sequence
 
@@ -904,8 +920,8 @@ fast-path storage by default.
     baseline and boundary coverage.
 12. **AUD-015:** resolved for correctness — unrestricted spherical replay now occurs only after
     genuine chart exhaustion; early performance handoff remains deferred.
-13. **AUD-016:** structural near-pi contract and certified exact-pi SoS resolved; stabilize the
-    remaining geometry consumers.
+13. **AUD-016:** resolved — owner-plane validation, exact-pi SoS, conditioned measures/diagnostics,
+    and retained-plane spherical fallback intersections are covered by focused regressions.
 
 ## Cross-cutting test backlog
 
