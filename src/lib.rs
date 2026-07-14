@@ -276,6 +276,35 @@ pub struct RepairReport {
     pub accepted: bool,
 }
 
+/// Observable outcome of final exact-zero output canonicalization.
+///
+/// The current baseline preserves one effective cell per effective generator:
+/// exact stored-zero components are contracted only when every cell remains
+/// representable. Positive-length edge simplification is not included here.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct OutputResolutionReport {
+    /// Unique exact stored-zero edges found after reconciliation and optional
+    /// Local3d repair.
+    pub exact_zero_edges_detected: usize,
+    /// Connected exact stored-zero vertex components found after repair.
+    pub exact_zero_components_detected: usize,
+    /// Exact stored-zero edges removed by committed transactions.
+    pub exact_zero_edges_contracted: usize,
+    /// Exact stored-zero components removed by committed transactions.
+    pub exact_zero_components_contracted: usize,
+    /// Components retained because contracting their interacting transaction
+    /// group would eliminate at least one effective generator cell.
+    pub cell_killing_components_preserved: usize,
+    /// Components retained because the rewritten graph failed a structural or
+    /// local quotient check for a reason other than cell elimination.
+    pub topology_rejected_components: usize,
+    /// Detected exact stored-zero edges still present under the
+    /// generator-preserving policy after all accepted transactions. The
+    /// independent validation report is authoritative for the final diagram.
+    pub exact_zero_edges_remaining: usize,
+}
+
 /// Observable per-run report for Voronoi computation.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -299,6 +328,8 @@ pub struct ComputeReport {
     pub pre_repair_edge_mismatch_count: usize,
     /// What the local repair pass did this run.
     pub repair: RepairReport,
+    /// What final exact-zero output canonicalization did this run.
+    pub output_resolution: OutputResolutionReport,
     /// Interior edges that remained unpaired, overused, or misoriented after
     /// reconciliation and were not cleared by an accepted local repair.
     /// Historical field name retained for API stability. `compute` turns these

@@ -1,6 +1,6 @@
 # Output Resolution and Edge Collapse Policy
 
-**Status:** design record; not yet implemented
+**Status:** exact stored-zero baseline implemented; broader public policy deferred
 
 **Date:** 2026-07-14
 
@@ -139,8 +139,10 @@ This commonly removes an arbitrary triangulation diagonal and restores a degree-
 generalized Voronoi vertex. It also fixes zero-length mesh edges without changing the generator
 set.
 
-The stage should run to a fixed point: one contraction can expose another exact stored-zero edge.
-Connected zero-edge components must be handled transactionally rather than by an order-dependent
+The stage must reach a fixed point. The baseline does this in one simultaneous rewrite of maximal
+connected zero-edge components: if deleting a run could expose an equal-position endpoint, the
+original boundary edge into that run already places the endpoint in the same component. Components
+that interact through one cell are handled as one transaction rather than by an order-dependent
 sequence of pairwise edits.
 
 ### Within epsilon (optional “extra-elide”)
@@ -194,29 +196,42 @@ The final policy must apply globally, whether or not repair ran. Repair-local to
 cannot be the only way a tiny edge is collapsed; otherwise an unrelated topology defect can change
 the resolution of the returned mesh.
 
-Repair currently uses distance for two different effects, which must be classified before a merge
+Repair uses distance for two related effects, which must still be classified before a merge
 component is committed:
 
 1. **Endpoint identity reconciliation:** two cells emitted nearby realizations of one intended
    logical vertex. Repair may use its internal, diameter-bounded correspondence tolerance for this
    operation. That tolerance need not equal a consumer's edge-collapse threshold.
-2. **Logical edge collapse:** a proposed union identifies two consecutive vertices of a cell and
-   destroys the edge between them. Exact stored-zero edges are authorized by the baseline policy;
-   positive edges are authorized only by the configured positive edge threshold.
+2. **Defect-local triangulation collapse:** a proposed union identifies consecutive vertices while
+   repairing an observed edge-agreement defect. A diameter-bounded positive diagonal is permitted
+   here when the transaction preserves every cell. This is the established tolerance policy for
+   degree-4+ generalized vertices; exact structured grids exercise it at O(n), where replacing it
+   wholesale with Local3d is both unnecessary and nonlocal.
 
-Policy is therefore tied to the effect of a union, not to the mere use of a distance comparison.
-If repair needs to destroy a positive logical edge which the configured scope does not authorize,
-it must escalate to Local3d rather than silently simplify. If the scope does authorize the edge,
-fast repair may take the same shortcut that the final global pass would take. Every cell-killing
-result additionally consults `Preserve`/`Error`/`Elide`.
+This defect-local authorization is not a global consumer epsilon threshold. It runs only after a
+known topology disagreement, remains bounded by the reconciliation component diameter, and is
+accepted only when no cell is killed or folded. Applying the same positive threshold to a clean
+diagram remains the optional approximation policy. A cell-killing repair proposal escalates to
+Local3d under `Preserve`; future `Error`/`Elide` modes must consult their generator outcome before
+commit.
 
 The existing fast-repair weld path must be audited and, where necessary, split along this boundary:
 
 - identity repair may establish the endpoint equivalence needed for edge agreement;
 - it must not silently eliminate a generator under `Preserve`;
-- every edge-destroying approximate merge must obey the same threshold and generator outcome as
-  the final global pass; and
-- the global pass remains authoritative for repaired and unrepaired diagrams alike.
+- every approximate merge must obey the repair diameter bound and generator outcome; a future
+  global positive threshold remains separately reported; and
+- clean construction records a necessary one-coordinate hint in one degree-local scan of each
+  final extracted f32 cell, then checks all three final assembled coordinates only for flagged
+  cells. Generator-triplet vertex keys recover the complete incident neighborhood of a confirmed
+  component. If reconciliation or Local3d can have changed those cycles, the terminal stage
+  instead performs a conservative full scan of the post-repair diagram.
+
+The clean-path hint is not an exhaustive certificate over alternate realizations of one
+deduplicated key: assembly may select a shared realization different from the one examined while a
+particular cell was hot. The independent validator is authoritative for remaining exact-zero
+geometry. Making terminal discovery exhaustive is optional strict/output-policy work; it should
+not silently impose a whole-edge scan on the default fast constructor.
 
 If later work introduces another repair after this stage, the resolution stage must run again
 after the final repair. The simpler design is to keep it terminal.
@@ -235,7 +250,8 @@ An accepted contraction component must, at minimum:
 - preserve connectivity and spherical Euler characteristic;
 - handle multiple coincident edges as one component, including explicit rejection or elision of a
   component that collapses an entire face; and
-- pass the selected whole-diagram validation before the transaction is committed.
+- pass a local quotient certificate before the transaction is committed; the ordinary report and
+  testing paths subsequently apply whole-diagram strict validation to the returned result.
 
 Deleting a triangular cell after two of its vertices merge is locally plausible: its other two
 edges become the candidate shared edge between the two neighboring cells. That operation is valid
@@ -243,10 +259,10 @@ only when the link and owner rotations agree. “The other owner of the zero edg
 geometrically justified generator representative and must not be selected merely because it owned
 the collapsed diagonal.
 
-The first implementation should favor a simple cold transactional rebuild over intricate live
-mutation. Exact-zero incidents are expected to be rare. Common-path scanning cost should be
-measured with retired-instruction and branch counters; live hints may optimize candidate discovery
-later, but the post-repair result remains authoritative.
+The baseline implementation uses a cold transactional in-place rewrite of only affected cell
+spans. It builds sparse zero components and derives affected cells from the existing vertex keys;
+the rare repaired path falls back to a full post-repair scan. Component construction, link checks,
+rollback state, telemetry, and environment lookups stay off the no-candidate path.
 
 ## Reporting and consumer contract
 
@@ -267,23 +283,24 @@ generic topology failure.
 The user-facing guarantee for positive-threshold output must say “valid spherical cell complex
 after explicit simplification,” not “Voronoi diagram of the original generators.”
 
-## Initial implementation sequence
+## Implementation state
 
-1. Add detection and reporting for exact stored-zero edges after the final repair.
-2. Implement transactional non-cell-killing zero-edge contraction and run it to a fixed point.
-3. Reproduce the downstream zero-edge incident and confirm it succeeds under default `Preserve`
-   without changing the generator count.
-4. Add `Preserve`, `Error`, and `Elide` behavior for components that would eliminate cells,
+1. [x] Add detection and reporting for exact stored-zero edges after the final repair.
+2. [x] Implement transactional non-cell-killing zero-edge contraction over maximal components.
+3. [x] Reproduce the downstream zero-edge incident and confirm it succeeds under default
+   `Preserve` without changing the generator count.
+4. [ ] Add public `Error` and `Elide` behavior for components that would eliminate cells,
    including explicit generator-remapping/report semantics.
-5. Split repair merge proposals into endpoint-identity and logical-edge-collapse effects; route an
-   unauthorized positive collapse to Local3d and enforce the generator outcome before commit.
-6. Add optional positive-threshold collapse only after the exact-zero policy is stable.
-7. Benchmark the no-candidate scan and keep all component reconstruction on the cold path.
+5. [x] Diameter-bound repair components and transactionally reject cell-killing/non-simple
+   effects; retain defect-local positive diagonal collapse for degree-4+ reconciliation.
+6. [ ] Add optional positive-threshold collapse only after the exact-zero policy is stable.
+7. [x] Keep the final-cell hint degree-local and component reconstruction sparse/cold.
 
-Tests must include non-cell-killing zero diagonals, triangle-to-digon cases, both-owner triangles,
-zero-edge trees and cycles, simultaneous contractions, permutation independence, repaired output,
-near-antipodal edges, and epsilon chains whose pairwise distances pass while their total diameter
-does not.
+The baseline retains synthetic non-cell-killing and triangle-to-digon tests, a minimized version of
+the downstream Hex3 incident, a weld-radius cell-survival sweep, and focused reconciliation tests
+for endpoint identity, cell-killing escalation, and bounded components. Broader trees,
+cycles, permutation, and repaired-output cases remain useful hardening work before exposing
+positive-threshold or generator-elision policy.
 
 ## Decisions still open
 
@@ -291,8 +308,8 @@ does not.
 - Whether resolution-elided generators map to `None`, a richer outcome enum, or an explicitly
   noncanonical deterministic representative.
 - The exact local link predicate used before transactional whole-diagram validation.
-- Whether exact-zero detection uses stored f32 positions exclusively or also retains pre-storage
-  f64 collision telemetry.
+- Whether to add pre-storage f64 collision telemetry; baseline decisions use stored f32 positions
+  exclusively.
 - Threshold units and whether a convenience angular API converts to the canonical squared-chord
   representation.
 - Whether positive-threshold output is stored in the same diagram type with report metadata or a

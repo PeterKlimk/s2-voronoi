@@ -118,13 +118,13 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
 
     let CollectedShardBookkeeping {
         mut unresolved_edges,
-        mut edge_check_overflow,
+        edge_check_overflow,
         deferred_slots,
     } = collect_shard_bookkeeping(&mut data.shards);
 
     let overflow_timing = resolve_edge_check_overflow(
         &mut data.shards,
-        &mut edge_check_overflow,
+        &edge_check_overflow,
         &mut unresolved_edges,
     );
     #[allow(unused_variables)]
@@ -413,7 +413,8 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
                         "packed vertex local index out of range"
                     );
                 }
-                dst.add(i).write(vertex_offsets[vbin.as_usize()] + local);
+                let global = vertex_offsets[vbin.as_usize()] + local;
+                dst.add(i).write(global);
             }
         }
     });
@@ -422,6 +423,30 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     unsafe {
         cell_indices.set_len(total_cell_indices as usize);
     }
+
+    let mut exact_zero_edge_hint_cells = Vec::new();
+    for shard in &finals {
+        exact_zero_edge_hint_cells.extend_from_slice(&shard.output.exact_zero_edge_hint_cells);
+    }
+    let mut exact_zero_edge_candidates = Vec::new();
+    for cell_idx in exact_zero_edge_hint_cells {
+        let cell = &cells[cell_idx as usize];
+        let span = &cell_indices[cell.vertex_start()..cell.vertex_start() + cell.vertex_count()];
+        for edge_idx in 0..span.len() {
+            let a = span[edge_idx];
+            let b = span[(edge_idx + 1) % span.len()];
+            if a == b {
+                continue;
+            }
+            let pa = all_vertices[a as usize];
+            let pb = all_vertices[b as usize];
+            if pa.dist_sq_f64(pb) == 0.0 {
+                exact_zero_edge_candidates.push((a.min(b), a.max(b)));
+            }
+        }
+    }
+    exact_zero_edge_candidates.sort_unstable();
+    exact_zero_edge_candidates.dedup();
 
     #[cfg(debug_assertions)]
     {
@@ -456,6 +481,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
         unresolved_edges,
         cells,
         cell_indices,
+        exact_zero_edge_candidates,
         dedup_sub: sub_phases,
     })
 }
@@ -571,7 +597,7 @@ mod tests {
 
         let edge_key = pack_edge(0, 1);
         let mut unresolved = Vec::new();
-        let mut overflow = vec![
+        let overflow = vec![
             EdgeCheckOverflow {
                 key: edge_key,
                 side: 0,
@@ -590,7 +616,7 @@ mod tests {
             },
         ];
 
-        resolve_edge_check_overflow(&mut shards, &mut overflow, &mut unresolved);
+        resolve_edge_check_overflow(&mut shards, &overflow, &mut unresolved);
 
         assert!(
             unresolved.is_empty(),
@@ -607,7 +633,7 @@ mod tests {
         let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
         let edge_key = pack_edge(0, 1);
         let mut unresolved = Vec::new();
-        let mut overflow = vec![
+        let overflow = vec![
             EdgeCheckOverflow {
                 key: edge_key,
                 side: 0,
@@ -626,7 +652,7 @@ mod tests {
             },
         ];
 
-        resolve_edge_check_overflow(&mut shards, &mut overflow, &mut unresolved);
+        resolve_edge_check_overflow(&mut shards, &overflow, &mut unresolved);
 
         assert_eq!(unresolved.len(), 1);
         assert_eq!(unresolved[0].key, edge_key);
@@ -640,7 +666,7 @@ mod tests {
             shards[1].output.cell_indices = vec![DEFERRED; 4];
             let edge_key = pack_edge(0, 1);
             let mut side_counts = [0usize; 2];
-            let mut overflow: Vec<EdgeCheckOverflow> = sides
+            let overflow: Vec<EdgeCheckOverflow> = sides
                 .into_iter()
                 .map(|side| {
                     let ordinal = side_counts[side as usize];
@@ -657,7 +683,7 @@ mod tests {
                 .collect();
             let mut unresolved = Vec::new();
 
-            resolve_edge_check_overflow(&mut shards, &mut overflow, &mut unresolved);
+            resolve_edge_check_overflow(&mut shards, &overflow, &mut unresolved);
 
             assert_eq!(unresolved.len(), 1, "sides={sides:?}");
             assert_eq!(
@@ -679,7 +705,7 @@ mod tests {
         let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
         shards[0].output.cell_indices = vec![DEFERRED; 6];
         let edge_key = pack_edge(0, 1);
-        let mut overflow: Vec<EdgeCheckOverflow> = (0..3)
+        let overflow: Vec<EdgeCheckOverflow> = (0..3)
             .map(|ordinal| EdgeCheckOverflow {
                 key: edge_key,
                 side: 0,
@@ -691,7 +717,7 @@ mod tests {
             .collect();
         let mut unresolved = Vec::new();
 
-        resolve_edge_check_overflow(&mut shards, &mut overflow, &mut unresolved);
+        resolve_edge_check_overflow(&mut shards, &overflow, &mut unresolved);
 
         let origins: BTreeSet<_> = unresolved.iter().map(|entry| entry.origin).collect();
         assert_eq!(

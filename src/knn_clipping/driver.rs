@@ -15,7 +15,7 @@ use crate::knn_clipping::cell_build::{build_cell_into, CellBuildContext, CellBui
 use crate::knn_clipping::TerminationConfig;
 use crate::live_dedup::{
     assign_bins, checked_local_id, checked_u32, emit_cell_output, BinId, BuildCellsError,
-    EdgeScratch, ShardContext, ShardState, ShardedCellsData,
+    EdgeScratch, ShardContext, ShardState, ShardedCellsData, VertexData,
 };
 use crate::packed_layout::PackedSlotLayout;
 
@@ -35,6 +35,40 @@ impl SphereCellScratch {
             edge_scratch: EdgeScratch::new(),
         }
     }
+}
+
+#[inline(always)]
+fn stored_x_hint_diff(a: Vec3, b: Vec3) -> u32 {
+    // Equality of x is a necessary condition for exact Vec3 equality. Ignore
+    // the sign bit so +0/-0 cannot be a false negative; opposite nonzero x
+    // values can only flag a harmless false positive for the cold full check.
+    const MAGNITUDE: u32 = 0x7fff_ffff;
+    (a.x.to_bits() ^ b.x.to_bits()) & MAGNITUDE
+}
+
+#[inline(always)]
+fn nonzero_bit(value: u32) -> u32 {
+    (value | value.wrapping_neg()) >> 31
+}
+
+#[inline(never)]
+fn has_exact_zero_edge(vertices: &[VertexData]) -> bool {
+    debug_assert!(vertices.len() >= 3);
+    let mut all_edge_diffs_nonzero = 1u32;
+    let ptr = vertices.as_ptr();
+    // SAFETY: successful final extraction has at least three initialized
+    // vertices. Read the contiguous cycle once, then compare its closing edge.
+    unsafe {
+        let first = (*ptr).1;
+        let mut previous = first;
+        for i in 1..vertices.len() {
+            let current = (*ptr.add(i)).1;
+            all_edge_diffs_nonzero &= nonzero_bit(stored_x_hint_diff(previous, current));
+            previous = current;
+        }
+        all_edge_diffs_nonzero &= nonzero_bit(stored_x_hint_diff(previous, first));
+    }
+    all_edge_diffs_nonzero == 0
 }
 
 pub(crate) fn build_cells_sharded_live_dedup(
@@ -304,5 +338,14 @@ fn build_and_emit_cell<'a, 'b, 'c>(
         cell_start,
         output_buffer,
         incoming_checks,
-    )
+    )?;
+    let exact_zero_edge_hint = has_exact_zero_edge(&output_buffer.vertices);
+    if exact_zero_edge_hint {
+        shard_ctx
+            .shard
+            .output
+            .exact_zero_edge_hint_cells
+            .push(cell_idx);
+    }
+    Ok(())
 }

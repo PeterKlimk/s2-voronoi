@@ -43,13 +43,38 @@ derived under that premise and retain outward reserves for the supported default
 `simd_scalar`, and hardware-FMA paths.
 
 Features near the resolution floor (epsilon-length edges, vertices from near-cocircular generators)
-may be kept or collapsed; which one happens is a policy choice, not a correctness bug, as long as
-the graph stays coherent. Reconciliation collapses a positional equivalence component only when its full
-diameter over stored vertices is at most `RECONCILE_DEGENERATE_LEN_EPS`; pairwise chains cannot
-extend that bound. Rejected components escalate to Local3d under the default repair policy.
-The proposed separation between generator preservation/elision and exact/epsilon edge collapse is
-recorded in [`output-resolution-policy.md`](output-resolution-policy.md); that note is a design
-record, not a description of the current public API.
+require an explicit output policy. After repair, the current baseline deterministically contracts
+maximal components of distinct vertex IDs with exactly equal stored f32 coordinates when the local
+quotient leaves every effective cell representable and structurally valid. It preserves and
+reports a component that would reduce a cell below three vertices or fail the quotient checks.
+Thus the default preserves one cell per effective generator, but can still return reported
+zero-geometry features when fixed output precision cannot embed that topology injectively.
+
+Clean construction performs one degree-local necessary-coordinate scan after each cell's final f32
+extraction, then checks complete final assembled positions only for flagged cells. Existing
+generator-triplet keys identify every cell incident to a confirmed component, so classification
+and the quotient certificate remain local. A path that entered reconciliation or Local3d instead
+performs a cold scan of the final cycles. `compute_with_report` and testing subsequently apply the
+full strict validator. `OutputResolutionReport` records detected, contracted, declined, and
+remaining exact-zero features; validation's independent `zero_length_edges` count is a
+representation note rather than a topology failure.
+
+The clean-path scan is deliberately a low-cost discovery policy, not an exhaustive proof over
+alternate per-cell realizations of a deduplicated key. A selected shared-vertex realization can in
+principle differ from the realization that supplied a cell's hot hint. Consumers requiring an
+authoritative absence check should inspect `ValidationReport::zero_length_edges`; unresolved
+features remain structurally valid under `Preserve`. An exhaustive terminal scan is deferred with
+the broader output-resolution API rather than charged to every fast construction.
+
+Reconciliation collapses a positional equivalence component only when its full diameter over
+stored vertices is at most `RECONCILE_DEGENERATE_LEN_EPS`; pairwise chains cannot extend that
+bound. Repair may also collapse a positive but bounded triangulation diagonal when reconciling an
+observed topology defect; exact degree-4+ grids require this established tolerance policy. The
+transaction rejects a result that would kill or fold a cell and escalates that component to
+Local3d. This defect-local repair is distinct from applying a consumer epsilon threshold to a clean
+diagram. The broader `Error`/`Elide` generator outcomes and optional global positive edge threshold
+remain deferred, as recorded in
+[`output-resolution-policy.md`](output-resolution-policy.md).
 
 ## Coincident generators (welding)
 

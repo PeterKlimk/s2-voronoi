@@ -91,8 +91,8 @@ pub(crate) fn residual_error(pairs: &[(u32, u32)]) -> crate::VoronoiError {
     ))
 }
 
-/// Error used only when the no-chain policy requested Local3d escalation and
-/// the configured repair path did not accept a replacement.
+/// Error used when reconciliation requested Local3d escalation and the
+/// configured repair path did not accept a replacement.
 pub(crate) fn escalation_error(pairs: &[(u32, u32)]) -> crate::VoronoiError {
     let shown: Vec<String> = pairs
         .iter()
@@ -105,7 +105,7 @@ pub(crate) fn escalation_error(pairs: &[(u32, u32)]) -> crate::VoronoiError {
         String::new()
     };
     crate::VoronoiError::ComputationFailed(format!(
-        "reconciliation rejected epsilon-chain component(s) near cell pair(s) {}{} and Local3d did not accept a replacement",
+        "reconciliation found component(s) requiring Local3d near cell pair(s) {}{} and Local3d did not accept a replacement",
         shown.join(", "),
         more,
     ))
@@ -638,8 +638,14 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
             mode,
             scan_dup_keys,
         )?;
-        let (mut uf, merged, rejected_components) =
-            bound_merge_components(&mut proposed, vertices, merge_ledger, degenerate_len_eps)?;
+        let (mut uf, merged, rejected_components) = bound_merge_components(
+            &mut proposed,
+            vertices,
+            cells,
+            cell_indices,
+            merge_ledger,
+            degenerate_len_eps,
+        )?;
         if !rejected_components.is_empty() {
             record_rejected_component_seeds(
                 &rejected_components,
@@ -1331,6 +1337,8 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
 fn bound_merge_components<P: crate::knn_clipping::live_dedup::VertexPosition>(
     proposed: &mut SparseUnionFind,
     vertices: &[P],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
     ledger: &mut MergeLedger,
     eps: f32,
 ) -> Result<(SparseUnionFind, usize, Vec<RejectedMergeComponent>), crate::VoronoiError> {
@@ -1341,9 +1349,15 @@ fn bound_merge_components<P: crate::knn_clipping::live_dedup::VertexPosition>(
     }
 
     let eps_sq = f64::from(eps) * f64::from(eps);
-    let mut accepted = SparseUnionFind::new();
-    let mut accepted_merges = 0usize;
+    struct Candidate {
+        representative: u32,
+        current_ids: Vec<u32>,
+        expanded: Vec<u32>,
+        rejected: bool,
+    }
+
     let mut rejected_components = Vec::new();
+    let mut candidates = Vec::new();
 
     for (representative, current_ids) in groups {
         let expanded = ledger.expanded_members(&current_ids);
@@ -1367,12 +1381,79 @@ fn bound_merge_components<P: crate::knn_clipping::live_dedup::VertexPosition>(
             continue;
         }
 
-        for &id in &current_ids {
-            if id != representative && accepted.union(representative, id) {
+        candidates.push(Candidate {
+            representative,
+            current_ids,
+            expanded,
+            rejected: false,
+        });
+    }
+
+    // Repair may collapse a diameter-bounded triangulation diagonal while
+    // reconciling an observed topology defect. This is load-bearing for exact
+    // degree-4+ grids, where Local3d is not a scalable substitute. The edit
+    // must still preserve every cell and avoid a non-simple face.
+    let mut candidate_for_id = rustc_hash::FxHashMap::<u32, usize>::default();
+    for (candidate_idx, candidate) in candidates.iter().enumerate() {
+        for &id in &candidate.current_ids {
+            candidate_for_id.insert(id, candidate_idx);
+        }
+    }
+
+    // Consider all components together. Multiple individually safe merges in
+    // one face can jointly erase or fold it; decline every component touching
+    // such a face under Preserve.
+    for cell_idx in 0..cells.len() {
+        let span = cell_vertex_slice(cell_idx as u32, cells, cell_indices)?;
+        let mut normalized = Vec::with_capacity(span.len());
+        let mut touched_candidates = Vec::new();
+        for &id in span {
+            let mapped = match candidate_for_id.get(&id).copied() {
+                Some(idx) if !candidates[idx].rejected => {
+                    if !touched_candidates.contains(&idx) {
+                        touched_candidates.push(idx);
+                    }
+                    candidates[idx].representative
+                }
+                _ => id,
+            };
+            if normalized.last().copied() != Some(mapped) {
+                normalized.push(mapped);
+            }
+        }
+        if normalized.len() > 1 && normalized[0] == *normalized.last().unwrap() {
+            normalized.pop();
+        }
+        let has_duplicate =
+            (0..normalized.len()).any(|i| normalized[(i + 1)..].contains(&normalized[i]));
+        if normalized.len() < 3 || has_duplicate {
+            for idx in touched_candidates {
+                candidates[idx].rejected = true;
+            }
+        }
+    }
+
+    let mut accepted = SparseUnionFind::new();
+    let mut accepted_merges = 0usize;
+    for candidate in candidates {
+        if candidate.rejected {
+            rejected_components.push(RejectedMergeComponent {
+                current_ids: candidate.current_ids,
+                member_ids: candidate.expanded,
+            });
+            continue;
+        }
+
+        for &id in &candidate.current_ids {
+            if id != candidate.representative && accepted.union(candidate.representative, id) {
                 accepted_merges += 1;
             }
         }
-        ledger.commit(representative, &current_ids, expanded);
+        ledger.commit(
+            candidate.representative,
+            &candidate.current_ids,
+            candidate.expanded,
+        );
     }
 
     Ok((accepted, accepted_merges, rejected_components))
@@ -1800,7 +1881,7 @@ mod tests {
 
         let mut ledger = MergeLedger::default();
         let (accepted, merges, rejected) =
-            bound_merge_components(&mut proposed, &vertices, &mut ledger, eps)
+            bound_merge_components(&mut proposed, &vertices, &[], &[], &mut ledger, eps)
                 .expect("diameter gate");
 
         assert_eq!(merges, 0, "no order-dependent prefix may be accepted");
@@ -1822,7 +1903,7 @@ mod tests {
         let mut first = SparseUnionFind::new();
         assert!(first.union(0, 1));
         let (_, first_merges, first_rejected) =
-            bound_merge_components(&mut first, &vertices, &mut ledger, eps)
+            bound_merge_components(&mut first, &vertices, &[], &[], &mut ledger, eps)
                 .expect("first-round diameter gate");
         assert_eq!(first_merges, 1);
         assert!(first_rejected.is_empty());
@@ -1832,7 +1913,7 @@ mod tests {
         let mut second = SparseUnionFind::new();
         assert!(second.union(0, 2));
         let (accepted, second_merges, second_rejected) =
-            bound_merge_components(&mut second, &vertices, &mut ledger, eps)
+            bound_merge_components(&mut second, &vertices, &[], &[], &mut ledger, eps)
                 .expect("second-round diameter gate");
         assert_eq!(second_merges, 0);
         assert_eq!(second_rejected.len(), 1);
@@ -1946,7 +2027,7 @@ mod tests {
     }
 
     #[test]
-    fn repair_collapses_one_sided_epsilon_edge() {
+    fn repair_escalates_cell_killing_one_sided_edge_collapse() {
         let vertices = vec![
             Vec3::new(0.0, 0.0, 1.0),
             Vec3::new(5.0e-8, 0.0, 1.0),
@@ -1966,25 +2047,30 @@ mod tests {
         let cells = vec![VoronoiCell::new(0, 3), VoronoiCell::new(3, 3)];
         let cell_indices = vec![0, 1, 2, 3, 4, 5];
 
-        let (changed, cells_rebuild, idx_rebuild, cells_in_place, _) = run_both_backends(
-            &[edge_record(0, 1)],
+        let records = [edge_record(0, 1)];
+        let mut repaired_cells = cells.clone();
+        let mut repaired_indices = cell_indices.clone();
+        let result = reconcile_unresolved_edges(
+            &records,
             &vertices,
-            &cells,
-            &cell_indices,
-            &vertex_keys,
-        );
-        assert!(changed, "expected one-sided epsilon edge to be reconciled");
+            &mut repaired_cells,
+            &mut repaired_indices,
+            VertexKeys::Flat(&vertex_keys),
+            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
+            RepairApply::InPlace,
+            |_, _| false,
+        )
+        .expect("cell-killing one-sided edge should escalate cleanly");
+
         assert_eq!(
-            cells_in_place[0].vertex_count(),
-            2,
-            "epsilon edge should collapse"
+            cell_sequences(&repaired_cells, &repaired_indices),
+            cell_sequences(&cells, &cell_indices),
+            "generator-preserving repair must not collapse a cell"
         );
-        assert_eq!(
-            idx_rebuild.len(),
-            5,
-            "rebuild should compact away the merged per-cell index"
+        assert!(
+            !result.escalation_pairs.is_empty(),
+            "cell-killing collapse must seed Local3d"
         );
-        assert_eq!(cells_rebuild[0].vertex_count(), 2);
     }
 
     fn mismatched_shared_edge_fixture(

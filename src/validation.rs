@@ -81,6 +81,10 @@ pub struct ValidationReport {
 
     /// Number of self-loop edges `(v, v)` in cell boundary cycles.
     pub self_loop_edges: usize,
+    /// Number of undirected edges whose distinct endpoint ids have exactly
+    /// equal stored directions. This is representation telemetry rather than
+    /// an abstract-topology defect.
+    pub zero_length_edges: usize,
     /// Number of edges that are exactly antipodal or whose near-pi arc cannot
     /// be reconciled with the bisector plane of its two owning generators.
     pub antipodal_edges: usize,
@@ -194,6 +198,9 @@ impl ValidationReport {
         }
         if self.welded_twin_cells > 0 {
             notes.push(format!("{} welded twins", self.welded_twin_cells));
+        }
+        if self.zero_length_edges > 0 {
+            notes.push(format!("{} zero-length edges", self.zero_length_edges));
         }
 
         notes
@@ -1094,15 +1101,19 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
     let mut boundary_edges = 0usize;
     let mut overused_edges = 0usize;
     let mut same_direction_edge_pairs = 0usize;
+    let mut zero_length_edges = 0usize;
     let num_edges = edges.len();
 
     for (&key, stat) in &edges {
-        if stat.cells.len() != 2 {
-            continue;
-        }
         let (a, b) = edge_vertices(key);
         let va = diagram.vertex(a);
         let vb = diagram.vertex(b);
+        if va.x == vb.x && va.y == vb.y && va.z == vb.z {
+            zero_length_edges += 1;
+        }
+        if stat.cells.len() != 2 {
+            continue;
+        }
         let dot = va.x * vb.x + va.y * vb.y + va.z * vb.z;
         if dot > -1.0 + ANTIPODAL_DOT_EPS {
             continue;
@@ -1190,6 +1201,7 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
         low_incidence_vertices,
         degree_counts,
         self_loop_edges,
+        zero_length_edges,
         antipodal_edges,
         boundary_edges,
         overused_edges,

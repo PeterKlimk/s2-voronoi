@@ -34,6 +34,7 @@ pub(crate) struct ShardOutput<P = Vec3> {
     pub(crate) cell_indices: Vec<u64>,
     pub(super) cell_starts: Vec<u32>,
     pub(super) cell_counts: Vec<u8>,
+    pub(crate) exact_zero_edge_hint_cells: Vec<u32>,
 }
 
 impl<P: VertexPosition> ShardOutput<P> {
@@ -47,6 +48,7 @@ impl<P: VertexPosition> ShardOutput<P> {
             cell_indices: Vec::new(),
             cell_starts: vec![0; num_local_generators],
             cell_counts: vec![0; num_local_generators],
+            exact_zero_edge_hint_cells: Vec::new(),
         }
     }
 

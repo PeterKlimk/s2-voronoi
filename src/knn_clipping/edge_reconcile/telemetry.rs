@@ -264,8 +264,14 @@ fn analyze_primary<P: VertexPosition>(
             MergeMode::Primary,
             true,
         )?;
-        let (mut uf, simulated_unions, rejected_components) =
-            bound_merge_components(&mut proposed, vertices, &mut MergeLedger::default(), eps)?;
+        let (mut uf, simulated_unions, rejected_components) = bound_merge_components(
+            &mut proposed,
+            vertices,
+            cells,
+            cell_indices,
+            &mut MergeLedger::default(),
+            eps,
+        )?;
         stats.simulated_unions = simulated_unions;
         stats.rejected_components = rejected_components.len();
         stats.components = component_stats(&mut uf, vertices)?;

@@ -5,6 +5,7 @@ use glam::{DVec3, Vec3};
 use super::edge_reconcile;
 use super::escalate;
 use super::live_dedup;
+use super::output_resolution;
 use super::timing::{Timer, TimingBuilder};
 use super::{
     cell_build::{CellBuildError, CellFailure},
@@ -41,6 +42,7 @@ struct PipelineState {
     post_repair_unpaired: Vec<(u32, u32)>,
     reconciliation_escalations: Vec<(u32, u32)>,
     repair: RepairOutcome,
+    output_resolution: crate::OutputResolutionReport,
     tb: TimingBuilder,
 }
 
@@ -90,6 +92,7 @@ fn run_core_pipeline(
         unresolved_edges,
         cells,
         cell_indices,
+        exact_zero_edge_candidates,
         dedup_sub: _,
     } = assembled;
     let (mut eff_cells, mut eff_cell_indices, reconcile_result) = reconcile_edges(
@@ -125,6 +128,44 @@ fn run_core_pipeline(
         low_incidence_scan_time,
         repair_mode,
     );
+    let clean_resolution_path = unresolved_edges.is_empty() && !repair.attempted;
+    let localized_resolution_cells = if clean_resolution_path {
+        let mut incident_cells = Vec::with_capacity(exact_zero_edge_candidates.len() * 6);
+        let mut complete = true;
+        for &(a, b) in &exact_zero_edge_candidates {
+            for vertex in [a, b] {
+                if let Some(key) = vertex_keys.get(vertex) {
+                    incident_cells.extend(key.map(|generator| generator as usize));
+                } else {
+                    complete = false;
+                    break;
+                }
+            }
+            if !complete {
+                break;
+            }
+        }
+        if complete {
+            incident_cells.sort_unstable();
+            incident_cells.dedup();
+            Some(incident_cells)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let output_resolution = output_resolution::canonicalize_exact_zero_edges(
+        &vertices,
+        &mut eff_cells,
+        &mut eff_cell_indices,
+        if clean_resolution_path {
+            Some(exact_zero_edge_candidates)
+        } else {
+            None
+        },
+        localized_resolution_cells,
+    )?;
     Ok(PipelineState {
         points,
         effective_points,
@@ -137,6 +178,7 @@ fn run_core_pipeline(
         post_repair_unpaired,
         reconciliation_escalations,
         repair,
+        output_resolution,
         tb,
     })
 }
@@ -343,6 +385,7 @@ fn compute_voronoi_knn_clipping_report_core(
                 attempted: state.repair.attempted,
                 accepted: state.repair.accepted,
             },
+            output_resolution: state.output_resolution,
             pre_repair_edge_mismatches,
             post_repair_unpaired_edges,
             post_repair_escalation_pairs,
@@ -695,7 +738,13 @@ fn maybe_repair_effective(
     // place — and truncated back on rejection — so an accepted repair never
     // copies the base positions.
     let t_flat = std::time::Instant::now();
-    let (minted_vertices, new_cells, new_cell_indices) = work.into_flat();
+    let (minted_vertices, new_cells, mut new_cell_indices) = work.into_flat();
+    // The in-place and rebuild reconciliation oracles can present the same
+    // cyclic boundary with different starting slots. Local3d preserves that
+    // arbitrary rotation when it splices a neighborhood. Canonicalize only
+    // this cold repaired output so semantically identical repair backends
+    // remain byte-for-byte differential oracles; winding is unchanged.
+    canonicalize_cell_cycle_starts(&new_cells, &mut new_cell_indices);
     let base_vertex_count = vertices.len();
     vertices.extend(minted_vertices);
     let flat_elapsed = t_flat.elapsed();
@@ -736,6 +785,17 @@ fn maybe_repair_effective(
     *eff_cells = new_cells;
     *eff_cell_indices = new_cell_indices;
     outcome(true)
+}
+
+fn canonicalize_cell_cycle_starts(cells: &[VoronoiCell], cell_indices: &mut [u32]) {
+    for cell in cells {
+        let start = cell.vertex_start();
+        let end = start + cell.vertex_count();
+        let span = &mut cell_indices[start..end];
+        if let Some((offset, _)) = span.iter().enumerate().min_by_key(|&(_, vertex)| vertex) {
+            span.rotate_left(offset);
+        }
+    }
 }
 
 fn map_cell_build_error(

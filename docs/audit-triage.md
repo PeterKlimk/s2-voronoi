@@ -59,6 +59,7 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 | AUD-014 | P1 | Resolved | Local3d lost the hull-face sign and could mint the antipodal Voronoi vertex | Carry the oriented support normal through sorted-triple repair fans |
 | AUD-015 | P1 | Resolved for correctness; performance policy deferred | Finite-chart no-ops were not spherical redundancy certificates | Replay unrestricted spherical constraints only after genuine chart exhaustion |
 | AUD-016 | P1 | Resolved | Near-semicircle Voronoi edges conflicted with the strict representation contract | Use owner-plane conditioning; reserve SoS for exact-pi degeneracy |
+| AUD-017 | P1 | Resolved for exact-zero baseline; broader policy deferred | Distinct vertex IDs could have identical stored positions despite valid topology | Canonicalize non-cell-killing exact-zero components after final repair |
 
 ## Audit closure state
 
@@ -76,8 +77,8 @@ The following are recorded backburner ideas, not blockers for the selected produ
 - a certified exhaustive normalized-site ownership diagnostic;
 - an early total-query-work circuit breaker for pathological but successful constructions; and
 - selection of an external certified-robust comparison implementation; and
-- the output-resolution and optional edge-collapse policy recorded in
-  [`output-resolution-policy.md`](output-resolution-policy.md).
+- public generator `Error`/`Elide` outcomes and optional positive-threshold edge collapse recorded
+  in [`output-resolution-policy.md`](output-resolution-policy.md).
 
 The cross-cutting campaigns below are continuing regression policy, not unfinished audit findings.
 
@@ -1051,6 +1052,52 @@ old vertex-zero fan (+31%, reflecting the robust generator fan's two additional 
 ordinary six-edge cell). A full `lloyd_step` took 328ms versus 369ms for the old per-cell centroid
 loop (-11%). These are on-demand measure costs; diagram construction is unchanged.
 
+### AUD-017 — Stored zero-length edge survived a topologically valid construction
+
+- **Priority:** P1
+- **Class:** output representation / downstream mesh handoff
+- **Confidence:** Confirmed from the Hex3 incident and minimized public input
+- **Status:** Resolved for the exact stored-zero baseline; broader public policy deferred
+
+A downstream Hex3 mesh contained an edge with two distinct vertex IDs but bit-identical f32
+positions. Both incident Voronoi cells remained valid polygons and every abstract edge agreed, so
+the structural construction certificate correctly did not classify this as a topology defect.
+The output embedding nevertheless exposed a zero-angle mesh edge to a consumer.
+
+The selected default preserves one cell per effective generator. After reconciliation and any
+accepted Local3d repair, it contracts maximal connected components of exact stored-zero edges only
+when the simultaneous quotient keeps every touched cell at degree three or higher and passes the
+local incidence, orientation, face-uniqueness, and Euler-delta certificate. Components that would
+kill a cell or fail the certificate remain represented and are reported. The report/testing path
+subsequently verifies the returned whole diagram strictly.
+
+The minimized incident uses the four owner generators from the report and their antipodes. It
+reproduces the exact stored-zero edge, contracts it without changing eight generator cells, leaves
+no zero edge, and passes strict validation. Synthetic cube and tetrahedron fixtures respectively
+pin a safe contraction and a declined triangle-to-digon transaction. A radius sweep retains an
+intentionally tiny separated cell under weld radii from `1.4e-6` through `1e-3`; welding supplies
+no general lower bound on individual Voronoi edge length.
+
+Reconciliation retains diameter-bounded positive triangulation collapse when repairing an observed
+edge-agreement defect; structured exact degree-4+ grids require this at O(n), and Local3d is not a
+scalable wholesale replacement. The transaction now declines and escalates a component that would
+kill or fold a cell. This defect-local repair policy is distinct from opting a clean output into
+consumer-controlled positive epsilon collapse.
+
+Candidate discovery uses a branchless one-coordinate necessary condition over each final extracted
+cell; exact equality over assembled positions is checked only for flagged cells. Existing
+generator-triplet keys recover the complete incident neighborhood, keeping component work sparse.
+Any path that may have changed cycles during reconciliation or repair uses a cold scan of the
+terminal diagram. At 500k sites, interleaved single-thread perf counters versus the pre-change
+baseline measured paired instruction ratios of `1.00121` for Fibonacci (including one committed
+contraction) and `1.00074` for no-candidate uniform seed 12345.
+Because dedup can select another cell's realization of a shared key, the clean-path hint is not an
+exhaustive final-position certificate; `ValidationReport::zero_length_edges` is the authoritative
+postcondition check. A proof-complete terminal scan remains optional strict-policy work rather than
+default fast-path cost.
+The separate generator `Error`/`Elide` choices and an optional positive edge threshold remain
+backburner API work in [`output-resolution-policy.md`](output-resolution-policy.md).
+
 ## Recommended implementation sequence
 
 1. **AUD-001:** resolved — removed unsafe-precondition violations.
@@ -1074,6 +1121,8 @@ loop (-11%). These are on-demand measure costs; diagram construction is unchange
     genuine chart exhaustion; early performance handoff remains deferred.
 13. **AUD-016:** resolved — owner-plane validation, exact-pi SoS, conditioned measures/diagnostics,
     and retained-plane spherical fallback intersections are covered by focused regressions.
+14. **AUD-017:** resolved for exact-zero output — safe non-cell-killing components canonicalize
+    after final repair; generator elision and positive-threshold simplification remain optional.
 
 ## Ongoing cross-cutting regression policy
 

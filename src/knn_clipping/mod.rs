@@ -16,6 +16,7 @@ pub(crate) mod edge_reconcile;
 pub(crate) use crate::live_dedup;
 pub(crate) mod escalate;
 pub(crate) mod local_hull;
+pub(crate) mod output_resolution;
 pub(crate) mod preprocess;
 // Timing instrumentation moved to the crate root (the live-dedup engine
 // uses it too); re-exported so existing paths keep working.

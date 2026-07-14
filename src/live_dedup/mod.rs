@@ -100,6 +100,9 @@ pub(crate) struct AssemblyResult<P = glam::Vec3> {
     pub cells: Vec<VoronoiCell>,
     /// Flattened vertex indices for all cells.
     pub cell_indices: Vec<u32>,
+    /// Exact stored-zero candidates recovered from cells flagged while their
+    /// extracted f32 realizations were already hot.
+    pub exact_zero_edge_candidates: Vec<(u32, u32)>,
     /// Timing sub-phases for the dedup stage.
     pub dedup_sub: crate::timing::DedupSubPhases,
 }
