@@ -276,3 +276,127 @@ fn error_policy_names_generators_with_unrepresentable_cells() {
     .expect_err("welded input aliases of an affected cell must be reported");
     assert_eq!(check(welded_error, welded_points.len()), [1, 10, 18]);
 }
+
+#[test]
+fn explicit_elision_returns_a_dense_valid_cell_mesh() {
+    let points = disabled_weld_cell_killing_points();
+    let output = compute_with_report(
+        &points,
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled),
+    )
+    .expect("cell-killing fixture should compute under Preserve");
+    let source_sites = output.preferred_diagram().generators().to_vec();
+    let resolved = output
+        .into_elided_cell_mesh()
+        .expect("the fixture's exact-zero quotient should be safe");
+
+    assert_eq!(resolved.mesh.num_source_inputs(), points.len());
+    assert_eq!(resolved.mesh.num_cells(), points.len() - 2);
+    assert_eq!(resolved.mesh.cell_for_input(1), None);
+    assert_eq!(resolved.mesh.cell_for_input(10), None);
+    assert_eq!(resolved.elision_report.effective_cells_elided, 2);
+    assert_eq!(resolved.elision_report.source_inputs_elided, 2);
+    assert_eq!(resolved.elision_report.exact_zero_edges_detected, 3);
+    assert_eq!(resolved.elision_report.exact_zero_components_detected, 3);
+    assert_eq!(resolved.elision_report.degree_two_vertices_suppressed, 2);
+    assert!(resolved.elision_report.vertices_removed >= 3);
+    assert!(resolved.elision_report.max_suppression_cross_track_radians <= 1.0e-6);
+    assert!(resolved.mesh.build_adjacency().is_complete());
+    assert!(
+        resolved.elision_report.validation.is_strictly_valid(),
+        "{}",
+        resolved.elision_report.validation.headline()
+    );
+    assert_eq!(resolved.mesh.vertices().len(), resolved.mesh.num_vertices());
+    for cell in resolved.mesh.iter_cells() {
+        assert_eq!(
+            cell.cell_index,
+            resolved
+                .mesh
+                .cell_for_input(resolved.mesh.source_input_index(cell.cell_index))
+                .unwrap()
+        );
+        assert_eq!(
+            resolved.mesh.source_site(cell.cell_index),
+            source_sites[resolved.mesh.source_input_index(cell.cell_index)]
+        );
+    }
+
+    let mut welded_points = points;
+    welded_points.push(welded_points[1]);
+    let welded = compute_with_report(
+        &welded_points,
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::MergeWithin(1.0e-10)),
+    )
+    .expect("welded extension should compute")
+    .into_elided_cell_mesh()
+    .expect("welded effective quotient should remain safe");
+    assert_eq!(welded.mesh.num_cells(), 16);
+    assert_eq!(welded.elision_report.effective_cells_elided, 2);
+    assert_eq!(welded.elision_report.source_inputs_elided, 3);
+    assert_eq!(welded.mesh.cell_for_input(1), None);
+    assert_eq!(welded.mesh.cell_for_input(10), None);
+    assert_eq!(welded.mesh.cell_for_input(18), None);
+    assert!(welded.mesh.validate().is_strictly_valid());
+
+    let embedding = SphereEmbedding::new([2.0, -3.0, 5.0], 7.0).unwrap();
+    let world_points: Vec<[f64; 3]> = welded_points
+        .iter()
+        .map(|point| {
+            [
+                2.0 + 7.0 * point.x as f64,
+                -3.0 + 7.0 * point.y as f64,
+                5.0 + 7.0 * point.z as f64,
+            ]
+        })
+        .collect();
+    let embedded = compute_on_sphere_with_report(
+        &world_points,
+        embedding,
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::MergeWithin(1.0e-10)),
+    )
+    .expect("embedded welded extension should compute")
+    .into_elided_cell_mesh()
+    .expect("embedded wrapper must use the same safe unit quotient");
+    assert_eq!(embedded.mesh.mesh().num_cells(), 16);
+    assert_eq!(embedded.mesh.mesh().cell_for_input(18), None);
+    assert_eq!(embedded.mesh.embedding(), embedding);
+    assert!(embedded.mesh.mesh().validate().is_strictly_valid());
+    let unit_vertex = embedded.mesh.mesh().vertex(0);
+    assert_eq!(
+        embedded.mesh.vertex_world(0),
+        [
+            2.0 + 7.0 * unit_vertex.x as f64,
+            -3.0 + 7.0 * unit_vertex.y as f64,
+            5.0 + 7.0 * unit_vertex.z as f64,
+        ]
+    );
+}
+
+#[test]
+fn explicit_elision_is_an_identity_conversion_when_no_cell_is_lost() {
+    let points = [
+        point(1.0, 0.0, 0.0),
+        point(-1.0, 0.0, 0.0),
+        point(0.0, 1.0, 0.0),
+        point(0.0, -1.0, 0.0),
+        point(0.0, 0.0, 1.0),
+        point(0.0, 0.0, -1.0),
+    ];
+    let output = compute_with_report(&points, VoronoiConfig::default())
+        .expect("octahedral input should compute");
+    let source_vertices = output.preferred_diagram().num_vertices();
+    let resolved = output
+        .into_elided_cell_mesh()
+        .expect("clean diagrams should convert without elision");
+
+    assert_eq!(resolved.mesh.num_cells(), points.len());
+    assert_eq!(resolved.mesh.num_vertices(), source_vertices);
+    assert_eq!(resolved.elision_report.effective_cells_elided, 0);
+    assert_eq!(resolved.elision_report.source_inputs_elided, 0);
+    for input in 0..points.len() {
+        assert_eq!(resolved.mesh.cell_for_input(input), Some(input));
+        assert_eq!(resolved.mesh.source_input_index(input), input);
+    }
+    assert!(resolved.mesh.validate().is_strictly_valid());
+}

@@ -52,7 +52,10 @@ zero-geometry features when fixed output precision cannot embed that topology in
 caller that requires cell-killing zero geometry to fail can select `CellKillingPolicy::Error`;
 after every safe contraction, a remaining cell-killing transaction returns
 `VoronoiError::CellEliminationRequired` with affected original input indices. If preprocessing
-welded an affected effective cell, every original member of that weld class is named.
+welded an affected effective cell, every original member of that weld class is named. A caller
+that instead accepts generator removal can consume a successful `ComputeOutput` through
+`into_elided_cell_mesh`, receiving a separately typed valid spherical cell mesh with explicit
+`input -> Option<cell>` provenance. It does not inherit Voronoi locator, Delaunay, or Lloyd claims.
 
 Clean construction performs one degree-local necessary-coordinate scan after each cell's final f32
 extraction, then checks complete final assembled positions only for flagged cells. The hot scan
@@ -95,8 +98,8 @@ bound. Repair may also collapse a positive but bounded triangulation diagonal wh
 observed topology defect; exact degree-4+ grids require this established tolerance policy. The
 transaction rejects a result that would kill or fold a cell and escalates that component to
 Local3d. This defect-local repair is distinct from applying a consumer epsilon threshold to a clean
-diagram. The `Error` generator outcome is implemented; `Elide` and an optional global positive edge
-threshold remain deferred, as recorded in
+diagram. The `Error` generator outcome and explicit exact-zero cell-mesh `Elide` conversion are
+implemented; an optional global positive edge threshold remains deferred, as recorded in
 [`output-resolution-policy.md`](output-resolution-policy.md).
 
 ## Coincident generators (welding)
@@ -112,6 +115,16 @@ cells with unpaired edges. It is on by default (`PreprocessMode::Weld`). Uniform
 contains sub-radius pairs by birthday statistics around the low millions of points, so welded
 output is normal at scale, not exceptional. Callers who certify their own separation can disable
 it (`PreprocessMode::Disabled`); `MergeWithin(r)` sets an explicit radius.
+
+Welding and the cell-killing output policy are different controls but not unrelated geometric
+axes. If surviving effective generators have minimum geodesic separation `alpha`, each exact
+Voronoi cell contains the cap of radius `alpha / 2` around its generator. A weld radius that
+dominates the complete construction-and-storage error budget should therefore prevent whole-cell
+collapse. The current radius has strong empirical margin, but a composed bound covering input
+canonicalization, clipping, repair displacement, and f32 output storage has not yet been completed.
+Until it is, `Preserve`/`Error`/explicit `Elide` remains the safety-net contract even under default
+welding. This argument does not rule out non-cell-killing zero edges from cocircular generators;
+safe exact-zero edge canonicalization remains necessary.
 
 Precisely, welding forms a graph whose edges satisfy
 `computed_f32_distance_squared < computed_f32_radius_squared`. Exact computed equality is not an

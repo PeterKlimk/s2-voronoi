@@ -22,9 +22,8 @@ policy documents. An unchecked item elsewhere should either be moved here or tre
 - Full strict validation remains available for testing and campaigns without burdening the default
   fast path.
 
-There is no active P0/P1 correctness defect and no finite correctness item in `Ready` state.
-Construction-certificate differential maintenance remains ongoing; the next finite features are
-optional output-policy decisions.
+There is no active P0/P1 correctness defect. Construction-certificate differential maintenance
+remains ongoing; the next finite contract task is the weld-radius/whole-cell error-bound attempt.
 
 ## Triage vocabulary
 
@@ -48,8 +47,8 @@ optional output-policy decisions.
 | ID | Priority | Status | Next gate |
 |---|---:|---|---|
 | WORK-002 | P2 | Ongoing | Exercise after construction/repair changes |
-| RES-001 | P2 | Decision | Review/approve the proposed public cell-mesh contract |
-| RES-002 | P2 | Blocked | Decide RES-001 |
+| WELD-001 | P2 | Ready | Compose the separation and finite-precision error bounds |
+| RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
 | RESEARCH-002 | P3 | Backburner | Justify diagnostic cost and conditioning policy |
@@ -57,6 +56,23 @@ optional output-policy decisions.
 | RESEARCH-004 | P3 | Backburner | Commit to full f64 representation and search bounds |
 
 ## Ongoing work
+
+### WELD-001 — Sufficient-welding whole-cell geometry bound
+
+- **Priority:** P2
+- **Status:** Ready
+- **Goal:** determine whether the default weld separation provably prevents an effective generator
+  cell from collapsing at f32 output resolution.
+- **Starting theorem:** minimum geodesic site separation `alpha` gives every exact Voronoi cell a
+  contained spherical cap of radius `alpha / 2`.
+- **Required composition:** bound input canonicalization/normalization, f64 clipping, gnomonic and
+  spherical fallback conversion, reconciliation/repair displacement, and final f32 storage against
+  that cap floor. Separate whole-cell survival from cocircular non-cell-killing zero edges, which
+  welding cannot prevent.
+- **Outcome:** either promote sufficient welding to the primary no-zero-cell guarantee with
+  `Preserve`/`Error`/explicit `Elide` as opt-out/safety-net behavior, or identify the missing margin
+  and adjust the radius or documented contract. Empirical campaigns support but do not replace the
+  bound.
 
 ### WORK-002 — Construction-certificate differential maintenance
 
@@ -94,13 +110,13 @@ default `Preserve` behavior.
 ### RES-001 — Public cell-killing outcomes
 
 - **Priority:** P2
-- **Status:** Decision
+- **Status:** Completed 2026-07-15
 - **Goal:** expose `Error` and `Elide` behavior when satisfying output resolution would remove an
-  effective generator cell. `Error` is implemented; `Elide` remains decision-gated.
+  effective generator cell. `Error` and explicit cell-mesh `Elide` are implemented.
 - **Implemented:** `CellKillingPolicy::{Preserve, Error}` applies equally to plain, report-bearing,
   and embedded computations. `CellEliminationRequired` reports original input indices, expanding
   affected preprocessing weld classes, after all safe exact-zero contractions.
-- **Elision prototype:** the agreed direction is an explicit postprocess returning a distinct
+- **Elision transaction:** the implemented direction is an explicit postprocess returning a distinct
   spherical cell mesh with `input -> Option<cell>` and `cell -> canonical input` mappings. A
   test-only global transaction elides the two cells in the 18-site fixture, then necessarily
   suppresses two degree-two boundary vertices under opposite owner-rotation checks. The final
@@ -108,17 +124,17 @@ default `Preserve` behavior.
   validation; its maximum forced-merge cross-track deviation is `1.861e-8 rad`. The welded fixture
   maps original inputs `[1, 10, 18]` to `None`. Pinched links, disagreeing rotations, and whole-mesh
   collapse are rejected.
-- **Proposed public surface:** a consuming `ComputeOutput::into_elided_cell_mesh` conversion owns
+- **Public surface:** a consuming `ComputeOutput::into_elided_cell_mesh` conversion owns
   the cold global transaction and returns a distinct `SphericalCellMesh`, compact provenance
   mappings, the original `ComputeReport`, and an elision report. The first surface exposes geometry,
   ordered cell cycles, source attribution, combinatorial adjacency, compaction, and generic S2-mesh
   validation. Locator, Delaunay, Lloyd, and conditioned area/centroid APIs remain Voronoi-only until
   separate semantics are justified. Unsafe conversion is all-or-error through a distinct
   `CellElisionError`; there is no implicit Preserve fallback. Embedded parity is a thin unit-mesh
-  wrapper without locator/Lloyd claims.
-- **Decisions required:**
-  - approve or revise the proposed surface before production implementation; and
-  - decide the generic spherical-arc contract before adding cell-mesh area/centroid methods.
+  wrapper without locator/Lloyd claims. Rejected conversion retains the original successful output,
+  and mesh vertex storage is dense and immutable.
+- **Deferred extension:** decide the generic spherical-arc contract before adding cell-mesh
+  area/centroid methods.
 - **Invariant:** `Preserve` remains the default and never silently removes an effective generator.
 - **Regression foundation:** an end-to-end 18-site fixture disables preprocessing welding while
   retaining distinct f32 generators. It returns a strict-valid mesh with three preserved
@@ -206,9 +222,10 @@ duplicated here.
 ## Suggested order
 
 1. Continue WORK-002 whenever construction, reconciliation, or Local3d changes.
-2. If a consumer needs generator removal or mesh conditioning, decide RES-001 before RES-002.
-3. Revisit PERF-001 only with a motivating workload and crossover measurements.
-4. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
+2. Attempt WELD-001 and either prove the default whole-cell separation margin or expose the gap.
+3. Decide RES-002 only when positive-threshold mesh conditioning is wanted.
+4. Revisit PERF-001 only with a motivating workload and crossover measurements.
+5. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
 
 ## Closed and retired work
 

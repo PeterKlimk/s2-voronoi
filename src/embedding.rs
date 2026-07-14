@@ -546,7 +546,160 @@ impl EmbeddedComputeOutput {
     pub fn preferred_diagram(&self) -> &EmbeddedSphericalVoronoi {
         self.effective_diagram.as_ref().unwrap_or(&self.diagram)
     }
+
+    /// Consume this report-bearing computation and explicitly elide cells
+    /// whose exact stored-zero geometry is unrepresentable.
+    ///
+    /// This is the embedded counterpart of
+    /// [`crate::ComputeOutput::into_elided_cell_mesh`]. A rejected transaction
+    /// retains this original successful output inside
+    /// [`EmbeddedCellElisionError`].
+    pub fn into_elided_cell_mesh(self) -> Result<EmbeddedCellMeshOutput, EmbeddedCellElisionError> {
+        let embedding = self.diagram.embedding();
+        let EmbeddedComputeOutput {
+            diagram,
+            effective_diagram,
+            report,
+        } = self;
+        let diagram = diagram.into_diagram();
+        let effective_diagram = effective_diagram.map(EmbeddedSphericalVoronoi::into_diagram);
+        let unit_output = crate::ComputeOutput {
+            diagram,
+            effective_diagram,
+            report,
+        };
+        match unit_output.into_elided_cell_mesh() {
+            Ok(output) => Ok(EmbeddedCellMeshOutput {
+                mesh: EmbeddedSphericalCellMesh::new(output.mesh, embedding),
+                compute_report: output.compute_report,
+                elision_report: output.elision_report,
+            }),
+            Err(error) => {
+                let kind = error.kind();
+                let message = error.message().to_owned();
+                let source = error.into_source_output();
+                Err(EmbeddedCellElisionError {
+                    kind,
+                    message,
+                    source_output: Box::new(EmbeddedComputeOutput {
+                        diagram: EmbeddedSphericalVoronoi::new(source.diagram, embedding),
+                        effective_diagram: source
+                            .effective_diagram
+                            .map(|diagram| EmbeddedSphericalVoronoi::new(diagram, embedding)),
+                        report: source.report,
+                    }),
+                })
+            }
+        }
+    }
 }
+
+/// A simplified spherical cell mesh together with its world-space embedding.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct EmbeddedSphericalCellMesh {
+    mesh: crate::SphericalCellMesh,
+    embedding: SphereEmbedding,
+}
+
+impl EmbeddedSphericalCellMesh {
+    /// Wrap a unit-sphere cell mesh in a world-space embedding.
+    #[inline]
+    pub fn new(mesh: crate::SphericalCellMesh, embedding: SphereEmbedding) -> Self {
+        Self { mesh, embedding }
+    }
+
+    /// Canonical unit-sphere cell mesh.
+    #[inline]
+    pub fn mesh(&self) -> &crate::SphericalCellMesh {
+        &self.mesh
+    }
+
+    /// World-space sphere embedding.
+    #[inline]
+    pub fn embedding(&self) -> SphereEmbedding {
+        self.embedding
+    }
+
+    /// Consume the wrapper into its unit mesh and embedding.
+    #[inline]
+    pub fn into_parts(self) -> (crate::SphericalCellMesh, SphereEmbedding) {
+        (self.mesh, self.embedding)
+    }
+
+    /// Mesh vertex mapped onto the embedded sphere.
+    #[track_caller]
+    pub fn vertex_world(&self, index: usize) -> [f64; 3] {
+        self.embedding.stored_unit_to_world(self.mesh.vertex(index))
+    }
+
+    /// Cell source-site attribution mapped onto the embedded sphere.
+    ///
+    /// This remains provenance only; the simplified mesh has no nearest-site
+    /// locator or Delaunay contract.
+    #[track_caller]
+    pub fn source_site_world(&self, cell: usize) -> [f64; 3] {
+        self.embedding
+            .stored_unit_to_world(self.mesh.source_site(cell))
+    }
+}
+
+/// Report-bearing result of embedded exact-zero cell elision.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct EmbeddedCellMeshOutput {
+    /// Dense simplified cell mesh and its embedding.
+    pub mesh: EmbeddedSphericalCellMesh,
+    /// Original construction, repair, and output-resolution report.
+    pub compute_report: ComputeReport,
+    /// Explicit cell-elision transaction report.
+    pub elision_report: crate::CellElisionReport,
+}
+
+/// Failure of [`EmbeddedComputeOutput::into_elided_cell_mesh`].
+///
+/// The original successful embedded computation remains recoverable without
+/// cloning through [`Self::into_source_output`].
+#[derive(Debug)]
+pub struct EmbeddedCellElisionError {
+    kind: crate::CellElisionErrorKind,
+    message: String,
+    source_output: Box<EmbeddedComputeOutput>,
+}
+
+impl EmbeddedCellElisionError {
+    /// Stable top-level rejection category.
+    #[inline]
+    pub fn kind(&self) -> crate::CellElisionErrorKind {
+        self.kind
+    }
+
+    /// Diagnostic detail. Wording is not a stable API contract.
+    #[inline]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Borrow the original successful embedded computation.
+    #[inline]
+    pub fn source_output(&self) -> &EmbeddedComputeOutput {
+        &self.source_output
+    }
+
+    /// Recover the original successful embedded computation without cloning.
+    #[inline]
+    pub fn into_source_output(self) -> EmbeddedComputeOutput {
+        *self.source_output
+    }
+}
+
+impl std::fmt::Display for EmbeddedCellElisionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "embedded cell elision {:?}: {}", self.kind, self.message)
+    }
+}
+
+impl std::error::Error for EmbeddedCellElisionError {}
 
 /// Compute an embedded spherical Voronoi diagram with default settings.
 pub fn compute_on_sphere<P: WorldVec3Like>(

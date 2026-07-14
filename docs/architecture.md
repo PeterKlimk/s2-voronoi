@@ -117,7 +117,8 @@ of the mechanisms above.
 
 ## Module map
 
-- `lib.rs` — public API. `diagram.rs` — diagram storage and views.
+- `lib.rs` — public API. `diagram.rs` — Voronoi diagram storage and views. `cell_mesh.rs` — dense
+  explicitly simplified spherical cell meshes, provenance, and generic mesh validation.
 - `types.rs` — `UnitVec3`, `UnitVec3Like`. `tolerances.rs` — numerical slack, with per-constant
   justification. `policy.rs` — performance heuristics (grid density, packed sizing, termination
   cadence), kept separate from tolerances.
@@ -127,7 +128,8 @@ of the mechanisms above.
   edge-check propagation, assembly. Generic over the vertex position type.
 - `knn_clipping/` — the spherical backend: per-bin `driver.rs`, single-cell `cell_build/`,
   gnomonic clipping in `topo2d/`, `preprocess.rs` (weld), `edge_reconcile.rs`, and cold-path
-  topology repair in `escalate.rs` / `local_hull.rs`.
+  topology repair in `escalate.rs` / `local_hull.rs`; `output_resolution.rs` owns terminal
+  exact-zero canonicalization and the explicit cell-elision quotient.
 - `cube_grid/` — cube-map spatial index and packed-kNN stage: dot-product distance with
   conservative cap/plane upper bounds, ring walk with per-ring certificates.
 - `locate.rs` — point location, reusing the grid shell frontiers to answer nearest-generator

@@ -335,6 +335,16 @@ pub fn validate(diagram: &SphericalVoronoi) -> ValidationReport {
     validate_impl(diagram)
 }
 
+/// Validate whether a simplified spherical cell mesh is a connected,
+/// oriented, closed S2 subdivision with dense geometry and coherent source
+/// provenance.
+///
+/// This checks generic mesh structure only. It deliberately makes no Voronoi,
+/// nearest-site, or Delaunay claim about the mesh's source sites.
+pub fn validate_cell_mesh(mesh: &crate::SphericalCellMesh) -> crate::CellMeshValidationReport {
+    mesh.validate()
+}
+
 /// Opt-in post-build verification gate (env `VORONOI_MESH_VERIFY=1`).
 ///
 /// The full topological validator is O(E) and is skipped by the plain

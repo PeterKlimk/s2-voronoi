@@ -81,11 +81,17 @@ Smaller inputs and single-threaded pools stay serial.
   backed by the same canonical unit diagram.
 - `validation::validate` — strict subdivision check.
 - `weld_map()` — generators merged as coincident (see Correctness).
+- `ComputeOutput::into_elided_cell_mesh()` — explicit cold conversion that may remove
+  unrepresentable zero-geometry cells and returns a separately typed, validated spherical cell
+  mesh with original-input provenance.
 
 Configuration is through `compute_with(points, VoronoiConfig)`; `compute_with_report` additionally
 returns what was welded, perturbed, or repaired. Defaults handle coincident and degenerate inputs;
 `CellKillingPolicy::Error` is available when a consumer requires exact stored-zero resolution to
-fail rather than preserve an unrepresentable generator cell. See
+fail rather than preserve an unrepresentable generator cell. Consumers that instead accept removal
+can call `into_elided_cell_mesh` on the successful report-bearing Preserve result. The cell mesh
+does not expose locator, Delaunay, or Lloyd methods because simplification can break those Voronoi
+interpretations. See
 [docs/correctness.md](docs/correctness.md).
 
 ## How it works

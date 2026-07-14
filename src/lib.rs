@@ -34,6 +34,12 @@
 //! For strict subdivision and exact-invariant checks on computed output, use
 //! [`validation::validate`].
 //!
+//! A caller that explicitly accepts removal of effective cells whose geometry
+//! collapses at f32 output resolution can consume [`ComputeOutput`] through
+//! [`ComputeOutput::into_elided_cell_mesh`]. The resulting
+//! [`SphericalCellMesh`] is separately typed and does not claim Voronoi
+//! locator, Delaunay, or Lloyd semantics.
+//!
 //! # Example
 //!
 //! ```
@@ -54,6 +60,7 @@
 //! ```
 
 pub mod adjacency;
+mod cell_mesh;
 mod delaunay;
 mod diagram;
 mod embedding;
@@ -129,12 +136,16 @@ pub fn run_batch_clip_microbench() {
 }
 
 pub use adjacency::CellAdjacency;
+pub use cell_mesh::{
+    CellElisionError, CellElisionErrorKind, CellElisionReport, CellMeshCellView, CellMeshOutput,
+    CellMeshValidationReport, SphericalCellMesh,
+};
 pub use diagram::{CellView, SphericalVoronoi};
 pub use embedding::{
     compute_on_sphere, compute_on_sphere_with, compute_on_sphere_with_report,
-    EmbeddedComputeOutput, EmbeddedSphereLocator, EmbeddedSphericalVoronoi,
-    IndexedSphereProjectionError, SphereEmbedding, SphereEmbeddingError, SphereProjectionError,
-    WorldVec3Like,
+    EmbeddedCellElisionError, EmbeddedCellMeshOutput, EmbeddedComputeOutput, EmbeddedSphereLocator,
+    EmbeddedSphericalCellMesh, EmbeddedSphericalVoronoi, IndexedSphereProjectionError,
+    SphereEmbedding, SphereEmbeddingError, SphereProjectionError, WorldVec3Like,
 };
 pub use error::VoronoiError;
 /// EXPERIMENTAL DIAGNOSTIC re-export — see the type's documentation; not
@@ -453,9 +464,10 @@ pub struct VoronoiConfig {
     /// Handling for exact stored-zero contractions that would leave an
     /// effective generator with fewer than three boundary vertices.
     ///
-    /// The default is [`CellKillingPolicy::Preserve`]. This policy is
-    /// independent of preprocessing welding: welding changes the solved input
-    /// set, while this policy handles geometry lost at output resolution.
+    /// The default is [`CellKillingPolicy::Preserve`]. This is a separate
+    /// output-stage control from preprocessing welding, but sufficient welding
+    /// is intended to provide the separation floor that prevents whole-cell
+    /// collapse. The policy remains the opt-out and residual safety net.
     pub cell_killing_policy: CellKillingPolicy,
 }
 

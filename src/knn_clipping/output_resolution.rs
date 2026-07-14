@@ -568,15 +568,9 @@ pub(super) fn canonicalize_exact_zero_edges(
     })
 }
 
-/// Test-only global prototype for the future explicit cell-elision API.
-///
-/// This intentionally rebuilds and validates the complete effective mesh. It
-/// proves the quotient semantics without placing any code or cost on the
-/// production path; a public implementation can later reuse or specialize the
-/// transaction once the contract is settled by fixtures.
-#[cfg(test)]
+/// Cold global transaction used by explicit cell-mesh elision.
 #[derive(Debug)]
-pub(super) struct PrototypeElision {
+pub(crate) struct EffectiveCellElision {
     pub diagram: crate::SphericalVoronoi,
     pub effective_to_cell: Vec<Option<u32>>,
     pub cell_to_effective: Vec<u32>,
@@ -587,7 +581,6 @@ pub(super) struct PrototypeElision {
     pub max_suppression_cross_track_radians: f64,
 }
 
-#[cfg(test)]
 fn rewrite_cycle_for_elision(
     span: &[u32],
     replacements: &FxHashMap<u32, u32>,
@@ -606,7 +599,7 @@ fn rewrite_cycle_for_elision(
         for i in 0..rewritten.len() {
             if rewritten[(i + 1)..].contains(&rewritten[i]) {
                 return Err(state_error(
-                    "prototype elision produced a non-simple surviving cell",
+                    "cell elision produced a non-simple surviving cell",
                 ));
             }
         }
@@ -617,8 +610,7 @@ fn rewrite_cycle_for_elision(
 /// In an oriented closed 2-manifold, the link of every live vertex is one
 /// directed cycle. Edge pairing alone does not reject two closed fans pinched
 /// together at one vertex, so elision checks this explicitly.
-#[cfg(test)]
-fn prototype_links_are_single_cycles(diagram: &crate::SphericalVoronoi) -> bool {
+fn elision_links_are_single_cycles(diagram: &crate::SphericalVoronoi) -> bool {
     let mut link_edges = vec![Vec::<(u32, u32)>::new(); diagram.num_vertices()];
     for cell in diagram.iter_cells() {
         let cycle = cell.vertex_indices;
@@ -673,8 +665,7 @@ fn prototype_links_are_single_cycles(diagram: &crate::SphericalVoronoi) -> bool 
 /// same two surviving faces. Those faces then share two consecutive edges;
 /// suppressing the degree-two subdivision point merges them into one edge and
 /// preserves `V - E + F`. The two owner rotations must agree exactly.
-#[cfg(test)]
-fn prototype_suppress_degree_two_vertices(
+fn suppress_elision_degree_two_vertices(
     cycles: &mut [Option<Vec<u32>>],
     vertex_count: usize,
 ) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
@@ -686,7 +677,7 @@ fn prototype_suppress_degree_two_vertices(
             for &vertex in cycle {
                 let Some(owners) = incident.get_mut(vertex as usize) else {
                     return Err(state_error(
-                        "prototype elision cycle references an out-of-range vertex",
+                        "cell elision cycle references an out-of-range vertex",
                     ));
                 };
                 owners.push(cell);
@@ -698,7 +689,7 @@ fn prototype_suppress_degree_two_vertices(
             .any(|owners| !owners.is_empty() && owners.len() == 1)
         {
             return Err(state_error(
-                "prototype elision produced a degree-one boundary vertex",
+                "cell elision produced a degree-one boundary vertex",
             ));
         }
         let Some((vertex, owners)) = incident
@@ -715,7 +706,7 @@ fn prototype_suppress_degree_two_vertices(
             let position = cycle
                 .iter()
                 .position(|&candidate| candidate as usize == vertex)
-                .ok_or_else(|| state_error("prototype elision lost vertex incidence"))?;
+                .ok_or_else(|| state_error("cell elision lost vertex incidence"))?;
             rotations[slot] = (
                 cycle[(position + cycle.len() - 1) % cycle.len()],
                 cycle[(position + 1) % cycle.len()],
@@ -724,7 +715,7 @@ fn prototype_suppress_degree_two_vertices(
         }
         if rotations[0].0 != rotations[1].1 || rotations[0].1 != rotations[1].0 {
             return Err(state_error(
-                "prototype degree-two suppression owner rotations disagree",
+                "cell-elision degree-two suppression owner rotations disagree",
             ));
         }
 
@@ -740,17 +731,14 @@ fn prototype_suppress_degree_two_vertices(
     Ok(suppressed)
 }
 
-#[cfg(test)]
-pub(super) fn prototype_elide_exact_zero_cells(
+pub(crate) fn elide_exact_zero_cells_for_mesh(
     generators: &[Vec3],
     vertices: &[Vec3],
     cells: &[VoronoiCell],
     cell_indices: &[u32],
-) -> Result<PrototypeElision, crate::VoronoiError> {
+) -> Result<EffectiveCellElision, crate::VoronoiError> {
     if generators.len() != cells.len() {
-        return Err(state_error(
-            "prototype elision generator/cell count mismatch",
-        ));
+        return Err(state_error("cell-elision generator/cell count mismatch"));
     }
     let zero_edges = collect_zero_edges(vertices, cells, cell_indices)?;
     let (components, _) = build_components(&zero_edges);
@@ -772,7 +760,7 @@ pub(super) fn prototype_elide_exact_zero_cells(
         rewritten_cycles.push(Some(rewritten));
     }
     let suppressed_vertices =
-        prototype_suppress_degree_two_vertices(&mut rewritten_cycles, vertices.len())?;
+        suppress_elision_degree_two_vertices(&mut rewritten_cycles, vertices.len())?;
     let mut max_suppression_cross_track_radians = 0.0f64;
     for &(vertex, start, end) in &suppressed_vertices {
         let point = vertices[vertex as usize].as_dvec3();
@@ -782,7 +770,7 @@ pub(super) fn prototype_elide_exact_zero_cells(
         let normal_len = normal.length();
         if !normal_len.is_finite() || normal_len == 0.0 {
             return Err(state_error(
-                "prototype degree-two suppression has an undefined replacement arc",
+                "cell-elision degree-two suppression has an undefined replacement arc",
             ));
         }
         let cross_track = (point.dot(normal / normal_len).abs().min(1.0)).asin();
@@ -810,7 +798,7 @@ pub(super) fn prototype_elide_exact_zero_cells(
     let effective_cells_elided = cells.len() - final_cells.len();
     if !zero_edges.is_empty() && effective_cells_elided == 0 {
         return Err(state_error(
-            "prototype exact-zero quotient did not eliminate a cell",
+            "exact-zero cell quotient did not eliminate a cell",
         ));
     }
     let mut diagram = crate::SphericalVoronoi::from_raw_parts(
@@ -822,26 +810,26 @@ pub(super) fn prototype_elide_exact_zero_cells(
     );
     diagram.compact_vertices();
 
-    if !prototype_links_are_single_cycles(&diagram) {
+    if !elision_links_are_single_cycles(&diagram) {
         return Err(state_error(
-            "prototype elision produced a disconnected vertex link",
+            "cell elision produced a disconnected vertex link",
         ));
     }
     let validation = crate::validation::validate(&diagram);
     if !validation.is_strictly_valid() {
         return Err(state_error(format!(
-            "prototype elision failed strict validation: {}",
+            "cell elision failed strict validation: {}",
             validation.headline()
         )));
     }
     if validation.zero_length_edges != 0 {
         return Err(state_error(format!(
-            "prototype elision retained {} exact-zero edges",
+            "cell elision retained {} exact-zero edges",
             validation.zero_length_edges
         )));
     }
 
-    Ok(PrototypeElision {
+    Ok(EffectiveCellElision {
         diagram,
         effective_to_cell,
         cell_to_effective,
@@ -1206,7 +1194,7 @@ mod tests {
     }
 
     #[test]
-    fn elision_prototype_rejects_whole_mesh_collapse() {
+    fn elision_rejects_whole_mesh_collapse() {
         let mut vertices = vec![
             unit(1.0, 1.0, 1.0),
             unit(1.0, -1.0, -1.0),
@@ -1217,9 +1205,9 @@ mod tests {
         let generators = vec![Vec3::Z; 4];
         let (cells, indices) = cells_from_cycles(&[&[0, 2, 1], &[0, 1, 3], &[0, 3, 2], &[1, 2, 3]]);
 
-        let error = prototype_elide_exact_zero_cells(&generators, &vertices, &cells, &indices)
+        let error = elide_exact_zero_cells_for_mesh(&generators, &vertices, &cells, &indices)
             .expect_err("a quotient that consumes the entire sphere must fail");
-        assert!(error.to_string().contains("prototype elision"));
+        assert!(error.to_string().contains("cell elision"));
     }
 
     #[test]
@@ -1250,13 +1238,13 @@ mod tests {
             indices,
             None,
         );
-        assert!(!prototype_links_are_single_cycles(&diagram));
+        assert!(!elision_links_are_single_cycles(&diagram));
     }
 
     #[test]
     fn degree_two_suppression_requires_opposite_owner_rotations() {
         let mut cycles = [Some(vec![0, 1, 2]), Some(vec![0, 1, 2])];
-        let error = prototype_suppress_degree_two_vertices(&mut cycles, 3)
+        let error = suppress_elision_degree_two_vertices(&mut cycles, 3)
             .expect_err("same-direction owner rotations must not be stitched");
         assert!(error.to_string().contains("owner rotations disagree"));
     }

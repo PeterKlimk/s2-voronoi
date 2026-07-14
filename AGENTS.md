@@ -76,6 +76,7 @@ src/
 ├── lib.rs                         # Public API and feature-gated internal exports
 ├── types.rs                       # UnitVec3 / UnitVec3Like
 ├── diagram.rs                     # SphericalVoronoi storage
+├── cell_mesh.rs                   # Explicitly simplified S2 cell meshes + provenance
 ├── validation.rs                  # Topology/consistency checks
 ├── locate.rs                      # Point-location API
 ├── measures.rs                    # Area, centroid, and Lloyd geometry

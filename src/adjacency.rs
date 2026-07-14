@@ -119,7 +119,7 @@ impl CellAdjacency {
 /// Shared adjacency construction over raw cell layout: ranges into the flat
 /// index buffer plus the weld-canonical mapping. Purely combinatorial, so
 /// the spherical and planar diagrams use the same core.
-fn build_adjacency_from_parts(
+pub(crate) fn build_adjacency_from_parts(
     num_cells: usize,
     cell_range: impl Fn(usize) -> (u32, u16),
     cell_indices: &[u32],

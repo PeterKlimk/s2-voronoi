@@ -1,7 +1,7 @@
 # Output Resolution and Edge Collapse Policy
 
-**Status:** exact stored-zero baseline and `Preserve`/`Error` implemented; `Elide` and positive
-threshold deferred
+**Status:** exact stored-zero `Preserve`/`Error` and explicit cell-mesh `Elide` implemented;
+positive threshold deferred
 
 **Date:** 2026-07-14
 
@@ -48,8 +48,11 @@ equal. Collapsing such an edge is an output-resolution decision.
 
 ## Relation to preprocessing welding
 
-Input welding and output edge collapse remain separate policies, even though the default weld
-radius gives useful evidence about whole-cell collapse.
+Input welding and output edge collapse remain separate controls at different pipeline stages, but
+they are not geometrically independent. A sufficient separation floor should prevent an entire
+surviving generator cell from collapsing at output resolution; the cell-killing outcome is
+principally the residual contract for callers that disable or reduce welding, plus a safety net
+until the composed finite-precision bound is proved.
 
 If the sites of an exact spherical Voronoi problem have minimum geodesic separation `alpha`, the
 cell of each site contains the spherical cap of radius `alpha / 2` centered on that site. For any
@@ -73,14 +76,24 @@ vertices within its own tolerance. No composed proof currently shows that all of
 below the ideal inradius floor. The existing constant relationship between the reconciliation and
 weld radii is a sanity check, not that proof.
 
-Accordingly:
+Accordingly, the intended user contract is:
 
-- `Preserve`/`Error`/`Elide` still applies to every cell-killing transaction, including with default
-  welding enabled;
+- accept sufficient welding and expect every surviving effective generator to retain representable
+  cell geometry; or disable/reduce welding and choose a defined error, topologically valid
+  zero-geometry preservation, or explicit cell elision;
+- `Preserve`/`Error`/`Elide` still handles every observed cell-killing transaction, including an
+  unexpected one with default welding enabled;
 - a cell-killing exact-zero contraction under default welding is a suspicious diagnostic event and
-  a useful target for an eventual separation/error proof; and
+  a possible contract-bound violation, not an ordinary independent policy outcome;
+- a composed proof must cover f32 input canonicalization, normalization, f64 construction,
+  reconciliation/repair displacement, and f32 output storage before the default weld radius can be
+  promoted from strong empirical evidence to that guarantee; and
 - an optional positive edge threshold deliberately permits removal of genuine features whose
   generators are well separated, so it cannot be inferred from the weld radius.
+
+Sufficient welding does not rule out zero-length *edges*. Well-separated generators can approach
+or attain cocircularity while a non-cell-killing dual edge shrinks to zero. The baseline safe
+contraction remains necessary even after a whole-cell separation proof.
 
 ## Dimension 1: generator outcome
 
@@ -138,11 +151,11 @@ nearest-generator location or geometric-Delaunay claims that the simplified boun
 support. Unsafe quotients return a defined elision error rather than silently falling back to
 `Preserve`.
 
-### Proposed public cell-mesh surface
+### Public cell-mesh surface
 
-The first public version should remain exact-zero-specific. A positive collapse threshold is a
+The first public version is exact-zero-specific. A positive collapse threshold is a
 separate approximation feature and should not make the baseline API generic prematurely. The
-recommended entry point is a consuming conversion on the report-bearing result:
+entry point is a consuming conversion on the report-bearing result:
 
 ```rust,ignore
 impl ComputeOutput {
@@ -156,12 +169,13 @@ preprocessed diagram, original-input weld aliases, and the authoritative validat
 operation first rejects a source with post-repair residuals or a non-strict preferred validation.
 It then applies one global, deterministic transaction to the effective diagram and composes the
 result back to original input indices. A source with no cell-killing exact-zero component succeeds
-as an identity conversion to the distinct mesh type. The method is consuming so an implementation
-can discard the duplicated returned/effective diagram and reuse large buffers; callers that need
-the preserved diagram after a failed conversion can clone it explicitly. This remains a requested
-cold `O(V + E + F)` operation and never runs from `compute` or `compute_with_report` implicitly.
+as an identity conversion to the distinct mesh type. The method is consuming so the implementation
+can discard duplicated returned/effective diagrams and reuse large buffers. A failure owns and
+returns the original successful `ComputeOutput` through `CellElisionError`, avoiding both data loss
+and a defensive whole-diagram clone. This remains a requested cold `O(V + E + F)` operation and
+never runs from `compute` or `compute_with_report` implicitly.
 
-The proposed minimal types are conceptually:
+The minimal types are conceptually:
 
 ```rust,ignore
 pub struct SphericalCellMesh {
@@ -202,11 +216,13 @@ The initial mesh operations should be limited to:
 - vertex and ordered-cell-cycle access (`num_vertices`, `vertices`, `vertex`, `num_cells`, `cell`,
   checked variants, and iteration);
 - provenance mapping above;
-- vertex compaction;
 - combinatorial cell adjacency aligned with boundary edges; and
 - a cell-mesh validator whose stable verdict means a connected, oriented, closed S2 subdivision
   with valid unit vertices, simple faces, single-cycle vertex links, paired edges, and Euler
   characteristic two.
+
+Vertex storage is dense by construction and checked deserialization revalidates the mesh, so there
+is no public compaction mutator on this immutable first surface.
 
 The mesh cell view should use `cell_index`, not reuse `CellView::generator_index`. Existing
 `CellAdjacency` storage and construction can be shared, but its mesh documentation must say only
@@ -220,19 +236,20 @@ which need not remain valid after simplification. The cell-mesh representation e
 shorter-arc-only contract with exact antipodes rejected, or explicit supporting-arc metadata before
 those measures can be promised generally.
 
-`CellElisionReport` should record the detected exact-zero edge/component counts, effective and
+`CellElisionReport` records the detected exact-zero edge/component counts, effective and
 original input cells elided, degree-two vertices suppressed, unused vertices removed, and the
 maximum cross-track residual of a suppressed vertex against its replacement great circle. That
 last value is transaction telemetry, not a global Voronoi or Hausdorff error bound. The mapping is
 the authoritative list of which inputs were elided.
 
-`CellElisionError` should be a separate non-exhaustive postprocessing error, not a
+`CellElisionError` is a separate non-exhaustive postprocessing error, not a
 `VoronoiError`. Its stable top-level categories need only distinguish an invalid source, an unsafe
 quotient, and a representation limit; detailed link/rotation/validation diagnostics can remain an
 unstable message. The conversion is all-or-error: it never returns a partially simplified mesh and
-never substitutes `Preserve` on rejection.
+never substitutes `Preserve` on rejection. The error retains the original successful output for
+zero-copy recovery.
 
-Embedded parity should be a thin wrapper over the same unit-sphere transaction:
+Embedded parity is a thin wrapper over the same unit-sphere transaction:
 `EmbeddedComputeOutput::into_elided_cell_mesh` returns an `EmbeddedSphericalCellMesh` plus the same
 mappings and reports. The wrapper maps vertices and source sites into world space, but deliberately
 does not provide an embedded locator or Lloyd operation.
@@ -415,9 +432,10 @@ The exact stored-zero baseline is complete:
 - clean discovery uses the degree-local hint and representative-drift certificate, with exhaustive
   terminal scanning whenever that certificate is unavailable.
 
-The remaining follow-ups and their dependencies are tracked only as ongoing WORK-002 and optional
-RES-001/RES-002 in [`work-log.md`](work-log.md). In particular, public generator elision and
-positive-threshold simplification are optional extensions, not incomplete pieces of the baseline.
+The remaining follow-ups and their dependencies are tracked in [`work-log.md`](work-log.md).
+Positive-threshold simplification remains an optional extension, not an incomplete piece of the
+baseline. The next contract job is attempting the composed proof that default welding prevents
+whole-cell output collapse.
 
 The baseline retains synthetic non-cell-killing and triangle-to-digon tests, a minimized version of
 the downstream Hex3 incident, a weld-radius cell-survival sweep, and focused reconciliation tests
@@ -426,7 +444,7 @@ cover maximal trees, cycles, safe and cell-killing shared-cell interactions, 96 
 permutations, and 64 randomized forest assemblies. Localized and exhaustive discovery must produce
 identical reports and quotients, and every terminal fixture must validate strictly.
 
-A test-only global elision prototype now exercises the 18-site cell-killing fixture after the
+A cold explicit elision transaction now exercises the 18-site cell-killing fixture after the
 ordinary repaired/validated pipeline. Directly deleting its two collapsed effective cells leaves
 two degree-two boundary vertices, demonstrating that face deletion alone is not a complete
 transaction. Deterministic suppression of each such vertex is accepted only when its two surviving
@@ -435,12 +453,12 @@ vertex links and complete adjacency, and passes strict validation. The maximum m
 cross-track deviation of those forced boundary merges is `1.861e-8 rad`. The welded extension
 composes to original inputs `[1, 10, 18] -> None`. Negative fixtures reject disagreeing owner
 rotations, a pinched two-sphere vertex link, and a quotient that consumes the whole mesh. This
-prototype is compiled only for tests and adds no production or fast-path code.
+transaction is called only by `into_elided_cell_mesh` and adds no work to construction or the
+ordinary report path.
 
 ## Deferred decisions
 
-Production generator elision, positive-threshold units, and pre-storage telemetry are grouped under
-RES-001 and RES-002 in [`work-log.md`](work-log.md). `Preserve`/`Error` naming, error-side mapping,
-the cell-killing quotient prototype, and a proposed simplified-output surface are now recorded.
-The public surface still requires review before implementation. This document remains the design
-rationale rather than a second task list.
+Positive-threshold units and pre-storage telemetry remain under RES-002 in
+[`work-log.md`](work-log.md). `Preserve`/`Error` naming, error-side mapping, the cell-killing
+quotient, and the distinct simplified-output surface are implemented. This document remains the
+design rationale rather than a second task list.

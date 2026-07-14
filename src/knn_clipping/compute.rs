@@ -1797,7 +1797,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_zero_elision_prototype_rebuilds_a_strict_compact_mesh() {
+    fn exact_zero_elision_rebuilds_a_strict_compact_mesh() {
         let points = disabled_weld_cell_killing_points();
         let state = run_core_pipeline(
             points.clone(),
@@ -1809,7 +1809,7 @@ mod tests {
         assert_eq!(state.cell_killing_generators, [1, 10]);
         assert_eq!(state.output_resolution.cell_killing_components_preserved, 3);
 
-        let elision = super::output_resolution::prototype_elide_exact_zero_cells(
+        let elision = super::output_resolution::elide_exact_zero_cells_for_mesh(
             state.effective_points_ref(),
             &state.vertices,
             &state.eff_cells,
@@ -1856,7 +1856,7 @@ mod tests {
             .merge_result
             .as_ref()
             .expect("duplicate generator should be welded");
-        let welded_elision = super::output_resolution::prototype_elide_exact_zero_cells(
+        let welded_elision = super::output_resolution::elide_exact_zero_cells_for_mesh(
             welded_state.effective_points_ref(),
             &welded_state.vertices,
             &welded_state.eff_cells,
