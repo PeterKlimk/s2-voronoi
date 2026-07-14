@@ -72,6 +72,19 @@ optional output-policy decisions.
   - keep welding and deterministic perturbation in separate expected-policy buckets.
 - **Acceptance:** every supported successful result passes the relevant strict and intrinsic
   geometry checks; Local3d escalation remains a valid success rather than a failure count.
+- **Latest maintenance (2026-07-15):**
+  - the extended uniform small-`n` campaign passed 62,464 intrinsic assessments; worst ownership,
+    vertex cross-track, and edge cross-track errors were respectively `1.507e-7`, `7.918e-8`, and
+    `1.833e-16` radians;
+  - clustered 1M seed 1 remained strict-valid across 1/6 threads and 6/96 bins, with the same three
+    pre-repair defects, four-cell reconciliation footprint, 18 hinted versus 17 terminal zero
+    edges, zero ownership mismatches in 733 samples, and `5.875e-8 rad` maximum sampled edge
+    cross-track error;
+  - the repair-net suite passed all five active tests, including exact output agreement between
+    the production in-place reconciler and full-rebuild oracle; and
+  - a vertex-id-independent semantic-topology fingerprint agreed across 1/6 threads, 6/96 bins,
+    default SIMD, scalar SIMD, and hardware FMA. Default/scalar representations were byte-identical
+    at matching bin counts; bin-count and FMA representation changes left topology unchanged.
 
 ## Decision-gated output policy
 
