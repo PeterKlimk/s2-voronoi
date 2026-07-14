@@ -128,10 +128,11 @@ pub(crate) const RECONCILE_DEGENERATE_LEN_EPS: f32 = 1e-6;
 /// "safe" classification stays conservative.
 pub(crate) const GRID_PLANE_PAD: f32 = 1e-6;
 
-/// Inflation applied to per-cell cap sin-radii (scaled by the center dot)
-/// when precomputing conservative cell bounds, covering rounding in the
-/// bound construction.
-pub(crate) const GRID_SIN_EPS: f32 = 1e-5;
+/// Angular inflation applied to per-cell cap sin-radii when precomputing
+/// conservative cell bounds. This covers the forward-map/grid-wall
+/// association error after the geometric corner radius is evaluated directly
+/// in promoted f64 arithmetic.
+pub(crate) const GRID_CAP_ANGULAR_PAD: f32 = 1e-5;
 
 /// Absolute inflation on dot bounds exported by the kNN stream. Some bounds
 /// are spherical-cosine/chord bounds while the stream ranks the once-rounded

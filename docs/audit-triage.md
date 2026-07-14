@@ -53,7 +53,7 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 | AUD-008 | P1 | Resolved | Plain `compute` documentation exceeded its fast-path certificate | Edge-agreement construction certificate + fused Euler; strict validation optional/testing |
 | AUD-009 | P1 | Resolved | Reconciliation merges were not bounded to an epsilon-diameter feature | Transactionally diameter-gate components; escalate rejected chains |
 | AUD-010 | P2 | Resolved | Fast, fallback, repair, and exact-predicate paths do not share one exact site model or SoS policy | Structural production contract chosen; unified exact combinatorics deferred as an optional add-on |
-| AUD-011 | P2 | Active; downstream guard derived conditionally, shell defect fixed, packed/grid lemmas open | The three-epsilon downstream reserve closes under stated IEEE/libm assumptions; packed frontier containment remains under-justified | Derive the remaining grid containment/association budget and decide the libm platform premise |
+| AUD-011 | P2 | Active only for platform-policy decision; grid and downstream bounds derived conditionally | The frontier certificate closes under stated IEEE/libm assumptions; two ill-conditioned cap constructions were repaired | Decide whether to adopt the explicit IEEE/libm platform premise |
 | AUD-012 | P3 | Resolved | Welding is intentionally a strict computed-f32 threshold graph with transitive classes | Retain boundary and detector-oracle tests |
 | AUD-013 | P2 | Resolved | Qhull was not a robust correctness oracle | Removed feature, dependency, public API, comparisons, and oracle-like tooling |
 | AUD-014 | P1 | Resolved | Local3d lost the hull-face sign and could mint the antipodal Voronoi vertex | Carry the oriented support normal through sorted-triple repair fans |
@@ -62,15 +62,15 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 
 ## Audit closure state
 
-There are no open P0 or P1 correctness findings in this audit. One P2 proof item remains active:
+There are no open P0 or P1 correctness findings in this audit. One P2 policy item remains active:
 
-- **AUD-011 grid frontier:** derive complete cell containment and forward-map/wall association for
-  the packed ring-2 certificate, including `GRID_PLANE_PAD`, `GRID_SIN_EPS`, the dense-band chord
-  certificate, and the final four-epsilon export pad. The shell's demonstrated antipodal endpoint
-  failure is fixed; no packed counterexample is known.
 - **AUD-011 platform premise:** decide whether conventional IEEE round-to-nearest behavior plus a
   one-ulp-or-better `f64::sin_cos`/`sqrt` implementation is an accepted platform assumption. Rust
   does not itself specify a useful worst-case transcendental error bound.
+
+The AUD-011 grid-frontier derivation now covers cell containment, forward-map/wall association,
+the packed ring-2 and interior-plane certificates, the dense-band chord certificate, and the final
+four-epsilon export pad. Its assumptions and reserves are recorded in the finding below.
 
 The following are recorded backburner ideas, not blockers for the selected production contract:
 
@@ -510,12 +510,12 @@ reconsidered.
 AUD-011 may use `U_i = normalize(f64(C_i))` as a **diagnostic reference for measuring geometric
 error** without implying that the returned combinatorics are the exact diagram of that site set.
 
-### AUD-011 — Numerical and geometric error envelopes are empirical
+### AUD-011 — Numerical and geometric error envelopes are conditionally derived
 
 - **Priority:** P2
 - **Class:** numerical proof and fidelity-measurement gap
-- **Confidence:** Fidelity baseline established; downstream guard conditionally derived; frontier
-  construction still has unproved containment/association lemmas
+- **Confidence:** Fidelity baseline established; frontier and downstream guards conditionally
+  derived; explicit platform premise awaiting policy acceptance
 
 Assuming its input `B` is a true upper bound on every unseen raw f32 dot, the radius-of-security
 derivation is mathematically sound:
@@ -526,12 +526,45 @@ derivation is mathematically sound:
 - the sign-dependent norm endpoint for positive/negative double-angle cosine is correct;
 - the chart Gram/Gershgorin correction has the correct conservative direction.
 
-The downstream derivation now covers canonical norm endpoints, rounded polygon `max_r2`, chart
-Gram/stretches, raw f32 dot evaluation, and the final signed-distance relationship. It is
-conditional on conventional IEEE round-to-nearest behavior and a one-ulp-or-better implementation
-of `f64::sin_cos`/`sqrt`; Rust does not specify a useful worst-case transcendental error bound. The
-remaining grid-side proof obligations are complete cell-cap containment, forward-map/wall
-association, the packed interior-plane envelope, and the dense-band chord certificate.
+The operation-count derivation is conditional on IEEE binary32 round-to-nearest arithmetic without
+FTZ for the relevant values, correctly rounded basic operations, and a one-ulp-or-better
+implementation of `f64::sin_cos`/`sqrt`. Rust does not specify a useful worst-case transcendental
+error bound. Under that premise, the error budget is:
+
+- At the maximum admitted grid resolution, 26,754, the minimum ideal UV cell width is
+  `4 / (3 * res) = 4.98467e-5`. A conservative operation-count budget for forward assignment plus
+  the rounded inverse wall is `20u = 1.1921e-6` in UV (`u = 2^-24`); ratio, normalization, and seam
+  terms remain below `2e-6` angularly. `GRID_CAP_ANGULAR_PAD = 1e-5` therefore contains every
+  direction assigned to the rounded cell.
+- On `+X`, with center `(1, uc, vc)` and point `(1, u, v)`, the fixed-`v` derivative of normalized
+  center dot has sign `uc(1 + v^2) - u(1 + vc*v)`. This is affine decreasing in `u`, so an interior
+  stationary point is a maximum; applying the same argument in `v` puts the minimum dot, hence the
+  maximum cell radius, at a corner. Other faces are exact sign/permutation equivalents. Cell caps
+  are consequently built from all four promoted-f32 corners in f64, angularly padded, then store
+  cosine downward and sine upward. This avoids cosine-to-sine cancellation.
+- A normalized security-plane evaluation needs less than about `8u = 4.77e-7`, including normal
+  construction and query normalization. `GRID_PLANE_PAD = 1e-6 = 16.78u` retains more than a
+  twofold reserve under ordinary, scalar-SIMD, and FMA association.
+- The ring-2 set is the neighbor-graph boundary of the 3x3 union. Every continuous path or geodesic
+  from the padded query-containing union to a point assigned outside it crosses the closure of a
+  graph-distance-two cell. Along a shortest geodesic the crossing is no farther from the query than
+  the later point, so the maximum over conservative ring-2 caps bounds every later assigned point.
+  The cube-face steps stitch by exact sign/permutation maps; neighbor enumeration retains the whole
+  boundary, whose maximum cardinality is `RING2_MAX = 16`. At resolution at most two the 3x3 union
+  covers the sphere and the empty-ring sentinel correctly denotes no outside point.
+- The dense index gathers to `fl(r_claim * 1.001) >= r_claim`; its directed binary-search bounds
+  include every coordinate within `r_claim`. Any omitted site has chord distance greater than the
+  claim. Canonical radial error (`2u + u^2`), a `gamma_3` raw dot (`3u + O(u^2)`), and construction
+  of `1 - r^2/2` (`u + O(u^2)`) consume `6u + O(u^2)`, below the `8u` export reserve.
+- For each alternative exported path—ring cap, interior plane, or dense band—the path-specific
+  bound arithmetic together with conversion to raw canonical-dot space remains below
+  `GRID_DOT_BOUND_PAD = 4 epsilon = 8u`. For the ring path, the ring is geographically separated
+  from the antipodal endpoint; near-center collapse either returns the conservative value `1` or is
+  covered by the angular pad and export reserve. Default SIMD, `simd_scalar`, and FMA share the
+  reserve; FMA is no worse than the `gamma_3` association.
+
+This is a conventional numerical proof, not an exhaustive proof over all f32 bit patterns. Its
+remaining open question is whether the stated platform behavior is an accepted contract premise.
 
 The frontier audit separately confirmed that shell and packed checkpoints pass the maximum of the
 known batch remainder and post-batch unseen certificate. It found no reversed inequality or
@@ -552,7 +585,16 @@ evaluates each discovered cell's center direction and spherical-cap expression i
 preserves the transverse component at the near-antipodal endpoint; the focused construction is
 retained as a regression. The packed cap helper only sees geographically nearby ring-2 cells when
 its classification assumptions hold, so the same antipodal construction is not a demonstrated
-packed failure. Its containment and wall-association proof remains open.
+packed failure.
+
+A separate packed-cap derivation then constructively falsified the stored cell radius. At
+resolution 26,754, a face-center cell's center/corner cosine rounded to exactly `1.0`; the old
+`sqrt(1 - cos^2) + 1e-5` stored `1e-5` while the promoted-f32 corner sine was about `3.5291e-5`.
+The problem was not confined to the endpoint: at resolution 1,536, face `+X`, cell `(668, 464)`,
+the full old builder stored cosine `0x3f7ffffd` and sine `0.00060802`, while the true promoted-f32
+corner sine was `0.0007284044`, an underestimate of `1.20384e-4`. Computing a coherent padded cap
+pair directly from promoted corners fixes both regimes; regressions retain the endpoint,
+non-endpoint, coarse-grid, and rotated-face constructions.
 
 One repair-only implementation mismatch was found during that audit. Local3d's grid gather scored
 candidates with `glam::Vec3::dot`, while the shell bound is certified for the crate's canonical
@@ -561,8 +603,7 @@ across the unseen bound. The gather now uses `fp::dot3_f32`, matching the certif
 This did not falsify the main termination theorem, but it closes an avoidable arithmetic seam in
 the accepted escalation path.
 
-Current constants are explicitly empirical in [`src/tolerances.rs`](../src/tolerances.rs#L1-L15).
-That proof obligation is distinct from output fidelity: a sound termination certificate can return
+The platform premise is distinct from output fidelity: a sound termination certificate can return
 a mesh whose f32 vertex positions and near-degenerate combinatorics still differ slightly from the
 diagnostic normalized-site problem.
 
@@ -610,12 +651,10 @@ once-rounded canonical vectors cover observed norms below and above one and pin 
 sign-dependent endpoint formula. SIMD/scalar dot-mask parity and packed frontier composition tests
 also pin equality and adjacent-value behavior.
 
-These tests establish the implemented comparison policy and arithmetic consistency; they do not
-replace the missing grid containment/association proof. The downstream radius-of-security proof
-does close under the explicit IEEE/library assumptions above, and the near-antipodal shell-cap
-counterexample is now fixed and retained. AUD-011 remains active for the narrower grid-side lemmas
-and for deciding whether the ordinary math-library assumption is an acceptable documented
-platform premise.
+These tests establish the implemented comparison policy and arithmetic consistency and complement,
+rather than replace, the conditional derivation above. Both cap counterexamples are fixed and
+retained. AUD-011 remains active only for deciding whether the ordinary IEEE/math-library
+assumption is an acceptable documented platform premise.
 
 **2026-07-14 adversarial falsification campaign**
 
@@ -650,6 +689,13 @@ Permanent coverage now retains a reduced all-omitted-generator replay oracle for
 construction, a real-cutter adjacent-threshold test, and test-only checkpoint labels proving that
 pre-, mid-, and post-batch packed termination are each exercised. The retained corpus passes under
 default SIMD, `simd_scalar`, and FMA and adds no production instrumentation or runtime branch.
+
+The packed-cap repair adds no query-loop operation. It replaces the one-time grid builder's old
+plane-intersection, edge, corner, and 3x3 radius sampling with four promoted-f32 corner evaluations.
+On a pinned 21-pair 500k Fibonacci comparison, retired instructions changed by `-0.453%` and
+branches by `-0.330%`; cycles changed by `+0.95%`, within this machine's calibrated noise floor.
+Hardware cache counters were noisy and moved in the unfavorable direction, without a corresponding
+instruction or resolved-cycle regression.
 
 The shell fix changes the ill-conditioned expression rather than merely outward-rounding stored
 sine/cosine independently, which can move the cap expression in the wrong direction for some
@@ -1023,8 +1069,8 @@ loop (-11%). These are on-demand measure costs; diagram construction is unchange
    a deferred optional add-on.
 9. **AUD-014:** resolved — preserved Local3d's oriented hull-face circumcenter through minting.
 10. **AUD-012:** resolved — retained and pinned strict computed-f32 transitive welding semantics.
-11. **AUD-011:** derive the packed/grid containment and association lemmas, decide the explicit
-    libm premise, and retain the measured fidelity baseline and boundary coverage.
+11. **AUD-011:** grid/frontier derivation and fidelity baseline complete; decide the explicit
+    IEEE/libm platform premise.
 12. **AUD-015:** resolved for correctness — unrestricted spherical replay now occurs only after
     genuine chart exhaustion; early performance handoff remains deferred.
 13. **AUD-016:** resolved — owner-plane validation, exact-pi SoS, conditioned measures/diagnostics,

@@ -19,6 +19,39 @@ struct CellBounds {
     v_line_planes: Vec<Vec3>,
 }
 
+/// Build a conservatively rounded cap directly from the cell's projected
+/// corners. Deriving the sine as `sqrt(1 - cos_radius^2)` is ill-conditioned
+/// for small cells and loses the entire radius once the cosine rounds to 1.
+pub(super) fn conservative_cell_cap(center: Vec3, corners: &[Vec3; 4]) -> (f32, f32) {
+    let center = center.as_dvec3();
+    let center_norm = center.length();
+    let mut farthest_cos = 1.0f64;
+    let mut farthest_sin = 0.0f64;
+
+    for &corner in corners {
+        let corner = corner.as_dvec3();
+        let denominator = center_norm * corner.length();
+        let cos = (center.dot(corner) / denominator).clamp(-1.0, 1.0);
+        if cos < farthest_cos {
+            farthest_cos = cos;
+            farthest_sin = center.cross(corner).length() / denominator;
+        }
+    }
+
+    // Enlarge the angular radius before storing the pair. This covers the
+    // small forward-map/grid-wall association error without cancellation.
+    let (pad_sin, pad_cos) = (crate::tolerances::GRID_CAP_ANGULAR_PAD as f64).sin_cos();
+    let padded_cos = farthest_cos * pad_cos - farthest_sin * pad_sin;
+    let padded_sin = farthest_sin * pad_cos + farthest_cos * pad_sin;
+
+    // Step once even when the cast happened to be outward already. Besides
+    // absorbing the negligible f64 evaluation error, this makes the stored
+    // pair independently directional rather than relying on exact ties.
+    let cos_radius = (padded_cos as f32).next_down();
+    let sin_radius = (padded_sin as f32).next_up();
+    (cos_radius, sin_radius)
+}
+
 /// Build the slot-ordered AoS records from the SoA coordinate arrays and the
 /// slot->global-index map (one sequential pass; see `CubeMapGrid::cell_points_aos`).
 pub(super) fn build_pos_aos(
@@ -654,17 +687,6 @@ impl CubeMapGrid {
             }
         }
 
-        #[inline]
-        fn inside_all(p: Vec3, planes: &[Vec3; 4]) -> bool {
-            planes.iter().all(|n| n.dot(p) >= -1e-6)
-        }
-
-        #[inline]
-        fn update_min_dot(center: Vec3, p: Vec3, min_dot: &mut f32) {
-            let dot = center.dot(p).clamp(-1.0, 1.0);
-            *min_dot = (*min_dot).min(dot);
-        }
-
         // Compute cell bounds in parallel (each cell is independent).
         let results: Vec<(Vec3, f64, f32, f32)> = maybe_par_into_iter!(0..num_cells)
             .map(|cell| {
@@ -680,86 +702,15 @@ impl CubeMapGrid {
                 let v0 = uv_lines[iv];
                 let v1 = uv_lines[iv + 1];
 
-                let mut planes = [
-                    u_planes[face * line_count + iu],
-                    u_planes[face * line_count + (iu + 1)],
-                    v_planes[face * line_count + iv],
-                    v_planes[face * line_count + (iv + 1)],
+                // The farthest point of a normalized gnomonic rectangle from
+                // an interior direction occurs at a corner.
+                let projected_corners = [
+                    face_uv_to_3d(face, u0, v0),
+                    face_uv_to_3d(face, u0, v1),
+                    face_uv_to_3d(face, u1, v0),
+                    face_uv_to_3d(face, u1, v1),
                 ];
-                for n in planes.iter_mut() {
-                    if n.dot(center) < 0.0 {
-                        *n = -*n;
-                    }
-                }
-
-                // Track min dot (= cos of max angle) using exact edge/vertex candidates.
-                let mut min_dot = 1.0f32;
-
-                // Corners: intersections of adjacent u/v planes.
-                let corners = [
-                    (planes[0], planes[2]),
-                    (planes[0], planes[3]),
-                    (planes[1], planes[2]),
-                    (planes[1], planes[3]),
-                ];
-                for (a, b) in corners {
-                    let cross = a.cross(b);
-                    if cross.length_squared() <= 1e-12 {
-                        continue;
-                    }
-                    let mut p = cross.normalize();
-                    if inside_all(p, &planes) {
-                        update_min_dot(center, p, &mut min_dot);
-                    }
-                    p = -p;
-                    if inside_all(p, &planes) {
-                        update_min_dot(center, p, &mut min_dot);
-                    }
-                }
-
-                // Edge midpoints: intersection of one plane with opposite boundary plane.
-                for &(plane, flip) in [
-                    (planes[0], planes[1]),
-                    (planes[1], planes[0]),
-                    (planes[2], planes[3]),
-                    (planes[3], planes[2]),
-                ]
-                .iter()
-                {
-                    let cross = plane.cross(flip);
-                    if cross.length_squared() <= 1e-12 {
-                        continue;
-                    }
-                    let mut p = cross.normalize();
-                    if inside_all(p, &planes) {
-                        update_min_dot(center, p, &mut min_dot);
-                    }
-                    p = -p;
-                    if inside_all(p, &planes) {
-                        update_min_dot(center, p, &mut min_dot);
-                    }
-                }
-
-                // Sample the cell corners directly from projected bounds.
-                for &u in &[u0, u1] {
-                    for &v in &[v0, v1] {
-                        update_min_dot(center, face_uv_to_3d(face, u, v), &mut min_dot);
-                    }
-                }
-
-                // Sample additional points for stability on highly curved faces.
-                let mid_u = (u0 + u1) * 0.5;
-                let mid_v = (v0 + v1) * 0.5;
-                for &u in &[u0, mid_u, u1] {
-                    for &v in &[v0, mid_v, v1] {
-                        update_min_dot(center, face_uv_to_3d(face, u, v), &mut min_dot);
-                    }
-                }
-
-                let cos_radius = min_dot.clamp(-1.0, 1.0);
-                let sin_a = (1.0 - cos_radius * cos_radius).max(0.0).sqrt();
-                let sin_radius =
-                    (sin_a + min_dot * crate::tolerances::GRID_SIN_EPS).clamp(0.0, 1.0);
+                let (cos_radius, sin_radius) = conservative_cell_cap(center, &projected_corners);
 
                 let center_inv_norm = center.as_dvec3().length().recip();
                 (center, center_inv_norm, cos_radius, sin_radius)

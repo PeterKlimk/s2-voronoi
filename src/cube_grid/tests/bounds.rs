@@ -4,6 +4,92 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 #[test]
+fn tiny_cell_cap_avoids_cosine_to_sine_cancellation() {
+    for (res, iu, iv) in [
+        (26_754usize, 13_377usize, 13_377usize),
+        (26_754, 6_688, 6_688),
+        (1_536, 668, 464),
+    ] {
+        let inv_res = 1.0 / res as f32;
+        let u0 = st_to_uv(iu as f32 * inv_res);
+        let u1 = st_to_uv((iu + 1) as f32 * inv_res);
+        let v0 = st_to_uv(iv as f32 * inv_res);
+        let v1 = st_to_uv((iv + 1) as f32 * inv_res);
+        let uc = st_to_uv((iu as f32 + 0.5) * inv_res);
+        let vc = st_to_uv((iv as f32 + 0.5) * inv_res);
+        let center = face_uv_to_3d(0, uc, vc);
+        let corners = [
+            face_uv_to_3d(0, u0, v0),
+            face_uv_to_3d(0, u0, v1),
+            face_uv_to_3d(0, u1, v0),
+            face_uv_to_3d(0, u1, v1),
+        ];
+
+        let old_cos = corners
+            .iter()
+            .map(|corner| center.dot(*corner))
+            .fold(1.0f32, f32::min);
+        let true_radius = corners
+            .iter()
+            .map(|corner| {
+                let c = center.as_dvec3();
+                let p = corner.as_dvec3();
+                (c.cross(p).length() / (c.length() * p.length())).asin()
+            })
+            .fold(0.0f64, f64::max);
+        let old_sin = (1.0 - old_cos * old_cos).max(0.0).sqrt()
+            + old_cos * crate::tolerances::GRID_CAP_ANGULAR_PAD;
+        let true_padded_sin = (true_radius + crate::tolerances::GRID_CAP_ANGULAR_PAD as f64).sin();
+        assert!(
+            (old_sin as f64) < true_padded_sin,
+            "fixture must reproduce the old underestimated sine radius"
+        );
+
+        let (stored_cos, stored_sin) = super::super::build::conservative_cell_cap(center, &corners);
+        let padded_radius = true_radius + crate::tolerances::GRID_CAP_ANGULAR_PAD as f64;
+        assert!(
+            stored_cos as f64 <= padded_radius.cos(),
+            "stored cosine radius is not rounded outward"
+        );
+        assert!(
+            stored_sin as f64 >= padded_radius.sin(),
+            "stored sine radius is not rounded outward"
+        );
+    }
+}
+
+#[test]
+fn direct_cell_cap_contains_coarse_and_rotated_face_corners() {
+    for (res, face, iu, iv) in [(1usize, 5usize, 0usize, 0usize), (17, 4, 0, 16)] {
+        let inv_res = 1.0 / res as f32;
+        let u0 = st_to_uv(iu as f32 * inv_res);
+        let u1 = st_to_uv((iu + 1) as f32 * inv_res);
+        let v0 = st_to_uv(iv as f32 * inv_res);
+        let v1 = st_to_uv((iv + 1) as f32 * inv_res);
+        let center = face_uv_to_3d(
+            face,
+            st_to_uv((iu as f32 + 0.5) * inv_res),
+            st_to_uv((iv as f32 + 0.5) * inv_res),
+        );
+        let corners = [
+            face_uv_to_3d(face, u0, v0),
+            face_uv_to_3d(face, u0, v1),
+            face_uv_to_3d(face, u1, v0),
+            face_uv_to_3d(face, u1, v1),
+        ];
+        let (cos_radius, sin_radius) = super::super::build::conservative_cell_cap(center, &corners);
+        let stored_radius = (sin_radius as f64).atan2(cos_radius as f64);
+
+        for corner in corners {
+            let c = center.as_dvec3().normalize();
+            let p = corner.as_dvec3().normalize();
+            let corner_radius = c.cross(p).length().atan2(c.dot(p));
+            assert!(corner_radius < stored_radius);
+        }
+    }
+}
+
+#[test]
 fn near_antipodal_shell_cap_bounds_raw_dot() {
     let res = 5usize;
     let grid = CubeMapGrid::new(&[], res);
