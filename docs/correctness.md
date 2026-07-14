@@ -34,6 +34,14 @@ are the incoming f32 vectors, their canonicalized rounded vectors, or ideal reno
 those vectors, plus one policy for exact predicate ties. The current pipeline does not claim exact
 positions, exact combinatorics for one unified site model, or a global backward-error witness.
 
+The numerical certificate assumes the conventional behavior of supported floating-point targets:
+IEEE-754 binary32/binary64 round-to-nearest arithmetic without flushing relevant subnormal values,
+correctly rounded basic operations, and `f64::sqrt`/`sin_cos` accurate to within one ulp. Rust does
+not specify a useful worst-case transcendental error bound, so this is an explicit platform premise
+rather than a language-level theorem. The grid, clipping, and unseen-neighbor error budgets are
+derived under that premise and retain outward reserves for the supported default SIMD,
+`simd_scalar`, and hardware-FMA paths.
+
 Features near the resolution floor (epsilon-length edges, vertices from near-cocircular generators)
 may be kept or collapsed; which one happens is a policy choice, not a correctness bug, as long as
 the graph stays coherent. Reconciliation collapses a positional equivalence component only when its full

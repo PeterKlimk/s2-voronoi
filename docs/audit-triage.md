@@ -53,7 +53,7 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 | AUD-008 | P1 | Resolved | Plain `compute` documentation exceeded its fast-path certificate | Edge-agreement construction certificate + fused Euler; strict validation optional/testing |
 | AUD-009 | P1 | Resolved | Reconciliation merges were not bounded to an epsilon-diameter feature | Transactionally diameter-gate components; escalate rejected chains |
 | AUD-010 | P2 | Resolved | Fast, fallback, repair, and exact-predicate paths do not share one exact site model or SoS policy | Structural production contract chosen; unified exact combinatorics deferred as an optional add-on |
-| AUD-011 | P2 | Active only for platform-policy decision; grid and downstream bounds derived conditionally | The frontier certificate closes under stated IEEE/libm assumptions; two ill-conditioned cap constructions were repaired | Decide whether to adopt the explicit IEEE/libm platform premise |
+| AUD-011 | P2 | Resolved | The frontier certificate closes under the adopted IEEE/libm premise; two ill-conditioned cap constructions were repaired | Retain boundary regressions and the documented platform premise |
 | AUD-012 | P3 | Resolved | Welding is intentionally a strict computed-f32 threshold graph with transitive classes | Retain boundary and detector-oracle tests |
 | AUD-013 | P2 | Resolved | Qhull was not a robust correctness oracle | Removed feature, dependency, public API, comparisons, and oracle-like tooling |
 | AUD-014 | P1 | Resolved | Local3d lost the hull-face sign and could mint the antipodal Voronoi vertex | Carry the oriented support normal through sorted-triple repair fans |
@@ -62,15 +62,13 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 
 ## Audit closure state
 
-There are no open P0 or P1 correctness findings in this audit. One P2 policy item remains active:
-
-- **AUD-011 platform premise:** decide whether conventional IEEE round-to-nearest behavior plus a
-  one-ulp-or-better `f64::sin_cos`/`sqrt` implementation is an accepted platform assumption. Rust
-  does not itself specify a useful worst-case transcendental error bound.
+There are no open correctness or policy findings in this audit.
 
 The AUD-011 grid-frontier derivation now covers cell containment, forward-map/wall association,
 the packed ring-2 and interior-plane certificates, the dense-band chord certificate, and the final
-four-epsilon export pad. Its assumptions and reserves are recorded in the finding below.
+four-epsilon export pad. Conventional IEEE round-to-nearest behavior plus a one-ulp-or-better
+`f64::sin_cos`/`sqrt` implementation is adopted as an explicit platform premise; its assumptions
+and reserves are recorded in the finding below and in `docs/correctness.md`.
 
 The following are recorded backburner ideas, not blockers for the selected production contract:
 
@@ -514,8 +512,8 @@ error** without implying that the returned combinatorics are the exact diagram o
 
 - **Priority:** P2
 - **Class:** numerical proof and fidelity-measurement gap
-- **Confidence:** Fidelity baseline established; frontier and downstream guards conditionally
-  derived; explicit platform premise awaiting policy acceptance
+- **Confidence:** Resolved under the adopted platform premise; fidelity baseline established and
+  frontier/downstream guards derived
 
 Assuming its input `B` is a true upper bound on every unseen raw f32 dot, the radius-of-security
 derivation is mathematically sound:
@@ -563,8 +561,8 @@ error bound. Under that premise, the error budget is:
   covered by the angular pad and export reserve. Default SIMD, `simd_scalar`, and FMA share the
   reserve; FMA is no worse than the `gamma_3` association.
 
-This is a conventional numerical proof, not an exhaustive proof over all f32 bit patterns. Its
-remaining open question is whether the stated platform behavior is an accepted contract premise.
+This is a conventional numerical proof, not an exhaustive proof over all f32 bit patterns. The
+stated platform behavior is an accepted contract premise.
 
 The frontier audit separately confirmed that shell and packed checkpoints pass the maximum of the
 known batch remainder and post-batch unseen certificate. It found no reversed inequality or
@@ -653,8 +651,7 @@ also pin equality and adjacent-value behavior.
 
 These tests establish the implemented comparison policy and arithmetic consistency and complement,
 rather than replace, the conditional derivation above. Both cap counterexamples are fixed and
-retained. AUD-011 remains active only for deciding whether the ordinary IEEE/math-library
-assumption is an acceptable documented platform premise.
+retained. With the IEEE/math-library premise adopted, AUD-011 is resolved.
 
 **2026-07-14 adversarial falsification campaign**
 
@@ -1069,8 +1066,8 @@ loop (-11%). These are on-demand measure costs; diagram construction is unchange
    a deferred optional add-on.
 9. **AUD-014:** resolved — preserved Local3d's oriented hull-face circumcenter through minting.
 10. **AUD-012:** resolved — retained and pinned strict computed-f32 transitive welding semantics.
-11. **AUD-011:** grid/frontier derivation and fidelity baseline complete; decide the explicit
-    IEEE/libm platform premise.
+11. **AUD-011:** resolved — grid/frontier derivation and fidelity baseline complete; explicit
+    IEEE/libm platform premise adopted.
 12. **AUD-015:** resolved for correctness — unrestricted spherical replay now occurs only after
     genuine chart exhaustion; early performance handoff remains deferred.
 13. **AUD-016:** resolved — owner-plane validation, exact-pi SoS, conditioned measures/diagnostics,
