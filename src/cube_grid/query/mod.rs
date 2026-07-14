@@ -11,7 +11,6 @@ pub(crate) use stream::{
     DirectedNeighborStream,
 };
 
-use crate::fp;
 use glam::Vec3;
 
 use super::{face_uv_to_cell, point_to_face_uv, CubeMapGrid, CubeMapGridScratch};
@@ -168,13 +167,17 @@ impl CubeMapGrid {
     ///
     /// Uses a spherical cap that contains the cell and triangle inequality on the sphere.
     #[inline]
-    fn cell_min_dist_sq(&self, query: Vec3, cell: usize) -> f32 {
-        let center = self.cell_centers[cell];
-        let mut cos_d = fp::dot3_f32(query.x, query.y, query.z, center.x, center.y, center.z);
-        cos_d = cos_d.clamp(-1.0, 1.0);
+    pub(super) fn cell_min_dist_sq(&self, query_unit: glam::DVec3, cell: usize) -> f32 {
+        // Evaluate the angular center distance from normalized promoted-f32
+        // vectors. A raw f32 center dot can round to exactly -1 for a merely
+        // near-antipodal query; deriving sin(d) from that endpoint loses an
+        // O(sqrt(f32::EPSILON)) transverse term that no fixed O(epsilon)
+        // export pad can cover.
+        let center = self.cell_centers[cell].as_dvec3();
+        let cos_d = (query_unit.dot(center) * self.cell_center_inv_norms[cell]).clamp(-1.0, 1.0);
 
-        let cos_r = self.cell_cos_radius[cell];
-        let sin_r = self.cell_sin_radius[cell];
+        let cos_r = self.cell_cos_radius[cell] as f64;
+        let sin_r = self.cell_sin_radius[cell] as f64;
 
         // If the query direction is within the cell's cap, the minimum distance can be 0.
         if cos_d > cos_r {
@@ -184,6 +187,6 @@ impl CubeMapGrid {
         // cos(d - r) = cos d cos r + sin d sin r
         let sin_d = (1.0 - cos_d * cos_d).max(0.0).sqrt();
         let max_dot_upper = (cos_d * cos_r + sin_d * sin_r).clamp(-1.0, 1.0);
-        2.0 - 2.0 * max_dot_upper
+        (2.0 - 2.0 * max_dot_upper) as f32
     }
 }

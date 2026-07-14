@@ -211,6 +211,9 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
     /// Build the next non-empty layer batch, or mark exhaustion.
     fn build_pending(&mut self) {
         debug_assert!(!self.has_pending);
+        // Most directed queries finish in the packed path. Normalize only
+        // after shell takeover, keeping its f64 work and state off that path.
+        let query_unit = self.query.as_dvec3().normalize();
         while !self.scratch.current.is_empty() {
             // Discover the next ring and its certificate while scanning the
             // current ring's points.
@@ -232,7 +235,7 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
                         continue;
                     }
                     self.scratch.next.push(ncell);
-                    let bound = self.grid.cell_min_dist_sq(self.query, ncell as usize);
+                    let bound = self.grid.cell_min_dist_sq(query_unit, ncell as usize);
                     next_min_dist_sq = next_min_dist_sq.min(bound);
                 }
             }

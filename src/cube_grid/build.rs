@@ -12,6 +12,7 @@ use super::{
 
 struct CellBounds {
     centers: Vec<Vec3>,
+    center_inv_norms: Vec<f64>,
     cos_radius: Vec<f32>,
     sin_radius: Vec<f32>,
     u_line_planes: Vec<Vec3>,
@@ -396,6 +397,7 @@ impl CubeMapGrid {
             ring2,
             ring2_lens,
             cell_centers: bounds.centers,
+            cell_center_inv_norms: bounds.center_inv_norms,
             cell_cos_radius: bounds.cos_radius,
             cell_sin_radius: bounds.sin_radius,
             u_line_planes: bounds.u_line_planes,
@@ -664,7 +666,7 @@ impl CubeMapGrid {
         }
 
         // Compute cell bounds in parallel (each cell is independent).
-        let results: Vec<(Vec3, f32, f32)> = maybe_par_into_iter!(0..num_cells)
+        let results: Vec<(Vec3, f64, f32, f32)> = maybe_par_into_iter!(0..num_cells)
             .map(|cell| {
                 let (face, iu, iv) = cell_to_face_ij(cell, res);
 
@@ -759,22 +761,26 @@ impl CubeMapGrid {
                 let sin_radius =
                     (sin_a + min_dot * crate::tolerances::GRID_SIN_EPS).clamp(0.0, 1.0);
 
-                (center, cos_radius, sin_radius)
+                let center_inv_norm = center.as_dvec3().length().recip();
+                (center, center_inv_norm, cos_radius, sin_radius)
             })
             .collect();
 
         // Unzip results into separate vectors.
         let mut centers = Vec::with_capacity(num_cells);
+        let mut center_inv_norms = Vec::with_capacity(num_cells);
         let mut cos_r = Vec::with_capacity(num_cells);
         let mut sin_r = Vec::with_capacity(num_cells);
-        for (c, cos, sin) in results {
+        for (c, inv_norm, cos, sin) in results {
             centers.push(c);
+            center_inv_norms.push(inv_norm);
             cos_r.push(cos);
             sin_r.push(sin);
         }
 
         CellBounds {
             centers,
+            center_inv_norms,
             cos_radius: cos_r,
             sin_radius: sin_r,
             u_line_planes: u_planes,

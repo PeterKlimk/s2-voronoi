@@ -105,6 +105,9 @@ pub struct CubeMapGrid {
     ring2_lens: Vec<u8>,
     /// Unit vector at the center of each cell (on the sphere).
     pub(super) cell_centers: Vec<Vec3>,
+    /// f64 normalization factor for each exactly promoted stored center. Used
+    /// by the shell cap certificate without a per-frontier-cell square root.
+    pub(super) cell_center_inv_norms: Vec<f64>,
     /// Spherical cap radius around `cell_centers[cell]` that conservatively contains the cell.
     /// Stored as cos/sin for fast per-query bounds.
     pub(super) cell_cos_radius: Vec<f32>,

@@ -477,7 +477,8 @@ error** without implying that the returned combinatorics are the exact diagram o
 
 - **Priority:** P2
 - **Class:** numerical proof and fidelity-measurement gap
-- **Confidence:** Fidelity baseline established; termination forward-error budget remains under-justified
+- **Confidence:** Fidelity baseline established; downstream guard conditionally derived; frontier
+  construction still has unproved containment/association lemmas
 
 Assuming its input `B` is a true upper bound on every unseen raw f32 dot, the radius-of-security
 derivation is mathematically sound:
@@ -488,27 +489,33 @@ derivation is mathematically sound:
 - the sign-dependent norm endpoint for positive/negative double-angle cosine is correct;
 - the chart Gram/Gershgorin correction has the correct conservative direction.
 
-The remaining gap is a complete forward-error derivation for:
-
-- canonical norm endpoints;
-- rounded polygon `max_r2`;
-- chart Gram/stretches;
-- double-angle threshold arithmetic;
-- raw f32 dot evaluation; and
-- the final signed-distance evaluation.
+The downstream derivation now covers canonical norm endpoints, rounded polygon `max_r2`, chart
+Gram/stretches, raw f32 dot evaluation, and the final signed-distance relationship. It is
+conditional on conventional IEEE round-to-nearest behavior and a one-ulp-or-better implementation
+of `f64::sin_cos`/`sqrt`; Rust does not specify a useful worst-case transcendental error bound. The
+remaining grid-side proof obligations are complete cell-cap containment, forward-map/wall
+association, the packed interior-plane envelope, and the dense-band chord certificate.
 
 The frontier audit separately confirmed that shell and packed checkpoints pass the maximum of the
 known batch remainder and post-batch unseen certificate. It found no reversed inequality or
 `<`/`<=` defect: equality can denote a tangent cutter, so termination must remain strict. Release
 contract tests passed for the default SIMD backend, scalar SIMD, and FMA arithmetic modes.
 
-An exact zero-tolerance frontier oracle also passed all twelve retained neighbor-contract scenarios
-under the default, `simd_scalar`, and FMA configurations. This includes cube seams/corners, dense
-bands, and production bin layouts. The remaining frontier-side proof gap is narrower: cell caps
-store a rounded cosine radius while only the sine radius is explicitly inflated, so an antipodal
-query receives no benefit from that sine inflation. The absolute four-epsilon export pad then has
-to cover cap construction, cell association, canonical norms, and dot-association differences.
-No counterexample was found, but the code does not yet derive that composed `<= 4 epsilon` bound.
+An exact zero-tolerance frontier oracle passed all twelve retained neighbor-contract scenarios under
+the default, `simd_scalar`, and FMA configurations, including cube seams/corners, dense bands, and
+production bin layouts. A later analytic audit nevertheless found a shell-cap counterexample those
+finite scenarios missed. With an exactly represented `+X` cell center and a canonical query
+proportional to `(-1, 2^-13, 0)`, the raw center dot rounds to `-1`, so the old formula derived
+`sin(d) = 0`. A cell-corner point in the transverse direction exceeds the exported bound by about
+`2.4e-5`, versus a four-epsilon pad of about `4.8e-7`. The lost term is `O(sin(r)*sqrt(epsilon))`,
+so increasing a fixed `O(epsilon)` pad is not a sound repair.
+
+The shell frontier now normalizes the promoted-f32 query when it builds a cold-path shell batch and
+evaluates each discovered cell's center direction and spherical-cap expression in f64. This
+preserves the transverse component at the near-antipodal endpoint; the focused construction is
+retained as a regression. The packed cap helper only sees geographically nearby ring-2 cells when
+its classification assumptions hold, so the same antipodal construction is not a demonstrated
+packed failure. Its containment and wall-association proof remains open.
 
 One repair-only implementation mismatch was found during that audit. Local3d's grid gather scored
 candidates with `glam::Vec3::dot`, while the shell bound is certified for the crate's canonical
@@ -567,11 +574,11 @@ sign-dependent endpoint formula. SIMD/scalar dot-mask parity and packed frontier
 also pin equality and adjacent-value behavior.
 
 These tests establish the implemented comparison policy and arithmetic consistency; they do not
-replace the missing composed proof. In particular, the remaining derivation must account jointly
-for cube-cap/grid construction, downward rounding of stored polygon radius, Gram/tangency
-residuals, double-angle arithmetic, raw-dot rounding, generator norm rounding, and final
-signed-distance cancellation. No counterexample was found in these audits, so AUD-011 remains a
-proof gap rather than a confirmed unsound bound.
+replace the missing grid containment/association proof. The downstream radius-of-security proof
+does close under the explicit IEEE/library assumptions above, and the near-antipodal shell-cap
+counterexample is now fixed and retained. AUD-011 remains active for the narrower grid-side lemmas
+and for deciding whether the ordinary math-library assumption is an acceptable documented
+platform premise.
 
 **2026-07-14 adversarial falsification campaign**
 
@@ -592,22 +599,32 @@ mid-, and post-batch termination classes. The corpus is deterministic and finite
 and did not exhaust all representable f32 directions or canonical norm extrema. It therefore gives
 strong empirical evidence, not a formal proof.
 
-The raw-f32 dot calculation alone admits a standard `gamma_5` bound of approximately
-`2.5000014 epsilon`. Against the current three-epsilon downstream guard, that leaves about
-`0.4999986 epsilon` for every other unaccounted contribution. No attack consumed that margin, but
-the narrow unallocated remainder is why the written derivation remains open.
+For a three-term dot, the standard weighted dot-product analysis gives `gamma_3`, not `gamma_5`,
+even though the unfused expression contains three multiplications and two additions. Both the
+ordinary association and the one-product-plus-two-FMA path are bounded by approximately
+`1.500001 epsilon * sum(abs(g_i*h_i))`. The canonical norm envelope keeps that sum below
+`(1+epsilon)^2`, leaving approximately `1.5 epsilon` of the three-epsilon downstream guard for the
+f64 threshold and clipping-sign arithmetic. The chart's `1e-12` Gram inflation and eight-epsilon
+angular pad dominate their derived f64 errors; the remaining tangent-case signed-distance margin
+is about `0.75 epsilon`, versus a conservative evaluation error below `0.01 epsilon` at the chart
+limit.
 
 Permanent coverage now retains a reduced all-omitted-generator replay oracle for shell and packed
 construction, a real-cutter adjacent-threshold test, and test-only checkpoint labels proving that
 pre-, mid-, and post-batch packed termination are each exercised. The retained corpus passes under
 default SIMD, `simd_scalar`, and FMA and adds no production instrumentation or runtime branch.
 
-The frontier cap arithmetic should not be changed merely to appear outward-rounded: independently
-perturbing stored sine and cosine can move the cap expression in the wrong direction for some
-signs. If proof-oriented hardening becomes necessary, evaluate the complete cap expression in
-promoted f64 and outward-round its final dot/distance, then benchmark the query-time cost.
-Likewise, changing the three-epsilon downstream guard remains a design choice until either the
-composed derivation or a counterexample justifies it.
+The shell fix changes the ill-conditioned expression rather than merely outward-rounding stored
+sine/cosine independently, which can move the cap expression in the wrong direction for some
+signs. It is confined to shell-frontier cell discovery: candidate dot ranking and the common packed
+path are unchanged. Query normalization and the f64 cap evaluation occur only after shell takeover;
+the promoted-center inverse norm is precomputed once per grid cell. At the usual occupancy the
+table costs eight bytes per grid cell, about 0.33 bytes per input point. On the 200k uniform timing
+fixture only 18 cells entered takeover (32 shell batches). A pinned 50-round paired comparison found
+cell construction neutral at one-percent resolution: the new version's inferred change was about
+`-0.7%`, with a `[-1.8%, +0.5%]` interval. An 80-round 500k comparison likewise could not resolve
+the one-time grid-build change: about `-0.3%`, with a `[-2.7%, +2.1%]` interval. The downstream
+derivation provides no justification for changing the three-epsilon guard.
 
 **Implemented fidelity measurements**
 
@@ -879,9 +896,12 @@ adds no candidate recording, allocation, or threshold branch to successful fast-
 There is a separate nonlocal regime that a synthetic-edge budget does not detect. Perturbed
 great-circle inputs became gnomonically bounded but processed 204,561 candidates at 1k sites,
 542,165 at 2k, and 2,735,916 at 5k; the maximum per-cell count was approximately `n`. This requires
-a total-query-work circuit breaker and Local3d/global-hull escalation rather than spherical chart
-recovery. The current Local3d entry point is post-assembly, so a genuine no-failure construction
-contract still requires a deferred pre-assembly cell/component recovery seam.
+a total-query-work circuit breaker and Local3d/global-hull escalation if that performance regime is
+later optimized; spherical chart recovery is not the relevant mechanism. The current inputs still
+construct successfully and any assembled defects remain eligible for the existing Local3d repair.
+No valid input is known to reach a pre-assembly cell-build error after the current recovery and
+degeneracy policies, so a pre-assembly repair seam is not an active correctness requirement. It
+would become one only if such a valid-input failure were reproduced.
 
 ### AUD-016 — Near-semicircle Voronoi edges conflict with the strict representation contract
 

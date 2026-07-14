@@ -4,6 +4,40 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 #[test]
+fn near_antipodal_shell_cap_bounds_raw_dot() {
+    let res = 5usize;
+    let grid = CubeMapGrid::new(&[], res);
+    let cell = grid.point_to_cell(Vec3::X);
+    assert_eq!(grid.cell_centers[cell], Vec3::X);
+
+    let (_, iu, iv) = cell_to_face_ij(cell, res);
+    let s = ((iu + 1) as f32 / res as f32).next_down();
+    let t = ((iv + 1) as f32 / res as f32).next_down();
+    let point = face_uv_to_3d(0, st_to_uv(s), st_to_uv(t));
+    assert_eq!(grid.point_to_cell(point), cell);
+
+    let delta = 2.0f64.powi(-13);
+    let tangent = glam::DVec3::new(0.0, point.y as f64, point.z as f64).normalize();
+    let query64 = (glam::DVec3::NEG_X + delta * tangent).normalize();
+    let query = Vec3::new(query64.x as f32, query64.y as f32, query64.z as f32);
+    assert_eq!(
+        query.x, -1.0,
+        "fixture must hit the rounded antipodal endpoint"
+    );
+
+    let min_dist_sq = grid.cell_min_dist_sq(query.as_dvec3().normalize(), cell);
+    let exported =
+        (1.0 - 0.5 * min_dist_sq).clamp(-1.0, 1.0) + crate::tolerances::GRID_DOT_BOUND_PAD;
+    let actual = crate::fp::dot3_f32(query.x, query.y, query.z, point.x, point.y, point.z);
+    assert!(
+        actual <= exported,
+        "near-antipodal cell cap underestimates raw dot: actual={actual:?}, \
+         exported={exported:?}, gap={:?}",
+        actual - exported
+    );
+}
+
+#[test]
 fn test_security_ring2_captures_outside_cap_max() {
     #[inline]
     fn max_dot_to_cap(q: Vec3, center: Vec3, cos_r: f32, sin_r: f32) -> f32 {
