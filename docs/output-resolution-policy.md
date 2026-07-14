@@ -81,14 +81,14 @@ coordinate-separation or Hausdorff bound. A naïve displacement proof would need
 roughly `2.0e-6` nominal, `2.2384e-6` with normalization slack, or `2.4768e-6` under the conservative
 off-shell model, before adding other construction and storage errors.
 
-Instead, the implementation directly certifies the finite representation. Under the existing
-representative x-drift bound `r`, a constructed cell whose hot local x values contain three classes
-separated successively by more than `2r + 1 ULP` must retain three distinct final stored positions.
-Cells that cannot prove that sufficient condition are recorded and exactly scanned after assembly.
-Every reconciliation and Local3d changed-cell footprint is added to the exact scan, while drift
-certificate failure selects a whole-diagram scan. Full validation independently counts canonical
-cells with fewer than three exact stored directions. This closes silent classification, not the
-stronger theorem that default welding makes the count mathematically unreachable.
+Full validation directly counts canonical cells with fewer than three exact stored directions,
+including a hypothetical alternating two-position cycle with no adjacent zero edge. This is
+report/validation telemetry rather than an always-on construction certificate. A construction-local
+x-separation certificate and sparse terminal scans were prototyped, but added about 0.75–0.80%
+retired instructions while changing no current policy outcome: `Preserve` takes no action,
+Error/Elide currently consume exact-zero components, report-bearing computation already validates,
+and plain computation discarded the count. It was removed pending a policy that actually consumes
+the result.
 
 Accordingly, the intended user contract is:
 
@@ -102,7 +102,7 @@ Accordingly, the intended user contract is:
 - a cell-killing exact-zero contraction under default welding is a suspicious diagnostic event and
   a possible contract-bound violation, not an ordinary independent policy outcome;
 - the current weld radius remains strong empirical prevention rather than a standalone composed
-  guarantee; the direct stored-position certificate is the finite-output safety net; and
+  guarantee; full validation is the explicit finite-output diagnostic; and
 - an optional positive edge threshold deliberately permits removal of genuine features whose
   generators are well separated, so it cannot be inferred from the weld radius.
 
@@ -449,8 +449,9 @@ The exact stored-zero baseline is complete:
 
 The remaining follow-ups and their dependencies are tracked in [`work-log.md`](work-log.md).
 Positive-threshold simplification remains an optional extension, not an incomplete piece of the
-baseline. The weld proof attempt classified the remaining metric gap and added the direct
-stored-position certificate described above; it did not justify increasing the weld radius.
+baseline. The weld proof attempt classified the remaining metric gap and added stored-position
+validation plus the lattice campaign described above; it did not justify increasing the weld
+radius or charging an always-on construction certificate.
 
 The baseline retains synthetic non-cell-killing and triangle-to-digon tests, a minimized version of
 the downstream Hex3 incident, a weld-radius cell-survival sweep, and focused reconciliation tests

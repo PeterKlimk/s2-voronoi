@@ -308,10 +308,6 @@ pub struct RepairReport {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct OutputResolutionReport {
-    /// Effective cells whose final boundary occupies fewer than three exact
-    /// stored directions. This is observable representation telemetry; the
-    /// default preserve policy does not turn it into a topology failure.
-    pub cells_with_fewer_than_three_stored_positions: usize,
     /// Unique exact stored-zero edges found after reconciliation and optional
     /// Local3d repair.
     pub exact_zero_edges_detected: usize,

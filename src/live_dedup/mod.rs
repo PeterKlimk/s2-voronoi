@@ -106,9 +106,6 @@ pub(crate) struct AssemblyResult<P = glam::Vec3> {
     /// Number of cells selected by the widened hot hint before final-position
     /// confirmation.
     pub exact_zero_edge_hint_cells: usize,
-    /// Cells whose construction-local realizations could not certify three
-    /// distinct final stored positions.
-    pub stored_position_risk_cells: Vec<u32>,
     /// Whether some final representative moved farther from a cell-local
     /// realization than the hot-hint certificate permits.
     pub resolution_drift_exceeded: bool,

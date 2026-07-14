@@ -103,14 +103,6 @@ fn assert_no_stored_cell_collapse(name: &str, points: &[UnitVec3]) {
         0,
         "{name}: validator disagreed with the direct coordinate-class scan"
     );
-    assert_eq!(
-        output
-            .report
-            .output_resolution
-            .cells_with_fewer_than_three_stored_positions,
-        0,
-        "{name}: localized construction/mutation certificate missed a cell"
-    );
 }
 
 fn rotated_pair_case(center: DVec3, rotation: DQuat, seed: u64) -> Vec<UnitVec3> {

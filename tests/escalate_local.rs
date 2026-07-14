@@ -46,14 +46,6 @@ fn local_escalation_makes_mega_strictly_valid() {
             after_report.cells_with_fewer_than_three_stored_positions, 0,
             "seed {seed}: final Local3d/fallback output lost a stored cell"
         );
-        assert_eq!(
-            after
-                .report
-                .output_resolution
-                .cells_with_fewer_than_three_stored_positions,
-            0,
-            "seed {seed}: mutation-local certificate disagreed with validation"
-        );
     }
 }
 

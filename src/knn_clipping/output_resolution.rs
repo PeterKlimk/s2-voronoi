@@ -382,41 +382,6 @@ pub(super) fn collect_zero_edges_in_cells(
     Ok(out)
 }
 
-/// Return cells whose referenced vertices occupy fewer than three distinct
-/// exact stored directions. The caller supplies a complete localized set or
-/// every cell when its construction certificate was invalidated.
-pub(super) fn collect_cells_with_fewer_than_three_stored_positions(
-    vertices: &[Vec3],
-    cells: &[VoronoiCell],
-    cell_indices: &[u32],
-    cell_ids: &[usize],
-) -> Result<Vec<usize>, crate::VoronoiError> {
-    let mut out = Vec::new();
-    for &cell_idx in cell_ids {
-        let span = cell_span(cell_idx, cells, cell_indices)?;
-        let mut positions = [Vec3::ZERO; 3];
-        let mut distinct = 0usize;
-        for &vertex in span {
-            let position = vertex_pos_for_resolution(vertices, vertex)?;
-            if positions[..distinct]
-                .iter()
-                .any(|&existing| same_stored_direction(existing, position))
-            {
-                continue;
-            }
-            if distinct == positions.len() {
-                break;
-            }
-            positions[distinct] = position;
-            distinct += 1;
-        }
-        if distinct < 3 {
-            out.push(cell_idx);
-        }
-    }
-    Ok(out)
-}
-
 fn vertex_pos_for_resolution(vertices: &[Vec3], vertex: u32) -> Result<Vec3, crate::VoronoiError> {
     vertices.get(vertex as usize).copied().ok_or_else(|| {
         state_error(format!(
@@ -939,27 +904,6 @@ mod tests {
             indices.extend_from_slice(cycle);
         }
         (cells, indices)
-    }
-
-    #[test]
-    fn stored_position_scan_detects_alternating_two_position_cycle_without_zero_edge() {
-        let a = unit(1.0, 0.0, 0.0);
-        let b = unit(0.0, 1.0, 0.0);
-        let vertices = vec![a, b, a, b];
-        let (cells, indices) = cells_from_cycles(&[&[0, 1, 2, 3]]);
-        assert!(collect_zero_edges(&vertices, &cells, &indices)
-            .unwrap()
-            .is_empty());
-        assert_eq!(
-            collect_cells_with_fewer_than_three_stored_positions(
-                &vertices,
-                &cells,
-                &indices,
-                &[0],
-            )
-            .unwrap(),
-            [0]
-        );
     }
 
     fn live_cycles(cells: &[VoronoiCell], indices: &[u32]) -> Vec<Vec<u32>> {

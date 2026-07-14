@@ -35,9 +35,6 @@ pub(crate) struct ShardOutput<P = Vec3> {
     pub(super) cell_starts: Vec<u32>,
     pub(super) cell_counts: Vec<u8>,
     pub(crate) exact_zero_edge_hint_cells: Vec<u32>,
-    /// Cells whose hot local realizations could not certify three final
-    /// stored-position classes under the representative-drift bound.
-    pub(crate) stored_position_risk_cells: Vec<u32>,
     pub(crate) resolution_drift_exceeded: bool,
 }
 
@@ -53,7 +50,6 @@ impl<P: VertexPosition> ShardOutput<P> {
             cell_starts: vec![0; num_local_generators],
             cell_counts: vec![0; num_local_generators],
             exact_zero_edge_hint_cells: Vec::new(),
-            stored_position_risk_cells: Vec::new(),
             resolution_drift_exceeded: false,
         }
     }

@@ -18,17 +18,17 @@ policy documents. An unchecked item elsewhere should either be moved here or tre
   not remove an effective generator cell.
 - Every current post-assembly mutator reports a complete changed-cell footprint for terminal
   exact-zero scanning; only globally uncertified representative drift forces global discovery.
-- Full validation and `OutputResolutionReport` now count canonical cells with fewer than three
-  exact stored positions. A construction-local separation certificate plus exact scans of its
-  sparse risk set and every mutator footprint make that classification complete without a global
-  ordinary-path scan.
+- Full validation now counts canonical cells with fewer than three exact stored positions; generic
+  `SphericalCellMesh` validation rejects them. This is intentionally validation/report-path work,
+  not an ordinary construction pass.
 - Qhull and the legacy P5 shadow path have been retired.
 - Full strict validation remains available for testing and campaigns without burdening the default
   fast path.
 
 There is no active P0/P1 correctness defect. Construction-certificate differential maintenance
 remains ongoing. The weld-radius/whole-cell bound attempt is complete: it identified a metric
-margin gap and replaced the missing global proof with a direct finite-representation certificate.
+margin gap, added explicit validation telemetry, and retained the default weld as empirical
+prevention rather than an overclaimed proof.
 
 ## Triage vocabulary
 
@@ -52,7 +52,7 @@ margin gap and replaced the missing global proof with a direct finite-representa
 | ID | Priority | Status | Next gate |
 |---|---:|---|---|
 | WORK-002 | P2 | Ongoing | Exercise after construction/repair changes |
-| WELD-001 | P2 | Completed | Metric proof gap classified; direct certificate implemented |
+| WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
@@ -87,27 +87,27 @@ margin gap and replaced the missing global proof with a direct finite-representa
   or Hausdorff certificate. A naïve displacement composition would require a weld chord above
   roughly `2.0e-6` nominal, `2.2384e-6` with normalization slack, or `2.4768e-6` under the
   conservative off-shell model, before other construction/storage errors.
-- **Implemented closure:** each hot constructed cell proves three final stored-position classes
-  when its local x coordinates contain three successively separated classes beyond the existing
-  `2r + 1 ULP` representative-drift bound. Only uncertified cells are retained for an exact final
-  coordinate-class scan. Reconciliation and Local3d footprints are always scanned; representative
-  drift invalidation scans the whole diagram. Full validation independently counts the same
-  condition. `Preserve` still treats it as representation telemetry rather than a topology defect.
+- **Implemented classification:** full validation counts cells with fewer than three exact stored
+  coordinate classes, including an alternating two-position cycle with no adjacent zero edge.
+  Generic `SphericalCellMesh` validation rejects that geometry. `Preserve` still treats it as
+  representation telemetry rather than a Voronoi-topology defect.
 - **Evidence:** active threshold-adjacent tests cover axis, cube-face seam, cube corner, f32
   half/quarter exponent-boundary orientations, two rotations, and near-cocircular stress. The
   manually run extended campaign covered 256 rotated threshold-adjacent cases. Direct final
-  coordinate scans found no collapse and agreed with localized telemetry. Forced spherical handoff,
-  mutation-footprint, and welding-disabled positive controls are pinned separately.
-- **Fast-path cost:** the stored-position min/max work shares the existing exact-zero hint pass and
-  adds one short pass over each extracted cell. Ten-round interleaved single-thread native counters
-  at 500k sites versus `11b49a4` measured instruction/branch ratios `1.00795`/`1.00450` for
-  Fibonacci and `1.00746`/`1.00409` for uniform seed 12345. Cycle ratios were `1.00460` and
-  `0.97096` respectively and are treated as noisy; the stable cost estimate is about 0.75–0.80%
-  retired instructions.
+  coordinate scans found no collapse and agreed with full validation. Forced spherical handoff,
+  repair/fallback output, and welding-disabled positive controls are pinned separately.
+- **Rejected fast-path certificate:** a construction-local x-separation certificate plus sparse
+  terminal scans was implemented and measured. Ten-round interleaved 500k counters added about
+  0.75–0.80% retired instructions and 0.41–0.45% branches. It changed no current policy outcome:
+  `Preserve` takes no action, Error/Elide operate on exact-zero components, report-bearing compute
+  already runs full validation, and plain compute discarded the count. The always-on certificate
+  was therefore removed; a future broader Error/Elide policy may pay for classification only when
+  selected. After removal, eight-round comparisons against `11b49a4` returned instruction ratios
+  `1.000000` for both Fibonacci and uniform, with branch ratios `1.000001` and `1.000003`.
 - **Conclusion:** do not promote the current weld radius to a standalone mathematical guarantee
   that output geometry cannot collapse. The production contract instead combines strong weld
-  evidence with a direct complete finite-representation classification and explicit
-  Preserve/Error/Elide policy surfaces.
+  evidence, explicit validation telemetry, and Preserve/Error/Elide policy surfaces for observed
+  exact-zero components.
 
 ### WORK-002 — Construction-certificate differential maintenance
 
