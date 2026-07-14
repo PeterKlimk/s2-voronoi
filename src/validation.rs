@@ -42,6 +42,13 @@ pub struct ValidationReport {
 
     /// Number of cells with fewer than 3 distinct vertices.
     pub degenerate_cells: usize,
+    /// Number of canonical cells whose referenced vertices occupy fewer than
+    /// three distinct exact stored directions.
+    ///
+    /// This is representation telemetry rather than an abstract-topology
+    /// defect: `Preserve` may intentionally retain such geometry when fixed
+    /// output precision cannot represent every effective cell injectively.
+    pub cells_with_fewer_than_three_stored_positions: usize,
     /// Number of cells with duplicate vertex indices in the boundary cycle.
     pub cells_with_duplicate_vertices: usize,
     /// Number of cells that reference at least one out-of-range vertex index.
@@ -201,6 +208,12 @@ impl ValidationReport {
         }
         if self.zero_length_edges > 0 {
             notes.push(format!("{} zero-length edges", self.zero_length_edges));
+        }
+        if self.cells_with_fewer_than_three_stored_positions > 0 {
+            notes.push(format!(
+                "{} cells with fewer than three stored positions",
+                self.cells_with_fewer_than_three_stored_positions
+            ));
         }
 
         notes
@@ -974,6 +987,7 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
 
     let mut total_cell_vertices = 0usize;
     let mut degenerate_cells = 0usize;
+    let mut cells_with_fewer_than_three_stored_positions = 0usize;
     let mut cells_with_duplicate_vertices = 0usize;
     let mut cells_with_invalid_references = 0usize;
     let mut invalid_vertex_references = 0usize;
@@ -1000,6 +1014,8 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
         let use_spill = len > seen_stack.len();
         let mut cell_has_duplicate_vertices = false;
         let mut cell_has_invalid_reference = false;
+        let mut distinct_positions = [crate::UnitVec3::new(0.0, 0.0, 0.0); 3];
+        let mut distinct_position_count = 0usize;
 
         for &vi in cell.vertex_indices {
             if (vi as usize) >= num_vertices {
@@ -1028,6 +1044,14 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
             } else {
                 vertex_cell_count[vi as usize] += 1;
             }
+
+            let position = vertices[vi as usize];
+            if distinct_position_count < 3
+                && !distinct_positions[..distinct_position_count].contains(&position)
+            {
+                distinct_positions[distinct_position_count] = position;
+                distinct_position_count += 1;
+            }
         }
 
         if cell_has_duplicate_vertices {
@@ -1043,6 +1067,9 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
         };
         if seen_valid_len < 3 {
             degenerate_cells += 1;
+        }
+        if distinct_position_count < 3 {
+            cells_with_fewer_than_three_stored_positions += 1;
         }
 
         // Canonical duplicate-cell signature over valid references only.
@@ -1198,6 +1225,7 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
         euler_characteristic,
         connected_components,
         degenerate_cells,
+        cells_with_fewer_than_three_stored_positions,
         cells_with_duplicate_vertices,
         cells_with_invalid_references,
         invalid_vertex_references,
@@ -1245,6 +1273,29 @@ mod verify_gate_tests {
             vec![0, 1, 2],
             None,
         )
+    }
+
+    #[test]
+    fn report_detects_two_position_cycle_without_an_adjacent_zero_edge() {
+        let diagram = SphericalVoronoi::from_raw_parts(
+            vec![Vec3::new(0.0, 0.0, 1.0)],
+            vec![
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+            ],
+            vec![crate::diagram::VoronoiCell::new(0, 4)],
+            vec![0, 1, 2, 3],
+            None,
+        );
+        let report = validate(&diagram);
+        assert_eq!(report.zero_length_edges, 0);
+        assert_eq!(report.cells_with_fewer_than_three_stored_positions, 1);
+        assert!(report
+            .representation_notes()
+            .iter()
+            .any(|note| note.contains("fewer than three stored positions")));
     }
 
     #[test]

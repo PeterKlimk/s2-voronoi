@@ -42,6 +42,18 @@ fn local_escalation_makes_mega_strictly_valid() {
             "seed {seed}: local repair did not produce a strictly valid diagram: {:?}",
             after_report.subdivision_issues()
         );
+        assert_eq!(
+            after_report.cells_with_fewer_than_three_stored_positions, 0,
+            "seed {seed}: final Local3d/fallback output lost a stored cell"
+        );
+        assert_eq!(
+            after
+                .report
+                .output_resolution
+                .cells_with_fewer_than_three_stored_positions,
+            0,
+            "seed {seed}: mutation-local certificate disagreed with validation"
+        );
     }
 }
 

@@ -18,12 +18,17 @@ policy documents. An unchecked item elsewhere should either be moved here or tre
   not remove an effective generator cell.
 - Every current post-assembly mutator reports a complete changed-cell footprint for terminal
   exact-zero scanning; only globally uncertified representative drift forces global discovery.
+- Full validation and `OutputResolutionReport` now count canonical cells with fewer than three
+  exact stored positions. A construction-local separation certificate plus exact scans of its
+  sparse risk set and every mutator footprint make that classification complete without a global
+  ordinary-path scan.
 - Qhull and the legacy P5 shadow path have been retired.
 - Full strict validation remains available for testing and campaigns without burdening the default
   fast path.
 
 There is no active P0/P1 correctness defect. Construction-certificate differential maintenance
-remains ongoing; the next finite contract task is the weld-radius/whole-cell error-bound attempt.
+remains ongoing. The weld-radius/whole-cell bound attempt is complete: it identified a metric
+margin gap and replaced the missing global proof with a direct finite-representation certificate.
 
 ## Triage vocabulary
 
@@ -47,7 +52,7 @@ remains ongoing; the next finite contract task is the weld-radius/whole-cell err
 | ID | Priority | Status | Next gate |
 |---|---:|---|---|
 | WORK-002 | P2 | Ongoing | Exercise after construction/repair changes |
-| WELD-001 | P2 | Ready | Compose the separation and finite-precision error bounds |
+| WELD-001 | P2 | Completed | Metric proof gap classified; direct certificate implemented |
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
@@ -60,7 +65,7 @@ remains ongoing; the next finite contract task is the weld-radius/whole-cell err
 ### WELD-001 — Sufficient-welding whole-cell geometry bound
 
 - **Priority:** P2
-- **Status:** Ready
+- **Status:** Completed 2026-07-15
 - **Goal:** determine whether the default weld separation provably prevents an effective generator
   cell from collapsing at f32 output resolution.
 - **Starting theorem:** minimum geodesic site separation `alpha` gives every exact Voronoi cell a
@@ -69,10 +74,40 @@ remains ongoing; the next finite contract task is the weld-radius/whole-cell err
   spherical fallback conversion, reconciliation/repair displacement, and final f32 storage against
   that cap floor. Separate whole-cell survival from cocircular non-cell-killing zero edges, which
   welding cannot prevent.
-- **Outcome:** either promote sufficient welding to the primary no-zero-cell guarantee with
-  `Preserve`/`Error`/explicit `Elide` as opt-out/safety-net behavior, or identify the missing margin
-  and adjust the radius or documented contract. Empirical campaigns support but do not replace the
-  bound.
+- **Finding:** the default recomputed squared weld threshold is
+  `1.8189892951256392e-12` (`0x2bffffff`, one f32 ULP below `2^-39`). A conservative raw canonical
+  chord floor is `1.3486989111824338e-6`; accounting for canonical norm slack gives a normalized-site
+  chord floor of `1.1102803320808713e-6` and ideal inradius `5.551401660404641e-7`. The more
+  conservative unequal-norm gnomonic/chord-cost model yields about `4.3593087648967823e-7`.
+- **Why the pure metric proof does not close:** reconciliation's `1e-6` component diameter is
+  larger than those inradius margins. It cannot simply be charged as arbitrary coordinate
+  displacement—reconciliation changes IDs, retains positions, and transactionally rejects fewer
+  than three IDs—but the current structural gates do not prove three final coordinate classes.
+  Local3d likewise passes whole-diagram strict topology validation without a coordinate-separation
+  or Hausdorff certificate. A naïve displacement composition would require a weld chord above
+  roughly `2.0e-6` nominal, `2.2384e-6` with normalization slack, or `2.4768e-6` under the
+  conservative off-shell model, before other construction/storage errors.
+- **Implemented closure:** each hot constructed cell proves three final stored-position classes
+  when its local x coordinates contain three successively separated classes beyond the existing
+  `2r + 1 ULP` representative-drift bound. Only uncertified cells are retained for an exact final
+  coordinate-class scan. Reconciliation and Local3d footprints are always scanned; representative
+  drift invalidation scans the whole diagram. Full validation independently counts the same
+  condition. `Preserve` still treats it as representation telemetry rather than a topology defect.
+- **Evidence:** active threshold-adjacent tests cover axis, cube-face seam, cube corner, f32
+  half/quarter exponent-boundary orientations, two rotations, and near-cocircular stress. The
+  manually run extended campaign covered 256 rotated threshold-adjacent cases. Direct final
+  coordinate scans found no collapse and agreed with localized telemetry. Forced spherical handoff,
+  mutation-footprint, and welding-disabled positive controls are pinned separately.
+- **Fast-path cost:** the stored-position min/max work shares the existing exact-zero hint pass and
+  adds one short pass over each extracted cell. Ten-round interleaved single-thread native counters
+  at 500k sites versus `11b49a4` measured instruction/branch ratios `1.00795`/`1.00450` for
+  Fibonacci and `1.00746`/`1.00409` for uniform seed 12345. Cycle ratios were `1.00460` and
+  `0.97096` respectively and are treated as noisy; the stable cost estimate is about 0.75–0.80%
+  retired instructions.
+- **Conclusion:** do not promote the current weld radius to a standalone mathematical guarantee
+  that output geometry cannot collapse. The production contract instead combines strong weld
+  evidence with a direct complete finite-representation classification and explicit
+  Preserve/Error/Elide policy surfaces.
 
 ### WORK-002 — Construction-certificate differential maintenance
 
@@ -222,10 +257,9 @@ duplicated here.
 ## Suggested order
 
 1. Continue WORK-002 whenever construction, reconciliation, or Local3d changes.
-2. Attempt WELD-001 and either prove the default whole-cell separation margin or expose the gap.
-3. Decide RES-002 only when positive-threshold mesh conditioning is wanted.
-4. Revisit PERF-001 only with a motivating workload and crossover measurements.
-5. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
+2. Decide RES-002 only when positive-threshold mesh conditioning is wanted.
+3. Revisit PERF-001 only with a motivating workload and crossover measurements.
+4. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
 
 ## Closed and retired work
 

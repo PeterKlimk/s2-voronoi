@@ -196,6 +196,7 @@ fn run_core_pipeline(
         cell_indices,
         exact_zero_edge_candidates,
         exact_zero_edge_hint_cells,
+        stored_position_risk_cells,
         resolution_drift_exceeded,
         dedup_sub: _,
     } = assembled;
@@ -244,8 +245,26 @@ fn run_core_pipeline(
     mutation_scan_cells.dedup();
 
     let resolution_decision = resolution_discovery_decision(resolution_drift_exceeded);
+    let mut stored_position_scan_cells: Vec<usize> = if resolution_decision.certified_hint {
+        stored_position_risk_cells
+            .into_iter()
+            .chain(mutation_scan_cells.iter().copied())
+            .map(|cell| cell as usize)
+            .collect()
+    } else {
+        (0..eff_cells.len()).collect()
+    };
+    stored_position_scan_cells.sort_unstable();
+    stored_position_scan_cells.dedup();
+    let stored_position_degenerate_cells =
+        output_resolution::collect_cells_with_fewer_than_three_stored_positions(
+            &vertices,
+            &eff_cells,
+            &eff_cell_indices,
+            &stored_position_scan_cells,
+        )?;
     let hinted_candidate_count = exact_zero_edge_candidates.len();
-    let resolution_outcome = canonicalize_pipeline_exact_zero_edges(
+    let mut resolution_outcome = canonicalize_pipeline_exact_zero_edges(
         &vertices,
         &vertex_keys,
         &mut eff_cells,
@@ -254,6 +273,11 @@ fn run_core_pipeline(
         &mutation_scan_cells,
         resolution_decision,
     )?;
+    // Exact-zero contractions only identify vertices at equal stored
+    // positions, so they cannot change a cell's number of coordinate classes.
+    resolution_outcome
+        .report
+        .cells_with_fewer_than_three_stored_positions = stored_position_degenerate_cells.len();
     tb.set_output_resolution_discovery(
         resolution_decision.certified_hint,
         resolution_decision.drift_fallback,

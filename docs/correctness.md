@@ -74,6 +74,16 @@ by its spliced cells. A future mutator that changes an existing vertex position 
 every cell incident to that vertex. Only representative-drift failure or incomplete provenance
 requires a whole-diagram discovery scan.
 
+The same representative-drift premise now certifies whole-cell stored geometry. A hot cell is
+proved to retain at least three final coordinate classes when its local x values contain a middle
+class separated from both the global minimum and maximum by more than `2 * 1e-6` plus one threshold
+ULP. Cells without that sufficient certificate are retained for an exact terminal scan. Every
+reconciliation or Local3d changed cell joins that scan, and representative-drift failure again
+selects the whole diagram. `OutputResolutionReport` and full validation count canonical cells with
+fewer than three exact stored positions. Under `Preserve` this remains representation telemetry,
+not a topology defect: a combinatorially coherent cell can occupy fewer than three output
+directions, including an alternating two-position cycle with no adjacent zero edge.
+
 Complete representative coverage depends on the live-dedup ownership lifecycle. A canonical
 generator-triplet `VertexKey` determines the owner bin. Reuse inside that shard is checked while
 the cell is emitted. Every off-shard realization retains its local position in a deferred slot;
@@ -121,10 +131,11 @@ axes. If surviving effective generators have minimum geodesic separation `alpha`
 Voronoi cell contains the cap of radius `alpha / 2` around its generator. A weld radius that
 dominates the complete construction-and-storage error budget should therefore prevent whole-cell
 collapse. The current radius has strong empirical margin, but a composed bound covering input
-canonicalization, clipping, repair displacement, and f32 output storage has not yet been completed.
-Until it is, `Preserve`/`Error`/explicit `Elide` remains the safety-net contract even under default
-welding. This argument does not rule out non-cell-killing zero edges from cocircular generators;
-safe exact-zero edge canonicalization remains necessary.
+canonicalization, clipping, repair displacement, and f32 output storage does not close at the
+current constants. The direct stored-position certificate above therefore classifies the finite
+output instead. `Preserve`/`Error`/explicit exact-zero `Elide` remains the policy surface even under
+default welding. This argument does not rule out non-cell-killing zero edges from cocircular
+generators; safe exact-zero edge canonicalization remains necessary.
 
 Precisely, welding forms a graph whose edges satisfy
 `computed_f32_distance_squared < computed_f32_radius_squared`. Exact computed equality is not an

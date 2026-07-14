@@ -466,6 +466,13 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     exact_zero_edge_candidates.sort_unstable();
     exact_zero_edge_candidates.dedup();
 
+    let mut stored_position_risk_cells = Vec::new();
+    for shard in &finals {
+        stored_position_risk_cells.extend_from_slice(&shard.output.stored_position_risk_cells);
+    }
+    stored_position_risk_cells.sort_unstable();
+    stored_position_risk_cells.dedup();
+
     #[cfg(debug_assertions)]
     {
         debug_assert!(
@@ -501,6 +508,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
         cell_indices,
         exact_zero_edge_candidates,
         exact_zero_edge_hint_cells: exact_zero_edge_hint_cell_count,
+        stored_position_risk_cells,
         resolution_drift_exceeded,
         dedup_sub: sub_phases,
     })

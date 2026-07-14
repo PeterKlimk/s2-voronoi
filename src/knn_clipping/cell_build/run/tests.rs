@@ -1338,6 +1338,21 @@ fn forced_handoff_mid_build_still_finishes_the_cell() {
         ctx.output_buffer().vertices.len() >= 3,
         "fallback-built cell should extract vertices",
     );
+    let mut stored_positions = Vec::new();
+    for &(_, position) in &ctx.output_buffer().vertices {
+        let bits = (
+            position.x.to_bits(),
+            position.y.to_bits(),
+            position.z.to_bits(),
+        );
+        if !stored_positions.contains(&bits) {
+            stored_positions.push(bits);
+        }
+    }
+    assert!(
+        stored_positions.len() >= 3,
+        "forced spherical handoff must retain three exact stored positions"
+    );
     assert!(ctx.builder.accepted_constraint_count() >= 3);
     assert!(!stats.knn_exhausted || !stats.did_packed);
 }

@@ -43,23 +43,40 @@ fn stored_x_outside_zero_hint(a: Vec3, b: Vec3) -> u32 {
 }
 
 #[inline(never)]
-fn has_zero_edge_candidate(vertices: &[VertexData]) -> bool {
+fn output_resolution_hints(vertices: &[VertexData]) -> (bool, bool) {
     debug_assert!(vertices.len() >= 3);
     let mut all_edges_outside_hint = 1u32;
+    let mut min_x = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
     let ptr = vertices.as_ptr();
     // SAFETY: successful final extraction has at least three initialized
     // vertices. Read the contiguous cycle once, then compare its closing edge.
     unsafe {
         let first = (*ptr).1;
+        min_x = min_x.min(first.x);
+        max_x = max_x.max(first.x);
         let mut previous = first;
         for i in 1..vertices.len() {
             let current = (*ptr.add(i)).1;
             all_edges_outside_hint &= stored_x_outside_zero_hint(previous, current);
+            min_x = min_x.min(current.x);
+            max_x = max_x.max(current.x);
             previous = current;
         }
         all_edges_outside_hint &= stored_x_outside_zero_hint(previous, first);
     }
-    all_edges_outside_hint == 0
+
+    // Dedup separately certifies that each final representative's x
+    // coordinate moves by at most r. Three local x classes separated
+    // successively by more than 2r therefore remain distinct. Global min/max
+    // maximize both separations around any candidate middle value, so this
+    // additional linear pass is a complete x-axis certificate.
+    let separation = f64::from(crate::tolerances::OUTPUT_RESOLUTION_ZERO_HINT_X_EPS);
+    let has_three_separated_x_classes = vertices.iter().any(|&(_, position)| {
+        let x = f64::from(position.x);
+        x - f64::from(min_x) > separation && f64::from(max_x) - x > separation
+    });
+    (all_edges_outside_hint == 0, !has_three_separated_x_classes)
 }
 
 pub(crate) fn build_cells_sharded_live_dedup(
@@ -330,7 +347,8 @@ fn build_and_emit_cell<'a, 'b, 'c>(
         output_buffer,
         incoming_checks,
     )?;
-    let exact_zero_edge_hint = has_zero_edge_candidate(&output_buffer.vertices);
+    let (exact_zero_edge_hint, stored_position_risk) =
+        output_resolution_hints(&output_buffer.vertices);
     if exact_zero_edge_hint {
         shard_ctx
             .shard
@@ -338,12 +356,19 @@ fn build_and_emit_cell<'a, 'b, 'c>(
             .exact_zero_edge_hint_cells
             .push(cell_idx);
     }
+    if stored_position_risk {
+        shard_ctx
+            .shard
+            .output
+            .stored_position_risk_cells
+            .push(cell_idx);
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod resolution_hint_tests {
-    use super::has_zero_edge_candidate;
+    use super::output_resolution_hints;
     use glam::Vec3;
 
     fn vertex(id: u32, x: f32) -> ([u32; 3], Vec3) {
@@ -353,32 +378,33 @@ mod resolution_hint_tests {
     #[test]
     fn widened_hint_includes_its_bound_and_rejects_separated_cycle() {
         let bound = crate::tolerances::OUTPUT_RESOLUTION_ZERO_HINT_X_EPS;
-        assert!(has_zero_edge_candidate(&[
-            vertex(0, 0.0),
-            vertex(1, bound),
-            vertex(2, 1.0),
-        ]));
+        assert!(output_resolution_hints(&[vertex(0, 0.0), vertex(1, bound), vertex(2, 1.0),]).0);
         let representative_bound = crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS;
-        assert!(has_zero_edge_candidate(&[
-            vertex(0, representative_bound),
-            vertex(1, -representative_bound),
-            vertex(2, 1.0),
-        ]));
-        assert!(has_zero_edge_candidate(&[
-            vertex(0, 0.0),
-            vertex(1, -0.0),
-            vertex(2, 1.0),
-        ]));
+        assert!(
+            output_resolution_hints(&[
+                vertex(0, representative_bound),
+                vertex(1, -representative_bound),
+                vertex(2, 1.0),
+            ])
+            .0
+        );
+        assert!(output_resolution_hints(&[vertex(0, 0.0), vertex(1, -0.0), vertex(2, 1.0),]).0);
         let just_outside = f32::from_bits(bound.to_bits() + 1);
-        assert!(!has_zero_edge_candidate(&[
-            vertex(0, 0.0),
-            vertex(1, just_outside),
-            vertex(2, -1.0),
-        ]));
-        assert!(!has_zero_edge_candidate(&[
-            vertex(0, -1.0),
-            vertex(1, 0.0),
-            vertex(2, 1.0),
-        ]));
+        assert!(
+            !output_resolution_hints(&[vertex(0, 0.0), vertex(1, just_outside), vertex(2, -1.0),])
+                .0
+        );
+        assert!(!output_resolution_hints(&[vertex(0, -1.0), vertex(1, 0.0), vertex(2, 1.0),]).0);
+    }
+
+    #[test]
+    fn stored_position_certificate_requires_three_separated_x_classes() {
+        let bound = crate::tolerances::OUTPUT_RESOLUTION_ZERO_HINT_X_EPS;
+        let outside = f32::from_bits(bound.to_bits() + 1);
+        assert!(
+            !output_resolution_hints(&[vertex(0, -outside), vertex(1, 0.0), vertex(2, outside),]).1
+        );
+        assert!(output_resolution_hints(&[vertex(0, -bound), vertex(1, 0.0), vertex(2, bound),]).1);
+        assert!(output_resolution_hints(&[vertex(0, -1.0), vertex(1, -1.0), vertex(2, 1.0),]).1);
     }
 }

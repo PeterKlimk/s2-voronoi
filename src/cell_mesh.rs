@@ -301,6 +301,9 @@ pub struct CellMeshValidationReport {
     pub connected_components: usize,
     /// Cells with fewer than three distinct vertices.
     pub degenerate_cells: usize,
+    /// Cells whose vertex records occupy fewer than three distinct exact
+    /// stored directions.
+    pub cells_with_fewer_than_three_stored_positions: usize,
     /// Cells containing a repeated vertex index.
     pub cells_with_duplicate_vertices: usize,
     /// Cells containing an out-of-range vertex reference.
@@ -339,6 +342,7 @@ impl CellMeshValidationReport {
             && self.euler_characteristic == 2
             && self.connected_components == 1
             && self.degenerate_cells == 0
+            && self.cells_with_fewer_than_three_stored_positions == 0
             && self.cells_with_duplicate_vertices == 0
             && self.cells_with_invalid_references == 0
             && self.duplicate_cells == 0
@@ -363,10 +367,11 @@ impl CellMeshValidationReport {
             );
         }
         format!(
-            "invalid spherical cell mesh (chi={}, components={}, degenerate={}, edge_issues={}, link_issues={}, provenance_issues={})",
+            "invalid spherical cell mesh (chi={}, components={}, degenerate={}, stored_degenerate={}, edge_issues={}, link_issues={}, provenance_issues={})",
             self.euler_characteristic,
             self.connected_components,
             self.degenerate_cells,
+            self.cells_with_fewer_than_three_stored_positions,
             self.boundary_edges
                 + self.overused_edges
                 + self.same_direction_edge_pairs
@@ -669,11 +674,13 @@ fn validate_cell_mesh(mesh: &SphericalCellMesh) -> CellMeshValidationReport {
     let mut cells_with_duplicate_vertices = 0;
     let mut cells_with_invalid_references = 0;
     let mut duplicate_cells = 0;
+    let mut cells_with_fewer_than_three_stored_positions = 0;
 
     for cell in mesh.iter_cells() {
         let cycle = cell.vertex_indices;
         if cycle.len() < 3 {
             degenerate_cells += 1;
+            cells_with_fewer_than_three_stored_positions += 1;
             continue;
         }
         let mut unique = FxHashSet::default();
@@ -690,6 +697,20 @@ fn validate_cell_mesh(mesh: &SphericalCellMesh) -> CellMeshValidationReport {
         if invalid {
             cells_with_invalid_references += 1;
             continue;
+        }
+        let mut distinct_positions = [UnitVec3::new(0.0, 0.0, 0.0); 3];
+        let mut distinct_position_count = 0usize;
+        for &vertex in cycle {
+            let position = mesh.vertices[vertex as usize];
+            if distinct_position_count < 3
+                && !distinct_positions[..distinct_position_count].contains(&position)
+            {
+                distinct_positions[distinct_position_count] = position;
+                distinct_position_count += 1;
+            }
+        }
+        if distinct_position_count < 3 {
+            cells_with_fewer_than_three_stored_positions += 1;
         }
         let mut signature = cycle.to_vec();
         signature.sort_unstable();
@@ -858,6 +879,7 @@ fn validate_cell_mesh(mesh: &SphericalCellMesh) -> CellMeshValidationReport {
             + mesh.num_cells() as i32,
         connected_components,
         degenerate_cells,
+        cells_with_fewer_than_three_stored_positions,
         cells_with_duplicate_vertices,
         cells_with_invalid_references,
         duplicate_cells,

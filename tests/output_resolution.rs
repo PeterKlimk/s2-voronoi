@@ -198,6 +198,22 @@ fn disabled_welding_preserves_cell_killing_zero_components() {
     assert_eq!(resolution.topology_rejected_components, 0);
     assert_eq!(resolution.exact_zero_edges_remaining, 3);
     assert_eq!(output.report.returned_validation.zero_length_edges, 3);
+    assert!(
+        output
+            .report
+            .returned_validation
+            .cells_with_fewer_than_three_stored_positions
+            > 0,
+        "fixture must exercise the stored-position telemetry"
+    );
+    assert_eq!(
+        resolution.cells_with_fewer_than_three_stored_positions,
+        output
+            .report
+            .returned_validation
+            .cells_with_fewer_than_three_stored_positions,
+        "localized discovery must match exhaustive validation"
+    );
     assert_eq!(output.diagram.num_cells(), points.len());
 
     // This is not merely a declined conservative transaction: at least one

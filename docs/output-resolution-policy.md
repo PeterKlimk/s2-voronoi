@@ -60,34 +60,49 @@ point inside that cap, the triangle inequality makes the owning site strictly cl
 other site. Consequently, a true separation floor gives every ideal cell a positive inradius and
 area.
 
-Conditionally interpreting the default weld chord radius (`~1.3487e-6`) as a true separation floor
-would give an inradius of about `6.74e-7` radians and a cap-area floor of about `1.43e-12`
-steradians. It would rule out an exactly zero ideal cell for a surviving effective generator.
+The computed-f32 weld predicate is slightly subtler than treating `~1.3487e-6` as an exact
+post-canonical separation floor. Its recomputed squared threshold is
+`1.8189892951256392e-12` (`0x2bffffff`, one ULP below `2^-39`). A conservative raw canonical chord
+floor is `1.3486989111824338e-6`; accounting for canonical norm slack gives normalized-site chord
+floor `1.1102803320808713e-6` and ideal inradius `5.551401660404641e-7`. A conservative unequal-norm
+gnomonic/chord-cost model lowers the working radius to about `4.3593087648967823e-7`. Any such true
+separation floor still rules out an exactly zero *ideal* cell for a surviving effective generator.
 
 It does not give a lower bound on every Voronoi edge or on the separation between adjacent Voronoi
 vertices. Four well-separated sites can approach cocircularity while one dual Voronoi edge tends
 continuously to zero. Welding therefore does not address the ordinary, non-cell-killing zero-edge
 case that motivated this policy.
 
-The current implementation also does not promote the conditional ideal-cell argument to a
-finite-precision certificate. The weld predicate and radius are computed-f32/empirical; the
-construction passes through f64 clipping and f32 storage; and reconciliation can merge stored
-vertices within its own tolerance. No composed proof currently shows that all of those errors stay
-below the ideal inradius floor. The existing constant relationship between the reconciliation and
-weld radii is a sanity check, not that proof.
+The metric composition does not close at the current constants. Reconciliation's `1e-6` component
+diameter exceeds the conservative ideal inradius, although charging it as arbitrary displacement is
+also too pessimistic: reconciliation changes IDs rather than positions and rejects a rewritten cell
+with fewer than three IDs. Local3d's strict gate similarly preserves topology without proving a
+coordinate-separation or Hausdorff bound. A naïve displacement proof would need a weld chord above
+roughly `2.0e-6` nominal, `2.2384e-6` with normalization slack, or `2.4768e-6` under the conservative
+off-shell model, before adding other construction and storage errors.
+
+Instead, the implementation directly certifies the finite representation. Under the existing
+representative x-drift bound `r`, a constructed cell whose hot local x values contain three classes
+separated successively by more than `2r + 1 ULP` must retain three distinct final stored positions.
+Cells that cannot prove that sufficient condition are recorded and exactly scanned after assembly.
+Every reconciliation and Local3d changed-cell footprint is added to the exact scan, while drift
+certificate failure selects a whole-diagram scan. Full validation independently counts canonical
+cells with fewer than three exact stored directions. This closes silent classification, not the
+stronger theorem that default welding makes the count mathematically unreachable.
 
 Accordingly, the intended user contract is:
 
 - accept sufficient welding and expect every surviving effective generator to retain representable
   cell geometry; or disable/reduce welding and choose a defined error, topologically valid
   zero-geometry preservation, or explicit cell elision;
-- `Preserve`/`Error`/`Elide` still handles every observed cell-killing transaction, including an
-  unexpected one with default welding enabled;
+- `Preserve`/`Error`/`Elide` still handles every observed exact-zero cell-killing transaction,
+  including an unexpected one with default welding enabled; the report and full validator also
+  expose a fewer-than-three-stored-positions cell even if its cycle has no adjacent zero edge (the
+  current Error/Elide transaction is not generalized to that hypothetical shape);
 - a cell-killing exact-zero contraction under default welding is a suspicious diagnostic event and
   a possible contract-bound violation, not an ordinary independent policy outcome;
-- a composed proof must cover f32 input canonicalization, normalization, f64 construction,
-  reconciliation/repair displacement, and f32 output storage before the default weld radius can be
-  promoted from strong empirical evidence to that guarantee; and
+- the current weld radius remains strong empirical prevention rather than a standalone composed
+  guarantee; the direct stored-position certificate is the finite-output safety net; and
 - an optional positive edge threshold deliberately permits removal of genuine features whose
   generators are well separated, so it cannot be inferred from the weld radius.
 
@@ -434,8 +449,8 @@ The exact stored-zero baseline is complete:
 
 The remaining follow-ups and their dependencies are tracked in [`work-log.md`](work-log.md).
 Positive-threshold simplification remains an optional extension, not an incomplete piece of the
-baseline. The next contract job is attempting the composed proof that default welding prevents
-whole-cell output collapse.
+baseline. The weld proof attempt classified the remaining metric gap and added the direct
+stored-position certificate described above; it did not justify increasing the weld radius.
 
 The baseline retains synthetic non-cell-killing and triangle-to-digon tests, a minimized version of
 the downstream Hex3 incident, a weld-radius cell-survival sweep, and focused reconciliation tests
