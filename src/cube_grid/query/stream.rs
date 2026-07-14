@@ -333,7 +333,14 @@ mod tests {
         }
         let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
 
-        let group = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
+        let group = PackedGroupInput::new(
+            cell,
+            QUERY_BIN,
+            start as u32,
+            queries.len(),
+            start as u32,
+            layout,
+        );
         let mut packed_scratch = PackedKnnCellScratch::new();
         let mut packed_timings = PackedKnnTimings::default();
         let PreparedPackedGroupStatus::Ready(mut prepared) =
@@ -426,7 +433,14 @@ mod tests {
             }
             let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
 
-            let group = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
+            let group = PackedGroupInput::new(
+                cell,
+                QUERY_BIN,
+                start as u32,
+                queries.len(),
+                start as u32,
+                layout,
+            );
             {
                 let mut packed_scratch = PackedKnnCellScratch::new();
                 let mut packed_timings = PackedKnnTimings::default();

@@ -131,10 +131,9 @@ impl PackedKnnCellScratch {
 
         group.debug_assert_matches_grid(grid);
 
-        let queries = group.queries();
         let query_bin = group.query_bin();
         let layout = group.layout();
-        let num_queries = queries.len();
+        let num_queries = group.query_count();
         let mut group_gen = self.next_group_gen.wrapping_add(1).max(1);
         if group_gen == u32::MAX {
             // Reserve `0` as "never set"; on wrap, clear all generation stamps.
@@ -618,9 +617,8 @@ impl PackedKnnCellScratch {
                     &z_chunks[chunk],
                 );
 
-                for (((((&query_slot, &qx), &qy), &qz), &threshold), keys) in queries
+                for ((((&qx, &qy), &qz), &threshold), keys) in query_x
                     .iter()
-                    .zip(query_x)
                     .zip(query_y)
                     .zip(query_z)
                     .zip(thresholds)
@@ -636,10 +634,6 @@ impl PackedKnnCellScratch {
                     while mask_bits != 0 {
                         let lane = mask_bits.trailing_zeros() as usize;
                         let slot = (soa_start + i + lane) as u32;
-                        debug_assert_ne!(
-                            slot, query_slot,
-                            "ring pass should never revisit the query slot"
-                        );
                         let dot = dots_arr[lane];
                         keys.push(make_desc_key(dot, slot));
                         mask_bits &= mask_bits - 1;
@@ -679,9 +673,8 @@ impl PackedKnnCellScratch {
                     )
                 };
 
-                for (((((&query_slot, &qx), &qy), &qz), &threshold), keys) in queries
+                for ((((&qx, &qy), &qz), &threshold), keys) in query_x
                     .iter()
-                    .zip(query_x)
                     .zip(query_y)
                     .zip(query_z)
                     .zip(thresholds)
@@ -697,10 +690,6 @@ impl PackedKnnCellScratch {
                     while mask_bits != 0 {
                         let lane = mask_bits.trailing_zeros() as usize;
                         let slot = (slot_base + lane) as u32;
-                        debug_assert_ne!(
-                            slot, query_slot,
-                            "ring pass should never revisit the query slot"
-                        );
                         let dot = dots_arr[lane];
                         keys.push(make_desc_key(dot, slot));
                         mask_bits &= mask_bits - 1;

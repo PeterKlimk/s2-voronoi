@@ -105,15 +105,6 @@ pub(crate) fn build_cells_sharded_live_dedup(
                 )]
                 let mut packed_timings = PackedKnnTimings::default();
 
-                // Only the packed path reads the per-generator slot ids.
-                let packed_queries_all: Vec<u32> = if packed_policy.enabled() {
-                    my_generators
-                        .iter()
-                        .map(|&i| grid.point_index_to_slot(i))
-                        .collect()
-                } else {
-                    Vec::new()
-                };
                 #[cfg(debug_assertions)]
                 {
                     for &i in my_generators {
@@ -147,13 +138,14 @@ pub(crate) fn build_cells_sharded_live_dedup(
                     let group_start = start;
 
                     if packed_policy.enabled() {
-                        let queries = &packed_queries_all[group_start..cursor];
+                        let query_slot_start = grid.cell_offsets()[cell as usize];
                         let query_local_start =
                             checked_u32(group_start, "packed query local start")?;
                         let group = PackedGroupInput::new(
                             cell as usize,
                             bin.as_u8(),
-                            queries,
+                            query_slot_start,
+                            cursor - group_start,
                             query_local_start,
                             packed_layout,
                         );

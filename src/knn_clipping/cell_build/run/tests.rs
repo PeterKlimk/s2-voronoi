@@ -1163,7 +1163,8 @@ fn packed_termination_checkpoints_survive_all_omitted_constraints() {
             slot_map[slot] = local as u32;
         }
         let layout = PackedSlotLayout::new(&slot_map, 24, (1 << 24) - 1);
-        let group = PackedGroupInput::new(cell, 0, &queries, 0, layout);
+        let group =
+            PackedGroupInput::new(cell, 0, grid.cell_offsets()[cell], queries.len(), 0, layout);
         let mut packed_scratch = PackedKnnCellScratch::new();
         let mut timings = PackedKnnTimings::default();
         let PreparedPackedGroupStatus::Ready(mut prepared) =

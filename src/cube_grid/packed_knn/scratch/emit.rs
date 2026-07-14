@@ -11,7 +11,7 @@ impl PackedKnnCellScratch {
     pub(super) fn ensure_tail_directed_for(
         &mut self,
         qi: usize,
-        group_queries: &[u32],
+        group: PackedGroupInput<'_>,
         group_gen: u32,
         tail_built_any: &mut bool,
         grid: &CubeMapGrid,
@@ -38,7 +38,9 @@ impl PackedKnnCellScratch {
         debug_assert!(self.tail_possible.get(qi).copied().unwrap_or(false));
 
         let mut t_tail = PackedLapTimer::start();
-        let query_slot = group_queries[qi];
+        let query_count = group.query_count();
+        debug_assert!(qi < query_count);
+        let query_slot = group.query_slot_start() + qi as u32;
         let query_slot_usize = query_slot as usize;
         let qx_s = grid.cell_points_x[query_slot_usize];
         let qy_s = grid.cell_points_y[query_slot_usize];
@@ -159,11 +161,11 @@ impl PackedKnnCellScratch {
         let ring_added = tail_keys.len() - ring_old_len;
         timings.add_ring_tail_rescan(ring_added == 0, ring_dot_evaluations);
         let tail_empty = tail_keys.is_empty();
-        let capacity = self.chunk0_keys[..group_queries.len()]
+        let capacity = self.chunk0_keys[..query_count]
             .iter()
             .map(Vec::capacity)
             .sum::<usize>()
-            + self.tail_keys[..group_queries.len()]
+            + self.tail_keys[..query_count]
                 .iter()
                 .map(Vec::capacity)
                 .sum::<usize>();
