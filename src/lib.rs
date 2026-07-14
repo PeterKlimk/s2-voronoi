@@ -69,6 +69,7 @@ pub(crate) mod policy;
 #[doc(hidden)]
 pub mod quality;
 pub(crate) mod sort;
+mod spherical_arc;
 /// Internal small-N sorting-network entry point, exposed for microbenchmarking only.
 #[cfg(feature = "microbench")]
 #[doc(hidden)]

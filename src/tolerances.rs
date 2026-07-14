@@ -149,8 +149,10 @@ pub(crate) const GRID_DOT_BOUND_PAD: f32 = 4.0 * f32::EPSILON;
 /// normalization; this bounds representation error, not algorithm error.
 pub(crate) const VERTEX_ON_SPHERE_EPS: f32 = 1e-4;
 
-/// Edge endpoints with dot below `-1 + this` are flagged antipodal (an
-/// edge's great-circle arc is ill-defined near antipodality).
+/// Edge endpoints with dot below `-1 + this` enter the near-pi conditioning
+/// path. The endpoint cross product is unreliable in this band, so validation
+/// uses the two owning generators to recover the supporting bisector plane.
+/// This threshold does not by itself make an edge invalid.
 pub(crate) const ANTIPODAL_DOT_EPS: f32 = 1e-5;
 
 #[cfg(test)]

@@ -69,8 +69,16 @@ fn cross_track_radians(sample: DVec3, a: DVec3, b: DVec3) -> f64 {
     (sample.dot(bisector_normal).abs() / length).min(1.0).asin()
 }
 
-fn spherical_chord_sample(a: DVec3, b: DVec3, t: f64) -> DVec3 {
-    (a * (1.0 - t) + b * t).normalize()
+fn owner_plane_arc_sample(a: DVec3, b: DVec3, ga: DVec3, gb: DVec3, t: f64) -> DVec3 {
+    let normal = (ga - gb).normalize();
+    let a = (a - normal * normal.dot(a)).normalize();
+    let b = (b - normal * normal.dot(b)).normalize();
+    let mut tangent = normal.cross(a).normalize();
+    if tangent.dot(b) < 0.0 {
+        tangent = -tangent;
+    }
+    let angle = tangent.dot(b).max(0.0).atan2(a.dot(b).clamp(-1.0, 1.0));
+    (a * (t * angle).cos() + tangent * (t * angle).sin()).normalize()
 }
 
 fn measure_intrinsic_geometry(
@@ -126,8 +134,10 @@ fn measure_intrinsic_geometry(
         }
         let va = vertices[*a as usize];
         let vb = vertices[*b as usize];
+        let ga = generators[owners[0]];
+        let gb = generators[owners[1]];
         for k in 0..=4 {
-            let sample = spherical_chord_sample(va, vb, k as f64 / 4.0);
+            let sample = owner_plane_arc_sample(va, vb, ga, gb, k as f64 / 4.0);
             result.edge_samples += 1;
             result.max_edge_cross_track_rad = result.max_edge_cross_track_rad.max(
                 cross_track_radians(sample, generators[owners[0]], generators[owners[1]]),
@@ -193,7 +203,6 @@ fn assert_case(points: &[UnitVec3], label: &str) -> IntrinsicGeometry {
 }
 
 #[test]
-#[ignore = "audit: near-antipodal small-n edge contract is tracked separately"]
 fn uniform_small_n_exhaustive_range_has_intrinsic_voronoi_geometry() {
     // Includes random_sphere_points(5, 2), the former topologically valid but
     // geometrically wrong AUD-002 counterexample.

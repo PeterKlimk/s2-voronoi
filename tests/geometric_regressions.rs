@@ -123,3 +123,23 @@ fn aud_002_five_sites_preserve_voronoi_geometry() {
     }
     assert_aud_002_voronoi_geometry();
 }
+
+#[test]
+fn aud_016_near_pi_edge_is_a_strict_valid_edge() {
+    let points = [
+        UnitVec3::new(-0.346_064_27, -0.758_758, -0.551_838_64),
+        UnitVec3::new(0.672_760_4, -0.217_307_08, -0.707_227_7),
+        UnitVec3::new(-0.753_194_45, 0.368_890_3, 0.544_626_5),
+        UnitVec3::new(-0.661_814_2, -0.681_742_25, -0.311_816_45),
+    ];
+    let output = compute_with_report(&points, VoronoiConfig::default())
+        .expect("AUD-016 near-pi fixture should compute");
+    let validation = validate(&output.diagram);
+    assert!(
+        validation.is_strictly_valid(),
+        "near-pi edge is shorter than pi and must remain supported: {}",
+        validation.headline()
+    );
+    assert_eq!(validation.euler_characteristic, 2);
+    assert_eq!(validation.antipodal_edges, 0);
+}

@@ -844,29 +844,39 @@ contract still requires a deferred pre-assembly cell/component recovery seam.
 - **Priority:** P1
 - **Class:** structural return gate / large-cell representation policy
 - **Confidence:** Reproduced by the intrinsic small-`n` campaign
-- **Status:** Open; design decision required
+- **Status:** Structural validation resolved; consumer stabilization and exact-pi SoS remain open
 
 A valid, non-welded four-generator fixture with all sites in a common hemisphere returns a
 tetrahedral cell complex whose true large-cell boundaries contain edges very close to a
-semicircle. Two stored edge endpoint pairs fall within `ANTIPODAL_DOT_EPS`, so strict validation
-rejects them and excludes them from its edge count (`Euler=3`, two antipodal-edge invariants), even
-though the ordinary production return gate accepts the diagram. The intrinsic oracle also records
-the expected numerical sensitivity of these long arcs: about `3.3e-5` radians maximum ownership
-violation for the current stored-f32 vertices.
+semicircle. Two stored edge endpoint pairs fall within `ANTIPODAL_DOT_EPS`; the old strict validator
+rejected them and excluded them from its edge count (`Euler=3`, two antipodal-edge invariants), even
+though the ordinary production return gate accepted the diagram. The old chord-normalized
+intrinsic sampler also reported about `3.3e-5` radians of artificial ownership error because its
+interpolation is ill-conditioned near a semicircle.
 
 This is not necessarily a wrong Local3d or clipping result. When the generator hull does not
 contain the origin, legitimate spherical Voronoi edges can approach pi in length; changing hull or
-clipping algorithms cannot remove that intrinsic regime. The contract must choose among:
+clipping algorithms cannot remove that intrinsic regime. The selected structural contract is:
 
-1. represent and validate an oriented near-pi arc using enough ownership/side information to make
-   its branch unambiguous;
-2. deterministically perturb and rebuild such inputs under the robust degeneracy policy; or
-3. classify the regime as unsupported and ensure the cheap return gate fails cleanly rather than
-   returning a strict-invalid diagram.
+1. every ordinary edge is the shorter-than-pi arc on the bisector plane of its two owning
+   generators;
+2. in the near-pi conditioning band, recover that plane from the owners instead of the endpoint
+   cross product, then reject only an exactly antipodal or owner-inconsistent representation; and
+3. exact-pi degeneracies use the explicit SoS policy, because an endpoint pair alone cannot identify
+   the two distinct semicircles of a lune.
 
-The exhaustive uniform small-`n` campaign remains retained but ignored pending that decision. Its
-AUD-002 negative control and the structured small-`n` campaign remain active independently; the
-near-semicircle case must not be hidden by merely loosening the intrinsic oracle.
+The strict and repair gates now pair the two halfedges before applying owner-plane classification.
+The detailed validator retains these edges in its incidence and Euler accounting. A focused
+four-site regression is strict-valid with `Euler=2`, and the owner-plane intrinsic sampler allows
+the exhaustive uniform `n=4..32`, seeds `0..63` campaign to run normally. The tolerance remains a
+conditioning trigger, not an acceptance relaxation.
+
+Remaining work is deliberately split from the structural fix. Public area/centroid and diagnostic
+edge sampling still use endpoint-cross or chord formulas that become inaccurate near pi; migrating
+them requires an efficient way to supply the neighboring owner without adding per-edge fast-path
+storage by default. Exact affine small-circle degeneracy is also not covered by the current
+rank-2/great-circle perturb retry: its SoS trigger must use certified affine coplanarity rather than
+classifying merely near-pi floating-point output as exact.
 
 ## Recommended implementation sequence
 
@@ -889,14 +899,13 @@ near-semicircle case must not be hidden by merely loosening the intrinsic oracle
     baseline and boundary coverage.
 12. **AUD-015:** resolved for correctness — unrestricted spherical replay now occurs only after
     genuine chart exhaustion; early performance handoff remains deferred.
-13. **AUD-016:** choose the near-semicircle edge contract, then make the production return gate and
-    strict validator agree with it.
+13. **AUD-016:** structural near-pi contract resolved; stabilize geometry consumers and extend the
+    explicit SoS path to certified exact-pi affine degeneracies.
 
 ## Cross-cutting test backlog
 
-- Finish integrating the retained exhaustive small-`n` geometry campaign after AUD-016 selects the
-  near-semicircle representation policy. Existing quality fixtures around 100 sites missed both
-  its four-site large-cell case and the five-site reconciliation failure.
+- Keep the exhaustive uniform small-`n` geometry campaign active. Existing quality fixtures around
+  100 sites missed both its four-site large-cell case and the five-site reconciliation failure.
 - After any reconciliation or Local3d edit, assess incident-site equality and shared-edge bisector
   residuals in addition to strict topology.
 - Add negative-control diagrams: rotate vertices without generators, reverse one face, duplicate a

@@ -81,7 +81,8 @@ pub struct ValidationReport {
 
     /// Number of self-loop edges `(v, v)` in cell boundary cycles.
     pub self_loop_edges: usize,
-    /// Number of edges whose endpoints are antipodal or near-antipodal.
+    /// Number of edges that are exactly antipodal or whose near-pi arc cannot
+    /// be reconciled with the bisector plane of its two owning generators.
     pub antipodal_edges: usize,
     /// Number of undirected edges referenced by fewer than 2 directed edges.
     pub boundary_edges: usize,
@@ -382,6 +383,21 @@ fn edge_key(lo: u32, hi: u32) -> u64 {
     ((lo as u64) << 32) | hi as u64
 }
 
+#[inline]
+fn edge_vertices(key: u64) -> (usize, usize) {
+    ((key >> 32) as usize, key as u32 as usize)
+}
+
+#[inline]
+fn owner_arc_class(
+    start: glam::Vec3,
+    end: glam::Vec3,
+    owner: glam::Vec3,
+    neighbor: glam::Vec3,
+) -> crate::spherical_arc::OwnerArcClass {
+    crate::spherical_arc::classify_owner_arc(start, end, owner, neighbor, ANTIPODAL_DOT_EPS)
+}
+
 /// Sort edge-use records by key — in parallel when available. This sort is the
 /// dominant cost of the strict verifiers at scale (~6M records at 1M cells).
 /// The downstream pairing scan only groups records by key and applies
@@ -508,13 +524,6 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
                 return Err("self-loop edge");
             }
 
-            let va = diagram.vertex(a as usize);
-            let vb = diagram.vertex(b as usize);
-            let dot = va.x * vb.x + va.y * vb.y + va.z * vb.z;
-            if dot <= -1.0 + ANTIPODAL_DOT_EPS {
-                return Err("antipodal edge");
-            }
-
             let (lo, hi, forward) = if a < b { (a, b, true) } else { (b, a, false) };
             edge_uses.push(EdgeUse {
                 key: edge_key(lo, hi),
@@ -550,6 +559,27 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
         let group = &edge_uses[i..j];
         if group.len() != 2 || group[0].forward == group[1].forward {
             return Err("unpaired, overused, or misoriented edge");
+        }
+        let (a, b) = edge_vertices(first.key);
+        let va = diagram.vertex(a);
+        let vb = diagram.vertex(b);
+        let dot = va.x * vb.x + va.y * vb.y + va.z * vb.z;
+        if dot <= -1.0 + ANTIPODAL_DOT_EPS {
+            let owner = diagram.generator(group[0].cell as usize);
+            let neighbor = diagram.generator(group[1].cell as usize);
+            let class = owner_arc_class(
+                glam::Vec3::new(va.x, va.y, va.z),
+                glam::Vec3::new(vb.x, vb.y, vb.z),
+                glam::Vec3::new(owner.x, owner.y, owner.z),
+                glam::Vec3::new(neighbor.x, neighbor.y, neighbor.z),
+            );
+            if matches!(
+                class,
+                crate::spherical_arc::OwnerArcClass::ExactPi
+                    | crate::spherical_arc::OwnerArcClass::Invalid
+            ) {
+                return Err("antipodal edge");
+            }
         }
         if group[0].cell != group[1].cell {
             dsu.union(group[0].cell as usize, group[1].cell as usize);
@@ -595,7 +625,7 @@ struct CellScan {
 /// the lexicographic minimum over `(cell, rank)` reproduces the sequential
 /// first error exactly: span(0) → vertex-ref/duplicate-vertex(1) →
 /// degenerate(2) → duplicate-cell(3, needs cross-cell info) →
-/// self-loop/antipodal(4).
+/// self-loop/arc(4).
 const RANK_SPAN: u8 = 0;
 const RANK_VERTEX: u8 = 1;
 const RANK_DEGENERATE: u8 = 2;
@@ -698,13 +728,6 @@ fn scan_cells_strict(
                 out.err = Some((ci as u32, RANK_EDGE, "self-loop edge"));
                 break 'cells;
             }
-            let va = vertices[a as usize];
-            let vb = vertices[b as usize];
-            let dot = va.x * vb.x + va.y * vb.y + va.z * vb.z;
-            if dot <= -1.0 + ANTIPODAL_DOT_EPS {
-                out.err = Some((ci as u32, RANK_EDGE, "antipodal edge"));
-                break 'cells;
-            }
             let (lo, hi, forward) = if a < b { (a, b, true) } else { (b, a, false) };
             out.edge_uses.push(EdgeUse {
                 key: edge_key(lo, hi),
@@ -735,6 +758,7 @@ fn scan_cells_strict(
 /// the independent reference) by the differential test
 /// `effective_strict_matches_fast`.
 pub(crate) fn verify_sphere_effective_strict(
+    generators: &[glam::Vec3],
     vertices: &[glam::Vec3],
     cells: &[crate::diagram::VoronoiCell],
     cell_indices: &[u32],
@@ -742,6 +766,10 @@ pub(crate) fn verify_sphere_effective_strict(
     use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
     let num_cells = cells.len();
     let num_vertices = vertices.len();
+
+    if generators.len() != num_cells {
+        return Err("generator/cell count mismatch");
+    }
 
     if vertices.iter().any(|v| !vertex_is_on_sphere(v.x, v.y, v.z)) {
         return Err("off-sphere vertex");
@@ -845,6 +873,24 @@ pub(crate) fn verify_sphere_effective_strict(
         let group = &edge_uses[i..j];
         if group.len() != 2 || group[0].forward == group[1].forward {
             return Err("unpaired, overused, or misoriented edge");
+        }
+        let (a, b) = edge_vertices(first.key);
+        let va = vertices[a];
+        let vb = vertices[b];
+        if va.dot(vb) <= -1.0 + ANTIPODAL_DOT_EPS {
+            let class = owner_arc_class(
+                va,
+                vb,
+                generators[group[0].cell as usize],
+                generators[group[1].cell as usize],
+            );
+            if matches!(
+                class,
+                crate::spherical_arc::OwnerArcClass::ExactPi
+                    | crate::spherical_arc::OwnerArcClass::Invalid
+            ) {
+                return Err("antipodal edge");
+            }
         }
         if group[0].cell != group[1].cell {
             dsu.union(group[0].cell as usize, group[1].cell as usize);
@@ -1010,14 +1056,6 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
                 continue;
             }
 
-            let va = diagram.vertex(a as usize);
-            let vb = diagram.vertex(b as usize);
-            let dot = va.x * vb.x + va.y * vb.y + va.z * vb.z;
-            if dot <= -1.0 + ANTIPODAL_DOT_EPS {
-                antipodal_edges += 1;
-                continue;
-            }
-
             let (lo, hi, forward) = if a < b { (a, b, true) } else { (b, a, false) };
             let stat = edges.entry(edge_key(lo, hi)).or_default();
             if forward {
@@ -1057,6 +1095,34 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
     let mut overused_edges = 0usize;
     let mut same_direction_edge_pairs = 0usize;
     let num_edges = edges.len();
+
+    for (&key, stat) in &edges {
+        if stat.cells.len() != 2 {
+            continue;
+        }
+        let (a, b) = edge_vertices(key);
+        let va = diagram.vertex(a);
+        let vb = diagram.vertex(b);
+        let dot = va.x * vb.x + va.y * vb.y + va.z * vb.z;
+        if dot > -1.0 + ANTIPODAL_DOT_EPS {
+            continue;
+        }
+        let owner = diagram.generator(stat.cells[0]);
+        let neighbor = diagram.generator(stat.cells[1]);
+        let class = owner_arc_class(
+            glam::Vec3::new(va.x, va.y, va.z),
+            glam::Vec3::new(vb.x, vb.y, vb.z),
+            glam::Vec3::new(owner.x, owner.y, owner.z),
+            glam::Vec3::new(neighbor.x, neighbor.y, neighbor.z),
+        );
+        if matches!(
+            class,
+            crate::spherical_arc::OwnerArcClass::ExactPi
+                | crate::spherical_arc::OwnerArcClass::Invalid
+        ) {
+            antipodal_edges += 1;
+        }
+    }
 
     let mut dsu = DisjointSet::new(num_cells);
     for stat in edges.values() {
@@ -1216,8 +1282,13 @@ mod verify_gate_tests {
     /// canonical `verify_sphere_fast` it stands in for inside the re-clip repair.
     fn assert_agree(d: &SphericalVoronoi) {
         let (v, c, ci) = effective_arrays(d);
+        let generators: Vec<Vec3> = d
+            .generators()
+            .iter()
+            .map(|g| Vec3::new(g.x, g.y, g.z))
+            .collect();
         let fast = verify_sphere_fast(d);
-        let eff = verify_sphere_effective_strict(&v, &c, &ci);
+        let eff = verify_sphere_effective_strict(&generators, &v, &c, &ci);
         assert_eq!(fast, eff, "fast={fast:?} effective={eff:?}");
     }
 

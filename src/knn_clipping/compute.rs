@@ -708,8 +708,12 @@ fn maybe_repair_effective(
     // temporary `SphericalVoronoi` — the clone was the dominant cost of a
     // committed repair. The validate itself stays whole-diagram (the repair's
     // blast radius is vertex-triple-identity-wide, so a local gate is unsound).
-    let gate =
-        crate::validation::verify_sphere_effective_strict(vertices, &new_cells, &new_cell_indices);
+    let gate = crate::validation::verify_sphere_effective_strict(
+        effective_points,
+        vertices,
+        &new_cells,
+        &new_cell_indices,
+    );
     if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
         eprintln!(
             "repair commit: into_flat {:?}, gate {:?} ({} verts, {} cells, gate {})",
@@ -1503,8 +1507,13 @@ mod tests {
         cells: &[VoronoiCell],
         cell_indices: &[u32],
     ) {
-        let strict =
-            crate::validation::verify_sphere_effective_strict(vertices, cells, cell_indices);
+        let generators = vec![Vec3::Z; cells.len()];
+        let strict = crate::validation::verify_sphere_effective_strict(
+            &generators,
+            vertices,
+            cells,
+            cell_indices,
+        );
         assert!(strict.is_err(), "{name}: injected defect must be invalid");
 
         let repair = unaccepted_outcome(vertices, cells, cell_indices);
@@ -1522,9 +1531,15 @@ mod tests {
         cells: &[VoronoiCell],
         cell_indices: &[u32],
     ) {
+        let generators = vec![Vec3::Z; cells.len()];
         assert!(
-            crate::validation::verify_sphere_effective_strict(vertices, cells, cell_indices)
-                .is_err(),
+            crate::validation::verify_sphere_effective_strict(
+                &generators,
+                vertices,
+                cells,
+                cell_indices,
+            )
+            .is_err(),
             "{name}: injected defect must be invalid"
         );
         let topology = summarize_topology(vertices.len(), cells, cell_indices);
@@ -1548,9 +1563,15 @@ mod tests {
         cells: &[VoronoiCell],
         cell_indices: &[u32],
     ) {
+        let generators = vec![Vec3::Z; cells.len()];
         assert!(
-            crate::validation::verify_sphere_effective_strict(vertices, cells, cell_indices)
-                .is_err(),
+            crate::validation::verify_sphere_effective_strict(
+                &generators,
+                vertices,
+                cells,
+                cell_indices,
+            )
+            .is_err(),
             "{name}: injected defect must be invalid"
         );
         let topology = summarize_topology(vertices.len(), cells, cell_indices);
@@ -1576,8 +1597,14 @@ mod tests {
     #[test]
     fn fault_injection_maps_plain_gate_coverage_and_gaps() {
         let good = crate::compute(&fib_sphere(64)).expect("valid baseline");
+        let base_generators: Vec<Vec3> = good
+            .generators()
+            .iter()
+            .map(|g| Vec3::new(g.x, g.y, g.z))
+            .collect();
         let (base_vertices, base_cells, base_indices) = effective_arrays(&good);
         crate::validation::verify_sphere_effective_strict(
+            &base_generators,
             &base_vertices,
             &base_cells,
             &base_indices,
