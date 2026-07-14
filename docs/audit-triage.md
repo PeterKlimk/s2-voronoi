@@ -75,7 +75,9 @@ The following are recorded backburner ideas, not blockers for the selected produ
 - unified exact normalized-site combinatorics and a shared exact-zero/SoS model;
 - a certified exhaustive normalized-site ownership diagnostic;
 - an early total-query-work circuit breaker for pathological but successful constructions; and
-- selection of an external certified-robust comparison implementation.
+- selection of an external certified-robust comparison implementation; and
+- the output-resolution and optional edge-collapse policy recorded in
+  [`output-resolution-policy.md`](output-resolution-policy.md).
 
 The cross-cutting campaigns below are continuing regression policy, not unfinished audit findings.
 

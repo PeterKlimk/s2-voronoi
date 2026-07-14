@@ -47,6 +47,9 @@ may be kept or collapsed; which one happens is a policy choice, not a correctnes
 the graph stays coherent. Reconciliation collapses a positional equivalence component only when its full
 diameter over stored vertices is at most `RECONCILE_DEGENERATE_LEN_EPS`; pairwise chains cannot
 extend that bound. Rejected components escalate to Local3d under the default repair policy.
+The proposed separation between generator preservation/elision and exact/epsilon edge collapse is
+recorded in [`output-resolution-policy.md`](output-resolution-policy.md); that note is a design
+record, not a description of the current public API.
 
 ## Coincident generators (welding)
 
