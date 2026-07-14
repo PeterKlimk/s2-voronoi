@@ -104,6 +104,11 @@ default `Preserve` behavior.
   - the link/owner-rotation certificate required before a cell-killing transaction commits; and
   - report composition with preprocessing welds and deterministic perturbation.
 - **Invariant:** `Preserve` remains the default and never silently removes an effective generator.
+- **Regression foundation:** an end-to-end 18-site fixture disables preprocessing welding while
+  retaining distinct f32 generators. It returns a strict-valid mesh with three preserved
+  cell-killing exact-zero components, including a triangle whose zero edge cannot be contracted
+  without deleting its generator cell. The fixture is stable across default SIMD, scalar SIMD,
+  and hardware FMA and is shared groundwork for `Preserve`, `Error`, and `Elide` tests.
 - **Reference:** [`output-resolution-policy.md`](output-resolution-policy.md).
 
 ### RES-002 — Optional positive-threshold edge simplification
