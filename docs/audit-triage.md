@@ -53,7 +53,7 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 | AUD-008 | P1 | Resolved | Plain `compute` documentation exceeded its fast-path certificate | Edge-agreement construction certificate + fused Euler; strict validation optional/testing |
 | AUD-009 | P1 | Resolved | Reconciliation merges were not bounded to an epsilon-diameter feature | Transactionally diameter-gate components; escalate rejected chains |
 | AUD-010 | P2 | Resolved | Fast, fallback, repair, and exact-predicate paths do not share one exact site model or SoS policy | Structural production contract chosen; unified exact combinatorics deferred as an optional add-on |
-| AUD-011 | P2 | Active; theorem/frontiers audited, fidelity measured | Termination reserves remain empirical; normalized-site geometric fidelity now has a campaign baseline | Derive the remaining termination budget; retain the boundary tests and fidelity campaign |
+| AUD-011 | P2 | Active; theorem/frontiers audited and aggressively falsified, fidelity measured | Termination reserves remain empirical; normalized-site geometric fidelity now has a campaign baseline | Derive the remaining termination budget; retain the boundary/oracle tests and fidelity campaign |
 | AUD-012 | P3 | Resolved | Welding is intentionally a strict computed-f32 threshold graph with transitive classes | Retain boundary and detector-oracle tests |
 | AUD-013 | P2 | Resolved | Qhull was not a robust correctness oracle | Removed feature, dependency, public API, comparisons, and oracle-like tooling |
 | AUD-014 | P1 | Resolved | Local3d lost the hull-face sign and could mint the antipodal Voronoi vertex | Carry the oriented support normal through sorted-triple repair fans |
@@ -502,6 +502,14 @@ known batch remainder and post-batch unseen certificate. It found no reversed in
 `<`/`<=` defect: equality can denote a tangent cutter, so termination must remain strict. Release
 contract tests passed for the default SIMD backend, scalar SIMD, and FMA arithmetic modes.
 
+An exact zero-tolerance frontier oracle also passed all twelve retained neighbor-contract scenarios
+under the default, `simd_scalar`, and FMA configurations. This includes cube seams/corners, dense
+bands, and production bin layouts. The remaining frontier-side proof gap is narrower: cell caps
+store a rounded cosine radius while only the sine radius is explicitly inflated, so an antipodal
+query receives no benefit from that sine inflation. The absolute four-epsilon export pad then has
+to cover cap construction, cell association, canonical norms, and dot-association differences.
+No counterexample was found, but the code does not yet derive that composed `<= 4 epsilon` bound.
+
 One repair-only implementation mismatch was found during that audit. Local3d's grid gather scored
 candidates with `glam::Vec3::dot`, while the shell bound is certified for the crate's canonical
 raw-f32 dot operation. Different association or FMA behavior could therefore round a candidate
@@ -564,6 +572,39 @@ for cube-cap/grid construction, downward rounding of stored polygon radius, Gram
 residuals, double-angle arithmetic, raw-dot rounding, generator norm rounding, and final
 signed-distance cancellation. No counterexample was found in these audits, so AUD-011 remains a
 proof gap rather than a confirmed unsound bound.
+
+**2026-07-14 adversarial falsification campaign**
+
+Temporary, repository-clean probes attacked the production certificate with the actual clipping
+predicate rather than a second copy of the threshold formula:
+
+- 14,592 successfully built shell-stream cells replayed every omitted generator through the final
+  Topo2D polygon: 2,107,441 omitted-generator clips, all `Unchanged`;
+- candidates scanned across the cached boundary and perturbed by component f32 ulps exercised tiny
+  cells, both signs of `cos(2 theta)`, both sides of its zero transition, elongated polar charts,
+  and near-tangent cancellation: 375,706 candidates accepted by `can_terminate`, none cut; and
+- 3,072 packed-driver cells from uniform and 75%-clustered inputs replayed all omitted generators,
+  with no changed clip and no build failure.
+
+The shell and threshold-adjacent campaigns passed under default SIMD, `simd_scalar`, and FMA. The
+packed campaign exercised the production driver end-to-end, but did not separately count pre-,
+mid-, and post-batch termination classes. The corpus is deterministic and finite, ran on x86_64,
+and did not exhaust all representable f32 directions or canonical norm extrema. It therefore gives
+strong empirical evidence, not a formal proof.
+
+The raw-f32 dot calculation alone admits a standard `gamma_5` bound of approximately
+`2.5000014 epsilon`. Against the current three-epsilon downstream guard, that leaves about
+`0.4999986 epsilon` for every other unaccounted contribution. No attack consumed that margin, but
+the narrow unallocated remainder is why the written derivation remains open.
+
+Highest-value permanent additions are a reduced all-omitted-generator replay oracle, a real-cutter
+adjacent-threshold test, and checkpoint telemetry proving that pre-, mid-, and post-batch packed
+termination are each covered. The frontier cap arithmetic should not be changed merely to appear
+outward-rounded: independently perturbing stored sine and cosine can move the cap expression in
+the wrong direction for some signs. If proof-oriented hardening becomes necessary, evaluate the
+complete cap expression in promoted f64 and outward-round its final dot/distance, then benchmark
+the query-time cost. Likewise, changing the three-epsilon downstream guard remains a design choice
+until either the composed derivation or a counterexample justifies it.
 
 **Implemented fidelity measurements**
 
