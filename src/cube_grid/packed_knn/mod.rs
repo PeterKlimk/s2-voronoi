@@ -18,7 +18,8 @@ pub use timing::PackedKnnTimings;
 pub(crate) struct PackedGroupInput<'a> {
     cell: usize,
     query_bin: u8,
-    queries: &'a [u32],
+    query_slot_start: u32,
+    query_count: usize,
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     query_local_start: u32,
     layout: PackedSlotLayout<'a>,
@@ -29,14 +30,16 @@ impl<'a> PackedGroupInput<'a> {
     pub(crate) fn new(
         cell: usize,
         query_bin: u8,
-        queries: &'a [u32],
+        query_slot_start: u32,
+        query_count: usize,
         query_local_start: u32,
         layout: PackedSlotLayout<'a>,
     ) -> Self {
         Self {
             cell,
             query_bin,
-            queries,
+            query_slot_start,
+            query_count,
             query_local_start,
             layout,
         }
@@ -53,8 +56,19 @@ impl<'a> PackedGroupInput<'a> {
     }
 
     #[inline]
-    pub(crate) fn queries(self) -> &'a [u32] {
-        self.queries
+    pub(crate) fn query_count(self) -> usize {
+        self.query_count
+    }
+
+    #[inline]
+    pub(crate) fn query_slot_start(self) -> u32 {
+        self.query_slot_start
+    }
+
+    #[inline]
+    #[cfg(debug_assertions)]
+    pub(crate) fn query_slots(self) -> core::ops::Range<u32> {
+        self.query_slot_start..self.query_slot_start + self.query_count as u32
     }
 
     #[inline]
@@ -75,27 +89,23 @@ impl<'a> PackedGroupInput<'a> {
         let start = grid.cell_offsets()[self.cell] as usize;
         let end = grid.cell_offsets()[self.cell + 1] as usize;
         debug_assert_eq!(
-            self.queries.len(),
+            self.query_count,
             end - start,
             "directed packed group must cover the full center cell"
         );
         debug_assert!(
-            self.queries
-                .iter()
+            self.query_slots()
                 .enumerate()
-                .all(|(offset, &slot)| slot as usize == start + offset),
+                .all(|(offset, slot)| slot as usize == start + offset),
             "directed packed group queries must be the center cell in slot order"
         );
         debug_assert!(
-            self.queries
-                .iter()
-                .enumerate()
-                .all(|(offset, _)| self.query_local(offset)
-                    == self.query_local_start + offset as u32),
+            (0..self.query_count)
+                .all(|offset| self.query_local(offset) == self.query_local_start + offset as u32),
             "directed packed group locals must be contiguous in slot order"
         );
         debug_assert!(
-            self.queries.iter().enumerate().all(|(offset, &slot)| {
+            self.query_slots().enumerate().all(|(offset, slot)| {
                 let (bin, local) = self.layout.bin_local(slot);
                 bin == self.query_bin && local == self.query_local(offset)
             }),

@@ -85,13 +85,20 @@ fn out_of_range_group_uses_slow_path_after_valid_prepare() {
     let mut scratch = PackedKnnCellScratch::new();
     let mut timings = PackedKnnTimings::default();
 
-    let valid = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
+    let valid = PackedGroupInput::new(
+        cell,
+        QUERY_BIN,
+        start as u32,
+        queries.len(),
+        start as u32,
+        layout,
+    );
     assert!(matches!(
         scratch.prepare_group_directed(&grid, valid, &mut timings),
         PreparedPackedGroupStatus::Ready(_)
     ));
 
-    let invalid = PackedGroupInput::new(6 * grid.res * grid.res, QUERY_BIN, &[], 0, layout);
+    let invalid = PackedGroupInput::new(6 * grid.res * grid.res, QUERY_BIN, 0, 0, 0, layout);
     assert!(matches!(
         scratch.prepare_group_directed(&grid, invalid, &mut timings),
         PreparedPackedGroupStatus::SlowPath
@@ -108,7 +115,14 @@ fn aggregate_candidate_work_uses_slow_path() {
     let queries: Vec<u32> = (start..end).map(|slot| slot as u32).collect();
     let slot_gen_map: Vec<u32> = (0..points.len() as u32).collect();
     let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
-    let group = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
+    let group = PackedGroupInput::new(
+        cell,
+        QUERY_BIN,
+        start as u32,
+        queries.len(),
+        start as u32,
+        layout,
+    );
     let mut scratch = PackedKnnCellScratch::new();
     let mut timings = PackedKnnTimings::default();
 
@@ -137,7 +151,14 @@ fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
         }
         let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
 
-        let group = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
+        let group = PackedGroupInput::new(
+            cell,
+            QUERY_BIN,
+            start as u32,
+            queries.len(),
+            start as u32,
+            layout,
+        );
         let mut scratch = PackedKnnCellScratch::new();
         let mut timings = PackedKnnTimings::default();
         let PreparedPackedGroupStatus::Ready(mut prepared) =
@@ -228,7 +249,14 @@ fn directed_center_chunk_boundaries_match_safe_bruteforce() {
                 ((QUERY_BIN as u32) << LOCAL_SHIFT) | (start + slot) as u32;
         }
         let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
-        let group = PackedGroupInput::new(cell, QUERY_BIN, &queries, start as u32, layout);
+        let group = PackedGroupInput::new(
+            cell,
+            QUERY_BIN,
+            start as u32,
+            queries.len(),
+            start as u32,
+            layout,
+        );
         let mut scratch = PackedKnnCellScratch::new();
         let mut timings = PackedKnnTimings::default();
         let PreparedPackedGroupStatus::Ready(mut prepared) =
