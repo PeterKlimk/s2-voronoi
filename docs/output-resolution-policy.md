@@ -305,15 +305,16 @@ The exact stored-zero baseline is complete:
 - clean discovery uses the degree-local hint and representative-drift certificate, with exhaustive
   terminal scanning whenever that certificate is unavailable.
 
-The active follow-ups and their dependencies are tracked only as WORK-001, RES-001, and RES-002 in
-[`work-log.md`](work-log.md). In particular, public generator elision and positive-threshold
-simplification are optional extensions, not incomplete pieces of the baseline.
+The remaining follow-ups and their dependencies are tracked only as ongoing WORK-002 and optional
+RES-001/RES-002 in [`work-log.md`](work-log.md). In particular, public generator elision and
+positive-threshold simplification are optional extensions, not incomplete pieces of the baseline.
 
 The baseline retains synthetic non-cell-killing and triangle-to-digon tests, a minimized version of
 the downstream Hex3 incident, a weld-radius cell-survival sweep, and focused reconciliation tests
-for endpoint identity, cell-killing escalation, and bounded components. Broader trees,
-cycles, permutation, and repaired-output cases remain useful hardening work before exposing
-positive-threshold or generator-elision policy.
+for endpoint identity, cell-killing escalation, and bounded components. Oriented-prism regressions
+cover maximal trees, cycles, safe and cell-killing shared-cell interactions, 96 structural
+permutations, and 64 randomized forest assemblies. Localized and exhaustive discovery must produce
+identical reports and quotients, and every terminal fixture must validate strictly.
 
 ## Deferred decisions
 

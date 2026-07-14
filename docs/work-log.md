@@ -22,8 +22,9 @@ policy documents. An unchecked item elsewhere should either be moved here or tre
 - Full strict validation remains available for testing and campaigns without burdening the default
   fast path.
 
-There is no active P0/P1 correctness defect. The nearest useful work is regression hardening and
-telemetry for the new output-resolution certificate.
+There is no active P0/P1 correctness defect and no finite correctness item in `Ready` state.
+Construction-certificate differential maintenance remains ongoing; the next finite features are
+optional output-policy decisions.
 
 ## Triage vocabulary
 
@@ -46,35 +47,16 @@ telemetry for the new output-resolution certificate.
 
 | ID | Priority | Status | Next gate |
 |---|---:|---|---|
-| WORK-001 | P2 | Ready | Run telemetry soak and broaden component fixtures |
 | WORK-002 | P2 | Ongoing | Exercise after construction/repair changes |
 | RES-001 | P2 | Decision | Agree generator-remapping and transaction semantics |
-| RES-002 | P2 | Blocked | Complete WORK-001 and decide RES-001 |
+| RES-002 | P2 | Blocked | Decide RES-001 |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
 | RESEARCH-002 | P3 | Backburner | Justify diagnostic cost and conditioning policy |
 | RESEARCH-003 | P3 | Backburner | First choose a compatible exact-zero/SoS model |
 | RESEARCH-004 | P3 | Backburner | Commit to full f64 representation and search bounds |
 
-## Ready work
-
-### WORK-001 — Output-resolution certificate soak and component hardening
-
-- **Priority:** P2
-- **Status:** Ready
-- **Motivation:** The exact-zero baseline and clean-path discovery certificate are implemented and
-  reviewed. Their remaining risk is future lifecycle drift rather than a known false-negative.
-- **Scope:**
-  - run timing-enabled adversarial campaigns and record certified versus exhaustive discovery,
-    drift fallback, locally scanned repair cells, hinted cells/candidates, and detected edges;
-  - add maximal zero-component fixtures covering trees, cycles, shared-cell interactions,
-    and permutations;
-  - compare hinted discovery with exhaustive discovery on randomized synthetic assemblies; and
-  - keep signed-zero and adjacent-f32 threshold cases pinned.
-- **Acceptance:** no invalid success, hinted and exhaustive canonicalization agree, all successful
-  outputs validate strictly, and ordinary workloads remain overwhelmingly on certified discovery.
-- **References:** AUD-017 in [`audit-triage.md`](audit-triage.md),
-  [`output-resolution-policy.md`](output-resolution-policy.md).
+## Ongoing work
 
 ### WORK-002 — Construction-certificate differential maintenance
 
@@ -115,7 +97,7 @@ default `Preserve` behavior.
 
 - **Priority:** P2
 - **Status:** Blocked
-- **Dependencies:** RES-001 and WORK-001
+- **Dependencies:** RES-001
 - **Goal:** let graphical or physics consumers explicitly remove represented nonzero slivers.
 - **Decisions required:**
   - canonical threshold units (squared chord internally, with or without an angular convenience
@@ -189,13 +171,31 @@ duplicated here.
 
 ## Suggested order
 
-1. WORK-001 telemetry soak and component regressions.
-2. Continue WORK-002 whenever construction, reconciliation, or Local3d changes.
-3. If a consumer needs generator removal or mesh conditioning, decide RES-001 before RES-002.
-4. Revisit PERF-001 only with a motivating workload and crossover measurements.
-5. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
+1. Continue WORK-002 whenever construction, reconciliation, or Local3d changes.
+2. If a consumer needs generator removal or mesh conditioning, decide RES-001 before RES-002.
+3. Revisit PERF-001 only with a motivating workload and crossover measurements.
+4. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
 
 ## Closed and retired work
+
+### WORK-001 — Output-resolution certificate soak and component hardening
+
+- **Priority:** P2
+- **Status:** Completed 2026-07-15
+- **Differential fixtures:** an oriented prism family covers a maximal safe zero-edge tree,
+  multiple safe components sharing a cell, multiple individually safe components that jointly
+  kill a cell, and a cell-killing cycle. Twenty-four vertex/cell/cycle permutations per family
+  plus 64 deterministic randomized forest assemblies produced identical localized and exhaustive
+  reports and quotients; every terminal synthetic diagram validated strictly.
+- **Production soak:** 29 strict-valid timing-enabled cases covered eight ordinary and
+  density-contrast distributions at 50k plus focused 1M clustered and 100k mega cases. All 29 used
+  certified discovery with no drift fallback. The runs visited 235,681 hint cells, rechecked 72
+  construction candidates, and detected 71 final exact-zero edges.
+- **Repair evidence:** clustered 1M seed 1 reported four reconciliation scan cells and changed 18
+  construction candidates into 17 actual terminal edges, directly exercising the stale-hint
+  recheck. No accepted Local3d repair occurred naturally in the bounded soak; its complete splice
+  footprint remains pinned by a direct regression and stays observable in ongoing WORK-002 runs.
+- **Boundary coverage:** signed zero, exact threshold, and adjacent-f32 cases remain pinned.
 
 ### WORK-003 — Post-construction zero-edge invalidation
 

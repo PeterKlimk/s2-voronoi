@@ -1116,6 +1116,16 @@ added 2.91% retired instructions, 3.32% branches, and about 6.0% branch misses; 
 vertex-position loads, comparisons, and per-worker candidate collection. The sparse certificate
 therefore remains the selected fast path, with exhaustive scanning confined to uncertified builds.
 
+WORK-001 subsequently closed the remaining hardening scope. Oriented-prism fixtures exercised a
+maximal safe tree, a cell-killing cycle, safe shared-cell components, and components that become
+cell-killing only as a group across 96 structural permutations; 64 deterministic randomized forest
+assemblies provided an additional localized-versus-exhaustive differential. Every report and live
+quotient agreed and every terminal fixture validated strictly. A 29-case timing-enabled production
+soak remained certified with no drift fallback, visiting 235,681 hint cells and reducing 72
+construction candidates to 71 final exact-zero edges. Clustered 1M seed 1 activated a four-cell
+reconciliation footprint and reduced 18 pre-repair candidates to 17 terminal edges, directly
+confirming why final local cycles—not stale construction candidates—are authoritative.
+
 The separate generator `Error`/`Elide` choices and an optional positive edge threshold remain
 backburner API work in [`output-resolution-policy.md`](output-resolution-policy.md).
 
