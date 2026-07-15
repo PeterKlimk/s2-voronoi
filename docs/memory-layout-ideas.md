@@ -271,6 +271,28 @@ invariant. The resulting production path is smaller and more direct, and the por
 shows no contrary signal. Treat the measured speedup as supportive rather than precise because
 code-layout effects are comparable to an effect of this size.
 
+### Slot-native generator-position result (2026-07-15)
+
+The second progression step is accepted. The driver derives each generator's slot from the known
+group start plus its local offset, loads the generator position from the spatially ordered
+`SlotPoint` stream, and forwards that value through cell construction. The global generator id
+remains unchanged. Checked builds assert both the slot's id and the position's exact f32 bits
+against the canonical point, covering packed, packed-slow-path, and packed-disabled groups.
+
+The production profile had placed the scattered `points[generator_idx]` load at the dominant
+sampled source location inside cell construction. Reusing the slot-native position removes that
+gather from builder reset, shell-frontier creation, and mid-batch bounds. At 2M with twelve threads,
+native hardware counters improved materially across both ordinary distributions: Fibonacci cycles
+fell 8.41% and cache misses 17.04% over nine agreeing pairs; uniform cycles fell 8.93% and cache
+misses 9.19%, also with every pair agreeing. Instructions changed by only -0.12% and -0.23%, which
+supports reduced memory stalls rather than changed geometric work. The benefit persisted with
+preprocessing and 96 bins (uniform cycles -8.86%, cache misses -13.16% over seven pairs), while a
+pinned one-thread Fibonacci guardrail remained favorable. An Intel i5-1038NG7 MacBook Pro on Rust
+1.88 independently measured 2M eight-thread wall-time improvements of 2.9% on Fibonacci (95%
+interval 1.4--4.3%, 14/16 pairs) and 2.6% on uniform (2.0--3.2%, 16/16 pairs). This completes
+progression step 2; keep the edge-check and inverse-map ideas as separately attributable
+experiments.
+
 ## 5. Thin per-local edge-check queues
 
 ### Current cost

@@ -352,6 +352,21 @@ with 5/16 wins and a roughly -0.05% to +0.97% interval. The lossless record shri
 structural reductions were retained rather than treating unresolved layout-sensitive cycles as a
 regression.
 
+Cell construction now takes the generator position from the group's known contiguous grid slot
+instead of gathering `points[generator_idx]`. The slot record retains the same global generator id,
+and checked builds verify that its position is bit-identical to the canonical point. The same value
+is forwarded through builder reset, shell-frontier initialization, mid-batch termination bounds,
+and exhaustion recovery, so the ordinary path no longer reintroduces the scattered generator load.
+On the 2M, twelve-thread native reference run, nine paired Fibonacci rounds reduced cycles 8.41%,
+cache references 6.89%, and cache misses 17.04%; nine uniform rounds reduced them 8.93%, 5.10%, and
+9.19%. Every cycle and cache-miss pair favored the candidate. Retired instructions fell only
+0.12--0.23%, identifying locality rather than changed query work as the cause. A seven-pair 2M
+uniform run with preprocessing and 96 bins retained an 8.86% cycle and 13.16% cache-miss reduction.
+The pinned one-thread Fibonacci guardrail also remained favorable (4.87% fewer cycles over seven
+pairs), and the full checked suite passed. On an Intel i5-1038NG7 MacBook Pro using the MSRV
+toolchain (Rust 1.88 / LLVM 20), 2M eight-thread wall time improved 2.9% on Fibonacci (95% interval
+1.4--4.3%, 14/16 pairs) and 2.6% on uniform (2.0--3.2%, 16/16 pairs).
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated

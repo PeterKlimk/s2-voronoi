@@ -134,6 +134,7 @@ pub(crate) struct CellBuildRequest<'a, 'm, 'p, 'g, 's> {
     pub(crate) points: &'a [Vec3],
     pub(crate) grid: &'a crate::cube_grid::CubeMapGrid,
     pub(crate) generator_idx: usize,
+    pub(crate) generator: Vec3,
     pub(crate) directed_ctx: crate::cube_grid::DirectedEligibility<'m>,
     pub(crate) packed: Option<PackedQuery<'p, 'g, 'm>>,
     pub(crate) incoming_checks: &'s [EdgeCheck],
@@ -391,16 +392,15 @@ impl BuildCounters {
 /// because every later halfspace can only shrink the real spherical polygon.
 fn recover_unbounded_after_exhaustion(
     ctx: &mut CellBuildContext,
-    points: &[Vec3],
     grid: &crate::cube_grid::CubeMapGrid,
     generator_idx: usize,
+    generator: Vec3,
     counters: &mut BuildCounters,
 ) -> bool {
-    let query = points[generator_idx];
     let pos_slots = grid.point_pos_slots();
     let mut seed_slots = Vec::new();
     let mut seeded = false;
-    let mut frontier = grid.unrestricted_shell_frontier(query, generator_idx, &mut ctx.scratch);
+    let mut frontier = grid.unrestricted_shell_frontier(generator, generator_idx, &mut ctx.scratch);
 
     while let Some(batch) = frontier.frontier(&mut ctx.packed_chunk) {
         let slots = &ctx.packed_chunk[..batch.n];
@@ -576,6 +576,7 @@ fn clip_batch(
     points: &[Vec3],
     pos_slots: &[crate::cube_grid::SlotPoint],
     generator_idx: usize,
+    generator: Vec3,
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
 ) {
@@ -587,6 +588,7 @@ fn clip_batch(
             points,
             pos_slots,
             generator_idx,
+            generator,
             trace,
             counters,
         ),
@@ -597,6 +599,7 @@ fn clip_batch(
                 points,
                 pos_slots,
                 generator_idx,
+                generator,
                 trace,
                 counters,
             )
@@ -629,6 +632,7 @@ fn clip_batch_source<const SHELL: bool>(
     points: &[Vec3],
     pos_slots: &[crate::cube_grid::SlotPoint],
     generator_idx: usize,
+    generator: Vec3,
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
 ) {
@@ -706,10 +710,15 @@ fn clip_batch_source<const SHELL: bool>(
                 // and consistent with the main gather above — points[next] would
                 // be a cold scattered read into the otherwise-unused points[]);
                 // bit-identical to points[point_indices[next_slot]].
-                let query = points[generator_idx];
                 let next = pos_slots[next_slot as usize].pos;
-                let next_dot =
-                    crate::fp::dot3_f32(query.x, query.y, query.z, next.x, next.y, next.z);
+                let next_dot = crate::fp::dot3_f32(
+                    generator.x,
+                    generator.y,
+                    generator.z,
+                    next.x,
+                    next.y,
+                    next.z,
+                );
                 // The remainder bound must cover both the rest of this sorted
                 // batch and everything after the batch, for every source.
                 complete_exact_bound(next_dot, batch.unseen_bound)
@@ -761,6 +770,7 @@ fn consume_stream(
     points: &[Vec3],
     pos_slots: &[crate::cube_grid::SlotPoint],
     generator_idx: usize,
+    generator: Vec3,
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
 ) {
@@ -781,6 +791,7 @@ fn consume_stream(
                     points,
                     pos_slots,
                     generator_idx,
+                    generator,
                     trace,
                     counters,
                 );
@@ -820,6 +831,7 @@ fn finish_cell(
     points: &[Vec3],
     grid: &crate::cube_grid::CubeMapGrid,
     generator_idx: usize,
+    generator: Vec3,
     trace: &BuildTrace,
     counters: &mut BuildCounters,
 ) -> Result<(), CellBuildError> {
@@ -831,8 +843,13 @@ fn finish_cell(
         ) {
             if failure == CellFailure::UnboundedAfterExhaustion {
                 let t_cert = crate::knn_clipping::timing::Timer::start();
-                let recovered =
-                    recover_unbounded_after_exhaustion(ctx, points, grid, generator_idx, counters);
+                let recovered = recover_unbounded_after_exhaustion(
+                    ctx,
+                    grid,
+                    generator_idx,
+                    generator,
+                    counters,
+                );
                 if recovered {
                     counters.fallback_all_constraints += 1;
                     counters.certification_time += t_cert.elapsed();
@@ -881,12 +898,13 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     let points = request.points;
     let grid = request.grid;
     let generator_idx = request.generator_idx;
+    let generator = request.generator;
     let pos_slots = grid.point_pos_slots();
 
     let mut trace = BuildTrace::new();
     let mut counters = BuildCounters::new();
 
-    ctx.builder.reset(generator_idx, points[generator_idx]);
+    ctx.builder.reset(generator_idx, generator);
     ctx.attempted_neighbors.clear();
     // Every successful finish path clears the reusable output before writing:
     // gnomonic extraction, spherical fallback extraction, and all-constraints
@@ -906,7 +924,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     {
         let mut stream = DirectedNeighborStream::new(
             grid,
-            points,
+            generator,
             generator_idx,
             &mut ctx.scratch,
             request.directed_ctx,
@@ -925,13 +943,22 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
             points,
             pos_slots,
             generator_idx,
+            generator,
             &mut trace,
             &mut counters,
         );
         counters.absorb_stream(&stream);
     }
 
-    finish_cell(ctx, points, grid, generator_idx, &trace, &mut counters)?;
+    finish_cell(
+        ctx,
+        points,
+        grid,
+        generator_idx,
+        generator,
+        &trace,
+        &mut counters,
+    )?;
 
     Ok(CellBuildStats {
         knn_query: counters.knn_query_time,

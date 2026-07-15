@@ -73,6 +73,7 @@ fn extraction_writers_replace_poison_and_errors_do_not_consume_it() {
             points: &points,
             grid: &grid,
             generator_idx: 0,
+            generator: points[0],
             directed_ctx,
             packed: None,
             incoming_checks: &[],
@@ -100,6 +101,7 @@ fn extraction_writers_replace_poison_and_errors_do_not_consume_it() {
             points: &points,
             grid: &grid,
             generator_idx: 0,
+            generator: points[0],
             directed_ctx,
             packed: None,
             incoming_checks: &[],
@@ -124,6 +126,7 @@ fn extraction_writers_replace_poison_and_errors_do_not_consume_it() {
             points: &failing_points,
             grid: &failing_grid,
             generator_idx: 0,
+            generator: failing_points[0],
             directed_ctx: failing_directed,
             packed: None,
             incoming_checks: &[],
@@ -301,7 +304,7 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
     {
         let mut stream = DirectedNeighborStream::new(
             grid,
-            points,
+            points[generator_idx],
             generator_idx,
             &mut ctx.scratch,
             directed_ctx,
@@ -319,13 +322,22 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
             points,
             pos_slots,
             generator_idx,
+            points[generator_idx],
             &mut trace,
             &mut counters,
         );
         counters.absorb_stream(&stream);
     }
 
-    let result = finish_cell(&mut ctx, points, grid, generator_idx, &trace, &mut counters);
+    let result = finish_cell(
+        &mut ctx,
+        points,
+        grid,
+        generator_idx,
+        points[generator_idx],
+        &trace,
+        &mut counters,
+    );
     let spherical_extract = if result.is_err() {
         let mut buffer = crate::live_dedup::CellOutputBuffer::default();
         ctx.builder
@@ -450,7 +462,7 @@ fn probe_early_extraction_cell(
     {
         let mut stream = DirectedNeighborStream::new(
             grid,
-            points,
+            points[generator_idx],
             generator_idx,
             &mut ctx.scratch,
             directed_ctx,
@@ -479,6 +491,7 @@ fn probe_early_extraction_cell(
                         points,
                         pos_slots,
                         generator_idx,
+                        points[generator_idx],
                         &mut trace,
                         &mut counters,
                     );
@@ -516,7 +529,15 @@ fn probe_early_extraction_cell(
         counters.absorb_stream(&stream);
     }
 
-    let result = finish_cell(&mut ctx, points, grid, generator_idx, &trace, &mut counters);
+    let result = finish_cell(
+        &mut ctx,
+        points,
+        grid,
+        generator_idx,
+        points[generator_idx],
+        &trace,
+        &mut counters,
+    );
     let final_signature = result.as_ref().ok().map(|_| signature(&ctx.output_buffer));
     let first_success = successes.first().map(|(hit, _)| hit.clone());
     let first_final_match = final_signature.and_then(|final_signature| {
@@ -1012,6 +1033,7 @@ fn direct_cursor_builds_normal_cell() {
             points: &points,
             grid: &grid,
             generator_idx: 0,
+            generator: points[0],
             directed_ctx,
             packed: None,
             incoming_checks: &[],
@@ -1115,6 +1137,7 @@ fn shell_termination_survives_all_omitted_constraints() {
                     points: &points,
                     grid: &grid,
                     generator_idx,
+                    generator: points[generator_idx],
                     directed_ctx,
                     packed: None,
                     incoming_checks: &[],
@@ -1187,6 +1210,7 @@ fn packed_termination_checkpoints_survive_all_omitted_constraints() {
                 points: &points,
                 grid: &grid,
                 generator_idx,
+                generator: points[generator_idx],
                 directed_ctx,
                 packed: Some(packed),
                 incoming_checks: &[],
@@ -1243,6 +1267,7 @@ fn exhausted_chart_replays_discarded_horizon_constraints_spherically() {
             points: &points,
             grid: &grid,
             generator_idx: 0,
+            generator: points[0],
             directed_ctx,
             packed: None,
             incoming_checks: &[],
@@ -1319,6 +1344,7 @@ fn forced_handoff_mid_build_still_finishes_the_cell() {
             points: &points,
             grid: &grid,
             generator_idx: 0,
+            generator: points[0],
             directed_ctx,
             packed: None,
             incoming_checks: &[],

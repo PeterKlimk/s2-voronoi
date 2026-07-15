@@ -71,14 +71,13 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
 
     pub(crate) fn new(
         grid: &'a CubeMapGrid,
-        points: &'a [Vec3],
+        query: Vec3,
         query_idx: usize,
         scratch: &'a mut CubeMapGridScratch,
         directed_ctx: DirectedEligibility<'m>,
         packed: Option<PackedQuery<'p, 'g, 'm>>,
     ) -> Self {
-        let takeover =
-            ShellFrontier::new(grid, points[query_idx], query_idx, scratch, directed_ctx);
+        let takeover = ShellFrontier::new(grid, query, query_idx, scratch, directed_ctx);
         let did_packed = packed.is_some();
         let stage = if did_packed {
             StreamStage::Packed
@@ -362,7 +361,7 @@ mod tests {
         );
         let mut stream = DirectedNeighborStream::new(
             &grid,
-            &points,
+            points[query_idx],
             query_idx,
             &mut grid_scratch,
             ctx,
@@ -464,7 +463,7 @@ mod tests {
                     );
                     let mut stream = DirectedNeighborStream::new(
                         &grid,
-                        &points,
+                        points[query_idx],
                         query_idx,
                         &mut grid_scratch,
                         ctx,
