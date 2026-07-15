@@ -223,7 +223,7 @@ impl Harness {
             let mut scratch = self.grid.make_scratch();
             let stream = DirectedNeighborStream::new(
                 &self.grid,
-                &self.points,
+                self.points[query_idx],
                 query_idx,
                 &mut scratch,
                 ctx,
@@ -274,7 +274,7 @@ impl Harness {
                     );
                     let stream = DirectedNeighborStream::new(
                         &self.grid,
-                        &self.points,
+                        self.points[query_idx],
                         query_idx,
                         &mut scratch,
                         ctx,
