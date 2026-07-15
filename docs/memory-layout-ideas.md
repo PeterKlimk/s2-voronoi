@@ -102,7 +102,7 @@ unless a future stream representation removes its capacity and recording control
 
 ## 2. Owner-local vertex-incidence accounting
 
-**Status: implemented experimentally; quiet-machine cycle/time acceptance pending (2026-07-15).**
+**Status: accepted as a multithreaded throughput candidate (2026-07-15).**
 
 ### Current cost
 
@@ -155,10 +155,20 @@ instructions, 1.72% fewer branches, 1.65% fewer branch misses, 3.45% fewer cache
 with mixed cache movement. A 2M Fibonacci peak-RSS probe measured about 1.5 MiB more RSS, so this is
 not currently a memory-envelope win.
 
-The full `checked` test profile passes, including reconciliation and Local3d repair fixtures. Do
-not promote or commit the experiment based on these attribution counters alone: final acceptance
-still requires paired cycle/time measurements on a quiet machine, including regular and
-high-cross-bin regimes.
+The full `checked` test profile passes, including reconciliation and Local3d repair fixtures.
+
+Windows-native paired wall-time measurements supplied the missing acceptance signal. At two
+million generators, owner-local incidence was 2.42% faster on Fibonacci, 2.87% faster on
+default-bin uniform, and 3.72% faster on 96-bin uniform; all three 20-round 95% intervals excluded
+zero. A separate 40-round focused Fibonacci run measured 1.47% faster, again just excluding zero.
+A 30-round single-thread Fibonacci guardrail was directionally 0.69% faster with a -1.42% to +0.04%
+interval, providing no evidence of a scalar regression.
+
+Portable Windows codegen (release without `-C target-cpu=native`) also passed the acceptance
+guardrails. A 30-round two-million-point Fibonacci multithreaded run was neutral at 0.60% faster
+(-2.35% to +1.17%); uniform with 96 bins was 2.10% faster (1.15% to 3.05%); and a one-million-point
+single-thread Fibonacci run was 0.71% faster (0.38% to 1.03%). Promote this branch to the primary
+default-path candidate for both native and portable builds.
 
 ## 3. Compact shard-local cell-reference stream
 
