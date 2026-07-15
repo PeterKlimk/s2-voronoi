@@ -26,6 +26,27 @@ child process per job, set `MALLOC_ARENA_MAX=2`, or link jemalloc/mimalloc if it
 `RUSTFLAGS="-C target-cpu=native"` is worth ~6% on the reference machine and is the main build
 flag that matters. Run benchmarks in release.
 
+For a machine-specific benchmark binary, profile-guided optimization is an additional material
+win. Install the compiler-matched tools once with `rustup component add llvm-tools-preview`, then
+run one of:
+
+```bash
+./scripts/pgo_build.sh balanced
+./scripts/pgo_build.sh fib
+```
+
+```powershell
+.\scripts\pgo_build.ps1 -Preset balanced
+.\scripts\pgo_build.ps1 -Preset fib
+```
+
+Both scripts create a self-contained, timestamped build beneath `target/pgo/` and print the final
+binary path. `balanced` trains normal and difficult distributions and is the general-purpose
+choice. `fib` trains only the dominant well-distributed path; it is faster there but can regress
+the deliberately adversarial `mega` distribution. Profiles are compiler-, binary-, and
+machine-specific: regenerate them after compiler or relevant source changes rather than checking
+the generated data into source control.
+
 ## Running the benchmarks
 
 The benchmark binaries need the `tools` feature:
@@ -590,6 +611,15 @@ Do not broadly retry these without a materially different design or workload:
   0.375% branches in every 1M pair. Forcing `build_cell_into` out of line shrank the caller but
   created a 10.6 KiB generic body, adding 1.398% instructions and 0.335% branches. Retain the reloads
   and forced inline specialization.
+- Native LLVM PGO is a material build-level optimization, with an explicit workload tradeoff. A
+  balanced profile trained on Fibonacci, uniform, clustered, and mega reduced the Linux binary's
+  text by 6.8%. On 2.5M MT Fibonacci, eight order-rotated pairs reduced cycles 4.16%, instructions
+  3.36%, and branches 3.85%. Uniform structural counters improved similarly. Clustered cycles
+  improved 2.1% despite 0.8% more branches; mega was approximately cycle-neutral (+0.7%) with 0.6%
+  fewer instructions but 4.3% more branches. Fibonacci-only training reached about 6.3% fewer MT
+  cycles than non-PGO, but regressed mega by roughly 3.5%; expose both profiles rather than hiding
+  that policy choice. Initial Windows wall-time runs under heavy unrelated load ranged too widely
+  to resolve PGO there, so the generated Windows binaries still need a quiet paired confirmation.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
