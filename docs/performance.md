@@ -367,6 +367,16 @@ pairs), and the full checked suite passed. On an Intel i5-1038NG7 MacBook Pro us
 toolchain (Rust 1.88 / LLVM 20), 2M eight-thread wall time improved 2.9% on Fibonacci (95% interval
 1.4--4.3%, 14/16 pairs) and 2.6% on uniform (2.0--3.2%, 16/16 pairs).
 
+Forwarded in-bin edge checks now carry the earlier generator's grid slot rather than its global id.
+Seed clipping uses that slot directly and gets position plus global id from one `SlotPoint` load,
+removing the scattered global-to-slot inverse lookup. At 2M/12T, nine Linux Fibonacci pairs reduced
+cycles 2.28% in eight of nine despite adding 0.50% instructions and 0.67% branches. On the quieter
+2M/8T Intel Mac, Fibonacci wall time improved 2.8% (95% interval 1.4--4.2%, 13/16 pairs) and uniform
+improved 3.8% (3.3--4.4%, 16/16 pairs). Because weld compaction is then the inverse slot map's final
+consumer, the map is released before construction, saving about 8 MB at 2M. That follow-up was
+instruction/cycle neutral, reduced Linux hardware cache references 2.05%, and was wall-time neutral
+on both Mac distributions over 32 pairs each.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated

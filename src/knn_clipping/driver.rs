@@ -338,8 +338,10 @@ fn build_and_emit_cell<'a, 'b, 'c>(
         shard_ctx,
         grid_ctx.assignment,
         cell_idx,
+        query_slot,
         cell_start,
         output_buffer,
+        grid_ctx.grid.point_pos_slots(),
         incoming_checks,
     )?;
     let exact_zero_edge_hint = has_zero_edge_candidate(&output_buffer.vertices);

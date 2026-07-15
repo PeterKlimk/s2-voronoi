@@ -54,6 +54,7 @@ impl EdgeScratch {
         cell_idx: u32,
         shard_ctx: &mut ShardContext<'_, P>,
         output_buffer: &CellOutputBuffer<P>,
+        slot_points: &[crate::cube_grid::SlotPoint],
         assignment: &BinAssignment,
         incoming_checks: Vec<EdgeCheck>,
     ) {
@@ -64,6 +65,7 @@ impl EdgeScratch {
             cell_idx,
             shard_ctx,
             output_buffer,
+            slot_points,
             assignment,
             incoming_checks,
             &mut self.vertex_indices,
@@ -77,7 +79,7 @@ impl EdgeScratch {
         &mut self,
         shard: &mut ShardState<P>,
         cell_vertices: &[VertexData<P>],
-        cell_idx: u32,
+        cell_slot: u32,
         cell_start: u32,
         bin: BinId,
         keys_verified: bool,
@@ -118,7 +120,7 @@ impl EdgeScratch {
             shard.dedup.push_edge_check(
                 entry.local_b,
                 EdgeCheck {
-                    neighbor_idx: cell_idx,
+                    neighbor_slot: cell_slot,
                     thirds,
                     indices,
                 },
@@ -201,15 +203,22 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
     shard_ctx: &mut ShardContext<'_, P>,
     assignment: &BinAssignment,
     cell_idx: u32,
+    cell_slot: u32,
     cell_start: u32,
     output_buffer: &CellOutputBuffer<P>,
+    slot_points: &[crate::cube_grid::SlotPoint],
     incoming_checks: Vec<EdgeCheck>,
 ) -> Result<(), BuildCellsError> {
+    debug_assert_eq!(
+        slot_points[cell_slot as usize].idx, cell_idx,
+        "forwarded edge-check slot must identify its source generator"
+    );
     let mut t_post = crate::timing::LapTimer::start();
     scratch.collect_and_resolve(
         cell_idx,
         shard_ctx,
         output_buffer,
+        slot_points,
         assignment,
         incoming_checks,
     );
@@ -306,7 +315,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
     scratch.emit(
         shard,
         &output_buffer.vertices,
-        cell_idx,
+        cell_slot,
         cell_start,
         bin,
         output_buffer.edge_keys_verified,

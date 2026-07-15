@@ -23,8 +23,13 @@ pub(super) fn unpack_edge_key(key: EdgeKey) -> (u32, u32) {
 
 /// Recover the canonical key omitted from the compact in-bin check record.
 #[inline]
-fn edge_check_key(cell_idx: u32, check: EdgeCheck) -> EdgeKey {
-    pack_edge(cell_idx, check.neighbor_idx)
+fn edge_check_key(
+    cell_idx: u32,
+    check: EdgeCheck,
+    slot_points: &[crate::cube_grid::SlotPoint],
+) -> EdgeKey {
+    let neighbor_idx = slot_points[check.neighbor_slot as usize].idx;
+    pack_edge(cell_idx, neighbor_idx)
 }
 
 /// Sentinel "third" for an endpoint whose vertex key does not name both edge
@@ -233,6 +238,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     cell_idx: u32,
     shard_ctx: &mut super::emit::ShardContext<'_, P>,
     output_buffer: &crate::knn_clipping::cell_build::CellOutputBuffer<P>,
+    slot_points: &[crate::cube_grid::SlotPoint],
     assignment: &BinAssignment,
     incoming_checks: Vec<EdgeCheck>,
     vertex_indices: &mut [u32],
@@ -323,7 +329,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
             // Search Vec for matching check (cache-friendly sequential access)
             let found = incoming_checks
                 .iter()
-                .position(|check| check.neighbor_idx == neighbor)
+                .position(|check| check.neighbor_slot == slot)
                 .map(|idx| (idx, incoming_checks[idx]));
 
             if let Some((found_idx, check)) = found {
@@ -412,7 +418,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
             };
             if !consumed {
                 shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
-                    key: edge_check_key(cell_idx, *check),
+                    key: edge_check_key(cell_idx, *check, slot_points),
                     origin: UnresolvedEdgeOrigin::InBinUnconsumedCheck,
                 });
             }
@@ -676,10 +682,20 @@ mod tests {
             edge_keys_verified: true,
         };
         let incoming = vec![EdgeCheck {
-            neighbor_idx: 0,
+            neighbor_slot: 0,
             thirds: [2, 2],
             indices: [7, 8],
         }];
+        let slot_points = [
+            crate::cube_grid::SlotPoint {
+                pos: glam::Vec3::X,
+                idx: 0,
+            },
+            crate::cube_grid::SlotPoint {
+                pos: glam::Vec3::Y,
+                idx: 1,
+            },
+        ];
         let mut vertex_indices = vec![INVALID_INDEX; 3];
         let mut to_later = Vec::new();
         let mut overflow = Vec::new();
@@ -688,6 +704,7 @@ mod tests {
             1,
             &mut shard_ctx,
             &output,
+            &slot_points,
             &assignment,
             incoming,
             &mut vertex_indices,
@@ -726,11 +743,15 @@ mod tests {
     #[test]
     fn compact_check_reconstructs_canonical_key() {
         let check = EdgeCheck {
-            neighbor_idx: 19,
+            neighbor_slot: 0,
             thirds: [3, 5],
             indices: [7, 11],
         };
-        assert_eq!(edge_check_key(7, check), pack_edge(7, 19));
-        assert_eq!(edge_check_key(23, check), pack_edge(19, 23));
+        let slot_points = [crate::cube_grid::SlotPoint {
+            pos: glam::Vec3::ZERO,
+            idx: 19,
+        }];
+        assert_eq!(edge_check_key(7, check, &slot_points), pack_edge(7, 19));
+        assert_eq!(edge_check_key(23, check, &slot_points), pack_edge(19, 23));
     }
 }
