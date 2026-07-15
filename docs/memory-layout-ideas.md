@@ -255,6 +255,15 @@ Peak RSS at two million Fibonacci generators was repeatably about 548,000 KiB ve
 a reduction of roughly 27 MiB. The full checked test suite passes. Keep later progression steps on
 separate branches so their gather and inverse-map effects remain attributable.
 
+### Layered recheck after owner-local promotion (2026-07-15)
+
+`agent/slot-groups-on-owner` reapplies this change directly to the accepted owner-local incidence
+baseline. Two Windows-native 60-round, two-million-point multithreaded comparisons measured it
+0.50% faster on Fibonacci (-1.31% to +0.32%) and 0.53% faster on uniform with 96 bins (-1.11% to
++0.05%). Pooling all 120 paired log-ratios gives a 0.513% improvement with a -1.008% to -0.015%
+interval, but neither regime independently excludes zero. Retain this as a validated marginal
+layer rather than treating it as another obvious default-path promotion.
+
 ## 5. Thin per-local edge-check queues
 
 ### Current cost
