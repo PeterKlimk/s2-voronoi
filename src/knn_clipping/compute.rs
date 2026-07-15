@@ -181,10 +181,12 @@ fn run_core_pipeline(
     };
 
     grid.release_point_slots();
+    let point_cell_storage = grid.take_point_cells();
 
     let sharded = construct_cell_shards(
         effective_points_ref,
         &grid,
+        point_cell_storage,
         termination,
         merge_result.as_ref(),
         &mut tb,
@@ -1605,14 +1607,19 @@ fn build_query_grid(
 fn construct_cell_shards(
     effective_points: &[Vec3],
     grid: &CubeMapGrid,
+    point_cell_storage: Vec<u32>,
     termination: TerminationConfig,
     merge_result: Option<&MergeResult>,
     tb: &mut TimingBuilder,
 ) -> Result<live_dedup::ShardedCellsData, crate::VoronoiError> {
     let t = Timer::start();
-    let sharded =
-        super::driver::build_cells_sharded_live_dedup(effective_points, grid, termination)
-            .map_err(|err| map_build_cells_error(err, effective_points, merge_result))?;
+    let sharded = super::driver::build_cells_sharded_live_dedup(
+        effective_points,
+        grid,
+        point_cell_storage,
+        termination,
+    )
+    .map_err(|err| map_build_cells_error(err, effective_points, merge_result))?;
     #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]
     tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
     Ok(sharded)

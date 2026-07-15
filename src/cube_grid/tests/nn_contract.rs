@@ -87,7 +87,8 @@ impl Harness {
 
     fn production(points: Vec<Vec3>, res: usize) -> Self {
         let grid = CubeMapGrid::new(&points, res);
-        let assignment = assign_bins(&points, &grid).expect("production bin assignment");
+        let assignment =
+            assign_bins(&points, &grid, Vec::new()).expect("production bin assignment");
         let mut cell_of_slot = vec![0usize; points.len()];
         for cell in 0..grid.cell_offsets().len() - 1 {
             let start = grid.cell_offsets()[cell] as usize;

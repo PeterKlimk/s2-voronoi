@@ -17,6 +17,10 @@ pub(crate) struct BinAssignment {
     /// Precomputed mask for extracting local from packed gen_map/slot_gen_map.
     pub(crate) local_mask: u32,
     pub(crate) bin_generators: Vec<Vec<usize>>,
+    /// Bin-ordered non-empty grid cells. `bin_cell_offsets` indexes the run for
+    /// each bin. This reuses the former per-generator point-to-cell storage.
+    pub(crate) bin_cells: Vec<u32>,
+    pub(crate) bin_cell_offsets: Vec<u32>,
     pub(crate) num_bins: usize,
 }
 
@@ -28,6 +32,13 @@ impl BinAssignment {
             BinId::from((packed >> self.local_shift) as u8),
             LocalId::from(packed & self.local_mask),
         )
+    }
+
+    #[inline(always)]
+    pub(crate) fn bin_cells(&self, bin: usize) -> &[u32] {
+        let start = self.bin_cell_offsets[bin] as usize;
+        let end = self.bin_cell_offsets[bin + 1] as usize;
+        &self.bin_cells[start..end]
     }
 
     #[cfg(any(debug_assertions, test))]
@@ -108,6 +119,7 @@ fn validate_local_capacity(
 pub(crate) fn assign_bins(
     points: &[Vec3],
     grid: &CubeMapGrid,
+    point_cell_storage: Vec<u32>,
 ) -> Result<BinAssignment, PackedLayoutCapacityError> {
     let layout = choose_bin_layout(grid.res());
 
@@ -130,6 +142,7 @@ pub(crate) fn assign_bins(
         grid.point_indices(),
         layout.num_bins,
         bin_for_cell,
+        point_cell_storage,
     )
 }
 
@@ -143,6 +156,7 @@ pub(crate) fn assign_bins_with(
     point_indices: &[u32],
     num_bins: usize,
     bin_for_cell: impl Fn(usize) -> usize,
+    mut point_cell_storage: Vec<u32>,
 ) -> Result<BinAssignment, PackedLayoutCapacityError> {
     // Compute bit layout for packed gen_map.
     // bin_bits: minimum bits needed to represent num_bins - 1
@@ -161,10 +175,29 @@ pub(crate) fn assign_bins_with(
 
     // Pre-count to avoid reallocations while building the per-bin generator lists.
     let mut counts: Vec<usize> = vec![0; num_bins];
+    let mut cell_counts: Vec<usize> = vec![0; num_bins];
     for cell in 0..num_cells {
         let b = bin_for_cell(cell);
-        counts[b] += cell_points(cell).len();
+        let len = cell_points(cell).len();
+        counts[b] += len;
+        cell_counts[b] += usize::from(len != 0);
     }
+
+    let mut bin_cell_offsets = Vec::with_capacity(num_bins + 1);
+    bin_cell_offsets.push(0u32);
+    for count in cell_counts {
+        let next = bin_cell_offsets
+            .last()
+            .copied()
+            .unwrap()
+            .checked_add(count as u32)
+            .expect("non-empty cell count exceeds u32");
+        bin_cell_offsets.push(next);
+    }
+    let nonempty_cells = bin_cell_offsets[num_bins] as usize;
+    point_cell_storage.clear();
+    point_cell_storage.resize(nonempty_cells, u32::MAX);
+    let mut next_bin_cell = bin_cell_offsets[..num_bins].to_vec();
 
     let mut bin_generators: Vec<Vec<usize>> = (0..num_bins)
         .map(|b| Vec::with_capacity(counts[b]))
@@ -184,6 +217,11 @@ pub(crate) fn assign_bins_with(
         // read-back.
         let cell_start = win[0] as usize;
         let cell_end = win[1] as usize;
+        if cell_start != cell_end {
+            let dst = next_bin_cell[b_usize] as usize;
+            point_cell_storage[dst] = cell as u32;
+            next_bin_cell[b_usize] += 1;
+        }
         for (offset, &g_u32) in point_indices[cell_start..cell_end].iter().enumerate() {
             let g = g_u32 as usize;
             debug_assert!(g < n, "grid returned out-of-range point index");
@@ -238,6 +276,8 @@ pub(crate) fn assign_bins_with(
         local_shift,
         local_mask,
         bin_generators,
+        bin_cells: point_cell_storage,
+        bin_cell_offsets,
         num_bins,
     })
 }
@@ -263,7 +303,11 @@ mod tests {
 
     #[test]
     fn generator_layout_round_trips_bin_and_local() {
-        let assignment = assign_bins_with(4, 2, &[0, 2, 4], &[2, 0, 3, 1], 2, |cell| cell).unwrap();
+        let assignment =
+            assign_bins_with(4, 2, &[0, 2, 4], &[2, 0, 3, 1], 2, |cell| cell, Vec::new()).unwrap();
+
+        assert_eq!(assignment.bin_cells, [0, 1]);
+        assert_eq!(assignment.bin_cell_offsets, [0, 1, 2]);
 
         let expected = [(0, 1), (1, 1), (0, 0), (1, 0)];
         for (generator, &(bin, local)) in expected.iter().enumerate() {

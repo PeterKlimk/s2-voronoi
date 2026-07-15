@@ -24,9 +24,16 @@ impl CubeMapGrid {
     }
 
     /// Get the precomputed cell index for `points[idx]` used to build this grid.
+    #[cfg_attr(not(test), allow(dead_code))]
     #[inline]
     pub fn point_index_to_cell(&self, idx: usize) -> usize {
         self.point_cells[idx] as usize
+    }
+
+    /// Take the construction-only inverse map so its allocation can be reused
+    /// for bin-ordered non-empty cell runs.
+    pub(crate) fn take_point_cells(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.point_cells)
     }
 
     /// Release the global-index-to-slot inverse after preprocessing. Weld
