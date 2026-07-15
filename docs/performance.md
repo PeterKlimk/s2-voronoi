@@ -387,6 +387,10 @@ The broader memory-layout and memory-traffic backlog, including regime-dependent
 hybrid fast-path/fallback designs, and a shared experiment matrix, lives in
 [`memory-layout-ideas.md`](memory-layout-ideas.md).
 
+Larger changes to scheduling, repair scope, pathological-work handoff, and repeated-build reuse are
+kept in the non-authoritative
+[`algorithmic performance ideas`](algorithmic-performance-ideas.md) catalogue.
+
 Promising workload-specific experiments:
 
 - **D3 — compact high-degree consumed flags:** replace the per-cell byte vector above 64 incoming

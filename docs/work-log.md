@@ -6,7 +6,10 @@
 
 This is the authoritative list of unfinished correctness, robustness, and design work. Historical
 investigations stay in [`audit-triage.md`](audit-triage.md); design rationale stays in the linked
-policy documents. An unchecked item elsewhere should either be moved here or treated as stale.
+policy documents. Larger uncommitted possibilities are collected separately in
+[`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md) and
+[`feature-api-wishlist.md`](feature-api-wishlist.md). An unchecked item elsewhere should either be
+moved here or treated as stale.
 
 ## Current state
 
@@ -211,8 +214,9 @@ default `Preserve` behavior.
 
 The remaining code-specific performance experiments are maintained separately in the open queue in
 [`performance.md`](performance.md) and the memory backlog in
-[`memory-layout-ideas.md`](memory-layout-ideas.md). They are not correctness tasks and are not
-duplicated here.
+[`memory-layout-ideas.md`](memory-layout-ideas.md). Larger research hypotheses live in
+[`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md). They are not correctness
+tasks and are not duplicated here.
 
 ## Research backburner
 

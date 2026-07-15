@@ -2,6 +2,8 @@
 
 Plans past 0.1, roughly ordered. None of this is a compatibility promise; the
 API is pre-1.0 and marked `#[non_exhaustive]` where evolution is expected.
+Uncommitted caller-facing ideas remain in the
+[feature and API wishlist](docs/feature-api-wishlist.md) until they are promoted here.
 
 ## 0.2 candidates
 

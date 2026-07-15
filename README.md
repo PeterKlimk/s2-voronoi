@@ -149,6 +149,8 @@ Single-threaded, ~1.8s at 1M. Per-build peak memory is roughly 0.65 KB/point.
 
 - [Active triage and work log](docs/work-log.md)
 - [Roadmap](ROADMAP.md)
+- [Algorithmic performance ideas](docs/algorithmic-performance-ideas.md)
+- [Feature and API wishlist](docs/feature-api-wishlist.md)
 - [Correctness and safety audit record](docs/audit-triage.md)
 - [Output-resolution policy](docs/output-resolution-policy.md)
 
