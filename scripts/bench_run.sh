@@ -110,7 +110,11 @@ if [[ -n "$CPU_PIN" ]]; then
     command -v taskset &>/dev/null && TASKSET="taskset -c $CPU_PIN" \
         || echo "Warning: taskset not found, no CPU pinning"
 fi
-$SINGLE_THREAD && export RAYON_NUM_THREADS=1
+THREAD_MODE="MT"
+if $SINGLE_THREAD; then
+    export RAYON_NUM_THREADS=1
+    THREAD_MODE="ST"
+fi
 
 extract_metric_ms() {
     local output="$1" metric="$2" line=""
@@ -175,7 +179,7 @@ if [[ -n "$CSV" ]]; then
 fi
 
 echo "=== Interleaved benchmark matrix ==="
-echo "Versions: $NUM_VERSIONS | rounds=$ROUNDS metric=$METRIC ${SINGLE_THREAD:+ST}${CPU_PIN:+ pin=$CPU_PIN}"
+echo "Versions: $NUM_VERSIONS | rounds=$ROUNDS metric=$METRIC $THREAD_MODE${CPU_PIN:+ pin=$CPU_PIN}"
 echo "Sizes: [$SIZES]  Dists: [$DISTS]  Seeds: [${SEEDS:-default}]${DIST_PARAM:+  dist-param=$DIST_PARAM}"
 for l in "${LABELS[@]}"; do echo "  $l"; done
 
@@ -186,7 +190,9 @@ run_cell() { # size dist seed
     bench_args+=("--dist" "$dist")
     [[ "$seed" != "_" ]] && bench_args+=("--seed" "$seed")
     [[ -n "$DIST_PARAM" ]] && bench_args+=("--dist-param" "$DIST_PARAM")
-    bench_args+=("${EXTRA_BENCH_ARGS[@]}")
+    if [[ ${#EXTRA_BENCH_ARGS[@]} -gt 0 ]]; then
+        bench_args+=("${EXTRA_BENCH_ARGS[@]}")
+    fi
 
     echo ""; echo "### cell: size=$size dist=$dist seed=${seed/_/default} ###"
     for idx in "${INDICES[@]}"; do > "$TMP_DIR/times_$idx.txt"; done
