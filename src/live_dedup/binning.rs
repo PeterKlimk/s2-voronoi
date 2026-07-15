@@ -17,6 +17,10 @@ pub(crate) struct BinAssignment {
     /// Precomputed mask for extracting local from packed gen_map/slot_gen_map.
     pub(crate) local_mask: u32,
     pub(crate) bin_generators: Vec<Vec<usize>>,
+    /// Non-empty grid cells assigned to each bin in processing order. Cell
+    /// offsets provide each run's generator count, allowing construction to
+    /// release the per-generator point-to-cell inverse map.
+    pub(crate) bin_cells: Vec<Vec<u32>>,
     pub(crate) num_bins: usize,
 }
 
@@ -161,13 +165,19 @@ pub(crate) fn assign_bins_with(
 
     // Pre-count to avoid reallocations while building the per-bin generator lists.
     let mut counts: Vec<usize> = vec![0; num_bins];
+    let mut cell_counts: Vec<usize> = vec![0; num_bins];
     for cell in 0..num_cells {
         let b = bin_for_cell(cell);
-        counts[b] += cell_points(cell).len();
+        let len = cell_points(cell).len();
+        counts[b] += len;
+        cell_counts[b] += usize::from(len != 0);
     }
 
     let mut bin_generators: Vec<Vec<usize>> = (0..num_bins)
         .map(|b| Vec::with_capacity(counts[b]))
+        .collect();
+    let mut bin_cells: Vec<Vec<u32>> = (0..num_bins)
+        .map(|b| Vec::with_capacity(cell_counts[b]))
         .collect();
 
     let mut generator_bin: Vec<BinId> = vec![BinId::from(u8::MAX); n];
@@ -184,6 +194,9 @@ pub(crate) fn assign_bins_with(
         // read-back.
         let cell_start = win[0] as usize;
         let cell_end = win[1] as usize;
+        if cell_start != cell_end {
+            bin_cells[b_usize].push(cell as u32);
+        }
         for (offset, &g_u32) in point_indices[cell_start..cell_end].iter().enumerate() {
             let g = g_u32 as usize;
             debug_assert!(g < n, "grid returned out-of-range point index");
@@ -238,6 +251,7 @@ pub(crate) fn assign_bins_with(
         local_shift,
         local_mask,
         bin_generators,
+        bin_cells,
         num_bins,
     })
 }

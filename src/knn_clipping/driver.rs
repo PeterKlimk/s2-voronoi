@@ -64,12 +64,13 @@ fn has_zero_edge_candidate(vertices: &[VertexData]) -> bool {
 
 pub(crate) fn build_cells_sharded_live_dedup(
     points: &[Vec3],
-    grid: &CubeMapGrid,
+    grid: &mut CubeMapGrid,
     termination: TerminationConfig,
 ) -> Result<ShardedCellsData, BuildCellsError> {
     let policy = termination.packed_policy(points.len());
     // Legacy config compatibility: no-k fallback ignores this cap.
 
+    grid.release_point_cells();
     let assignment = assign_bins(points, grid).map_err(BuildCellsError::PackedLayoutCapacity)?;
     let num_bins = assignment.num_bins;
     let packed_policy = policy;
@@ -81,6 +82,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
 
                 let bin = BinId::from_usize(bin_usize);
                 let my_generators = &assignment.bin_generators[bin_usize];
+                let bin_cells = &assignment.bin_cells[bin_usize];
                 let mut shard = ShardState::new(my_generators.len());
 
                 let mut sub_accum = CellSubAccum::new();
@@ -135,15 +137,10 @@ pub(crate) fn build_cells_sharded_live_dedup(
                 );
 
                 let mut cursor = 0usize;
-                while cursor < my_generators.len() {
-                    let cell = grid.point_index_to_cell(my_generators[cursor]) as u32;
-                    let start = cursor;
-                    while cursor < my_generators.len()
-                        && grid.point_index_to_cell(my_generators[cursor]) as u32 == cell
-                    {
-                        cursor += 1;
-                    }
-                    let group_start = start;
+                for &cell in bin_cells {
+                    let group_start = cursor;
+                    let offsets = grid.cell_offsets();
+                    cursor += (offsets[cell as usize + 1] - offsets[cell as usize]) as usize;
 
                     if packed_policy.enabled() {
                         let queries = &packed_queries_all[group_start..cursor];
@@ -216,6 +213,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                         )?;
                     }
                 }
+                debug_assert_eq!(cursor, my_generators.len());
 
                 Ok((shard, sub_accum))
             })

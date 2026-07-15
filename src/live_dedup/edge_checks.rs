@@ -661,6 +661,7 @@ mod tests {
             local_shift: 1,
             local_mask: 1,
             bin_generators: vec![vec![0, 1]],
+            bin_cells: Vec::new(),
             num_bins: 1,
         };
         let mut shard = ShardState::<glam::Vec3>::new(2);

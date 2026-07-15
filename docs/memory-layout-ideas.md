@@ -179,6 +179,27 @@ often receive the slot or cell directly from their group.
 - Track separately the eliminated allocation/pass, inverse-map lifetime, and scattered generator
   gathers.
 
+### Point-cell inverse-map experiment (2026-07-15)
+
+The `agent/drop-point-cell-map` branch isolates the independently removable part of progression
+step 5. Bin assignment records a compact list of non-empty grid cells per bin, construction derives
+group lengths from CSR offsets, and then releases the per-generator `point_cells` map. The rare
+shell takeover path recomputes its start cell from the query position. The still-hot point-to-slot
+map remains unchanged pending a combined slot-native design.
+
+The deterministic counters are promising. At one million Fibonacci generators, retired
+instructions fell about 0.46%, branches 0.97%, branch misses 1.27%, and hardware cache misses about
+14%. Uniform input with 96 bins showed 0.56% fewer instructions, 1.36% fewer branches, 2.57% fewer
+branch misses, and 5.1% fewer cache misses. Cachegrind at 20k likewise showed 0.48% fewer instruction
+references, 0.85% fewer branches, 0.52% fewer mispredicts, 6.7% fewer D1 misses, and 1.8% fewer
+last-level data misses, though data references rose 0.94% and simulated I1 misses rose sharply from
+code-layout movement.
+
+This version is not a peak-memory win: the per-bin non-empty-cell lists replace most of the dropped
+map's storage, and 2M probes showed roughly 30 MiB higher peak RSS, likely including allocator and
+parallel phase-overlap effects. Keep it as a quiet-machine throughput finalist; a production merge
+should consider storing the cell runs in one reused flat allocation.
+
 ## 5. Thin per-local edge-check queues
 
 ### Current cost
@@ -236,4 +257,3 @@ ceiling:
 - Do not add a per-reference same-owner branch to the existing `u64` stream. The measured hit rate
   was extremely high and the branch still regressed; a successful compact-reference experiment must
   actually narrow the primary stream and isolate sparse exceptions.
-

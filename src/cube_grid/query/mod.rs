@@ -24,9 +24,17 @@ impl CubeMapGrid {
     }
 
     /// Get the precomputed cell index for `points[idx]` used to build this grid.
+    #[cfg_attr(not(test), allow(dead_code))]
     #[inline]
     pub fn point_index_to_cell(&self, idx: usize) -> usize {
         self.point_cells[idx] as usize
+    }
+
+    /// Drop the construction-only inverse map once bin cell runs have captured
+    /// the processing order. Shell queries then derive their rare start cell
+    /// directly from the query position.
+    pub(crate) fn release_point_cells(&mut self) {
+        self.point_cells = Vec::new();
     }
 
     /// Get the SOA slot index for `points[idx]` used to build this grid.

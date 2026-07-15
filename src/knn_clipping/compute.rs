@@ -172,7 +172,7 @@ fn run_core_pipeline(
     validate_preprocess_mode(preprocess_mode)?;
     let mut tb = TimingBuilder::new();
 
-    let (effective_points, merge_result, preprocess_report, grid) =
+    let (effective_points, merge_result, preprocess_report, mut grid) =
         prepare_points_and_grid(&points, preprocess_mode, &mut tb)?;
 
     let effective_points_ref: &[Vec3] = match &effective_points {
@@ -182,7 +182,7 @@ fn run_core_pipeline(
 
     let sharded = construct_cell_shards(
         effective_points_ref,
-        &grid,
+        &mut grid,
         termination,
         merge_result.as_ref(),
         &mut tb,
@@ -1585,7 +1585,7 @@ fn build_query_grid(
 
 fn construct_cell_shards(
     effective_points: &[Vec3],
-    grid: &CubeMapGrid,
+    grid: &mut CubeMapGrid,
     termination: TerminationConfig,
     merge_result: Option<&MergeResult>,
     tb: &mut TimingBuilder,
