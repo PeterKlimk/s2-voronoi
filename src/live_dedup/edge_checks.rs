@@ -221,10 +221,7 @@ fn assert_cell_output_lengths<P>(
 ) -> usize {
     let n = output_buffer.vertices.len();
     assert!(
-        n >= 2
-            && output_buffer.edge_neighbor_slots.len() == n
-            && output_buffer.edge_neighbor_globals.len() == n
-            && vertex_indices_len == n,
+        n >= 2 && output_buffer.edge_neighbor_slots.len() == n && vertex_indices_len == n,
         "cell output arrays out of sync"
     );
     n
@@ -251,7 +248,6 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
 
     let cell_vertices = &output_buffer.vertices;
     let edge_neighbor_slots = &output_buffer.edge_neighbor_slots;
-    let edge_neighbor_globals = &output_buffer.edge_neighbor_globals;
     let keys_verified = output_buffer.edge_keys_verified;
 
     let n = assert_cell_output_lengths(output_buffer, vertex_indices.len());
@@ -297,8 +293,10 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
             continue;
         }
 
-        // Derive global index from propagated array (sequential access)
-        let neighbor = unsafe { *edge_neighbor_globals.get_unchecked(i) };
+        // The slot is already required for bin/local classification; recover
+        // its global id from the same slot-native point record instead of
+        // propagating a second parallel extraction stream.
+        let neighbor = unsafe { slot_points.get_unchecked(slot as usize).idx };
         if neighbor == cell_idx {
             continue;
         }
@@ -667,6 +665,8 @@ mod tests {
             local_shift: 1,
             local_mask: 1,
             bin_generators: vec![vec![0, 1]],
+            bin_cells: Vec::new(),
+            bin_cell_offsets: vec![0, 0],
             num_bins: 1,
         };
         let mut shard = ShardState::<glam::Vec3>::new(2);

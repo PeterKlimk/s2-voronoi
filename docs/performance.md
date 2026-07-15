@@ -417,6 +417,17 @@ consumer, the map is released before construction, saving about 8 MB at 2M. That
 instruction/cycle neutral, reduced Linux hardware cache references 2.05%, and was wall-time neutral
 on both Mac distributions over 32 pairs each.
 
+The default same-cell weld scan now rejects a candidate after one face-tangent coordinate whenever
+that component's square alone is not below the strict weld threshold. Because the remaining squared
+components are non-negative, this is an exact early-out from the existing computed-f32 predicate;
+threshold-adjacent and brute-force pair-set tests pin the behavior. At 1M single-threaded native
+with preprocessing, fifteen paired Fibonacci runs reduced whole-build retired instructions by
+2.10%, branches by 2.69%, and cycles by 10.26%, with every pair favoring the candidate for all three
+counters. Nine 96-bin uniform pairs reduced instructions by 1.96%, branches by 2.41%, and cycles by
+7.60%, again with every pair favorable. Portable-codegen Cachegrind at 20k reported 2.08% fewer
+instruction references, 2.57% fewer data references, and 3.01% fewer branches; simulated
+mispredictions rose 5.13%, a layout-sensitive result not reproduced by the native cycle counters.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated

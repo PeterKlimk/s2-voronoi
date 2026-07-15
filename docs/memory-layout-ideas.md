@@ -314,6 +314,59 @@ cache references/misses fell 2.05%/4.33%. The Mac measured exactly neutral geome
 for both Fibonacci and uniform over 32 pairs each (both 95% intervals -0.5% to +0.6%). The full
 checked suite passes with both steps.
 
+### Point-cell inverse-map resurfacing (2026-07-16)
+
+`agent/drop-point-cell-map-v2` reapplies the old point-cell-map experiment to the current
+slot-native baseline without its replacement-allocation drawback. After preprocessing, the
+per-generator `point_cells` vector is taken from the grid and its allocation is reused as one flat,
+bin-ordered stream of non-empty cell ids. A small offset table indexes each bin's run. Construction
+gets each group length from the grid CSR offsets, then drops the recycled stream before assembly.
+The number of non-empty cells cannot exceed the number of points, so the reused allocation already
+has sufficient capacity.
+
+At 1M single-threaded native Fibonacci, nine paired Linux runs reduced retired instructions by
+0.483% and branches by 1.432%, with every pair agreeing; cycles remained unresolved. A 96-bin
+uniform guardrail reduced instructions by 0.424% and branches by 1.179%, again in every pair, with
+unresolved cycles. Portable-codegen Cachegrind at 20k reported 0.441% fewer instruction references,
+0.321% fewer data references, 7.26% fewer D1 misses, and 2.15% fewer last-level data misses. The
+simulated branch-mispredict count rose 7.71%, while hardware branch misses were noisy and did not
+reproduce a stable loss. A 2.5M/12-thread RSS probe showed no recurrence of the old nested-vector
+branch's roughly 30 MiB peak regression. The full release suite passes; quiet-Mac wall-time
+validation remains pending.
+
+### Slot-derived edge-neighbor global experiment (2026-07-16)
+
+`agent/drop-edge-neighbor-globals` stops writing the hot gnomonic
+`CellOutputBuffer::edge_neighbor_globals` stream. Edge collection already needs each neighbor slot
+for bin/local classification, so it recovers the global id from that slot's `SlotPoint` record.
+Checked/test builds retain the parallel stream for the extraction consistency assertion, and the
+rare spherical fallback retains it for its release-mode malformed-attribution check; ordinary
+release extraction no longer reserves or writes it.
+
+At 1M single-threaded native Fibonacci, fifteen paired Linux runs reduced retired instructions by
+0.494% and branches by 0.389%, with every pair agreeing; cycles were directionally 1.40% lower in
+eleven pairs but unresolved. A 96-bin uniform guardrail reduced instructions by 0.441% and branches
+by 0.333% in every pair. Portable-codegen Cachegrind was instruction-neutral (+0.003%), reduced data
+references by 0.427%, I1 misses by 4.24%, and branches by 0.124%, but increased simulated branch
+mispredictions by 3.74%. At 2.5M/12 threads, instructions and branches retained the same reductions
+(-0.496%/-0.394% in all nine pairs) while cycles remained unresolved. Quiet-Mac wall-time
+validation is required before promotion.
+
+### Combined candidate result (2026-07-16)
+
+`agent/perf-candidates-combined` layers the recycled point-cell runs, the exact tangent-component
+weld gate, and slot-derived edge-neighbor ids. Their structural gains compose without visible
+interference. At 1M single-threaded native Fibonacci, nine pairs reduced instructions by 3.02% and
+branches by 4.35%. At 2.5M/12 threads with preprocessing, Fibonacci reduced instructions by 3.01%
+and branches by 4.34% in all nine pairs, cycles by 2.89% in eight, and hardware cache misses by
+13.95% in eight. The matching 96-bin uniform run reduced instructions by 2.80% and branches by
+3.84% in every pair, cycles by 5.75% in seven, and cache misses by 11.16% in eight. API,
+correctness, targeted weld, and the component branches' full-release checks pass. On the quiet
+eight-thread Intel Mac at 2.5M with preprocessing, sixteen paired Fibonacci runs measured the
+combination 1.3% faster (95% interval 0.4--2.2%, 13/16 favorable); uniform with 96 bins measured
+1.6% faster (0.8--2.3%, 13/16 favorable). The combined candidate clears its wall-time promotion
+gate.
+
 ## 5. Thin per-local edge-check queues
 
 ### Current cost

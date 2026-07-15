@@ -868,6 +868,8 @@ mod tests {
             local_shift: 31,
             local_mask: (1u32 << 31) - 1,
             bin_generators: vec![vec![0, 2, 3], vec![1, 4, 5]],
+            bin_cells: Vec::new(),
+            bin_cell_offsets: vec![0, 0, 0],
             num_bins: 2,
         };
         let sharded = ShardedCellsData {
