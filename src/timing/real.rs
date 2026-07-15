@@ -476,6 +476,8 @@ pub struct PhaseTimings {
     pub dedup: Duration,
     pub dedup_sub: DedupSubPhases,
     pub edge_reconcile: Duration,
+    pub merge_safety_scan_cells: u64,
+    pub merge_safety_global_fallbacks: u64,
     pub assemble: Duration,
     /// Query-grid shape: resolution, max cell occupancy, and whether the
     /// occupancy-feedback rebuild fired.
@@ -749,6 +751,12 @@ impl PhaseTimings {
             ms(self.edge_reconcile),
             pct(self.edge_reconcile)
         );
+        if self.merge_safety_scan_cells > 0 || self.merge_safety_global_fallbacks > 0 {
+            eprintln!(
+                "    merge_safety: scanned_cells={} global_fallbacks={}",
+                self.merge_safety_scan_cells, self.merge_safety_global_fallbacks
+            );
+        }
         eprintln!(
             "  assemble:          {:7.1}ms ({:4.1}%)",
             ms(self.assemble),
@@ -771,7 +779,7 @@ impl PhaseTimings {
 
         if std::env::var_os("VORONOI_MESH_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_reconcile_scan_cells={rrsc} resolution_repair_scan_cells={rpsc} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} merge_safety_scan_cells={mssc} merge_safety_global_fallbacks={msgf} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_reconcile_scan_cells={rrsc} resolution_repair_scan_cells={rpsc} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -781,6 +789,8 @@ impl PhaseTimings {
                 cc = ms(self.cell_construction),
                 dd = ms(self.dedup),
                 er = ms(self.edge_reconcile),
+                mssc = self.merge_safety_scan_cells,
+                msgf = self.merge_safety_global_fallbacks,
                 asmb = ms(self.assemble),
                 rch = self.resolution_certified_hint as u8,
                 rfd = self.resolution_drift_fallback as u8,
@@ -850,6 +860,8 @@ pub struct TimingBuilder {
     dedup: Duration,
     dedup_sub: DedupSubPhases,
     edge_reconcile: Duration,
+    merge_safety_scan_cells: u64,
+    merge_safety_global_fallbacks: u64,
     assemble: Duration,
     grid_res: usize,
     grid_max_occupancy: u64,
@@ -877,6 +889,8 @@ impl TimingBuilder {
             dedup: Duration::ZERO,
             dedup_sub: DedupSubPhases::default(),
             edge_reconcile: Duration::ZERO,
+            merge_safety_scan_cells: 0,
+            merge_safety_global_fallbacks: 0,
             assemble: Duration::ZERO,
             grid_res: 0,
             grid_max_occupancy: 0,
@@ -928,8 +942,15 @@ impl TimingBuilder {
         self.dedup_sub = sub;
     }
 
-    pub fn set_edge_reconcile(&mut self, d: Duration) {
+    pub fn set_edge_reconcile(
+        &mut self,
+        d: Duration,
+        merge_safety_scan_cells: usize,
+        merge_safety_global_fallbacks: usize,
+    ) {
         self.edge_reconcile = d;
+        self.merge_safety_scan_cells = merge_safety_scan_cells as u64;
+        self.merge_safety_global_fallbacks = merge_safety_global_fallbacks as u64;
     }
 
     pub fn set_assemble(&mut self, d: Duration) {
@@ -969,6 +990,8 @@ impl TimingBuilder {
             dedup: self.dedup,
             dedup_sub: self.dedup_sub,
             edge_reconcile: self.edge_reconcile,
+            merge_safety_scan_cells: self.merge_safety_scan_cells,
+            merge_safety_global_fallbacks: self.merge_safety_global_fallbacks,
             assemble: self.assemble,
             grid_res: self.grid_res,
             grid_max_occupancy: self.grid_max_occupancy,
@@ -991,8 +1014,11 @@ mod tests {
     #[test]
     fn output_resolution_discovery_fields_survive_finish() {
         let mut builder = TimingBuilder::new();
+        builder.set_edge_reconcile(std::time::Duration::from_millis(2), 17, 1);
         builder.set_output_resolution_discovery(false, true, 13, 5, 11, 7, 3);
         let timings = builder.finish();
+        assert_eq!(timings.merge_safety_scan_cells, 17);
+        assert_eq!(timings.merge_safety_global_fallbacks, 1);
         assert!(!timings.resolution_certified_hint);
         assert!(timings.resolution_drift_fallback);
         assert_eq!(timings.resolution_reconcile_scan_cells, 13);

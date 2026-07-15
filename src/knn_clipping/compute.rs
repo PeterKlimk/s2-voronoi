@@ -215,6 +215,7 @@ fn run_core_pipeline(
         escalation_pairs: reconciliation_escalations,
         merge_affected_cells,
         resolution_scan_cells: reconcile_resolution_scan_cells,
+        ..
     } = reconcile_result;
     // This is part of the plain-return safety gate, not merely a repair
     // trigger. Compute it even when repair is disabled so that mode cannot
@@ -1679,7 +1680,11 @@ fn reconcile_edges(
     // unpaired interior edge is surfaced as a residual error by the caller
     // (valid-or-error contract — see docs/correctness.md; the dropped
     // post-hoc Tier-2 repair investigation lives in git history).
-    tb.set_edge_reconcile(t.elapsed());
+    tb.set_edge_reconcile(
+        t.elapsed(),
+        reconcile_result.merge_safety_scan_cells,
+        reconcile_result.merge_safety_global_fallbacks,
+    );
     Ok((cells, cell_indices, reconcile_result))
 }
 

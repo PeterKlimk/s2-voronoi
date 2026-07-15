@@ -263,6 +263,13 @@ pub(crate) struct ReconcileResult {
     /// Includes record-owner cells for collinear drops and key-owner cells for
     /// accepted identity merges.
     pub resolution_scan_cells: Vec<u32>,
+    /// Number of cell cycles examined by the merge-safety face check across
+    /// all reconciliation rounds. Exposed to timing telemetry so localized
+    /// coverage can be compared with the full diagram size.
+    pub merge_safety_scan_cells: usize,
+    /// Number of rounds whose merge-safety cover could not be certified from
+    /// vertex provenance and therefore used the global cell scan.
+    pub merge_safety_global_fallbacks: usize,
 }
 
 /// Original vertex ids represented by a surviving id after accepted
@@ -277,6 +284,12 @@ struct MergeLedger {
 struct RejectedMergeComponent {
     current_ids: Vec<u32>,
     member_ids: Vec<u32>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct MergeSafetyStats {
+    scanned_cells: usize,
+    global_fallbacks: usize,
 }
 
 impl MergeLedger {
@@ -409,7 +422,8 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
     let done = |residual_pairs: Vec<(u32, u32)>,
                 mut escalation_pairs: Vec<(u32, u32)>,
                 mut affected: Vec<u32>,
-                mut resolution_scan_cells: Vec<u32>| {
+                mut resolution_scan_cells: Vec<u32>,
+                merge_safety: MergeSafetyStats| {
         escalation_pairs.sort_unstable();
         escalation_pairs.dedup();
         affected.sort_unstable();
@@ -424,8 +438,11 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
             escalation_pairs,
             merge_affected_cells: affected,
             resolution_scan_cells,
+            merge_safety_scan_cells: merge_safety.scanned_cells,
+            merge_safety_global_fallbacks: merge_safety.global_fallbacks,
         }
     };
+    let mut merge_safety = MergeSafetyStats::default();
     let primary_candidates = affected_cells_from_records(edge_records);
     let primary_changed = run_repair_rounds(
         edge_records,
@@ -439,6 +456,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         &mut merge_ledger,
         &mut escalation_pairs,
         &mut merge_affected_cells,
+        &mut merge_safety,
     )?;
     let mut resolution_scan_cells = if primary_changed {
         primary_candidates.clone()
@@ -459,6 +477,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
             escalation_pairs,
             merge_affected_cells,
             resolution_scan_cells,
+            merge_safety,
         ));
     }
     let synth = synthesize_backstop_records(&unpaired, vertex_keys, cells.len());
@@ -475,6 +494,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
             &mut merge_ledger,
             &mut escalation_pairs,
             &mut merge_affected_cells,
+            &mut merge_safety,
         )?;
         if synth_changed {
             resolution_scan_cells.extend(affected_cells_from_records(&synth));
@@ -500,6 +520,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         escalation_pairs,
         merge_affected_cells,
         resolution_scan_cells,
+        merge_safety,
     ))
 }
 
@@ -635,6 +656,7 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
     // Accumulates the cells whose spans a merge apply may rewrite (see
     // `ReconcileResult::merge_affected_cells`); the caller sorts/dedups.
     merge_affected_cells: &mut Vec<u32>,
+    merge_safety: &mut MergeSafetyStats,
 ) -> Result<bool, crate::VoronoiError> {
     let mut any = false;
     // The only cells a round can need to touch are those named by the records.
@@ -664,14 +686,17 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
             mode,
             scan_dup_keys,
         )?;
-        let (mut uf, merged, rejected_components) = bound_merge_components(
+        let (mut uf, merged, rejected_components, round_merge_safety) = bound_merge_components(
             &mut proposed,
             vertices,
             cells,
             cell_indices,
+            vertex_keys,
             merge_ledger,
             degenerate_len_eps,
         )?;
+        merge_safety.scanned_cells += round_merge_safety.scanned_cells;
+        merge_safety.global_fallbacks += round_merge_safety.global_fallbacks;
         if !rejected_components.is_empty() {
             record_rejected_component_seeds(
                 &rejected_components,
@@ -1360,14 +1385,126 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
 /// entire component is rejected transactionally and handed to Local3d by the
 /// caller. Distances are accumulated in f64 over the stored f32 coordinates so
 /// the policy is a defensible bound rather than another f32 rounding layer.
+struct MergeCandidate {
+    representative: u32,
+    current_ids: Vec<u32>,
+    expanded: Vec<u32>,
+}
+
+/// Return the complete cell cover for the proposed components, or `None` when
+/// provenance is incomplete and the caller must scan globally.
+///
+/// Initially, a vertex id can be referenced only by the three generator cells
+/// in its key. After an accepted merge, the surviving representative can also
+/// be referenced by cells from the retired ids' keys. `expanded` is the
+/// persistent ledger of precisely those original ids, so the union of their
+/// key triples remains a complete cover across repair rounds and apply modes.
+fn merge_safety_cell_cover(
+    candidates: &[MergeCandidate],
+    vertex_keys: VertexKeys<'_>,
+    cell_count: usize,
+) -> Option<Vec<u32>> {
+    if cell_count == 0 {
+        return Some(Vec::new());
+    }
+
+    let mut cover = Vec::new();
+    for candidate in candidates {
+        for &id in &candidate.expanded {
+            let key = vertex_keys.get(id)?;
+            for owner in key {
+                if owner as usize >= cell_count {
+                    return None;
+                }
+                cover.push(owner);
+            }
+        }
+    }
+    cover.sort_unstable();
+    cover.dedup();
+    Some(cover)
+}
+
+/// Simulate all proposed components jointly over either a certified local
+/// cover or the full diagram. Cells must be visited in ascending order to
+/// retain the existing transaction semantics: once a component is rejected,
+/// later faces are evaluated as if that component will not be applied.
+fn reject_face_unsafe_components(
+    candidates: &[MergeCandidate],
+    candidate_for_id: &rustc_hash::FxHashMap<u32, usize>,
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    cover: Option<&[u32]>,
+) -> Result<Vec<bool>, crate::VoronoiError> {
+    let mut rejected = vec![false; candidates.len()];
+    let mut normalized = Vec::new();
+    let mut touched_candidates = Vec::new();
+
+    let mut visit = |cell_idx: u32| -> Result<(), crate::VoronoiError> {
+        let span = cell_vertex_slice(cell_idx, cells, cell_indices)?;
+        normalized.clear();
+        normalized.reserve(span.len());
+        touched_candidates.clear();
+        for &id in span {
+            let mapped = match candidate_for_id.get(&id).copied() {
+                Some(idx) if !rejected[idx] => {
+                    if !touched_candidates.contains(&idx) {
+                        touched_candidates.push(idx);
+                    }
+                    candidates[idx].representative
+                }
+                _ => id,
+            };
+            if normalized.last().copied() != Some(mapped) {
+                normalized.push(mapped);
+            }
+        }
+        if normalized.len() > 1 && normalized[0] == *normalized.last().unwrap() {
+            normalized.pop();
+        }
+        let has_duplicate =
+            (0..normalized.len()).any(|i| normalized[(i + 1)..].contains(&normalized[i]));
+        if normalized.len() < 3 || has_duplicate {
+            for &idx in &touched_candidates {
+                rejected[idx] = true;
+            }
+        }
+        Ok(())
+    };
+
+    match cover {
+        Some(cell_ids) => {
+            for &cell_idx in cell_ids {
+                visit(cell_idx)?;
+            }
+        }
+        None => {
+            for cell_idx in 0..cells.len() {
+                visit(cell_idx as u32)?;
+            }
+        }
+    }
+
+    Ok(rejected)
+}
+
 fn bound_merge_components<P: crate::knn_clipping::live_dedup::VertexPosition>(
     proposed: &mut SparseUnionFind,
     vertices: &[P],
     cells: &[VoronoiCell],
     cell_indices: &[u32],
+    vertex_keys: VertexKeys<'_>,
     ledger: &mut MergeLedger,
     eps: f32,
-) -> Result<(SparseUnionFind, usize, Vec<RejectedMergeComponent>), crate::VoronoiError> {
+) -> Result<
+    (
+        SparseUnionFind,
+        usize,
+        Vec<RejectedMergeComponent>,
+        MergeSafetyStats,
+    ),
+    crate::VoronoiError,
+> {
     let touched = proposed.touched_ids();
     let mut groups = std::collections::BTreeMap::<u32, Vec<u32>>::new();
     for id in touched {
@@ -1375,13 +1512,6 @@ fn bound_merge_components<P: crate::knn_clipping::live_dedup::VertexPosition>(
     }
 
     let eps_sq = f64::from(eps) * f64::from(eps);
-    struct Candidate {
-        representative: u32,
-        current_ids: Vec<u32>,
-        expanded: Vec<u32>,
-        rejected: bool,
-    }
-
     let mut rejected_components = Vec::new();
     let mut candidates = Vec::new();
 
@@ -1407,11 +1537,10 @@ fn bound_merge_components<P: crate::knn_clipping::live_dedup::VertexPosition>(
             continue;
         }
 
-        candidates.push(Candidate {
+        candidates.push(MergeCandidate {
             representative,
             current_ids,
             expanded,
-            rejected: false,
         });
     }
 
@@ -1428,41 +1557,45 @@ fn bound_merge_components<P: crate::knn_clipping::live_dedup::VertexPosition>(
 
     // Consider all components together. Multiple individually safe merges in
     // one face can jointly erase or fold it; decline every component touching
-    // such a face under Preserve.
-    for cell_idx in 0..cells.len() {
-        let span = cell_vertex_slice(cell_idx as u32, cells, cell_indices)?;
-        let mut normalized = Vec::with_capacity(span.len());
-        let mut touched_candidates = Vec::new();
-        for &id in span {
-            let mapped = match candidate_for_id.get(&id).copied() {
-                Some(idx) if !candidates[idx].rejected => {
-                    if !touched_candidates.contains(&idx) {
-                        touched_candidates.push(idx);
-                    }
-                    candidates[idx].representative
-                }
-                _ => id,
-            };
-            if normalized.last().copied() != Some(mapped) {
-                normalized.push(mapped);
-            }
-        }
-        if normalized.len() > 1 && normalized[0] == *normalized.last().unwrap() {
-            normalized.pop();
-        }
-        let has_duplicate =
-            (0..normalized.len()).any(|i| normalized[(i + 1)..].contains(&normalized[i]));
-        if normalized.len() < 3 || has_duplicate {
-            for idx in touched_candidates {
-                candidates[idx].rejected = true;
-            }
-        }
+    // such a face under Preserve. The expanded provenance ledger gives a
+    // complete local cover. Missing or invalid provenance falls back to the
+    // previous global scan.
+    let cover = merge_safety_cell_cover(&candidates, vertex_keys, cells.len());
+    let rejected = reject_face_unsafe_components(
+        &candidates,
+        &candidate_for_id,
+        cells,
+        cell_indices,
+        cover.as_deref(),
+    )?;
+    let merge_safety = MergeSafetyStats {
+        scanned_cells: cover.as_ref().map_or(cells.len(), Vec::len),
+        global_fallbacks: usize::from(cover.is_none()),
+    };
+
+    // Continuously audit the provenance proof in checked/debug builds. The
+    // oracle starts from the same candidate state and visits every cell in the
+    // original order; any missed reference or joint-face interaction is a
+    // localization bug, not an acceptable output difference.
+    #[cfg(debug_assertions)]
+    if cover.is_some() {
+        let global_rejected = reject_face_unsafe_components(
+            &candidates,
+            &candidate_for_id,
+            cells,
+            cell_indices,
+            None,
+        )?;
+        debug_assert_eq!(
+            rejected, global_rejected,
+            "localized merge-safety cover disagreed with global oracle"
+        );
     }
 
     let mut accepted = SparseUnionFind::new();
     let mut accepted_merges = 0usize;
-    for candidate in candidates {
-        if candidate.rejected {
+    for (candidate, rejected) in candidates.into_iter().zip(rejected) {
+        if rejected {
             rejected_components.push(RejectedMergeComponent {
                 current_ids: candidate.current_ids,
                 member_ids: candidate.expanded,
@@ -1482,7 +1615,7 @@ fn bound_merge_components<P: crate::knn_clipping::live_dedup::VertexPosition>(
         );
     }
 
-    Ok((accepted, accepted_merges, rejected_components))
+    Ok((accepted, accepted_merges, rejected_components, merge_safety))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1906,9 +2039,16 @@ mod tests {
         assert!(proposed.union(1, 2));
 
         let mut ledger = MergeLedger::default();
-        let (accepted, merges, rejected) =
-            bound_merge_components(&mut proposed, &vertices, &[], &[], &mut ledger, eps)
-                .expect("diameter gate");
+        let (accepted, merges, rejected, _) = bound_merge_components(
+            &mut proposed,
+            &vertices,
+            &[],
+            &[],
+            VertexKeys::Flat(&[]),
+            &mut ledger,
+            eps,
+        )
+        .expect("diameter gate");
 
         assert_eq!(merges, 0, "no order-dependent prefix may be accepted");
         assert_eq!(rejected.len(), 1);
@@ -1928,9 +2068,16 @@ mod tests {
 
         let mut first = SparseUnionFind::new();
         assert!(first.union(0, 1));
-        let (_, first_merges, first_rejected) =
-            bound_merge_components(&mut first, &vertices, &[], &[], &mut ledger, eps)
-                .expect("first-round diameter gate");
+        let (_, first_merges, first_rejected, _) = bound_merge_components(
+            &mut first,
+            &vertices,
+            &[],
+            &[],
+            VertexKeys::Flat(&[]),
+            &mut ledger,
+            eps,
+        )
+        .expect("first-round diameter gate");
         assert_eq!(first_merges, 1);
         assert!(first_rejected.is_empty());
 
@@ -1938,12 +2085,133 @@ mod tests {
         // member 1 is 1.25 eps away. A per-round-only gate would miss this.
         let mut second = SparseUnionFind::new();
         assert!(second.union(0, 2));
-        let (accepted, second_merges, second_rejected) =
-            bound_merge_components(&mut second, &vertices, &[], &[], &mut ledger, eps)
-                .expect("second-round diameter gate");
+        let (accepted, second_merges, second_rejected, _) = bound_merge_components(
+            &mut second,
+            &vertices,
+            &[],
+            &[],
+            VertexKeys::Flat(&[]),
+            &mut ledger,
+            eps,
+        )
+        .expect("second-round diameter gate");
         assert_eq!(second_merges, 0);
         assert_eq!(second_rejected.len(), 1);
         assert!(accepted.touched_ids().is_empty());
+        assert_eq!(ledger.members.get(&0), Some(&vec![0, 1]));
+    }
+
+    fn sparse_face_safety_fixture() -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>, Vec<VertexKey>) {
+        let eps = crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS;
+        let vertices = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.25 * eps, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let mut cells = vec![VoronoiCell::new(0, 0); 100];
+        cells[50] = VoronoiCell::new(0, 3);
+        let cell_indices = vec![0, 1, 2];
+        let vertex_keys = vec![[50, 51, 52]; 3];
+        (vertices, cells, cell_indices, vertex_keys)
+    }
+
+    #[test]
+    fn merge_safety_scans_only_key_owner_cover() {
+        let eps = crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS;
+        let (vertices, cells, cell_indices, vertex_keys) = sparse_face_safety_fixture();
+        let mut proposed = SparseUnionFind::new();
+        assert!(proposed.union(0, 1));
+        let (_, merges, rejected, stats) = bound_merge_components(
+            &mut proposed,
+            &vertices,
+            &cells,
+            &cell_indices,
+            VertexKeys::Flat(&vertex_keys),
+            &mut MergeLedger::default(),
+            eps,
+        )
+        .expect("localized face-safety scan");
+
+        assert_eq!(
+            merges, 0,
+            "the covered cell would collapse below a triangle"
+        );
+        assert_eq!(rejected.len(), 1);
+        assert_eq!(stats.scanned_cells, 3);
+        assert_eq!(stats.global_fallbacks, 0);
+    }
+
+    #[test]
+    fn merge_safety_missing_provenance_falls_back_globally() {
+        let eps = crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS;
+        let (vertices, cells, cell_indices, _) = sparse_face_safety_fixture();
+        let mut proposed = SparseUnionFind::new();
+        assert!(proposed.union(0, 1));
+        let (_, merges, rejected, stats) = bound_merge_components(
+            &mut proposed,
+            &vertices,
+            &cells,
+            &cell_indices,
+            VertexKeys::Flat(&[]),
+            &mut MergeLedger::default(),
+            eps,
+        )
+        .expect("global face-safety fallback");
+
+        assert_eq!(merges, 0);
+        assert_eq!(rejected.len(), 1);
+        assert_eq!(stats.scanned_cells, cells.len());
+        assert_eq!(stats.global_fallbacks, 1);
+    }
+
+    #[test]
+    fn merge_safety_cover_expands_prior_round_members() {
+        let eps = crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS;
+        let vertices = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.1 * eps, 0.0, 0.0),
+            Vec3::new(0.2 * eps, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ];
+        let vertex_keys = vec![[0, 1, 2], [3, 4, 5], [0, 1, 2], [3, 4, 5]];
+        let mut ledger = MergeLedger::default();
+
+        let mut first = SparseUnionFind::new();
+        assert!(first.union(0, 1));
+        let (_, first_merges, first_rejected, _) = bound_merge_components(
+            &mut first,
+            &vertices,
+            &[],
+            &[],
+            VertexKeys::Flat(&vertex_keys),
+            &mut ledger,
+            eps,
+        )
+        .expect("first-round merge");
+        assert_eq!(first_merges, 1);
+        assert!(first_rejected.is_empty());
+
+        // Cell 3 originally referenced retired id 1. After applying the first
+        // merge it references representative 0, whose own key does not name
+        // cell 3. The ledger member 1 must keep cell 3 in the next cover.
+        let mut cells = vec![VoronoiCell::new(0, 0); 6];
+        cells[3] = VoronoiCell::new(0, 3);
+        let cell_indices = vec![0, 2, 3];
+        let mut second = SparseUnionFind::new();
+        assert!(second.union(0, 2));
+        let (_, second_merges, second_rejected, _) = bound_merge_components(
+            &mut second,
+            &vertices,
+            &cells,
+            &cell_indices,
+            VertexKeys::Flat(&vertex_keys),
+            &mut ledger,
+            eps,
+        )
+        .expect("second-round merge safety");
+
+        assert_eq!(second_merges, 0);
+        assert_eq!(second_rejected.len(), 1);
         assert_eq!(ledger.members.get(&0), Some(&vec![0, 1]));
     }
 
@@ -1974,6 +2242,7 @@ mod tests {
         let mut ledger = MergeLedger::default();
         let mut escalations = Vec::new();
         let mut affected = Vec::new();
+        let mut merge_safety = MergeSafetyStats::default();
 
         run_repair_rounds(
             &records,
@@ -1987,6 +2256,7 @@ mod tests {
             &mut ledger,
             &mut escalations,
             &mut affected,
+            &mut merge_safety,
         )
         .expect("chain reconciliation");
 

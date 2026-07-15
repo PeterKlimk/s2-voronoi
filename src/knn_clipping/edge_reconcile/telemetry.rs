@@ -264,11 +264,12 @@ fn analyze_primary<P: VertexPosition>(
             MergeMode::Primary,
             true,
         )?;
-        let (mut uf, simulated_unions, rejected_components) = bound_merge_components(
+        let (mut uf, simulated_unions, rejected_components, _) = bound_merge_components(
             &mut proposed,
             vertices,
             cells,
             cell_indices,
+            vertex_keys,
             &mut MergeLedger::default(),
             eps,
         )?;

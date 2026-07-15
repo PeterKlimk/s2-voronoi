@@ -235,6 +235,22 @@ threshold-graph components are checked transactionally in f64 against every orig
 later round cannot hide a transitive diameter violation behind an earlier representative. Rejected
 components seed Local3d. Clean builds allocate neither the ledger nor proposal state.
 
+Merge-safety face validation uses that ledger's original vertex ids to derive a complete local cell
+cover from their key triples. This includes cells inherited by a surviving representative across
+earlier repair rounds. Missing or invalid provenance falls back to the prior global scan, and
+checked builds compare localized component decisions against a global oracle. The `timing` feature
+reports `merge_safety_scan_cells` and `merge_safety_global_fallbacks`.
+
+The deterministic `cubed` reconciliation workload showed strong scaling. At 99,846 sites, the
+local cover scanned 2,650 cells with zero fallbacks; twelve interleaved single-threaded rounds cut
+median `edge_reconcile` time from 19.6 ms to 8.0 ms. At 501,126 sites, it scanned 2,084 cells and
+seven rounds cut the phase from 55.3 ms to 6.4 ms. Nine 100k Linux perf pairs on normal non-timing
+builds reduced whole-build retired instructions by 13.47%, branches by 21.80%, and cycles by 9.74%,
+with every pair favorable. Task-clock improved 3.96% but only 6/9 pairs favored the candidate, so
+the structural counters are the stronger evidence on the busy host. A nine-pair 500k Fibonacci
+clean-path guardrail reduced instructions by 0.16% and branches by 0.49%, again with every pair
+favorable; cycles were noise-dominated with only 4/9 candidate wins.
+
 Cell construction no longer clears its reusable output buffer before building. Every successful
 writer—gnomonic, spherical fallback, and all-constraints recovery—clears before writing, while an
 error returns before the driver can consume the buffer. Poison-buffer tests cover all three writers

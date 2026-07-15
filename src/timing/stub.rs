@@ -154,7 +154,13 @@ impl TimingBuilder {
     pub fn set_dedup(&mut self, _d: Duration, _sub: DedupSubPhases) {}
 
     #[inline(always)]
-    pub fn set_edge_reconcile(&mut self, _d: Duration) {}
+    pub fn set_edge_reconcile(
+        &mut self,
+        _d: Duration,
+        _merge_safety_scan_cells: usize,
+        _merge_safety_global_fallbacks: usize,
+    ) {
+    }
 
     #[inline(always)]
     pub fn set_assemble(&mut self, _d: Duration) {}

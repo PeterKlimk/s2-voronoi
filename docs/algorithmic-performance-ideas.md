@@ -13,22 +13,29 @@ merely because it has better asymptotic language attached to it. Comparisons nee
 builds, interleaved workloads, and hardware counters. In particular, alternatives with larger
 constants must establish a measured crossover rather than compete with the normal path by default.
 
+## Implemented from this catalogue
+
+### Defect-local merge-safety validation — implemented 2026-07-16
+
+Edge reconciliation now validates proposed positional merges over a certified cell cover instead of
+revisiting the complete diagram on every defect-bearing round. The cover is the union of generator
+cells in the vertex keys of every original member retained by the cross-round merge ledger. This
+also covers cells that reference a surviving representative whose own key no longer names them.
+
+All components proposed in a round are still simulated jointly and in the original cell order.
+Missing or invalid key provenance falls back to the global scan. Checked builds run the global scan
+as a differential oracle and assert identical component decisions; focused tests cover sparse
+localization, the fallback, and references inherited through an earlier merge.
+
+The deterministic `cubed` benchmark distribution exercises O(n) degree-4 reconciliation defects.
+At approximately 100k sites, the local cover examined 2,650 of 99,846 cells with no fallback;
+twelve interleaved single-threaded rounds reduced median reconciliation time from 19.6 ms to 8.0 ms.
+At approximately 500k, it examined 2,084 of 501,126 cells and seven rounds reduced the phase from
+55.3 ms to 6.4 ms. Nine 100k Linux perf pairs on normal non-timing builds reduced whole-build
+retired instructions by 13.47%, branches by 21.80%, and cycles by 9.74%, with every pair favorable.
+The measured result is also recorded in [`performance.md`](performance.md).
+
 ## Candidate ideas
-
-### Defect-local merge-safety validation
-
-Edge reconciliation currently validates proposed positional merges against the complete cells that
-could be damaged by them. Investigate whether that proof can be restricted to a conservatively
-maintained affected-cell set instead of revisiting every cell on each defect-bearing round.
-
-A candidate set would include every cell named by the expanded membership ledger, every cell using
-an affected vertex key, and every cell changed by an earlier round. All components proposed in a
-round must be simulated jointly. Missing provenance or an uncertain transitive dependency falls
-back to the existing global validation; local coverage is an optimization, never a new authority.
-
-Before changing behavior, instrument the global scan's share of repair time and the size of the
-conservative cover on defect-heavy fixtures. Promotion requires differential tests showing the same
-accepted and rejected merge components, escalation decisions, and final output as the global path.
 
 ### Work-balanced construction for non-uniform inputs
 
