@@ -179,6 +179,19 @@ often receive the slot or cell directly from their group.
 - Track separately the eliminated allocation/pass, inverse-map lifetime, and scattered generator
   gathers.
 
+### Known-cell takeover experiment (2026-07-15)
+
+The `agent/known-packed-group-cell` branch isolates progression step 4. Only when a packed query
+actually exhausts does the stream copy its already-known group cell into the shell frontier; normal
+packed-only cells and non-packed slow paths remain unchanged.
+
+Whole-run retired instructions and branches at one million Fibonacci generators were identical to
+measurement precision, as expected for a transition used by only a few cells. Cachegrind at 20k
+showed just 2,688 additional instruction references and 1,302 additional data references across the
+entire run, but code-layout changes increased simulated branch mispredictions by about 5%. This does
+not justify deeper coupling between packed and shell state. Retain it as a completed attribution
+branch, not as a throughput candidate.
+
 ## 5. Thin per-local edge-check queues
 
 ### Current cost
@@ -236,4 +249,3 @@ ceiling:
 - Do not add a per-reference same-owner branch to the existing `u64` stream. The measured hit rate
   was extremely high and the branch still regressed; a successful compact-reference experiment must
   actually narrow the primary stream and isolate sparse exceptions.
-

@@ -160,13 +160,21 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
     }
 
     #[inline]
+    pub(super) fn set_start_cell(&mut self, cell: u32) {
+        debug_assert!(!self.initialized);
+        self.start_cell = cell;
+    }
+
+    #[inline]
     fn initialize(&mut self) {
         debug_assert!(!self.initialized);
-        self.start_cell = if self.query_idx < self.grid.point_cells.len() {
-            self.grid.point_cells[self.query_idx]
-        } else {
-            self.grid.point_to_cell(self.query) as u32
-        };
+        if self.start_cell == u32::MAX {
+            self.start_cell = if self.query_idx < self.grid.point_cells.len() {
+                self.grid.point_cells[self.query_idx]
+            } else {
+                self.grid.point_to_cell(self.query) as u32
+            };
+        }
         self.scratch.stamp = self.scratch.stamp.wrapping_add(1).max(1);
         if self.scratch.stamp == u32::MAX {
             self.scratch.visited_stamp.fill(0);

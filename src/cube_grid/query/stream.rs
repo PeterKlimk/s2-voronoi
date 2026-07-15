@@ -55,6 +55,14 @@ pub(crate) struct DirectedNeighborStream<'a, 'm, 'p, 'g> {
 }
 
 impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
+    #[inline]
+    fn enter_takeover(&mut self) {
+        if let Some(packed) = self.packed.as_ref() {
+            self.takeover.set_start_cell(packed.cell() as u32);
+        }
+        self.stage = StreamStage::Takeover;
+    }
+
     #[inline(always)]
     fn packed_mut(&mut self, context: &str) -> &mut PackedQuery<'p, 'g, 'm> {
         match self.packed.as_mut() {
@@ -161,7 +169,7 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
                         }
                         PackedNeighborFrontier::Exhausted => {
                             self.packed_safe_exhausted |= packed.safe_exhausted();
-                            self.stage = StreamStage::Takeover;
+                            self.enter_takeover();
                             continue;
                         }
                     }
@@ -205,7 +213,7 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
                     packed.advance_frontier(grid);
                     if packed.is_exhausted() {
                         self.packed_safe_exhausted |= packed.safe_exhausted();
-                        self.stage = StreamStage::Takeover;
+                        self.enter_takeover();
                     }
                 }
                 StreamStage::Takeover => self.takeover.advance(),

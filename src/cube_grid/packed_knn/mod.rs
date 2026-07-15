@@ -186,6 +186,11 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
         }
     }
 
+    #[inline]
+    pub(crate) fn cell(&self) -> usize {
+        self.prepared.cell()
+    }
+
     /// Return the current packed frontier.
     ///
     /// For an exact batch, the first probe writes slots to caller-owned `out`
