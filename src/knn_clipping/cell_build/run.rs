@@ -935,7 +935,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         clipping: counters.clipping_time,
         certification: counters.certification_time,
         neighbors_processed: counters.neighbors_processed,
-        final_edges: ctx.output_buffer.vertices.len(),
+        final_edges: ctx.output_buffer.vertex_keys.len(),
         directional_shadow_checks: counters.directional_shadow_checks,
         directional_shadow_candidate_tests: counters.directional_shadow_candidate_tests,
         directional_shadow_hits: counters.directional_shadow_hits,

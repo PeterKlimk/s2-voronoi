@@ -214,9 +214,10 @@ fn assert_cell_output_lengths<P>(
     output_buffer: &crate::knn_clipping::cell_build::CellOutputBuffer<P>,
     vertex_indices_len: usize,
 ) -> usize {
-    let n = output_buffer.vertices.len();
+    let n = output_buffer.vertex_keys.len();
     assert!(
         n >= 2
+            && output_buffer.vertex_positions.len() == n
             && output_buffer.edge_neighbor_slots.len() == n
             && output_buffer.edge_neighbor_globals.len() == n
             && vertex_indices_len == n,
@@ -243,7 +244,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     let local = shard_ctx.local;
     let bin = shard_ctx.bin;
 
-    let cell_vertices = &output_buffer.vertices;
+    let vertex_keys = &output_buffer.vertex_keys;
     let edge_neighbor_slots = &output_buffer.edge_neighbor_slots;
     let edge_neighbor_globals = &output_buffer.edge_neighbor_globals;
     let keys_verified = output_buffer.edge_keys_verified;
@@ -350,8 +351,8 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                     keys_verified,
                     &mut shard.output.unresolved_edges,
                     edge_key,
-                    [unsafe { cell_vertices.get_unchecked(i).0 }, unsafe {
-                        cell_vertices.get_unchecked(j).0
+                    [unsafe { *vertex_keys.get_unchecked(i) }, unsafe {
+                        *vertex_keys.get_unchecked(j)
                     }],
                 );
 
@@ -587,7 +588,8 @@ mod tests {
     #[should_panic(expected = "cell output arrays out of sync")]
     fn cell_output_length_mismatch_panics_before_collection() {
         let mut output = crate::live_dedup::CellOutputBuffer::default();
-        output.vertices.resize(2, ([0, 1, 2], glam::Vec3::ZERO));
+        output.vertex_keys.resize(2, [0, 1, 2]);
+        output.vertex_positions.resize(2, glam::Vec3::ZERO);
         output.edge_neighbor_slots.resize(1, u32::MAX);
         output.edge_neighbor_globals.resize(2, u32::MAX);
         assert_cell_output_lengths(&output, 2);
@@ -670,7 +672,8 @@ mod tests {
             local: LocalId::from(1),
         };
         let output = crate::live_dedup::CellOutputBuffer {
-            vertices: vec![([0, 1, 2], glam::Vec3::X); 3],
+            vertex_keys: vec![[0, 1, 2]; 3],
+            vertex_positions: vec![glam::Vec3::X; 3],
             edge_neighbor_globals: vec![0, 0, u32::MAX],
             edge_neighbor_slots: vec![0, 0, u32::MAX],
             edge_keys_verified: true,

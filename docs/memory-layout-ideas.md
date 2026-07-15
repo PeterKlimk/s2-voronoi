@@ -217,6 +217,11 @@ ceiling:
 - Split `CellOutputBuffer` vertex keys and positions so resolved vertices can read keys without
   eagerly reading positions. About two-thirds of cell-vertex incidences refer to an already-created
   global vertex, but the per-worker buffer has at most 24 entries and normally remains hot in L1.
+  The July 2026 experiment on `agent/split-cell-output-vertices` confirmed that this is not a useful
+  default layout: at 1M Fibonacci points it added about 0.35% retired instructions and 0.25%
+  branches. Cachegrind at 20k showed 5,200 fewer D1 misses, but about 497k more instruction reads,
+  215k more I1 misses, and 49k more branch mispredicts. Preserve the branch as a measured negative;
+  the tiny data-locality gain does not offset the extra extraction and iteration machinery.
 - Narrow sphere-only edge-check seed data if the shared planar/spherical engine can retain one
   coherent API. Splitting seed fields from endpoint-reconciliation payload risks adding queue
   headers or allocations and may not reduce DRAM traffic because both passes occur close together.
@@ -236,4 +241,3 @@ ceiling:
 - Do not add a per-reference same-owner branch to the existing `u64` stream. The measured hit rate
   was extremely high and the branch still regressed; a successful compact-reference experiment must
   actually narrow the primary stream and isolate sparse exceptions.
-

@@ -8,9 +8,6 @@ use glam::Vec3;
 /// The triplet `(A, B, C)` represents the circumcenter of generators `A, B, C`.
 pub type VertexKey = [u32; 3];
 
-/// Vertex data: `(key, position)`. Uses `u32` indices to save space.
-pub type VertexData<P = Vec3> = (VertexKey, P);
-
 /// Reasons a cell build can terminate unsuccessfully.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellFailure {
@@ -41,7 +38,8 @@ pub struct CellBuildError {
 /// A reusable buffer to hold the extracted output of clipping a cell.
 #[derive(Default)]
 pub struct CellOutputBuffer<P = Vec3> {
-    pub vertices: Vec<VertexData<P>>,
+    pub vertex_keys: Vec<VertexKey>,
+    pub vertex_positions: Vec<P>,
     pub edge_neighbor_globals: Vec<u32>,
     pub edge_neighbor_slots: Vec<u32>,
     /// True when the extractor guarantees every real edge's neighbor appears
@@ -59,7 +57,8 @@ pub struct CellOutputBuffer<P = Vec3> {
 impl<P> CellOutputBuffer<P> {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            vertices: Vec::with_capacity(capacity),
+            vertex_keys: Vec::with_capacity(capacity),
+            vertex_positions: Vec::with_capacity(capacity),
             edge_neighbor_globals: Vec::with_capacity(capacity),
             edge_neighbor_slots: Vec::with_capacity(capacity),
             edge_keys_verified: false,
@@ -67,7 +66,8 @@ impl<P> CellOutputBuffer<P> {
     }
 
     pub fn clear(&mut self) {
-        self.vertices.clear();
+        self.vertex_keys.clear();
+        self.vertex_positions.clear();
         self.edge_neighbor_globals.clear();
         self.edge_neighbor_slots.clear();
         self.edge_keys_verified = false;

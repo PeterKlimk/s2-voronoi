@@ -112,8 +112,8 @@ mod tests {
         let mut buffer = crate::knn_clipping::cell_build::CellOutputBuffer::default();
         builder.to_vertex_data_full(&mut buffer).unwrap();
 
-        assert_eq!(buffer.vertices.len(), 3);
-        for (_key, pos) in &buffer.vertices {
+        assert_eq!(buffer.vertex_keys.len(), 3);
+        for pos in &buffer.vertex_positions {
             let len = pos.length();
             assert!(
                 (len - 1.0).abs() < 1e-5,

@@ -390,7 +390,7 @@ fn valid_bounded_cells_reconstruct_vertices_with_healthy_norm() {
             .to_vertex_data_full(&mut buffer)
             .expect("valid bounded cell should extract vertex data");
         assert!(
-            !buffer.vertices.is_empty(),
+            !buffer.vertex_keys.is_empty(),
             "cell {} should produce at least one vertex",
             i
         );
@@ -420,14 +420,16 @@ fn extraction_failure_reports_invalid_vertex_plane_metadata() {
     gnomonic.use_a = false;
 
     let mut buffer = CellOutputBuffer::default();
-    buffer.vertices.push(([u32::MAX; 3], Vec3::X));
+    buffer.vertex_keys.push([u32::MAX; 3]);
+    buffer.vertex_positions.push(Vec3::X);
     buffer.edge_neighbor_globals.push(u32::MAX);
     buffer.edge_neighbor_slots.push(u32::MAX);
     assert_eq!(
         gnomonic.to_vertex_data_full(&mut buffer),
         Err(crate::knn_clipping::cell_build::CellFailure::NoValidSeed)
     );
-    assert!(buffer.vertices.is_empty());
+    assert!(buffer.vertex_keys.is_empty());
+    assert!(buffer.vertex_positions.is_empty());
     assert!(buffer.edge_neighbor_globals.is_empty());
     assert!(buffer.edge_neighbor_slots.is_empty());
 
@@ -506,7 +508,7 @@ fn clipped_away_handoff_rebuilds_from_constraints() {
     assert!(builder.is_bounded());
     let mut buffer = CellOutputBuffer::default();
     builder.to_vertex_data_full(&mut buffer).unwrap();
-    assert_eq!(buffer.vertices.len(), 3);
+    assert_eq!(buffer.vertex_keys.len(), 3);
 }
 
 #[test]
@@ -608,7 +610,7 @@ fn polygon_vertex_limit_handoff_replays_overflowing_constraint() {
     builder
         .to_vertex_data_full(&mut buffer)
         .expect("polygon-cap fallback replay should produce extractable vertices");
-    assert!(buffer.vertices.len() >= 3);
+    assert!(buffer.vertex_keys.len() >= 3);
 }
 
 #[test]
@@ -665,7 +667,7 @@ fn fallback_handoff_switches_builder_variant_and_replays_constraints() {
     builder
         .to_vertex_data_full(&mut buffer)
         .expect("fallback replay should produce extractable vertices");
-    assert_eq!(buffer.vertices.len(), 3);
+    assert_eq!(buffer.vertex_keys.len(), 3);
 }
 
 #[test]
@@ -800,11 +802,11 @@ fn fallback_stale_corner_is_rebuilt_from_all_constraints() {
         .to_vertex_data_full(&mut buffer)
         .expect("all-constraints retry should recover the cut corner");
 
-    assert_eq!(buffer.vertices.len(), 5);
-    assert!(!buffer.vertices.iter().any(|(key, _)| *key == [0, 11, 12]));
-    assert!(buffer.vertices.iter().any(|(key, _)| *key == [0, 11, 15]));
-    assert!(buffer.vertices.iter().any(|(key, _)| *key == [0, 12, 15]));
-    for (_, position) in &buffer.vertices {
+    assert_eq!(buffer.vertex_keys.len(), 5);
+    assert!(!buffer.vertex_keys.contains(&[0, 11, 12]));
+    assert!(buffer.vertex_keys.contains(&[0, 11, 15]));
+    assert!(buffer.vertex_keys.contains(&[0, 12, 15]));
+    for position in &buffer.vertex_positions {
         let position = glam::DVec3::new(position.x as f64, position.y as f64, position.z as f64);
         assert!(
             builder

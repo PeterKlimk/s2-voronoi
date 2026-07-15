@@ -15,7 +15,7 @@ use crate::knn_clipping::cell_build::{build_cell_into, CellBuildContext, CellBui
 use crate::knn_clipping::TerminationConfig;
 use crate::live_dedup::{
     assign_bins, checked_local_id, checked_u32, emit_cell_output, BinId, BuildCellsError,
-    EdgeScratch, ShardContext, ShardState, ShardedCellsData, VertexData,
+    EdgeScratch, ShardContext, ShardState, ShardedCellsData,
 };
 use crate::packed_layout::PackedSlotLayout;
 
@@ -43,17 +43,17 @@ fn stored_x_outside_zero_hint(a: Vec3, b: Vec3) -> u32 {
 }
 
 #[inline(never)]
-fn has_zero_edge_candidate(vertices: &[VertexData]) -> bool {
+fn has_zero_edge_candidate(vertices: &[Vec3]) -> bool {
     debug_assert!(vertices.len() >= 3);
     let mut all_edges_outside_hint = 1u32;
     let ptr = vertices.as_ptr();
     // SAFETY: successful final extraction has at least three initialized
     // vertices. Read the contiguous cycle once, then compare its closing edge.
     unsafe {
-        let first = (*ptr).1;
+        let first = *ptr;
         let mut previous = first;
         for i in 1..vertices.len() {
-            let current = (*ptr.add(i)).1;
+            let current = *ptr.add(i);
             all_edges_outside_hint &= stored_x_outside_zero_hint(previous, current);
             previous = current;
         }
@@ -330,7 +330,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
         output_buffer,
         incoming_checks,
     )?;
-    let exact_zero_edge_hint = has_zero_edge_candidate(&output_buffer.vertices);
+    let exact_zero_edge_hint = has_zero_edge_candidate(&output_buffer.vertex_positions);
     if exact_zero_edge_hint {
         shard_ctx
             .shard
@@ -346,8 +346,8 @@ mod resolution_hint_tests {
     use super::has_zero_edge_candidate;
     use glam::Vec3;
 
-    fn vertex(id: u32, x: f32) -> ([u32; 3], Vec3) {
-        ([id, id + 10, id + 20], Vec3::new(x, 0.0, 1.0))
+    fn vertex(_id: u32, x: f32) -> Vec3 {
+        Vec3::new(x, 0.0, 1.0)
     }
 
     #[test]

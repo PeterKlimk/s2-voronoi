@@ -25,14 +25,12 @@ struct FallbackVertex {
 /// split micro-edge the surviving vertex keeps X in its key while the edge
 /// sequence continues with C.
 fn edge_keys_consistent(buffer: &CellOutputBuffer) -> bool {
-    let n = buffer.vertices.len();
+    let n = buffer.vertex_keys.len();
     (0..n).all(|i| {
         let en = buffer.edge_neighbor_globals[i];
         en == u32::MAX
-            || (buffer.vertices[i].0.contains(&en)
-                && buffer.vertices[if i + 1 == n { 0 } else { i + 1 }]
-                    .0
-                    .contains(&en))
+            || (buffer.vertex_keys[i].contains(&en)
+                && buffer.vertex_keys[if i + 1 == n { 0 } else { i + 1 }].contains(&en))
     })
 }
 
@@ -47,14 +45,17 @@ impl GnomonicBuilder {
             return Err(CellFailure::NoValidSeed);
         }
         buffer.clear();
-        buffer.vertices.reserve(poly.len);
+        buffer.vertex_keys.reserve(poly.len);
+        buffer.vertex_positions.reserve(poly.len);
         buffer.edge_neighbor_globals.reserve(poly.len);
         buffer.edge_neighbor_slots.reserve(poly.len);
 
-        let vertices = buffer.vertices.spare_capacity_mut();
+        let vertex_keys = buffer.vertex_keys.spare_capacity_mut();
+        let vertex_positions = buffer.vertex_positions.spare_capacity_mut();
         let edge_neighbor_globals = buffer.edge_neighbor_globals.spare_capacity_mut();
         let edge_neighbor_slots = buffer.edge_neighbor_slots.spare_capacity_mut();
-        debug_assert!(vertices.len() >= poly.len);
+        debug_assert!(vertex_keys.len() >= poly.len);
+        debug_assert!(vertex_positions.len() >= poly.len);
         debug_assert!(edge_neighbor_globals.len() >= poly.len);
         debug_assert!(edge_neighbor_slots.len() >= poly.len);
 
@@ -101,7 +102,10 @@ impl GnomonicBuilder {
             let key = sort3_u32(gen_idx, n1, n2);
             // SAFETY: all three vectors were cleared and reserved for
             // `poly.len` immediately above; `i` is in `0..poly.len`.
-            unsafe { vertices.get_unchecked_mut(i).write((key, v_pos)) };
+            unsafe {
+                vertex_keys.get_unchecked_mut(i).write(key);
+                vertex_positions.get_unchecked_mut(i).write(v_pos);
+            }
 
             let edge_plane = poly.edge_planes[i];
             if edge_plane == INVALID_PLANE_ID {
@@ -128,7 +132,8 @@ impl GnomonicBuilder {
         // earlier error the public lengths remain zero, so partial output is
         // neither observed nor dropped as initialized data.
         unsafe {
-            buffer.vertices.set_len(poly.len);
+            buffer.vertex_keys.set_len(poly.len);
+            buffer.vertex_positions.set_len(poly.len);
             buffer.edge_neighbor_globals.set_len(poly.len);
             buffer.edge_neighbor_slots.set_len(poly.len);
         }
@@ -481,7 +486,8 @@ impl FallbackBuilder {
                 vertex.position.z as f32,
             )
             .normalize();
-            buffer.vertices.push((key, position));
+            buffer.vertex_keys.push(key);
+            buffer.vertex_positions.push(position);
 
             let next = vertices[(i + 1) % vertices.len()];
             let Some(edge_plane) = self.shared_edge_constraint(vertex, next) else {
@@ -654,7 +660,8 @@ fn extract_all_constraints_cell(
     }
 
     buffer.clear();
-    buffer.vertices.reserve(vertices.len());
+    buffer.vertex_keys.reserve(vertices.len());
+    buffer.vertex_positions.reserve(vertices.len());
     buffer.edge_neighbor_globals.reserve(vertices.len());
     buffer.edge_neighbor_slots.reserve(vertices.len());
 
@@ -668,14 +675,12 @@ fn extract_all_constraints_cell(
             vertex.position.z as f32,
         )
         .normalize();
-        buffer.vertices.push((
-            sort3_u32(
-                gen_idx,
-                plane_a.neighbor_idx as u32,
-                plane_b.neighbor_idx as u32,
-            ),
-            position,
+        buffer.vertex_keys.push(sort3_u32(
+            gen_idx,
+            plane_a.neighbor_idx as u32,
+            plane_b.neighbor_idx as u32,
         ));
+        buffer.vertex_positions.push(position);
 
         let next = vertices[(i + 1) % vertices.len()];
         let Some(edge_plane) = shared_all_constraints_edge(vertex, next, constraints) else {

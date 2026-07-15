@@ -24,20 +24,22 @@ fn octahedron_points() -> Vec<Vec3> {
 
 fn poison_output_buffer(ctx: &mut CellBuildContext) {
     ctx.output_buffer.clear();
+    ctx.output_buffer.vertex_keys.push([u32::MAX; 3]);
     ctx.output_buffer
-        .vertices
-        .push(([u32::MAX; 3], Vec3::new(0.25, -0.5, 0.75)));
+        .vertex_positions
+        .push(Vec3::new(0.25, -0.5, 0.75));
     ctx.output_buffer.edge_neighbor_globals.push(u32::MAX - 1);
     ctx.output_buffer.edge_neighbor_slots.push(u32::MAX - 2);
     ctx.output_buffer.edge_keys_verified = true;
 }
 
 fn assert_output_replaced(buffer: &crate::live_dedup::CellOutputBuffer) {
-    let n = buffer.vertices.len();
+    let n = buffer.vertex_keys.len();
     assert!(n >= 3);
+    assert_eq!(buffer.vertex_positions.len(), n);
     assert_eq!(buffer.edge_neighbor_globals.len(), n);
     assert_eq!(buffer.edge_neighbor_slots.len(), n);
-    assert!(buffer.vertices.iter().all(|(key, _)| *key != [u32::MAX; 3]));
+    assert!(buffer.vertex_keys.iter().all(|key| *key != [u32::MAX; 3]));
     assert!(buffer
         .edge_neighbor_globals
         .iter()
@@ -49,8 +51,9 @@ fn assert_output_replaced(buffer: &crate::live_dedup::CellOutputBuffer) {
 }
 
 fn assert_output_still_poisoned(buffer: &crate::live_dedup::CellOutputBuffer) {
-    assert_eq!(buffer.vertices.len(), 1);
-    assert_eq!(buffer.vertices[0].0, [u32::MAX; 3]);
+    assert_eq!(buffer.vertex_keys.len(), 1);
+    assert_eq!(buffer.vertex_positions.len(), 1);
+    assert_eq!(buffer.vertex_keys[0], [u32::MAX; 3]);
     assert_eq!(buffer.edge_neighbor_globals, [u32::MAX - 1]);
     assert_eq!(buffer.edge_neighbor_slots, [u32::MAX - 2]);
     assert!(buffer.edge_keys_verified);
@@ -331,7 +334,7 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
         ctx.builder
             .to_vertex_data_from_all_constraints(points, &mut buffer)
             .ok()
-            .map(|()| (buffer.vertices.len(), buffer.edge_neighbor_globals.len()))
+            .map(|()| (buffer.vertex_keys.len(), buffer.edge_neighbor_globals.len()))
     } else {
         None
     };
@@ -340,7 +343,7 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
         ok: result.is_ok(),
         failure: result.err().map(|err| err.failure),
         neighbors_processed: counters.neighbors_processed,
-        final_edges: ctx.output_buffer.vertices.len(),
+        final_edges: ctx.output_buffer.vertex_keys.len(),
         knn_exhausted: counters.knn_exhausted,
         bounded: ctx.builder.is_bounded(),
         fallback_projection: counters.fallback_projection,
@@ -352,7 +355,7 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
 }
 
 fn signature(buffer: &crate::live_dedup::CellOutputBuffer) -> CellSignature {
-    let mut vertex_keys: Vec<[u32; 3]> = buffer.vertices.iter().map(|(key, _)| *key).collect();
+    let mut vertex_keys = buffer.vertex_keys.clone();
     vertex_keys.sort_unstable();
     let mut edge_neighbors = buffer.edge_neighbor_globals.clone();
     edge_neighbors.sort_unstable();
@@ -411,7 +414,7 @@ fn maybe_record_early_extract(
         EarlyExtractHit {
             neighbors_processed: counters.neighbors_processed,
             accepted_constraints: builder.accepted_constraint_count(),
-            edges: buffer.vertices.len(),
+            edges: buffer.vertex_keys.len(),
         },
         signature(&buffer),
     ));
@@ -531,7 +534,7 @@ fn probe_early_extraction_cell(
         ok: result.is_ok(),
         failure: result.err().map(|err| err.failure),
         neighbors_processed: counters.neighbors_processed,
-        final_edges: ctx.output_buffer.vertices.len(),
+        final_edges: ctx.output_buffer.vertex_keys.len(),
         knn_exhausted: counters.knn_exhausted,
         fallback_all_constraints: counters.fallback_all_constraints,
         first_success,
@@ -1019,7 +1022,7 @@ fn direct_cursor_builds_normal_cell() {
     )
     .expect("cell build should succeed");
 
-    assert!(ctx.output_buffer().vertices.len() >= 3);
+    assert!(ctx.output_buffer().vertex_keys.len() >= 3);
     assert!(!stats.knn_exhausted || !stats.did_packed);
 }
 
@@ -1252,14 +1255,14 @@ fn exhausted_chart_replays_discarded_horizon_constraints_spherically() {
     assert!(stats.knn_exhausted);
     assert_eq!(stats.fallback_all_constraints, 1);
     assert!(ctx.builder.is_fallback());
-    assert_eq!(ctx.output_buffer.vertices.len(), 3);
+    assert_eq!(ctx.output_buffer.vertex_keys.len(), 3);
 
     let mut edge_neighbors = ctx.output_buffer.edge_neighbor_globals.clone();
     edge_neighbors.sort_unstable();
     assert_eq!(edge_neighbors, [1, 2, 3]);
 
     let generator = points[0].as_dvec3().normalize();
-    for &(_, vertex) in &ctx.output_buffer.vertices {
+    for &vertex in &ctx.output_buffer.vertex_positions {
         let vertex = vertex.as_dvec3().normalize();
         for &neighbor in &points[1..] {
             let neighbor = neighbor.as_dvec3().normalize();
@@ -1335,11 +1338,11 @@ fn forced_handoff_mid_build_still_finishes_the_cell() {
     );
     assert_eq!(ctx.builder.failure(), None);
     assert!(
-        ctx.output_buffer().vertices.len() >= 3,
+        ctx.output_buffer().vertex_keys.len() >= 3,
         "fallback-built cell should extract vertices",
     );
     let mut stored_positions = Vec::new();
-    for &(_, position) in &ctx.output_buffer().vertices {
+    for &position in &ctx.output_buffer().vertex_positions {
         let bits = (
             position.x.to_bits(),
             position.y.to_bits(),
