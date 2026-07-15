@@ -590,6 +590,14 @@ Do not broadly retry these without a materially different design or workload:
   0.375% branches in every 1M pair. Forcing `build_cell_into` out of line shrank the caller but
   created a 10.6 KiB generic body, adding 1.398% instructions and 0.335% branches. Retain the reloads
   and forced inline specialization.
+- A PGO-guided attempt to inline the edge resolver into cell emission saved 0.177% native
+  instructions but added 0.310% branches, increased L1I misses about fivefold, and regressed cycles
+  1.48%; PGO's coordinated global layout cannot be reproduced by that annotation alone. Inlining
+  the single-call-site clip-batch wrapper was independently favorable: native Fibonacci reduced
+  instructions 0.427% and branches 0.578%, while portable codegen reduced them 0.168% and 0.559%.
+  Native uniform, clustered, and mega all improved both counters as well; total text shrank by 8.5
+  KiB. Cycle samples were host-noise dominated, so acceptance rests on the cross-target,
+  cross-regime structural reduction and the simpler one-call-site codegen shape.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
