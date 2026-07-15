@@ -52,6 +52,7 @@ impl EdgeScratch {
         shard_ctx: &mut ShardContext<'_, P>,
         output_buffer: &CellOutputBuffer<P>,
         assignment: &BinAssignment,
+        slot_points: &[crate::cube_grid::SlotPoint],
         incoming_checks: Vec<EdgeCheck>,
     ) {
         self.vertex_indices.clear();
@@ -62,6 +63,7 @@ impl EdgeScratch {
             shard_ctx,
             output_buffer,
             assignment,
+            slot_points,
             incoming_checks,
             &mut self.vertex_indices,
             &mut self.edges_to_later,
@@ -74,7 +76,7 @@ impl EdgeScratch {
         &mut self,
         shard: &mut ShardState<P>,
         cell_vertices: &[VertexData<P>],
-        cell_idx: u32,
+        cell_slot: u32,
         cell_start: u32,
         bin: BinId,
         keys_verified: bool,
@@ -115,7 +117,7 @@ impl EdgeScratch {
             shard.dedup.push_edge_check(
                 entry.local_b,
                 EdgeCheck {
-                    neighbor_idx: cell_idx,
+                    neighbor_slot: cell_slot,
                     thirds,
                     indices,
                 },
@@ -197,6 +199,8 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
     scratch: &mut EdgeScratch,
     shard_ctx: &mut ShardContext<'_, P>,
     assignment: &BinAssignment,
+    slot_points: &[crate::cube_grid::SlotPoint],
+    cell_slot: u32,
     cell_idx: u32,
     cell_start: u32,
     output_buffer: &CellOutputBuffer<P>,
@@ -208,6 +212,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
         shard_ctx,
         output_buffer,
         assignment,
+        slot_points,
         incoming_checks,
     );
     let collect_resolve_time = t_post.lap();
@@ -299,7 +304,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
     scratch.emit(
         shard,
         &output_buffer.vertices,
-        cell_idx,
+        cell_slot,
         cell_start,
         bin,
         output_buffer.edge_keys_verified,

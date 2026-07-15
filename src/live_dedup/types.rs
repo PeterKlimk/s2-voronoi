@@ -220,11 +220,10 @@ pub(crate) struct UnresolvedEdgeMismatch {
 
 #[derive(Clone, Copy)]
 pub(crate) struct EdgeCheck {
-    /// The earlier same-bin generator that forwarded this check. The
-    /// destination generator is known by every consumer, so the canonical
-    /// edge key is losslessly reconstructed with `pack_edge(destination,
-    /// neighbor_idx)` when a diagnostic record needs it.
-    pub(crate) neighbor_idx: u32,
+    /// Grid slot of the earlier same-bin generator that forwarded this check.
+    /// The slot provides both its position and global generator index through
+    /// the slot-ordered point array.
+    pub(crate) neighbor_slot: u32,
     /// For edge (A, B), each endpoint vertex key is (A, B, T).
     /// Store just the "third" generator T for each endpoint, in canonical
     /// order. `u32::MAX` (`edge_checks::MALFORMED_THIRD`) marks an endpoint

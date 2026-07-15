@@ -179,6 +179,20 @@ often receive the slot or cell directly from their group.
 - Track separately the eliminated allocation/pass, inverse-map lifetime, and scattered generator
   gathers.
 
+### Forwarded-slot experiment (2026-07-15)
+
+The `agent/forwarded-neighbor-slots` branch isolates progression step 3. Same-bin `EdgeCheck`
+records carry the forwarding generator's grid slot instead of its global index. Incoming geometry
+seeding reads both index and position directly from `SlotPoint`; matching compares propagated slots,
+and the cold unmatched-check diagnostic recovers the global index from the slot record.
+
+This is not independently beneficial. At one million Fibonacci generators, retired instructions
+rose about 0.52%, branches about 0.50%, and branch misses about 1.6%. Cachegrind at 20k reported
+0.51% more instruction references, 0.59% more data references, 5.8% more I1 misses, and 3.9% more
+branch mispredicts. It did show 2.4% fewer D1 misses and effectively flat last-level misses, but the
+front-end cost dominates. Retain the branch only as combination evidence if eliminating the inverse
+point-to-slot map later repays the added slot plumbing.
+
 ## 5. Thin per-local edge-check queues
 
 ### Current cost
@@ -236,4 +250,3 @@ ceiling:
 - Do not add a per-reference same-owner branch to the existing `u64` stream. The measured hit rate
   was extremely high and the branch still regressed; a successful compact-reference experiment must
   actually narrow the primary stream and isolate sparse exceptions.
-

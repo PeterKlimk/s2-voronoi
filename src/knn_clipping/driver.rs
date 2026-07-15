@@ -325,6 +325,8 @@ fn build_and_emit_cell<'a, 'b, 'c>(
         &mut live_ctx.edge_scratch,
         shard_ctx,
         grid_ctx.assignment,
+        grid_ctx.grid.point_pos_slots(),
+        grid_ctx.grid.point_index_to_slot(generator_idx),
         cell_idx,
         cell_start,
         output_buffer,
