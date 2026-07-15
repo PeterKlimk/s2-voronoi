@@ -219,11 +219,21 @@ the foreign sidecar (0.47%). Peak RSS at two million generators fell from about 
 2.6% fewer D1 misses and 4.3% fewer last-level data misses, while hardware counters at one million
 showed 6--12% fewer cache misses across the sampled distributions.
 
-The current implementation is not yet a demonstrated throughput win. Retired-instruction counts
-rose about 1.5%, branch counts rose 2.5--2.9%, and Cachegrind reported about 2.0% more instruction
-references and 5.0% more branch mispredictions. Keep the branch for quiet-machine cycle and wall-time
-comparison, and profile the source-slot-to-cell mapping and sparse patch construction before
-considering it for the default path.
+The initial implementation was not a demonstrated throughput win. Retired-instruction counts rose
+about 1.5%, branch counts rose 2.5--2.9%, and Cachegrind reported about 2.0% more instruction
+references and 5.0% more branch mispredictions.
+
+A 2026-07-16 refresh merged the accepted slot-native path and compared current `main` against the
+compact stream again. On the quieter Intel Mac at two million generators and eight threads, the
+candidate was 0.8% slower on Fibonacci (paired 95% interval +0.1% to +1.5%, 6/21 favorable) and
+neutral on uniform at 0.1% faster (-0.5% to +0.3%, 11/24 favorable). Twelve-thread Linux counters
+agreed on the structural cost: instructions rose 0.59% and branches 1.46% in all nine Fibonacci
+pairs, while cycles remained unresolved at +0.53%.
+
+Reject this representation for the default throughput path. The roughly 68 MiB peak-memory saving
+at two million generators is real, but it does not compensate for the ordinary-distribution speed
+regression. Revisit only as an explicitly memory-oriented mode or after eliminating the sidecar and
+source-slot mapping overhead without restoring a branch to every incidence.
 
 ## 4. Slot-native packed groups and cell construction
 
