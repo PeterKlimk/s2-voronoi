@@ -74,6 +74,11 @@ pub(crate) enum PreparedPackedGroupStatus<'a, 'g> {
 
 impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
     #[inline]
+    pub(super) fn query_slot(&self, qi: usize) -> u32 {
+        self.group.queries()[qi]
+    }
+
+    #[inline]
     #[cfg(test)]
     pub(crate) fn security(&self, qi: usize) -> f32 {
         self.scratch.security(qi)

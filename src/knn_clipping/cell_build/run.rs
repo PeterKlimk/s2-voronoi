@@ -883,7 +883,11 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     let mut trace = BuildTrace::new();
     let mut counters = BuildCounters::new();
 
-    ctx.builder.reset(generator_idx, points[generator_idx]);
+    let generator_pos = request.packed.as_ref().map_or_else(
+        || points[generator_idx],
+        |packed| grid.point_pos_at_slot(packed.query_slot()),
+    );
+    ctx.builder.reset(generator_idx, generator_pos);
     ctx.attempted_neighbors.clear();
     // Every successful finish path clears the reusable output before writing:
     // gnomonic extraction, spherical fallback extraction, and all-constraints

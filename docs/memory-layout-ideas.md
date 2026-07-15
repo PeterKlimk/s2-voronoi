@@ -179,6 +179,20 @@ often receive the slot or cell directly from their group.
 - Track separately the eliminated allocation/pass, inverse-map lifetime, and scattered generator
   gathers.
 
+### Query-coordinate experiment (2026-07-15)
+
+The `agent/slot-native-query-coordinates` branch isolates progression step 2 without including the
+slot-range change: packed queries reuse their already-known slot to reconstruct the generator from
+the three slot-ordered SoA coordinate arrays, while slow-path cells retain the global-index load.
+
+This is not a default-path candidate. At one million Fibonacci generators, retired instructions
+rose about 0.4% and branches about 0.7%. Cachegrind at 20k likewise reported 0.4% more instruction
+references and 0.6% more data references, with essentially unchanged D1 misses, last-level data
+misses, and simulated branch mispredictions; L1 instruction misses rose about 20%. The scattered
+`points[global]` load is cheaper than three SoA loads plus the packed-path selection at current
+locality. Retain the branch as attribution evidence; a future combined representation should not
+assume this progression step is independently beneficial.
+
 ## 5. Thin per-local edge-check queues
 
 ### Current cost
@@ -236,4 +250,3 @@ ceiling:
 - Do not add a per-reference same-owner branch to the existing `u64` stream. The measured hit rate
   was extremely high and the branch still regressed; a successful compact-reference experiment must
   actually narrow the primary stream and isolate sparse exceptions.
-

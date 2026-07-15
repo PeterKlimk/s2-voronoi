@@ -62,6 +62,17 @@ impl CubeMapGrid {
         &self.cell_points_aos
     }
 
+    /// Reconstruct one point from the three slot-ordered SoA coordinate streams.
+    #[inline]
+    pub(crate) fn point_pos_at_slot(&self, slot: u32) -> Vec3 {
+        let slot = slot as usize;
+        Vec3::new(
+            self.cell_points_x[slot],
+            self.cell_points_y[slot],
+            self.cell_points_z[slot],
+        )
+    }
+
     /// Get points in a cell.
     // Production consumers moved to raw CSR slices in the shared binning
     // core; tests still use this accessor.

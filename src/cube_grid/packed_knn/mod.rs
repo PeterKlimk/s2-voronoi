@@ -186,6 +186,11 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
         }
     }
 
+    #[inline]
+    pub(crate) fn query_slot(&self) -> u32 {
+        self.prepared.query_slot(self.query_index)
+    }
+
     /// Return the current packed frontier.
     ///
     /// For an exact batch, the first probe writes slots to caller-owned `out`
