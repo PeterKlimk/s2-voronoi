@@ -172,13 +172,15 @@ fn run_core_pipeline(
     validate_preprocess_mode(preprocess_mode)?;
     let mut tb = TimingBuilder::new();
 
-    let (effective_points, merge_result, preprocess_report, grid) =
+    let (effective_points, merge_result, preprocess_report, mut grid) =
         prepare_points_and_grid(&points, preprocess_mode, &mut tb)?;
 
     let effective_points_ref: &[Vec3] = match &effective_points {
         Some(v) => v.as_slice(),
         None => points.as_slice(),
     };
+
+    grid.release_point_slots();
 
     let sharded = construct_cell_shards(
         effective_points_ref,

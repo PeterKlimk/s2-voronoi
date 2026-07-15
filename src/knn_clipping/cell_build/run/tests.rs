@@ -291,15 +291,7 @@ fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> Prob
     ctx.attempted_neighbors.clear();
     ctx.output_buffer.clear();
 
-    clip_seed_neighbors(
-        &mut ctx,
-        points,
-        grid,
-        pos_slots,
-        &[],
-        &mut trace,
-        &mut counters,
-    );
+    clip_seed_neighbors(&mut ctx, points, pos_slots, &[], &mut trace, &mut counters);
 
     {
         let mut stream = DirectedNeighborStream::new(
@@ -449,15 +441,7 @@ fn probe_early_extraction_cell(
     ctx.attempted_neighbors.clear();
     ctx.output_buffer.clear();
 
-    clip_seed_neighbors(
-        &mut ctx,
-        points,
-        grid,
-        pos_slots,
-        &[],
-        &mut trace,
-        &mut counters,
-    );
+    clip_seed_neighbors(&mut ctx, points, pos_slots, &[], &mut trace, &mut counters);
 
     {
         let mut stream = DirectedNeighborStream::new(

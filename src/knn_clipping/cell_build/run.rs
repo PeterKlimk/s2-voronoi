@@ -511,7 +511,6 @@ struct StreamPhase<'x> {
 fn clip_seed_neighbors(
     ctx: &mut CellBuildContext,
     points: &[Vec3],
-    grid: &crate::cube_grid::CubeMapGrid,
     pos_slots: &[crate::cube_grid::SlotPoint],
     incoming_checks: &[EdgeCheck],
     trace: &mut BuildTrace,
@@ -525,11 +524,6 @@ fn clip_seed_neighbors(
         let neighbor_slot = check.neighbor_slot;
         let neighbor_point = pos_slots[neighbor_slot as usize];
         let neighbor_idx = neighbor_point.idx as usize;
-        debug_assert_eq!(
-            grid.point_index_to_slot(neighbor_idx),
-            neighbor_slot,
-            "forwarded edge-check slot must match the grid inverse map"
-        );
         trace.last_neighbor_idx = Some(neighbor_idx);
         trace.last_neighbor_slot = Some(neighbor_slot);
         trace.last_batch_source = None;
@@ -920,7 +914,6 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     clip_seed_neighbors(
         ctx,
         points,
-        grid,
         pos_slots,
         request.incoming_checks,
         &mut trace,

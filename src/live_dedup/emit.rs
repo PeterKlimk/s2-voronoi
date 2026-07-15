@@ -209,6 +209,10 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
     slot_points: &[crate::cube_grid::SlotPoint],
     incoming_checks: Vec<EdgeCheck>,
 ) -> Result<(), BuildCellsError> {
+    debug_assert_eq!(
+        slot_points[cell_slot as usize].idx, cell_idx,
+        "forwarded edge-check slot must identify its source generator"
+    );
     let mut t_post = crate::timing::LapTimer::start();
     scratch.collect_and_resolve(
         cell_idx,

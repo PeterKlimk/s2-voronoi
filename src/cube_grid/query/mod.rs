@@ -29,10 +29,11 @@ impl CubeMapGrid {
         self.point_cells[idx] as usize
     }
 
-    /// Get the SOA slot index for `points[idx]` used to build this grid.
-    #[inline]
-    pub fn point_index_to_slot(&self, idx: usize) -> u32 {
-        self.point_slots[idx]
+    /// Release the global-index-to-slot inverse after preprocessing. Weld
+    /// compaction is its final production consumer; construction and repair
+    /// operate in slot space from this point onward.
+    pub(crate) fn release_point_slots(&mut self) {
+        self.point_slots = Vec::new();
     }
 
     /// Get grid resolution (cells per face).
