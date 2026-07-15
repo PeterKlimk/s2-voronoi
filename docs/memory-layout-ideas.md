@@ -102,7 +102,7 @@ unless a future stream representation removes its capacity and recording control
 
 ## 2. Owner-local vertex-incidence accounting
 
-**Status: implemented experimentally; quiet-machine cycle/time acceptance pending (2026-07-15).**
+**Status: accepted as a multithreaded throughput candidate (2026-07-15).**
 
 ### Current cost
 
@@ -155,10 +155,15 @@ instructions, 1.72% fewer branches, 1.65% fewer branch misses, 3.45% fewer cache
 with mixed cache movement. A 2M Fibonacci peak-RSS probe measured about 1.5 MiB more RSS, so this is
 not currently a memory-envelope win.
 
-The full `checked` test profile passes, including reconciliation and Local3d repair fixtures. Do
-not promote or commit the experiment based on these attribution counters alone: final acceptance
-still requires paired cycle/time measurements on a quiet machine, including regular and
-high-cross-bin regimes.
+The full `checked` test profile passes, including reconciliation and Local3d repair fixtures.
+
+Windows-native paired wall-time measurements supplied the missing acceptance signal. At two
+million generators, owner-local incidence was 2.42% faster on Fibonacci (20 rounds), 2.87% faster
+on default-bin uniform (20 rounds), and 3.72% faster on 96-bin uniform (20 rounds), with all three
+95% intervals excluding zero. A separate 40-round focused Fibonacci run measured 1.47% faster,
+again just excluding zero. A 30-round single-thread Fibonacci guardrail was directionally 0.69%
+faster with a -1.42% to +0.04% interval, providing no evidence of a scalar regression. Promote this
+branch to the primary default-path candidate.
 
 ## 3. Compact shard-local cell-reference stream
 
@@ -244,6 +249,26 @@ simulated branch mispredictions, so quiet-machine cycle and wall-time measuremen
 Peak RSS at two million Fibonacci generators was repeatably about 548,000 KiB versus 575,000 KiB,
 a reduction of roughly 27 MiB. The full checked test suite passes. Keep later progression steps on
 separate branches so their gather and inverse-map effects remain attributable.
+
+### Quiet comparison and combined candidate (2026-07-15)
+
+Slot-native groups alone did not reproduce a multithreaded throughput win on Windows. One broad
+20-round Fibonacci matrix measured 3.39% faster, but a focused 40-round repeat was unresolved and
+trended 1.51% slower; default-bin and 96-bin uniform were neutral. It did measure 0.83% faster in a
+30-round single-thread Fibonacci guardrail. Treat it as a memory/layout component, not an
+independent throughput promotion.
+
+`agent/owner-incidence-slot-groups` combines this layout with owner-local incidence. Windows-native
+30-round matrices measured the combination 2.63% faster on two-million-point Fibonacci and 2.76%
+faster on two-million-point uniform with 96 bins; both 95% intervals excluded zero. Owner-local
+alone remained faster on the 96-bin case (3.68%), so the combination trades some of that branch's
+best-case throughput for the slot-native layout.
+
+The earlier 27 MiB slot-native peak-RSS result did not reproduce for the combination: three current
+2M WSL probes measured 624,104--629,848 KiB versus 630,720--633,920 KiB for `main`, only a small and
+variable reduction. Prefer owner-local incidence alone for a minimal throughput change. Retain the
+combined branch as a validated alternative, but do not justify it primarily with the older RSS
+estimate without a dedicated allocator/live-memory study.
 
 ## 5. Thin per-local edge-check queues
 
