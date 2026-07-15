@@ -36,9 +36,10 @@ cargo run --release --features tools --bin bench_voronoi -- 100k 500k 1m
 
 Useful flags:
 
-- `--dist {fib|uniform|clustered|bimodal|gradient|outlier|splittable|mega}` and `--dist-param` —
+- `--dist {fib|uniform|clustered|bimodal|gradient|outlier|splittable|mega|cubed}` and `--dist-param` —
   non-uniform distributions exercise the density-adaptive paths that uniform input never reaches.
-  Benchmark across a few of these, not uniform alone.
+  Benchmark across a few of these, not uniform alone. `cubed` is a deterministic projected quad
+  grid with O(n) degree-4 vertices, intended specifically for reconciliation benchmarks.
 - `--validate` — compare against the convex-hull ground truth (slow; capped at 100k).
 - `--no-preprocess` — skip welding (isolates construction cost).
 

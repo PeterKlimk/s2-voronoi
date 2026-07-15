@@ -66,6 +66,42 @@ fn fibonacci_sphere_points_with_rng<R: Rng>(n: usize, jitter: f32, rng: &mut R) 
         .collect()
 }
 
+/// Deterministic cubed-sphere grid with approximately `n` generators.
+///
+/// The projected quad lattice has O(n) degree-4 Voronoi vertices, so it is a
+/// stable high-reconciliation-work benchmark at otherwise ordinary density.
+/// The returned length is `6 * k * k` for the nearest integral face width.
+fn cubed_sphere_points(n: usize) -> Vec<Vec3> {
+    let k = ((n as f64 / 6.0).sqrt().round() as usize).max(1);
+    let mut points = Vec::with_capacity(6 * k * k);
+    let face_normals = [
+        Vec3::X,
+        Vec3::NEG_X,
+        Vec3::Y,
+        Vec3::NEG_Y,
+        Vec3::Z,
+        Vec3::NEG_Z,
+    ];
+
+    for normal in face_normals {
+        let tangent_u = if normal.x.abs() < 0.5 {
+            Vec3::X
+        } else {
+            Vec3::Y
+        };
+        let tangent_v = normal.cross(tangent_u);
+        for i in 0..k {
+            for j in 0..k {
+                let u = -1.0 + (i as f32 + 0.5) * 2.0 / k as f32;
+                let v = -1.0 + (j as f32 + 0.5) * 2.0 / k as f32;
+                points.push((normal + u * tangent_u + v * tangent_v).normalize());
+            }
+        }
+    }
+
+    points
+}
+
 fn random_tangent_vector<R: Rng>(p: Vec3, rng: &mut R) -> Vec3 {
     let arbitrary = if p.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
 
@@ -186,7 +222,8 @@ struct Args {
     /// random). Density-contrast: clustered (caps mixture), bimodal (one dense
     /// cap over a sparse bg), gradient (smooth density ~exp(k·z)), outlier
     /// (uniform plus one tiny pile), splittable (many cell-scale clusters),
-    /// mega (one cap holding a fraction of all points). See --dist-param.
+    /// mega (one cap holding a fraction of all points). Reconciliation stress:
+    /// cubed (deterministic projected quad grid). See --dist-param.
     #[arg(long, default_value = "fib")]
     dist: String,
 
@@ -223,6 +260,7 @@ fn generate_points(n: usize, seed: u64, lloyd: bool, dist: &str, param: f64) -> 
         "outlier" => return outlier_points(n, &mut rng),
         "splittable" => return splittable_points(n, &mut rng),
         "mega" => return mega_points(n, param, &mut rng),
+        "cubed" => return cubed_sphere_points(n),
         // Almost everything inside a single tight cap (radius = dist-param,
         // default 0.002 ≈ tighter than one max-res grid cell) — the "everything
         // in one cell" extreme the occupancy rebuild's memory cap cannot split.
