@@ -5,12 +5,13 @@
 use glam::Vec3;
 
 use super::binning::BinAssignment;
-use super::edge_checks::collect_and_resolve_cell_edges;
-use super::packed::{pack_ref, DEFERRED, INVALID_INDEX};
-use super::shard::ShardState;
-use super::types::{
-    BinId, DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeOverflowLocal, EdgeToLater, LocalId,
+use super::edge_checks::{
+    collect_and_resolve_cell_edges, thirds_for_emit, OUTGOING_NONE, OUTGOING_OVERFLOW_SIDE0,
+    OUTGOING_OVERFLOW_SIDE1,
 };
+use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
+use super::shard::ShardState;
+use super::types::{BinId, DeferredSlot, EdgeCheck, EdgeCheckOverflow, LocalId};
 use super::{BuildCellsError, CellOutputBuffer, VertexData};
 
 #[inline(always)]
@@ -24,8 +25,7 @@ fn exceeds_resolution_drift<P: super::types::VertexPosition>(representative: P, 
 }
 
 pub(crate) struct EdgeScratch {
-    edges_to_later: Vec<EdgeToLater>,
-    edges_overflow: Vec<EdgeOverflowLocal>,
+    outgoing: Vec<u32>,
     vertex_indices: Vec<u32>,
 }
 
@@ -42,8 +42,7 @@ fn assert_endpoint_lengths<P>(cell_vertices: &[VertexData<P>], vertex_indices_le
 impl EdgeScratch {
     pub(crate) fn new() -> Self {
         Self {
-            edges_to_later: Vec::new(),
-            edges_overflow: Vec::new(),
+            outgoing: Vec::new(),
             vertex_indices: Vec::new(),
         }
     }
@@ -61,6 +60,9 @@ impl EdgeScratch {
         self.vertex_indices.clear();
         self.vertex_indices
             .resize(output_buffer.vertices.len(), INVALID_INDEX);
+        self.outgoing.clear();
+        self.outgoing
+            .resize(output_buffer.vertices.len(), OUTGOING_NONE);
         collect_and_resolve_cell_edges(
             cell_idx,
             shard_ctx,
@@ -69,99 +71,60 @@ impl EdgeScratch {
             assignment,
             incoming_checks,
             &mut self.vertex_indices,
-            &mut self.edges_to_later,
-            &mut self.edges_overflow,
+            &mut self.outgoing,
         );
     }
+}
 
-    #[cfg_attr(feature = "profiling", inline(never))]
-    fn emit<P: super::types::VertexPosition>(
-        &mut self,
-        shard: &mut ShardState<P>,
-        cell_vertices: &[VertexData<P>],
-        cell_slot: u32,
-        cell_start: u32,
-        bin: BinId,
-        keys_verified: bool,
-    ) {
-        use super::edge_checks::thirds_for_emit;
-
-        let vertex_count = assert_endpoint_lengths(cell_vertices, self.vertex_indices.len());
-
-        // These scratch records are Copy and own no resources. Iterating by
-        // copy avoids Drain's per-element/unwind bookkeeping; successful
-        // emission clears the reusable buffer below.
-        for entry in self.edges_to_later.iter().copied() {
-            let locals = entry.locals;
-            let a = locals[0] as usize;
-            let b = locals[1] as usize;
-            debug_assert!(a < vertex_count && b < vertex_count);
-            // The sole record producer creates both locals from `i` and its
-            // cyclic successor in `0..vertex_count`; lengths were checked once
-            // above. Keep repeated bounds checks out of the forwarding loops.
-            let keys = unsafe {
-                [
-                    cell_vertices.get_unchecked(a).0,
-                    cell_vertices.get_unchecked(b).0,
-                ]
-            };
-            let indices = unsafe {
-                [
-                    *self.vertex_indices.get_unchecked(a),
-                    *self.vertex_indices.get_unchecked(b),
-                ]
-            };
-            let thirds = thirds_for_emit(
-                keys_verified,
-                &mut shard.output.unresolved_edges,
-                entry.key,
-                keys,
-            );
-            shard.dedup.push_edge_check(
-                entry.local_b,
-                EdgeCheck {
-                    neighbor_slot: cell_slot,
-                    thirds,
-                    indices,
-                },
-            );
-        }
-        self.edges_to_later.clear();
-
-        for entry in self.edges_overflow.iter().copied() {
-            let locals = entry.locals;
-            let a = locals[0] as usize;
-            let b = locals[1] as usize;
-            debug_assert!(a < vertex_count && b < vertex_count);
-            // Same producer/range proof as the ordinary forwarding loop.
-            let keys = unsafe {
-                [
-                    cell_vertices.get_unchecked(a).0,
-                    cell_vertices.get_unchecked(b).0,
-                ]
-            };
-            let indices = unsafe {
-                [
-                    *self.vertex_indices.get_unchecked(a),
-                    *self.vertex_indices.get_unchecked(b),
-                ]
-            };
-            let thirds = thirds_for_emit(
-                keys_verified,
-                &mut shard.output.unresolved_edges,
-                entry.key,
-                keys,
-            );
-            shard.output.edge_check_overflow.push(EdgeCheckOverflow {
-                key: entry.key,
-                side: entry.side,
-                source_bin: bin,
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn emit_outgoing_edge<P: super::types::VertexPosition>(
+    tag: u32,
+    shard: &mut ShardState<P>,
+    cell_idx: u32,
+    neighbor: u32,
+    cell_slot: u32,
+    cell_start: u32,
+    edge_local: usize,
+    vertex_count: usize,
+    endpoint_keys: [crate::knn_clipping::cell_build::VertexKey; 2],
+    endpoint_indices: [u32; 2],
+    bin: BinId,
+    keys_verified: bool,
+) {
+    if tag == OUTGOING_NONE {
+        return;
+    }
+    let key = pack_edge(cell_idx, neighbor);
+    let thirds = thirds_for_emit(
+        keys_verified,
+        &mut shard.output.unresolved_edges,
+        key,
+        endpoint_keys,
+    );
+    if tag == OUTGOING_OVERFLOW_SIDE0 || tag == OUTGOING_OVERFLOW_SIDE1 {
+        let next = if edge_local + 1 == vertex_count {
+            0
+        } else {
+            edge_local + 1
+        };
+        shard.output.edge_check_overflow.push(EdgeCheckOverflow {
+            key,
+            side: u8::from(tag == OUTGOING_OVERFLOW_SIDE1),
+            source_bin: bin,
+            thirds,
+            indices: endpoint_indices,
+            slots: [cell_start + edge_local as u32, cell_start + next as u32],
+        });
+    } else {
+        shard.dedup.push_edge_check(
+            LocalId::from(tag),
+            EdgeCheck {
+                neighbor_slot: cell_slot,
                 thirds,
-                indices,
-                slots: [cell_start + locals[0] as u32, cell_start + locals[1] as u32],
-            });
-        }
-        self.edges_overflow.clear();
+                indices: endpoint_indices,
+            },
+        );
     }
 }
 
@@ -226,7 +189,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
     cell_sub.add_edge_collect(collect_resolve_time / 2);
     cell_sub.add_edge_resolve(collect_resolve_time / 2);
 
-    let count = output_buffer.vertices.len();
+    let count = assert_endpoint_lengths(&output_buffer.vertices, scratch.vertex_indices.len());
     let shard = &mut *shard_ctx.shard;
     let local = shard_ctx.local;
     let bin = shard_ctx.bin;
@@ -236,11 +199,16 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
 
     {
         let vertex_indices = &mut scratch.vertex_indices;
-        for ((key, pos), vi) in output_buffer
+        let mut first_key = [0u32; 3];
+        let mut first_index = INVALID_INDEX;
+        let mut previous_key = [0u32; 3];
+        let mut previous_index = INVALID_INDEX;
+        for (i, ((key, pos), vi)) in output_buffer
             .vertices
             .iter()
             .copied()
             .zip(vertex_indices.iter_mut())
+            .enumerate()
         {
             #[cfg(feature = "timing")]
             {
@@ -250,7 +218,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
             // before the owner-map load. Generic x86 codegen regresses badly
             // from this branch layout, so retain its owner-first shape below.
             #[cfg(target_feature = "avx2")]
-            {
+            let needs_owner_lookup = {
                 // A resolved index is necessarily local to this shard: in-bin
                 // edge checks carry shard-local ids, while cross-bin/deferred
                 // endpoints retain INVALID_INDEX until assembly.
@@ -265,62 +233,101 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
                         exceeds_resolution_drift(representative, pos);
                     shard.output.add_vertex_incidence(*vi);
                     shard.output.cell_indices.push(pack_ref(bin, *vi));
-                    continue;
-                }
-            }
-
-            let owner_bin = assignment.generator_bin[key[0] as usize];
-            if owner_bin == bin {
-                #[cfg(target_feature = "avx2")]
-                {
-                    let new_idx = checked_u32(shard.output.vertices.len(), "shard vertex index")?;
-                    shard.output.vertices.push(pos);
-                    shard.output.vertex_keys.push(key);
-                    shard.output.vertex_incidence.push(1);
-                    *vi = new_idx;
-                }
-                #[cfg(not(target_feature = "avx2"))]
-                if *vi == INVALID_INDEX {
-                    let new_idx = checked_u32(shard.output.vertices.len(), "shard vertex index")?;
-                    shard.output.vertices.push(pos);
-                    shard.output.vertex_keys.push(key);
-                    shard.output.vertex_incidence.push(1);
-                    *vi = new_idx;
+                    false
                 } else {
-                    let representative =
-                        unsafe { *shard.output.vertices.get_unchecked(*vi as usize) };
-                    shard.output.resolution_drift_exceeded |=
-                        exceeds_resolution_drift(representative, pos);
-                    shard.output.add_vertex_incidence(*vi);
+                    true
                 }
-                let v_idx = *vi;
-                debug_assert_ne!(v_idx, INVALID_INDEX, "missing on-shard vertex index");
-                shard.output.cell_indices.push(pack_ref(bin, v_idx));
-            } else {
-                debug_assert_eq!(*vi, INVALID_INDEX, "received index for off-shard owner");
-                let source_slot =
-                    checked_u32(shard.output.cell_indices.len(), "deferred source slot")?;
-                shard.output.cell_indices.push(DEFERRED);
-                shard.output.deferred_slots.push(DeferredSlot {
-                    key,
-                    pos,
-                    source_bin: bin,
-                    source_slot,
-                });
-            }
-        }
-    }
-    cell_sub.add_key_dedup(t_post.lap());
+            };
+            #[cfg(not(target_feature = "avx2"))]
+            let needs_owner_lookup = true;
 
-    scratch.emit(
-        shard,
-        &output_buffer.vertices,
-        cell_slot,
-        cell_start,
-        bin,
-        output_buffer.edge_keys_verified,
-    );
-    cell_sub.add_edge_emit(t_post.lap());
+            if needs_owner_lookup {
+                let owner_bin = assignment.generator_bin[key[0] as usize];
+                if owner_bin == bin {
+                    #[cfg(target_feature = "avx2")]
+                    {
+                        let new_idx =
+                            checked_u32(shard.output.vertices.len(), "shard vertex index")?;
+                        shard.output.vertices.push(pos);
+                        shard.output.vertex_keys.push(key);
+                        shard.output.vertex_incidence.push(1);
+                        *vi = new_idx;
+                    }
+                    #[cfg(not(target_feature = "avx2"))]
+                    if *vi == INVALID_INDEX {
+                        let new_idx =
+                            checked_u32(shard.output.vertices.len(), "shard vertex index")?;
+                        shard.output.vertices.push(pos);
+                        shard.output.vertex_keys.push(key);
+                        shard.output.vertex_incidence.push(1);
+                        *vi = new_idx;
+                    } else {
+                        let representative =
+                            unsafe { *shard.output.vertices.get_unchecked(*vi as usize) };
+                        shard.output.resolution_drift_exceeded |=
+                            exceeds_resolution_drift(representative, pos);
+                        shard.output.add_vertex_incidence(*vi);
+                    }
+                    let v_idx = *vi;
+                    debug_assert_ne!(v_idx, INVALID_INDEX, "missing on-shard vertex index");
+                    shard.output.cell_indices.push(pack_ref(bin, v_idx));
+                } else {
+                    debug_assert_eq!(*vi, INVALID_INDEX, "received index for off-shard owner");
+                    let source_slot =
+                        checked_u32(shard.output.cell_indices.len(), "deferred source slot")?;
+                    shard.output.cell_indices.push(DEFERRED);
+                    shard.output.deferred_slots.push(DeferredSlot {
+                        key,
+                        pos,
+                        source_bin: bin,
+                        source_slot,
+                    });
+                }
+            }
+
+            let current_index = *vi;
+            if i == 0 {
+                first_key = key;
+                first_index = current_index;
+            } else {
+                emit_outgoing_edge(
+                    scratch.outgoing[i - 1],
+                    shard,
+                    cell_idx,
+                    output_buffer.edge_neighbor_globals[i - 1],
+                    cell_slot,
+                    cell_start,
+                    i - 1,
+                    count,
+                    [previous_key, key],
+                    [previous_index, current_index],
+                    bin,
+                    output_buffer.edge_keys_verified,
+                );
+            }
+            previous_key = key;
+            previous_index = current_index;
+        }
+        emit_outgoing_edge(
+            scratch.outgoing[count - 1],
+            shard,
+            cell_idx,
+            output_buffer.edge_neighbor_globals[count - 1],
+            cell_slot,
+            cell_start,
+            count - 1,
+            count,
+            [previous_key, first_key],
+            [previous_index, first_index],
+            bin,
+            output_buffer.edge_keys_verified,
+        );
+    }
+    let dedup_emit_time = t_post.lap();
+    // Vertex dedup and outgoing edge emission are deliberately interleaved so
+    // an edge is forwarded as soon as its second endpoint index is known.
+    cell_sub.add_key_dedup(dedup_emit_time / 2);
+    cell_sub.add_edge_emit(dedup_emit_time / 2);
 
     debug_assert_eq!(
         shard.output.cell_indices.len() as u32 - cell_start,

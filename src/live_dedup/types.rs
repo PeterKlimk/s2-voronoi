@@ -249,28 +249,6 @@ pub(super) struct EdgeCheckOverflow {
     pub(super) slots: [u32; 2],
 }
 
-/// Edge record to later-local neighbors (emitted into their incoming edgecheck queues).
-///
-/// This is ephemeral (per-cell scratch) and optimized for cache-friendly iteration in the emit
-/// phase.
-#[derive(Clone, Copy)]
-pub(super) struct EdgeToLater {
-    pub(super) key: EdgeKey,
-    pub(super) local_b: LocalId,
-    pub(super) locals: [u8; 2],
-}
-
-const _: () = assert!(std::mem::size_of::<EdgeToLater>() == 16);
-
-/// Flattened for size: 16 bytes instead of 24.
-/// Layout: key (8) + locals (2) + side (1) + 5 padding = 16
-#[derive(Clone, Copy)]
-pub(super) struct EdgeOverflowLocal {
-    pub(super) key: EdgeKey,
-    pub(super) locals: [u8; 2],
-    pub(super) side: u8,
-}
-
 #[derive(Clone, Copy)]
 pub(crate) struct DeferredSlot<P = Vec3> {
     /// Canonical vertex key that identifies the eventual owner bin.

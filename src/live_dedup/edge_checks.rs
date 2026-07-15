@@ -6,8 +6,8 @@ use super::binning::BinAssignment;
 use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
 use super::types::{
-    BinId, EdgeCheck, EdgeCheckOverflow, EdgeKey, EdgeOverflowLocal, EdgeToLater, LocalId,
-    UnresolvedEdgeMismatch, UnresolvedEdgeOrigin,
+    BinId, EdgeCheck, EdgeCheckOverflow, EdgeKey, LocalId, UnresolvedEdgeMismatch,
+    UnresolvedEdgeOrigin,
 };
 use super::with_two_mut;
 use crate::knn_clipping::cell_build::VertexKey;
@@ -38,6 +38,10 @@ fn edge_check_key(
 /// full-matches nor patches, so bad attribution can only widen the defect
 /// record set, never silently share a vertex id.
 pub(super) const MALFORMED_THIRD: u32 = u32::MAX;
+
+pub(super) const OUTGOING_NONE: u32 = u32::MAX;
+pub(super) const OUTGOING_OVERFLOW_SIDE0: u32 = u32::MAX - 1;
+pub(super) const OUTGOING_OVERFLOW_SIDE1: u32 = u32::MAX - 2;
 
 /// The endpoint's "third" generator — the key entry that is neither edge
 /// endpoint. When the key contains `{a, b, third}`, XOR is self-canceling
@@ -232,7 +236,7 @@ fn assert_cell_output_lengths<P>(
 
 #[cfg_attr(feature = "profiling", inline(never))]
 // The argument list is the fused collect+resolve data flow; the two
-// output vecs are caller-owned scratch reused across cells.
+// output tag stream is caller-owned scratch reused across cells.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     cell_idx: u32,
@@ -242,8 +246,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     assignment: &BinAssignment,
     incoming_checks: Vec<EdgeCheck>,
     vertex_indices: &mut [u32],
-    edges_to_later: &mut Vec<EdgeToLater>,
-    edges_overflow: &mut Vec<EdgeOverflowLocal>,
+    outgoing: &mut [u32],
 ) {
     let shard = &mut *shard_ctx.shard;
     let local = shard_ctx.local;
@@ -255,8 +258,8 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     let keys_verified = output_buffer.edge_keys_verified;
 
     let n = assert_cell_output_lengths(output_buffer, vertex_indices.len());
-    edges_to_later.clear();
-    edges_overflow.clear();
+    assert_eq!(outgoing.len(), n, "outgoing edge tags out of sync");
+    outgoing.fill(OUTGOING_NONE);
 
     #[cfg(debug_assertions)]
     {
@@ -310,20 +313,19 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
         let local_b = LocalId::from(local_b);
 
         if bin != bin_b {
-            // Cross-bin edge → overflow
+            // Cross-bin edge → encode overflow side for direct emission once
+            // both endpoint indices are available.
             let side = if cell_idx <= neighbor { 0 } else { 1 };
-            edges_overflow.push(EdgeOverflowLocal {
-                key: edge_key,
-                locals,
-                side,
-            });
+            outgoing[i] = if side == 0 {
+                OUTGOING_OVERFLOW_SIDE0
+            } else {
+                OUTGOING_OVERFLOW_SIDE1
+            };
         } else if local_u32 < local_b.as_u32() {
-            // Edge to later neighbor → collect for emit
-            edges_to_later.push(EdgeToLater {
-                key: edge_key,
-                local_b,
-                locals,
-            });
+            // Same-bin edge to a later neighbor. Local ids cannot overlap the
+            // high sentinel values because at least six bins share the u32
+            // packed layout.
+            outgoing[i] = local_b.as_u32();
         } else {
             // Edge to earlier neighbor → resolve immediately.
             // Search Vec for matching check (cache-friendly sequential access)
@@ -697,8 +699,7 @@ mod tests {
             },
         ];
         let mut vertex_indices = vec![INVALID_INDEX; 3];
-        let mut to_later = Vec::new();
-        let mut overflow = Vec::new();
+        let mut outgoing = vec![OUTGOING_NONE; 3];
 
         collect_and_resolve_cell_edges(
             1,
@@ -708,8 +709,7 @@ mod tests {
             &assignment,
             incoming,
             &mut vertex_indices,
-            &mut to_later,
-            &mut overflow,
+            &mut outgoing,
         );
 
         assert_eq!(shard.output.unresolved_edges.len(), 1);
