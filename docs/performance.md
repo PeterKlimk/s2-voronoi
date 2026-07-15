@@ -36,10 +36,13 @@ cargo run --release --features tools --bin bench_voronoi -- 100k 500k 1m
 
 Useful flags:
 
-- `--dist {fib|uniform|clustered|bimodal|gradient|outlier|splittable|mega|cubed}` and `--dist-param` —
+- `--dist {fib|uniform|clustered|bimodal|gradient|outlier|splittable|mega|cubed|great-circle}` and
+  `--dist-param` —
   non-uniform distributions exercise the density-adaptive paths that uniform input never reaches.
   Benchmark across a few of these, not uniform alone. `cubed` is a deterministic projected quad
   grid with O(n) degree-4 vertices, intended specifically for reconciliation benchmarks.
+  `great-circle` is a narrow perturbed band intended for successful high-candidate-work benchmarks;
+  its coordinate jitter defaults to 0.01 and is controlled by `--dist-param`.
 - `--validate` — compare against the convex-hull ground truth (slow; capped at 100k).
 - `--no-preprocess` — skip welding (isolates construction cost).
 
@@ -56,6 +59,21 @@ Useful flags:
   correctness audits, not performance measurements; clean builds skip even the environment lookup.
 - `VORONOI_MESH_GRID_DENSITY=<f>` / `VORONOI_MESH_PLANE_GRID_DENSITY=<f>` — spatial-grid target
   density (points per cell) for sweeps.
+
+Timing builds also expose scale-relative construction-work telemetry in both the human report and
+`TIMING_KV`:
+
+- `candidate_work_*` describes all examined candidates per generator;
+- `no_progress_tail_*` describes candidates examined after the final polygon-changing constraint;
+- p50/p90/p99/p999 values are exact below 256 and power-of-two bucket lower bounds above it; and
+- `*_ge4x_median_lb`, `*_ge16x_median_lb`, and `*_ge64x_median_lb` are conservative counts relative
+  to that same run's median (floored at one), rather than fixed global thresholds. The exact base
+  used is emitted as `*_relative_base`.
+
+`no_progress_tail_excluded` counts cells whose batched exhaustion recovery did not preserve
+per-candidate clip outcomes. Those cells still contribute to total candidate work. Use raw
+quantiles across input sizes to measure natural scaling, then use the run-relative tail counts to
+distinguish a few exceptional cells from a broadly expensive distribution.
 
 ## Repair cold path
 

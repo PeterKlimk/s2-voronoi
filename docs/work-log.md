@@ -202,12 +202,17 @@ default `Preserve` behavior.
 ### PERF-001 — Total-query-work circuit breaker
 
 - **Priority:** P3
-- **Status:** Backburner
+- **Status:** Backburner; scale-relative work telemetry implemented 2026-07-16
 - **Motivation:** Perturbed great-circle inputs can become gnomonically bounded yet process nearly
   every generator for some cells. The existing exhaustion replay is correct but does not detect
   this successful high-work regime.
 - **Candidate direction:** a progress-aware total-work budget followed by unrestricted spherical,
   Local3d, or global-hull escalation.
+- **Measurement available:** timing builds report total candidate-work and no-geometric-progress
+  tail quantiles plus counts at 4x/16x/64x each run's median. Batched exhaustion-recovery cells are
+  reported as exclusions from the latter. `bench_voronoi --dist great-circle` provides a directly
+  successful high-work case; `mega` distinguishes a small extreme tail from broad scale-dependent
+  work.
 - **Before implementation:** measure the actual cold-replay crossover, avoid a fixed candidate
   count such as 128, and prove that the handoff cannot turn a valid success into a failure.
 - **Reference:** AUD-015 in [`audit-triage.md`](audit-triage.md).

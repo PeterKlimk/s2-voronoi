@@ -102,6 +102,25 @@ fn cubed_sphere_points(n: usize) -> Vec<Vec3> {
     points
 }
 
+/// Evenly spaced generators in a narrow perturbed great-circle band. This is
+/// a directly successful construction case with a broad high-work tail.
+fn great_circle_points<R: Rng>(n: usize, jitter: f32, rng: &mut R) -> Vec<Vec3> {
+    (0..n)
+        .map(|i| {
+            let theta = std::f32::consts::TAU * i as f32 / n as f32;
+            let mut point = Vec3::new(theta.cos(), theta.sin(), 0.0);
+            if jitter > 0.0 {
+                point += Vec3::new(
+                    rng.gen_range(-jitter..jitter),
+                    rng.gen_range(-jitter..jitter),
+                    rng.gen_range(-jitter..jitter),
+                );
+            }
+            point.normalize()
+        })
+        .collect()
+}
+
 fn random_tangent_vector<R: Rng>(p: Vec3, rng: &mut R) -> Vec3 {
     let arbitrary = if p.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
 
@@ -223,13 +242,16 @@ struct Args {
     /// cap over a sparse bg), gradient (smooth density ~exp(k·z)), outlier
     /// (uniform plus one tiny pile), splittable (many cell-scale clusters),
     /// mega (one cap holding a fraction of all points). Reconciliation stress:
-    /// cubed (deterministic projected quad grid). See --dist-param.
+    /// cubed (deterministic projected quad grid). High-work robustness:
+    /// great-circle (narrow perturbed great-circle band).
+    /// See --dist-param.
     #[arg(long, default_value = "fib")]
     dist: String,
 
     /// Distribution shape knob, meaning depends on --dist: gradient = k
     /// (steepness, default 4); mega = fraction in the cap (default 0.8);
-    /// others ignore it. 0 = use the distribution's default.
+    /// great-circle = coordinate jitter (default 0.01); others ignore it. 0 =
+    /// use the distribution's default.
     #[arg(long, default_value_t = 0.0)]
     dist_param: f64,
 
@@ -261,6 +283,10 @@ fn generate_points(n: usize, seed: u64, lloyd: bool, dist: &str, param: f64) -> 
         "splittable" => return splittable_points(n, &mut rng),
         "mega" => return mega_points(n, param, &mut rng),
         "cubed" => return cubed_sphere_points(n),
+        "great-circle" => {
+            let jitter = if param > 0.0 { param as f32 } else { 0.01 };
+            return great_circle_points(n, jitter, &mut rng);
+        }
         // Almost everything inside a single tight cap (radius = dist-param,
         // default 0.002 ≈ tighter than one max-res grid cell) — the "everything
         // in one cell" extreme the occupancy rebuild's memory cap cannot split.

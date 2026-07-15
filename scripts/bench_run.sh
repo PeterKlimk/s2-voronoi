@@ -68,9 +68,10 @@ Usage: bench_run.sh [opts] [-- bench_voronoi_args...]
   -r, --rounds N      Rounds per cell (default: 5)
   -s, --sizes "..."   Size(s), space-separated to sweep (default: 100k)
   -d, --dists "..."   Distribution(s) to sweep: fib uniform clustered bimodal
-                      gradient outlier splittable mega cubed (default: fib)
+                      gradient outlier splittable mega cubed great-circle (default: fib)
       --seeds "..."   Seed(s) to sweep (default: bench_voronoi default, one run)
-      --dist-param X  Distribution shape knob (gradient k / mega fraction)
+      --dist-param X  Distribution shape knob (gradient k / mega fraction /
+                      great-circle coordinate jitter, default 0.01)
       --csv FILE      Write a structured CSV across the whole matrix
       --converge      Run paired-interleaved rounds until the per-round-ratio
                       95% CI settles, then stop (decision-grade on a noisy box

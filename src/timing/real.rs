@@ -61,6 +61,137 @@ impl StageCounts {
     }
 }
 
+// Keep the common range exact and compress only genuinely long tails. Timing
+// builds can then characterize ordinary workloads precisely without allocating
+// one sample per cell.
+const WORK_EXACT_BUCKETS: usize = 256;
+const WORK_LOG_BUCKETS: usize = u64::BITS as usize - 8;
+const WORK_BUCKETS: usize = WORK_EXACT_BUCKETS + WORK_LOG_BUCKETS;
+
+#[derive(Debug, Clone)]
+struct WorkHistogram {
+    buckets: [u64; WORK_BUCKETS],
+    samples: u64,
+    max: u64,
+}
+
+impl Default for WorkHistogram {
+    fn default() -> Self {
+        Self {
+            buckets: [0; WORK_BUCKETS],
+            samples: 0,
+            max: 0,
+        }
+    }
+}
+
+impl WorkHistogram {
+    #[inline]
+    fn bucket(value: u64) -> usize {
+        if value < WORK_EXACT_BUCKETS as u64 {
+            value as usize
+        } else {
+            let log2 = u64::BITS as usize - 1 - value.leading_zeros() as usize;
+            WORK_EXACT_BUCKETS + log2 - 8
+        }
+    }
+
+    #[inline]
+    fn bucket_lower_bound(bucket: usize) -> u64 {
+        if bucket < WORK_EXACT_BUCKETS {
+            bucket as u64
+        } else {
+            1_u64 << (8 + bucket - WORK_EXACT_BUCKETS)
+        }
+    }
+
+    #[inline]
+    fn record(&mut self, value: usize) {
+        let value = value as u64;
+        self.buckets[Self::bucket(value)] += 1;
+        self.samples += 1;
+        self.max = self.max.max(value);
+    }
+
+    #[inline]
+    fn merge(&mut self, other: &Self) {
+        for (dst, src) in self.buckets.iter_mut().zip(other.buckets.iter()) {
+            *dst += *src;
+        }
+        self.samples += other.samples;
+        self.max = self.max.max(other.max);
+    }
+
+    fn quantile_lower_bound(&self, numerator: u64, denominator: u64) -> u64 {
+        if self.samples == 0 {
+            return 0;
+        }
+        let rank = self
+            .samples
+            .saturating_mul(numerator)
+            .saturating_add(denominator - 1)
+            / denominator;
+        let mut cumulative = 0_u64;
+        for (bucket, count) in self.buckets.iter().enumerate() {
+            cumulative += count;
+            if cumulative >= rank.max(1) {
+                return Self::bucket_lower_bound(bucket);
+            }
+        }
+        self.max
+    }
+
+    /// Conservative count when `threshold` cuts through a logarithmic bucket:
+    /// only buckets whose lower bound meets the threshold are included.
+    fn count_at_least_lower_bound(&self, threshold: u64) -> u64 {
+        self.buckets
+            .iter()
+            .enumerate()
+            .filter(|(bucket, _)| Self::bucket_lower_bound(*bucket) >= threshold)
+            .map(|(_, count)| count)
+            .sum()
+    }
+
+    fn summary(&self) -> WorkDistribution {
+        let p50_bucket_lower = self.quantile_lower_bound(1, 2);
+        let relative_median_base = p50_bucket_lower.max(1);
+        let relative_count = |factor: u64| {
+            self.count_at_least_lower_bound(relative_median_base.saturating_mul(factor))
+        };
+        WorkDistribution {
+            samples: self.samples,
+            p50_bucket_lower,
+            p90_bucket_lower: self.quantile_lower_bound(9, 10),
+            p99_bucket_lower: self.quantile_lower_bound(99, 100),
+            p999_bucket_lower: self.quantile_lower_bound(999, 1000),
+            max: self.max,
+            relative_median_base,
+            count_ge_4x_median_lower: relative_count(4),
+            count_ge_16x_median_lower: relative_count(16),
+            count_ge_64x_median_lower: relative_count(64),
+        }
+    }
+}
+
+/// Scale-relative per-cell work shape. Quantiles are exact below 256 and the
+/// lower bound of a power-of-two bucket above that. Relative-tail counts are
+/// conservative when their threshold cuts through such a bucket.
+#[derive(Debug, Clone, Default)]
+pub struct WorkDistribution {
+    pub samples: u64,
+    pub p50_bucket_lower: u64,
+    pub p90_bucket_lower: u64,
+    pub p99_bucket_lower: u64,
+    pub p999_bucket_lower: u64,
+    pub max: u64,
+    /// p50 bucket lower bound, floored at one so a zero-progress median still
+    /// has useful positive relative-tail thresholds.
+    pub relative_median_base: u64,
+    pub count_ge_4x_median_lower: u64,
+    pub count_ge_16x_median_lower: u64,
+    pub count_ge_64x_median_lower: u64,
+}
+
 /// Per-cell-group timing totals aggregated across all shards.
 #[derive(Debug, Clone, Default)]
 pub struct CellSubPhases {
@@ -114,6 +245,14 @@ pub struct CellSubPhases {
     /// `neighbors_processed_total` to size examine-and-reject headroom.
     pub final_edges_total: u64,
     pub final_edges_max: u64,
+    /// Total examined candidates per cell, reported relative to this run's
+    /// median so expected growth with input size is not itself pathological.
+    pub candidate_work: WorkDistribution,
+    /// Examined candidates after the final polygon-changing constraint.
+    pub no_progress_tail: WorkDistribution,
+    /// Cells omitted from `no_progress_tail` because exhaustion recovery
+    /// batches constraints without retaining individual clip outcomes.
+    pub no_progress_tail_excluded: u64,
     /// Shadow direction-aware batch-skip probe counters. These do not affect
     /// construction; they estimate candidates a conservative known-batch
     /// directional certificate could skip.
@@ -184,6 +323,9 @@ pub struct CellSubAccum {
     neighbors_processed_max: u64,
     final_edges_total: u64,
     final_edges_max: u64,
+    candidate_work: WorkHistogram,
+    no_progress_tail: WorkHistogram,
+    no_progress_tail_excluded: u64,
     directional_shadow_checks: u64,
     directional_shadow_candidate_tests: u64,
     directional_shadow_hits: u64,
@@ -294,6 +436,21 @@ impl CellSubAccum {
     }
 
     #[inline]
+    pub fn add_work_profile(
+        &mut self,
+        candidates: usize,
+        candidates_after_last_progress: usize,
+        progress_tail_valid: bool,
+    ) {
+        self.candidate_work.record(candidates);
+        if progress_tail_valid {
+            self.no_progress_tail.record(candidates_after_last_progress);
+        } else {
+            self.no_progress_tail_excluded += 1;
+        }
+    }
+
+    #[inline]
     pub fn add_fallbacks(&mut self, projection: usize, polygon_cap: usize, all_constraints: usize) {
         self.fallback_projection += projection as u64;
         self.fallback_polygon_cap += polygon_cap as u64;
@@ -390,6 +547,9 @@ impl CellSubAccum {
             .max(other.neighbors_processed_max);
         self.final_edges_total += other.final_edges_total;
         self.final_edges_max = self.final_edges_max.max(other.final_edges_max);
+        self.candidate_work.merge(&other.candidate_work);
+        self.no_progress_tail.merge(&other.no_progress_tail);
+        self.no_progress_tail_excluded += other.no_progress_tail_excluded;
         self.directional_shadow_checks += other.directional_shadow_checks;
         self.directional_shadow_candidate_tests += other.directional_shadow_candidate_tests;
         self.directional_shadow_hits += other.directional_shadow_hits;
@@ -450,6 +610,9 @@ impl CellSubAccum {
             neighbors_processed_max: self.neighbors_processed_max,
             final_edges_total: self.final_edges_total,
             final_edges_max: self.final_edges_max,
+            candidate_work: self.candidate_work.summary(),
+            no_progress_tail: self.no_progress_tail.summary(),
+            no_progress_tail_excluded: self.no_progress_tail_excluded,
             directional_shadow_checks: self.directional_shadow_checks,
             directional_shadow_candidate_tests: self.directional_shadow_candidate_tests,
             directional_shadow_hits: self.directional_shadow_hits,
@@ -710,6 +873,39 @@ impl PhaseTimings {
                 self.grid_max_occupancy,
                 self.grid_rebuilt
             );
+            let candidate_work = &self.cell_sub.candidate_work;
+            if candidate_work.samples > 0 {
+                eprintln!(
+                    "    candidate_work: samples={} bucket_lb(p50={} p90={} p99={} p999={}) max={} relative_tail_lb(base={} 4x={} 16x={} 64x={})",
+                    candidate_work.samples,
+                    candidate_work.p50_bucket_lower,
+                    candidate_work.p90_bucket_lower,
+                    candidate_work.p99_bucket_lower,
+                    candidate_work.p999_bucket_lower,
+                    candidate_work.max,
+                    candidate_work.relative_median_base,
+                    candidate_work.count_ge_4x_median_lower,
+                    candidate_work.count_ge_16x_median_lower,
+                    candidate_work.count_ge_64x_median_lower,
+                );
+            }
+            let no_progress_tail = &self.cell_sub.no_progress_tail;
+            if no_progress_tail.samples > 0 || self.cell_sub.no_progress_tail_excluded > 0 {
+                eprintln!(
+                    "    no_progress_tail: samples={} excluded={} bucket_lb(p50={} p90={} p99={} p999={}) max={} relative_tail_lb(base={} 4x={} 16x={} 64x={})",
+                    no_progress_tail.samples,
+                    self.cell_sub.no_progress_tail_excluded,
+                    no_progress_tail.p50_bucket_lower,
+                    no_progress_tail.p90_bucket_lower,
+                    no_progress_tail.p99_bucket_lower,
+                    no_progress_tail.p999_bucket_lower,
+                    no_progress_tail.max,
+                    no_progress_tail.relative_median_base,
+                    no_progress_tail.count_ge_4x_median_lower,
+                    no_progress_tail.count_ge_16x_median_lower,
+                    no_progress_tail.count_ge_64x_median_lower,
+                );
+            }
             let examine_per_edge = if self.cell_sub.final_edges_total > 0 {
                 self.cell_sub.neighbors_processed_total as f64
                     / self.cell_sub.final_edges_total as f64
@@ -779,7 +975,7 @@ impl PhaseTimings {
 
         if std::env::var_os("VORONOI_MESH_TIMING_KV").is_some() {
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} merge_safety_scan_cells={mssc} merge_safety_global_fallbacks={msgf} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_reconcile_scan_cells={rrsc} resolution_repair_scan_cells={rpsc} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} merge_safety_scan_cells={mssc} merge_safety_global_fallbacks={msgf} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_reconcile_scan_cells={rrsc} resolution_repair_scan_cells={rpsc} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} candidate_work_samples={cws} candidate_work_p50_lb={cw50} candidate_work_p90_lb={cw90} candidate_work_p99_lb={cw99} candidate_work_p999_lb={cw999} candidate_work_max={cwm} candidate_work_relative_base={cwb} candidate_work_ge4x_median_lb={cw4} candidate_work_ge16x_median_lb={cw16} candidate_work_ge64x_median_lb={cw64} no_progress_tail_samples={nps} no_progress_tail_excluded={npx} no_progress_tail_p50_lb={np50} no_progress_tail_p90_lb={np90} no_progress_tail_p99_lb={np99} no_progress_tail_p999_lb={np999} no_progress_tail_max={npm} no_progress_tail_relative_base={npb} no_progress_tail_ge4x_median_lb={np4} no_progress_tail_ge16x_median_lb={np16} no_progress_tail_ge64x_median_lb={np64} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -823,6 +1019,27 @@ impl PhaseTimings {
                 slm = self.cell_sub.shell_midlayer_terminations,
                 nt = self.cell_sub.neighbors_processed_total,
                 nm = self.cell_sub.neighbors_processed_max,
+                cws = self.cell_sub.candidate_work.samples,
+                cw50 = self.cell_sub.candidate_work.p50_bucket_lower,
+                cw90 = self.cell_sub.candidate_work.p90_bucket_lower,
+                cw99 = self.cell_sub.candidate_work.p99_bucket_lower,
+                cw999 = self.cell_sub.candidate_work.p999_bucket_lower,
+                cwm = self.cell_sub.candidate_work.max,
+                cwb = self.cell_sub.candidate_work.relative_median_base,
+                cw4 = self.cell_sub.candidate_work.count_ge_4x_median_lower,
+                cw16 = self.cell_sub.candidate_work.count_ge_16x_median_lower,
+                cw64 = self.cell_sub.candidate_work.count_ge_64x_median_lower,
+                nps = self.cell_sub.no_progress_tail.samples,
+                npx = self.cell_sub.no_progress_tail_excluded,
+                np50 = self.cell_sub.no_progress_tail.p50_bucket_lower,
+                np90 = self.cell_sub.no_progress_tail.p90_bucket_lower,
+                np99 = self.cell_sub.no_progress_tail.p99_bucket_lower,
+                np999 = self.cell_sub.no_progress_tail.p999_bucket_lower,
+                npm = self.cell_sub.no_progress_tail.max,
+                npb = self.cell_sub.no_progress_tail.relative_median_base,
+                np4 = self.cell_sub.no_progress_tail.count_ge_4x_median_lower,
+                np16 = self.cell_sub.no_progress_tail.count_ge_16x_median_lower,
+                np64 = self.cell_sub.no_progress_tail.count_ge_64x_median_lower,
                 fet = self.cell_sub.final_edges_total,
                 fem = self.cell_sub.final_edges_max,
                 epe = if self.cell_sub.final_edges_total > 0 {
@@ -1009,7 +1226,62 @@ impl TimingBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::TimingBuilder;
+    use super::{TimingBuilder, WorkHistogram};
+
+    #[test]
+    fn work_histogram_reports_exact_body_and_bounded_tail() {
+        let mut histogram = WorkHistogram::default();
+        for value in [2, 4, 4, 8, 16, 64, 300] {
+            histogram.record(value);
+        }
+
+        let summary = histogram.summary();
+        assert_eq!(summary.samples, 7);
+        assert_eq!(summary.p50_bucket_lower, 8);
+        assert_eq!(summary.p90_bucket_lower, 256);
+        assert_eq!(summary.p99_bucket_lower, 256);
+        assert_eq!(summary.p999_bucket_lower, 256);
+        assert_eq!(summary.max, 300);
+        assert_eq!(summary.relative_median_base, 8);
+        assert_eq!(summary.count_ge_4x_median_lower, 2);
+        assert_eq!(summary.count_ge_16x_median_lower, 1);
+        // The 300 sample cannot be conservatively claimed to exceed 512 from
+        // its [256, 512) logarithmic bucket.
+        assert_eq!(summary.count_ge_64x_median_lower, 0);
+    }
+
+    #[test]
+    fn work_histogram_merge_preserves_samples_and_quantiles() {
+        let mut left = WorkHistogram::default();
+        let mut right = WorkHistogram::default();
+        for value in [3, 5, 7] {
+            left.record(value);
+        }
+        for value in [9, 11, 13] {
+            right.record(value);
+        }
+        left.merge(&right);
+
+        let summary = left.summary();
+        assert_eq!(summary.samples, 6);
+        assert_eq!(summary.p50_bucket_lower, 7);
+        assert_eq!(summary.p90_bucket_lower, 13);
+        assert_eq!(summary.max, 13);
+        assert_eq!(summary.relative_median_base, 7);
+    }
+
+    #[test]
+    fn zero_median_uses_one_candidate_relative_base() {
+        let mut histogram = WorkHistogram::default();
+        for value in [0, 0, 0, 4] {
+            histogram.record(value);
+        }
+
+        let summary = histogram.summary();
+        assert_eq!(summary.p50_bucket_lower, 0);
+        assert_eq!(summary.relative_median_base, 1);
+        assert_eq!(summary.count_ge_4x_median_lower, 1);
+    }
 
     #[test]
     fn output_resolution_discovery_fields_survive_finish() {

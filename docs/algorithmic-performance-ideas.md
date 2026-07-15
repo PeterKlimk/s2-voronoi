@@ -73,6 +73,29 @@ candidate work, and repair-region size, and must prove that handoff cannot turn 
 success into failure. The authoritative tracked form of this idea is `PERF-001` in
 [`work-log.md`](work-log.md#perf-001--total-query-work-circuit-breaker).
 
+Timing builds now record two per-cell distributions: all examined candidates and candidates after
+the final polygon-changing constraint. They report raw quantiles together with counts at least
+4x/16x/64x each run's own median. This normalization is essential: candidate work per generator can
+grow naturally with total input size and density contrast, so an absolute count is not a pathology
+certificate. Values below 256 are exact; larger quantiles are power-of-two bucket lower bounds.
+Cells entering batched exhaustion recovery remain in total work but are explicitly excluded from
+the progress-tail distribution because that path does not retain individual clip outcomes.
+
+Initial single-threaded structural probes demonstrate the intended separation without using noisy
+wall time as evidence. Fibonacci stayed at candidate median 8 through 2M, then changed regime at
+4M: median 10, p90 22, p99 36, and p999 131, versus 8/11/15/18 at 2M. Packed-tail activation rose
+from 24,319 to 1,044,793 cells while maximum grid occupancy remained 42 versus 41. A true-uniform
+control stayed at median/p90/p99 9/15/23 from 1M through 4M, with p999 39/34/34. This makes the 4M
+Fibonacci result look like a broad lattice/grid/query interaction rather than a few defective cells
+or universal smooth growth; a defect-local handoff should not target it.
+
+The `mega` dense-cap workload grew from median 21 at 100k to 70 at 500k, confirming separately that
+a fixed candidate threshold would misclassify scale growth within some distributions. Despite that
+shift, the 500k run still isolated 252 cells at or above 64x its own median and a maximum of 492,283
+candidates. The directly successful `great-circle` benchmark at 1k sites (default 0.01 coordinate
+jitter) had median 24, p90 at least 512, and maximum 999. These counters characterize opportunity;
+they do not yet select a handoff or establish its crossover.
+
 ### Reusable regional dependency information
 
 Construction already produces facts that could make cold repair and repeated computations cheaper:

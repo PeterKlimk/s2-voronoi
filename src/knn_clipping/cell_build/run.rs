@@ -163,6 +163,15 @@ pub(crate) struct CellBuildStats {
     shell_layer_prefix_consumed: usize,
     #[cfg(feature = "timing")]
     shell_midlayer_terminations: usize,
+    /// Candidates examined after the final polygon-changing constraint. This
+    /// is a direct lack-of-progress signal for high-work successful cells.
+    #[cfg(feature = "timing")]
+    neighbors_after_last_progress: usize,
+    /// Exhaustion recovery counts candidates in batches without retaining
+    /// per-candidate clip outcomes, so its progress tail is intentionally
+    /// excluded rather than reported as precise.
+    #[cfg(feature = "timing")]
+    progress_tail_valid: bool,
     fallback_projection: usize,
     fallback_polygon_cap: usize,
     fallback_all_constraints: usize,
@@ -239,6 +248,12 @@ impl CellBuildStats {
             self.incoming_seed_neighbors,
             self.edgecheck_seed_clips,
         );
+        #[cfg(feature = "timing")]
+        cell_sub.add_work_profile(
+            self.neighbors_processed,
+            self.neighbors_after_last_progress,
+            self.progress_tail_valid,
+        );
     }
 }
 
@@ -311,6 +326,10 @@ pub(super) struct BuildCounters {
     shell_layer_prefix_consumed: usize,
     #[cfg(feature = "timing")]
     shell_midlayer_terminations: usize,
+    #[cfg(feature = "timing")]
+    last_progress_neighbor: usize,
+    #[cfg(feature = "timing")]
+    progress_tail_valid: bool,
     fallback_projection: usize,
     fallback_polygon_cap: usize,
     fallback_all_constraints: usize,
@@ -351,6 +370,10 @@ impl BuildCounters {
             shell_layer_prefix_consumed: 0,
             #[cfg(feature = "timing")]
             shell_midlayer_terminations: 0,
+            #[cfg(feature = "timing")]
+            last_progress_neighbor: 0,
+            #[cfg(feature = "timing")]
+            progress_tail_valid: true,
             fallback_projection: 0,
             fallback_polygon_cap: 0,
             fallback_all_constraints: 0,
@@ -397,6 +420,10 @@ fn recover_unbounded_after_exhaustion(
     generator: Vec3,
     counters: &mut BuildCounters,
 ) -> bool {
+    #[cfg(feature = "timing")]
+    {
+        counters.progress_tail_valid = false;
+    }
     let pos_slots = grid.point_pos_slots();
     let mut seed_slots = Vec::new();
     let mut seeded = false;
@@ -548,6 +575,13 @@ fn clip_seed_neighbors(
                 Err(_) => break,
             };
         counters.neighbors_processed += 1;
+        #[cfg(feature = "timing")]
+        {
+            // Forwarded edge checks are construction seeds rather than a
+            // proximity tail. Treat each accepted seed as progress; the
+            // subsequent stream tail remains exact.
+            counters.last_progress_neighbor = counters.neighbors_processed;
+        }
         if fallback_rejected {
             break;
         }
@@ -686,6 +720,10 @@ fn clip_batch_source<const SHELL: bool>(
             };
 
         counters.neighbors_processed += 1;
+        #[cfg(feature = "timing")]
+        if clip_result == crate::knn_clipping::topo2d::types::ClipResult::Changed {
+            counters.last_progress_neighbor = counters.neighbors_processed;
+        }
         if fallback_rejected {
             break;
         }
@@ -981,6 +1019,12 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         shell_layer_prefix_consumed: counters.shell_layer_prefix_consumed,
         #[cfg(feature = "timing")]
         shell_midlayer_terminations: counters.shell_midlayer_terminations,
+        #[cfg(feature = "timing")]
+        neighbors_after_last_progress: counters
+            .neighbors_processed
+            .saturating_sub(counters.last_progress_neighbor),
+        #[cfg(feature = "timing")]
+        progress_tail_valid: counters.progress_tail_valid,
         fallback_projection: counters.fallback_projection,
         fallback_polygon_cap: counters.fallback_polygon_cap,
         fallback_all_constraints: counters.fallback_all_constraints,
