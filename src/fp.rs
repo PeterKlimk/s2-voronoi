@@ -101,6 +101,17 @@ impl PointChunk8 {
     pub(crate) fn dots(&self, qx: f32, qy: f32, qz: f32) -> Dots8 {
         Dots8(backend::dot3(self.x, self.y, self.z, qx, qy, qz))
     }
+
+    /// Dot two candidate chunks against one query, sharing its broadcast
+    /// values. The packed ring walk consumes adjacent chunks this way so the
+    /// query coordinates and threshold setup are paid once per 16 candidates.
+    #[inline(always)]
+    pub(crate) fn dots_pair(&self, other: &Self, qx: f32, qy: f32, qz: f32) -> (Dots8, Dots8) {
+        let (a, b) = backend::dot3_pair(
+            self.x, self.y, self.z, other.x, other.y, other.z, qx, qy, qz,
+        );
+        (Dots8(a), Dots8(b))
+    }
 }
 
 impl Dots8 {
@@ -199,6 +210,35 @@ mod backend {
         #[cfg(not(feature = "fma"))]
         {
             (x * qx + y * qy) + z * qz
+        }
+    }
+
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn dot3_pair(
+        ax: V,
+        ay: V,
+        az: V,
+        bx: V,
+        by: V,
+        bz: V,
+        qx: f32,
+        qy: f32,
+        qz: f32,
+    ) -> (V, V) {
+        let qx = f32x8::splat(qx);
+        let qy = f32x8::splat(qy);
+        let qz = f32x8::splat(qz);
+        #[cfg(feature = "fma")]
+        {
+            (
+                az.mul_add(qz, ax.mul_add(qx, ay * qy)),
+                bz.mul_add(qz, bx.mul_add(qx, by * qy)),
+            )
+        }
+        #[cfg(not(feature = "fma"))]
+        {
+            ((ax * qx + ay * qy) + az * qz, (bx * qx + by * qy) + bz * qz)
         }
     }
 
@@ -327,7 +367,13 @@ mod tests {
         ];
         let (qx, qy, qz) = (0.577_350_26, -0.707_106_77, 0.408_248_3);
         let dots = PointChunk8::from_arrays(xs, ys, zs).dots(qx, qy, qz);
+        let other = PointChunk8::from_arrays(zs, xs, ys);
+        let (paired_dots, paired_other) =
+            PointChunk8::from_arrays(xs, ys, zs).dots_pair(&other, qx, qy, qz);
         let lanes = dots.to_array();
+
+        assert_eq!(paired_dots.to_array(), lanes);
+        assert_eq!(paired_other.to_array(), other.dots(qx, qy, qz).to_array());
 
         for lane in 0..8 {
             let scalar = dot3_f32(xs[lane], ys[lane], zs[lane], qx, qy, qz);
@@ -405,6 +451,22 @@ mod backend {
             out[i] = super::fma_f32(z[i], qz, super::fma_f32(x[i], qx, y[i] * qy));
         }
         out
+    }
+
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn dot3_pair(
+        ax: V,
+        ay: V,
+        az: V,
+        bx: V,
+        by: V,
+        bz: V,
+        qx: f32,
+        qy: f32,
+        qz: f32,
+    ) -> (V, V) {
+        (dot3(ax, ay, az, qx, qy, qz), dot3(bx, by, bz, qx, qy, qz))
     }
 
     #[inline(always)]
