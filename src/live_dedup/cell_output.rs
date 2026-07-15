@@ -44,6 +44,10 @@ pub struct CellOutputBuffer<P = Vec3> {
     pub vertices: Vec<VertexData<P>>,
     pub edge_neighbor_globals: Vec<u32>,
     pub edge_neighbor_slots: Vec<u32>,
+    /// Sparse exact-zero-resolution hint accumulated while extracted vertex
+    /// positions are live. This is only a candidate filter; final resolution
+    /// still performs the exact stored-position comparison.
+    pub exact_zero_edge_hint: bool,
     /// True when the extractor guarantees every real edge's neighbor appears
     /// in BOTH endpoint vertex keys (the emit engine's key/edge-consistency
     /// precondition). The incremental gnomonic clip maintains this by
@@ -62,6 +66,7 @@ impl<P> CellOutputBuffer<P> {
             vertices: Vec::with_capacity(capacity),
             edge_neighbor_globals: Vec::with_capacity(capacity),
             edge_neighbor_slots: Vec::with_capacity(capacity),
+            exact_zero_edge_hint: false,
             edge_keys_verified: false,
         }
     }
@@ -70,6 +75,7 @@ impl<P> CellOutputBuffer<P> {
         self.vertices.clear();
         self.edge_neighbor_globals.clear();
         self.edge_neighbor_slots.clear();
+        self.exact_zero_edge_hint = false;
         self.edge_keys_verified = false;
     }
 }

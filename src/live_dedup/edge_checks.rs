@@ -679,6 +679,7 @@ mod tests {
             vertices: vec![([0, 1, 2], glam::Vec3::X); 3],
             edge_neighbor_globals: vec![0, 0, u32::MAX],
             edge_neighbor_slots: vec![0, 0, u32::MAX],
+            exact_zero_edge_hint: false,
             edge_keys_verified: true,
         };
         let incoming = vec![EdgeCheck {

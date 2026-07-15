@@ -13,9 +13,11 @@ use crate::cube_grid::packed_knn::{
 use crate::cube_grid::{CubeMapGrid, PackedQuery};
 use crate::knn_clipping::cell_build::{build_cell_into, CellBuildContext, CellBuildRequest};
 use crate::knn_clipping::TerminationConfig;
+#[cfg(test)]
+use crate::live_dedup::VertexData;
 use crate::live_dedup::{
     assign_bins, checked_local_id, checked_u32, emit_cell_output, BinId, BuildCellsError,
-    EdgeScratch, ShardContext, ShardState, ShardedCellsData, VertexData,
+    EdgeScratch, ShardContext, ShardState, ShardedCellsData,
 };
 use crate::packed_layout::PackedSlotLayout;
 
@@ -37,12 +39,13 @@ impl SphereCellScratch {
     }
 }
 
+#[cfg(test)]
 #[inline(always)]
 fn stored_x_outside_zero_hint(a: Vec3, b: Vec3) -> u32 {
     ((a.x - b.x).abs() > crate::tolerances::OUTPUT_RESOLUTION_ZERO_HINT_X_EPS) as u32
 }
 
-#[inline(never)]
+#[cfg(test)]
 fn has_zero_edge_candidate(vertices: &[VertexData]) -> bool {
     debug_assert!(vertices.len() >= 3);
     let mut all_edges_outside_hint = 1u32;
@@ -344,8 +347,13 @@ fn build_and_emit_cell<'a, 'b, 'c>(
         grid_ctx.grid.point_pos_slots(),
         incoming_checks,
     )?;
-    let exact_zero_edge_hint = has_zero_edge_candidate(&output_buffer.vertices);
-    if exact_zero_edge_hint {
+    #[cfg(test)]
+    assert_eq!(
+        output_buffer.exact_zero_edge_hint,
+        has_zero_edge_candidate(&output_buffer.vertices),
+        "extraction-local zero-edge hint must match the stored-cycle scan"
+    );
+    if output_buffer.exact_zero_edge_hint {
         shard_ctx
             .shard
             .output

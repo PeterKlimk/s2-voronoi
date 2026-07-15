@@ -10,6 +10,11 @@ use glam::{DVec3, Vec3};
 
 use crate::tolerances::{EXTRACT_DEGENERATE_LEN2, FALLBACK_PLANE_TOL};
 
+#[inline(always)]
+fn stored_x_outside_zero_hint(previous_x: f32, current_x: f32) -> u32 {
+    ((previous_x - current_x).abs() > crate::tolerances::OUTPUT_RESOLUTION_ZERO_HINT_X_EPS) as u32
+}
+
 #[derive(Clone, Copy)]
 struct FallbackVertex {
     position: DVec3,
@@ -59,6 +64,9 @@ impl GnomonicBuilder {
         debug_assert!(edge_neighbor_slots.len() >= poly.len);
 
         let gen_idx = self.generator_idx as u32;
+        let mut first_x = 0.0f32;
+        let mut previous_x = 0.0f32;
+        let mut all_edges_outside_hint = 1u32;
         for i in 0..poly.len {
             let u = poly.us[i];
             let v = poly.vs[i];
@@ -90,6 +98,12 @@ impl GnomonicBuilder {
                 return Err(CellFailure::NoValidSeed);
             }
             let v_pos = dir * len2.sqrt().recip();
+            if i == 0 {
+                first_x = v_pos.x;
+            } else {
+                all_edges_outside_hint &= stored_x_outside_zero_hint(previous_x, v_pos.x);
+            }
+            previous_x = v_pos.x;
 
             let plane_a = plane_a as usize;
             let plane_b = plane_b as usize;
@@ -135,6 +149,8 @@ impl GnomonicBuilder {
             buffer.edge_neighbor_globals.set_len(poly.len);
             buffer.edge_neighbor_slots.set_len(poly.len);
         }
+        all_edges_outside_hint &= stored_x_outside_zero_hint(previous_x, first_x);
+        buffer.exact_zero_edge_hint = all_edges_outside_hint == 0;
         // The incremental clip keeps vertex plane pairs and edge planes in
         // lockstep (a clip's entry/exit vertices carry the pair {crossed
         // edge's plane, new plane}; interior vertices and their edges are
@@ -494,6 +510,13 @@ impl FallbackBuilder {
             buffer.edge_neighbor_globals.push(edge.neighbor_idx as u32);
             buffer.edge_neighbor_slots.push(edge.neighbor_slot);
         }
+        let mut all_edges_outside_hint = 1u32;
+        for edge in buffer.vertices.windows(2) {
+            all_edges_outside_hint &= stored_x_outside_zero_hint(edge[0].1.x, edge[1].1.x);
+        }
+        all_edges_outside_hint &=
+            stored_x_outside_zero_hint(buffer.vertices.last().unwrap().1.x, buffer.vertices[0].1.x);
+        buffer.exact_zero_edge_hint = all_edges_outside_hint == 0;
         // Fallback cells are rare and defect-adjacent: verify key/edge
         // consistency here (cold) so emit can record any malformed
         // attribution deterministically instead of checking every cell.
