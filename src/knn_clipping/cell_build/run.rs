@@ -522,8 +522,14 @@ fn clip_seed_neighbors(
     }
     let t_clip = crate::knn_clipping::timing::Timer::start();
     for check in incoming_checks {
-        let neighbor_idx = check.neighbor_idx as usize;
-        let neighbor_slot = grid.point_index_to_slot(neighbor_idx);
+        let neighbor_slot = check.neighbor_slot;
+        let neighbor_point = pos_slots[neighbor_slot as usize];
+        let neighbor_idx = neighbor_point.idx as usize;
+        debug_assert_eq!(
+            grid.point_index_to_slot(neighbor_idx),
+            neighbor_slot,
+            "forwarded edge-check slot must match the grid inverse map"
+        );
         trace.last_neighbor_idx = Some(neighbor_idx);
         trace.last_neighbor_slot = Some(neighbor_slot);
         trace.last_batch_source = None;
@@ -533,7 +539,7 @@ fn clip_seed_neighbors(
             continue;
         }
 
-        let neighbor = pos_slots[neighbor_slot as usize].pos;
+        let neighbor = neighbor_point.pos;
         let fallback_rejected =
             match ctx
                 .builder
