@@ -261,8 +261,15 @@ separate branches so their gather and inverse-map effects remain attributable.
 baseline. Two Windows-native 60-round, two-million-point multithreaded comparisons measured it
 0.50% faster on Fibonacci (-1.31% to +0.32%) and 0.53% faster on uniform with 96 bins (-1.11% to
 +0.05%). Pooling all 120 paired log-ratios gives a 0.513% improvement with a -1.008% to -0.015%
-interval, but neither regime independently excludes zero. Retain this as a validated marginal
-layer rather than treating it as another obvious default-path promotion.
+interval, but neither regime independently excludes zero. A 40-round portable-codegen Fibonacci
+guardrail was also directionally 0.44% faster, with a -1.48% to +0.62% interval.
+
+Promote this layer despite its marginal wall-time signal. The stronger prior is favorable: it
+removes a per-shard allocation and fill pass, reduces retired instructions and cache traffic, and
+represents each packed group using the contiguous slot range already required by its grid-cell
+invariant. The resulting production path is smaller and more direct, and the portable guardrail
+shows no contrary signal. Treat the measured speedup as supportive rather than precise because
+code-layout effects are comparable to an effect of this size.
 
 ## 5. Thin per-local edge-check queues
 
