@@ -14,10 +14,13 @@ use super::types::{
 use super::{BuildCellsError, CellOutputBuffer, VertexData};
 
 #[inline(always)]
+#[allow(clippy::neg_cmp_op_on_partial_ord)] // unordered (NaN) must fail the certificate
 fn exceeds_resolution_drift<P: super::types::VertexPosition>(representative: P, local: P) -> bool {
     let delta = representative.resolution_axis_delta(local);
-    !delta.is_finite()
-        || delta > f64::from(crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS)
+    // `resolution_axis_delta` is non-negative. An ordered `<=` accepts exactly
+    // the finite in-range values; negating it also rejects NaN and infinity
+    // without a separate floating-point classification.
+    !(delta <= f64::from(crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS))
 }
 
 pub(crate) struct EdgeScratch {
@@ -342,6 +345,10 @@ mod tests {
         assert!(exceeds_resolution_drift(
             origin,
             Vec3::new(f32::NAN, 0.0, 0.0)
+        ));
+        assert!(exceeds_resolution_drift(
+            origin,
+            Vec3::new(f32::INFINITY, 0.0, 0.0)
         ));
         assert!(!exceeds_resolution_drift(
             Vec3::new(0.0, 1.0, 1.0),
