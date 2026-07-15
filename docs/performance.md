@@ -576,6 +576,19 @@ Do not broadly retry these without a materially different design or workload:
   split by distribution: Fibonacci favored the candidate in 3/4 pairs while uniform rejected it in
   3/4. Generic structural counters improved, but the primary native signal is too small and mixed
   to justify extra group-validation machinery; retain the direct checked conversion per cell.
+- An assembly-guided rewrite of the clean-path representative-drift predicate replaced the explicit
+  non-finite classification plus epsilon comparison with one negated ordered comparison. The delta
+  is an absolute coordinate difference, so this accepts exactly finite in-range values and still
+  rejects NaN and infinity. Native codegen removes the integer bit classification, two flag
+  materializations, and their OR. Twelve interleaved 1M single-thread Fibonacci pairs reduced
+  retired instructions by 0.3604% with unchanged branches. A deliberately noisy 30-round Windows
+  native 2.5M multithreaded run was directionally favorable (-4.53%, interval -9.12% to +0.29%),
+  but that magnitude is code-layout interaction rather than a causal estimate of the small rewrite.
+- Two nearby assembly-driven controls were rejected. Explicitly keeping the resolved vertex index
+  live removed two reloads but perturbed register allocation enough to add 0.084% instructions and
+  0.375% branches in every 1M pair. Forcing `build_cell_into` out of line shrank the caller but
+  created a 10.6 KiB generic body, adding 1.398% instructions and 0.335% branches. Retain the reloads
+  and forced inline specialization.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
