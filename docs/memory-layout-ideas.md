@@ -224,6 +224,21 @@ ceiling:
   and is much smaller than attempted-neighbor stamps, so evaluate only after the larger table is
   addressed.
 
+### Lazy shell-stamp experiment (2026-07-15)
+
+The `agent/lazy-shell-grid-stamps` branch leaves the shell visitation table empty until a frontier
+actually initializes, then preserves the existing generation-stamp traversal. It is not beneficial
+for the measured production regimes. Large Fibonacci and uniform builds eventually enter shell
+takeover in the active contexts, so the allocation is delayed rather than avoided; peak RSS at two
+million generators was unchanged at about 575 MiB.
+
+Retired instructions and branches were effectively unchanged at the default bin count and about
+0.02% higher with 96 bins. Cachegrind at 20k showed 0.03% more instruction references, 0.09% more
+data references, 0.36% more branches, and 5.0% more simulated branch mispredictions. D1 misses fell
+about 1%, but last-level data misses rose about 1.5%. Retire this candidate: eager allocation keeps
+the inevitable initialization outside the rare shell-takeover path, and the table is too small to
+produce a meaningful memory-envelope win.
+
 ## Ideas currently disfavored
 
 - Do not merge the point-coordinate SoA and selected-neighbor `SlotPoint` AoS without a new access
@@ -236,4 +251,3 @@ ceiling:
 - Do not add a per-reference same-owner branch to the existing `u64` stream. The measured hit rate
   was extremely high and the branch still regressed; a successful compact-reference experiment must
   actually narrow the primary stream and isolate sparse exceptions.
-

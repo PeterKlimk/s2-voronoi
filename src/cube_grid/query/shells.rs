@@ -167,11 +167,8 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
         } else {
             self.grid.point_to_cell(self.query) as u32
         };
-        self.scratch.stamp = self.scratch.stamp.wrapping_add(1).max(1);
-        if self.scratch.stamp == u32::MAX {
-            self.scratch.visited_stamp.fill(0);
-            self.scratch.stamp = 1;
-        }
+        self.scratch
+            .begin_visit(self.grid.cell_offsets.len().saturating_sub(1));
         self.scratch.mark_visited(self.start_cell);
         self.scratch.current.clear();
         self.scratch.current.push(self.start_cell);
