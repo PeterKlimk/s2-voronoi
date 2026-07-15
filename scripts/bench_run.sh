@@ -237,7 +237,7 @@ run_cell() { # size dist seed
 
     # Per-commit stats + verdict for this cell.
     local best_median=999999999 best_idx=""
-    declare -A MED
+    MED=()
     printf "  %-28s %9s %9s %9s\n" "version" "median" "min" "spread"
     for i in "${!INDICES[@]}"; do
         local idx="${INDICES[$i]}" label="${LABELS[$i]}" min med avg max spread
