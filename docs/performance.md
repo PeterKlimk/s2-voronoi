@@ -581,9 +581,10 @@ Do not broadly retry these without a materially different design or workload:
   is an absolute coordinate difference, so this accepts exactly finite in-range values and still
   rejects NaN and infinity. Native codegen removes the integer bit classification, two flag
   materializations, and their OR. Twelve interleaved 1M single-thread Fibonacci pairs reduced
-  retired instructions by 0.3604% with unchanged branches. A deliberately noisy 30-round Windows
-  native 2.5M multithreaded run was directionally favorable (-4.53%, interval -9.12% to +0.29%),
-  but that magnitude is code-layout interaction rather than a causal estimate of the small rewrite.
+  retired instructions by 0.3604% with unchanged branches; ten portable-codegen pairs reduced them
+  by 0.2981%, also with unchanged branches. A deliberately noisy 30-round Windows native 2.5M
+  multithreaded run was directionally favorable (-4.53%, interval -9.12% to +0.29%), but that
+  magnitude is code-layout interaction rather than a causal estimate of the small rewrite.
 - Two nearby assembly-driven controls were rejected. Explicitly keeping the resolved vertex index
   live removed two reloads but perturbed register allocation enough to add 0.084% instructions and
   0.375% branches in every 1M pair. Forcing `build_cell_into` out of line shrank the caller but
