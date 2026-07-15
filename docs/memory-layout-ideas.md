@@ -314,6 +314,26 @@ cache references/misses fell 2.05%/4.33%. The Mac measured exactly neutral geome
 for both Fibonacci and uniform over 32 pairs each (both 95% intervals -0.5% to +0.6%). The full
 checked suite passes with both steps.
 
+### Point-cell inverse-map resurfacing (2026-07-16)
+
+`agent/drop-point-cell-map-v2` reapplies the old point-cell-map experiment to the current
+slot-native baseline without its replacement-allocation drawback. After preprocessing, the
+per-generator `point_cells` vector is taken from the grid and its allocation is reused as one flat,
+bin-ordered stream of non-empty cell ids. A small offset table indexes each bin's run. Construction
+gets each group length from the grid CSR offsets, then drops the recycled stream before assembly.
+The number of non-empty cells cannot exceed the number of points, so the reused allocation already
+has sufficient capacity.
+
+At 1M single-threaded native Fibonacci, nine paired Linux runs reduced retired instructions by
+0.483% and branches by 1.432%, with every pair agreeing; cycles remained unresolved. A 96-bin
+uniform guardrail reduced instructions by 0.424% and branches by 1.179%, again in every pair, with
+unresolved cycles. Portable-codegen Cachegrind at 20k reported 0.441% fewer instruction references,
+0.321% fewer data references, 7.26% fewer D1 misses, and 2.15% fewer last-level data misses. The
+simulated branch-mispredict count rose 7.71%, while hardware branch misses were noisy and did not
+reproduce a stable loss. A 2.5M/12-thread RSS probe showed no recurrence of the old nested-vector
+branch's roughly 30 MiB peak regression. The full release suite passes; quiet-Mac wall-time
+validation remains pending.
+
 ## 5. Thin per-local edge-check queues
 
 ### Current cost
