@@ -48,13 +48,16 @@ impl GnomonicBuilder {
         }
         buffer.clear();
         buffer.vertices.reserve(poly.len);
+        #[cfg(any(test, debug_assertions))]
         buffer.edge_neighbor_globals.reserve(poly.len);
         buffer.edge_neighbor_slots.reserve(poly.len);
 
         let vertices = buffer.vertices.spare_capacity_mut();
+        #[cfg(any(test, debug_assertions))]
         let edge_neighbor_globals = buffer.edge_neighbor_globals.spare_capacity_mut();
         let edge_neighbor_slots = buffer.edge_neighbor_slots.spare_capacity_mut();
         debug_assert!(vertices.len() >= poly.len);
+        #[cfg(any(test, debug_assertions))]
         debug_assert!(edge_neighbor_globals.len() >= poly.len);
         debug_assert!(edge_neighbor_slots.len() >= poly.len);
 
@@ -109,6 +112,7 @@ impl GnomonicBuilder {
             let edge_plane = poly.edge_planes[i];
             if edge_plane == INVALID_PLANE_ID {
                 unsafe {
+                    #[cfg(any(test, debug_assertions))]
                     edge_neighbor_globals.get_unchecked_mut(i).write(u32::MAX);
                     edge_neighbor_slots.get_unchecked_mut(i).write(u32::MAX);
                 }
@@ -118,6 +122,7 @@ impl GnomonicBuilder {
                     return Err(CellFailure::NoValidSeed);
                 };
                 unsafe {
+                    #[cfg(any(test, debug_assertions))]
                     edge_neighbor_globals
                         .get_unchecked_mut(i)
                         .write(constraint.neighbor_idx as u32);
@@ -132,6 +137,7 @@ impl GnomonicBuilder {
         // neither observed nor dropped as initialized data.
         unsafe {
             buffer.vertices.set_len(poly.len);
+            #[cfg(any(test, debug_assertions))]
             buffer.edge_neighbor_globals.set_len(poly.len);
             buffer.edge_neighbor_slots.set_len(poly.len);
         }
