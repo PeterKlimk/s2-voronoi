@@ -566,6 +566,9 @@ fn clip_seed_neighbors(
 
 /// Clip one exact batch; returns with `counters.terminated` set when the
 /// builder's certificate fires mid-batch.
+// There is one production call site. Keeping the source-specialized loops
+// visible there avoids a separate outlined copy and reduces total code size.
+#[cfg_attr(not(feature = "profiling"), inline(always))]
 #[allow(clippy::too_many_arguments)]
 fn clip_batch(
     phase: &mut StreamPhase<'_>,
