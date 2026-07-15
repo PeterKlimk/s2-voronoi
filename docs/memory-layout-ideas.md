@@ -334,6 +334,24 @@ reproduce a stable loss. A 2.5M/12-thread RSS probe showed no recurrence of the 
 branch's roughly 30 MiB peak regression. The full release suite passes; quiet-Mac wall-time
 validation remains pending.
 
+### Slot-derived edge-neighbor global experiment (2026-07-16)
+
+`agent/drop-edge-neighbor-globals` stops writing the hot gnomonic
+`CellOutputBuffer::edge_neighbor_globals` stream. Edge collection already needs each neighbor slot
+for bin/local classification, so it recovers the global id from that slot's `SlotPoint` record.
+Checked/test builds retain the parallel stream for the extraction consistency assertion, and the
+rare spherical fallback retains it for its release-mode malformed-attribution check; ordinary
+release extraction no longer reserves or writes it.
+
+At 1M single-threaded native Fibonacci, fifteen paired Linux runs reduced retired instructions by
+0.494% and branches by 0.389%, with every pair agreeing; cycles were directionally 1.40% lower in
+eleven pairs but unresolved. A 96-bin uniform guardrail reduced instructions by 0.441% and branches
+by 0.333% in every pair. Portable-codegen Cachegrind was instruction-neutral (+0.003%), reduced data
+references by 0.427%, I1 misses by 4.24%, and branches by 0.124%, but increased simulated branch
+mispredictions by 3.74%. At 2.5M/12 threads, instructions and branches retained the same reductions
+(-0.496%/-0.394% in all nine pairs) while cycles remained unresolved. Quiet-Mac wall-time
+validation is required before promotion.
+
 ## 5. Thin per-local edge-check queues
 
 ### Current cost
