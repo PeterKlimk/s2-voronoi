@@ -83,7 +83,10 @@ impl GnomonicBuilder {
             );
             let dir = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);
             let len2 = dir.length_squared();
-            if !len2.is_finite() || len2 < EXTRACT_DEGENERATE_LEN2 {
+            // Keep the validity check in the floating-point domain. The upper
+            // bound rejects infinity, while either comparison rejects NaN.
+            let valid_len2 = (EXTRACT_DEGENERATE_LEN2..=f32::MAX).contains(&len2);
+            if !valid_len2 {
                 return Err(CellFailure::NoValidSeed);
             }
             let v_pos = dir * len2.sqrt().recip();
