@@ -352,6 +352,18 @@ mispredictions by 3.74%. At 2.5M/12 threads, instructions and branches retained 
 (-0.496%/-0.394% in all nine pairs) while cycles remained unresolved. Quiet-Mac wall-time
 validation is required before promotion.
 
+### Combined candidate result (2026-07-16)
+
+`agent/perf-candidates-combined` layers the recycled point-cell runs, the exact tangent-component
+weld gate, and slot-derived edge-neighbor ids. Their structural gains compose without visible
+interference. At 1M single-threaded native Fibonacci, nine pairs reduced instructions by 3.02% and
+branches by 4.35%. At 2.5M/12 threads with preprocessing, Fibonacci reduced instructions by 3.01%
+and branches by 4.34% in all nine pairs, cycles by 2.89% in eight, and hardware cache misses by
+13.95% in eight. The matching 96-bin uniform run reduced instructions by 2.80% and branches by
+3.84% in every pair, cycles by 5.75% in seven, and cache misses by 11.16% in eight. API,
+correctness, targeted weld, and the component branches' full-release checks pass. Quiet-Mac paired
+wall-time validation remains the promotion gate.
+
 ## 5. Thin per-local edge-check queues
 
 ### Current cost
