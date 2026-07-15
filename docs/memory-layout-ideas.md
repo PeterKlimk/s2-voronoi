@@ -361,8 +361,11 @@ branches by 4.35%. At 2.5M/12 threads with preprocessing, Fibonacci reduced inst
 and branches by 4.34% in all nine pairs, cycles by 2.89% in eight, and hardware cache misses by
 13.95% in eight. The matching 96-bin uniform run reduced instructions by 2.80% and branches by
 3.84% in every pair, cycles by 5.75% in seven, and cache misses by 11.16% in eight. API,
-correctness, targeted weld, and the component branches' full-release checks pass. Quiet-Mac paired
-wall-time validation remains the promotion gate.
+correctness, targeted weld, and the component branches' full-release checks pass. On the quiet
+eight-thread Intel Mac at 2.5M with preprocessing, sixteen paired Fibonacci runs measured the
+combination 1.3% faster (95% interval 0.4--2.2%, 13/16 favorable); uniform with 96 bins measured
+1.6% faster (0.8--2.3%, 13/16 favorable). The combined candidate clears its wall-time promotion
+gate.
 
 ## 5. Thin per-local edge-check queues
 
