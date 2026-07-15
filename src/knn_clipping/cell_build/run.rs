@@ -12,7 +12,6 @@ use crate::knn_clipping::topo2d::types::MAX_POLY_VERTICES;
 use crate::knn_clipping::topo2d::{
     BuilderClipOutcome, BuilderFallbackRequest, BuilderFallbackTrigger, BuilderStepOutcome,
 };
-use crate::live_dedup::EdgeCheck;
 use crate::policy::PackedNeighborPolicy;
 
 use super::{CellBuildError, CellFailure, CellOutputBuffer};
@@ -136,7 +135,7 @@ pub(crate) struct CellBuildRequest<'a, 'm, 'p, 'g, 's> {
     pub(crate) generator_idx: usize,
     pub(crate) directed_ctx: crate::cube_grid::DirectedEligibility<'m>,
     pub(crate) packed: Option<PackedQuery<'p, 'g, 'm>>,
-    pub(crate) incoming_checks: &'s [EdgeCheck],
+    pub(crate) incoming_seed_neighbors: &'s [u32],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -513,16 +512,16 @@ fn clip_seed_neighbors(
     points: &[Vec3],
     grid: &crate::cube_grid::CubeMapGrid,
     pos_slots: &[crate::cube_grid::SlotPoint],
-    incoming_checks: &[EdgeCheck],
+    incoming_seed_neighbors: &[u32],
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
 ) {
-    if incoming_checks.is_empty() {
+    if incoming_seed_neighbors.is_empty() {
         return;
     }
     let t_clip = crate::knn_clipping::timing::Timer::start();
-    for check in incoming_checks {
-        let neighbor_idx = check.neighbor_idx as usize;
+    for &neighbor_idx in incoming_seed_neighbors {
+        let neighbor_idx = neighbor_idx as usize;
         let neighbor_slot = grid.point_index_to_slot(neighbor_idx);
         trace.last_neighbor_idx = Some(neighbor_idx);
         trace.last_neighbor_slot = Some(neighbor_slot);
@@ -895,7 +894,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         points,
         grid,
         pos_slots,
-        request.incoming_checks,
+        request.incoming_seed_neighbors,
         &mut trace,
         &mut counters,
     );
@@ -955,7 +954,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         fallback_projection: counters.fallback_projection,
         fallback_polygon_cap: counters.fallback_polygon_cap,
         fallback_all_constraints: counters.fallback_all_constraints,
-        incoming_seed_neighbors: request.incoming_checks.len(),
+        incoming_seed_neighbors: request.incoming_seed_neighbors.len(),
         edgecheck_seed_clips: counters.edgecheck_seed_clips,
         knn_exhausted: counters.knn_exhausted,
         used_knn: counters.used_knn,

@@ -220,6 +220,13 @@ ceiling:
 - Narrow sphere-only edge-check seed data if the shared planar/spherical engine can retain one
   coherent API. Splitting seed fields from endpoint-reconciliation payload risks adding queue
   headers or allocations and may not reduce DRAM traffic because both passes occur close together.
+  The July 2026 `agent/narrow-edge-seed-stream` experiment copied forwarding-generator ids into a
+  reusable packed `u32` stream before spherical clipping while retaining full checks for endpoint
+  reconciliation. It added about 0.50% retired instructions, 0.85% branches, and 2.9% branch misses
+  at 1M Fibonacci with no hardware cache-miss reduction. Cachegrind at 20k likewise showed 0.47%
+  more instruction references, 0.45% more data references, 0.72% more branches, and 5.6% more branch
+  mispredicts; D1 misses fell only 1.3% and last-level misses were flat. Retire the copy-based split:
+  ordinary seed queues are too small for tighter traversal to repay materialization.
 - Make shell-grid visited stamps lazy. Their table scales with grid cells rather than input points
   and is much smaller than attempted-neighbor stamps, so evaluate only after the larger table is
   addressed.
@@ -236,4 +243,3 @@ ceiling:
 - Do not add a per-reference same-owner branch to the existing `u64` stream. The measured hit rate
   was extremely high and the branch still regressed; a successful compact-reference experiment must
   actually narrow the primary stream and isolate sparse exceptions.
-

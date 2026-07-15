@@ -75,7 +75,7 @@ fn extraction_writers_replace_poison_and_errors_do_not_consume_it() {
             generator_idx: 0,
             directed_ctx,
             packed: None,
-            incoming_checks: &[],
+            incoming_seed_neighbors: &[],
         },
     )
     .expect("gnomonic cell should replace poisoned output");
@@ -102,7 +102,7 @@ fn extraction_writers_replace_poison_and_errors_do_not_consume_it() {
             generator_idx: 0,
             directed_ctx,
             packed: None,
-            incoming_checks: &[],
+            incoming_seed_neighbors: &[],
         },
     )
     .expect("fallback cell should replace poisoned output");
@@ -126,7 +126,7 @@ fn extraction_writers_replace_poison_and_errors_do_not_consume_it() {
             generator_idx: 0,
             directed_ctx: failing_directed,
             packed: None,
-            incoming_checks: &[],
+            incoming_seed_neighbors: &[],
         },
     );
     assert!(result.is_err());
@@ -1014,7 +1014,7 @@ fn direct_cursor_builds_normal_cell() {
             generator_idx: 0,
             directed_ctx,
             packed: None,
-            incoming_checks: &[],
+            incoming_seed_neighbors: &[],
         },
     )
     .expect("cell build should succeed");
@@ -1117,7 +1117,7 @@ fn shell_termination_survives_all_omitted_constraints() {
                     generator_idx,
                     directed_ctx,
                     packed: None,
-                    incoming_checks: &[],
+                    incoming_seed_neighbors: &[],
                 },
             )
             .expect("shell oracle cell should build");
@@ -1188,7 +1188,7 @@ fn packed_termination_checkpoints_survive_all_omitted_constraints() {
                 generator_idx,
                 directed_ctx,
                 packed: Some(packed),
-                incoming_checks: &[],
+                incoming_seed_neighbors: &[],
             },
         )
         .expect("packed oracle cell should build");
@@ -1244,7 +1244,7 @@ fn exhausted_chart_replays_discarded_horizon_constraints_spherically() {
             generator_idx: 0,
             directed_ctx,
             packed: None,
-            incoming_checks: &[],
+            incoming_seed_neighbors: &[],
         },
     )
     .expect("unrestricted spherical replay should recover the horizon cell");
@@ -1320,7 +1320,7 @@ fn forced_handoff_mid_build_still_finishes_the_cell() {
             generator_idx: 0,
             directed_ctx,
             packed: None,
-            incoming_checks: &[],
+            incoming_seed_neighbors: &[],
         },
     )
     .expect("cell build should succeed even after forced mid-build fallback");

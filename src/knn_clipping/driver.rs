@@ -27,12 +27,14 @@ pub(super) struct GridContext<'a> {
 
 struct SphereCellScratch {
     edge_scratch: EdgeScratch,
+    seed_neighbors: Vec<u32>,
 }
 
 impl SphereCellScratch {
     fn new() -> Self {
         Self {
             edge_scratch: EdgeScratch::new(),
+            seed_neighbors: Vec::new(),
         }
     }
 }
@@ -294,6 +296,10 @@ fn build_and_emit_cell<'a, 'b, 'c>(
         .set_cell_start(shard_ctx.local, cell_start);
 
     let incoming_checks = shard_ctx.shard.dedup.take_edge_checks(shard_ctx.local);
+    live_ctx.seed_neighbors.clear();
+    live_ctx
+        .seed_neighbors
+        .extend(incoming_checks.iter().map(|check| check.neighbor_idx));
     let cell_idx = checked_u32(generator_idx, "generator index")?;
 
     let directed_ctx = crate::cube_grid::DirectedEligibility::from_layout(
@@ -313,7 +319,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
             generator_idx,
             directed_ctx,
             packed,
-            incoming_checks: &incoming_checks,
+            incoming_seed_neighbors: &live_ctx.seed_neighbors,
         },
     )
     .map_err(BuildCellsError::CellBuild)?;
