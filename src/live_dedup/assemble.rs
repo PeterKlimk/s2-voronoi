@@ -43,17 +43,20 @@ fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
             let delta = representative.resolution_axis_delta(entry.pos);
             resolution_drift_exceeded |= !delta.is_finite()
                 || delta > f64::from(crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS);
+            shards[representative_bin.as_usize()]
+                .output
+                .add_vertex_incidence(representative_local);
             continue;
         }
 
         let owner_bin = generator_bin[entry.key[0] as usize];
-        let idx = if let Some(&(bin, idx)) = fallback_map.get(&entry.key) {
+        let (idx, is_new) = if let Some(&(bin, idx)) = fallback_map.get(&entry.key) {
             debug_assert_eq!(bin, owner_bin, "fallback owner bin mismatch");
             let representative = shards[owner_bin.as_usize()].output.vertices[idx as usize];
             let delta = representative.resolution_axis_delta(entry.pos);
             resolution_drift_exceeded |= !delta.is_finite()
                 || delta > f64::from(crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS);
-            idx
+            (idx, false)
         } else {
             let new_idx = {
                 let owner_shard = &mut shards[owner_bin.as_usize()];
@@ -64,11 +67,18 @@ fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
                 })?;
                 owner_shard.output.vertices.push(entry.pos);
                 owner_shard.output.vertex_keys.push(entry.key);
+                owner_shard.output.vertex_incidence.push(1);
                 new_idx
             };
             fallback_map.insert(entry.key, (owner_bin, new_idx));
-            new_idx
+            (new_idx, true)
         };
+
+        if !is_new {
+            shards[owner_bin.as_usize()]
+                .output
+                .add_vertex_incidence(idx);
+        }
 
         shards[source_bin].output.foreign_refs.push(ForeignRef {
             source_slot: source_slot as u32,
@@ -352,6 +362,27 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
         cells.set_len(num_cells);
     }
 
+    let incidence_summary = {
+        let mut used_vertices = 0usize;
+        let mut low_incidence = false;
+        for shard in &finals {
+            debug_assert_eq!(
+                shard.output.vertex_incidence.len(),
+                shard.output.vertices.len(),
+                "vertex incidence out of sync with positions"
+            );
+            for &count in &shard.output.vertex_incidence {
+                used_vertices += usize::from(count != 0);
+                low_incidence |= count == 1 || count == 2;
+            }
+        }
+        super::IncidenceSummary {
+            used_vertices,
+            live_half_edges: total_cell_indices as usize,
+            low_incidence,
+        }
+    };
+
     #[cfg(debug_assertions)]
     let mut cell_indices: Vec<u32> = vec![u32::MAX; total_cell_indices as usize];
     #[cfg(not(debug_assertions))]
@@ -545,6 +576,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
         exact_zero_edge_candidates,
         exact_zero_edge_hint_cells: exact_zero_edge_hint_cell_count,
         resolution_drift_exceeded,
+        incidence_summary,
         dedup_sub: sub_phases,
     })
 }
@@ -661,6 +693,7 @@ mod tests {
             shards[0].output.foreign_refs,
             vec![foreign(0, 1, 0), foreign(1, 1, 0)]
         );
+        assert_eq!(shards[1].output.vertex_incidence, vec![2]);
     }
 
     #[test]
@@ -670,6 +703,7 @@ mod tests {
         shards[0].output.foreign_refs = vec![foreign(0, 1, 0)];
         shards[1].output.vertices = vec![Vec3::ZERO];
         shards[1].output.vertex_keys = vec![[0, 1, 2]];
+        shards[1].output.vertex_incidence = vec![0];
         let eps = crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS;
 
         let drift_exceeded = patch_deferred_slots_with_fallback(
@@ -849,6 +883,7 @@ mod tests {
             Vec3::new(0.0, 0.0, 1.0),
         ];
         shard0.output.vertex_keys = vec![[0, 1, 2], [0, 1, 3], [0, 2, 3]];
+        shard0.output.vertex_incidence = vec![0; 3];
         shard0.output.cell_indices = vec![0, 1, 2];
         shard0.output.set_cell_start(LocalId::from_usize(0), 0);
         shard0.output.set_cell_count(LocalId::from_usize(0), 3);
@@ -860,6 +895,7 @@ mod tests {
             Vec3::new(4.0e-8, 1.0 + 2.0e-7, 0.0),
         ];
         shard1.output.vertex_keys = vec![[0, 1, 4], [0, 1, 5]];
+        shard1.output.vertex_incidence = vec![0; 2];
         shard1.output.cell_indices = vec![0, 1, 0];
         shard1.output.set_cell_start(LocalId::from_usize(0), 0);
         shard1.output.set_cell_count(LocalId::from_usize(0), 3);

@@ -89,6 +89,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                 let vertex_capacity = my_generators.len().saturating_mul(6);
                 shard.output.vertices.reserve(vertex_capacity);
                 shard.output.vertex_keys.reserve(vertex_capacity);
+                shard.output.vertex_incidence.reserve(vertex_capacity);
                 shard
                     .output
                     .cell_indices
@@ -104,15 +105,6 @@ pub(crate) fn build_cells_sharded_live_dedup(
                 )]
                 let mut packed_timings = PackedKnnTimings::default();
 
-                // Only the packed path reads the per-generator slot ids.
-                let packed_queries_all: Vec<u32> = if packed_policy.enabled() {
-                    my_generators
-                        .iter()
-                        .map(|&i| grid.point_index_to_slot(i))
-                        .collect()
-                } else {
-                    Vec::new()
-                };
                 #[cfg(debug_assertions)]
                 {
                     for &i in my_generators {
@@ -146,13 +138,14 @@ pub(crate) fn build_cells_sharded_live_dedup(
                     let group_start = start;
 
                     if packed_policy.enabled() {
-                        let queries = &packed_queries_all[group_start..cursor];
+                        let query_slot_start = grid.cell_offsets()[cell as usize];
                         let query_local_start =
                             checked_u32(group_start, "packed query local start")?;
                         let group = PackedGroupInput::new(
                             cell as usize,
                             bin.as_u8(),
-                            queries,
+                            query_slot_start,
+                            cursor - group_start,
                             query_local_start,
                             packed_layout,
                         );
@@ -175,6 +168,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                                     &grid_ctx,
                                     &my_generators[group_start..cursor],
                                     group_start,
+                                    query_slot_start,
                                     Some((&mut prepared, &mut packed_timings, packed_policy)),
                                 )?;
                                 #[cfg(feature = "timing")]
@@ -190,6 +184,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                                     &grid_ctx,
                                     &my_generators[group_start..cursor],
                                     group_start,
+                                    query_slot_start,
                                     None,
                                 )?;
                             }
@@ -212,6 +207,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                             &grid_ctx,
                             &my_generators[group_start..cursor],
                             group_start,
+                            grid.cell_offsets()[cell as usize],
                             None,
                         )?;
                     }
@@ -246,6 +242,7 @@ fn emit_generator_group<'c>(
     grid_ctx: &GridContext<'c>,
     generators: &[usize],
     group_start: usize,
+    query_slot_start: u32,
     mut packed: Option<(
         &mut PreparedPackedGroup<'_, 'c>,
         &mut PackedKnnTimings,
@@ -262,6 +259,7 @@ fn emit_generator_group<'c>(
         let query = packed.as_mut().map(|(prepared, timings, policy)| {
             PackedQuery::new(prepared, timings, offset, *policy)
         });
+        let query_slot = query_slot_start + offset as u32;
         build_and_emit_cell(
             sub_accum,
             &mut *build_ctx,
@@ -269,12 +267,14 @@ fn emit_generator_group<'c>(
             &mut shard_ctx,
             grid_ctx,
             global,
+            query_slot,
             query,
         )?;
     }
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_and_emit_cell<'a, 'b, 'c>(
     cell_sub: &'a mut crate::timing::CellSubAccum,
     build_ctx: &'a mut CellBuildContext,
@@ -282,6 +282,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
     shard_ctx: &'a mut ShardContext<'b>,
     grid_ctx: &'a GridContext<'c>,
     generator_idx: usize,
+    query_slot: u32,
     packed: Option<PackedQuery<'_, '_, 'c>>,
 ) -> Result<(), BuildCellsError> {
     let cell_start = checked_u32(
@@ -295,6 +296,16 @@ fn build_and_emit_cell<'a, 'b, 'c>(
 
     let incoming_checks = shard_ctx.shard.dedup.take_edge_checks(shard_ctx.local);
     let cell_idx = checked_u32(generator_idx, "generator index")?;
+    let generator_slot = grid_ctx.grid.point_pos_slots()[query_slot as usize];
+    debug_assert_eq!(
+        generator_slot.idx as usize, generator_idx,
+        "cell-major generator order must match the grid's contiguous slot order"
+    );
+    debug_assert_eq!(
+        generator_slot.pos.to_array().map(f32::to_bits),
+        grid_ctx.points[generator_idx].to_array().map(f32::to_bits),
+        "slot-native generator position must be bit-identical to the canonical point"
+    );
 
     let directed_ctx = crate::cube_grid::DirectedEligibility::from_layout(
         shard_ctx.bin.as_u8(),
@@ -311,6 +322,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
             points: grid_ctx.points,
             grid: grid_ctx.grid,
             generator_idx,
+            generator: generator_slot.pos,
             directed_ctx,
             packed,
             incoming_checks: &incoming_checks,

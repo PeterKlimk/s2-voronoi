@@ -197,6 +197,7 @@ fn run_core_pipeline(
         exact_zero_edge_candidates,
         exact_zero_edge_hint_cells,
         resolution_drift_exceeded,
+        incidence_summary,
         dedup_sub: _,
     } = assembled;
     let (mut eff_cells, mut eff_cell_indices, reconcile_result) = reconcile_edges(
@@ -217,7 +218,22 @@ fn run_core_pipeline(
     // trigger. Compute it even when repair is disabled so that mode cannot
     // suppress a known-invalid low-incidence output.
     let t_low_incidence = std::time::Instant::now();
-    let topology = summarize_topology(vertices.len(), &eff_cells, &eff_cell_indices);
+    let topology = if reconcile_resolution_scan_cells.is_empty() {
+        let incremental = TopologySummary {
+            used_vertices: incidence_summary.used_vertices,
+            live_half_edges: incidence_summary.live_half_edges,
+            low_incidence: incidence_summary.low_incidence,
+        };
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(
+            incremental,
+            summarize_topology_scalar(vertices.len(), &eff_cells, &eff_cell_indices),
+            "owner-local incidence summary diverged from the live-window scan"
+        );
+        incremental
+    } else {
+        summarize_topology(vertices.len(), &eff_cells, &eff_cell_indices)
+    };
     let low_incidence_scan_time = t_low_incidence.elapsed();
     let RepairResult {
         outcome: repair,

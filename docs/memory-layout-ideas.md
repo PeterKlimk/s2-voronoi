@@ -41,6 +41,8 @@ inexact pathological path.
 
 ## 1. Lazy attempted-neighbor stamps
 
+**Status: retired after experiment (2026-07-15).**
+
 ### Current cost
 
 Every bin's `CellBuildContext` constructs an `N`-entry `u32` generation-stamp table. At one million
@@ -77,12 +79,36 @@ robust there but wasteful on the packed common path.
 - Compare the lazy transition, table allocation count, attempted-list maximum, and number of cells
   that materialize the table.
 
+### Experiment result
+
+The lazy transition was implemented in three forms: a reusable `Vec<u32>`, an adaptive
+shell-pressure fallback, and a 32-slot inline buffer with a reusable overflow vector. Exact work
+counters and output sizes were unchanged. On one-million-point Fibonacci, only 18 cells
+materialized dense state, 14 of 24 contexts allocated a table, and the maximum pre-shell list was
+23 slots, confirming the sparsity hypothesis.
+
+The bookkeeping cost nevertheless outweighed the avoided spatial stamp stores. For the inline
+variant, deterministic one-thread Cachegrind at 20k reported 2.30% more instruction references,
+2.19% more branches, 5.84% more branch mispredicts, and 44.3% more L1 instruction misses. It did
+reduce data writes by 1.23% and D1 misses by 2.97%, but last-level data misses were effectively
+flat. Hardware retired-instruction counts at scale likewise increased for both the vector and
+inline forms. The pressure fallback did not materially improve the shell-heavy shape and added
+ordinary per-cell work.
+
+Wall time and cycle counters were too noisy during this experiment to support a throughput claim.
+The deterministic counters are already unfavorable enough to retire the design: do not replace
+the packed path's unconditional spatial stamp store with a per-candidate growable/inline stream
+unless a future stream representation removes its capacity and recording control flow.
+
 ## 2. Owner-local vertex-incidence accounting
+
+**Status: accepted as a multithreaded throughput candidate (2026-07-15).**
 
 ### Current cost
 
-With repair enabled, every build performs a post-assembly low-incidence scan over the live cell
-windows. The parallel path allocates one `AtomicU32` per assembled vertex and performs roughly six
+Every build performs a post-assembly low-incidence scan over the live cell windows. It is part of
+the plain-return safety gate as well as the repair trigger, so disabling repair no longer disables
+the scan. The parallel path allocates one `AtomicU32` per assembled vertex and performs roughly six
 random atomic increments per input point. On a two-million-point reference run the scalar scan took
 about 22.7 ms and the twelve-thread atomic scan about 25.0 ms: the pass did not scale and became
 slightly slower in parallel.
@@ -104,12 +130,45 @@ slightly slower in parallel.
 - Expected win: clean multithreaded builds with repair enabled.
 - Obvious edge cases: reconciliation mutations, repair acceptance/rejection, welded inputs, and
   high cross-bin incidence.
-- Disable the added accounting when `RepairMode::Disabled`; that configuration currently pays no
-  low-incidence scan.
+- Keep the accounting active under `RepairMode::Disabled`; the topology summary is an independent
+  plain-return safety signal.
 - Measure whether moving one cheap increment per incidence into the dominant construction/dedup
   phase offsets the removed tail pass.
 - A saturating byte is valid only for the boolean repair trigger. Do not reuse it for exact degree
   reporting without changing the representation and tests.
+
+### Provisional experiment result
+
+The candidate stores a saturating byte parallel to each shard's vertices, initializes newly
+created vertices at incidence one, increments resolved on-shard references during emission, and
+applies every deferred reference once at its final owner. Clean assembly reduces these private
+counters. Any reconciliation that reports a changed live-cell footprint discards the summary and
+runs the existing exact scan. Checked builds recompute the scalar live-window summary on the clean
+path and assert equality.
+
+Deterministic one-thread Cachegrind at 20k Fibonacci was close to instruction-neutral (+0.01%
+instruction references) while reducing branches by 2.19%, D1 misses by 2.76%, and last-level data
+misses by 1.73%; data references increased 0.31% and branch mispredicts increased 1.12%. At one
+million uniform points and 96 bins, seven-round hardware-counter means showed 0.32% fewer retired
+instructions, 1.72% fewer branches, 1.65% fewer branch misses, 3.45% fewer cache references, and
+10.4% fewer cache misses. One-thread 500k Fibonacci remained near neutral in instructions (+0.13%)
+with mixed cache movement. A 2M Fibonacci peak-RSS probe measured about 1.5 MiB more RSS, so this is
+not currently a memory-envelope win.
+
+The full `checked` test profile passes, including reconciliation and Local3d repair fixtures.
+
+Windows-native paired wall-time measurements supplied the missing acceptance signal. At two
+million generators, owner-local incidence was 2.42% faster on Fibonacci, 2.87% faster on
+default-bin uniform, and 3.72% faster on 96-bin uniform; all three 20-round 95% intervals excluded
+zero. A separate 40-round focused Fibonacci run measured 1.47% faster, again just excluding zero.
+A 30-round single-thread Fibonacci guardrail was directionally 0.69% faster with a -1.42% to +0.04%
+interval, providing no evidence of a scalar regression.
+
+Portable Windows codegen (release without `-C target-cpu=native`) also passed the acceptance
+guardrails. A 30-round two-million-point Fibonacci multithreaded run was neutral at 0.60% faster
+(-2.35% to +1.17%); uniform with 96 bins was 2.10% faster (1.15% to 3.05%); and a one-million-point
+single-thread Fibonacci run was 0.71% faster (0.38% to 1.03%). Promote this branch to the primary
+default-path candidate for both native and portable builds.
 
 ## 3. Compact shard-local cell-reference stream
 
@@ -197,6 +256,61 @@ often receive the slot or cell directly from their group.
   compare SoA query coordinates with `SlotPoint` access.
 - Track separately the eliminated allocation/pass, inverse-map lifetime, and scattered generator
   gathers.
+
+### Experimental result (2026-07-15)
+
+The first progression step is implemented on `agent/slot-native-packed-groups`. A packed group now
+stores its contiguous slot start and query count instead of borrowing a materialized `Vec<u32>`.
+The hot ring pass does not reconstruct slots it only used for a redundant debug assertion; the
+group-boundary assertions still verify complete-cell coverage, slot order, and bin/local mapping.
+
+At one million Fibonacci generators, retired instructions fell about 0.36% and branches about
+0.64%. The same instruction reduction held for uniform input with 96 bins. Cachegrind at 20k showed
+0.44% fewer instruction references, 0.31% fewer data references, 2.6% fewer D1 misses, and 2.1%
+fewer last-level data misses. It also showed about 11% more L1 instruction misses and 1.8% more
+simulated branch mispredictions, so quiet-machine cycle and wall-time measurements remain required.
+
+Peak RSS at two million Fibonacci generators was repeatably about 548,000 KiB versus 575,000 KiB,
+a reduction of roughly 27 MiB. The full checked test suite passes. Keep later progression steps on
+separate branches so their gather and inverse-map effects remain attributable.
+
+### Layered recheck after owner-local promotion (2026-07-15)
+
+`agent/slot-groups-on-owner` reapplies this change directly to the accepted owner-local incidence
+baseline. Two Windows-native 60-round, two-million-point multithreaded comparisons measured it
+0.50% faster on Fibonacci (-1.31% to +0.32%) and 0.53% faster on uniform with 96 bins (-1.11% to
++0.05%). Pooling all 120 paired log-ratios gives a 0.513% improvement with a -1.008% to -0.015%
+interval, but neither regime independently excludes zero. A 40-round portable-codegen Fibonacci
+guardrail was also directionally 0.44% faster, with a -1.48% to +0.62% interval.
+
+Promote this layer despite its marginal wall-time signal. The stronger prior is favorable: it
+removes a per-shard allocation and fill pass, reduces retired instructions and cache traffic, and
+represents each packed group using the contiguous slot range already required by its grid-cell
+invariant. The resulting production path is smaller and more direct, and the portable guardrail
+shows no contrary signal. Treat the measured speedup as supportive rather than precise because
+code-layout effects are comparable to an effect of this size.
+
+### Slot-native generator-position result (2026-07-15)
+
+The second progression step is accepted. The driver derives each generator's slot from the known
+group start plus its local offset, loads the generator position from the spatially ordered
+`SlotPoint` stream, and forwards that value through cell construction. The global generator id
+remains unchanged. Checked builds assert both the slot's id and the position's exact f32 bits
+against the canonical point, covering packed, packed-slow-path, and packed-disabled groups.
+
+The production profile had placed the scattered `points[generator_idx]` load at the dominant
+sampled source location inside cell construction. Reusing the slot-native position removes that
+gather from builder reset, shell-frontier creation, and mid-batch bounds. At 2M with twelve threads,
+native hardware counters improved materially across both ordinary distributions: Fibonacci cycles
+fell 8.41% and cache misses 17.04% over nine agreeing pairs; uniform cycles fell 8.93% and cache
+misses 9.19%, also with every pair agreeing. Instructions changed by only -0.12% and -0.23%, which
+supports reduced memory stalls rather than changed geometric work. The benefit persisted with
+preprocessing and 96 bins (uniform cycles -8.86%, cache misses -13.16% over seven pairs), while a
+pinned one-thread Fibonacci guardrail remained favorable. An Intel i5-1038NG7 MacBook Pro on Rust
+1.88 independently measured 2M eight-thread wall-time improvements of 2.9% on Fibonacci (95%
+interval 1.4--4.3%, 14/16 pairs) and 2.6% on uniform (2.0--3.2%, 16/16 pairs). This completes
+progression step 2; keep the edge-check and inverse-map ideas as separately attributable
+experiments.
 
 ## 5. Thin per-local edge-check queues
 

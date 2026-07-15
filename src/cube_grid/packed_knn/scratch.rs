@@ -101,7 +101,7 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
     ) {
         self.scratch.ensure_tail_directed_for(
             qi,
-            self.group.queries(),
+            self.group,
             self.group_gen,
             &mut self.tail_built_any,
             grid,
@@ -128,7 +128,7 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
     pub(crate) fn record_tail_usage(&self, timings: &mut PackedKnnTimings) {
         let mut unused_center_keys = 0usize;
         let mut unused_chunk0_keys = 0usize;
-        for qi in 0..self.group.queries().len() {
+        for qi in 0..self.group.query_count() {
             if self.scratch.tail_ready_gen.get(qi).copied().unwrap_or(0) != self.group_gen {
                 unused_center_keys += self
                     .scratch

@@ -14,10 +14,13 @@ use super::types::{
 use super::{BuildCellsError, CellOutputBuffer, VertexData};
 
 #[inline(always)]
+#[allow(clippy::neg_cmp_op_on_partial_ord)] // unordered (NaN) must fail the certificate
 fn exceeds_resolution_drift<P: super::types::VertexPosition>(representative: P, local: P) -> bool {
     let delta = representative.resolution_axis_delta(local);
-    !delta.is_finite()
-        || delta > f64::from(crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS)
+    // `resolution_axis_delta` is non-negative. An ordered `<=` accepts exactly
+    // the finite in-range values; negating it also rejects NaN and infinity
+    // without a separate floating-point classification.
+    !(delta <= f64::from(crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS))
 }
 
 pub(crate) struct EdgeScratch {
@@ -251,6 +254,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
                         unsafe { *shard.output.vertices.get_unchecked(*vi as usize) };
                     shard.output.resolution_drift_exceeded |=
                         exceeds_resolution_drift(representative, pos);
+                    shard.output.add_vertex_incidence(*vi);
                     shard.output.cell_indices.push(*vi);
                     continue;
                 }
@@ -263,6 +267,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
                     let new_idx = checked_u32(shard.output.vertices.len(), "shard vertex index")?;
                     shard.output.vertices.push(pos);
                     shard.output.vertex_keys.push(key);
+                    shard.output.vertex_incidence.push(1);
                     *vi = new_idx;
                 }
                 #[cfg(not(target_feature = "avx2"))]
@@ -270,12 +275,14 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
                     let new_idx = checked_u32(shard.output.vertices.len(), "shard vertex index")?;
                     shard.output.vertices.push(pos);
                     shard.output.vertex_keys.push(key);
+                    shard.output.vertex_incidence.push(1);
                     *vi = new_idx;
                 } else {
                     let representative =
                         unsafe { *shard.output.vertices.get_unchecked(*vi as usize) };
                     shard.output.resolution_drift_exceeded |=
                         exceeds_resolution_drift(representative, pos);
+                    shard.output.add_vertex_incidence(*vi);
                 }
                 let v_idx = *vi;
                 debug_assert_ne!(v_idx, INVALID_INDEX, "missing on-shard vertex index");
@@ -340,6 +347,10 @@ mod tests {
         assert!(exceeds_resolution_drift(
             origin,
             Vec3::new(f32::NAN, 0.0, 0.0)
+        ));
+        assert!(exceeds_resolution_drift(
+            origin,
+            Vec3::new(f32::INFINITY, 0.0, 0.0)
         ));
         assert!(!exceeds_resolution_drift(
             Vec3::new(0.0, 1.0, 1.0),

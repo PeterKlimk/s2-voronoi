@@ -352,6 +352,21 @@ with 5/16 wins and a roughly -0.05% to +0.97% interval. The lossless record shri
 structural reductions were retained rather than treating unresolved layout-sensitive cycles as a
 regression.
 
+Cell construction now takes the generator position from the group's known contiguous grid slot
+instead of gathering `points[generator_idx]`. The slot record retains the same global generator id,
+and checked builds verify that its position is bit-identical to the canonical point. The same value
+is forwarded through builder reset, shell-frontier initialization, mid-batch termination bounds,
+and exhaustion recovery, so the ordinary path no longer reintroduces the scattered generator load.
+On the 2M, twelve-thread native reference run, nine paired Fibonacci rounds reduced cycles 8.41%,
+cache references 6.89%, and cache misses 17.04%; nine uniform rounds reduced them 8.93%, 5.10%, and
+9.19%. Every cycle and cache-miss pair favored the candidate. Retired instructions fell only
+0.12--0.23%, identifying locality rather than changed query work as the cause. A seven-pair 2M
+uniform run with preprocessing and 96 bins retained an 8.86% cycle and 13.16% cache-miss reduction.
+The pinned one-thread Fibonacci guardrail also remained favorable (4.87% fewer cycles over seven
+pairs), and the full checked suite passed. On an Intel i5-1038NG7 MacBook Pro using the MSRV
+toolchain (Rust 1.88 / LLVM 20), 2M eight-thread wall time improved 2.9% on Fibonacci (95% interval
+1.4--4.3%, 14/16 pairs) and 2.6% on uniform (2.0--3.2%, 16/16 pairs).
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -576,6 +591,28 @@ Do not broadly retry these without a materially different design or workload:
   split by distribution: Fibonacci favored the candidate in 3/4 pairs while uniform rejected it in
   3/4. Generic structural counters improved, but the primary native signal is too small and mixed
   to justify extra group-validation machinery; retain the direct checked conversion per cell.
+- An assembly-guided rewrite of the clean-path representative-drift predicate replaced the explicit
+  non-finite classification plus epsilon comparison with one negated ordered comparison. The delta
+  is an absolute coordinate difference, so this accepts exactly finite in-range values and still
+  rejects NaN and infinity. Native codegen removes the integer bit classification, two flag
+  materializations, and their OR. Twelve interleaved 1M single-thread Fibonacci pairs reduced
+  retired instructions by 0.3604% with unchanged branches; ten portable-codegen pairs reduced them
+  by 0.2981%, also with unchanged branches. A deliberately noisy 30-round Windows native 2.5M
+  multithreaded run was directionally favorable (-4.53%, interval -9.12% to +0.29%), but that
+  magnitude is code-layout interaction rather than a causal estimate of the small rewrite.
+- Two nearby assembly-driven controls were rejected. Explicitly keeping the resolved vertex index
+  live removed two reloads but perturbed register allocation enough to add 0.084% instructions and
+  0.375% branches in every 1M pair. Forcing `build_cell_into` out of line shrank the caller but
+  created a 10.6 KiB generic body, adding 1.398% instructions and 0.335% branches. Retain the reloads
+  and forced inline specialization.
+- A PGO-guided attempt to inline the edge resolver into cell emission saved 0.177% native
+  instructions but added 0.310% branches, increased L1I misses about fivefold, and regressed cycles
+  1.48%; PGO's coordinated global layout cannot be reproduced by that annotation alone. Inlining
+  the single-call-site clip-batch wrapper was independently favorable: native Fibonacci reduced
+  instructions 0.427% and branches 0.578%, while portable codegen reduced them 0.168% and 0.559%.
+  Native uniform, clustered, and mega all improved both counters as well; total text shrank by 8.5
+  KiB. Cycle samples were host-noise dominated, so acceptance rests on the cross-target,
+  cross-regime structural reduction and the simpler one-call-site codegen shape.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile

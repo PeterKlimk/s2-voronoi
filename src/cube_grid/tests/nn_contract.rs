@@ -223,7 +223,7 @@ impl Harness {
             let mut scratch = self.grid.make_scratch();
             let stream = DirectedNeighborStream::new(
                 &self.grid,
-                &self.points,
+                self.points[query_idx],
                 query_idx,
                 &mut scratch,
                 ctx,
@@ -242,8 +242,14 @@ impl Harness {
             }
             let queries: Vec<u32> = (start..end).map(|s| s as u32).collect();
             let (cell_bin, cell_start_local) = self.layout().bin_local(start as u32);
-            let group =
-                PackedGroupInput::new(cell, cell_bin, &queries, cell_start_local, self.layout());
+            let group = PackedGroupInput::new(
+                cell,
+                cell_bin,
+                start as u32,
+                queries.len(),
+                cell_start_local,
+                self.layout(),
+            );
             {
                 let mut packed_scratch = PackedKnnCellScratch::new();
                 let mut timings = PackedKnnTimings::default();
@@ -268,7 +274,7 @@ impl Harness {
                     );
                     let stream = DirectedNeighborStream::new(
                         &self.grid,
-                        &self.points,
+                        self.points[query_idx],
                         query_idx,
                         &mut scratch,
                         ctx,
