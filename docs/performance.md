@@ -36,13 +36,18 @@ cargo run --release --features tools --bin bench_voronoi -- 100k 500k 1m
 
 Useful flags:
 
-- `--dist {fib|uniform|clustered|bimodal|gradient|outlier|splittable|mega|cubed|great-circle}` and
-  `--dist-param` —
+- `--dist {fib|fib-legacy|uniform|clustered|bimodal|gradient|outlier|splittable|mega|cubed|great-circle}`
+  and `--dist-param` —
   non-uniform distributions exercise the density-adaptive paths that uniform input never reaches.
   Benchmark across a few of these, not uniform alone. `cubed` is a deterministic projected quad
   grid with O(n) degree-4 vertices, intended specifically for reconciliation benchmarks.
   `great-circle` is a narrow perturbed band intended for successful high-candidate-work benchmarks;
   its coordinate jitter defaults to 0.01 and is controlled by `--dist-param`.
+- `fib` evaluates the unbounded phase and latitude in f64 before storing f32 coordinates.
+  `fib-legacy` preserves the historical f32-phase generator for comparisons with old artifacts.
+  Fibonacci measurements recorded through 2026-07-16 used the legacy generator unless explicitly
+  identified as corrected; do not compare their absolute counters or timings directly with new
+  `fib` runs.
 - `--validate` — compare against the convex-hull ground truth (slow; capped at 100k).
 - `--no-preprocess` — skip welding (isolates construction cost).
 

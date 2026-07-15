@@ -81,13 +81,15 @@ certificate. Values below 256 are exact; larger quantiles are power-of-two bucke
 Cells entering batched exhaustion recovery remain in total work but are explicitly excluded from
 the progress-tail distribution because that path does not retain individual clip outcomes.
 
-Initial single-threaded structural probes demonstrate the intended separation without using noisy
-wall time as evidence. Fibonacci stayed at candidate median 8 through 2M, then changed regime at
-4M: median 10, p90 22, p99 36, and p999 131, versus 8/11/15/18 at 2M. Packed-tail activation rose
-from 24,319 to 1,044,793 cells while maximum grid occupancy remained 42 versus 41. A true-uniform
-control stayed at median/p90/p99 9/15/23 from 1M through 4M, with p999 39/34/34. This makes the 4M
-Fibonacci result look like a broad lattice/grid/query interaction rather than a few defective cells
-or universal smooth growth; a defect-local handoff should not target it.
+An apparent broad Fibonacci tail beyond 2.5M was traced to the benchmark generator rather than the
+query algorithm. Its historical implementation multiplied an unbounded phase by the site index in
+f32. Above index roughly 2.16M the phase crosses `2^23` radians and its representable spacing reaches
+one radian, quantizing the nominal golden-angle lattice before `sin`/`cos`. Adjacent grid resolutions,
+different jitter seeds, native instructions, and FMA all reproduced the artifact. Promoting phase
+and latitude generation to f64 removed it: at 3M, candidate p50/p90/p99/p999/max changed from
+9/15/26/116/167 to 7/9/10/11/14, examine-per-edge from 1.709 to 1.222, and unrestricted shell
+takeovers from 5,775 cells to zero. `fib-legacy` retains the old input for historical comparisons.
+This case is not evidence for a production handoff or query-policy change.
 
 The `mega` dense-cap workload grew from median 21 at 100k to 70 at 500k, confirming separately that
 a fixed candidate threshold would misclassify scale growth within some distributions. Despite that

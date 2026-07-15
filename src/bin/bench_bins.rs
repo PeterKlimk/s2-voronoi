@@ -5,16 +5,21 @@ use std::time::Instant;
 use voronoi_mesh::{compute, UnitVec3};
 
 fn generate_fibonacci_sphere(n: usize) -> Vec<UnitVec3> {
-    let golden_ratio: f32 = (1.0 + 5.0f32.sqrt()) / 2.0;
+    let golden_ratio = (1.0 + 5.0f64.sqrt()) / 2.0;
     let mut points = Vec::with_capacity(n);
 
     for i in 0..n {
-        let theta = 2.0 * std::f32::consts::PI * (i as f32) / golden_ratio;
-        let phi = (1.0 - 2.0 * (i as f32 + 0.5) / (n as f32)).acos();
-        let x = phi.sin() * theta.cos();
-        let y = phi.sin() * theta.sin();
-        let z = phi.cos();
-        points.push(UnitVec3::new(x, y, z));
+        let theta = std::f64::consts::TAU * i as f64 / golden_ratio;
+        let z = 1.0 - 2.0 * (i as f64 + 0.5) / n as f64;
+        let radius = (1.0 - z * z).sqrt();
+        points.push(
+            UnitVec3::new(
+                (radius * theta.cos()) as f32,
+                (radius * theta.sin()) as f32,
+                z as f32,
+            )
+            .normalize(),
+        );
     }
     points
 }

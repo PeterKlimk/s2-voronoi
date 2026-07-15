@@ -34,6 +34,7 @@ fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<UnitVec3> {
     match dist {
         "uniform" => random_sphere_points(n, seed),
         "fibonacci" => fibonacci_sphere_points(n, param, seed),
+        "fibonacci_legacy" => fibonacci_sphere_points_legacy(n, param, seed),
         "clustered" => clustered_cap_points(n, param, seed),
         "bimodal" => bimodal_density_points(n, param, seed),
         "cube" => cube_vertex_stress_points(n, param, seed),

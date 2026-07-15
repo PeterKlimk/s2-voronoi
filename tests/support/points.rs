@@ -25,17 +25,42 @@ pub fn random_sphere_points_with_rng<R: Rng + ?Sized>(n: usize, rng: &mut R) -> 
 
 /// Generate Fibonacci sphere points (more uniform than random).
 pub fn fibonacci_sphere_points(n: usize, jitter: f32, seed: u64) -> Vec<UnitVec3> {
+    fibonacci_sphere_points_impl(n, jitter, seed, false)
+}
+
+/// Historical Fibonacci fixture whose unbounded phase was evaluated in f32.
+/// Retained only for comparisons with campaigns recorded before 2026-07-16.
+pub fn fibonacci_sphere_points_legacy(n: usize, jitter: f32, seed: u64) -> Vec<UnitVec3> {
+    fibonacci_sphere_points_impl(n, jitter, seed, true)
+}
+
+fn fibonacci_sphere_points_impl(
+    n: usize,
+    jitter: f32,
+    seed: u64,
+    legacy_phase: bool,
+) -> Vec<UnitVec3> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let golden_angle = PI * (3.0 - 5.0f32.sqrt());
+    let golden_angle = std::f64::consts::PI * (3.0 - 5.0f64.sqrt());
+    let legacy_golden_angle = PI * (3.0 - 5.0f32.sqrt());
 
     (0..n)
         .map(|i| {
-            let y = 1.0 - (2.0 * i as f32 + 1.0) / n as f32;
-            let radius = (1.0 - y * y).sqrt();
-            let theta = golden_angle * i as f32;
-
-            let mut x = radius * theta.cos();
-            let mut z = radius * theta.sin();
+            let (mut x, y, mut z) = if legacy_phase {
+                let y = 1.0 - (2.0 * i as f32 + 1.0) / n as f32;
+                let radius = (1.0 - y * y).sqrt();
+                let theta = legacy_golden_angle * i as f32;
+                (radius * theta.cos(), y, radius * theta.sin())
+            } else {
+                let y = 1.0 - (2.0 * i as f64 + 1.0) / n as f64;
+                let radius = (1.0 - y * y).sqrt();
+                let theta = golden_angle * i as f64;
+                (
+                    (radius * theta.cos()) as f32,
+                    y as f32,
+                    (radius * theta.sin()) as f32,
+                )
+            };
 
             if jitter > 0.0 {
                 x += rng.gen_range(-jitter..jitter);

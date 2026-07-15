@@ -43,24 +43,50 @@ fn mean_spacing(num_points: usize) -> f32 {
     (4.0 * std::f32::consts::PI / num_points as f32).sqrt()
 }
 
-const PHI: f32 = 1.618_034;
+const PHI: f64 = 1.618_033_988_749_895;
+
+fn fibonacci_sphere_point(n: usize, i: usize) -> Vec3 {
+    let y = 1.0 - (2.0 * i as f64 + 1.0) / n as f64;
+    let r = (1.0 - y * y).sqrt();
+    let theta = std::f64::consts::TAU * i as f64 / PHI;
+    Vec3::new((r * theta.cos()) as f32, y as f32, (r * theta.sin()) as f32)
+}
+
+fn legacy_fibonacci_sphere_point(n: usize, i: usize) -> Vec3 {
+    const LEGACY_PHI: f32 = 1.618_034;
+    let y = 1.0 - (2.0 * i as f32 + 1.0) / n as f32;
+    let r = (1.0 - y * y).sqrt();
+    let theta = std::f32::consts::TAU * i as f32 / LEGACY_PHI;
+    Vec3::new(r * theta.cos(), y, r * theta.sin())
+}
 
 fn fibonacci_sphere_points_with_rng<R: Rng>(n: usize, jitter: f32, rng: &mut R) -> Vec<Vec3> {
-    use std::f32::consts::TAU;
-
     (0..n)
         .map(|i| {
-            let y = 1.0 - (2.0 * i as f32 + 1.0) / n as f32;
-            let r = (1.0 - y * y).sqrt();
-            let theta = TAU * i as f32 / PHI;
-
-            let mut p = Vec3::new(r * theta.cos(), y, r * theta.sin());
+            let mut p = fibonacci_sphere_point(n, i);
 
             if jitter > 0.0 {
                 let tangent = random_tangent_vector(p, rng);
                 p = (p + tangent * jitter).normalize();
             }
 
+            p
+        })
+        .collect()
+}
+
+fn legacy_fibonacci_sphere_points_with_rng<R: Rng>(
+    n: usize,
+    jitter: f32,
+    rng: &mut R,
+) -> Vec<Vec3> {
+    (0..n)
+        .map(|i| {
+            let mut p = legacy_fibonacci_sphere_point(n, i);
+            if jitter > 0.0 {
+                let tangent = random_tangent_vector(p, rng);
+                p = (p + tangent * jitter).normalize();
+            }
             p
         })
         .collect()
@@ -237,8 +263,9 @@ struct Args {
     #[arg(long)]
     lloyd: bool,
 
-    /// Point distribution. Well-distributed: fib (default), uniform (true
-    /// random). Density-contrast: clustered (caps mixture), bimodal (one dense
+    /// Point distribution. Well-distributed: fib (default), fib-legacy
+    /// (historical f32-phase generator), uniform (true random).
+    /// Density-contrast: clustered (caps mixture), bimodal (one dense
     /// cap over a sparse bg), gradient (smooth density ~exp(k·z)), outlier
     /// (uniform plus one tiny pile), splittable (many cell-scale clusters),
     /// mega (one cap holding a fraction of all points). Reconciliation stress:
@@ -306,7 +333,11 @@ fn generate_points(n: usize, seed: u64, lloyd: bool, dist: &str, param: f64) -> 
     }
     let jitter_scale = if lloyd { 0.1 } else { 0.25 };
     let jitter = mean_spacing(n) * jitter_scale;
-    let mut points = fibonacci_sphere_points_with_rng(n, jitter, &mut rng);
+    let mut points = if dist == "fib-legacy" {
+        legacy_fibonacci_sphere_points_with_rng(n, jitter, &mut rng)
+    } else {
+        fibonacci_sphere_points_with_rng(n, jitter, &mut rng)
+    };
     if lloyd {
         lloyd_relax_kmeans(&mut points, 2, 20, &mut rng);
     }
@@ -722,4 +753,49 @@ fn main() {
     }
 
     println!("\nBenchmark complete.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fibonacci_sphere_point, legacy_fibonacci_sphere_point, PHI};
+
+    fn longitude(point: glam::Vec3) -> f64 {
+        (point.z as f64).atan2(point.x as f64)
+    }
+
+    fn wrap_angle(angle: f64) -> f64 {
+        (angle + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI
+    }
+
+    #[test]
+    fn fibonacci_phase_stays_accurate_past_the_f32_integer_cliff() {
+        let n = 3_000_000;
+        let expected_step = wrap_angle(std::f64::consts::TAU / PHI);
+        let mut corrected_max_error = 0.0_f64;
+        let mut legacy_max_error = 0.0_f64;
+
+        for i in 2_500_000..2_500_128 {
+            let corrected_step = wrap_angle(
+                longitude(fibonacci_sphere_point(n, i + 1))
+                    - longitude(fibonacci_sphere_point(n, i)),
+            );
+            corrected_max_error =
+                corrected_max_error.max(wrap_angle(corrected_step - expected_step).abs());
+
+            let legacy_step = wrap_angle(
+                longitude(legacy_fibonacci_sphere_point(n, i + 1))
+                    - longitude(legacy_fibonacci_sphere_point(n, i)),
+            );
+            legacy_max_error = legacy_max_error.max(wrap_angle(legacy_step - expected_step).abs());
+        }
+
+        assert!(
+            corrected_max_error < 1.0e-5,
+            "promoted Fibonacci phase drifted by {corrected_max_error:e} radians"
+        );
+        assert!(
+            legacy_max_error > 0.1,
+            "legacy fixture no longer demonstrates f32 phase quantization: {legacy_max_error:e}"
+        );
+    }
 }
