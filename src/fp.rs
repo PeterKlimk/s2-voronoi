@@ -116,6 +116,20 @@ impl Dots8 {
     }
 }
 
+/// Bitmask of lanes whose computed-f32 squared delta from `value` is
+/// strictly below `threshold_squared`. This is the lane-wise form of the
+/// weld detector's exact scalar gate:
+///
+/// `let d = value - values[i]; d * d < threshold_squared`
+#[inline(always)]
+pub(crate) fn squared_deltas_mask_lt8(
+    values: &[f32; 8],
+    value: f32,
+    threshold_squared: f32,
+) -> u32 {
+    backend::squared_deltas_mask_lt8(backend::load_array(*values), value, threshold_squared)
+}
+
 /// Convert eight positive finite inward-plane distances to conservative
 /// outside-dot thresholds. The returned mask marks lanes where this interior
 /// formula is valid; callers retain their geometric fallback for other lanes.
@@ -194,6 +208,15 @@ mod backend {
     }
 
     #[inline(always)]
+    pub(super) fn squared_deltas_mask_lt8(values: V, value: f32, threshold_squared: f32) -> u32 {
+        let delta = f32x8::splat(value) - values;
+        f32x8::splat(threshold_squared)
+            .cmp_gt(delta * delta)
+            .move_mask() as u32
+            & 0xff
+    }
+
+    #[inline(always)]
     pub(super) fn to_array(v: V) -> [f32; 8] {
         v.to_array()
     }
@@ -268,7 +291,7 @@ mod backend {
 
 #[cfg(test)]
 mod tests {
-    use super::{dot3_f32, interior_security_thresholds8, PointChunk8};
+    use super::{dot3_f32, interior_security_thresholds8, squared_deltas_mask_lt8, PointChunk8};
 
     #[test]
     fn point_chunk_dot_and_strict_mask_match_scalar_at_adjacent_thresholds() {
@@ -341,6 +364,29 @@ mod tests {
         let (_, nan_mask) = interior_security_thresholds8([f32::NAN; 8], pad);
         assert_eq!(nan_mask, 0);
     }
+
+    #[test]
+    fn squared_delta_mask_matches_the_strict_scalar_predicate() {
+        let threshold = 0.25f32;
+        let threshold_squared = threshold * threshold;
+        let value = 0.5f32;
+        let values = [
+            value,
+            value + threshold_squared.sqrt().next_down(),
+            value + threshold,
+            value + threshold.next_up(),
+            value - threshold.next_down(),
+            value - threshold,
+            value - threshold.next_up(),
+            f32::NAN,
+        ];
+        let mask = squared_deltas_mask_lt8(&values, value, threshold_squared);
+        for (lane, &candidate) in values.iter().enumerate() {
+            let delta = value - candidate;
+            let expected = delta * delta < threshold_squared;
+            assert_eq!((mask & (1 << lane)) != 0, expected, "lane {lane}");
+        }
+    }
 }
 
 #[cfg(feature = "simd_scalar")]
@@ -366,6 +412,16 @@ mod backend {
         let mut bits = 0u32;
         for (i, &d) in v.iter().enumerate() {
             bits |= u32::from(d > threshold) << i;
+        }
+        bits
+    }
+
+    #[inline(always)]
+    pub(super) fn squared_deltas_mask_lt8(values: V, value: f32, threshold_squared: f32) -> u32 {
+        let mut bits = 0u32;
+        for (i, &candidate) in values.iter().enumerate() {
+            let delta = value - candidate;
+            bits |= u32::from(delta * delta < threshold_squared) << i;
         }
         bits
     }
