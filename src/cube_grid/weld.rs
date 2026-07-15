@@ -71,6 +71,7 @@ impl CubeMapGrid {
             if start == end {
                 return;
             }
+            let (face, iu, iv) = cell_to_face_ij(cell, self.res);
 
             let push = |out: &mut Vec<(u32, u32)>, a: u32, b: u32| -> bool {
                 if retained
@@ -87,13 +88,27 @@ impl CubeMapGrid {
             };
 
             // Same-cell pairs.
+            // Test one face-tangent component first. If its square alone is
+            // not below the strict threshold, the non-negative three-term
+            // squared distance cannot be below it either. Almost every normal
+            // input pair exits here after loading one coordinate instead of
+            // all three.
+            let gate_points = match face {
+                0 | 1 => &self.cell_points_z,
+                _ => &self.cell_points_x,
+            };
             for i in start..end {
                 let (xi, yi, zi) = (
                     self.cell_points_x[i],
                     self.cell_points_y[i],
                     self.cell_points_z[i],
                 );
+                let gate_i = gate_points[i];
                 for j in (i + 1)..end {
+                    let gate_delta = gate_i - gate_points[j];
+                    if !is_weld_pair(gate_delta * gate_delta, thr_sq) {
+                        continue;
+                    }
                     let dx = xi - self.cell_points_x[j];
                     let dy = yi - self.cell_points_y[j];
                     let dz = zi - self.cell_points_z[j];
@@ -108,7 +123,6 @@ impl CubeMapGrid {
             // Cross-cell pairs: only points within `pad` of a wall plane can
             // have a partner in another cell (essentially never on real
             // input — this loop's body is cold).
-            let (face, iu, iv) = cell_to_face_ij(cell, self.res);
             let walls = [
                 self.u_line_planes[face * line_count + iu],
                 self.u_line_planes[face * line_count + iu + 1],
