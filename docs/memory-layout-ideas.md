@@ -290,8 +290,29 @@ preprocessing and 96 bins (uniform cycles -8.86%, cache misses -13.16% over seve
 pinned one-thread Fibonacci guardrail remained favorable. An Intel i5-1038NG7 MacBook Pro on Rust
 1.88 independently measured 2M eight-thread wall-time improvements of 2.9% on Fibonacci (95%
 interval 1.4--4.3%, 14/16 pairs) and 2.6% on uniform (2.0--3.2%, 16/16 pairs). This completes
-progression step 2; keep the edge-check and inverse-map ideas as separately attributable
-experiments.
+progression step 2.
+
+### Slot-forwarded edge-check and inverse-map result (2026-07-16)
+
+Progression step 3 is accepted. An in-bin `EdgeCheck` now carries the earlier generator's grid slot
+instead of its global id. Seed clipping consumes the slot directly and obtains both position and
+global id from the same `SlotPoint` load; cold unmatched-check diagnostics recover their edge key
+from that record. The queue record remains 20 bytes, and checked builds assert at the forwarding
+boundary that the slot identifies the source generator.
+
+At 2M with twelve threads, nine paired Linux Fibonacci runs reduced cycles 2.28% in eight of nine
+pairs despite increasing retired instructions 0.50% and branches 0.67%; this is a locality win, not
+an arithmetic-work reduction. The quieter eight-thread Intel Mac independently measured 2.8%
+faster Fibonacci wall time (95% interval 1.4--4.2%, 13/16 pairs) and 3.8% faster uniform wall time
+(3.3--4.4%, 16/16 pairs).
+
+Progression step 5 is also accepted as a separate lifetime reduction. Weld compaction is the final
+consumer of the global-id-to-slot inverse, so construction releases its four-byte-per-generator
+buffer before building cells (about 8 MB at 2M). Relative to slot-forwarded checks alone, Linux
+instructions and branches changed by less than 0.01%, cycles were neutral (-0.22%), and hardware
+cache references/misses fell 2.05%/4.33%. The Mac measured exactly neutral geometric-mean wall time
+for both Fibonacci and uniform over 32 pairs each (both 95% intervals -0.5% to +0.6%). The full
+checked suite passes with both steps.
 
 ## 5. Thin per-local edge-check queues
 
