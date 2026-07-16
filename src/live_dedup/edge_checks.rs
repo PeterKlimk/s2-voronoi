@@ -160,23 +160,6 @@ fn reconcile_edge_endpoints(
     false
 }
 
-/// Mark one incoming in-bin check as consumed. Returns true when this check
-/// was already consumed by an earlier edge of the same cell — a duplicate
-/// side, not another successful agreement.
-#[inline]
-fn mark_incoming_consumed(idx: usize, matched: &mut u64, matched_spill: &mut [bool]) -> bool {
-    if idx < 64 {
-        let bit = 1u64 << idx;
-        let duplicate = *matched & bit != 0;
-        *matched |= bit;
-        duplicate
-    } else {
-        let duplicate = matched_spill[idx - 64];
-        matched_spill[idx - 64] = true;
-        duplicate
-    }
-}
-
 impl ShardDedup {
     pub(super) fn push_edge_check(&mut self, local: LocalId, check: EdgeCheck) {
         let local_idx = local.as_usize();
@@ -237,7 +220,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     output_buffer: &crate::knn_clipping::cell_build::CellOutputBuffer<P>,
     slot_points: &[crate::cube_grid::SlotPoint],
     assignment: &BinAssignment,
-    incoming_checks: Vec<EdgeCheck>,
+    mut incoming_checks: Vec<EdgeCheck>,
     vertex_indices: &mut [u32],
     edges_to_later: &mut Vec<EdgeToLater>,
     edges_overflow: &mut Vec<EdgeOverflowLocal>,
@@ -266,15 +249,13 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     // Incoming checks were taken earlier (e.g. for geometry seeding).
     let incoming_count = incoming_checks.len();
 
-    // Track which incoming checks have been consumed. The common case fits
-    // the u64 bitmask; a dense near-cocircular cell can receive more than 64
-    // checks (mega inputs produce >64-vertex cells), so the surplus spills to
-    // a Vec (no allocation in the common case). Exactness matters: the
-    // unmatched loop below is detection-critical, and a wrongly-"consumed"
-    // check (as the old release build's masked `1 << idx` shift could produce
-    // past 64) is a silently dropped defect record.
-    let mut matched: u64 = 0;
-    let mut matched_spill: Vec<bool> = vec![false; incoming_count.saturating_sub(64)];
+    // Partition matched checks to the front as edges consume them. Ordinary
+    // cells then search a shrinking suffix instead of rescanning checks that
+    // already matched earlier polygon edges. A second search of the prefix is
+    // needed only for a duplicate side. The unmatched suffix is also the
+    // exact detection-critical set to report after the edge loop, including
+    // high-degree cells without a spill allocation.
+    let mut matched_count = 0usize;
 
     let layout = PackedSlotLayout::new(
         &assignment.slot_gen_map,
@@ -325,12 +306,26 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
         } else {
             // Edge to earlier neighbor → resolve immediately.
             // Search Vec for matching check (cache-friendly sequential access)
-            let found = incoming_checks
+            let found_unmatched = incoming_checks[matched_count..]
                 .iter()
                 .position(|check| check.neighbor_slot == slot)
-                .map(|idx| (idx, incoming_checks[idx]));
+                .map(|offset| matched_count + offset);
+            let (found, duplicate) = if let Some(found_idx) = found_unmatched {
+                incoming_checks.swap(matched_count, found_idx);
+                let check = incoming_checks[matched_count];
+                matched_count += 1;
+                (Some(check), false)
+            } else {
+                (
+                    incoming_checks[..matched_count]
+                        .iter()
+                        .find(|check| check.neighbor_slot == slot)
+                        .copied(),
+                    true,
+                )
+            };
 
-            if let Some((found_idx, check)) = found {
+            if let Some(check) = found {
                 // One incoming check matching two of this cell's edges
                 // (duplicate side) was long believed impossible. The strict
                 // strict keep rule makes it
@@ -343,7 +338,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                 // battery and the strict-plane campaign). So this is a
                 // handled defect, not an invariant violation; debug builds
                 // must not abort (this only makes debug match release).
-                if mark_incoming_consumed(found_idx, &mut matched, &mut matched_spill) {
+                if duplicate {
                     shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
                         key: edge_key,
                         origin: UnresolvedEdgeOrigin::InBinDuplicateSide,
@@ -398,29 +393,11 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
         }
     }
 
-    // Fast path: if all incoming checks matched, skip the unmatched loop
-    let all_mask = if incoming_count >= 64 {
-        u64::MAX
-    } else {
-        (1u64 << incoming_count) - 1
-    };
-    let all_matched =
-        incoming_count == 0 || (matched == all_mask && matched_spill.iter().all(|&m| m));
-
-    if !all_matched {
-        for (idx, check) in incoming_checks.iter().enumerate() {
-            let consumed = if idx < 64 {
-                matched & (1u64 << idx) != 0
-            } else {
-                matched_spill[idx - 64]
-            };
-            if !consumed {
-                shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
-                    key: edge_check_key(cell_idx, *check, slot_points),
-                    origin: UnresolvedEdgeOrigin::InBinUnconsumedCheck,
-                });
-            }
-        }
+    for check in &incoming_checks[matched_count..] {
+        shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
+            key: edge_check_key(cell_idx, *check, slot_points),
+            origin: UnresolvedEdgeOrigin::InBinUnconsumedCheck,
+        });
     }
 
     if incoming_count > 0 {
@@ -640,17 +617,6 @@ mod tests {
             patched.push((mine, other));
         }));
         assert_eq!(patched, [(0, 0), (1, 1)]);
-    }
-
-    #[test]
-    fn repeated_in_bin_check_consumption_is_a_duplicate_side() {
-        let mut matched = 0u64;
-        let mut spill = vec![false; 2];
-
-        assert!(!mark_incoming_consumed(7, &mut matched, &mut spill));
-        assert!(mark_incoming_consumed(7, &mut matched, &mut spill));
-        assert!(!mark_incoming_consumed(65, &mut matched, &mut spill));
-        assert!(mark_incoming_consumed(65, &mut matched, &mut spill));
     }
 
     #[test]

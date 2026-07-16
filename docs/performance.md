@@ -484,6 +484,23 @@ Larger changes to scheduling, repair scope, pathological-work handoff, and repea
 kept in the non-authoritative
 [`algorithmic performance ideas`](algorithmic-performance-ideas.md) catalogue.
 
+Measured candidates awaiting a final host gate:
+
+- **Shrinking-suffix incoming edge-check matching:** partition each cell's already-matched in-bin
+  checks to the front, search the shrinking unmatched suffix first, and search the prefix only for
+  the handled duplicate-side case. This also makes the final unmatched suffix explicit and removes
+  the high-degree consumed-mask spill. The checked edge-check suite and the release high-degree,
+  repair-net, adversarial, and correctness suites pass. At 1M single-threaded native Linux, nine
+  interleaved Fibonacci pairs reduced instructions by 0.42% and branches by 1.83% in every pair;
+  uniform reduced them by 0.44% and 1.76%, also in every pair. Cycles were directionally favorable
+  but noisy. On the quiet eight-thread Intel Mac at 2M, twenty multithreaded pairs were neutral:
+  Fibonacci changed +0.10% (95% interval -0.67% to +0.87%, 8/20 favorable) and uniform +0.03%
+  (-0.48% to +0.56%, 9/20 favorable). Single-threaded Mac validation at 1M supplied a clear signal:
+  thirty Fibonacci pairs were 0.86% faster (95% interval 0.28--1.43%, 25/30 favorable), and thirty
+  uniform pairs were 1.63% faster (0.79--2.46%, 26/30 favorable). Preserve this as a strong
+  single-threaded candidate pending wall-time testing on a quiet native-Linux host; the neutral Mac
+  multithreaded result prevents claiming a general default-path throughput win yet.
+
 Measured gates awaiting a design experiment:
 
 - **Output materialization:** the null-write ceiling is large enough to pursue, but it does not
