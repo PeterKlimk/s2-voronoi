@@ -82,9 +82,9 @@ impl CubeMapGrid {
         #[cfg(feature = "timing")]
         let mut timings = CubeMapGridBuildTimings::default();
         #[cfg(feature = "timing")]
-        return Self::new_impl(points, res, true, Some(&mut timings));
+        return Self::new_impl(points, res, true, true, Some(&mut timings));
         #[cfg(not(feature = "timing"))]
-        return Self::new_impl(points, res, true, None);
+        return Self::new_impl(points, res, true, true, None);
     }
 
     /// Build a provisional query grid without the optional dense-cell side
@@ -93,7 +93,16 @@ impl CubeMapGrid {
     /// the index once on the retained layout.
     #[cfg(not(feature = "timing"))]
     pub(crate) fn new_deferred_dense(points: &[Vec3], res: usize) -> Self {
-        Self::new_impl(points, res, false, None)
+        Self::new_impl(points, res, false, true, None)
+    }
+
+    /// Build a provisional compute grid while also deferring the two
+    /// slot/global point views. Weld-enabled construction initializes those
+    /// views during the retained grid's cell-major weld traversal, avoiding
+    /// two standalone passes over provisional/final grid storage.
+    #[cfg(not(feature = "timing"))]
+    pub(crate) fn new_deferred_dense_and_point_views(points: &[Vec3], res: usize) -> Self {
+        Self::new_impl(points, res, false, false, None)
     }
 
     #[cfg(feature = "timing")]
@@ -102,13 +111,23 @@ impl CubeMapGrid {
         res: usize,
         timings: &mut CubeMapGridBuildTimings,
     ) -> Self {
-        Self::new_impl(points, res, false, Some(timings))
+        Self::new_impl(points, res, false, true, Some(timings))
+    }
+
+    #[cfg(feature = "timing")]
+    pub(crate) fn new_deferred_dense_and_point_views_with_build_timings(
+        points: &[Vec3],
+        res: usize,
+        timings: &mut CubeMapGridBuildTimings,
+    ) -> Self {
+        Self::new_impl(points, res, false, false, Some(timings))
     }
 
     fn new_impl(
         points: &[Vec3],
         res: usize,
         build_dense_index: bool,
+        build_point_views: bool,
         #[cfg(feature = "timing")] mut timings: Option<&mut CubeMapGridBuildTimings>,
         #[cfg(not(feature = "timing"))] _timings: Option<&mut CubeMapGridBuildTimings>,
     ) -> Self {
@@ -386,27 +405,32 @@ impl CubeMapGrid {
             timings.cell_bounds += t.elapsed();
         }
 
-        // Inverse mapping: point index -> SOA slot (slot indexes into point_indices/cell_points_*).
-        let mut point_slots: Vec<u32> = vec![u32::MAX; points.len()];
-        for (slot, &global) in point_indices.iter().enumerate() {
-            let idx = global as usize;
+        let (point_slots, cell_points_aos) = if build_point_views {
+            // Inverse mapping: point index -> SOA slot (slot indexes into
+            // point_indices/cell_points_*).
+            let mut point_slots: Vec<u32> = vec![u32::MAX; points.len()];
+            for (slot, &global) in point_indices.iter().enumerate() {
+                let idx = global as usize;
+                debug_assert!(
+                    idx < point_slots.len(),
+                    "grid returned out-of-range point index"
+                );
+                point_slots[idx] = slot as u32;
+            }
             debug_assert!(
-                idx < point_slots.len(),
-                "grid returned out-of-range point index"
+                !point_slots.contains(&u32::MAX),
+                "point_slots not fully initialized"
             );
-            point_slots[idx] = slot as u32;
-        }
-        debug_assert!(
-            !point_slots.contains(&u32::MAX),
-            "point_slots not fully initialized"
-        );
-
-        let cell_points_aos = build_pos_aos(
-            &cell_points_x,
-            &cell_points_y,
-            &cell_points_z,
-            &point_indices,
-        );
+            let cell_points_aos = build_pos_aos(
+                &cell_points_x,
+                &cell_points_y,
+                &cell_points_z,
+                &point_indices,
+            );
+            (point_slots, cell_points_aos)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         // Dense-cell side index (punch 1): built only for over-full cells, so
         // None on uniform input. Side structure; leaves the SoA untouched.
         let dense_index = if build_dense_index {

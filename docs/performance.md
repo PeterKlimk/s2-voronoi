@@ -511,6 +511,22 @@ Recently accepted optimizations:
   (-0.30% to +1.06% when expressed as candidate speedup, 18/30 favorable). The clear Fibonacci win,
   reduced retired/data work, and absence of a material uniform loss justify keeping the guard.
 
+- **Fused weld point-view finalization:** preprocessing-enabled grid builds defer the
+  global-id-to-slot inverse and slot-ordered `SlotPoint` stream until occupancy feedback selects
+  the retained grid, then initialize both inside the existing same-cell weld loop. Disabled
+  preprocessing keeps the original grid-build path, while a `MergeWithin` radius too large for
+  grid adjacency retains the standalone detector and finalizes the selected grid separately. A
+  differential test pins the weld-pair set and both point views exactly against a normal grid.
+  At 1M single-threaded native Linux with preprocessing, Fibonacci added 0.21% instructions and
+  0.24% branches but reduced hardware cache references 5.06%; uniform at 96 bins added 0.17% and
+  0.20% while reducing cache references 7.23%. Cycles were unresolved. Cachegrind at 20k
+  Fibonacci independently measured 2.22% fewer D1 misses and 10.48% fewer I1 misses, alongside
+  0.13--0.14% more instruction/data references. The quiet eight-thread Intel Mac supplied the
+  throughput result at 2M: twenty multithreaded Fibonacci pairs were 1.98% faster (95% interval
+  1.16--2.80%, 16/20 favorable), and uniform was 2.31% faster (1.57--3.04%, 19/20). A 1M
+  single-threaded Fibonacci guardrail was also 0.93% faster (0.31--1.55%, 13/20). This is an
+  accepted locality win despite slightly more scalar retired work.
+
 Measured gates awaiting a design experiment:
 
 - **Output materialization:** the null-write ceiling is large enough to pursue, but it does not
@@ -535,11 +551,6 @@ Untried probes and candidates (2026-07-17 triage; each begins with a cheap measu
   lines, none TLB reach. WSL reported millions of data-TLB misses at 2M, but its page and memory
   behavior is not representative enough to gate an allocator/THP change. Repeat the counter probe
   on native Linux before trying `madvise(MADV_HUGEPAGE)` on slot arrays, shards, or grid storage.
-- **Input-side pass fusion:** the preprocess weld scan, grid build, and binning each stream all n
-  input points as separate passes; the binning double-decode is already on the code-review
-  backlog. Fusing the weld scan into the grid-build pass removes one full input stream — pure
-  bandwidth in the phase that is bandwidth-bound. Must preserve the bimodal weld-compaction
-  behavior and grid determinism.
 - **Dense-gated directional termination certificate:** the archived certificate (d9d0975) closed
   negative on fib/uniform (+3.9–4.5% instructions), but the residual dense-cap cost after
   band-prune is certificate depth, and mega runs ~11x candidate inflation versus ~1.6x normal.

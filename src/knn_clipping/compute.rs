@@ -1446,22 +1446,22 @@ fn prepare_points_and_grid(
         PreprocessMode::MergeWithin(threshold) => Some(threshold),
     };
 
-    let (mut grid, mut dense_index_eligible) = build_query_grid(points, tb);
+    let (mut grid, mut dense_index_eligible) = build_query_grid(points, tb, threshold.is_some());
 
     let t = Timer::start();
     let mut effective_points = None;
     let mut merge_result = None;
     if let Some(threshold) = threshold {
         if threshold <= grid.max_grid_weld_threshold() {
-            let pairs = grid.collect_weld_pairs(threshold).map_err(|coincident_pairs| {
-                crate::VoronoiError::DegenerateInput {
+            let pairs = grid
+                .collect_weld_pairs_and_finalize_point_views(threshold)
+                .map_err(|coincident_pairs| crate::VoronoiError::DegenerateInput {
                     coincident_pairs,
                     message: format!(
                         "weld detection exceeded the retained-pair budget of {}; reduce the merge threshold or deduplicate the input",
                         crate::cube_grid::MAX_RETAINED_WELD_PAIRS
                     ),
-                }
-            })?;
+                })?;
             tb.set_weld_pair_stats(pairs.len(), pairs.capacity());
             if !pairs.is_empty() {
                 let (mut result, kept) = super::preprocess::merge_result_from_pairs(points, &pairs);
@@ -1488,10 +1488,11 @@ fn prepare_points_and_grid(
             })?;
             if result.num_merged > 0 {
                 let pts = std::mem::take(&mut result.effective_points);
-                (grid, dense_index_eligible) = build_query_grid(&pts, tb);
+                (grid, dense_index_eligible) = build_query_grid(&pts, tb, true);
                 effective_points = Some(pts);
                 merge_result = Some(result);
             }
+            grid.finalize_point_views();
         }
     }
     tb.set_preprocess(t.elapsed());
@@ -1545,6 +1546,7 @@ fn cell_sum_sq_per_n(grid: &crate::cube_grid::CubeMapGrid, n: usize) -> f64 {
 fn build_query_grid(
     effective_points: &[Vec3],
     tb: &mut TimingBuilder,
+    defer_point_views: bool,
 ) -> (crate::cube_grid::CubeMapGrid, bool) {
     let t = Timer::start();
     let n = effective_points.len();
@@ -1554,11 +1556,23 @@ fn build_query_grid(
     let build = |res: usize, #[cfg(feature = "timing")] timings: &mut CubeMapGridBuildTimings| {
         #[cfg(feature = "timing")]
         {
-            CubeMapGrid::new_deferred_dense_with_build_timings(effective_points, res, timings)
+            if defer_point_views {
+                CubeMapGrid::new_deferred_dense_and_point_views_with_build_timings(
+                    effective_points,
+                    res,
+                    timings,
+                )
+            } else {
+                CubeMapGrid::new_deferred_dense_with_build_timings(effective_points, res, timings)
+            }
         }
         #[cfg(not(feature = "timing"))]
         {
-            CubeMapGrid::new_deferred_dense(effective_points, res)
+            if defer_point_views {
+                CubeMapGrid::new_deferred_dense_and_point_views(effective_points, res)
+            } else {
+                CubeMapGrid::new_deferred_dense(effective_points, res)
+            }
         }
     };
 
@@ -2732,7 +2746,7 @@ mod tests {
         );
 
         let mut tb = TimingBuilder::new();
-        let (grid, dense_index_eligible) = build_query_grid(&points, &mut tb);
+        let (grid, dense_index_eligible) = build_query_grid(&points, &mut tb, false);
         assert!(dense_index_eligible);
         let rebuilt_occupancy = max_cell_occupancy(&grid);
         assert!(
@@ -2769,7 +2783,7 @@ mod tests {
             .collect();
 
         let mut tb = TimingBuilder::new();
-        let (mut grid, dense_index_eligible) = build_query_grid(&points, &mut tb);
+        let (mut grid, dense_index_eligible) = build_query_grid(&points, &mut tb, false);
         assert!(dense_index_eligible, "sub-cell cap must trigger regridding");
         let dense_cell = grid.point_index_to_cell(0) as u32;
         assert!(grid.cell_points(dense_cell as usize).len() > crate::policy::DENSE_CELL_THRESHOLD);

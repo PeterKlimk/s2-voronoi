@@ -16,6 +16,12 @@ use super::{cell_to_face_ij, CubeMapGrid};
 
 pub(crate) const MAX_RETAINED_WELD_PAIRS: usize = 1 << 20;
 
+#[derive(Clone, Copy)]
+struct PointViewInit {
+    point_slots_addr: usize,
+    cell_points_aos_addr: usize,
+}
+
 /// The exact computed-f32 edge predicate for the welding threshold graph.
 #[inline(always)]
 pub(crate) fn is_weld_pair(distance_squared: f32, radius_squared: f32) -> bool {
@@ -45,7 +51,80 @@ impl CubeMapGrid {
     /// contains the partner cell because `threshold` is far below the wall
     /// spacing (`max_grid_weld_threshold`). The `nc > cell` gate makes
     /// exactly one side of each cell pair do the scan.
+    #[cfg(test)]
     pub(crate) fn collect_weld_pairs(&self, threshold: f32) -> Result<Vec<(u32, u32)>, usize> {
+        self.collect_weld_pairs_impl::<false>(
+            threshold,
+            PointViewInit {
+                point_slots_addr: 0,
+                cell_points_aos_addr: 0,
+            },
+        )
+    }
+
+    /// Collect weld pairs while initializing the retained grid's two
+    /// construction/query point views. Each cell owns a disjoint slot range,
+    /// and every global point id occurs exactly once, so the existing
+    /// cell-parallel traversal can populate both destinations without
+    /// synchronization.
+    pub(crate) fn collect_weld_pairs_and_finalize_point_views(
+        &mut self,
+        threshold: f32,
+    ) -> Result<Vec<(u32, u32)>, usize> {
+        assert!(
+            self.point_slots.is_empty() && self.cell_points_aos.is_empty(),
+            "point views already initialized"
+        );
+        let n = self.point_indices.len();
+        let mut point_slots = Vec::<u32>::with_capacity(n);
+        let mut cell_points_aos = Vec::<super::SlotPoint>::with_capacity(n);
+        let init = PointViewInit {
+            point_slots_addr: point_slots.spare_capacity_mut().as_mut_ptr() as usize,
+            cell_points_aos_addr: cell_points_aos.spare_capacity_mut().as_mut_ptr() as usize,
+        };
+        let pairs = self.collect_weld_pairs_impl::<true>(threshold, init)?;
+        // SAFETY: a successful traversal visits every nonempty cell. Its slot
+        // ranges partition `0..n`, and `point_indices` is a permutation of
+        // `0..n`, so `scan_cell` initialized every element of both vectors
+        // exactly once. On an early pair-budget error, the lengths remain zero.
+        unsafe {
+            point_slots.set_len(n);
+            cell_points_aos.set_len(n);
+        }
+        debug_assert!(!point_slots.contains(&u32::MAX));
+        self.point_slots = point_slots;
+        self.cell_points_aos = cell_points_aos;
+        Ok(pairs)
+    }
+
+    /// Initialize deferred point views without weld detection. Used by the
+    /// standalone large-radius `MergeWithin` path after it selects the grid
+    /// that will be retained.
+    pub(crate) fn finalize_point_views(&mut self) {
+        if !self.point_slots.is_empty() || !self.cell_points_aos.is_empty() {
+            debug_assert_eq!(self.point_slots.len(), self.point_indices.len());
+            debug_assert_eq!(self.cell_points_aos.len(), self.point_indices.len());
+            return;
+        }
+        let n = self.point_indices.len();
+        self.point_slots = vec![u32::MAX; n];
+        for (slot, &global) in self.point_indices.iter().enumerate() {
+            self.point_slots[global as usize] = slot as u32;
+        }
+        debug_assert!(!self.point_slots.contains(&u32::MAX));
+        self.cell_points_aos = super::build::build_pos_aos(
+            &self.cell_points_x,
+            &self.cell_points_y,
+            &self.cell_points_z,
+            &self.point_indices,
+        );
+    }
+
+    fn collect_weld_pairs_impl<const FINALIZE_POINT_VIEWS: bool>(
+        &self,
+        threshold: f32,
+        point_view_init: PointViewInit,
+    ) -> Result<Vec<(u32, u32)>, usize> {
         debug_assert!(
             threshold <= self.max_grid_weld_threshold(),
             "weld threshold {} exceeds grid adjacency bound {}",
@@ -98,6 +177,25 @@ impl CubeMapGrid {
                 _ => &self.cell_points_x,
             };
             for i in start..end {
+                if FINALIZE_POINT_VIEWS {
+                    let global = self.point_indices[i] as usize;
+                    let point_slots = point_view_init.point_slots_addr as *mut u32;
+                    let cell_points_aos =
+                        point_view_init.cell_points_aos_addr as *mut super::SlotPoint;
+                    // SAFETY: cell ranges are disjoint across workers and
+                    // point_indices contains every global id exactly once.
+                    unsafe {
+                        point_slots.add(global).write(i as u32);
+                        cell_points_aos.add(i).write(super::SlotPoint {
+                            pos: Vec3::new(
+                                self.cell_points_x[i],
+                                self.cell_points_y[i],
+                                self.cell_points_z[i],
+                            ),
+                            idx: global as u32,
+                        });
+                    }
+                }
                 let gate_i = gate_points[i];
                 let candidate_start = i + 1;
                 let (candidate_chunks, candidate_tail) =
@@ -397,6 +495,38 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn fused_weld_scan_finalizes_exact_point_views() {
+        let threshold = crate::tolerances::weld_radius();
+        let points = points_with_twins(400, 40, threshold * 0.5, 91);
+        let expected = CubeMapGrid::new(&points, 13);
+
+        #[cfg(feature = "timing")]
+        let mut fused = {
+            let mut timings = crate::cube_grid::CubeMapGridBuildTimings::default();
+            CubeMapGrid::new_deferred_dense_and_point_views_with_build_timings(
+                &points,
+                13,
+                &mut timings,
+            )
+        };
+        #[cfg(not(feature = "timing"))]
+        let mut fused = CubeMapGrid::new_deferred_dense_and_point_views(&points, 13);
+
+        assert!(fused.point_slots.is_empty());
+        assert!(fused.cell_points_aos.is_empty());
+        let mut expected_pairs = expected.collect_weld_pairs(threshold).unwrap();
+        let mut fused_pairs = fused
+            .collect_weld_pairs_and_finalize_point_views(threshold)
+            .unwrap();
+        expected_pairs.sort_unstable();
+        fused_pairs.sort_unstable();
+
+        assert_eq!(fused_pairs, expected_pairs);
+        assert_eq!(fused.point_slots, expected.point_slots);
+        assert_eq!(fused.cell_points_aos, expected.cell_points_aos);
     }
 
     /// Exact-duplicate pairs straddling nothing (same coordinates) must be
