@@ -34,6 +34,14 @@ are the incoming f32 vectors, their canonicalized rounded vectors, or ideal reno
 those vectors, plus one policy for exact predicate ties. The current pipeline does not claim exact
 positions, exact combinatorics for one unified site model, or a global backward-error witness.
 
+Stored spherical directions use the checked `SpherePoint` representation. Each value has finite
+components and an f64-evaluated squared norm within `2 * f32::EPSILON` of one, produced by
+normalizing in f64 and rounding once to f32. This is a storage envelope, not a claim of exact unit
+length. Private fields prevent safe arbitrary-bit construction, and checked serde rejects altered
+off-sphere values rather than renormalizing them. The packed `#[repr(transparent)]` `[f32; 3]`
+layout and zero-copy xyz views do not imply that a Rust slice is itself a stable C ABI container or
+that every GPU uniform/storage layout accepts a 12-byte stride.
+
 The numerical certificate assumes the conventional behavior of supported floating-point targets:
 IEEE-754 binary32/binary64 round-to-nearest arithmetic without flushing relevant subnormal values,
 correctly rounded basic operations, and `f64::sqrt`/`sin_cos` accurate to within one ulp. Rust does

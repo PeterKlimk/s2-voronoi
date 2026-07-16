@@ -296,9 +296,9 @@ fn world_locator_and_lloyd_targets_match_unit_space() {
     for (i, point) in world_lloyd.iter().enumerate() {
         let projected = embedding.project_world_to_unit(point).unwrap();
         let unit_centroid = embedded.diagram().cell_centroid(i);
-        assert!((projected[0] - unit_centroid.x as f64).abs() < 1e-7);
-        assert!((projected[1] - unit_centroid.y as f64).abs() < 1e-7);
-        assert!((projected[2] - unit_centroid.z as f64).abs() < 1e-7);
+        assert!((projected[0] - unit_centroid.x() as f64).abs() < 1e-7);
+        assert!((projected[1] - unit_centroid.y() as f64).abs() < 1e-7);
+        assert!((projected[2] - unit_centroid.z() as f64).abs() < 1e-7);
         assert_eq!(*point, embedded.cell_centroid_world(i));
     }
 }

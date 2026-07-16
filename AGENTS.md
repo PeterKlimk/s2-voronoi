@@ -74,7 +74,7 @@ High-level flow per generator:
 ```text
 src/
 ├── lib.rs                         # Public API and feature-gated internal exports
-├── types.rs                       # UnitVec3 / UnitVec3Like
+├── types.rs                       # SpherePoint storage + raw input adapters
 ├── diagram.rs                     # SphericalVoronoi storage
 ├── cell_mesh.rs                   # Explicitly simplified S2 cell meshes + provenance
 ├── validation.rs                  # Topology/consistency checks
@@ -110,7 +110,7 @@ src/
 ## Features
 
 - `parallel` (default): rayon-based parallel cell construction.
-- `glam`: public `UnitVec3Like` impl/conversions for `glam::Vec3`.
+- `glam`: public input support and checked `SpherePoint` conversions for `glam::Vec3`.
 - `timing`: detailed timing instrumentation.
 - `profiling`: helpers for profiling runs (e.g. inline control).
 - `microbench`: internal microbench harnesses.

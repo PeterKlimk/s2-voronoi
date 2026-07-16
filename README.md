@@ -30,11 +30,23 @@ for cell in diagram.iter_cells() {
     let boundary = cell.vertex_indices.iter().map(|&i| diagram.vertex(i as usize));
     let _ = (generator, boundary);
 }
+
+// Packed output is available without allocation or per-point conversion.
+let vertex_xyz: &[[f32; 3]] = diagram.vertices_xyz();
+# let _ = vertex_xyz;
 # Ok::<(), voronoi_mesh::VoronoiError>(())
 ```
 
 Inputs are assumed unit-normalized. They are canonicalized once at entry (renormalized in f64,
 rounded back to f32), so `generators()` may differ from the raw input by ~1 ulp.
+
+Raw f32 input can be supplied as `UnitVec3`, `[f32; 3]`, `(f32, f32, f32)`, or—behind the
+`glam` feature—`glam::Vec3`. `UnitVec3` is an unchecked input adapter: its public fields make
+bulk import convenient, but it is never used to certify stored output. Diagram generators,
+vertices, centroids, and Lloyd targets use `SpherePoint`, whose private packed `[f32; 3]` field
+guarantees finite coordinates within `2 * f32::EPSILON` of unit squared length. Use `to_array()`,
+`as_array()`, component methods, or the zero-copy `generators_xyz()` / `vertices_xyz()` views to
+export into another math, rendering, or serialization format.
 
 ### Spheres in world coordinates
 
@@ -69,7 +81,8 @@ Smaller inputs and single-threaded pools stay serial.
 
 ## What you get
 
-- `SphericalVoronoi`: shared vertex list, per-cell boundary indices, generators.
+- `SphericalVoronoi`: checked `SpherePoint` generator/vertex storage, shared vertex list, and
+  per-cell boundary indices. Packed xyz slice views are zero-copy.
 - `cell_area(i)`, `cell_centroid(i)` — spherical areas and centroids.
 - `lloyd_step()` — one centroidal-relaxation iteration.
 - `build_adjacency()` — per-cell Voronoi neighbors aligned with boundary edges (the Delaunay
@@ -141,8 +154,9 @@ Single-threaded, ~1.8s at 1M. Per-build peak memory is roughly 0.65 KB/point.
 ## Features
 
 - `parallel` (default): rayon parallelism in cell construction.
-- `glam`: `UnitVec3Like` impl and conversions for `glam::Vec3`.
-- `serde`: `Serialize`/`Deserialize` for the diagram types.
+- `glam`: `UnitVec3Like` input support for `glam::Vec3` and checked `SpherePoint` conversions.
+- `serde`: `Serialize`/checked `Deserialize` for diagram types; invalid stored sphere points are
+  rejected rather than silently normalized.
 - `timing`: phase and sub-phase timing reports.
 
 ## Development documents

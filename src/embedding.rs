@@ -7,7 +7,7 @@
 use std::fmt;
 
 use crate::{
-    ComputeOutput, ComputeReport, SphereLocator, SphericalVoronoi, UnitVec3, VoronoiConfig,
+    ComputeOutput, ComputeReport, SphereLocator, SpherePoint, SphericalVoronoi, VoronoiConfig,
     VoronoiError,
 };
 
@@ -279,7 +279,7 @@ impl SphereEmbedding {
 
     /// Embed a unit direction as a world-space point on the sphere.
     ///
-    /// `direction` is assumed unit-normalized, following the [`UnitVec3`]
+    /// `direction` is assumed unit-normalized, following the [`SpherePoint`]
     /// contract. The embedding constructor guarantees finite output for such
     /// directions.
     #[inline]
@@ -301,8 +301,12 @@ impl SphereEmbedding {
     }
 
     #[inline]
-    fn stored_unit_to_world(self, direction: UnitVec3) -> [f64; 3] {
-        self.unit_to_world([direction.x as f64, direction.y as f64, direction.z as f64])
+    fn stored_unit_to_world(self, direction: SpherePoint) -> [f64; 3] {
+        self.unit_to_world([
+            direction.x() as f64,
+            direction.y() as f64,
+            direction.z() as f64,
+        ])
     }
 }
 
@@ -327,7 +331,7 @@ fn normalize_scaled_valid(mut v: [f64; 3]) -> [f64; 3] {
 fn projected_unit_f32<P: WorldVec3Like + ?Sized>(
     embedding: SphereEmbedding,
     point: &P,
-) -> Result<UnitVec3, SphereProjectionError> {
+) -> Result<SpherePoint, SphereProjectionError> {
     projected_components_f32(embedding, world_components(point))
 }
 
@@ -335,12 +339,12 @@ fn projected_unit_f32<P: WorldVec3Like + ?Sized>(
 fn projected_components_f32(
     embedding: SphereEmbedding,
     world: [f64; 3],
-) -> Result<UnitVec3, SphereProjectionError> {
+) -> Result<SpherePoint, SphereProjectionError> {
     embedding.validate_world_point(world)?;
     let u = embedding.project_validated_world(world);
-    let point = UnitVec3::new(u[0] as f32, u[1] as f32, u[2] as f32);
+    let point = SpherePoint::from_direction_dvec3(glam::DVec3::from_array(u));
     #[cfg(feature = "profiling")]
-    crate::point_audit::record_unit_f64_canonical(
+    crate::point_audit::record_sphere_point_f64_canonical(
         crate::point_audit::PointProducer::EmbeddingProjection,
         point,
     );
@@ -390,7 +394,7 @@ fn project_points<P: WorldVec3Like>(
                                 world_points.iter().zip(output_chunk.iter_mut()).enumerate()
                             {
                                 match projected_components_f32(embedding, world) {
-                                    Ok(u) => *output = glam::Vec3::new(u.x, u.y, u.z),
+                                    Ok(u) => *output = glam::Vec3::from_array(u.to_array()),
                                     Err(err) => {
                                         if first_error.is_none() {
                                             first_error = Some((point_start + offset, err));
@@ -422,7 +426,7 @@ fn project_points<P: WorldVec3Like>(
         .enumerate()
         .map(|(point_index, point)| {
             projected_unit_f32(embedding, point)
-                .map(|u| glam::Vec3::new(u.x, u.y, u.z))
+                .map(|u| glam::Vec3::from_array(u.to_array()))
                 .map_err(|err| VoronoiError::InvalidInput {
                     point_index,
                     message: err.to_string(),
@@ -771,7 +775,7 @@ impl EmbeddedSphereLocator {
         &self,
         queries: &[P],
     ) -> Result<Vec<usize>, IndexedSphereProjectionError> {
-        let directions: Result<Vec<UnitVec3>, IndexedSphereProjectionError> = queries
+        let directions: Result<Vec<SpherePoint>, IndexedSphereProjectionError> = queries
             .iter()
             .enumerate()
             .map(|(point_index, query)| {
@@ -883,7 +887,7 @@ mod projection_tests {
             .iter()
             .map(|point| {
                 let u = projected_unit_f32(embedding, point).unwrap();
-                glam::Vec3::new(u.x, u.y, u.z)
+                glam::Vec3::from_array(u.to_array())
             })
             .collect();
 

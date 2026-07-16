@@ -95,7 +95,7 @@ impl SphericalVoronoi {
                 continue;
             }
             let p = self.vertex(v);
-            let p = DVec3::new(p.x as f64, p.y as f64, p.z as f64);
+            let p = DVec3::new(p.x() as f64, p.y() as f64, p.z() as f64);
             // Tangent basis at the vertex; generators sorted CCW around the
             // outward normal are CCW viewed from outside.
             let e1 = p.cross(reference_axis(p)).normalize();
@@ -103,7 +103,7 @@ impl SphericalVoronoi {
             ring.clear();
             for &c in cells {
                 let g = self.generator(c as usize);
-                let g = DVec3::new(g.x as f64, g.y as f64, g.z as f64);
+                let g = DVec3::new(g.x() as f64, g.y() as f64, g.z() as f64);
                 ring.push((g.dot(e2).atan2(g.dot(e1)), c));
             }
             ring.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));

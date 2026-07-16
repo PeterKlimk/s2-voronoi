@@ -55,7 +55,7 @@ prevention rather than an overclaimed proof.
 | ID | Priority | Status | Next gate |
 |---|---:|---|---|
 | WORK-002 | P2 | Ongoing | Exercise after construction/repair changes |
-| POINT-001 | P2 | Ready | Implement checked `SpherePoint` and audited storage rule |
+| POINT-001 | P2 | Completed | Checked `SpherePoint`, audited storage rule, and packed views landed |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
@@ -64,12 +64,12 @@ prevention rather than an overclaimed proof.
 | RESEARCH-003 | P3 | Backburner | First choose a compatible exact-zero/SoS model |
 | RESEARCH-004 | P3 | Backburner | Commit to full f64 representation and search bounds |
 
-## Ready work
+## Completed work
 
 ### POINT-001 — Checked spherical point boundary
 
 - **Priority:** P2
-- **Status:** Ready 2026-07-17
+- **Status:** Completed 2026-07-17
 - **Decision:** implement private-field packed `SpherePoint` with a finite
   `2 * f32::EPSILON` squared-norm envelope. Raw arrays and closure ingest remain the
   interoperability boundary; glam remains internal arithmetic.
@@ -82,6 +82,12 @@ prevention rather than an overclaimed proof.
 - **Implementation scope:** migrate public producers/consumers and checked serde together; add the
   audited final allocation ownership transfer and packed xyz views; preserve safe raw import APIs.
   Locator query semantics remain a separate correctness/API stage.
+- **Result:** all stored/public directions now use the finite `2 * f32::EPSILON` envelope and
+  checked private-field type. Exact packed views and backend allocation ownership reuse are tested;
+  checked serde rejects invalid stored values. Full default and `serde,glam` release suites,
+  no-default-feature checks, doctests, and focused Valgrind Memcheck passed. Clippy completed with
+  the repository's existing warnings. The Mac and Linux performance evidence is recorded in
+  [`point-api-plan.md`](point-api-plan.md#stage-1--apply-the-representation-decision-and-remove-the-final-point-conversion).
 
 ## Ongoing work
 

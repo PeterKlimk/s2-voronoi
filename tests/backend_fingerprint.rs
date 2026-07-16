@@ -96,9 +96,9 @@ fn backend_fingerprint() {
 
     let mut h: u64 = 0xcbf29ce484222325;
     for v in diagram.vertices() {
-        mix(&mut h, v.x.to_bits() as u64);
-        mix(&mut h, v.y.to_bits() as u64);
-        mix(&mut h, v.z.to_bits() as u64);
+        mix(&mut h, v.x().to_bits() as u64);
+        mix(&mut h, v.y().to_bits() as u64);
+        mix(&mut h, v.z().to_bits() as u64);
     }
     for cell in diagram.iter_cells() {
         for &i in cell.vertex_indices {

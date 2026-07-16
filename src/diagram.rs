@@ -1,6 +1,6 @@
 //! Spherical Voronoi diagram storage and access.
 
-use crate::UnitVec3;
+use crate::SpherePoint;
 use glam::Vec3;
 
 /// A spherical Voronoi diagram on the unit sphere.
@@ -27,10 +27,10 @@ use glam::Vec3;
 #[cfg_attr(feature = "serde", serde(try_from = "wire::SphericalVoronoiWire"))]
 pub struct SphericalVoronoi {
     /// Generator points (input), one per cell.
-    generators: Vec<UnitVec3>,
+    generators: Vec<SpherePoint>,
 
     /// Voronoi vertices (shared between cells).
-    vertices: Vec<UnitVec3>,
+    vertices: Vec<SpherePoint>,
 
     /// Per-cell data: (start_index, vertex_count) into cell_indices.
     cells: Vec<CellData>,
@@ -56,7 +56,7 @@ impl SphericalVoronoi {
     ///
     /// This is a small test helper for constructing diagrams without running the backend.
     #[cfg(test)]
-    pub(crate) fn empty(generators: Vec<UnitVec3>) -> Self {
+    pub(crate) fn empty(generators: Vec<SpherePoint>) -> Self {
         let n = generators.len();
         Self {
             generators,
@@ -69,8 +69,8 @@ impl SphericalVoronoi {
 
     #[cfg(test)]
     pub(crate) fn from_cells_and_indices(
-        generators: Vec<UnitVec3>,
-        vertices: Vec<UnitVec3>,
+        generators: Vec<SpherePoint>,
+        vertices: Vec<SpherePoint>,
         cell_starts: Vec<u32>,
         cell_counts: Vec<u16>,
         cell_indices: Vec<u32>,
@@ -115,15 +115,16 @@ impl SphericalVoronoi {
                 );
             }
         }
+        // SAFETY: all backend producers use the audited f64-normalize-then-
+        // round storage rule before assembly. Reconciliation only selects or
+        // reuses those certified positions.
+        let generators = unsafe { crate::types::sphere_points_from_vec3(generators) };
+        // SAFETY: same producer invariant as generators; Local3d minted
+        // vertices use the same canonical storage rule.
+        let vertices = unsafe { crate::types::sphere_points_from_vec3(vertices) };
         Self {
-            generators: generators
-                .into_iter()
-                .map(|v| UnitVec3::new(v.x, v.y, v.z))
-                .collect(),
-            vertices: vertices
-                .into_iter()
-                .map(|v| UnitVec3::new(v.x, v.y, v.z))
-                .collect(),
+            generators,
+            vertices,
             cells: cells
                 .into_iter()
                 .map(|c| CellData {
@@ -144,8 +145,14 @@ impl SphericalVoronoi {
 
     /// Borrow all generator points.
     #[inline]
-    pub fn generators(&self) -> &[UnitVec3] {
+    pub fn generators(&self) -> &[SpherePoint] {
         &self.generators
+    }
+
+    /// Borrow generator coordinates as tightly packed xyz triples.
+    #[inline]
+    pub fn generators_xyz(&self) -> &[[f32; 3]] {
+        crate::types::sphere_points_as_xyz(&self.generators)
     }
 
     /// Number of vertices.
@@ -156,8 +163,14 @@ impl SphericalVoronoi {
 
     /// Borrow all Voronoi vertices.
     #[inline]
-    pub fn vertices(&self) -> &[UnitVec3] {
+    pub fn vertices(&self) -> &[SpherePoint] {
         &self.vertices
+    }
+
+    /// Borrow Voronoi vertex coordinates as tightly packed xyz triples.
+    #[inline]
+    pub fn vertices_xyz(&self) -> &[[f32; 3]] {
+        crate::types::sphere_points_as_xyz(&self.vertices)
     }
 
     /// Start offset of a cell's range in the shared index buffer (used by
@@ -209,14 +222,14 @@ impl SphericalVoronoi {
     /// checked access to user-supplied indices.
     #[inline]
     #[track_caller]
-    pub fn generator(&self, index: usize) -> UnitVec3 {
+    pub fn generator(&self, index: usize) -> SpherePoint {
         self.generators[index]
     }
 
     /// Checked form of [`Self::generator`]: `None` when `index` is out of
     /// bounds.
     #[inline]
-    pub fn get_generator(&self, index: usize) -> Option<UnitVec3> {
+    pub fn get_generator(&self, index: usize) -> Option<SpherePoint> {
         self.generators.get(index).copied()
     }
 
@@ -228,13 +241,13 @@ impl SphericalVoronoi {
     /// checked access to user-supplied indices.
     #[inline]
     #[track_caller]
-    pub fn vertex(&self, index: usize) -> UnitVec3 {
+    pub fn vertex(&self, index: usize) -> SpherePoint {
         self.vertices[index]
     }
 
     /// Checked form of [`Self::vertex`]: `None` when `index` is out of bounds.
     #[inline]
-    pub fn get_vertex(&self, index: usize) -> Option<UnitVec3> {
+    pub fn get_vertex(&self, index: usize) -> Option<SpherePoint> {
         self.vertices.get(index).copied()
     }
 
@@ -426,12 +439,12 @@ impl VoronoiCell {
 /// derived `Serialize` on the real struct defines the format.
 #[cfg(feature = "serde")]
 mod wire {
-    use super::{CellData, SphericalVoronoi, UnitVec3};
+    use super::{CellData, SpherePoint, SphericalVoronoi};
 
     #[derive(serde::Deserialize)]
     pub struct SphericalVoronoiWire {
-        generators: Vec<UnitVec3>,
-        vertices: Vec<UnitVec3>,
+        generators: Vec<SpherePoint>,
+        vertices: Vec<SpherePoint>,
         cells: Vec<CellData>,
         cell_indices: Vec<u32>,
         weld_map: Option<Vec<u32>>,
@@ -519,9 +532,13 @@ mod wire {
 mod tests {
     use super::*;
 
+    fn point(x: f32, y: f32, z: f32) -> SpherePoint {
+        SpherePoint::try_from_xyz([x, y, z]).unwrap()
+    }
+
     #[test]
     fn test_empty_diagram() {
-        let generators = vec![UnitVec3::new(1.0, 0.0, 0.0), UnitVec3::new(0.0, 1.0, 0.0)];
+        let generators = vec![point(1.0, 0.0, 0.0), point(0.0, 1.0, 0.0)];
         let diagram = SphericalVoronoi::empty(generators);
 
         assert_eq!(diagram.num_cells(), 2);
@@ -532,14 +549,14 @@ mod tests {
 
     #[test]
     fn test_compact_vertices_removes_orphans_and_remaps() {
-        let generators = vec![UnitVec3::new(1.0, 0.0, 0.0), UnitVec3::new(-1.0, 0.0, 0.0)];
+        let generators = vec![point(1.0, 0.0, 0.0), point(-1.0, 0.0, 0.0)];
         // Vertex 2 is an orphan; 0, 1, 3, 4 are referenced.
         let vertices = vec![
-            UnitVec3::new(0.0, 1.0, 0.0),
-            UnitVec3::new(0.0, -1.0, 0.0),
-            UnitVec3::new(0.577, 0.577, 0.577),
-            UnitVec3::new(0.0, 0.0, 1.0),
-            UnitVec3::new(0.0, 0.0, -1.0),
+            point(0.0, 1.0, 0.0),
+            point(0.0, -1.0, 0.0),
+            point(0.577, 0.577, 0.577),
+            point(0.0, 0.0, 1.0),
+            point(0.0, 0.0, -1.0),
         ];
         let mut diagram = SphericalVoronoi::from_cells_and_indices(
             generators,
@@ -555,7 +572,7 @@ mod tests {
         // Indices above the orphan shift down by one; the rest are unchanged.
         assert_eq!(diagram.cell(0).vertex_indices, &[0, 2, 1, 3]);
         assert_eq!(diagram.cell(1).vertex_indices, &[0, 3, 1, 2]);
-        assert_eq!(diagram.vertex(2), UnitVec3::new(0.0, 0.0, 1.0));
+        assert_eq!(diagram.vertex(2), point(0.0, 0.0, 1.0));
         // Second call is a no-op.
         assert_eq!(diagram.compact_vertices(), 0);
     }
@@ -564,12 +581,12 @@ mod tests {
     fn test_compact_vertices_preserves_weld_aliasing() {
         let generators = vec![
             glam::Vec3::new(1.0, 0.0, 0.0),
-            glam::Vec3::new(1.0, 1e-7, 0.0),
+            glam::Vec3::new(1.0, 1e-7, 0.0).normalize(),
             glam::Vec3::new(-1.0, 0.0, 0.0),
         ];
         let vertices = vec![
             glam::Vec3::new(0.0, 1.0, 0.0),
-            glam::Vec3::new(0.3, 0.3, 0.9), // orphan
+            glam::Vec3::new(0.3, 0.3, 0.9).normalize(), // orphan
             glam::Vec3::new(0.0, -1.0, 0.0),
             glam::Vec3::new(0.0, 0.0, 1.0),
             glam::Vec3::new(0.0, 0.0, -1.0),
@@ -603,12 +620,12 @@ mod tests {
 
     #[test]
     fn test_from_parts() {
-        let generators = vec![UnitVec3::new(1.0, 0.0, 0.0), UnitVec3::new(-1.0, 0.0, 0.0)];
+        let generators = vec![point(1.0, 0.0, 0.0), point(-1.0, 0.0, 0.0)];
         let vertices = vec![
-            UnitVec3::new(0.0, 1.0, 0.0),
-            UnitVec3::new(0.0, -1.0, 0.0),
-            UnitVec3::new(0.0, 0.0, 1.0),
-            UnitVec3::new(0.0, 0.0, -1.0),
+            point(0.0, 1.0, 0.0),
+            point(0.0, -1.0, 0.0),
+            point(0.0, 0.0, 1.0),
+            point(0.0, 0.0, -1.0),
         ];
         // Cell 0 uses vertices 0,2,1,3; Cell 1 uses same but different order
         let cell_starts = vec![0, 4];
@@ -627,5 +644,62 @@ mod tests {
         assert_eq!(diagram.num_vertices(), 4);
         assert_eq!(diagram.cell(0).len(), 4);
         assert_eq!(diagram.cell(1).len(), 4);
+    }
+
+    #[test]
+    fn raw_parts_transfer_point_allocations_without_copying() {
+        let generators = vec![
+            crate::types::canonical_vec3_from_dvec3(glam::DVec3::new(1.0, 2.0, 3.0)),
+            crate::types::canonical_vec3_from_dvec3(glam::DVec3::new(-1.0, -2.0, -3.0)),
+        ];
+        let vertices = vec![
+            crate::types::canonical_vec3_from_dvec3(glam::DVec3::new(3.0, -2.0, 1.0)),
+            crate::types::canonical_vec3_from_dvec3(glam::DVec3::new(-3.0, 2.0, -1.0)),
+        ];
+        let generator_pointer = generators.as_ptr().cast::<u8>();
+        let vertex_pointer = vertices.as_ptr().cast::<u8>();
+        let generator_bits: Vec<[u32; 3]> = generators
+            .iter()
+            .map(|point| point.to_array().map(f32::to_bits))
+            .collect();
+        let vertex_bits: Vec<[u32; 3]> = vertices
+            .iter()
+            .map(|point| point.to_array().map(f32::to_bits))
+            .collect();
+
+        let diagram = SphericalVoronoi::from_raw_parts(
+            generators,
+            vertices,
+            vec![VoronoiCell::new(0, 0), VoronoiCell::new(0, 0)],
+            Vec::new(),
+            None,
+        );
+
+        assert_eq!(
+            diagram.generators().as_ptr().cast::<u8>(),
+            generator_pointer
+        );
+        assert_eq!(diagram.vertices().as_ptr().cast::<u8>(), vertex_pointer);
+        assert_eq!(
+            diagram.generators_xyz().as_ptr().cast::<u8>(),
+            generator_pointer
+        );
+        assert_eq!(diagram.vertices_xyz().as_ptr().cast::<u8>(), vertex_pointer);
+        assert_eq!(
+            diagram
+                .generators_xyz()
+                .iter()
+                .map(|xyz| xyz.map(f32::to_bits))
+                .collect::<Vec<_>>(),
+            generator_bits
+        );
+        assert_eq!(
+            diagram
+                .vertices_xyz()
+                .iter()
+                .map(|xyz| xyz.map(f32::to_bits))
+                .collect::<Vec<_>>(),
+            vertex_bits
+        );
     }
 }

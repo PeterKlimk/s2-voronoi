@@ -60,7 +60,7 @@ fn sphere_delaunay_is_complete_dual() {
         // CCW viewed from outside: positive scalar triple product.
         let g = |i: u32| {
             let p = diagram.generator(i as usize);
-            glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64)
+            glam::DVec3::new(p.x() as f64, p.y() as f64, p.z() as f64)
         };
         let det = g(t[0]).cross(g(t[1])).dot(g(t[2]));
         assert!(det > 0.0, "triangle {t:?} not CCW (det {det})");
@@ -80,7 +80,7 @@ fn sphere_delaunay_empty_circumcircle() {
     let diagram = compute(&points).unwrap();
     let g = |i: u32| {
         let p = diagram.generator(i as usize);
-        glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64)
+        glam::DVec3::new(p.x() as f64, p.y() as f64, p.z() as f64)
     };
     for t in diagram.delaunay_triangles() {
         let (a, b, c) = (g(t[0]), g(t[1]), g(t[2]));

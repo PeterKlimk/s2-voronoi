@@ -31,6 +31,10 @@
 //! - shared Voronoi vertices, accessible via [`SphericalVoronoi::vertices`] / [`SphericalVoronoi::vertex`]
 //! - per-cell vertex index lists, accessible via [`SphericalVoronoi::cell`] / [`SphericalVoronoi::iter_cells`]
 //!
+//! Generators and vertices are checked, packed [`SpherePoint`] values. Use
+//! [`SphericalVoronoi::generators_xyz`] and [`SphericalVoronoi::vertices_xyz`]
+//! for zero-copy `&[[f32; 3]]` interoperability.
+//!
 //! For strict subdivision and exact-invariant checks on computed output, use
 //! [`validation::validate`].
 //!
@@ -169,7 +173,9 @@ pub mod escalate_probe {
 }
 
 pub use locate::SphereLocator;
-pub use types::{UnitVec3, UnitVec3Like};
+pub use types::{
+    SpherePoint, SpherePointError, UnitVec3, UnitVec3Like, SPHERE_POINT_MAX_NORM_SQUARED_ERROR,
+};
 
 /// Reset profiling-only spherical point-envelope counters.
 #[cfg(feature = "profiling")]

@@ -1141,8 +1141,7 @@ fn canonicalize_and_find_first_non_finite(points: &mut [Vec3]) -> Option<usize> 
             let v = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
             let len_sq = v.length_squared();
             if (0.25..=4.0).contains(&len_sq) {
-                let n = v / len_sq.sqrt();
-                *p = Vec3::new(n.x as f32, n.y as f32, n.z as f32);
+                *p = crate::types::canonical_vec3_from_dvec3(v);
             }
             #[cfg(feature = "profiling")]
             crate::point_audit::record_vec3_from_dvec3(
@@ -2069,7 +2068,7 @@ mod tests {
         let vertices = diagram
             .vertices()
             .iter()
-            .map(|v| Vec3::new(v.x, v.y, v.z))
+            .map(|v| Vec3::from_array(v.to_array()))
             .collect();
         let cells = (0..diagram.num_cells())
             .map(|i| VoronoiCell::new(diagram.cell_start(i), diagram.cell(i).len() as u16))
@@ -2188,7 +2187,7 @@ mod tests {
         let base_generators: Vec<Vec3> = good
             .generators()
             .iter()
-            .map(|g| Vec3::new(g.x, g.y, g.z))
+            .map(|g| Vec3::from_array(g.to_array()))
             .collect();
         let (base_vertices, base_cells, base_indices) = effective_arrays(&good);
         crate::validation::verify_sphere_effective_strict(
@@ -2305,7 +2304,7 @@ mod tests {
         let generators = good
             .generators()
             .iter()
-            .map(|g| Vec3::new(g.x, g.y, g.z))
+            .map(|g| Vec3::from_array(g.to_array()))
             .collect();
         let mut weld_map: Vec<u32> = (0..base_cells.len() as u32).collect();
         weld_map[1] = 0;

@@ -5,21 +5,21 @@
 mod support;
 
 use support::points::random_sphere_points;
-use voronoi_mesh::{compute, UnitVec3};
+use voronoi_mesh::{compute, SpherePoint, UnitVec3, UnitVec3Like};
 
 /// Distance-comparison slack: locator and brute force may round differently
 /// (normalized vs raw coordinates), so a tie can resolve to a different
 /// index whose distance differs by a few ULPs.
 const REL_EPS: f64 = 1e-5;
 
-fn dot(a: UnitVec3, b: UnitVec3) -> f64 {
-    a.x as f64 * b.x as f64 + a.y as f64 * b.y as f64 + a.z as f64 * b.z as f64
+fn dot<A: UnitVec3Like, B: UnitVec3Like>(a: &A, b: &B) -> f64 {
+    a.x() as f64 * b.x() as f64 + a.y() as f64 * b.y() as f64 + a.z() as f64 * b.z() as f64
 }
 
-fn brute_nearest_sphere(generators: &[UnitVec3], q: UnitVec3) -> (usize, f64) {
+fn brute_nearest_sphere(generators: &[SpherePoint], q: &UnitVec3) -> (usize, f64) {
     let mut best = (0usize, f64::NEG_INFINITY);
     for (i, g) in generators.iter().enumerate() {
-        let d = dot(*g, q);
+        let d = dot(g, q);
         if d > best.1 {
             best = (i, d);
         }
@@ -35,9 +35,9 @@ fn sphere_locate_matches_brute_force() {
     let queries = random_sphere_points(3000, 12);
     for q in &queries {
         let found = locator.locate(q);
-        let (brute, brute_dot) = brute_nearest_sphere(diagram.generators(), *q);
+        let (brute, brute_dot) = brute_nearest_sphere(diagram.generators(), q);
         if found != brute {
-            let found_dot = dot(diagram.generator(found), *q);
+            let found_dot = dot(&diagram.generator(found), q);
             assert!(
                 found_dot >= brute_dot - REL_EPS,
                 "locate returned {found} (dot {found_dot}), brute force {brute} (dot {brute_dot})"
@@ -86,9 +86,9 @@ fn locate_small_diagrams() {
     let queries = random_sphere_points(200, 92);
     for q in &queries {
         let found = locator.locate(q);
-        let (brute, brute_dot) = brute_nearest_sphere(diagram.generators(), *q);
+        let (brute, brute_dot) = brute_nearest_sphere(diagram.generators(), q);
         if found != brute {
-            let found_dot = dot(diagram.generator(found), *q);
+            let found_dot = dot(&diagram.generator(found), q);
             assert!(found_dot >= brute_dot - REL_EPS);
         }
     }

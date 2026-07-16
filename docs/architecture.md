@@ -115,13 +115,19 @@ Geometric accuracy is best-effort (f64 internally, f32 storage); topological coh
 adjacent cells' combinatorial decisions to agree. Keep that distinction explicit when touching any
 of the mechanisms above.
 
+Final generators and vertices are stored as `SpherePoint`: a private-field, 12-byte `[f32; 3]`
+wrapper enforcing the common finite squared-norm envelope. Backend `glam::Vec3` allocations are
+transferred directly into this layout after construction; public packed xyz views borrow the same
+memory. `UnitVec3` remains an unchecked raw input adapter and is not a stored-output certificate.
+
 ## Module map
 
 - `lib.rs` — public API. `diagram.rs` — Voronoi diagram storage and views. `cell_mesh.rs` — dense
   explicitly simplified spherical cell meshes, provenance, and generic mesh validation.
-- `types.rs` — `UnitVec3`, `UnitVec3Like`. `tolerances.rs` — numerical slack, with per-constant
-  justification. `policy.rs` — performance heuristics (grid density, packed sizing, termination
-  cadence), kept separate from tolerances.
+- `types.rs` — checked `SpherePoint` storage, unchecked `UnitVec3` input, and `UnitVec3Like` input
+  adaptation. `tolerances.rs` — numerical slack, with per-constant justification. `policy.rs` —
+  performance heuristics (grid density, packed sizing, termination cadence), kept separate from
+  tolerances.
 - `embedding.rs` — f64 world-coordinate projection, `SphereEmbedding`, embedded diagram/report
   wrappers, and world-space point location; delegates all geometry to the unit backend.
 - `live_dedup/` — the geometry-agnostic core: sharded vertex ownership, deferred-slot patching,

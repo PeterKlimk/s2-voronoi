@@ -456,7 +456,7 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
     if diagram
         .vertices()
         .iter()
-        .any(|v| !vertex_is_on_sphere(v.x, v.y, v.z))
+        .any(|v| !vertex_is_on_sphere(v.x(), v.y(), v.z()))
     {
         return Err("off-sphere vertex");
     }
@@ -593,15 +593,15 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
         let (a, b) = edge_vertices(first.key);
         let va = diagram.vertex(a);
         let vb = diagram.vertex(b);
-        let dot = va.x * vb.x + va.y * vb.y + va.z * vb.z;
+        let dot = va.dot(vb);
         if dot <= -1.0 + ANTIPODAL_DOT_EPS {
             let owner = diagram.generator(group[0].cell as usize);
             let neighbor = diagram.generator(group[1].cell as usize);
             let class = owner_arc_class(
-                glam::Vec3::new(va.x, va.y, va.z),
-                glam::Vec3::new(vb.x, vb.y, vb.z),
-                glam::Vec3::new(owner.x, owner.y, owner.z),
-                glam::Vec3::new(neighbor.x, neighbor.y, neighbor.z),
+                glam::Vec3::from_array(va.to_array()),
+                glam::Vec3::from_array(vb.to_array()),
+                glam::Vec3::from_array(owner.to_array()),
+                glam::Vec3::from_array(neighbor.to_array()),
             );
             if matches!(
                 class,
@@ -1014,7 +1014,7 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
         let use_spill = len > seen_stack.len();
         let mut cell_has_duplicate_vertices = false;
         let mut cell_has_invalid_reference = false;
-        let mut distinct_positions = [crate::UnitVec3::new(0.0, 0.0, 0.0); 3];
+        let mut distinct_positions = [None; 3];
         let mut distinct_position_count = 0usize;
 
         for &vi in cell.vertex_indices {
@@ -1047,9 +1047,9 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
 
             let position = vertices[vi as usize];
             if distinct_position_count < 3
-                && !distinct_positions[..distinct_position_count].contains(&position)
+                && !distinct_positions[..distinct_position_count].contains(&Some(position))
             {
-                distinct_positions[distinct_position_count] = position;
+                distinct_positions[distinct_position_count] = Some(position);
                 distinct_position_count += 1;
             }
         }
@@ -1145,23 +1145,23 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
         let (a, b) = edge_vertices(key);
         let va = diagram.vertex(a);
         let vb = diagram.vertex(b);
-        if va.x == vb.x && va.y == vb.y && va.z == vb.z {
+        if va == vb {
             zero_length_edges += 1;
         }
         if stat.cells.len() != 2 {
             continue;
         }
-        let dot = va.x * vb.x + va.y * vb.y + va.z * vb.z;
+        let dot = va.dot(vb);
         if dot > -1.0 + ANTIPODAL_DOT_EPS {
             continue;
         }
         let owner = diagram.generator(stat.cells[0]);
         let neighbor = diagram.generator(stat.cells[1]);
         let class = owner_arc_class(
-            glam::Vec3::new(va.x, va.y, va.z),
-            glam::Vec3::new(vb.x, vb.y, vb.z),
-            glam::Vec3::new(owner.x, owner.y, owner.z),
-            glam::Vec3::new(neighbor.x, neighbor.y, neighbor.z),
+            glam::Vec3::from_array(va.to_array()),
+            glam::Vec3::from_array(vb.to_array()),
+            glam::Vec3::from_array(owner.to_array()),
+            glam::Vec3::from_array(neighbor.to_array()),
         );
         if matches!(
             class,
@@ -1212,7 +1212,7 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
 
     let mut vertices_off_sphere = 0usize;
     for v in vertices {
-        if !vertex_is_on_sphere(v.x, v.y, v.z) {
+        if !vertex_is_on_sphere(v.x(), v.y(), v.z()) {
             vertices_off_sphere += 1;
         }
     }
@@ -1343,7 +1343,7 @@ mod verify_gate_tests {
         let verts = d
             .vertices()
             .iter()
-            .map(|v| Vec3::new(v.x, v.y, v.z))
+            .map(|v| Vec3::from_array(v.to_array()))
             .collect();
         let cells = (0..d.num_cells())
             .map(|i| crate::diagram::VoronoiCell::new(d.cell_start(i), d.cell(i).len() as u16))
@@ -1358,7 +1358,7 @@ mod verify_gate_tests {
         let generators: Vec<Vec3> = d
             .generators()
             .iter()
-            .map(|g| Vec3::new(g.x, g.y, g.z))
+            .map(|g| Vec3::from_array(g.to_array()))
             .collect();
         let fast = verify_sphere_fast(d);
         let eff = verify_sphere_effective_strict(&generators, &v, &c, &ci);
@@ -1406,28 +1406,28 @@ mod verify_gate_tests {
         assert!(verify_sphere_fast(&dup_cell).is_err());
         assert_agree(&dup_cell);
 
-        // Invalid: an off-sphere vertex on an otherwise-valid diagram. (The
-        // validator does not read generator positions, so a placeholder vec of
-        // the right length suffices.)
+        // Raw effective arrays can still be rejected before they become a
+        // diagram. A checked SpherePoint-backed SphericalVoronoi cannot safely
+        // contain these coordinates, so there is intentionally no
+        // verify_sphere_fast comparison for these cases.
         let (mut v, c, ci) = effective_arrays(&good);
         v[0] *= 2.0;
         let generators = vec![Vec3::new(0.0, 0.0, 1.0); c.len()];
-        let corrupted = SphericalVoronoi::from_raw_parts(generators, v, c, ci, None);
-        assert!(verify_sphere_fast(&corrupted).is_err());
-        assert_agree(&corrupted);
+        assert_eq!(
+            verify_sphere_effective_strict(&generators, &v, &c, &ci),
+            Err("off-sphere vertex")
+        );
 
         // Invalid: non-finite coordinates must not exploit NaN comparison
-        // semantics to pass either the report or strict validation paths.
+        // semantics in the effective-array gate.
         for coordinate in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
             let (mut v, c, ci) = effective_arrays(&good);
             v[0].x = coordinate;
             let generators = vec![Vec3::new(0.0, 0.0, 1.0); c.len()];
-            let corrupted = SphericalVoronoi::from_raw_parts(generators, v, c, ci, None);
-            let report = validate(&corrupted);
-            assert_eq!(report.vertices_off_sphere, 1);
-            assert!(!report.is_strictly_valid());
-            assert_eq!(verify_sphere_fast(&corrupted), Err("off-sphere vertex"));
-            assert_agree(&corrupted);
+            assert_eq!(
+                verify_sphere_effective_strict(&generators, &v, &c, &ci),
+                Err("off-sphere vertex")
+            );
         }
     }
 }

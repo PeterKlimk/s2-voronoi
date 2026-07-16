@@ -62,7 +62,7 @@ impl SphericalVoronoi {
         let generators: Vec<Vec3> = self
             .generators()
             .iter()
-            .map(|g| Vec3::new(g.x, g.y, g.z))
+            .map(|g| Vec3::from_array(g.to_array()))
             .collect();
         let n = generators.len();
         let res = ((n as f64 / (6.0 * 16.0)).sqrt() as usize).max(4);

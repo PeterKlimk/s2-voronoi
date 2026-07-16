@@ -1,7 +1,6 @@
 //! Profiling-only attribution for stored/public spherical-direction envelopes.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::OnceLock;
 
 const EPS: f64 = f32::EPSILON as f64;
 
@@ -208,7 +207,6 @@ fn normalize_f64_then_store(source: [f64; 3]) -> [f32; 3] {
 static ENVELOPES: [AtomicEnvelope; PRODUCER_COUNT] =
     [const { AtomicEnvelope::new() }; PRODUCER_COUNT];
 static ENABLED: AtomicBool = AtomicBool::new(false);
-static USE_F64_RULE: OnceLock<bool> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug)]
 pub struct PointEnvelopeSummary {
@@ -259,32 +257,19 @@ pub(crate) fn record_vec3_from_dvec3(
     ENVELOPES[producer as usize].record(current.to_array(), source.to_array());
 }
 
-/// Profiling-only candidate switch. The default preserves production bits and
-/// either branch performs exactly one normalization.
-pub(crate) fn select_direction(
-    rounded: glam::Vec3,
-    rounded_len_sq: f32,
-    source: glam::DVec3,
-) -> glam::Vec3 {
-    if *USE_F64_RULE
-        .get_or_init(|| std::env::var("VORONOI_MESH_POINT_CANONICALIZER").as_deref() == Ok("f64"))
-    {
-        let stored = normalize_f64_then_store(source.to_array());
-        glam::Vec3::from_array(stored)
-    } else {
-        rounded * rounded_len_sq.sqrt().recip()
-    }
-}
-
-pub(crate) fn record_unit_f64_canonical(producer: PointProducer, current: crate::UnitVec3) {
+pub(crate) fn record_sphere_point_f64_canonical(
+    producer: PointProducer,
+    current: crate::SpherePoint,
+) {
     if !ENABLED.load(Ordering::Relaxed) {
         return;
     }
-    ENVELOPES[producer as usize].record_f64_canonical([current.x, current.y, current.z]);
+    ENVELOPES[producer as usize].record_f64_canonical(current.to_array());
 }
 
-pub(crate) fn record_unit(producer: PointProducer, point: crate::UnitVec3) {
-    record_xyz(producer, point.x, point.y, point.z);
+pub(crate) fn record_sphere_point(producer: PointProducer, point: crate::SpherePoint) {
+    let [x, y, z] = point.to_array();
+    record_xyz(producer, x, y, z);
 }
 
 pub(crate) fn snapshot() -> Vec<PointEnvelopeSummary> {

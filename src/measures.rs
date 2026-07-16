@@ -6,15 +6,15 @@
 
 use crate::spherical_arc::{resolve_owner_arc, OwnerArc};
 use crate::tolerances::ANTIPODAL_DOT_EPS;
-use crate::{SphericalVoronoi, UnitVec3};
+use crate::{SpherePoint, SphericalVoronoi};
 use glam::DVec3;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 type OwnerPairs = FxHashMap<u64, [u32; 2]>;
 
 #[inline]
-fn dvec(v: UnitVec3) -> DVec3 {
-    DVec3::new(v.x as f64, v.y as f64, v.z as f64)
+fn dvec(v: SpherePoint) -> DVec3 {
+    DVec3::new(v.x() as f64, v.y() as f64, v.z() as f64)
 }
 
 #[inline]
@@ -151,7 +151,7 @@ fn cell_centroid_pass(
     diagram: &SphericalVoronoi,
     index: usize,
     owners: Option<&OwnerPairs>,
-) -> (UnitVec3, bool) {
+) -> (SpherePoint, bool) {
     let cell = diagram.cell(index);
     let generator = diagram.generator(index);
     if cell.len() < 3 {
@@ -193,10 +193,7 @@ fn cell_centroid_pass(
     if centroid.dot(dvec(generator)) < 0.0 {
         centroid = -centroid;
     }
-    (
-        UnitVec3::new(centroid.x as f32, centroid.y as f32, centroid.z as f32),
-        conditioned,
-    )
+    (SpherePoint::from_direction_dvec3(centroid), conditioned)
 }
 
 impl SphericalVoronoi {
@@ -241,12 +238,12 @@ impl SphericalVoronoi {
     ///
     /// Panics if `index >= self.num_cells()` (see [`Self::cell`]).
     #[track_caller]
-    pub fn cell_centroid(&self, index: usize) -> UnitVec3 {
+    pub fn cell_centroid(&self, index: usize) -> SpherePoint {
         let index = self.canonical_cell_index(index);
         let (centroid, conditioned) = cell_centroid_pass(self, index, None);
         if !conditioned {
             #[cfg(feature = "profiling")]
-            crate::point_audit::record_unit_f64_canonical(
+            crate::point_audit::record_sphere_point_f64_canonical(
                 crate::point_audit::PointProducer::Centroid,
                 centroid,
             );
@@ -256,7 +253,7 @@ impl SphericalVoronoi {
         let owners = resolve_owner_pairs(self, &keys);
         let centroid = cell_centroid_pass(self, index, Some(&owners)).0;
         #[cfg(feature = "profiling")]
-        crate::point_audit::record_unit_f64_canonical(
+        crate::point_audit::record_sphere_point_f64_canonical(
             crate::point_audit::PointProducer::Centroid,
             centroid,
         );
@@ -276,8 +273,8 @@ impl SphericalVoronoi {
     /// inputs remain coincident (and re-weld) under relaxation. If any cell
     /// has a near-semicircle edge, the batch resolves all such owners in one
     /// cold linear scan rather than rebuilding adjacency per cell.
-    pub fn lloyd_step(&self) -> Vec<UnitVec3> {
-        let mut centroids = vec![UnitVec3::new(0.0, 0.0, 0.0); self.num_cells()];
+    pub fn lloyd_step(&self) -> Vec<SpherePoint> {
+        let mut centroids = self.generators().to_vec();
         let mut conditioned_cells = Vec::new();
         for (index, slot) in centroids.iter_mut().enumerate() {
             if self.canonical_cell_index(index) != index {
@@ -306,7 +303,7 @@ impl SphericalVoronoi {
         }
         #[cfg(feature = "profiling")]
         for &centroid in &centroids {
-            crate::point_audit::record_unit_f64_canonical(
+            crate::point_audit::record_sphere_point_f64_canonical(
                 crate::point_audit::PointProducer::Centroid,
                 centroid,
             );

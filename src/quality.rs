@@ -242,7 +242,7 @@ pub fn assess_canonicalization<P: crate::UnitVec3Like>(
         .zip(returned_diagram.generators())
         .filter_map(|(before, after)| {
             let before = DVec3::new(before.x() as f64, before.y() as f64, before.z() as f64);
-            let after = DVec3::new(after.x as f64, after.y as f64, after.z as f64);
+            let after = DVec3::new(after.x() as f64, after.y() as f64, after.z() as f64);
             (before.length_squared() > 0.0 && after.length_squared() > 0.0)
                 .then(|| angular_separation(before.normalize(), after.normalize()))
         })
@@ -254,12 +254,12 @@ pub fn assess_with_config(diagram: &SphericalVoronoi, config: QualityConfig) -> 
     let generators: Vec<Vec3> = diagram
         .generators()
         .iter()
-        .map(|g| Vec3::new(g.x, g.y, g.z))
+        .map(|g| Vec3::from_array(g.to_array()))
         .collect();
     let vertices: Vec<Vec3> = diagram
         .vertices()
         .iter()
-        .map(|v| Vec3::new(v.x, v.y, v.z))
+        .map(|v| Vec3::from_array(v.to_array()))
         .collect();
     let normalized_generators: Vec<DVec3> = generators.iter().copied().map(normalize_f64).collect();
     let normalized_vertices: Vec<DVec3> = vertices.iter().copied().map(normalize_f64).collect();
@@ -639,11 +639,11 @@ fn analyze_low_degree_vertices(diagram: &SphericalVoronoi) -> LowDegreeQualitySt
 
     let grid_size = 1e-4_f32;
     let inv_grid = 1.0 / grid_size;
-    let grid_key = |v: &crate::UnitVec3| -> (i32, i32, i32) {
+    let grid_key = |v: &crate::SpherePoint| -> (i32, i32, i32) {
         (
-            (v.x * inv_grid) as i32,
-            (v.y * inv_grid) as i32,
-            (v.z * inv_grid) as i32,
+            (v.x() * inv_grid) as i32,
+            (v.y() * inv_grid) as i32,
+            (v.z() * inv_grid) as i32,
         )
     };
 
@@ -669,9 +669,9 @@ fn analyze_low_degree_vertices(diagram: &SphericalVoronoi) -> LowDegreeQualitySt
                                 continue;
                             }
                             let other = &diagram_vertices[j];
-                            let d = (v.x - other.x).powi(2)
-                                + (v.y - other.y).powi(2)
-                                + (v.z - other.z).powi(2);
+                            let d = (v.x() - other.x()).powi(2)
+                                + (v.y() - other.y()).powi(2)
+                                + (v.z() - other.z()).powi(2);
                             min_dist_sq = min_dist_sq.min(d);
                         }
                     }

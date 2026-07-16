@@ -67,7 +67,7 @@ fn exact_position_class_count(output: &voronoi_mesh::SphericalVoronoi, cell: usi
         let p = output.vertex(vertex as usize);
         // Ordinary float equality deliberately identifies signed zero, as the
         // production stored-direction predicate does.
-        let key = (p.x, p.y, p.z);
+        let key = (p.x(), p.y(), p.z());
         if !classes.contains(&key) {
             classes.push(key);
         }

@@ -1,6 +1,6 @@
 //! Spherical cell meshes produced by explicit output-resolution simplification.
 
-use crate::{CellAdjacency, UnitVec3};
+use crate::{CellAdjacency, SpherePoint};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt;
 
@@ -25,10 +25,10 @@ struct MeshCellData {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(try_from = "CellMeshWire"))]
 pub struct SphericalCellMesh {
-    vertices: Vec<UnitVec3>,
+    vertices: Vec<SpherePoint>,
     cells: Vec<MeshCellData>,
     cell_indices: Vec<u32>,
-    cell_source_sites: Vec<UnitVec3>,
+    cell_source_sites: Vec<SpherePoint>,
     cell_to_input: Vec<u32>,
     input_to_cell: Vec<u32>,
 }
@@ -36,10 +36,10 @@ pub struct SphericalCellMesh {
 #[cfg(feature = "serde")]
 #[derive(serde::Deserialize)]
 struct CellMeshWire {
-    vertices: Vec<UnitVec3>,
+    vertices: Vec<SpherePoint>,
     cells: Vec<MeshCellData>,
     cell_indices: Vec<u32>,
-    cell_source_sites: Vec<UnitVec3>,
+    cell_source_sites: Vec<SpherePoint>,
     cell_to_input: Vec<u32>,
     input_to_cell: Vec<u32>,
 }
@@ -80,9 +80,9 @@ impl TryFrom<CellMeshWire> for SphericalCellMesh {
 
 impl SphericalCellMesh {
     pub(crate) fn from_raw_parts(
-        vertices: Vec<UnitVec3>,
+        vertices: Vec<SpherePoint>,
         cell_cycles: Vec<Vec<u32>>,
-        cell_source_sites: Vec<UnitVec3>,
+        cell_source_sites: Vec<SpherePoint>,
         cell_to_input: Vec<u32>,
         input_to_cell: Vec<Option<u32>>,
     ) -> Self {
@@ -91,13 +91,13 @@ impl SphericalCellMesh {
         #[cfg(feature = "profiling")]
         {
             for &vertex in &vertices {
-                crate::point_audit::record_unit(
+                crate::point_audit::record_sphere_point(
                     crate::point_audit::PointProducer::CellMeshVertex,
                     vertex,
                 );
             }
             for &site in &cell_source_sites {
-                crate::point_audit::record_unit(
+                crate::point_audit::record_sphere_point(
                     crate::point_audit::PointProducer::CellMeshSourceSite,
                     site,
                 );
@@ -140,8 +140,14 @@ impl SphericalCellMesh {
 
     /// Borrow all mesh vertices.
     #[inline]
-    pub fn vertices(&self) -> &[UnitVec3] {
+    pub fn vertices(&self) -> &[SpherePoint] {
         &self.vertices
+    }
+
+    /// Borrow mesh vertex coordinates as tightly packed xyz triples.
+    #[inline]
+    pub fn vertices_xyz(&self) -> &[[f32; 3]] {
+        crate::types::sphere_points_as_xyz(&self.vertices)
     }
 
     /// Return a mesh vertex.
@@ -151,13 +157,13 @@ impl SphericalCellMesh {
     /// Panics when `index >= self.num_vertices()`.
     #[inline]
     #[track_caller]
-    pub fn vertex(&self, index: usize) -> UnitVec3 {
+    pub fn vertex(&self, index: usize) -> SpherePoint {
         self.vertices[index]
     }
 
     /// Checked form of [`Self::vertex`].
     #[inline]
-    pub fn get_vertex(&self, index: usize) -> Option<UnitVec3> {
+    pub fn get_vertex(&self, index: usize) -> Option<SpherePoint> {
         self.vertices.get(index).copied()
     }
 
@@ -243,14 +249,20 @@ impl SphericalCellMesh {
     /// Delaunay, or Lloyd semantics. Panics for an out-of-range cell.
     #[inline]
     #[track_caller]
-    pub fn source_site(&self, cell: usize) -> UnitVec3 {
+    pub fn source_site(&self, cell: usize) -> SpherePoint {
         self.cell_source_sites[cell]
     }
 
     /// Checked form of [`Self::source_site`].
     #[inline]
-    pub fn get_source_site(&self, cell: usize) -> Option<UnitVec3> {
+    pub fn get_source_site(&self, cell: usize) -> Option<SpherePoint> {
         self.cell_source_sites.get(cell).copied()
+    }
+
+    /// Borrow source-site directions as tightly packed xyz triples.
+    #[inline]
+    pub fn source_sites_xyz(&self) -> &[[f32; 3]] {
+        crate::types::sphere_points_as_xyz(&self.cell_source_sites)
     }
 
     /// Build combinatorial cell adjacency aligned with boundary edges.
@@ -550,12 +562,12 @@ fn prepare_elided_cell_mesh(
     let generators: Vec<glam::Vec3> = preferred
         .generators()
         .iter()
-        .map(|site| glam::Vec3::new(site.x, site.y, site.z))
+        .map(|site| glam::Vec3::from_array(site.to_array()))
         .collect();
     let vertices: Vec<glam::Vec3> = preferred
         .vertices()
         .iter()
-        .map(|vertex| glam::Vec3::new(vertex.x, vertex.y, vertex.z))
+        .map(|vertex| glam::Vec3::from_array(vertex.to_array()))
         .collect();
     let mut cells = Vec::with_capacity(preferred.num_cells());
     let mut cell_indices = Vec::new();
@@ -626,7 +638,7 @@ fn prepare_elided_cell_mesh(
         .iter()
         .map(|&effective| effective_to_input[effective as usize])
         .collect();
-    let cell_source_sites: Vec<UnitVec3> = elision
+    let cell_source_sites: Vec<SpherePoint> = elision
         .cell_to_effective
         .iter()
         .map(|&effective| preferred.generator(effective as usize))
@@ -674,7 +686,7 @@ struct EdgeUse {
 fn validate_cell_mesh(mesh: &SphericalCellMesh) -> CellMeshValidationReport {
     let mut vertices_off_sphere = 0usize;
     for vertex in &mesh.vertices {
-        let len_sq = vertex.x * vertex.x + vertex.y * vertex.y + vertex.z * vertex.z;
+        let len_sq = vertex.length_squared();
         if !len_sq.is_finite() || (len_sq - 1.0).abs() > crate::tolerances::VERTEX_ON_SPHERE_EPS {
             vertices_off_sphere += 1;
         }
@@ -713,14 +725,14 @@ fn validate_cell_mesh(mesh: &SphericalCellMesh) -> CellMeshValidationReport {
             cells_with_invalid_references += 1;
             continue;
         }
-        let mut distinct_positions = [UnitVec3::new(0.0, 0.0, 0.0); 3];
+        let mut distinct_positions = [None; 3];
         let mut distinct_position_count = 0usize;
         for &vertex in cycle {
             let position = mesh.vertices[vertex as usize];
             if distinct_position_count < 3
-                && !distinct_positions[..distinct_position_count].contains(&position)
+                && !distinct_positions[..distinct_position_count].contains(&Some(position))
             {
-                distinct_positions[distinct_position_count] = position;
+                distinct_positions[distinct_position_count] = Some(position);
                 distinct_position_count += 1;
             }
         }
@@ -822,7 +834,7 @@ fn validate_cell_mesh(mesh: &SphericalCellMesh) -> CellMeshValidationReport {
         } else {
             let va = mesh.vertices[a as usize];
             let vb = mesh.vertices[b as usize];
-            if va.x == -vb.x && va.y == -vb.y && va.z == -vb.z {
+            if va.x() == -vb.x() && va.y() == -vb.y() && va.z() == -vb.z() {
                 antipodal_edges += 1;
             }
         }
@@ -857,7 +869,7 @@ fn validate_cell_mesh(mesh: &SphericalCellMesh) -> CellMeshValidationReport {
             .cell_source_sites
             .iter()
             .filter(|site| {
-                let len_sq = site.x * site.x + site.y * site.y + site.z * site.z;
+                let len_sq = site.length_squared();
                 !len_sq.is_finite()
                     || (len_sq - 1.0).abs() > crate::tolerances::VERTEX_ON_SPHERE_EPS
             })
@@ -914,16 +926,17 @@ fn validate_cell_mesh(mesh: &SphericalCellMesh) -> CellMeshValidationReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::UnitVec3;
 
-    fn unit(x: f32, y: f32, z: f32) -> UnitVec3 {
-        UnitVec3::new(x, y, z).normalize()
+    fn unit(x: f32, y: f32, z: f32) -> SpherePoint {
+        SpherePoint::try_from_xyz([x, y, z]).unwrap()
     }
 
-    fn fixture_mesh(vertices: Vec<UnitVec3>, cycles: &[&[u32]]) -> SphericalCellMesh {
+    fn fixture_mesh(vertices: Vec<SpherePoint>, cycles: &[&[u32]]) -> SphericalCellMesh {
         SphericalCellMesh::from_raw_parts(
             vertices,
             cycles.iter().map(|cycle| cycle.to_vec()).collect(),
-            vec![UnitVec3::new(0.0, 0.0, 1.0); cycles.len()],
+            vec![unit(0.0, 0.0, 1.0); cycles.len()],
             (0..cycles.len() as u32).collect(),
             (0..cycles.len() as u32).map(Some).collect(),
         )

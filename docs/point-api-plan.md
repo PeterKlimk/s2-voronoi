@@ -326,6 +326,28 @@ Gate result:
 
 ### Stage 1 — apply the representation decision and remove the final point conversion
 
+**Completed 2026-07-17.** The implementation introduced private-field packed `SpherePoint`
+storage across diagrams, explicit cell meshes, centroids/Lloyd output, and embedding projection;
+kept `UnitVec3`/`UnitVec3Like` as unchecked raw-input adapters; added checked exact-value serde;
+and exposed zero-copy packed xyz views. All legitimate producers use the Stage-0
+f64-normalize-then-f32-round contract. The final `Vec<Vec3>` allocations transfer ownership across
+one audited layout boundary, with compile-time size/alignment checks, exact-bit/pointer/capacity
+tests, a compile-fail private-construction test, and focused Valgrind Memcheck coverage.
+
+The allocation benchmark corrected one premise of this stage: the prior same-layout
+`map(...).collect()` was already optimized into in-place collection by the tested Rust toolchain.
+At 2M single-threaded Fibonacci, both versions reported `assemble = 0.0 ms`, while peak RSS was
+effectively identical (baseline 539,800--539,828 KiB; candidate 539,620--539,952 KiB). The explicit
+ownership transfer therefore guarantees and audits reuse but does not produce an additional
+observable allocation win on this toolchain.
+
+The remaining performance movement matches the already accepted Stage-0 numerical migration. At
+500k, three Linux `perf stat` runs measured +0.38% retired instructions and +0.05% branches; cycles,
+cache misses, and wall time remained noisy. Cachegrind at 50k measured +0.70% instruction references
+and +0.26% branches. On the native Intel Mac, 20 interleaved single-threaded 1M Fibonacci rounds
+were 1697.3 ms median before and 1702.3 ms after (+0.29%, classified `~same`; spreads 2.0% and
+3.2%). This is consistent with the Stage-0 decision and shows no native wall-time regression.
+
 - Under A, keep `UnitVec3`, `UnitVec3Like`, serde shape, and every existing public signature
   unchanged. Replace the two elementwise `Vec3 -> UnitVec3` collections in
   `SphericalVoronoi::from_raw_parts` with a checked allocation cast.

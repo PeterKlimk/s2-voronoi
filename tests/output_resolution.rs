@@ -374,9 +374,9 @@ fn explicit_elision_returns_a_dense_valid_cell_mesh() {
     assert_eq!(
         embedded.mesh.vertex_world(0),
         [
-            2.0 + 7.0 * unit_vertex.x as f64,
-            -3.0 + 7.0 * unit_vertex.y as f64,
-            5.0 + 7.0 * unit_vertex.z as f64,
+            2.0 + 7.0 * unit_vertex.x() as f64,
+            -3.0 + 7.0 * unit_vertex.y() as f64,
+            5.0 + 7.0 * unit_vertex.z() as f64,
         ]
     );
 }

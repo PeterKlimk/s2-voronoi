@@ -16,7 +16,7 @@ fn test_vertices_on_unit_sphere() {
     let diagram = compute(&points).unwrap();
 
     for (i, v) in diagram.vertices().iter().enumerate() {
-        let len = (v.x * v.x + v.y * v.y + v.z * v.z).sqrt();
+        let len = v.length_squared().sqrt();
         assert!(
             (len - 1.0).abs() < 1e-5,
             "vertex {} not on unit sphere: length = {}",
@@ -160,7 +160,9 @@ fn test_reproducibility() {
 
     // Compare vertex positions
     for (v1, v2) in diagram1.vertices().iter().zip(diagram2.vertices().iter()) {
-        let diff = ((v1.x - v2.x).powi(2) + (v1.y - v2.y).powi(2) + (v1.z - v2.z).powi(2)).sqrt();
+        let [x1, y1, z1] = v1.to_array();
+        let [x2, y2, z2] = v2.to_array();
+        let diff = ((x1 - x2).powi(2) + (y1 - y2).powi(2) + (z1 - z2).powi(2)).sqrt();
         assert!(diff < 1e-6, "vertices should be identical");
     }
 }
@@ -242,10 +244,11 @@ fn test_cell_centroids_unit_length_and_near_generator() {
     let mean_spacing = (4.0 * std::f64::consts::PI / 2_000.0f64).sqrt();
     for i in 0..diagram.num_cells() {
         let c = diagram.cell_centroid(i);
-        let len = (c.x as f64).hypot(c.y as f64).hypot(c.z as f64);
+        let [cx, cy, cz] = c.to_array();
+        let len = (cx as f64).hypot(cy as f64).hypot(cz as f64);
         assert!((len - 1.0).abs() < 1e-6, "centroid must be unit length");
         let g = diagram.generator(i);
-        let dot = (c.x * g.x + c.y * g.y + c.z * g.z) as f64;
+        let dot = c.dot(g) as f64;
         let angle = dot.clamp(-1.0, 1.0).acos();
         assert!(
             angle < mean_spacing,
@@ -256,14 +259,14 @@ fn test_cell_centroids_unit_length_and_near_generator() {
 
 #[test]
 fn test_lloyd_relaxation_converges_toward_centroidal() {
-    let mut points = fibonacci_sphere_points(500, 0.5, 99);
+    let points = fibonacci_sphere_points(500, 0.5, 99);
 
     let mean_displacement = |diagram: &voronoi_mesh::SphericalVoronoi| -> f64 {
         (0..diagram.num_cells())
             .map(|i| {
                 let g = diagram.generator(i);
                 let c = diagram.cell_centroid(i);
-                let dot = ((g.x * c.x + g.y * c.y + g.z * c.z) as f64).clamp(-1.0, 1.0);
+                let dot = (g.dot(c) as f64).clamp(-1.0, 1.0);
                 dot.acos()
             })
             .sum::<f64>()
@@ -271,8 +274,8 @@ fn test_lloyd_relaxation_converges_toward_centroidal() {
     };
 
     let mut last = f64::MAX;
+    let mut diagram = compute(&points).unwrap();
     for iteration in 0..3 {
-        let diagram = compute(&points).unwrap();
         let displacement = mean_displacement(&diagram);
         assert!(
             displacement < last,
@@ -280,6 +283,6 @@ fn test_lloyd_relaxation_converges_toward_centroidal() {
              displacement ({displacement} >= {last})"
         );
         last = displacement;
-        points = diagram.lloyd_step();
+        diagram = compute(&diagram.lloyd_step()).unwrap();
     }
 }

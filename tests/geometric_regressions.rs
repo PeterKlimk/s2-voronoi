@@ -3,19 +3,20 @@
 use std::collections::BTreeMap;
 
 use voronoi_mesh::{
-    compute_with, compute_with_report, validation::validate, RepairMode, UnitVec3, VoronoiConfig,
+    compute_with, compute_with_report, validation::validate, RepairMode, UnitVec3, UnitVec3Like,
+    VoronoiConfig,
 };
 
 const HEALTHY_F32_DOT_RESIDUAL: f64 = 2.0e-6;
 
-fn dot(a: &UnitVec3, b: &UnitVec3) -> f64 {
-    a.x as f64 * b.x as f64 + a.y as f64 * b.y as f64 + a.z as f64 * b.z as f64
+fn dot<A: UnitVec3Like, B: UnitVec3Like>(a: &A, b: &B) -> f64 {
+    a.x() as f64 * b.x() as f64 + a.y() as f64 * b.y() as f64 + a.z() as f64 * b.z() as f64
 }
 
-fn normalized_chord_sample(a: &UnitVec3, b: &UnitVec3, t: f64) -> UnitVec3 {
-    let x = a.x as f64 * (1.0 - t) + b.x as f64 * t;
-    let y = a.y as f64 * (1.0 - t) + b.y as f64 * t;
-    let z = a.z as f64 * (1.0 - t) + b.z as f64 * t;
+fn normalized_chord_sample<A: UnitVec3Like, B: UnitVec3Like>(a: &A, b: &B, t: f64) -> UnitVec3 {
+    let x = a.x() as f64 * (1.0 - t) + b.x() as f64 * t;
+    let y = a.y() as f64 * (1.0 - t) + b.y() as f64 * t;
+    let z = a.z() as f64 * (1.0 - t) + b.z() as f64 * t;
     let inv_len = 1.0 / x.hypot(y).hypot(z);
     UnitVec3::new(
         (x * inv_len) as f32,

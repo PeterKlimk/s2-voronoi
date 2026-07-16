@@ -15,7 +15,8 @@ use support::points::{
     random_sphere_points,
 };
 use voronoi_mesh::{
-    compute_with_report, validation::validate, SphericalVoronoi, UnitVec3, VoronoiConfig,
+    compute_with_report, validation::validate, SphericalVoronoi, UnitVec3, UnitVec3Like,
+    VoronoiConfig,
 };
 
 // Small diagrams can contain nearly antipodal edge endpoints, where rounding
@@ -42,8 +43,8 @@ impl IntrinsicGeometry {
     }
 }
 
-fn normalized(p: &UnitVec3) -> DVec3 {
-    DVec3::new(p.x as f64, p.y as f64, p.z as f64).normalize()
+fn normalized<P: UnitVec3Like>(p: &P) -> DVec3 {
+    DVec3::new(p.x() as f64, p.y() as f64, p.z() as f64).normalize()
 }
 
 fn angular_distance(a: DVec3, b: DVec3) -> f64 {
@@ -81,9 +82,9 @@ fn owner_plane_arc_sample(a: DVec3, b: DVec3, ga: DVec3, gb: DVec3, t: f64) -> D
     (a * (t * angle).cos() + tangent * (t * angle).sin()).normalize()
 }
 
-fn measure_intrinsic_geometry(
-    generators: &[UnitVec3],
-    vertices: &[UnitVec3],
+fn measure_intrinsic_geometry<G: UnitVec3Like, V: UnitVec3Like>(
+    generators: &[G],
+    vertices: &[V],
     cells: &[Vec<u32>],
 ) -> IntrinsicGeometry {
     let generators: Vec<DVec3> = generators.iter().map(normalized).collect();

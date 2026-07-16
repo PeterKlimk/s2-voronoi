@@ -141,7 +141,7 @@ fn mega_repair_is_deterministic_single_threaded() {
                 .diagram
                 .vertices()
                 .iter()
-                .map(|v| (v.x.to_bits(), v.y.to_bits(), v.z.to_bits()))
+                .map(|v| (v.x().to_bits(), v.y().to_bits(), v.z().to_bits()))
                 .collect();
             let cells: Vec<Vec<u32>> = (0..out.diagram.num_cells())
                 .map(|i| out.diagram.cell(i).vertex_indices.to_vec())

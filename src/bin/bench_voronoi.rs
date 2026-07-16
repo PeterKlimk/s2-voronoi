@@ -666,9 +666,9 @@ fn run_benchmark_with_config(
         }
         let mut coordinates = DefaultHasher::new();
         for point in diagram.generators().iter().chain(diagram.vertices()) {
-            coordinates.write_u32(point.x.to_bits());
-            coordinates.write_u32(point.y.to_bits());
-            coordinates.write_u32(point.z.to_bits());
+            coordinates.write_u32(point.x().to_bits());
+            coordinates.write_u32(point.y().to_bits());
+            coordinates.write_u32(point.z().to_bits());
         }
         println!(
             "POINT_AUDIT_HASH topology={:016x} coordinates={:016x}",

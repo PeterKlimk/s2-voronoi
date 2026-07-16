@@ -496,7 +496,8 @@ fn test_generators_preserved() {
     assert_eq!(diagram.generators().len(), points.len());
     for (i, (gen, orig)) in diagram.generators().iter().zip(points.iter()).enumerate() {
         let diff =
-            ((gen.x - orig.x).powi(2) + (gen.y - orig.y).powi(2) + (gen.z - orig.z).powi(2)).sqrt();
+            ((gen.x() - orig.x).powi(2) + (gen.y() - orig.y).powi(2) + (gen.z() - orig.z).powi(2))
+                .sqrt();
         assert!(diff < 1e-6, "generator {} differs from input: {}", i, diff);
     }
 }
@@ -711,6 +712,26 @@ fn test_serde_deserialize_rejects_malformed_data() {
     })
     .expect_err("cell/generator count mismatch must be rejected");
     assert!(err.to_string().contains("count"), "unexpected error: {err}");
+
+    // Checked point storage rejects invalid exact coordinates. Deserialization
+    // must not silently normalize an altered diagram payload.
+    let err = corrupt(&|v| {
+        v["generators"][0] = serde_json::json!([0.5, 0.5, 0.5]);
+    })
+    .expect_err("off-sphere generator storage must be rejected");
+    assert!(
+        err.to_string().contains("envelope"),
+        "unexpected error: {err}"
+    );
+
+    let err = corrupt(&|v| {
+        v["vertices"][0] = serde_json::json!([0.0, 0.0, 0.0]);
+    })
+    .expect_err("directionless vertex storage must be rejected");
+    assert!(
+        err.to_string().contains("envelope"),
+        "unexpected error: {err}"
+    );
 
     // The unmodified value still deserializes.
     corrupt(&|_| {}).expect("unmodified wire data must round-trip");
