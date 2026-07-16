@@ -37,16 +37,22 @@ The measured result is also recorded in [`performance.md`](performance.md).
 
 ## Candidate ideas
 
-### Selected-neighbor constraint batches
+### Selected-neighbor constraint batches — closed negative 2026-07-16
 
-The directed neighbor pipeline currently collapses selected, dot-bearing batches to slot ids before
-the gnomonic builder reconstructs constraints one at a time. A backend-private selected-constraint
-stage could preserve the exact batch, prepare a small rolling window of generator-local bisectors,
-and reject redundant constraints together before ordered polygon mutation. This is deliberate
-hot-path fusion rather than a proposal to put gnomonic geometry in the general cube-grid API.
+The directed neighbor pipeline collapses selected, dot-bearing batches to slot ids before the
+gnomonic builder reconstructs constraints one at a time. A backend-private selected-constraint
+stage was proposed to preserve the exact batch, prepare a rolling window of generator-local
+bisectors, and reject redundant constraints together before ordered polygon mutation.
 
-The numerical invariants, staged experiments, telemetry, and measurement matrix are developed in
-the dedicated [`selected-neighbor constraint batch plan`](constraint-batch-pipeline-idea.md).
+Every staged form was built, verified behavior-identical, and rejected on 500k pinned native
+counters: rolling `f64x4` coefficient preparation (+3.0% instructions), four-lane radial
+preclassification (+3.6–4.5%), 64-sector support-envelope classification (+17.0%), and a fused
+exact classifier in eager (+11.9%) and adaptive (+5.15%) forms. The shared cause is that the
+scalar width-one path is already near the cost floor — an unchanged clip is ~40–60 instructions
+with a pre-vertex radial early exit — while short streams make ~20% of window preparation
+speculative. Full results are recorded in the
+[`selected-neighbor constraint batch plan`](constraint-batch-pipeline-idea.md). Do not reopen
+without a workload with materially longer per-cell constraint streams.
 
 ### Work-balanced construction for non-uniform inputs
 
@@ -108,6 +114,27 @@ shift, the 500k run still isolated 252 cells at or above 64x its own median and 
 candidates. The directly successful `great-circle` benchmark at 1k sites (default 0.01 coordinate
 jitter) had median 24, p90 at least 512, and maximum 999. These counters characterize opportunity;
 they do not yet select a handoff or establish its crossover.
+
+### High-core-count scaling validation
+
+Single-thread per-op cost is near its floor; the differentiating claim is multithreaded scaling
+(measured ~4x on 6 cores against tuned planar Delaunay's ~2.4x). That claim has never been tested
+beyond the reference machine. A short rented many-core run (64+ cores) would upgrade it from a
+benchmark observation to an architecture result — or find the ceiling.
+
+Cheap preparation before paying for the run, so it measures the architecture rather than an
+allocation artifact:
+
+- justify the `VORONOI_MESH_BIN_COUNT` default (about 2x threads) at 64+ cores, or sweep it;
+- check that shard and scratch allocation is not all first-touch on one NUMA node; and
+- watch fallback/repair queue growth and assembly-phase serialization at high parallelism.
+
+### Naive-baseline ablation
+
+Build a same-architecture, untuned variant (or a configuration that disables the tuned paths) and
+compare it with both the tuned build and a naive incremental construction. This separates the
+algorithmic contribution from implementation tuning for any write-up, and occasionally reveals
+what a tuning was actually buying. Evaluation infrastructure, not a production optimization.
 
 ### Reusable regional dependency information
 

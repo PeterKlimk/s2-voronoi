@@ -26,6 +26,12 @@ child process per job, set `MALLOC_ARENA_MAX=2`, or link jemalloc/mimalloc if it
 `RUSTFLAGS="-C target-cpu=native"` is worth ~6% on the reference machine and is the main build
 flag that matters. Run benchmarks in release.
 
+PGO/BOLT is worth a further ~5% (measured 2026-07, minutes to set up). It is a code-layout win,
+not a code improvement: the gain is brittle across source changes and profiles, so treat it as an
+opt-in recipe for benchmark headlines and deployment binaries rather than something the source
+should be tuned against. The 1–2% per-binary layout noise documented under
+[Comparing commits](#comparing-commits) is the same effect uncontrolled.
+
 ## Running the benchmarks
 
 The benchmark binaries need the `tools` feature:
@@ -462,6 +468,32 @@ hybrid fast-path/fallback designs, and a shared experiment matrix, lives in
 Larger changes to scheduling, repair scope, pathological-work handoff, and repeated-build reuse are
 kept in the non-authoritative
 [`algorithmic performance ideas`](algorithmic-performance-ideas.md) catalogue.
+
+Untried probes and candidates (2026-07-16 triage; each begins with a cheap measurement gate):
+
+- **TLB / huge-page probe:** the measured memory wall is dedup and grid build streaming large
+  arrays with scattered access; every locality experiment so far targeted cache lines, none TLB
+  reach. Gate: measure `dTLB-load-misses` share at 1M–2.5M. If material, try
+  `madvise(MADV_HUGEPAGE)` (or THP verification) on the slot arrays, shards, and grid storage.
+- **Input-side pass fusion:** the preprocess weld scan, grid build, and binning each stream all n
+  input points as separate passes; the binning double-decode is already on the code-review
+  backlog. Fusing the weld scan into the grid-build pass removes one full input stream — pure
+  bandwidth in the phase that is bandwidth-bound. Must preserve the bimodal weld-compaction
+  behavior and grid determinism.
+- **Emission null-write audit:** null the mesh/output writes and time the delta at 1M+. If it is
+  tens of ms, bin-ordered emission with implicit indexing or deferred twin pointers becomes a
+  design candidate; if not, close the output-format lever.
+- **Dense-gated directional termination certificate:** the archived certificate (d9d0975) closed
+  negative on fib/uniform (+3.9–4.5% instructions), but the residual dense-cap cost after
+  band-prune is certificate depth, and mega runs ~11x candidate inflation versus ~1.6x normal.
+  Gate it on `grid_rebuilt` exactly like band-prune so the normal path is untouched, and A/B on
+  mega/great-circle only.
+- **Cell-interleaving ILP probe:** software-pipelining 2–4 independent cells through the scalar
+  clipper only pays if the clip loop is load-latency-bound. The current taxonomy says cell
+  construction is compute-bound (IPC 2.0–2.65), so the prior is low. Gate: pin the clip phase and
+  read IPC plus memory-stall counters; only consider the (large, driver-restructuring) experiment
+  if stalls dominate. Degree-bucketed scheduling for branch coherence is a companion to this item
+  only — Morton ordering was already neutral, so it is not worth trying alone.
 
 Promising workload-specific experiments:
 
