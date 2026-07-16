@@ -121,8 +121,9 @@ impl CubeMapGrid {
                 }
 
                 let tail_start = end - candidate_tail.len();
-                for j in tail_start..end {
-                    let gate_delta = gate_i - gate_points[j];
+                for (tail_offset, &gate_j) in gate_points[tail_start..end].iter().enumerate() {
+                    let j = tail_start + tail_offset;
+                    let gate_delta = gate_i - gate_j;
                     if !is_weld_pair(gate_delta * gate_delta, thr_sq) {
                         continue;
                     }

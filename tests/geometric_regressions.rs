@@ -156,9 +156,9 @@ fn aud_016_near_pi_edge_is_a_strict_valid_edge() {
         "AUD-016 areas must sum to 4*pi within stored-f32 error, got {area_sum}"
     );
     let lloyd = output.diagram.lloyd_step();
-    for i in 0..output.diagram.num_cells() {
+    for (i, &lloyd_point) in lloyd.iter().enumerate() {
         let centroid = output.diagram.cell_centroid(i);
-        assert_eq!(centroid, lloyd[i]);
+        assert_eq!(centroid, lloyd_point);
         let owner = output.diagram.generator(i);
         let owner_dot = centroid.dot(owner);
         for j in 0..output.diagram.num_cells() {

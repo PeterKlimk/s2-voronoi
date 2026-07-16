@@ -389,7 +389,7 @@ fn local_delaunay_2d(proj: &[robust::Coord<f64>]) -> Vec<[usize; 3]> {
         tris = keep;
         // Re-triangulate the cavity: each boundary directed edge (u,v) — one whose
         // reverse (v,u) is not also a bad edge — forms a new CCW triangle (u,v,i).
-        for (&(u, v), _) in bad_edges.iter() {
+        for &(u, v) in bad_edges.keys() {
             if !bad_edges.contains_key(&(v, u)) {
                 tris.push([u, v, i]);
             }

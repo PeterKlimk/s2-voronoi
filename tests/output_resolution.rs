@@ -15,6 +15,8 @@ fn hex3_four_generator_core_contracts_stored_zero_edge() {
     // in Hex3's seed-12345 250k handoff. Antipodal copies are only distant
     // supports that close the spherical diagram; they do not define the local
     // empty-cap corner.
+    // Keep the full decimal renderings from the original f32 incident fixture.
+    #[allow(clippy::excessive_precision)]
     let core = [
         [0.5433253049850464, 0.6803092956542969, 0.4919114410877228],
         [0.5451860427856445, 0.6789295077323914, 0.4917590022087097],
