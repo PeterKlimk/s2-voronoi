@@ -551,7 +551,7 @@ pub fn compute<P: UnitVec3Like>(points: &[P]) -> Result<SphericalVoronoi, Vorono
 /// rejected before the extractor is called.
 pub fn compute_by<T, F>(points: &[T], xyz: F) -> Result<SphericalVoronoi, VoronoiError>
 where
-    F: Fn(&T) -> [f32; 3] + Sync,
+    F: Fn(&T) -> [f32; 3],
 {
     compute_with_by(points, VoronoiConfig::default(), xyz)
 }
@@ -560,7 +560,7 @@ where
 /// backend's sole owned point allocation.
 fn collect_points_by<T, F>(points: &[T], xyz: F) -> Result<Vec<glam::Vec3>, VoronoiError>
 where
-    F: Fn(&T) -> [f32; 3] + Sync,
+    F: Fn(&T) -> [f32; 3],
 {
     if points.len() < 4 {
         return Err(VoronoiError::InsufficientPoints(points.len()));
@@ -599,7 +599,7 @@ pub fn compute_with_by<T, F>(
     xyz: F,
 ) -> Result<SphericalVoronoi, VoronoiError>
 where
-    F: Fn(&T) -> [f32; 3] + Sync,
+    F: Fn(&T) -> [f32; 3],
 {
     let vec3_points = collect_points_by(points, xyz)?;
     knn_clipping::compute_voronoi_knn_clipping_with_config_owned(vec3_points, &config)
@@ -625,7 +625,7 @@ pub fn compute_with_report_by<T, F>(
     xyz: F,
 ) -> Result<ComputeOutput, VoronoiError>
 where
-    F: Fn(&T) -> [f32; 3] + Sync,
+    F: Fn(&T) -> [f32; 3],
 {
     let vec3_points = collect_points_by(points, xyz)?;
     knn_clipping::compute_voronoi_knn_clipping_with_report_owned(vec3_points, &config)

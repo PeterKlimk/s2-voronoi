@@ -211,7 +211,9 @@ finite, nonzero f32 vector is normalized in f64 and rounded once to f32 before b
 ranking and shell certification. Scaling a query by a positive finite factor therefore cannot
 change its cell. A zero or non-finite single query returns `SphereQueryError`; a batch returns
 `IndexedSphereQueryError` naming the lowest invalid query index before location begins. The batch
-normalization buffer is intentional correctness state, not part of the stored diagram.
+normalization buffer is intentional correctness state, not part of the stored diagram. Callers
+that already hold checked `SpherePoint` queries can use `locate_point` or `locate_many_points`;
+those infallible paths preserve the same ranking model without revalidating or renormalizing.
 
 ## Embedded spheres
 

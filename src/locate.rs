@@ -165,7 +165,7 @@ impl SphereLocator {
     /// Queries use the same radial normalization as [`Self::locate`]. An
     /// error identifies the lowest invalid input index before any location
     /// work starts.
-    pub fn locate_many<P: UnitVec3Like + Sync>(
+    pub fn locate_many<P: UnitVec3Like>(
         &self,
         queries: &[P],
     ) -> Result<Vec<usize>, IndexedSphereQueryError> {
@@ -182,8 +182,13 @@ impl SphereLocator {
         Ok(self.locate_many_canonical(&normalized?, |query| *query))
     }
 
+    /// Locate an already checked and canonicalized spherical point.
+    ///
+    /// Unlike [`Self::locate`], this infallible path performs no validation or
+    /// normalization. Prefer it when a query will be reused or is already
+    /// available as a [`SpherePoint`].
     #[inline]
-    pub(crate) fn locate_sphere_point(&mut self, p: SpherePoint) -> usize {
+    pub fn locate_point(&mut self, p: SpherePoint) -> usize {
         sphere_locate_core(
             &self.grid,
             self.canonical.as_deref(),
@@ -193,7 +198,12 @@ impl SphereLocator {
         )
     }
 
-    pub(crate) fn locate_many_sphere_points(&self, queries: &[SpherePoint]) -> Vec<usize> {
+    /// Locate already checked spherical points in input order.
+    ///
+    /// This is the allocation-free-input counterpart to [`Self::locate_many`]:
+    /// only the returned index vector is allocated, and location is parallel
+    /// with the `parallel` feature.
+    pub fn locate_many_points(&self, queries: &[SpherePoint]) -> Vec<usize> {
         self.locate_many_canonical(queries, |query| Vec3::from_array(query.to_array()))
     }
 

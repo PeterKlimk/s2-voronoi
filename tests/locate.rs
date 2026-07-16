@@ -155,3 +155,55 @@ fn locate_many_reports_the_lowest_invalid_query_index() {
     assert_eq!(error.query_index(), 4);
     assert_eq!(error.query_error(), SphereQueryError::Directionless);
 }
+
+#[test]
+fn locate_many_accepts_non_sync_query_records() {
+    use std::cell::Cell;
+
+    struct NonSyncQuery(Cell<[f32; 3]>);
+
+    impl UnitVec3Like for NonSyncQuery {
+        fn x(&self) -> f32 {
+            self.0.get()[0]
+        }
+
+        fn y(&self) -> f32 {
+            self.0.get()[1]
+        }
+
+        fn z(&self) -> f32 {
+            self.0.get()[2]
+        }
+    }
+
+    let points = random_sphere_points(100, 114);
+    let diagram = compute(&points).unwrap();
+    let locator = diagram.build_locator();
+    let queries: Vec<NonSyncQuery> = points
+        .iter()
+        .map(|point| NonSyncQuery(Cell::new([point.x, point.y, point.z])))
+        .collect();
+    assert_eq!(
+        locator.locate_many(&queries).unwrap(),
+        (0..100).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn checked_point_locator_paths_match_raw_queries() {
+    let points = random_sphere_points(400, 115);
+    let diagram = compute(&points).unwrap();
+    let queries = random_sphere_points(500, 116);
+    let checked: Vec<SpherePoint> = queries
+        .iter()
+        .map(|query| SpherePoint::try_from_xyz([query.x, query.y, query.z]).unwrap())
+        .collect();
+    let mut locator = diagram.build_locator();
+
+    let raw = locator.locate_many(&queries).unwrap();
+    assert_eq!(locator.locate_many_points(&checked), raw);
+    for ((query, point), &expected) in queries.iter().zip(&checked).zip(&raw) {
+        assert_eq!(locator.locate(query).unwrap(), expected);
+        assert_eq!(locator.locate_point(*point), expected);
+    }
+}

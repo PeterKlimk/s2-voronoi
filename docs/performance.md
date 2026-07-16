@@ -21,6 +21,21 @@ a loop will accumulate high-water RSS — glibc does not return freed arenas to 
 builds, amplified by per-thread rayon arenas. This is allocator behavior, not a leak; build in a
 child process per job, set `MALLOC_ARENA_MAX=2`, or link jemalloc/mimalloc if it matters.
 
+## Point-location queries
+
+`SphereLocator::locate` accepts arbitrary finite, nonzero f32 directions and therefore validates
+and normalizes each raw query in f64. `locate_many` first materializes a canonical 12-byte direction
+per query so the subsequent grid search can run in parallel and invalid batches can report the
+lowest input index deterministically. At one million queries, that buffer is about 12 MB and lives
+alongside the returned index vector.
+
+When queries are reused or already canonical, construct `SpherePoint` values once and call
+`locate_point` or `locate_many_points`. These infallible paths skip the normalization and canonical
+input buffer; the batched form allocates only its returned indices. In the 2026-07 point-API review,
+raw-query normalization cost about 93 retired instructions/query and 2.4% native single-threaded
+locator time. The serial prepass made the raw multithreaded batch about 5.1% slower; the checked
+point path exists for throughput-sensitive repeated queries.
+
 ## Building for speed
 
 `RUSTFLAGS="-C target-cpu=native"` is worth ~6% on the reference machine and is the main build

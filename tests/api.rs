@@ -603,6 +603,26 @@ fn test_closure_ingest_checks_length_before_extraction_and_preserves_error_index
 }
 
 #[test]
+fn closure_ingest_accepts_non_sync_records_and_extractors() {
+    use std::cell::Cell;
+
+    let points = random_sphere_points(20, 88_891);
+    let records: Vec<Cell<[f32; 3]>> = points
+        .iter()
+        .map(|point| Cell::new([point.x, point.y, point.z]))
+        .collect();
+    let calls = Cell::new(0usize);
+    let diagram = compute_by(&records, |record| {
+        calls.set(calls.get() + 1);
+        record.get()
+    })
+    .unwrap();
+
+    assert_eq!(calls.get(), records.len());
+    assert_eq!(diagram.num_cells(), records.len());
+}
+
+#[test]
 fn test_compute_solves_upper_hemisphere_large_cells() {
     let points = hemisphere_points(100, 42);
     let diagram = compute(&points).expect("hemisphere-limited inputs should compute");

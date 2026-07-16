@@ -401,6 +401,14 @@ unit forms now use the same canonical query and return the same brute-force near
 This is a correctness/API change: it adds one f64 normalization per raw unit-space query and an
 owned canonical-query buffer for batches, and makes no throughput-win claim.
 
+The completed before/full review measured about 93 additional retired instructions per raw query;
+Cachegrind attributed 79 of them directly to checked-point construction. Native Mac medians were
++2.47% for repeated single queries, +2.44% for single-threaded batches, and +5.07% for
+multithreaded batches, where the canonicalization prepass remains serial. The follow-up exposes
+`locate_point` and `locate_many_points` for already checked `SpherePoint` queries, avoiding repeated
+normalization and the 12-byte/query canonical batch buffer. Raw adapters and closure ingest no
+longer impose unused `Sync` bounds while their adaptation remains serial.
+
 - Specify fallible single-query and indexed batch errors for zero, non-finite, and out-of-contract
   query directions.
 - Normalize/rank queries under one model and test the current raw-dot versus normalized-bound

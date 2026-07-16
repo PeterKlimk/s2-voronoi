@@ -77,7 +77,10 @@ prevention rather than an overclaimed proof.
 - **Result:** `locate` returns `SphereQueryError`; `locate_many` returns the lowest indexed
   `IndexedSphereQueryError`. A deterministic regression proves that the old raw-dot versus
   normalized-bound mismatch could return a non-nearest generator for scaled input. World-space
-  locators retain their existing projection errors and reuse the internal checked-point path.
+  locators retain their existing projection errors and reuse the checked-point path. Public
+  `locate_point` and `locate_many_points` methods provide that same infallible path for reusable
+  canonical queries, avoiding the measured 2.4--5.1% raw-query normalization cost and the
+  12-byte/query batch buffer. Raw batch records no longer need to be `Sync`.
   Details are recorded in
   [`point-api-plan.md`](point-api-plan.md#stage-3--design-locator-validation-as-a-correctness-change).
 
@@ -90,7 +93,8 @@ prevention rather than an overclaimed proof.
   allocate an intermediate coordinate vector.
 - **Result:** `compute_by`, `compute_with_by`, and `compute_with_report_by` share one backend
   collector with the direct path. The extractor runs once per accepted point, too-short inputs fail
-  before extraction, and validation preserves original indices. Exact-output API tests, release
+  before extraction, validation preserves original indices, and neither records nor extractors
+  need to be `Sync` while adaptation remains serial. Exact-output API tests, release
   checks, Linux counters/Cachegrind, and native Mac interleaved timing passed. Detailed performance
   evidence is recorded in [`point-api-plan.md`](point-api-plan.md#stage-2--add-closure-based-ingest-independently).
 

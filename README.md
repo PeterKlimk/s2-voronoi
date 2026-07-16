@@ -117,7 +117,8 @@ Smaller inputs and single-threaded pools stay serial.
 - `delaunay_triangles()` — the dual triangulation as `Vec<[u32; 3]>`.
 - `build_locator()` — reusable point-location; `locate(q)` maps any finite, nonzero direction to
   its cell in near-constant time, while `locate_many(&[q])` batches across cores and reports the
-  lowest invalid query index.
+  lowest invalid query index. `locate_point` and `locate_many_points` skip repeated validation and
+  normalization for queries already stored as checked `SpherePoint` values.
 - `SphereEmbedding` / `compute_on_sphere` — translated and uniformly scaled world-space spheres
   backed by the same canonical unit diagram.
 - `validation::validate` — strict subdivision check.
