@@ -701,23 +701,23 @@ fn clip_batch_source<const SHELL: bool>(
         // Position from the fused record loaded above (spatial order → clustered,
         // cache-friendly); bit-identical to points[neighbor_idx].
         let neighbor = slot_point.pos;
-        let (clip_result, fallback_rejected) =
-            match phase
-                .builder
-                .clip_with_slot_result_policy(neighbor_idx, neighbor_slot, neighbor)
-            {
-                Ok(BuilderClipOutcome::Applied(result)) => (result, false),
-                Ok(BuilderClipOutcome::NeedsFallback(request)) => {
-                    trace.fallback_request = Some(request);
-                    counters.record_fallback(request);
-                    let rejected = !phase.builder.try_enter_fallback(points, request);
-                    (
-                        crate::knn_clipping::topo2d::types::ClipResult::Changed,
-                        rejected,
-                    )
-                }
-                Err(_) => break,
-            };
+        let prepared = phase.builder.prepare_neighbor_constraint(neighbor);
+        let (clip_result, fallback_rejected) = match phase
+            .builder
+            .clip_with_slot_prepared_result_policy(neighbor_idx, neighbor_slot, neighbor, prepared)
+        {
+            Ok(BuilderClipOutcome::Applied(result)) => (result, false),
+            Ok(BuilderClipOutcome::NeedsFallback(request)) => {
+                trace.fallback_request = Some(request);
+                counters.record_fallback(request);
+                let rejected = !phase.builder.try_enter_fallback(points, request);
+                (
+                    crate::knn_clipping::topo2d::types::ClipResult::Changed,
+                    rejected,
+                )
+            }
+            Err(_) => break,
+        };
 
         counters.neighbors_processed += 1;
         #[cfg(feature = "timing")]

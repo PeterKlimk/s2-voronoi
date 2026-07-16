@@ -23,6 +23,30 @@ pub struct Topo2DBuilder {
     inner: BuilderImpl,
 }
 
+/// Exact generator-local coefficients prepared from one selected neighbor.
+///
+/// The plane id is deliberately absent: ordered consumption assigns it from
+/// the number of constraints that actually changed the polygon before this
+/// candidate.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PreparedGnomonicConstraint {
+    a: f64,
+    b: f64,
+    c: f64,
+    ab2: f64,
+}
+
+/// Width-one form of the selected-neighbor preparation seam.
+///
+/// `Fallback` carries no derived geometry. It keeps the caller's prepare then
+/// consume sequence uniform while the fallback builder continues to consume
+/// the original neighbor position.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum PreparedNeighborConstraint {
+    Gnomonic(PreparedGnomonicConstraint),
+    Fallback,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BuilderFallbackTrigger {
     ProjectionLimit,

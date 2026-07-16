@@ -1,5 +1,6 @@
 use super::{
-    BuilderImpl, FallbackBuilder, FallbackConstraint, GnomonicBuilder, PolyBuffer, Topo2DBuilder,
+    BuilderImpl, FallbackBuilder, FallbackConstraint, GnomonicBuilder, PolyBuffer,
+    PreparedGnomonicConstraint, PreparedNeighborConstraint, Topo2DBuilder,
 };
 use crate::fp;
 use crate::knn_clipping::cell_build::CellFailure;
@@ -207,6 +208,16 @@ impl GnomonicBuilder {
         )
     }
 
+    /// Prepare the exact coefficients whose plane id will be assigned when
+    /// this selected neighbor is consumed in stream order.
+    #[cfg_attr(feature = "profiling", inline(never))]
+    #[cfg_attr(not(feature = "profiling"), inline(always))]
+    pub(super) fn prepare_constraint(&self, neighbor: Vec3) -> PreparedGnomonicConstraint {
+        let (a, b, c) = self.bisector_coefficients(neighbor);
+        let ab2 = fp::fma_f64(a, a, b * b);
+        PreparedGnomonicConstraint { a, b, c, ab2 }
+    }
+
     #[inline]
     pub(super) fn current_poly(&self) -> &PolyBuffer {
         if self.use_a {
@@ -351,6 +362,22 @@ impl FallbackBuilder {
 }
 
 impl Topo2DBuilder {
+    /// Prepare one selected neighbor without mutating polygon or stream state.
+    /// This width-one seam is intentionally safe to widen into a rolling batch:
+    /// consumption still owns ordering, plane ids, termination, and fallback.
+    #[inline(always)]
+    pub(crate) fn prepare_neighbor_constraint(
+        &self,
+        neighbor: glam::Vec3,
+    ) -> PreparedNeighborConstraint {
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => {
+                PreparedNeighborConstraint::Gnomonic(builder.prepare_constraint(neighbor))
+            }
+            BuilderImpl::Fallback(_) => PreparedNeighborConstraint::Fallback,
+        }
+    }
+
     pub fn new(generator_idx: usize, generator: Vec3) -> Self {
         Self {
             inner: BuilderImpl::Gnomonic(GnomonicBuilder::new(generator_idx, generator)),

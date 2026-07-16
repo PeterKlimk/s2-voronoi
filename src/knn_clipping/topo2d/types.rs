@@ -32,6 +32,19 @@ impl HalfPlane {
     /// Construct the strict half-plane `a*u + b*v + c >= 0`.
     pub fn new_unnormalized(a: f64, b: f64, c: f64, plane_idx: usize) -> Self {
         let ab2: f64 = fp::fma_f64(a, a, b * b);
+        Self::from_unnormalized_parts(a, b, c, ab2, plane_idx)
+    }
+
+    /// Attach the dynamic plane id to coefficients prepared before ordered
+    /// polygon consumption.
+    #[inline]
+    pub(crate) fn from_unnormalized_parts(
+        a: f64,
+        b: f64,
+        c: f64,
+        ab2: f64,
+        plane_idx: usize,
+    ) -> Self {
         HalfPlane {
             a,
             b,

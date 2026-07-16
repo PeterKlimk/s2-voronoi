@@ -68,6 +68,131 @@ fn install_bounded_radius(builder: &mut Topo2DBuilder, max_r2: f64) {
     gnomonic.term_cache_valid = false;
 }
 
+fn reference_gnomonic_clip(
+    builder: &mut GnomonicBuilder,
+    neighbor_idx: usize,
+    neighbor_slot: u32,
+    neighbor: Vec3,
+) -> Result<ClipResult, CellFailure> {
+    if let Some(failure) = builder.failed {
+        return Err(failure);
+    }
+
+    let (a, b, c) = builder.bisector_coefficients(neighbor);
+    let hp = HalfPlane::new_unnormalized(a, b, c, builder.constraints.len());
+    let result = if builder.use_a {
+        super::super::clippers::clip_convex(&builder.poly_a, &hp, &mut builder.poly_b)
+    } else {
+        super::super::clippers::clip_convex(&builder.poly_b, &hp, &mut builder.poly_a)
+    };
+    if result == ClipResult::Unchanged {
+        return Ok(result);
+    }
+    builder.commit_clip(result, neighbor_idx, neighbor_slot)
+}
+
+fn assert_gnomonic_clip_state_eq(expected: &GnomonicBuilder, actual: &GnomonicBuilder) {
+    assert_eq!(expected.use_a, actual.use_a);
+    assert_eq!(expected.failed, actual.failed);
+    assert_eq!(expected.constraints.len(), actual.constraints.len());
+    for (expected, actual) in expected.constraints.iter().zip(&actual.constraints) {
+        assert_eq!(expected.neighbor_idx, actual.neighbor_idx);
+        assert_eq!(expected.neighbor_slot, actual.neighbor_slot);
+    }
+
+    let expected = expected.current_poly();
+    let actual = actual.current_poly();
+    assert_eq!(expected.len, actual.len);
+    assert_eq!(expected.max_r2.to_bits(), actual.max_r2.to_bits());
+    assert_eq!(expected.has_bounding_ref, actual.has_bounding_ref);
+    for i in 0..expected.len {
+        assert_eq!(expected.us[i].to_bits(), actual.us[i].to_bits(), "u[{i}]");
+        assert_eq!(expected.vs[i].to_bits(), actual.vs[i].to_bits(), "v[{i}]");
+        assert_eq!(expected.vertex_planes[i], actual.vertex_planes[i]);
+        assert_eq!(expected.edge_planes[i], actual.edge_planes[i]);
+    }
+}
+
+#[test]
+fn prepared_constraint_matches_exact_coefficient_formula() {
+    for generator in [
+        Vec3::Z,
+        Vec3::new(0.3, -0.4, 0.866_025_4).normalize(),
+        worst_ring_generator(),
+    ] {
+        let builder = GnomonicBuilder::new(0, generator);
+        let near_twin = Vec3::new(generator.x.next_up(), generator.y, generator.z);
+        for neighbor in [Vec3::X, Vec3::NEG_Y, near_twin] {
+            let (a, b, c) = builder.bisector_coefficients(neighbor);
+            let prepared = builder.prepare_constraint(neighbor);
+            assert_eq!(prepared.a.to_bits(), a.to_bits());
+            assert_eq!(prepared.b.to_bits(), b.to_bits());
+            assert_eq!(prepared.c.to_bits(), c.to_bits());
+            assert_eq!(
+                prepared.ab2.to_bits(),
+                crate::fp::fma_f64(a, a, b * b).to_bits()
+            );
+        }
+    }
+}
+
+#[test]
+fn prepared_constraint_clip_is_bitwise_equivalent_to_inline_reference() {
+    let points = generic_sphere_points(32);
+    let generator = points[0];
+    let mut candidates = vec![Vec3::new(generator.x.next_up(), generator.y, generator.z)];
+    candidates.extend(points.iter().copied().skip(1));
+    candidates.sort_by(|a, b| generator.dot(*b).total_cmp(&generator.dot(*a)));
+
+    let mut expected = GnomonicBuilder::new(0, generator);
+    let mut actual = GnomonicBuilder::new(0, generator);
+    for (offset, neighbor) in candidates.into_iter().enumerate() {
+        let neighbor_idx = offset + 1;
+        let neighbor_slot = neighbor_idx as u32;
+        let expected_result =
+            reference_gnomonic_clip(&mut expected, neighbor_idx, neighbor_slot, neighbor);
+        let prepared = actual.prepare_constraint(neighbor);
+        let actual_result =
+            actual.clip_with_slot_prepared_result(neighbor_idx, neighbor_slot, prepared);
+        assert_eq!(expected_result, actual_result, "candidate {offset}");
+        assert_gnomonic_clip_state_eq(&expected, &actual);
+        if expected_result.is_err() {
+            break;
+        }
+    }
+}
+
+#[test]
+fn prepared_gnomonic_constraint_is_discarded_after_fallback_transition() {
+    let generator = Vec3::Z;
+    let neighbor = Vec3::X;
+    let points = [generator, neighbor];
+    let request = BuilderFallbackRequest {
+        trigger: BuilderFallbackTrigger::ProjectionLimit,
+    };
+
+    let mut expected = Topo2DBuilder::new(0, generator);
+    let mut actual = Topo2DBuilder::new(0, generator);
+    let stale = actual.prepare_neighbor_constraint(neighbor);
+    assert!(expected.try_enter_fallback(&points, request));
+    assert!(actual.try_enter_fallback(&points, request));
+
+    let expected_result = expected.clip_with_slot_result_policy(1, 1, neighbor);
+    let actual_result = actual.clip_with_slot_prepared_result_policy(1, 1, neighbor, stale);
+    assert_eq!(expected_result, actual_result);
+
+    let expected_constraints = expected.accepted_spherical_constraints(&points);
+    let actual_constraints = actual.accepted_spherical_constraints(&points);
+    assert_eq!(expected_constraints.len(), actual_constraints.len());
+    for (expected, actual) in expected_constraints.iter().zip(&actual_constraints) {
+        assert_eq!(expected.neighbor_idx, actual.neighbor_idx);
+        assert_eq!(expected.neighbor_slot, actual.neighbor_slot);
+        assert_eq!(expected.normal.x.to_bits(), actual.normal.x.to_bits());
+        assert_eq!(expected.normal.y.to_bits(), actual.normal.y.to_bits());
+        assert_eq!(expected.normal.z.to_bits(), actual.normal.z.to_bits());
+    }
+}
+
 fn termination_formula(gnomonic: &GnomonicBuilder, max_r2: f64) -> (f64, f64) {
     let min_cos = gnomonic.chart_min_cos_bound(max_r2);
     let sin_theta = (1.0 - min_cos * min_cos).max(0.0).sqrt();

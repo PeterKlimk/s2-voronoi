@@ -1,6 +1,7 @@
 use super::{
     BuilderClipOutcome, BuilderImpl, BuilderStepOutcome, FallbackBuilder, GnomonicBuilder,
-    GnomonicConstraint, SphericalPoly, SphericalPolyVertex, Topo2DBuilder,
+    GnomonicConstraint, PreparedGnomonicConstraint, PreparedNeighborConstraint, SphericalPoly,
+    SphericalPolyVertex, Topo2DBuilder,
 };
 use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck};
@@ -79,13 +80,31 @@ impl GnomonicBuilder {
         neighbor_slot: u32,
         neighbor: Vec3,
     ) -> Result<ClipResult, CellFailure> {
+        let prepared = self.prepare_constraint(neighbor);
+        self.clip_with_slot_prepared_result(neighbor_idx, neighbor_slot, prepared)
+    }
+
+    /// Consume exact coefficients prepared before the ordered clip step.
+    #[cfg_attr(feature = "profiling", inline(never))]
+    #[cfg_attr(not(feature = "profiling"), inline(always))]
+    pub(super) fn clip_with_slot_prepared_result(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        prepared: PreparedGnomonicConstraint,
+    ) -> Result<ClipResult, CellFailure> {
         if let Some(f) = self.failed {
             return Err(f);
         }
 
-        let (a, b, c) = self.bisector_coefficients(neighbor);
         let plane_idx = self.constraints.len();
-        let hp = HalfPlane::new_unnormalized(a, b, c, plane_idx);
+        let hp = HalfPlane::from_unnormalized_parts(
+            prepared.a,
+            prepared.b,
+            prepared.c,
+            prepared.ab2,
+            plane_idx,
+        );
 
         let clip_result = if self.use_a {
             clip_convex(&self.poly_a, &hp, &mut self.poly_b)
@@ -527,11 +546,34 @@ impl Topo2DBuilder {
         neighbor_slot: u32,
         neighbor: Vec3,
     ) -> Result<BuilderClipOutcome, CellFailure> {
-        let result = match &mut self.inner {
-            BuilderImpl::Gnomonic(builder) => {
+        let prepared = self.prepare_neighbor_constraint(neighbor);
+        self.clip_with_slot_prepared_result_policy(neighbor_idx, neighbor_slot, neighbor, prepared)
+    }
+
+    /// Consume a selected neighbor whose gnomonic coefficients may have been
+    /// prepared before this ordered stream position. A fallback transition
+    /// invalidates that representation, so fallback always uses the original
+    /// neighbor position retained by the caller.
+    #[cfg_attr(feature = "profiling", inline(never))]
+    #[cfg_attr(not(feature = "profiling"), inline(always))]
+    pub(crate) fn clip_with_slot_prepared_result_policy(
+        &mut self,
+        neighbor_idx: usize,
+        neighbor_slot: u32,
+        neighbor: Vec3,
+        prepared: PreparedNeighborConstraint,
+    ) -> Result<BuilderClipOutcome, CellFailure> {
+        let result = match (&mut self.inner, prepared) {
+            (BuilderImpl::Gnomonic(builder), PreparedNeighborConstraint::Gnomonic(prepared)) => {
+                builder.clip_with_slot_prepared_result(neighbor_idx, neighbor_slot, prepared)
+            }
+            // This mismatch is not expected in the width-one path. Keeping it
+            // correct makes a future rolling window robust to discarded or
+            // stale preparation around state transitions.
+            (BuilderImpl::Gnomonic(builder), PreparedNeighborConstraint::Fallback) => {
                 builder.clip_with_slot_result(neighbor_idx, neighbor_slot, neighbor)
             }
-            BuilderImpl::Fallback(builder) => {
+            (BuilderImpl::Fallback(builder), _) => {
                 builder.clip_with_slot_result(neighbor_idx, neighbor_slot, neighbor)
             }
         };
