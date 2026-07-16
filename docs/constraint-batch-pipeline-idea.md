@@ -288,11 +288,35 @@ Add the vectorized radial certificate first. Then add exact across-constraint al
 classification as a separate candidate. Preserve ordered termination checkpoints for every skipped
 constraint.
 
+**Experiment result (2026-07-16): 64-sector support-envelope classification rejected.** The
+prototype promoted the timing-only directional support audit into the exact-batch frontier and
+mid-batch production paths. It first proved that every post-batch unseen candidate was outside the
+current termination radius, then tested the known batch remainder against a cached conservative
+support envelope. Timing builds retained the exact all-vertices test as a differential oracle; it
+reported zero false-positive skips.
+
+On a 100k corrected-Fibonacci run, the classifier tested 74,500 candidates and accepted 6,361
+batch tails. Its counters credited those tails with 58,010 entries, but actual consumed neighbors
+fell only from 721,993 to 714,437: 7,556 candidates, or 1.05%. The difference matters: raw tail
+length is not equivalent to end-to-end work removed once later frontier and termination behavior
+changes.
+
+The production cost was far larger than that saving. At 500k, pinned single-threaded native counter
+runs increased retired instructions from 3,410,422,604 to 3,989,471,644 (+16.98%), branches from
+378,159,032 to 461,230,828 (+21.97%), and cycles by 18.02%. Rebuilding 64 directional supports and
+classifying through angular sectors was too expensive for the small number of constraints actually
+eliminated.
+
+Do not revive this support envelope as a production batch gate. A subsequent classifier needs a
+much cheaper certificate, or it must produce data that the clipper immediately reuses so that
+classification replaces downstream work rather than adding a second geometric pass. Measure actual
+consumed-candidate reduction, not the sum of nominal skipped-tail lengths.
+
 ### Phase 5: deeper fusion only after attribution
 
-Possible follow-ups include adaptive window width, support-envelope classification, reclassification
-after polygon progress, or direct handoff from packed selection storage. Each needs evidence that
-the preceding stage leaves a material residual cost.
+Possible follow-ups include adaptive window width, a cheaper fused radial certificate,
+reclassification after polygon progress, or direct handoff from packed selection storage. Each
+needs evidence that the preceding stage leaves a material residual cost.
 
 ## Measurement plan
 
