@@ -503,11 +503,6 @@ Promising workload-specific experiments:
 
 Assembly/live-dedup swarm backlog (2026-07-13):
 
-- **Release shard vertex buffers during the global copy:** `all_vertices` is populated while all
-  per-shard position vectors remain live. Taking/dropping each source after its disjoint copy could
-  lower transient live heap by about 12 bytes per output vertex. Retain per-shard spans for debug
-  bounds checks and measure allocator live bytes as well as peak RSS, since the allocator may retain
-  freed pages. This is principally a memory-envelope experiment.
 - **Flatten per-local edge-check queues only as a memory redesign:** `Vec<Vec<EdgeCheck>>` pays a
   `Vec` header per local generator. A node arena plus head/tail arrays could reduce empty-queue
   metadata, but it loses the current zero-copy transfer and may add traversal/copy work. Require
@@ -529,6 +524,13 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Releasing shard position buffers during global vertex concatenation did not materially reduce
+  the observed peak. Dropping sources inside the parallel scatter left the source-plus-destination
+  overlap intact and measured about 8--9 MiB more RSS at 2M. Copying shards serially before each
+  drop changed the median peak from 562,672 KiB to 560,338 KiB across six alternating measurements,
+  only 0.4% amid 14--17 MiB run ranges, while adding 1.42% whole-build branches at 1M; instructions
+  were neutral (+0.016%). Retain the parallel copy: this concatenation overlap is not the governing
+  RSS peak, and serializing it has a structural cost without a useful memory-envelope gain.
 - Accumulating an owner-local incidence bit mask during edge collection duplicated enough work to
   lose despite removing a later classification pass. At 1M single-threaded Fibonacci it added
   2.68% instructions, 2.51% branches, and 3.03% cycles. Keep the existing pass unless the mask can
