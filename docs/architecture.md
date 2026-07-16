@@ -17,6 +17,16 @@ uniform scaling preserve spherical Voronoi topology, while non-uniform transform
 and sites whose different radii affect distance do not. Those are different geometric problems,
 not embedding modes of this backend.
 
+## Input adaptation
+
+The unit-sphere API has one owned f32 backend buffer. `UnitVec3Like` inputs and the `compute_by`
+family both write directly into that allocation before the common validation/canonicalization
+pipeline starts. Closure ingest lets application records and foreign or version-mismatched math
+types participate without an orphan-rule-sensitive trait implementation or a caller-allocated
+coordinate vector. It does not make the diagram generic over the caller's point type, and it does
+not provide an f64 path: the closure deliberately returns `[f32; 3]` under the existing storage and
+search model.
+
 ## The per-cell construction
 
 A Voronoi cell is the intersection of half-spaces: one per neighbor, bounded by the perpendicular

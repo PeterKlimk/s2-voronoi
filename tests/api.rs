@@ -7,8 +7,9 @@ use support::points::{
     random_sphere_points,
 };
 use voronoi_mesh::{
-    compute, compute_with, compute_with_report, validation::validate, DegenerateMode,
-    PreprocessMode, UnitVec3, VoronoiConfig, VoronoiError,
+    compute, compute_by, compute_with, compute_with_by, compute_with_report,
+    compute_with_report_by, validation::validate, DegenerateMode, PreprocessMode, UnitVec3,
+    VoronoiConfig, VoronoiError,
 };
 
 #[test]
@@ -517,6 +518,88 @@ fn test_input_types() {
     let tuple_points: Vec<(f32, f32, f32)> = base_points.iter().map(|p| (p.x, p.y, p.z)).collect();
     let diagram = compute(&tuple_points).expect("tuple input should work");
     assert_eq!(diagram.num_cells(), 50);
+}
+
+#[test]
+fn test_closure_ingest_matches_direct_input_across_api_family() {
+    #[derive(Clone, Copy)]
+    struct ForeignRecord {
+        id: u64,
+        direction: [f32; 3],
+    }
+
+    let points = random_sphere_points(200, 88_889);
+    let records: Vec<ForeignRecord> = points
+        .iter()
+        .enumerate()
+        .map(|(id, point)| ForeignRecord {
+            id: id as u64,
+            direction: [point.x, point.y, point.z],
+        })
+        .collect();
+    let extract = |record: &ForeignRecord| {
+        std::hint::black_box(record.id);
+        record.direction
+    };
+
+    let direct = compute(&points).unwrap();
+    let mapped = compute_by(&records, extract).unwrap();
+    assert_eq!(mapped.generators_xyz(), direct.generators_xyz());
+    assert_eq!(mapped.vertices_xyz(), direct.vertices_xyz());
+    for cell in 0..direct.num_cells() {
+        assert_eq!(
+            mapped.cell(cell).vertex_indices,
+            direct.cell(cell).vertex_indices
+        );
+    }
+
+    let config = VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled);
+    let direct = compute_with(&points, config.clone()).unwrap();
+    let mapped = compute_with_by(&records, config.clone(), extract).unwrap();
+    assert_eq!(mapped.generators_xyz(), direct.generators_xyz());
+    assert_eq!(mapped.vertices_xyz(), direct.vertices_xyz());
+
+    let direct = compute_with_report(&points, config.clone()).unwrap();
+    let mapped = compute_with_report_by(&records, config, extract).unwrap();
+    assert_eq!(
+        mapped.diagram.generators_xyz(),
+        direct.diagram.generators_xyz()
+    );
+    assert_eq!(mapped.diagram.vertices_xyz(), direct.diagram.vertices_xyz());
+    assert_eq!(mapped.report.preprocess, direct.report.preprocess);
+    assert_eq!(
+        mapped.report.returned_validation.headline(),
+        direct.report.returned_validation.headline()
+    );
+}
+
+#[test]
+fn test_closure_ingest_checks_length_before_extraction_and_preserves_error_index() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let calls = AtomicUsize::new(0);
+    let too_short = [[1.0f32, 0.0, 0.0]; 3];
+    let error = compute_by(&too_short, |point| {
+        calls.fetch_add(1, Ordering::Relaxed);
+        *point
+    })
+    .unwrap_err();
+    assert!(matches!(error, VoronoiError::InsufficientPoints(3)));
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+    let mut points = random_sphere_points(20, 88_890);
+    points[7].x = f32::NAN;
+    let calls = AtomicUsize::new(0);
+    let error = compute_by(&points, |point| {
+        calls.fetch_add(1, Ordering::Relaxed);
+        [point.x, point.y, point.z]
+    })
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        VoronoiError::InvalidInput { point_index: 7, .. }
+    ));
+    assert_eq!(calls.load(Ordering::Relaxed), points.len());
 }
 
 #[test]

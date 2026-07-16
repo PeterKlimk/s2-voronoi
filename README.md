@@ -48,6 +48,33 @@ guarantees finite coordinates within `2 * f32::EPSILON` of unit squared length. 
 `as_array()`, component methods, or the zero-copy `generators_xyz()` / `vertices_xyz()` views to
 export into another math, rendering, or serialization format.
 
+For foreign vector types or application records, closure ingest avoids wrapper traits and an
+intermediate coordinate vector:
+
+```rust
+use voronoi_mesh::compute_by;
+
+struct Site {
+    direction: [f32; 3],
+    region_id: u64,
+}
+
+# let sites = vec![
+#     Site { direction: [1.0, 0.0, 0.0], region_id: 0 },
+#     Site { direction: [-1.0, 0.0, 0.0], region_id: 1 },
+#     Site { direction: [0.0, 1.0, 0.0], region_id: 2 },
+#     Site { direction: [0.0, -1.0, 0.0], region_id: 3 },
+#     Site { direction: [0.0, 0.0, 1.0], region_id: 4 },
+#     Site { direction: [0.0, 0.0, -1.0], region_id: 5 },
+# ];
+let diagram = compute_by(&sites, |site| site.direction)?;
+# let _ = (diagram, sites[0].region_id);
+# Ok::<(), voronoi_mesh::VoronoiError>(())
+```
+
+`compute_with_by` and `compute_with_report_by` provide the configured and report-bearing forms.
+The extractor runs once per item directly into the backend-owned input allocation.
+
 ### Spheres in world coordinates
 
 Keep the geometric computation in stable unit-sphere coordinates while embedding the result at
@@ -99,7 +126,8 @@ Smaller inputs and single-threaded pools stay serial.
   mesh with original-input provenance.
 
 Configuration is through `compute_with(points, VoronoiConfig)`; `compute_with_report` additionally
-returns what was welded, perturbed, or repaired. Defaults handle coincident and degenerate inputs;
+returns what was welded, perturbed, or repaired. The `_by` variants provide the same behavior for
+closure-based ingest. Defaults handle coincident and degenerate inputs;
 `CellKillingPolicy::Error` is available when a consumer requires exact stored-zero resolution to
 fail rather than preserve an unrepresentable generator cell. Consumers that instead accept removal
 can call `into_elided_cell_mesh` on the successful report-bearing Preserve result. The cell mesh

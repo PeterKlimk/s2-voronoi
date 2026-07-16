@@ -56,6 +56,7 @@ prevention rather than an overclaimed proof.
 |---|---:|---|---|
 | WORK-002 | P2 | Ongoing | Exercise after construction/repair changes |
 | POINT-001 | P2 | Completed | Checked `SpherePoint`, audited storage rule, and packed views landed |
+| POINT-002 | P2 | Completed | Closure-based zero-intermediate ingest landed without direct-path regression |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
@@ -65,6 +66,19 @@ prevention rather than an overclaimed proof.
 | RESEARCH-004 | P3 | Backburner | Commit to full f64 representation and search bounds |
 
 ## Completed work
+
+### POINT-002 — Closure-based point ingest
+
+- **Priority:** P2
+- **Status:** Completed 2026-07-17
+- **Decision:** retain the simple `UnitVec3Like` direct API and add `_by` variants for adapting
+  foreign records and math types without making `SphericalVoronoi` generic or requiring callers to
+  allocate an intermediate coordinate vector.
+- **Result:** `compute_by`, `compute_with_by`, and `compute_with_report_by` share one backend
+  collector with the direct path. The extractor runs once per accepted point, too-short inputs fail
+  before extraction, and validation preserves original indices. Exact-output API tests, release
+  checks, Linux counters/Cachegrind, and native Mac interleaved timing passed. Detailed performance
+  evidence is recorded in [`point-api-plan.md`](point-api-plan.md#stage-2--add-closure-based-ingest-independently).
 
 ### POINT-001 — Checked spherical point boundary
 

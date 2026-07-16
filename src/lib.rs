@@ -539,16 +539,45 @@ pub fn compute<P: UnitVec3Like>(points: &[P]) -> Result<SphericalVoronoi, Vorono
     compute_with(points, VoronoiConfig::default())
 }
 
-/// Shared entry preamble: reject sub-4 inputs and convert to the backend's
-/// `Vec3` representation.
-fn backend_points<P: UnitVec3Like>(points: &[P]) -> Result<Vec<glam::Vec3>, VoronoiError> {
+/// Compute a spherical Voronoi diagram by extracting f32 xyz coordinates from
+/// arbitrary caller-owned records.
+///
+/// For an accepted-length slice, the extractor is called exactly once per
+/// point and writes directly into the backend-owned point allocation; no
+/// intermediate coordinate collection is created. Returned coordinates follow
+/// the same unit-sphere input contract as [`compute`]. This is useful for
+/// foreign math types, version-mismatched math crates, and records whose
+/// coordinates are only one field among other data. Fewer than four points are
+/// rejected before the extractor is called.
+pub fn compute_by<T, F>(points: &[T], xyz: F) -> Result<SphericalVoronoi, VoronoiError>
+where
+    F: Fn(&T) -> [f32; 3] + Sync,
+{
+    compute_with_by(points, VoronoiConfig::default(), xyz)
+}
+
+/// Shared entry preamble: reject sub-4 inputs and collect directly into the
+/// backend's sole owned point allocation.
+fn collect_points_by<T, F>(points: &[T], xyz: F) -> Result<Vec<glam::Vec3>, VoronoiError>
+where
+    F: Fn(&T) -> [f32; 3] + Sync,
+{
     if points.len() < 4 {
         return Err(VoronoiError::InsufficientPoints(points.len()));
     }
-    Ok(points
-        .iter()
-        .map(|p| glam::Vec3::new(p.x(), p.y(), p.z()))
-        .collect())
+    let mut backend = Vec::with_capacity(points.len());
+    backend.extend(
+        points
+            .iter()
+            .map(|point| glam::Vec3::from_array(xyz(point))),
+    );
+    Ok(backend)
+}
+
+/// Adapt the existing trait-based input path through the shared collector.
+#[inline]
+fn backend_points<P: UnitVec3Like>(points: &[P]) -> Result<Vec<glam::Vec3>, VoronoiError> {
+    collect_points_by(points, |point| [point.x(), point.y(), point.z()])
 }
 
 /// Compute a spherical Voronoi diagram with explicit configuration.
@@ -560,6 +589,22 @@ pub fn compute_with<P: UnitVec3Like>(
     knn_clipping::compute_voronoi_knn_clipping_with_config_owned(vec3_points, &config)
 }
 
+/// Compute through a coordinate extractor with explicit configuration.
+///
+/// This is the closure-ingest equivalent of [`compute_with`]. The extractor
+/// has the same direct-to-backend allocation behavior as [`compute_by`].
+pub fn compute_with_by<T, F>(
+    points: &[T],
+    config: VoronoiConfig,
+    xyz: F,
+) -> Result<SphericalVoronoi, VoronoiError>
+where
+    F: Fn(&T) -> [f32; 3] + Sync,
+{
+    let vec3_points = collect_points_by(points, xyz)?;
+    knn_clipping::compute_voronoi_knn_clipping_with_config_owned(vec3_points, &config)
+}
+
 /// Compute a spherical Voronoi diagram and return observable preprocessing and
 /// validation metadata.
 pub fn compute_with_report<P: UnitVec3Like>(
@@ -567,5 +612,21 @@ pub fn compute_with_report<P: UnitVec3Like>(
     config: VoronoiConfig,
 ) -> Result<ComputeOutput, VoronoiError> {
     let vec3_points = backend_points(points)?;
+    knn_clipping::compute_voronoi_knn_clipping_with_report_owned(vec3_points, &config)
+}
+
+/// Compute through a coordinate extractor and return preprocessing and
+/// validation metadata.
+///
+/// This is the closure-ingest equivalent of [`compute_with_report`].
+pub fn compute_with_report_by<T, F>(
+    points: &[T],
+    config: VoronoiConfig,
+    xyz: F,
+) -> Result<ComputeOutput, VoronoiError>
+where
+    F: Fn(&T) -> [f32; 3] + Sync,
+{
+    let vec3_points = collect_points_by(points, xyz)?;
     knn_clipping::compute_voronoi_knn_clipping_with_report_owned(vec3_points, &config)
 }

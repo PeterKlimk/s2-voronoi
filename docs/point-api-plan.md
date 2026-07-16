@@ -363,6 +363,21 @@ were 1697.3 ms median before and 1702.3 ms after (+0.29%, classified `~same`; sp
 
 ### Stage 2 — add closure-based ingest independently
 
+**Completed 2026-07-17.** Added `compute_by`, `compute_with_by`, and
+`compute_with_report_by` over one internal `collect_points_by` adapter. The adapter allocates only
+the backend's required `Vec<Vec3>` and invokes the extractor exactly once per accepted input point;
+the existing `UnitVec3Like` path now uses the same adapter. Inputs shorter than four points fail
+before extraction, and backend validation retains the original input index. Exact-output API tests
+cover topology, coordinates, configuration, reports, and validation summaries for a local foreign
+record type.
+
+The existing direct path remained effectively codegen-neutral. At 500k single-threaded Fibonacci,
+five Linux `perf stat` runs changed retired instructions from 3,424,971,022 to 3,424,966,720
+(-0.00013%) and branches from 382,102,522 to 382,101,932 (-0.00015%); cycles and wall time were
+within run noise. Cachegrind at 50k measured +0.00112% instruction references and +0.00179%
+branches. On the native Intel Mac, 20 interleaved single-threaded 1M Fibonacci rounds measured
+1694.6 ms before and 1692.7 ms after, classified `~same` (spreads 9.9% and 3.6%).
+
 - Add one internal f32 `collect_points_by` routine and minimal `compute_by` equivalents without
   duplicating the computational pipeline.
 - Retain `UnitVec3Like`; downstream local records already work, while `compute_by` primarily solves
