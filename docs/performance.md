@@ -581,6 +581,14 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Reusing the backend's final `Vec<VoronoiCell>` allocation as the diagram's
+  layout-identical cell storage removed the per-cell conversion allocation and copy. Both a shared
+  internal record and a `repr(C)` ownership-transfer implementation reduced 1M native uniform
+  instructions by 0.19--0.22% and branches by 1.15% in all nine pairs. Both also perturbed the hot
+  build's cache layout badly: the shared-record form increased cache references 9.3% and cycles
+  2.8%, while the ownership-transfer form increased them 11.9% and 4.2%. Keep the explicit final
+  conversion until output construction can change more holistically; removing this isolated copy
+  is a clear retired-work win but a throughput loss on the ordinary uniform workload.
 - Reusing the gnomonic extraction direction's f64 squared norm for both validity and canonical
   normalization removed exactly 12 instructions and 6 branches per emitted vertex (600k/300k at
   50k Fibonacci), but the smaller extractor perturbed code layout badly: Cachegrind I1 misses rose
