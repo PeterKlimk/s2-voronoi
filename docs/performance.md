@@ -502,6 +502,15 @@ Recently accepted optimizations:
   multithreaded result as evidence that this work is not limiting there, not as a regression; the
   measured intervals rule out a material loss on that host.
 
+  A follow-up avoids swapping a 20-byte check with itself when the next match is already at the
+  unmatched-prefix boundary. Cachegrind at 50k Fibonacci reduced whole-build instructions by
+  0.17% and data references by 0.48%; 1M native Linux counters retained about 0.15--0.16% fewer
+  instructions on Fibonacci and uniform, though the added predictable guard raised total branches
+  by 0.45--0.53%. On the quiet Mac at 1M single-threaded, thirty Fibonacci pairs were 1.07% faster
+  (95% interval 0.24--1.89%, 25/30 favorable); uniform was directionally 0.38% faster but unresolved
+  (-0.30% to +1.06% when expressed as candidate speedup, 18/30 favorable). The clear Fibonacci win,
+  reduced retired/data work, and absence of a material uniform loss justify keeping the guard.
+
 Measured gates awaiting a design experiment:
 
 - **Output materialization:** the null-write ceiling is large enough to pursue, but it does not

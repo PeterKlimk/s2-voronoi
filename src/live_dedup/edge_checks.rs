@@ -311,7 +311,9 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                 .position(|check| check.neighbor_slot == slot)
                 .map(|offset| matched_count + offset);
             let (found, duplicate) = if let Some(found_idx) = found_unmatched {
-                incoming_checks.swap(matched_count, found_idx);
+                if found_idx != matched_count {
+                    incoming_checks.swap(matched_count, found_idx);
+                }
                 let check = incoming_checks[matched_count];
                 matched_count += 1;
                 (Some(check), false)
