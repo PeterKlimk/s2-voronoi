@@ -37,6 +37,17 @@ The measured result is also recorded in [`performance.md`](performance.md).
 
 ## Candidate ideas
 
+### Selected-neighbor constraint batches
+
+The directed neighbor pipeline currently collapses selected, dot-bearing batches to slot ids before
+the gnomonic builder reconstructs constraints one at a time. A backend-private selected-constraint
+stage could preserve the exact batch, prepare a small rolling window of generator-local bisectors,
+and reject redundant constraints together before ordered polygon mutation. This is deliberate
+hot-path fusion rather than a proposal to put gnomonic geometry in the general cube-grid API.
+
+The numerical invariants, staged experiments, telemetry, and measurement matrix are developed in
+the dedicated [`selected-neighbor constraint batch plan`](constraint-batch-pipeline-idea.md).
+
 ### Work-balanced construction for non-uniform inputs
 
 The current spatial bins provide locality and deterministic directed build order, but equal spatial
