@@ -14,6 +14,59 @@ use crate::diagram::VoronoiCell;
 use crate::knn_clipping::cell_build::VertexKey;
 use crate::timing::{DedupSubPhases, Timer};
 
+const SHARD_ORDER_SAMPLES_PER_BIN: usize = 32;
+
+/// Choose shard-order scatter only when spatial order has little correlation
+/// with the caller's generator order. In that regime generator-order scatter
+/// jumps through each shard's source arrays; shard order makes those reads
+/// sequential. When the orders correlate, retain sequential destination
+/// writes instead.
+fn prefer_shard_order_scatter(bin_generators: &[Vec<usize>], num_cells: usize) -> bool {
+    let mut abs_delta = 0u64;
+    let mut samples = 0u64;
+    for generators in bin_generators {
+        let pair_count = generators.len().saturating_sub(1);
+        let sample_count = pair_count.min(SHARD_ORDER_SAMPLES_PER_BIN);
+        for sample in 0..sample_count {
+            let i = sample * pair_count / sample_count;
+            abs_delta += generators[i + 1].abs_diff(generators[i]) as u64;
+            samples += 1;
+        }
+    }
+    // The measured crossover lies widely between Fibonacci (~0.2% of n)
+    // and shuffled/uniform input (~7% of n). One percent keeps ordered
+    // inputs on contiguous destination writes and scrambled inputs on
+    // contiguous shard-source reads. BinId and LocalId representation limits
+    // keep both products well below u64::MAX.
+    samples != 0 && abs_delta * 100 > num_cells as u64 * samples
+}
+
+#[inline(always)]
+unsafe fn scatter_local_indices(
+    src: &[u32],
+    cell_indices_ptr: usize,
+    dst_start: usize,
+    vertex_offset: u32,
+    _owner_vertex_count: usize,
+) {
+    // SAFETY: the caller assigns one disjoint destination span per cell and
+    // keeps both source and destination allocations alive through the copy.
+    let dst = unsafe { (cell_indices_ptr as *mut u32).add(dst_start) };
+    for (i, &local) in src.iter().enumerate() {
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            local == INVALID_INDEX || (local as usize) < _owner_vertex_count,
+            "primary local vertex index out of range"
+        );
+        // Foreign slots carry INVALID_INDEX here and are overwritten by the
+        // sparse sidecar immediately after this bulk pass.
+        let global = vertex_offset.wrapping_add(local);
+        unsafe {
+            dst.add(i).write(global);
+        }
+    }
+}
+
 fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
     shards: &mut [super::shard::ShardState<P>],
     generator_bin: &[BinId],
@@ -129,27 +182,28 @@ fn collect_shard_bookkeeping<P: super::types::VertexPosition>(
 pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     mut data: ShardedCellsData<P>,
 ) -> Result<super::AssemblyResult<P>, crate::VoronoiError> {
-    let t0 = Timer::start();
-
     let num_bins = data.assignment.num_bins;
 
-    #[allow(unused_variables)]
-    let overflow_collect_time = t0.elapsed();
-    let t1 = Timer::start();
-
+    let t_bookkeeping = Timer::start();
     let CollectedShardBookkeeping {
         mut unresolved_edges,
         edge_check_overflow,
         deferred_slots,
     } = collect_shard_bookkeeping(&mut data.shards);
+    #[allow(unused_variables)]
+    let bookkeeping_time = t_bookkeeping.elapsed();
 
+    let t_overflow = Timer::start();
     let overflow_timing = resolve_edge_check_overflow(
         &mut data.shards,
         &edge_check_overflow,
         &mut unresolved_edges,
     );
     #[allow(unused_variables)]
-    let edge_checks_overflow_time = overflow_timing.sort + overflow_timing.match_;
+    let edge_check_overflow_time = t_overflow.elapsed();
+    // Keep the existing nested measurements live for profiling builds even
+    // though this attribution reports the enclosing wall-clock phase.
+    let _overflow_detail_time = overflow_timing.sort + overflow_timing.match_;
 
     // Dev-only: tally unresolved-edge origins to see which path inflates the
     // residual (within-bin vs cross-bin). See docs/correctness.md.
@@ -204,14 +258,14 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     #[allow(unused_variables)]
     let deferred_fallback_time = t_deferred.elapsed();
 
-    #[allow(unused_variables)]
-    let overflow_flush_time = t1.elapsed();
-
     // Convert to ShardFinal, dropping dedup structures to reduce memory pressure
+    let t_finalize = Timer::start();
     let mut finals: Vec<ShardFinal<P>> = std::mem::take(&mut data.shards)
         .into_iter()
         .map(|s| s.into_final())
         .collect();
+    #[allow(unused_variables)]
+    let finalize_shards_time = t_finalize.elapsed();
 
     let t2 = Timer::start();
 
@@ -300,7 +354,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     let num_cells = data.assignment.generator_bin.len();
     #[allow(unused_variables)]
     let concat_vertices_time = t2.elapsed();
-    let t3 = Timer::start();
+    let t_cell_prefixes = Timer::start();
 
     // Phase 4: emit cells in generator index order (prefix-sum + direct fill).
     // Avoid redundant initialization passes in release builds. In debug builds, use sentinels to
@@ -341,7 +395,10 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
         // error, the Vec retains length zero and VoronoiCell has no drop state.
         cells.set_len(num_cells);
     }
+    #[allow(unused_variables)]
+    let emit_cell_prefixes_time = t_cell_prefixes.elapsed();
 
+    let t_incidence = Timer::start();
     let incidence_summary = {
         let mut used_vertices = 0usize;
         let mut low_incidence = false;
@@ -362,7 +419,10 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
             low_incidence,
         }
     };
+    #[allow(unused_variables)]
+    let incidence_summary_time = t_incidence.elapsed();
 
+    let t_cell_indices = Timer::start();
     #[cfg(debug_assertions)]
     let mut cell_indices: Vec<u32> = vec![u32::MAX; total_cell_indices as usize];
     #[cfg(not(debug_assertions))]
@@ -409,66 +469,119 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     };
     // Capture slices by value so the parallel closure carries their data pointers directly instead
     // of reloading them through references to the owning Vecs in the per-vertex scatter loop.
-    let assignment = &data.assignment;
     let finals_ref = finals.as_slice();
     let cells_ref = cells.as_slice();
     let vertex_offsets = vertex_offsets.as_slice();
-    maybe_par_into_iter!(0..num_cells).for_each(move |gen_idx| {
-        let (bin, local) = assignment.generator_bin_local(gen_idx);
-        let bin = bin.as_usize();
-        let shard = &finals_ref[bin];
-        let start = shard.output.cell_start(local) as usize;
-        let cell = &cells_ref[gen_idx];
-        let count = cell.vertex_count();
-        let dst_start = cell.vertex_start();
+    let bin_generators = data.assignment.bin_generators.as_slice();
+    let scatter_by_shard = prefer_shard_order_scatter(bin_generators, num_cells);
+    if scatter_by_shard {
+        maybe_par_into_iter!(0..num_bins).for_each(move |bin| {
+            let shard = &finals_ref[bin];
+            let generators = &bin_generators[bin];
+            debug_assert_eq!(generators.len(), shard.output.cell_starts.len());
+            debug_assert_eq!(generators.len(), shard.output.cell_counts.len());
 
-        #[cfg(debug_assertions)]
-        {
-            let local_idx = local.as_usize();
-            debug_assert!(bin < num_bins, "generator bin out of range");
-            debug_assert!(
-                local_idx < shard.output.cell_counts.len(),
-                "local index out of range"
-            );
-            debug_assert!(
-                start + count <= shard.output.cell_indices.len(),
-                "src range OOB"
-            );
-            debug_assert!(
-                dst_start + count <= total_cell_indices as usize,
-                "dst range OOB"
-            );
-        }
+            // Shard cell streams are local-id ordered. Traverse that order so
+            // both metadata and source indices are sequential; final spans
+            // remain at their generator-ordered destinations.
+            for (local_idx, &gen_idx) in generators.iter().enumerate() {
+                let start = shard.output.cell_starts[local_idx] as usize;
+                let count = shard.output.cell_counts[local_idx] as usize;
+                let cell = &cells_ref[gen_idx];
+                let dst_start = cell.vertex_start();
 
-        let src = &shard.output.cell_indices[start..start + count];
-        // Safety: pointers are valid for the buffers; each cell writes a disjoint range.
-        unsafe {
-            let dst = (cell_indices_ptr as *mut u32).add(dst_start);
-            for (i, &local) in src.iter().enumerate() {
                 #[cfg(debug_assertions)]
                 {
+                    debug_assert_eq!(count, cell.vertex_count(), "cell count mismatch");
+                    debug_assert!(gen_idx < num_cells, "generator index out of range");
                     debug_assert!(
-                        local == INVALID_INDEX
-                            || (local as usize) < finals_ref[bin].output.vertices.len(),
-                        "primary local vertex index out of range"
+                        start + count <= shard.output.cell_indices.len(),
+                        "src range OOB"
+                    );
+                    debug_assert!(
+                        dst_start + count <= total_cell_indices as usize,
+                        "dst range OOB"
                     );
                 }
-                // Foreign slots carry INVALID_INDEX here and are overwritten
-                // by the sparse sidecar immediately after this bulk pass.
-                let global = vertex_offsets[bin].wrapping_add(local);
-                dst.add(i).write(global);
+
+                let src = &shard.output.cell_indices[start..start + count];
+                unsafe {
+                    scatter_local_indices(
+                        src,
+                        cell_indices_ptr,
+                        dst_start,
+                        vertex_offsets[bin],
+                        shard.output.vertices.len(),
+                    );
+                }
             }
-        }
-    });
+        });
+    } else {
+        let assignment = &data.assignment;
+        maybe_par_into_iter!(0..num_cells).for_each(move |gen_idx| {
+            let (bin, local) = assignment.generator_bin_local(gen_idx);
+            let bin = bin.as_usize();
+            let shard = &finals_ref[bin];
+            let start = shard.output.cell_start(local) as usize;
+            let cell = &cells_ref[gen_idx];
+            let count = cell.vertex_count();
+            let dst_start = cell.vertex_start();
+
+            #[cfg(debug_assertions)]
+            {
+                debug_assert!(bin < num_bins, "generator bin out of range");
+                debug_assert!(
+                    start + count <= shard.output.cell_indices.len(),
+                    "src range OOB"
+                );
+                debug_assert!(
+                    dst_start + count <= total_cell_indices as usize,
+                    "dst range OOB"
+                );
+            }
+
+            let src = &shard.output.cell_indices[start..start + count];
+            unsafe {
+                scatter_local_indices(
+                    src,
+                    cell_indices_ptr,
+                    dst_start,
+                    vertex_offsets[bin],
+                    shard.output.vertices.len(),
+                );
+            }
+        });
+    }
 
     #[cfg(not(debug_assertions))]
     unsafe {
         cell_indices.set_len(total_cell_indices as usize);
     }
+    #[allow(unused_variables)]
+    let scatter_cell_indices_time = t_cell_indices.elapsed();
+
+    #[cfg(feature = "timing")]
+    let (shard_order_descents, shard_order_pairs, shard_order_abs_delta) =
+        bin_generators.iter().fold(
+            (0u64, 0u64, 0u64),
+            |(descents, pairs, abs_delta), generators| {
+                let local_descents = generators.windows(2).filter(|w| w[1] < w[0]).count() as u64;
+                let local_abs_delta = generators
+                    .windows(2)
+                    .map(|w| w[1].abs_diff(w[0]) as u64)
+                    .sum::<u64>();
+                (
+                    descents + local_descents,
+                    pairs + generators.len().saturating_sub(1) as u64,
+                    abs_delta + local_abs_delta,
+                )
+            },
+        );
 
     // The common scatter above reads one narrow local id and performs no
     // owner branch. Patch the sparse foreign references by their final cell
     // identity after all disjoint bulk writes have completed.
+    let t_overrides = Timer::start();
     for shard in &finals {
         for entry in &shard.output.reference_overrides {
             let cell = &cells[entry.source_cell as usize];
@@ -483,6 +596,8 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
             cell_indices[dst] = vertex_offsets[owner_bin] + entry.owner_local;
         }
     }
+    #[allow(unused_variables)]
+    let patch_reference_overrides_time = t_overrides.elapsed();
 
     #[cfg(debug_assertions)]
     debug_assert!(
@@ -490,6 +605,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
         "unresolved foreign cell reference after sparse patch"
     );
 
+    let t_zero_hints = Timer::start();
     let mut exact_zero_edge_hint_cells = Vec::new();
     for shard in &finals {
         exact_zero_edge_hint_cells.extend_from_slice(&shard.output.exact_zero_edge_hint_cells);
@@ -514,6 +630,8 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     }
     exact_zero_edge_candidates.sort_unstable();
     exact_zero_edge_candidates.dedup();
+    #[allow(unused_variables)]
+    let exact_zero_hints_time = t_zero_hints.elapsed();
 
     #[cfg(debug_assertions)]
     {
@@ -530,11 +648,22 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
             "unwritten cells remain after assembly (vertex_count sentinel)"
         );
     }
-    #[allow(unused_variables)]
-    let emit_cells_time = t3.elapsed();
-
     #[cfg(feature = "timing")]
     let sub_phases = DedupSubPhases {
+        bookkeeping: bookkeeping_time,
+        edge_check_overflow: edge_check_overflow_time,
+        deferred_patching: deferred_fallback_time,
+        finalize_shards: finalize_shards_time,
+        concat_vertices: concat_vertices_time,
+        emit_cell_prefixes: emit_cell_prefixes_time,
+        incidence_summary: incidence_summary_time,
+        scatter_cell_indices: scatter_cell_indices_time,
+        patch_reference_overrides: patch_reference_overrides_time,
+        exact_zero_hints: exact_zero_hints_time,
+        shard_order_descents,
+        shard_order_pairs,
+        shard_order_abs_delta,
+        scatter_by_shard,
         triplet_keys: finals.iter().map(|s| s.triplet_keys).sum(),
         unresolved_edges_count: unresolved_edges.len() as u64,
         primary_cell_references: finals
@@ -582,6 +711,25 @@ mod tests {
 
     fn bin(value: usize) -> BinId {
         BinId::from_usize(value)
+    }
+
+    #[test]
+    fn scatter_order_gate_distinguishes_correlated_and_scrambled_ids() {
+        let correlated = vec![(0..100).collect(), (100..200).collect()];
+        assert!(!prefer_shard_order_scatter(&correlated, 200));
+
+        let scrambled = vec![
+            (0..100)
+                .map(|i| if i % 2 == 0 { i / 2 } else { 199 - i / 2 })
+                .collect(),
+            Vec::new(),
+        ];
+        assert!(prefer_shard_order_scatter(&scrambled, 200));
+
+        let at_threshold = vec![(0..33).map(|i| i * 100).collect()];
+        assert!(!prefer_shard_order_scatter(&at_threshold, 10_000));
+        let above_threshold = vec![(0..33).map(|i| i * 101).collect()];
+        assert!(prefer_shard_order_scatter(&above_threshold, 10_000));
     }
 
     #[test]

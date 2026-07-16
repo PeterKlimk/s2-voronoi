@@ -540,22 +540,30 @@ Recently accepted optimizations:
   uniform changed -0.05% (-0.59% to +0.49%, 11/20). Keep the lower-work lifecycle and named build
   modes; the intervals rule out the noisy Linux Fibonacci cycle regression on the outcome host.
 
-Measured gates awaiting a design experiment:
+Accepted output-materialization result:
 
-- **Output materialization:** the null-write ceiling is large enough to pursue, but it does not
-  justify a segmented public format by itself. A profiling-only ablation retained construction,
-  reconciliation, all source reads, index arithmetic, incidence reduction, and a matched checksum;
-  one mode allocated and filled the global vertex/cell/index buffers and the other omitted only
-  those destinations. At 2M on the eight-thread Intel Mac, 16-round interleaved medians favored the
-  null mode by 5.5% on Fibonacci (687.1ms to 651.5ms) and 4.5% on uniform (864.2ms to 827.0ms).
-  One-million-point Linux counters showed the smaller compute-side ceiling expected for a
-  bandwidth effect: nulling writes removed about 0.6% of instructions and 1.1--1.2% of branches.
-  Cachegrind at 20k Fibonacci attributed 2.3% fewer data references, 7.4% fewer D1 misses, and
-  15.2% fewer last-level data misses. Checksums and output counts matched in every write/null pair.
-  First isolate the already-redundant final `Vec3`/cell-metadata conversions at
-  `SphericalVoronoi::from_raw_parts`; only then consider construction directly into final backing
-  stores. Preserve the contiguous `vertices()` and per-cell slice contracts, and treat the null
-  result as an upper bound rather than an expected production win.
+- **Adaptive final index scatter:** phase attribution showed that the apparent final typed point
+  conversion was already an allocation-preserving ownership transfer. An isolated cell-metadata
+  conversion removal lowered retired work but hurt ordinary uniform throughput and remains retired.
+  The material attainable component was instead the shard-local to global cell-index scatter.
+  Generator-order traversal gives sequential destination writes but can jump among shard source
+  streams; shard-order traversal gives sequential source reads but scatters the final writes. The
+  assembly path now samples up to 32 adjacent generator-id pairs per shard and selects shard order
+  when their mean absolute delta exceeds 1% of the input size. Fibonacci and cubed-sphere inputs
+  remain generator ordered; uniform, clustered, and mega inputs select shard order. Public cell
+  order, contiguous storage, and index values are unchanged.
+
+  At 2M on the eight-thread Intel Mac, the attributed index phase was about 16--18ms on Fibonacci
+  and 42--48ms on uniform, versus roughly 10--12ms for vertex concatenation. Twenty interleaved
+  multithreaded pairs left Fibonacci neutral (645.8ms versus 645.2ms median) and improved uniform
+  by 1.12% (paired 95% interval 0.58--1.66%, 17/20 favorable). At 1M single-threaded, uniform
+  improved 2.72% (1.25--4.17%, 18/20); Fibonacci was unresolved at about 0.3% slower by median and
+  a paired interval spanning -2.52% to +0.34% speedup. Clustered was directionally 1.58% faster and
+  mega neutral. A separate 12-pair 2M multithreaded no-preprocess guardrail was neutral/favorable:
+  Fibonacci moved from 629.6ms to 626.8ms and uniform from 790.9ms to 785.7ms. Linux fixed-work
+  counters reduced retired instructions by 0.25% on Fibonacci and 0.55% on uniform in every one of
+  nine pairs. This is a locality trade selected from the input's existing spatial-order signal,
+  not a public-format change.
 
 Untried probes and candidates (2026-07-17 triage; each begins with a cheap measurement gate):
 

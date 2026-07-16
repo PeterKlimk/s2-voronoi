@@ -535,7 +535,7 @@ takeover path; this table is too small to create a useful memory-envelope win.
 
 ## 7. Final output materialization
 
-**Status: measurement gate passed; narrow boundary-conversion experiment next (2026-07-17).**
+**Status: adaptive final index scatter accepted (2026-07-17).**
 
 ### Current cost and ceiling probe
 
@@ -565,18 +565,33 @@ Native Mac wall time supplied the outcome gate. On an eight-thread Intel i5-1038
 827.0ms (4.5%). This is a useful bandwidth/cache ceiling, not a forecast: a production diagram
 still has to own the final bytes.
 
-### Candidate progression
+### Result
 
-1. Remove only the final typed conversion copies in `SphericalVoronoi::from_raw_parts`. Prefer one
-   shared internal storage type; otherwise require an explicit, compile-time-checked layout and
-   ownership-transfer boundary. This is independent of sharding and preserves the public layout.
-2. Attribute vertex concatenation, cell-prefix emission, index scatter, and sparse override patches
-   separately on the native host. Prototype direct final backing stores only for a component whose
-   copy remains material after step 1.
-3. Consider bin-ordered or segmented internal storage only if direct flat assembly cannot capture
-   the measured benefit. Such a design must retain `vertices() -> &[UnitVec3]`, cheap random
-   `cell(i)`, serialization, welding aliases, reconciliation, and repair behavior; otherwise it is
-   an API/format redesign rather than a throughput optimization.
+Attribution changed the target. Generator and vertex conversion in
+`SphericalVoronoi::from_raw_parts` already transfers the `Vec3` allocations without copying. Two
+layout-identical approaches to removing only the cell-metadata conversion reduced retired work but
+regressed cache behavior and uniform throughput, so that isolated conversion remains retired.
+
+On the quiet Mac at 2M, vertex concatenation took roughly 10--12ms. Cell-index scatter took about
+16--18ms on Fibonacci and 42--48ms on uniform, making it the material component that could be
+changed without redesigning the output. There are two opposing locality choices:
+
+- generator order writes the final index vector sequentially but jumps among shard-local sources;
+- shard order reads each shard stream sequentially but scatters writes into the already assigned
+  final cell spans.
+
+The accepted implementation samples up to 32 adjacent generator ids per shard. It uses shard order
+when the sampled mean absolute id delta is greater than 1% of the input size, and otherwise retains
+generator order. Measured means were about 0.2% for Fibonacci and 7% for uniform, with clustered
+and mega also above the gate and cubed-sphere below it. The decision costs at most 32 comparisons
+per shard; it neither scans all cells nor changes any public order, offset, or storage contract.
+
+Twenty 2M multithreaded Mac pairs left Fibonacci neutral and improved uniform by 1.12% (paired 95%
+interval 0.58--1.66%). At 1M single-threaded, uniform improved 2.72%; Fibonacci was unresolved with
+a roughly 0.3% median regression and an interval spanning neutral. Linux fixed-work counters
+reduced instructions by 0.25% on Fibonacci and 0.55% on uniform in all nine pairs. The larger null
+write result remains only an upper bound: direct flat backing stores or segmented public storage
+would add substantially more coupling for an unproven residual benefit.
 
 Do not couple the clipper to final addresses merely to chase the full null-write percentage. Counts
 and offsets are not known until shard construction completes, and a counting prepass or synchronized
