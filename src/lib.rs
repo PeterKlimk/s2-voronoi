@@ -122,6 +122,9 @@ pub(crate) mod cube_grid;
 pub(crate) mod knn_clipping;
 pub(crate) mod live_dedup;
 pub mod locate;
+#[cfg(feature = "profiling")]
+#[doc(hidden)]
+pub mod point_audit;
 
 /// Run the internal convex-clip microbench harness (feature: `microbench`).
 #[cfg(feature = "microbench")]
@@ -167,6 +170,20 @@ pub mod escalate_probe {
 
 pub use locate::SphereLocator;
 pub use types::{UnitVec3, UnitVec3Like};
+
+/// Reset profiling-only spherical point-envelope counters.
+#[cfg(feature = "profiling")]
+#[doc(hidden)]
+pub fn profile_point_envelopes_reset() {
+    point_audit::reset();
+}
+
+/// Snapshot profiling-only spherical point-envelope counters.
+#[cfg(feature = "profiling")]
+#[doc(hidden)]
+pub fn profile_point_envelopes() -> Vec<point_audit::PointEnvelopeSummary> {
+    point_audit::snapshot()
+}
 
 /// Preprocessing mode applied before Voronoi computation.
 #[derive(Debug, Clone, Copy, PartialEq)]

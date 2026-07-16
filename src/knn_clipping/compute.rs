@@ -1144,6 +1144,12 @@ fn canonicalize_and_find_first_non_finite(points: &mut [Vec3]) -> Option<usize> 
                 let n = v / len_sq.sqrt();
                 *p = Vec3::new(n.x as f32, n.y as f32, n.z as f32);
             }
+            #[cfg(feature = "profiling")]
+            crate::point_audit::record_vec3_from_dvec3(
+                crate::point_audit::PointProducer::CanonicalGenerator,
+                *p,
+                v,
+            );
         }
         first_bad
     }

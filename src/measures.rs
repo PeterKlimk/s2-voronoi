@@ -245,11 +245,22 @@ impl SphericalVoronoi {
         let index = self.canonical_cell_index(index);
         let (centroid, conditioned) = cell_centroid_pass(self, index, None);
         if !conditioned {
+            #[cfg(feature = "profiling")]
+            crate::point_audit::record_unit_f64_canonical(
+                crate::point_audit::PointProducer::Centroid,
+                centroid,
+            );
             return centroid;
         }
         let keys = collect_near_pi_keys(self, &[index]);
         let owners = resolve_owner_pairs(self, &keys);
-        cell_centroid_pass(self, index, Some(&owners)).0
+        let centroid = cell_centroid_pass(self, index, Some(&owners)).0;
+        #[cfg(feature = "profiling")]
+        crate::point_audit::record_unit_f64_canonical(
+            crate::point_audit::PointProducer::Centroid,
+            centroid,
+        );
+        centroid
     }
 
     /// The next generator set of Lloyd relaxation: every cell's centroid,
@@ -292,6 +303,13 @@ impl SphericalVoronoi {
             if canonical != index {
                 centroids[index] = centroids[canonical];
             }
+        }
+        #[cfg(feature = "profiling")]
+        for &centroid in &centroids {
+            crate::point_audit::record_unit_f64_canonical(
+                crate::point_audit::PointProducer::Centroid,
+                centroid,
+            );
         }
         centroids
     }

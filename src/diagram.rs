@@ -100,6 +100,21 @@ impl SphericalVoronoi {
         weld_map: Option<Vec<u32>>,
     ) -> Self {
         debug_assert!(weld_map.as_ref().is_none_or(|m| m.len() == cells.len()));
+        #[cfg(feature = "profiling")]
+        {
+            for &generator in &generators {
+                crate::point_audit::record_vec3(
+                    crate::point_audit::PointProducer::FinalGenerator,
+                    generator,
+                );
+            }
+            for &vertex in &vertices {
+                crate::point_audit::record_vec3(
+                    crate::point_audit::PointProducer::FinalVertex,
+                    vertex,
+                );
+            }
+        }
         Self {
             generators: generators
                 .into_iter()

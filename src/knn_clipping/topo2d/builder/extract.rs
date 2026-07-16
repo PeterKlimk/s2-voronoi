@@ -67,7 +67,7 @@ impl GnomonicBuilder {
             let v = poly.vs[i];
             let (plane_a, plane_b) = poly.vertex_planes[i];
 
-            let dir = DVec3::new(
+            let source = DVec3::new(
                 fp::fma_f64(
                     u,
                     self.basis.t1.x,
@@ -84,7 +84,7 @@ impl GnomonicBuilder {
                     fp::fma_f64(v, self.basis.t2.z, self.basis.g.z),
                 ),
             );
-            let dir = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);
+            let dir = Vec3::new(source.x as f32, source.y as f32, source.z as f32);
             let len2 = dir.length_squared();
             // Keep the validity check in the floating-point domain. The upper
             // bound rejects infinity, while either comparison rejects NaN.
@@ -92,7 +92,16 @@ impl GnomonicBuilder {
             if !valid_len2 {
                 return Err(CellFailure::NoValidSeed);
             }
+            #[cfg(feature = "profiling")]
+            let v_pos = crate::point_audit::select_direction(dir, len2, source);
+            #[cfg(not(feature = "profiling"))]
             let v_pos = dir * len2.sqrt().recip();
+            #[cfg(feature = "profiling")]
+            crate::point_audit::record_vec3_from_dvec3(
+                crate::point_audit::PointProducer::GnomonicVertex,
+                v_pos,
+                source,
+            );
 
             let plane_a = plane_a as usize;
             let plane_b = plane_b as usize;
@@ -484,12 +493,25 @@ impl FallbackBuilder {
                 plane_a.neighbor_idx as u32,
                 plane_b.neighbor_idx as u32,
             );
-            let position = Vec3::new(
+            let rounded = Vec3::new(
                 vertex.position.x as f32,
                 vertex.position.y as f32,
                 vertex.position.z as f32,
-            )
-            .normalize();
+            );
+            #[cfg(feature = "profiling")]
+            let position = crate::point_audit::select_direction(
+                rounded,
+                rounded.length_squared(),
+                vertex.position,
+            );
+            #[cfg(not(feature = "profiling"))]
+            let position = rounded.normalize();
+            #[cfg(feature = "profiling")]
+            crate::point_audit::record_vec3_from_dvec3(
+                crate::point_audit::PointProducer::FallbackVertex,
+                position,
+                vertex.position,
+            );
             buffer.vertices.push((key, position));
 
             let next = vertices[(i + 1) % vertices.len()];

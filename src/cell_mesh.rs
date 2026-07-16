@@ -88,6 +88,21 @@ impl SphericalCellMesh {
     ) -> Self {
         debug_assert_eq!(cell_cycles.len(), cell_source_sites.len());
         debug_assert_eq!(cell_cycles.len(), cell_to_input.len());
+        #[cfg(feature = "profiling")]
+        {
+            for &vertex in &vertices {
+                crate::point_audit::record_unit(
+                    crate::point_audit::PointProducer::CellMeshVertex,
+                    vertex,
+                );
+            }
+            for &site in &cell_source_sites {
+                crate::point_audit::record_unit(
+                    crate::point_audit::PointProducer::CellMeshSourceSite,
+                    site,
+                );
+            }
+        }
         let total_indices = cell_cycles.iter().map(Vec::len).sum();
         let mut cells = Vec::with_capacity(cell_cycles.len());
         let mut cell_indices = Vec::with_capacity(total_indices);

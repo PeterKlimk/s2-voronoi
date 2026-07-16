@@ -1,12 +1,12 @@
 # Point representation and interoperability plan
 
-**Status:** independently reviewed; a producer-envelope audit gates Option A versus B.
+**Status:** Stage 0 audited; Option B selected for implementation.
 
 This plan records the public-point decision around the measured output-materialization
 optimization. It compares whether a checked semantic `SpherePoint` earns its additional API and
-validation machinery over a simpler packed coordinate type, records the independent preference for
-Option A under current evidence, and defines the numerical gate that can justify Option B as the
-better pre-user design. The decision is separate from the established choice to retain
+validation machinery over a simpler packed coordinate type, records the independent initial
+preference for Option A, and closes the numerical gate in favor of Option B after producer-level
+measurement. The decision is separate from the established choice to retain
 `glam::Vec3`/`DVec3` as internal arithmetic types.
 
 ## Existing facts and constraints
@@ -205,10 +205,73 @@ directions, and centroids normalize their f64 integral. A coherent numerical mig
 worthwhile if it replaces those variants with one storage rule, tightens the actual common
 envelope, and makes a checked point useful to queries and consumers.
 
-Consequently **Stage 0 below reopens A versus B**. Choose B if evidence shows that one shared
+Consequently **Stage 0 below reopened A versus B**. Choose B if evidence shows that one shared
 canonicalizer covers every legitimate producer without unacceptable topology, output-resolution,
 or throughput movement and the resulting type removes meaningful checks or invalid states.
 Otherwise retain A rather than creating a semantic wrapper around a weak invariant.
+
+## Stage 0 findings and decision
+
+The profiling-only audit attributes stored squared-norm error to canonical generators, ordinary
+gnomonic extraction, spherical fallback extraction, newly minted Local3d vertices, final diagram
+generators/vertices, centroids, embedding projection, and cell-mesh copies. It also evaluates both
+rounding orders from the producer's original f64 direction rather than normalizing the already
+stored f32 value a second time.
+
+Observed current-rule envelopes:
+
+- canonical generators and f64-produced centroids stayed below `1.01e-7` absolute squared-norm
+  error;
+- ordinary final vertices reached `3.06e-7` on uniform data and `3.31e-7` on the perturbed
+  great-circle stress, while fallback extraction reached `2.29e-7` on mega seed 3;
+- no finite observed value exceeded four `f32::EPSILON`, `1e-6`, or the historical `1e-4`
+  validation tolerance; and
+- cell-mesh positions/source sites are exact copies of final diagram vertices/generators.
+  Embedding projection, centroid, and Local3d minting already normalize in f64 and round once.
+  The active repair-net fixtures reused existing vertices and therefore did not mint a new repair
+  position during this campaign; the mint path's f64-normalized support-normal construction and
+  exact stored-position unit regression remain the supporting evidence for that cold producer.
+
+Replacing, rather than layering over, the ordinary and fallback f32 normalizations with
+promoted-f64-normalize-then-round produced one common rule. Across Fibonacci, uniform, clustered,
+mega, perturbed great-circle, and cubed-sphere runs, every measured stored value stayed below
+`1.04e-7` absolute squared-norm error. The public contract should nevertheless use the
+conservative bound `2 * f32::EPSILON`: it covers component rounding and f64 normalization error
+without claiming that empirical maxima are a proof or that stored f32 directions are exactly unit.
+
+Correctness and representation effects:
+
+- the full release suite passed under the candidate, including adversarial, repair-net,
+  output-resolution, embedding, cell-elision, and weird-geometry suites;
+- ordinary/random/clustered/great-circle/mega topology fingerprints were unchanged, although many
+  coordinate bits intentionally changed;
+- the deliberately cocircular cubed-sphere grid selected a different valid degenerate resolution.
+  Both results were strictly valid with the same 997 pre-reconciliation defects; sampled maximum
+  vertex norm error improved from `1.15e-7` to `4.13e-8` and maximum vertex/edge cross-track error
+  from `6.43e-8` to `4.03e-8`. Orphan counts moved from 1,063 to 1,084, so this is an intentional
+  representation/output-policy migration rather than a bit-preserving cleanup; and
+- the candidate changed roughly 47--53% of final vertex coordinates on the sampled ordinary and
+  dense corpora. Vertex triple keys still provide shared identity; exact coordinate and
+  output-resolution movement must remain pinned during the real migration.
+
+Performance effects after ensuring each mode performs exactly one normalization:
+
+- Cachegrind at 50k reported 424.14M versus 426.55M instruction references (`+0.57%`) and 38.72M
+  versus 39.02M conditional branches (`+0.78%`);
+- Linux `perf stat` over 3 x 5 builds at 500k reported `+0.61%` retired instructions and `+0.72%`
+  branches. WSL cycles and wall time were noisy and are not decision evidence; and
+- on the native Mac, paired 20-run single-threaded 1M Fibonacci trials averaged 988.3 ms for the
+  current rule and 988.0 ms for the promoted-f64 rule. The difference is noise; there is no
+  observed native wall-time regression. Earlier layered measurements that paid both square roots
+  are discarded.
+
+**Decision: choose Option B.** The audit removes the independent review's main objection: all
+crate-produced spherical directions can share a useful, tight, enforceable finite norm envelope,
+and the unified rule has acceptable correctness and performance behavior. A private-field
+`SpherePoint` materially prevents arbitrary safe construction and invalid serde states while raw
+arrays/closures preserve import interoperability. The type does not make query certificates
+magically exact: locator bounds must still account for the documented envelope or normalize under
+one consistent model in Stage 3.
 
 ## Import and export surface
 
@@ -236,7 +299,7 @@ that `Vec`/slice itself is C ABI safe or that every GPU storage/uniform layout u
 
 ## Staged implementation plan
 
-### Stage 0 — measure and test a unified stored-direction contract
+### Stage 0 — measure and test a unified stored-direction contract (complete)
 
 - Instrument every public/stored point producer separately: canonical generators, ordinary fast
   extraction, fallback extraction, reconciliation/Local3d repair vertices, centroids/Lloyd sites,
@@ -255,13 +318,11 @@ that `Vec`/slice itself is C ABI safe or that every GPU storage/uniform layout u
 - Decide whether the resulting common envelope is strong enough for locator ranking/bounds and
   whether a checked type removes concrete validation or misuse paths.
 
-Gate:
+Gate result:
 
-- Choose **B** if one enforceable storage rule covers all legitimate producers, the migration has
+- **Selected B:** one enforceable storage rule covers all legitimate producers, the migration has
   acceptable correctness/performance behavior, and the type materially strengthens construction,
   serde, or query contracts.
-- Choose **A** if producers need meaningfully different envelopes or a common weak envelope would
-  remain documentation-only.
 
 ### Stage 1 — apply the representation decision and remove the final point conversion
 

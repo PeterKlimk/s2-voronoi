@@ -338,7 +338,13 @@ fn projected_components_f32(
 ) -> Result<UnitVec3, SphereProjectionError> {
     embedding.validate_world_point(world)?;
     let u = embedding.project_validated_world(world);
-    Ok(UnitVec3::new(u[0] as f32, u[1] as f32, u[2] as f32))
+    let point = UnitVec3::new(u[0] as f32, u[1] as f32, u[2] as f32);
+    #[cfg(feature = "profiling")]
+    crate::point_audit::record_unit_f64_canonical(
+        crate::point_audit::PointProducer::EmbeddingProjection,
+        point,
+    );
+    Ok(point)
 }
 
 fn project_points<P: WorldVec3Like>(

@@ -1029,11 +1029,15 @@ impl<'a> WorkingDiagram<'a> {
         }
         let vid = found.unwrap_or_else(|| {
             let vid = self.num_vertices() as u32;
-            self.minted_pos.push(
-                vertex
-                    .mint_pos
-                    .unwrap_or_else(|| triple_circumcenter(points, t)),
+            let position = vertex
+                .mint_pos
+                .unwrap_or_else(|| triple_circumcenter(points, t));
+            #[cfg(feature = "profiling")]
+            crate::point_audit::record_vec3(
+                crate::point_audit::PointProducer::RepairVertex,
+                position,
             );
+            self.minted_pos.push(position);
             self.minted_key.push(t);
             vid
         });

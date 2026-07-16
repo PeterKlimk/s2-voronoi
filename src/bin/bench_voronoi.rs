@@ -18,6 +18,8 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::io::{self, Write};
 use std::time::Instant;
+#[cfg(feature = "profiling")]
+use std::{collections::hash_map::DefaultHasher, hash::Hasher};
 use voronoi_mesh::{PreprocessMode, RepairMode, UnitVec3, VoronoiConfig};
 
 fn parse_count(s: &str) -> Result<usize, String> {
@@ -270,7 +272,8 @@ struct Args {
     /// (uniform plus one tiny pile), splittable (many cell-scale clusters),
     /// mega (one cap holding a fraction of all points). Reconciliation stress:
     /// cubed (deterministic projected quad grid). High-work robustness:
-    /// great-circle (narrow perturbed great-circle band).
+    /// great-circle (narrow perturbed great-circle band), cube-vertices
+    /// (eight tight corner clusters; --dist-param is angular spread).
     /// See --dist-param.
     #[arg(long, default_value = "fib")]
     dist: String,
@@ -297,6 +300,11 @@ struct Args {
     /// Number of iterations to run (useful for profiling)
     #[arg(short = 'n', long, default_value_t = 1)]
     repeat: usize,
+
+    /// Profiling-only: report norm envelopes by stored-point producer.
+    #[cfg(feature = "profiling")]
+    #[arg(long)]
+    point_envelope_audit: bool,
 }
 
 fn generate_points(n: usize, seed: u64, lloyd: bool, dist: &str, param: f64) -> Vec<Vec3> {
@@ -313,6 +321,10 @@ fn generate_points(n: usize, seed: u64, lloyd: bool, dist: &str, param: f64) -> 
         "great-circle" => {
             let jitter = if param > 0.0 { param as f32 } else { 0.01 };
             return great_circle_points(n, jitter, &mut rng);
+        }
+        "cube-vertices" => {
+            let spread = if param > 0.0 { param as f32 } else { 0.01 };
+            return cube_vertex_points(n, spread, &mut rng);
         }
         // Almost everything inside a single tight cap (radius = dist-param,
         // default 0.002 ≈ tighter than one max-res grid cell) — the "everything
@@ -342,6 +354,35 @@ fn generate_points(n: usize, seed: u64, lloyd: bool, dist: &str, param: f64) -> 
         lloyd_relax_kmeans(&mut points, 2, 20, &mut rng);
     }
     points
+}
+
+fn cube_vertex_points<R: Rng>(n: usize, spread: f32, rng: &mut R) -> Vec<Vec3> {
+    let s = 1.0 / 3.0f32.sqrt();
+    let corners = [
+        Vec3::new(s, s, s),
+        Vec3::new(s, s, -s),
+        Vec3::new(s, -s, s),
+        Vec3::new(s, -s, -s),
+        Vec3::new(-s, s, s),
+        Vec3::new(-s, s, -s),
+        Vec3::new(-s, -s, s),
+        Vec3::new(-s, -s, -s),
+    ];
+    (0..n)
+        .map(|i| {
+            let center = corners[i % corners.len()];
+            let arbitrary = if center.x.abs() < 0.9 {
+                Vec3::X
+            } else {
+                Vec3::Y
+            };
+            let t1 = center.cross(arbitrary).normalize();
+            let t2 = center.cross(t1);
+            let u = rng.gen_range(-spread..spread);
+            let v = rng.gen_range(-spread..spread);
+            (center + u * t1 + v * t2).normalize()
+        })
+        .collect()
 }
 
 fn random_unit<R: Rng>(rng: &mut R) -> Vec3 {
@@ -577,12 +618,64 @@ struct BenchResult {
     mean_cell_vertices: f64,
 }
 
-fn run_benchmark_with_config(points: &[UnitVec3], config: VoronoiConfig) -> BenchResult {
+fn run_benchmark_with_config(
+    points: &[UnitVec3],
+    config: VoronoiConfig,
+    #[cfg(feature = "profiling")] point_envelope_audit: bool,
+) -> BenchResult {
     let n = points.len();
 
+    #[cfg(feature = "profiling")]
+    if point_envelope_audit {
+        voronoi_mesh::profile_point_envelopes_reset();
+    }
     let t0 = Instant::now();
     let diagram = voronoi_mesh::compute_with(points, config).expect("voronoi-mesh should succeed");
     let time_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    #[cfg(feature = "profiling")]
+    if point_envelope_audit {
+        std::hint::black_box(diagram.lloyd_step());
+        for row in voronoi_mesh::profile_point_envelopes() {
+            println!(
+                "POINT_ENVELOPE producer={} count={} non_finite={} max={:.9e} gt_1eps={} gt_2eps={} gt_4eps={} gt_8eps={} gt_1e6={} gt_1e5={} gt_1e4={} f32_changed={} f32_max={:.9e} f64_changed={} f64_max={:.9e} rules_differ={}",
+                row.producer,
+                row.count,
+                row.non_finite,
+                row.max_abs_error,
+                row.over_1eps,
+                row.over_2eps,
+                row.over_4eps,
+                row.over_8eps,
+                row.over_1e6,
+                row.over_1e5,
+                row.over_1e4,
+                row.f32_rule_changed,
+                row.f32_rule_max_abs_error,
+                row.f64_rule_changed,
+                row.f64_rule_max_abs_error,
+                row.rules_differ,
+            );
+        }
+        let mut topology = DefaultHasher::new();
+        for cell in diagram.iter_cells() {
+            for &index in cell.vertex_indices {
+                topology.write_u32(index);
+            }
+            topology.write_u8(0xff);
+        }
+        let mut coordinates = DefaultHasher::new();
+        for point in diagram.generators().iter().chain(diagram.vertices()) {
+            coordinates.write_u32(point.x.to_bits());
+            coordinates.write_u32(point.y.to_bits());
+            coordinates.write_u32(point.z.to_bits());
+        }
+        println!(
+            "POINT_AUDIT_HASH topology={:016x} coordinates={:016x}",
+            topology.finish(),
+            coordinates.finish(),
+        );
+    }
 
     #[cfg(debug_assertions)]
     {
@@ -686,7 +779,12 @@ fn main() {
                 io::stdout().flush().unwrap();
             }
 
-            let result = run_benchmark_with_config(&unit_points, config.clone());
+            let result = run_benchmark_with_config(
+                &unit_points,
+                config.clone(),
+                #[cfg(feature = "profiling")]
+                args.point_envelope_audit,
+            );
             times.push(result.time_ms);
 
             if args.repeat > 1 {
