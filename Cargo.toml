@@ -38,11 +38,14 @@ serde = ["dep:serde"] # Serialize/Deserialize for diagram types
 escalate_probe = ["dep:delaunator"] # Expose the defect-driven exact local-rebuild for integration testing
 simd_scalar = [] # Scalar/autovectorized 8-lane path instead of `wide`; debugging/comparison
 fma = [] # Prefer fused multiply-add via mul_add. On x86/x86_64 requires the `+fma` target feature (RUSTFLAGS="-C target-feature=+fma" or -C target-cpu=native); else compile error (SIMD/scalar dot paths must fuse identically). See src/fp.rs guard.
-tools = ["dep:clap", "dep:kiddo", "dep:rand", "dep:rand_chacha"] # Benchmark/utility binaries
+tools = ["dep:clap", "dep:fixed", "dep:kiddo", "dep:rand", "dep:rand_chacha"] # Benchmark/utility binaries
 
 [dependencies]
 clap = { version = "4", features = ["derive"], optional = true }
 kiddo = { version = "4", optional = true }
+# Constrain kiddo's broad `fixed = "1"` dependency to the newest release
+# compatible with the crate's Rust 1.88 MSRV. fixed 1.31 requires Rust 1.93.
+fixed = { version = "=1.30.0", optional = true }
 rand = { version = "0.8", optional = true }
 rand_chacha = { version = "0.3", optional = true }
 # Math (always internal dependency)
