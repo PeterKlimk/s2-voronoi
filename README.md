@@ -115,8 +115,9 @@ Smaller inputs and single-threaded pools stay serial.
 - `build_adjacency()` — per-cell Voronoi neighbors aligned with boundary edges (the Delaunay
   edges of the generator set).
 - `delaunay_triangles()` — the dual triangulation as `Vec<[u32; 3]>`.
-- `build_locator()` — reusable point-location; `locate(q)` maps a point to its cell in
-  near-constant time, `locate_many(&[q])` batches across cores.
+- `build_locator()` — reusable point-location; `locate(q)` maps any finite, nonzero direction to
+  its cell in near-constant time, while `locate_many(&[q])` batches across cores and reports the
+  lowest invalid query index.
 - `SphereEmbedding` / `compute_on_sphere` — translated and uniformly scaled world-space spheres
   backed by the same canonical unit diagram.
 - `validation::validate` — strict subdivision check.

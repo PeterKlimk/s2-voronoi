@@ -387,6 +387,20 @@ branches. On the native Intel Mac, 20 interleaved single-threaded 1M Fibonacci r
 
 ### Stage 3 — design locator validation as a correctness change
 
+**Completed 2026-07-17.** `SphereLocator::locate` is now fallible and normalizes every finite,
+nonzero query in f64 before one f32 rounding. `locate_many` applies the same rule through a
+canonical query buffer and returns `IndexedSphereQueryError` with the lowest invalid slice index;
+zero and non-finite values have explicit `SphereQueryError` variants. Already projected
+world-space queries use the internal checked-point path and do not pay a second normalization.
+
+The motivating mismatch is retained as a regression fixture. With 700 deterministic generators,
+scaling query `[-0.022981111, 0.5619437, 0.82685614]` by 16 previously multiplied raw candidate
+dots while shell bounds remained normalized. The search stopped after the first occupied shell and
+returned generator 211 (dot 0.9913483) instead of generator 576 (dot 0.9990854). The scaled and
+unit forms now use the same canonical query and return the same brute-force nearest generator.
+This is a correctness/API change: it adds one f64 normalization per raw unit-space query and an
+owned canonical-query buffer for batches, and makes no throughput-win claim.
+
 - Specify fallible single-query and indexed batch errors for zero, non-finite, and out-of-contract
   query directions.
 - Normalize/rank queries under one model and test the current raw-dot versus normalized-bound

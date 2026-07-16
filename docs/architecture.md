@@ -148,6 +148,6 @@ memory. `UnitVec3` remains an unchecked raw input adapter and is not a stored-ou
   exact-zero canonicalization and the explicit cell-elision quotient.
 - `cube_grid/` — cube-map spatial index and packed-kNN stage: dot-product distance with
   conservative cap/plane upper bounds, ring walk with per-ring certificates.
-- `locate.rs` — point location, reusing the grid shell frontiers to answer nearest-generator
-  queries. `validation.rs` — strict subdivision checks.
+- `locate.rs` — fallible point-query normalization and point location, reusing the grid shell
+  frontiers to answer nearest-generator queries. `validation.rs` — strict subdivision checks.
 - `timing/` — optional instrumentation.

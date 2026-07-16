@@ -172,7 +172,7 @@ pub mod escalate_probe {
     };
 }
 
-pub use locate::SphereLocator;
+pub use locate::{IndexedSphereQueryError, SphereLocator, SphereQueryError};
 pub use types::{
     SpherePoint, SpherePointError, UnitVec3, UnitVec3Like, SPHERE_POINT_MAX_NORM_SQUARED_ERROR,
 };

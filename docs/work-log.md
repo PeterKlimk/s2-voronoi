@@ -57,6 +57,7 @@ prevention rather than an overclaimed proof.
 | WORK-002 | P2 | Ongoing | Exercise after construction/repair changes |
 | POINT-001 | P2 | Completed | Checked `SpherePoint`, audited storage rule, and packed views landed |
 | POINT-002 | P2 | Completed | Closure-based zero-intermediate ingest landed without direct-path regression |
+| POINT-003 | P1 | Completed | Locator query validation and normalized ranking/certification landed |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
@@ -66,6 +67,19 @@ prevention rather than an overclaimed proof.
 | RESEARCH-004 | P3 | Backburner | Commit to full f64 representation and search bounds |
 
 ## Completed work
+
+### POINT-003 — Locator query contract
+
+- **Priority:** P1
+- **Status:** Completed 2026-07-17
+- **Decision:** interpret every finite, nonzero unit-space query radially, normalize it with the
+  same f64-to-f32 rule as checked points, and make invalid single and batch queries explicit.
+- **Result:** `locate` returns `SphereQueryError`; `locate_many` returns the lowest indexed
+  `IndexedSphereQueryError`. A deterministic regression proves that the old raw-dot versus
+  normalized-bound mismatch could return a non-nearest generator for scaled input. World-space
+  locators retain their existing projection errors and reuse the internal checked-point path.
+  Details are recorded in
+  [`point-api-plan.md`](point-api-plan.md#stage-3--design-locator-validation-as-a-correctness-change).
 
 ### POINT-002 — Closure-based point ingest
 

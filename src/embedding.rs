@@ -764,7 +764,7 @@ impl EmbeddedSphereLocator {
         query: &P,
     ) -> Result<usize, SphereProjectionError> {
         let direction = projected_unit_f32(self.embedding, query)?;
-        Ok(self.locator.locate(&direction))
+        Ok(self.locator.locate_sphere_point(direction))
     }
 
     /// Locate world-space queries in input order.
@@ -787,7 +787,7 @@ impl EmbeddedSphereLocator {
                 })
             })
             .collect();
-        Ok(self.locator.locate_many(&directions?))
+        Ok(self.locator.locate_many_sphere_points(&directions?))
     }
 
     /// Embedding used to interpret world-space queries.

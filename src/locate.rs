@@ -14,12 +14,77 @@
 //! to a twin than to its canonical, since welded generators coincide within
 //! the weld radius).
 
+use std::fmt;
+
 use glam::Vec3;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch};
-use crate::{SphericalVoronoi, UnitVec3Like};
+use crate::{SpherePoint, SpherePointError, SphericalVoronoi, UnitVec3Like};
+
+/// Why a unit-sphere locator query could not define a direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SphereQueryError {
+    /// One query coordinate is NaN or infinite.
+    NonFinite {
+        /// Component index: 0 = x, 1 = y, 2 = z.
+        component: usize,
+    },
+    /// All query coordinates are zero.
+    Directionless,
+}
+
+impl fmt::Display for SphereQueryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NonFinite { component } => {
+                write!(f, "sphere query component {component} is not finite")
+            }
+            Self::Directionless => write!(f, "sphere query does not define a direction"),
+        }
+    }
+}
+
+impl std::error::Error for SphereQueryError {}
+
+/// An indexed unit-sphere locator-query error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IndexedSphereQueryError {
+    query_index: usize,
+    source: SphereQueryError,
+}
+
+impl IndexedSphereQueryError {
+    /// Index of the invalid query in the input slice.
+    #[inline]
+    pub fn query_index(&self) -> usize {
+        self.query_index
+    }
+
+    /// Underlying query validation error.
+    #[inline]
+    pub fn query_error(&self) -> SphereQueryError {
+        self.source
+    }
+}
+
+impl fmt::Display for IndexedSphereQueryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid sphere query at index {}: {}",
+            self.query_index, self.source
+        )
+    }
+}
+
+impl std::error::Error for IndexedSphereQueryError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
 
 /// Run `f` over every query with a per-worker scratch from `mk` (parallel
 /// with the `parallel` feature, plain loop otherwise).
@@ -80,22 +145,63 @@ impl SphericalVoronoi {
 impl SphereLocator {
     /// Cell containing the query direction (nearest generator by angle).
     ///
-    /// The query is assumed unit-normalized, like the diagram's inputs.
-    /// Returns the canonical cell index.
-    pub fn locate<P: UnitVec3Like>(&mut self, p: &P) -> usize {
-        let query = Vec3::new(p.x(), p.y(), p.z());
-        sphere_locate_core(
+    /// Every finite, nonzero vector denotes its radial direction: the query
+    /// is normalized in f64 and rounded once to f32 before ranking. Returns
+    /// the canonical cell index.
+    pub fn locate<P: UnitVec3Like + ?Sized>(&mut self, p: &P) -> Result<usize, SphereQueryError> {
+        let query = normalized_query(p)?;
+        Ok(sphere_locate_core(
             &self.grid,
             self.canonical.as_deref(),
             &mut self.scratch,
             &mut self.batch,
             query,
-        )
+        ))
     }
 
     /// Locate every query, in input order (parallel with the `parallel`
     /// feature — each worker gets its own scratch, so this takes `&self`).
-    pub fn locate_many<P: UnitVec3Like + Sync>(&self, queries: &[P]) -> Vec<usize> {
+    ///
+    /// Queries use the same radial normalization as [`Self::locate`]. An
+    /// error identifies the lowest invalid input index before any location
+    /// work starts.
+    pub fn locate_many<P: UnitVec3Like + Sync>(
+        &self,
+        queries: &[P],
+    ) -> Result<Vec<usize>, IndexedSphereQueryError> {
+        let normalized: Result<Vec<Vec3>, IndexedSphereQueryError> = queries
+            .iter()
+            .enumerate()
+            .map(|(query_index, query)| {
+                normalized_query(query).map_err(|source| IndexedSphereQueryError {
+                    query_index,
+                    source,
+                })
+            })
+            .collect();
+        Ok(self.locate_many_canonical(&normalized?, |query| *query))
+    }
+
+    #[inline]
+    pub(crate) fn locate_sphere_point(&mut self, p: SpherePoint) -> usize {
+        sphere_locate_core(
+            &self.grid,
+            self.canonical.as_deref(),
+            &mut self.scratch,
+            &mut self.batch,
+            Vec3::from_array(p.to_array()),
+        )
+    }
+
+    pub(crate) fn locate_many_sphere_points(&self, queries: &[SpherePoint]) -> Vec<usize> {
+        self.locate_many_canonical(queries, |query| Vec3::from_array(query.to_array()))
+    }
+
+    fn locate_many_canonical<P, F>(&self, queries: &[P], to_vec3: F) -> Vec<usize>
+    where
+        P: Sync,
+        F: Fn(&P) -> Vec3 + Sync + Send,
+    {
         map_with_scratch(
             queries,
             || (self.grid.make_scratch(), Vec::new()),
@@ -105,11 +211,23 @@ impl SphereLocator {
                     self.canonical.as_deref(),
                     &mut scratch.0,
                     &mut scratch.1,
-                    Vec3::new(p.x(), p.y(), p.z()),
+                    to_vec3(p),
                 )
             },
         )
     }
+}
+
+#[inline]
+fn normalized_query<P: UnitVec3Like + ?Sized>(p: &P) -> Result<Vec3, SphereQueryError> {
+    let point = SpherePoint::try_from_xyz([p.x(), p.y(), p.z()]).map_err(|error| match error {
+        SpherePointError::NonFinite { component } => SphereQueryError::NonFinite { component },
+        SpherePointError::Directionless => SphereQueryError::Directionless,
+        SpherePointError::OutsideStoredEnvelope => {
+            unreachable!("direction construction normalizes rather than validating stored bits")
+        }
+    })?;
+    Ok(Vec3::from_array(point.to_array()))
 }
 
 fn sphere_locate_core(

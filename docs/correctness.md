@@ -206,6 +206,13 @@ Unit-length input is assumed, not enforced (it is canonicalized once at entry, s
 generators may differ from the raw input by ~1 ulp). Non-finite components are rejected with an
 index-bearing `InvalidInput`.
 
+Locator queries have a deliberately broader radial-direction contract than generator input. Every
+finite, nonzero f32 vector is normalized in f64 and rounded once to f32 before both candidate
+ranking and shell certification. Scaling a query by a positive finite factor therefore cannot
+change its cell. A zero or non-finite single query returns `SphereQueryError`; a batch returns
+`IndexedSphereQueryError` naming the lowest invalid query index before location begins. The batch
+normalization buffer is intentional correctness state, not part of the stored diagram.
+
 ## Embedded spheres
 
 `compute_on_sphere` extends the coordinate contract, not the geometric model. A validated
