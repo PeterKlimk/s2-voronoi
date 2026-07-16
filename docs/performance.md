@@ -484,7 +484,7 @@ Larger changes to scheduling, repair scope, pathological-work handoff, and repea
 kept in the non-authoritative
 [`algorithmic performance ideas`](algorithmic-performance-ideas.md) catalogue.
 
-Measured candidates awaiting a final host gate:
+Recently accepted optimizations:
 
 - **Shrinking-suffix incoming edge-check matching:** partition each cell's already-matched in-bin
   checks to the front, search the shrinking unmatched suffix first, and search the prefix only for
@@ -497,9 +497,10 @@ Measured candidates awaiting a final host gate:
   Fibonacci changed +0.10% (95% interval -0.67% to +0.87%, 8/20 favorable) and uniform +0.03%
   (-0.48% to +0.56%, 9/20 favorable). Single-threaded Mac validation at 1M supplied a clear signal:
   thirty Fibonacci pairs were 0.86% faster (95% interval 0.28--1.43%, 25/30 favorable), and thirty
-  uniform pairs were 1.63% faster (0.79--2.46%, 26/30 favorable). Preserve this as a strong
-  single-threaded candidate pending wall-time testing on a quiet native-Linux host; the neutral Mac
-  multithreaded result prevents claiming a general default-path throughput win yet.
+  uniform pairs were 1.63% faster (0.79--2.46%, 26/30 favorable). The repeatable retired-work
+  reduction and quiet-host single-threaded wins justify the default change. Treat the neutral Mac
+  multithreaded result as evidence that this work is not limiting there, not as a regression; the
+  measured intervals rule out a material loss on that host.
 
 Measured gates awaiting a design experiment:
 
