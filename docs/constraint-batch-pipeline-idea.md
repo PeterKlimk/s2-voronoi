@@ -345,6 +345,34 @@ whose unknown-lane evaluations feed the ordinary clip kernel instead of being di
 window width and reclassification after polygon progress need evidence that such a fused kernel
 first leaves a material residual cost.
 
+**Experiment result (2026-07-16): fused exact classifier rejected in eager and adaptive forms.**
+The prototype evaluated four prepared constraints across one current 3-to-8-vertex polygon,
+retaining exact signed distances and inside masks. An all-inside lane was permanently redundant;
+the first active lane consumed the retained distances directly in the existing specialized clip
+kernel. After that clip changed the polygon, unknown later lanes reverted to ordinary evaluation.
+Targeted release tests established bitwise-equivalent clip state, prepared-coefficient identity,
+fallback invalidation, and unchanged termination checkpoints.
+
+The eager form did substantial useful work at 100k: it classified 403,492 consumed lanes, proved
+52,335 unchanged, and reused distances for 106,617 active clips. It nevertheless increased 500k
+native retired instructions by 11.9%. The first active constraint invalidated most remaining
+unknown-lane distances, so the classifier added a large second evaluation pass despite reusing its
+first useful result.
+
+An adaptive form retained width-one preparation until an ordinary clip returned `Unchanged`, then
+armed one four-lane classifier window and disarmed on the next change. This reduced prepared
+speculation from 20.7% to 3.3%. Of 12,471 classified lanes, 7,874 (63.1%) were unchanged and 3,446
+active clips reused their distances. Despite the much better hit rate, the nested window and state
+machinery still affected the common loop. Against width one, 500k pinned native runs increased
+instructions from 3,410,422,066 to 3,586,171,204 (+5.15%), branches from 378,158,826 to 405,109,159
+(+7.13%), cycles by 3.72%, and text size by about 19.7 KiB.
+
+Do not integrate a rolling exact classifier into the common consumption loop. If this idea is ever
+revisited, the only credible shape is an outlined cold side exit taken after the existing width-one
+path observes `Unchanged`, leaving the normal loop and clip-kernel code generation untouched. Its
+ceiling is small on corrected Fibonacci—only about 12.5k classified lanes per 100k cells—so it
+should first be justified by a workload with materially longer stable tails.
+
 ## Measurement plan
 
 The primary outcome is end-to-end time/cycles, supported by retired instructions, branches, cache
