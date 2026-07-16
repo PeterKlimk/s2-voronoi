@@ -288,6 +288,32 @@ Add the vectorized radial certificate first. Then add exact across-constraint al
 classification as a separate candidate. Preserve ordered termination checkpoints for every skipped
 constraint.
 
+**Experiment result (2026-07-16): four-lane radial preclassification rejected.** The prototype
+reused the bit-exact `f64x4` coefficient preparation from Phase 3 and evaluated the clipper's
+existing sufficient condition, `c >= 0 && c*c >= ab2 * max_r2`, before ordered clip consumption.
+Certified lanes reported `Unchanged` without constructing a half-plane or entering the clipper;
+unknown lanes followed the ordinary path. Candidate order, termination checkpoints, and fallback
+handling remained unchanged in targeted release tests.
+
+On a 100k corrected-Fibonacci timing run, 535,426 constraints were prepared and 424,803 consumed,
+retaining Phase 3's 20.7% speculation. Of 403,493 consumed lanes eligible for the batch test, 57,608
+(14.3%) were radially certified. Total consumed neighbors and final edges were unchanged because
+the certificate skips clipper entry, not candidates.
+
+That apparently useful hit rate did not remove substantial work: `clip_convex` already performs the
+same radial check before loading polygon vertices or dispatching a clip kernel. The batch path only
+moved that cheap early exit above half-plane construction and inlined builder plumbing. A scalar
+per-lane form increased 500k pinned native retired instructions by 3.60% and branches by 5.54%
+against width one. Tightening it to one explicit four-lane mask increased instructions by 4.48% and
+branches by 4.84%. Cycle and wall-time samples were host-noisy and supplied no contrary acceptance
+signal.
+
+Do not use radial preclassification to justify a prepared window by itself. It may be folded into a
+batch stage already paid for by some other optimization, but here it duplicated an existing
+pre-vertex early exit while retaining the window's storage, dispatch, and speculative preparation
+costs. A future fused classifier must eliminate vertex evaluation or make its unknown-lane results
+directly reusable by the real clip kernel.
+
 **Experiment result (2026-07-16): 64-sector support-envelope classification rejected.** The
 prototype promoted the timing-only directional support audit into the exact-batch frontier and
 mid-batch production paths. It first proved that every post-batch unseen candidate was outside the
@@ -314,9 +340,10 @@ consumed-candidate reduction, not the sum of nominal skipped-tail lengths.
 
 ### Phase 5: deeper fusion only after attribution
 
-Possible follow-ups include adaptive window width, a cheaper fused radial certificate,
-reclassification after polygon progress, or direct handoff from packed selection storage. Each
-needs evidence that the preceding stage leaves a material residual cost.
+Remaining follow-ups include direct handoff from packed selection storage or an exact classifier
+whose unknown-lane evaluations feed the ordinary clip kernel instead of being discarded. Adaptive
+window width and reclassification after polygon progress need evidence that such a fused kernel
+first leaves a material residual cost.
 
 ## Measurement plan
 
