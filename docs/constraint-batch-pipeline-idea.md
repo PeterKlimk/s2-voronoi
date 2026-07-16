@@ -1,6 +1,16 @@
 # Selected-neighbor constraint batches
 
-**Status:** research plan, not an implementation commitment or authoritative queue item
+**Status:** closed negative (2026-07-16) — every staged experiment through Phase 5 was rejected;
+retained as the experimental record
+
+All "width one" baselines below refer to a prepared-constraint seam refactor committed only on
+`agent/constraint-batch-pipeline` (762b16f); the seam was not merged to `main`, since it existed to
+host the rejected experiments. The rejections share one cause: an unchanged clip is roughly 40–60
+instructions with an existing pre-vertex radial early exit, streams are short (~7.2 consumed
+candidates per cell) with frequent mid-batch termination, so any window/dispatch/classification
+machinery costs more than the work it can remove. This is the constraint-side counterpart of the
+rejected directional termination certificate; do not retry late/known-batch designs without a
+workload whose per-cell streams are materially longer.
 
 This document explores a fused handoff between directed neighbor selection and per-cell polygon
 clipping. The proposal is deliberately specific to the `knn_clipping` backend: it does not make the
@@ -263,17 +273,115 @@ cost independently of SIMD savings.
 Prepare four constraints with exact lane-wise `f64` operations. Compare rolling widths and record
 speculation. Keep ordinary sequential clipping unchanged.
 
+**Experiment result (2026-07-16): coefficient-only rolling preparation rejected.** A scalar
+four-entry window preserved the existing candidate, edge, termination, and fallback outcomes, but a
+100k corrected-Fibonacci timing run prepared 539,940 stream constraints and consumed 424,803 of
+them: 115,137 speculative preparations (21.3%). Against the committed width-one seam, a 500k
+single-threaded native counter run added 3.46% retired instructions and 3.83% branches. Interleaved
+wall time was noisy but gave no acceptance signal.
+
+A tighter version matched the builder variant once per window and prepared four constraints through
+an exact lane-wise `f64x4` kernel. Boundary lanes with a signed-zero difference fell back to the
+scalar formula to preserve coefficient bits. It reduced speculation slightly by handling partial
+windows scalar: 535,426 prepared versus the same 424,803 consumed (20.7%). SIMD recovered about 15
+million instructions relative to the scalar-window prototype, but remained 3.02% above the
+width-one baseline and added 5.14% branches. The window storage, dispatch, and speculative work cost
+more than coefficient SIMD saved.
+
+Do not revive rolling coefficient preparation alone. A future Phase 4 experiment must fuse enough
+batch classification or redundant-constraint elimination to remove downstream work, and should
+prototype that combined kernel directly rather than retain the rejected preparation scaffold.
+
 ### Phase 4: batch redundancy filters
 
 Add the vectorized radial certificate first. Then add exact across-constraint all-inside
 classification as a separate candidate. Preserve ordered termination checkpoints for every skipped
 constraint.
 
+**Experiment result (2026-07-16): four-lane radial preclassification rejected.** The prototype
+reused the bit-exact `f64x4` coefficient preparation from Phase 3 and evaluated the clipper's
+existing sufficient condition, `c >= 0 && c*c >= ab2 * max_r2`, before ordered clip consumption.
+Certified lanes reported `Unchanged` without constructing a half-plane or entering the clipper;
+unknown lanes followed the ordinary path. Candidate order, termination checkpoints, and fallback
+handling remained unchanged in targeted release tests.
+
+On a 100k corrected-Fibonacci timing run, 535,426 constraints were prepared and 424,803 consumed,
+retaining Phase 3's 20.7% speculation. Of 403,493 consumed lanes eligible for the batch test, 57,608
+(14.3%) were radially certified. Total consumed neighbors and final edges were unchanged because
+the certificate skips clipper entry, not candidates.
+
+That apparently useful hit rate did not remove substantial work: `clip_convex` already performs the
+same radial check before loading polygon vertices or dispatching a clip kernel. The batch path only
+moved that cheap early exit above half-plane construction and inlined builder plumbing. A scalar
+per-lane form increased 500k pinned native retired instructions by 3.60% and branches by 5.54%
+against width one. Tightening it to one explicit four-lane mask increased instructions by 4.48% and
+branches by 4.84%. Cycle and wall-time samples were host-noisy and supplied no contrary acceptance
+signal.
+
+Do not use radial preclassification to justify a prepared window by itself. It may be folded into a
+batch stage already paid for by some other optimization, but here it duplicated an existing
+pre-vertex early exit while retaining the window's storage, dispatch, and speculative preparation
+costs. A future fused classifier must eliminate vertex evaluation or make its unknown-lane results
+directly reusable by the real clip kernel.
+
+**Experiment result (2026-07-16): 64-sector support-envelope classification rejected.** The
+prototype promoted the timing-only directional support audit into the exact-batch frontier and
+mid-batch production paths. It first proved that every post-batch unseen candidate was outside the
+current termination radius, then tested the known batch remainder against a cached conservative
+support envelope. Timing builds retained the exact all-vertices test as a differential oracle; it
+reported zero false-positive skips.
+
+On a 100k corrected-Fibonacci run, the classifier tested 74,500 candidates and accepted 6,361
+batch tails. Its counters credited those tails with 58,010 entries, but actual consumed neighbors
+fell only from 721,993 to 714,437: 7,556 candidates, or 1.05%. The difference matters: raw tail
+length is not equivalent to end-to-end work removed once later frontier and termination behavior
+changes.
+
+The production cost was far larger than that saving. At 500k, pinned single-threaded native counter
+runs increased retired instructions from 3,410,422,604 to 3,989,471,644 (+16.98%), branches from
+378,159,032 to 461,230,828 (+21.97%), and cycles by 18.02%. Rebuilding 64 directional supports and
+classifying through angular sectors was too expensive for the small number of constraints actually
+eliminated.
+
+Do not revive this support envelope as a production batch gate. A subsequent classifier needs a
+much cheaper certificate, or it must produce data that the clipper immediately reuses so that
+classification replaces downstream work rather than adding a second geometric pass. Measure actual
+consumed-candidate reduction, not the sum of nominal skipped-tail lengths.
+
 ### Phase 5: deeper fusion only after attribution
 
-Possible follow-ups include adaptive window width, support-envelope classification, reclassification
-after polygon progress, or direct handoff from packed selection storage. Each needs evidence that
-the preceding stage leaves a material residual cost.
+Remaining follow-ups include direct handoff from packed selection storage or an exact classifier
+whose unknown-lane evaluations feed the ordinary clip kernel instead of being discarded. Adaptive
+window width and reclassification after polygon progress need evidence that such a fused kernel
+first leaves a material residual cost.
+
+**Experiment result (2026-07-16): fused exact classifier rejected in eager and adaptive forms.**
+The prototype evaluated four prepared constraints across one current 3-to-8-vertex polygon,
+retaining exact signed distances and inside masks. An all-inside lane was permanently redundant;
+the first active lane consumed the retained distances directly in the existing specialized clip
+kernel. After that clip changed the polygon, unknown later lanes reverted to ordinary evaluation.
+Targeted release tests established bitwise-equivalent clip state, prepared-coefficient identity,
+fallback invalidation, and unchanged termination checkpoints.
+
+The eager form did substantial useful work at 100k: it classified 403,492 consumed lanes, proved
+52,335 unchanged, and reused distances for 106,617 active clips. It nevertheless increased 500k
+native retired instructions by 11.9%. The first active constraint invalidated most remaining
+unknown-lane distances, so the classifier added a large second evaluation pass despite reusing its
+first useful result.
+
+An adaptive form retained width-one preparation until an ordinary clip returned `Unchanged`, then
+armed one four-lane classifier window and disarmed on the next change. This reduced prepared
+speculation from 20.7% to 3.3%. Of 12,471 classified lanes, 7,874 (63.1%) were unchanged and 3,446
+active clips reused their distances. Despite the much better hit rate, the nested window and state
+machinery still affected the common loop. Against width one, 500k pinned native runs increased
+instructions from 3,410,422,066 to 3,586,171,204 (+5.15%), branches from 378,158,826 to 405,109,159
+(+7.13%), cycles by 3.72%, and text size by about 19.7 KiB.
+
+Do not integrate a rolling exact classifier into the common consumption loop. If this idea is ever
+revisited, the only credible shape is an outlined cold side exit taken after the existing width-one
+path observes `Unchanged`, leaving the normal loop and clip-kernel code generation untouched. Its
+ceiling is small on corrected Fibonacci—only about 12.5k classified lanes per 100k cells—so it
+should first be justified by a workload with materially longer stable tails.
 
 ## Measurement plan
 
