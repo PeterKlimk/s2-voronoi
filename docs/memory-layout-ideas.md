@@ -533,6 +533,56 @@ references, 0.09% data references, 0.36% branches, and 5.0% simulated mispredict
 about 1%, but last-level data misses rose about 1.5%. Retain eager allocation outside the rare
 takeover path; this table is too small to create a useful memory-envelope win.
 
+## 7. Final output materialization
+
+**Status: measurement gate passed; narrow boundary-conversion experiment next (2026-07-17).**
+
+### Current cost and ceiling probe
+
+Live dedup retains vertices and cell references in shard-owned buffers, then assembly allocates and
+fills contiguous global vertex, cell-metadata, and cell-index buffers. Final diagram construction
+subsequently maps the backend's `Vec3` generators and vertices into `UnitVec3` vectors and maps
+`VoronoiCell` into the private cell-storage type. The public representation requires contiguous
+vertex storage and contiguous index windows for `cell()`, but these intermediate-to-final copies
+are not themselves part of that contract.
+
+A profiling-only ablation measured the assembly destination writes without changing candidate or
+topology work. Both modes ran normal preprocessing, construction, construction-time reconciliation,
+source-buffer reads, vertex-offset and cell-prefix arithmetic, incidence reduction, sparse foreign
+reference patch arithmetic, and matched checksum work. The write mode additionally allocated and
+filled the three global buffers; the null mode stopped before post-assembly reconciliation and
+diagram construction. Output counts and checksums matched at 100k and 1M.
+
+At one million points on single-threaded Linux, the null mode removed 0.605% of retired instructions
+and 1.233% of branches on Fibonacci. Uniform with 96 bins removed 0.557% and 1.055%, respectively.
+The Fibonacci branch-miss result was mixed while uniform improved, consistent with a small compute
+effect rather than eliminated algorithmic work. Cachegrind at 20k Fibonacci measured 0.82% fewer
+instruction references, 2.32% fewer data references, 7.41% fewer D1 misses, and 15.19% fewer
+last-level data misses in the null mode.
+
+Native Mac wall time supplied the outcome gate. On an eight-thread Intel i5-1038NG7, 16 interleaved
+2M rounds reduced the Fibonacci median from 687.1ms to 651.5ms (5.5%) and uniform from 864.2ms to
+827.0ms (4.5%). This is a useful bandwidth/cache ceiling, not a forecast: a production diagram
+still has to own the final bytes.
+
+### Candidate progression
+
+1. Remove only the final typed conversion copies in `SphericalVoronoi::from_raw_parts`. Prefer one
+   shared internal storage type; otherwise require an explicit, compile-time-checked layout and
+   ownership-transfer boundary. This is independent of sharding and preserves the public layout.
+2. Attribute vertex concatenation, cell-prefix emission, index scatter, and sparse override patches
+   separately on the native host. Prototype direct final backing stores only for a component whose
+   copy remains material after step 1.
+3. Consider bin-ordered or segmented internal storage only if direct flat assembly cannot capture
+   the measured benefit. Such a design must retain `vertices() -> &[UnitVec3]`, cheap random
+   `cell(i)`, serialization, welding aliases, reconciliation, and repair behavior; otherwise it is
+   an API/format redesign rather than a throughput optimization.
+
+Do not couple the clipper to final addresses merely to chase the full null-write percentage. Counts
+and offsets are not known until shard construction completes, and a counting prepass or synchronized
+global arena can easily repay the saved copy with duplicated geometry work, contention, or unstable
+addresses.
+
 ## Ideas currently disfavored
 
 - Do not merge the point-coordinate SoA and selected-neighbor `SlotPoint` AoS without a new access

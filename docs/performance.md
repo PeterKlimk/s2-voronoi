@@ -469,20 +469,35 @@ Larger changes to scheduling, repair scope, pathological-work handoff, and repea
 kept in the non-authoritative
 [`algorithmic performance ideas`](algorithmic-performance-ideas.md) catalogue.
 
-Untried probes and candidates (2026-07-16 triage; each begins with a cheap measurement gate):
+Measured gates awaiting a design experiment:
 
-- **TLB / huge-page probe:** the measured memory wall is dedup and grid build streaming large
-  arrays with scattered access; every locality experiment so far targeted cache lines, none TLB
-  reach. Gate: measure `dTLB-load-misses` share at 1M–2.5M. If material, try
-  `madvise(MADV_HUGEPAGE)` (or THP verification) on the slot arrays, shards, and grid storage.
+- **Output materialization:** the null-write ceiling is large enough to pursue, but it does not
+  justify a segmented public format by itself. A profiling-only ablation retained construction,
+  reconciliation, all source reads, index arithmetic, incidence reduction, and a matched checksum;
+  one mode allocated and filled the global vertex/cell/index buffers and the other omitted only
+  those destinations. At 2M on the eight-thread Intel Mac, 16-round interleaved medians favored the
+  null mode by 5.5% on Fibonacci (687.1ms to 651.5ms) and 4.5% on uniform (864.2ms to 827.0ms).
+  One-million-point Linux counters showed the smaller compute-side ceiling expected for a
+  bandwidth effect: nulling writes removed about 0.6% of instructions and 1.1--1.2% of branches.
+  Cachegrind at 20k Fibonacci attributed 2.3% fewer data references, 7.4% fewer D1 misses, and
+  15.2% fewer last-level data misses. Checksums and output counts matched in every write/null pair.
+  First isolate the already-redundant final `Vec3`/cell-metadata conversions at
+  `SphericalVoronoi::from_raw_parts`; only then consider construction directly into final backing
+  stores. Preserve the contiguous `vertices()` and per-cell slice contracts, and treat the null
+  result as an upper bound rather than an expected production win.
+
+Untried probes and candidates (2026-07-17 triage; each begins with a cheap measurement gate):
+
+- **TLB / huge-page probe (native Linux only):** the measured memory wall is dedup and grid build
+  streaming large arrays with scattered access; every locality experiment so far targeted cache
+  lines, none TLB reach. WSL reported millions of data-TLB misses at 2M, but its page and memory
+  behavior is not representative enough to gate an allocator/THP change. Repeat the counter probe
+  on native Linux before trying `madvise(MADV_HUGEPAGE)` on slot arrays, shards, or grid storage.
 - **Input-side pass fusion:** the preprocess weld scan, grid build, and binning each stream all n
   input points as separate passes; the binning double-decode is already on the code-review
   backlog. Fusing the weld scan into the grid-build pass removes one full input stream — pure
   bandwidth in the phase that is bandwidth-bound. Must preserve the bimodal weld-compaction
   behavior and grid determinism.
-- **Emission null-write audit:** null the mesh/output writes and time the delta at 1M+. If it is
-  tens of ms, bin-ordered emission with implicit indexing or deferred twin pointers becomes a
-  design candidate; if not, close the output-format lever.
 - **Dense-gated directional termination certificate:** the archived certificate (d9d0975) closed
   negative on fib/uniform (+3.9–4.5% instructions), but the residual dense-cap cost after
   band-prune is certificate depth, and mega runs ~11x candidate inflation versus ~1.6x normal.
