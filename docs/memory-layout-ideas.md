@@ -218,6 +218,31 @@ slot-native path, Linux instructions still rose 0.59% and branches 1.46% in ever
 On the eight-thread Intel Mac it was 0.8% slower on Fibonacci (paired 95% interval +0.1% to +1.5%)
 and neutral on uniform.
 
+Controlled current-baseline ablations on 2026-07-17 identified the cause rather than attributing
+the change to wall-time noise. Each ablation retained the accepted 12-byte override and changed
+one part of the predecessor's cold mapping lifecycle; Linux figures are retired hardware counters
+at one million generators, with wall time discarded:
+
+| Reintroduced predecessor behavior | Fibonacci instructions / branches | Uniform, 96 bins | Cachegrind, 20k Fibonacci |
+| --- | ---: | ---: | ---: |
+| Recover the final destination from `source_slot` and monotonic cell starts | +0.16% / +0.22% | +0.29% / +0.41% | +0.22% instruction refs / +0.29% branches |
+| Rebuild per-shard resolution maps before deferred fallback | -0.12% / +1.29% | +0.01% / +1.20% | -0.02% instruction refs / +0.84% branches |
+| Sort the sparse 12-byte sidecars before final assembly | +0.19% / +1.50% | +0.31% / +1.37% | +0.32% instruction refs / +0.89% branches |
+
+The factors are not additive because each changes inlining and code layout, but the attribution is
+clear. The mandatory sidecar sort alone reproduces the refreshed predecessor's +1.46% branch
+penalty; Cachegrind also recorded 4.0% more simulated mispredicts. Source-slot recovery adds a
+smaller repeatable cost and couples final assembly to complete monotonic starts even for empty
+shard-local cells. Rebuilding the map is instruction-neutral but branch-heavy; it discards work
+that the current single allocation-lazy lookup can reuse.
+
+The sort-only ablation was also 1.4% slower on two-million-generator Fibonacci and 0.7% slower on
+uniform on the eight-thread Intel Mac (16 interleaved rounds, median comparison). This reproduces
+the earlier branch's wall-time shape closely enough to close the discrepancy: the old result was
+negative because its source-slot design bundled a mandatory sort, a second sparse lookup
+lifecycle, and destination recovery. The accepted design became positive by removing those costs,
+not because the same implementation happened to receive a friendlier benchmark sample.
+
 That negative result applies to the source-slot mapping design, not to compact references as a
 class. It motivated the accepted implementation below, which carries final source cell/offset
 provenance directly, uses an allocation-lazy lookup only while overwrite semantics are live, and
