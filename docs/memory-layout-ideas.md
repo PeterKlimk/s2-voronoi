@@ -170,7 +170,7 @@ guardrails. A 30-round two-million-point Fibonacci multithreaded run was neutral
 single-thread Fibonacci run was 0.71% faster (0.38% to 1.03%). Promote this branch to the primary
 default-path candidate for both native and portable builds.
 
-## 3. Compact shard-local cell-reference stream — implemented candidate 2026-07-16
+## 3. Compact shard-local cell-reference stream — implemented 2026-07-16
 
 ### Current cost
 
@@ -206,6 +206,23 @@ layout proposal realizes the width reduction and keeps the primary loop uncondit
 - Measure foreign incidence, sidecar bytes, patch locality, live memory, and assembly cycles by
   distribution and bin count.
 
+### Rejected predecessor: source-slot sidecar
+
+An earlier branch narrowed the primary stream but identified foreign corrections only by their
+shard-local source slot. Deferred resolution rebuilt per-shard hash maps from those records, and
+final assembly recovered the destination cell with a binary search over shard-local cell starts.
+That version saved roughly 68 MiB of peak RSS at two million generators but retained too much cold
+mapping work. Its initial form added about 1.5% instructions, 2.5--2.9% branches, 2.0% Cachegrind
+instruction references, and 5.0% simulated mispredicts. After rebasing onto the accepted
+slot-native path, Linux instructions still rose 0.59% and branches 1.46% in every Fibonacci pair.
+On the eight-thread Intel Mac it was 0.8% slower on Fibonacci (paired 95% interval +0.1% to +1.5%)
+and neutral on uniform.
+
+That negative result applies to the source-slot mapping design, not to compact references as a
+class. It motivated the accepted implementation below, which carries final source cell/offset
+provenance directly, uses an allocation-lazy lookup only while overwrite semantics are live, and
+drops that lookup before branch-free assembly.
+
 ### Candidate result
 
 The branch implementation stores one shard-local `u32` in the primary stream and appends a
@@ -239,7 +256,7 @@ The cross-platform gate also passed on the eight-thread Intel i5-1038NG7 Mac usi
 613.8 ms (4.7% lower latency), default-bin uniform from 818.4 ms to 782.0 ms (4.4% lower), and
 96-bin uniform from 870.3 ms to 843.0 ms (3.1% lower). Per-cell spreads were 3.6--5.8%, but all
 three paired medians independently favored the candidate by materially more than the Linux
-instruction-count improvements alone predicted. The candidate is merge-ready.
+instruction-count improvements alone predicted. The candidate was accepted and merged.
 
 ## 4. Slot-native packed groups and cell construction
 
@@ -349,6 +366,16 @@ cache references/misses fell 2.05%/4.33%. The Mac measured exactly neutral geome
 for both Fibonacci and uniform over 32 pairs each (both 95% intervals -0.5% to +0.6%). The full
 checked suite passes with both steps.
 
+### Known-cell takeover result — closed neutral 2026-07-15
+
+Progression step 4 was isolated separately. Only when a packed query exhausted did the stream copy
+its already-known group cell into the shell frontier; ordinary packed-only cells and non-packed
+slow paths were unchanged. Whole-run instructions and branches at one million Fibonacci generators
+were identical to measurement precision. Cachegrind recorded only 2,688 additional instruction
+references and 1,302 data references across the run, while layout movement increased simulated
+branch mispredictions by about 5%. The transition is too rare to justify tighter packed/shell state
+coupling, so this remains attribution rather than a production candidate.
+
 ### Point-cell inverse-map resurfacing (2026-07-16)
 
 `agent/drop-point-cell-map-v2` reapplies the old point-cell-map experiment to the current
@@ -432,6 +459,20 @@ larger always-live array.
   and allocation count. This is primarily a memory-envelope proposal until a design also preserves
   or improves traversal cycles.
 
+### Experimental result — rejected for the default path 2026-07-15
+
+The thin-queue prototype replaced each local slot with one nullable pointer to a boxed
+`Vec<EdgeCheck>`, moving queue headers and payload capacity together through the existing
+take/recycle path. At two million Fibonacci generators, peak RSS fell repeatably from about
+575,000 KiB to 554,600 KiB, roughly 20 MiB.
+
+The indirection cost outweighs that saving for the default throughput path. At one million
+Fibonacci generators, instructions rose about 0.9% and branches 2.1%. Cachegrind reported 1.0%
+more instruction references, 1.4% more data references, 1.6% more branches, 8.6% more simulated
+mispredictions, and 22% more I1 misses. D1 misses fell 1.0% and last-level data misses 6.1%, but
+not enough to offset the deterministic front-end work. Retain this only as evidence for an explicit
+memory mode or a lower-overhead custom thin allocation.
+
 ## 6. Lower-priority local layout experiments
 
 These may remove load uops or L1 traffic but are less likely to move a true multithreaded memory
@@ -440,12 +481,32 @@ ceiling:
 - Split `CellOutputBuffer` vertex keys and positions so resolved vertices can read keys without
   eagerly reading positions. About two-thirds of cell-vertex incidences refer to an already-created
   global vertex, but the per-worker buffer has at most 24 entries and normally remains hot in L1.
+  The July 2026 split-stream experiment confirmed this is not a useful default layout: at 1M
+  Fibonacci it added about 0.35% instructions and 0.25% branches. Cachegrind showed 5,200 fewer D1
+  misses but roughly 497k more instruction reads, 215k more I1 misses, and 49k more branch
+  mispredicts. The small data-locality gain does not repay the extraction and iteration machinery.
 - Narrow sphere-only edge-check seed data if the shared planar/spherical engine can retain one
   coherent API. Splitting seed fields from endpoint-reconciliation payload risks adding queue
   headers or allocations and may not reduce DRAM traffic because both passes occur close together.
+  A copy-based split materialized forwarding-generator ids in a reusable `u32` stream before
+  spherical clipping while retaining full checks for reconciliation. It added 0.50% instructions,
+  0.85% branches, and 2.9% branch misses at 1M Fibonacci without reducing hardware cache misses.
+  Cachegrind likewise added 0.47% instruction references, 0.45% data references, 0.72% branches,
+  and 5.6% mispredicts; D1 misses fell only 1.3%. Ordinary seed queues are too small to repay the
+  copy, so retire this form.
 - Make shell-grid visited stamps lazy. Their table scales with grid cells rather than input points
   and is much smaller than attempted-neighbor stamps, so evaluate only after the larger table is
   addressed.
+
+### Lazy shell-stamp experiment — rejected 2026-07-15
+
+Leaving the shell visitation table empty until a frontier first initialized only delayed the
+allocation: large Fibonacci and uniform builds eventually entered shell takeover in active
+contexts, and 2M peak RSS remained about 575 MiB. Instructions and branches were neutral at the
+default bin count and about 0.02% higher with 96 bins. Cachegrind added 0.03% instruction
+references, 0.09% data references, 0.36% branches, and 5.0% simulated mispredicts; D1 misses fell
+about 1%, but last-level data misses rose about 1.5%. Retain eager allocation outside the rare
+takeover path; this table is too small to create a useful memory-envelope win.
 
 ## Ideas currently disfavored
 
