@@ -98,20 +98,37 @@ impl CubeMapGrid {
                 _ => &self.cell_points_x,
             };
             for i in start..end {
-                let (xi, yi, zi) = (
-                    self.cell_points_x[i],
-                    self.cell_points_y[i],
-                    self.cell_points_z[i],
-                );
                 let gate_i = gate_points[i];
-                for j in (i + 1)..end {
+                let candidate_start = i + 1;
+                let (candidate_chunks, candidate_tail) =
+                    gate_points[candidate_start..end].as_chunks::<8>();
+
+                for (chunk_idx, candidates) in candidate_chunks.iter().enumerate() {
+                    let mut mask = crate::fp::squared_deltas_mask_lt8(candidates, gate_i, thr_sq);
+                    while mask != 0 {
+                        let lane = mask.trailing_zeros() as usize;
+                        let j = candidate_start + chunk_idx * 8 + lane;
+                        let dx = self.cell_points_x[i] - self.cell_points_x[j];
+                        let dy = self.cell_points_y[i] - self.cell_points_y[j];
+                        let dz = self.cell_points_z[i] - self.cell_points_z[j];
+                        if is_weld_pair(dx * dx + dy * dy + dz * dz, thr_sq)
+                            && !push(out, self.point_indices[i], self.point_indices[j])
+                        {
+                            return;
+                        }
+                        mask &= mask - 1;
+                    }
+                }
+
+                let tail_start = end - candidate_tail.len();
+                for j in tail_start..end {
                     let gate_delta = gate_i - gate_points[j];
                     if !is_weld_pair(gate_delta * gate_delta, thr_sq) {
                         continue;
                     }
-                    let dx = xi - self.cell_points_x[j];
-                    let dy = yi - self.cell_points_y[j];
-                    let dz = zi - self.cell_points_z[j];
+                    let dx = self.cell_points_x[i] - self.cell_points_x[j];
+                    let dy = self.cell_points_y[i] - self.cell_points_y[j];
+                    let dz = self.cell_points_z[i] - self.cell_points_z[j];
                     if is_weld_pair(dx * dx + dy * dy + dz * dz, thr_sq)
                         && !push(out, self.point_indices[i], self.point_indices[j])
                     {

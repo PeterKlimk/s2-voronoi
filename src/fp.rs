@@ -101,6 +101,17 @@ impl PointChunk8 {
     pub(crate) fn dots(&self, qx: f32, qy: f32, qz: f32) -> Dots8 {
         Dots8(backend::dot3(self.x, self.y, self.z, qx, qy, qz))
     }
+
+    /// Dot two candidate chunks against one query, sharing its broadcast
+    /// values. The packed ring walk consumes adjacent chunks this way so the
+    /// query coordinates and threshold setup are paid once per 16 candidates.
+    #[inline(always)]
+    pub(crate) fn dots_pair(&self, other: &Self, qx: f32, qy: f32, qz: f32) -> (Dots8, Dots8) {
+        let (a, b) = backend::dot3_pair(
+            self.x, self.y, self.z, other.x, other.y, other.z, qx, qy, qz,
+        );
+        (Dots8(a), Dots8(b))
+    }
 }
 
 impl Dots8 {
@@ -114,6 +125,20 @@ impl Dots8 {
     pub(crate) fn to_array(&self) -> [f32; 8] {
         backend::to_array(self.0)
     }
+}
+
+/// Bitmask of lanes whose computed-f32 squared delta from `value` is
+/// strictly below `threshold_squared`. This is the lane-wise form of the
+/// weld detector's exact scalar gate:
+///
+/// `let d = value - values[i]; d * d < threshold_squared`
+#[inline(always)]
+pub(crate) fn squared_deltas_mask_lt8(
+    values: &[f32; 8],
+    value: f32,
+    threshold_squared: f32,
+) -> u32 {
+    backend::squared_deltas_mask_lt8(backend::load_array(*values), value, threshold_squared)
 }
 
 /// Convert eight positive finite inward-plane distances to conservative
@@ -189,8 +214,46 @@ mod backend {
     }
 
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn dot3_pair(
+        ax: V,
+        ay: V,
+        az: V,
+        bx: V,
+        by: V,
+        bz: V,
+        qx: f32,
+        qy: f32,
+        qz: f32,
+    ) -> (V, V) {
+        let qx = f32x8::splat(qx);
+        let qy = f32x8::splat(qy);
+        let qz = f32x8::splat(qz);
+        #[cfg(feature = "fma")]
+        {
+            (
+                az.mul_add(qz, ax.mul_add(qx, ay * qy)),
+                bz.mul_add(qz, bx.mul_add(qx, by * qy)),
+            )
+        }
+        #[cfg(not(feature = "fma"))]
+        {
+            ((ax * qx + ay * qy) + az * qz, (bx * qx + by * qy) + bz * qz)
+        }
+    }
+
+    #[inline(always)]
     pub(super) fn mask_gt(v: V, threshold: f32) -> u32 {
         v.cmp_gt(f32x8::splat(threshold)).move_mask() as u32 & 0xff
+    }
+
+    #[inline(always)]
+    pub(super) fn squared_deltas_mask_lt8(values: V, value: f32, threshold_squared: f32) -> u32 {
+        let delta = f32x8::splat(value) - values;
+        f32x8::splat(threshold_squared)
+            .cmp_gt(delta * delta)
+            .move_mask() as u32
+            & 0xff
     }
 
     #[inline(always)]
@@ -268,7 +331,7 @@ mod backend {
 
 #[cfg(test)]
 mod tests {
-    use super::{dot3_f32, interior_security_thresholds8, PointChunk8};
+    use super::{dot3_f32, interior_security_thresholds8, squared_deltas_mask_lt8, PointChunk8};
 
     #[test]
     fn point_chunk_dot_and_strict_mask_match_scalar_at_adjacent_thresholds() {
@@ -304,7 +367,13 @@ mod tests {
         ];
         let (qx, qy, qz) = (0.577_350_26, -0.707_106_77, 0.408_248_3);
         let dots = PointChunk8::from_arrays(xs, ys, zs).dots(qx, qy, qz);
+        let other = PointChunk8::from_arrays(zs, xs, ys);
+        let (paired_dots, paired_other) =
+            PointChunk8::from_arrays(xs, ys, zs).dots_pair(&other, qx, qy, qz);
         let lanes = dots.to_array();
+
+        assert_eq!(paired_dots.to_array(), lanes);
+        assert_eq!(paired_other.to_array(), other.dots(qx, qy, qz).to_array());
 
         for lane in 0..8 {
             let scalar = dot3_f32(xs[lane], ys[lane], zs[lane], qx, qy, qz);
@@ -341,6 +410,29 @@ mod tests {
         let (_, nan_mask) = interior_security_thresholds8([f32::NAN; 8], pad);
         assert_eq!(nan_mask, 0);
     }
+
+    #[test]
+    fn squared_delta_mask_matches_the_strict_scalar_predicate() {
+        let threshold = 0.25f32;
+        let threshold_squared = threshold * threshold;
+        let value = 0.5f32;
+        let values = [
+            value,
+            value + threshold_squared.sqrt().next_down(),
+            value + threshold,
+            value + threshold.next_up(),
+            value - threshold.next_down(),
+            value - threshold,
+            value - threshold.next_up(),
+            f32::NAN,
+        ];
+        let mask = squared_deltas_mask_lt8(&values, value, threshold_squared);
+        for (lane, &candidate) in values.iter().enumerate() {
+            let delta = value - candidate;
+            let expected = delta * delta < threshold_squared;
+            assert_eq!((mask & (1 << lane)) != 0, expected, "lane {lane}");
+        }
+    }
 }
 
 #[cfg(feature = "simd_scalar")]
@@ -362,10 +454,36 @@ mod backend {
     }
 
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn dot3_pair(
+        ax: V,
+        ay: V,
+        az: V,
+        bx: V,
+        by: V,
+        bz: V,
+        qx: f32,
+        qy: f32,
+        qz: f32,
+    ) -> (V, V) {
+        (dot3(ax, ay, az, qx, qy, qz), dot3(bx, by, bz, qx, qy, qz))
+    }
+
+    #[inline(always)]
     pub(super) fn mask_gt(v: V, threshold: f32) -> u32 {
         let mut bits = 0u32;
         for (i, &d) in v.iter().enumerate() {
             bits |= u32::from(d > threshold) << i;
+        }
+        bits
+    }
+
+    #[inline(always)]
+    pub(super) fn squared_deltas_mask_lt8(values: V, value: f32, threshold_squared: f32) -> u32 {
+        let mut bits = 0u32;
+        for (i, &candidate) in values.iter().enumerate() {
+            let delta = value - candidate;
+            bits |= u32::from(delta * delta < threshold_squared) << i;
         }
         bits
     }

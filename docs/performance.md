@@ -428,6 +428,27 @@ counters. Nine 96-bin uniform pairs reduced instructions by 1.96%, branches by 2
 instruction references, 2.57% fewer data references, and 3.01% fewer branches; simulated
 mispredictions rose 5.13%, a layout-sensitive result not reproduced by the native cycle counters.
 
+The same-cell weld scan now evaluates that exact tangent-component rejection gate eight pairs at a
+time on the `wide` backend. Lanes that survive still run the original strict computed-f32 XYZ
+predicate, and the scalar tail preserves pair order. At 1M single-threaded native with
+preprocessing, nine paired Fibonacci runs reduced whole-build instructions by 2.04% and branches by
+3.54%; uniform reduced them by 1.99% and 3.16%. A 2.5M multithreaded Fibonacci guardrail retained
+2.07% fewer instructions and 3.58% fewer branches in all seven pairs. On native Windows at 2.5M
+multithreaded, fifty phase-timed Fibonacci pairs reduced the exact preprocessing phase by 34.92%
+(95% interval 33.49--36.31%, 50/50 favorable); total wall time remained unresolved because the
+phase takes only about 7ms of the build.
+
+Packed ring preparation now processes adjacent eight-lane point chunks as a pair. The two chunks
+share the query-coordinate SIMD broadcasts, compute both security masks before one combined-empty
+test, and still emit chunk A before chunk B; odd chunks and scalar remainders retain the old path.
+Relative to the vectorized-weld baseline, 1M single-threaded Linux Fibonacci reduced instructions
+by 0.168% and branches by 0.771%, while uniform reduced them by 0.211% and 0.628%; clustered and
+mega guardrails also reduced both counters. Isolated directly on main, native Windows 2.5M
+multithreaded phase timing reduced `ring_pass` by 6.97% on Fibonacci (95% interval 5.20--8.70%) and
+9.28% on uniform (6.80--11.70%). The enclosing packed-kNN phase improved directionally by
+1.69--1.95%; uninstrumented whole-build estimates were 0.50% faster on Fibonacci and 0.79% faster
+on uniform but remained below the machine's resolution.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated
@@ -476,6 +497,14 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Accumulating an owner-local incidence bit mask during edge collection duplicated enough work to
+  lose despite removing a later classification pass. At 1M single-threaded Fibonacci it added
+  2.68% instructions, 2.51% branches, and 3.03% cycles. Keep the existing pass unless the mask can
+  be produced without widening the hot collection loop.
+- Replacing the per-cell resolved vertex-index `Vec` with an inline `[u32; 24]` scratch plus heap
+  fallback slightly reduced instructions and branches but increased cache references by about 4%
+  and regressed cycles by 1.05% on Fibonacci and 0.67% on uniform. The larger always-live stack
+  frame is not a throughput win; retain the reusable vector.
 - Reducing the live-dedup position/key reserve from six to three or four entries per local generator
   is a valid memory/performance tradeoff, but not a default speed win. A 1M sweep over Fibonacci,
   uniform, clustered, and a successful 500k mega case found no shard above 2.03 owned vertices per

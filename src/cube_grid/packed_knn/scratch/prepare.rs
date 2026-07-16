@@ -609,7 +609,60 @@ impl PackedKnnCellScratch {
             let (x_chunks, _) = xs.as_chunks::<8>();
             let (y_chunks, _) = ys.as_chunks::<8>();
             let (z_chunks, _) = zs.as_chunks::<8>();
-            for chunk in 0..full_chunks {
+            let paired_chunks = full_chunks / 2;
+            for pair in 0..paired_chunks {
+                let chunk = pair * 2;
+                let i = chunk * 8;
+                let candidates_a = fp::PointChunk8::from_array_refs(
+                    &x_chunks[chunk],
+                    &y_chunks[chunk],
+                    &z_chunks[chunk],
+                );
+                let candidates_b = fp::PointChunk8::from_array_refs(
+                    &x_chunks[chunk + 1],
+                    &y_chunks[chunk + 1],
+                    &z_chunks[chunk + 1],
+                );
+
+                for ((((&qx, &qy), &qz), &threshold), keys) in query_x
+                    .iter()
+                    .zip(query_y)
+                    .zip(query_z)
+                    .zip(thresholds)
+                    .zip(chunk0_keys.iter_mut())
+                {
+                    let (dots_a, dots_b) = candidates_a.dots_pair(&candidates_b, qx, qy, qz);
+                    let mut mask_a = dots_a.mask_gt(threshold);
+                    let mut mask_b = dots_b.mask_gt(threshold);
+                    if mask_a | mask_b == 0 {
+                        continue;
+                    }
+
+                    if mask_a != 0 {
+                        let dots_arr = dots_a.to_array();
+                        while mask_a != 0 {
+                            let lane = mask_a.trailing_zeros() as usize;
+                            let slot = (soa_start + i + lane) as u32;
+                            let dot = dots_arr[lane];
+                            keys.push(make_desc_key(dot, slot));
+                            mask_a &= mask_a - 1;
+                        }
+                    }
+                    if mask_b != 0 {
+                        let dots_arr = dots_b.to_array();
+                        while mask_b != 0 {
+                            let lane = mask_b.trailing_zeros() as usize;
+                            let slot = (soa_start + i + 8 + lane) as u32;
+                            let dot = dots_arr[lane];
+                            keys.push(make_desc_key(dot, slot));
+                            mask_b &= mask_b - 1;
+                        }
+                    }
+                }
+            }
+
+            if full_chunks % 2 != 0 {
+                let chunk = full_chunks - 1;
                 let i = chunk * 8;
                 let candidates = fp::PointChunk8::from_array_refs(
                     &x_chunks[chunk],
