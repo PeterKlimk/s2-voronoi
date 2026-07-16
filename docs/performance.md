@@ -589,6 +589,10 @@ Do not broadly retry these without a materially different design or workload:
   2.8%, while the ownership-transfer form increased them 11.9% and 4.2%. Keep the explicit final
   conversion until output construction can change more holistically; removing this isolated copy
   is a clear retired-work win but a throughput loss on the ordinary uniform workload.
+- Borrowing a matched incoming edge check in place instead of copying its 20-byte record made the
+  shrinking-suffix loop worse. At 1M single-threaded native, Fibonacci instructions/branches rose
+  0.073%/0.397% and uniform rose 0.066%/0.347%, with every one of nine pairs unfavorable for both
+  counters. LLVM handles the short-lived value copy better than the indexed borrow; keep the copy.
 - Reusing the gnomonic extraction direction's f64 squared norm for both validity and canonical
   normalization removed exactly 12 instructions and 6 branches per emitted vertex (600k/300k at
   50k Fibonacci), but the smaller extractor perturbed code layout badly: Cachegrind I1 misses rose
