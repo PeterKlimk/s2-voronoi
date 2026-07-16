@@ -3,7 +3,7 @@
 use std::mem;
 
 use super::binning::BinAssignment;
-use super::packed::{pack_edge, pack_ref, DEFERRED, INVALID_INDEX};
+use super::packed::{pack_edge, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
 use super::types::{
     BinId, EdgeCheck, EdgeCheckOverflow, EdgeKey, EdgeOverflowLocal, EdgeToLater, LocalId,
@@ -471,15 +471,6 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
     // reference (duplicate same-key vertices reaching this cell through two
     // edges); the caller records the conflict so repair sees the site even
     // when the thirds fully agree.
-    let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| -> bool {
-        let packed = pack_ref(owner_bin, idx);
-        // A slot already holding a DIFFERENT concrete reference is a real,
-        // handled defect (recorded by the caller as CrossBinSlotConflict so
-        // repair sees the site); not an invariant violation, so no assert.
-        let conflict = *slot != DEFERRED && *slot != packed;
-        *slot = packed;
-        conflict
-    };
     let mut i = 0usize;
     while i < sorted.len() {
         let key = sorted[i].key;
@@ -519,15 +510,21 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
                 let mut conflict = false;
                 let full = reconcile_edge_endpoints(b.thirds, a.thirds, |bk, ak| {
                     if a.indices[ak] != INVALID_INDEX {
-                        conflict |= patch_slot(
-                            &mut b_shard.output.cell_indices[b.slots[bk] as usize],
+                        conflict |= b_shard.output.patch_reference(
+                            b.source_bin,
+                            b.slots[bk],
+                            b.source_cell,
+                            b.source_offsets[bk],
                             a.source_bin,
                             a.indices[ak],
                         );
                     }
                     if b.indices[bk] != INVALID_INDEX {
-                        conflict |= patch_slot(
-                            &mut a_shard.output.cell_indices[a.slots[ak] as usize],
+                        conflict |= a_shard.output.patch_reference(
+                            a.source_bin,
+                            a.slots[ak],
+                            a.source_cell,
+                            a.source_offsets[ak],
                             b.source_bin,
                             b.indices[bk],
                         );

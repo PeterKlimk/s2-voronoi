@@ -5,7 +5,8 @@ use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
 use super::edge_checks::resolve_edge_check_overflow;
-use super::packed::{pack_ref, unpack_ref, DEFERRED};
+#[cfg(debug_assertions)]
+use super::packed::INVALID_INDEX;
 use super::shard::ShardFinal;
 use super::types::{BinId, DeferredSlot, EdgeCheckOverflow, UnresolvedEdgeMismatch};
 use super::ShardedCellsData;
@@ -18,23 +19,14 @@ fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
     generator_bin: &[BinId],
     deferred_slots: Vec<DeferredSlot<P>>,
 ) -> Result<bool, crate::VoronoiError> {
-    let patch_slot = |slot: &mut u64, owner_bin: BinId, idx: u32| {
-        let packed = pack_ref(owner_bin, idx);
-        if *slot == DEFERRED {
-            *slot = packed;
-        } else {
-            debug_assert_eq!(*slot, packed, "edge check index mismatch");
-        }
-    };
-
     let mut fallback_map: FxHashMap<VertexKey, (BinId, u32)> = FxHashMap::default();
     let mut resolution_drift_exceeded = false;
     for entry in deferred_slots {
         let source_bin = entry.source_bin.as_usize();
-        let source_slot = entry.source_slot as usize;
-        let existing = shards[source_bin].output.cell_indices[source_slot];
-        if existing != DEFERRED {
-            let (representative_bin, representative_local) = unpack_ref(existing);
+        if let Some((representative_bin, representative_local)) = shards[source_bin]
+            .output
+            .logical_reference(entry.source_bin, entry.source_slot)
+        {
             let representative = shards[representative_bin.as_usize()].output.vertices
                 [representative_local as usize];
             let delta = representative.resolution_axis_delta(entry.pos);
@@ -77,8 +69,15 @@ fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
                 .add_vertex_incidence(idx);
         }
 
-        let slot = &mut shards[source_bin].output.cell_indices[source_slot];
-        patch_slot(slot, owner_bin, idx);
+        let conflict = shards[source_bin].output.patch_reference(
+            entry.source_bin,
+            entry.source_slot,
+            entry.source_cell,
+            entry.source_offset,
+            owner_bin,
+            idx,
+        );
+        debug_assert!(!conflict, "deferred fallback reference conflict");
     }
     Ok(resolution_drift_exceeded)
 }
@@ -199,16 +198,11 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
             .shards
             .iter()
             .any(|shard| shard.output.resolution_drift_exceeded);
+    for shard in &mut data.shards {
+        shard.output.finish_reference_patching();
+    }
     #[allow(unused_variables)]
     let deferred_fallback_time = t_deferred.elapsed();
-
-    #[cfg(debug_assertions)]
-    for shard in &data.shards {
-        debug_assert!(
-            !shard.output.cell_indices.contains(&DEFERRED),
-            "unresolved deferred indices remain after overflow flush"
-        );
-    }
 
     #[allow(unused_variables)]
     let overflow_flush_time = t1.elapsed();
@@ -450,18 +444,18 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
         // Safety: pointers are valid for the buffers; each cell writes a disjoint range.
         unsafe {
             let dst = (cell_indices_ptr as *mut u32).add(dst_start);
-            for (i, &packed) in src.iter().enumerate() {
-                debug_assert_ne!(packed, DEFERRED, "deferred index leaked to assembly");
-                let (vbin, local) = unpack_ref(packed);
+            for (i, &local) in src.iter().enumerate() {
                 #[cfg(debug_assertions)]
                 {
-                    debug_assert!(vbin.as_usize() < num_bins, "packed vertex bin out of range");
                     debug_assert!(
-                        (local as usize) < finals_ref[vbin.as_usize()].output.vertices.len(),
-                        "packed vertex local index out of range"
+                        local == INVALID_INDEX
+                            || (local as usize) < finals_ref[bin].output.vertices.len(),
+                        "primary local vertex index out of range"
                     );
                 }
-                let global = vertex_offsets[vbin.as_usize()] + local;
+                // Foreign slots carry INVALID_INDEX here and are overwritten
+                // by the sparse sidecar immediately after this bulk pass.
+                let global = vertex_offsets[bin].wrapping_add(local);
                 dst.add(i).write(global);
             }
         }
@@ -471,6 +465,30 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     unsafe {
         cell_indices.set_len(total_cell_indices as usize);
     }
+
+    // The common scatter above reads one narrow local id and performs no
+    // owner branch. Patch the sparse foreign references by their final cell
+    // identity after all disjoint bulk writes have completed.
+    for shard in &finals {
+        for entry in &shard.output.reference_overrides {
+            let cell = &cells[entry.source_cell as usize];
+            debug_assert!((entry.source_offset as usize) < cell.vertex_count());
+            let dst = cell.vertex_start() + entry.source_offset as usize;
+            let owner_bin = entry.owner_bin.as_usize();
+            debug_assert!(owner_bin < num_bins);
+            debug_assert!(
+                (entry.owner_local as usize) < finals[owner_bin].output.vertices.len(),
+                "override local vertex index out of range"
+            );
+            cell_indices[dst] = vertex_offsets[owner_bin] + entry.owner_local;
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    debug_assert!(
+        !cell_indices.contains(&u32::MAX),
+        "unresolved foreign cell reference after sparse patch"
+    );
 
     let mut exact_zero_edge_hint_cells = Vec::new();
     for shard in &finals {
@@ -519,6 +537,14 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     let sub_phases = DedupSubPhases {
         triplet_keys: finals.iter().map(|s| s.triplet_keys).sum(),
         unresolved_edges_count: unresolved_edges.len() as u64,
+        primary_cell_references: finals
+            .iter()
+            .map(|s| s.output.cell_indices.len() as u64)
+            .sum(),
+        reference_overrides: finals
+            .iter()
+            .map(|s| s.output.reference_overrides.len() as u64)
+            .sum(),
     };
 
     #[cfg(not(feature = "timing"))]
@@ -545,7 +571,7 @@ mod tests {
         edge_segments_for_neighbor, reconcile_unresolved_edges, RepairApply, VertexKeys,
     };
     use crate::knn_clipping::live_dedup::binning::BinAssignment;
-    use crate::knn_clipping::live_dedup::packed::pack_edge;
+    use crate::knn_clipping::live_dedup::packed::{pack_edge, INVALID_INDEX};
     use crate::knn_clipping::live_dedup::shard::ShardState;
     use crate::knn_clipping::live_dedup::types::{
         EdgeCheckOverflow, LocalId, UnresolvedEdgeOrigin,
@@ -574,12 +600,16 @@ mod tests {
                 thirds: [1, 2],
                 indices: [3, 4],
                 slots: [5, 6],
+                source_cell: ordinal as u32,
+                source_offsets: [0, 1],
             });
             shard.output.deferred_slots.push(DeferredSlot {
                 key: [ordinal as u32, 20, 30],
                 pos: Vec3::new(ordinal as f32, 0.0, 1.0),
                 source_bin: bin(ordinal),
                 source_slot: ordinal as u32,
+                source_cell: ordinal as u32,
+                source_offset: 0,
             });
         }
 
@@ -610,7 +640,7 @@ mod tests {
     #[test]
     fn deferred_fallback_allocates_once_per_owner_key() {
         let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
-        shards[0].output.cell_indices = vec![DEFERRED, DEFERRED];
+        shards[0].output.cell_indices = vec![INVALID_INDEX, INVALID_INDEX];
         let generator_bin = vec![bin(1), bin(0), bin(0)];
         let key = [0, 1, 2];
         let pos = Vec3::new(0.0, 0.0, 1.0);
@@ -624,12 +654,16 @@ mod tests {
                     pos,
                     source_bin: bin(0),
                     source_slot: 0,
+                    source_cell: 0,
+                    source_offset: 0,
                 },
                 DeferredSlot {
                     key,
                     pos,
                     source_bin: bin(0),
                     source_slot: 1,
+                    source_cell: 0,
+                    source_offset: 1,
                 },
             ],
         )
@@ -639,14 +673,21 @@ mod tests {
         assert_eq!(shards[1].output.vertices.len(), 1);
         assert_eq!(shards[1].output.vertex_keys, vec![key]);
         assert_eq!(shards[1].output.vertex_incidence, vec![2]);
-        assert_eq!(shards[0].output.cell_indices[0], pack_ref(bin(1), 0));
-        assert_eq!(shards[0].output.cell_indices[1], pack_ref(bin(1), 0));
+        assert_eq!(
+            shards[0].output.logical_reference(bin(0), 0),
+            Some((bin(1), 0))
+        );
+        assert_eq!(
+            shards[0].output.logical_reference(bin(0), 1),
+            Some((bin(1), 0))
+        );
     }
 
     #[test]
     fn deferred_patch_reports_representative_drift_beyond_guard() {
         let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
-        shards[0].output.cell_indices = vec![pack_ref(bin(1), 0)];
+        shards[0].output.cell_indices = vec![INVALID_INDEX];
+        shards[0].output.patch_reference(bin(0), 0, 0, 0, bin(1), 0);
         shards[1].output.vertices = vec![Vec3::ZERO];
         shards[1].output.vertex_keys = vec![[0, 1, 2]];
         shards[1].output.vertex_incidence = vec![0];
@@ -660,6 +701,8 @@ mod tests {
                 pos: Vec3::new(f32::from_bits(eps.to_bits() + 1), 0.0, 0.0),
                 source_bin: bin(0),
                 source_slot: 0,
+                source_cell: 0,
+                source_offset: 0,
             }],
         )
         .expect("prepatched deferred slot should be checked");
@@ -670,8 +713,8 @@ mod tests {
     #[test]
     fn overflow_matching_patches_cross_bin_slots_before_fallback() {
         let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
-        shards[0].output.cell_indices = vec![DEFERRED, DEFERRED];
-        shards[1].output.cell_indices = vec![DEFERRED, DEFERRED];
+        shards[0].output.cell_indices = vec![INVALID_INDEX, INVALID_INDEX];
+        shards[1].output.cell_indices = vec![INVALID_INDEX, INVALID_INDEX];
 
         let edge_key = pack_edge(0, 1);
         let mut unresolved = Vec::new();
@@ -683,6 +726,8 @@ mod tests {
                 thirds: [2, 3],
                 indices: [10, 11],
                 slots: [0, 1],
+                source_cell: 0,
+                source_offsets: [0, 1],
             },
             EdgeCheckOverflow {
                 key: edge_key,
@@ -691,6 +736,8 @@ mod tests {
                 thirds: [3, 2],
                 indices: [20, 21],
                 slots: [0, 1],
+                source_cell: 1,
+                source_offsets: [0, 1],
             },
         ];
 
@@ -700,10 +747,22 @@ mod tests {
             unresolved.is_empty(),
             "full reverse-winding match should not remain unresolved"
         );
-        assert_eq!(shards[0].output.cell_indices[0], pack_ref(bin(1), 21));
-        assert_eq!(shards[0].output.cell_indices[1], pack_ref(bin(1), 20));
-        assert_eq!(shards[1].output.cell_indices[0], pack_ref(bin(0), 11));
-        assert_eq!(shards[1].output.cell_indices[1], pack_ref(bin(0), 10));
+        assert_eq!(
+            shards[0].output.logical_reference(bin(0), 0),
+            Some((bin(1), 21))
+        );
+        assert_eq!(
+            shards[0].output.logical_reference(bin(0), 1),
+            Some((bin(1), 20))
+        );
+        assert_eq!(
+            shards[1].output.logical_reference(bin(1), 0),
+            Some((bin(0), 11))
+        );
+        assert_eq!(
+            shards[1].output.logical_reference(bin(1), 1),
+            Some((bin(0), 10))
+        );
     }
 
     #[test]
@@ -719,6 +778,8 @@ mod tests {
                 thirds: [2, 3],
                 indices: [10, 11],
                 slots: [0, 1],
+                source_cell: 0,
+                source_offsets: [0, 1],
             },
             EdgeCheckOverflow {
                 key: edge_key,
@@ -727,6 +788,8 @@ mod tests {
                 thirds: [9, 8],
                 indices: [20, 21],
                 slots: [0, 1],
+                source_cell: 1,
+                source_offsets: [0, 1],
             },
         ];
 
@@ -740,8 +803,8 @@ mod tests {
     fn overflow_duplicate_runs_do_not_patch_an_arbitrary_pair() {
         for sides in [[0u8, 0, 1], [0u8, 1, 1]] {
             let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
-            shards[0].output.cell_indices = vec![DEFERRED; 4];
-            shards[1].output.cell_indices = vec![DEFERRED; 4];
+            shards[0].output.cell_indices = vec![INVALID_INDEX; 4];
+            shards[1].output.cell_indices = vec![INVALID_INDEX; 4];
             let edge_key = pack_edge(0, 1);
             let mut side_counts = [0usize; 2];
             let overflow: Vec<EdgeCheckOverflow> = sides
@@ -756,6 +819,8 @@ mod tests {
                         thirds: if side == 0 { [2, 3] } else { [3, 2] },
                         indices: [10 + ordinal as u32 * 2, 11 + ordinal as u32 * 2],
                         slots: [ordinal as u32 * 2, ordinal as u32 * 2 + 1],
+                        source_cell: side as u32,
+                        source_offsets: [0, 1],
                     }
                 })
                 .collect();
@@ -772,7 +837,7 @@ mod tests {
             assert!(
                 shards
                     .iter()
-                    .all(|shard| shard.output.cell_indices.iter().all(|&v| v == DEFERRED)),
+                    .all(|shard| shard.output.reference_overrides.is_empty()),
                 "ambiguous run must be left to vertex-key fallback; sides={sides:?}"
             );
         }
@@ -781,7 +846,7 @@ mod tests {
     #[test]
     fn overflow_duplicate_run_without_opposite_side_reports_both_defects() {
         let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
-        shards[0].output.cell_indices = vec![DEFERRED; 6];
+        shards[0].output.cell_indices = vec![INVALID_INDEX; 6];
         let edge_key = pack_edge(0, 1);
         let overflow: Vec<EdgeCheckOverflow> = (0..3)
             .map(|ordinal| EdgeCheckOverflow {
@@ -791,6 +856,8 @@ mod tests {
                 thirds: [2, 3],
                 indices: [10 + ordinal * 2, 11 + ordinal * 2],
                 slots: [ordinal * 2, ordinal * 2 + 1],
+                source_cell: 0,
+                source_offsets: [0, 1],
             })
             .collect();
         let mut unresolved = Vec::new();
@@ -820,11 +887,7 @@ mod tests {
         ];
         shard0.output.vertex_keys = vec![[0, 1, 2], [0, 1, 3], [0, 2, 3]];
         shard0.output.vertex_incidence = vec![0; 3];
-        shard0.output.cell_indices = vec![
-            pack_ref(bin(0), 0),
-            pack_ref(bin(0), 1),
-            pack_ref(bin(0), 2),
-        ];
+        shard0.output.cell_indices = vec![0, 1, 2];
         shard0.output.set_cell_start(LocalId::from_usize(0), 0);
         shard0.output.set_cell_count(LocalId::from_usize(0), 3);
 
@@ -834,7 +897,7 @@ mod tests {
         ];
         shard1.output.vertex_keys = vec![[0, 1, 4], [0, 1, 5]];
         shard1.output.vertex_incidence = vec![0; 2];
-        shard1.output.cell_indices = vec![pack_ref(bin(1), 0), pack_ref(bin(1), 1), DEFERRED];
+        shard1.output.cell_indices = vec![0, 1, INVALID_INDEX];
         shard1.output.set_cell_start(LocalId::from_usize(0), 0);
         shard1.output.set_cell_count(LocalId::from_usize(0), 3);
         shard1.output.deferred_slots.push(DeferredSlot {
@@ -842,6 +905,8 @@ mod tests {
             pos: Vec3::new(-1.0, 0.0, 0.0),
             source_bin: bin(1),
             source_slot: 2,
+            source_cell: 1,
+            source_offset: 2,
         });
         let edge_key = pack_edge(0, 1);
         shard0.output.edge_check_overflow.push(EdgeCheckOverflow {
@@ -851,6 +916,8 @@ mod tests {
             thirds: [2, 3],
             indices: [0, 1],
             slots: [0, 1],
+            source_cell: 0,
+            source_offsets: [0, 1],
         });
         shard1.output.edge_check_overflow.push(EdgeCheckOverflow {
             key: edge_key,
@@ -859,6 +926,8 @@ mod tests {
             thirds: [9, 8],
             indices: [0, 1],
             slots: [0, 1],
+            source_cell: 1,
+            source_offsets: [0, 1],
         });
 
         let assignment = BinAssignment {

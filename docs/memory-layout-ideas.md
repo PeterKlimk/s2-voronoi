@@ -170,7 +170,7 @@ guardrails. A 30-round two-million-point Fibonacci multithreaded run was neutral
 single-thread Fibonacci run was 0.71% faster (0.38% to 1.03%). Promote this branch to the primary
 default-path candidate for both native and portable builds.
 
-## 3. Compact shard-local cell-reference stream
+## 3. Compact shard-local cell-reference stream — implemented candidate 2026-07-16
 
 ### Current cost
 
@@ -205,6 +205,35 @@ layout proposal realizes the width reduction and keeps the primary loop uncondit
 - Preserve the full `u32` local range; do not introduce a smaller packed-local representation limit.
 - Measure foreign incidence, sidecar bytes, patch locality, live memory, and assembly cycles by
   distribution and bin count.
+
+### Candidate result
+
+The branch implementation stores one shard-local `u32` in the primary stream and appends a
+12-byte override only when reconciliation resolves a reference to another shard. A temporary
+allocation-lazy map preserves the previous overwrite/conflict semantics on the cold reconciliation
+path and is dropped before assembly. The ordinary final scatter is unconditional; a subsequent
+sparse pass writes foreign references directly to their final cell/offset destinations. Checked
+builds assert that every foreign placeholder has an override before the temporary map is dropped.
+
+Timing telemetry at 100k recorded 5,600 overrides for 599,988 references (0.933%) on Fibonacci with
+the default six bins and 26,164 overrides (4.361%) on uniform with 96 bins. Before transient map
+overhead, that reduces retained reference storage by about 23.33 and 20.86 bytes per input point,
+respectively, relative to the packed-`u64` stream.
+
+Matched native Linux counters at one million points were positive in both regimes. Fibonacci used
+0.53% fewer retired instructions, 1.53% fewer branches, and 0.83% fewer branch misses. Uniform with
+96 bins used 0.28% fewer instructions, 1.31% fewer branches, and 4.05% fewer branch misses. Host
+wall time varied by more than an order of magnitude and was discarded. In a one-thread 20k
+Cachegrind run, the final assembly loop performed 3.24% fewer data reads, 36.4% fewer D1 read misses,
+22.5% fewer branches, and 45.7% fewer simulated branch mispredicts; whole-program D1 misses fell
+1.51%. Simulated last-level movement was mixed under Cachegrind's direct-mapped model and is not an
+acceptance claim.
+
+Two reversed-order 2M Fibonacci RSS probes reproduced a reduction from about 625 MiB to 544 MiB,
+roughly 81 MiB or 13%. The deliberately unfavorable 96-bin uniform probe remained positive but
+smaller, falling from 751.3 MiB to 738.7 MiB because the transient sparse lookup is proportionally
+larger. The full release suite and checked assembly tests pass. Retain this as the candidate; a Mac
+run remains the cross-platform acceptance gate before merging.
 
 ## 4. Slot-native packed groups and cell construction
 

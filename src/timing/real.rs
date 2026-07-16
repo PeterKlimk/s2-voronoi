@@ -271,6 +271,8 @@ pub struct CellSubPhases {
 pub struct DedupSubPhases {
     pub triplet_keys: u64,
     pub unresolved_edges_count: u64,
+    pub primary_cell_references: u64,
+    pub reference_overrides: u64,
 }
 
 /// Accumulator for cell sub-phase timings (used per-bin, then merged).
@@ -939,8 +941,13 @@ impl PhaseTimings {
             pct(self.dedup)
         );
         eprintln!(
-            "    keys: triplet={} unresolved_edges={}",
-            self.dedup_sub.triplet_keys, self.dedup_sub.unresolved_edges_count
+            "    keys: triplet={} unresolved_edges={} primary_refs={} foreign_overrides={} ({:.3}%)",
+            self.dedup_sub.triplet_keys,
+            self.dedup_sub.unresolved_edges_count,
+            self.dedup_sub.primary_cell_references,
+            self.dedup_sub.reference_overrides,
+            100.0 * self.dedup_sub.reference_overrides as f64
+                / self.dedup_sub.primary_cell_references.max(1) as f64,
         );
         eprintln!(
             "  edge_reconcile:    {:7.1}ms ({:4.1}%)",

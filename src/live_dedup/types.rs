@@ -247,6 +247,8 @@ pub(super) struct EdgeCheckOverflow {
     pub(super) thirds: [u32; 2],
     pub(super) indices: [u32; 2],
     pub(super) slots: [u32; 2],
+    pub(super) source_cell: u32,
+    pub(super) source_offsets: [u8; 2],
 }
 
 /// Edge record to later-local neighbors (emitted into their incoming edgecheck queues).
@@ -279,6 +281,22 @@ pub(crate) struct DeferredSlot<P = Vec3> {
     /// Bin/cell slot that still needs to be patched once ownership is resolved.
     pub(super) source_bin: BinId,
     pub(super) source_slot: u32,
+    pub(super) source_cell: u32,
+    pub(super) source_offset: u8,
 }
+
+/// Sparse override for a cell reference whose vertex is owned by another
+/// shard. The temporary per-shard lookup maps source slots to these records
+/// during reconciliation; `source_cell`/`source_offset` identify the final CSR
+/// destination directly.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CellReferenceOverride {
+    pub(super) source_cell: u32,
+    pub(super) owner_local: u32,
+    pub(super) source_offset: u8,
+    pub(super) owner_bin: BinId,
+}
+
+const _: () = assert!(std::mem::size_of::<CellReferenceOverride>() == 12);
 
 // Packed-kNN data is handled via chunked emission from `cube_grid::packed_knn`.

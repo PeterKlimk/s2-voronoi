@@ -1,8 +1,12 @@
 //! Shard-local state for live dedup.
 
-use super::types::{DeferredSlot, EdgeCheck, EdgeCheckOverflow, LocalId, UnresolvedEdgeMismatch};
+use super::types::{
+    BinId, CellReferenceOverride, DeferredSlot, EdgeCheck, EdgeCheckOverflow, LocalId,
+    UnresolvedEdgeMismatch,
+};
 use crate::knn_clipping::cell_build::VertexKey;
 use glam::Vec3;
+use rustc_hash::FxHashMap;
 
 use super::types::VertexPosition;
 
@@ -35,7 +39,14 @@ pub(crate) struct ShardOutput<P = Vec3> {
     pub(super) edge_check_overflow: Vec<EdgeCheckOverflow>,
     /// Cell slots whose owner bin is off-shard and must be patched during assembly.
     pub(crate) deferred_slots: Vec<DeferredSlot<P>>,
-    pub(crate) cell_indices: Vec<u64>,
+    /// Primary cell-reference stream. Every ordinary entry is local to this
+    /// shard; foreign entries retain `INVALID_INDEX` and are patched from the
+    /// sparse override stream after the branch-free final scatter.
+    pub(crate) cell_indices: Vec<u32>,
+    pub(crate) reference_overrides: Vec<CellReferenceOverride>,
+    /// Allocation-lazy cold-path index used only while reconciliation and
+    /// fallback can overwrite sparse references. Dropped before final scatter.
+    pub(crate) reference_override_lookup: FxHashMap<u32, u32>,
     pub(super) cell_starts: Vec<u32>,
     pub(super) cell_counts: Vec<u8>,
     pub(crate) exact_zero_edge_hint_cells: Vec<u32>,
@@ -52,6 +63,8 @@ impl<P: VertexPosition> ShardOutput<P> {
             edge_check_overflow: Vec::new(),
             deferred_slots: Vec::new(),
             cell_indices: Vec::new(),
+            reference_overrides: Vec::new(),
+            reference_override_lookup: FxHashMap::default(),
             cell_starts: vec![0; num_local_generators],
             cell_counts: vec![0; num_local_generators],
             exact_zero_edge_hint_cells: Vec::new(),
@@ -83,6 +96,54 @@ impl<P: VertexPosition> ShardOutput<P> {
     pub(super) fn add_vertex_incidence(&mut self, local: u32) {
         let count = &mut self.vertex_incidence[local as usize];
         *count = (*count + 1).min(3);
+    }
+
+    /// Current logical reference at one primary-stream slot. Overrides are
+    /// rare, and a temporary lookup keeps cold reconciliation constant-time.
+    pub(crate) fn logical_reference(
+        &self,
+        source_bin: BinId,
+        source_slot: u32,
+    ) -> Option<(BinId, u32)> {
+        if let Some(&index) = self.reference_override_lookup.get(&source_slot) {
+            let entry = self.reference_overrides[index as usize];
+            return Some((entry.owner_bin, entry.owner_local));
+        }
+        let local = self.cell_indices[source_slot as usize];
+        (local != super::packed::INVALID_INDEX).then_some((source_bin, local))
+    }
+
+    /// Append a sparse logical-reference overwrite and report whether it
+    /// replaced a different concrete reference.
+    pub(crate) fn patch_reference(
+        &mut self,
+        source_bin: BinId,
+        source_slot: u32,
+        source_cell: u32,
+        source_offset: u8,
+        owner_bin: BinId,
+        owner_local: u32,
+    ) -> bool {
+        let conflict = self
+            .logical_reference(source_bin, source_slot)
+            .is_some_and(|existing| existing != (owner_bin, owner_local));
+        self.reference_overrides.push(CellReferenceOverride {
+            source_cell,
+            owner_local,
+            source_offset,
+            owner_bin,
+        });
+        self.reference_override_lookup
+            .insert(source_slot, (self.reference_overrides.len() - 1) as u32);
+        conflict
+    }
+
+    pub(crate) fn finish_reference_patching(&mut self) {
+        debug_assert!(self.cell_indices.iter().enumerate().all(|(slot, &local)| {
+            local != super::packed::INVALID_INDEX
+                || self.reference_override_lookup.contains_key(&(slot as u32))
+        }));
+        self.reference_override_lookup = FxHashMap::default();
     }
 }
 

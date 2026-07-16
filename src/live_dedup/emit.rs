@@ -6,7 +6,7 @@ use glam::Vec3;
 
 use super::binning::BinAssignment;
 use super::edge_checks::collect_and_resolve_cell_edges;
-use super::packed::{pack_ref, DEFERRED, INVALID_INDEX};
+use super::packed::INVALID_INDEX;
 use super::shard::ShardState;
 use super::types::{
     BinId, DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeOverflowLocal, EdgeToLater, LocalId,
@@ -75,10 +75,12 @@ impl EdgeScratch {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
+    #[allow(clippy::too_many_arguments)] // compact edge records carry final CSR provenance
     fn emit<P: super::types::VertexPosition>(
         &mut self,
         shard: &mut ShardState<P>,
         cell_vertices: &[VertexData<P>],
+        cell_idx: u32,
         cell_slot: u32,
         cell_start: u32,
         bin: BinId,
@@ -159,6 +161,8 @@ impl EdgeScratch {
                 thirds,
                 indices,
                 slots: [cell_start + locals[0] as u32, cell_start + locals[1] as u32],
+                source_cell: cell_idx,
+                source_offsets: locals,
             });
         }
         self.edges_overflow.clear();
@@ -264,7 +268,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
                     shard.output.resolution_drift_exceeded |=
                         exceeds_resolution_drift(representative, pos);
                     shard.output.add_vertex_incidence(*vi);
-                    shard.output.cell_indices.push(pack_ref(bin, *vi));
+                    shard.output.cell_indices.push(*vi);
                     continue;
                 }
             }
@@ -295,17 +299,23 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
                 }
                 let v_idx = *vi;
                 debug_assert_ne!(v_idx, INVALID_INDEX, "missing on-shard vertex index");
-                shard.output.cell_indices.push(pack_ref(bin, v_idx));
+                shard.output.cell_indices.push(v_idx);
             } else {
                 debug_assert_eq!(*vi, INVALID_INDEX, "received index for off-shard owner");
                 let source_slot =
                     checked_u32(shard.output.cell_indices.len(), "deferred source slot")?;
-                shard.output.cell_indices.push(DEFERRED);
+                let source_offset = checked_u8(
+                    shard.output.cell_indices.len() - cell_start as usize,
+                    "deferred source offset",
+                )?;
+                shard.output.cell_indices.push(INVALID_INDEX);
                 shard.output.deferred_slots.push(DeferredSlot {
                     key,
                     pos,
                     source_bin: bin,
                     source_slot,
+                    source_cell: cell_idx,
+                    source_offset,
                 });
             }
         }
@@ -315,6 +325,7 @@ pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
     scratch.emit(
         shard,
         &output_buffer.vertices,
+        cell_idx,
         cell_slot,
         cell_start,
         bin,
