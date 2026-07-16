@@ -1,11 +1,12 @@
 # Point representation and interoperability plan
 
-**Status:** independently reviewed; Option A is the recommended first design.
+**Status:** independently reviewed; a producer-envelope audit gates Option A versus B.
 
 This plan records the public-point decision around the measured output-materialization
 optimization. It compares whether a checked semantic `SpherePoint` earns its additional API and
-validation machinery over a simpler packed coordinate type, then stages the independently reviewed
-Option A result. The decision is separate from the established choice to retain
+validation machinery over a simpler packed coordinate type, records the independent preference for
+Option A under current evidence, and defines the numerical gate that can justify Option B as the
+better pre-user design. The decision is separate from the established choice to retain
 `glam::Vec3`/`DVec3` as internal arithmetic types.
 
 ## Existing facts and constraints
@@ -170,7 +171,7 @@ interop with nalgebra or custom records, and makes a routine internal dependency
 diagram and serialization contract. Optional glam conversions can remain convenience features;
 glam should not be the canonical boundary.
 
-## Independent review and decision
+## Independent review and reopened decision gate
 
 A conversation-blind review ranked the alternatives **A > B > C**. The decisive issue is that
 `SpherePoint` would not currently establish one useful invariant across all of its proposed
@@ -178,7 +179,7 @@ producers. A weak common envelope would not remove checks or make raw locator qu
 strong generator-grade envelope would require changing output, centroid, repair, serde, and query
 contracts before the measured conversion optimization could land.
 
-Proceed with **Option A**:
+The review therefore recommended **Option A as the smallest safe next change**:
 
 - Retain `UnitVec3` as an honest compact POD coordinate type for now. Its name documents intended
   use but does not certify normalization.
@@ -196,9 +197,22 @@ Proceed with **Option A**:
 Option C remains the simplicity control but discards useful domain naming without offering a
 meaningful layout or interoperability advantage over A.
 
+This simplicity ranking is not the final long-term choice. There are no users to preserve, and the
+existing `1e-4` public vertex tolerance is documented as deliberately loose. Most identified
+producers already normalize immediately before f32 storage: generators use f64 normalization,
+fast extraction normalizes after f32 rounding, fallback and repair start from normalized f64
+directions, and centroids normalize their f64 integral. A coherent numerical migration is
+worthwhile if it replaces those variants with one storage rule, tightens the actual common
+envelope, and makes a checked point useful to queries and consumers.
+
+Consequently **Stage 0 below reopens A versus B**. Choose B if evidence shows that one shared
+canonicalizer covers every legitimate producer without unacceptable topology, output-resolution,
+or throughput movement and the resulting type removes meaningful checks or invalid states.
+Otherwise retain A rather than creating a semantic wrapper around a weak invariant.
+
 ## Import and export surface
 
-Under Option A:
+Common interoperability surface after the representation decision:
 
 - Provide `compute_by(&[T], F)` so any user record or math type works without an integration
   feature or orphan-rule conflict for foreign types. The closure writes directly into the
@@ -222,15 +236,45 @@ that `Vec`/slice itself is C ABI safe or that every GPU storage/uniform layout u
 
 ## Staged implementation plan
 
-### Stage 1 — remove only the redundant final point conversion
+### Stage 0 — measure and test a unified stored-direction contract
 
-- Keep `UnitVec3`, `UnitVec3Like`, serde shape, and every public signature unchanged.
-- Replace the two elementwise `Vec3 -> UnitVec3` collections in
-  `SphericalVoronoi::from_raw_parts` with a checked internal allocation cast.
-- Require exact size/alignment compatibility and retain a safe elementwise fallback for a supported
-  target whose glam layout differs. The proof depends on both `UnitVec3` and the target-specific
-  `glam::Vec3` layout.
-- Add zero-copy `vertices_xyz()` and `generators_xyz()` views using the existing POD layouts.
+- Instrument every public/stored point producer separately: canonical generators, ordinary fast
+  extraction, fallback extraction, reconciliation/Local3d repair vertices, centroids/Lloyd sites,
+  embedding projection, and cell-mesh source sites/vertices.
+- Across ordinary, dense, welded, adversarial, repair, and cell-elision corpora, record maximum
+  `abs(length_squared - 1)` and counts beyond 1/2/4/8 f32 epsilons and the current `1e-4` bound.
+- Prototype one shared storage canonicalizer at the producers' existing normalization points. Do
+  not add a second normalization pass. Compare promoted-f64-normalize-then-round with the current
+  round-then-f32-normalize path and select one rule only if its rounding/order contract is explicit.
+- Compare topology, vertex keys, exact stored-coordinate equalities, output-resolution decisions,
+  repair/reconciliation outcomes, validation, and geometric error. Exact coordinate bits may move
+  in this experiment, but every change must be attributed; a tighter norm is not automatically a
+  better diagram if it destabilizes shared stored equality or certified output policy.
+- Measure instructions, branches, cache behavior, native wall time, and peak RSS. Centralization
+  should replace existing work rather than charge one extra square root per emitted vertex.
+- Decide whether the resulting common envelope is strong enough for locator ranking/bounds and
+  whether a checked type removes concrete validation or misuse paths.
+
+Gate:
+
+- Choose **B** if one enforceable storage rule covers all legitimate producers, the migration has
+  acceptable correctness/performance behavior, and the type materially strengthens construction,
+  serde, or query contracts.
+- Choose **A** if producers need meaningfully different envelopes or a common weak envelope would
+  remain documentation-only.
+
+### Stage 1 — apply the representation decision and remove the final point conversion
+
+- Under A, keep `UnitVec3`, `UnitVec3Like`, serde shape, and every existing public signature
+  unchanged. Replace the two elementwise `Vec3 -> UnitVec3` collections in
+  `SphericalVoronoi::from_raw_parts` with a checked allocation cast.
+- Under B, migrate every public producer/consumer together to private-field `SpherePoint`, use the
+  Stage-0 canonicalizer for all safe construction and checked deserialization, and keep public
+  arbitrary-bit construction unavailable. Encapsulate the layout-compatible final allocation
+  transfer behind a small audited internal boundary.
+- In either branch, require exact size/alignment compatibility with target-specific `glam::Vec3`,
+  retain a safe elementwise fallback where appropriate, and add zero-copy `vertices_xyz()` and
+  `generators_xyz()` views with exact-bit tests.
 - Treat cell metadata separately; do not transmute the two layout-unspecified structs in this
   stage.
 
@@ -251,12 +295,8 @@ that `Vec`/slice itself is C ABI safe or that every GPU storage/uniform layout u
   mismatch explicitly.
 - Do not couple this API change to the output conversion benchmark or claim it as a throughput win.
 
-### Stage 4 — reconsider representation only with new evidence
+### Stage 4 — revisit deferred interoperability only with new evidence
 
-- Audit norm envelopes for every generator, vertex, repair, centroid, Lloyd, cell-mesh, embedding,
-  serde, and locator producer.
-- Reopen Option B only if one enforceable invariant removes meaningful downstream validation or
-  prevents a demonstrated misuse class.
 - Reopen trait retirement, f64 ingest, mint, or an arrays-only public surface only in response to a
   concrete interoperability requirement.
 
@@ -264,9 +304,15 @@ that `Vec`/slice itself is C ABI safe or that every GPU storage/uniform layout u
 
 Correctness/API checks:
 
-- Exact output topology, coordinate-bit, report, and work-counter agreement with the current API on
-  ordinary, welded, adversarial, repair, and cell-elision fixtures.
+- Exact output topology, report, and work-counter agreement with the current API on ordinary,
+  welded, adversarial, repair, and cell-elision fixtures. Under A, coordinate bits must also agree;
+  under B, every intentional bit change from the unified canonicalizer must be classified and the
+  new output-resolution/geometry result independently accepted.
+- Producer-attributed norm-envelope tests, including repair and centroid paths rather than only
+  ordinary construction.
 - Exact-bit packed-array views and current serde round trips for diagrams and cell meshes.
+- Under B, checked serde must reject rather than normalize invalid stored values, and compile-fail
+  tests should cover private fields/withheld arbitrary-bit construction where useful.
 - Cross-feature checks for default, `serde`, `glam`, and no-default-feature builds.
 - Miri or an equivalent focused memory-safety check for the internal allocation ownership cast,
   plus compile-time size/alignment assertions on every supported target family. Miri cannot prove
@@ -274,7 +320,8 @@ Correctness/API checks:
 
 Performance checks:
 
-- Linux retired instructions/branches and Cachegrind for final diagram construction.
+- Linux retired instructions/branches and Cachegrind for the Stage-0 canonicalizer and final diagram
+  construction, separately attributed.
 - Native Mac interleaved 2M Fibonacci and uniform runs for production total time and the assemble
   phase. Do not use the null-write percentage as the expected gain.
 - Peak RSS at 2M to verify that the source/destination point-allocation overlap was actually
