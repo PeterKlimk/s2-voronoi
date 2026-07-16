@@ -705,6 +705,19 @@ Do not broadly retry these without a materially different design or workload:
   added 2.91% instructions, 3.32% branches, and about 6.0% branch misses; uniform added 2.65%,
   3.25%, and about 5.58%. Keep the degree-local necessary-coordinate hint plus representative-
   drift certificate, and reserve exhaustive scanning for uncertified builds.
+- Accumulating the existing x-only zero-edge hint while gnomonic extraction positions were live
+  removed the later tiny-buffer scan, but added 0.192% native instructions and 0.084% branches at
+  1M Fibonacci, with all fifteen pairs worse on both counters; cycles trended about 2% worse.
+  Portable Cachegrind instead showed 0.12% fewer instruction references and 1.81% fewer branches,
+  but 28.8% more simulated I1 misses and 0.59% more D1 misses. Keep the outlined scan: on the native
+  production target its hot-buffer reread is cheaper than extending extraction's live state.
+- Replacing the two 16-byte outgoing-edge scratch streams with one u32 tag per cell edge and
+  forwarding each edge as soon as vertex dedup produced its second endpoint removed the final
+  scratch-emission pass, but mixed queue/overflow dispatch into the vertex loop. At 1M native
+  Fibonacci it added 2.32% instructions and 4.16% branches in all nine pairs, with neutral cycles.
+  Portable Cachegrind confirmed 2.43% more instruction references, 3.44% more branches, 25.8% more
+  I1 misses, and 3.61% more mispredicts. Keep the compact dedicated outgoing passes; their regular
+  iteration is much cheaper than interleaving the two state machines.
 - Short-circuiting packed tail SIMD chunks when their security mask is empty was neutral on
   Fibonacci (instructions -0.007%, branches +0.009%) but regressed 500k native clustered by 0.048%
   instructions, 0.106% branches, and 1.74% cycles. Most activated tail-rescan chunks have at least
