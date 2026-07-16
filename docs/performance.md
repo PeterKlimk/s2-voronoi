@@ -554,6 +554,18 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Reusing the gnomonic extraction direction's f64 squared norm for both validity and canonical
+  normalization removed exactly 12 instructions and 6 branches per emitted vertex (600k/300k at
+  50k Fibonacci), but the smaller extractor perturbed code layout badly: Cachegrind I1 misses rose
+  from 1.23M to 3.19M. At 1M native uniform, seven interleaved pairs retained 0.19% fewer
+  instructions and 0.73% fewer branches but increased cache references 16.7% in every pair and
+  cycles 3.1% overall. Expressing the arithmetic locally instead of through a shared helper
+  produced identical codegen. Retain the separate rounded-f32 extraction guard; arithmetic work is
+  not the limiting cost if removing it makes the instruction footprint less favorable.
+- Passing the generator's already-evaluated squared norm into tangent-basis construction was a
+  compiler-level no-op. Cachegrind attributed exactly 7,850,000 instructions to 50k builder resets
+  before and after; whole-build movement was -0.005% with unfavorable layout noise. LLVM already
+  eliminates the repeated dot products, so keep the clearer independent calculations.
 - Releasing shard position buffers during global vertex concatenation did not materially reduce
   the observed peak. Dropping sources inside the parallel scatter left the source-plus-destination
   overlap intact and measured about 8--9 MiB more RSS at 2M. Copying shards serially before each
