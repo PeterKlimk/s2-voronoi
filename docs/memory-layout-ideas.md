@@ -232,8 +232,14 @@ acceptance claim.
 Two reversed-order 2M Fibonacci RSS probes reproduced a reduction from about 625 MiB to 544 MiB,
 roughly 81 MiB or 13%. The deliberately unfavorable 96-bin uniform probe remained positive but
 smaller, falling from 751.3 MiB to 738.7 MiB because the transient sparse lookup is proportionally
-larger. The full release suite and checked assembly tests pass. Retain this as the candidate; a Mac
-run remains the cross-platform acceptance gate before merging.
+larger. The full release suite and checked assembly tests pass.
+
+The cross-platform gate also passed on the eight-thread Intel i5-1038NG7 Mac using Rust 1.88. In
+20-round interleaved 2M runs without preprocessing, Fibonacci fell from a 644.0 ms median to
+613.8 ms (4.7% lower latency), default-bin uniform from 818.4 ms to 782.0 ms (4.4% lower), and
+96-bin uniform from 870.3 ms to 843.0 ms (3.1% lower). Per-cell spreads were 3.6--5.8%, but all
+three paired medians independently favored the candidate by materially more than the Linux
+instruction-count improvements alone predicted. The candidate is merge-ready.
 
 ## 4. Slot-native packed groups and cell construction
 
