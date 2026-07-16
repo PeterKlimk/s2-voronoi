@@ -263,6 +263,25 @@ cost independently of SIMD savings.
 Prepare four constraints with exact lane-wise `f64` operations. Compare rolling widths and record
 speculation. Keep ordinary sequential clipping unchanged.
 
+**Experiment result (2026-07-16): coefficient-only rolling preparation rejected.** A scalar
+four-entry window preserved the existing candidate, edge, termination, and fallback outcomes, but a
+100k corrected-Fibonacci timing run prepared 539,940 stream constraints and consumed 424,803 of
+them: 115,137 speculative preparations (21.3%). Against the committed width-one seam, a 500k
+single-threaded native counter run added 3.46% retired instructions and 3.83% branches. Interleaved
+wall time was noisy but gave no acceptance signal.
+
+A tighter version matched the builder variant once per window and prepared four constraints through
+an exact lane-wise `f64x4` kernel. Boundary lanes with a signed-zero difference fell back to the
+scalar formula to preserve coefficient bits. It reduced speculation slightly by handling partial
+windows scalar: 535,426 prepared versus the same 424,803 consumed (20.7%). SIMD recovered about 15
+million instructions relative to the scalar-window prototype, but remained 3.02% above the
+width-one baseline and added 5.14% branches. The window storage, dispatch, and speculative work cost
+more than coefficient SIMD saved.
+
+Do not revive rolling coefficient preparation alone. A future Phase 4 experiment must fuse enough
+batch classification or redundant-constraint elimination to remove downstream work, and should
+prototype that combined kernel directly rather than retain the rejected preparation scaffold.
+
 ### Phase 4: batch redundancy filters
 
 Add the vectorized radial certificate first. Then add exact across-constraint all-inside
