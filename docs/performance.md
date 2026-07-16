@@ -513,10 +513,13 @@ Recently accepted optimizations:
 
 - **Fused weld point-view finalization:** preprocessing-enabled grid builds defer the
   global-id-to-slot inverse and slot-ordered `SlotPoint` stream until occupancy feedback selects
-  the retained grid, then initialize both inside the existing same-cell weld loop. Disabled
-  preprocessing keeps the original grid-build path, while a `MergeWithin` radius too large for
-  grid adjacency retains the standalone detector and finalizes the selected grid separately. A
-  differential test pins the weld-pair set and both point views exactly against a normal grid.
+  the retained grid, then initialize the required slot stream inside the existing same-cell weld
+  loop. The inverse remains absent on the ordinary zero-weld path; actual compaction builds its
+  effective cell and slot maps directly in the existing survivor-copy pass, removing the old
+  dropped-slot list and original-id follow-up pass. Disabled preprocessing keeps the original
+  grid-build path, while a `MergeWithin` radius too large for grid adjacency retains the
+  standalone detector and finalizes the selected slot stream separately. Differential tests pin
+  the weld-pair set and slot stream against a normal grid, and compacted maps against a fresh grid.
   At 1M single-threaded native Linux with preprocessing, Fibonacci added 0.21% instructions and
   0.24% branches but reduced hardware cache references 5.06%; uniform at 96 bins added 0.17% and
   0.20% while reducing cache references 7.23%. Cycles were unresolved. Cachegrind at 20k
@@ -526,6 +529,16 @@ Recently accepted optimizations:
   1.16--2.80%, 16/20 favorable), and uniform was 2.31% faster (1.57--3.04%, 19/20). A 1M
   single-threaded Fibonacci guardrail was also 0.93% faster (0.31--1.55%, 13/20). This is an
   accepted locality win despite slightly more scalar retired work.
+
+  Making the inverse truly weld-only and rebuilding maps in the survivor pass reduced another
+  0.078--0.080% of Linux instructions in every Fibonacci and 96-bin uniform pair, with branches
+  essentially unchanged. Cachegrind confirmed 0.06% fewer instruction references, 0.07% fewer
+  data references, and 0.86% fewer D1 misses, but recorded 4.4% more I1 misses and 6.2% more
+  simulated mispredicts from layout movement. A direct quiet-Mac comparison against the accepted
+  fused baseline was neutral-to-favorable: 2M multithreaded Fibonacci was directionally 0.48%
+  faster (paired interval -0.23% to +1.18% when expressed as speedup, 12/20 favorable), while
+  uniform changed -0.05% (-0.59% to +0.49%, 11/20). Keep the lower-work lifecycle and named build
+  modes; the intervals rule out the noisy Linux Fibonacci cycle regression on the outcome host.
 
 Measured gates awaiting a design experiment:
 

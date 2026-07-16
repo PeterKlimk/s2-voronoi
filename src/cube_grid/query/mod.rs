@@ -67,6 +67,11 @@ impl CubeMapGrid {
     /// (position + index in one cache line) for the clip path.
     #[inline]
     pub fn point_pos_slots(&self) -> &[crate::cube_grid::SlotPoint] {
+        debug_assert_eq!(
+            self.cell_points_aos.len(),
+            self.point_indices.len(),
+            "slot-point stream used before finalization"
+        );
         &self.cell_points_aos
     }
 

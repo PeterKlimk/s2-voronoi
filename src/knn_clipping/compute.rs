@@ -1454,7 +1454,7 @@ fn prepare_points_and_grid(
     if let Some(threshold) = threshold {
         if threshold <= grid.max_grid_weld_threshold() {
             let pairs = grid
-                .collect_weld_pairs_and_finalize_point_views(threshold)
+                .collect_weld_pairs_and_finalize_slot_points(threshold)
                 .map_err(|coincident_pairs| crate::VoronoiError::DegenerateInput {
                     coincident_pairs,
                     message: format!(
@@ -1492,7 +1492,7 @@ fn prepare_points_and_grid(
                 effective_points = Some(pts);
                 merge_result = Some(result);
             }
-            grid.finalize_point_views();
+            grid.finalize_slot_points();
         }
     }
     tb.set_preprocess(t.elapsed());

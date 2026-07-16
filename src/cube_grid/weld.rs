@@ -17,8 +17,7 @@ use super::{cell_to_face_ij, CubeMapGrid};
 pub(crate) const MAX_RETAINED_WELD_PAIRS: usize = 1 << 20;
 
 #[derive(Clone, Copy)]
-struct PointViewInit {
-    point_slots_addr: usize,
+struct SlotPointInit {
     cell_points_aos_addr: usize,
 }
 
@@ -55,19 +54,18 @@ impl CubeMapGrid {
     pub(crate) fn collect_weld_pairs(&self, threshold: f32) -> Result<Vec<(u32, u32)>, usize> {
         self.collect_weld_pairs_impl::<false>(
             threshold,
-            PointViewInit {
-                point_slots_addr: 0,
+            SlotPointInit {
                 cell_points_aos_addr: 0,
             },
         )
     }
 
-    /// Collect weld pairs while initializing the retained grid's two
-    /// construction/query point views. Each cell owns a disjoint slot range,
-    /// and every global point id occurs exactly once, so the existing
-    /// cell-parallel traversal can populate both destinations without
-    /// synchronization.
-    pub(crate) fn collect_weld_pairs_and_finalize_point_views(
+    /// Collect weld pairs while initializing the retained grid's slot-ordered
+    /// point stream. Each cell owns a disjoint slot range, so the existing
+    /// cell-parallel traversal can populate the destination without
+    /// synchronization. The global-id-to-slot inverse remains absent unless
+    /// actual weld compaction needs it.
+    pub(crate) fn collect_weld_pairs_and_finalize_slot_points(
         &mut self,
         threshold: f32,
     ) -> Result<Vec<(u32, u32)>, usize> {
@@ -76,42 +74,34 @@ impl CubeMapGrid {
             "point views already initialized"
         );
         let n = self.point_indices.len();
-        let mut point_slots = Vec::<u32>::with_capacity(n);
         let mut cell_points_aos = Vec::<super::SlotPoint>::with_capacity(n);
-        let init = PointViewInit {
-            point_slots_addr: point_slots.spare_capacity_mut().as_mut_ptr() as usize,
+        let init = SlotPointInit {
             cell_points_aos_addr: cell_points_aos.spare_capacity_mut().as_mut_ptr() as usize,
         };
         let pairs = self.collect_weld_pairs_impl::<true>(threshold, init)?;
-        // SAFETY: a successful traversal visits every nonempty cell. Its slot
-        // ranges partition `0..n`, and `point_indices` is a permutation of
-        // `0..n`, so `scan_cell` initialized every element of both vectors
-        // exactly once. On an early pair-budget error, the lengths remain zero.
+        // SAFETY: a successful traversal visits every nonempty cell, whose
+        // slot ranges partition `0..n`, so `scan_cell` initialized every
+        // element exactly once. On an early pair-budget error, the length
+        // remains zero.
         unsafe {
-            point_slots.set_len(n);
             cell_points_aos.set_len(n);
         }
-        debug_assert!(!point_slots.contains(&u32::MAX));
-        self.point_slots = point_slots;
         self.cell_points_aos = cell_points_aos;
         Ok(pairs)
     }
 
-    /// Initialize deferred point views without weld detection. Used by the
-    /// standalone large-radius `MergeWithin` path after it selects the grid
-    /// that will be retained.
-    pub(crate) fn finalize_point_views(&mut self) {
-        if !self.point_slots.is_empty() || !self.cell_points_aos.is_empty() {
-            debug_assert_eq!(self.point_slots.len(), self.point_indices.len());
-            debug_assert_eq!(self.cell_points_aos.len(), self.point_indices.len());
+    /// Initialize deferred slot-ordered points without weld detection. Used
+    /// by the standalone large-radius `MergeWithin` path after it selects the
+    /// grid that will be retained.
+    pub(crate) fn finalize_slot_points(&mut self) {
+        assert!(
+            self.cell_points_aos.is_empty()
+                || self.cell_points_aos.len() == self.point_indices.len(),
+            "slot-point stream is partially initialized"
+        );
+        if !self.cell_points_aos.is_empty() {
             return;
         }
-        let n = self.point_indices.len();
-        self.point_slots = vec![u32::MAX; n];
-        for (slot, &global) in self.point_indices.iter().enumerate() {
-            self.point_slots[global as usize] = slot as u32;
-        }
-        debug_assert!(!self.point_slots.contains(&u32::MAX));
         self.cell_points_aos = super::build::build_pos_aos(
             &self.cell_points_x,
             &self.cell_points_y,
@@ -120,10 +110,10 @@ impl CubeMapGrid {
         );
     }
 
-    fn collect_weld_pairs_impl<const FINALIZE_POINT_VIEWS: bool>(
+    fn collect_weld_pairs_impl<const FINALIZE_SLOT_POINTS: bool>(
         &self,
         threshold: f32,
-        point_view_init: PointViewInit,
+        slot_point_init: SlotPointInit,
     ) -> Result<Vec<(u32, u32)>, usize> {
         debug_assert!(
             threshold <= self.max_grid_weld_threshold(),
@@ -176,27 +166,29 @@ impl CubeMapGrid {
                 0 | 1 => &self.cell_points_z,
                 _ => &self.cell_points_x,
             };
+            let cell_points_aos = slot_point_init.cell_points_aos_addr as *mut super::SlotPoint;
             for i in start..end {
-                if FINALIZE_POINT_VIEWS {
-                    let global = self.point_indices[i] as usize;
-                    let point_slots = point_view_init.point_slots_addr as *mut u32;
-                    let cell_points_aos =
-                        point_view_init.cell_points_aos_addr as *mut super::SlotPoint;
+                let gate_i = if FINALIZE_SLOT_POINTS {
+                    let global = self.point_indices[i];
+                    let x = self.cell_points_x[i];
+                    let y = self.cell_points_y[i];
+                    let z = self.cell_points_z[i];
                     // SAFETY: cell ranges are disjoint across workers and
-                    // point_indices contains every global id exactly once.
+                    // together partition the slot-ordered destination.
                     unsafe {
-                        point_slots.add(global).write(i as u32);
                         cell_points_aos.add(i).write(super::SlotPoint {
-                            pos: Vec3::new(
-                                self.cell_points_x[i],
-                                self.cell_points_y[i],
-                                self.cell_points_z[i],
-                            ),
-                            idx: global as u32,
+                            pos: Vec3::new(x, y, z),
+                            idx: global,
                         });
                     }
-                }
-                let gate_i = gate_points[i];
+                    if matches!(face, 0 | 1) {
+                        z
+                    } else {
+                        x
+                    }
+                } else {
+                    gate_points[i]
+                };
                 let candidate_start = i + 1;
                 let (candidate_chunks, candidate_tail) =
                     gate_points[candidate_start..end].as_chunks::<8>();
@@ -317,10 +309,10 @@ impl CubeMapGrid {
     /// Only the point-dependent arrays change (offsets, indices, SoA
     /// coordinates, AoS positions, per-point cells/slots); the per-cell
     /// geometry depends only on `res`. Survivors keep their relative (cell,
-    /// slot) order, so every array compacts with a single forward pass over its
-    /// own buffer — no reallocation and no random scatter. The result is
-    /// bit-identical to a fresh build on the effective points at the same
-    /// resolution (pinned by a test below).
+    /// slot) order, so the slot streams and effective-id maps are rebuilt in
+    /// one forward pass without random source reads. The result is bit-identical
+    /// to a fresh build on the effective points at the same resolution (pinned
+    /// by a test below).
     pub(crate) fn compact_welded(
         &mut self,
         kept: &[bool],
@@ -329,13 +321,26 @@ impl CubeMapGrid {
     ) {
         let num_cells = 6 * self.res * self.res;
 
-        // Slot-order stream compaction of the SoA + AoS arrays. A forward write
-        // cursor `w` packs survivors densely and remaps each stored index to its
-        // effective id; coordinates and the slot-ordered AoS are overwritten in
-        // place (`w <= r`, so the source slot `r` is never one already written).
-        // The dropped slots are recorded in ascending order for the slot
-        // renumber below.
-        let mut dropped_slots: Vec<u32> = Vec::new();
+        assert_eq!(
+            self.cell_points_aos.len(),
+            self.point_indices.len(),
+            "slot-point stream must be initialized before compaction"
+        );
+        assert_eq!(self.point_cells.len(), kept.len());
+        assert!(
+            self.point_slots.is_empty() || self.point_slots.len() == kept.len(),
+            "point-slot inverse is partially initialized"
+        );
+        if self.point_slots.is_empty() {
+            self.point_slots.resize(n_eff, u32::MAX);
+        }
+
+        // One slot-order pass compacts the SoA + AoS streams and directly
+        // rebuilds both effective-id maps. The outer cell and forward write
+        // cursor already are the surviving point's final cell and slot, so no
+        // dropped-slot list or original-id follow-up pass is needed. Writes to
+        // effective-id map entries cannot disturb the loop: neither map is a
+        // source for this pass.
         let mut w = 0usize;
         let mut read_start = 0usize;
         for cell in 0..num_cells {
@@ -343,10 +348,10 @@ impl CubeMapGrid {
             for r in read_start..read_end {
                 let orig = self.point_indices[r] as usize;
                 if !kept[orig] {
-                    dropped_slots.push(r as u32);
                     continue;
                 }
                 let eff = original_to_effective[orig];
+                let eff_usize = eff as usize;
                 let (x, y, z) = (
                     self.cell_points_x[r],
                     self.cell_points_y[r],
@@ -360,6 +365,8 @@ impl CubeMapGrid {
                     pos: Vec3::new(x, y, z),
                     idx: eff,
                 };
+                self.point_cells[eff_usize] = cell as u32;
+                self.point_slots[eff_usize] = w as u32;
                 w += 1;
             }
             self.cell_offsets[cell + 1] = w as u32;
@@ -371,26 +378,6 @@ impl CubeMapGrid {
         self.cell_points_y.truncate(w);
         self.cell_points_z.truncate(w);
         self.cell_points_aos.truncate(w);
-
-        // Per-point arrays (indexed by point id). Cell membership is invariant
-        // under welding, so `point_cells` compacts by original id in place. A
-        // survivor's new slot is its old slot minus the dropped points ahead of
-        // it — a `partition_point` into the ascending `dropped_slots` (a single
-        // comparison in the common one-weld case). Both reuse their buffers; the
-        // effective id `e` never overtakes the read cursor `orig`, so neither
-        // pass reads a slot it has already overwritten.
-        let mut e = 0usize;
-        for (orig, &keep) in kept.iter().enumerate() {
-            if !keep {
-                continue;
-            }
-            let old_slot = self.point_slots[orig] as usize;
-            let drops_before = dropped_slots.partition_point(|&s| (s as usize) < old_slot);
-            self.point_cells[e] = self.point_cells[orig];
-            self.point_slots[e] = (old_slot - drops_before) as u32;
-            e += 1;
-        }
-        debug_assert_eq!(e, n_eff, "per-point compaction kept-count mismatch");
         self.point_cells.truncate(n_eff);
         self.point_slots.truncate(n_eff);
 
@@ -498,7 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn fused_weld_scan_finalizes_exact_point_views() {
+    fn fused_weld_scan_finalizes_exact_slot_points() {
         let threshold = crate::tolerances::weld_radius();
         let points = points_with_twins(400, 40, threshold * 0.5, 91);
         let expected = CubeMapGrid::new(&points, 13);
@@ -519,13 +506,13 @@ mod tests {
         assert!(fused.cell_points_aos.is_empty());
         let mut expected_pairs = expected.collect_weld_pairs(threshold).unwrap();
         let mut fused_pairs = fused
-            .collect_weld_pairs_and_finalize_point_views(threshold)
+            .collect_weld_pairs_and_finalize_slot_points(threshold)
             .unwrap();
         expected_pairs.sort_unstable();
         fused_pairs.sort_unstable();
 
         assert_eq!(fused_pairs, expected_pairs);
-        assert_eq!(fused.point_slots, expected.point_slots);
+        assert!(fused.point_slots.is_empty());
         assert_eq!(fused.cell_points_aos, expected.cell_points_aos);
     }
 
