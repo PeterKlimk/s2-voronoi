@@ -350,9 +350,12 @@ tasks and are not duplicated here.
   edge-arc radians, gnomonic metric-relative inflation, and the local-rebuild stereographic `f32`
   denominator floor. Their equal value does not imply a hierarchy or shared semantics. Optimized
   executable sections remain byte-identical; only source-line metadata moved.
-- **Next gate:** move the already named owner-conditioned spherical-arc plane-residual and exact-pi
-  sine thresholds into `tolerances.rs`. Preserve their `f64` values and their distinct `>` / `<=`
-  rejection boundaries; do not fold either into the equal-valued fallback plane or arc constants.
+- **QUAL-001E owner-arc result:** owner-plane residual and exact-pi sine thresholds now live in
+  `tolerances.rs` with their `f64` units and distinct `>` / `<=` rejection boundaries documented.
+  Their stripped optimized binaries are byte-identical to the parent.
+- **Next gate:** classify the two weld candidate-grid wall guards. Preserve the cube-grid weld's
+  additive `f32` pad and preprocessing weld's relative `f64` inflation as separate constants; equal
+  `1e-6` spellings do not justify changing either expression or sharing one typed value.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

@@ -5,10 +5,8 @@
 //! generators define the supporting bisector plane independently of the
 //! rounded output endpoints.
 
+use crate::tolerances::{OWNER_ARC_EXACT_PI_SIN_TOL, OWNER_ARC_PLANE_SIN_TOL};
 use glam::{DVec3, Vec3};
-
-const OWNER_PLANE_SIN_TOL: f64 = 2.0e-6;
-const EXACT_PI_SIN_TOL: f64 = 1.0e-12;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum OwnerArcClass {
@@ -57,13 +55,13 @@ pub(crate) fn resolve_owner_arc(
     let max_plane_residual = start_residual.max(end_residual);
     let start = (start - normal * normal.dot(start)).normalize_or_zero();
     let end = (end - normal * normal.dot(end)).normalize_or_zero();
-    if start == DVec3::ZERO || end == DVec3::ZERO || max_plane_residual > OWNER_PLANE_SIN_TOL {
+    if start == DVec3::ZERO || end == DVec3::ZERO || max_plane_residual > OWNER_ARC_PLANE_SIN_TOL {
         return Err(OwnerArcClass::Invalid);
     }
 
     let cosine = start.dot(end).clamp(-1.0, 1.0);
     let unsigned_sine = start.cross(end).length();
-    if cosine < 0.0 && unsigned_sine <= EXACT_PI_SIN_TOL {
+    if cosine < 0.0 && unsigned_sine <= OWNER_ARC_EXACT_PI_SIN_TOL {
         return Err(OwnerArcClass::ExactPi);
     }
 

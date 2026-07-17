@@ -357,16 +357,18 @@ only setup, classification, and invariant-bearing state.
 
 **Hot-path impact expected:** none
 
-**Progress:** started 2026-07-18 with three name-only slices. The dense-cell gather-radius inflation
+**Progress:** started 2026-07-18 with four name-only slices. The dense-cell gather-radius inflation
 is now the named, dimensionless `f32` policy `DENSE_BAND_RADIUS_INFLATION`. The repeated fallback
 `1e-24` spellings are now separately owned as `FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR` (a
 dimensionless squared-sine conditioning floor) and `FALLBACK_VERTEX_DEDUP_LEN2` (a dimensionless
 squared chord distance). Raw `1e-12` sites are now split among `FALLBACK_EDGE_ARC_ANGLE_PAD`
 (radians), `GNOMONIC_METRIC_R2_RELATIVE_PAD` (a dimensionless `f64` scale fraction), and
 `LOCAL_REBUILD_STEREOGRAPHIC_DENOMINATOR_FLOOR` (a dimensionless `f32` divisor floor). All values,
-arithmetic, and comparison directions are unchanged. The policy slice produced a byte-identical
-optimized benchmark; both tolerance slices produced identical executable code/read-only data and
-differed only in source-line metadata.
+arithmetic, and comparison directions are unchanged. Owner-conditioned spherical arcs now also use
+registry-owned `OWNER_ARC_PLANE_SIN_TOL` and `OWNER_ARC_EXACT_PI_SIN_TOL` values rather than
+module-local constants. The policy slice produced a byte-identical optimized benchmark; the first
+two tolerance slices produced identical executable code/read-only data with only source-line
+metadata movement, and the owner-arc slice produced an identical stripped optimized binary.
 
 Classify every production floating-point literal outside tests/benchmarks as one of:
 

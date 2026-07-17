@@ -441,6 +441,28 @@ The third numerical/policy-constant slice was validated on 2026-07-18 against im
   source-location records; executable code and numeric data did not change. There was no reason
   for a counter or quiet wall-clock run.
 
+## QUAL-001E owner-arc registry result
+
+The fourth numerical/policy-constant slice was validated on 2026-07-18 against immediate parent
+`1d189d7`.
+
+- The owner-conditioned spherical-arc thresholds moved from module-local constants to
+  `tolerances.rs` as `OWNER_ARC_PLANE_SIN_TOL` and `OWNER_ARC_EXACT_PI_SIN_TOL`.
+- The plane residual remains a dimensionless `f64` sine/dot tolerance of `2e-6`; an arc is rejected
+  when its maximum endpoint residual is `>` the value, so equality remains valid. The exact-pi
+  threshold remains a dimensionless `f64` cross-length sine of `1e-12`; an opposite-facing arc is
+  classified as ambiguous when the sine is `<=` the value.
+- The constants are deliberately independent of the fallback plane and arc-angle tolerances. Their
+  current values and numerical ordering do not create a shared hierarchy.
+- `cargo fmt`, both default and native all-feature Clippy with warnings denied, the complete release
+  and checked suites, the no-default-features release suite, and the `serde,glam` release suite
+  passed.
+- Matched release `tools` benchmarks had identical section sizes and total footprint. All inspected
+  loadable sections, including `.text`, `.rodata`, `.data.rel.ro`, and exception tables, were
+  byte-identical. After removing symbols and the build-id note, both complete artifacts had SHA-256
+  `a9c01ba20bbe32194ce765864c12fa9087c77a965038c57f4fbe908c8d0c56c8`. No counter or quiet
+  wall-clock run was warranted.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

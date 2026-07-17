@@ -143,6 +143,22 @@ pub(crate) const FALLBACK_VERTEX_DEDUP_LEN2: f64 = 1e-24;
 /// degenerate-extraction failures rather than normalizing noise.
 pub(crate) const EXTRACT_DEGENERATE_LEN2: f32 = 1e-28;
 
+// === Owner-conditioned spherical arcs ===
+
+/// Maximum absolute endpoint residual from the owner-defined bisector plane.
+///
+/// For normalized inputs the dimensionless dot residual is the sine of the
+/// off-plane angle. An owner-conditioned arc is rejected as inconsistent when
+/// its maximum endpoint residual is `>` this value; equality remains valid.
+pub(crate) const OWNER_ARC_PLANE_SIN_TOL: f64 = 2.0e-6;
+
+/// Unsigned endpoint-cross sine at or below which an opposite-facing
+/// owner-conditioned arc is classified as exactly pi and therefore ambiguous.
+///
+/// The exact-pi classification requires both `cosine < 0` and
+/// `unsigned_sine <=` this dimensionless `f64` threshold.
+pub(crate) const OWNER_ARC_EXACT_PI_SIN_TOL: f64 = 1.0e-12;
+
 // === Edge reconciliation ===
 
 /// Scale below which a reconciled edge's endpoints are considered the same
