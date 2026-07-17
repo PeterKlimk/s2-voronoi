@@ -428,8 +428,10 @@ robustness, and fidelity targets now have explicit Cargo feature boundaries; mix
 suites stay intact to avoid duplicating their fixtures. The pre-existing `tools` gate is the
 recorded `quality` surface decision. Local rebuild now snapshots diagnostics once per actual
 attempt, and reconciliation snapshots all three diagnostic/oracle choices once per defect-bearing
-computation. Both disabled/no-trigger paths remain lookup-free. Singleton stage diagnostics remain
-to audit; they do not justify an options record unless their stage boundary or policy benefits.
+computation. Both disabled/no-trigger paths remain lookup-free. The singleton audit moved the
+renamed edge-mismatch-origin diagnostic behind its mismatch boundary and confirmed that
+output-resolution telemetry already returns before its lookup on a no-zero-edge result.
+QUAL-001H completed 2026-07-18.
 
 1. Inventory environment knobs by category: supported operational, internal diagnostic,
    differential oracle, manual benchmark, or obsolete.
@@ -437,14 +439,15 @@ to audit; they do not justify an options record unless their stage boundary or p
    relevant stage. Completed for local rebuild and reconciliation.
 3. Keep clean-path guarantees such as avoiding environment lookups when no defect record exists.
    Local rebuild returns before its snapshot when no trigger exists; reconciliation returns its
-   default options without reading process state when no mismatch record exists.
-4. Rename `reclip_repair` coverage around the current local-rebuild contract and remove the unused
-   environment setting.
+   default options without reading process state when no mismatch record exists; live assembly
+   likewise skips its origin diagnostic lookup when no mismatch exists.
+4. ~~Rename `reclip_repair` coverage around the current local-rebuild contract and remove the
+   unused environment setting.~~ Completed.
 5. ~~Keep ignored local-rebuild and campaign probes out of mixed active suites, in clearly
    declared manual targets or tools.~~ Completed for wholly manual targets; isolated ignored cases
    remain beside the active fixtures they reuse.
-6. Use panic-safe scoped environment guards and serialize mutations at the appropriate process
-   boundary.
+6. ~~Use panic-safe scoped environment guards and serialize mutations at the appropriate process
+   boundary.~~ Completed for every active in-process writer.
 7. ~~Decide whether `quality` remains an always-built doc-hidden API or becomes an internal
    feature; document and test the chosen surface.~~ Confirmed the existing `tools` gate and its two
    repository consumers.
@@ -486,7 +489,7 @@ repeatable adverse counter signal.
    enums remain in Milestone 2.
 2. ~~QUAL-001F compatibility-surface removal, empty wrappers, planar decision, and module maps.~~
    Completed 2026-07-17.
-3. QUAL-001H stale test knob and probe organization.
+3. ~~QUAL-001H stale test knob and probe organization.~~ Completed 2026-07-18.
 4. QUAL-001E constant inventory and name-only relocation.
 5. QUAL-001I durable comment/documentation updates.
 

@@ -344,6 +344,35 @@ The fifth diagnostics/test-layout slice was validated on 2026-07-18 against imme
   Five of seven pairs favored the candidate; every run had zero context switches and CPU
   migrations. There was no adverse counter signal warranting a quiet wall-clock run.
 
+## QUAL-001H singleton-diagnostics result
+
+The sixth and closing diagnostics/test-layout slice was validated on 2026-07-18 against immediate
+parent `bd2f37a`.
+
+- Live assembly now checks for a non-empty mismatch set before reading its origin diagnostic.
+  `VORONOI_MESH_EDGE_MISMATCH_ORIGINS` replaces the stale internal
+  `VORONOI_MESH_UNPAIRED_ORIGINS` name; its value semantics and defect-bearing output are
+  unchanged. `ComputeReport` remains the zero-event evidence, so clean runs no longer emit an
+  all-zero origin line.
+- Output-resolution telemetry was audited but deliberately left unchanged: its no-zero-edge early
+  return already precedes the `VORONOI_MESH_RESOLUTION_KV` lookup, while a known exact-zero fixture
+  still emitted the complete structured resolution result.
+- A clean 10k benchmark emitted no origin line with the renamed knob present. The deterministic
+  in-bin defect fixture emitted the expected total of three mismatches, split into two thirds
+  mismatches and one unconsumed check.
+- `cargo clippy --all-targets --all-features -- -D warnings`, the complete release and checked
+  suites, the no-default-features release suite, and the `serde,glam` release suite all passed.
+- The 100k semantic fingerprint remained `961e56d915d09a4e` in both the 1-thread/6-bin and
+  6-thread/96-bin checks, with representation fingerprints `0991e1df6f60d5de` and
+  `0e65ca5dbe8fe07c`, 199,996 vertices, and 100,000 cells.
+- Matched native release builds reported 2,177,695 text, 55,784 data, and 1,563 BSS bytes for the
+  candidate versus 2,177,671 text, 55,784 data, and 1,579 BSS bytes for the parent. Text grew 24
+  bytes, data was unchanged, BSS fell 16 bytes, and the total footprint grew 8 bytes.
+- Seven interleaved, CPU-pinned 500k Fibonacci runs retired a mean 3,420,123,521 instructions for
+  the candidate and 3,420,134,408 for the parent, a neutral/favorable -10,887 (-0.00032%) candidate
+  delta. Six of seven pairs favored the candidate; every run had zero context switches and CPU
+  migrations. There was no adverse counter signal warranting a quiet wall-clock run.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

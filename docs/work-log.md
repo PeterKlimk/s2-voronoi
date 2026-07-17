@@ -59,7 +59,7 @@ prevention rather than an overclaimed proof.
 | POINT-002 | P2 | Completed | Closure-based zero-intermediate ingest landed without direct-path regression |
 | POINT-003 | P1 | Completed | Locator query validation and normalized ranking/certification landed |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
-| QUAL-001 | P2 | Active | Organize diagnostic knobs, probes, and test layout (QUAL-001H) |
+| QUAL-001 | P2 | Active | Inventory constants and name-only relocation (QUAL-001E) |
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
@@ -335,9 +335,13 @@ tasks and are not duplicated here.
   duplicate-scan fallback are snapshotted together only after mismatch records exist, then passed
   explicitly through telemetry and reconciliation rounds. Clean computations perform no
   reconciliation environment lookup.
-- **Next gate:** audit the remaining singleton stage diagnostics, starting with the live-assembly
-  mismatch-origin reader and terminal output-resolution telemetry. Preserve useful zero-event
-  diagnostics rather than moving reads merely for symmetry.
+- **QUAL-001H singleton result:** the stale internal `VORONOI_MESH_UNPAIRED_ORIGINS` name became
+  `VORONOI_MESH_EDGE_MISMATCH_ORIGINS`, and its lookup/output now occurs only when assembly has a
+  mismatch. Output-resolution telemetry was retained unchanged because it already returns before
+  its lookup when no exact-zero edge exists. This closes QUAL-001H.
+- **Next gate:** begin QUAL-001E with a constant inventory and name-only relocation proposal; do
+  not move constants across hot module boundaries until optimized code identity or counters clear
+  the change.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

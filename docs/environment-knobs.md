@@ -1,6 +1,6 @@
 # Environment-variable ownership
 
-**Status:** active inventory for QUAL-001H
+**Status:** authoritative inventory; QUAL-001H completed 2026-07-18
 
 **Audited:** 2026-07-18
 
@@ -24,7 +24,7 @@ mutation.
 | `VORONOI_MESH_TIMING_KV` | instrumentation | `timing::real::PhaseTimings::report` | Presence emits machine-readable timing output when the `timing` feature is enabled. |
 | `VORONOI_MESH_RECONCILE_TELEMETRY` | correctness diagnostic | defect-scoped `ReconcileOptions` snapshot | Presence repeats a read-only primary-round analysis and emits `RECONCILE_KV`. Read once with the other reconciliation options only after mismatch records exist. |
 | `VORONOI_MESH_RESOLUTION_KV` | correctness diagnostic | terminal output-resolution pass | Presence emits exact-zero resolution statistics. |
-| `VORONOI_MESH_UNPAIRED_ORIGINS` | correctness diagnostic | live assembly, after mismatch collection | Presence prints mismatch-origin counts. |
+| `VORONOI_MESH_EDGE_MISMATCH_ORIGINS` | correctness diagnostic | live assembly, mismatch-record path only | Presence prints mismatch-origin counts. Clean assemblies return before the lookup; this replaces the stale internal name `VORONOI_MESH_UNPAIRED_ORIGINS`. |
 | `VORONOI_MESH_VERIFY_TRACE` | correctness diagnostic | verification gate, only after fast verification rejects | Exact value `1` prints the fast-verifier fallback reason. |
 | `VORONOI_MESH_RECONCILE_REBUILD` | differential oracle | defect-scoped `ReconcileOptions` snapshot | Exact value `1` selects the whole-buffer rebuild oracle instead of production in-place application. Read once only after mismatch records exist. |
 | `VORONOI_MESH_RECONCILE_GLOBAL_DUPSCAN` | differential safety valve | defect-scoped `ReconcileOptions` snapshot | Exact value `1` substitutes the O(V) global duplicate scan for localized traversal. Read once only after mismatch records exist. |

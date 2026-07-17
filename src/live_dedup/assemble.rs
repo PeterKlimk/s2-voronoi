@@ -213,9 +213,10 @@ pub(super) fn assemble_sharded_live_dedup(
     // though this attribution reports the enclosing wall-clock phase.
     let _overflow_detail_time = overflow_timing.sort + overflow_timing.match_;
 
-    // Dev-only: tally unresolved-edge origins to see which path inflates the
-    // residual (within-bin vs cross-bin). See docs/correctness.md.
-    if std::env::var("VORONOI_MESH_UNPAIRED_ORIGINS").is_ok() {
+    // Dev-only: tally mismatch origins to see which path inflates the residual
+    // (within-bin vs cross-bin). `ComputeReport` already records a clean result,
+    // so keep that path free of both the environment lookup and an all-zero line.
+    if !edge_mismatches.is_empty() && std::env::var("VORONOI_MESH_EDGE_MISMATCH_ORIGINS").is_ok() {
         use super::types::EdgeMismatchOrigin as O;
         let mut c = [0usize; 10];
         for e in &edge_mismatches {
