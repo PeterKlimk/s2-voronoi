@@ -17,12 +17,25 @@ clarifies ownership and invariants while preserving those reasons.
 [`work-log.md`](work-log.md) remains the authoritative queue. This document owns the detailed
 scope, ordering, and acceptance gates for `QUAL-001`.
 
+## Compatibility posture
+
+As of 2026-07-17, the crate has no external users. This cleanup should use that pre-adoption window
+to establish the public API and vocabulary that future users should inherit, rather than preserve
+misleading names through aliases or deprecation layers.
+
+Repository tests, tools, examples, feature combinations, and any checked-in serialized fixtures
+remain real consumers and must migrate coherently. A public rename or removal is not permission to
+change geometry, error conditions, numerical policy, or performance behavior. If an internal
+persisted-data dependency or unrecorded workspace consumer is discovered, record it and make an
+explicit schema/compatibility decision before proceeding.
+
 ## Outcome sought
 
 After this program:
 
-- construction, reconciliation, local rebuilding, validation, and output resolution have distinct
-  names and explicit state transitions;
+- the public API, reports, diagnostics, and internal implementation use distinct names and explicit
+  state transitions for construction, reconciliation, local rebuilding, validation, and output
+  resolution;
 - live cell-cycle access is mediated by one internal abstraction that makes stale backing-buffer
   tails impossible to consume accidentally;
 - strict validation has one shared invariant vocabulary and shared classification primitives,
@@ -31,16 +44,17 @@ After this program:
   the generated hot loops;
 - numerical tolerances and performance policy constants each have one authoritative registry;
 - raw integer identities are typed at ambiguity-prone cold seams without widening hot storage;
-- obsolete compatibility paths, test knobs, and module descriptions are either removed or given a
-  current owner; and
+- obsolete compatibility paths are removed rather than prolonged for hypothetical consumers, and
+  test knobs and module descriptions are either removed or given a current owner; and
 - active regression tests are separated from ignored research probes and process-global diagnostic
   controls are explicit.
 
 ## Non-goals
 
-- No public API redesign merely to support internal cleanup. Historical public report field names
-  can remain when changing them would be needless API churn.
-- No change to the supported geometric, welding, repair, or output-resolution contract.
+- No behavioral or algorithmic API redesign hidden inside a naming cleanup. Breaking renames and
+  removals are allowed; changes to what the computation means remain separate decisions.
+- No change to the supported geometric, welding, reconciliation, local-rebuild, or
+  output-resolution contract.
 - No tolerance-value tuning combined with a naming or relocation change.
 - No conversion of working SoA data to AoS for aesthetic reasons.
 - No removal of unsafe code whose measured replacement is slower. Unsafe boundaries should become
@@ -87,8 +101,10 @@ The intended vocabulary is:
 - **acceptance gate** — whole-effective-diagram strict validation of a proposed rebuild; and
 - **output resolution** — terminal exact stored-zero canonicalization/elision policy.
 
-Internal names should converge on this glossary. Public historical fields may retain their names
-with documentation that maps them to the current stages.
+Public and internal names should converge on this glossary in one coordinated migration. Report
+fields, error/diagnostic names, tests, examples, and documentation should not preserve ambiguous
+historical terminology solely for compatibility. Do not add deprecated aliases unless a concrete
+current repository consumer makes a short migration bridge worthwhile.
 
 ### F2 — Live cell storage has a load-bearing implicit invariant
 
@@ -174,7 +190,8 @@ The audit found:
 - internal public/re-exported diagnostic surfaces retained mainly for old paths or probes.
 
 These may represent a future workspace direction, but future intent should not masquerade as a
-current dependency. Each item needs either an active owner/test or removal.
+current dependency. With no external users, removal is the default; retention requires an active
+repository consumer, owner, and test.
 
 ### F8 — Raw integer identities remain ambiguous at cold seams
 
@@ -233,17 +250,21 @@ and diagnostic-knob documentation should be refreshed as part of the same hygien
 
 **Hot-path impact expected:** none
 
-1. Add the stage glossary above to `docs/architecture.md` and use it in new code.
-2. Rename internal reconciliation functions/types that currently use generic `repair` wording.
-3. Replace inverse/correlated cold state with enums, for example:
+1. Add the stage glossary above to `docs/architecture.md` and inventory the public/internal names
+   that map to each stage.
+2. Rename public and internal functions, types, report fields, diagnostics, and applicable error
+   variants that currently use generic or misleading `repair` wording.
+3. Update repository consumers—tests, examples, tools, documentation, feature combinations, and
+   checked-in serialized fixtures—in the same migration, without compatibility aliases by default.
+4. Replace inverse/correlated cold state with enums, for example:
    - identity versus merged effective input;
    - certified-local versus global-fallback resolution discovery; and
    - not-needed, disabled, rejected, or accepted local-rebuild outcomes.
-4. Separate defect facts (`low_incidence`, Euler failure, residual pairs) from the action outcome.
-5. Preserve public report compatibility while documenting its mapping to the lifecycle.
+5. Separate defect facts (`low_incidence`, Euler failure, residual pairs) from the action outcome.
 
-Acceptance requires exact result/report equality on existing fixtures and no new branching or
-allocation in per-cell construction.
+Acceptance requires equal geometric results and report contents after applying the declared field
+mapping, plus no new branching or allocation in per-cell construction. Public names may break;
+behavioral categories may not change as part of this workstream.
 
 ### QUAL-001B — Live cell-layout abstraction
 
@@ -343,7 +364,8 @@ the audit relocation.
 
 **Hot-path impact expected:** none, verified by build/codegen checks where aliases disappear
 
-1. Remove internal compatibility re-exports and update call sites to current module ownership.
+1. Remove public and internal compatibility re-exports that have no current repository consumer,
+   and update remaining call sites to current module ownership.
 2. Replace or remove empty `TerminationConfig`; direct use of `PackedNeighborPolicy` is the current
    likely endpoint.
 3. Decide the planar abstraction explicitly:
@@ -415,14 +437,15 @@ into packed/assembly hot arrays only if assembly output and benchmark counters r
 
 ### Milestone 1 — Low-risk semantic cleanup
 
-1. QUAL-001A vocabulary and lifecycle names.
-2. QUAL-001F compatibility aliases, empty wrappers, planar decision, and module maps.
+1. QUAL-001A coordinated public/internal vocabulary and lifecycle migration.
+2. QUAL-001F compatibility-surface removal, empty wrappers, planar decision, and module maps.
 3. QUAL-001H stale test knob and probe organization.
 4. QUAL-001E constant inventory and name-only relocation.
 5. QUAL-001I durable comment/documentation updates.
 
-These changes should be small, independently reviewable commits. They establish the vocabulary
-used by later structural work.
+These changes should be small, independently reviewable commits except where a public/internal
+rename must be atomic to keep the repository compiling. They establish the vocabulary used by
+later structural work without carrying a deprecated parallel API.
 
 ### Milestone 2 — Make invariants structural
 
@@ -472,8 +495,14 @@ unrelated full campaign.
 
 ### Semantic gate
 
-- Public API behavior and documented error categories do not change unless the task explicitly
-  declares an API decision.
+- Public names, module paths, report fields, diagnostic knobs, and serialized field names may
+  break where QUAL-001 explicitly records the replacement. No deprecation or alias period is
+  required without a concrete current consumer.
+- Public behavior, geometric results, error conditions, and numerical policy remain unchanged by
+  those migrations. Any semantic API change is a separate decision and commit.
+- Before changing a serialized representation, search the repository for persisted fixtures and
+  consumers and record the schema decision; absence of external users does not justify silently
+  invalidating known internal data.
 - Ordinary refactors retain exact output bytes where the current implementation is deterministic.
 - Where bin count, FMA, or a deliberately degenerate policy permits representation movement,
   semantic-topology fingerprints and strict/intrinsic geometry verdicts remain unchanged.
@@ -481,7 +510,8 @@ unrelated full campaign.
 - Accepted local rebuilds pass the whole effective-diagram gate; rejected proposals restore the
   original arrays exactly.
 - Output-resolution discovery/canonicalization reports and mutation footprints remain equivalent.
-- WORK-002 negative controls remain active after every validation or repair change.
+- WORK-002 negative controls remain active after every validation, reconciliation, or local-rebuild
+  change.
 
 ### Performance gate
 
@@ -510,6 +540,8 @@ ordinary-path branch.
 ## Commit and review policy
 
 - One logical invariant or phase extraction per commit.
+- A repository-wide public/internal naming migration may be one atomic commit when splitting it
+  would require temporary aliases or leave the tree uncompilable.
 - No numerical value changes in structural commits.
 - No simultaneous assembly and packed-query refactor.
 - Include the exact validation and benchmark commands in each hot-path commit message or work-log
@@ -522,5 +554,6 @@ ordinary-path branch.
 
 `QUAL-001` is complete when every finding F1–F10 is either resolved or explicitly retained with a
 current rationale, owner, and test; all accepted changes pass their semantic and performance gates;
-the current module/test/knob documentation agrees with the tree; and there is no known repeatable
-regression against the pinned baseline.
+the future-facing public surface and the internal lifecycle vocabulary agree; the current
+module/test/knob documentation agrees with the tree; and there is no known repeatable regression
+against the pinned baseline.

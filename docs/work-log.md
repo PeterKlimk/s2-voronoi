@@ -290,9 +290,14 @@ tasks and are not duplicated here.
 - **Status:** Ready; direction accepted 2026-07-17
 - **Goal:** reduce change amplification and make pipeline invariants structural without giving back
   established throughput, memory behavior, or numerical/correctness guarantees.
+- **Compatibility posture:** there are no external users as of 2026-07-17. Use this window for
+  coordinated breaking public/internal renames and removal of obsolete shims; do not preserve
+  misleading surfaces for hypothetical consumers. Repository consumers and known serialized data
+  still require an explicit migration.
 - **First milestone:** pin the semantic/performance baseline, establish distinct construction /
-  assembly / reconciliation / local-rebuild / acceptance / output-resolution vocabulary, then
-  remove stale compatibility aliases, obsolete test terminology, and inaccurate module maps.
+  assembly / reconciliation / local-rebuild / acceptance / output-resolution vocabulary across
+  the public API and implementation, then remove stale compatibility aliases, obsolete test
+  terminology, and inaccurate module maps.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, escalation,
   assembly, and packed-query phase programs one measured change at a time.
