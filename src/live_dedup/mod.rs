@@ -28,7 +28,7 @@ pub(crate) use packed::pack_edge;
 pub(crate) use shard::ShardState;
 pub(crate) use types::BinId;
 pub use types::EdgeMismatchOrigin;
-pub(crate) use types::{EdgeCheck, EdgeKey, EdgeMismatch, EdgeRecord, VertexPosition};
+pub(crate) use types::{EdgeCheck, EdgeKey, EdgeMismatch, EdgeRecord};
 
 /// Per-shard vertex keys kept un-concatenated.
 ///
@@ -94,9 +94,9 @@ pub(crate) struct IncidenceSummary {
 }
 
 /// Result of assembling sharded live-dedup data into global arrays.
-pub(crate) struct AssemblyResult<P = glam::Vec3> {
+pub(crate) struct AssemblyResult {
     /// All Voronoi vertex positions (global, concatenated from shards).
-    pub vertices: Vec<P>,
+    pub vertices: Vec<glam::Vec3>,
     /// Vertex keys (triplet of generator indices), parallel to `vertices`, kept
     /// un-concatenated — see `ShardedVertexKeys`.
     pub vertex_keys: ShardedVertexKeys,
@@ -126,17 +126,17 @@ pub(crate) struct AssemblyResult<P = glam::Vec3> {
     pub dedup_sub: crate::timing::DedupSubPhases,
 }
 
-pub(crate) struct ShardedCellsData<P = glam::Vec3> {
+pub(crate) struct ShardedCellsData {
     assignment: BinAssignment,
-    shards: Vec<ShardState<P>>,
+    shards: Vec<ShardState>,
     pub(super) cell_sub: crate::timing::CellSubAccum,
 }
 
-impl<P: VertexPosition> ShardedCellsData<P> {
+impl ShardedCellsData {
     /// Assemble from a geometry driver's output.
     pub(crate) fn from_parts(
         assignment: BinAssignment,
-        shards: Vec<ShardState<P>>,
+        shards: Vec<ShardState>,
         cell_sub: crate::timing::CellSubAccum,
     ) -> Self {
         Self {
@@ -164,9 +164,9 @@ fn with_two_mut<T>(v: &mut [T], i: usize, j: usize) -> (&mut T, &mut T) {
     }
 }
 
-pub(crate) fn assemble_sharded_live_dedup<P: VertexPosition>(
-    data: ShardedCellsData<P>,
-) -> Result<AssemblyResult<P>, crate::VoronoiError> {
+pub(crate) fn assemble_sharded_live_dedup(
+    data: ShardedCellsData,
+) -> Result<AssemblyResult, crate::VoronoiError> {
     assemble::assemble_sharded_live_dedup(data)
 }
 

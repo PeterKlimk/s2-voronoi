@@ -1,7 +1,7 @@
 //! Directed-eligibility rules for the stitching order.
 //!
-//! Grid-agnostic: operates on the CSR `cell_offsets` and the packed
-//! (bin, local) slot layout only, so the cube-map and planar grids share it.
+//! Operates on the cube-grid CSR `cell_offsets` and packed `(bin, local)`
+//! slot layout.
 
 use crate::packed_layout::PackedSlotLayout;
 

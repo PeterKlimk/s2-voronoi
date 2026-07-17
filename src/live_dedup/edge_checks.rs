@@ -54,7 +54,7 @@ pub(super) const MALFORMED_THIRD: u32 = u32::MAX;
 /// `EndpointKeyMismatch`, feeding reconciliation and optional local rebuilding that
 /// provably restores strict validity), not an invariant violation — the same
 /// reachable-and-handled family as the four asserts demoted for the strict
-/// planar keep rule.
+/// strict keep rule.
 #[inline]
 pub(super) fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> Option<u32> {
     (key.contains(&a) && key.contains(&b)).then(|| key[0] ^ key[1] ^ key[2] ^ a ^ b)
@@ -198,8 +198,8 @@ impl ShardDedup {
 ///
 /// This eliminates the edges_to_earlier intermediate vec
 #[inline(always)]
-fn assert_cell_output_lengths<P>(
-    output_buffer: &crate::live_dedup::CellOutputBuffer<P>,
+fn assert_cell_output_lengths(
+    output_buffer: &crate::live_dedup::CellOutputBuffer,
     vertex_indices_len: usize,
 ) -> usize {
     let n = output_buffer.vertices.len();
@@ -214,10 +214,10 @@ fn assert_cell_output_lengths<P>(
 // The argument list is the fused collect+resolve data flow; the two
 // output vecs are caller-owned scratch reused across cells.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
+pub(super) fn collect_and_resolve_cell_edges(
     cell_idx: u32,
-    shard_ctx: &mut super::emit::ShardContext<'_, P>,
-    output_buffer: &crate::live_dedup::CellOutputBuffer<P>,
+    shard_ctx: &mut super::emit::ShardContext<'_>,
+    output_buffer: &crate::live_dedup::CellOutputBuffer,
     slot_points: &[crate::cube_grid::SlotPoint],
     assignment: &BinAssignment,
     mut incoming_checks: Vec<EdgeCheck>,
@@ -330,14 +330,13 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
             if let Some(check) = found {
                 // One incoming check matching two of this cell's edges
                 // (duplicate side) was long believed impossible. The strict
-                // strict keep rule makes it
-                // reachable: a sliver can give a cell two edges to one
+                // keep rule makes it reachable: a sliver can give a cell two edges to one
                 // neighbor. Release has no assert here and already produces
                 // strictly-valid output on these inputs (the duplicate
                 // re-resolves, any displaced check surfaces via the
                 // unmatched-check loop below, and reconciliation plus the output-
-                // invariant scan restore validity — verified by the plane
-                // battery and the strict-plane campaign). So this is a
+                // invariant scan restore validity — verified by the adversarial
+                // regression fixtures). So this is a
                 // handled defect, not an invariant violation; debug builds
                 // must not abort (this only makes debug match release).
                 if duplicate {
@@ -361,11 +360,11 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                     // A local endpoint already carrying a DIFFERENT global id
                     // is a vertex-identity sliver (one corner committed under
                     // two triple attributions) — reachable under the strict
-                    // strict keep rule, not an
+                    // keep rule, not an
                     // invariant violation. Release adopts the incoming id
                     // (last write wins) and the output-invariant scan plus reconciliation
-                    // restore strict validity (verified by the plane battery
-                    // and the strict campaign); the validate / VORONOI_MESH_VERIFY
+                    // restore strict validity (verified by the adversarial
+                    // regression fixtures); the validate / VORONOI_MESH_VERIFY
                     // gates remain the production catch. Debug must not abort
                     // (this only makes debug match release behavior).
                     unsafe {
@@ -420,8 +419,8 @@ pub(super) struct OverflowResolveTiming {
 /// between bins without global communication during the main clipping phase.
 ///
 #[cfg_attr(feature = "profiling", inline(never))]
-pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
-    shards: &mut [ShardState<P>],
+pub(super) fn resolve_edge_check_overflow(
+    shards: &mut [ShardState],
     edge_check_overflow: &[EdgeCheckOverflow],
     edge_mismatches: &mut Vec<EdgeMismatch>,
 ) -> OverflowResolveTiming {
@@ -634,7 +633,7 @@ mod tests {
             bin_cell_offsets: vec![0, 0],
             num_bins: 1,
         };
-        let mut shard = ShardState::<glam::Vec3>::new(2);
+        let mut shard = ShardState::new(2);
         let mut shard_ctx = super::super::emit::ShardContext {
             shard: &mut shard,
             bin: BinId::from(0),

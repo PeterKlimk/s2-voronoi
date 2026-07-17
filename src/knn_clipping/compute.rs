@@ -1687,7 +1687,6 @@ fn reconcile_edges(
         edge_reconcile::VertexKeys::Sharded(vertex_keys),
         crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
         edge_reconcile::reconcile_apply_from_env(),
-        |_, _| false,
     )?;
     // The simple cross-bin stitch above is the only local rebuild pass: any surviving
     // unpaired interior edge is surfaced as a residual error by the caller

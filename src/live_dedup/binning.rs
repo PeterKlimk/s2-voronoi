@@ -64,9 +64,8 @@ struct BinLayout {
 }
 
 /// Target shard count from threads (x2) with the `VORONOI_MESH_BIN_COUNT` override,
-/// clamped to `[min_bins, 96]`. Shared by the spherical (min 6 — one per
-/// face) and planar (min 1) layouts so the env knob has one parser.
-pub(crate) fn target_bin_count(min_bins: usize) -> usize {
+/// clamped to `[6, 96]` so every cube face can own at least one shard.
+pub(crate) fn target_bin_count() -> usize {
     #[cfg(feature = "parallel")]
     let threads = rayon::current_num_threads().max(1);
     #[cfg(not(feature = "parallel"))]
@@ -77,11 +76,11 @@ pub(crate) fn target_bin_count(min_bins: usize) -> usize {
     } else {
         threads * 2
     }
-    .clamp(min_bins, 96)
+    .clamp(6, 96)
 }
 
 fn choose_bin_layout(grid_res: usize) -> BinLayout {
-    let target_bins = target_bin_count(6);
+    let target_bins = target_bin_count();
     let target_per_face = (target_bins as f64 / 6.0).max(1.0);
     let mut bin_res = target_per_face.sqrt().ceil() as usize;
     bin_res = bin_res.clamp(1, grid_res.max(1));

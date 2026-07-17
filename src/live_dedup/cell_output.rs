@@ -7,7 +7,7 @@ use glam::Vec3;
 pub(crate) type VertexKey = [u32; 3];
 
 /// Vertex data: `(key, position)`. Uses `u32` indices to save space.
-pub(crate) type VertexData<P = Vec3> = (VertexKey, P);
+pub(crate) type VertexData = (VertexKey, Vec3);
 
 /// Reasons a cell build can terminate unsuccessfully.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,8 +38,8 @@ pub(crate) struct CellBuildError {
 
 /// A reusable buffer to hold the extracted output of clipping a cell.
 #[derive(Default)]
-pub(crate) struct CellOutputBuffer<P = Vec3> {
-    pub(crate) vertices: Vec<VertexData<P>>,
+pub(crate) struct CellOutputBuffer {
+    pub(crate) vertices: Vec<VertexData>,
     pub(crate) edge_neighbor_globals: Vec<u32>,
     pub(crate) edge_neighbor_slots: Vec<u32>,
     /// True when the extractor guarantees every real edge's neighbor appears
@@ -54,7 +54,7 @@ pub(crate) struct CellOutputBuffer<P = Vec3> {
     pub(crate) edge_keys_verified: bool,
 }
 
-impl<P> CellOutputBuffer<P> {
+impl CellOutputBuffer {
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
             vertices: Vec::with_capacity(capacity),

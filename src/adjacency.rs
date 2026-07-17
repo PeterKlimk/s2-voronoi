@@ -14,11 +14,9 @@ use rayon::prelude::*;
 
 /// Sentinel for an edge with no paired cell.
 ///
-/// On the sphere, strictly valid diagrams (see
-/// [`crate::validation::validate`]) contain none. On the plane, edges on the
-/// domain rectangle's boundary legitimately have no neighbor and always
-/// carry this sentinel; interior edges of a strictly valid planar diagram
-/// never do.
+/// Strictly valid Voronoi diagrams (see [`crate::validation::validate`])
+/// contain none. Explicit cell meshes can contain boundary edges after cell
+/// elision; malformed or incomplete inputs can expose the sentinel too.
 pub const NO_NEIGHBOR: u32 = u32::MAX;
 
 /// Per-cell neighbor lists, aligned with cell boundary edges.
@@ -104,9 +102,8 @@ impl CellAdjacency {
     }
 
     /// True when every edge has a paired neighbor (no [`NO_NEIGHBOR`]
-    /// entries). Always true for strictly valid spherical diagrams; planar
-    /// diagrams with boundary-touching cells are never complete (rect
-    /// boundary edges have no neighbor by construction).
+    /// entries). Always true for strictly valid spherical diagrams. A cell
+    /// mesh with an exposed boundary after elision is incomplete.
     pub fn is_complete(&self) -> bool {
         (0..self.cells.len()).all(|cell| {
             self.neighbors_of(cell)
@@ -117,8 +114,8 @@ impl CellAdjacency {
 }
 
 /// Shared adjacency construction over raw cell layout: ranges into the flat
-/// index buffer plus the weld-canonical mapping. Purely combinatorial, so
-/// the spherical and planar diagrams use the same core.
+/// index buffer plus the weld-canonical mapping. Both Voronoi diagrams and
+/// explicitly elided cell meshes use this combinatorial core.
 pub(crate) fn build_adjacency_from_parts(
     num_cells: usize,
     cell_range: impl Fn(usize) -> (u32, u16),
@@ -175,8 +172,8 @@ pub(crate) fn build_adjacency_from_parts(
         while run_end < records.len() && records[run_end].0 == key {
             run_end += 1;
         }
-        // Exactly two uses = a properly shared edge; anything else (a
-        // boundary edge on the plane, or a defective edge) stays NO_NEIGHBOR.
+        // Exactly two uses = a properly shared edge; an exposed cell-mesh
+        // boundary or a defective edge stays NO_NEIGHBOR.
         if run_end - run_start == 2 {
             let (cell_a, pos_a) = unpack(records[run_start].1);
             let (cell_b, pos_b) = unpack(records[run_start + 1].1);

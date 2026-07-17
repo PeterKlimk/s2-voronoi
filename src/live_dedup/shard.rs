@@ -7,8 +7,6 @@ use crate::live_dedup::VertexKey;
 use glam::Vec3;
 use rustc_hash::FxHashMap;
 
-use super::types::VertexPosition;
-
 /// Data only needed during vertex deduplication (dropped after overflow flush).
 pub(crate) struct ShardDedup {
     /// Per-local edge checks (Vec-based for cache locality)
@@ -27,8 +25,8 @@ impl ShardDedup {
 }
 
 /// Output data needed for final assembly.
-pub(crate) struct ShardOutput<P = Vec3> {
-    pub(crate) vertices: Vec<P>,
+pub(crate) struct ShardOutput {
+    pub(crate) vertices: Vec<Vec3>,
     pub(crate) vertex_keys: Vec<VertexKey>,
     /// Saturating live-cell incidence, parallel to `vertices`. Construction
     /// owns this shard exclusively; deferred off-shard references are applied
@@ -37,7 +35,7 @@ pub(crate) struct ShardOutput<P = Vec3> {
     pub(super) edge_mismatches: Vec<EdgeMismatch>,
     pub(super) edge_check_overflow: Vec<EdgeCheckOverflow>,
     /// Cell slots whose owner bin is off-shard and must be patched during assembly.
-    pub(crate) deferred_slots: Vec<DeferredSlot<P>>,
+    pub(crate) deferred_slots: Vec<DeferredSlot>,
     /// Primary cell-reference stream. Every ordinary entry is local to this
     /// shard; foreign entries retain `INVALID_INDEX` and are patched from the
     /// sparse override stream after the branch-free final scatter.
@@ -52,7 +50,7 @@ pub(crate) struct ShardOutput<P = Vec3> {
     pub(crate) resolution_drift_exceeded: bool,
 }
 
-impl<P: VertexPosition> ShardOutput<P> {
+impl ShardOutput {
     pub(super) fn new(num_local_generators: usize) -> Self {
         Self {
             vertices: Vec::new(),
@@ -147,14 +145,14 @@ impl<P: VertexPosition> ShardOutput<P> {
 }
 
 /// Per-shard state during cell construction.
-pub(crate) struct ShardState<P = Vec3> {
+pub(crate) struct ShardState {
     pub(crate) dedup: ShardDedup,
-    pub(crate) output: ShardOutput<P>,
+    pub(crate) output: ShardOutput,
     #[cfg(feature = "timing")]
     pub(super) triplet_keys: u64,
 }
 
-impl<P: VertexPosition> ShardState<P> {
+impl ShardState {
     pub(crate) fn new(num_local_generators: usize) -> Self {
         Self {
             dedup: ShardDedup::new(num_local_generators),
@@ -164,7 +162,7 @@ impl<P: VertexPosition> ShardState<P> {
         }
     }
 
-    pub(super) fn into_final(self) -> ShardFinal<P> {
+    pub(super) fn into_final(self) -> ShardFinal {
         ShardFinal {
             output: self.output,
             #[cfg(feature = "timing")]
@@ -175,8 +173,8 @@ impl<P: VertexPosition> ShardState<P> {
 }
 
 /// Shard state after construction, with dedup dropped.
-pub(super) struct ShardFinal<P = Vec3> {
-    pub(crate) output: ShardOutput<P>,
+pub(super) struct ShardFinal {
+    pub(crate) output: ShardOutput,
     #[cfg(feature = "timing")]
     pub(super) triplet_keys: u64,
 }

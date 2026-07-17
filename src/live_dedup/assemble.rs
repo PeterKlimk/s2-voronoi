@@ -1,5 +1,6 @@
 //! Assembly helpers for live dedup.
 
+use glam::Vec3;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
@@ -15,6 +16,19 @@ use crate::live_dedup::VertexKey;
 use crate::timing::{DedupSubPhases, Timer};
 
 const SHARD_ORDER_SAMPLES_PER_BIN: usize = 32;
+
+#[inline]
+fn resolution_axis_delta(a: Vec3, b: Vec3) -> f64 {
+    (f64::from(a.x) - f64::from(b.x)).abs()
+}
+
+#[inline]
+fn dist_sq_f64(a: Vec3, b: Vec3) -> f64 {
+    let dx = f64::from(a.x) - f64::from(b.x);
+    let dy = f64::from(a.y) - f64::from(b.y);
+    let dz = f64::from(a.z) - f64::from(b.z);
+    dx * dx + dy * dy + dz * dz
+}
 
 /// Choose shard-order scatter only when spatial order has little correlation
 /// with the caller's generator order. In that regime generator-order scatter
@@ -66,10 +80,10 @@ unsafe fn scatter_local_indices(
     }
 }
 
-fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
-    shards: &mut [super::shard::ShardState<P>],
+fn patch_deferred_slots_with_fallback(
+    shards: &mut [super::shard::ShardState],
     generator_bin: &[BinId],
-    deferred_slots: Vec<DeferredSlot<P>>,
+    deferred_slots: Vec<DeferredSlot>,
 ) -> Result<bool, crate::VoronoiError> {
     let mut fallback_map: FxHashMap<VertexKey, (BinId, u32)> = FxHashMap::default();
     let mut resolution_drift_exceeded = false;
@@ -81,7 +95,7 @@ fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
         {
             let representative = shards[representative_bin.as_usize()].output.vertices
                 [representative_local as usize];
-            let delta = representative.resolution_axis_delta(entry.pos);
+            let delta = resolution_axis_delta(representative, entry.pos);
             resolution_drift_exceeded |= !delta.is_finite()
                 || delta > f64::from(crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS);
             shards[representative_bin.as_usize()]
@@ -94,7 +108,7 @@ fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
         let (idx, is_new) = if let Some(&(bin, idx)) = fallback_map.get(&entry.key) {
             debug_assert_eq!(bin, owner_bin, "fallback owner bin mismatch");
             let representative = shards[owner_bin.as_usize()].output.vertices[idx as usize];
-            let delta = representative.resolution_axis_delta(entry.pos);
+            let delta = resolution_axis_delta(representative, entry.pos);
             resolution_drift_exceeded |= !delta.is_finite()
                 || delta > f64::from(crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS);
             (idx, false)
@@ -134,15 +148,13 @@ fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
     Ok(resolution_drift_exceeded)
 }
 
-struct CollectedShardBookkeeping<P> {
+struct CollectedShardBookkeeping {
     edge_mismatches: Vec<EdgeMismatch>,
     edge_check_overflow: Vec<EdgeCheckOverflow>,
-    deferred_slots: Vec<DeferredSlot<P>>,
+    deferred_slots: Vec<DeferredSlot>,
 }
 
-fn collect_shard_bookkeeping<P: super::types::VertexPosition>(
-    shards: &mut [super::shard::ShardState<P>],
-) -> CollectedShardBookkeeping<P> {
+fn collect_shard_bookkeeping(shards: &mut [super::shard::ShardState]) -> CollectedShardBookkeeping {
     let unresolved_total: usize = shards
         .iter()
         .map(|shard| shard.output.edge_mismatches.len())
@@ -178,9 +190,9 @@ fn collect_shard_bookkeeping<P: super::types::VertexPosition>(
     }
 }
 
-pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
-    mut data: ShardedCellsData<P>,
-) -> Result<super::AssemblyResult<P>, crate::VoronoiError> {
+pub(super) fn assemble_sharded_live_dedup(
+    mut data: ShardedCellsData,
+) -> Result<super::AssemblyResult, crate::VoronoiError> {
     let num_bins = data.assignment.num_bins;
 
     let t_bookkeeping = Timer::start();
@@ -256,7 +268,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
 
     // Convert to ShardFinal, dropping dedup structures to reduce memory pressure
     let t_finalize = Timer::start();
-    let mut finals: Vec<ShardFinal<P>> = std::mem::take(&mut data.shards)
+    let mut finals: Vec<ShardFinal> = std::mem::take(&mut data.shards)
         .into_iter()
         .map(|s| s.into_final())
         .collect();
@@ -292,12 +304,12 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     // *keys* are only consulted by edge reconciliation (for at most the defect
     // region), so they are NOT concatenated — kept per-shard in
     // `ShardedVertexKeys` below.
-    // `P: Copy`, and the parallel scatter below writes every slot exactly once
+    // `Vec3: Copy`, and the parallel scatter below writes every slot exactly once
     // via the partitioned `vertex_offsets`. Keep the Vec length at zero until
-    // the scatter completes so no uninitialized `P` is ever exposed as a value.
+    // the scatter completes so no uninitialized `Vec3` is ever exposed as a value.
     #[cfg(feature = "parallel")]
     let all_vertices = {
-        let mut all_vertices = Vec::<P>::with_capacity(total_vertices);
+        let mut all_vertices = Vec::<Vec3>::with_capacity(total_vertices);
         let vertices_ptr = all_vertices.spare_capacity_mut().as_mut_ptr() as usize;
         finals
             .par_iter()
@@ -311,7 +323,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
                 );
                 if count > 0 {
                     unsafe {
-                        let v_dst = (vertices_ptr as *mut P).add(offset as usize);
+                        let v_dst = (vertices_ptr as *mut Vec3).add(offset as usize);
                         std::ptr::copy_nonoverlapping(shard.output.vertices.as_ptr(), v_dst, count);
                     }
                 }
@@ -619,7 +631,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
             }
             let pa = all_vertices[a as usize];
             let pb = all_vertices[b as usize];
-            if pa.dist_sq_f64(pb) == 0.0 {
+            if dist_sq_f64(pa, pb) == 0.0 {
                 exact_zero_edge_candidates.push((a.min(b), a.max(b)));
             }
         }
@@ -728,7 +740,7 @@ mod tests {
 
     #[test]
     fn shard_bookkeeping_collection_reserves_drains_and_preserves_order() {
-        let mut shards = vec![ShardState::<Vec3>::new(0), ShardState::<Vec3>::new(0)];
+        let mut shards = vec![ShardState::new(0), ShardState::new(0)];
         for (ordinal, shard) in shards.iter_mut().enumerate() {
             let key = pack_edge(ordinal as u32, ordinal as u32 + 10);
             shard.output.edge_mismatches.push(EdgeMismatch {
@@ -781,7 +793,7 @@ mod tests {
 
     #[test]
     fn deferred_fallback_allocates_once_per_owner_key() {
-        let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
+        let mut shards = vec![ShardState::new(1), ShardState::new(1)];
         shards[0].output.cell_indices = vec![INVALID_INDEX, INVALID_INDEX];
         let generator_bin = vec![bin(1), bin(0), bin(0)];
         let key = [0, 1, 2];
@@ -827,7 +839,7 @@ mod tests {
 
     #[test]
     fn deferred_patch_reports_representative_drift_beyond_guard() {
-        let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
+        let mut shards = vec![ShardState::new(1), ShardState::new(1)];
         shards[0].output.cell_indices = vec![INVALID_INDEX];
         shards[0].output.patch_reference(bin(0), 0, 0, 0, bin(1), 0);
         shards[1].output.vertices = vec![Vec3::ZERO];
@@ -854,7 +866,7 @@ mod tests {
 
     #[test]
     fn overflow_matching_patches_cross_bin_slots_before_fallback() {
-        let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
+        let mut shards = vec![ShardState::new(1), ShardState::new(1)];
         shards[0].output.cell_indices = vec![INVALID_INDEX, INVALID_INDEX];
         shards[1].output.cell_indices = vec![INVALID_INDEX, INVALID_INDEX];
 
@@ -909,7 +921,7 @@ mod tests {
 
     #[test]
     fn overflow_mismatch_is_reported_unresolved() {
-        let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
+        let mut shards = vec![ShardState::new(1), ShardState::new(1)];
         let edge_key = pack_edge(0, 1);
         let mut unresolved = Vec::new();
         let overflow = vec![
@@ -944,7 +956,7 @@ mod tests {
     #[test]
     fn overflow_duplicate_runs_do_not_patch_an_arbitrary_pair() {
         for sides in [[0u8, 0, 1], [0u8, 1, 1]] {
-            let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
+            let mut shards = vec![ShardState::new(1), ShardState::new(1)];
             shards[0].output.cell_indices = vec![INVALID_INDEX; 4];
             shards[1].output.cell_indices = vec![INVALID_INDEX; 4];
             let edge_key = pack_edge(0, 1);
@@ -987,7 +999,7 @@ mod tests {
 
     #[test]
     fn overflow_duplicate_run_without_opposite_side_reports_both_defects() {
-        let mut shards = vec![ShardState::<Vec3>::new(1), ShardState::<Vec3>::new(1)];
+        let mut shards = vec![ShardState::new(1), ShardState::new(1)];
         shards[0].output.cell_indices = vec![INVALID_INDEX; 6];
         let edge_key = pack_edge(0, 1);
         let overflow: Vec<EdgeCheckOverflow> = (0..3)
@@ -1125,7 +1137,6 @@ mod tests {
             VertexKeys::Sharded(&assembled.vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
             ReconcileApply::InPlace,
-            |_, _| false,
         )
         .expect("reconciliation should succeed without capacity overflow");
         let spans_after: Vec<Vec<u32>> = cells

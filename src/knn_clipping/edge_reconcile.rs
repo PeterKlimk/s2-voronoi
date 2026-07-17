@@ -12,6 +12,8 @@
 
 mod telemetry;
 
+use glam::Vec3;
+
 use crate::diagram::VoronoiCell;
 use crate::live_dedup::VertexKey;
 use crate::live_dedup::{EdgeKey, EdgeRecord, ShardedVertexKeys};
@@ -216,14 +218,18 @@ fn edge_segments_for_neighbor_into(
     Ok(())
 }
 
-fn dist_sq<P: crate::live_dedup::VertexPosition>(a: P, b: P) -> f32 {
-    a.dist_sq(b)
+fn dist_sq(a: Vec3, b: Vec3) -> f32 {
+    (a - b).length_squared()
 }
 
-fn vertex_pos<P: crate::live_dedup::VertexPosition>(
-    vertices: &[P],
-    vertex_id: u32,
-) -> Result<P, crate::VoronoiError> {
+fn dist_sq_f64(a: Vec3, b: Vec3) -> f64 {
+    let dx = f64::from(a.x) - f64::from(b.x);
+    let dy = f64::from(a.y) - f64::from(b.y);
+    let dz = f64::from(a.z) - f64::from(b.z);
+    dx * dx + dy * dy + dz * dz
+}
+
+fn vertex_pos(vertices: &[Vec3], vertex_id: u32) -> Result<Vec3, crate::VoronoiError> {
     vertices.get(vertex_id as usize).copied().ok_or_else(|| {
         reconcile_state_error(format!(
             "edge reconciliation vertex id {} out of range for vertex buffer len {}",
@@ -370,22 +376,16 @@ enum MergeMode {
 /// survives is returned as cell pairs for the caller's report rather than
 /// force-merged. Returns an empty vec on clean runs (no records) without
 /// touching anything — the scans are paid only on defect runs.
-#[allow(clippy::too_many_arguments)] // geometry-parameterized reconciliation seam
-pub(crate) fn reconcile_edge_mismatches<P: crate::live_dedup::VertexPosition>(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn reconcile_edge_mismatches(
     edge_records: &[EdgeRecord],
-    vertices: &[P],
+    vertices: &[Vec3],
     cells: &mut Vec<VoronoiCell>,
     cell_indices: &mut Vec<u32>,
     vertex_keys: VertexKeys<'_>,
-    // Degenerate-length threshold in the caller's coordinate space (chord
-    // units on the sphere, normalized rect units on the plane); each
-    // geometry owns and justifies its constant.
+    // Degenerate-length threshold in spherical chord units.
     degenerate_len_eps: f32,
     apply: ReconcileApply,
-    // Geometry's boundary classification: true when a single-use edge
-    // between these vertex ids is legitimate (plane rect walls). The
-    // sphere and the periodic plane have no boundary.
-    is_boundary_edge: impl Fn(u32, u32) -> bool,
 ) -> Result<ReconcileResult, crate::VoronoiError> {
     if edge_records.is_empty() {
         // Production fast path: with no detected mismatch there is nothing to
@@ -405,7 +405,7 @@ pub(crate) fn reconcile_edge_mismatches<P: crate::live_dedup::VertexPosition>(
         // that input class (revisit the contract, not just this assert).
         #[cfg(debug_assertions)]
         {
-            let unpaired = scan_unpaired_interior_global(cells, cell_indices, &is_boundary_edge)?;
+            let unpaired = scan_unpaired_interior_global(cells, cell_indices)?;
             assert!(
                 unpaired.is_empty(),
                 "edge-reconcile early-return invariant violated: {} bad interior \
@@ -464,13 +464,7 @@ pub(crate) fn reconcile_edge_mismatches<P: crate::live_dedup::VertexPosition>(
         Vec::new()
     };
 
-    let unpaired = scan_unpaired_interior(
-        cells,
-        cell_indices,
-        vertex_keys,
-        &primary_candidates,
-        &is_boundary_edge,
-    )?;
+    let unpaired = scan_unpaired_interior(cells, cell_indices, vertex_keys, &primary_candidates)?;
     if unpaired.is_empty() {
         return Ok(done(
             Vec::new(),
@@ -505,13 +499,7 @@ pub(crate) fn reconcile_edge_mismatches<P: crate::live_dedup::VertexPosition>(
     residual_candidates.extend(affected_cells_from_records(&synth));
     residual_candidates.sort_unstable();
     residual_candidates.dedup();
-    let residual = scan_unpaired_interior(
-        cells,
-        cell_indices,
-        vertex_keys,
-        &residual_candidates,
-        &is_boundary_edge,
-    )?;
+    let residual = scan_unpaired_interior(cells, cell_indices, vertex_keys, &residual_candidates)?;
     Ok(done(
         residual
             .iter()
@@ -642,9 +630,9 @@ fn drop_degenerate_collinear_vertices(
 /// scan runs only in the first Primary round — its unions are idempotent
 /// once applied, and re-counting them would defeat convergence detection.
 #[allow(clippy::too_many_arguments)]
-fn run_reconciliation_rounds<P: crate::live_dedup::VertexPosition>(
+fn run_reconciliation_rounds(
     edge_records: &[EdgeRecord],
-    vertices: &[P],
+    vertices: &[Vec3],
     cells: &mut Vec<VoronoiCell>,
     cell_indices: &mut Vec<u32>,
     vertex_keys: VertexKeys<'_>,
@@ -788,18 +776,11 @@ pub(crate) fn scan_unpaired_interior(
     cell_indices: &[u32],
     vertex_keys: VertexKeys<'_>,
     candidate_cells: &[u32],
-    is_boundary_edge: &impl Fn(u32, u32) -> bool,
 ) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
-    let out = scan_unpaired_interior_localized(
-        cells,
-        cell_indices,
-        vertex_keys,
-        candidate_cells,
-        is_boundary_edge,
-    )?;
+    let out = scan_unpaired_interior_localized(cells, cell_indices, vertex_keys, candidate_cells)?;
     #[cfg(debug_assertions)]
     {
-        let global = scan_unpaired_interior_global(cells, cell_indices, is_boundary_edge)?;
+        let global = scan_unpaired_interior_global(cells, cell_indices)?;
         // Both are sorted; compare directly.
         debug_assert_eq!(
             out, global,
@@ -815,7 +796,6 @@ fn scan_unpaired_interior_localized(
     cell_indices: &[u32],
     vertex_keys: VertexKeys<'_>,
     candidate_cells: &[u32],
-    is_boundary_edge: &impl Fn(u32, u32) -> bool,
 ) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
     use rustc_hash::FxHashMap as HashMap;
     // Scan region = candidate cells + their 1-ring (the cells named by the
@@ -862,9 +842,6 @@ fn scan_unpaired_interior_localized(
 
     let mut out: Vec<(u32, u32, u32)> = Vec::new();
     for ((a, b), (count, forward_count, owner)) in uses {
-        if is_boundary_edge(a, b) {
-            continue;
-        }
         let mut total_count = count;
         let mut total_forward = forward_count;
         if a != b && count == 1 {
@@ -933,7 +910,6 @@ fn cell_edge_uses(
 fn scan_unpaired_interior_global(
     cells: &[VoronoiCell],
     cell_indices: &[u32],
-    is_boundary_edge: &impl Fn(u32, u32) -> bool,
 ) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
     use rustc_hash::FxHashMap as HashMap;
     let mut uses: HashMap<(u32, u32), (u32, u32, u32)> = HashMap::default();
@@ -954,9 +930,7 @@ fn scan_unpaired_interior_global(
     }
     let mut out: Vec<(u32, u32, u32)> = uses
         .into_iter()
-        .filter(|&((a, b), (count, forward, _))| {
-            !is_boundary_edge(a, b) && (a == b || count != 2 || forward != 1)
-        })
+        .filter(|&((a, b), (count, forward, _))| a == b || count != 2 || forward != 1)
         .map(|((a, b), (_, _, owner))| (a, b, owner))
         .collect();
     out.sort_unstable();
@@ -1026,10 +1000,10 @@ fn cell_pair_for_unpaired(va: u32, vb: u32, owner: u32, vertex_keys: VertexKeys<
 /// Union every pair of segment-endpoint vertices, across and within the
 /// two sides, that lie within the degenerate length scale. Local to one
 /// defective edge, so the quadratic pairing is over a handful of ids.
-fn proximity_union_segments<P: crate::live_dedup::VertexPosition>(
+fn proximity_union_segments(
     seg_a: &[(u32, u32)],
     seg_b: &[(u32, u32)],
-    vertices: &[P],
+    vertices: &[Vec3],
     degenerate_len_eps_sq: f32,
     uf: &mut SparseUnionFind,
     merged: &mut usize,
@@ -1187,9 +1161,9 @@ fn assert_localized_dupscan_complete(vertex_keys: VertexKeys<'_>, uf: &mut Spars
 }
 
 #[allow(clippy::too_many_arguments)]
-fn collect_merges<P: crate::live_dedup::VertexPosition>(
+fn collect_merges(
     edge_records: &[EdgeRecord],
-    vertices: &[P],
+    vertices: &[Vec3],
     cells: &[VoronoiCell],
     cell_indices: &[u32],
     vertex_keys: VertexKeys<'_>,
@@ -1488,9 +1462,9 @@ fn reject_face_unsafe_components(
     Ok(rejected)
 }
 
-fn bound_merge_components<P: crate::live_dedup::VertexPosition>(
+fn bound_merge_components(
     proposed: &mut SparseUnionFind,
-    vertices: &[P],
+    vertices: &[Vec3],
     cells: &[VoronoiCell],
     cell_indices: &[u32],
     vertex_keys: VertexKeys<'_>,
@@ -1522,7 +1496,7 @@ fn bound_merge_components<P: crate::live_dedup::VertexPosition>(
             let a = vertex_pos(vertices, expanded[i])?;
             for &b_id in &expanded[(i + 1)..] {
                 let b = vertex_pos(vertices, b_id)?;
-                if a.dist_sq_f64(b) > eps_sq {
+                if dist_sq_f64(a, b) > eps_sq {
                     within_diameter = false;
                     break 'pairs;
                 }
@@ -1826,27 +1800,17 @@ mod tests {
 
         let cells = vec![VoronoiCell::new(0, 3), VoronoiCell::new(3, 3)];
         let opposite = vec![0, 1, 2, 2, 1, 0];
-        assert!(scan_unpaired_interior(
-            &cells,
-            &opposite,
-            VertexKeys::Flat(&keys),
-            &[0, 1],
-            &|_, _| false,
-        )
-        .expect("valid paired scan")
-        .is_empty());
+        assert!(
+            scan_unpaired_interior(&cells, &opposite, VertexKeys::Flat(&keys), &[0, 1],)
+                .expect("valid paired scan")
+                .is_empty()
+        );
 
         let same_direction = vec![0, 1, 2, 0, 1, 2];
         assert_eq!(
-            scan_unpaired_interior(
-                &cells,
-                &same_direction,
-                VertexKeys::Flat(&keys),
-                &[0, 1],
-                &|_, _| false,
-            )
-            .expect("same-direction scan")
-            .len(),
+            scan_unpaired_interior(&cells, &same_direction, VertexKeys::Flat(&keys), &[0, 1],)
+                .expect("same-direction scan")
+                .len(),
             3,
             "every shared edge is misoriented"
         );
@@ -1858,28 +1822,16 @@ mod tests {
         ];
         let overused = vec![0, 1, 2, 2, 1, 0, 0, 1, 2];
         assert_eq!(
-            scan_unpaired_interior(
-                &cells,
-                &overused,
-                VertexKeys::Flat(&keys),
-                &[0, 1, 2],
-                &|_, _| false,
-            )
-            .expect("overused scan")
-            .len(),
+            scan_unpaired_interior(&cells, &overused, VertexKeys::Flat(&keys), &[0, 1, 2],)
+                .expect("overused scan")
+                .len(),
             3,
             "every shared edge has a third use"
         );
 
         let self_loop = vec![0, 1, 2, 0, 0, 2];
-        let bad = scan_unpaired_interior(
-            &cells[..2],
-            &self_loop,
-            VertexKeys::Flat(&keys),
-            &[0, 1],
-            &|_, _| false,
-        )
-        .expect("self-loop scan");
+        let bad = scan_unpaired_interior(&cells[..2], &self_loop, VertexKeys::Flat(&keys), &[0, 1])
+            .expect("self-loop scan");
         assert!(bad.iter().any(|&(a, b, _)| a == b));
     }
 
@@ -1980,7 +1932,6 @@ mod tests {
             VertexKeys::Flat(vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
             ReconcileApply::Rebuild,
-            |_, _| false,
         )
         .expect("rebuild reconciliation should succeed");
 
@@ -1993,7 +1944,6 @@ mod tests {
             VertexKeys::Flat(vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
             ReconcileApply::InPlace,
-            |_, _| false,
         )
         .expect("in-place reconciliation should succeed");
 
@@ -2354,7 +2304,6 @@ mod tests {
             VertexKeys::Flat(&vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
             ReconcileApply::InPlace,
-            |_, _| false,
         )
         .expect("cell-killing one-sided edge should local_rebuild cleanly");
 
@@ -2498,7 +2447,6 @@ mod tests {
             VertexKeys::Flat(&vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
             ReconcileApply::InPlace,
-            |_, _| false,
         )
         .expect("reconciliation should report its mutation footprint");
         assert!(!result.resolution_scan_cells.is_empty());
@@ -2526,7 +2474,6 @@ mod tests {
             VertexKeys::Flat(&vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
             ReconcileApply::InPlace,
-            |_, _| false,
         )
         .expect("distant mismatch should remain a controlled residual");
         assert!(

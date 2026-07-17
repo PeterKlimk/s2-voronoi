@@ -1,6 +1,4 @@
-//! The geometry-agnostic emission seam: per-cell shard emission shared by
-//! the spherical (`knn_clipping::driver`) and planar
-//! (`plane_clipping::driver`) drivers.
+//! Per-cell shard emission for the spherical construction driver.
 
 use glam::Vec3;
 
@@ -15,8 +13,8 @@ use super::{BuildCellsError, CellOutputBuffer, VertexData};
 
 #[inline(always)]
 #[allow(clippy::neg_cmp_op_on_partial_ord)] // unordered (NaN) must fail the certificate
-fn exceeds_resolution_drift<P: super::types::VertexPosition>(representative: P, local: P) -> bool {
-    let delta = representative.resolution_axis_delta(local);
+fn exceeds_resolution_drift(representative: Vec3, local: Vec3) -> bool {
+    let delta = (f64::from(representative.x) - f64::from(local.x)).abs();
     // `resolution_axis_delta` is non-negative. An ordered `<=` accepts exactly
     // the finite in-range values; negating it also rejects NaN and infinity
     // without a separate floating-point classification.
@@ -30,7 +28,7 @@ pub(crate) struct EdgeScratch {
 }
 
 #[inline(always)]
-fn assert_endpoint_lengths<P>(cell_vertices: &[VertexData<P>], vertex_indices_len: usize) -> usize {
+fn assert_endpoint_lengths(cell_vertices: &[VertexData], vertex_indices_len: usize) -> usize {
     let vertex_count = cell_vertices.len();
     assert_eq!(
         vertex_indices_len, vertex_count,
@@ -49,11 +47,11 @@ impl EdgeScratch {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    fn collect_and_resolve<P: super::types::VertexPosition>(
+    fn collect_and_resolve(
         &mut self,
         cell_idx: u32,
-        shard_ctx: &mut ShardContext<'_, P>,
-        output_buffer: &CellOutputBuffer<P>,
+        shard_ctx: &mut ShardContext<'_>,
+        output_buffer: &CellOutputBuffer,
         slot_points: &[crate::cube_grid::SlotPoint],
         assignment: &BinAssignment,
         incoming_checks: Vec<EdgeCheck>,
@@ -76,10 +74,10 @@ impl EdgeScratch {
 
     #[cfg_attr(feature = "profiling", inline(never))]
     #[allow(clippy::too_many_arguments)] // compact edge records carry final CSR provenance
-    fn emit<P: super::types::VertexPosition>(
+    fn emit(
         &mut self,
-        shard: &mut ShardState<P>,
-        cell_vertices: &[VertexData<P>],
+        shard: &mut ShardState,
+        cell_vertices: &[VertexData],
         cell_idx: u32,
         cell_slot: u32,
         cell_start: u32,
@@ -169,8 +167,8 @@ impl EdgeScratch {
     }
 }
 
-pub(crate) struct ShardContext<'a, P = Vec3> {
-    pub(crate) shard: &'a mut ShardState<P>,
+pub(crate) struct ShardContext<'a> {
+    pub(crate) shard: &'a mut ShardState,
     pub(crate) bin: BinId,
     pub(crate) local: LocalId,
 }
@@ -198,18 +196,17 @@ pub(crate) fn checked_local_id(value: usize, context: &str) -> Result<LocalId, B
 
 /// Emit one built cell's output into its shard: resolve/record edge checks,
 /// dedup vertices by owner bin (deferring off-shard owners), and forward
-/// edge checks to later cells. Geometry-free; shared by the spherical and
-/// planar drivers.
-#[allow(clippy::too_many_arguments)] // internal seam shared by two drivers
-pub(crate) fn emit_cell_output<P: super::types::VertexPosition>(
+/// edge checks to later cells.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emit_cell_output(
     cell_sub: &mut crate::timing::CellSubAccum,
     scratch: &mut EdgeScratch,
-    shard_ctx: &mut ShardContext<'_, P>,
+    shard_ctx: &mut ShardContext<'_>,
     assignment: &BinAssignment,
     cell_idx: u32,
     cell_slot: u32,
     cell_start: u32,
-    output_buffer: &CellOutputBuffer<P>,
+    output_buffer: &CellOutputBuffer,
     slot_points: &[crate::cube_grid::SlotPoint],
     incoming_checks: Vec<EdgeCheck>,
 ) -> Result<(), BuildCellsError> {

@@ -1,6 +1,5 @@
 //! Spherical pipeline driver: per-bin parallel cell construction through
-//! the shared live-dedup engine (the planar sibling is
-//! `plane_clipping::driver`).
+//! live deduplication.
 
 use glam::Vec3;
 #[cfg(feature = "parallel")]

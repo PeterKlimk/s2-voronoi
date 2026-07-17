@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
+use glam::Vec3;
 use rustc_hash::FxHashMap;
 
 use super::{
@@ -15,7 +16,7 @@ use super::{
 };
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::union_find::SparseUnionFind;
-use crate::live_dedup::{EdgeMismatch, EdgeMismatchOrigin, EdgeRecord, VertexPosition};
+use crate::live_dedup::{EdgeMismatch, EdgeMismatchOrigin, EdgeRecord};
 
 // Inclusive upper bounds for the histogram. The final bucket is +inf.
 // Chord distances are on the canonical unit sphere in production.
@@ -125,9 +126,9 @@ struct PrimaryTelemetry {
 /// would consider on its first round. The real pass still runs normally after
 /// this function returns. Analysis errors are reported but never propagated.
 #[allow(clippy::too_many_arguments)] // mirrors the read-only reconciliation seam
-pub(crate) fn emit_primary_reconcile_telemetry<P: VertexPosition>(
+pub(crate) fn emit_primary_reconcile_telemetry(
     unresolved: &[EdgeMismatch],
-    vertices: &[P],
+    vertices: &[Vec3],
     cells: &[VoronoiCell],
     cell_indices: &[u32],
     vertex_keys: VertexKeys<'_>,
@@ -151,9 +152,9 @@ pub(crate) fn emit_primary_reconcile_telemetry<P: VertexPosition>(
     }
 }
 
-fn analyze_primary<P: VertexPosition>(
+fn analyze_primary(
     unresolved: &[EdgeMismatch],
-    vertices: &[P],
+    vertices: &[Vec3],
     cells: &[VoronoiCell],
     cell_indices: &[u32],
     vertex_keys: VertexKeys<'_>,
@@ -279,10 +280,10 @@ fn analyze_primary<P: VertexPosition>(
     Ok(stats)
 }
 
-fn record_proximity_distances<P: VertexPosition>(
+fn record_proximity_distances(
     seg_a: &[(u32, u32)],
     seg_b: &[(u32, u32)],
-    vertices: &[P],
+    vertices: &[Vec3],
     eps: f32,
     stats: &mut DistanceStats,
 ) -> Result<(), crate::VoronoiError> {
@@ -301,9 +302,9 @@ fn record_proximity_distances<P: VertexPosition>(
     Ok(())
 }
 
-fn component_stats<P: VertexPosition>(
+fn component_stats(
     uf: &mut SparseUnionFind,
-    vertices: &[P],
+    vertices: &[Vec3],
 ) -> Result<ComponentStats, crate::VoronoiError> {
     let touched = uf.touched_ids();
     let mut groups: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
@@ -327,9 +328,9 @@ fn component_stats<P: VertexPosition>(
     Ok(stats)
 }
 
-fn component_diameter_bounds<P: VertexPosition>(
+fn component_diameter_bounds(
     ids: &[u32],
-    vertices: &[P],
+    vertices: &[Vec3],
 ) -> Result<(f32, f32, bool), crate::VoronoiError> {
     if ids.len() <= 1 {
         return Ok((0.0, 0.0, true));
@@ -362,19 +363,11 @@ fn component_diameter_bounds<P: VertexPosition>(
     Ok((lower_sq.sqrt(), 2.0 * radius_sq.sqrt(), false))
 }
 
-fn vertex_distance<P: VertexPosition>(
-    vertices: &[P],
-    a: u32,
-    b: u32,
-) -> Result<f32, crate::VoronoiError> {
+fn vertex_distance(vertices: &[Vec3], a: u32, b: u32) -> Result<f32, crate::VoronoiError> {
     Ok(vertex_distance_sq(vertices, a, b)?.sqrt())
 }
 
-fn vertex_distance_sq<P: VertexPosition>(
-    vertices: &[P],
-    a: u32,
-    b: u32,
-) -> Result<f32, crate::VoronoiError> {
+fn vertex_distance_sq(vertices: &[Vec3], a: u32, b: u32) -> Result<f32, crate::VoronoiError> {
     Ok(dist_sq(vertex_pos(vertices, a)?, vertex_pos(vertices, b)?))
 }
 

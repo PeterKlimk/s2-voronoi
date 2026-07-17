@@ -25,8 +25,7 @@ impl<'a> PackedSlotLayout<'a> {
 
     /// Bin of a grid cell via its first slot (`None` for empty cells).
     ///
-    /// Takes the CSR `cell_offsets` directly so any grid layout (cube-map or
-    /// planar) with bin-contiguous cells can use it.
+    /// Takes the cube-grid CSR `cell_offsets` directly; cells are bin-contiguous.
     #[inline]
     pub(crate) fn cell_bin(self, cell_offsets: &[u32], cell: usize) -> Option<u8> {
         let start = cell_offsets[cell] as usize;

@@ -81,9 +81,9 @@ impl CubeMapGridBuildTimings {
     }
 }
 
-// Ring-2 size is 16 in a planar 3×3 neighborhood, but can be slightly larger on the stitched cube
-// surface near cube vertices where a "3×3" neighborhood has only 7 unique neighbors (one diagonal
-// is missing because only 3 faces meet at a cube vertex).
+// A regular 3×3 neighborhood has a ring-2 size of 16. The stitched cube surface can be slightly
+// less regular near cube vertices, where a "3×3" neighborhood has only 7 unique neighbors (one
+// diagonal is missing because only 3 faces meet at a cube vertex); 16 remains the safe cap.
 const RING2_MAX: usize = 16;
 
 /// Cube-map spatial grid for points on unit sphere.

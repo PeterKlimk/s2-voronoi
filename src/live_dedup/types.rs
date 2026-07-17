@@ -1,63 +1,6 @@
 //! Shared POD-like types for live dedup bookkeeping.
 
-use glam::{Vec2, Vec3};
-
-/// Vertex position type threaded through the dedup/assembly layer.
-///
-/// The engine is geometry-agnostic: it stores positions, dedups by
-/// [`VertexKey`], and only ever needs a squared distance (edge-reconcile's
-/// degenerate-length check). The sphere instantiates `Vec3`, the plane
-/// `Vec2`; type defaults keep the spherical call sites spelled as before.
-pub(crate) trait VertexPosition: Copy + Send + Sync + std::fmt::Debug + 'static {
-    /// Squared Euclidean distance (chord distance on the unit sphere).
-    fn dist_sq(self, other: Self) -> f32;
-
-    /// Squared distance accumulated in f64 for cold-path policy bounds.
-    fn dist_sq_f64(self, other: Self) -> f64;
-
-    /// Absolute difference along the coordinate used by the clean-path
-    /// output-resolution certificate.
-    fn resolution_axis_delta(self, other: Self) -> f64;
-}
-
-impl VertexPosition for Vec3 {
-    #[inline]
-    fn dist_sq(self, other: Self) -> f32 {
-        (self - other).length_squared()
-    }
-
-    #[inline]
-    fn dist_sq_f64(self, other: Self) -> f64 {
-        let dx = f64::from(self.x) - f64::from(other.x);
-        let dy = f64::from(self.y) - f64::from(other.y);
-        let dz = f64::from(self.z) - f64::from(other.z);
-        dx * dx + dy * dy + dz * dz
-    }
-
-    #[inline]
-    fn resolution_axis_delta(self, other: Self) -> f64 {
-        (f64::from(self.x) - f64::from(other.x)).abs()
-    }
-}
-
-impl VertexPosition for Vec2 {
-    #[inline]
-    fn dist_sq(self, other: Self) -> f32 {
-        (self - other).length_squared()
-    }
-
-    #[inline]
-    fn dist_sq_f64(self, other: Self) -> f64 {
-        let dx = f64::from(self.x) - f64::from(other.x);
-        let dy = f64::from(self.y) - f64::from(other.y);
-        dx * dx + dy * dy
-    }
-
-    #[inline]
-    fn resolution_axis_delta(self, other: Self) -> f64 {
-        (f64::from(self.x) - f64::from(other.x)).abs()
-    }
-}
+use glam::Vec3;
 
 use crate::live_dedup::VertexKey;
 
@@ -272,10 +215,10 @@ pub(super) struct EdgeOverflowLocal {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct DeferredSlot<P = Vec3> {
+pub(crate) struct DeferredSlot {
     /// Canonical vertex key that identifies the eventual owner bin.
     pub(super) key: VertexKey,
-    pub(super) pos: P,
+    pub(super) pos: Vec3,
     /// Bin/cell slot that still needs to be patched once ownership is resolved.
     pub(super) source_bin: BinId,
     pub(super) source_slot: u32,
