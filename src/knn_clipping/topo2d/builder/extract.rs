@@ -8,7 +8,10 @@ use crate::knn_clipping::topo2d::types::INVALID_PLANE_ID;
 use crate::live_dedup::{CellFailure, CellOutputBuffer};
 use glam::{DVec3, Vec3};
 
-use crate::tolerances::{EXTRACT_DEGENERATE_LEN2, FALLBACK_PLANE_TOL};
+use crate::tolerances::{
+    EXTRACT_DEGENERATE_LEN2, FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR, FALLBACK_PLANE_TOL,
+    FALLBACK_VERTEX_DEDUP_LEN2,
+};
 
 #[derive(Clone, Copy)]
 struct FallbackVertex {
@@ -348,7 +351,7 @@ impl FallbackBuilder {
             .normal
             .cross(self.constraints[plane_b].normal);
         let len2 = cross.length_squared();
-        if !len2.is_finite() || len2 <= 1e-24 {
+        if !len2.is_finite() || len2 <= FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR {
             return None;
         }
 
@@ -367,10 +370,9 @@ impl FallbackBuilder {
     }
 
     fn push_fallback_vertex(vertices: &mut Vec<FallbackVertex>, vertex: FallbackVertex) {
-        if vertices
-            .last()
-            .is_some_and(|last| (last.position - vertex.position).length_squared() <= 1e-24)
-        {
+        if vertices.last().is_some_and(|last| {
+            (last.position - vertex.position).length_squared() <= FALLBACK_VERTEX_DEDUP_LEN2
+        }) {
             return;
         }
         vertices.push(vertex);
@@ -462,7 +464,7 @@ impl FallbackBuilder {
 
         if vertices.len() >= 2
             && (vertices[0].position - vertices[vertices.len() - 1].position).length_squared()
-                <= 1e-24
+                <= FALLBACK_VERTEX_DEDUP_LEN2
         {
             vertices.pop();
         }
@@ -726,7 +728,7 @@ fn all_constraints_vertices(
         for b in a + 1..constraints.len() {
             let cross = constraints[a].normal.cross(constraints[b].normal);
             let len2 = cross.length_squared();
-            if !len2.is_finite() || len2 <= 1e-24 {
+            if !len2.is_finite() || len2 <= FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR {
                 continue;
             }
 
@@ -788,10 +790,9 @@ fn spherical_poly_from_all_constraints(
 }
 
 fn push_all_constraints_vertex(vertices: &mut Vec<FallbackVertex>, vertex: FallbackVertex) {
-    if vertices
-        .iter()
-        .any(|existing| (existing.position - vertex.position).length_squared() <= 1e-24)
-    {
+    if vertices.iter().any(|existing| {
+        (existing.position - vertex.position).length_squared() <= FALLBACK_VERTEX_DEDUP_LEN2
+    }) {
         return;
     }
     vertices.push(vertex);

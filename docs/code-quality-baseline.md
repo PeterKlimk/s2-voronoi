@@ -395,6 +395,29 @@ The first numerical/policy-constant slice was validated on 2026-07-18 against im
   f64 fallback vertices by squared distance. They require separate semantic constants, not one
   mechanically shared name; preserving their equal values is a separate fact from their ownership.
 
+## QUAL-001E fallback threshold result
+
+The second numerical/policy-constant slice was validated on 2026-07-18 against immediate parent
+`8f08126`.
+
+- Seven raw fallback `1e-24` comparisons and the clip-local dedup constant are now represented by
+  two authoritative `f64` tolerances: `FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR` rejects non-finite
+  or `<=` squared cross norms before normalization, while `FALLBACK_VERTEX_DEDUP_LEN2` collapses
+  fallback unit directions at `<=` squared chord distance.
+- Both values remain exactly `1e-24`. Their shared bit pattern is deliberately not encoded as a
+  shared semantic constant: intersection conditioning and vertex identity may require independent
+  future analysis and tuning.
+- The constant documentation records units and comparison directions. No hierarchy assertion was
+  added because the two values have no load-bearing ordering relationship.
+- `cargo fmt`, both default and native all-feature Clippy with warnings denied, the complete release
+  and checked suites, the no-default-features release suite, and the `serde,glam` release suite
+  passed.
+- Matched release `tools` benchmarks had identical section sizes and total footprint. `.text`
+  (`a20c69a6…f0de8`), `.rodata` (`f8b29268…7761`), and exception tables were byte-identical. The
+  whole-file hash changed only with the build id, symbol/string metadata, and 13 one-byte line
+  fields in 24-byte source-location records in `.data.rel.ro`; executable code and numeric data did
+  not change. There was no counter signal requiring a quiet wall-clock run.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

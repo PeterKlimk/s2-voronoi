@@ -107,6 +107,23 @@ pub(crate) const FALLBACK_PLANE_TOL: f64 = 1e-12;
 /// where intersection conditioning is poor.
 pub(crate) const FALLBACK_DEDUP_DOT: f32 = 1.0 - 1e-5;
 
+/// Squared cross-product norm at or below which an f64 fallback intersection
+/// is too poorly conditioned to normalize.
+///
+/// The fallback operands are unit directions or unit plane normals, so this
+/// dimensionless value is a squared-sine floor. Every use rejects non-finite
+/// values and values `<=` this floor.
+pub(crate) const FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR: f64 = 1e-24;
+
+/// Squared chord distance at or below which f64 fallback unit-direction
+/// vertices are treated as numerically identical.
+///
+/// This dimensionless threshold must stay well below the spacing of distinct
+/// f32 input generators; a larger f32-era threshold collapsed the microscopic
+/// cells that the ClippedAway fallback exists to preserve. Every use merges at
+/// `<=` this value.
+pub(crate) const FALLBACK_VERTEX_DEDUP_LEN2: f64 = 1e-24;
+
 /// Squared-length floor for reconstructed vertex directions; rejects only
 /// catastrophically cancelled directions (|v| < 1e-14) as
 /// degenerate-extraction failures rather than normalizing noise.

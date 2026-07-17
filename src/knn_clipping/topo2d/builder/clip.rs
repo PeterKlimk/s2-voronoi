@@ -5,6 +5,7 @@ use super::{
 use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck};
 use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane};
 use crate::live_dedup::CellFailure;
+use crate::tolerances::{FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR, FALLBACK_VERTEX_DEDUP_LEN2};
 use glam::Vec3;
 
 impl GnomonicBuilder {
@@ -200,12 +201,6 @@ impl GnomonicBuilder {
     }
 }
 
-/// Squared-distance threshold for merging numerically identical f64 vertices
-/// during the cold fallback clip. This must stay well below the spacing of
-/// distinct f32 input generators; a larger f32-era threshold collapsed the
-/// microscopic cells that the ClippedAway fallback exists to preserve.
-const CLIP_DEDUP_LEN2: f64 = 1e-24;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FallbackClipDisposition {
     /// The nominal halfspace contains every current vertex, so the constraint
@@ -245,7 +240,7 @@ impl FallbackBuilder {
             .unwrap_or_else(|| a.position.cross(b.position))
             .normalize_or_zero();
         let edge_len2 = edge_normal.length_squared();
-        if !edge_len2.is_finite() || edge_len2 <= 1e-24 {
+        if !edge_len2.is_finite() || edge_len2 <= FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR {
             return None;
         }
 
@@ -259,7 +254,7 @@ impl FallbackBuilder {
 
         let cross = edge_normal.cross(constraint.normal);
         let len2 = cross.length_squared();
-        if !len2.is_finite() || len2 <= 1e-24 {
+        if !len2.is_finite() || len2 <= FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR {
             return None;
         }
         let candidate = cross * len2.sqrt().recip();
@@ -286,7 +281,7 @@ impl FallbackBuilder {
         outgoing_edge: usize,
     ) {
         if let Some(last) = vertices.last_mut() {
-            if (last.position - vertex.position).length_squared() <= CLIP_DEDUP_LEN2 {
+            if (last.position - vertex.position).length_squared() <= FALLBACK_VERTEX_DEDUP_LEN2 {
                 if let Some(last_edge) = edge_planes.last_mut() {
                     *last_edge = outgoing_edge;
                 }
@@ -343,7 +338,7 @@ impl FallbackBuilder {
         if out_vertices.len() >= 2
             && (out_vertices[0].position - out_vertices[out_vertices.len() - 1].position)
                 .length_squared()
-                <= CLIP_DEDUP_LEN2
+                <= FALLBACK_VERTEX_DEDUP_LEN2
         {
             out_vertices.pop();
             out_edges.pop();

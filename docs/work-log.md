@@ -342,9 +342,13 @@ tasks and are not duplicated here.
 - **QUAL-001E policy result:** the raw dense-band `1e-3` gather inflation is now the named,
   dimensionless `f32` policy `DENSE_BAND_RADIUS_INFLATION` in `policy.rs`. Its optimized benchmark
   artifact is byte-identical to the parent, and all required feature/test matrices pass.
-- **Next gate:** split the fallback `1e-24` inventory into separately named squared cross-product
-  conditioning and squared vertex-dedup meanings, preserving both exact values and every `<=`
-  comparison. Require optimized code identity or counters before accepting the relocation.
+- **QUAL-001E fallback result:** seven raw `1e-24` comparisons are now separately owned as the f64
+  squared-cross conditioning floor `FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR` and squared-chord
+  identity threshold `FALLBACK_VERTEX_DEDUP_LEN2`. Both exact values and all `<=` comparisons are
+  unchanged. Optimized executable sections are byte-identical; only source-line metadata moved.
+- **Next gate:** classify the remaining raw `1e-12` sites. In particular, fallback edge-arc angular
+  slack, chart-metric inflation, and fallback plane-dot tolerance have different units and must not
+  be unified merely because their current decimal spelling matches.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.
