@@ -12,6 +12,14 @@
 /// robust-mode policy, not a coplanarity acceptance tolerance.
 pub(crate) const COPLANAR_PERTURBATION_SCALE: f64 = 1.0e-2;
 
+/// Expansion applied to the local projected-Delaunay span when sizing its
+/// bounding super-triangle.
+///
+/// This dimensionless `f64` construction policy keeps the synthetic vertices
+/// generously outside the projected point set. It is independent of the
+/// minimum-span conditioning floor.
+pub(crate) const LOCAL_REBUILD_SUPER_TRIANGLE_SCALE: f64 = 1000.0;
+
 /// Target mean points per query-grid cell.
 ///
 /// Set from the 2026-06 reference-machine sweep (Ryzen 3600,

@@ -362,9 +362,14 @@ tasks and are not duplicated here.
   separately as robust-mode policy. Values, strict `>` rejection boundaries, arithmetic, and the
   local closure capture are unchanged. Optimized executable sections and numeric data are
   byte-identical; only source metadata moved.
-- **Next gate:** classify the local projected-Delaunay super-triangle's `f64` span floor separately
-  from its expansion factor. Preserve the existing `max(1e-9)` conditioning guard, `* 1000.0`
-  sizing policy, and all downstream geometry; the two constants serve different roles.
+- **QUAL-001E projected-Delaunay result:** the local rebuild's `f64` minimum chart-span guard and
+  super-triangle expansion factor now live separately as conditioning tolerance and construction
+  policy. Values, `max`/multiplication expressions, synthetic geometry, and robust predicate inputs
+  are unchanged. Optimized executable sections and numeric data are byte-identical; only source
+  metadata moved.
+- **Next gate:** classify the two `f64::EPSILON` centroid degeneracy guards separately. Preserve the
+  edge-cross `<=` skip and accumulated-integral `<=` generator fallback exactly; equal machine-floor
+  values do not make those failure modes one semantic tolerance.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

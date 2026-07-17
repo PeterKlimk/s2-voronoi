@@ -218,6 +218,15 @@ pub(crate) const OUTPUT_RESOLUTION_ZERO_HINT_X_EPS: f32 =
 
 // === Local rebuilding ===
 
+/// Minimum projected coordinate span used to size the local 2D Delaunay
+/// super-triangle.
+///
+/// Stereographic chart coordinates are dimensionless `f64` values. The
+/// measured maximum axis span is clamped with `max` to this floor so a
+/// coincident or extremely narrow local set still receives a nonzero
+/// construction envelope. This is a sizing guard, not a point classifier.
+pub(crate) const LOCAL_REBUILD_DELAUNAY_SPAN_FLOOR: f64 = 1e-9;
+
 /// Minimum stereographic projection denominator `1 - dot(point, pole)`.
 ///
 /// Projection inputs and the dot are `f32`; retaining an explicit `f32` floor

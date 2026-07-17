@@ -24,7 +24,10 @@ use super::local_hull::LocalHull;
 use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch};
 use crate::diagram::VoronoiCell;
 use crate::live_dedup::ShardedVertexKeys;
-use crate::tolerances::LOCAL_REBUILD_STEREOGRAPHIC_DENOMINATOR_FLOOR;
+use crate::policy::LOCAL_REBUILD_SUPER_TRIANGLE_SCALE;
+use crate::tolerances::{
+    LOCAL_REBUILD_DELAUNAY_SPAN_FLOOR, LOCAL_REBUILD_STEREOGRAPHIC_DENOMINATOR_FLOOR,
+};
 
 /// A generator's rebuilt Voronoi cell: its vertices as the ordered cyclic fan
 /// of sorted global-id triples (each triple = the three generators meeting at
@@ -344,10 +347,12 @@ fn local_delaunay_2d(proj: &[robust::Coord<f64>]) -> Vec<[usize; 3]> {
         maxx = maxx.max(c.x);
         maxy = maxy.max(c.y);
     }
-    let span = (maxx - minx).max(maxy - miny).max(1e-9);
+    let span = (maxx - minx)
+        .max(maxy - miny)
+        .max(LOCAL_REBUILD_DELAUNAY_SPAN_FLOOR);
     let (midx, midy) = ((minx + maxx) * 0.5, (miny + maxy) * 0.5);
     // Super-triangle vertices (indices n, n+1, n+2), generously enclosing all.
-    let big = span * 1000.0;
+    let big = span * LOCAL_REBUILD_SUPER_TRIANGLE_SCALE;
     let mut pts: Vec<Coord<f64>> = proj.to_vec();
     pts.push(Coord {
         x: midx - 2.0 * big,

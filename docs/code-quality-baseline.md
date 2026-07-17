@@ -514,6 +514,30 @@ The sixth numerical/policy-constant slice was validated on 2026-07-18 against im
   and 14 changed source-location bytes in `.data.rel.ro`; executable code and numeric data did not
   change. No counter or quiet wall-clock run was warranted.
 
+## QUAL-001E projected-Delaunay sizing result
+
+The seventh numerical/policy-constant slice was validated on 2026-07-18 against immediate parent
+`2e49a1a`.
+
+- The local projected-Delaunay path's raw `1e-9` chart-span floor moved to `tolerances.rs` as
+  `LOCAL_REBUILD_DELAUNAY_SPAN_FLOOR: f64`. Stereographic chart coordinates are dimensionless; the
+  maximum measured axis span remains clamped with `max` to this value before sizing the synthetic
+  construction envelope. It remains a nonzero sizing guard, not a point-acceptance classifier.
+- The raw `1000.0` super-triangle multiplier moved independently to `policy.rs` as
+  `LOCAL_REBUILD_SUPER_TRIANGLE_SCALE: f64`. The same span is still multiplied by the same
+  dimensionless expansion before the three synthetic vertices are formed. Its value and role are
+  not derived from the minimum-span floor.
+- No coordinate expression, predicate, insertion order, robust predicate input, or downstream
+  triangle filtering changed.
+- `cargo fmt`, both default and native all-feature Clippy with warnings denied, the complete release
+  and checked suites, the no-default-features release suite, and the `serde,glam` release suite
+  passed.
+- Matched release `tools` benchmarks had identical section sizes and total footprint. `.text`
+  (`a20c69a6…f0de8`), `.rodata` (`f8b29268…7761`), exception tables (`1771916b…bcbb`), and unwind
+  sections were byte-identical. The whole-file difference was confined to build/symbol metadata
+  and 40 changed source-location bytes in `.data.rel.ro`; executable code and numeric data did not
+  change. No counter or quiet wall-clock run was warranted.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
