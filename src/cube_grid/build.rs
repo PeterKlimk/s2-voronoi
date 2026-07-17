@@ -313,11 +313,13 @@ impl CubeMapGrid {
         let materialize_coordinates_by_slot = input_correlation.is_scrambled();
         #[cfg(feature = "timing")]
         if let Some(timings) = timings.as_deref_mut() {
-            timings.input_order_abs_delta += input_order_abs_delta;
-            timings.input_order_pairs += input_order_pairs;
-            timings.materialize_coordinates_by_slot |= materialize_coordinates_by_slot;
+            // A later occupancy rebuild replaces the provisional grid, so
+            // retain the most recent build's order sample rather than
+            // combining incomparable cell domains.
+            timings.input_order_abs_delta = input_order_abs_delta;
+            timings.input_order_pairs = input_order_pairs;
+            timings.materialize_coordinates_by_slot = materialize_coordinates_by_slot;
         }
-
         // Step 2, 3, 4: Count, Prefix Sum, Scatter.
         // These are distinct in implementation between parallel and sequential strategies.
 

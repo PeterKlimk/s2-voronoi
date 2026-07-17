@@ -586,6 +586,40 @@ Spatial-order materialization policy candidate:
   choice part of one cross-pipeline address-order policy rather than a distribution-named assembly
   exception.
 
+Policy audit: these are the two largest measured identity/spatial conversion boundaries, not every
+possible use of the signal. The next credible candidate was final cell metadata: generator-order
+prefix construction writes globally ordered cells sequentially but gathers counts from shard-local
+streams. A candidate can scatter counts in shard order and then run the required sequential prefix.
+Local 500k attribution measured the current prefix phase at 6.1ms for Fibonacci and 7.8ms for
+uniform, giving it a smaller but nontrivial ceiling. Bin-assignment inverse maps are another
+boundary, but changing their scattered global writes requires an added pass or inverse map and has
+a lower prior. The prior point-to-slot fusion is already retired, and the slot-native construction
+core has no competing identity-order traversal left to select.
+
+The abstraction follow-up kept the conceptual split between measurement and boundary-specific
+choice, but rejected a generalized `LocalitySample` implementation. Distributed short sample
+blocks fixed a periodic alias in the old fixed-position sampler, while moving the grid probe to
+actual CSR slot offsets improved the metric itself; together the larger sampling path perturbed hot
+scatter codegen by a repeatable +0.228% whole-build instructions. A flattened generator-to-shard
+source-distance probe also failed to distinguish Fibonacci from uniform. Keep the compact
+site-specific samplers and the pre-prefix numeric-cell proxy. The shared classifier now adds only a
+one-element floor for domains below 100. Rebuild telemetry reports the retained grid and exports the
+decision through `TIMING_KV`.
+
+That minimal retained form reduced 1M Linux instructions by 0.162% on Fibonacci and 0.147% on
+uniform, and branches by 0.382%/0.339%, in all three confirmation pairs. On the quiet Mac at 2M
+multithreaded it was neutral: Fibonacci medians were 641.4ms/641.0ms and uniform's paired ratio was
+0.9972 with a 0.9885--1.0059 interval (12/20 favorable).
+
+The adaptive cell-count/prefix candidate was closed neutral. Its one-byte form scattered counts in
+shard order before the mandatory sequential global prefix when the existing policy selected shard
+order. At 1M single-threaded Linux, instructions and branches were effectively unchanged
+(-0.008%/-0.013%); cycles, cache references, and misses were directionally 1.47%, 8.18%, and 5.28%
+lower over five pairs. The quiet-Mac outcome gate did not confirm a throughput win: 20 paired 2M
+multithreaded uniform rounds produced a 0.9985 ratio with a 0.9906--1.0065 interval and 11/20
+favorable, while Fibonacci was neutral. Retain the fused generator-order cell-prefix loop rather
+than another A/B materialization path with no retired-work or outcome benefit.
+
 Untried probes and candidates (2026-07-17 triage; each begins with a cheap measurement gate):
 
 - **TLB / huge-page probe (native Linux only):** the measured memory wall is dedup and grid build

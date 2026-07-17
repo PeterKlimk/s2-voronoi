@@ -16,12 +16,12 @@ impl SpatialOrderCorrelation {
     }
 }
 
-/// Classify a sampled mean absolute delta against one percent of its domain.
+/// Classify a sampled mean absolute delta against the greater of one element
+/// and one percent of its domain.
 ///
-/// Callers choose samples from the order they can traverse cheaply. This
-/// policy is symmetric in intent: a spatial sequence of global ids and a
-/// global sequence of spatial bucket ids both measure whether the two orders
-/// retain useful locality.
+/// Callers choose samples from the order they can traverse cheaply. The
+/// absolute floor prevents unit-stride order in domains below 100 entries
+/// from being mislabeled as scrambled.
 #[inline(always)]
 pub(crate) fn classify_spatial_correlation(
     abs_delta: u64,
@@ -30,7 +30,8 @@ pub(crate) fn classify_spatial_correlation(
 ) -> SpatialOrderCorrelation {
     // Representation limits in both current callers keep these products well
     // below u64::MAX.
-    if samples != 0 && abs_delta * 100 > domain_len as u64 * samples {
+    let scaled_domain = domain_len.max(100) as u64;
+    if samples != 0 && abs_delta * 100 > scaled_domain * samples {
         SpatialOrderCorrelation::Scrambled
     } else {
         SpatialOrderCorrelation::Correlated
@@ -54,6 +55,18 @@ mod tests {
         assert_eq!(
             classify_spatial_correlation(0, 0, 10_000),
             SpatialOrderCorrelation::Correlated
+        );
+    }
+
+    #[test]
+    fn small_domains_keep_unit_stride_correlated() {
+        assert_eq!(
+            classify_spatial_correlation(32, 32, 64),
+            SpatialOrderCorrelation::Correlated
+        );
+        assert_eq!(
+            classify_spatial_correlation(64, 32, 64),
+            SpatialOrderCorrelation::Scrambled
         );
     }
 }
