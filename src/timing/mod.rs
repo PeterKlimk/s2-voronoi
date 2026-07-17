@@ -7,7 +7,7 @@
 
 /// K-NN stage that a cell terminated at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KnnCellStage {
+pub(crate) enum KnnCellStage {
     /// Terminated during packed chunk0 (r=1).
     PackedChunk0,
     /// Terminated during packed tail (r=1, dot >= security).
@@ -22,6 +22,6 @@ mod real;
 mod stub;
 
 #[cfg(feature = "timing")]
-pub use real::*;
+pub(crate) use real::*;
 #[cfg(not(feature = "timing"))]
-pub use stub::*;
+pub(crate) use stub::*;

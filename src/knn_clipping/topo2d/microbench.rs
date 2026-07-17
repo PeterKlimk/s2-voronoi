@@ -4,7 +4,7 @@
 //! to make it easy to compare small variants while editing the clippers.
 
 #[cfg(feature = "microbench")]
-pub fn run_clip_convex_microbench() {
+pub(crate) fn run_clip_convex_microbench() {
     use super::clippers::{clip_convex, clip_convex_small_bool};
     use super::types::{plane_id, ClipResult, HalfPlane, PolyBuffer};
     use glam::Vec3;
@@ -552,7 +552,7 @@ pub fn run_clip_convex_microbench() {
 
 /// Batch clipping microbench: compare serial vs batched clip_convex.
 #[cfg(feature = "microbench")]
-pub fn run_batch_clip_microbench() {
+pub(crate) fn run_batch_clip_microbench() {
     eprintln!("\n=== Batch Clip Microbench ===\n");
     eprintln!("Batch clipping has been removed.\n");
     eprintln!("=== End Batch Clip Microbench ===\n");

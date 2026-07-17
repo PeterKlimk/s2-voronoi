@@ -161,6 +161,53 @@ The coordinated vocabulary migration was validated on 2026-07-17 against immedia
 - Cycle medians ranged from `-1.41%` to `+0.15%`. Task-clock was substantially noisier, but neither
   had a corroborating retired-work signal, so the conditional quiet run was not warranted.
 
+## QUAL-001F validation result
+
+Current-architecture hygiene was completed on 2026-07-17 as three attributable changes after
+QUAL-001A:
+
+1. unused compatibility re-exports and the empty `TerminationConfig` were removed;
+2. the unconsumed `VertexPosition` / `Vec2` seam was specialized to the crate's spherical `Vec3`
+   backend, including reconciliation's always-false boundary policy; and
+3. default, all-feature, and all-target `unreachable_pub` audits restricted 216 internal
+   visibility spellings, refreshed module ownership documentation, and made generated
+   sorting-network visibility reproducible from the generator.
+
+The doc-hidden root surfaces for `tools`, `profiling`, `microbench`, and
+`local_rebuild_probe`, plus experimental report diagnostics, were retained: each has a current
+repository binary, integration test, or defect fixture. QUAL-001H owns the decision to reorganize
+those diagnostics rather than silently removing them in a visibility pass.
+
+Validation evidence:
+
+- `cargo fmt --check`, the sorting-network generator check, default and native all-feature clippy
+  with warnings denied, default/all-feature `-D unreachable-pub`, and all-target/all-feature check
+  passed.
+- The full release and checked suites passed. The no-default and `serde,glam` matrices passed with
+  one harness thread; the `local_rebuild_probe` target compiled with its 14 manual probes ignored.
+- Concurrent feature-matrix runs reproduced the process-global diagnostic-test interference
+  already assigned to QUAL-001H; the affected targets passed alone and the complete matrices passed
+  serialized. This is test-layout evidence, not a production-output difference.
+- Single-thread and six-thread/96-bin fingerprints remained exactly
+  `0991e1df6f60d5de` and `0e65ca5dbe8fe07c`, with semantic topology
+  `961e56d915d09a4e`. The FMA representation fingerprint remained
+  `30bde3bc634ebb50` after the spherical specialization.
+- Compatibility removal versus `82e2b4e` was counter-neutral: single-thread instruction/branch
+  medians stayed within `0.00003%`, default-parallel retired work stayed within `0.03%`, and
+  loadable binary sections were byte-identical.
+- The spherical specialization versus `e37962c` moved instruction medians by
+  `+0.01297%` to `+0.01441%` across Fibonacci/uniform and single/default-parallel cells; branch
+  medians stayed between `-0.00072%` and `+0.00053%`. Cycle medians ranged from `-0.61%` to
+  `+0.10%` without a corroborating adverse retired-work signal. Text shrank 280 bytes; total
+  text/data/BSS size shrank 8 bytes.
+- The final visibility/documentation candidate and immediate parent `83b9392` had identical
+  `.text`, `.rodata`, and `.data` hashes and identical text/data/BSS sizes. ELF build IDs differed
+  because Rust metadata/symbol visibility changed; loadable program content did not.
+
+No quiet wall-clock run was warranted: the only stable counter movement was a negligible
+`~0.014%` instruction increase after deleting an unused generic seam, while cycles and task clock
+remained uncorrelated shared-host noise.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

@@ -33,7 +33,7 @@ fn cswap_unpredictable_u64(v: &mut [u64], i: usize, j: usize) {
 ///
 /// Based on the standard library's `insertion_sort` but keeps the loop in a
 /// tight pointer form for better codegen on small slices.
-pub fn insertion_sort_ptr<T, F>(v: &mut [T], is_less: &mut F)
+pub(crate) fn insertion_sort_ptr<T, F>(v: &mut [T], is_less: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -86,7 +86,7 @@ where
 ///
 /// Merges `left` and `right` (both sorted) into `dst`.
 /// Both `left` and `right` must have the same length.
-pub fn bidirectional_same_size_merge<T: Copy, F>(
+pub(crate) fn bidirectional_same_size_merge<T: Copy, F>(
     left: &[T],
     right: &[T],
     dst: &mut [T],
@@ -138,7 +138,7 @@ pub fn bidirectional_same_size_merge<T: Copy, F>(
 /// Simple forward-only merge (fallback when bidirectional isn't beneficial).
 ///
 /// Merges sorted `left` and `right` into `dst`.
-pub fn merge_forward<T: Copy, F>(left: &[T], right: &[T], dst: &mut [T], is_less: &mut F)
+pub(crate) fn merge_forward<T: Copy, F>(left: &[T], right: &[T], dst: &mut [T], is_less: &mut F)
 where
     F: FnMut(&T, &T) -> bool,
 {
@@ -303,6 +303,9 @@ const SENTINEL: u64 = u64::MAX;
 /// Requirements:
 /// - `N <= 35` (larger sizes fall back to `sort_unstable`)
 /// - `u64::MAX` must not appear in the input (used as the sentinel for padding)
+// Public here only so the `microbench` feature can re-export it from the crate
+// root; the normal library surface does not expose the private `sort` module.
+#[allow(unreachable_pub)]
 pub fn sort_small(v: &mut [u64]) {
     let n = v.len();
     if n < 8 {

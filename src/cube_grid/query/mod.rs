@@ -18,7 +18,7 @@ use super::{face_uv_to_cell, point_to_face_uv, CubeMapGrid, CubeMapGridScratch};
 impl CubeMapGrid {
     /// Get cell index for a point.
     #[inline]
-    pub fn point_to_cell(&self, p: Vec3) -> usize {
+    pub(crate) fn point_to_cell(&self, p: Vec3) -> usize {
         let (face, u, v) = point_to_face_uv(p);
         face_uv_to_cell(face, u, v, self.res)
     }
@@ -26,7 +26,7 @@ impl CubeMapGrid {
     /// Get the precomputed cell index for `points[idx]` used to build this grid.
     #[cfg_attr(not(test), allow(dead_code))]
     #[inline]
-    pub fn point_index_to_cell(&self, idx: usize) -> usize {
+    pub(crate) fn point_index_to_cell(&self, idx: usize) -> usize {
         self.point_cells[idx] as usize
     }
 
@@ -45,19 +45,19 @@ impl CubeMapGrid {
 
     /// Get grid resolution (cells per face).
     #[inline]
-    pub fn res(&self) -> usize {
+    pub(crate) fn res(&self) -> usize {
         self.res
     }
 
     /// Get cell offsets array (length = num_cells + 1).
     #[inline]
-    pub fn cell_offsets(&self) -> &[u32] {
+    pub(crate) fn cell_offsets(&self) -> &[u32] {
         &self.cell_offsets
     }
 
     /// Get point indices array (SOA layout, length = n).
     #[inline]
-    pub fn point_indices(&self) -> &[u32] {
+    pub(crate) fn point_indices(&self) -> &[u32] {
         &self.point_indices
     }
 
@@ -66,7 +66,7 @@ impl CubeMapGrid {
     /// global index, in spatial slot order — a cache-friendly neighbor gather
     /// (position + index in one cache line) for the clip path.
     #[inline]
-    pub fn point_pos_slots(&self) -> &[crate::cube_grid::SlotPoint] {
+    pub(crate) fn point_pos_slots(&self) -> &[crate::cube_grid::SlotPoint] {
         debug_assert_eq!(
             self.cell_points_aos.len(),
             self.point_indices.len(),
@@ -80,7 +80,7 @@ impl CubeMapGrid {
     // core; tests still use this accessor.
     #[cfg_attr(not(test), allow(dead_code))]
     #[inline]
-    pub fn cell_points(&self, cell: usize) -> &[u32] {
+    pub(crate) fn cell_points(&self, cell: usize) -> &[u32] {
         let start = self.cell_offsets[cell] as usize;
         let end = self.cell_offsets[cell + 1] as usize;
         &self.point_indices[start..end]
@@ -88,7 +88,7 @@ impl CubeMapGrid {
 
     /// Get the 9 neighbor cells (including self) for a cell.
     #[inline]
-    pub fn cell_neighbors(&self, cell: usize) -> &[u32; 9] {
+    pub(crate) fn cell_neighbors(&self, cell: usize) -> &[u32; 9] {
         &self.neighbors[cell]
     }
 
@@ -136,7 +136,7 @@ impl CubeMapGrid {
 
     /// Get the ring-2 cells (Chebyshev distance 2) for a cell.
     #[inline]
-    pub fn cell_ring2(&self, cell: usize) -> &[u32] {
+    pub(crate) fn cell_ring2(&self, cell: usize) -> &[u32] {
         let len = self.ring2_lens[cell] as usize;
         &self.ring2[cell][..len]
     }
@@ -145,7 +145,7 @@ impl CubeMapGrid {
     ///
     /// Indexed by `face * (res + 1) + line`, where `line ∈ [0, res]`.
     #[inline]
-    pub fn face_u_line_plane(&self, face: usize, line: usize) -> Vec3 {
+    pub(crate) fn face_u_line_plane(&self, face: usize, line: usize) -> Vec3 {
         debug_assert!(face < 6, "invalid face {}", face);
         debug_assert!(
             line <= self.res,
@@ -160,7 +160,7 @@ impl CubeMapGrid {
     ///
     /// Indexed by `face * (res + 1) + line`, where `line ∈ [0, res]`.
     #[inline]
-    pub fn face_v_line_plane(&self, face: usize, line: usize) -> Vec3 {
+    pub(crate) fn face_v_line_plane(&self, face: usize, line: usize) -> Vec3 {
         debug_assert!(face < 6, "invalid face {}", face);
         debug_assert!(
             line <= self.res,
@@ -172,7 +172,7 @@ impl CubeMapGrid {
     }
 
     /// Create a reusable scratch buffer for fast repeated queries.
-    pub fn make_scratch(&self) -> CubeMapGridScratch {
+    pub(crate) fn make_scratch(&self) -> CubeMapGridScratch {
         CubeMapGridScratch::new(6 * self.res * self.res)
     }
 

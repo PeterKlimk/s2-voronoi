@@ -2,16 +2,16 @@
 
 pub(crate) mod builder;
 pub(crate) mod clippers;
-pub mod types;
+pub(crate) mod types;
 
 #[cfg(any(test, feature = "microbench"))]
-pub mod microbench;
+pub(crate) mod microbench;
 
 #[cfg(feature = "microbench")]
-pub use microbench::{run_batch_clip_microbench, run_clip_convex_microbench};
+pub(crate) use microbench::{run_batch_clip_microbench, run_clip_convex_microbench};
 
 // Re-export core types and builder for external use within the crate
-pub use builder::Topo2DBuilder;
+pub(crate) use builder::Topo2DBuilder;
 pub(crate) use builder::{
     BuilderClipOutcome, BuilderFallbackRequest, BuilderFallbackTrigger, BuilderStepOutcome,
 };

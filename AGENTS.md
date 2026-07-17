@@ -77,14 +77,21 @@ src/
 ├── types.rs                       # SpherePoint storage + raw input adapters
 ├── diagram.rs                     # SphericalVoronoi storage
 ├── cell_mesh.rs                   # Explicitly simplified S2 cell meshes + provenance
+├── adjacency.rs                   # Generator adjacency derived from diagram/cell mesh
+├── delaunay.rs                    # Dual triangulation views
 ├── validation.rs                  # Topology/consistency checks
 ├── locate.rs                      # Point-location API
 ├── measures.rs                    # Area, centroid, and Lloyd geometry
 ├── spherical_arc.rs               # Owner-conditioned spherical edge geometry
+├── embedding.rs                   # World-space sphere projection/wrappers
 ├── error.rs                       # VoronoiError
 ├── fp.rs                          # Numeric helper ops
 ├── tolerances.rs                  # Centralized numerical tolerances
 ├── policy.rs                      # Grid and query policy
+├── packed_layout.rs               # Packed point/layout helpers
+├── spatial_order.rs               # Deterministic spherical ordering
+├── point_audit.rs                 # Profiling-only point audit surface
+├── quality.rs                     # Tools-only diagnostic/reference routines
 ├── knn_clipping/                  # Main backend
 │   ├── compute.rs                 # End-to-end backend orchestration
 │   ├── driver.rs                  # Per-bin cell construction
@@ -96,7 +103,7 @@ src/
 │   ├── cell_build/                # Single-cell construction loop
 │   └── topo2d/                    # Gnomonic/topological clipping
 ├── live_dedup/                    # Sharded dedup + assembly
-├── timing/                        # Timing feature plumbing
+├── timing/                        # Real/zero-sized timing backends
 ├── cube_grid/                     # Spatial index + query stack
 │   ├── build.rs                   # Grid construction
 │   ├── projection.rs              # Face/uv/st conversion helpers
@@ -106,6 +113,11 @@ src/
 │   └── sort_nets.rs               # Auto-generated sorting network code
 └── sort.rs                        # Internal small-sort utilities (feature/test use)
 ```
+
+`live_dedup/` and reconciliation are intentionally specialized to spherical `Vec3` positions.
+Reintroduce a shared position abstraction only when a second in-repository backend supplies a
+current consumer and contract tests. `src/generated/sort_nets.rs` must be changed through
+`scripts/gen_sort_nets.py`, not by editing the generated body.
 
 ## Features
 

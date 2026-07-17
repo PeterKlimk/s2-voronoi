@@ -12,6 +12,7 @@ Uses data from sorting_networks.json
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
 
 
@@ -20,6 +21,18 @@ def load_networks():
     json_path = Path(__file__).parent.parent / "sorting_networks.json"
     with open(json_path) as f:
         return json.load(f)
+
+
+def format_rust(source):
+    """Keep checked-in output identical to the repository's rustfmt form."""
+    result = subprocess.run(
+        ["rustfmt", "--edition", "2021"],
+        input=source,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return result.stdout
 
 
 def emit_header():
@@ -76,7 +89,7 @@ def emit_sort8(networks):
     lines = ["/// Sort 8 elements using a sorting network (all in registers)."]
     lines.append("/// Returns sorted array.")
     lines.append("#[inline(always)]")
-    lines.append("pub fn sort8_net(")
+    lines.append("pub(crate) fn sort8_net(")
     lines.append("    mut r0: u64, mut r1: u64, mut r2: u64, mut r3: u64,")
     lines.append("    mut r4: u64, mut r5: u64, mut r6: u64, mut r7: u64,")
     lines.append(") -> [u64; 8] {")
@@ -118,7 +131,9 @@ def emit_hybrid_sort_tail_out(networks, key, fn_name, num_slice, doc_slice_len):
     lines.append("/// - Callers must ensure `u64::MAX` does not appear in the input values when using padding")
     # Keep this as an out-of-line function by default to avoid code-size bloat when
     # used as a building block (e.g., inside larger routines).
-    lines.append(f"pub unsafe fn {fn_name}(base: *mut u64, out: *mut u64, tail_len: usize) {{")
+    lines.append(
+        f"pub(crate) unsafe fn {fn_name}(base: *mut u64, out: *mut u64, tail_len: usize) {{"
+    )
     lines.append("    debug_assert!(tail_len <= 8);")
     lines.append("")
     lines.append("    // Load tail registers (pad with sentinels).")
@@ -196,7 +211,9 @@ def emit_hybrid_sort_tail_out(networks, key, fn_name, num_slice, doc_slice_len):
     lines.append("}")
     return "\n".join(lines)
 
-def emit_hybrid_sort_tail_out_var_regs(networks, key, fn_name, num_slice, num_regs, vis="pub"):
+def emit_hybrid_sort_tail_out_var_regs(
+    networks, key, fn_name, num_slice, num_regs, vis="pub(crate)"
+):
     """Like emit_hybrid_sort_tail_out, but supports a variable number of tail registers."""
     data = networks[key]
     comparators = data["comparators"]
@@ -338,7 +355,7 @@ def main():
         )
     )
     output.append(emit_tests())
-    rendered = "\n".join(output)
+    rendered = format_rust("\n".join(output))
 
     out_path = Path(__file__).parent.parent / "src" / "generated" / "sort_nets.rs"
     if args.check:

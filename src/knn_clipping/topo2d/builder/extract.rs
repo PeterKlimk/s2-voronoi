@@ -580,7 +580,10 @@ impl FallbackBuilder {
 
 impl Topo2DBuilder {
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn to_vertex_data_full(&self, buffer: &mut CellOutputBuffer) -> Result<(), CellFailure> {
+    pub(crate) fn to_vertex_data_full(
+        &self,
+        buffer: &mut CellOutputBuffer,
+    ) -> Result<(), CellFailure> {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder.to_vertex_data_full(buffer),
             BuilderImpl::Fallback(builder) => builder.to_vertex_data_full(buffer),
@@ -635,7 +638,7 @@ impl Topo2DBuilder {
         true
     }
 
-    pub fn count_active_planes(&self) -> (usize, usize) {
+    pub(crate) fn count_active_planes(&self) -> (usize, usize) {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder.count_active_planes(),
             BuilderImpl::Fallback(builder) => builder.count_active_planes(),

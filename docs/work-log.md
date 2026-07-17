@@ -59,7 +59,7 @@ prevention rather than an overclaimed proof.
 | POINT-002 | P2 | Completed | Closure-based zero-intermediate ingest landed without direct-path regression |
 | POINT-003 | P1 | Completed | Locator query validation and normalized ranking/certification landed |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
-| QUAL-001 | P2 | Active | Remove obsolete compatibility surfaces and empty wrappers (QUAL-001F) |
+| QUAL-001 | P2 | Active | Organize diagnostic knobs, probes, and test layout (QUAL-001H) |
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
@@ -287,7 +287,7 @@ tasks and are not duplicated here.
 ### QUAL-001 — Performance-preserving cleanup
 
 - **Priority:** P2
-- **Status:** Active; baseline and QUAL-001A vocabulary migration completed 2026-07-17
+- **Status:** Active; baseline, QUAL-001A, and QUAL-001F completed 2026-07-17
 - **Goal:** reduce change amplification and make pipeline invariants structural without giving back
   established throughput, memory behavior, or numerical/correctness guarantees.
 - **Compatibility posture:** there are no external users as of 2026-07-17. Use this window for
@@ -308,9 +308,15 @@ tasks and are not duplicated here.
   multi-thread retired work remained within its declared noise band, and code size/RSS gates
   passed. Detailed measurements are in
   [`code-quality-baseline.md`](code-quality-baseline.md#qual-001a-validation-result).
-- **Next gate:** QUAL-001F—remove unused compatibility re-exports, resolve empty
-  `TerminationConfig`, decide the current planar abstraction, and audit doc-hidden/internal
-  visibility before changing state shapes.
+- **QUAL-001F result:** unused compatibility re-exports and the empty `TerminationConfig` were
+  removed. With no second backend in the repository, live dedup and reconciliation now own
+  spherical `Vec3` positions directly. The compiler visibility audit restricted 216 unreachable
+  internal spellings across default, all-feature, and test builds, including generator-owned
+  sorting-network exports, to crate scope. Feature-gated diagnostics and experimental report
+  fields remain because repository probes/tools and defect fixtures consume them; their long-term
+  organization belongs to QUAL-001H. Module maps now describe the actual tree.
+- **Next gate:** QUAL-001H—classify diagnostic/environment knobs, separate manual probes from
+  active regression suites, and make the `quality` surface an explicit feature/API decision.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

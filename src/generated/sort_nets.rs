@@ -43,7 +43,7 @@ unsafe fn cswap_ptr(base: *mut u64, i: usize, j: usize) {
 /// Sort 8 elements using a sorting network (all in registers).
 /// Returns sorted array.
 #[inline(always)]
-pub fn sort8_net(
+pub(crate) fn sort8_net(
     mut r0: u64,
     mut r1: u64,
     mut r2: u64,
@@ -88,7 +88,7 @@ pub fn sort8_net(
 /// - `out` must point to at least `tail_len` valid u64 elements
 /// - `tail_len <= 8`
 /// - Callers must ensure `u64::MAX` does not appear in the input values when using padding
-pub unsafe fn sort16_tail_out(base: *mut u64, out: *mut u64, tail_len: usize) {
+pub(crate) unsafe fn sort16_tail_out(base: *mut u64, out: *mut u64, tail_len: usize) {
     debug_assert!(tail_len <= 8);
 
     // Load tail registers (pad with sentinels).
@@ -289,7 +289,7 @@ pub unsafe fn sort16_tail_out(base: *mut u64, out: *mut u64, tail_len: usize) {
 /// - `out` must point to at least `tail_len` valid u64 elements
 /// - `tail_len <= 8`
 /// - Callers must ensure `u64::MAX` does not appear in the input values when using padding
-pub unsafe fn sort24_tail_out(base: *mut u64, out: *mut u64, tail_len: usize) {
+pub(crate) unsafe fn sort24_tail_out(base: *mut u64, out: *mut u64, tail_len: usize) {
     debug_assert!(tail_len <= 8);
 
     // Load tail registers (pad with sentinels).

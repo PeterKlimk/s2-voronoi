@@ -1,7 +1,7 @@
 use super::super::CubeMapGridScratch;
 
 impl CubeMapGridScratch {
-    pub fn new(num_cells: usize) -> Self {
+    pub(crate) fn new(num_cells: usize) -> Self {
         Self {
             visited_stamp: vec![0; num_cells],
             stamp: 0,

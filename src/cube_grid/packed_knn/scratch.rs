@@ -16,7 +16,7 @@ const MAX_CANDIDATES_HARD: usize = 65_536;
 const MAX_AGGREGATE_CANDIDATE_WORK: usize = 1 << 20;
 
 /// Reusable scratch buffers for packed per-cell group queries.
-pub struct PackedKnnCellScratch {
+pub(crate) struct PackedKnnCellScratch {
     cell_ranges: Vec<PackedCellRange>,
     next_group_gen: u32,
     chunk0_keys: Vec<Vec<u64>>,
@@ -147,7 +147,7 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
 }
 
 impl PackedKnnCellScratch {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             cell_ranges: Vec::with_capacity(9),
             next_group_gen: 1,
@@ -168,7 +168,7 @@ impl PackedKnnCellScratch {
 
     #[inline]
     #[cfg(test)]
-    pub fn security(&self, qi: usize) -> f32 {
+    pub(crate) fn security(&self, qi: usize) -> f32 {
         self.security_thresholds[qi]
     }
 

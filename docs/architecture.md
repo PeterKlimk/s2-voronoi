@@ -76,10 +76,12 @@ Ray et al., *Meshless Voronoi on the GPU* (2018), is the source of the per-cell 
 above. They stop at independent cells — each thread holds its own polyhedron and nothing is
 shared, which is the right contract for Lloyd loops and flux integrals. Most uses of a Voronoi
 *diagram*, though, want a single graph: each vertex stored once, each edge knowing both its cells.
-Producing that from independently-built cells is the main work this crate adds, and the rest of
-the pipeline is geometry-agnostic — it is generic over the vertex position type, with the sphere
-contributing a thin driver (spatial index with certified distance bounds, bisector construction,
-termination predicate).
+Producing that from independently-built cells is the main work this crate adds. The stitching
+pipeline is geometry-light but intentionally spherical: it stores `Vec3` positions, measures
+spherical chord distances during reconciliation, and has no boundary-edge policy. Its ownership,
+deduplication, and assembly mechanisms remain separated from cell construction, but the crate does
+not carry a generic position abstraction for a backend that is not present. Generality should be
+reintroduced only with a second current backend and shared contract tests.
 
 Three mechanisms make it work without a global lock:
 
@@ -132,22 +134,29 @@ memory. `UnitVec3` remains an unchecked raw input adapter and is not a stored-ou
 
 ## Module map
 
-- `lib.rs` — public API. `diagram.rs` — Voronoi diagram storage and views. `cell_mesh.rs` — dense
-  explicitly simplified spherical cell meshes, provenance, and generic mesh validation.
-- `types.rs` — checked `SpherePoint` storage, unchecked `UnitVec3` input, and `UnitVec3Like` input
-  adaptation. `tolerances.rs` — numerical slack, with per-constant justification. `policy.rs` —
-  performance heuristics (grid density, packed sizing, termination cadence), kept separate from
-  tolerances.
-- `embedding.rs` — f64 world-coordinate projection, `SphereEmbedding`, embedded diagram/report
-  wrappers, and world-space point location; delegates all geometry to the unit backend.
-- `live_dedup/` — the geometry-agnostic core: sharded vertex ownership, deferred-slot patching,
-  edge-check propagation, assembly. Generic over the vertex position type.
-- `knn_clipping/` — the spherical backend: per-bin `driver.rs`, single-cell `cell_build/`,
-  gnomonic clipping in `topo2d/`, `preprocess.rs` (weld), `edge_reconcile.rs`, and cold-path
-  local rebuilding in `local_rebuild.rs` / `local_hull.rs`; `output_resolution.rs` owns terminal
-  exact-zero canonicalization and the explicit cell-elision quotient.
-- `cube_grid/` — cube-map spatial index and packed-kNN stage: dot-product distance with
-  conservative cap/plane upper bounds, ring walk with per-ring certificates.
-- `locate.rs` — fallible point-query normalization and point location, reusing the grid shell
-  frontiers to answer nearest-generator queries. `validation.rs` — strict subdivision checks.
-- `timing/` — optional instrumentation.
+- `lib.rs` owns the public compute/configuration/report surface. `types.rs`, `diagram.rs`, and
+  `error.rs` own checked point storage, diagram storage/views, and public errors respectively.
+- `cell_mesh.rs` owns explicitly simplified spherical cell meshes and provenance. `adjacency.rs`
+  and `delaunay.rs` derive graph views; `measures.rs` and `spherical_arc.rs` own area, centroid,
+  Lloyd, and owner-conditioned edge geometry.
+- `embedding.rs` owns f64 world-coordinate projection and delegates unit-sphere geometry to the
+  common backend. `locate.rs` owns checked point location. `validation.rs` owns strict
+  subdivision checks.
+- `fp.rs` is the scalar/SIMD numerical backend seam. `tolerances.rs` owns numerical slack;
+  `policy.rs` owns performance heuristics. `packed_layout.rs` and `spatial_order.rs` own packed
+  memory-layout and deterministic ordering helpers.
+- `cube_grid/` owns the cube-map spatial index. `query/` implements certified shell traversal and
+  resumable directed queries; `packed_knn/` implements batched packed selection.
+- `knn_clipping/` owns end-to-end spherical construction. `compute.rs` orchestrates the backend;
+  `driver.rs` builds bins; `cell_build/` runs one cell; `topo2d/` performs gnomonic clipping;
+  `preprocess.rs` merges near-coincident inputs; `edge_reconcile.rs` reconciles assembled cycles;
+  `local_rebuild.rs` and `local_hull.rs` own cold neighborhood rebuilding; and
+  `output_resolution.rs` owns terminal stored-zero policy.
+- `live_dedup/` owns spherical sharded vertex ownership, forwarded edge checks, deferred-slot
+  patching, and global assembly. It is specialized to `Vec3`; a future second geometry backend
+  must earn any shared abstraction with a current consumer and tests.
+- `timing/` contains real and zero-sized timing backends. `quality.rs` and `point_audit.rs` are
+  feature-gated diagnostic surfaces; `sort.rs` is the small-sort facade used by production and
+  microbench code.
+- `generated/sort_nets.rs` is generated by `scripts/gen_sort_nets.py`. Change the generator, then
+  regenerate the checked-in file; do not edit the generated network body manually.

@@ -196,7 +196,7 @@ impl CubeMapGrid {
     /// For n points, good choices:
     /// - res ≈ sqrt(n / 300) for ~50 points per cell
     /// - res ≈ sqrt(n / 600) for ~100 points per cell
-    pub fn new(points: &[Vec3], res: usize) -> Self {
+    pub(crate) fn new(points: &[Vec3], res: usize) -> Self {
         #[cfg(feature = "timing")]
         let mut timings = CubeMapGridBuildTimings::default();
         #[cfg(feature = "timing")]

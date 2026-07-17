@@ -1,6 +1,6 @@
 # Code quality and maintainability plan
 
-**Status:** active; baseline and QUAL-001A vocabulary migration completed
+**Status:** active; baseline, QUAL-001A vocabulary migration, and QUAL-001F architecture hygiene completed
 
 **Date:** 2026-07-17
 
@@ -193,6 +193,13 @@ These may represent a future workspace direction, but future intent should not m
 current dependency. With no external users, removal is the default; retention requires an active
 repository consumer, owner, and test.
 
+Resolved in QUAL-001F: obsolete re-exports and `TerminationConfig` were removed; the live-dedup
+and reconciliation pipeline was specialized to spherical `Vec3`; unreachable internal visibility
+was reduced to crate scope; and the generated-sort, feature-gated diagnostic, and module ownership
+boundaries were documented. The public diagnostic surfaces retained by this pass all have current
+repository consumers behind internal features or explicit experimental report fields. Their
+longer-term feature/layout decision remains QUAL-001H.
+
 ### F8 — Raw integer identities remain ambiguous at cold seams
 
 The implementation already has useful `BinId`, local-id, and edge-key wrappers, but reconciliation
@@ -368,6 +375,15 @@ the audit relocation.
 
 **Hot-path impact expected:** none, verified by build/codegen checks where aliases disappear
 
+**Progress:** completed 2026-07-17 in three independently validated changes. The compatibility
+shims and empty wrapper were removed first; the absent planar backend was then resolved by
+specializing shared storage/reconciliation to `Vec3`; finally 216 compiler-identified unreachable
+`pub` spellings (131 in the default library, 78 additional feature-only items, and 7 test-only
+items) were restricted to crate scope, and both module maps were refreshed. Doc-hidden
+`tools`, `profiling`, `microbench`, and `local_rebuild_probe` surfaces were retained because current
+repository binaries/tests consume them; QUAL-001H owns the explicit long-term diagnostic API
+decision.
+
 1. Remove public and internal compatibility re-exports that have no current repository consumer,
    and update remaining call sites to current module ownership.
 2. Replace or remove empty `TerminationConfig`; direct use of `PackedNeighborPolicy` is the current
@@ -448,7 +464,8 @@ repeatable adverse counter signal.
 
 1. ~~QUAL-001A coordinated public/internal vocabulary migration.~~ Completed 2026-07-17; state
    enums remain in Milestone 2.
-2. QUAL-001F compatibility-surface removal, empty wrappers, planar decision, and module maps.
+2. ~~QUAL-001F compatibility-surface removal, empty wrappers, planar decision, and module maps.~~
+   Completed 2026-07-17.
 3. QUAL-001H stale test knob and probe organization.
 4. QUAL-001E constant inventory and name-only relocation.
 5. QUAL-001I durable comment/documentation updates.

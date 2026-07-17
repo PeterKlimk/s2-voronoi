@@ -4,31 +4,31 @@ use std::time::Duration;
 use crate::cube_grid::{packed_knn::PackedKnnTimings, CubeMapGridBuildTimings};
 
 /// Timer that tracks elapsed time when timing is enabled.
-pub struct Timer(std::time::Instant);
+pub(crate) struct Timer(std::time::Instant);
 
 impl Timer {
     #[inline]
-    pub fn start() -> Self {
+    pub(crate) fn start() -> Self {
         Self(std::time::Instant::now())
     }
 
     #[inline]
-    pub fn elapsed(&self) -> Duration {
+    pub(crate) fn elapsed(&self) -> Duration {
         self.0.elapsed()
     }
 }
 
 /// Timer optimized for sequential sub-phase timing: each `lap()` uses a single `Instant::now()`.
-pub struct LapTimer(std::time::Instant);
+pub(crate) struct LapTimer(std::time::Instant);
 
 impl LapTimer {
     #[inline]
-    pub fn start() -> Self {
+    pub(crate) fn start() -> Self {
         Self(std::time::Instant::now())
     }
 
     #[inline]
-    pub fn lap(&mut self) -> Duration {
+    pub(crate) fn lap(&mut self) -> Duration {
         let now = std::time::Instant::now();
         let d = now.duration_since(self.0);
         self.0 = now;
@@ -177,7 +177,7 @@ impl WorkHistogram {
 /// lower bound of a power-of-two bucket above that. Relative-tail counts are
 /// conservative when their threshold cuts through such a bucket.
 #[derive(Debug, Clone, Default)]
-pub struct WorkDistribution {
+pub(crate) struct WorkDistribution {
     pub samples: u64,
     pub p50_bucket_lower: u64,
     pub p90_bucket_lower: u64,
@@ -194,7 +194,7 @@ pub struct WorkDistribution {
 
 /// Per-cell-group timing totals aggregated across all shards.
 #[derive(Debug, Clone, Default)]
-pub struct CellSubPhases {
+pub(crate) struct CellSubPhases {
     pub knn_query: Duration,
     pub packed_knn: Duration,
     pub packed_setup: Duration,
@@ -268,7 +268,7 @@ pub struct CellSubPhases {
 
 /// Fine-grained dedup timing and a few size counters.
 #[derive(Debug, Clone, Default)]
-pub struct DedupSubPhases {
+pub(crate) struct DedupSubPhases {
     pub bookkeeping: Duration,
     pub edge_check_overflow: Duration,
     pub deferred_patching: Duration,
@@ -291,7 +291,7 @@ pub struct DedupSubPhases {
 
 /// Accumulator for cell sub-phase timings (used per-bin, then merged).
 #[derive(Clone, Default)]
-pub struct CellSubAccum {
+pub(crate) struct CellSubAccum {
     knn_query: Duration,
     packed_knn: Duration,
     packed_setup: Duration,
@@ -354,22 +354,22 @@ pub struct CellSubAccum {
 
 impl CellSubAccum {
     #[inline]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
     #[inline]
-    pub fn add_knn(&mut self, d: Duration) {
+    pub(crate) fn add_knn(&mut self, d: Duration) {
         self.knn_query += d;
     }
 
     #[inline]
-    pub fn add_packed_knn(&mut self, d: Duration) {
+    pub(crate) fn add_packed_knn(&mut self, d: Duration) {
         self.packed_knn += d;
     }
 
     #[inline]
-    pub fn add_packed_knn_breakdown(&mut self, timings: &PackedKnnTimings) {
+    pub(crate) fn add_packed_knn_breakdown(&mut self, timings: &PackedKnnTimings) {
         self.packed_setup += timings.setup + timings.query_cache;
         self.packed_security += timings.security_thresholds;
         self.packed_center_pass += timings.center_pass;
@@ -397,38 +397,38 @@ impl CellSubAccum {
     }
 
     #[inline]
-    pub fn add_clip(&mut self, d: Duration) {
+    pub(crate) fn add_clip(&mut self, d: Duration) {
         self.clipping += d;
     }
 
     #[inline]
-    pub fn add_cert(&mut self, d: Duration) {
+    pub(crate) fn add_cert(&mut self, d: Duration) {
         self.certification += d;
     }
 
     #[inline]
-    pub fn add_key_dedup(&mut self, d: Duration) {
+    pub(crate) fn add_key_dedup(&mut self, d: Duration) {
         self.key_dedup += d;
     }
 
     #[inline]
-    pub fn add_edge_collect(&mut self, d: Duration) {
+    pub(crate) fn add_edge_collect(&mut self, d: Duration) {
         self.edge_collect += d;
     }
 
     #[inline]
-    pub fn add_edge_resolve(&mut self, d: Duration) {
+    pub(crate) fn add_edge_resolve(&mut self, d: Duration) {
         self.edge_resolve += d;
     }
 
     #[inline]
-    pub fn add_edge_emit(&mut self, d: Duration) {
+    pub(crate) fn add_edge_emit(&mut self, d: Duration) {
         self.edge_emit += d;
     }
 
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    pub fn add_cell_stage(
+    pub(crate) fn add_cell_stage(
         &mut self,
         stage: KnnCellStage,
         knn_exhausted: bool,
@@ -452,7 +452,7 @@ impl CellSubAccum {
     }
 
     #[inline]
-    pub fn add_work_profile(
+    pub(crate) fn add_work_profile(
         &mut self,
         candidates: usize,
         candidates_after_last_progress: usize,
@@ -467,14 +467,19 @@ impl CellSubAccum {
     }
 
     #[inline]
-    pub fn add_fallbacks(&mut self, projection: usize, polygon_cap: usize, all_constraints: usize) {
+    pub(crate) fn add_fallbacks(
+        &mut self,
+        projection: usize,
+        polygon_cap: usize,
+        all_constraints: usize,
+    ) {
         self.fallback_projection += projection as u64;
         self.fallback_polygon_cap += polygon_cap as u64;
         self.fallback_all_constraints += all_constraints as u64;
     }
 
     #[inline]
-    pub fn add_shell_layer_usage(
+    pub(crate) fn add_shell_layer_usage(
         &mut self,
         batches: usize,
         slots: usize,
@@ -489,7 +494,7 @@ impl CellSubAccum {
 
     #[inline]
     #[allow(clippy::too_many_arguments)]
-    pub fn add_directional_shadow(
+    pub(crate) fn add_directional_shadow(
         &mut self,
         checks: usize,
         candidate_tests: usize,
@@ -511,7 +516,7 @@ impl CellSubAccum {
     }
 
     #[inline]
-    pub fn merge(&mut self, other: &CellSubAccum) {
+    pub(crate) fn merge(&mut self, other: &CellSubAccum) {
         self.knn_query += other.knn_query;
         self.packed_knn += other.packed_knn;
         self.packed_setup += other.packed_setup;
@@ -578,7 +583,7 @@ impl CellSubAccum {
     }
 
     #[inline]
-    pub fn into_sub_phases(self) -> CellSubPhases {
+    pub(crate) fn into_sub_phases(self) -> CellSubPhases {
         CellSubPhases {
             knn_query: self.knn_query,
             packed_knn: self.packed_knn,
@@ -643,7 +648,7 @@ impl CellSubAccum {
 
 /// Phase-level timings for a full Voronoi run.
 #[derive(Debug, Clone)]
-pub struct PhaseTimings {
+pub(crate) struct PhaseTimings {
     pub total: Duration,
     pub preprocess: Duration,
     pub weld_pairs: u64,
@@ -673,7 +678,7 @@ pub struct PhaseTimings {
 }
 
 impl PhaseTimings {
-    pub fn report(&self, n: usize) {
+    pub(crate) fn report(&self, n: usize) {
         let ms = |d: Duration| d.as_secs_f64() * 1000.0;
         let total_ms = ms(self.total);
 
@@ -1143,7 +1148,7 @@ impl PhaseTimings {
 }
 
 /// Builder for collecting phase timings.
-pub struct TimingBuilder {
+pub(crate) struct TimingBuilder {
     t_start: std::time::Instant,
     preprocess: Duration,
     weld_pairs: u64,
@@ -1171,7 +1176,7 @@ pub struct TimingBuilder {
 }
 
 impl TimingBuilder {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             t_start: std::time::Instant::now(),
             preprocess: Duration::ZERO,
@@ -1200,44 +1205,44 @@ impl TimingBuilder {
         }
     }
 
-    pub fn set_grid_stats(&mut self, res: usize, max_occupancy: u64, rebuilt: bool) {
+    pub(crate) fn set_grid_stats(&mut self, res: usize, max_occupancy: u64, rebuilt: bool) {
         self.grid_res = res;
         self.grid_max_occupancy = max_occupancy;
         self.grid_rebuilt = rebuilt;
     }
 
-    pub fn set_preprocess(&mut self, d: Duration) {
+    pub(crate) fn set_preprocess(&mut self, d: Duration) {
         self.preprocess = d;
     }
 
-    pub fn set_weld_pair_stats(&mut self, len: usize, capacity: usize) {
+    pub(crate) fn set_weld_pair_stats(&mut self, len: usize, capacity: usize) {
         self.weld_pairs = len as u64;
         self.weld_pair_capacity = capacity as u64;
     }
 
-    pub fn set_knn_build(&mut self, d: Duration) {
+    pub(crate) fn set_knn_build(&mut self, d: Duration) {
         self.knn_build = d;
     }
 
-    pub fn add_knn_build(&mut self, d: Duration) {
+    pub(crate) fn add_knn_build(&mut self, d: Duration) {
         self.knn_build += d;
     }
 
-    pub fn set_knn_build_sub(&mut self, sub: CubeMapGridBuildTimings) {
+    pub(crate) fn set_knn_build_sub(&mut self, sub: CubeMapGridBuildTimings) {
         self.knn_build_sub = Some(sub);
     }
 
-    pub fn set_cell_construction(&mut self, d: Duration, sub: CellSubPhases) {
+    pub(crate) fn set_cell_construction(&mut self, d: Duration, sub: CellSubPhases) {
         self.cell_construction = d;
         self.cell_sub = sub;
     }
 
-    pub fn set_dedup(&mut self, d: Duration, sub: DedupSubPhases) {
+    pub(crate) fn set_dedup(&mut self, d: Duration, sub: DedupSubPhases) {
         self.dedup = d;
         self.dedup_sub = sub;
     }
 
-    pub fn set_edge_reconcile(
+    pub(crate) fn set_edge_reconcile(
         &mut self,
         d: Duration,
         merge_safety_scan_cells: usize,
@@ -1248,12 +1253,12 @@ impl TimingBuilder {
         self.merge_safety_global_fallbacks = merge_safety_global_fallbacks as u64;
     }
 
-    pub fn set_assemble(&mut self, d: Duration) {
+    pub(crate) fn set_assemble(&mut self, d: Duration) {
         self.assemble = d;
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn set_output_resolution_discovery(
+    pub(crate) fn set_output_resolution_discovery(
         &mut self,
         certified_hint: bool,
         drift_fallback: bool,
@@ -1272,7 +1277,7 @@ impl TimingBuilder {
         self.resolution_detected_edges = detected_edges as u64;
     }
 
-    pub fn finish(self) -> PhaseTimings {
+    pub(crate) fn finish(self) -> PhaseTimings {
         PhaseTimings {
             total: self.t_start.elapsed(),
             preprocess: self.preprocess,

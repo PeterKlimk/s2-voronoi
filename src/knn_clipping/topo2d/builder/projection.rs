@@ -28,14 +28,14 @@ pub(crate) fn sort3_u32(a: u32, b: u32, c: u32) -> [u32; 3] {
 }
 
 /// Orthonormal tangent basis for gnomonic projection.
-pub struct TangentBasis {
+pub(crate) struct TangentBasis {
     pub t1: DVec3,
     pub t2: DVec3,
     pub g: DVec3,
 }
 
 impl TangentBasis {
-    pub fn new(g: DVec3) -> Self {
+    pub(crate) fn new(g: DVec3) -> Self {
         let len_sq = g.length_squared();
         if len_sq == 0.0 || !len_sq.is_finite() {
             return TangentBasis {
@@ -351,7 +351,7 @@ impl FallbackBuilder {
 }
 
 impl Topo2DBuilder {
-    pub fn new(generator_idx: usize, generator: Vec3) -> Self {
+    pub(crate) fn new(generator_idx: usize, generator: Vec3) -> Self {
         Self {
             inner: BuilderImpl::Gnomonic(GnomonicBuilder::new(generator_idx, generator)),
         }
@@ -364,7 +364,7 @@ impl Topo2DBuilder {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn reset(&mut self, generator_idx: usize, generator: Vec3) {
+    pub(crate) fn reset(&mut self, generator_idx: usize, generator: Vec3) {
         if let BuilderImpl::Gnomonic(builder) = &mut self.inner {
             builder.reset(generator_idx, generator);
         } else {
@@ -373,7 +373,7 @@ impl Topo2DBuilder {
     }
 
     #[inline]
-    pub fn is_bounded(&self) -> bool {
+    pub(crate) fn is_bounded(&self) -> bool {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder.is_bounded(),
             BuilderImpl::Fallback(builder) => builder.is_bounded(),
@@ -381,7 +381,7 @@ impl Topo2DBuilder {
     }
 
     #[inline]
-    pub fn is_failed(&self) -> bool {
+    pub(crate) fn is_failed(&self) -> bool {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder.is_failed(),
             BuilderImpl::Fallback(builder) => builder.is_failed(),
@@ -389,7 +389,7 @@ impl Topo2DBuilder {
     }
 
     #[inline]
-    pub fn failure(&self) -> Option<crate::live_dedup::CellFailure> {
+    pub(crate) fn failure(&self) -> Option<crate::live_dedup::CellFailure> {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder.failure(),
             BuilderImpl::Fallback(builder) => builder.failure(),
@@ -397,7 +397,7 @@ impl Topo2DBuilder {
     }
 
     #[inline]
-    pub fn vertex_count(&self) -> usize {
+    pub(crate) fn vertex_count(&self) -> usize {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder.vertex_count(),
             BuilderImpl::Fallback(builder) => builder.vertex_count(),
@@ -405,7 +405,7 @@ impl Topo2DBuilder {
     }
 
     #[inline]
-    pub fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
+    pub(crate) fn neighbor_indices_iter(&self) -> impl Iterator<Item = usize> + '_ {
         let iter: Box<dyn Iterator<Item = usize> + '_> = match &self.inner {
             BuilderImpl::Gnomonic(builder) => Box::new(builder.neighbor_indices_iter()),
             BuilderImpl::Fallback(builder) => Box::new(builder.neighbor_indices_iter()),
@@ -414,7 +414,7 @@ impl Topo2DBuilder {
     }
 
     #[cfg_attr(feature = "profiling", inline(never))]
-    pub fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
+    pub(crate) fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
         match &mut self.inner {
             BuilderImpl::Gnomonic(builder) => builder.can_terminate(max_unseen_dot_bound),
             BuilderImpl::Fallback(builder) => builder.can_terminate(max_unseen_dot_bound),

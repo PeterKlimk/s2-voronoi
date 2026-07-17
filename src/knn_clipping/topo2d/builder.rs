@@ -9,7 +9,7 @@ use crate::knn_clipping::topo2d::types::ClipResult;
 use crate::live_dedup::CellFailure;
 use glam::DVec3;
 
-pub use projection::TangentBasis;
+pub(crate) use projection::TangentBasis;
 
 // One long-lived instance per worker, reused via reset(); boxing the
 // large gnomonic variant would put indirection on the hot clip path.
@@ -19,7 +19,7 @@ enum BuilderImpl {
     Fallback(FallbackBuilder),
 }
 
-pub struct Topo2DBuilder {
+pub(crate) struct Topo2DBuilder {
     inner: BuilderImpl,
 }
 

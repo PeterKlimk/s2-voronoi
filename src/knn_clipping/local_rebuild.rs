@@ -714,7 +714,7 @@ pub(crate) fn rebuild_with_projected_delaunay(
 /// rebuilt rim agree with the fast diagram (fast ≈ the global-pole Delaunay).
 /// A/B reference for the local rebuilds; not a production path.
 #[cfg(feature = "local_rebuild_probe")]
-pub fn rebuild_with_global_delaunay(
+pub(crate) fn rebuild_with_global_delaunay(
     points: &[Vec3],
     work: &mut WorkingDiagram,
     defect_pairs: &[(u32, u32)],
@@ -909,7 +909,7 @@ fn low_incidence_gens(work: &WorkingDiagram) -> Vec<u32> {
 /// scales with the diagram (the old form copied every vertex, built a
 /// triple→vid map over all of them, and materialized every cell as its own
 /// `Vec`, ~1s at 2.5M generators before a single defect was examined).
-pub struct WorkingDiagram<'a> {
+pub(crate) struct WorkingDiagram<'a> {
     base_vertices: &'a [Vec3],
     base_keys: &'a ShardedVertexKeys,
     base_cells: &'a [VoronoiCell],
@@ -929,7 +929,7 @@ pub struct WorkingDiagram<'a> {
 impl<'a> WorkingDiagram<'a> {
     /// Overlay over the assembled global arrays (post-reconcile). `keys` is the
     /// per-vertex triple store; `cells`/`cell_indices` the flat CSR boundaries.
-    pub fn from_assembled(
+    pub(crate) fn from_assembled(
         vertices: &'a [Vec3],
         keys: &'a ShardedVertexKeys,
         cells: &'a [VoronoiCell],
@@ -1416,7 +1416,7 @@ impl<'a> WorkingDiagram<'a> {
         cells
     }
 
-    pub fn into_flat(self) -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>) {
+    pub(crate) fn into_flat(self) -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>) {
         let n = self.base_cells.len();
         let mut cells = Vec::with_capacity(n);
         let mut cell_indices = Vec::with_capacity(self.base_cell_indices.len());
@@ -1437,7 +1437,7 @@ impl<'a> WorkingDiagram<'a> {
 
 /// Outcome of a rebuild pass (diagnostics for tests / debug output).
 #[derive(Debug, Default, Clone, Copy)]
-pub struct LocalRebuildStats {
+pub(crate) struct LocalRebuildStats {
     /// Total grow rounds.
     pub rounds: usize,
     /// Distinct generators whose cells were rebuilt and spliced.
@@ -1449,7 +1449,7 @@ pub struct LocalRebuildStats {
 
 /// A0 probe stash payload: (effective points, fast per-cell triples).
 #[cfg(feature = "local_rebuild_probe")]
-pub type A0Stash = (Vec<Vec3>, Vec<Vec<[u32; 3]>>);
+pub(crate) type A0Stash = (Vec<Vec3>, Vec<Vec<[u32; 3]>>);
 
 #[cfg(feature = "local_rebuild_probe")]
 thread_local! {

@@ -1,4 +1,5 @@
 #![deny(missing_docs)]
+#![warn(unreachable_pub)]
 
 //! Spherical Voronoi diagrams on the unit sphere (S2).
 //!

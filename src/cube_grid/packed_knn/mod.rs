@@ -10,9 +10,9 @@ use super::CubeMapGrid;
 use crate::packed_layout::PackedSlotLayout;
 use crate::policy::PackedNeighborPolicy;
 
-pub use scratch::PackedKnnCellScratch;
+pub(crate) use scratch::PackedKnnCellScratch;
 pub(crate) use scratch::{PreparedPackedGroup, PreparedPackedGroupStatus};
-pub use timing::PackedKnnTimings;
+pub(crate) use timing::PackedKnnTimings;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PackedGroupInput<'a> {

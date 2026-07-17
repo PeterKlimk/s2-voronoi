@@ -13,7 +13,7 @@
 
 mod build;
 mod dense;
-pub mod packed_knn;
+pub(crate) mod packed_knn;
 mod projection;
 mod query;
 mod weld;
@@ -39,7 +39,7 @@ use std::time::Duration;
 /// line (no straddle, 4 per line).
 #[repr(C, align(16))]
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub struct SlotPoint {
+pub(crate) struct SlotPoint {
     /// The point's position (bit-identical to `points[idx]`).
     pub pos: Vec3,
     /// The point's global index into the original `points` slice.
@@ -70,7 +70,7 @@ pub(crate) struct CubeMapGridBuildTimings;
 #[cfg(feature = "timing")]
 impl CubeMapGridBuildTimings {
     #[inline]
-    pub fn total(&self) -> Duration {
+    pub(crate) fn total(&self) -> Duration {
         self.count_cells
             + self.prefix_sum
             + self.scatter_soa
@@ -87,7 +87,7 @@ impl CubeMapGridBuildTimings {
 const RING2_MAX: usize = 16;
 
 /// Cube-map spatial grid for points on unit sphere.
-pub struct CubeMapGrid {
+pub(crate) struct CubeMapGrid {
     pub(super) res: usize,
     /// Start index into point_indices for each cell, plus final length.
     /// Length: 6 * res² + 1
@@ -283,7 +283,7 @@ fn diagonal_from_edge_neighbors(center: u32, a: u32, b: u32, res: usize) -> u32 
 /// Reusable per-query scratch buffers.
 ///
 /// For performance (especially parallel queries), prefer `CubeMapGrid::make_scratch()`.
-pub struct CubeMapGridScratch {
+pub(crate) struct CubeMapGridScratch {
     /// Cell visitation stamps (avoids clearing between queries)
     visited_stamp: Vec<u32>,
     stamp: u32,

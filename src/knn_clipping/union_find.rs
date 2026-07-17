@@ -12,7 +12,7 @@ pub(crate) struct UnionFind {
 
 #[cfg(test)]
 impl UnionFind {
-    pub fn new(n: usize) -> Self {
+    pub(crate) fn new(n: usize) -> Self {
         let mut parent = Vec::with_capacity(n);
         for i in 0..n {
             parent.push(i as u32);
@@ -23,7 +23,7 @@ impl UnionFind {
         }
     }
 
-    pub fn find(&mut self, x: u32) -> u32 {
+    pub(crate) fn find(&mut self, x: u32) -> u32 {
         let idx = x as usize;
         let p = self.parent[idx];
         if p != x {
@@ -37,7 +37,7 @@ impl UnionFind {
     ///
     /// No production caller since edge_reconcile moved to `SparseUnionFind`;
     /// retained as the semantics oracle for the sparse equivalence test.
-    pub fn union(&mut self, a: u32, b: u32) -> bool {
+    pub(crate) fn union(&mut self, a: u32, b: u32) -> bool {
         let ra = self.find(a);
         let rb = self.find(b);
         if ra == rb {
@@ -72,11 +72,11 @@ pub(crate) struct SparseUnionFind {
 }
 
 impl SparseUnionFind {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    pub fn find(&mut self, x: u32) -> u32 {
+    pub(crate) fn find(&mut self, x: u32) -> u32 {
         let Some(&(p, _)) = self.nodes.get(&x) else {
             return x;
         };
@@ -99,7 +99,7 @@ impl SparseUnionFind {
     /// All ids that have entered the structure, sorted for determinism.
     /// Every id that participated in a successful union is included (both
     /// representatives and merged-away ids).
-    pub fn touched_ids(&self) -> Vec<u32> {
+    pub(crate) fn touched_ids(&self) -> Vec<u32> {
         let mut ids: Vec<u32> = self.nodes.keys().copied().collect();
         ids.sort_unstable();
         ids
@@ -107,7 +107,7 @@ impl SparseUnionFind {
 
     /// Order-dependent union: the smaller index always becomes the
     /// representative. Returns `true` if `a` and `b` were in different sets.
-    pub fn union_keep_min(&mut self, a: u32, b: u32) -> bool {
+    pub(crate) fn union_keep_min(&mut self, a: u32, b: u32) -> bool {
         let ra = self.find(a);
         let rb = self.find(b);
         if ra == rb {
@@ -120,7 +120,7 @@ impl SparseUnionFind {
 
     /// Union by rank, with `UnionFind::union`'s exact tie-breaking.
     /// Returns `true` if `a` and `b` were in different sets.
-    pub fn union(&mut self, a: u32, b: u32) -> bool {
+    pub(crate) fn union(&mut self, a: u32, b: u32) -> bool {
         let ra = self.find(a);
         let rb = self.find(b);
         if ra == rb {

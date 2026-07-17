@@ -4,74 +4,74 @@ use std::time::Duration;
 use crate::cube_grid::packed_knn::PackedKnnTimings;
 
 /// Dummy timer when `timing` is disabled (zero-sized).
-pub struct Timer;
+pub(crate) struct Timer;
 
 impl Timer {
     #[inline(always)]
-    pub fn start() -> Self {
+    pub(crate) fn start() -> Self {
         Self
     }
 
     #[inline(always)]
-    pub fn elapsed(&self) -> Duration {
+    pub(crate) fn elapsed(&self) -> Duration {
         Duration::ZERO
     }
 }
 
 /// Dummy lap timer when `timing` is disabled (zero-sized).
-pub struct LapTimer;
+pub(crate) struct LapTimer;
 
 impl LapTimer {
     #[inline(always)]
-    pub fn start() -> Self {
+    pub(crate) fn start() -> Self {
         Self
     }
 
     #[inline(always)]
-    pub fn lap(&mut self) -> Duration {
+    pub(crate) fn lap(&mut self) -> Duration {
         Duration::ZERO
     }
 }
 
 /// Dummy cell sub-phases when `timing` is disabled (zero-sized).
 #[derive(Debug, Clone, Copy, Default)]
-pub struct CellSubPhases;
+pub(crate) struct CellSubPhases;
 
 /// Dummy dedup sub-phases when `timing` is disabled (zero-sized).
 #[derive(Debug, Clone, Copy, Default)]
-pub struct DedupSubPhases;
+pub(crate) struct DedupSubPhases;
 
 /// Dummy accumulator when `timing` is disabled (zero-sized).
 #[derive(Clone, Copy, Default)]
-pub struct CellSubAccum;
+pub(crate) struct CellSubAccum;
 
 impl CellSubAccum {
     #[inline(always)]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self
     }
     #[inline(always)]
-    pub fn add_knn(&mut self, _d: Duration) {}
+    pub(crate) fn add_knn(&mut self, _d: Duration) {}
     #[inline(always)]
-    pub fn add_packed_knn(&mut self, _d: Duration) {}
+    pub(crate) fn add_packed_knn(&mut self, _d: Duration) {}
     #[inline(always)]
     #[allow(dead_code)]
-    pub fn add_packed_knn_breakdown(&mut self, _timings: &PackedKnnTimings) {}
+    pub(crate) fn add_packed_knn_breakdown(&mut self, _timings: &PackedKnnTimings) {}
     #[inline(always)]
-    pub fn add_clip(&mut self, _d: Duration) {}
+    pub(crate) fn add_clip(&mut self, _d: Duration) {}
     #[inline(always)]
-    pub fn add_cert(&mut self, _d: Duration) {}
+    pub(crate) fn add_cert(&mut self, _d: Duration) {}
     #[inline(always)]
-    pub fn add_key_dedup(&mut self, _d: Duration) {}
+    pub(crate) fn add_key_dedup(&mut self, _d: Duration) {}
     #[inline(always)]
-    pub fn add_edge_collect(&mut self, _d: Duration) {}
+    pub(crate) fn add_edge_collect(&mut self, _d: Duration) {}
     #[inline(always)]
-    pub fn add_edge_resolve(&mut self, _d: Duration) {}
+    pub(crate) fn add_edge_resolve(&mut self, _d: Duration) {}
     #[inline(always)]
-    pub fn add_edge_emit(&mut self, _d: Duration) {}
+    pub(crate) fn add_edge_emit(&mut self, _d: Duration) {}
     #[inline(always)]
     #[allow(clippy::too_many_arguments)] // mirrors the real timing API
-    pub fn add_cell_stage(
+    pub(crate) fn add_cell_stage(
         &mut self,
         _stage: KnnCellStage,
         _knn_exhausted: bool,
@@ -86,7 +86,7 @@ impl CellSubAccum {
     }
     #[inline(always)]
     #[allow(clippy::too_many_arguments)] // mirrors the real timing API
-    pub fn add_directional_shadow(
+    pub(crate) fn add_directional_shadow(
         &mut self,
         _checks: usize,
         _candidate_tests: usize,
@@ -99,7 +99,7 @@ impl CellSubAccum {
     ) {
     }
     #[inline(always)]
-    pub fn add_fallbacks(
+    pub(crate) fn add_fallbacks(
         &mut self,
         _projection: usize,
         _polygon_cap: usize,
@@ -107,54 +107,54 @@ impl CellSubAccum {
     ) {
     }
     #[inline(always)]
-    pub fn merge(&mut self, _other: &CellSubAccum) {}
+    pub(crate) fn merge(&mut self, _other: &CellSubAccum) {}
     #[inline(always)]
-    pub fn into_sub_phases(self) -> CellSubPhases {
+    pub(crate) fn into_sub_phases(self) -> CellSubPhases {
         CellSubPhases
     }
 }
 
 /// Dummy timings when `timing` is disabled (zero-sized).
 #[derive(Debug, Clone, Copy)]
-pub struct PhaseTimings;
+pub(crate) struct PhaseTimings;
 
 impl PhaseTimings {
     #[inline(always)]
-    pub fn report(&self, _n: usize) {}
+    pub(crate) fn report(&self, _n: usize) {}
 }
 
 /// Dummy builder when `timing` is disabled.
-pub struct TimingBuilder;
+pub(crate) struct TimingBuilder;
 
 impl TimingBuilder {
     #[inline(always)]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self
     }
 
     #[inline(always)]
-    pub fn set_preprocess(&mut self, _d: Duration) {}
+    pub(crate) fn set_preprocess(&mut self, _d: Duration) {}
 
     #[inline(always)]
-    pub fn set_weld_pair_stats(&mut self, _len: usize, _capacity: usize) {}
+    pub(crate) fn set_weld_pair_stats(&mut self, _len: usize, _capacity: usize) {}
 
     #[inline(always)]
-    pub fn set_knn_build(&mut self, _d: Duration) {}
+    pub(crate) fn set_knn_build(&mut self, _d: Duration) {}
 
     #[inline(always)]
-    pub fn add_knn_build(&mut self, _d: Duration) {}
+    pub(crate) fn add_knn_build(&mut self, _d: Duration) {}
 
     #[inline(always)]
-    pub fn set_grid_stats(&mut self, _res: usize, _max_occupancy: u64, _rebuilt: bool) {}
+    pub(crate) fn set_grid_stats(&mut self, _res: usize, _max_occupancy: u64, _rebuilt: bool) {}
 
     #[inline(always)]
-    pub fn set_cell_construction(&mut self, _d: Duration, _sub: CellSubPhases) {}
+    pub(crate) fn set_cell_construction(&mut self, _d: Duration, _sub: CellSubPhases) {}
 
     #[inline(always)]
-    pub fn set_dedup(&mut self, _d: Duration, _sub: DedupSubPhases) {}
+    pub(crate) fn set_dedup(&mut self, _d: Duration, _sub: DedupSubPhases) {}
 
     #[inline(always)]
-    pub fn set_edge_reconcile(
+    pub(crate) fn set_edge_reconcile(
         &mut self,
         _d: Duration,
         _merge_safety_scan_cells: usize,
@@ -163,11 +163,11 @@ impl TimingBuilder {
     }
 
     #[inline(always)]
-    pub fn set_assemble(&mut self, _d: Duration) {}
+    pub(crate) fn set_assemble(&mut self, _d: Duration) {}
 
     #[inline(always)]
     #[allow(clippy::too_many_arguments)]
-    pub fn set_output_resolution_discovery(
+    pub(crate) fn set_output_resolution_discovery(
         &mut self,
         _certified_hint: bool,
         _drift_fallback: bool,
@@ -180,7 +180,7 @@ impl TimingBuilder {
     }
 
     #[inline(always)]
-    pub fn finish(self) -> PhaseTimings {
+    pub(crate) fn finish(self) -> PhaseTimings {
         PhaseTimings
     }
 }
