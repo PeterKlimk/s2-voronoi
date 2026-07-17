@@ -20,7 +20,8 @@ categories = ["algorithms", "mathematics", "science::geo", "graphics"]
 
 [package.metadata.docs.rs]
 # Public feature surface; internal flags (timing, profiling, microbench,
-# simd_scalar, fma, tools) are not part of the documented contract.
+# local_rebuild_probe, manual_probes, simd_scalar, fma, tools) are not part of
+# the documented contract.
 features = ["parallel", "glam", "serde"]
 
 [features]
@@ -36,6 +37,7 @@ profiling = [] # Profiling helpers (e.g. disable inlining on hot functions)
 microbench = ["dep:rand", "dep:rand_chacha"] # Enable internal microbench harnesses
 serde = ["dep:serde"] # Serialize/Deserialize for diagram types
 local_rebuild_probe = ["dep:delaunator"] # Expose the defect-driven exact local-rebuild for integration testing
+manual_probes = [] # Compile wholly manual/ignored integration-test targets
 simd_scalar = [] # Scalar/autovectorized 8-lane path instead of `wide`; debugging/comparison
 fma = [] # Prefer fused multiply-add via mul_add. On x86/x86_64 requires the `+fma` target feature (RUSTFLAGS="-C target-feature=+fma" or -C target-cpu=native); else compile error (SIMD/scalar dot paths must fuse identically). See src/fp.rs guard.
 tools = ["dep:clap", "dep:fixed", "dep:kiddo", "dep:rand", "dep:rand_chacha"] # Benchmark/utility binaries
@@ -105,6 +107,21 @@ path = "src/bin/microbench_sort.rs"
 required-features = ["microbench"]
 
 # Historical/research diagnostics: every case is ignored and selected by name.
+[[test]]
+name = "coincidence_probes"
+path = "tests/coincidence_probes.rs"
+required-features = ["manual_probes"]
+
+[[test]]
+name = "robustness_campaign"
+path = "tests/robustness_campaign.rs"
+required-features = ["manual_probes"]
+
+[[test]]
+name = "fidelity_campaign"
+path = "tests/fidelity_campaign.rs"
+required-features = ["tools"]
+
 [[test]]
 name = "local_rebuild_probe"
 path = "tests/local_rebuild_probe.rs"

@@ -225,8 +225,9 @@ Specific stale or mixed-purpose areas include:
 - `tests/escalate.rs` mixes a small active suite with a larger collection of ignored research
   probes and direct environment mutation;
 - environment restoration is hand-written and is not panic-safe in several helpers; and
-- `quality.rs` is a large doc-hidden diagnostic module compiled without a dedicated quality/tools
-  gate, a choice that should be made explicitly rather than inherited.
+- `quality.rs` is a large doc-hidden diagnostic module. The initial audit described it as
+  always-built, but source history shows it has been `tools`-gated since `c620fe4`; QUAL-001H owns
+  recording that existing boundary rather than inventing a second quality feature.
 
 The target is one diagnostic-options snapshot at appropriate cold entry points, feature-gated
 probe code, panic-safe test guards, and a clear separation between CI regressions and manual
@@ -422,8 +423,10 @@ verification-gate unit test uses isolated child processes and leaves the shared 
 environment untouched. Ignored local-rebuild probes now use one thread-local, nested, panic-safe A0
 capture scope; the redundant process-global forced-rebuild switch and A0 environment reader were
 removed, and Cargo records the all-ignored target's required internal feature. Optimized production
-binaries remained byte-identical through the first slice. Campaign organization, cold option
-records, and the `quality` surface decision remain.
+binaries remained byte-identical through the first slice. The wholly ignored coincidence,
+robustness, and fidelity targets now have explicit Cargo feature boundaries; mixed active/manual
+suites stay intact to avoid duplicating their fixtures. The pre-existing `tools` gate is the
+recorded `quality` surface decision. Cold option records remain.
 
 1. Inventory environment knobs by category: supported operational, internal diagnostic,
    differential oracle, manual benchmark, or obsolete.
@@ -432,12 +435,14 @@ records, and the `quality` surface decision remain.
 3. Keep clean-path guarantees such as avoiding environment lookups when no defect record exists.
 4. Rename `reclip_repair` coverage around the current local-rebuild contract and remove the unused
    environment setting.
-5. Keep ignored local-rebuild and campaign probes out of mixed active suites, in clearly declared
-   manual targets or tools.
+5. ~~Keep ignored local-rebuild and campaign probes out of mixed active suites, in clearly
+   declared manual targets or tools.~~ Completed for wholly manual targets; isolated ignored cases
+   remain beside the active fixtures they reuse.
 6. Use panic-safe scoped environment guards and serialize mutations at the appropriate process
    boundary.
-7. Decide whether `quality` remains an always-built doc-hidden API or becomes an internal feature;
-   document and test the chosen surface.
+7. ~~Decide whether `quality` remains an always-built doc-hidden API or becomes an internal
+   feature; document and test the chosen surface.~~ Confirmed the existing `tools` gate and its two
+   repository consumers.
 
 ### QUAL-001I — Durable documentation
 

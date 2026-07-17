@@ -29,7 +29,7 @@ MAX_N="${MAX_N:-3000000}"
 export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-6}"
 
 echo "Building test binary..."
-cargo test --release --test robustness_campaign --no-run 2>&1 | tail -1
+cargo test --release --features manual_probes --test robustness_campaign --no-run 2>&1 | tail -1
 BIN="$(find target/release/deps -maxdepth 1 -type f -name 'robustness_campaign-*' ! -name '*.d' \
   -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)"
 if [ -z "${BIN:-}" ] || [ ! -x "$BIN" ]; then

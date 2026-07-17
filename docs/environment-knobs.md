@@ -47,8 +47,8 @@ ordinary library API unless also listed above.
 
 | Variables | Owner | Purpose |
 |---|---|---|
-| `VORONOI_MESH_CASE_DIST`, `VORONOI_MESH_CASE_N`, `VORONOI_MESH_CASE_SEED`, `VORONOI_MESH_CASE_PARAM` | fidelity/robustness campaign tests and scripts | Select one externally orchestrated distribution case. |
-| `VORONOI_MESH_FIDELITY_CELLS`, `VORONOI_MESH_FIDELITY_EDGE_SAMPLES`, `VORONOI_MESH_LOCAL_REBUILD_MODE` | fidelity campaign | Configure sampling and the campaign's explicit `VoronoiConfig`; the mode variable is not a production config reader. |
+| `VORONOI_MESH_CASE_DIST`, `VORONOI_MESH_CASE_N`, `VORONOI_MESH_CASE_SEED`, `VORONOI_MESH_CASE_PARAM` | `manual_probes` robustness and `tools` fidelity campaigns | Select one externally orchestrated distribution case. |
+| `VORONOI_MESH_FIDELITY_CELLS`, `VORONOI_MESH_FIDELITY_EDGE_SAMPLES`, `VORONOI_MESH_LOCAL_REBUILD_MODE` | `tools` fidelity campaign | Configure sampling and the campaign's explicit `VoronoiConfig`; the mode variable is not a production config reader. |
 | `VORONOI_MESH_BENCH_CAP_CENTER` | `bench_voronoi` | Choose the dense-cap placement for a benchmark distribution. |
 | `VORONOI_MESH_BENCH_TARGET_MS`, `VORONOI_MESH_BENCH_SAMPLES`, `VORONOI_MESH_BENCH_HP_POOL`, `VORONOI_MESH_BENCH_CASE` | clipping microbench | Control sample sizing and case selection. |
 | `VORONOI_MESH_PROBE_TARGETS`, `VORONOI_MESH_PROBE_LARGE`, `VORONOI_MESH_PROBE_N` | ignored cell-build unit probes | Select manual fallback/exhaustion probe scale and targets. |
@@ -77,3 +77,7 @@ ordinary library API unless also listed above.
   is thread-local and panic-safe, so these probes do not mutate the process environment or a
   process-global rebuild switch. Cargo marks the all-ignored target as requiring the internal
   `local_rebuild_probe` feature; each research workload remains selected by test name.
+- Cargo excludes the wholly ignored `coincidence_probes` and `robustness_campaign` targets unless
+  the internal `manual_probes` feature is selected, and excludes `fidelity_campaign` unless
+  `tools` is selected. Campaign variables are read-only process inputs set before each isolated
+  case; they do not require an in-process mutation guard.

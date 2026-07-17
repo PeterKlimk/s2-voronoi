@@ -1,3 +1,4 @@
+#![cfg(feature = "manual_probes")]
 //! Robustness evidence campaign (ignored by default): drive many seeds,
 //! sizes, and distributions through `compute_with_report` and record, per
 //! input, the defect count, the detection-origin histogram (incl. the
@@ -26,7 +27,7 @@
 //!
 //! Run one case by hand:
 //!   VORONOI_MESH_CASE_DIST=uniform VORONOI_MESH_CASE_N=2000000 VORONOI_MESH_CASE_SEED=1 \
-//!     cargo test --release --test robustness_campaign -- --ignored \
+//!     cargo test --release --features manual_probes --test robustness_campaign -- --ignored \
 //!     campaign_case --nocapture
 
 mod support;

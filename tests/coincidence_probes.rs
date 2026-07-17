@@ -1,3 +1,4 @@
+#![cfg(feature = "manual_probes")]
 //! Coincidence margin-mapping probes (diagnostic, run manually).
 //!
 //! These map the resolvability boundary of the raw pipeline (welding
@@ -8,7 +9,8 @@
 //! weld radius in docs/correctness.md. Re-run after changes to the
 //! clipping/dedup numerics to detect boundary drift:
 //!
-//!   cargo test --release --test coincidence_probes -- --ignored --nocapture
+//!   cargo test --release --features manual_probes --test coincidence_probes \
+//!     -- --ignored --nocapture
 //!
 //! The asserting contract tests derived from these findings live in
 //! tests/adversarial.rs (weld contract + resolvable-regime sections).

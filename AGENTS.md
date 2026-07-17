@@ -127,6 +127,10 @@ current consumer and contract tests. `src/generated/sort_nets.rs` must be change
 - `timing`: detailed timing instrumentation.
 - `profiling`: helpers for profiling runs (e.g. inline control).
 - `microbench`: internal microbench harnesses.
+- `serde`: checked serialization/deserialization support for diagram types.
+- `local_rebuild_probe`: local-rebuild internals for ignored research probes.
+- `manual_probes`: wholly manual/ignored integration-test targets.
+- `simd_scalar`: scalar/autovectorized comparison backend.
 - `fma`: prefer fused multiply-add (`mul_add`) where used.
 - `tools`: benchmark/utility binaries.
 

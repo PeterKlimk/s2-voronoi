@@ -5,6 +5,11 @@
 //! established strict topology contract, and emits one `FIDELITYRESULT` line.
 //! `scripts/fidelity_campaign.sh` runs a matrix in isolated processes so large
 //! cases do not accumulate allocator high-water memory.
+//!
+//! Run one case by hand:
+//!   VORONOI_MESH_CASE_DIST=uniform VORONOI_MESH_CASE_N=100000 \
+//!     cargo test --release --features tools --test fidelity_campaign \
+//!     fidelity_case -- --ignored --nocapture
 
 mod support;
 

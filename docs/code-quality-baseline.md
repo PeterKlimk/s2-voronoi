@@ -260,6 +260,32 @@ The second diagnostics/test-layout slice was validated on 2026-07-18 against imm
   differs only in Rust panic-location line numbers shifted by the deleted source lines. No
   performance-counter sampling or quiet wall-clock run was necessary.
 
+## QUAL-001H manual-campaign target result
+
+The third diagnostics/test-layout slice was validated on 2026-07-18 against immediate parent
+`b99d59d`.
+
+- Cargo now excludes the wholly ignored `coincidence_probes` and `robustness_campaign` targets
+  unless the internal `manual_probes` feature is selected. The tools-dependent fidelity campaign
+  explicitly requires `tools` rather than compiling as an empty default target.
+- Source-level reproduction commands and the robustness campaign driver select the required
+  feature. Target names, test names, environment inputs, and per-case process isolation remain
+  unchanged.
+- Mixed active/manual targets were deliberately retained: their isolated ignored cases reuse the
+  surrounding fixture setup, and splitting them would increase duplication without improving
+  state isolation.
+- The planned `quality` surface decision was already present before QUAL-001: `quality.rs` is
+  doc-hidden and `tools`-gated, with current consumers in `bench_voronoi` and the fidelity campaign.
+- Cargo target listings reported the expected 5 coincidence probes, 4 robustness cases, and 1
+  fidelity case behind their declared features. One release-mode case from each target passed,
+  including the environment-driven campaign paths; both campaign scripts passed shell syntax
+  validation.
+- The ordinary release suite passed without compiling those three targets. All-target/all-feature
+  Clippy passed with warnings denied.
+- The optimized benchmark retained byte-identical `.text` and `.rodata` sections against the saved
+  immediate-parent artifact, with equal 2,179,216 text, 55,840 data, and 4,096 BSS bytes. No
+  performance-counter sampling or quiet wall-clock run was necessary.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
