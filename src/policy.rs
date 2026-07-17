@@ -166,7 +166,6 @@ impl PackedNeighborPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::knn_clipping::TerminationConfig;
 
     #[test]
     fn grid_resolution_scales_with_point_count() {
@@ -261,9 +260,8 @@ mod tests {
     }
 
     #[test]
-    fn policy_defaults_match_internal_config_defaults() {
-        let internal = TerminationConfig::default();
-        let policy = internal.packed_policy(100);
+    fn packed_policy_defaults_are_pinned() {
+        let policy = PackedNeighborPolicy::for_point_count(100);
 
         assert_eq!(policy.chunk0_size(), DEFAULT_PACKED_CHUNK0_SIZE);
         assert_eq!(policy.chunk_size(), DEFAULT_PACKED_CHUNK_SIZE);

@@ -2,7 +2,7 @@ use super::{
     BuilderImpl, FallbackBuilder, FallbackConstraint, GnomonicBuilder, PolyBuffer, Topo2DBuilder,
 };
 use crate::fp;
-use crate::knn_clipping::cell_build::CellFailure;
+use crate::live_dedup::CellFailure;
 use glam::{DVec3, Vec3};
 use std::hint::select_unpredictable;
 
@@ -253,7 +253,7 @@ impl GnomonicBuilder {
     }
 
     #[inline]
-    pub(super) fn failure(&self) -> Option<crate::knn_clipping::cell_build::CellFailure> {
+    pub(super) fn failure(&self) -> Option<crate::live_dedup::CellFailure> {
         self.failed
     }
 
@@ -389,7 +389,7 @@ impl Topo2DBuilder {
     }
 
     #[inline]
-    pub fn failure(&self) -> Option<crate::knn_clipping::cell_build::CellFailure> {
+    pub fn failure(&self) -> Option<crate::live_dedup::CellFailure> {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder.failure(),
             BuilderImpl::Fallback(builder) => builder.failure(),

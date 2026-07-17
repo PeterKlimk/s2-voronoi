@@ -11,7 +11,7 @@ use super::shard::ShardFinal;
 use super::types::{BinId, DeferredSlot, EdgeCheckOverflow, EdgeMismatch};
 use super::ShardedCellsData;
 use crate::diagram::VoronoiCell;
-use crate::knn_clipping::cell_build::VertexKey;
+use crate::live_dedup::VertexKey;
 use crate::timing::{DedupSubPhases, Timer};
 
 const SHARD_ORDER_SAMPLES_PER_BIN: usize = 32;
@@ -695,11 +695,11 @@ mod tests {
     use crate::knn_clipping::edge_reconcile::{
         edge_segments_for_neighbor, reconcile_edge_mismatches, ReconcileApply, VertexKeys,
     };
-    use crate::knn_clipping::live_dedup::binning::BinAssignment;
-    use crate::knn_clipping::live_dedup::packed::{pack_edge, INVALID_INDEX};
-    use crate::knn_clipping::live_dedup::shard::ShardState;
-    use crate::knn_clipping::live_dedup::types::{EdgeCheckOverflow, EdgeMismatchOrigin, LocalId};
-    use crate::knn_clipping::live_dedup::{EdgeRecord, ShardedCellsData};
+    use crate::live_dedup::binning::BinAssignment;
+    use crate::live_dedup::packed::{pack_edge, INVALID_INDEX};
+    use crate::live_dedup::shard::ShardState;
+    use crate::live_dedup::types::{EdgeCheckOverflow, EdgeMismatchOrigin, LocalId};
+    use crate::live_dedup::{EdgeRecord, ShardedCellsData};
     use glam::Vec3;
     use std::collections::BTreeSet;
 

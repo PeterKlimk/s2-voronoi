@@ -12,9 +12,9 @@
 
 mod telemetry;
 
-use super::live_dedup::{EdgeKey, EdgeRecord, ShardedVertexKeys};
 use crate::diagram::VoronoiCell;
-use crate::knn_clipping::cell_build::VertexKey;
+use crate::live_dedup::VertexKey;
+use crate::live_dedup::{EdgeKey, EdgeRecord, ShardedVertexKeys};
 
 pub(crate) use telemetry::emit_primary_reconcile_telemetry;
 
@@ -216,11 +216,11 @@ fn edge_segments_for_neighbor_into(
     Ok(())
 }
 
-fn dist_sq<P: crate::knn_clipping::live_dedup::VertexPosition>(a: P, b: P) -> f32 {
+fn dist_sq<P: crate::live_dedup::VertexPosition>(a: P, b: P) -> f32 {
     a.dist_sq(b)
 }
 
-fn vertex_pos<P: crate::knn_clipping::live_dedup::VertexPosition>(
+fn vertex_pos<P: crate::live_dedup::VertexPosition>(
     vertices: &[P],
     vertex_id: u32,
 ) -> Result<P, crate::VoronoiError> {
@@ -371,7 +371,7 @@ enum MergeMode {
 /// force-merged. Returns an empty vec on clean runs (no records) without
 /// touching anything — the scans are paid only on defect runs.
 #[allow(clippy::too_many_arguments)] // geometry-parameterized reconciliation seam
-pub(crate) fn reconcile_edge_mismatches<P: crate::knn_clipping::live_dedup::VertexPosition>(
+pub(crate) fn reconcile_edge_mismatches<P: crate::live_dedup::VertexPosition>(
     edge_records: &[EdgeRecord],
     vertices: &[P],
     cells: &mut Vec<VoronoiCell>,
@@ -642,7 +642,7 @@ fn drop_degenerate_collinear_vertices(
 /// scan runs only in the first Primary round — its unions are idempotent
 /// once applied, and re-counting them would defeat convergence detection.
 #[allow(clippy::too_many_arguments)]
-fn run_reconciliation_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
+fn run_reconciliation_rounds<P: crate::live_dedup::VertexPosition>(
     edge_records: &[EdgeRecord],
     vertices: &[P],
     cells: &mut Vec<VoronoiCell>,
@@ -1026,7 +1026,7 @@ fn cell_pair_for_unpaired(va: u32, vb: u32, owner: u32, vertex_keys: VertexKeys<
 /// Union every pair of segment-endpoint vertices, across and within the
 /// two sides, that lie within the degenerate length scale. Local to one
 /// defective edge, so the quadratic pairing is over a handful of ids.
-fn proximity_union_segments<P: crate::knn_clipping::live_dedup::VertexPosition>(
+fn proximity_union_segments<P: crate::live_dedup::VertexPosition>(
     seg_a: &[(u32, u32)],
     seg_b: &[(u32, u32)],
     vertices: &[P],
@@ -1187,7 +1187,7 @@ fn assert_localized_dupscan_complete(vertex_keys: VertexKeys<'_>, uf: &mut Spars
 }
 
 #[allow(clippy::too_many_arguments)]
-fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
+fn collect_merges<P: crate::live_dedup::VertexPosition>(
     edge_records: &[EdgeRecord],
     vertices: &[P],
     cells: &[VoronoiCell],
@@ -1488,7 +1488,7 @@ fn reject_face_unsafe_components(
     Ok(rejected)
 }
 
-fn bound_merge_components<P: crate::knn_clipping::live_dedup::VertexPosition>(
+fn bound_merge_components<P: crate::live_dedup::VertexPosition>(
     proposed: &mut SparseUnionFind,
     vertices: &[P],
     cells: &[VoronoiCell],

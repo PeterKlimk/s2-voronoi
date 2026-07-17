@@ -7,9 +7,4 @@
 
 mod run;
 
-// The cell-output vocabulary moved into the live-dedup engine (it is the
-// engine's input format, shared with the planar driver); re-exported here
-// so existing paths keep working.
-pub use crate::live_dedup::{CellBuildError, CellFailure, CellOutputBuffer, VertexKey};
-
 pub(crate) use run::{build_cell_into, CellBuildContext, CellBuildRequest};

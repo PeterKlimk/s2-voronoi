@@ -25,10 +25,10 @@ pub(super) fn probe_frontier<'a, 'm, 'p, 'g>(
     stream: &mut DirectedNeighborStream<'a, 'm, 'p, 'g>,
     packed_chunk: &mut Vec<u32>,
     used_knn: &mut bool,
-    knn_stage: &mut crate::knn_clipping::timing::KnnCellStage,
+    knn_stage: &mut crate::timing::KnnCellStage,
     knn_query_time: &mut Duration,
 ) -> DirectedNeighborFrontier {
-    let t_knn = crate::knn_clipping::timing::Timer::start();
+    let t_knn = crate::timing::Timer::start();
     let takeover_before = stream.is_takeover_stage();
     let frontier = stream.frontier(packed_chunk);
     let frontier_is_takeover = match frontier {
@@ -40,7 +40,7 @@ pub(super) fn probe_frontier<'a, 'm, 'p, 'g>(
     };
     if frontier_is_takeover {
         *used_knn = true;
-        *knn_stage = crate::knn_clipping::timing::KnnCellStage::ShellExpand;
+        *knn_stage = crate::timing::KnnCellStage::ShellExpand;
         *knn_query_time += t_knn.elapsed();
     }
     frontier

@@ -3,7 +3,7 @@
 use super::types::{
     BinId, CellReferenceOverride, DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeMismatch, LocalId,
 };
-use crate::knn_clipping::cell_build::VertexKey;
+use crate::live_dedup::VertexKey;
 use glam::Vec3;
 use rustc_hash::FxHashMap;
 

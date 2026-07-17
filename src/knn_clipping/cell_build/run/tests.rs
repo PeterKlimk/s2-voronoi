@@ -11,9 +11,8 @@ use crate::cube_grid::packed_knn::{
 use crate::cube_grid::{
     CubeMapGrid, DirectedEligibility, DirectedNeighborFrontier, DirectedNeighborStream,
 };
-use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::Topo2DBuilder;
-use crate::knn_clipping::TerminationConfig;
+use crate::live_dedup::CellFailure;
 use crate::packed_layout::PackedSlotLayout;
 use crate::policy::PackedNeighborPolicy;
 use glam::Vec3;
@@ -60,7 +59,7 @@ fn assert_output_still_poisoned(buffer: &crate::live_dedup::CellOutputBuffer) {
 fn extraction_writers_replace_poison_and_errors_do_not_consume_it() {
     let points = octahedron_points();
     let grid = CubeMapGrid::new(&points, 4);
-    let policy = TerminationConfig::default().packed_policy(points.len());
+    let policy = PackedNeighborPolicy::for_point_count(points.len());
     let fake_slot_map = vec![0u32; points.len()];
     let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
 
@@ -115,7 +114,7 @@ fn extraction_writers_replace_poison_and_errors_do_not_consume_it() {
     // Err return prevents the production driver from reading or emitting it.
     let failing_points = vec![Vec3::Z];
     let failing_grid = CubeMapGrid::new(&failing_points, 4);
-    let failing_policy = TerminationConfig::default().packed_policy(failing_points.len());
+    let failing_policy = PackedNeighborPolicy::for_point_count(failing_points.len());
     let failing_slot_map = vec![0u32; failing_points.len()];
     let failing_directed = DirectedEligibility::new(u8::MAX, 0, &failing_slot_map, 0, 0);
     let mut failing_ctx = CellBuildContext::new(&failing_grid, failing_policy);
@@ -279,7 +278,7 @@ struct EarlyProbeCell {
 }
 
 fn probe_cell(points: &[Vec3], grid: &CubeMapGrid, generator_idx: usize) -> ProbeCell {
-    let policy = TerminationConfig::default().packed_policy(points.len());
+    let policy = PackedNeighborPolicy::for_point_count(points.len());
     let fake_slot_map = vec![0u32; points.len()];
     let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
     let mut ctx = CellBuildContext::new(grid, policy);
@@ -426,7 +425,7 @@ fn probe_early_extraction_cell(
     grid: &CubeMapGrid,
     generator_idx: usize,
 ) -> EarlyProbeCell {
-    let policy = TerminationConfig::default().packed_policy(points.len());
+    let policy = PackedNeighborPolicy::for_point_count(points.len());
     let fake_slot_map = vec![0u32; points.len()];
     let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
     let mut ctx = CellBuildContext::new(grid, policy);
@@ -1006,7 +1005,7 @@ fn probe_projection_fallback_cases() {
 fn direct_cursor_builds_normal_cell() {
     let points = octahedron_points();
     let grid = CubeMapGrid::new(&points, 4);
-    let policy = TerminationConfig::default().packed_policy(points.len());
+    let policy = PackedNeighborPolicy::for_point_count(points.len());
     let mut ctx = CellBuildContext::new(&grid, policy);
     let fake_slot_map = vec![0u32; points.len()];
     let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
@@ -1110,7 +1109,7 @@ fn shell_termination_survives_all_omitted_constraints() {
 
     for points in cases {
         let grid = CubeMapGrid::new(&points, 8);
-        let policy = TerminationConfig::default().packed_policy(points.len());
+        let policy = PackedNeighborPolicy::for_point_count(points.len());
         let slot_map = vec![0_u32; points.len()];
         for generator_idx in 0..points.len() {
             let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &slot_map, 24, (1 << 24) - 1);
@@ -1240,7 +1239,7 @@ fn exhausted_chart_replays_discarded_horizon_constraints_spherically() {
     }
 
     let grid = CubeMapGrid::new(&points, 4);
-    let policy = TerminationConfig::default().packed_policy(points.len());
+    let policy = PackedNeighborPolicy::for_point_count(points.len());
     let fake_slot_map = vec![0u32; points.len()];
     let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
     let mut ctx = CellBuildContext::new(&grid, policy);
@@ -1316,7 +1315,7 @@ fn projection_invalid_detail_includes_replay_payload_summary() {
 fn forced_handoff_mid_build_still_finishes_the_cell() {
     let points = octahedron_points();
     let grid = CubeMapGrid::new(&points, 4);
-    let policy = TerminationConfig::default().packed_policy(points.len());
+    let policy = PackedNeighborPolicy::for_point_count(points.len());
     let fake_slot_map = vec![0u32; points.len()];
     let directed_ctx = DirectedEligibility::new(u8::MAX, 0, &fake_slot_map, 0, 0);
     let mut ctx = CellBuildContext::new(&grid, policy);

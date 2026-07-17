@@ -1,7 +1,7 @@
 use glam::Vec3;
 
-use super::super::{CellBuildError, CellFailure};
 use super::{BuildCounters, BuildTrace, CellBuildContext};
+use crate::live_dedup::{CellBuildError, CellFailure};
 
 pub(super) fn classify_terminal_failure(
     bounded: bool,

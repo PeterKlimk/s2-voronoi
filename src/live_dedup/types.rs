@@ -59,7 +59,7 @@ impl VertexPosition for Vec2 {
     }
 }
 
-use crate::knn_clipping::cell_build::VertexKey;
+use crate::live_dedup::VertexKey;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]

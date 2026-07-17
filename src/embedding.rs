@@ -728,8 +728,9 @@ pub fn compute_on_sphere_with<P: WorldVec3Like>(
     config: VoronoiConfig,
 ) -> Result<EmbeddedSphericalVoronoi, VoronoiError> {
     let projected = project_points(points, embedding)?;
-    let diagram =
-        crate::knn_clipping::compute_voronoi_knn_clipping_with_config_owned(projected, &config)?;
+    let diagram = crate::knn_clipping::compute::compute_voronoi_knn_clipping_with_config_owned(
+        projected, &config,
+    )?;
     Ok(EmbeddedSphericalVoronoi::new(diagram, embedding))
 }
 
@@ -744,7 +745,9 @@ pub fn compute_on_sphere_with_report<P: WorldVec3Like>(
         diagram,
         effective_diagram,
         report,
-    } = crate::knn_clipping::compute_voronoi_knn_clipping_with_report_owned(projected, &config)?;
+    } = crate::knn_clipping::compute::compute_voronoi_knn_clipping_with_report_owned(
+        projected, &config,
+    )?;
     Ok(EmbeddedComputeOutput {
         diagram: EmbeddedSphericalVoronoi::new(diagram, embedding),
         effective_diagram: effective_diagram

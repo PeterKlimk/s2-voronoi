@@ -587,7 +587,7 @@ pub fn compute_with<P: UnitVec3Like>(
     config: VoronoiConfig,
 ) -> Result<SphericalVoronoi, VoronoiError> {
     let vec3_points = backend_points(points)?;
-    knn_clipping::compute_voronoi_knn_clipping_with_config_owned(vec3_points, &config)
+    knn_clipping::compute::compute_voronoi_knn_clipping_with_config_owned(vec3_points, &config)
 }
 
 /// Compute through a coordinate extractor with explicit configuration.
@@ -603,7 +603,7 @@ where
     F: Fn(&T) -> [f32; 3],
 {
     let vec3_points = collect_points_by(points, xyz)?;
-    knn_clipping::compute_voronoi_knn_clipping_with_config_owned(vec3_points, &config)
+    knn_clipping::compute::compute_voronoi_knn_clipping_with_config_owned(vec3_points, &config)
 }
 
 /// Compute a spherical Voronoi diagram and return observable preprocessing and
@@ -613,7 +613,7 @@ pub fn compute_with_report<P: UnitVec3Like>(
     config: VoronoiConfig,
 ) -> Result<ComputeOutput, VoronoiError> {
     let vec3_points = backend_points(points)?;
-    knn_clipping::compute_voronoi_knn_clipping_with_report_owned(vec3_points, &config)
+    knn_clipping::compute::compute_voronoi_knn_clipping_with_report_owned(vec3_points, &config)
 }
 
 /// Compute through a coordinate extractor and return preprocessing and
@@ -629,5 +629,5 @@ where
     F: Fn(&T) -> [f32; 3],
 {
     let vec3_points = collect_points_by(points, xyz)?;
-    knn_clipping::compute_voronoi_knn_clipping_with_report_owned(vec3_points, &config)
+    knn_clipping::compute::compute_voronoi_knn_clipping_with_report_owned(vec3_points, &config)
 }

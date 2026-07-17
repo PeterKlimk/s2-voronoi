@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 use rayon::prelude::*;
 
 /// Result of welding coincident generators before Voronoi computation.
-pub struct MergeResult {
+pub(crate) struct MergeResult {
     /// Points to use for Voronoi (representatives only, or all if no merges).
     pub effective_points: Vec<Vec3>,
     /// Maps original point index -> representative index in effective_points.
@@ -230,7 +230,10 @@ pub(crate) fn try_collect_close_pairs(
 /// connected components of that graph. The class representative is the
 /// smallest original index, and representatives keep their original relative
 /// order in `effective_points`.
-pub fn try_merge_close_points(points: &[Vec3], threshold: f32) -> Result<MergeResult, usize> {
+pub(crate) fn try_merge_close_points(
+    points: &[Vec3],
+    threshold: f32,
+) -> Result<MergeResult, usize> {
     let pairs = try_collect_close_pairs(points, threshold)?;
     if pairs.is_empty() {
         return Ok(identity_result(points));

@@ -3,18 +3,15 @@
 use glam::{DVec3, Vec3};
 
 use super::edge_reconcile;
-use super::live_dedup;
 use super::local_rebuild;
 use super::output_resolution;
-use super::timing::{Timer, TimingBuilder};
-use super::{
-    cell_build::{CellBuildError, CellFailure},
-    try_merge_close_points, MergeResult, TerminationConfig,
-};
+use super::preprocess::{try_merge_close_points, MergeResult};
 use crate::cube_grid::CubeMapGrid;
 #[cfg(feature = "timing")]
 use crate::cube_grid::CubeMapGridBuildTimings;
 use crate::diagram::VoronoiCell;
+use crate::live_dedup::{self, CellBuildError, CellFailure};
+use crate::timing::{Timer, TimingBuilder};
 use crate::{
     CellKillingPolicy, ComputeOutput, ComputeReport, DegenerateMode, DegenerateReport,
     LocalRebuildMode, PreprocessMode, PreprocessReport, VoronoiConfig,
@@ -162,7 +159,6 @@ fn canonicalize_pipeline_exact_zero_edges(
 /// fails loud on residuals; the report path surfaces them in `ComputeReport`.
 fn run_core_pipeline(
     points: Vec<Vec3>,
-    termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
     local_rebuild_mode: LocalRebuildMode,
 ) -> Result<PipelineState, crate::VoronoiError> {
@@ -187,7 +183,6 @@ fn run_core_pipeline(
         effective_points_ref,
         &grid,
         point_cell_storage,
-        termination,
         merge_result.as_ref(),
         &mut tb,
     )?;
@@ -352,12 +347,11 @@ fn validate_preprocess_mode(mode: PreprocessMode) -> Result<(), crate::VoronoiEr
 
 pub(super) fn compute_voronoi_knn_clipping_owned_core(
     points: Vec<Vec3>,
-    termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
     local_rebuild_mode: LocalRebuildMode,
     cell_killing_policy: CellKillingPolicy,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
-    let mut state = run_core_pipeline(points, termination, preprocess_mode, local_rebuild_mode)?;
+    let mut state = run_core_pipeline(points, preprocess_mode, local_rebuild_mode)?;
     check_plain_return_signals(
         state.local_rebuild,
         &state.residual_unpaired,
@@ -412,15 +406,13 @@ fn with_coplanar_perturb_retry<T>(
     }
 }
 
-pub fn compute_voronoi_knn_clipping_with_config_owned(
+pub(crate) fn compute_voronoi_knn_clipping_with_config_owned(
     points: Vec<Vec3>,
     config: &VoronoiConfig,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
-    let termination = TerminationConfig::default();
     with_coplanar_perturb_retry(points, config.degenerate_mode, |points, _| {
         compute_voronoi_knn_clipping_owned_core(
             points,
-            termination,
             config.preprocess_mode,
             config.local_rebuild_mode,
             config.cell_killing_policy,
@@ -428,18 +420,16 @@ pub fn compute_voronoi_knn_clipping_with_config_owned(
     })
 }
 
-pub fn compute_voronoi_knn_clipping_with_report_owned(
+pub(crate) fn compute_voronoi_knn_clipping_with_report_owned(
     points: Vec<Vec3>,
     config: &VoronoiConfig,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
-    let termination = TerminationConfig::default();
     with_coplanar_perturb_retry(
         points,
         config.degenerate_mode,
         |points, perturbation_applied| {
             compute_voronoi_knn_clipping_report_core(
                 points,
-                termination,
                 config.preprocess_mode,
                 config.local_rebuild_mode,
                 config.cell_killing_policy,
@@ -454,13 +444,12 @@ pub fn compute_voronoi_knn_clipping_with_report_owned(
 
 fn compute_voronoi_knn_clipping_report_core(
     points: Vec<Vec3>,
-    termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
     local_rebuild_mode: LocalRebuildMode,
     cell_killing_policy: CellKillingPolicy,
     degenerate_report: DegenerateReport,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
-    let mut state = run_core_pipeline(points, termination, preprocess_mode, local_rebuild_mode)?;
+    let mut state = run_core_pipeline(points, preprocess_mode, local_rebuild_mode)?;
     enforce_cell_killing_policy(&state, cell_killing_policy)?;
     let local_rebuild_accepted = state.local_rebuild.accepted;
     // Surface output-invariant residuals alongside the detection records. If
@@ -1631,18 +1620,13 @@ fn construct_cell_shards(
     effective_points: &[Vec3],
     grid: &CubeMapGrid,
     point_cell_storage: Vec<u32>,
-    termination: TerminationConfig,
     merge_result: Option<&MergeResult>,
     tb: &mut TimingBuilder,
 ) -> Result<live_dedup::ShardedCellsData, crate::VoronoiError> {
     let t = Timer::start();
-    let sharded = super::driver::build_cells_sharded_live_dedup(
-        effective_points,
-        grid,
-        point_cell_storage,
-        termination,
-    )
-    .map_err(|err| map_build_cells_error(err, effective_points, merge_result))?;
+    let sharded =
+        super::driver::build_cells_sharded_live_dedup(effective_points, grid, point_cell_storage)
+            .map_err(|err| map_build_cells_error(err, effective_points, merge_result))?;
     #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]
     tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
     Ok(sharded)
@@ -1758,10 +1742,8 @@ mod tests {
         validate_and_canonicalize_unit_points, validate_generator_capacity, LocalRebuildOutcome,
     };
     use crate::diagram::VoronoiCell;
-    use crate::knn_clipping::cell_build::{CellBuildError, CellFailure};
-    use crate::knn_clipping::live_dedup::{
-        BuildCellsError, PackedLayoutCapacityError, ShardedVertexKeys,
-    };
+    use crate::live_dedup::{BuildCellsError, PackedLayoutCapacityError, ShardedVertexKeys};
+    use crate::live_dedup::{CellBuildError, CellFailure};
     use crate::{LocalRebuildMode, PreprocessMode, VoronoiError};
     use glam::Vec3;
 
@@ -1853,7 +1835,6 @@ mod tests {
         let points = disabled_weld_cell_killing_points();
         let state = run_core_pipeline(
             points.clone(),
-            super::TerminationConfig::default(),
             PreprocessMode::Disabled,
             LocalRebuildMode::Hull3d,
         )
@@ -1899,7 +1880,6 @@ mod tests {
         welded_points.push(welded_points[1]);
         let welded_state = run_core_pipeline(
             welded_points.clone(),
-            super::TerminationConfig::default(),
             PreprocessMode::MergeWithin(1.0e-10),
             LocalRebuildMode::Hull3d,
         )
@@ -2723,7 +2703,7 @@ mod tests {
     #[test]
     fn clustered_input_triggers_occupancy_rebuild() {
         use crate::cube_grid::CubeMapGrid;
-        use crate::knn_clipping::timing::TimingBuilder;
+        use crate::timing::TimingBuilder;
 
         // Deterministic golden-angle spiral cluster in a ~0.1 rad cap around
         // +Z: a density-derived grid packs thousands of points per cell.
@@ -2769,7 +2749,7 @@ mod tests {
 
     #[test]
     fn dense_index_is_deferred_until_retained_grid_finalization() {
-        use crate::knn_clipping::timing::TimingBuilder;
+        use crate::timing::TimingBuilder;
 
         // A sub-cell cap remains dense even after occupancy feedback reaches
         // its resolution/memory limit, so the retained grid genuinely needs

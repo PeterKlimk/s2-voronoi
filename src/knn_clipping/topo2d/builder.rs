@@ -5,8 +5,8 @@ mod projection;
 mod tests;
 
 use super::types::{PolyBuffer, INVALID_PLANE_ID};
-use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::types::ClipResult;
+use crate::live_dedup::CellFailure;
 use glam::DVec3;
 
 pub use projection::TangentBasis;

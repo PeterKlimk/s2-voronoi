@@ -12,12 +12,12 @@ use crate::cube_grid::packed_knn::{
 };
 use crate::cube_grid::{CubeMapGrid, PackedQuery};
 use crate::knn_clipping::cell_build::{build_cell_into, CellBuildContext, CellBuildRequest};
-use crate::knn_clipping::TerminationConfig;
 use crate::live_dedup::{
     assign_bins, checked_local_id, checked_u32, emit_cell_output, BinId, BuildCellsError,
     EdgeScratch, ShardContext, ShardState, ShardedCellsData, VertexData,
 };
 use crate::packed_layout::PackedSlotLayout;
+use crate::policy::PackedNeighborPolicy;
 
 pub(super) struct GridContext<'a> {
     pub(super) points: &'a [Vec3],
@@ -66,10 +66,8 @@ pub(crate) fn build_cells_sharded_live_dedup(
     points: &[Vec3],
     grid: &CubeMapGrid,
     point_cell_storage: Vec<u32>,
-    termination: TerminationConfig,
 ) -> Result<ShardedCellsData, BuildCellsError> {
-    let policy = termination.packed_policy(points.len());
-    // Legacy config compatibility: no-k fallback ignores this cap.
+    let policy = PackedNeighborPolicy::for_point_count(points.len());
 
     let mut assignment = assign_bins(points, grid, point_cell_storage)
         .map_err(BuildCellsError::PackedLayoutCapacity)?;

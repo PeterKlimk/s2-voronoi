@@ -15,7 +15,7 @@ use crate::knn_clipping::topo2d::{
 use crate::live_dedup::EdgeCheck;
 use crate::policy::PackedNeighborPolicy;
 
-use super::{CellBuildError, CellFailure, CellOutputBuffer};
+use crate::live_dedup::{CellBuildError, CellFailure, CellOutputBuffer};
 use failure::{classify_terminal_failure, unexpected_failure_error};
 use frontier::{complete_exact_bound, maybe_terminate_or_advance_frontier, probe_frontier};
 
@@ -182,7 +182,7 @@ pub(crate) struct CellBuildStats {
     did_packed: bool,
     packed_tail_used: bool,
     packed_safe_exhausted: bool,
-    knn_stage: crate::knn_clipping::timing::KnnCellStage,
+    knn_stage: crate::timing::KnnCellStage,
     #[cfg(test)]
     termination_checkpoint: Option<TerminationCheckpoint>,
 }
@@ -198,7 +198,7 @@ enum TerminationCheckpoint {
 
 impl CellBuildStats {
     #[inline]
-    pub(crate) fn record_into(&self, cell_sub: &mut crate::knn_clipping::timing::CellSubAccum) {
+    pub(crate) fn record_into(&self, cell_sub: &mut crate::timing::CellSubAccum) {
         cell_sub.add_knn(self.knn_query);
         cell_sub.add_clip(self.clipping);
         cell_sub.add_cert(self.certification);
@@ -229,9 +229,9 @@ impl CellBuildStats {
             self.knn_stage
         } else if self.did_packed {
             if self.packed_tail_used {
-                crate::knn_clipping::timing::KnnCellStage::PackedTail
+                crate::timing::KnnCellStage::PackedTail
             } else {
-                crate::knn_clipping::timing::KnnCellStage::PackedChunk0
+                crate::timing::KnnCellStage::PackedChunk0
             }
         } else {
             self.knn_stage
@@ -305,7 +305,7 @@ pub(super) struct BuildCounters {
     clipping_time: Duration,
     certification_time: Duration,
     pub(super) used_knn: bool,
-    knn_stage: crate::knn_clipping::timing::KnnCellStage,
+    knn_stage: crate::timing::KnnCellStage,
     pub(super) knn_exhausted: bool,
     pub(super) did_packed: bool,
     packed_tail_used: bool,
@@ -349,7 +349,7 @@ impl BuildCounters {
             clipping_time: Duration::ZERO,
             certification_time: Duration::ZERO,
             used_knn: false,
-            knn_stage: crate::knn_clipping::timing::KnnCellStage::ShellExpand,
+            knn_stage: crate::timing::KnnCellStage::ShellExpand,
             knn_exhausted: false,
             did_packed: false,
             packed_tail_used: false,
@@ -546,7 +546,7 @@ fn clip_seed_neighbors(
     if incoming_checks.is_empty() {
         return;
     }
-    let t_clip = crate::knn_clipping::timing::Timer::start();
+    let t_clip = crate::timing::Timer::start();
     for check in incoming_checks {
         let neighbor_slot = check.neighbor_slot;
         let neighbor_point = pos_slots[neighbor_slot as usize];
@@ -614,7 +614,7 @@ fn clip_batch(
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
 ) {
-    let t_clip = crate::knn_clipping::timing::Timer::start();
+    let t_clip = crate::timing::Timer::start();
     match batch.source {
         DirectedNeighborBatchSource::ShellExpand => clip_batch_source::<true>(
             phase,
@@ -880,7 +880,7 @@ fn finish_cell(
             counters.knn_exhausted,
         ) {
             if failure == CellFailure::UnboundedAfterExhaustion {
-                let t_cert = crate::knn_clipping::timing::Timer::start();
+                let t_cert = crate::timing::Timer::start();
                 let recovered = recover_unbounded_after_exhaustion(
                     ctx,
                     grid,
@@ -912,7 +912,7 @@ fn finish_cell(
         ));
     }
 
-    let t_cert = crate::knn_clipping::timing::Timer::start();
+    let t_cert = crate::timing::Timer::start();
     if let Err(failure) = ctx.builder.to_vertex_data_full(&mut ctx.output_buffer) {
         return Err(unexpected_failure_error(
             ctx,

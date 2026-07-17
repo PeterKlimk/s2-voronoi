@@ -10,7 +10,7 @@ use super::types::{
     EdgeOverflowLocal, EdgeToLater, LocalId,
 };
 use super::with_two_mut;
-use crate::knn_clipping::cell_build::VertexKey;
+use crate::live_dedup::VertexKey;
 use crate::packed_layout::PackedSlotLayout;
 use crate::timing::Timer;
 use std::time::Duration;
@@ -199,7 +199,7 @@ impl ShardDedup {
 /// This eliminates the edges_to_earlier intermediate vec
 #[inline(always)]
 fn assert_cell_output_lengths<P>(
-    output_buffer: &crate::knn_clipping::cell_build::CellOutputBuffer<P>,
+    output_buffer: &crate::live_dedup::CellOutputBuffer<P>,
     vertex_indices_len: usize,
 ) -> usize {
     let n = output_buffer.vertices.len();
@@ -217,7 +217,7 @@ fn assert_cell_output_lengths<P>(
 pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
     cell_idx: u32,
     shard_ctx: &mut super::emit::ShardContext<'_, P>,
-    output_buffer: &crate::knn_clipping::cell_build::CellOutputBuffer<P>,
+    output_buffer: &crate::live_dedup::CellOutputBuffer<P>,
     slot_points: &[crate::cube_grid::SlotPoint],
     assignment: &BinAssignment,
     mut incoming_checks: Vec<EdgeCheck>,

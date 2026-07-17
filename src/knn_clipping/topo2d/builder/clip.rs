@@ -2,9 +2,9 @@ use super::{
     BuilderClipOutcome, BuilderImpl, BuilderStepOutcome, FallbackBuilder, GnomonicBuilder,
     GnomonicConstraint, SphericalPoly, SphericalPolyVertex, Topo2DBuilder,
 };
-use crate::knn_clipping::cell_build::CellFailure;
 use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck};
 use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane};
+use crate::live_dedup::CellFailure;
 use glam::Vec3;
 
 impl GnomonicBuilder {

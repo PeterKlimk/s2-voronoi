@@ -1,7 +1,7 @@
 use super::projection::MIN_PROJECTION_COS;
 use super::*;
-use crate::knn_clipping::cell_build::CellOutputBuffer;
 use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane, INVALID_PLANE_ID};
+use crate::live_dedup::CellOutputBuffer;
 use glam::Vec3;
 use std::cmp::Ordering;
 
@@ -281,13 +281,10 @@ fn changed_clip_fails_when_bounded_polygon_reaches_projection_limit() {
         .as_gnomonic_mut()
         .commit_clip(ClipResult::Changed, 1, u32::MAX)
         .expect_err("expected projection-invalid bounded cell to fail");
-    assert_eq!(
-        err,
-        crate::knn_clipping::cell_build::CellFailure::ProjectionInvalid
-    );
+    assert_eq!(err, crate::live_dedup::CellFailure::ProjectionInvalid);
     assert_eq!(
         builder.failure(),
-        Some(crate::knn_clipping::cell_build::CellFailure::ProjectionInvalid)
+        Some(crate::live_dedup::CellFailure::ProjectionInvalid)
     );
 }
 
@@ -425,7 +422,7 @@ fn extraction_failure_reports_invalid_vertex_plane_metadata() {
     buffer.edge_neighbor_slots.push(u32::MAX);
     assert_eq!(
         gnomonic.to_vertex_data_full(&mut buffer),
-        Err(crate::knn_clipping::cell_build::CellFailure::NoValidSeed)
+        Err(crate::live_dedup::CellFailure::NoValidSeed)
     );
     assert!(buffer.vertices.is_empty());
     assert!(buffer.edge_neighbor_globals.is_empty());
@@ -445,9 +442,9 @@ fn extraction_failure_reports_invalid_vertex_plane_metadata() {
 #[test]
 fn projection_invalid_is_classified_as_fallback_handoff() {
     assert_eq!(
-        Topo2DBuilder::classify_clip_result(Err(
-            crate::knn_clipping::cell_build::CellFailure::ProjectionInvalid,
-        )),
+        Topo2DBuilder::classify_clip_result(
+            Err(crate::live_dedup::CellFailure::ProjectionInvalid,)
+        ),
         Ok(BuilderClipOutcome::NeedsFallback(BuilderFallbackRequest {
             trigger: BuilderFallbackTrigger::ProjectionLimit,
         }))
@@ -457,9 +454,7 @@ fn projection_invalid_is_classified_as_fallback_handoff() {
 #[test]
 fn too_many_vertices_is_classified_as_polygon_fallback_handoff() {
     assert_eq!(
-        Topo2DBuilder::classify_clip_result(Err(
-            crate::knn_clipping::cell_build::CellFailure::TooManyVertices,
-        )),
+        Topo2DBuilder::classify_clip_result(Err(crate::live_dedup::CellFailure::TooManyVertices,)),
         Ok(BuilderClipOutcome::NeedsFallback(BuilderFallbackRequest {
             trigger: BuilderFallbackTrigger::PolygonVertexLimit,
         }))
@@ -469,9 +464,7 @@ fn too_many_vertices_is_classified_as_polygon_fallback_handoff() {
 #[test]
 fn clipped_away_is_classified_as_exact_fallback_handoff() {
     assert_eq!(
-        Topo2DBuilder::classify_clip_result(Err(
-            crate::knn_clipping::cell_build::CellFailure::ClippedAway,
-        )),
+        Topo2DBuilder::classify_clip_result(Err(crate::live_dedup::CellFailure::ClippedAway,)),
         Ok(BuilderClipOutcome::NeedsFallback(BuilderFallbackRequest {
             trigger: BuilderFallbackTrigger::ClippedAway,
         }))
@@ -494,7 +487,7 @@ fn clipped_away_handoff_rebuilds_from_constraints() {
     let gnomonic = builder.as_gnomonic_mut();
     gnomonic.poly_a.len = 0;
     gnomonic.poly_b.len = 0;
-    gnomonic.failed = Some(crate::knn_clipping::cell_build::CellFailure::ClippedAway);
+    gnomonic.failed = Some(crate::live_dedup::CellFailure::ClippedAway);
 
     let switched = builder.try_enter_fallback(
         &fallback_points(g, h1, h2, h3),
@@ -521,7 +514,7 @@ fn clipped_away_handoff_rejection_preserves_failed_builder() {
     }
     gnomonic.poly_a.len = 0;
     gnomonic.poly_b.len = 0;
-    gnomonic.failed = Some(crate::knn_clipping::cell_build::CellFailure::ClippedAway);
+    gnomonic.failed = Some(crate::live_dedup::CellFailure::ClippedAway);
 
     let eps = f32::EPSILON;
     let points = fallback_points4(
@@ -541,7 +534,7 @@ fn clipped_away_handoff_rejection_preserves_failed_builder() {
     assert!(builder.is_failed());
     assert_eq!(
         builder.failure(),
-        Some(crate::knn_clipping::cell_build::CellFailure::ClippedAway)
+        Some(crate::live_dedup::CellFailure::ClippedAway)
     );
 }
 
@@ -551,7 +544,7 @@ fn too_many_vertices_records_current_constraint_before_fallback() {
     let gnomonic = builder.as_gnomonic_mut();
     assert_eq!(
         gnomonic.commit_clip(ClipResult::TooManyVertices, 11, 21),
-        Err(crate::knn_clipping::cell_build::CellFailure::TooManyVertices)
+        Err(crate::live_dedup::CellFailure::TooManyVertices)
     );
     assert_eq!(gnomonic.constraints.len(), 1);
     assert_eq!(gnomonic.constraints[0].neighbor_idx, 11);
@@ -585,7 +578,7 @@ fn polygon_vertex_limit_handoff_replays_overflowing_constraint() {
         builder
             .as_gnomonic_mut()
             .commit_clip(ClipResult::TooManyVertices, 14, 24),
-        Err(crate::knn_clipping::cell_build::CellFailure::TooManyVertices)
+        Err(crate::live_dedup::CellFailure::TooManyVertices)
     );
 
     let points = fallback_points4(g, h1, h2, h3, h4);
@@ -630,10 +623,9 @@ fn fallback_handoff_switches_builder_variant_and_replays_constraints() {
         .clip_with_slot_policy(13, 23, h3)
         .expect("normal clip should apply");
 
-    let outcome = Topo2DBuilder::handle_clip_result(Err(
-        crate::knn_clipping::cell_build::CellFailure::ProjectionInvalid,
-    ))
-    .expect("projection invalid should be converted to a fallback handoff");
+    let outcome =
+        Topo2DBuilder::handle_clip_result(Err(crate::live_dedup::CellFailure::ProjectionInvalid))
+            .expect("projection invalid should be converted to a fallback handoff");
     let points = fallback_points(g, h1, h2, h3);
     assert!(builder.try_enter_fallback(
         &points,
@@ -886,10 +878,7 @@ fn polar_projection_limit_uses_chart_metric_bound() {
     let err = gnomonic
         .commit_clip(ClipResult::Changed, 1, u32::MAX)
         .expect_err("metric-stretched chart must hand off at the projection limit");
-    assert_eq!(
-        err,
-        crate::knn_clipping::cell_build::CellFailure::ProjectionInvalid
-    );
+    assert_eq!(err, crate::live_dedup::CellFailure::ProjectionInvalid);
 }
 
 /// Build a small cell around `g` from neighbors at angular distance `2*theta`

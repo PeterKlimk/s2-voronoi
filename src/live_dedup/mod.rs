@@ -16,7 +16,9 @@ mod packed;
 mod shard;
 mod types;
 
-pub use cell_output::{CellBuildError, CellFailure, CellOutputBuffer, VertexData, VertexKey};
+pub(crate) use cell_output::{
+    CellBuildError, CellFailure, CellOutputBuffer, VertexData, VertexKey,
+};
 
 pub(crate) use binning::assign_bins;
 pub(crate) use binning::BinAssignment;

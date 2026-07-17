@@ -4,8 +4,8 @@ use super::{
     SphericalPoly, SphericalPolyVertex, Topo2DBuilder,
 };
 use crate::fp;
-use crate::knn_clipping::cell_build::{CellFailure, CellOutputBuffer};
 use crate::knn_clipping::topo2d::types::INVALID_PLANE_ID;
+use crate::live_dedup::{CellFailure, CellOutputBuffer};
 use glam::{DVec3, Vec3};
 
 use crate::tolerances::{EXTRACT_DEGENERATE_LEN2, FALLBACK_PLANE_TOL};

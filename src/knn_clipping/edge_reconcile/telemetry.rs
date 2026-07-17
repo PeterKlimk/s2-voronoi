@@ -14,10 +14,8 @@ use super::{
     vertex_pos, MergeLedger, MergeMode, VertexKeys,
 };
 use crate::diagram::VoronoiCell;
-use crate::knn_clipping::live_dedup::{
-    EdgeMismatch, EdgeMismatchOrigin, EdgeRecord, VertexPosition,
-};
 use crate::knn_clipping::union_find::SparseUnionFind;
+use crate::live_dedup::{EdgeMismatch, EdgeMismatchOrigin, EdgeRecord, VertexPosition};
 
 // Inclusive upper bounds for the histogram. The final bucket is +inf.
 // Chord distances are on the canonical unit sphere in production.
@@ -448,7 +446,7 @@ fn emit_stats(stats: &PrimaryTelemetry, eps: f32, analysis_ms: f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::knn_clipping::live_dedup::EdgeKey;
+    use crate::live_dedup::EdgeKey;
     use glam::Vec3;
 
     #[test]
