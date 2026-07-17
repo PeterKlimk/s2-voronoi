@@ -286,6 +286,33 @@ The third diagnostics/test-layout slice was validated on 2026-07-18 against imme
   immediate-parent artifact, with equal 2,179,216 text, 55,840 data, and 4,096 BSS bytes. No
   performance-counter sampling or quiet wall-clock run was necessary.
 
+## QUAL-001H local-rebuild cold-options result
+
+The fourth diagnostics/test-layout slice was validated on 2026-07-18 against immediate parent
+`7a60bc2`.
+
+- `LocalRebuildDiagnostics` snapshots the debug flag and feature-only global-Delaunay selector once
+  per actual rebuild attempt. The grow loop and commit gate receive the captured debug value rather
+  than rereading process state.
+- The snapshot is constructed after mode and trigger checks. Disabled configurations, ordinary
+  no-defect computations, and A0 capture return before either diagnostic lookup. Previously the
+  debug variable was read on every enabled computation and three times during an attempt.
+- The complete production local-rebuild target passed. The probe-only target compiled with all 14
+  named manual cases, and a clean fixture run with the debug variable present confirmed that it no
+  longer emits a false rebuild-trigger diagnostic.
+- `cargo clippy --all-targets --all-features -- -D warnings`, the complete release and checked
+  suites, the no-default-features release suite, and the `serde,glam` release suite all passed.
+- The 100k semantic fingerprint remained `961e56d915d09a4e` in both the 1-thread/6-bin and
+  6-thread/96-bin checks, with the expected representation fingerprints `0991e1df6f60d5de` and
+  `0e65ca5dbe8fe07c`, 199,996 vertices, and 100,000 cells.
+- With matched native release builds, the candidate had 2,177,651 text, 55,784 data, and 1,611 BSS
+  bytes versus 2,177,911 text, 55,784 data, and 1,339 BSS bytes for the parent: text fell 260 bytes,
+  data was unchanged, and the total allocation increased 12 bytes because BSS grew 272 bytes.
+- Seven interleaved, CPU-pinned 500k Fibonacci runs retired a mean 3,420,125,021 instructions for
+  the candidate and 3,420,130,510 for the parent, a neutral -5,489 (-0.00016%) candidate delta.
+  Every measured run had zero context switches and CPU migrations. There was no adverse counter
+  signal warranting a quiet wall-clock run.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

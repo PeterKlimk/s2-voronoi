@@ -328,7 +328,12 @@ tasks and are not duplicated here.
   internal `manual_probes` feature; the fidelity campaign explicitly requires `tools`. Mixed suites
   retain isolated ignored cases beside their shared active fixtures. The planned `quality` decision
   was already implemented: its doc-hidden surface has been `tools`-gated since `c620fe4`.
-- **Next gate:** consolidate related cold diagnostic option reads without adding clean-path lookups.
+- **QUAL-001H local-rebuild options result:** debug output and the feature-only global-Delaunay
+  selector are snapshotted once per actual rebuild attempt and passed explicitly through the grow
+  loop. Disabled and no-trigger computations return before either lookup.
+- **Next gate:** give reconciliation the same defect-scoped options treatment; its apply-mode reader
+  currently runs before the empty-record early return, and its duplicate-scan selector is read from
+  inside reconciliation rounds.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

@@ -762,6 +762,27 @@ fn check_plain_return_signals(
 /// Try the configured local rebuild and commit it only if whole-diagram strict
 /// validation succeeds. Reports both the public outcome and the exact local
 /// footprint whose final cycles changed on an accepted splice.
+#[derive(Clone, Copy)]
+struct LocalRebuildDiagnostics {
+    debug: bool,
+    #[cfg(feature = "local_rebuild_probe")]
+    use_global_delaunay: bool,
+}
+
+impl LocalRebuildDiagnostics {
+    /// Snapshot internal diagnostics once per actual rebuild attempt. The
+    /// caller deliberately constructs this only after the trigger check, so
+    /// disabled and clean computations perform no diagnostic environment read.
+    fn read_from_env() -> Self {
+        Self {
+            debug: std::env::var("VORONOI_MESH_LOCAL_REBUILD_DEBUG").is_ok(),
+            #[cfg(feature = "local_rebuild_probe")]
+            use_global_delaunay: std::env::var("VORONOI_MESH_LOCAL_REBUILD_GLOBAL_DELAUNAY")
+                .is_ok(),
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // cohesive rebuild-entry state; splitting would obscure it
 fn maybe_rebuild_effective(
     effective_points: &[Vec3],
@@ -804,7 +825,14 @@ fn maybe_rebuild_effective(
         .collect();
     defect_pairs.sort_unstable();
     defect_pairs.dedup();
-    if std::env::var("VORONOI_MESH_LOCAL_REBUILD_DEBUG").is_ok() {
+    if defect_pairs.is_empty() && !has_low_incidence {
+        return LocalRebuildResult::unchanged(LocalRebuildOutcome::not_attempted(
+            false,
+            euler_defect,
+        ));
+    }
+    let diagnostics = LocalRebuildDiagnostics::read_from_env();
+    if diagnostics.debug {
         eprintln!(
             "local rebuild trigger: low-incidence scan {:?} (defect_pairs={}, unpaired={}, no_chain={}, low_incidence={})",
             low_incidence_scan_time,
@@ -813,12 +841,6 @@ fn maybe_rebuild_effective(
             local_rebuild_seed_pairs.len(),
             has_low_incidence,
         );
-    }
-    if defect_pairs.is_empty() && !has_low_incidence {
-        return LocalRebuildResult::unchanged(LocalRebuildOutcome::not_attempted(
-            false,
-            euler_defect,
-        ));
     }
     let outcome = |accepted: bool| LocalRebuildOutcome {
         attempted: true,
@@ -843,7 +865,7 @@ fn maybe_rebuild_effective(
         eff_cell_indices,
     );
     #[cfg(feature = "local_rebuild_probe")]
-    let stats = if std::env::var("VORONOI_MESH_LOCAL_REBUILD_GLOBAL_DELAUNAY").is_ok() {
+    let stats = if diagnostics.use_global_delaunay {
         local_rebuild::rebuild_with_global_delaunay(
             effective_points,
             &mut work,
@@ -851,6 +873,7 @@ fn maybe_rebuild_effective(
             merge_affected_cells,
             LOCAL_REBUILD_GATHER_K,
             LOCAL_REBUILD_MAX_ROUNDS,
+            diagnostics.debug,
         )
     } else if matches!(local_rebuild_mode, LocalRebuildMode::ProjectedDelaunay) {
         local_rebuild::rebuild_with_projected_delaunay(
@@ -862,6 +885,7 @@ fn maybe_rebuild_effective(
             merge_affected_cells,
             LOCAL_REBUILD_GATHER_K,
             LOCAL_REBUILD_MAX_ROUNDS,
+            diagnostics.debug,
         )
     } else {
         local_rebuild::rebuild_with_local_hull(
@@ -873,6 +897,7 @@ fn maybe_rebuild_effective(
             merge_affected_cells,
             LOCAL_REBUILD_GATHER_K,
             LOCAL_REBUILD_MAX_ROUNDS,
+            diagnostics.debug,
         )
     };
     #[cfg(not(feature = "local_rebuild_probe"))]
@@ -886,6 +911,7 @@ fn maybe_rebuild_effective(
             merge_affected_cells,
             LOCAL_REBUILD_GATHER_K,
             LOCAL_REBUILD_MAX_ROUNDS,
+            diagnostics.debug,
         )
     } else {
         local_rebuild::rebuild_with_local_hull(
@@ -897,6 +923,7 @@ fn maybe_rebuild_effective(
             merge_affected_cells,
             LOCAL_REBUILD_GATHER_K,
             LOCAL_REBUILD_MAX_ROUNDS,
+            diagnostics.debug,
         )
     };
     // No splices means the local rebuild did not modify `work` (a `splice_generator`
@@ -940,7 +967,7 @@ fn maybe_rebuild_effective(
         &new_cells,
         &new_cell_indices,
     );
-    if std::env::var("VORONOI_MESH_LOCAL_REBUILD_DEBUG").is_ok() {
+    if diagnostics.debug {
         eprintln!(
             "local rebuild commit: into_flat {:?}, gate {:?} ({} verts, {} cells, gate {})",
             flat_elapsed,

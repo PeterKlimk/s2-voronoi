@@ -541,18 +541,27 @@ fn local_hull_fans(
 /// consistent oracle `fans_for`, and grow on the residual until it closes (or
 /// `max_rounds`). The caller's whole-diagram never-worse gate makes any
 /// non-converged residual safe: an unrebuilt diagram is simply not committed.
+#[derive(Clone, Copy)]
+struct GrowthDiagnostics {
+    enabled: bool,
+    name: &'static str,
+}
+
 fn run_rebuild_growth(
     points: &[Vec3],
     work: &mut WorkingDiagram,
     defect_pairs: &[(u32, u32)],
     merge_affected: &[u32],
     max_rounds: usize,
-    debug_name: &str,
+    diagnostics: GrowthDiagnostics,
     mut fans_for: impl FnMut(&WorkingDiagram, &[u32]) -> FxHashMap<u32, RebuildFan>,
 ) -> LocalRebuildStats {
     use std::collections::BTreeSet;
     let mut stats = LocalRebuildStats::default();
-    let debug = std::env::var("VORONOI_MESH_LOCAL_REBUILD_DEBUG").is_ok();
+    let GrowthDiagnostics {
+        enabled: debug,
+        name: debug_name,
+    } = diagnostics;
 
     let defect_gens: BTreeSet<u32> = defect_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
     let mut closure: BTreeSet<u32> = defect_gens.clone();
@@ -668,6 +677,7 @@ pub(crate) fn rebuild_with_local_hull(
     merge_affected: &[u32],
     ring_k: usize,
     max_rounds: usize,
+    debug: bool,
 ) -> LocalRebuildStats {
     run_rebuild_growth(
         points,
@@ -675,7 +685,10 @@ pub(crate) fn rebuild_with_local_hull(
         defect_pairs,
         merge_affected,
         max_rounds,
-        "rebuild_with_local_hull",
+        GrowthDiagnostics {
+            enabled: debug,
+            name: "rebuild_with_local_hull",
+        },
         |work, closure| local_hull_fans(points, grid, scratch, work, closure, ring_k),
     )
 }
@@ -693,6 +706,7 @@ pub(crate) fn rebuild_with_projected_delaunay(
     merge_affected: &[u32],
     ring_k: usize,
     max_rounds: usize,
+    debug: bool,
 ) -> LocalRebuildStats {
     run_rebuild_growth(
         points,
@@ -700,7 +714,10 @@ pub(crate) fn rebuild_with_projected_delaunay(
         defect_pairs,
         merge_affected,
         max_rounds,
-        "rebuild_with_projected_delaunay",
+        GrowthDiagnostics {
+            enabled: debug,
+            name: "rebuild_with_projected_delaunay",
+        },
         |work, closure| local_exact_fans(points, grid, scratch, work, closure, ring_k),
     )
 }
@@ -718,6 +735,7 @@ pub(crate) fn rebuild_with_global_delaunay(
     merge_affected: &[u32],
     _gather_k: usize,
     max_rounds: usize,
+    debug: bool,
 ) -> LocalRebuildStats {
     let mut centroid = Vec3::ZERO;
     for &p in points {
@@ -756,7 +774,10 @@ pub(crate) fn rebuild_with_global_delaunay(
         defect_pairs,
         merge_affected,
         max_rounds,
-        "rebuild_with_global_delaunay",
+        GrowthDiagnostics {
+            enabled: debug,
+            name: "rebuild_with_global_delaunay",
+        },
         |_work, closure| {
             closure
                 .iter()

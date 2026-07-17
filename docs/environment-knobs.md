@@ -28,8 +28,8 @@ mutation.
 | `VORONOI_MESH_VERIFY_TRACE` | correctness diagnostic | verification gate, only after fast verification rejects | Exact value `1` prints the fast-verifier fallback reason. |
 | `VORONOI_MESH_RECONCILE_REBUILD` | differential oracle | reconciliation apply-mode selection | Exact value `1` selects the whole-buffer rebuild oracle instead of production in-place application. |
 | `VORONOI_MESH_RECONCILE_GLOBAL_DUPSCAN` | differential safety valve | reconciliation defect path | Exact value `1` substitutes the O(V) global duplicate scan for localized traversal. |
-| `VORONOI_MESH_LOCAL_REBUILD_DEBUG` | correctness diagnostic | local-rebuild orchestration/growth | Presence prints rebuild phase and acceptance diagnostics. |
-| `VORONOI_MESH_LOCAL_REBUILD_GLOBAL_DELAUNAY` | feature probe | `local_rebuild_probe`-gated rebuild branch | Presence selects the global projected-Delaunay oracle. Internal feature only. |
+| `VORONOI_MESH_LOCAL_REBUILD_DEBUG` | correctness diagnostic | attempt-scoped local-rebuild snapshot | Presence prints rebuild phase and acceptance diagnostics. Read once only after a rebuild trigger; disabled and clean computations perform no lookup. |
+| `VORONOI_MESH_LOCAL_REBUILD_GLOBAL_DELAUNAY` | feature probe | attempt-scoped `local_rebuild_probe` snapshot | Presence selects the global projected-Delaunay oracle. Read alongside the debug flag after a rebuild trigger; internal feature only. |
 
 `VORONOI_MESH_PLANE_GRID_DENSITY` had no reader or backend in this repository. Its stale
 performance-documentation entry was removed by QUAL-001H; reintroducing it requires a current

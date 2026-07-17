@@ -426,13 +426,16 @@ removed, and Cargo records the all-ignored target's required internal feature. O
 binaries remained byte-identical through the first slice. The wholly ignored coincidence,
 robustness, and fidelity targets now have explicit Cargo feature boundaries; mixed active/manual
 suites stay intact to avoid duplicating their fixtures. The pre-existing `tools` gate is the
-recorded `quality` surface decision. Cold option records remain.
+recorded `quality` surface decision. The first cold record now snapshots local-rebuild diagnostics
+once per actual attempt, removes duplicate growth/commit reads, and leaves disabled and clean
+computations lookup-free. Reconciliation and other stage-local cold records remain.
 
 1. Inventory environment knobs by category: supported operational, internal diagnostic,
    differential oracle, manual benchmark, or obsolete.
 2. Read related cold knobs once into a diagnostic/options record and pass explicit values to the
-   relevant stage.
+   relevant stage. Local rebuild completed; reconciliation remains.
 3. Keep clean-path guarantees such as avoiding environment lookups when no defect record exists.
+   Local rebuild now returns before its diagnostic snapshot when no trigger exists.
 4. Rename `reclip_repair` coverage around the current local-rebuild contract and remove the unused
    environment setting.
 5. ~~Keep ignored local-rebuild and campaign probes out of mixed active suites, in clearly
