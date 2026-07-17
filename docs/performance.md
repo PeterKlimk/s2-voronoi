@@ -540,22 +540,85 @@ Recently accepted optimizations:
   uniform changed -0.05% (-0.59% to +0.49%, 11/20). Keep the lower-work lifecycle and named build
   modes; the intervals rule out the noisy Linux Fibonacci cycle regression on the outcome host.
 
-Measured gates awaiting a design experiment:
+Spatial-order materialization policy candidate:
 
-- **Output materialization:** the null-write ceiling is large enough to pursue, but it does not
-  justify a segmented public format by itself. A profiling-only ablation retained construction,
-  reconciliation, all source reads, index arithmetic, incidence reduction, and a matched checksum;
-  one mode allocated and filled the global vertex/cell/index buffers and the other omitted only
-  those destinations. At 2M on the eight-thread Intel Mac, 16-round interleaved medians favored the
-  null mode by 5.5% on Fibonacci (687.1ms to 651.5ms) and 4.5% on uniform (864.2ms to 827.0ms).
-  One-million-point Linux counters showed the smaller compute-side ceiling expected for a
-  bandwidth effect: nulling writes removed about 0.6% of instructions and 1.1--1.2% of branches.
-  Cachegrind at 20k Fibonacci attributed 2.3% fewer data references, 7.4% fewer D1 misses, and
-  15.2% fewer last-level data misses. Checksums and output counts matched in every write/null pair.
-  First isolate the already-redundant final `Vec3`/cell-metadata conversions at
-  `SphericalVoronoi::from_raw_parts`; only then consider construction directly into final backing
-  stores. Preserve the contiguous `vertices()` and per-cell slice contracts, and treat the null
-  result as an upper bound rather than an expected production win.
+- **Adaptive final index scatter:** phase attribution showed that the apparent final typed point
+  conversion was already an allocation-preserving ownership transfer. An isolated cell-metadata
+  conversion removal lowered retired work but hurt ordinary uniform throughput and remains retired.
+  The material attainable component was instead the shard-local to global cell-index scatter.
+  Generator-order traversal gives sequential destination writes but can jump among shard source
+  streams; shard-order traversal gives sequential source reads but scatters the final writes. The
+  assembly path now samples up to 32 adjacent generator-id pairs per shard and selects shard order
+  when their mean absolute delta exceeds 1% of the input size. Fibonacci and cubed-sphere inputs
+  remain generator ordered; uniform, clustered, and mega inputs select shard order. Public cell
+  order, contiguous storage, and index values are unchanged.
+
+  At 2M on the eight-thread Intel Mac, the attributed index phase was about 16--18ms on Fibonacci
+  and 42--48ms on uniform, versus roughly 10--12ms for vertex concatenation. Twenty interleaved
+  multithreaded pairs left Fibonacci neutral (645.8ms versus 645.2ms median) and improved uniform
+  by 1.12% (paired 95% interval 0.58--1.66%, 17/20 favorable). At 1M single-threaded, uniform
+  improved 2.72% (1.25--4.17%, 18/20); Fibonacci was unresolved at about 0.3% slower by median and
+  a paired interval spanning -2.52% to +0.34% speedup. Clustered was directionally 1.58% faster and
+  mega neutral. A separate 12-pair 2M multithreaded no-preprocess guardrail was neutral/favorable:
+  Fibonacci moved from 629.6ms to 626.8ms and uniform from 790.9ms to 785.7ms. Linux fixed-work
+  counters reduced retired instructions by 0.25% on Fibonacci and 0.55% on uniform in every one of
+  nine pairs. This is a locality trade selected from the input's existing spatial-order signal,
+  not a public-format change.
+
+- **Adaptive grid coordinate materialization:** the same one-percent mean-delta policy now also
+  classifies the grid-build boundary. The grid samples 32 adjacent input point-to-cell addresses.
+  A correlated, already cell-major input retains the fused pass that scatters ids and XYZ together.
+  A scrambled input first scatters only ids, then traverses spatial slots to gather each input point
+  and write the three coordinate arrays sequentially. This adds a pass and about 0.19--0.21% whole-
+  build Linux instructions, but the final readable implementation reduced 1M uniform cycles by
+  8.27%, cache references by 16.11%, and cache misses by 26.67% in all five confirmation pairs;
+  Fibonacci cycles were 0.80% lower with four of five pairs favorable and cache traffic neutral.
+
+  The quiet eight-thread Intel Mac supplied the outcome signal against the accepted output-scatter
+  baseline. In the final 20-pair 2M multithreaded build, Fibonacci was neutral (643.2ms versus
+  642.8ms median), while uniform improved from 790.4ms to 769.8ms; the uniform geometric ratio was
+  0.9754 with a 0.9685--0.9824 interval and all 20 pairs favorable. A focused 30-pair Fibonacci
+  run on the pre-readability form was likewise neutral (ratio 0.9958, interval 0.9897--1.0020). The
+  final code was also neutral single-threaded at 1M (Fibonacci 1003.7ms versus 1008.5ms; uniform
+  1264.2ms versus 1261.0ms). With preprocessing disabled at 2M multithreaded, Fibonacci remained
+  neutral (643.7ms versus 650.0ms) and uniform improved from 802.5ms to 777.8ms. The cell-major
+  `cubed` guard retained the fused path and was neutral over 20 pairs. This makes the final-scatter
+  choice part of one cross-pipeline address-order policy rather than a distribution-named assembly
+  exception.
+
+Policy audit: these are the two largest measured identity/spatial conversion boundaries, not every
+possible use of the signal. The next credible candidate was final cell metadata: generator-order
+prefix construction writes globally ordered cells sequentially but gathers counts from shard-local
+streams. A candidate can scatter counts in shard order and then run the required sequential prefix.
+Local 500k attribution measured the current prefix phase at 6.1ms for Fibonacci and 7.8ms for
+uniform, giving it a smaller but nontrivial ceiling. Bin-assignment inverse maps are another
+boundary, but changing their scattered global writes requires an added pass or inverse map and has
+a lower prior. The prior point-to-slot fusion is already retired, and the slot-native construction
+core has no competing identity-order traversal left to select.
+
+The abstraction follow-up kept the conceptual split between measurement and boundary-specific
+choice, but rejected a generalized `LocalitySample` implementation. Distributed short sample
+blocks fixed a periodic alias in the old fixed-position sampler, while moving the grid probe to
+actual CSR slot offsets improved the metric itself; together the larger sampling path perturbed hot
+scatter codegen by a repeatable +0.228% whole-build instructions. A flattened generator-to-shard
+source-distance probe also failed to distinguish Fibonacci from uniform. Keep the compact
+site-specific samplers and the pre-prefix numeric-cell proxy. The shared classifier now adds only a
+one-element floor for domains below 100. Rebuild telemetry reports the retained grid and exports the
+decision through `TIMING_KV`.
+
+That minimal retained form reduced 1M Linux instructions by 0.162% on Fibonacci and 0.147% on
+uniform, and branches by 0.382%/0.339%, in all three confirmation pairs. On the quiet Mac at 2M
+multithreaded it was neutral: Fibonacci medians were 641.4ms/641.0ms and uniform's paired ratio was
+0.9972 with a 0.9885--1.0059 interval (12/20 favorable).
+
+The adaptive cell-count/prefix candidate was closed neutral. Its one-byte form scattered counts in
+shard order before the mandatory sequential global prefix when the existing policy selected shard
+order. At 1M single-threaded Linux, instructions and branches were effectively unchanged
+(-0.008%/-0.013%); cycles, cache references, and misses were directionally 1.47%, 8.18%, and 5.28%
+lower over five pairs. The quiet-Mac outcome gate did not confirm a throughput win: 20 paired 2M
+multithreaded uniform rounds produced a 0.9985 ratio with a 0.9906--1.0065 interval and 11/20
+favorable, while Fibonacci was neutral. Retain the fused generator-order cell-prefix loop rather
+than another A/B materialization path with no retired-work or outcome benefit.
 
 Untried probes and candidates (2026-07-17 triage; each begins with a cheap measurement gate):
 

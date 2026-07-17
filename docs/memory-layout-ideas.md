@@ -535,7 +535,7 @@ takeover path; this table is too small to create a useful memory-envelope win.
 
 ## 7. Final output materialization
 
-**Status: measurement gate passed; narrow boundary-conversion experiment next (2026-07-17).**
+**Status: shared spatial-order materialization policy candidate (2026-07-17).**
 
 ### Current cost and ceiling probe
 
@@ -565,18 +565,113 @@ Native Mac wall time supplied the outcome gate. On an eight-thread Intel i5-1038
 827.0ms (4.5%). This is a useful bandwidth/cache ceiling, not a forecast: a production diagram
 still has to own the final bytes.
 
-### Candidate progression
+### Result
 
-1. Remove only the final typed conversion copies in `SphericalVoronoi::from_raw_parts`. Prefer one
-   shared internal storage type; otherwise require an explicit, compile-time-checked layout and
-   ownership-transfer boundary. This is independent of sharding and preserves the public layout.
-2. Attribute vertex concatenation, cell-prefix emission, index scatter, and sparse override patches
-   separately on the native host. Prototype direct final backing stores only for a component whose
-   copy remains material after step 1.
-3. Consider bin-ordered or segmented internal storage only if direct flat assembly cannot capture
-   the measured benefit. Such a design must retain `vertices() -> &[UnitVec3]`, cheap random
-   `cell(i)`, serialization, welding aliases, reconciliation, and repair behavior; otherwise it is
-   an API/format redesign rather than a throughput optimization.
+Attribution changed the target. Generator and vertex conversion in
+`SphericalVoronoi::from_raw_parts` already transfers the `Vec3` allocations without copying. Two
+layout-identical approaches to removing only the cell-metadata conversion reduced retired work but
+regressed cache behavior and uniform throughput, so that isolated conversion remains retired.
+
+On the quiet Mac at 2M, vertex concatenation took roughly 10--12ms. Cell-index scatter took about
+16--18ms on Fibonacci and 42--48ms on uniform, making it the material component that could be
+changed without redesigning the output. There are two opposing locality choices:
+
+- generator order writes the final index vector sequentially but jumps among shard-local sources;
+- shard order reads each shard stream sequentially but scatters writes into the already assigned
+  final cell spans.
+
+The accepted implementation samples up to 32 adjacent generator ids per shard. It uses shard order
+when the sampled mean absolute id delta is greater than 1% of the input size, and otherwise retains
+generator order. Measured means were about 0.2% for Fibonacci and 7% for uniform, with clustered
+and mega also above the gate and cubed-sphere below it. The decision costs at most 32 comparisons
+per shard; it neither scans all cells nor changes any public order, offset, or storage contract.
+
+Twenty 2M multithreaded Mac pairs left Fibonacci neutral and improved uniform by 1.12% (paired 95%
+interval 0.58--1.66%). At 1M single-threaded, uniform improved 2.72%; Fibonacci was unresolved with
+a roughly 0.3% median regression and an interval spanning neutral. Linux fixed-work counters
+reduced instructions by 0.25% on Fibonacci and 0.55% on uniform in all nine pairs. The larger null
+write result remains only an upper bound: direct flat backing stores or segmented public storage
+would add substantially more coupling for an unproven residual benefit.
+
+The follow-up grid experiment established that this is broader than one final-scatter exception.
+Both grid construction and final output now use the same classification rule: sample adjacent
+addresses in the current traversal, and treat their order as scrambled when the mean absolute
+delta exceeds 1% of the destination/source domain. The two boundaries apply that result differently:
+
+- grid construction keeps its fused input-order scatter for correlated cell-major input, but for
+  scrambled input scatters ids first and then writes XYZ sequentially in spatial-slot order;
+- final assembly retains generator order when spatial shard sources correlate with generator ids,
+  and otherwise streams each shard source while scattering into fixed generator-ordered spans.
+
+On the quiet Mac, the final combined policy left 2M multithreaded Fibonacci neutral and improved
+uniform by 2.46% geometrically (ratio 0.9754, interval 0.9685--0.9824, 20/20 favorable). A focused
+30-pair Fibonacci control was neutral. The final code was also neutral single-threaded for both
+Fibonacci and uniform; with preprocessing disabled, multithreaded Fibonacci remained neutral and
+uniform improved by about 3.1% by median. The already cell-major `cubed` guard was neutral in the
+preceding policy build. The grid half adds roughly 0.2% retired instructions to buy lower
+multithreaded cache traffic; it is a measured locality win rather than a retired-work reduction.
+The policy is based on address correlation, not benchmark distribution names, and leaves every
+public order and storage contract unchanged.
+
+### Policy audit and remaining boundaries
+
+The two accepted candidates cover the largest measured conversions between spatial and identity
+order, but they do not exhaust the pattern. Most cell construction is already unconditionally
+slot/bin ordered, so detection is useful only where a global-order storage contract creates a
+competing traversal. The strongest residual candidate was final cell metadata: the current
+generator-order prefix loop writes `VoronoiCell` records sequentially while reading cell counts
+through shard-local addresses. A shard-order count scatter followed by the mandatory sequential
+prefix pass is the direct analogue of adaptive index assembly. On a local 500k timing run, the
+prefix phase was 6.1ms on Fibonacci and 7.8ms on uniform, versus 16.5ms and 10.7ms for cell-index
+assembly, respectively. This is a credible but smaller ceiling.
+
+Bin assignment is a lower-confidence residual. Its spatial traversal appends `bin_generators` and
+writes `slot_gen_map` sequentially, but scatters `generator_bin` and `generator_layout` by global
+id. Making those inverse arrays global-order would require retaining or rebuilding another inverse
+map or adding a pass, so the extra work may exceed the locality benefit. The point-to-slot inverse
+fusion has already been measured and reverted; the default preprocessing path now avoids that map
+unless compaction actually needs it. Batched locator query reordering is a separate API workload,
+not a continuation of compute-pipeline materialization.
+
+The first shared classifier is intentionally small, but should not be mistaken for a final cost
+model. It shares only a normalized mean-delta threshold; each caller still owns its sampling, and
+the same one-percent crossover stands in for different read/write widths and pass costs. Numeric
+grid-cell deltas are only a proxy for slot addresses when cells are sparse or unevenly occupied,
+and shard-to-global deltas do not detect a global traversal that round-robins among many otherwise
+ordered shard streams. Before this audit, domains below about 100 entries could also classify
+unit-stride order as scrambled because one percent was less than one element, while grid-rebuild
+timing combined samples from different resolutions instead of describing the retained grid. The
+minimal changes below close those two concrete defects; the broader cost-model limitations remain.
+
+The abstraction experiment confirmed that measurement and choice should be conceptually separate,
+but the generalized `LocalitySample` implementation was not retained. The former single fixed
+position per stratum aliased a synthetic two-points-per-cell sequence; distributed short blocks
+fixed that sampling defect, but the larger generic sampler perturbed hot codegen. Sampling actual
+CSR slot offsets after the grid prefix was likewise semantically more precise than numeric cell ids
+but added a repeatable 0.228% whole-build instructions (about 16 per generator) on Fibonacci and
+uniform. A trial flattened generator-to-shard source address was also not useful: at 500k its mean
+delta was about 146,813 for Fibonacci and 161,851 for uniform, failing to distinguish the regimes
+that the shard-to-global destination sample separates cleanly (about 443 versus 36,979).
+
+Keep site-specific sampling and boundary-specific choices. The shared classifier now only adds an
+absolute one-element floor so unit-stride domains below 100 entries remain correlated. Grid rebuild
+telemetry retains the selected final sample instead of combining resolutions, and the grid decision
+is included in `TIMING_KV`. This minimal form reduced 1M Linux instructions by 0.162% on Fibonacci
+and 0.147% on uniform, and branches by 0.382%/0.339%, in all three confirmation pairs. The quiet-Mac
+2M multithreaded guardrail was neutral: Fibonacci medians were 641.4ms/641.0ms and uniform's paired
+ratio was 0.9972 with a 0.9885--1.0059 interval (12/20 favorable).
+
+The cell-count/prefix candidate was implemented and then retired. For scrambled input it scattered
+the native one-byte shard counts into generator order, followed by the mandatory sequential global
+prefix; correlated input kept the old fused gather/prefix. The one-byte form was structurally
+neutral on 1M single-threaded Linux (instructions -0.008%, branches -0.013%) and directionally
+reduced cycles 1.47%, cache references 8.18%, and cache misses 5.28% over five pairs. That signal
+did not become a quiet-Mac outcome win: the final 20-pair 2M multithreaded uniform result was a
+0.9985 candidate/base ratio with a 0.9906--1.0065 interval and 11/20 favorable; Fibonacci was
+neutral. An earlier two-byte prototype produced one favorable Mac run but regressed Linux ST cache
+traffic and did not survive the native-width refinement. With no retired-work reduction or
+confirmed outcome benefit, another materialization path is not justified. Keep the simpler fused
+cell-prefix loop.
 
 Do not couple the clipper to final addresses merely to chase the full null-write percentage. Counts
 and offsets are not known until shard construction completes, and a counting prepass or synchronized

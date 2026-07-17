@@ -269,6 +269,20 @@ pub struct CellSubPhases {
 /// Fine-grained dedup timing and a few size counters.
 #[derive(Debug, Clone, Default)]
 pub struct DedupSubPhases {
+    pub bookkeeping: Duration,
+    pub edge_check_overflow: Duration,
+    pub deferred_patching: Duration,
+    pub finalize_shards: Duration,
+    pub concat_vertices: Duration,
+    pub emit_cell_prefixes: Duration,
+    pub incidence_summary: Duration,
+    pub scatter_cell_indices: Duration,
+    pub patch_reference_overrides: Duration,
+    pub exact_zero_hints: Duration,
+    pub shard_order_descents: u64,
+    pub shard_order_pairs: u64,
+    pub shard_order_abs_delta: u64,
+    pub scatter_by_shard: bool,
     pub triplet_keys: u64,
     pub unresolved_edges_count: u64,
     pub primary_cell_references: u64,
@@ -703,6 +717,12 @@ impl PhaseTimings {
                     sub_pct(sub.scatter_soa)
                 );
                 eprintln!(
+                    "    grid_order_sample: pairs={} mean_abs_cell_delta={:.1} materialize_by_slot={}",
+                    sub.input_order_pairs,
+                    sub.input_order_abs_delta as f64 / sub.input_order_pairs.max(1) as f64,
+                    sub.materialize_coordinates_by_slot,
+                );
+                eprintln!(
                     "    grid_neighbors:  {:7.1}ms ({:4.1}%)",
                     ms(sub.neighbors),
                     sub_pct(sub.neighbors)
@@ -950,6 +970,29 @@ impl PhaseTimings {
                 / self.dedup_sub.primary_cell_references.max(1) as f64,
         );
         eprintln!(
+            "    assembly: bookkeeping={:.3}ms overflow={:.3}ms deferred={:.3}ms finalize={:.3}ms vertices={:.3}ms prefixes={:.3}ms incidence={:.3}ms indices={:.3}ms overrides={:.3}ms zero_hints={:.3}ms",
+            ms(self.dedup_sub.bookkeeping),
+            ms(self.dedup_sub.edge_check_overflow),
+            ms(self.dedup_sub.deferred_patching),
+            ms(self.dedup_sub.finalize_shards),
+            ms(self.dedup_sub.concat_vertices),
+            ms(self.dedup_sub.emit_cell_prefixes),
+            ms(self.dedup_sub.incidence_summary),
+            ms(self.dedup_sub.scatter_cell_indices),
+            ms(self.dedup_sub.patch_reference_overrides),
+            ms(self.dedup_sub.exact_zero_hints),
+        );
+        eprintln!(
+            "    shard_order_sample: descents={} / {} ({:.3}%) mean_abs_global_delta={:.1} scatter_by_shard={}",
+            self.dedup_sub.shard_order_descents,
+            self.dedup_sub.shard_order_pairs,
+            100.0 * self.dedup_sub.shard_order_descents as f64
+                / self.dedup_sub.shard_order_pairs.max(1) as f64,
+            self.dedup_sub.shard_order_abs_delta as f64
+                / self.dedup_sub.shard_order_pairs.max(1) as f64,
+            self.dedup_sub.scatter_by_shard,
+        );
+        eprintln!(
             "  edge_reconcile:    {:7.1}ms ({:4.1}%)",
             ms(self.edge_reconcile),
             pct(self.edge_reconcile)
@@ -981,16 +1024,44 @@ impl PhaseTimings {
         );
 
         if std::env::var_os("VORONOI_MESH_TIMING_KV").is_some() {
+            let (grid_order_pairs, grid_order_abs_delta, grid_materialize_by_slot) = self
+                .knn_build_sub
+                .as_ref()
+                .map(|sub| {
+                    (
+                        sub.input_order_pairs,
+                        sub.input_order_abs_delta,
+                        sub.materialize_coordinates_by_slot as u8,
+                    )
+                })
+                .unwrap_or((0, 0, 0));
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} cell_construction_ms={cc:.3} dedup_ms={dd:.3} edge_reconcile_ms={er:.3} merge_safety_scan_cells={mssc} merge_safety_global_fallbacks={msgf} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_reconcile_scan_cells={rrsc} resolution_repair_scan_cells={rpsc} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} candidate_work_samples={cws} candidate_work_p50_lb={cw50} candidate_work_p90_lb={cw90} candidate_work_p99_lb={cw99} candidate_work_p999_lb={cw999} candidate_work_max={cwm} candidate_work_relative_base={cwb} candidate_work_ge4x_median_lb={cw4} candidate_work_ge16x_median_lb={cw16} candidate_work_ge64x_median_lb={cw64} no_progress_tail_samples={nps} no_progress_tail_excluded={npx} no_progress_tail_p50_lb={np50} no_progress_tail_p90_lb={np90} no_progress_tail_p99_lb={np99} no_progress_tail_p999_lb={np999} no_progress_tail_max={npm} no_progress_tail_relative_base={npb} no_progress_tail_ge4x_median_lb={np4} no_progress_tail_ge16x_median_lb={np16} no_progress_tail_ge64x_median_lb={np64} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} grid_order_pairs={gop} grid_order_abs_delta={goa} grid_materialize_by_slot={gms} cell_construction_ms={cc:.3} dedup_ms={dd:.3} dedup_bookkeeping_ms={dbk:.3} dedup_overflow_ms={dof:.3} dedup_deferred_ms={ddp:.3} dedup_finalize_ms={dfs:.3} dedup_vertices_ms={dvt:.3} dedup_prefixes_ms={dcp:.3} dedup_incidence_ms={dis:.3} dedup_indices_ms={dci:.3} dedup_overrides_ms={dro:.3} dedup_zero_hints_ms={dzh:.3} shard_order_descents={sod} shard_order_pairs={sop} shard_order_abs_delta={soa} scatter_by_shard={sbs} edge_reconcile_ms={er:.3} merge_safety_scan_cells={mssc} merge_safety_global_fallbacks={msgf} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_reconcile_scan_cells={rrsc} resolution_repair_scan_cells={rpsc} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} candidate_work_samples={cws} candidate_work_p50_lb={cw50} candidate_work_p90_lb={cw90} candidate_work_p99_lb={cw99} candidate_work_p999_lb={cw999} candidate_work_max={cwm} candidate_work_relative_base={cwb} candidate_work_ge4x_median_lb={cw4} candidate_work_ge16x_median_lb={cw16} candidate_work_ge64x_median_lb={cw64} no_progress_tail_samples={nps} no_progress_tail_excluded={npx} no_progress_tail_p50_lb={np50} no_progress_tail_p90_lb={np90} no_progress_tail_p99_lb={np99} no_progress_tail_p999_lb={np999} no_progress_tail_max={npm} no_progress_tail_relative_base={npb} no_progress_tail_ge4x_median_lb={np4} no_progress_tail_ge16x_median_lb={np16} no_progress_tail_ge64x_median_lb={np64} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
                 wp = self.weld_pairs,
                 wpc = self.weld_pair_capacity,
                 kb = ms(self.knn_build),
+                gop = grid_order_pairs,
+                goa = grid_order_abs_delta,
+                gms = grid_materialize_by_slot,
                 cc = ms(self.cell_construction),
                 dd = ms(self.dedup),
+                dbk = ms(self.dedup_sub.bookkeeping),
+                dof = ms(self.dedup_sub.edge_check_overflow),
+                ddp = ms(self.dedup_sub.deferred_patching),
+                dfs = ms(self.dedup_sub.finalize_shards),
+                dvt = ms(self.dedup_sub.concat_vertices),
+                dcp = ms(self.dedup_sub.emit_cell_prefixes),
+                dis = ms(self.dedup_sub.incidence_summary),
+                dci = ms(self.dedup_sub.scatter_cell_indices),
+                dro = ms(self.dedup_sub.patch_reference_overrides),
+                dzh = ms(self.dedup_sub.exact_zero_hints),
+                sod = self.dedup_sub.shard_order_descents,
+                sop = self.dedup_sub.shard_order_pairs,
+                soa = self.dedup_sub.shard_order_abs_delta,
+                sbs = self.dedup_sub.scatter_by_shard as u8,
                 er = ms(self.edge_reconcile),
                 mssc = self.merge_safety_scan_cells,
                 msgf = self.merge_safety_global_fallbacks,
