@@ -3,8 +3,8 @@ use super::helpers::{make_desc_key, outside_max_dot_xyz, security_planes_3x3_int
 use super::*;
 use crate::fp;
 use crate::policy::{
-    PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER, PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER,
-    PACKED_HI_BUDGET,
+    DENSE_BAND_RADIUS_INFLATION, PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER,
+    PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER, PACKED_HI_BUDGET,
 };
 
 #[inline]
@@ -366,7 +366,7 @@ impl PackedKnnCellScratch {
                 // the coverage is complete down to `band_bound`; the shell
                 // takeover backstops anything below it (rare for a dense cell,
                 // where the cell closes within the band).
-                let r_gather = r_claim * (1.0 + 1e-3);
+                let r_gather = r_claim * (1.0 + DENSE_BAND_RADIUS_INFLATION);
                 let band_bound = (1.0 - 0.5 * r_claim * r_claim).clamp(-1.0, 1.0);
                 for qi in 0..num_queries {
                     let security = security_thresholds[qi];

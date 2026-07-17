@@ -66,6 +66,14 @@ pub(crate) const DENSE_CELL_THRESHOLD: usize = 512;
 /// neighbors-before-termination (~8) so takeover stays rare.
 pub(crate) const DENSE_BAND_TARGET_COUNT: usize = 128;
 
+/// Fractional expansion applied to the dense-cell gather radius.
+///
+/// This dimensionless `f32` pad makes the gathered band a conservative
+/// superset of the claimed chord-radius band despite floating-point error.
+/// False positives only add candidates; the exact claim radius still defines
+/// the strict `dot > band_bound` coverage boundary.
+pub(crate) const DENSE_BAND_RADIUS_INFLATION: f32 = 1e-3;
+
 /// Query-grid target density, with the sweep/tuning env override.
 pub(crate) fn knn_grid_target_density() -> f64 {
     static OVERRIDE: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();

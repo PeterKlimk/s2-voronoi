@@ -357,6 +357,13 @@ only setup, classification, and invariant-bearing state.
 
 **Hot-path impact expected:** none
 
+**Progress:** started 2026-07-18 with the policy registry. The dense-cell gather-radius inflation is
+now the named, dimensionless `f32` policy `DENSE_BAND_RADIUS_INFLATION`; its value and use-site
+expression are unchanged, and the optimized tools benchmark is byte-identical to its parent.
+Initial inventory also established that the repeated fallback `1e-24` spellings cover two distinct
+meanings—squared cross-product conditioning floors and squared vertex-dedup distances—so the next
+slice will name those meanings separately even while preserving their currently equal bit pattern.
+
 Classify every production floating-point literal outside tests/benchmarks as one of:
 
 - exact mathematical value;

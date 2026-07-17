@@ -287,7 +287,7 @@ tasks and are not duplicated here.
 ### QUAL-001 — Performance-preserving cleanup
 
 - **Priority:** P2
-- **Status:** Active; baseline, QUAL-001A, and QUAL-001F completed 2026-07-17
+- **Status:** Active; baseline, QUAL-001A, QUAL-001F, and QUAL-001H completed; QUAL-001E active
 - **Goal:** reduce change amplification and make pipeline invariants structural without giving back
   established throughput, memory behavior, or numerical/correctness guarantees.
 - **Compatibility posture:** there are no external users as of 2026-07-17. Use this window for
@@ -339,9 +339,12 @@ tasks and are not duplicated here.
   `VORONOI_MESH_EDGE_MISMATCH_ORIGINS`, and its lookup/output now occurs only when assembly has a
   mismatch. Output-resolution telemetry was retained unchanged because it already returns before
   its lookup when no exact-zero edge exists. This closes QUAL-001H.
-- **Next gate:** begin QUAL-001E with a constant inventory and name-only relocation proposal; do
-  not move constants across hot module boundaries until optimized code identity or counters clear
-  the change.
+- **QUAL-001E policy result:** the raw dense-band `1e-3` gather inflation is now the named,
+  dimensionless `f32` policy `DENSE_BAND_RADIUS_INFLATION` in `policy.rs`. Its optimized benchmark
+  artifact is byte-identical to the parent, and all required feature/test matrices pass.
+- **Next gate:** split the fallback `1e-24` inventory into separately named squared cross-product
+  conditioning and squared vertex-dedup meanings, preserving both exact values and every `<=`
+  comparison. Require optimized code identity or counters before accepting the relocation.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

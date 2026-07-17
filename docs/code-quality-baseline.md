@@ -373,6 +373,28 @@ parent `bd2f37a`.
   delta. Six of seven pairs favored the candidate; every run had zero context switches and CPU
   migrations. There was no adverse counter signal warranting a quiet wall-clock run.
 
+## QUAL-001E dense-band policy result
+
+The first numerical/policy-constant slice was validated on 2026-07-18 against immediate parent
+`5998cb9`.
+
+- The packed dense-cell gather's raw `1e-3` inflation is now the named
+  `DENSE_BAND_RADIUS_INFLATION` policy in `policy.rs`. Its documentation records that the value is
+  a dimensionless `f32` fraction, that it expands the gather chord radius, and that false positives
+  add work without changing the strict dot-space coverage boundary.
+- The value, arithmetic expression, comparison directions, and control flow are unchanged. This is
+  a name-and-ownership change only; it does not tune the dense-band algorithm.
+- `cargo fmt`, both default and all-feature Clippy with warnings denied, the complete release and
+  checked suites, the no-default-features release suite, and the `serde,glam` release suite passed.
+- The release `tools` benchmark before and after the change had identical SHA-256
+  `295d983048d512272dbd019e2a162da572050df7594f3929d06cae9711a571ed`. Exact artifact identity
+  supersedes counter and semantic-fingerprint comparison for this slice; there was no reason to
+  request a quiet wall-clock run.
+- The initial remaining-literal review found that equal `1e-24` fallback spellings currently serve
+  two roles: rejecting squared cross products that are too small to normalize and deduplicating
+  f64 fallback vertices by squared distance. They require separate semantic constants, not one
+  mechanically shared name; preserving their equal values is a separate fact from their ownership.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
