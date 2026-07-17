@@ -353,9 +353,14 @@ tasks and are not duplicated here.
 - **QUAL-001E owner-arc result:** owner-plane residual and exact-pi sine thresholds now live in
   `tolerances.rs` with their `f64` units and distinct `>` / `<=` rejection boundaries documented.
   Their stripped optimized binaries are byte-identical to the parent.
-- **Next gate:** classify the two weld candidate-grid wall guards. Preserve the cube-grid weld's
-  additive `f32` pad and preprocessing weld's relative `f64` inflation as separate constants; equal
-  `1e-6` spellings do not justify changing either expression or sharing one typed value.
+- **QUAL-001E weld-wall result:** the cube-grid weld's additive `f32` wall pad and preprocessing
+  weld's relative `f64` wall inflation are now separately named in `tolerances.rs`. Their values,
+  expressions, strict comparison boundaries, and final computed-f32 weld predicate are unchanged.
+  Optimized executable sections and numeric data are byte-identical; only source metadata moved.
+- **Next gate:** classify the near-great-circle compatibility classifier's maximum and RMS
+  plane-residual thresholds separately from its realized perturbation amplitude. Preserve every
+  value, type, predicate, and expression; these acceptance bounds and the deliberate joggle scale
+  do not form a shared tolerance hierarchy.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

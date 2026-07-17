@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use crate::tolerances::STANDALONE_WELD_WALL_RELATIVE_PAD;
+
 /// Result of welding coincident generators before Voronoi computation.
 pub(crate) struct MergeResult {
     /// Points to use for Voronoi (representatives only, or all if no merges).
@@ -45,7 +47,7 @@ impl WeldGrid {
         WeldGrid {
             cell,
             inv_cell: 1.0 / cell,
-            pad: thr * (1.0 + 1e-6),
+            pad: thr * (1.0 + STANDALONE_WELD_WALL_RELATIVE_PAD),
         }
     }
 

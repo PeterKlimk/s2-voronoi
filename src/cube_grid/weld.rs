@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 use rayon::prelude::*;
 
 use super::{cell_to_face_ij, CubeMapGrid};
+use crate::tolerances::GRID_WELD_WALL_ABS_PAD;
 
 pub(crate) const MAX_RETAINED_WELD_PAIRS: usize = 1 << 20;
 
@@ -126,7 +127,7 @@ impl CubeMapGrid {
         // Wall-proximity pad: threshold plus a generous absolute guard for
         // the f32 plane-dot error (a few ulps of 1.0). False positives only
         // cost a redundant neighbor scan.
-        let pad = threshold + 1e-6;
+        let pad = threshold + GRID_WELD_WALL_ABS_PAD;
         let line_count = self.res + 1;
         let retained = AtomicUsize::new(0);
         let exceeded = AtomicBool::new(false);

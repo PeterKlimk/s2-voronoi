@@ -463,6 +463,31 @@ The fourth numerical/policy-constant slice was validated on 2026-07-18 against i
   `a9c01ba20bbe32194ce765864c12fa9087c77a965038c57f4fbe908c8d0c56c8`. No counter or quiet
   wall-clock run was warranted.
 
+## QUAL-001E weld wall-guard result
+
+The fifth numerical/policy-constant slice was validated on 2026-07-18 against immediate parent
+`15cdc94`.
+
+- The two raw weld candidate-grid `1e-6` guards moved to `tolerances.rs` as independent constants.
+  `GRID_WELD_WALL_ABS_PAD: f32` remains an absolute, dimensionless plane-dot/chord-scale reserve;
+  the grid-integrated path still scans an adjacent cell when
+  `abs(plane_dot) < threshold + GRID_WELD_WALL_ABS_PAD`.
+- `STANDALONE_WELD_WALL_RELATIVE_PAD: f64` remains a dimensionless relative inflation; the
+  standalone preprocessing path still forms its quantized wall pad as
+  `threshold * (1 + STANDALONE_WELD_WALL_RELATIVE_PAD)` and uses the same strict `<` wall-distance
+  comparison. The equal constant values do not establish a shared unit, expression, or hierarchy.
+- Both guards can only admit extra candidate-cell scans. The final computed-f32 weld predicate
+  remains the strict `distance_squared < radius_squared`, so this slice changes neither its weld
+  radius nor its equality boundary.
+- `cargo fmt`, both default and native all-feature Clippy with warnings denied, the complete release
+  and checked suites, the no-default-features release suite, and the `serde,glam` release suite
+  passed.
+- Matched release `tools` benchmarks had identical section sizes and total footprint. `.text`
+  (`a20c69a6…f0de8`), `.rodata` (`f8b29268…7761`), and exception tables
+  (`1771916b…bcbb`) were byte-identical. The whole-file difference was confined to build/symbol
+  metadata and 75 changed source-location bytes in `.data.rel.ro`; executable code and numeric data
+  did not change. There was no counter signal requiring a quiet wall-clock run.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

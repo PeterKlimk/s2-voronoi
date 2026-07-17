@@ -49,6 +49,23 @@ pub(crate) fn weld_radius() -> f32 {
     coincident_distance()
 }
 
+/// Absolute reserve added to the grid-integrated weld threshold before the
+/// `f32` wall-plane proximity test.
+///
+/// A point scans neighboring cells when `abs(plane_dot) < threshold + pad`.
+/// The pad is in the same dimensionless chord/plane-dot scale; false positives
+/// only add candidate scans, while the final weld-distance predicate remains
+/// strict and unchanged.
+pub(crate) const GRID_WELD_WALL_ABS_PAD: f32 = 1e-6;
+
+/// Relative inflation used by the standalone weld detector's f64 quantized
+/// wall-distance test.
+///
+/// Its absolute wall pad is `threshold * (1 + relative_pad)`, followed by a
+/// strict `<` comparison. This dimensionless fraction does not affect the
+/// final computed-f32 weld-distance predicate.
+pub(crate) const STANDALONE_WELD_WALL_RELATIVE_PAD: f64 = 1e-6;
+
 // === Gnomonic clipping (per-cell chart) ===
 
 // Gnomonic half-plane clipping uses the strict antisymmetric keep rule

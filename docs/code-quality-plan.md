@@ -357,7 +357,7 @@ only setup, classification, and invariant-bearing state.
 
 **Hot-path impact expected:** none
 
-**Progress:** started 2026-07-18 with four name-only slices. The dense-cell gather-radius inflation
+**Progress:** started 2026-07-18 with five name-only slices. The dense-cell gather-radius inflation
 is now the named, dimensionless `f32` policy `DENSE_BAND_RADIUS_INFLATION`. The repeated fallback
 `1e-24` spellings are now separately owned as `FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR` (a
 dimensionless squared-sine conditioning floor) and `FALLBACK_VERTEX_DEDUP_LEN2` (a dimensionless
@@ -366,8 +366,11 @@ squared chord distance). Raw `1e-12` sites are now split among `FALLBACK_EDGE_AR
 `LOCAL_REBUILD_STEREOGRAPHIC_DENOMINATOR_FLOOR` (a dimensionless `f32` divisor floor). All values,
 arithmetic, and comparison directions are unchanged. Owner-conditioned spherical arcs now also use
 registry-owned `OWNER_ARC_PLANE_SIN_TOL` and `OWNER_ARC_EXACT_PI_SIN_TOL` values rather than
-module-local constants. The policy slice produced a byte-identical optimized benchmark; the first
-two tolerance slices produced identical executable code/read-only data with only source-line
+module-local constants. The two weld candidate-grid wall guards are now separately named as the
+additive `f32` `GRID_WELD_WALL_ABS_PAD` and relative `f64`
+`STANDALONE_WELD_WALL_RELATIVE_PAD`; their equal `1e-6` values do not imply shared arithmetic or
+units. The policy slice produced a byte-identical optimized benchmark; the fallback, unit-distinct,
+and weld-wall slices produced identical executable code/read-only data with only source-line
 metadata movement, and the owner-arc slice produced an identical stripped optimized binary.
 
 Classify every production floating-point literal outside tests/benchmarks as one of:
