@@ -59,6 +59,7 @@ prevention rather than an overclaimed proof.
 | POINT-002 | P2 | Completed | Closure-based zero-intermediate ingest landed without direct-path regression |
 | POINT-003 | P1 | Completed | Locator query validation and normalized ranking/certification landed |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
+| QUAL-001 | P2 | Ready | Begin staged vocabulary and architecture hygiene |
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
@@ -281,6 +282,25 @@ The remaining code-specific performance experiments are maintained separately in
 [`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md). They are not correctness
 tasks and are not duplicated here.
 
+## Code quality and maintainability
+
+### QUAL-001 — Performance-preserving cleanup
+
+- **Priority:** P2
+- **Status:** Ready; direction accepted 2026-07-17
+- **Goal:** reduce change amplification and make pipeline invariants structural without giving back
+  established throughput, memory behavior, or numerical/correctness guarantees.
+- **First milestone:** pin the semantic/performance baseline, establish distinct construction /
+  assembly / reconciliation / local-rebuild / acceptance / output-resolution vocabulary, then
+  remove stale compatibility aliases, obsolete test terminology, and inaccurate module maps.
+- **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
+  specialized traversals, type ambiguity-prone cold ids, and split reconciliation, escalation,
+  assembly, and packed-query phase programs one measured change at a time.
+- **Gate:** every production refactor preserves semantic fingerprints and passes the affected
+  workload's interleaved performance gate against its immediate parent. Readability alone does not
+  justify a repeatable throughput, memory, or code-size regression.
+- **Reference:** [`code-quality-plan.md`](code-quality-plan.md).
+
 ## Research backburner
 
 ### RESEARCH-001 — Unified exact normalized-site combinatorics
@@ -324,9 +344,10 @@ tasks and are not duplicated here.
 ## Suggested order
 
 1. Continue WORK-002 whenever construction, reconciliation, or Local3d changes.
-2. Decide RES-002 only when positive-threshold mesh conditioning is wanted.
-3. Revisit PERF-001 only with a motivating workload and crossover measurements.
-4. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
+2. Execute QUAL-001 in staged, independently benchmarked milestones.
+3. Decide RES-002 only when positive-threshold mesh conditioning is wanted.
+4. Revisit PERF-001 only with a motivating workload and crossover measurements.
+5. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
 
 ## Closed and retired work
 
