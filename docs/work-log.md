@@ -59,7 +59,7 @@ prevention rather than an overclaimed proof.
 | POINT-002 | P2 | Completed | Closure-based zero-intermediate ingest landed without direct-path regression |
 | POINT-003 | P1 | Completed | Locator query validation and normalized ranking/certification landed |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
-| QUAL-001 | P2 | Ready | Begin staged vocabulary and architecture hygiene |
+| QUAL-001 | P2 | Ready | Apply the pinned lifecycle rename map |
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
@@ -298,8 +298,11 @@ tasks and are not duplicated here.
   assembly / reconciliation / local-rebuild / acceptance / output-resolution vocabulary across
   the public API and implementation, then remove stale compatibility aliases, obsolete test
   terminology, and inaccurate module maps.
+- **Baseline:** counter-oriented Milestone 0 evidence and the exact atomic lifecycle rename map are
+  pinned in [`code-quality-baseline.md`](code-quality-baseline.md). The shared host's wall clock is
+  advisory; single-thread retired instructions/branches are the primary first-change sentinel.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
-  specialized traversals, type ambiguity-prone cold ids, and split reconciliation, escalation,
+  specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.
 - **Gate:** every production refactor preserves semantic fingerprints and passes the affected
   workload's interleaved performance gate against its immediate parent. Readability alone does not

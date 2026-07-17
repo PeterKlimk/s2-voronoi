@@ -435,6 +435,11 @@ into packed/assembly hot arrays only if assembly output and benchmark counters r
 - Select defect-bearing reconciliation and accepted/rejected local-rebuild fixtures.
 - Predeclare the performance equivalence/noise rule on the measurement host.
 
+Captured 2026-07-17 in [`code-quality-baseline.md`](code-quality-baseline.md), including the exact
+QUAL-001A public/internal rename map. On the busy shared WSL2 host, single-thread instructions and
+branches are the primary sentinel; quiet wall-clock work is conditional on an unexplained,
+repeatable adverse counter signal.
+
 ### Milestone 1 — Low-risk semantic cleanup
 
 1. QUAL-001A coordinated public/internal vocabulary and lifecycle migration.
@@ -484,7 +489,8 @@ Every implementation change runs:
 
 ```bash
 cargo fmt
-cargo clippy --all-targets --all-features
+cargo clippy --all-targets
+RUSTFLAGS="-C target-cpu=native" cargo clippy --all-targets --all-features
 cargo test --release
 cargo test --profile checked
 ```

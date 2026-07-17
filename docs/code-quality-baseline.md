@@ -1,0 +1,285 @@
+# Code-quality baseline and lifecycle rename map
+
+**Status:** Milestone 0 baseline captured; QUAL-001A rename map ready to implement
+
+**Date:** 2026-07-17
+
+This record pins the starting evidence and exact first migration for
+[`QUAL-001`](code-quality-plan.md). It is deliberately counter-oriented because the measurement
+host is a busy shared machine. A quiet wall-clock campaign is reserved for a repeatable signal that
+cannot be classified through semantic checks, retired work, memory, or code size.
+
+## Baseline identity
+
+- **Measured revision:** `ec8c491e239e8184dd2de62238360383c3345af4`
+- **Last production-code revision:** `fde41b6` (`ec8c491` differs only by the two cleanup-plan
+  documentation commits)
+- **Toolchain:** `rustc 1.97.0 (2d8144b78 2026-07-07)`, LLVM 22.1.6,
+  `cargo 1.97.0 (c980f4866 2026-06-30)`
+- **MSRV contract:** Rust 1.88; this baseline is not an MSRV validation run
+- **Host:** WSL2 Linux 6.6.87.2, AMD Ryzen 5 3600, 6 physical / 12 logical CPUs
+- **Benchmark build:** release, `tools`, `-C target-cpu=native`
+- **Artifact:** `/tmp/bench_compare/bench_0`, build id
+  `61f788139e9bc2899d660b3ce7f2356730f3f1d1`
+- **Artifact size:** 2,178,079 text bytes; 55,784 data bytes; 2,998,928 file bytes
+
+The benchmark artifact is temporary. The revision, build inputs, commands, and summary below are
+the durable baseline; candidate comparisons rebuild both the candidate and its immediate parent.
+
+## Semantic baseline
+
+The ignored `backend_fingerprint` test uses a fixed 100k random-sphere input (seed 7). Its
+representation fingerprint includes stored coordinates and vertex ids; its semantic fingerprint
+canonicalizes cell cycles through incident-generator identities.
+
+| Backend / execution | Representation | Semantic topology | Vertices | Cells |
+|---|---:|---:|---:|---:|
+| default, 1 thread, 6 bins | `0991e1df6f60d5de` | `961e56d915d09a4e` | 199,996 | 100,000 |
+| default, 6 threads, 96 bins | `0e65ca5dbe8fe07c` | `961e56d915d09a4e` | 199,996 | 100,000 |
+| scalar SIMD seam, 1 thread, 6 bins | `0991e1df6f60d5de` | `961e56d915d09a4e` | 199,996 | 100,000 |
+| hardware FMA, native, 1 thread, 6 bins | `30bde3bc634ebb50` | `961e56d915d09a4e` | 199,996 | 100,000 |
+
+Commands:
+
+```bash
+RAYON_NUM_THREADS=1 VORONOI_MESH_BIN_COUNT=6 \
+  cargo test --release --test backend_fingerprint backend_fingerprint -- --ignored --nocapture
+
+RAYON_NUM_THREADS=6 VORONOI_MESH_BIN_COUNT=96 \
+  cargo test --release --test backend_fingerprint backend_fingerprint -- --ignored --nocapture
+
+RAYON_NUM_THREADS=1 VORONOI_MESH_BIN_COUNT=6 \
+  cargo test --release --features simd_scalar \
+  --test backend_fingerprint backend_fingerprint -- --ignored --nocapture
+
+RUSTFLAGS="-C target-cpu=native" RAYON_NUM_THREADS=1 VORONOI_MESH_BIN_COUNT=6 \
+  cargo test --release --features fma \
+  --test backend_fingerprint backend_fingerprint -- --ignored --nocapture
+```
+
+The defect-bearing baseline also passed:
+
+```text
+edge_repair_net: 5 passed, 5 ignored
+escalate_local:   4 passed, 1 ignored
+```
+
+These are historical test target names. QUAL-001A renames them according to the map below.
+
+## Counter baseline
+
+The current `scripts/bench_perf.sh` harness was used with five measured samples after a first-round
+warm-up. All runs used 500k points, seed 12345, preprocessing disabled, and the default local
+rebuild policy. Single-thread runs used `RAYON_NUM_THREADS=1` and CPU 0; default-parallel runs were
+unpinned so the Rayon pool could use the host.
+
+### Median retired work
+
+The percentage in parentheses is `(max - min) / median` across the five samples. Counts are for the
+whole benchmark process, including deterministic point generation.
+
+| Regime | Distribution | Instructions | Branches | Branch misses | Cache misses |
+|---|---|---:|---:|---:|---:|
+| 1 thread, CPU 0 | Fibonacci | 3,419,644,674 (0.001%) | 377,984,367 (0.002%) | 12,669,130 (7.50%) | 8,189,538 (44.99%) |
+| 1 thread, CPU 0 | uniform | 3,734,723,609 (0.001%) | 431,888,065 (0.001%) | 20,398,270 (2.24%) | 13,753,682 (24.14%) |
+| default parallel | Fibonacci | 3,492,881,656 (0.179%) | 392,165,697 (0.309%) | 13,908,227 (3.28%) | 9,289,750 (18.52%) |
+| default parallel | uniform | 3,822,378,633 (0.325%) | 447,918,186 (0.566%) | 22,685,717 (2.20%) | 18,418,672 (27.74%) |
+
+### Noisy counters and memory
+
+| Regime | Distribution | Cycles median | Cycle range | Task-clock median | Task-clock range | Max RSS sample |
+|---|---|---:|---:|---:|---:|---:|
+| 1 thread, CPU 0 | Fibonacci | 2,014,477,151 | 17.37% | 768 ms | 21.28% | 137,448 KiB |
+| 1 thread, CPU 0 | uniform | 2,500,593,827 | 11.33% | 813 ms | 17.93% | 134,560 KiB |
+| default parallel | Fibonacci | 2,514,102,135 | 1.68% | 1,211 ms | 26.08% | 149,096 KiB |
+| default parallel | uniform | 3,117,391,998 | 3.48% | 1,503 ms | 32.28% | 149,268 KiB |
+
+The perf samples reported zero context switches and zero CPU migrations. Under WSL2 those software
+counters are not useful contamination filters, so the comparison must rely on paired rotation and
+the stability of retired instructions/branches. Cache and task-clock variation confirms that they
+are attribution aids, not first-line acceptance metrics on this host.
+
+Commands:
+
+```bash
+./scripts/bench_build.sh HEAD
+./scripts/bench_perf.sh -r 5 -s 500k -d fib \
+  --csv /tmp/code_quality_perf_st_fib.csv
+./scripts/bench_perf.sh -r 5 -s 500k -d uniform \
+  --csv /tmp/code_quality_perf_st_uniform.csv
+./scripts/bench_perf.sh -r 5 -s 500k -d fib --multi --no-pin \
+  --csv /tmp/code_quality_perf_mt_fib.csv
+./scripts/bench_perf.sh -r 5 -s 500k -d uniform --multi --no-pin \
+  --csv /tmp/code_quality_perf_mt_uniform.csv
+```
+
+## Comparison rule for QUAL-001A
+
+The rename is expected to be behavior- and hot-work-neutral. Compare the candidate against its
+immediate parent with both artifacts in the same rotated `bench_perf.sh` run.
+
+- Semantic fingerprints and defect-suite outcomes must match the contract above.
+- Single-thread instructions and branches are the primary codegen sentinel. Any repeatable paired
+  movement above 0.1% requires inspection; exact or near-exact equality is expected.
+- Default-parallel instructions/branches use a 1% decision band because this baseline shows up to
+  0.57% natural spread and parallel work scheduling is not representation-deterministic.
+- Peak RSS and binary text size must not move repeatably by more than 1% without an explained
+  tool/API-surface cause.
+- Cycles, cache events, task-clock, and elapsed time are advisory on this machine. Request a quiet
+  run when they show a repeatable adverse direction above 3% that stable retired-work, RSS, and
+  code-size evidence cannot explain.
+- A new ordinary-path allocation, branch, or environment lookup is independently sufficient to
+  reject or redesign the change.
+
+These are gates for the naming migration, not universal thresholds for later hot-path extraction.
+Each later workstream must set its own immediate-parent rule from its affected regimes.
+
+## QUAL-001A lifecycle rename map
+
+The migration is intentionally breaking and atomic across the compiling repository. No deprecated
+aliases are added. Geometry, control flow, numerical constants, report contents, and state shapes
+remain unchanged; the invalid-state cleanup recorded in QUAL-001A follows as a separate commit.
+
+### Public API and report surface
+
+| Current | Replacement |
+|---|---|
+| `RepairMode` | `LocalRebuildMode` |
+| `RepairMode::Disabled` | `LocalRebuildMode::Disabled` |
+| `RepairMode::Local3d` | `LocalRebuildMode::Hull3d` |
+| `RepairMode::LocalProjected` | `LocalRebuildMode::ProjectedDelaunay` |
+| `VoronoiConfig::repair_mode` | `VoronoiConfig::local_rebuild_mode` |
+| `VoronoiConfig::with_repair_mode` | `VoronoiConfig::with_local_rebuild_mode` |
+| `RepairReport` | `LocalRebuildReport` |
+| `ComputeReport::repair` | `ComputeReport::local_rebuild` |
+| `pre_repair_edge_mismatch_count` | `assembly_edge_mismatch_count` |
+| `pre_repair_edge_mismatches` | `assembly_edge_mismatches` |
+| `post_repair_unpaired_edges` | `residual_unpaired_edges` |
+| `post_repair_escalation_pairs` | `residual_reconciliation_pairs` |
+| `unresolved_edge_pairs` | `reconciliation_edge_records` |
+| `has_post_repair_residuals` | `has_output_residuals` |
+| `UnresolvedEdgeOrigin` | `EdgeMismatchOrigin` |
+| `UnresolvedEdgeOrigin::PostRepairUnpaired` | `EdgeMismatchOrigin::PostReconciliationUnpaired` |
+
+`assembly_edge_mismatch_*` names facts detected by live dedup/assembly before post-assembly
+reconciliation. `reconciliation_edge_records` remains the diagnostic aggregate that includes
+initial facts and any synthesized post-reconciliation backstop records. The residual fields name
+facts about the returned output rather than implying that one ambiguous repair stage ran.
+
+The affected configuration and report types do not derive serde. The serde audit found only point,
+diagram, and cell-mesh wire types; their field names and formats are outside this migration.
+
+### Reconciliation internals
+
+| Current | Replacement |
+|---|---|
+| `UnresolvedEdgeMismatch` | `EdgeMismatch` |
+| `unresolved_edges` variables | `edge_mismatches` |
+| `reconcile_unresolved_edges` | `reconcile_edge_mismatches` |
+| `RepairApply` | `ReconcileApply` |
+| `repair_apply_from_env` | `reconcile_apply_from_env` |
+| `MAX_REPAIR_ROUNDS` | `MAX_RECONCILIATION_ROUNDS` |
+| `run_repair_rounds` | `run_reconciliation_rounds` |
+| reconciliation-local `repaired_*` variables | `reconciled_*` |
+| `escalation_pairs` / `reconciliation_escalations` | `local_rebuild_seed_pairs` |
+| `escalation_error` | `reconciliation_rejection_error` |
+
+The existing `edge_reconcile.rs`, `ReconcileResult`, `reconcile_edges`, `residual_pairs`, and
+`merge_affected_cells` names already describe their stage and remain.
+
+### Local-rebuild internals
+
+| Current | Replacement |
+|---|---|
+| `knn_clipping/escalate.rs` / module `escalate` | `knn_clipping/local_rebuild.rs` / `local_rebuild` |
+| `RepairOutcome` | `LocalRebuildOutcome` |
+| `RepairResult` | `LocalRebuildResult` |
+| `maybe_repair_effective` | `maybe_rebuild_effective` |
+| `RepairVertex` | `RebuildVertex` |
+| `RepairFan` | `RebuildFan` |
+| `repair_grow_loop` | `run_rebuild_growth` |
+| `repair_local_hull` | `rebuild_with_local_hull` |
+| `repair_local_exact` | `rebuild_with_projected_delaunay` |
+| `repair_delaunator` | `rebuild_with_global_delaunay` |
+| `EscalationStats` | `LocalRebuildStats` |
+| `ESCALATE_GATHER_K` | `LOCAL_REBUILD_GATHER_K` |
+| `ESCALATE_MAX_ROUNDS` | `LOCAL_REBUILD_MAX_ROUNDS` |
+| `escalation_enabled` | `local_rebuild_probe_forced` |
+| `set_escalation_enabled` | `set_local_rebuild_forced` |
+| local-rebuild `repair_*` variables | corresponding `rebuild_*` names |
+| `resolution_repair_scan_cells` | `resolution_rebuild_scan_cells` |
+
+This commit does not convert `LocalRebuildOutcome { attempted, accepted, ... }` into the planned
+state enum. Keeping the rename and state-model change separate preserves attribution and gives the
+later commit a clear behavioral diff.
+
+### Features, probes, environment, and tools
+
+| Current | Replacement / action |
+|---|---|
+| Cargo feature and root module `escalate_probe` | `local_rebuild_probe` |
+| `VORONOI_MESH_RECLIP_REPAIR` | remove; no production reader exists |
+| `VORONOI_MESH_REPAIR_MODE` | `VORONOI_MESH_LOCAL_REBUILD_MODE` |
+| mode value `local3d` | `hull3d` |
+| mode value `projected` | `projected-delaunay` |
+| `VORONOI_MESH_EDGE_REPAIR_REBUILD` | `VORONOI_MESH_RECONCILE_REBUILD` |
+| `VORONOI_MESH_EDGE_REPAIR_GLOBAL_DUPSCAN` | `VORONOI_MESH_RECONCILE_GLOBAL_DUPSCAN` |
+| `VORONOI_MESH_ESCALATE_DEBUG` | `VORONOI_MESH_LOCAL_REBUILD_DEBUG` |
+| `VORONOI_MESH_ESCALATE_DELAUNATOR` | `VORONOI_MESH_LOCAL_REBUILD_GLOBAL_DELAUNAY` |
+| `VORONOI_MESH_ESCALATE_PROBE_A0` | `VORONOI_MESH_LOCAL_REBUILD_PROBE_A0` |
+| `VORONOI_MESH_ESCALATE_DIST` | `VORONOI_MESH_LOCAL_REBUILD_DIST` |
+| `VORONOI_MESH_ESCALATE_N` | `VORONOI_MESH_LOCAL_REBUILD_N` |
+| `VORONOI_MESH_ESCALATE_SEED` | `VORONOI_MESH_LOCAL_REBUILD_SEED` |
+| `VORONOI_MESH_ESCALATE_K` | `VORONOI_MESH_LOCAL_REBUILD_K` |
+| benchmark option `--no-repair` | `--no-local-rebuild` |
+| KV fields `repair_attempted` / `repair_accepted` | `local_rebuild_attempted` / `local_rebuild_accepted` |
+
+Campaign scripts and parsers migrate in the same commit. None of these probe/diagnostic names gets
+a fallback reader for the old spelling.
+
+### Test targets
+
+| Current | Replacement |
+|---|---|
+| `tests/edge_repair_net.rs` | `tests/edge_reconciliation.rs` |
+| `tests/escalate_local.rs` | `tests/local_rebuild.rs` |
+| `tests/escalate.rs` | `tests/local_rebuild_probe.rs` |
+| `tests/reclip_repair.rs` | `tests/local_rebuild_contract.rs` |
+
+Test function names and assertions follow the same stage-specific vocabulary. The no-op
+`VORONOI_MESH_RECLIP_REPAIR` setup is deleted from `local_rebuild_contract`; serialization remains
+only for environment variables that the test actually changes.
+
+### Documentation boundary
+
+Update current contract and operational material in `README.md`, `docs/architecture.md`,
+`docs/correctness.md`, `docs/performance.md`, the crate docs, scripts, and active work-log text.
+Use **reconciliation** for identity/cycle cleanup and **local rebuild** for the Hull3d or projected
+Delaunay replacement transaction.
+
+Do not mechanically rewrite closed audit records, historical benchmark narratives, or rejected
+experiment descriptions when `repair` is part of the recorded historical name. Add a short mapping
+only where a current command, identifier, or link would otherwise become unusable.
+
+## Atomic migration boundary and gates
+
+The first implementation commit may span public API, production internals, tests, tools, scripts,
+and current docs because splitting it would require temporary aliases or a non-compiling tree. It
+must not include state-enum redesign, tolerance movement, algorithm changes, or phase extraction.
+
+Minimum validation:
+
+```bash
+cargo fmt
+cargo clippy --all-targets
+RUSTFLAGS="-C target-cpu=native" cargo clippy --all-targets --all-features
+cargo test --release
+cargo test --profile checked
+cargo test --release --no-default-features
+cargo test --release --features serde,glam
+cargo test --release --features local_rebuild_probe --test local_rebuild_probe
+```
+
+Then rerun the four semantic fingerprint commands and the two renamed defect-bearing targets. Build
+the candidate and immediate parent together and run the four counter cells above interleaved. A
+quiet wall-clock run is required only by the comparison rule's unexplained repeatable signal.
