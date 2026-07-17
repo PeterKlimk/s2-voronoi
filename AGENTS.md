@@ -66,6 +66,7 @@ High-level flow per generator:
 - `docs/architecture.md`: the algorithm (per-cell construction + stitching) and module map.
 - `docs/correctness.md`: guarantees, outcome classes, and limits.
 - `docs/performance.md`: benchmark guidance and perf knobs.
+- `docs/environment-knobs.md`: environment-variable ownership and test-mutation policy.
 - `docs/work-log.md`: authoritative active triage, dependencies, and backburner.
 - `docs/audit-triage.md`: closed July 2026 correctness/safety audit record.
 

@@ -11,26 +11,10 @@
 //! sweep lives in `scripts/robustness_campaign.sh`.
 
 mod support;
+use support::env::with_env_vars;
 use support::points::mega_points;
 
-use std::sync::Mutex;
 use voronoi_mesh::{compute, compute_with_report, ComputeReport, VoronoiConfig};
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-/// Run `f` with optional environment overrides, serialized so no other case
-/// in this binary computes while the process-global environment is mutated.
-fn with_env<T>(extra: &[(&str, &str)], f: impl FnOnce() -> T) -> T {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    for (k, v) in extra {
-        std::env::set_var(k, v);
-    }
-    let out = f();
-    for (k, _) in extra {
-        std::env::remove_var(k);
-    }
-    out
-}
 
 /// Count residuals that survived to the returned diagram (what the hot path
 /// loud-fails on; the report path returns them as diagnostics instead).
@@ -50,7 +34,7 @@ const N: usize = 100_000;
 /// plain path loud-fails on it; see the next test.)
 #[test]
 fn mega_rebuild_no_residual_implies_strictly_valid() {
-    with_env(&[], || {
+    with_env_vars(&[], || {
         for seed in SEEDS {
             let pts = mega_points(N, 0.8, seed);
             let out = compute_with_report(&pts, VoronoiConfig::default())
@@ -71,7 +55,7 @@ fn mega_rebuild_no_residual_implies_strictly_valid() {
 /// and whenever `compute` returns `Ok` the diagram is strictly valid.
 #[test]
 fn mega_plain_compute_errs_iff_residual_remains() {
-    with_env(&[], || {
+    with_env_vars(&[], || {
         for seed in SEEDS {
             let pts = mega_points(N, 0.8, seed);
             let residual = surviving_residual(
@@ -104,7 +88,7 @@ fn mega_plain_compute_errs_iff_residual_remains() {
 /// (exercises the cross-bin path deterministically, single process).
 #[test]
 fn mega_rebuild_cross_bin_contract() {
-    with_env(&[("VORONOI_MESH_BIN_COUNT", "48")], || {
+    with_env_vars(&[("VORONOI_MESH_BIN_COUNT", Some("48"))], || {
         let pts = mega_points(N, 0.8, 2);
         let out = compute_with_report(&pts, VoronoiConfig::default())
             .expect("report path must not loud-fail");
@@ -128,7 +112,7 @@ fn mega_rebuild_is_deterministic_single_threaded() {
         .num_threads(1)
         .build()
         .expect("1-thread pool");
-    with_env(&[], || {
+    with_env_vars(&[], || {
         let pts = mega_points(N, 0.8, 2);
         let layout = |pts: &[voronoi_mesh::UnitVec3]| {
             let out =

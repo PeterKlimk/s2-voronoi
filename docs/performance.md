@@ -83,8 +83,11 @@ Useful flags:
   equivalence components the current policy would create, plus the number rejected by the
   no-chain diameter gate. This intentionally repeats cold-path reconciliation work and is for
   correctness audits, not performance measurements; clean builds skip even the environment lookup.
-- `VORONOI_MESH_GRID_DENSITY=<f>` / `VORONOI_MESH_PLANE_GRID_DENSITY=<f>` — spatial-grid target
-  density (points per cell) for sweeps.
+- `VORONOI_MESH_GRID_DENSITY=<f>` — spatial-grid target density (points per cell) for sweeps. It is
+  snapshotted on first use; run each density in a separate process.
+
+The complete supported, diagnostic, campaign, and manual-probe inventory is maintained in
+[`environment-knobs.md`](environment-knobs.md).
 
 Timing builds also expose scale-relative construction-work telemetry in both the human report and
 `TIMING_KV`:

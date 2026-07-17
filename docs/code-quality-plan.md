@@ -415,6 +415,14 @@ into packed/assembly hot arrays only if assembly output and benchmark counters r
 
 **Hot-path impact expected:** neutral or improved
 
+**Progress:** environment inventory and active-test isolation completed 2026-07-18. The inventory
+is maintained in [`environment-knobs.md`](environment-knobs.md); the stale planar density name was
+retired. Active integration-test writers use one exact-restore, panic-safe scoped guard, while the
+verification-gate unit test uses isolated child processes and leaves the shared unit-test
+environment untouched. Optimized production binaries remained byte-identical. Ignored manual
+local-rebuild probes still need scoped forced state and clearer target organization; cold option
+records and the `quality` surface decision also remain.
+
 1. Inventory environment knobs by category: supported operational, internal diagnostic,
    differential oracle, manual benchmark, or obsolete.
 2. Read related cold knobs once into a diagnostic/options record and pass explicit values to the

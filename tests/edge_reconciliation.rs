@@ -73,6 +73,7 @@
 
 mod support;
 
+use support::env::with_env_vars;
 use support::points::*;
 use voronoi_mesh::{
     compute_with_report, validation::validate, ComputeOutput, EdgeMismatchOrigin, UnitVec3Like,
@@ -88,24 +89,18 @@ const SOURCE_N: usize = 2_000_000;
 const WINDOW_RADIUS_MULT: f32 = 10.0;
 const SCAFFOLD_EXCL_MULT: f32 = 15.0;
 
-/// Serialize env-var mutation across tests in this binary.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 fn with_env<R>(bin_count: Option<usize>, reconcile_rebuild: bool, f: impl FnOnce() -> R) -> R {
-    let _guard = ENV_LOCK.lock().unwrap();
-    match bin_count {
-        Some(n) => std::env::set_var("VORONOI_MESH_BIN_COUNT", n.to_string()),
-        None => std::env::remove_var("VORONOI_MESH_BIN_COUNT"),
-    }
-    if reconcile_rebuild {
-        std::env::set_var("VORONOI_MESH_RECONCILE_REBUILD", "1");
-    } else {
-        std::env::remove_var("VORONOI_MESH_RECONCILE_REBUILD");
-    }
-    let result = f();
-    std::env::remove_var("VORONOI_MESH_BIN_COUNT");
-    std::env::remove_var("VORONOI_MESH_RECONCILE_REBUILD");
-    result
+    let bin_count = bin_count.map(|n| n.to_string());
+    with_env_vars(
+        &[
+            ("VORONOI_MESH_BIN_COUNT", bin_count.as_deref()),
+            (
+                "VORONOI_MESH_RECONCILE_REBUILD",
+                reconcile_rebuild.then_some("1"),
+            ),
+        ],
+        f,
+    )
 }
 
 fn with_bin_count<R>(bin_count: Option<usize>, f: impl FnOnce() -> R) -> R {

@@ -185,9 +185,10 @@ Validation evidence:
   passed.
 - The full release and checked suites passed. The no-default and `serde,glam` matrices passed with
   one harness thread; the `local_rebuild_probe` target compiled with its 14 manual probes ignored.
-- Concurrent feature-matrix runs reproduced the process-global diagnostic-test interference
-  already assigned to QUAL-001H; the affected targets passed alone and the complete matrices passed
-  serialized. This is test-layout evidence, not a production-output difference.
+- An initial validation orchestration accidentally overlapped long-running Cargo commands on the
+  busy host; the affected targets passed alone and the complete matrices passed serialized. That
+  run did not establish process-environment interference. QUAL-001H subsequently audited the
+  actual within-process mutation boundaries directly.
 - Single-thread and six-thread/96-bin fingerprints remained exactly
   `0991e1df6f60d5de` and `0e65ca5dbe8fe07c`, with semantic topology
   `961e56d915d09a4e`. The FMA representation fingerprint remained
@@ -207,6 +208,32 @@ Validation evidence:
 No quiet wall-clock run was warranted: the only stable counter movement was a negligible
 `~0.014%` instruction increase after deleting an unused generic seam, while cycles and task clock
 remained uncorrelated shared-host noise.
+
+## QUAL-001H environment-isolation result
+
+The first diagnostics/test-layout slice was validated on 2026-07-18 against immediate parent
+`a777508`.
+
+- [`environment-knobs.md`](environment-knobs.md) classifies every library, tool, campaign, and
+  manual-probe variable found in Rust and repository scripts. It records reader ownership,
+  snapshot cadence, current writers, and the integration-test process boundary.
+- The stale `VORONOI_MESH_PLANE_GRID_DENSITY` documentation was removed; no planar backend or
+  reader exists in the repository.
+- Active integration tests now share one panic-safe helper that serializes within each target,
+  preserves exact pre-existing `OsString` values, restores in reverse order during unwinding, and
+  recovers a poisoned mutex. A direct regression exercises panic restoration and subsequent reuse.
+- The verification-gate unit test exercises enabled and disabled behavior in filtered child-test
+  processes. It tests the real environment parser and error mapping without mutating the shared
+  library-unit-test process.
+- Default release, checked, no-default-feature, and `serde,glam` suites passed under their ordinary
+  parallel test harnesses. The local-rebuild probe target compiled with all 14 manual probes
+  ignored. Default and native all-feature clippy passed with warnings denied.
+- The optimized benchmark binary was byte-for-byte identical to `a777508`, including equal
+  text/data/BSS sizes. No performance sampling or quiet wall-clock run was necessary.
+
+Ignored `local_rebuild_probe` cases still own manual environment mutation and a forced-rebuild
+switch. They remain explicitly individual-run probes; scoped probe state and target organization
+are the next QUAL-001H boundary.
 
 ## QUAL-001A lifecycle rename map
 

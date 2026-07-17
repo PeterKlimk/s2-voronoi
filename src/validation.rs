@@ -1251,11 +1251,6 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
 mod verify_gate_tests {
     use super::*;
     use glam::Vec3;
-    use std::sync::Mutex;
-
-    // Serializes the process-global env-var mutation so the set/remove
-    // window cannot leak into a parallel case in this test.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// A single triangular cell: its three edges are each used once, and the
     /// sphere has no boundary, so all three are unpaired interior edges —
@@ -1300,25 +1295,55 @@ mod verify_gate_tests {
 
     #[test]
     fn verify_gate_errors_only_when_enabled_and_invalid() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        const CHILD_ENV: &str = "VORONOI_MESH_VERIFY_GATE_CHILD";
         let diagram = invalid_diagram();
         assert!(!validate(&diagram).is_strictly_valid());
 
-        std::env::remove_var("VORONOI_MESH_VERIFY");
-        assert!(
-            verify_sphere_if_enabled(&diagram).is_ok(),
-            "disabled gate must not error even on an invalid diagram"
-        );
-
-        std::env::set_var("VORONOI_MESH_VERIFY", "1");
-        let res = verify_sphere_if_enabled(&diagram);
-        std::env::remove_var("VORONOI_MESH_VERIFY");
-        let err = res.expect_err("enabled gate must error on an invalid diagram");
-        match err {
-            crate::VoronoiError::ComputationFailed(msg) => {
-                assert!(msg.contains("VORONOI_MESH_VERIFY"), "message: {msg}");
+        if let Ok(case) = std::env::var(CHILD_ENV) {
+            let result = verify_sphere_if_enabled(&diagram);
+            match case.as_str() {
+                "disabled" => assert!(
+                    result.is_ok(),
+                    "disabled gate must not error even on an invalid diagram"
+                ),
+                "enabled" => match result.expect_err("enabled gate must reject invalid output") {
+                    crate::VoronoiError::ComputationFailed(msg) => {
+                        assert!(msg.contains("VORONOI_MESH_VERIFY"), "message: {msg}");
+                    }
+                    other => panic!("unexpected error variant: {other:?}"),
+                },
+                other => panic!("unknown child case {other}"),
             }
-            other => panic!("unexpected error variant: {other:?}"),
+            return;
+        }
+
+        let run_child = |case: &str, enabled: bool| {
+            let mut command = std::process::Command::new(
+                std::env::current_exe().expect("unit-test executable path"),
+            );
+            command
+                .arg("--exact")
+                .arg(
+                    "validation::verify_gate_tests::verify_gate_errors_only_when_enabled_and_invalid",
+                )
+                .arg("--nocapture")
+                .env(CHILD_ENV, case);
+            if enabled {
+                command.env("VORONOI_MESH_VERIFY", "1");
+            } else {
+                command.env_remove("VORONOI_MESH_VERIFY");
+            }
+            let output = command.output().expect("run isolated verification case");
+            assert!(
+                output.status.success(),
+                "verification child {case} failed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+        };
+
+        for (case, enabled) in [("disabled", false), ("enabled", true)] {
+            run_child(case, enabled);
         }
     }
 
