@@ -160,6 +160,24 @@ pub(crate) const FALLBACK_VERTEX_DEDUP_LEN2: f64 = 1e-24;
 /// degenerate-extraction failures rather than normalizing noise.
 pub(crate) const EXTRACT_DEGENERATE_LEN2: f32 = 1e-28;
 
+// === Degenerate-input compatibility classification ===
+
+/// Maximum absolute point residual from the candidate great-circle plane.
+///
+/// For normalized inputs the dimensionless `f64` dot residual is the sine of
+/// the off-plane angle. The compatibility classifier rejects the candidate
+/// when the maximum residual is `>` this value; equality remains accepted.
+pub(crate) const NEAR_GREAT_CIRCLE_MAX_PLANE_SIN_TOL: f64 = 2.0e-6;
+
+/// Maximum root-mean-square point residual from the candidate great-circle
+/// plane.
+///
+/// This is the dimensionless `f64` RMS of the same sine/dot residuals. The
+/// compatibility classifier rejects the candidate when the RMS residual is
+/// `>` this value; equality remains accepted. It is an independent aggregate
+/// criterion, not a derived fraction of the maximum-residual tolerance.
+pub(crate) const NEAR_GREAT_CIRCLE_RMS_PLANE_SIN_TOL: f64 = 5.0e-7;
+
 // === Owner-conditioned spherical arcs ===
 
 /// Maximum absolute endpoint residual from the owner-defined bisector plane.

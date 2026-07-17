@@ -357,10 +357,14 @@ tasks and are not duplicated here.
   weld's relative `f64` wall inflation are now separately named in `tolerances.rs`. Their values,
   expressions, strict comparison boundaries, and final computed-f32 weld predicate are unchanged.
   Optimized executable sections and numeric data are byte-identical; only source metadata moved.
-- **Next gate:** classify the near-great-circle compatibility classifier's maximum and RMS
-  plane-residual thresholds separately from its realized perturbation amplitude. Preserve every
-  value, type, predicate, and expression; these acceptance bounds and the deliberate joggle scale
-  do not form a shared tolerance hierarchy.
+- **QUAL-001E coplanar-policy result:** the near-great-circle maximum and RMS plane-residual bounds
+  now live as independent `f64` tolerances, while the realized perturbation amplitude is named
+  separately as robust-mode policy. Values, strict `>` rejection boundaries, arithmetic, and the
+  local closure capture are unchanged. Optimized executable sections and numeric data are
+  byte-identical; only source metadata moved.
+- **Next gate:** classify the local projected-Delaunay super-triangle's `f64` span floor separately
+  from its expansion factor. Preserve the existing `max(1e-9)` conditioning guard, `* 1000.0`
+  sizing policy, and all downstream geometry; the two constants serve different roles.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

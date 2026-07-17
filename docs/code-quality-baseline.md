@@ -488,6 +488,32 @@ The fifth numerical/policy-constant slice was validated on 2026-07-18 against im
   metadata and 75 changed source-location bytes in `.data.rel.ro`; executable code and numeric data
   did not change. There was no counter signal requiring a quiet wall-clock run.
 
+## QUAL-001E coplanar compatibility-policy result
+
+The sixth numerical/policy-constant slice was validated on 2026-07-18 against immediate parent
+`5863b63`.
+
+- The near-great-circle compatibility classifier's raw plane-residual thresholds moved to
+  `tolerances.rs` as independent `f64` values. `NEAR_GREAT_CIRCLE_MAX_PLANE_SIN_TOL` remains
+  `2.0e-6`, and `NEAR_GREAT_CIRCLE_RMS_PLANE_SIN_TOL` remains `5.0e-7`. Both are dimensionless
+  sine/dot residual bounds, and the classifier still rejects when either measured residual is
+  strictly `>` its bound; equality remains accepted.
+- Their numerical ordering does not establish a derived fraction or load-bearing hierarchy. The
+  maximum and RMS tests constrain different aggregates over the same point residuals.
+- The raw `1.0e-2f64` realized joggle became `COPLANAR_PERTURBATION_SCALE` in `policy.rs`. It remains
+  a dimensionless normal-offset coefficient multiplied by the same stable signed value before
+  point renormalization. It is intentionally output-changing robust-mode policy, not a
+  coplanarity-classification tolerance. The local `scale` binding was retained so the iterator
+  closure keeps its original capture and optimized shape.
+- `cargo fmt`, both default and native all-feature Clippy with warnings denied, the complete release
+  and checked suites, the no-default-features release suite, and the `serde,glam` release suite
+  passed.
+- Matched release `tools` benchmarks had identical section sizes and total footprint. `.text`
+  (`a20c69a6…f0de8`), `.rodata` (`f8b29268…7761`), exception tables (`1771916b…bcbb`), and unwind
+  sections were byte-identical. The whole-file difference was confined to build/symbol metadata
+  and 14 changed source-location bytes in `.data.rel.ro`; executable code and numeric data did not
+  change. No counter or quiet wall-clock run was warranted.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

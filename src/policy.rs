@@ -1,8 +1,16 @@
-//! Internal policy and heuristic configuration for neighbor search.
+//! Internal behavior and performance policy configuration.
 //!
-//! This module centralizes the crate's behavior-preserving tuning knobs so the
-//! query/stream code can depend on named policy decisions instead of scattered
-//! constants.
+//! This module centralizes the crate's behavior-preserving tuning knobs so
+//! implementation code can depend on named policy decisions instead of
+//! scattered constants.
+
+/// Realized normal-direction joggle used by `DegenerateMode::PerturbCoplanar`.
+///
+/// This dimensionless `f64` coefficient scales a stable signed value before
+/// adding the plane normal and renormalizing the point. Its maximum magnitude
+/// is approximately the angular offset in radians. This is an output-changing
+/// robust-mode policy, not a coplanarity acceptance tolerance.
+pub(crate) const COPLANAR_PERTURBATION_SCALE: f64 = 1.0e-2;
 
 /// Target mean points per query-grid cell.
 ///

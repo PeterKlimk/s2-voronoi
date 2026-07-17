@@ -11,7 +11,9 @@ use crate::cube_grid::CubeMapGrid;
 use crate::cube_grid::CubeMapGridBuildTimings;
 use crate::diagram::VoronoiCell;
 use crate::live_dedup::{self, CellBuildError, CellFailure};
+use crate::policy::COPLANAR_PERTURBATION_SCALE;
 use crate::timing::{Timer, TimingBuilder};
+use crate::tolerances::{NEAR_GREAT_CIRCLE_MAX_PLANE_SIN_TOL, NEAR_GREAT_CIRCLE_RMS_PLANE_SIN_TOL};
 use crate::{
     CellKillingPolicy, ComputeOutput, ComputeReport, DegenerateMode, DegenerateReport,
     LocalRebuildMode, PreprocessMode, PreprocessReport, VoronoiConfig,
@@ -1321,7 +1323,9 @@ fn classify_near_great_circle(points: &[Vec3]) -> Option<CoplanarClass> {
         sum_dot2 += d * d;
     }
     let rms_dot = (sum_dot2 / points.len() as f64).sqrt();
-    if max_abs_dot > 2.0e-6 || rms_dot > 5.0e-7 {
+    if max_abs_dot > NEAR_GREAT_CIRCLE_MAX_PLANE_SIN_TOL
+        || rms_dot > NEAR_GREAT_CIRCLE_RMS_PLANE_SIN_TOL
+    {
         return None;
     }
 
@@ -1410,9 +1414,9 @@ fn covers_great_circle(points: &[Vec3], normal: DVec3) -> bool {
 fn perturb_coplanar_points(points: &[Vec3], normal: DVec3) -> Vec<Vec3> {
     // This is a realized robust-mode joggle, not a symbolic-only SoS epsilon.
     // The current f32 topology/validation path still sees near-antipodal pole
-    // edges for microscopic offsets on exact great-circle fixtures; 1e-2 rad is
-    // the already-tested small-jitter regime for these inputs.
-    let scale = 1.0e-2f64;
+    // edges for microscopic offsets on exact great-circle fixtures; the named
+    // scale is the already-tested small-jitter regime for these inputs.
+    let scale = COPLANAR_PERTURBATION_SCALE;
     points
         .iter()
         .enumerate()
