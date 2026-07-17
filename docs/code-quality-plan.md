@@ -419,9 +419,11 @@ into packed/assembly hot arrays only if assembly output and benchmark counters r
 is maintained in [`environment-knobs.md`](environment-knobs.md); the stale planar density name was
 retired. Active integration-test writers use one exact-restore, panic-safe scoped guard, while the
 verification-gate unit test uses isolated child processes and leaves the shared unit-test
-environment untouched. Optimized production binaries remained byte-identical. Ignored manual
-local-rebuild probes still need scoped forced state and clearer target organization; cold option
-records and the `quality` surface decision also remain.
+environment untouched. Ignored local-rebuild probes now use one thread-local, nested, panic-safe A0
+capture scope; the redundant process-global forced-rebuild switch and A0 environment reader were
+removed, and Cargo records the all-ignored target's required internal feature. Optimized production
+binaries remained byte-identical through the first slice. Campaign organization, cold option
+records, and the `quality` surface decision remain.
 
 1. Inventory environment knobs by category: supported operational, internal diagnostic,
    differential oracle, manual benchmark, or obsolete.
@@ -430,8 +432,8 @@ records and the `quality` surface decision also remain.
 3. Keep clean-path guarantees such as avoiding environment lookups when no defect record exists.
 4. Rename `reclip_repair` coverage around the current local-rebuild contract and remove the unused
    environment setting.
-5. Move ignored escalation/campaign probes out of mixed active suites into clearly named manual
-   probe targets or tools.
+5. Keep ignored local-rebuild and campaign probes out of mixed active suites, in clearly declared
+   manual targets or tools.
 6. Use panic-safe scoped environment guards and serialize mutations at the appropriate process
    boundary.
 7. Decide whether `quality` remains an always-built doc-hidden API or becomes an internal feature;

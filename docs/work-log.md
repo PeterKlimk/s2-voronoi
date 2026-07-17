@@ -321,9 +321,11 @@ tasks and are not duplicated here.
   test uses isolated child processes. Ordinary parallel feature matrices passed, and the optimized
   production binary was byte-identical to its parent. The stale planar grid-density name was
   removed from current documentation.
-- **Next gate:** move ignored local-rebuild/campaign probes behind scoped probe state and clearly
-  manual targets, then decide the `quality` feature/API surface and consolidate related cold option
-  reads without adding clean-path lookups.
+- **QUAL-001H local-rebuild probe result:** the all-ignored target is now explicitly feature-gated
+  in Cargo and retains its 14 named workloads. A0 capture uses one nested, thread-local, panic-safe
+  scope. The redundant process-global forced-rebuild switch and A0 environment reader were removed.
+- **Next gate:** organize the remaining ignored campaigns, then decide the `quality` feature/API
+  surface and consolidate related cold option reads without adding clean-path lookups.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

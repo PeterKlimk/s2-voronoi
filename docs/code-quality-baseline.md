@@ -231,9 +231,34 @@ The first diagnostics/test-layout slice was validated on 2026-07-18 against imme
 - The optimized benchmark binary was byte-for-byte identical to `a777508`, including equal
   text/data/BSS sizes. No performance sampling or quiet wall-clock run was necessary.
 
-Ignored `local_rebuild_probe` cases still own manual environment mutation and a forced-rebuild
-switch. They remain explicitly individual-run probes; scoped probe state and target organization
-are the next QUAL-001H boundary.
+At this boundary, ignored `local_rebuild_probe` cases still owned manual environment mutation and a
+forced-rebuild switch. The following QUAL-001H slice removed both.
+
+## QUAL-001H manual-probe isolation result
+
+The second diagnostics/test-layout slice was validated on 2026-07-18 against immediate parent
+`50e419c`.
+
+- Every A0 snapshot consumer now goes through the shared `stash_fast_triples` helper and an
+  explicit `with_a0_fast_capture` scope. The state and captured payload are both thread-local; the
+  scope composes when nested and restores its prior state during panic unwinding.
+- The former process-global forced-rebuild switch was redundant: every repository consumer set it
+  only around A0 capture, while the A0 branch returns before rebuild-mode selection. The switch,
+  setter, reader, atomic storage, and A0 environment lookup were removed without replacement.
+- Cargo now declares `local_rebuild_probe` as an all-ignored manual test target requiring the
+  internal feature. The target retains the same name and all 14 named probes.
+- A focused release regression covered nesting, thread isolation, and panic restoration. The
+  manual target listed all 14 cases, and a reduced 1,000-point A0 exact-reference probe passed.
+- Default release, checked, no-default-feature, and `serde,glam` suites passed under their ordinary
+  parallel harnesses. All-target/all-feature Clippy passed with warnings denied.
+- The 1-thread/6-bin and 6-thread/96-bin representation fingerprints remained exactly
+  `0991e1df6f60d5de` and `0e65ca5dbe8fe07c`; both retained semantic topology
+  `961e56d915d09a4e` with 199,996 vertices and 100,000 cells.
+- Parent and candidate optimized benchmark builds used the same stable toolchain and dependency
+  lock. Their `.text` and `.rodata` sections were byte-identical, and both reported 2,179,216 text,
+  55,840 data, and 4,096 BSS bytes. Full files differ through build metadata, and `.data.rel.ro`
+  differs only in Rust panic-location line numbers shifted by the deleted source lines. No
+  performance-counter sampling or quiet wall-clock run was necessary.
 
 ## QUAL-001A lifecycle rename map
 

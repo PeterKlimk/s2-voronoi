@@ -2,7 +2,8 @@
 //! rebuild over REAL fast-path defects and confirm it produces a consistent
 //! local diagram where the fast path left an unpaired edge.
 //!
-//!   cargo test --release --features local_rebuild_probe --test local_rebuild_probe -- --nocapture
+//!   cargo test --release --features local_rebuild_probe --test local_rebuild_probe \
+//!     PROBE_NAME -- --ignored --nocapture
 #![cfg(feature = "local_rebuild_probe")]
 
 mod support;
@@ -12,8 +13,7 @@ use std::collections::HashMap;
 use glam::Vec3;
 use support::points::*;
 use voronoi_mesh::local_rebuild_probe::{
-    check_cell_internally_paired, gather_local, rebuild_cells, set_local_rebuild_forced,
-    RebuiltCell,
+    check_cell_internally_paired, gather_local, rebuild_cells, with_a0_fast_capture, RebuiltCell,
 };
 use voronoi_mesh::{compute_with_report, LocalRebuildMode, UnitVec3, VoronoiConfig};
 
@@ -142,7 +142,6 @@ fn defect_cells_are_internally_valid_after_rebuild() {
 #[ignore = "A0 exact-reference probe; run individually with env + --ignored --nocapture"]
 fn a0_exact_reference_delaunator() {
     use std::collections::BTreeSet;
-    use voronoi_mesh::local_rebuild_probe::take_a0_fast;
 
     let seed: u64 = std::env::var("VORONOI_MESH_LOCAL_REBUILD_SEED")
         .ok()
@@ -161,13 +160,7 @@ fn a0_exact_reference_delaunator() {
         _ => mega_points(n, 0.8, seed),
     };
 
-    // Trigger the A0 stash inside maybe_rebuild_effective.
-    std::env::set_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0", "1");
-    set_local_rebuild_forced(true);
-    let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    set_local_rebuild_forced(false);
-    std::env::remove_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0");
-    let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
+    let (pts, fast_triples) = stash_fast_triples(&points);
     let m = pts.len();
 
     // Stereographic projection from the antipode of the centroid (so the dense
@@ -347,14 +340,10 @@ fn probe_points_from_env(default_n: usize) -> (String, u64, Vec<UnitVec3>) {
 }
 
 fn stash_fast_triples(points: &[UnitVec3]) -> (Vec<Vec3>, Vec<Vec<[u32; 3]>>) {
-    use voronoi_mesh::local_rebuild_probe::take_a0_fast;
-
-    std::env::set_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0", "1");
-    set_local_rebuild_forced(true);
-    let _ = compute_with_report(points, VoronoiConfig::default()).expect("build");
-    set_local_rebuild_forced(false);
-    std::env::remove_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0");
-    take_a0_fast().expect("A0 stash")
+    let (_, captured) = with_a0_fast_capture(|| {
+        let _ = compute_with_report(points, VoronoiConfig::default()).expect("build");
+    });
+    captured.expect("A0 stash")
 }
 
 fn exact_triples_norm3d(pts: &[Vec3]) -> (Vec<std::collections::BTreeSet<[u32; 3]>>, Vec<bool>) {
@@ -894,7 +883,7 @@ fn local_delaunator_cell(
 #[ignore = "local-delaunator-vs-global; run with env + --ignored --nocapture"]
 fn local_delaunator_vs_global() {
     use std::collections::BTreeSet;
-    use voronoi_mesh::local_rebuild_probe::{gather_local, take_a0_fast};
+    use voronoi_mesh::local_rebuild_probe::gather_local;
 
     let seed: u64 = std::env::var("VORONOI_MESH_LOCAL_REBUILD_SEED")
         .ok()
@@ -906,12 +895,7 @@ fn local_delaunator_vs_global() {
         .unwrap_or(100_000);
     let points = mega_points(n, 0.8, seed);
 
-    std::env::set_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0", "1");
-    set_local_rebuild_forced(true);
-    let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    set_local_rebuild_forced(false);
-    std::env::remove_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0");
-    let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
+    let (pts, fast_triples) = stash_fast_triples(&points);
 
     let (exact, hull_region) = exact_triples_delaunator(&pts);
     let targets: Vec<u32> = (0..pts.len() as u32)
@@ -955,7 +939,7 @@ fn local_delaunator_vs_global() {
 #[ignore = "projection-theory 3-way diagnostic; small n; env + --ignored --nocapture"]
 fn projection_theory_3way() {
     use std::collections::BTreeSet;
-    use voronoi_mesh::local_rebuild_probe::{rebuild_cells, take_a0_fast};
+    use voronoi_mesh::local_rebuild_probe::rebuild_cells;
 
     let seed: u64 = std::env::var("VORONOI_MESH_LOCAL_REBUILD_SEED")
         .ok()
@@ -973,12 +957,7 @@ fn projection_theory_3way() {
         _ => mega_points(n, 0.8, seed),
     };
 
-    std::env::set_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0", "1");
-    set_local_rebuild_forced(true);
-    let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    set_local_rebuild_forced(false);
-    std::env::remove_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0");
-    let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
+    let (pts, fast_triples) = stash_fast_triples(&points);
     let m = pts.len();
 
     // delaunator (stereographic, projected) and its hull-region (incomplete fans)
@@ -1031,7 +1010,7 @@ fn projection_theory_3way() {
 #[ignore = "detect+fix+expand with one-local_hull oracle; env + --ignored --nocapture"]
 fn detect_fix_expand_localhull() {
     use std::collections::{BTreeSet, HashMap};
-    use voronoi_mesh::local_rebuild_probe::{gather_local, rebuild_cells, take_a0_fast};
+    use voronoi_mesh::local_rebuild_probe::{gather_local, rebuild_cells};
 
     let seed: u64 = std::env::var("VORONOI_MESH_LOCAL_REBUILD_SEED")
         .ok()
@@ -1052,12 +1031,7 @@ fn detect_fix_expand_localhull() {
         _ => mega_points(n, 0.8, seed),
     };
 
-    std::env::set_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0", "1");
-    set_local_rebuild_forced(true);
-    let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    set_local_rebuild_forced(false);
-    std::env::remove_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0");
-    let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
+    let (pts, fast_triples) = stash_fast_triples(&points);
     let m = pts.len();
     let fast_set: Vec<BTreeSet<[u32; 3]>> = fast_triples
         .iter()
@@ -1137,7 +1111,7 @@ fn detect_fix_expand_localhull() {
 #[ignore = "local-oracle-vs-delaunator diagnostic; run with env + --ignored --nocapture"]
 fn local_oracle_vs_delaunator() {
     use std::collections::BTreeSet;
-    use voronoi_mesh::local_rebuild_probe::{rebuild_cells, take_a0_fast};
+    use voronoi_mesh::local_rebuild_probe::rebuild_cells;
 
     let seed: u64 = std::env::var("VORONOI_MESH_LOCAL_REBUILD_SEED")
         .ok()
@@ -1149,12 +1123,7 @@ fn local_oracle_vs_delaunator() {
         .unwrap_or(100_000);
     let points = mega_points(n, 0.8, seed);
 
-    std::env::set_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0", "1");
-    set_local_rebuild_forced(true);
-    let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    set_local_rebuild_forced(false);
-    std::env::remove_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0");
-    let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
+    let (pts, fast_triples) = stash_fast_triples(&points);
 
     let (exact, hull_region) = exact_triples_delaunator(&pts);
     // rebuild targets = changed cells (fast ≠ exact), excluding the projection rim.
@@ -1205,7 +1174,6 @@ fn local_oracle_vs_delaunator() {
 #[ignore = "detect+fix+expand demonstration; run individually with env + --ignored --nocapture"]
 fn detect_fix_expand_delaunator() {
     use std::collections::{BTreeSet, HashMap};
-    use voronoi_mesh::local_rebuild_probe::take_a0_fast;
 
     let seed: u64 = std::env::var("VORONOI_MESH_LOCAL_REBUILD_SEED")
         .ok()
@@ -1223,12 +1191,7 @@ fn detect_fix_expand_delaunator() {
         _ => mega_points(n, 0.8, seed),
     };
 
-    std::env::set_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0", "1");
-    set_local_rebuild_forced(true);
-    let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    set_local_rebuild_forced(false);
-    std::env::remove_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0");
-    let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
+    let (pts, fast_triples) = stash_fast_triples(&points);
     let m = pts.len();
 
     let (exact, hull_region) = exact_triples_delaunator(&pts);

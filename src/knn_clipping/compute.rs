@@ -781,7 +781,7 @@ fn maybe_rebuild_effective(
     let euler_defect = !topology.has_sphere_euler(eff_cells.len());
     // A0 probes need the fast assembled state, not the rebuilt one.
     #[cfg(feature = "local_rebuild_probe")]
-    if std::env::var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0").is_ok() {
+    if local_rebuild::a0_fast_capture_active() {
         local_rebuild::stash_a0_fast(effective_points, vertex_keys, eff_cells, eff_cell_indices);
         return LocalRebuildResult::unchanged(LocalRebuildOutcome::not_attempted(
             has_low_incidence,
@@ -789,8 +789,7 @@ fn maybe_rebuild_effective(
         ));
     }
 
-    let local_rebuild_enabled = !matches!(local_rebuild_mode, LocalRebuildMode::Disabled)
-        || local_rebuild::local_rebuild_probe_forced();
+    let local_rebuild_enabled = !matches!(local_rebuild_mode, LocalRebuildMode::Disabled);
     if !local_rebuild_enabled {
         return LocalRebuildResult::unchanged(LocalRebuildOutcome::not_attempted(
             has_low_incidence,

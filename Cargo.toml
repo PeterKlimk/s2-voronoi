@@ -104,6 +104,12 @@ name = "microbench_sort"
 path = "src/bin/microbench_sort.rs"
 required-features = ["microbench"]
 
+# Historical/research diagnostics: every case is ignored and selected by name.
+[[test]]
+name = "local_rebuild_probe"
+path = "tests/local_rebuild_probe.rs"
+required-features = ["local_rebuild_probe"]
+
 # NOTE: thin-LTO + codegen-units=1 was tried (commit f4c6426) and reverted.
 # It showed a ~few% uniform win, but the magnitude is layout-noise-confounded,
 # it was never verified on other regimes, and it costs ~6x release build time.

@@ -30,11 +30,15 @@ mutation.
 | `VORONOI_MESH_RECONCILE_GLOBAL_DUPSCAN` | differential safety valve | reconciliation defect path | Exact value `1` substitutes the O(V) global duplicate scan for localized traversal. |
 | `VORONOI_MESH_LOCAL_REBUILD_DEBUG` | correctness diagnostic | local-rebuild orchestration/growth | Presence prints rebuild phase and acceptance diagnostics. |
 | `VORONOI_MESH_LOCAL_REBUILD_GLOBAL_DELAUNAY` | feature probe | `local_rebuild_probe`-gated rebuild branch | Presence selects the global projected-Delaunay oracle. Internal feature only. |
-| `VORONOI_MESH_LOCAL_REBUILD_PROBE_A0` | feature probe | `local_rebuild_probe`-gated pre-rebuild snapshot | Presence records the assembled fast state for manual oracle comparison. Internal feature only. |
 
 `VORONOI_MESH_PLANE_GRID_DENSITY` had no reader or backend in this repository. Its stale
 performance-documentation entry was removed by QUAL-001H; reintroducing it requires a current
 planar backend rather than a compatibility-only environment name.
+
+`VORONOI_MESH_LOCAL_REBUILD_PROBE_A0` was retired by QUAL-001H. A0 snapshot capture is now an
+explicit `local_rebuild_probe` feature API scope. The scope is thread-local, composes when nested,
+and restores its prior state during panic unwinding; it adds no ordinary production-path state or
+environment lookup.
 
 ## Campaign, benchmark, and manual-probe inputs
 
@@ -69,6 +73,7 @@ ordinary library API unless also listed above.
   the real environment reader and error mapping without a production-only injection seam.
 - `src/bin/bench_bins.rs` mutates `VORONOI_MESH_BIN_COUNT` as a standalone process before running
   its workload; no test-process guard is required.
-- Ignored `local_rebuild_probe` cases still set `VORONOI_MESH_LOCAL_REBUILD_PROBE_A0` and toggle a
-  process-global forced-rebuild switch manually. They are intended to run individually today;
-  moving them behind a scoped probe state belongs to the next QUAL-001H slice.
+- Ignored `local_rebuild_probe` cases share one `stash_fast_triples` helper. Its explicit A0 scope
+  is thread-local and panic-safe, so these probes do not mutate the process environment or a
+  process-global rebuild switch. Cargo marks the all-ignored target as requiring the internal
+  `local_rebuild_probe` feature; each research workload remains selected by test name.

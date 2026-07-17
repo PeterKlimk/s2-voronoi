@@ -17,9 +17,6 @@
 //! The caller (`maybe_rebuild_effective`) commits the result only if the whole
 //! rebuilt diagram passes strict validation — the never-worse gate.
 
-#[cfg(feature = "local_rebuild_probe")]
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use glam::{DVec3, Vec3};
 use rustc_hash::FxHashMap;
 
@@ -1453,9 +1450,50 @@ pub(crate) type A0Stash = (Vec<Vec3>, Vec<Vec<[u32; 3]>>);
 
 #[cfg(feature = "local_rebuild_probe")]
 thread_local! {
+    /// Whether the current thread requested an A0 fast-state snapshot.
+    static A0_CAPTURE_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// A0 probe stash from the last build, for an exact-reference comparison
-    /// test. See `take_a0_fast`.
+    /// test. See `with_a0_fast_capture`.
     static A0_STASH: std::cell::RefCell<Option<A0Stash>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(feature = "local_rebuild_probe")]
+struct A0CaptureScope {
+    previous_active: bool,
+    previous_stash: Option<A0Stash>,
+}
+
+#[cfg(feature = "local_rebuild_probe")]
+impl Drop for A0CaptureScope {
+    fn drop(&mut self) {
+        A0_CAPTURE_ACTIVE.with(|active| active.set(self.previous_active));
+        A0_STASH.with(|stash| *stash.borrow_mut() = self.previous_stash.take());
+    }
+}
+
+/// Run `f` with A0 fast-state capture enabled on the current thread, returning
+/// both its result and the snapshot produced by the computation, if any.
+///
+/// The previous state and stash are restored during unwinding, nested scopes
+/// restore the outer scope, and probes on other test threads remain independent.
+#[cfg(feature = "local_rebuild_probe")]
+pub fn with_a0_fast_capture<R>(f: impl FnOnce() -> R) -> (R, Option<A0Stash>) {
+    let previous_active = A0_CAPTURE_ACTIVE.with(|active| active.replace(true));
+    let previous_stash = A0_STASH.with(|stash| stash.borrow_mut().take());
+    let scope = A0CaptureScope {
+        previous_active,
+        previous_stash,
+    };
+    let result = f();
+    let captured = A0_STASH.with(|stash| stash.borrow_mut().take());
+    drop(scope);
+    (result, captured)
+}
+
+/// Whether the current thread requested an A0 fast-state snapshot.
+#[cfg(feature = "local_rebuild_probe")]
+pub(crate) fn a0_fast_capture_active() -> bool {
+    A0_CAPTURE_ACTIVE.with(std::cell::Cell::get)
 }
 
 /// Stash the assembled fast per-cell triple fans for A0 exact-reference probes.
@@ -1484,43 +1522,43 @@ pub(crate) fn stash_a0_fast(
     A0_STASH.with(|s| *s.borrow_mut() = Some((points.to_vec(), triples)));
 }
 
-/// Take the A0 stash (effective points + fast per-cell triples) from the last
-/// build that ran with `VORONOI_MESH_LOCAL_REBUILD_PROBE_A0` set. Probe API.
-#[cfg(feature = "local_rebuild_probe")]
-pub fn take_a0_fast() -> Option<A0Stash> {
-    A0_STASH.with(|s| s.borrow_mut().take())
-}
-
-/// Process-global enable for the rebuild pass (probe / opt-in): forces the
-/// rebuild trigger on even when the configured [`crate::LocalRebuildMode`] is
-/// `Disabled`. Off by default; only the probe API sets it.
-#[cfg(feature = "local_rebuild_probe")]
-static LOCAL_REBUILD_FORCED: AtomicBool = AtomicBool::new(false);
-
-/// Enable or disable forced defect-driven rebuilding (probe API).
-#[cfg(feature = "local_rebuild_probe")]
-pub fn set_local_rebuild_forced(on: bool) {
-    LOCAL_REBUILD_FORCED.store(on, Ordering::Relaxed);
-}
-
-/// Whether local rebuilding is currently force-enabled.
-#[cfg(feature = "local_rebuild_probe")]
-pub(crate) fn local_rebuild_probe_forced() -> bool {
-    LOCAL_REBUILD_FORCED.load(Ordering::Relaxed)
-}
-
-/// Forced local rebuilding is opt-in through the probe feature.
-#[cfg(not(feature = "local_rebuild_probe"))]
-pub(crate) const fn local_rebuild_probe_forced() -> bool {
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn u(x: f32, y: f32, z: f32) -> Vec3 {
         Vec3::new(x, y, z).normalize()
+    }
+
+    #[cfg(feature = "local_rebuild_probe")]
+    #[test]
+    fn a0_capture_scope_is_nested_thread_local_and_panic_safe() {
+        assert!(!a0_fast_capture_active());
+
+        let ((), captured) = with_a0_fast_capture(|| {
+            assert!(a0_fast_capture_active());
+            let ((), nested_capture) = with_a0_fast_capture(|| assert!(a0_fast_capture_active()));
+            assert!(nested_capture.is_none());
+            assert!(a0_fast_capture_active());
+
+            std::thread::scope(|scope| {
+                scope
+                    .spawn(|| assert!(!a0_fast_capture_active()))
+                    .join()
+                    .expect("probe thread");
+            });
+        });
+        assert!(captured.is_none());
+        assert!(!a0_fast_capture_active());
+
+        A0_STASH.with(|stash| *stash.borrow_mut() = Some((vec![Vec3::X], vec![vec![[0, 1, 2]]])));
+        let panic = std::panic::catch_unwind(|| {
+            with_a0_fast_capture(|| panic!("exercise A0 capture unwinding"));
+        });
+        assert!(panic.is_err());
+        assert!(!a0_fast_capture_active());
+        let restored = A0_STASH.with(|stash| stash.borrow_mut().take());
+        assert_eq!(restored, Some((vec![Vec3::X], vec![vec![[0, 1, 2]]])));
     }
 
     #[test]

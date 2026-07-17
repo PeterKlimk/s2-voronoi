@@ -169,8 +169,8 @@ pub use live_dedup::EdgeMismatchOrigin;
 #[doc(hidden)]
 pub mod local_rebuild_probe {
     pub use crate::knn_clipping::local_rebuild::{
-        check_cell_internally_paired, gather_local, rebuild_cells, set_local_rebuild_forced,
-        shared_neighbor, take_a0_fast, RebuiltCell,
+        check_cell_internally_paired, gather_local, rebuild_cells, shared_neighbor,
+        with_a0_fast_capture, RebuiltCell,
     };
 }
 
