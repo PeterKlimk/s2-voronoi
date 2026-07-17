@@ -418,6 +418,29 @@ The second numerical/policy-constant slice was validated on 2026-07-18 against i
   fields in 24-byte source-location records in `.data.rel.ro`; executable code and numeric data did
   not change. There was no counter signal requiring a quiet wall-clock run.
 
+## QUAL-001E unit-distinct `1e-12` result
+
+The third numerical/policy-constant slice was validated on 2026-07-18 against immediate parent
+`38b2057`.
+
+- Four raw production `1e-12` spellings are now three authoritative constants:
+  `FALLBACK_EDGE_ARC_ANGLE_PAD: f64` is radians added to an inclusive arc-extent comparison;
+  `GNOMONIC_METRIC_R2_RELATIVE_PAD: f64` is a dimensionless fraction used in `bound * (1 + pad)`;
+  and `LOCAL_REBUILD_STEREOGRAPHIC_DENOMINATOR_FLOOR: f32` clamps the dimensionless
+  `1 - dot(point, pole)` divisor with `max` in both the production projected rebuild and its
+  feature-only global oracle.
+- All three retain the exact `1e-12` value and each use retains its prior expression, type, and
+  comparison direction. No hierarchy assertion was added because angular slack, relative metric
+  inflation, and a divisor floor have no meaningful ordering relationship.
+- `cargo fmt`, both default and native all-feature Clippy with warnings denied, the complete release
+  and checked suites, the no-default-features release suite, and the `serde,glam` release suite
+  passed.
+- Matched release `tools` benchmarks had identical section sizes and total footprint. `.text`
+  (`a20c69a6…f0de8`), `.rodata` (`f8b29268…7761`), and exception tables were byte-identical. The
+  whole-file difference was confined to build/symbol metadata and 41 changed bytes in
+  source-location records; executable code and numeric data did not change. There was no reason
+  for a counter or quiet wall-clock run.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

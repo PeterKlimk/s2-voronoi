@@ -5,7 +5,9 @@ use super::{
 use crate::knn_clipping::topo2d::clippers::{clip_convex, clip_convex_edgecheck};
 use crate::knn_clipping::topo2d::types::{ClipResult, HalfPlane};
 use crate::live_dedup::CellFailure;
-use crate::tolerances::{FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR, FALLBACK_VERTEX_DEDUP_LEN2};
+use crate::tolerances::{
+    FALLBACK_EDGE_ARC_ANGLE_PAD, FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR, FALLBACK_VERTEX_DEDUP_LEN2,
+};
 use glam::Vec3;
 
 impl GnomonicBuilder {
@@ -266,7 +268,7 @@ impl FallbackBuilder {
             .dot(candidate)
             .atan2(a.position.dot(candidate).clamp(-1.0, 1.0))
             .rem_euclid(std::f64::consts::TAU);
-        let dir = if candidate_angle <= total_angle + 1.0e-12 {
+        let dir = if candidate_angle <= total_angle + FALLBACK_EDGE_ARC_ANGLE_PAD {
             candidate
         } else {
             -candidate

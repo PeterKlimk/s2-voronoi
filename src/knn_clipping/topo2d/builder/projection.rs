@@ -3,6 +3,7 @@ use super::{
 };
 use crate::fp;
 use crate::live_dedup::CellFailure;
+use crate::tolerances::GNOMONIC_METRIC_R2_RELATIVE_PAD;
 use glam::{DVec3, Vec3};
 use std::hint::select_unpredictable;
 
@@ -113,7 +114,7 @@ impl GnomonicBuilder {
         let g11 = basis.t1.length_squared() * inv_g2;
         let g22 = basis.t2.length_squared() * inv_g2;
         let g12 = (basis.t1.dot(basis.t2) * inv_g2).abs();
-        (g11.max(g22) + g12).max(1.0) * (1.0 + 1e-12)
+        (g11.max(g22) + g12).max(1.0) * (1.0 + GNOMONIC_METRIC_R2_RELATIVE_PAD)
     }
 
     pub(super) fn new(generator_idx: usize, generator: Vec3) -> Self {

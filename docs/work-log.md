@@ -346,9 +346,13 @@ tasks and are not duplicated here.
   squared-cross conditioning floor `FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR` and squared-chord
   identity threshold `FALLBACK_VERTEX_DEDUP_LEN2`. Both exact values and all `<=` comparisons are
   unchanged. Optimized executable sections are byte-identical; only source-line metadata moved.
-- **Next gate:** classify the remaining raw `1e-12` sites. In particular, fallback edge-arc angular
-  slack, chart-metric inflation, and fallback plane-dot tolerance have different units and must not
-  be unified merely because their current decimal spelling matches.
+- **QUAL-001E `1e-12` result:** four raw sites are now three independent tolerances for fallback
+  edge-arc radians, gnomonic metric-relative inflation, and the local-rebuild stereographic `f32`
+  denominator floor. Their equal value does not imply a hierarchy or shared semantics. Optimized
+  executable sections remain byte-identical; only source-line metadata moved.
+- **Next gate:** move the already named owner-conditioned spherical-arc plane-residual and exact-pi
+  sine thresholds into `tolerances.rs`. Preserve their `f64` values and their distinct `>` / `<=`
+  rejection boundaries; do not fold either into the equal-valued fallback plane or arc constants.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

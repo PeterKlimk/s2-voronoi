@@ -24,6 +24,7 @@ use super::local_hull::LocalHull;
 use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch};
 use crate::diagram::VoronoiCell;
 use crate::live_dedup::ShardedVertexKeys;
+use crate::tolerances::LOCAL_REBUILD_STEREOGRAPHIC_DENOMINATOR_FLOOR;
 
 /// A generator's rebuilt Voronoi cell: its vertices as the ordered cyclic fan
 /// of sorted global-id triples (each triple = the three generators meeting at
@@ -479,7 +480,7 @@ fn local_exact_fans(
         .iter()
         .map(|&id| {
             let p = points[id as usize];
-            let d = (1.0 - p.dot(pole)).max(1e-12);
+            let d = (1.0 - p.dot(pole)).max(LOCAL_REBUILD_STEREOGRAPHIC_DENOMINATOR_FLOOR);
             Coord {
                 x: (p.dot(e1) / d) as f64,
                 y: (p.dot(e2) / d) as f64,
@@ -748,7 +749,7 @@ pub(crate) fn rebuild_with_global_delaunay(
     let proj: Vec<delaunator::Point> = points
         .iter()
         .map(|&p| {
-            let d = (1.0 - p.dot(pole)).max(1e-12);
+            let d = (1.0 - p.dot(pole)).max(LOCAL_REBUILD_STEREOGRAPHIC_DENOMINATOR_FLOOR);
             delaunator::Point {
                 x: (p.dot(e1) / d) as f64,
                 y: (p.dot(e2) / d) as f64,

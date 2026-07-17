@@ -92,6 +92,14 @@ pub(crate) const TERMINATION_THRESHOLD_GUARD: f64 = 3.0 * f32::EPSILON as f64;
 /// normalized angular threshold back into the raw-dot space used by kNN.
 pub(crate) const CANONICAL_UNIT_NORM_SLACK: f64 = f32::EPSILON as f64;
 
+/// Relative inflation applied to the gnomonic chart's squared-radius metric
+/// bound after the Gram-matrix estimate is clamped to at least one.
+///
+/// This dimensionless `f64` fraction is used as `bound * (1 + pad)` so dot
+/// rounding cannot make the termination certificate underestimate chart
+/// stretch.
+pub(crate) const GNOMONIC_METRIC_R2_RELATIVE_PAD: f64 = 1e-12;
+
 // === Spherical fallback (constraint replay past the chart limit) ===
 
 /// Constraint-satisfaction slack for fallback vertex candidates (a candidate
@@ -114,6 +122,12 @@ pub(crate) const FALLBACK_DEDUP_DOT: f32 = 1.0 - 1e-5;
 /// dimensionless value is a squared-sine floor. Every use rejects non-finite
 /// values and values `<=` this floor.
 pub(crate) const FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR: f64 = 1e-24;
+
+/// Angular slack, in radians, when deciding which antipodal intersection of
+/// two fallback planes lies on the retained edge arc.
+///
+/// The candidate is accepted when `candidate_angle <= total_angle + pad`.
+pub(crate) const FALLBACK_EDGE_ARC_ANGLE_PAD: f64 = 1e-12;
 
 /// Squared chord distance at or below which f64 fallback unit-direction
 /// vertices are treated as numerically identical.
@@ -150,6 +164,15 @@ pub(crate) const OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS: f32 = RECONCILE_DEGENER
 const OUTPUT_RESOLUTION_ZERO_HINT_X_BASE: f32 = 2.0 * OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS;
 pub(crate) const OUTPUT_RESOLUTION_ZERO_HINT_X_EPS: f32 =
     f32::from_bits(OUTPUT_RESOLUTION_ZERO_HINT_X_BASE.to_bits() + 1);
+
+// === Local rebuilding ===
+
+/// Minimum stereographic projection denominator `1 - dot(point, pole)`.
+///
+/// Projection inputs and the dot are `f32`; retaining an explicit `f32` floor
+/// preserves that arithmetic. The dimensionless denominator is clamped with
+/// `max` before division so an exact projection-pole hit stays finite.
+pub(crate) const LOCAL_REBUILD_STEREOGRAPHIC_DENOMINATOR_FLOOR: f32 = 1e-12;
 
 // === Cube-grid conservative bounds ===
 
