@@ -367,9 +367,12 @@ tasks and are not duplicated here.
   policy. Values, `max`/multiplication expressions, synthetic geometry, and robust predicate inputs
   are unchanged. Optimized executable sections and numeric data are byte-identical; only source
   metadata moved.
-- **Next gate:** classify the two `f64::EPSILON` centroid degeneracy guards separately. Preserve the
-  edge-cross `<=` skip and accumulated-integral `<=` generator fallback exactly; equal machine-floor
-  values do not make those failure modes one semantic tolerance.
+- **QUAL-001E centroid result:** the per-edge cross-length skip and final accumulated-integral
+  fallback now use independently named `f64::EPSILON` floors. Both `<=` boundaries and their
+  respective skip/generator outcomes are unchanged. Stripped optimized binaries are identical.
+- **Next gate:** classify the profiling-only point-envelope thresholds as local diagnostic bucket
+  boundaries, not production tolerances. Replace ambiguous `1e6` field/column vocabulary with
+  exponent-aware names while preserving every strict `>` comparison and emitted value.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

@@ -194,6 +194,24 @@ pub(crate) const OWNER_ARC_PLANE_SIN_TOL: f64 = 2.0e-6;
 /// `unsigned_sine <=` this dimensionless `f64` threshold.
 pub(crate) const OWNER_ARC_EXACT_PI_SIN_TOL: f64 = 1.0e-12;
 
+// === Geometric measures ===
+
+/// Edge-cross length at or below which the spherical centroid integral skips
+/// an edge rather than dividing by its cross length.
+///
+/// For unit endpoints this dimensionless `f64` magnitude is the unsigned sine
+/// of the edge angle. The `<=` boundary deliberately treats one machine
+/// epsilon as degenerate.
+pub(crate) const CENTROID_EDGE_CROSS_LEN_FLOOR: f64 = f64::EPSILON;
+
+/// Accumulated centroid-integral length at or below which the cell generator
+/// is returned instead of normalizing the integral direction.
+///
+/// The comparison is performed in `f64` with `<=`. This fallback guard is
+/// independent of the per-edge cross-length floor even though both currently
+/// use one machine epsilon.
+pub(crate) const CENTROID_INTEGRAL_LEN_FLOOR: f64 = f64::EPSILON;
+
 // === Edge reconciliation ===
 
 /// Scale below which a reconciled edge's endpoints are considered the same

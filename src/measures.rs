@@ -5,7 +5,9 @@
 //! measures.
 
 use crate::spherical_arc::{resolve_owner_arc, OwnerArc};
-use crate::tolerances::ANTIPODAL_DOT_EPS;
+use crate::tolerances::{
+    ANTIPODAL_DOT_EPS, CENTROID_EDGE_CROSS_LEN_FLOOR, CENTROID_INTEGRAL_LEN_FLOOR,
+};
 use crate::{SpherePoint, SphericalVoronoi};
 use glam::DVec3;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -178,7 +180,7 @@ fn cell_centroid_pass(
 
         let cross = a.cross(b);
         let cross_len = cross.length();
-        if cross_len <= f64::EPSILON {
+        if cross_len <= CENTROID_EDGE_CROSS_LEN_FLOOR {
             continue;
         }
         let arc_angle = cross_len.atan2(edge_dot);
@@ -186,7 +188,7 @@ fn cell_centroid_pass(
     }
 
     let len = integral.length();
-    if len <= f64::EPSILON {
+    if len <= CENTROID_INTEGRAL_LEN_FLOOR {
         return (generator, conditioned);
     }
     let mut centroid = integral / len;

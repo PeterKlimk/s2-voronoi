@@ -538,6 +538,29 @@ The seventh numerical/policy-constant slice was validated on 2026-07-18 against 
   and 40 changed source-location bytes in `.data.rel.ro`; executable code and numeric data did not
   change. No counter or quiet wall-clock run was warranted.
 
+## QUAL-001E centroid degeneracy-floor result
+
+The eighth numerical/policy-constant slice was validated on 2026-07-18 against immediate parent
+`ef9f22c`.
+
+- The two raw `f64::EPSILON` centroid comparisons moved to `tolerances.rs` as independent values.
+  `CENTROID_EDGE_CROSS_LEN_FLOOR` remains a dimensionless unit-endpoint cross/sine magnitude; an
+  edge is still skipped when `cross_len <=` the floor, avoiding division by a degenerate cross
+  length.
+- `CENTROID_INTEGRAL_LEN_FLOOR` remains the final accumulated-vector magnitude guard; the cell still
+  returns its generator when `integral.length() <=` the floor rather than normalizing a degenerate
+  direction. Equality retains the fallback behavior in both comparisons.
+- The constants both remain exactly `f64::EPSILON`, but their equal machine-floor values do not
+  couple per-edge omission to whole-cell fallback or establish a shared tuning hierarchy.
+- `cargo fmt`, both default and native all-feature Clippy with warnings denied, the complete release
+  and checked suites, the no-default-features release suite, and the `serde,glam` release suite
+  passed.
+- Matched release `tools` benchmarks had identical sizes and byte-identical loadable sections,
+  including `.text`, `.rodata`, `.data.rel.ro`, exception tables, and unwind data. After stripping
+  symbols and the build-id note, both complete artifacts had SHA-256
+  `802417baf66cc5394d41803f3478134478e1aaae57c3843bebe1180e2f2ae495`. No counter or quiet
+  wall-clock run was warranted.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
