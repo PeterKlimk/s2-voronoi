@@ -159,16 +159,16 @@ pub use error::VoronoiError;
 /// EXPERIMENTAL DIAGNOSTIC re-export — see the type's documentation; not
 /// part of the supported API surface (taxonomy may change in patch releases).
 #[doc(hidden)]
-pub use live_dedup::UnresolvedEdgeOrigin;
+pub use live_dedup::EdgeMismatchOrigin;
 
-/// Defect-driven escalation probe (feature `escalate_probe`); lets an
-/// integration test drive the exact local rebuild over real defect sites.
+/// Defect-driven local-rebuild probe (feature `local_rebuild_probe`); lets an
+/// integration test drive the rebuild oracles over real defect sites.
 /// Diagnostic only.
-#[cfg(feature = "escalate_probe")]
+#[cfg(feature = "local_rebuild_probe")]
 #[doc(hidden)]
-pub mod escalate_probe {
-    pub use crate::knn_clipping::escalate::{
-        check_cell_internally_paired, gather_local, rebuild_cells, set_escalation_enabled,
+pub mod local_rebuild_probe {
+    pub use crate::knn_clipping::local_rebuild::{
+        check_cell_internally_paired, gather_local, rebuild_cells, set_local_rebuild_forced,
         shared_neighbor, take_a0_fast, RebuiltCell,
     };
 }
@@ -221,23 +221,23 @@ pub enum PreprocessMode {
     MergeWithin(f32),
 }
 
-/// Post-assembly repair policy for rare near-degenerate topology defects.
+/// Post-assembly local rebuild policy for rare near-degenerate topology defects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum RepairMode {
-    /// Do not run local repair. Residual unpaired edges remain
+pub enum LocalRebuildMode {
+    /// Do not run local rebuilding. Residual unpaired edges remain
     /// observable through `compute_with_report` and make plain `compute` fail.
     Disabled,
     /// Rebuild residual near-degenerate neighborhoods with one normalized local
     /// 3D hull and accept only if whole-diagram validation passes.
-    Local3d,
+    Hull3d,
     /// Rebuild residual near-degenerate neighborhoods with one shared local
     /// stereographic Delaunay and accept only if whole-diagram validation passes.
     ///
     /// This remains available as a projected-oracle diagnostic path. The default
-    /// uses [`RepairMode::Local3d`], which avoids the large-chart failure mode of
-    /// projected repair in extreme closures.
-    LocalProjected,
+    /// uses [`LocalRebuildMode::Hull3d`], which avoids the large-chart failure mode of
+    /// projected local rebuild in extreme closures.
+    ProjectedDelaunay,
 }
 
 /// Policy for degenerate spherical inputs that do not have a stable
@@ -312,14 +312,14 @@ pub struct DegenerateReport {
     pub perturbation_applied: bool,
 }
 
-/// Observable outcome of the optional post-assembly local repair pass.
+/// Observable outcome of the optional post-assembly local-rebuild pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct RepairReport {
-    /// A repair pass ran (defects were detected and the configured
-    /// [`RepairMode`] is not `Disabled`). False on clean builds.
+pub struct LocalRebuildReport {
+    /// A local rebuild pass ran (defects were detected and the configured
+    /// [`LocalRebuildMode`] is not `Disabled`). False on clean builds.
     pub attempted: bool,
-    /// The repaired diagram passed whole-diagram strict validation and was
+    /// The rebuilt diagram passed whole-diagram strict validation and was
     /// committed. Always false when `attempted` is false.
     pub accepted: bool,
 }
@@ -333,9 +333,9 @@ pub struct RepairReport {
 #[non_exhaustive]
 pub struct OutputResolutionReport {
     /// Unique exact stored-zero edges found after reconciliation and optional
-    /// Local3d repair.
+    /// Hull3d rebuild.
     pub exact_zero_edges_detected: usize,
-    /// Connected exact stored-zero vertex components found after repair.
+    /// Connected exact stored-zero vertex components found after local rebuilding.
     pub exact_zero_components_detected: usize,
     /// Exact stored-zero edges removed by committed transactions.
     pub exact_zero_edges_contracted: usize,
@@ -367,42 +367,42 @@ pub struct ComputeReport {
     /// changed the solved generator set.
     pub effective_validation: Option<validation::ValidationReport>,
     /// Number of shared-edge mismatches observed during live dedup before the
-    /// post-assembly reconciliation and optional local repair passes.
+    /// post-assembly reconciliation and optional local rebuilding.
     ///
-    /// A non-zero count proves a near-degenerate input exercised the repair
+    /// A non-zero count proves a near-degenerate input exercised the reconciliation
     /// machinery; it does not mean the returned diagram is invalid. Check
-    /// [`ComputeReport::post_repair_unpaired_edges`] and
+    /// [`ComputeReport::residual_unpaired_edges`] and
     /// [`ComputeReport::preferred_validation`] for the output contract.
-    pub pre_repair_edge_mismatch_count: usize,
-    /// What the local repair pass did this run.
-    pub repair: RepairReport,
+    pub assembly_edge_mismatch_count: usize,
+    /// What the local-rebuild stage did this run.
+    pub local_rebuild: LocalRebuildReport,
     /// What final exact-zero output canonicalization did this run.
     pub output_resolution: OutputResolutionReport,
     /// Interior edges that remained unpaired, overused, or misoriented after
-    /// reconciliation and were not cleared by an accepted local repair.
-    /// Historical field name retained for API stability. `compute` turns these
-    /// into a loud error; `compute_with_report` surfaces them for diagnostics.
-    pub post_repair_unpaired_edges: Vec<(u32, u32)>,
+    /// reconciliation and were not cleared by an accepted local rebuild.
+    /// `compute` turns these into a loud error; `compute_with_report` surfaces
+    /// them for diagnostics.
+    pub residual_unpaired_edges: Vec<(u32, u32)>,
     /// EXPERIMENTAL DIAGNOSTIC: reconciliation cell pairs rejected by the
-    /// no-chain diameter policy and not cleared by an accepted Local3d repair.
+    /// no-chain diameter policy and not cleared by an accepted Hull3d rebuild.
     #[doc(hidden)]
-    pub post_repair_escalation_pairs: Vec<(u32, u32)>,
+    pub residual_reconciliation_pairs: Vec<(u32, u32)>,
     /// EXPERIMENTAL DIAGNOSTIC (unsupported surface; taxonomy changes in
-    /// patch releases): the pre-repair mismatches behind
-    /// [`ComputeReport::pre_repair_edge_mismatch_count`], as effective-diagram
+    /// patch releases): the assembly mismatches behind
+    /// [`ComputeReport::assembly_edge_mismatch_count`], as effective-diagram
     /// generator pairs plus the detection path that recorded each.
     #[doc(hidden)]
-    pub pre_repair_edge_mismatches: Vec<(u32, u32, UnresolvedEdgeOrigin)>,
+    pub assembly_edge_mismatches: Vec<(u32, u32, EdgeMismatchOrigin)>,
     /// EXPERIMENTAL DIAGNOSTIC (unsupported surface; taxonomy changes in
     /// patch releases): unresolved shared-edge mismatches handed to
     /// post-assembly reconciliation, as effective-diagram generator pairs plus
     /// detection origins. Historical aggregate: contains
-    /// `pre_repair_edge_mismatches` plus `PostRepairUnpaired` records when
-    /// [`ComputeReport::post_repair_unpaired_edges`] is non-empty. Tests use
+    /// `assembly_edge_mismatches` plus `PostReconciliationUnpaired` records when
+    /// [`ComputeReport::residual_unpaired_edges`] is non-empty. Tests use
     /// this to prove defect-forcing inputs exercise each detection path (see
-    /// `tests/edge_repair_net.rs`).
+    /// `tests/edge_reconciliation.rs`).
     #[doc(hidden)]
-    pub unresolved_edge_pairs: Vec<(u32, u32, UnresolvedEdgeOrigin)>,
+    pub reconciliation_edge_records: Vec<(u32, u32, EdgeMismatchOrigin)>,
 }
 
 impl ComputeReport {
@@ -421,11 +421,11 @@ impl ComputeReport {
     /// True when the returned report contains output-invariant residuals that
     /// plain `compute` would reject with an error.
     #[inline]
-    pub fn has_post_repair_residuals(&self) -> bool {
-        !self.post_repair_unpaired_edges.is_empty()
-            || !self.post_repair_escalation_pairs.is_empty()
+    pub fn has_output_residuals(&self) -> bool {
+        !self.residual_unpaired_edges.is_empty()
+            || !self.residual_reconciliation_pairs.is_empty()
             || !self.preferred_validation().is_strictly_valid()
-            || (self.repair.attempted && !self.repair.accepted)
+            || (self.local_rebuild.attempted && !self.local_rebuild.accepted)
     }
 }
 
@@ -470,12 +470,12 @@ pub struct VoronoiConfig {
     /// diagram rather than receiving duplicated boundaries, so strict
     /// validation passes whether or not welds occur.
     pub preprocess_mode: PreprocessMode,
-    /// Cold-path repair for rare near-degenerate clipping defects.
+    /// Cold-path local rebuilding for rare near-degenerate clipping defects.
     ///
-    /// The default tries normalized local 3D repair and accepts it only when strict
-    /// validation succeeds. Disable this for diagnostics or to reproduce the raw
-    /// fast-path residual/error behavior.
-    pub repair_mode: RepairMode,
+    /// The default tries a normalized local 3D hull rebuild and accepts it only
+    /// when strict validation succeeds. Disable this for diagnostics or to
+    /// reproduce the raw fast-path residual/error behavior.
+    pub local_rebuild_mode: LocalRebuildMode,
     /// Handling for rank-deficient coplanar inputs.
     ///
     /// The default is [`DegenerateMode::PerturbCoplanar`]: certified affine
@@ -499,7 +499,7 @@ impl Default for VoronoiConfig {
     fn default() -> Self {
         Self {
             preprocess_mode: PreprocessMode::Weld,
-            repair_mode: RepairMode::Local3d,
+            local_rebuild_mode: LocalRebuildMode::Hull3d,
             degenerate_mode: DegenerateMode::PerturbCoplanar,
             cell_killing_policy: CellKillingPolicy::Preserve,
         }
@@ -513,9 +513,9 @@ impl VoronoiConfig {
         self
     }
 
-    /// Default config with the given [`RepairMode`].
-    pub fn with_repair_mode(mut self, mode: RepairMode) -> Self {
-        self.repair_mode = mode;
+    /// Default config with the given [`LocalRebuildMode`].
+    pub fn with_local_rebuild_mode(mut self, mode: LocalRebuildMode) -> Self {
+        self.local_rebuild_mode = mode;
         self
     }
 

@@ -9,7 +9,7 @@
 mod support;
 
 use support::points::*;
-use voronoi_mesh::{compute_with_report, quality, RepairMode, UnitVec3, VoronoiConfig};
+use voronoi_mesh::{compute_with_report, quality, LocalRebuildMode, UnitVec3, VoronoiConfig};
 
 fn env_str(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -58,18 +58,18 @@ fn fidelity_case() {
     let param: f32 = env_parse("VORONOI_MESH_CASE_PARAM", 0.0f32);
     let sampled_cells: usize = env_parse("VORONOI_MESH_FIDELITY_CELLS", 1_024usize);
     let edge_samples: usize = env_parse("VORONOI_MESH_FIDELITY_EDGE_SAMPLES", 3usize);
-    let repair_mode = match env_str("VORONOI_MESH_REPAIR_MODE", "local3d").as_str() {
-        "local3d" => RepairMode::Local3d,
-        "projected" => RepairMode::LocalProjected,
-        "disabled" => RepairMode::Disabled,
-        mode => panic!("unknown VORONOI_MESH_REPAIR_MODE '{mode}'"),
+    let local_rebuild_mode = match env_str("VORONOI_MESH_LOCAL_REBUILD_MODE", "hull3d").as_str() {
+        "hull3d" => LocalRebuildMode::Hull3d,
+        "projected-delaunay" => LocalRebuildMode::ProjectedDelaunay,
+        "disabled" => LocalRebuildMode::Disabled,
+        mode => panic!("unknown VORONOI_MESH_LOCAL_REBUILD_MODE '{mode}'"),
     };
 
     let points = make_points(&dist, n, seed, param);
     let original_n = points.len();
     let output = compute_with_report(
         &points,
-        VoronoiConfig::default().with_repair_mode(repair_mode),
+        VoronoiConfig::default().with_local_rebuild_mode(local_rebuild_mode),
     )
     .unwrap_or_else(|e| panic!("{dist} n={original_n} seed={seed}: compute failed: {e}"));
     let validation = output.report.preferred_validation();
@@ -78,8 +78,8 @@ fn fidelity_case() {
         "{dist} n={original_n} seed={seed}: strict validation failed: {validation}"
     );
     assert!(
-        !output.report.has_post_repair_residuals(),
-        "{dist} n={original_n} seed={seed}: default output retained a repair residual"
+        !output.report.has_output_residuals(),
+        "{dist} n={original_n} seed={seed}: default output retained a residual"
     );
 
     let mut report = quality::assess_with_config(
@@ -93,13 +93,13 @@ fn fidelity_case() {
         quality::assess_canonicalization(&points, &output.diagram);
 
     println!(
-        "FIDELITYRESULT dist={dist} original_n={original_n} effective_n={} seed={seed} param={param} merged={} perturbed={} pre_defects={} repair_attempted={} repair_accepted={} {}",
+        "FIDELITYRESULT dist={dist} original_n={original_n} effective_n={} seed={seed} param={param} merged={} perturbed={} pre_defects={} local_rebuild_attempted={} local_rebuild_accepted={} {}",
         output.preferred_diagram().num_cells(),
         output.report.preprocess.num_merged,
         output.report.degenerate.perturbation_applied,
-        output.report.pre_repair_edge_mismatch_count,
-        output.report.repair.attempted,
-        output.report.repair.accepted,
+        output.report.assembly_edge_mismatch_count,
+        output.report.local_rebuild.attempted,
+        output.report.local_rebuild.accepted,
         report.fidelity_kv_fields(),
     );
 }

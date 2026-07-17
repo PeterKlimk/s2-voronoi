@@ -173,7 +173,7 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
 
 /// Initialized signed distances for one small-polygon SIMD evaluation.
 ///
-/// The four-lane variant deliberately has no padded upper lanes: escalation
+/// The four-lane variant deliberately has no padded upper lanes: transition handling
 /// receives only this initialized slice, and every transition index is below
 /// the const-generic live-lane count.
 enum SmallDists {

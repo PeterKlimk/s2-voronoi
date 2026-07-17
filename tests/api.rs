@@ -98,15 +98,15 @@ fn test_dense_duplicate_cluster_returns_controlled_error() {
 fn test_report_residual_helper_includes_low_incidence_vertices() {
     let points = fibonacci_sphere_points(8, 0.0, 0);
     let mut output = compute_with_report(&points, VoronoiConfig::default()).unwrap();
-    assert!(!output.report.has_post_repair_residuals());
+    assert!(!output.report.has_output_residuals());
 
-    output.report.post_repair_unpaired_edges.clear();
+    output.report.residual_unpaired_edges.clear();
     output.report.returned_validation.low_incidence_vertices = 1;
-    assert!(output.report.has_post_repair_residuals());
+    assert!(output.report.has_output_residuals());
 
     output.report.returned_validation.low_incidence_vertices = 0;
-    output.report.post_repair_escalation_pairs.push((0, 1));
-    assert!(output.report.has_post_repair_residuals());
+    output.report.residual_reconciliation_pairs.push((0, 1));
+    assert!(output.report.has_output_residuals());
 }
 
 #[test]

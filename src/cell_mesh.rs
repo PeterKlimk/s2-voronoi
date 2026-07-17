@@ -513,7 +513,8 @@ pub struct CellElisionReport {
 pub struct CellMeshOutput {
     /// Dense valid spherical cell subdivision.
     pub mesh: SphericalCellMesh,
-    /// Original construction, repair, and output-resolution report.
+    /// Original construction, reconciliation, local-rebuild, and
+    /// output-resolution report.
     pub compute_report: crate::ComputeReport,
     /// Outcome of the explicit postprocessing transaction.
     pub elision_report: CellElisionReport,
@@ -551,10 +552,10 @@ impl crate::ComputeOutput {
 fn prepare_elided_cell_mesh(
     source: &crate::ComputeOutput,
 ) -> Result<(SphericalCellMesh, CellElisionReport), (CellElisionErrorKind, String)> {
-    if source.report.has_post_repair_residuals() {
+    if source.report.has_output_residuals() {
         return Err((
             CellElisionErrorKind::InvalidSource,
-            "source computation has post-repair or strict-validation residuals".into(),
+            "source computation has output or strict-validation residuals".into(),
         ));
     }
 
@@ -992,7 +993,7 @@ mod tests {
         ];
         let mut output = crate::compute_with_report(&points, crate::VoronoiConfig::default())
             .expect("octahedral source should compute");
-        output.report.post_repair_unpaired_edges.push((0, 1));
+        output.report.residual_unpaired_edges.push((0, 1));
         let cell_count = output.diagram.num_cells();
 
         let error = output
@@ -1002,7 +1003,7 @@ mod tests {
         assert_eq!(error.source_output().diagram.num_cells(), cell_count);
         let recovered = error.into_source_output();
         assert_eq!(recovered.diagram.num_cells(), cell_count);
-        assert_eq!(recovered.report.post_repair_unpaired_edges, [(0, 1)]);
+        assert_eq!(recovered.report.residual_unpaired_edges, [(0, 1)]);
     }
 
     #[cfg(feature = "serde")]

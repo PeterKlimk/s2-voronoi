@@ -112,7 +112,7 @@ pub(crate) const FALLBACK_DEDUP_DOT: f32 = 1.0 - 1e-5;
 /// degenerate-extraction failures rather than normalizing noise.
 pub(crate) const EXTRACT_DEGENERATE_LEN2: f32 = 1e-28;
 
-// === Edge reconciliation (post-assembly repair) ===
+// === Edge reconciliation ===
 
 /// Scale below which a reconciled edge's endpoints are considered the same
 /// point (epsilon-edge collapse). Sits in the f32-lattice band at unit scale

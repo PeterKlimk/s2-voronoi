@@ -119,7 +119,7 @@ impl SphericalVoronoi {
         // round storage rule before assembly. Reconciliation only selects or
         // reuses those certified positions.
         let generators = unsafe { crate::types::sphere_points_from_vec3(generators) };
-        // SAFETY: same producer invariant as generators; Local3d minted
+        // SAFETY: same producer invariant as generators; Hull3d minted
         // vertices use the same canonical storage rule.
         let vertices = unsafe { crate::types::sphere_points_from_vec3(vertices) };
         Self {
@@ -310,7 +310,7 @@ impl SphericalVoronoi {
 
     /// Remove vertices that no cell references and compact the index storage.
     ///
-    /// Edge repair may leave a handful of unreferenced vertices behind rather
+    /// Edge reconciliation may leave a handful of unreferenced vertices behind rather
     /// than paying this pass on every computation (see the orphan-vertices
     /// representation note in `docs/correctness.md`). Call this when
     /// a dense vertex array matters (serialization, GPU upload). Vertex
@@ -479,7 +479,7 @@ mod wire {
                         w.cell_indices.len()
                     ));
                 }
-                // Only LIVE spans are validated: the in-place edge repair can
+                // Only LIVE spans are validated: in-place reconciliation can
                 // legitimately leave stale never-read slots in the buffer tail.
                 if let Some(&vi) = w.cell_indices[start..end]
                     .iter()

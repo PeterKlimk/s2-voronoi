@@ -1,23 +1,23 @@
-//! Defect-driven local repair (current state in `docs/correctness.md`).
+//! Defect-driven local rebuild (current state in `docs/correctness.md`).
 //!
 //! When post-assembly detection finds residual topology defects (unpaired
 //! edges / degree-1-or-2 vertices), the affected neighborhood is rebuilt from
 //! ONE consistent exact oracle and spliced back into the assembled diagram.
-//! Because every repaired cell comes from the same oracle, repaired cells pair
+//! Because every rebuilt cell comes from the same oracle, rebuilt cells pair
 //! with each other on shared edges by construction; on the well-conditioned rim
 //! the oracle agrees with the fast clipper, so rebuilt rim vertices reuse the
 //! surrounding cells' vertex ids and pair with the unspliced neighbors too.
 //!
-//! Two production oracles share one grow loop ([`repair_grow_loop`]):
-//! - [`repair_local_hull`] (default, [`crate::RepairMode::Local3d`]): a
+//! Two production oracles share one grow loop ([`run_rebuild_growth`]):
+//! - [`rebuild_with_local_hull`] (default, [`crate::LocalRebuildMode::Hull3d`]): a
 //!   normalized local 3D hull ([`LocalHull`], exact `orient3d`).
-//! - [`repair_local_exact`] ([`crate::RepairMode::LocalProjected`]): exact 2D
+//! - [`rebuild_with_projected_delaunay`] ([`crate::LocalRebuildMode::ProjectedDelaunay`]): exact 2D
 //!   Delaunay (`robust::incircle`) in a single shared stereographic chart.
 //!
-//! The caller (`maybe_repair_effective`) commits the result only if the whole
-//! repaired diagram passes strict validation — the never-worse gate.
+//! The caller (`maybe_rebuild_effective`) commits the result only if the whole
+//! rebuilt diagram passes strict validation — the never-worse gate.
 
-#[cfg(feature = "escalate_probe")]
+#[cfg(feature = "local_rebuild_probe")]
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use glam::{DVec3, Vec3};
@@ -31,7 +31,7 @@ use crate::live_dedup::ShardedVertexKeys;
 /// A generator's rebuilt Voronoi cell: its vertices as the ordered cyclic fan
 /// of sorted global-id triples (each triple = the three generators meeting at
 /// that Voronoi vertex). Same identity space as the production `VertexKey`.
-#[cfg(feature = "escalate_probe")]
+#[cfg(feature = "local_rebuild_probe")]
 #[derive(Debug, Clone)]
 pub struct RebuiltCell {
     /// The generator (global id) whose Voronoi cell this is.
@@ -41,17 +41,17 @@ pub struct RebuiltCell {
 }
 
 #[derive(Clone, Copy)]
-struct RepairVertex {
+struct RebuildVertex {
     key: [u32; 3],
-    /// Oracle-selected position for a newly minted vertex. Local3d supplies
+    /// Oracle-selected position for a newly minted vertex. Hull3d supplies
     /// the oriented hull support normal; other diagnostic oracles retain the
     /// historical triple-derived fallback by leaving this as `None`.
     mint_pos: Option<Vec3>,
 }
 
-type RepairFan = Vec<RepairVertex>;
+type RebuildFan = Vec<RebuildVertex>;
 
-#[cfg(feature = "escalate_probe")]
+#[cfg(feature = "local_rebuild_probe")]
 impl RebuiltCell {
     /// The vertices of this cell incident to the edge it shares with `other`
     /// (the two Voronoi vertices whose triple contains both generators), as a
@@ -72,7 +72,7 @@ impl RebuiltCell {
 /// Gather a local generator id set: the `seeds` plus their `k` nearest
 /// neighbors (largest dot product on the unit sphere). Brute force — probe/test
 /// use only; the production path uses [`gather_knn_grid`].
-#[cfg(feature = "escalate_probe")]
+#[cfg(feature = "local_rebuild_probe")]
 pub fn gather_local(points: &[Vec3], seeds: &[u32], k: usize) -> Vec<u32> {
     use std::collections::BTreeSet;
     let mut set: BTreeSet<u32> = seeds.iter().copied().collect();
@@ -95,7 +95,7 @@ pub fn gather_local(points: &[Vec3], seeds: &[u32], k: usize) -> Vec<u32> {
     set.into_iter().collect()
 }
 
-/// O(local) kNN gather used by the production repair oracles. For each seed,
+/// O(local) kNN gather used by the production rebuild oracles. For each seed,
 /// walk the cube-map shell frontier nearest-first (the same machinery the point
 /// locator uses) and collect the `k + 1` nearest generators, unioned with the
 /// seeds — proportional to the local neighborhood rather than to `n`.
@@ -126,7 +126,7 @@ fn gather_knn_grid(
                 // The shell frontier certifies the crate's canonical raw-f32
                 // dot operation. Scoring with glam's independently associated
                 // `Vec3::dot` could round across `layer.unseen_bound` and stop
-                // the repair gather before its actual k-th candidate was seen.
+                // the rebuild gather before its actual k-th candidate was seen.
                 let dot = crate::fp::dot3_f32(
                     query.x,
                     query.y,
@@ -162,7 +162,7 @@ fn gather_knn_grid(
 /// each vertex triple contains `g`; consecutive cell vertices also share the
 /// neighbor `m` whose bisector carries the edge `g–m`. Returns `m`, or `None`
 /// if the two triples don't share exactly one other generator (not an edge).
-#[cfg(feature = "escalate_probe")]
+#[cfg(feature = "local_rebuild_probe")]
 pub fn shared_neighbor(g: u32, t0: [u32; 3], t1: [u32; 3]) -> Option<u32> {
     let common: Vec<u32> = t0
         .iter()
@@ -177,7 +177,7 @@ pub fn shared_neighbor(g: u32, t0: [u32; 3], t1: [u32; 3]) -> Option<u32> {
 }
 
 /// Whether two vertices are cyclically adjacent in a cell's fan.
-#[cfg(feature = "escalate_probe")]
+#[cfg(feature = "local_rebuild_probe")]
 fn cyclically_adjacent(verts: &[[u32; 3]], a: [u32; 3], b: [u32; 3]) -> bool {
     let n = verts.len();
     let pa = verts.iter().position(|&t| t == a);
@@ -197,7 +197,7 @@ fn cyclically_adjacent(verts: &[[u32; 3]], a: [u32; 3], b: [u32; 3]) -> bool {
 /// edges that could NOT be checked because `m` is outside the rebuilt set (the
 /// rim) — 0 means the cell is fully internally paired. Panics on a genuine
 /// pairing disagreement (an interior defect the rebuild failed to resolve).
-#[cfg(feature = "escalate_probe")]
+#[cfg(feature = "local_rebuild_probe")]
 pub fn check_cell_internally_paired(
     cell: &RebuiltCell,
     cells_by_gen: &std::collections::HashMap<u32, RebuiltCell>,
@@ -225,7 +225,7 @@ pub fn check_cell_internally_paired(
 /// Rebuild the `seeds`' Voronoi cells from one exact local hull over
 /// `local_ids`. Returns one [`RebuiltCell`] per seed, or `None` if the local
 /// set has no 3D hull (all generators coplanar — a measure-zero pathology).
-#[cfg(feature = "escalate_probe")]
+#[cfg(feature = "local_rebuild_probe")]
 pub fn rebuild_cells(
     points: &[Vec3],
     local_ids: &[u32],
@@ -242,13 +242,13 @@ pub fn rebuild_cells(
     })
 }
 
-/// Internal Local3d form of [`rebuild_cells`], retaining the hull face's
+/// Internal Hull3d form of [`rebuild_cells`], retaining the hull face's
 /// oriented support normal alongside the sorted triple identity.
 fn rebuild_hull_cells(
     points: &[Vec3],
     local_ids: &[u32],
     seeds: &[u32],
-) -> Option<Vec<(u32, RepairFan)>> {
+) -> Option<Vec<(u32, RebuildFan)>> {
     let pos: Vec<Vec3> = local_ids.iter().map(|&g| points[g as usize]).collect();
     let hull = LocalHull::build(&pos)?;
 
@@ -276,7 +276,7 @@ fn rebuild_hull_cells(
                 let mut t = [local_ids[a], local_ids[b], local_ids[c]];
                 t.sort_unstable();
                 let n = hull.face_circumcenter(fi);
-                RepairVertex {
+                RebuildVertex {
                     key: t,
                     mint_pos: Some(Vec3::new(n.x as f32, n.y as f32, n.z as f32)),
                 }
@@ -314,9 +314,9 @@ fn chain_fan(tris: &[[u32; 3]]) -> Option<Vec<[u32; 3]>> {
     }
 }
 
-fn unpositioned_fan(keys: Vec<[u32; 3]>) -> RepairFan {
+fn unpositioned_fan(keys: Vec<[u32; 3]>) -> RebuildFan {
     keys.into_iter()
-        .map(|key| RepairVertex {
+        .map(|key| RebuildVertex {
             key,
             mint_pos: None,
         })
@@ -399,7 +399,7 @@ fn local_delaunay_2d(proj: &[robust::Coord<f64>]) -> Vec<[usize; 3]> {
     tris
 }
 
-/// Union gather (2-RING) for a repair oracle: the closure, each closure cell's
+/// Union gather (2-RING) for a rebuild oracle: the closure, each closure cell's
 /// current Voronoi neighbors (so a cluster-boundary cell's far Voronoi neighbors
 /// are present), then each of those seeds' kNN (so every gathered cell's own
 /// neighborhood is complete and its triangulated fan is the true Delaunay, not a
@@ -461,7 +461,7 @@ fn local_exact_fans(
     work: &WorkingDiagram,
     closure: &[u32],
     ring_k: usize,
-) -> FxHashMap<u32, RepairFan> {
+) -> FxHashMap<u32, RebuildFan> {
     use robust::Coord;
     use std::collections::BTreeSet;
 
@@ -469,7 +469,7 @@ fn local_exact_fans(
 
     // SINGLE shared stereographic chart over the gather, pole at the antipode of
     // the local centroid. One exact 2D triangulation produces all closure fans,
-    // so repaired cells agree with each other.
+    // so rebuilt cells agree with each other.
     let mut centroid = Vec3::ZERO;
     for &id in &local_ids {
         centroid += points[id as usize];
@@ -523,13 +523,13 @@ fn local_hull_fans(
     work: &WorkingDiagram,
     closure: &[u32],
     ring_k: usize,
-) -> FxHashMap<u32, RepairFan> {
+) -> FxHashMap<u32, RebuildFan> {
     if closure.is_empty() {
         return FxHashMap::default();
     }
     let local_ids = gather_two_ring(points, grid, scratch, work, closure, ring_k);
 
-    let mut fans: FxHashMap<u32, RepairFan> = FxHashMap::default();
+    let mut fans: FxHashMap<u32, RebuildFan> = FxHashMap::default();
     if let Some(cells) = rebuild_hull_cells(points, &local_ids, closure) {
         for (generator, fan) in cells {
             fans.insert(generator, fan);
@@ -538,24 +538,24 @@ fn local_hull_fans(
     fans
 }
 
-/// The shared repair engine: seed the closure from the defect-pair generators
+/// The shared rebuild engine: seed the closure from the defect-pair generators
 /// and any low-incidence (degree 1/2) vertex's generators (a sliver vertex can
 /// be a defect with no unpaired edge), splice each closure cell's fan from the
 /// consistent oracle `fans_for`, and grow on the residual until it closes (or
 /// `max_rounds`). The caller's whole-diagram never-worse gate makes any
-/// non-converged residual safe: an unrepaired diagram is simply not committed.
-fn repair_grow_loop(
+/// non-converged residual safe: an unrebuilt diagram is simply not committed.
+fn run_rebuild_growth(
     points: &[Vec3],
     work: &mut WorkingDiagram,
     defect_pairs: &[(u32, u32)],
     merge_affected: &[u32],
     max_rounds: usize,
     debug_name: &str,
-    mut fans_for: impl FnMut(&WorkingDiagram, &[u32]) -> FxHashMap<u32, RepairFan>,
-) -> EscalationStats {
+    mut fans_for: impl FnMut(&WorkingDiagram, &[u32]) -> FxHashMap<u32, RebuildFan>,
+) -> LocalRebuildStats {
     use std::collections::BTreeSet;
-    let mut stats = EscalationStats::default();
-    let debug = std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok();
+    let mut stats = LocalRebuildStats::default();
+    let debug = std::env::var("VORONOI_MESH_LOCAL_REBUILD_DEBUG").is_ok();
 
     let defect_gens: BTreeSet<u32> = defect_pairs.iter().flat_map(|&(a, b)| [a, b]).collect();
     let mut closure: BTreeSet<u32> = defect_gens.clone();
@@ -594,10 +594,10 @@ fn repair_grow_loop(
             spliced.insert(g);
         }
         // Geometry is not a reliable winding oracle in the dense cases that
-        // reach repair: rounded/reconciled f32 circumcenters can make a tiny
+        // reach rebuild: rounded/reconciled f32 circumcenters can make a tiny
         // cell look self-crossing. Enforce the combinatorial invariant instead.
-        // Shared edges constrain two repaired cells to opposite directions;
-        // rim edges anchor each connected repaired component to an unspliced
+        // Shared edges constrain two rebuilt cells to opposite directions;
+        // rim edges anchor each connected rebuilt component to an unspliced
         // neighbor. This is a parity solve over the already-spliced overlay.
         work.reconcile_override_winding(points, &spliced, target_sign);
         // Grow on the residual: generators named by any still-unpaired edge, plus
@@ -659,10 +659,10 @@ fn repair_grow_loop(
     stats
 }
 
-/// Dependency-free local 3D repair (default, [`crate::RepairMode::Local3d`]):
+/// Dependency-free local 3D rebuild (default, [`crate::LocalRebuildMode::Hull3d`]):
 /// the grow loop over the normalized-local-3D-hull oracle ([`local_hull_fans`]).
 #[allow(clippy::too_many_arguments)] // grid and scratch form the reusable gather index
-pub(crate) fn repair_local_hull(
+pub(crate) fn rebuild_with_local_hull(
     points: &[Vec3],
     grid: &CubeMapGrid,
     scratch: &mut CubeMapGridScratch,
@@ -671,23 +671,23 @@ pub(crate) fn repair_local_hull(
     merge_affected: &[u32],
     ring_k: usize,
     max_rounds: usize,
-) -> EscalationStats {
-    repair_grow_loop(
+) -> LocalRebuildStats {
+    run_rebuild_growth(
         points,
         work,
         defect_pairs,
         merge_affected,
         max_rounds,
-        "repair_local_hull",
+        "rebuild_with_local_hull",
         |work, closure| local_hull_fans(points, grid, scratch, work, closure, ring_k),
     )
 }
 
-/// Projected local repair ([`crate::RepairMode::LocalProjected`]): the grow loop
+/// Projected local rebuild ([`crate::LocalRebuildMode::ProjectedDelaunay`]): the grow loop
 /// over the shared-stereographic-chart exact 2D Delaunay oracle
 /// ([`local_exact_fans`]). Kept as a projected-oracle diagnostic path.
 #[allow(clippy::too_many_arguments)] // grid and scratch form the reusable gather index
-pub(crate) fn repair_local_exact(
+pub(crate) fn rebuild_with_projected_delaunay(
     points: &[Vec3],
     grid: &CubeMapGrid,
     scratch: &mut CubeMapGridScratch,
@@ -696,32 +696,32 @@ pub(crate) fn repair_local_exact(
     merge_affected: &[u32],
     ring_k: usize,
     max_rounds: usize,
-) -> EscalationStats {
-    repair_grow_loop(
+) -> LocalRebuildStats {
+    run_rebuild_growth(
         points,
         work,
         defect_pairs,
         merge_affected,
         max_rounds,
-        "repair_local_exact",
+        "rebuild_with_projected_delaunay",
         |work, closure| local_exact_fans(points, grid, scratch, work, closure, ring_k),
     )
 }
 
-/// Probe-only global oracle (feature `escalate_probe`): ONE GLOBAL stereographic
+/// Probe-only global oracle (feature `local_rebuild_probe`): ONE GLOBAL stereographic
 /// Delaunay (fixed pole, `delaunator`) over all generators, read per closure
 /// generator through the shared grow loop. A global pole is what makes the
 /// rebuilt rim agree with the fast diagram (fast ≈ the global-pole Delaunay).
-/// A/B reference for the local repairs; not a production path.
-#[cfg(feature = "escalate_probe")]
-pub fn repair_delaunator(
+/// A/B reference for the local rebuilds; not a production path.
+#[cfg(feature = "local_rebuild_probe")]
+pub fn rebuild_with_global_delaunay(
     points: &[Vec3],
     work: &mut WorkingDiagram,
     defect_pairs: &[(u32, u32)],
     merge_affected: &[u32],
     _gather_k: usize,
     max_rounds: usize,
-) -> EscalationStats {
+) -> LocalRebuildStats {
     let mut centroid = Vec3::ZERO;
     for &p in points {
         centroid += p;
@@ -742,7 +742,7 @@ pub fn repair_delaunator(
         .collect();
     let tri = delaunator::triangulate(&proj);
     if tri.triangles.is_empty() {
-        return EscalationStats::default();
+        return LocalRebuildStats::default();
     }
     // generator -> incident sorted-global triples (the global Delaunay fan)
     let mut incident: FxHashMap<u32, Vec<[u32; 3]>> = FxHashMap::default();
@@ -753,13 +753,13 @@ pub fn repair_delaunator(
             incident.entry(li as u32).or_default().push(k);
         }
     }
-    repair_grow_loop(
+    run_rebuild_growth(
         points,
         work,
         defect_pairs,
         merge_affected,
         max_rounds,
-        "repair_delaunator",
+        "rebuild_with_global_delaunay",
         |_work, closure| {
             closure
                 .iter()
@@ -792,7 +792,7 @@ pub fn repair_delaunator(
 /// The f64 spherical circumcenter of a generator triple, as a (near-)unit
 /// `Vec3` — one of the two antipodal circumcenters of the three generators.
 /// This same-generator-side choice remains the fallback for projected/probe
-/// oracles. Local3d instead supplies the hull-winding-selected support normal,
+/// oracles. Hull3d instead supplies the hull-winding-selected support normal,
 /// which is essential when the local hull does not contain the origin.
 fn triple_circumcenter(points: &[Vec3], t: [u32; 3]) -> Vec3 {
     let p = |i: u32| {
@@ -808,7 +808,7 @@ fn triple_circumcenter(points: &[Vec3], t: [u32; 3]) -> Vec3 {
     Vec3::new(n.x as f32, n.y as f32, n.z as f32)
 }
 
-/// Signed spherical polygon orientation, accumulated in f64. Repair is entered
+/// Signed spherical polygon orientation, accumulated in f64. Rebuild is entered
 /// precisely for numerically difficult neighborhoods, and the O(radius²)
 /// polygon-area signal can be smaller than the rounding left by summing its
 /// O(radius) edge cross-products in f32.
@@ -905,7 +905,7 @@ fn low_incidence_gens(work: &WorkingDiagram) -> Vec<u32> {
 /// index space. The base arrays are borrowed read-only; splicing records a
 /// per-generator boundary override, and freshly minted vertices live in side
 /// arrays (their vids continue past the base vertex count). Building the view
-/// is O(1) and splicing is O(defect region) — the repair's entry cost no longer
+/// is O(1) and splicing is O(defect region) — the rebuild's entry cost no longer
 /// scales with the diagram (the old form copied every vertex, built a
 /// triple→vid map over all of them, and materialized every cell as its own
 /// `Vec`, ~1s at 2.5M generators before a single defect was examined).
@@ -1008,7 +1008,7 @@ impl<'a> WorkingDiagram<'a> {
     /// different vid than the spliced cell, so both feed the same grow-or-
     /// reject machinery; only the vertex id (and its f32-vs-recomputed
     /// position) differs.
-    fn vid_for(&mut self, points: &[Vec3], vertex: RepairVertex) -> u32 {
+    fn vid_for(&mut self, points: &[Vec3], vertex: RebuildVertex) -> u32 {
         let t = vertex.key;
         if let Some(&vid) = self.triple_to_vid.get(&t) {
             return vid;
@@ -1034,7 +1034,7 @@ impl<'a> WorkingDiagram<'a> {
                 .unwrap_or_else(|| triple_circumcenter(points, t));
             #[cfg(feature = "profiling")]
             crate::point_audit::record_vec3(
-                crate::point_audit::PointProducer::RepairVertex,
+                crate::point_audit::PointProducer::RebuildVertex,
                 position,
             );
             self.minted_pos.push(position);
@@ -1054,7 +1054,7 @@ impl<'a> WorkingDiagram<'a> {
         &mut self,
         points: &[Vec3],
         g: u32,
-        fan: &[RepairVertex],
+        fan: &[RebuildVertex],
         target_sign: f64,
     ) {
         let mut list: Vec<u32> = fan
@@ -1067,7 +1067,7 @@ impl<'a> WorkingDiagram<'a> {
         self.overrides.insert(g, list);
     }
 
-    /// Make every shared edge in the repaired overlay run in opposite
+    /// Make every shared edge in the rebuilt overlay run in opposite
     /// directions, without consulting its numerically fragile vertex geometry.
     /// Each cell reversal is a boolean; a same-direction edge requires exactly
     /// one endpoint cell to reverse, while an already-opposite edge requires
@@ -1333,7 +1333,7 @@ impl<'a> WorkingDiagram<'a> {
         // One record per directed half-edge: (canonical undirected key, is
         // lower-id direction). Sort + run-scan instead of a hashmap build —
         // the map (unreserved, ~2E entries, rebuilt every grow round) was the
-        // dominant repair cost at scale (~1.3s/round at 1M cells; the sorted
+        // dominant rebuild cost at scale (~1.3s/round at 1M cells; the sorted
         // scan is ~10x cheaper and parallelizes).
         let mut uses: Vec<(u64, bool)> = Vec::with_capacity(self.base_cell_indices.len() + 64);
         // Per-vertex live-cell reference counts, matching `low_incidence_gens`
@@ -1435,9 +1435,9 @@ impl<'a> WorkingDiagram<'a> {
     }
 }
 
-/// Outcome of a repair pass (diagnostics for tests / debug output).
+/// Outcome of a rebuild pass (diagnostics for tests / debug output).
 #[derive(Debug, Default, Clone, Copy)]
-pub struct EscalationStats {
+pub struct LocalRebuildStats {
     /// Total grow rounds.
     pub rounds: usize,
     /// Distinct generators whose cells were rebuilt and spliced.
@@ -1448,10 +1448,10 @@ pub struct EscalationStats {
 }
 
 /// A0 probe stash payload: (effective points, fast per-cell triples).
-#[cfg(feature = "escalate_probe")]
+#[cfg(feature = "local_rebuild_probe")]
 pub type A0Stash = (Vec<Vec3>, Vec<Vec<[u32; 3]>>);
 
-#[cfg(feature = "escalate_probe")]
+#[cfg(feature = "local_rebuild_probe")]
 thread_local! {
     /// A0 probe stash from the last build, for an exact-reference comparison
     /// test. See `take_a0_fast`.
@@ -1459,7 +1459,7 @@ thread_local! {
 }
 
 /// Stash the assembled fast per-cell triple fans for A0 exact-reference probes.
-#[cfg(feature = "escalate_probe")]
+#[cfg(feature = "local_rebuild_probe")]
 pub(crate) fn stash_a0_fast(
     points: &[Vec3],
     keys: &ShardedVertexKeys,
@@ -1485,33 +1485,33 @@ pub(crate) fn stash_a0_fast(
 }
 
 /// Take the A0 stash (effective points + fast per-cell triples) from the last
-/// build that ran with `VORONOI_MESH_ESCALATE_PROBE_A0` set. Probe API.
-#[cfg(feature = "escalate_probe")]
+/// build that ran with `VORONOI_MESH_LOCAL_REBUILD_PROBE_A0` set. Probe API.
+#[cfg(feature = "local_rebuild_probe")]
 pub fn take_a0_fast() -> Option<A0Stash> {
     A0_STASH.with(|s| s.borrow_mut().take())
 }
 
-/// Process-global enable for the repair pass (probe / opt-in): forces the
-/// repair trigger on even when the configured [`crate::RepairMode`] is
+/// Process-global enable for the rebuild pass (probe / opt-in): forces the
+/// rebuild trigger on even when the configured [`crate::LocalRebuildMode`] is
 /// `Disabled`. Off by default; only the probe API sets it.
-#[cfg(feature = "escalate_probe")]
-static ESCALATE_ENABLED: AtomicBool = AtomicBool::new(false);
+#[cfg(feature = "local_rebuild_probe")]
+static LOCAL_REBUILD_FORCED: AtomicBool = AtomicBool::new(false);
 
-/// Enable or disable defect-driven escalation (probe API).
-#[cfg(feature = "escalate_probe")]
-pub fn set_escalation_enabled(on: bool) {
-    ESCALATE_ENABLED.store(on, Ordering::Relaxed);
+/// Enable or disable forced defect-driven rebuilding (probe API).
+#[cfg(feature = "local_rebuild_probe")]
+pub fn set_local_rebuild_forced(on: bool) {
+    LOCAL_REBUILD_FORCED.store(on, Ordering::Relaxed);
 }
 
-/// Whether escalation is currently force-enabled.
-#[cfg(feature = "escalate_probe")]
-pub(crate) fn escalation_enabled() -> bool {
-    ESCALATE_ENABLED.load(Ordering::Relaxed)
+/// Whether local rebuilding is currently force-enabled.
+#[cfg(feature = "local_rebuild_probe")]
+pub(crate) fn local_rebuild_probe_forced() -> bool {
+    LOCAL_REBUILD_FORCED.load(Ordering::Relaxed)
 }
 
-/// Escalation is opt-in through the probe feature.
-#[cfg(not(feature = "escalate_probe"))]
-pub(crate) const fn escalation_enabled() -> bool {
+/// Forced local rebuilding is opt-in through the probe feature.
+#[cfg(not(feature = "local_rebuild_probe"))]
+pub(crate) const fn local_rebuild_probe_forced() -> bool {
     false
 }
 
@@ -1561,15 +1561,15 @@ mod tests {
         let cells = vec![VoronoiCell::new(0, 0); points.len()];
         let mut work = WorkingDiagram::from_assembled(&[], &keys, &cells, &[]);
         let fan = [
-            RepairVertex {
+            RebuildVertex {
                 key: [0, 1, 2],
                 mint_pos: Some(Vec3::X),
             },
-            RepairVertex {
+            RebuildVertex {
                 key: [0, 1, 2],
                 mint_pos: Some(Vec3::Y),
             },
-            RepairVertex {
+            RebuildVertex {
                 key: [0, 1, 2],
                 mint_pos: Some(Vec3::Z),
             },

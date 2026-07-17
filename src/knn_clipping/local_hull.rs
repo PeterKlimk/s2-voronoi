@@ -392,7 +392,7 @@ mod tests {
 
     /// Documents that the BARE hull's triangulation of exact cocircular cliques
     /// (the cube's square faces) is order-DEPENDENT — the insertion order picks
-    /// the diagonal. `#[ignore]` because the escalation use does NOT require
+    /// the diagonal. `#[ignore]` because local rebuilding does NOT require
     /// across-build determinism: a component is rebuilt as ONE hull (so its
     /// diagonals are internally consistent), the grow-until-clean-rim condition
     /// keeps cocircular cliques interior to that single hull, and the coincident
@@ -434,7 +434,7 @@ mod tests {
         }
     }
 
-    /// The load-bearing property for the escalation rebuild: every generator's
+    /// The load-bearing property for the local rebuild: every generator's
     /// dual cell reads as a single clean fan, INCLUDING on a structure with
     /// exact cocircular cliques (the cube's square faces). `cell_faces` must not
     /// bail (return empty) for any generator of a valid hull, regardless of how
@@ -474,7 +474,7 @@ mod tests {
         }
     }
 
-    /// THE core escalation invariant: every two generators that share a Voronoi
+    /// THE core local-rebuild invariant: every two generators that share a Voronoi
     /// edge, read from ONE hull, agree on that edge's two endpoints (the two
     /// incident faces = the two shared Voronoi vertices) — and those endpoints
     /// are cyclically adjacent in BOTH dual fans. This is why rebuilding a whole

@@ -128,7 +128,7 @@ Smaller inputs and single-threaded pools stay serial.
   mesh with original-input provenance.
 
 Configuration is through `compute_with(points, VoronoiConfig)`; `compute_with_report` additionally
-returns what was welded, perturbed, or repaired. The `_by` variants provide the same behavior for
+returns what was welded, perturbed, reconciled, or locally rebuilt. The `_by` variants provide the same behavior for
 closure-based ingest. Defaults handle coincident and degenerate inputs;
 `CellKillingPolicy::Error` is available when a consumer requires exact stored-zero resolution to
 fail rather than preserve an unrepresentable generator cell. Consumers that instead accept removal
@@ -155,8 +155,8 @@ lock. [docs/architecture.md](docs/architecture.md) has the full description.
 ## Correctness
 
 The fast success path certifies the properties graphical consumers need: every shared edge agrees
-exactly in multiplicity and orientation, low-incidence defects are rejected or repaired, and the
-spherical Euler characteristic holds. Full strict validation (including connectivity and broader
+exactly in multiplicity and orientation, low-incidence defects are rejected or locally rebuilt,
+and the spherical Euler characteristic holds. Full strict validation (including connectivity and broader
 representation diagnostics) remains available through `validation::validate`, is included in
 `compute_with_report`, and can gate plain `compute` with `VORONOI_MESH_VERIFY=1`; it is not imposed
 as a second global edge sort on every production build. These checks are fuzz-tested at
@@ -165,8 +165,8 @@ multi-million point counts.
 Geometry is accurate to floating-point working precision, not an unqualified “exact Voronoi”
 claim: inputs are canonicalized, different robust/fallback policies can resolve ambiguity-scale
 features, and output vertices are stored as f32. Near-coincident generators are welded,
-degenerate great-circle inputs are perturbed, and rare topology defects are repaired, all by
-default and all reported.
+degenerate great-circle inputs are perturbed, and rare topology defects are reconciled or locally
+rebuilt, all by default and all reported.
 [docs/correctness.md](docs/correctness.md) states the guarantees and limits precisely.
 
 ## Performance

@@ -546,7 +546,8 @@ pub struct EmbeddedComputeOutput {
     pub diagram: EmbeddedSphericalVoronoi,
     /// Effective diagram actually solved after preprocessing, when welding changed the generator set.
     pub effective_diagram: Option<EmbeddedSphericalVoronoi>,
-    /// Existing unit-backend preprocessing, repair, and validation report.
+    /// Existing unit-backend preprocessing, reconciliation, local-rebuild,
+    /// and validation report.
     pub report: ComputeReport,
 }
 
@@ -660,7 +661,8 @@ impl EmbeddedSphericalCellMesh {
 pub struct EmbeddedCellMeshOutput {
     /// Dense simplified cell mesh and its embedding.
     pub mesh: EmbeddedSphericalCellMesh,
-    /// Original construction, repair, and output-resolution report.
+    /// Original construction, reconciliation, local-rebuild, and
+    /// output-resolution report.
     pub compute_report: ComputeReport,
     /// Explicit cell-elision transaction report.
     pub elision_report: crate::CellElisionReport,

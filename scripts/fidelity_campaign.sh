@@ -56,14 +56,14 @@ run_case() {
   # progress human-sized. The full records contain all conditioning buckets
   # and are deliberately much too wide for a terminal status stream.
   echo "$line" >> "$OUT"
-  local merged pre_defects repair_attempted repair_accepted ownership edge_max
+  local merged pre_defects local_rebuild_attempted local_rebuild_accepted ownership edge_max
   merged="$(sed -n 's/.* merged=\([^ ]*\).*/\1/p' <<< "$line")"
   pre_defects="$(sed -n 's/.* pre_defects=\([^ ]*\).*/\1/p' <<< "$line")"
-  repair_attempted="$(sed -n 's/.* repair_attempted=\([^ ]*\).*/\1/p' <<< "$line")"
-  repair_accepted="$(sed -n 's/.* repair_accepted=\([^ ]*\).*/\1/p' <<< "$line")"
+  local_rebuild_attempted="$(sed -n 's/.* local_rebuild_attempted=\([^ ]*\).*/\1/p' <<< "$line")"
+  local_rebuild_accepted="$(sed -n 's/.* local_rebuild_accepted=\([^ ]*\).*/\1/p' <<< "$line")"
   ownership="$(sed -n 's/.* ownership_mismatches=\([^ ]*\).*/\1/p' <<< "$line")"
   edge_max="$(sed -n 's/.* edge_cross_max_rad=\([^ ]*\).*/\1/p' <<< "$line")"
-  echo "OK dist=$dist n=$n seed=$seed merged=$merged pre_defects=$pre_defects repair=$repair_attempted/$repair_accepted ownership=$ownership edge_max_rad=$edge_max"
+  echo "OK dist=$dist n=$n seed=$seed merged=$merged pre_defects=$pre_defects local_rebuild=$local_rebuild_attempted/$local_rebuild_accepted ownership=$ownership edge_max_rad=$edge_max"
 }
 
 for seed in $SEEDS; do

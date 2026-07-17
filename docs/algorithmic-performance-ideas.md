@@ -80,7 +80,7 @@ Some pathological cells can remain valid while examining nearly every generator.
 be based on measured work and lack of geometric progress, not a fixed neighbor count. There are
 likely several useful regimes:
 
-- a few expensive cells can replay through unrestricted spherical construction or Local3d;
+- a few expensive cells can replay through unrestricted spherical construction or Hull3d rebuilding;
 - a compact defect region can justify one local hull or triangulation shared by that region; and
 - only a sufficiently large affected fraction can amortize a global hull or triangulation.
 

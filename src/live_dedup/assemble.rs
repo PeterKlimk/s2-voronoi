@@ -8,7 +8,7 @@ use super::edge_checks::resolve_edge_check_overflow;
 #[cfg(debug_assertions)]
 use super::packed::INVALID_INDEX;
 use super::shard::ShardFinal;
-use super::types::{BinId, DeferredSlot, EdgeCheckOverflow, UnresolvedEdgeMismatch};
+use super::types::{BinId, DeferredSlot, EdgeCheckOverflow, EdgeMismatch};
 use super::ShardedCellsData;
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::cell_build::VertexKey;
@@ -135,7 +135,7 @@ fn patch_deferred_slots_with_fallback<P: super::types::VertexPosition>(
 }
 
 struct CollectedShardBookkeeping<P> {
-    unresolved_edges: Vec<UnresolvedEdgeMismatch>,
+    edge_mismatches: Vec<EdgeMismatch>,
     edge_check_overflow: Vec<EdgeCheckOverflow>,
     deferred_slots: Vec<DeferredSlot<P>>,
 }
@@ -145,7 +145,7 @@ fn collect_shard_bookkeeping<P: super::types::VertexPosition>(
 ) -> CollectedShardBookkeeping<P> {
     let unresolved_total: usize = shards
         .iter()
-        .map(|shard| shard.output.unresolved_edges.len())
+        .map(|shard| shard.output.edge_mismatches.len())
         .sum();
     let overflow_total: usize = shards
         .iter()
@@ -156,9 +156,9 @@ fn collect_shard_bookkeeping<P: super::types::VertexPosition>(
         .map(|shard| shard.output.deferred_slots.len())
         .sum();
 
-    let mut unresolved_edges = Vec::new();
+    let mut edge_mismatches = Vec::new();
     if unresolved_total != 0 {
-        unresolved_edges.reserve_exact(unresolved_total);
+        edge_mismatches.reserve_exact(unresolved_total);
     }
     let mut edge_check_overflow = Vec::new();
     edge_check_overflow.reserve_exact(overflow_total);
@@ -166,13 +166,13 @@ fn collect_shard_bookkeeping<P: super::types::VertexPosition>(
     deferred_slots.reserve_exact(deferred_total);
 
     for shard in shards {
-        unresolved_edges.append(&mut shard.output.unresolved_edges);
+        edge_mismatches.append(&mut shard.output.edge_mismatches);
         edge_check_overflow.append(&mut shard.output.edge_check_overflow);
         deferred_slots.append(&mut shard.output.deferred_slots);
     }
 
     CollectedShardBookkeeping {
-        unresolved_edges,
+        edge_mismatches,
         edge_check_overflow,
         deferred_slots,
     }
@@ -185,7 +185,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
 
     let t_bookkeeping = Timer::start();
     let CollectedShardBookkeeping {
-        mut unresolved_edges,
+        mut edge_mismatches,
         edge_check_overflow,
         deferred_slots,
     } = collect_shard_bookkeeping(&mut data.shards);
@@ -193,11 +193,8 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     let bookkeeping_time = t_bookkeeping.elapsed();
 
     let t_overflow = Timer::start();
-    let overflow_timing = resolve_edge_check_overflow(
-        &mut data.shards,
-        &edge_check_overflow,
-        &mut unresolved_edges,
-    );
+    let overflow_timing =
+        resolve_edge_check_overflow(&mut data.shards, &edge_check_overflow, &mut edge_mismatches);
     #[allow(unused_variables)]
     let edge_check_overflow_time = t_overflow.elapsed();
     // Keep the existing nested measurements live for profiling builds even
@@ -207,9 +204,9 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     // Dev-only: tally unresolved-edge origins to see which path inflates the
     // residual (within-bin vs cross-bin). See docs/correctness.md.
     if std::env::var("VORONOI_MESH_UNPAIRED_ORIGINS").is_ok() {
-        use super::types::UnresolvedEdgeOrigin as O;
+        use super::types::EdgeMismatchOrigin as O;
         let mut c = [0usize; 10];
-        for e in &unresolved_edges {
+        for e in &edge_mismatches {
             let i = match e.origin {
                 O::InBinMissingCheck => 0,
                 O::InBinThirdsMismatch => 1,
@@ -219,7 +216,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
                 O::CrossBinSingleSided => 5,
                 O::CrossBinDuplicateSide => 6,
                 O::CrossBinSlotConflict => 7,
-                O::PostRepairUnpaired => 8,
+                O::PostReconciliationUnpaired => 8,
                 O::EndpointKeyMismatch => 9,
             };
             c[i] += 1;
@@ -227,7 +224,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
         eprintln!(
             "[origins] total={} | InBin(miss={} thirds={} dup={} unconsumed={}) \
              CrossBin(thirds={} single={} dup={} slot={}) endpoint_key={}",
-            unresolved_edges.len(),
+            edge_mismatches.len(),
             c[0],
             c[1],
             c[2],
@@ -664,7 +661,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
         shard_order_abs_delta,
         scatter_by_shard,
         triplet_keys: finals.iter().map(|s| s.triplet_keys).sum(),
-        unresolved_edges_count: unresolved_edges.len() as u64,
+        edge_mismatches_count: edge_mismatches.len() as u64,
         primary_cell_references: finals
             .iter()
             .map(|s| s.output.cell_indices.len() as u64)
@@ -681,7 +678,7 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
     Ok(super::AssemblyResult {
         vertices: all_vertices,
         vertex_keys: all_vertex_keys,
-        unresolved_edges,
+        edge_mismatches,
         cells,
         cell_indices,
         exact_zero_edge_candidates,
@@ -696,14 +693,12 @@ pub(super) fn assemble_sharded_live_dedup<P: super::types::VertexPosition>(
 mod tests {
     use super::*;
     use crate::knn_clipping::edge_reconcile::{
-        edge_segments_for_neighbor, reconcile_unresolved_edges, RepairApply, VertexKeys,
+        edge_segments_for_neighbor, reconcile_edge_mismatches, ReconcileApply, VertexKeys,
     };
     use crate::knn_clipping::live_dedup::binning::BinAssignment;
     use crate::knn_clipping::live_dedup::packed::{pack_edge, INVALID_INDEX};
     use crate::knn_clipping::live_dedup::shard::ShardState;
-    use crate::knn_clipping::live_dedup::types::{
-        EdgeCheckOverflow, LocalId, UnresolvedEdgeOrigin,
-    };
+    use crate::knn_clipping::live_dedup::types::{EdgeCheckOverflow, EdgeMismatchOrigin, LocalId};
     use crate::knn_clipping::live_dedup::{EdgeRecord, ShardedCellsData};
     use glam::Vec3;
     use std::collections::BTreeSet;
@@ -736,9 +731,9 @@ mod tests {
         let mut shards = vec![ShardState::<Vec3>::new(0), ShardState::<Vec3>::new(0)];
         for (ordinal, shard) in shards.iter_mut().enumerate() {
             let key = pack_edge(ordinal as u32, ordinal as u32 + 10);
-            shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
+            shard.output.edge_mismatches.push(EdgeMismatch {
                 key,
-                origin: UnresolvedEdgeOrigin::InBinMissingCheck,
+                origin: EdgeMismatchOrigin::InBinMissingCheck,
             });
             shard.output.edge_check_overflow.push(EdgeCheckOverflow {
                 key,
@@ -762,26 +757,26 @@ mod tests {
 
         let collected = collect_shard_bookkeeping(&mut shards);
 
-        assert_eq!(collected.unresolved_edges.len(), 2);
+        assert_eq!(collected.edge_mismatches.len(), 2);
         assert_eq!(collected.edge_check_overflow.len(), 2);
         assert_eq!(collected.deferred_slots.len(), 2);
-        assert!(collected.unresolved_edges.capacity() >= 2);
+        assert!(collected.edge_mismatches.capacity() >= 2);
         assert!(collected.edge_check_overflow.capacity() >= 2);
         assert!(collected.deferred_slots.capacity() >= 2);
-        assert_eq!(collected.unresolved_edges[0].key, pack_edge(0, 10));
-        assert_eq!(collected.unresolved_edges[1].key, pack_edge(1, 11));
+        assert_eq!(collected.edge_mismatches[0].key, pack_edge(0, 10));
+        assert_eq!(collected.edge_mismatches[1].key, pack_edge(1, 11));
         assert_eq!(collected.edge_check_overflow[0].source_bin, bin(0));
         assert_eq!(collected.edge_check_overflow[1].source_bin, bin(1));
         assert_eq!(collected.deferred_slots[0].key[0], 0);
         assert_eq!(collected.deferred_slots[1].key[0], 1);
         for shard in &shards {
-            assert!(shard.output.unresolved_edges.is_empty());
+            assert!(shard.output.edge_mismatches.is_empty());
             assert!(shard.output.edge_check_overflow.is_empty());
             assert!(shard.output.deferred_slots.is_empty());
         }
 
         let empty_unresolved = collect_shard_bookkeeping(&mut shards);
-        assert_eq!(empty_unresolved.unresolved_edges.capacity(), 0);
+        assert_eq!(empty_unresolved.edge_mismatches.capacity(), 0);
     }
 
     #[test]
@@ -978,7 +973,7 @@ mod tests {
             assert_eq!(unresolved.len(), 1, "sides={sides:?}");
             assert_eq!(
                 unresolved[0].origin,
-                UnresolvedEdgeOrigin::CrossBinDuplicateSide,
+                EdgeMismatchOrigin::CrossBinDuplicateSide,
                 "sides={sides:?}"
             );
             assert!(
@@ -1015,8 +1010,8 @@ mod tests {
         assert_eq!(
             origins,
             BTreeSet::from([
-                UnresolvedEdgeOrigin::CrossBinDuplicateSide,
-                UnresolvedEdgeOrigin::CrossBinSingleSided,
+                EdgeMismatchOrigin::CrossBinDuplicateSide,
+                EdgeMismatchOrigin::CrossBinSingleSided,
             ])
         );
     }
@@ -1096,8 +1091,8 @@ mod tests {
 
         let assembled = assemble_sharded_live_dedup(sharded).expect("assembly should succeed");
         assert!(assembled.resolution_drift_exceeded);
-        assert_eq!(assembled.unresolved_edges.len(), 1);
-        assert_eq!(assembled.unresolved_edges[0].key, edge_key);
+        assert_eq!(assembled.edge_mismatches.len(), 1);
+        assert_eq!(assembled.edge_mismatches[0].key, edge_key);
         assert_eq!(assembled.cells.len(), 6);
         assert_eq!(assembled.cells[0].vertex_count(), 3);
         assert_eq!(assembled.cells[1].vertex_count(), 3);
@@ -1112,7 +1107,7 @@ mod tests {
         );
 
         let reconcile_input: Vec<EdgeRecord> = assembled
-            .unresolved_edges
+            .edge_mismatches
             .iter()
             .map(|edge| EdgeRecord { key: edge.key })
             .collect();
@@ -1122,14 +1117,14 @@ mod tests {
             .iter()
             .map(|c| cell_indices[c.vertex_start()..c.vertex_start() + c.vertex_count()].to_vec())
             .collect();
-        let _residual = reconcile_unresolved_edges(
+        let _residual = reconcile_edge_mismatches(
             &reconcile_input,
             &assembled.vertices,
             &mut cells,
             &mut cell_indices,
             VertexKeys::Sharded(&assembled.vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-            RepairApply::InPlace,
+            ReconcileApply::InPlace,
             |_, _| false,
         )
         .expect("reconciliation should succeed without capacity overflow");

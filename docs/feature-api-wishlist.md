@@ -32,7 +32,7 @@ is a related output-shaped pipeline.
 
 This should be a separate API, not a hidden mode of `compute`: it needs a result and report contract,
 deterministic reduction rules, and a clear answer for defects that currently require post-assembly
-reconciliation or Local3d. The ordinary full-diagram path and its guarantees remain unchanged.
+reconciliation or Hull3d rebuilding. The ordinary full-diagram path and its guarantees remain unchanged.
 
 ## Temporal topology hints
 

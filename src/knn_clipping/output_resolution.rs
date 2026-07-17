@@ -1,6 +1,6 @@
 //! Final output-resolution canonicalization.
 //!
-//! This stage runs after reconciliation and optional Local3d repair. Its
+//! This stage runs after reconciliation and optional Hull3d rebuilding. Its
 //! baseline policy contracts distinct vertex ids whose stored f32 directions
 //! are exactly equal, but only when the transaction preserves every effective
 //! generator cell. Cell-killing components are retained for the default

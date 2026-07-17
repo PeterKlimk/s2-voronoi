@@ -17,7 +17,7 @@
 #   RAYON_NUM_THREADS  intra-build parallelism (default 6)
 #   VORONOI_MESH_VERIFY  set to 1 for the always-on validator gate
 #
-# Each matrix case must succeed, clear all repair residuals, and validate
+# Each matrix case must succeed, clear all output residuals, and validate
 # strictly. Errors, surviving residuals, invalid output, and process death all
 # fail the campaign.
 
@@ -40,7 +40,7 @@ echo "Binary: $BIN"
 echo "Output: $OUT  (MAX_N=$MAX_N, RAYON_NUM_THREADS=$RAYON_NUM_THREADS)"
 echo
 
-echo "dist,n,seed,param,result,defects,post_repair,no_chain,valid,repair_attempted,repair_accepted,peak_mb,origins" > "$OUT"
+echo "dist,n,seed,param,result,defects,residual_edges,reconciliation_residual,valid,local_rebuild_attempted,local_rebuild_accepted,peak_mb,origins" > "$OUT"
 
 invalid=0
 errored=0
@@ -66,27 +66,27 @@ run_case() { # dist n seed param
     return
   fi
   # Parse "key=value" tokens.
-  local result defects post_repair no_chain valid repair_attempted repair_accepted peak origins
+  local result defects residual_edges reconciliation_residual valid local_rebuild_attempted local_rebuild_accepted peak origins
   result="$(sed -n 's/.* result=\([^ ]*\).*/\1/p' <<<"$line")"
   defects="$(sed -n 's/.* defects=\([^ ]*\).*/\1/p' <<<"$line")"
-  post_repair="$(sed -n 's/.* post_repair=\([^ ]*\).*/\1/p' <<<"$line")"
-  post_repair="${post_repair:--}"
-  no_chain="$(sed -n 's/.* no_chain=\([^ ]*\).*/\1/p' <<<"$line")"
-  no_chain="${no_chain:--}"
+  residual_edges="$(sed -n 's/.* residual_edges=\([^ ]*\).*/\1/p' <<<"$line")"
+  residual_edges="${residual_edges:--}"
+  reconciliation_residual="$(sed -n 's/.* reconciliation_residual=\([^ ]*\).*/\1/p' <<<"$line")"
+  reconciliation_residual="${reconciliation_residual:--}"
   valid="$(sed -n 's/.* valid=\([^ ]*\).*/\1/p' <<<"$line")"
-  repair_attempted="$(sed -n 's/.* repair_attempted=\([^ ]*\).*/\1/p' <<<"$line")"
-  repair_attempted="${repair_attempted:--}"
-  repair_accepted="$(sed -n 's/.* repair_accepted=\([^ ]*\).*/\1/p' <<<"$line")"
-  repair_accepted="${repair_accepted:--}"
+  local_rebuild_attempted="$(sed -n 's/.* local_rebuild_attempted=\([^ ]*\).*/\1/p' <<<"$line")"
+  local_rebuild_attempted="${local_rebuild_attempted:--}"
+  local_rebuild_accepted="$(sed -n 's/.* local_rebuild_accepted=\([^ ]*\).*/\1/p' <<<"$line")"
+  local_rebuild_accepted="${local_rebuild_accepted:--}"
   peak="$(sed -n 's/.* peak_mb=\([^ ]*\).*/\1/p' <<<"$line")"
   origins="$(sed -n 's/.* origins=\(.*\)$/\1/p' <<<"$line")"
-  echo "$dist,$n,$seed,$param,$result,$defects,$post_repair,$no_chain,$valid,$repair_attempted,$repair_accepted,$peak,$origins" >> "$OUT"
-  printf "  %-11s n=%-8s seed=%-3s result=%-3s defects=%-4s post_repair=%-4s no_chain=%-3s valid=%-5s repair=%s/%s peak=%sMB\n" \
-    "$dist" "$n" "$seed" "$result" "$defects" "$post_repair" "$no_chain" "$valid" "$repair_attempted" "$repair_accepted" "$peak"
+  echo "$dist,$n,$seed,$param,$result,$defects,$residual_edges,$reconciliation_residual,$valid,$local_rebuild_attempted,$local_rebuild_accepted,$peak,$origins" >> "$OUT"
+  printf "  %-11s n=%-8s seed=%-3s result=%-3s defects=%-4s residual=%-4s reconcile=%-3s valid=%-5s rebuild=%s/%s peak=%sMB\n" \
+    "$dist" "$n" "$seed" "$result" "$defects" "$residual_edges" "$reconciliation_residual" "$valid" "$local_rebuild_attempted" "$local_rebuild_accepted" "$peak"
   if [ "$result" = "err" ]; then
     errored=$((errored + 1))
     invalid=$((invalid + 1))
-  elif [ "$valid" != "true" ] || [ "$post_repair" != "0" ]; then
+  elif [ "$valid" != "true" ] || [ "$residual_edges" != "0" ]; then
     invalid=$((invalid + 1))
   fi
 }
@@ -122,10 +122,10 @@ for seed in 1 2 3 4 5; do
 done
 
 # Mega (a `param` fraction of points in a tiny cap) exercises the default
-# Local3d escalation path. It has the same clean-success requirement as every
+# Hull3d local-rebuild path. It has the same clean-success requirement as every
 # other supported matrix case. Override sizes with MEGA_SIZES.
 MEGA_SIZES="${MEGA_SIZES:-100000 500000 1000000}"
-echo "== mega (default Local3d repair) =="
+echo "== mega (default Hull3d local rebuild) =="
 for n in $MEGA_SIZES; do
   for seed in 1 2 3 4 5; do
     run_case mega "$n" "$seed" 0.8

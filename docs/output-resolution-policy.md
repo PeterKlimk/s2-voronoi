@@ -76,7 +76,7 @@ case that motivated this policy.
 The metric composition does not close at the current constants. Reconciliation's `1e-6` component
 diameter exceeds the conservative ideal inradius, although charging it as arbitrary displacement is
 also too pessimistic: reconciliation changes IDs rather than positions and rejects a rewritten cell
-with fewer than three IDs. Local3d's strict gate similarly preserves topology without proving a
+with fewer than three IDs. Hull3d's strict gate similarly preserves topology without proving a
 coordinate-separation or Hausdorff bound. A naïve displacement proof would need a weld chord above
 roughly `2.0e-6` nominal, `2.2384e-6` with normalization slack, or `2.4768e-6` under the conservative
 off-shell model, before adding other construction and storage errors.
@@ -327,12 +327,12 @@ accepted component must satisfy the topology and representation checks below.
 Resolution policy belongs after construction and repair:
 
 ```text
-construct -> reconcile -> Local3d if required -> output-resolution policy -> validation
+construct -> reconcile -> Hull3d rebuild if required -> output-resolution policy -> validation
 ```
 
-Local3d reconstructs a Voronoi neighborhood. It must not run after output-resolution collapse and
+Hull3d reconstructs a Voronoi neighborhood. It must not run after output-resolution collapse and
 recreate an edge the policy intentionally removed. A failure of a collapse transaction is handled
-by the selected generator outcome, not by asking Local3d to restore the pre-simplified geometry.
+by the selected generator outcome, not by asking Hull3d to restore the pre-simplified geometry.
 
 The final policy must apply globally, whether or not repair ran. Repair-local tolerance welding
 cannot be the only way a tiny edge is collapsed; otherwise an unrelated topology defect can change
@@ -348,13 +348,13 @@ component is committed:
    repairing an observed edge-agreement defect. A diameter-bounded positive diagonal is permitted
    here when the transaction preserves every cell. This is the established tolerance policy for
    degree-4+ generalized vertices; exact structured grids exercise it at O(n), where replacing it
-   wholesale with Local3d is both unnecessary and nonlocal.
+   wholesale with Hull3d is both unnecessary and nonlocal.
 
 This defect-local authorization is not a global consumer epsilon threshold. It runs only after a
 known topology disagreement, remains bounded by the reconciliation component diameter, and is
 accepted only when no cell is killed or folded. Applying the same positive threshold to a clean
 diagram remains the optional approximation policy. A cell-killing repair proposal escalates to
-Local3d under `Preserve`; future `Error`/`Elide` modes must consult their generator outcome before
+Hull3d under `Preserve`; future `Error`/`Elide` modes must consult their generator outcome before
 commit.
 
 The existing fast-repair weld path must be audited and, where necessary, split along this boundary:
@@ -368,7 +368,7 @@ The existing fast-repair weld path must be audited and, where necessary, split a
   flagged cells. Dedup certifies every representative substitution against the same cell-local
   realization. With representative x drift bounded by `r`, the hot threshold is `t + 2r`, where
   the implemented exact-zero baseline has `t = 0` and `r = 1e-6`. A bound violation switches to a
-  conservative full terminal scan. Reconciliation and accepted Local3d repair instead report the
+  conservative full terminal scan. Reconciliation and accepted Hull3d rebuilding instead report the
   complete cells whose final cycles changed; those cells are rescanned exactly after mutation.
 
 This makes clean-path exact-zero discovery exhaustive without imposing a whole-edge scan on the
@@ -407,7 +407,7 @@ the collapsed diagonal.
 The baseline implementation uses a cold transactional in-place rewrite of only affected cell
 spans. It builds sparse zero components and derives affected cells from the existing vertex keys;
 representative-drift violation or incomplete provenance falls back to a full terminal scan.
-Reconciliation and Local3d pay only for an exact scan of their changed-cell footprints. Component
+Reconciliation and Hull3d rebuilding pay only for an exact scan of their changed-cell footprints. Component
 construction, link checks, rollback state, and cold transaction telemetry stay off the
 no-candidate path.
 

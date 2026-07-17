@@ -6,8 +6,8 @@ use super::binning::BinAssignment;
 use super::packed::{pack_edge, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
 use super::types::{
-    BinId, EdgeCheck, EdgeCheckOverflow, EdgeKey, EdgeOverflowLocal, EdgeToLater, LocalId,
-    UnresolvedEdgeMismatch, UnresolvedEdgeOrigin,
+    BinId, EdgeCheck, EdgeCheckOverflow, EdgeKey, EdgeMismatch, EdgeMismatchOrigin,
+    EdgeOverflowLocal, EdgeToLater, LocalId,
 };
 use super::with_two_mut;
 use crate::knn_clipping::cell_build::VertexKey;
@@ -51,7 +51,7 @@ pub(super) const MALFORMED_THIRD: u32 = u32::MAX;
 /// split micro-edge, and the surviving vertex keeps the split plane in its
 /// key while the edge sequence continues with the original neighbor. The
 /// wrong attribution is a handled defect (callers record it as
-/// `EndpointKeyMismatch`, feeding the reconcile + repair pipeline that
+/// `EndpointKeyMismatch`, feeding reconciliation and optional local rebuilding that
 /// provably restores strict validity), not an invariant violation — the same
 /// reachable-and-handled family as the four asserts demoted for the strict
 /// planar keep rule.
@@ -84,7 +84,7 @@ fn thirds_verified(key: EdgeKey, endpoint_keys: [VertexKey; 2]) -> [u32; 2] {
 #[inline]
 pub(super) fn thirds_for_emit(
     keys_verified: bool,
-    unresolved: &mut Vec<UnresolvedEdgeMismatch>,
+    unresolved: &mut Vec<EdgeMismatch>,
     key: EdgeKey,
     endpoint_keys: [VertexKey; 2],
 ) -> [u32; 2] {
@@ -104,7 +104,7 @@ pub(super) fn thirds_for_emit(
 /// XOR of structured ids is not uniform.
 #[inline]
 pub(super) fn thirds_or_record(
-    unresolved: &mut Vec<UnresolvedEdgeMismatch>,
+    unresolved: &mut Vec<EdgeMismatch>,
     key: EdgeKey,
     endpoint_keys: [VertexKey; 2],
 ) -> [u32; 2] {
@@ -112,9 +112,9 @@ pub(super) fn thirds_or_record(
     let t0 = third_for_edge_endpoint(endpoint_keys[0], a, b);
     let t1 = third_for_edge_endpoint(endpoint_keys[1], a, b);
     if t0.is_none() || t1.is_none() {
-        unresolved.push(UnresolvedEdgeMismatch {
+        unresolved.push(EdgeMismatch {
             key,
-            origin: UnresolvedEdgeOrigin::EndpointKeyMismatch,
+            origin: EdgeMismatchOrigin::EndpointKeyMismatch,
         });
     }
     [t0.unwrap_or(MALFORMED_THIRD), t1.unwrap_or(MALFORMED_THIRD)]
@@ -335,21 +335,21 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                 // neighbor. Release has no assert here and already produces
                 // strictly-valid output on these inputs (the duplicate
                 // re-resolves, any displaced check surfaces via the
-                // unmatched-check loop below, and repair + the output-
+                // unmatched-check loop below, and reconciliation plus the output-
                 // invariant scan restore validity — verified by the plane
                 // battery and the strict-plane campaign). So this is a
                 // handled defect, not an invariant violation; debug builds
                 // must not abort (this only makes debug match release).
                 if duplicate {
-                    shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
+                    shard.output.edge_mismatches.push(EdgeMismatch {
                         key: edge_key,
-                        origin: UnresolvedEdgeOrigin::InBinDuplicateSide,
+                        origin: EdgeMismatchOrigin::InBinDuplicateSide,
                     });
                 }
 
                 let my_thirds = thirds_for_emit(
                     keys_verified,
-                    &mut shard.output.unresolved_edges,
+                    &mut shard.output.edge_mismatches,
                     edge_key,
                     [unsafe { cell_vertices.get_unchecked(i).0 }, unsafe {
                         cell_vertices.get_unchecked(j).0
@@ -363,7 +363,7 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                     // two triple attributions) — reachable under the strict
                     // strict keep rule, not an
                     // invariant violation. Release adopts the incoming id
-                    // (last write wins) and the output-invariant scan + repair
+                    // (last write wins) and the output-invariant scan plus reconciliation
                     // restore strict validity (verified by the plane battery
                     // and the strict campaign); the validate / VORONOI_MESH_VERIFY
                     // gates remain the production catch. Debug must not abort
@@ -380,25 +380,25 @@ pub(super) fn collect_and_resolve_cell_edges<P: super::types::VertexPosition>(
                     && !my_thirds.contains(&MALFORMED_THIRD)
                     && !check.thirds.contains(&MALFORMED_THIRD)
                 {
-                    shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
+                    shard.output.edge_mismatches.push(EdgeMismatch {
                         key: edge_key,
-                        origin: UnresolvedEdgeOrigin::InBinThirdsMismatch,
+                        origin: EdgeMismatchOrigin::InBinThirdsMismatch,
                     });
                 }
             } else {
                 // Missing side - earlier neighbor didn't emit check
-                shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
+                shard.output.edge_mismatches.push(EdgeMismatch {
                     key: edge_key,
-                    origin: UnresolvedEdgeOrigin::InBinMissingCheck,
+                    origin: EdgeMismatchOrigin::InBinMissingCheck,
                 });
             }
         }
     }
 
     for check in &incoming_checks[matched_count..] {
-        shard.output.unresolved_edges.push(UnresolvedEdgeMismatch {
+        shard.output.edge_mismatches.push(EdgeMismatch {
             key: edge_check_key(cell_idx, *check, slot_points),
-            origin: UnresolvedEdgeOrigin::InBinUnconsumedCheck,
+            origin: EdgeMismatchOrigin::InBinUnconsumedCheck,
         });
     }
 
@@ -423,7 +423,7 @@ pub(super) struct OverflowResolveTiming {
 pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
     shards: &mut [ShardState<P>],
     edge_check_overflow: &[EdgeCheckOverflow],
-    unresolved_edges: &mut Vec<UnresolvedEdgeMismatch>,
+    edge_mismatches: &mut Vec<EdgeMismatch>,
 ) -> OverflowResolveTiming {
     #[derive(Clone, Copy)]
     struct SortHandle {
@@ -448,7 +448,7 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
     let t_edge_match = Timer::start();
     // Returns true when the slot already held a DIFFERENT concrete
     // reference (duplicate same-key vertices reaching this cell through two
-    // edges); the caller records the conflict so repair sees the site even
+    // edges); the caller records the conflict so reconciliation sees the site even
     // when the thirds fully agree.
     let mut i = 0usize;
     while i < sorted.len() {
@@ -460,9 +460,9 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
         let run_len = run_end - i;
 
         if run_len == 1 {
-            unresolved_edges.push(UnresolvedEdgeMismatch {
+            edge_mismatches.push(EdgeMismatch {
                 key,
-                origin: UnresolvedEdgeOrigin::CrossBinSingleSided,
+                origin: EdgeMismatchOrigin::CrossBinSingleSided,
             });
         } else if run_len == 2 {
             let a = edge_check_overflow[sorted[i].index];
@@ -474,11 +474,11 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
                 // strict keep rule gives it a
                 // natural trigger — e.g. the bounded-plane fixture in the
                 // `locate` suite. It is recorded as CrossBinDuplicateSide and
-                // repaired to strict validity, so it is a handled defect, not
+                // reconciled to strict validity, so it is a handled defect, not
                 // an invariant violation (hence no abort).
-                unresolved_edges.push(UnresolvedEdgeMismatch {
+                edge_mismatches.push(EdgeMismatch {
                     key: a.key,
-                    origin: UnresolvedEdgeOrigin::CrossBinDuplicateSide,
+                    origin: EdgeMismatchOrigin::CrossBinDuplicateSide,
                 });
             } else {
                 let (a_shard, b_shard) =
@@ -516,15 +516,15 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
                     // thirds mismatch.
                     if !a.thirds.contains(&MALFORMED_THIRD) && !b.thirds.contains(&MALFORMED_THIRD)
                     {
-                        unresolved_edges.push(UnresolvedEdgeMismatch {
+                        edge_mismatches.push(EdgeMismatch {
                             key: a.key,
-                            origin: UnresolvedEdgeOrigin::CrossBinThirdsMismatch,
+                            origin: EdgeMismatchOrigin::CrossBinThirdsMismatch,
                         });
                     }
                 } else if conflict {
-                    unresolved_edges.push(UnresolvedEdgeMismatch {
+                    edge_mismatches.push(EdgeMismatch {
                         key: a.key,
-                        origin: UnresolvedEdgeOrigin::CrossBinSlotConflict,
+                        origin: EdgeMismatchOrigin::CrossBinSlotConflict,
                     });
                 }
             }
@@ -534,18 +534,18 @@ pub(super) fn resolve_edge_check_overflow<P: super::types::VertexPosition>(
             // for this key. Pairing an arbitrary opposite-side subset would
             // make patches depend on unstable ordering within a side, so leave
             // the whole run to the deterministic vertex-key fallback.
-            unresolved_edges.push(UnresolvedEdgeMismatch {
+            edge_mismatches.push(EdgeMismatch {
                 key,
-                origin: UnresolvedEdgeOrigin::CrossBinDuplicateSide,
+                origin: EdgeMismatchOrigin::CrossBinDuplicateSide,
             });
             let first_side = edge_check_overflow[sorted[i].index].side;
             if sorted[i..run_end]
                 .iter()
                 .all(|entry| edge_check_overflow[entry.index].side == first_side)
             {
-                unresolved_edges.push(UnresolvedEdgeMismatch {
+                edge_mismatches.push(EdgeMismatch {
                     key,
-                    origin: UnresolvedEdgeOrigin::CrossBinSingleSided,
+                    origin: EdgeMismatchOrigin::CrossBinSingleSided,
                 });
             }
         }
@@ -622,7 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn in_bin_duplicate_side_reaches_unresolved_repair_signal() {
+    fn in_bin_duplicate_side_reaches_reconciliation_signal() {
         let assignment = BinAssignment {
             generator_bin: vec![BinId::from(0), BinId::from(0)],
             generator_layout: vec![0, 1],
@@ -677,12 +677,12 @@ mod tests {
             &mut overflow,
         );
 
-        assert_eq!(shard.output.unresolved_edges.len(), 1);
+        assert_eq!(shard.output.edge_mismatches.len(), 1);
         assert_eq!(
-            shard.output.unresolved_edges[0].origin,
-            UnresolvedEdgeOrigin::InBinDuplicateSide
+            shard.output.edge_mismatches[0].origin,
+            EdgeMismatchOrigin::InBinDuplicateSide
         );
-        assert_eq!(shard.output.unresolved_edges[0].key, pack_edge(0, 1));
+        assert_eq!(shard.output.edge_mismatches[0].key, pack_edge(0, 1));
     }
 
     #[test]
@@ -700,7 +700,7 @@ mod tests {
         assert_eq!(unresolved.len(), 1);
         assert_eq!(
             unresolved[0].origin,
-            UnresolvedEdgeOrigin::EndpointKeyMismatch
+            EdgeMismatchOrigin::EndpointKeyMismatch
         );
         assert_eq!(unresolved[0].key, key);
     }

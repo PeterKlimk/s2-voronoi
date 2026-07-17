@@ -1,20 +1,20 @@
 //! Production-path regression for the dependency-free, local exact defect
-//! repair (the escalation engine). Unlike `escalate.rs`, this file is NOT gated
-//! on `escalate_probe` and pulls in NO `delaunator` crate — it exercises the
+//! rebuild (the local rebuilding engine). Unlike `local_rebuild.rs`, this file is NOT gated
+//! on `local_rebuild_probe` and pulls in NO `delaunator` crate — it exercises the
 //! exact path a default build ships. The cell fallback may now resolve the
 //! historical mega defects upstream; otherwise this proves the local oracle
 //! reaches strict validity with no external dependency.
 //!
-//!   cargo test --release --test escalate_local
+//!   cargo test --release --test local_rebuild
 
 mod support;
 
 use support::points::*;
-use voronoi_mesh::{compute, compute_with_report, RepairMode, VoronoiConfig};
+use voronoi_mesh::{compute, compute_with_report, LocalRebuildMode, VoronoiConfig};
 
 #[test]
-fn local_escalation_makes_mega_strictly_valid() {
-    let off = || VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
+fn local_rebuild_makes_mega_strictly_valid() {
+    let off = || VoronoiConfig::default().with_local_rebuild_mode(LocalRebuildMode::Disabled);
     let on = VoronoiConfig::default;
     for seed in [1u64, 2, 15] {
         let points = mega_points(100_000, 0.8, seed);
@@ -34,23 +34,23 @@ fn local_escalation_makes_mega_strictly_valid() {
                 format!("{:?}", after_report.subdivision_issues())
             }
         );
-        // The fallback path can now resolve some formerly repair-only defects
-        // upstream. Whether repair runs or not, the meaningful contract is a
+        // The fallback path can now resolve some formerly rebuild-only defects
+        // upstream. Whether rebuild runs or not, the meaningful contract is a
         // strictly valid final diagram.
         assert!(
             after_report.is_strictly_valid(),
-            "seed {seed}: local repair did not produce a strictly valid diagram: {:?}",
+            "seed {seed}: local rebuild did not produce a strictly valid diagram: {:?}",
             after_report.subdivision_issues()
         );
         assert_eq!(
             after_report.cells_with_fewer_than_three_stored_positions, 0,
-            "seed {seed}: final Local3d/fallback output lost a stored cell"
+            "seed {seed}: final Hull3d/fallback output lost a stored cell"
         );
     }
 }
 
 #[test]
-fn default_compute_repairs_known_mega_defects() {
+fn default_compute_rebuilds_known_mega_defects() {
     for seed in [1u64, 2, 15] {
         let points = mega_points(100_000, 0.8, seed);
         let diagram = compute(&points)
@@ -64,47 +64,48 @@ fn default_compute_repairs_known_mega_defects() {
     }
 }
 
-/// The projected-oracle diagnostic mode must also repair the known mega
+/// The projected-oracle diagnostic mode must also rebuild the known mega
 /// defects to strict validity (it shares the grow loop with the default
-/// `Local3d` mode but uses the shared-stereographic-chart exact 2D Delaunay
-/// oracle). These seeds historically required repair, but may now resolve in
-/// the strengthened per-cell fallback before the repair trigger.
+/// `Hull3d` mode but uses the shared-stereographic-chart exact 2D Delaunay
+/// oracle). These seeds historically required rebuild, but may now resolve in
+/// the strengthened per-cell fallback before the rebuild trigger.
 #[test]
-fn projected_repair_makes_mega_strictly_valid() {
-    let on = || VoronoiConfig::default().with_repair_mode(RepairMode::LocalProjected);
+fn projected_rebuild_makes_mega_strictly_valid() {
+    let on =
+        || VoronoiConfig::default().with_local_rebuild_mode(LocalRebuildMode::ProjectedDelaunay);
     for seed in [1u64, 15] {
         let points = mega_points(100_000, 0.8, seed);
         let out = compute_with_report(&points, on())
             .unwrap_or_else(|e| panic!("mega 100k s{seed}: projected build failed: {e:?}"));
         assert!(
             out.report.returned_validation.is_strictly_valid(),
-            "mega 100k s{seed}: LocalProjected repair did not reach strict validity: {}",
+            "mega 100k s{seed}: ProjectedDelaunay rebuild did not reach strict validity: {}",
             out.report.returned_validation.headline()
         );
-        // The strengthened cell fallback may resolve the defect before repair.
-        // If the coarse repair pass is triggered, it must be accepted.
+        // The strengthened cell fallback may resolve the defect before rebuild.
+        // If the coarse rebuild pass is triggered, it must be accepted.
         assert!(
-            !out.report.repair.attempted || out.report.repair.accepted,
-            "mega 100k s{seed}: attempted repair was rejected: {:?}",
-            out.report.repair
+            !out.report.local_rebuild.attempted || out.report.local_rebuild.accepted,
+            "mega 100k s{seed}: attempted rebuild was rejected: {:?}",
+            out.report.local_rebuild
         );
     }
 }
 
 #[test]
-fn accepted_default_repair_clears_surviving_residual_report() {
+fn accepted_default_rebuild_clears_surviving_residual_report() {
     for seed in [1u64, 2, 15] {
         let points = mega_points(100_000, 0.8, seed);
         let out = compute_with_report(&points, VoronoiConfig::default())
             .unwrap_or_else(|e| panic!("mega 100k s{seed}: report build failed: {e:?}"));
         assert!(
             out.report.returned_validation.is_strictly_valid(),
-            "mega 100k s{seed}: default repair was not accepted"
+            "mega 100k s{seed}: default rebuild was not accepted"
         );
-        let post = out.report.post_repair_unpaired_edges.len();
+        let post = out.report.residual_unpaired_edges.len();
         assert_eq!(
             post, 0,
-            "mega 100k s{seed}: accepted repair left surviving residual records"
+            "mega 100k s{seed}: accepted rebuild left surviving residual records"
         );
     }
 }
@@ -113,9 +114,9 @@ fn accepted_default_repair_clears_surviving_residual_report() {
 /// the global oracle resolved must also resolve with the local engine. Ignored
 /// (minutes at the larger sizes); run with `--ignored --nocapture`.
 #[test]
-#[ignore = "broad escalation sweep; run with --ignored --nocapture"]
-fn local_escalation_broad_sweep() {
-    let off = || VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
+#[ignore = "broad local rebuilding sweep; run with --ignored --nocapture"]
+fn local_rebuild_broad_sweep() {
+    let off = || VoronoiConfig::default().with_local_rebuild_mode(LocalRebuildMode::Disabled);
     let on = VoronoiConfig::default;
     let mut cases: Vec<(String, Vec<_>)> = Vec::new();
     for seed in 1u64..=20 {
@@ -171,9 +172,9 @@ fn local_escalation_broad_sweep() {
         );
         assert!(
             after_valid,
-            "{name}: local repair did not reach strict validity"
+            "{name}: local rebuild did not reach strict validity"
         );
     }
-    println!("defective inputs repaired: {defects}/{}", cases.len());
+    println!("defective inputs rebuilt: {defects}/{}", cases.len());
     assert!(defects > 0, "expected some defective inputs in the sweep");
 }

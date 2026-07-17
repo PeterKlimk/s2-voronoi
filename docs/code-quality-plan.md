@@ -1,6 +1,6 @@
 # Code quality and maintainability plan
 
-**Status:** accepted direction; staged implementation not started
+**Status:** active; baseline and QUAL-001A vocabulary migration completed
 
 **Date:** 2026-07-17
 
@@ -250,6 +250,10 @@ and diagnostic-knob documentation should be refreshed as part of the same hygien
 
 **Hot-path impact expected:** none
 
+**Progress:** vocabulary items 1–3 completed and validated 2026-07-17. The state-enum and
+fact/action separation in items 4–5 remain deliberately deferred to Milestone 2 so the behavioral
+state-model change has its own attributable commit.
+
 1. Add the stage glossary above to `docs/architecture.md` and inventory the public/internal names
    that map to each stage.
 2. Rename public and internal functions, types, report fields, diagnostics, and applicable error
@@ -442,7 +446,8 @@ repeatable adverse counter signal.
 
 ### Milestone 1 — Low-risk semantic cleanup
 
-1. QUAL-001A coordinated public/internal vocabulary and lifecycle migration.
+1. ~~QUAL-001A coordinated public/internal vocabulary migration.~~ Completed 2026-07-17; state
+   enums remain in Milestone 2.
 2. QUAL-001F compatibility-surface removal, empty wrappers, planar decision, and module maps.
 3. QUAL-001H stale test knob and probe organization.
 4. QUAL-001E constant inventory and name-only relocation.

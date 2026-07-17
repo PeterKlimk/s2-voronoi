@@ -108,10 +108,10 @@ by exactly one mechanism — makes the hybrid sound.
 A final **edge reconciliation** pass handles the residue: where two cells made *different*
 combinatorial decisions about an epsilon-scale feature (one kept a sliver edge, the other
 collapsed it — each evaluates predicates in its own chart), the disagreement is detected and
-repaired. Positional merges are transactional: the complete component, including aliases from
+reconciled. Positional merges are transactional: the complete component, including aliases from
 earlier rounds, must have f64-measured diameter no larger than the reconciliation epsilon. A
 component that would grow through a chain past that bound is left untouched and explicitly seeds
-Local3d repair. The disputed feature is epsilon-scale, so both paths remain local.
+a Hull3d local rebuild. The disputed feature is epsilon-scale, so both paths remain local.
 
 The fast-path validity argument is the central design idea: combinatorial identity plus directed
 edge checks certify exact multiplicity and opposite orientation without rebuilding and sorting a
@@ -144,7 +144,7 @@ memory. `UnitVec3` remains an unchecked raw input adapter and is not a stored-ou
   edge-check propagation, assembly. Generic over the vertex position type.
 - `knn_clipping/` — the spherical backend: per-bin `driver.rs`, single-cell `cell_build/`,
   gnomonic clipping in `topo2d/`, `preprocess.rs` (weld), `edge_reconcile.rs`, and cold-path
-  topology repair in `escalate.rs` / `local_hull.rs`; `output_resolution.rs` owns terminal
+  local rebuilding in `local_rebuild.rs` / `local_hull.rs`; `output_resolution.rs` owns terminal
   exact-zero canonicalization and the explicit cell-elision quotient.
 - `cube_grid/` — cube-map spatial index and packed-kNN stage: dot-product distance with
   conservative cap/plane upper bounds, ring walk with per-ring certificates.

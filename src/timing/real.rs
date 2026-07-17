@@ -284,7 +284,7 @@ pub struct DedupSubPhases {
     pub shard_order_abs_delta: u64,
     pub scatter_by_shard: bool,
     pub triplet_keys: u64,
-    pub unresolved_edges_count: u64,
+    pub edge_mismatches_count: u64,
     pub primary_cell_references: u64,
     pub reference_overrides: u64,
 }
@@ -666,7 +666,7 @@ pub struct PhaseTimings {
     pub resolution_certified_hint: bool,
     pub resolution_drift_fallback: bool,
     pub resolution_reconcile_scan_cells: u64,
-    pub resolution_repair_scan_cells: u64,
+    pub resolution_rebuild_scan_cells: u64,
     pub resolution_hint_cells: u64,
     pub resolution_hinted_candidates: u64,
     pub resolution_detected_edges: u64,
@@ -961,9 +961,9 @@ impl PhaseTimings {
             pct(self.dedup)
         );
         eprintln!(
-            "    keys: triplet={} unresolved_edges={} primary_refs={} foreign_overrides={} ({:.3}%)",
+            "    keys: triplet={} edge_mismatches={} primary_refs={} foreign_overrides={} ({:.3}%)",
             self.dedup_sub.triplet_keys,
-            self.dedup_sub.unresolved_edges_count,
+            self.dedup_sub.edge_mismatches_count,
             self.dedup_sub.primary_cell_references,
             self.dedup_sub.reference_overrides,
             100.0 * self.dedup_sub.reference_overrides as f64
@@ -1009,7 +1009,7 @@ impl PhaseTimings {
             pct(self.assemble)
         );
         eprintln!(
-            "  output_resolution: mode={} drift_fallback={} local_scan(reconcile_cells={},repair_cells={}) hint_cells={} hinted_candidates={} detected_edges={}",
+            "  output_resolution: mode={} drift_fallback={} local_scan(reconcile_cells={},rebuild_cells={}) hint_cells={} hinted_candidates={} detected_edges={}",
             if self.resolution_certified_hint {
                 "certified_hint"
             } else {
@@ -1017,7 +1017,7 @@ impl PhaseTimings {
             },
             self.resolution_drift_fallback as u8,
             self.resolution_reconcile_scan_cells,
-            self.resolution_repair_scan_cells,
+            self.resolution_rebuild_scan_cells,
             self.resolution_hint_cells,
             self.resolution_hinted_candidates,
             self.resolution_detected_edges,
@@ -1036,7 +1036,7 @@ impl PhaseTimings {
                 })
                 .unwrap_or((0, 0, 0));
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} grid_order_pairs={gop} grid_order_abs_delta={goa} grid_materialize_by_slot={gms} cell_construction_ms={cc:.3} dedup_ms={dd:.3} dedup_bookkeeping_ms={dbk:.3} dedup_overflow_ms={dof:.3} dedup_deferred_ms={ddp:.3} dedup_finalize_ms={dfs:.3} dedup_vertices_ms={dvt:.3} dedup_prefixes_ms={dcp:.3} dedup_incidence_ms={dis:.3} dedup_indices_ms={dci:.3} dedup_overrides_ms={dro:.3} dedup_zero_hints_ms={dzh:.3} shard_order_descents={sod} shard_order_pairs={sop} shard_order_abs_delta={soa} scatter_by_shard={sbs} edge_reconcile_ms={er:.3} merge_safety_scan_cells={mssc} merge_safety_global_fallbacks={msgf} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_reconcile_scan_cells={rrsc} resolution_repair_scan_cells={rpsc} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} candidate_work_samples={cws} candidate_work_p50_lb={cw50} candidate_work_p90_lb={cw90} candidate_work_p99_lb={cw99} candidate_work_p999_lb={cw999} candidate_work_max={cwm} candidate_work_relative_base={cwb} candidate_work_ge4x_median_lb={cw4} candidate_work_ge16x_median_lb={cw16} candidate_work_ge64x_median_lb={cw64} no_progress_tail_samples={nps} no_progress_tail_excluded={npx} no_progress_tail_p50_lb={np50} no_progress_tail_p90_lb={np90} no_progress_tail_p99_lb={np99} no_progress_tail_p999_lb={np999} no_progress_tail_max={npm} no_progress_tail_relative_base={npb} no_progress_tail_ge4x_median_lb={np4} no_progress_tail_ge16x_median_lb={np16} no_progress_tail_ge64x_median_lb={np64} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} grid_order_pairs={gop} grid_order_abs_delta={goa} grid_materialize_by_slot={gms} cell_construction_ms={cc:.3} dedup_ms={dd:.3} dedup_bookkeeping_ms={dbk:.3} dedup_overflow_ms={dof:.3} dedup_deferred_ms={ddp:.3} dedup_finalize_ms={dfs:.3} dedup_vertices_ms={dvt:.3} dedup_prefixes_ms={dcp:.3} dedup_incidence_ms={dis:.3} dedup_indices_ms={dci:.3} dedup_overrides_ms={dro:.3} dedup_zero_hints_ms={dzh:.3} shard_order_descents={sod} shard_order_pairs={sop} shard_order_abs_delta={soa} scatter_by_shard={sbs} edge_reconcile_ms={er:.3} merge_safety_scan_cells={mssc} merge_safety_global_fallbacks={msgf} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_reconcile_scan_cells={rrsc} resolution_rebuild_scan_cells={rpsc} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} candidate_work_samples={cws} candidate_work_p50_lb={cw50} candidate_work_p90_lb={cw90} candidate_work_p99_lb={cw99} candidate_work_p999_lb={cw999} candidate_work_max={cwm} candidate_work_relative_base={cwb} candidate_work_ge4x_median_lb={cw4} candidate_work_ge16x_median_lb={cw16} candidate_work_ge64x_median_lb={cw64} no_progress_tail_samples={nps} no_progress_tail_excluded={npx} no_progress_tail_p50_lb={np50} no_progress_tail_p90_lb={np90} no_progress_tail_p99_lb={np99} no_progress_tail_p999_lb={np999} no_progress_tail_max={npm} no_progress_tail_relative_base={npb} no_progress_tail_ge4x_median_lb={np4} no_progress_tail_ge16x_median_lb={np16} no_progress_tail_ge64x_median_lb={np64} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -1069,7 +1069,7 @@ impl PhaseTimings {
                 rch = self.resolution_certified_hint as u8,
                 rfd = self.resolution_drift_fallback as u8,
                 rrsc = self.resolution_reconcile_scan_cells,
-                rpsc = self.resolution_repair_scan_cells,
+                rpsc = self.resolution_rebuild_scan_cells,
                 rhc = self.resolution_hint_cells,
                 rhcand = self.resolution_hinted_candidates,
                 rde = self.resolution_detected_edges,
@@ -1164,7 +1164,7 @@ pub struct TimingBuilder {
     resolution_certified_hint: bool,
     resolution_drift_fallback: bool,
     resolution_reconcile_scan_cells: u64,
-    resolution_repair_scan_cells: u64,
+    resolution_rebuild_scan_cells: u64,
     resolution_hint_cells: u64,
     resolution_hinted_candidates: u64,
     resolution_detected_edges: u64,
@@ -1193,7 +1193,7 @@ impl TimingBuilder {
             resolution_certified_hint: false,
             resolution_drift_fallback: false,
             resolution_reconcile_scan_cells: 0,
-            resolution_repair_scan_cells: 0,
+            resolution_rebuild_scan_cells: 0,
             resolution_hint_cells: 0,
             resolution_hinted_candidates: 0,
             resolution_detected_edges: 0,
@@ -1258,7 +1258,7 @@ impl TimingBuilder {
         certified_hint: bool,
         drift_fallback: bool,
         reconcile_scan_cells: usize,
-        repair_scan_cells: usize,
+        rebuild_scan_cells: usize,
         hint_cells: usize,
         hinted_candidates: usize,
         detected_edges: usize,
@@ -1266,7 +1266,7 @@ impl TimingBuilder {
         self.resolution_certified_hint = certified_hint;
         self.resolution_drift_fallback = drift_fallback;
         self.resolution_reconcile_scan_cells = reconcile_scan_cells as u64;
-        self.resolution_repair_scan_cells = repair_scan_cells as u64;
+        self.resolution_rebuild_scan_cells = rebuild_scan_cells as u64;
         self.resolution_hint_cells = hint_cells as u64;
         self.resolution_hinted_candidates = hinted_candidates as u64;
         self.resolution_detected_edges = detected_edges as u64;
@@ -1294,7 +1294,7 @@ impl TimingBuilder {
             resolution_certified_hint: self.resolution_certified_hint,
             resolution_drift_fallback: self.resolution_drift_fallback,
             resolution_reconcile_scan_cells: self.resolution_reconcile_scan_cells,
-            resolution_repair_scan_cells: self.resolution_repair_scan_cells,
+            resolution_rebuild_scan_cells: self.resolution_rebuild_scan_cells,
             resolution_hint_cells: self.resolution_hint_cells,
             resolution_hinted_candidates: self.resolution_hinted_candidates,
             resolution_detected_edges: self.resolution_detected_edges,
@@ -1372,7 +1372,7 @@ mod tests {
         assert!(!timings.resolution_certified_hint);
         assert!(timings.resolution_drift_fallback);
         assert_eq!(timings.resolution_reconcile_scan_cells, 13);
-        assert_eq!(timings.resolution_repair_scan_cells, 5);
+        assert_eq!(timings.resolution_rebuild_scan_cells, 5);
         assert_eq!(timings.resolution_hint_cells, 11);
         assert_eq!(timings.resolution_hinted_candidates, 7);
         assert_eq!(timings.resolution_detected_edges, 3);

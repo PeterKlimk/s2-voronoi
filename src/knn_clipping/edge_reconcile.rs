@@ -21,7 +21,7 @@ pub(crate) use telemetry::emit_primary_reconcile_telemetry;
 /// Read-only view of vertex keys passed to reconciliation. `Flat` backs the
 /// unit tests (and any caller holding a contiguous array); `Sharded` is the
 /// production path, looking keys up per-shard without a global concatenation.
-/// `Copy` so it threads through the repair helpers by value.
+/// `Copy` so it threads through the reconciliation helpers by value.
 #[derive(Clone, Copy)]
 pub(crate) enum VertexKeys<'a> {
     // Used by the unit tests (and any caller holding a contiguous array).
@@ -65,7 +65,7 @@ fn reconcile_state_error(message: impl Into<String>) -> crate::VoronoiError {
     crate::VoronoiError::ComputationFailed(message.into())
 }
 
-/// Error for post-repair residuals on the plain compute paths: a non-empty
+/// Error for post-reconciliation residuals on the plain compute paths: a non-empty
 /// residual list means the output is provably not a valid subdivision (some
 /// interior edge stays unpaired, overused, or misoriented), and those paths have no report channel to
 /// surface it — so they fail loud rather than return a known-invalid
@@ -91,9 +91,9 @@ pub(crate) fn residual_error(pairs: &[(u32, u32)]) -> crate::VoronoiError {
     ))
 }
 
-/// Error used when reconciliation requested Local3d escalation and the
-/// configured repair path did not accept a replacement.
-pub(crate) fn escalation_error(pairs: &[(u32, u32)]) -> crate::VoronoiError {
+/// Error used when reconciliation requested a Hull3d local rebuild and the
+/// configured rebuild path did not accept a replacement.
+pub(crate) fn reconciliation_rejection_error(pairs: &[(u32, u32)]) -> crate::VoronoiError {
     let shown: Vec<String> = pairs
         .iter()
         .take(8)
@@ -105,7 +105,7 @@ pub(crate) fn escalation_error(pairs: &[(u32, u32)]) -> crate::VoronoiError {
         String::new()
     };
     crate::VoronoiError::ComputationFailed(format!(
-        "reconciliation found component(s) requiring Local3d near cell pair(s) {}{} and Local3d did not accept a replacement",
+        "reconciliation found component(s) requiring Hull3d near cell pair(s) {}{} and Hull3d did not accept a replacement",
         shown.join(", "),
         more,
     ))
@@ -238,9 +238,9 @@ use super::union_find::SparseUnionFind;
 /// Rebuilt cell table and index buffer after reconciliation.
 pub(crate) type ReconciledCells = (Vec<VoronoiCell>, Vec<u32>);
 
-/// Outcome of [`reconcile_unresolved_edges`].
+/// Outcome of [`reconcile_edge_mismatches`].
 ///
-/// `merge_affected_cells` exists for the repair's localized residual scan:
+/// `merge_affected_cells` exists for the reconciliation's localized residual scan:
 /// identity merges remap vertex references in place, so a cell in this set can
 /// reference a surviving vertex whose key triple does not name it — the one
 /// production violation of the key-ownership invariant ("a vertex keyed
@@ -249,12 +249,12 @@ pub(crate) type ReconciledCells = (Vec<VoronoiCell>, Vec<u32>);
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct ReconcileResult {
     /// Surviving bad interior edges (unpaired, overused, or misoriented), as
-    /// owning cell pairs for the caller's report / repair trigger.
+    /// owning cell pairs for the caller's report / reconciliation trigger.
     pub residual_pairs: Vec<(u32, u32)>,
     /// Cell pairs whose proposed tolerance component exceeded the configured
-    /// diameter. These are explicit Local3d seeds even when the unmodified
+    /// diameter. These are explicit Hull3d seeds even when the unmodified
     /// output happens not to expose an unpaired edge.
-    pub escalation_pairs: Vec<(u32, u32)>,
+    pub local_rebuild_seed_pairs: Vec<(u32, u32)>,
     /// Cells whose spans were rewritten by identity merges (sorted, deduped):
     /// the union of key triples over every vertex id that entered a merge.
     pub merge_affected_cells: Vec<u32>,
@@ -326,28 +326,28 @@ impl MergeLedger {
 /// `Rebuild` is the original full rewrite, retained as the differential
 /// oracle: the two backends must produce identical per-cell vertex
 /// sequences (pinned by the unit tests below and the full-pipeline
-/// differential in tests/edge_repair_net.rs via `VORONOI_MESH_EDGE_REPAIR_REBUILD`).
+/// differential in tests/edge_reconcile_net.rs via `VORONOI_MESH_RECONCILE_REBUILD`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum RepairApply {
+pub(crate) enum ReconcileApply {
     InPlace,
     Rebuild,
 }
 
-/// Production apply mode: in-place unless `VORONOI_MESH_EDGE_REPAIR_REBUILD=1`
+/// Production apply mode: in-place unless `VORONOI_MESH_RECONCILE_REBUILD=1`
 /// selects the rebuild oracle (diagnostic / differential-testing knob,
 /// read once per compute on the cold path).
-pub(crate) fn repair_apply_from_env() -> RepairApply {
-    match std::env::var("VORONOI_MESH_EDGE_REPAIR_REBUILD") {
-        Ok(v) if v == "1" => RepairApply::Rebuild,
-        _ => RepairApply::InPlace,
+pub(crate) fn reconcile_apply_from_env() -> ReconcileApply {
+    match std::env::var("VORONOI_MESH_RECONCILE_REBUILD") {
+        Ok(v) if v == "1" => ReconcileApply::Rebuild,
+        _ => ReconcileApply::InPlace,
     }
 }
 
-/// Hard cap on repair rounds; each productive round strictly shrinks some
+/// Hard cap on reconciliation rounds; each productive round strictly shrinks some
 /// cell span, so termination is structural — the cap is a backstop.
-const MAX_REPAIR_ROUNDS: usize = 8;
+const MAX_RECONCILIATION_ROUNDS: usize = 8;
 
-/// How a repair pass interprets its records when pairing endpoints.
+/// How a reconciliation pass interprets its records when pairing endpoints.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MergeMode {
     /// Bookkeeping-driven records (live-dedup detection): identity and
@@ -362,7 +362,7 @@ enum MergeMode {
 /// Reconcile unresolved shared-edge mismatches by merging vertex
 /// identities, patching `cells` / `cell_indices` via the chosen backend.
 ///
-/// Runs the bookkeeping-driven repair to a fixpoint (merges can expose
+/// Runs the bookkeeping-driven reconciliation to a fixpoint (merges can expose
 /// newly pairable states), then checks the output invariant directly:
 /// every interior edge must be used by exactly two cells. Unpaired
 /// findings synthesize an eps-bounded backstop pass (the owning cell pair
@@ -370,8 +370,8 @@ enum MergeMode {
 /// survives is returned as cell pairs for the caller's report rather than
 /// force-merged. Returns an empty vec on clean runs (no records) without
 /// touching anything — the scans are paid only on defect runs.
-#[allow(clippy::too_many_arguments)] // geometry-parameterized repair seam
-pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::VertexPosition>(
+#[allow(clippy::too_many_arguments)] // geometry-parameterized reconciliation seam
+pub(crate) fn reconcile_edge_mismatches<P: crate::knn_clipping::live_dedup::VertexPosition>(
     edge_records: &[EdgeRecord],
     vertices: &[P],
     cells: &mut Vec<VoronoiCell>,
@@ -381,7 +381,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
     // units on the sphere, normalized rect units on the plane); each
     // geometry owns and justifies its constant.
     degenerate_len_eps: f32,
-    apply: RepairApply,
+    apply: ReconcileApply,
     // Geometry's boundary classification: true when a single-use edge
     // between these vertex ids is legitimate (plane rect walls). The
     // sphere and the periodic plane have no boundary.
@@ -389,7 +389,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
 ) -> Result<ReconcileResult, crate::VoronoiError> {
     if edge_records.is_empty() {
         // Production fast path: with no detected mismatch there is nothing to
-        // repair, and the O(total cell indices) output-invariant scan is
+        // reconciliation, and the O(total cell indices) output-invariant scan is
         // skipped — avoiding it on clean runs is the whole point of this
         // early return. Soundness rests on a detection-completeness claim:
         // every bad interior edge produces >= 1 detection record, so an
@@ -417,15 +417,15 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         return Ok(ReconcileResult::default());
     }
     let mut merge_affected_cells: Vec<u32> = Vec::new();
-    let mut escalation_pairs: Vec<(u32, u32)> = Vec::new();
+    let mut local_rebuild_seed_pairs: Vec<(u32, u32)> = Vec::new();
     let mut merge_ledger = MergeLedger::default();
     let done = |residual_pairs: Vec<(u32, u32)>,
-                mut escalation_pairs: Vec<(u32, u32)>,
+                mut local_rebuild_seed_pairs: Vec<(u32, u32)>,
                 mut affected: Vec<u32>,
                 mut resolution_scan_cells: Vec<u32>,
                 merge_safety: MergeSafetyStats| {
-        escalation_pairs.sort_unstable();
-        escalation_pairs.dedup();
+        local_rebuild_seed_pairs.sort_unstable();
+        local_rebuild_seed_pairs.dedup();
         affected.sort_unstable();
         affected.dedup();
         if !resolution_scan_cells.is_empty() {
@@ -435,7 +435,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         resolution_scan_cells.dedup();
         ReconcileResult {
             residual_pairs,
-            escalation_pairs,
+            local_rebuild_seed_pairs,
             merge_affected_cells: affected,
             resolution_scan_cells,
             merge_safety_scan_cells: merge_safety.scanned_cells,
@@ -444,7 +444,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
     };
     let mut merge_safety = MergeSafetyStats::default();
     let primary_candidates = affected_cells_from_records(edge_records);
-    let primary_changed = run_repair_rounds(
+    let primary_changed = run_reconciliation_rounds(
         edge_records,
         vertices,
         cells,
@@ -454,7 +454,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
         apply,
         MergeMode::Primary,
         &mut merge_ledger,
-        &mut escalation_pairs,
+        &mut local_rebuild_seed_pairs,
         &mut merge_affected_cells,
         &mut merge_safety,
     )?;
@@ -474,7 +474,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
     if unpaired.is_empty() {
         return Ok(done(
             Vec::new(),
-            escalation_pairs,
+            local_rebuild_seed_pairs,
             merge_affected_cells,
             resolution_scan_cells,
             merge_safety,
@@ -482,7 +482,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
     }
     let synth = synthesize_backstop_records(&unpaired, vertex_keys, cells.len());
     if !synth.is_empty() {
-        let synth_changed = run_repair_rounds(
+        let synth_changed = run_reconciliation_rounds(
             &synth,
             vertices,
             cells,
@@ -492,7 +492,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
             apply,
             MergeMode::ProximityOnly,
             &mut merge_ledger,
-            &mut escalation_pairs,
+            &mut local_rebuild_seed_pairs,
             &mut merge_affected_cells,
             &mut merge_safety,
         )?;
@@ -517,7 +517,7 @@ pub(crate) fn reconcile_unresolved_edges<P: crate::knn_clipping::live_dedup::Ver
             .iter()
             .map(|&(va, vb, owner)| cell_pair_for_unpaired(va, vb, owner, vertex_keys))
             .collect(),
-        escalation_pairs,
+        local_rebuild_seed_pairs,
         merge_affected_cells,
         resolution_scan_cells,
         merge_safety,
@@ -544,7 +544,7 @@ fn degenerate_single(key: VertexKey) -> Option<u32> {
 }
 
 /// Cells named (as the two edge endpoints) by the detection records — the only
-/// cells a repair round can legitimately need to touch. Sorted + deduped.
+/// cells a reconciliation round can legitimately need to touch. Sorted + deduped.
 fn affected_cells_from_records(edge_records: &[EdgeRecord]) -> Vec<u32> {
     let mut cells = Vec::with_capacity(edge_records.len() * 2);
     for record in edge_records {
@@ -598,7 +598,7 @@ fn assert_candidate_covers_droppable(
 /// Touches only `candidate_cells` (the cells named by the detection records),
 /// not the whole vertex set: by the detection-completeness contract, every
 /// droppable degenerate vertex's owner cell is an endpoint of some unresolved
-/// edge, so the records' cells cover them all. This keeps a repair round
+/// edge, so the records' cells cover them all. This keeps a reconciliation round
 /// O(defect size) instead of O(total vertices) per round — the latter made a
 /// 3-defect run cost seconds at 2.5M. Debug
 /// builds assert the coverage via `assert_candidate_covers_droppable`.
@@ -642,17 +642,17 @@ fn drop_degenerate_collinear_vertices(
 /// scan runs only in the first Primary round — its unions are idempotent
 /// once applied, and re-counting them would defeat convergence detection.
 #[allow(clippy::too_many_arguments)]
-fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
+fn run_reconciliation_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
     edge_records: &[EdgeRecord],
     vertices: &[P],
     cells: &mut Vec<VoronoiCell>,
     cell_indices: &mut Vec<u32>,
     vertex_keys: VertexKeys<'_>,
     degenerate_len_eps: f32,
-    apply: RepairApply,
+    apply: ReconcileApply,
     mode: MergeMode,
     merge_ledger: &mut MergeLedger,
-    escalation_pairs: &mut Vec<(u32, u32)>,
+    local_rebuild_seed_pairs: &mut Vec<(u32, u32)>,
     // Accumulates the cells whose spans a merge apply may rewrite (see
     // `ReconcileResult::merge_affected_cells`); the caller sorts/dedups.
     merge_affected_cells: &mut Vec<u32>,
@@ -660,12 +660,12 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
 ) -> Result<bool, crate::VoronoiError> {
     let mut any = false;
     // The only cells a round can need to touch are those named by the records.
-    // Computed once; repair rounds only remove vertices, so this set is a valid
+    // Computed once; reconciliation rounds only remove vertices, so this set is a valid
     // (shrinking) cover for every round, not just the first.
     let candidate_cells = affected_cells_from_records(edge_records);
     #[cfg(debug_assertions)]
     assert_candidate_covers_droppable(cells, cell_indices, vertex_keys, &candidate_cells);
-    for round in 0..MAX_REPAIR_ROUNDS {
+    for round in 0..MAX_RECONCILIATION_ROUNDS {
         // Drop spurious collinear (degenerate-key) vertices first: a vertex
         // whose key has only two distinct generators is not a triple point,
         // it lies on a single bisector (both incident edges go to the same
@@ -704,7 +704,7 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
                 cells,
                 cell_indices,
                 vertex_keys,
-                escalation_pairs,
+                local_rebuild_seed_pairs,
                 merge_affected_cells,
             )?;
         }
@@ -722,7 +722,7 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
                 }
             }
             match apply {
-                RepairApply::Rebuild => {
+                ReconcileApply::Rebuild => {
                     let (new_cells, new_indices) =
                         apply_merges_rebuild(&mut uf, cells, cell_indices)?;
                     let changed = cell_spans_differ(cells, cell_indices, &new_cells, &new_indices)?;
@@ -730,7 +730,7 @@ fn run_repair_rounds<P: crate::knn_clipping::live_dedup::VertexPosition>(
                     *cell_indices = new_indices;
                     changed
                 }
-                RepairApply::InPlace => {
+                ReconcileApply::InPlace => {
                     apply_merges_in_place(&mut uf, cells, cell_indices, vertex_keys)?
                 }
             }
@@ -771,10 +771,10 @@ fn cell_spans_differ(
 /// two uses in opposite directions. Returns one sorted
 /// `(vertex_a, vertex_b, owning_cell)` record per bad edge.
 ///
-/// Localized to the repair's touched region: reconciliation modifies only the
+/// Localized to the reconciliation's touched region: reconciliation modifies only the
 /// cells named by the detection records (`candidate_cells`) and the vertices
 /// they share, so only those cells and their 1-ring can be incident to a
-/// post-repair unpaired edge. We build the edge-use map over that region, then
+/// post-reconciliation unpaired edge. We build the edge-use map over that region, then
 /// partner-verify each locally-single use against the true neighbor cell's span
 /// (recovered from the endpoint keys) to reject edges whose real partner merely
 /// lies outside the scanned region. This makes the scan O(defect) instead of
@@ -981,7 +981,7 @@ fn key_common_pair(k1: VertexKey, k2: VertexKey) -> Option<(u32, u32)> {
     }
 }
 
-/// Synthesize repair records from unpaired interior edges: the owning cell
+/// Synthesize reconciliation records from unpaired interior edges: the owning cell
 /// pair recovered from the endpoint keys' shared generators, deduplicated.
 fn synthesize_backstop_records(
     unpaired: &[(u32, u32, u32)],
@@ -1056,7 +1056,7 @@ fn proximity_union_segments<P: crate::knn_clipping::live_dedup::VertexPosition>(
 /// localized BFS. Diagnostic / differential safety valve, read once on the cold
 /// defect path.
 fn dupscan_force_global() -> bool {
-    matches!(std::env::var("VORONOI_MESH_EDGE_REPAIR_GLOBAL_DUPSCAN"), Ok(v) if v == "1")
+    matches!(std::env::var("VORONOI_MESH_RECONCILE_GLOBAL_DUPSCAN"), Ok(v) if v == "1")
 }
 
 /// Union all same-key vertex duplicates by a single O(V) pass over every key.
@@ -1180,7 +1180,7 @@ fn assert_localized_dupscan_complete(vertex_keys: VertexKeys<'_>, uf: &mut Spars
                 uf.find(i),
                 "edge-reconcile localized dup-scan gap: vertices {other} and {i} share a \
                  key but the localized BFS did not union them — the duplicate-connectivity \
-                 contract is violated (set VORONOI_MESH_EDGE_REPAIR_GLOBAL_DUPSCAN=1 to fall back)"
+                 contract is violated (set VORONOI_MESH_RECONCILE_GLOBAL_DUPSCAN=1 to fall back)"
             );
         }
     });
@@ -1234,7 +1234,7 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
         }
     }
 
-    // Reuse exactly two segment buffers across every record in this repair
+    // Reuse exactly two segment buffers across every record in this reconciliation
     // round. Irregular edges may expose arbitrarily many segments, so the
     // buffers retain their full contents and grow as needed rather than using
     // a fixed-size/capped representation.
@@ -1382,7 +1382,7 @@ fn collect_merges<P: crate::knn_clipping::live_dedup::VertexPosition>(
 /// Convert the threshold-graph proposals from one round into accepted merge
 /// components. A component is accepted only when every pair of original
 /// members represented across all prior rounds is within `eps`; otherwise the
-/// entire component is rejected transactionally and handed to Local3d by the
+/// entire component is rejected transactionally and handed to Hull3d by the
 /// caller. Distances are accumulated in f64 over the stored f32 coordinates so
 /// the policy is a defensible bound rather than another f32 rounding layer.
 struct MergeCandidate {
@@ -1398,7 +1398,7 @@ struct MergeCandidate {
 /// in its key. After an accepted merge, the surviving representative can also
 /// be referenced by cells from the retired ids' keys. `expanded` is the
 /// persistent ledger of precisely those original ids, so the union of their
-/// key triples remains a complete cover across repair rounds and apply modes.
+/// key triples remains a complete cover across reconciliation rounds and apply modes.
 fn merge_safety_cell_cover(
     candidates: &[MergeCandidate],
     vertex_keys: VertexKeys<'_>,
@@ -1544,9 +1544,9 @@ fn bound_merge_components<P: crate::knn_clipping::live_dedup::VertexPosition>(
         });
     }
 
-    // Repair may collapse a diameter-bounded triangulation diagonal while
+    // Reconciliation may collapse a diameter-bounded triangulation diagonal while
     // reconciling an observed topology defect. This is load-bearing for exact
-    // degree-4+ grids, where Local3d is not a scalable substitute. The edit
+    // degree-4+ grids, where Hull3d is not a scalable substitute. The edit
     // must still preserve every cell and avoid a non-simple face.
     let mut candidate_for_id = rustc_hash::FxHashMap::<u32, usize>::default();
     for (candidate_idx, candidate) in candidates.iter().enumerate() {
@@ -1625,7 +1625,7 @@ fn record_rejected_component_seeds(
     cells: &[VoronoiCell],
     cell_indices: &[u32],
     vertex_keys: VertexKeys<'_>,
-    escalation_pairs: &mut Vec<(u32, u32)>,
+    local_rebuild_seed_pairs: &mut Vec<(u32, u32)>,
     merge_affected_cells: &mut Vec<u32>,
 ) -> Result<(), crate::VoronoiError> {
     use rustc_hash::FxHashSet;
@@ -1641,7 +1641,7 @@ fn record_rejected_component_seeds(
             }
         }
 
-        let seeds_before = escalation_pairs.len();
+        let seeds_before = local_rebuild_seed_pairs.len();
         for record in edge_records {
             let (a, b) = unpack_edge(record.key.as_u64());
             edge_segments_for_neighbor_into(a, b, cells, cell_indices, vertex_keys, &mut seg_a)?;
@@ -1651,14 +1651,14 @@ fn record_rejected_component_seeds(
                 .chain(&seg_b)
                 .any(|&(v0, v1)| current_ids.contains(&v0) || current_ids.contains(&v1));
             if touches_rejected {
-                escalation_pairs.push((a.min(b), a.max(b)));
+                local_rebuild_seed_pairs.push((a.min(b), a.max(b)));
             }
         }
 
         // Same-key duplicate proposals can be discovered through the localized
         // identity scan without appearing on the recorded edge's current
         // segment. Seed those components from their own generator keys.
-        if escalation_pairs.len() == seeds_before {
+        if local_rebuild_seed_pairs.len() == seeds_before {
             for &id in &component.member_ids {
                 let Some(key) = vertex_keys.get(id) else {
                     continue;
@@ -1667,16 +1667,16 @@ fn record_rejected_component_seeds(
                     for j in (i + 1)..key.len() {
                         let (a, b) = (key[i].min(key[j]), key[i].max(key[j]));
                         if a != b && (b as usize) < cells.len() {
-                            escalation_pairs.push((a, b));
+                            local_rebuild_seed_pairs.push((a, b));
                         }
                     }
                 }
             }
         }
-        if escalation_pairs.len() == seeds_before {
+        if local_rebuild_seed_pairs.len() == seeds_before {
             if let Some(record) = edge_records.first() {
                 let (a, b) = unpack_edge(record.key.as_u64());
-                escalation_pairs.push((a.min(b), a.max(b)));
+                local_rebuild_seed_pairs.push((a.min(b), a.max(b)));
             }
         }
     }
@@ -1800,7 +1800,7 @@ fn apply_merges_in_place(
             debug_assert_eq!(
                 uf.find(vi),
                 vi,
-                "cell {ci} still references non-representative vertex {vi} after in-place repair"
+                "cell {ci} still references non-representative vertex {vi} after in-place reconciliation"
             );
         }
     }
@@ -1940,7 +1940,7 @@ mod tests {
                     assert_eq!(seg_a, [(0, 1), (3, 4)]);
                 }
             }
-            // Model a productive repair round shrinking the live span. The
+            // Model a productive reconciliation round shrinking the live span. The
             // second pass must clear stale segments while retaining capacity.
             cells[0] = VoronoiCell::new(0, 5);
         }
@@ -1972,34 +1972,34 @@ mod tests {
         vertex_keys: &[VertexKey],
     ) -> (bool, Vec<VoronoiCell>, Vec<u32>, Vec<VoronoiCell>, Vec<u32>) {
         let (mut cells_r, mut idx_r) = (cells.to_vec(), cell_indices.to_vec());
-        let residual_r = reconcile_unresolved_edges(
+        let residual_r = reconcile_edge_mismatches(
             records,
             vertices,
             &mut cells_r,
             &mut idx_r,
             VertexKeys::Flat(vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-            RepairApply::Rebuild,
+            ReconcileApply::Rebuild,
             |_, _| false,
         )
         .expect("rebuild reconciliation should succeed");
 
         let (mut cells_p, mut idx_p) = (cells.to_vec(), cell_indices.to_vec());
-        let residual_p = reconcile_unresolved_edges(
+        let residual_p = reconcile_edge_mismatches(
             records,
             vertices,
             &mut cells_p,
             &mut idx_p,
             VertexKeys::Flat(vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-            RepairApply::InPlace,
+            ReconcileApply::InPlace,
             |_, _| false,
         )
         .expect("in-place reconciliation should succeed");
 
         assert_eq!(
             residual_r, residual_p,
-            "backends disagree on post-repair residuals"
+            "backends disagree on post-reconciliation residuals"
         );
         assert_eq!(
             cell_sequences(&cells_r, &idx_r),
@@ -2216,7 +2216,7 @@ mod tests {
     }
 
     #[test]
-    fn rejected_chain_becomes_an_explicit_escalation_seed() {
+    fn rejected_chain_becomes_an_explicit_local_rebuild_seed() {
         let eps = crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS;
         let vertices = vec![
             Vec3::new(0.0, 0.0, 0.0),
@@ -2240,21 +2240,21 @@ mod tests {
         let records = [edge_record(0, 1)];
         let before = cell_sequences(&cells, &cell_indices);
         let mut ledger = MergeLedger::default();
-        let mut escalations = Vec::new();
+        let mut local_rebuild_seed_pairs = Vec::new();
         let mut affected = Vec::new();
         let mut merge_safety = MergeSafetyStats::default();
 
-        run_repair_rounds(
+        run_reconciliation_rounds(
             &records,
             &vertices,
             &mut cells,
             &mut cell_indices,
             VertexKeys::Flat(&vertex_keys),
             eps,
-            RepairApply::InPlace,
+            ReconcileApply::InPlace,
             MergeMode::Primary,
             &mut ledger,
-            &mut escalations,
+            &mut local_rebuild_seed_pairs,
             &mut affected,
             &mut merge_safety,
         )
@@ -2263,7 +2263,7 @@ mod tests {
         affected.sort_unstable();
         affected.dedup();
         assert_eq!(cell_sequences(&cells, &cell_indices), before);
-        assert_eq!(escalations, [(0, 1)]);
+        assert_eq!(local_rebuild_seed_pairs, [(0, 1)]);
         assert_eq!(affected, [0, 1, 2, 3, 4]);
     }
 
@@ -2323,7 +2323,7 @@ mod tests {
     }
 
     #[test]
-    fn repair_escalates_cell_killing_one_sided_edge_collapse() {
+    fn reconciliation_seeds_rebuild_for_cell_killing_one_sided_edge_collapse() {
         let vertices = vec![
             Vec3::new(0.0, 0.0, 1.0),
             Vec3::new(5.0e-8, 0.0, 1.0),
@@ -2344,28 +2344,28 @@ mod tests {
         let cell_indices = vec![0, 1, 2, 3, 4, 5];
 
         let records = [edge_record(0, 1)];
-        let mut repaired_cells = cells.clone();
-        let mut repaired_indices = cell_indices.clone();
-        let result = reconcile_unresolved_edges(
+        let mut reconciled_cells = cells.clone();
+        let mut reconciled_indices = cell_indices.clone();
+        let result = reconcile_edge_mismatches(
             &records,
             &vertices,
-            &mut repaired_cells,
-            &mut repaired_indices,
+            &mut reconciled_cells,
+            &mut reconciled_indices,
             VertexKeys::Flat(&vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-            RepairApply::InPlace,
+            ReconcileApply::InPlace,
             |_, _| false,
         )
-        .expect("cell-killing one-sided edge should escalate cleanly");
+        .expect("cell-killing one-sided edge should local_rebuild cleanly");
 
         assert_eq!(
-            cell_sequences(&repaired_cells, &repaired_indices),
+            cell_sequences(&reconciled_cells, &reconciled_indices),
             cell_sequences(&cells, &cell_indices),
-            "generator-preserving repair must not collapse a cell"
+            "generator-preserving reconciliation must not collapse a cell"
         );
         assert!(
-            !result.escalation_pairs.is_empty(),
-            "cell-killing collapse must seed Local3d"
+            !result.local_rebuild_seed_pairs.is_empty(),
+            "cell-killing collapse must seed Hull3d"
         );
     }
 
@@ -2411,7 +2411,7 @@ mod tests {
     }
 
     #[test]
-    fn repair_bounds_one_shared_endpoint_inference() {
+    fn reconcile_bounds_one_shared_endpoint_inference() {
         let records = [edge_record(0, 1)];
         let eps = crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS;
 
@@ -2436,7 +2436,7 @@ mod tests {
     }
 
     #[test]
-    fn repair_reconciles_epsilon_close_shared_edge_endpoints() {
+    fn reconcile_reconciles_epsilon_close_shared_edge_endpoints() {
         let (vertices, vertex_keys, cells, cell_indices) =
             mismatched_shared_edge_fixture(2.0e-7, 4.0e-8);
 
@@ -2490,14 +2490,14 @@ mod tests {
 
         let mut footprint_cells = cells.clone();
         let mut footprint_indices = cell_indices.clone();
-        let result = reconcile_unresolved_edges(
+        let result = reconcile_edge_mismatches(
             &records,
             &vertices,
             &mut footprint_cells,
             &mut footprint_indices,
             VertexKeys::Flat(&vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-            RepairApply::InPlace,
+            ReconcileApply::InPlace,
             |_, _| false,
         )
         .expect("reconciliation should report its mutation footprint");
@@ -2507,7 +2507,7 @@ mod tests {
     }
 
     #[test]
-    fn repair_refuses_distant_shared_edge_endpoints() {
+    fn reconcile_refuses_distant_shared_edge_endpoints() {
         let (vertices, vertex_keys, cells, cell_indices) =
             mismatched_shared_edge_fixture(1.0e-5, 2.0e-6);
         let records = [edge_record(0, 1)];
@@ -2518,20 +2518,20 @@ mod tests {
 
         let mut reconciled_cells = cells.clone();
         let mut reconciled_indices = cell_indices.clone();
-        let result = reconcile_unresolved_edges(
+        let result = reconcile_edge_mismatches(
             &records,
             &vertices,
             &mut reconciled_cells,
             &mut reconciled_indices,
             VertexKeys::Flat(&vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-            RepairApply::InPlace,
+            ReconcileApply::InPlace,
             |_, _| false,
         )
         .expect("distant mismatch should remain a controlled residual");
         assert!(
             !result.residual_pairs.is_empty(),
-            "rejected endpoint pairing must remain visible to repair/error handling"
+            "rejected endpoint pairing must remain visible to reconciliation/error handling"
         );
         assert!(
             result.resolution_scan_cells.is_empty(),

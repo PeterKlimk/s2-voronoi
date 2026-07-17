@@ -101,15 +101,15 @@ per-candidate clip outcomes. Those cells still contribute to total candidate wor
 quantiles across input sizes to measure natural scaling, then use the run-relative tail counts to
 distinguish a few exceptional cells from a broadly expensive distribution.
 
-## Repair cold path
+## Local-rebuild cold path
 
-The post-assembly local repair fires only on defect-bearing inputs (rare; near-cocircular
+Post-assembly local rebuilding runs only on defect-bearing inputs (rare; near-cocircular
 clusters, e.g. the `mega` distribution) and is fast in the common case. One known cold path
 remains: when the defect sits on the boundary of an extremely dense cluster (most points inside a
-single grid cell), the repair's neighbor gather expands into the cluster and the repair can take
+single grid cell), the rebuild's neighbor gather expands into the cluster and the rebuild can take
 seconds to minutes at millions of points. The output contract is unaffected — the result is still
-strictly valid or a clean error — only latency degrades. `RepairMode::Disabled` skips repair
-entirely (residual defects then fail plain `compute` loudly).
+strictly valid or a clean error — only latency degrades. `LocalRebuildMode::Disabled` skips local
+rebuilding entirely (residual defects then fail plain `compute` loudly).
 
 ## Comparing commits
 
@@ -218,7 +218,7 @@ arithmetic. At 2M single-threaded it reduced retired instructions by 0.18% on Fi
 on uniform input in all three paired runs. Cycles improved 3.5–4.4% on Fibonacci and 2.3–3.9% on
 uniform. The same instruction reduction was visible in the default parallel build.
 
-The always-on low-incidence repair trigger uses plain `u32` counters when the active Rayon pool has
+The always-on low-incidence local-rebuild trigger uses plain `u32` counters when the active Rayon pool has
 one worker, avoiding atomic increments and the parallel final scan. Pools with more than one worker
 retain the atomic implementation. At 2M single-threaded it reduced retired instructions by 0.067%
 on Fibonacci and 0.061% on uniform input, with effectively identical counts in all three paired
@@ -268,20 +268,20 @@ dense-index construction is a small cold portion of the build. Retain this as a 
 pass/branch reduction, not as a demonstrated end-to-end improvement.
 
 Edge reconciliation reuses two unrestricted segment vectors across unresolved records within each
-repair round. The previous path created two vectors per record; an 86,400-point high-degree fixture
+reconciliation round. The previous path created two vectors per record; an 86,400-point high-degree fixture
 with 6,626 records therefore exposed 13,252 allocation opportunities. The clean path still returns
-before allocating scratch, and each repair round receives fresh buffers. Same-session defect-heavy
+before allocating scratch, and each reconciliation round receives fresh buffers. Same-session defect-heavy
 timing moved from 13.884 ms to 12.804 ms; repeated candidate timing was noisy, so retain this for the
 certain structural allocation removal rather than the provisional 7.8% phase result.
 
 Tolerance reconciliation retains a sparse membership ledger only on defect-bearing runs. Proposed
 threshold-graph components are checked transactionally in f64 against every original member, so a
 later round cannot hide a transitive diameter violation behind an earlier representative. Rejected
-components seed Local3d. Clean builds allocate neither the ledger nor proposal state.
+components seed Hull3d. Clean builds allocate neither the ledger nor proposal state.
 
 Merge-safety face validation uses that ledger's original vertex ids to derive a complete local cell
 cover from their key triples. This includes cells inherited by a surviving representative across
-earlier repair rounds. Missing or invalid provenance falls back to the prior global scan, and
+earlier reconciliation rounds. Missing or invalid provenance falls back to the prior global scan, and
 checked builds compare localized component decisions against a global oracle. The `timing` feature
 reports `merge_safety_scan_cells` and `merge_safety_global_fallbacks`.
 
@@ -317,8 +317,8 @@ instructions at 20k Fibonacci. Without native instructions, Fibonacci instructio
 all seven pairs while cycles were neutral. Valgrind Memcheck reported no errors end to end.
 
 Convex clipping computes its two intersection parameters together. Zero-epsilon spherical clips
-return the raw, already-bracketed divisions; propagated-epsilon edge checks and diagnostic
-escalation retain finite checking and clamping. On 500k single-threaded native Fibonacci this
+return the raw, already-bracketed divisions; propagated-epsilon edge checks and the diagnostic
+fallback retain finite checking and clamping. On 500k single-threaded native Fibonacci this
 reduced instructions by 1.11% and branches by 0.138% in all nine pairs with neutral cycles; native
 uniform reduced instructions by 1.06% and branches by 0.138% in all nine pairs. The generic-target
 build improved by 1.27% instructions, 0.36% branches, and 2.75% cycles on Fibonacci.
@@ -404,7 +404,7 @@ Within-bin forwarded edge checks store the earlier neighbor's 32-bit generator i
 canonical 64-bit edge key. The destination generator is already known at both consumers, so defect
 records reconstruct the exact key with `pack_edge(destination, neighbor)`; seed clipping also avoids
 decoding the key. This shrinks the hot queue record from 32 to 24 bytes without changing enqueue
-order, matching, diagnostics, or repair inputs. At 1M single-threaded native, retired instructions
+order, matching, diagnostics, or reconciliation inputs. At 1M single-threaded native, retired instructions
 fell 0.189% on Fibonacci and 0.187% on uniform across six agreeing pairs; branches were neutral.
 Generic-target instructions fell 0.178%/0.175% and branches 0.366%/0.326% across four agreeing
 pairs. Longer native cycle matrices remained below the host's decision floor: Fibonacci measured
@@ -480,7 +480,7 @@ The broader memory-layout and memory-traffic backlog, including regime-dependent
 hybrid fast-path/fallback designs, and a shared experiment matrix, lives in
 [`memory-layout-ideas.md`](memory-layout-ideas.md).
 
-Larger changes to scheduling, repair scope, pathological-work handoff, and repeated-build reuse are
+Larger changes to scheduling, local-rebuild scope, pathological-work handoff, and repeated-build reuse are
 kept in the non-authoritative
 [`algorithmic performance ideas`](algorithmic-performance-ideas.md) catalogue.
 
@@ -490,7 +490,7 @@ Recently accepted optimizations:
   checks to the front, search the shrinking unmatched suffix first, and search the prefix only for
   the handled duplicate-side case. This also makes the final unmatched suffix explicit and removes
   the high-degree consumed-mask spill. The checked edge-check suite and the release high-degree,
-  repair-net, adversarial, and correctness suites pass. At 1M single-threaded native Linux, nine
+  edge-reconciliation, adversarial, and correctness suites pass. At 1M single-threaded native Linux, nine
   interleaved Fibonacci pairs reduced instructions by 0.42% and branches by 1.83% in every pair;
   uniform reduced them by 0.44% and 1.76%, also in every pair. Cycles were directionally favorable
   but noisy. On the quiet eight-thread Intel Mac at 2M, twenty multithreaded pairs were neutral:
@@ -650,10 +650,10 @@ Assembly/live-dedup swarm backlog (2026-07-13):
 - **Flatten per-local edge-check queues only as a memory redesign:** `Vec<Vec<EdgeCheck>>` pays a
   `Vec` header per local generator. A node arena plus head/tail arrays could reduce empty-queue
   metadata, but it loses the current zero-copy transfer and may add traversal/copy work. Require
-  queue-count telemetry and preserve exact directed enqueue order, repair origins, and high-degree
+  queue-count telemetry and preserve exact directed enqueue order, mismatch origins, and high-degree
   behavior before prototyping.
-- **Deduplicate repair work by unresolved edge key:** defect inputs can report multiple origins for
-  one edge. A repair-only unique-key view may avoid repeated reconciliation while retaining the full
+- **Deduplicate reconciliation work by unresolved edge key:** defect inputs can report multiple origins for
+  one edge. A reconciliation-only unique-key view may avoid repeated work while retaining the full
   diagnostic origin list. Existing large probes found only a few mismatch records, so this remains
   a cold-path robustness idea rather than a production-speed candidate.
 
@@ -800,7 +800,7 @@ Do not broadly retry these without a materially different design or workload:
   The original rotate/AND/two-`tzcnt` sequence is superior. A 1M mask audit also found no single
   dominant mixed mask, so a narrow pattern fast path is not justified.
 - Evaluating only three scalar signed distances in the N=3 production clip kernel, while retaining
-  its existing mask, escalation, guarded interpolation, and output paths, regressed the native
+  its existing mask, fallback, guarded interpolation, and output paths, regressed the native
   clip microbench in both regimes: mixed clips moved from about 20.6 to 23.5 ns/call and unchanged
   clips from about 4.7 to 6.2 ns/call. AVX2's four-lane evaluation is cheaper even with one dead
   lane. The faster retained scalar reference omits other production work and is not a valid kernel
@@ -839,8 +839,8 @@ Do not broadly retry these without a materially different design or workload:
   normalization improved 1M Fibonacci cycles 3.46% (14/15) but added 0.34% instructions. A 45-pair
   uniform run was cycle-neutral (-0.20%, candidate lower 16/45) while adding 0.31% instructions in
   every pair. Targeted correctness/validation/adversarial suites passed, but the changed vertex
-  rounding can affect proximity-based defect repair as well as public geometry. Revisit only with a
-  stronger accuracy/repair audit or a workload showing broader latency benefit; retain exact
+  rounding can affect proximity-based reconciliation/local rebuilding as well as public geometry.
+  Revisit only with a stronger accuracy/topology audit or a workload showing broader latency benefit; retain exact
   `sqrt().recip()` for now.
 - Deferring `PolyBuffer::max_r2` maintenance while synthetic bounding vertices remain removed the
   per-survivor radius arithmetic from bounded clips, then recomputed the exact radius once when the

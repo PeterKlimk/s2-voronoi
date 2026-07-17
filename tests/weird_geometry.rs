@@ -14,7 +14,7 @@ use support::points::{
     hemisphere_points,
 };
 use voronoi_mesh::{
-    compute, validation::validate, DegenerateMode, PreprocessMode, RepairMode, UnitVec3,
+    compute, validation::validate, DegenerateMode, LocalRebuildMode, PreprocessMode, UnitVec3,
     VoronoiConfig,
 };
 
@@ -148,12 +148,12 @@ fn robust_great_circle_perturbation_solves_rank2_fixture() {
 }
 
 #[test]
-fn dense_cap_frontier_is_strict_without_repair() {
+fn dense_cap_frontier_is_strict_without_local_rebuild() {
     let points = benchmark_cap_points(50_000, 0.05, 7);
 
     let raw = voronoi_mesh::compute_with_report(
         &points,
-        VoronoiConfig::default().with_repair_mode(RepairMode::Disabled),
+        VoronoiConfig::default().with_local_rebuild_mode(LocalRebuildMode::Disabled),
     )
     .expect("dense-cap raw path should build");
 
@@ -163,24 +163,24 @@ fn dense_cap_frontier_is_strict_without_repair() {
         raw.report.returned_validation.headline()
     );
     assert!(
-        !raw.report.has_post_repair_residuals(),
+        !raw.report.has_output_residuals(),
         "raw dense-cap fallback left output-invariant residuals"
     );
 
-    let repaired = voronoi_mesh::compute_with_report(&points, VoronoiConfig::default())
-        .expect("default repair should solve the dense-cap frontier fixture");
+    let rebuilt = voronoi_mesh::compute_with_report(&points, VoronoiConfig::default())
+        .expect("default pipeline should solve the dense-cap frontier fixture");
     assert!(
-        repaired.report.returned_validation.is_strictly_valid(),
-        "default repair should return a strict-valid dense-cap diagram: {}",
-        repaired.report.returned_validation.headline()
+        rebuilt.report.returned_validation.is_strictly_valid(),
+        "default pipeline should return a strict-valid dense-cap diagram: {}",
+        rebuilt.report.returned_validation.headline()
     );
     assert!(
-        !repaired.report.repair.attempted,
-        "upstream-valid dense-cap fixture should not invoke repair"
+        !rebuilt.report.local_rebuild.attempted,
+        "upstream-valid dense-cap fixture should not invoke local rebuilding"
     );
     assert!(
-        !repaired.report.has_post_repair_residuals(),
-        "accepted default repair should clear output-invariant residuals"
+        !rebuilt.report.has_output_residuals(),
+        "default pipeline should clear output-invariant residuals"
     );
 }
 
@@ -203,16 +203,16 @@ fn classify_weird_geometry_failures() {
             pole_with_latitude_ring(64, 0.5),
         ),
         (
-            "dense_cap_50k_repair_frontier",
+            "dense_cap_50k_local_rebuild_frontier",
             benchmark_cap_points(50_000, 0.05, 7),
         ),
     ] {
         match voronoi_mesh::compute_with_report(&points, VoronoiConfig::default()) {
             Ok(output) => eprintln!(
-                "WEIRDCASE {name}: ok cells={} validation={} pre_repair={}",
+                "WEIRDCASE {name}: ok cells={} validation={} assembly_mismatches={}",
                 output.preferred_diagram().num_cells(),
                 output.report.preferred_validation().headline(),
-                output.report.pre_repair_edge_mismatches.len()
+                output.report.assembly_edge_mismatches.len()
             ),
             Err(err) => eprintln!("WEIRDCASE {name}: err {err:?}"),
         }

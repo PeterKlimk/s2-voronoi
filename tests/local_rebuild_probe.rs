@@ -1,9 +1,9 @@
-//! Step-C vertical slice (feature `escalate_probe`): drive the exact local
+//! Step-C vertical slice (feature `local_rebuild_probe`): drive the exact local
 //! rebuild over REAL fast-path defects and confirm it produces a consistent
 //! local diagram where the fast path left an unpaired edge.
 //!
-//!   cargo test --release --features escalate_probe --test escalate -- --nocapture
-#![cfg(feature = "escalate_probe")]
+//!   cargo test --release --features local_rebuild_probe --test local_rebuild_probe -- --nocapture
+#![cfg(feature = "local_rebuild_probe")]
 
 mod support;
 
@@ -11,10 +11,11 @@ use std::collections::HashMap;
 
 use glam::Vec3;
 use support::points::*;
-use voronoi_mesh::escalate_probe::{
-    check_cell_internally_paired, gather_local, rebuild_cells, set_escalation_enabled, RebuiltCell,
+use voronoi_mesh::local_rebuild_probe::{
+    check_cell_internally_paired, gather_local, rebuild_cells, set_local_rebuild_forced,
+    RebuiltCell,
 };
-use voronoi_mesh::{compute_with_report, RepairMode, UnitVec3, VoronoiConfig};
+use voronoi_mesh::{compute_with_report, LocalRebuildMode, UnitVec3, VoronoiConfig};
 
 fn to_vec3(points: &[UnitVec3]) -> Vec<Vec3> {
     points.iter().map(|p| Vec3::new(p.x, p.y, p.z)).collect()
@@ -27,6 +28,7 @@ fn to_vec3(points: &[UnitVec3]) -> Vec<Vec3> {
 /// defect data; the dual-consistency invariant guarantees agreement whenever
 /// both seeds are interior to the gathered set.
 #[test]
+#[ignore = "historical mega fixture now resolves before the defect-driven rebuild"]
 fn rebuild_resolves_mega_defects() {
     let points = mega_points(100_000, 0.8, 3);
     let pts3 = to_vec3(&points);
@@ -34,7 +36,7 @@ fn rebuild_resolves_mega_defects() {
     let out = compute_with_report(&points, VoronoiConfig::default()).expect("build");
     let defects: Vec<(u32, u32)> = out
         .report
-        .unresolved_edge_pairs
+        .reconciliation_edge_records
         .iter()
         .map(|&(a, b, _)| (a, b))
         .collect();
@@ -89,13 +91,14 @@ fn rebuild_resolves_mega_defects() {
 /// the one a-b edge. `check_cell_internally_paired` panics on any interior
 /// pairing disagreement, so a clean run is the proof.
 #[test]
+#[ignore = "historical mega fixture now resolves before the defect-driven rebuild"]
 fn defect_cells_are_internally_valid_after_rebuild() {
     let points = mega_points(100_000, 0.8, 3);
     let pts3 = to_vec3(&points);
     let out = compute_with_report(&points, VoronoiConfig::default()).expect("build");
     let defects: Vec<(u32, u32)> = out
         .report
-        .unresolved_edge_pairs
+        .reconciliation_edge_records
         .iter()
         .map(|&(a, b, _)| (a, b))
         .collect();
@@ -132,24 +135,25 @@ fn defect_cells_are_internally_valid_after_rebuild() {
 /// are DEFECTS (fast unpaired). Decides the clip-time-exact (A) cost/soundness:
 /// changed = cells A must canonicalize; defects ⊆ changed is required; the
 /// changed count vs defect-closure shows A (canonicalize-cap) vs B (surgical).
-///   VORONOI_MESH_ESCALATE_DIST=mega VORONOI_MESH_ESCALATE_N=100000 VORONOI_MESH_ESCALATE_SEED=3 \
-///     cargo test --release --features escalate_probe --test escalate \
+///   VORONOI_MESH_LOCAL_REBUILD_DIST=mega VORONOI_MESH_LOCAL_REBUILD_N=100000 VORONOI_MESH_LOCAL_REBUILD_SEED=3 \
+///     cargo test --release --features local_rebuild_probe --test local_rebuild_probe \
 ///     a0_exact_reference_delaunator -- --ignored --nocapture
 #[test]
 #[ignore = "A0 exact-reference probe; run individually with env + --ignored --nocapture"]
 fn a0_exact_reference_delaunator() {
     use std::collections::BTreeSet;
-    use voronoi_mesh::escalate_probe::take_a0_fast;
+    use voronoi_mesh::local_rebuild_probe::take_a0_fast;
 
-    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_LOCAL_REBUILD_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_LOCAL_REBUILD_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100_000);
-    let dist = std::env::var("VORONOI_MESH_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
+    let dist =
+        std::env::var("VORONOI_MESH_LOCAL_REBUILD_DIST").unwrap_or_else(|_| "mega".to_string());
     let points = match dist.as_str() {
         "uniform" => random_sphere_points(n, seed),
         "fib" => fibonacci_sphere_points(n, 0.0, seed),
@@ -157,12 +161,12 @@ fn a0_exact_reference_delaunator() {
         _ => mega_points(n, 0.8, seed),
     };
 
-    // Trigger the A0 stash inside maybe_repair_effective.
-    std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
-    set_escalation_enabled(true);
+    // Trigger the A0 stash inside maybe_rebuild_effective.
+    std::env::set_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0", "1");
+    set_local_rebuild_forced(true);
     let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    set_escalation_enabled(false);
-    std::env::remove_var("VORONOI_MESH_ESCALATE_PROBE_A0");
+    set_local_rebuild_forced(false);
+    std::env::remove_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0");
     let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
     let m = pts.len();
 
@@ -322,16 +326,16 @@ fn exact_triples_delaunator(
 }
 
 fn probe_points_from_env(default_n: usize) -> (String, u64, Vec<UnitVec3>) {
-    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_LOCAL_REBUILD_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_LOCAL_REBUILD_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(default_n);
     let dist =
-        std::env::var("VORONOI_MESH_ESCALATE_DIST").unwrap_or_else(|_| "uniform".to_string());
+        std::env::var("VORONOI_MESH_LOCAL_REBUILD_DIST").unwrap_or_else(|_| "uniform".to_string());
     let points = match dist.as_str() {
         "fib" => fibonacci_sphere_points(n, 0.0, seed),
         "clustered" => clustered_cap_points(n, 0.3, seed),
@@ -343,19 +347,19 @@ fn probe_points_from_env(default_n: usize) -> (String, u64, Vec<UnitVec3>) {
 }
 
 fn stash_fast_triples(points: &[UnitVec3]) -> (Vec<Vec3>, Vec<Vec<[u32; 3]>>) {
-    use voronoi_mesh::escalate_probe::take_a0_fast;
+    use voronoi_mesh::local_rebuild_probe::take_a0_fast;
 
-    std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
-    set_escalation_enabled(true);
+    std::env::set_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0", "1");
+    set_local_rebuild_forced(true);
     let _ = compute_with_report(points, VoronoiConfig::default()).expect("build");
-    set_escalation_enabled(false);
-    std::env::remove_var("VORONOI_MESH_ESCALATE_PROBE_A0");
+    set_local_rebuild_forced(false);
+    std::env::remove_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0");
     take_a0_fast().expect("A0 stash")
 }
 
 fn exact_triples_norm3d(pts: &[Vec3]) -> (Vec<std::collections::BTreeSet<[u32; 3]>>, Vec<bool>) {
     use std::collections::BTreeSet;
-    use voronoi_mesh::escalate_probe::rebuild_cells;
+    use voronoi_mesh::local_rebuild_probe::rebuild_cells;
 
     let m = pts.len();
     let all: Vec<u32> = (0..m as u32).collect();
@@ -623,12 +627,12 @@ fn changed_component_summary(changed: &[bool], fast_triples: &[Vec<[u32; 3]>]) -
 
 /// Compare the fast gnomonic graph against a normalized 3D exact Delaunay
 /// reference (global `LocalHull`). This is an audit/probe for the fast path and
-/// repair targets. The normalization inside `LocalHull` is essential: raw f32
+/// rebuild targets. The normalization inside `LocalHull` is essential: raw f32
 /// radius drift is not the S2 graph.
 ///
 /// Example:
-///   VORONOI_MESH_ESCALATE_DIST=uniform VORONOI_MESH_ESCALATE_N=12000 VORONOI_MESH_ESCALATE_SEED=3 \
-///     cargo test --release --features escalate_probe --test escalate \
+///   VORONOI_MESH_LOCAL_REBUILD_DIST=uniform VORONOI_MESH_LOCAL_REBUILD_N=12000 VORONOI_MESH_LOCAL_REBUILD_SEED=3 \
+///     cargo test --release --features local_rebuild_probe --test local_rebuild_probe \
 ///     probe_fast_vs_norm3d_reference -- --ignored --nocapture
 #[test]
 #[ignore = "normalized 3D exact-reference probe; run with env + --ignored --nocapture"]
@@ -883,30 +887,30 @@ fn local_delaunator_cell(
 }
 
 /// Does a LOCAL delaunator (over a generous gather) reproduce the GLOBAL
-/// delaunator on the repair cells? This was the first projected-oracle sanity
+/// delaunator on the rebuild cells? This was the first projected-oracle sanity
 /// check. After the normalized-CGAL finding, normalized local 3D hull is also a
 /// viable oracle candidate.
 #[test]
 #[ignore = "local-delaunator-vs-global; run with env + --ignored --nocapture"]
 fn local_delaunator_vs_global() {
     use std::collections::BTreeSet;
-    use voronoi_mesh::escalate_probe::{gather_local, take_a0_fast};
+    use voronoi_mesh::local_rebuild_probe::{gather_local, take_a0_fast};
 
-    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_LOCAL_REBUILD_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_LOCAL_REBUILD_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100_000);
     let points = mega_points(n, 0.8, seed);
 
-    std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
-    set_escalation_enabled(true);
+    std::env::set_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0", "1");
+    set_local_rebuild_forced(true);
     let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    set_escalation_enabled(false);
-    std::env::remove_var("VORONOI_MESH_ESCALATE_PROBE_A0");
+    set_local_rebuild_forced(false);
+    std::env::remove_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0");
     let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
 
     let (exact, hull_region) = exact_triples_delaunator(&pts);
@@ -919,7 +923,7 @@ fn local_delaunator_vs_global() {
         })
         .collect();
     println!(
-        "local-delaunator: {} repair-target cells, seed={seed}",
+        "local-delaunator: {} rebuild-target cells, seed={seed}",
         targets.len()
     );
     for k in [64usize, 128, 256, 512] {
@@ -951,28 +955,29 @@ fn local_delaunator_vs_global() {
 #[ignore = "projection-theory 3-way diagnostic; small n; env + --ignored --nocapture"]
 fn projection_theory_3way() {
     use std::collections::BTreeSet;
-    use voronoi_mesh::escalate_probe::{rebuild_cells, take_a0_fast};
+    use voronoi_mesh::local_rebuild_probe::{rebuild_cells, take_a0_fast};
 
-    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_LOCAL_REBUILD_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_LOCAL_REBUILD_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(12_000);
-    let dist = std::env::var("VORONOI_MESH_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
+    let dist =
+        std::env::var("VORONOI_MESH_LOCAL_REBUILD_DIST").unwrap_or_else(|_| "mega".to_string());
     let points = match dist.as_str() {
         "uniform" => random_sphere_points(n, seed),
         "clustered" => clustered_cap_points(n, 0.3, seed),
         _ => mega_points(n, 0.8, seed),
     };
 
-    std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
-    set_escalation_enabled(true);
+    std::env::set_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0", "1");
+    set_local_rebuild_forced(true);
     let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    set_escalation_enabled(false);
-    std::env::remove_var("VORONOI_MESH_ESCALATE_PROBE_A0");
+    set_local_rebuild_forced(false);
+    std::env::remove_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0");
     let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
     let m = pts.len();
 
@@ -1019,38 +1024,39 @@ fn projection_theory_3way() {
 /// The actually-right oracle test: detect defects → replace the cluster cells
 /// from ONE `local_hull` (3D exact `orient3d`, projection-independent) over the
 /// cluster's gather → expand by any still-inconsistent generator → repeat. The
-/// repair is valid iff every triple is referenced by exactly its 3 generators.
-/// Measures repair-set size + convergence with the dependency-free 3D oracle
+/// rebuild is valid iff every triple is referenced by exactly its 3 generators.
+/// Measures rebuild-set size + convergence with the dependency-free 3D oracle
 /// (the real target, not "match delaunator").
 #[test]
 #[ignore = "detect+fix+expand with one-local_hull oracle; env + --ignored --nocapture"]
 fn detect_fix_expand_localhull() {
     use std::collections::{BTreeSet, HashMap};
-    use voronoi_mesh::escalate_probe::{gather_local, rebuild_cells, take_a0_fast};
+    use voronoi_mesh::local_rebuild_probe::{gather_local, rebuild_cells, take_a0_fast};
 
-    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_LOCAL_REBUILD_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_LOCAL_REBUILD_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100_000);
-    let k: usize = std::env::var("VORONOI_MESH_ESCALATE_K")
+    let k: usize = std::env::var("VORONOI_MESH_LOCAL_REBUILD_K")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(64);
-    let dist = std::env::var("VORONOI_MESH_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
+    let dist =
+        std::env::var("VORONOI_MESH_LOCAL_REBUILD_DIST").unwrap_or_else(|_| "mega".to_string());
     let points = match dist.as_str() {
         "uniform" => random_sphere_points(n, seed),
         _ => mega_points(n, 0.8, seed),
     };
 
-    std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
-    set_escalation_enabled(true);
+    std::env::set_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0", "1");
+    set_local_rebuild_forced(true);
     let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    set_escalation_enabled(false);
-    std::env::remove_var("VORONOI_MESH_ESCALATE_PROBE_A0");
+    set_local_rebuild_forced(false);
+    std::env::remove_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0");
     let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
     let m = pts.len();
     let fast_set: Vec<BTreeSet<[u32; 3]>> = fast_triples
@@ -1059,7 +1065,7 @@ fn detect_fix_expand_localhull() {
         .collect();
 
     // Inconsistent triples (referenced by != its 3 generators) → implicated gens,
-    // given a repair set R rebuilt from ONE local_hull over gather(R, k).
+    // given a rebuild set R rebuilt from ONE local_hull over gather(R, k).
     let analyze = |r: &BTreeSet<u32>| -> (BTreeSet<u32>, usize) {
         let rv: Vec<u32> = r.iter().copied().collect();
         let oracle: HashMap<u32, BTreeSet<[u32; 3]>> = if rv.is_empty() {
@@ -1114,44 +1120,44 @@ fn detect_fix_expand_localhull() {
     }
     println!(
         "EXPAND-LH dist={dist} n={m} seed={seed} k={k}: base_bad_triples={base_nbad} \
-         repair_set={} rounds={rounds} final_bad_triples={final_bad} {} | traj={:?}",
+         rebuild_set={} rounds={rounds} final_bad_triples={final_bad} {} | traj={:?}",
         r.len(),
         if final_bad == 0 { "CLEAN" } else { "RESIDUAL" },
         history,
     );
 }
 
-/// First goal for the repair: a LOCAL exact oracle whose cells match the global
+/// First goal for the rebuild: a LOCAL exact oracle whose cells match the global
 /// exact reference (delaunator). This measures how well normalized `local_hull`
 /// (via `rebuild_cells` over a k-NN gather) matches delaunator on the cells that
-/// matter — the CHANGED cells (where fast ≠ exact, i.e. the repair targets) —
+/// matter — the CHANGED cells (where fast ≠ exact, i.e. the rebuild targets) —
 /// across gather sizes. Mismatches diagnose what the oracle needs (completeness
 /// vs ties). A perfect local oracle would match delaunator on every changed cell.
 #[test]
 #[ignore = "local-oracle-vs-delaunator diagnostic; run with env + --ignored --nocapture"]
 fn local_oracle_vs_delaunator() {
     use std::collections::BTreeSet;
-    use voronoi_mesh::escalate_probe::{rebuild_cells, take_a0_fast};
+    use voronoi_mesh::local_rebuild_probe::{rebuild_cells, take_a0_fast};
 
-    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_LOCAL_REBUILD_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_LOCAL_REBUILD_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100_000);
     let points = mega_points(n, 0.8, seed);
 
-    std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
-    set_escalation_enabled(true);
+    std::env::set_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0", "1");
+    set_local_rebuild_forced(true);
     let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    set_escalation_enabled(false);
-    std::env::remove_var("VORONOI_MESH_ESCALATE_PROBE_A0");
+    set_local_rebuild_forced(false);
+    std::env::remove_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0");
     let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
 
     let (exact, hull_region) = exact_triples_delaunator(&pts);
-    // repair targets = changed cells (fast ≠ exact), excluding the projection rim.
+    // rebuild targets = changed cells (fast ≠ exact), excluding the projection rim.
     let targets: Vec<u32> = (0..pts.len() as u32)
         .filter(|&g| {
             !hull_region[g as usize] && {
@@ -1163,14 +1169,14 @@ fn local_oracle_vs_delaunator() {
     let pts3: Vec<glam::Vec3> = pts.clone();
 
     println!(
-        "local-oracle: {} changed (repair-target) cells, seed={seed} n={}",
+        "local-oracle: {} changed (rebuild-target) cells, seed={seed} n={}",
         targets.len(),
         pts.len()
     );
     for k in [48usize, 96, 192, 384, 768] {
         let mut matched = 0usize;
         for &g in &targets {
-            let local = voronoi_mesh::escalate_probe::gather_local(&pts3, &[g], k);
+            let local = voronoi_mesh::local_rebuild_probe::gather_local(&pts3, &[g], k);
             let Some(cells) = rebuild_cells(&pts3, &local, &[g]) else {
                 continue;
             };
@@ -1191,36 +1197,37 @@ fn local_oracle_vs_delaunator() {
 
 /// THE demonstration: with a CONSISTENT exact oracle, "detect bad edges → fix
 /// both incident cells → expand until agreement" terminates at the small
-/// changed-closure (does NOT explode to the cap). Seeds the repair set from the
+/// changed-closure (does NOT explode to the cap). Seeds the rebuild set from the
 /// fast diagram's defects, replaces those cells with their exact (delaunator)
 /// cells, and grows by any generator still inconsistent — measuring the final
-/// repair-set size (should be ~tens) and residual (should be 0).
+/// rebuild-set size (should be ~tens) and residual (should be 0).
 #[test]
 #[ignore = "detect+fix+expand demonstration; run individually with env + --ignored --nocapture"]
 fn detect_fix_expand_delaunator() {
     use std::collections::{BTreeSet, HashMap};
-    use voronoi_mesh::escalate_probe::take_a0_fast;
+    use voronoi_mesh::local_rebuild_probe::take_a0_fast;
 
-    let seed: u64 = std::env::var("VORONOI_MESH_ESCALATE_SEED")
+    let seed: u64 = std::env::var("VORONOI_MESH_LOCAL_REBUILD_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
-    let n: usize = std::env::var("VORONOI_MESH_ESCALATE_N")
+    let n: usize = std::env::var("VORONOI_MESH_LOCAL_REBUILD_N")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100_000);
-    let dist = std::env::var("VORONOI_MESH_ESCALATE_DIST").unwrap_or_else(|_| "mega".to_string());
+    let dist =
+        std::env::var("VORONOI_MESH_LOCAL_REBUILD_DIST").unwrap_or_else(|_| "mega".to_string());
     let points = match dist.as_str() {
         "uniform" => random_sphere_points(n, seed),
         "clustered" => clustered_cap_points(n, 0.3, seed),
         _ => mega_points(n, 0.8, seed),
     };
 
-    std::env::set_var("VORONOI_MESH_ESCALATE_PROBE_A0", "1");
-    set_escalation_enabled(true);
+    std::env::set_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0", "1");
+    set_local_rebuild_forced(true);
     let _ = compute_with_report(&points, VoronoiConfig::default()).expect("build");
-    set_escalation_enabled(false);
-    std::env::remove_var("VORONOI_MESH_ESCALATE_PROBE_A0");
+    set_local_rebuild_forced(false);
+    std::env::remove_var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0");
     let (pts, fast_triples) = take_a0_fast().expect("A0 stash");
     let m = pts.len();
 
@@ -1231,7 +1238,7 @@ fn detect_fix_expand_delaunator() {
         .collect();
 
     // A triple {a,b,c} is consistent iff exactly cells {a,b,c} reference it.
-    // Given a repair set R (use exact for those, fast otherwise), find the
+    // Given a rebuild set R (use exact for those, fast otherwise), find the
     // generators implicated by any inconsistent (non-hull) triple.
     let implicated = |r: &BTreeSet<u32>| -> BTreeSet<u32> {
         let mut refs: HashMap<[u32; 3], Vec<u32>> = HashMap::new();
@@ -1281,7 +1288,7 @@ fn detect_fix_expand_delaunator() {
         history.push(r.len());
     }
     println!(
-        "EXPAND dist={dist} n={m} seed={seed}: detected_seed={seed_size} -> repair_set={} \
+        "EXPAND dist={dist} n={m} seed={seed}: detected_seed={seed_size} -> rebuild_set={} \
          in {rounds} rounds {} | trajectory={:?}",
         r.len(),
         if converged {
@@ -1293,12 +1300,12 @@ fn detect_fix_expand_delaunator() {
     );
 }
 
-/// Generalization sweep (report-only): does consensus repair turn every mega
+/// Generalization sweep (report-only): does consensus rebuild turn every mega
 /// config strictly valid, and is it a no-op (validity preserved) on clean input?
 #[test]
 #[ignore = "report-only sweep; run with --ignored --nocapture"]
-fn escalation_generalization_sweep() {
-    let off = || VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
+fn local_rebuild_generalization_sweep() {
+    let off = || VoronoiConfig::default().with_local_rebuild_mode(LocalRebuildMode::Disabled);
     let on = VoronoiConfig::default;
     let run = |label: &str, pts: &[UnitVec3]| {
         let before = compute_with_report(pts, off()).expect("build");

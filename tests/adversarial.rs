@@ -152,10 +152,10 @@ fn test_cube_vertices_tight() {
 fn test_cube_vertices_100k_seed3_defect_carrier() {
     // Discovered by the robustness campaign: a cheap (~0.5s), deterministic
     // defect carrier — the only known sphere input that exercises the
-    // post-assembly repair net below the multi-million-point scale (it
+    // post-assembly reconciliation net below the multi-million-point scale (it
     // produces InBinThirdsMismatch + InBinUnconsumedCheck records that
-    // repair to strict validity). The contract is strict validity; `compute`
-    // additionally errors on any post-repair residual, so this also guards
+    // reconcile or locally rebuild to strict validity). The contract is strict validity;
+    // `compute` additionally errors on any output residual, so this also guards
     // the always-caught path.
     let points = cube_vertex_stress_points(100_000, 0.01, 3);
     expect_strict_success("cube_vertices_100k_seed3", compute(&points));
@@ -208,15 +208,15 @@ fn test_hemisphere_dense() {
 fn test_hemisphere_origin_outside_hull_is_strict() {
     use voronoi_mesh::{compute_with_report, VoronoiConfig};
 
-    // This origin-outside hull used to deterministically reach Local3d. Cold
-    // spherical exhaustion recovery can now construct it without repair, but
+    // This origin-outside hull used to deterministically reach Hull3d. Cold
+    // spherical exhaustion recovery can now construct it without local rebuilding, but
     // either route must preserve the outward solution and return a strict
-    // diagram. Local3d's face-sign behavior is pinned directly by its unit
+    // diagram. Hull3d's face-sign behavior is pinned directly by its unit
     // regression.
     let points = hemisphere_points(1_000, 1);
     let output = compute_with_report(&points, VoronoiConfig::default())
-        .expect("hemisphere Local3d regression should compute");
-    assert!(!output.report.has_post_repair_residuals());
+        .expect("hemisphere Hull3d regression should compute");
+    assert!(!output.report.has_output_residuals());
     assert!(output.report.preferred_validation().is_strictly_valid());
 }
 

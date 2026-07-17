@@ -15,7 +15,7 @@ use super::{
 };
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::live_dedup::{
-    EdgeRecord, UnresolvedEdgeMismatch, UnresolvedEdgeOrigin, VertexPosition,
+    EdgeMismatch, EdgeMismatchOrigin, EdgeRecord, VertexPosition,
 };
 use crate::knn_clipping::union_find::SparseUnionFind;
 
@@ -117,7 +117,7 @@ struct PrimaryTelemetry {
     inferred_pairing: DistanceStats,
     proximity_evaluations: DistanceStats,
     one_sided_edge: DistanceStats,
-    origins: BTreeMap<UnresolvedEdgeOrigin, OriginStats>,
+    origins: BTreeMap<EdgeMismatchOrigin, OriginStats>,
     simulated_unions: usize,
     rejected_components: usize,
     components: ComponentStats,
@@ -128,7 +128,7 @@ struct PrimaryTelemetry {
 /// this function returns. Analysis errors are reported but never propagated.
 #[allow(clippy::too_many_arguments)] // mirrors the read-only reconciliation seam
 pub(crate) fn emit_primary_reconcile_telemetry<P: VertexPosition>(
-    unresolved: &[UnresolvedEdgeMismatch],
+    unresolved: &[EdgeMismatch],
     vertices: &[P],
     cells: &[VoronoiCell],
     cell_indices: &[u32],
@@ -154,7 +154,7 @@ pub(crate) fn emit_primary_reconcile_telemetry<P: VertexPosition>(
 }
 
 fn analyze_primary<P: VertexPosition>(
-    unresolved: &[UnresolvedEdgeMismatch],
+    unresolved: &[EdgeMismatch],
     vertices: &[P],
     cells: &[VoronoiCell],
     cell_indices: &[u32],
@@ -500,9 +500,9 @@ mod tests {
         ];
         let cells = [VoronoiCell::new(0, 3), VoronoiCell::new(3, 3)];
         let cell_indices = [0, 1, 2, 3, 4, 5];
-        let records = [UnresolvedEdgeMismatch {
+        let records = [EdgeMismatch {
             key: EdgeKey::from(1_u64 << 32),
-            origin: UnresolvedEdgeOrigin::CrossBinThirdsMismatch,
+            origin: EdgeMismatchOrigin::CrossBinThirdsMismatch,
         }];
 
         let stats = analyze_primary(
@@ -519,7 +519,7 @@ mod tests {
         assert_eq!(stats.inferred_pairing.count, 1);
         assert_eq!(stats.inferred_pairing.within_eps, 0);
         assert!(stats.inferred_pairing.max > 1.0e-6);
-        let origin = &stats.origins[&UnresolvedEdgeOrigin::CrossBinThirdsMismatch];
+        let origin = &stats.origins[&EdgeMismatchOrigin::CrossBinThirdsMismatch];
         assert_eq!(origin.records, 1);
         assert_eq!(origin.distinct_endpoints, 1);
         assert_eq!(origin.inferred_pairing.count, 1);

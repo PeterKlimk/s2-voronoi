@@ -1,8 +1,7 @@
 //! Shard-local state for live dedup.
 
 use super::types::{
-    BinId, CellReferenceOverride, DeferredSlot, EdgeCheck, EdgeCheckOverflow, LocalId,
-    UnresolvedEdgeMismatch,
+    BinId, CellReferenceOverride, DeferredSlot, EdgeCheck, EdgeCheckOverflow, EdgeMismatch, LocalId,
 };
 use crate::knn_clipping::cell_build::VertexKey;
 use glam::Vec3;
@@ -35,7 +34,7 @@ pub(crate) struct ShardOutput<P = Vec3> {
     /// owns this shard exclusively; deferred off-shard references are applied
     /// at their owner before final assembly.
     pub(crate) vertex_incidence: Vec<u8>,
-    pub(super) unresolved_edges: Vec<UnresolvedEdgeMismatch>,
+    pub(super) edge_mismatches: Vec<EdgeMismatch>,
     pub(super) edge_check_overflow: Vec<EdgeCheckOverflow>,
     /// Cell slots whose owner bin is off-shard and must be patched during assembly.
     pub(crate) deferred_slots: Vec<DeferredSlot<P>>,
@@ -59,7 +58,7 @@ impl<P: VertexPosition> ShardOutput<P> {
             vertices: Vec::new(),
             vertex_keys: Vec::new(),
             vertex_incidence: Vec::new(),
-            unresolved_edges: Vec::new(),
+            edge_mismatches: Vec::new(),
             edge_check_overflow: Vec::new(),
             deferred_slots: Vec::new(),
             cell_indices: Vec::new(),

@@ -1,10 +1,10 @@
 //! Robustness evidence campaign (ignored by default): drive many seeds,
 //! sizes, and distributions through `compute_with_report` and record, per
 //! input, the defect count, the detection-origin histogram (incl. the
-//! post-repair output-invariant backstop), and strict validity.
+//! post-reconciliation output-invariant backstop), and strict validity.
 //!
 //! Motivation: the residual-defect story must not rest on the handful of
-//! historically known sites. Every new natural input either repairs to
+//! historically known sites. Every new natural input either reaches
 //! strict validity (evidence the hardened net holds) or surfaces a defect
 //! class we have not characterized — which is exactly what we want to find
 //! here rather than in the field.
@@ -35,8 +35,8 @@ use std::collections::BTreeMap;
 
 use support::points::*;
 use voronoi_mesh::{
-    compute_with, compute_with_report, validation::validate, RepairMode, UnitVec3,
-    UnresolvedEdgeOrigin, VoronoiConfig,
+    compute_with, compute_with_report, validation::validate, EdgeMismatchOrigin, LocalRebuildMode,
+    UnitVec3, VoronoiConfig,
 };
 
 /// Process peak RSS (high-water mark) in MB, from /proc/self/status.
@@ -101,7 +101,7 @@ fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<UnitVec3> {
 ///
 /// Emits a single machine-parseable `CASERESULT` line. Every matrix case is a
 /// supported finite/default-preprocessed input and therefore must succeed,
-/// clear every reconciliation/repair residual, and validate strictly. Errors
+/// clear every reconciliation/local-rebuild residual, and validate strictly. Errors
 /// or surviving diagnostics are campaign failures, not accepted outcomes.
 #[test]
 #[ignore]
@@ -116,16 +116,16 @@ fn campaign_case() {
 
     match compute_with_report(&points, VoronoiConfig::default()) {
         Ok(out) => {
-            let mut origins: BTreeMap<UnresolvedEdgeOrigin, usize> = BTreeMap::new();
-            for &(_, _, origin) in &out.report.unresolved_edge_pairs {
+            let mut origins: BTreeMap<EdgeMismatchOrigin, usize> = BTreeMap::new();
+            for &(_, _, origin) in &out.report.reconciliation_edge_records {
                 *origins.entry(origin).or_default() += 1;
             }
             let valid = out.report.preferred_validation().is_strictly_valid();
-            let defects = out.report.unresolved_edge_pairs.len();
-            let no_chain = out.report.post_repair_escalation_pairs.len();
-            let post_repair = out.report.post_repair_unpaired_edges.len() + no_chain;
-            let repair_attempted = out.report.repair.attempted;
-            let repair_accepted = out.report.repair.accepted;
+            let defects = out.report.reconciliation_edge_records.len();
+            let reconciliation_residual = out.report.residual_reconciliation_pairs.len();
+            let residual_edges = out.report.residual_unpaired_edges.len() + reconciliation_residual;
+            let local_rebuild_attempted = out.report.local_rebuild.attempted;
+            let local_rebuild_accepted = out.report.local_rebuild.accepted;
             let origins_str = if origins.is_empty() {
                 "none".to_string()
             } else {
@@ -137,15 +137,15 @@ fn campaign_case() {
             };
             println!(
                 "CASERESULT dist={dist} n={actual_n} seed={seed} param={param} \
-                 result=ok defects={defects} post_repair={post_repair} no_chain={no_chain} valid={valid} \
-                 repair_attempted={repair_attempted} repair_accepted={repair_accepted} \
+                 result=ok defects={defects} residual_edges={residual_edges} reconciliation_residual={reconciliation_residual} valid={valid} \
+                 local_rebuild_attempted={local_rebuild_attempted} local_rebuild_accepted={local_rebuild_accepted} \
                  peak_mb={} origins={origins_str}",
                 peak_rss_mb()
             );
             assert!(
-                valid && post_repair == 0,
-                "{dist} n={actual_n} seed={seed}: default repair did not produce a clean, \
-                 strictly valid diagram (valid={valid}, post_repair={post_repair}, \
+                valid && residual_edges == 0,
+                "{dist} n={actual_n} seed={seed}: default pipeline did not produce a clean, \
+                 strictly valid diagram (valid={valid}, residual_edges={residual_edges}, \
                  origins={origins_str})"
             );
         }
@@ -160,10 +160,10 @@ fn campaign_case() {
     }
 }
 
-/// Smaller differential for the actual plain-API contract with repair
+/// Smaller differential for the actual plain-API contract with local rebuilding
 /// disabled. A clean error is allowed because this mode deliberately refuses
-/// Local3d repair; any returned diagram must still satisfy the strict sphere
-/// validator. This is separate from `campaign_case`, whose default-repair
+/// a Hull3d rebuild; any returned diagram must still satisfy the strict sphere
+/// validator. This is separate from `campaign_case`, whose default
 /// matrix requires success for every supported input.
 #[test]
 #[ignore]
@@ -175,7 +175,7 @@ fn campaign_disabled_case() {
 
     let points = make_points(&dist, n, seed, param);
     let actual_n = points.len();
-    let config = VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
+    let config = VoronoiConfig::default().with_local_rebuild_mode(LocalRebuildMode::Disabled);
 
     match compute_with(&points, config) {
         Ok(diagram) => {
@@ -212,7 +212,7 @@ fn diag_memory_accumulation() {
     for i in 0..6 {
         let pts = random_sphere_points(1_000_000, (i + 1) as u64);
         let out = compute_with_report(&pts, VoronoiConfig::default()).expect("compute");
-        let defects = out.report.unresolved_edge_pairs.len();
+        let defects = out.report.reconciliation_edge_records.len();
         drop(out);
         drop(pts);
         println!(
@@ -232,7 +232,7 @@ fn diag_single_build_peak() {
     let n: usize = env_parse("VORONOI_MESH_CASE_N", 1_000_000usize);
     let pts = random_sphere_points(n, 1);
     let out = compute_with_report(&pts, VoronoiConfig::default()).expect("compute");
-    let defects = out.report.unresolved_edge_pairs.len();
+    let defects = out.report.reconciliation_edge_records.len();
     let valid = out.report.preferred_validation().is_strictly_valid();
     println!(
         "PEAKPROBE n={n} peak_rss={} MB defects={defects} valid={valid}",

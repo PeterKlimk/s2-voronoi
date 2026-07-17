@@ -8,21 +8,21 @@ Initial release.
   cube-grid kNN unseen bound; adversarial differential tests now check both
   against exhaustive reference calculations. Rank-2 failure classification is
   linear rather than accidentally all-pairs on million-point error paths.
-- Defect-driven repair now reconciles rebuilt-cell winding combinatorially,
+- Defect-driven local rebuilding now reconciles rebuilt-cell winding combinatorially,
   anchored to the unmodified rim, instead of trusting rounded microscopic
-  vertex geometry. The former mega 1M seed-1 gate rejection is repaired to a
+  vertex geometry. The former mega 1M seed-1 gate rejection is rebuilt to a
   strict subdivision.
 - A gnomonic `ClippedAway` result can hand off to spherical constraint replay.
   The cold fallback keeps normalized bisectors and polygon vertices in f64,
   resumes the nearest-neighbor stream, and rounds only final stored positions.
-  This resolves former dense-cap and mega defects before post-assembly repair
+  This resolves former dense-cap and mega defects before post-assembly reconciliation
   without changing clean-path performance.
-- Edge-repair observability and coverage: `ComputeReport::unresolved_edge_pairs`
+- Edge-reconciliation observability and coverage: `ComputeReport::reconciliation_edge_records`
   reports each shared-edge mismatch that reached post-assembly reconciliation,
-  tagged with an `UnresolvedEdgeOrigin` naming the detection path; a
-  deterministic net (`tests/edge_repair_net.rs`) pins a real 2M-scale defect
+  tagged with an `EdgeMismatchOrigin` naming the detection path; a
+  deterministic net (`tests/edge_reconciliation.rs`) pins a real 2M-scale defect
   site down to a ~1.7k-point fixture and exercises the in-bin and cross-bin
-  detection/repair paths, asserting strict post-repair validity (see
+  detection/reconciliation paths, asserting strict output validity (see
   engineering-findings #13).
 - Micro-optimization batch from a screened 17-branch matrix:
   paired-proven stack (~-36ms total
@@ -60,9 +60,9 @@ Initial release.
 - Edge reconciliation is O(defects) instead of O(diagram): merges collect
   into a sparse union-find (no per-run O(V) init) and apply by patching only
   the cells that can reference a merged vertex (located via vertex-key
-  triplets), in place. On a defect-bearing 2M single-threaded run the repair
+  triplets), in place. On a defect-bearing 2M single-threaded run reconciliation
   drops from ~382ms to ~0.06ms; the original full rebuild is retained as a
-  differential oracle behind `VORONOI_MESH_EDGE_REPAIR_REBUILD=1`, with tests pinning
+  differential oracle behind `VORONOI_MESH_RECONCILE_REBUILD=1`, with tests pinning
   identical per-cell output between backends.
 - Spherical Voronoi diagrams on the unit sphere via kNN-driven half-space
   clipping: per-cell parallel construction stitched into one consistent graph

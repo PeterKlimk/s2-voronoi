@@ -91,7 +91,7 @@ src/
 │   ├── preprocess.rs              # Near-coincident merge pass
 │   ├── edge_reconcile.rs          # Post-assembly edge reconciliation
 │   ├── output_resolution.rs       # Exact stored-zero canonicalization
-│   ├── escalate.rs                # Local3d repair orchestration
+│   ├── local_rebuild.rs           # Hull3d/projected local-rebuild orchestration
 │   ├── local_hull.rs              # Robust local 3D hull
 │   ├── cell_build/                # Single-cell construction loop
 │   └── topo2d/                    # Gnomonic/topological clipping

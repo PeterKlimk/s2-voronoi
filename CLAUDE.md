@@ -52,7 +52,7 @@ VORONOI_MESH_TIMING_KV=1 cargo run --release --features tools,timing --bin bench
 - `VORONOI_MESH_BIN_COUNT=<n>`: override sharded bin count (defaults to about 2x threads).
 - `VORONOI_MESH_TIMING_KV=1`: emit machine-readable timing lines (`timing` feature).
 - `VORONOI_MESH_VERIFY=1`: run the full topological validator after every build on the plain `compute` fast path (which otherwise skips it) and return an error on any strict-validity failure. Off by default; O(E) cost per call. Belt-and-braces for callers wanting output validity machine-checked regardless of detection bookkeeping.
-- `VORONOI_MESH_EDGE_REPAIR_REBUILD=1`: select the full-rewrite repair backend (differential oracle for the in-place default).
+- `VORONOI_MESH_RECONCILE_REBUILD=1`: select the full-rewrite reconciliation backend (differential oracle for the in-place default).
 
 ## Crate Overview
 
@@ -119,7 +119,7 @@ src/
 - Internal: `timing` (instrumentation), `profiling` (inline control),
   `microbench` (harnesses), `simd_scalar` (non-`wide` 8-lane fallback),
   `fma` (mul_add; off by default, see ledger), `tools` (bench binaries), and
-  `escalate_probe` (Local3d integration-test seam).
+  `local_rebuild_probe` (Hull3d integration-test seam).
 
 ## Tests
 

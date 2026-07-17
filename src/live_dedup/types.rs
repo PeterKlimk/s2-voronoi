@@ -160,7 +160,7 @@ pub(crate) struct EdgeRecord {
 /// is `ComputeReport`'s coarse summary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
-pub enum UnresolvedEdgeOrigin {
+pub enum EdgeMismatchOrigin {
     /// Within-bin: the later cell has an edge to an earlier same-bin
     /// neighbor, but no incoming edge check matched (the earlier cell
     /// concluded the edge does not exist).
@@ -200,22 +200,20 @@ pub enum UnresolvedEdgeOrigin {
     /// "third", so detection is deterministic instead of relying on a
     /// garbage third failing to match downstream.
     EndpointKeyMismatch,
-    /// Post-repair output-invariant backstop: an interior edge used by
+    /// Post-reconciliation output-invariant backstop: an interior edge used by
     /// exactly one cell survived reconciliation. Reported, not force-fixed
     /// — the backstop's eps-bounded pass refuses to merge distant vertices
     /// on synthesized evidence.
-    PostRepairUnpaired,
+    PostReconciliationUnpaired,
 }
 
-/// Historical name: this records an unresolved shared-edge reconciliation mismatch.
-///
 /// These are produced by edge-check matching when the two sides of an undirected edge cannot be
 /// reconciled during live dedup. They are the only inputs to the narrow post-pass
 /// reconciliation in `edge_reconcile.rs`.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct UnresolvedEdgeMismatch {
+pub(crate) struct EdgeMismatch {
     pub(crate) key: EdgeKey,
-    pub(crate) origin: UnresolvedEdgeOrigin,
+    pub(crate) origin: EdgeMismatchOrigin,
 }
 
 #[derive(Clone, Copy)]

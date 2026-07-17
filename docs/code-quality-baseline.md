@@ -1,6 +1,6 @@
 # Code-quality baseline and lifecycle rename map
 
-**Status:** Milestone 0 baseline captured; QUAL-001A rename map ready to implement
+**Status:** Milestone 0 baseline captured; QUAL-001A vocabulary migration validated
 
 **Date:** 2026-07-17
 
@@ -133,6 +133,33 @@ immediate parent with both artifacts in the same rotated `bench_perf.sh` run.
 
 These are gates for the naming migration, not universal thresholds for later hot-path extraction.
 Each later workstream must set its own immediate-parent rule from its affected regimes.
+
+## QUAL-001A validation result
+
+The coordinated vocabulary migration was validated on 2026-07-17 against immediate parent
+`3bf5050`. It changed names and documentation, removed the unread
+`VORONOI_MESH_RECLIP_REPAIR` knob, and did not add compatibility aliases.
+
+- All four backend fingerprints matched the semantic and representation values above exactly.
+- `cargo test --release`, `cargo test --profile checked`, the no-default-feature build, and the
+  `serde,glam` build passed. Both default and native all-feature clippy runs passed with warnings
+  denied.
+- The renamed defect suites retained their outcomes: `edge_reconciliation` passed 5 tests with 5
+  ignored, and `local_rebuild` passed 4 tests with 1 ignored.
+- The probe-feature target exposed two inherited active tests whose historical mega fixture now
+  resolves before defect-driven rebuilding. The same tests fail at `3bf5050`; they are now marked
+  as diagnostics with that reason, leaving the feature target compiling cleanly with 14 ignored
+  probes.
+- Paired single-thread candidate/parent medians were effectively identical: instructions moved
+  `+0.000250%` (Fibonacci) and `-0.000190%` (uniform); branches moved `+0.000053%` and
+  `-0.000769%` respectively.
+- Default-parallel medians stayed within the declared scheduling band: instructions moved
+  `+0.231277%` and `+0.237042%`; branches moved `+0.412397%` and `+0.404437%`. Paired means were
+  closer to zero than the medians.
+- Binary text grew by 112 bytes (`+0.0051%`); data size was unchanged. One-shot peak-RSS samples
+  ranged from `-1.11%` to `+0.12%`, with no adverse sample above 1%.
+- Cycle medians ranged from `-1.41%` to `+0.15%`. Task-clock was substantially noisier, but neither
+  had a corroborating retired-work signal, so the conditional quiet run was not warranted.
 
 ## QUAL-001A lifecycle rename map
 

@@ -76,7 +76,7 @@ pub struct ValidationReport {
     pub vertices_off_sphere: usize,
     /// Number of vertices that are referenced by no cells.
     ///
-    /// Representation note, not a defect: edge repair may leave unreferenced
+    /// Representation note, not a defect: edge reconciliation may leave unreferenced
     /// vertices behind rather than paying a compaction pass (they do not
     /// participate in the subdivision and the Euler count ignores them). Use
     /// [`crate::SphericalVoronoi::compact_vertices`] to remove them.
@@ -362,7 +362,7 @@ pub fn validate_cell_mesh(mesh: &crate::SphericalCellMesh) -> crate::CellMeshVal
 ///
 /// The full topological validator is O(E) and is skipped by the plain
 /// `compute` fast path for speed (the report-returning
-/// entry points already validate unconditionally). With the net's repair
+/// entry points already validate unconditionally). With reconciliation
 /// scans gated on detection records, a defect that left no record would
 /// ship silently on those paths. Enabling this runs the validator after
 /// every build and turns any strict-validity failure into an error —
@@ -769,7 +769,7 @@ fn scan_cells_strict(
     out
 }
 
-/// Strict validation of effective arrays in place — the repair acceptance gate
+/// Strict validation of effective arrays in place — the local-rebuild acceptance gate
 /// (also the plain-path contract check), sharing the strict contract of
 /// `verify_sphere_fast` without cloning the diagram into a `SphericalVoronoi`.
 /// Effective index space has no welded twins, so every cell is its own face
@@ -1352,7 +1352,7 @@ mod verify_gate_tests {
     }
 
     /// The slice validator must reach the SAME verdict (and first error) as the
-    /// canonical `verify_sphere_fast` it stands in for inside the re-clip repair.
+    /// canonical `verify_sphere_fast` it stands in for at the local-rebuild gate.
     fn assert_agree(d: &SphericalVoronoi) {
         let (v, c, ci) = effective_arrays(d);
         let generators: Vec<Vec3> = d

@@ -130,7 +130,7 @@ slightly slower in parallel.
 - Expected win: clean multithreaded builds with repair enabled.
 - Obvious edge cases: reconciliation mutations, repair acceptance/rejection, welded inputs, and
   high cross-bin incidence.
-- Keep the accounting active under `RepairMode::Disabled`; the topology summary is an independent
+- Keep the accounting active under `LocalRebuildMode::Disabled`; the topology summary is an independent
   plain-return safety signal.
 - Measure whether moving one cheap increment per incidence into the dominant construction/dedup
   phase offsets the removed tail pass.
@@ -155,7 +155,7 @@ instructions, 1.72% fewer branches, 1.65% fewer branch misses, 3.45% fewer cache
 with mixed cache movement. A 2M Fibonacci peak-RSS probe measured about 1.5 MiB more RSS, so this is
 not currently a memory-envelope win.
 
-The full `checked` test profile passes, including reconciliation and Local3d repair fixtures.
+The full `checked` test profile passes, including reconciliation and Hull3d rebuild fixtures.
 
 Windows-native paired wall-time measurements supplied the missing acceptance signal. At two
 million generators, owner-local incidence was 2.42% faster on Fibonacci, 2.87% faster on

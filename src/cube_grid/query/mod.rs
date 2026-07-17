@@ -37,7 +37,7 @@ impl CubeMapGrid {
     }
 
     /// Release the global-index-to-slot inverse after preprocessing. Weld
-    /// compaction is its final production consumer; construction and repair
+    /// compaction is its final production consumer; construction and local rebuilding
     /// operate in slot space from this point onward.
     pub(crate) fn release_point_slots(&mut self) {
         self.point_slots = Vec::new();

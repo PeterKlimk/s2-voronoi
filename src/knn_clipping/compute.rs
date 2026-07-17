@@ -3,8 +3,8 @@
 use glam::{DVec3, Vec3};
 
 use super::edge_reconcile;
-use super::escalate;
 use super::live_dedup;
+use super::local_rebuild;
 use super::output_resolution;
 use super::timing::{Timer, TimingBuilder};
 use super::{
@@ -17,18 +17,18 @@ use crate::cube_grid::CubeMapGridBuildTimings;
 use crate::diagram::VoronoiCell;
 use crate::{
     CellKillingPolicy, ComputeOutput, ComputeReport, DegenerateMode, DegenerateReport,
-    PreprocessMode, PreprocessReport, RepairMode, VoronoiConfig,
+    LocalRebuildMode, PreprocessMode, PreprocessReport, VoronoiConfig,
 };
 
-/// Per-seed neighbor count for the repair's grid kNN gather (the 2-ring gather
+/// Per-seed neighbor count for the local rebuild's grid kNN gather (the 2-ring gather
 /// collects each seed's `k + 1` nearest via the shell frontier).
-const ESCALATE_GATHER_K: usize = 32;
+const LOCAL_REBUILD_GATHER_K: usize = 32;
 /// Grow-until-clean round cap per defect component.
-const ESCALATE_MAX_ROUNDS: usize = 12;
+const LOCAL_REBUILD_MAX_ROUNDS: usize = 12;
 
 /// Everything the shared pipeline produces before the plain and report paths
 /// diverge: canonicalized inputs, the reconciled effective arrays, and the
-/// repair outcome. `TimingBuilder` rides along so the caller's final remap
+/// local rebuild outcome. `TimingBuilder` rides along so the caller's final remap
 /// lands in the same timing report.
 struct PipelineState {
     points: Vec<Vec3>,
@@ -38,10 +38,10 @@ struct PipelineState {
     vertices: Vec<Vec3>,
     eff_cells: Vec<VoronoiCell>,
     eff_cell_indices: Vec<u32>,
-    unresolved_edges: Vec<live_dedup::UnresolvedEdgeMismatch>,
-    post_repair_unpaired: Vec<(u32, u32)>,
-    reconciliation_escalations: Vec<(u32, u32)>,
-    repair: RepairOutcome,
+    edge_mismatches: Vec<live_dedup::EdgeMismatch>,
+    residual_unpaired: Vec<(u32, u32)>,
+    local_rebuild_seed_pairs: Vec<(u32, u32)>,
+    local_rebuild: LocalRebuildOutcome,
     output_resolution: crate::OutputResolutionReport,
     cell_killing_generators: Vec<usize>,
     tb: TimingBuilder,
@@ -80,7 +80,7 @@ fn canonicalize_pipeline_exact_zero_edges(
 ) -> Result<output_resolution::CanonicalizationOutcome, crate::VoronoiError> {
     let (exact_zero_candidates, localized_candidate_cells) = if decision.certified_hint {
         // Construction hints name pre-reconciliation edges. Re-scan their
-        // degree-local incident cells in the terminal diagram so a repair
+        // degree-local incident cells in the terminal diagram so a local rebuild
         // cannot leave a stale candidate, and add the complete footprint of
         // every post-assembly mutation. Untouched cells retain the original
         // construction certificate.
@@ -113,7 +113,7 @@ fn canonicalize_pipeline_exact_zero_edges(
                 &discovery_cells,
             )?;
 
-            // A repaired/minted endpoint may not exist in the assembly key
+            // A rebuilt/minted endpoint may not exist in the assembly key
             // store. In that rare case candidate discovery is still local and
             // complete, but quotient classification conservatively considers
             // every cell. Otherwise include every key owner so all references
@@ -158,13 +158,13 @@ fn canonicalize_pipeline_exact_zero_edges(
 }
 
 /// The shared front of both compute paths: validate → canonicalize → grid →
-/// per-cell shards → assemble → reconcile → repair. The plain path fails loud
-/// on residuals; the report path surfaces them in `ComputeReport`.
+/// per-cell shards → assemble → reconcile → local rebuild. The plain path
+/// fails loud on residuals; the report path surfaces them in `ComputeReport`.
 fn run_core_pipeline(
     points: Vec<Vec3>,
     termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
-    repair_mode: RepairMode,
+    local_rebuild_mode: LocalRebuildMode,
 ) -> Result<PipelineState, crate::VoronoiError> {
     validate_generator_capacity(points.len())?;
     let mut points = points;
@@ -195,7 +195,7 @@ fn run_core_pipeline(
     let live_dedup::AssemblyResult {
         mut vertices,
         vertex_keys,
-        unresolved_edges,
+        edge_mismatches,
         cells,
         cell_indices,
         exact_zero_edge_candidates,
@@ -207,20 +207,20 @@ fn run_core_pipeline(
     let (mut eff_cells, mut eff_cell_indices, reconcile_result) = reconcile_edges(
         &mut vertices,
         &vertex_keys,
-        &unresolved_edges,
+        &edge_mismatches,
         cells,
         cell_indices,
         &mut tb,
     )?;
     let edge_reconcile::ReconcileResult {
-        residual_pairs: post_repair_unpaired,
-        escalation_pairs: reconciliation_escalations,
+        residual_pairs: residual_unpaired,
+        local_rebuild_seed_pairs,
         merge_affected_cells,
         resolution_scan_cells: reconcile_resolution_scan_cells,
         ..
     } = reconcile_result;
-    // This is part of the plain-return safety gate, not merely a repair
-    // trigger. Compute it even when repair is disabled so that mode cannot
+    // This is part of the plain-return safety gate, not merely a local rebuild
+    // trigger. Compute it even when local rebuild is disabled so that mode cannot
     // suppress a known-invalid low-incidence output.
     let t_low_incidence = std::time::Instant::now();
     let topology = if reconcile_resolution_scan_cells.is_empty() {
@@ -240,27 +240,27 @@ fn run_core_pipeline(
         summarize_topology(vertices.len(), &eff_cells, &eff_cell_indices)
     };
     let low_incidence_scan_time = t_low_incidence.elapsed();
-    let RepairResult {
-        outcome: repair,
-        resolution_scan_cells: repair_resolution_scan_cells,
-    } = maybe_repair_effective(
+    let LocalRebuildResult {
+        outcome: local_rebuild,
+        resolution_scan_cells: local_rebuild_resolution_scan_cells,
+    } = maybe_rebuild_effective(
         effective_points_ref,
         &grid,
         &mut vertices,
         &vertex_keys,
         &mut eff_cells,
         &mut eff_cell_indices,
-        &post_repair_unpaired,
-        &reconciliation_escalations,
+        &residual_unpaired,
+        &local_rebuild_seed_pairs,
         &merge_affected_cells,
         topology,
         low_incidence_scan_time,
-        repair_mode,
+        local_rebuild_mode,
     );
     let reconcile_resolution_scan_cell_count = reconcile_resolution_scan_cells.len();
-    let repair_resolution_scan_cell_count = repair_resolution_scan_cells.len();
+    let local_rebuild_resolution_scan_cell_count = local_rebuild_resolution_scan_cells.len();
     let mut mutation_scan_cells = reconcile_resolution_scan_cells;
-    mutation_scan_cells.extend(repair_resolution_scan_cells);
+    mutation_scan_cells.extend(local_rebuild_resolution_scan_cells);
     mutation_scan_cells.sort_unstable();
     mutation_scan_cells.dedup();
 
@@ -279,7 +279,7 @@ fn run_core_pipeline(
         resolution_decision.certified_hint,
         resolution_decision.drift_fallback,
         reconcile_resolution_scan_cell_count,
-        repair_resolution_scan_cell_count,
+        local_rebuild_resolution_scan_cell_count,
         exact_zero_edge_hint_cells,
         hinted_candidate_count,
         resolution_outcome.report.exact_zero_edges_detected,
@@ -292,10 +292,10 @@ fn run_core_pipeline(
         vertices,
         eff_cells,
         eff_cell_indices,
-        unresolved_edges,
-        post_repair_unpaired,
-        reconciliation_escalations,
-        repair,
+        edge_mismatches,
+        residual_unpaired,
+        local_rebuild_seed_pairs,
+        local_rebuild,
         output_resolution: resolution_outcome.report,
         cell_killing_generators: resolution_outcome.cell_killing_generators,
         tb,
@@ -354,14 +354,14 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     points: Vec<Vec3>,
     termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
-    repair_mode: RepairMode,
+    local_rebuild_mode: LocalRebuildMode,
     cell_killing_policy: CellKillingPolicy,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
-    let mut state = run_core_pipeline(points, termination, preprocess_mode, repair_mode)?;
+    let mut state = run_core_pipeline(points, termination, preprocess_mode, local_rebuild_mode)?;
     check_plain_return_signals(
-        state.repair,
-        &state.post_repair_unpaired,
-        &state.reconciliation_escalations,
+        state.local_rebuild,
+        &state.residual_unpaired,
+        &state.local_rebuild_seed_pairs,
     )?;
     enforce_cell_killing_policy(&state, cell_killing_policy)?;
 
@@ -422,7 +422,7 @@ pub fn compute_voronoi_knn_clipping_with_config_owned(
             points,
             termination,
             config.preprocess_mode,
-            config.repair_mode,
+            config.local_rebuild_mode,
             config.cell_killing_policy,
         )
     })
@@ -441,7 +441,7 @@ pub fn compute_voronoi_knn_clipping_with_report_owned(
                 points,
                 termination,
                 config.preprocess_mode,
-                config.repair_mode,
+                config.local_rebuild_mode,
                 config.cell_killing_policy,
                 DegenerateReport {
                     requested_mode: config.degenerate_mode,
@@ -456,46 +456,44 @@ fn compute_voronoi_knn_clipping_report_core(
     points: Vec<Vec3>,
     termination: TerminationConfig,
     preprocess_mode: PreprocessMode,
-    repair_mode: RepairMode,
+    local_rebuild_mode: LocalRebuildMode,
     cell_killing_policy: CellKillingPolicy,
     degenerate_report: DegenerateReport,
 ) -> Result<ComputeOutput, crate::VoronoiError> {
-    let mut state = run_core_pipeline(points, termination, preprocess_mode, repair_mode)?;
+    let mut state = run_core_pipeline(points, termination, preprocess_mode, local_rebuild_mode)?;
     enforce_cell_killing_policy(&state, cell_killing_policy)?;
-    let repair_accepted = state.repair.accepted;
+    let local_rebuild_accepted = state.local_rebuild.accepted;
     // Surface output-invariant residuals alongside the detection records. If
-    // local repair was accepted, the returned diagram is strictly valid and
+    // local rebuild was accepted, the returned diagram is strictly valid and
     // these residuals no longer survive to output.
-    let pre_repair_edge_mismatches: Vec<(u32, u32, live_dedup::UnresolvedEdgeOrigin)> = state
-        .unresolved_edges
+    let assembly_edge_mismatches: Vec<(u32, u32, live_dedup::EdgeMismatchOrigin)> = state
+        .edge_mismatches
         .iter()
         .map(|m| {
             let (a, b) = edge_reconcile::unpack_edge(m.key.as_u64());
             (a.min(b), a.max(b), m.origin)
         })
         .collect();
-    let post_repair_unpaired_edges: Vec<(u32, u32)> = if repair_accepted {
+    let residual_unpaired_edges: Vec<(u32, u32)> = if local_rebuild_accepted {
         Vec::new()
     } else {
         state
-            .post_repair_unpaired
+            .residual_unpaired
             .iter()
             .map(|&(a, b)| (a.min(b), a.max(b)))
             .collect()
     };
-    let post_repair_escalation_pairs = if repair_accepted {
+    let residual_reconciliation_pairs = if local_rebuild_accepted {
         Vec::new()
     } else {
-        state.reconciliation_escalations.clone()
+        state.local_rebuild_seed_pairs.clone()
     };
-    if !repair_accepted {
-        for &(a, b) in &state.post_repair_unpaired {
-            state
-                .unresolved_edges
-                .push(live_dedup::UnresolvedEdgeMismatch {
-                    key: live_dedup::pack_edge(a, b),
-                    origin: live_dedup::UnresolvedEdgeOrigin::PostRepairUnpaired,
-                });
+    if !local_rebuild_accepted {
+        for &(a, b) in &state.residual_unpaired {
+            state.edge_mismatches.push(live_dedup::EdgeMismatch {
+                key: live_dedup::pack_edge(a, b),
+                origin: live_dedup::EdgeMismatchOrigin::PostReconciliationUnpaired,
+            });
         }
     }
 
@@ -541,17 +539,17 @@ fn compute_voronoi_knn_clipping_report_core(
             degenerate: degenerate_report,
             returned_validation,
             effective_validation,
-            pre_repair_edge_mismatch_count: pre_repair_edge_mismatches.len(),
-            repair: crate::RepairReport {
-                attempted: state.repair.attempted,
-                accepted: state.repair.accepted,
+            assembly_edge_mismatch_count: assembly_edge_mismatches.len(),
+            local_rebuild: crate::LocalRebuildReport {
+                attempted: state.local_rebuild.attempted,
+                accepted: state.local_rebuild.accepted,
             },
             output_resolution: state.output_resolution,
-            pre_repair_edge_mismatches,
-            post_repair_unpaired_edges,
-            post_repair_escalation_pairs,
-            unresolved_edge_pairs: state
-                .unresolved_edges
+            assembly_edge_mismatches,
+            residual_unpaired_edges,
+            residual_reconciliation_pairs,
+            reconciliation_edge_records: state
+                .edge_mismatches
                 .iter()
                 .map(|m| {
                     let (a, b) = edge_reconcile::unpack_edge(m.key.as_u64());
@@ -563,7 +561,7 @@ fn compute_voronoi_knn_clipping_report_core(
 }
 
 /// Cheap topology facts collected by the incidence pass already required for
-/// the repair trigger and plain-return safety gate.
+/// the local rebuild trigger and plain-return safety gate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TopologySummary {
     used_vertices: usize,
@@ -587,7 +585,7 @@ impl TopologySummary {
 }
 
 /// Summarize referenced vertices and live half-edges, including whether any
-/// referenced vertex has degree 1 or 2 (a real defect the repair should
+/// referenced vertex has degree 1 or 2 (a real defect the local rebuild should
 /// examine).
 ///
 /// Counts incidence over each cell's *live* window `[vertex_start ..
@@ -597,11 +595,11 @@ impl TopologySummary {
 /// `drop_degenerate_collinear_vertices` in `edge_reconcile`), so the buffer can
 /// retain stale tail slots that no live cell references. Scanning the whole
 /// buffer counts those stale slots as phantom degree-1/2 vertices and trips a
-/// no-op repair (a single stale slot cost ~13s of acceptance-gate work at
+/// no-op local rebuild (a single stale slot cost ~13s of acceptance-gate work at
 /// 2.5M). Counting live windows matches the validators (`validate_impl`,
-/// `verify_sphere_fast`) and the repair's own `low_incidence_gens`.
+/// `verify_sphere_fast`) and the local rebuild's own `low_incidence_gens`.
 /// This scan runs on EVERY build as a plain-return safety signal (and, when
-/// enabled, a repair trigger). It cannot piggyback on reconcile, which
+/// enabled, a local rebuild trigger). It cannot piggyback on reconcile, which
 /// early-returns when no edge is unresolved. Multi-threaded builds use exact
 /// shared atomic counters, read only after the chunk-parallel scan; a one-thread
 /// Rayon pool uses the same plain-counter path as a build without `parallel`.
@@ -682,18 +680,18 @@ fn summarize_topology(
     summarize_topology_scalar(vertex_count, cells, cell_indices)
 }
 
-/// Outcome of the repair attempt, for the caller's fail-loud decision.
+/// Outcome of the local rebuild attempt, for the caller's fail-loud decision.
 #[derive(Clone, Copy)]
-struct RepairOutcome {
-    /// A repair pass ran: defects were detected and the configured mode is
-    /// enabled. False on clean builds and when repair is disabled.
+struct LocalRebuildOutcome {
+    /// A local rebuild pass ran: defects were detected and the configured mode is
+    /// enabled. False on clean builds and when local rebuild is disabled.
     attempted: bool,
-    /// The repaired effective diagram passed the strict gate and was committed.
+    /// The rebuilt effective diagram passed the strict gate and was committed.
     accepted: bool,
     /// Detection found a low-incidence (degree-1/2) vertex defect. Such a
     /// vertex is strictly-invalid output even when every edge pairs (it fails
     /// `verify_sphere_effective_strict`'s "low-incidence vertex" check), so
-    /// when the repair was not accepted the plain path must fail loud on it —
+    /// when the local rebuild was not accepted the plain path must fail loud on it —
     /// there is no unpaired-edge residual to trip the existing guard.
     low_incidence_defect: bool,
     /// The cheap `V - H/2 + F` check failed (or `H` was odd). This catches
@@ -702,9 +700,9 @@ struct RepairOutcome {
     euler_defect: bool,
 }
 
-impl RepairOutcome {
-    const fn not_attempted(low_incidence_defect: bool, euler_defect: bool) -> RepairOutcome {
-        RepairOutcome {
+impl LocalRebuildOutcome {
+    const fn not_attempted(low_incidence_defect: bool, euler_defect: bool) -> LocalRebuildOutcome {
+        LocalRebuildOutcome {
             attempted: false,
             accepted: false,
             low_incidence_defect,
@@ -713,15 +711,15 @@ impl RepairOutcome {
     }
 }
 
-struct RepairResult {
-    outcome: RepairOutcome,
-    /// Cells whose final cycles were replaced by an accepted Local3d splice.
+struct LocalRebuildResult {
+    outcome: LocalRebuildOutcome,
+    /// Cells whose final cycles were replaced by an accepted Hull3d splice.
     /// Newly minted vertices are referenced only from these cells.
     resolution_scan_cells: Vec<u32>,
 }
 
-impl RepairResult {
-    fn unchanged(outcome: RepairOutcome) -> Self {
+impl LocalRebuildResult {
+    fn unchanged(outcome: LocalRebuildOutcome) -> Self {
         Self {
             outcome,
             resolution_scan_cells: Vec::new(),
@@ -732,34 +730,36 @@ impl RepairResult {
 /// Reject defect signals that cannot be surfaced by the plain compute API.
 ///
 /// Kept as one pure decision seam so fault-injection tests can pin the exact
-/// production return policy independently of repair mechanics.
+/// production return policy independently of local rebuild mechanics.
 fn check_plain_return_signals(
-    repair: RepairOutcome,
-    post_repair_unpaired: &[(u32, u32)],
-    reconciliation_escalations: &[(u32, u32)],
+    local_rebuild: LocalRebuildOutcome,
+    residual_unpaired: &[(u32, u32)],
+    local_rebuild_seed_pairs: &[(u32, u32)],
 ) -> Result<(), crate::VoronoiError> {
-    // A committed repair has already passed whole-diagram strict validation,
-    // so pre-repair signals no longer describe the returned geometry.
-    if repair.accepted {
+    // A committed local rebuild has already passed whole-diagram strict validation,
+    // so pre-rebuild signals no longer describe the returned geometry.
+    if local_rebuild.accepted {
         return Ok(());
     }
-    if !post_repair_unpaired.is_empty() {
-        return Err(edge_reconcile::residual_error(post_repair_unpaired));
+    if !residual_unpaired.is_empty() {
+        return Err(edge_reconcile::residual_error(residual_unpaired));
     }
-    if !reconciliation_escalations.is_empty() {
-        return Err(edge_reconcile::escalation_error(reconciliation_escalations));
+    if !local_rebuild_seed_pairs.is_empty() {
+        return Err(edge_reconcile::reconciliation_rejection_error(
+            local_rebuild_seed_pairs,
+        ));
     }
     // A low-incidence (degree-1/2) defect can exist with every edge paired,
     // so it needs a signal independent of the edge-residual checks above.
-    if repair.low_incidence_defect {
+    if local_rebuild.low_incidence_defect {
         return Err(crate::VoronoiError::ComputationFailed(
-            "post-assembly repair could not resolve a residual low-incidence \
+            "post-assembly local rebuild could not resolve a residual low-incidence \
              (degree-1/2) vertex defect — output is not a valid subdivision. \
              Use compute_with_report to inspect, or report this input."
                 .to_string(),
         ));
     }
-    if repair.euler_defect {
+    if local_rebuild.euler_defect {
         return Err(crate::VoronoiError::ComputationFailed(
             "post-assembly topology summary failed the spherical Euler check; \
              output is not a single valid spherical subdivision. Use \
@@ -770,163 +770,166 @@ fn check_plain_return_signals(
     Ok(())
 }
 
-/// Try the configured local repair and commit it only if whole-diagram strict
-/// validation succeeds. Reports both the public repair outcome and the exact
-/// local footprint whose final cycles changed on an accepted splice.
-#[allow(clippy::too_many_arguments)] // cohesive repair-entry state; splitting would obscure it
-fn maybe_repair_effective(
+/// Try the configured local rebuild and commit it only if whole-diagram strict
+/// validation succeeds. Reports both the public outcome and the exact local
+/// footprint whose final cycles changed on an accepted splice.
+#[allow(clippy::too_many_arguments)] // cohesive rebuild-entry state; splitting would obscure it
+fn maybe_rebuild_effective(
     effective_points: &[Vec3],
     grid: &CubeMapGrid,
     vertices: &mut Vec<Vec3>,
     vertex_keys: &live_dedup::ShardedVertexKeys,
     eff_cells: &mut Vec<VoronoiCell>,
     eff_cell_indices: &mut Vec<u32>,
-    post_repair_unpaired: &[(u32, u32)],
-    reconciliation_escalations: &[(u32, u32)],
+    residual_unpaired: &[(u32, u32)],
+    local_rebuild_seed_pairs: &[(u32, u32)],
     merge_affected_cells: &[u32],
     topology: TopologySummary,
     low_incidence_scan_time: std::time::Duration,
-    repair_mode: RepairMode,
-) -> RepairResult {
+    local_rebuild_mode: LocalRebuildMode,
+) -> LocalRebuildResult {
     let has_low_incidence = topology.low_incidence;
     let euler_defect = !topology.has_sphere_euler(eff_cells.len());
-    // A0 probes need the fast assembled state, not the repaired one.
-    #[cfg(feature = "escalate_probe")]
-    if std::env::var("VORONOI_MESH_ESCALATE_PROBE_A0").is_ok() {
-        escalate::stash_a0_fast(effective_points, vertex_keys, eff_cells, eff_cell_indices);
-        return RepairResult::unchanged(RepairOutcome::not_attempted(
+    // A0 probes need the fast assembled state, not the rebuilt one.
+    #[cfg(feature = "local_rebuild_probe")]
+    if std::env::var("VORONOI_MESH_LOCAL_REBUILD_PROBE_A0").is_ok() {
+        local_rebuild::stash_a0_fast(effective_points, vertex_keys, eff_cells, eff_cell_indices);
+        return LocalRebuildResult::unchanged(LocalRebuildOutcome::not_attempted(
             has_low_incidence,
             euler_defect,
         ));
     }
 
-    let repair_enabled =
-        !matches!(repair_mode, RepairMode::Disabled) || escalate::escalation_enabled();
-    if !repair_enabled {
-        return RepairResult::unchanged(RepairOutcome::not_attempted(
+    let local_rebuild_enabled = !matches!(local_rebuild_mode, LocalRebuildMode::Disabled)
+        || local_rebuild::local_rebuild_probe_forced();
+    if !local_rebuild_enabled {
+        return LocalRebuildResult::unchanged(LocalRebuildOutcome::not_attempted(
             has_low_incidence,
             euler_defect,
         ));
     }
 
-    let mut defect_pairs: Vec<(u32, u32)> = post_repair_unpaired
+    let mut defect_pairs: Vec<(u32, u32)> = residual_unpaired
         .iter()
-        .chain(reconciliation_escalations)
+        .chain(local_rebuild_seed_pairs)
         .map(|&(a, b)| (a.min(b), a.max(b)))
         .collect();
     defect_pairs.sort_unstable();
     defect_pairs.dedup();
-    if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
+    if std::env::var("VORONOI_MESH_LOCAL_REBUILD_DEBUG").is_ok() {
         eprintln!(
-            "repair trigger: low-incidence scan {:?} (defect_pairs={}, unpaired={}, no_chain={}, low_incidence={})",
+            "local rebuild trigger: low-incidence scan {:?} (defect_pairs={}, unpaired={}, no_chain={}, low_incidence={})",
             low_incidence_scan_time,
             defect_pairs.len(),
-            post_repair_unpaired.len(),
-            reconciliation_escalations.len(),
+            residual_unpaired.len(),
+            local_rebuild_seed_pairs.len(),
             has_low_incidence,
         );
     }
     if defect_pairs.is_empty() && !has_low_incidence {
-        return RepairResult::unchanged(RepairOutcome::not_attempted(false, euler_defect));
+        return LocalRebuildResult::unchanged(LocalRebuildOutcome::not_attempted(
+            false,
+            euler_defect,
+        ));
     }
-    let outcome = |accepted: bool| RepairOutcome {
+    let outcome = |accepted: bool| LocalRebuildOutcome {
         attempted: true,
         accepted,
         low_incidence_defect: has_low_incidence,
         euler_defect,
     };
 
-    // Local-neighbor gather index for the repair: O(local) shell-frontier kNN per
+    // Local-neighbor gather index for the local rebuild: O(local) shell-frontier kNN per
     // seed instead of the old O(n) brute force (a closure of thousands on a
     // dense-defect input made the brute force minutes-long). Reuse the construction
     // `grid` (occupancy-tuned; `compact_welded` keeps it bit-equivalent to a fresh
-    // effective-point build) rather than rebuilding. Repair uses the grid's
+    // effective-point build) rather than rebuilding. Local rebuild uses the grid's
     // unrestricted shell frontier because it wants every nearby generator, not
     // the directed construction subset.
-    let mut repair_scratch = grid.make_scratch();
+    let mut rebuild_scratch = grid.make_scratch();
 
-    let mut work = escalate::WorkingDiagram::from_assembled(
+    let mut work = local_rebuild::WorkingDiagram::from_assembled(
         vertices,
         vertex_keys,
         eff_cells,
         eff_cell_indices,
     );
-    #[cfg(feature = "escalate_probe")]
-    let stats = if std::env::var("VORONOI_MESH_ESCALATE_DELAUNATOR").is_ok() {
-        escalate::repair_delaunator(
+    #[cfg(feature = "local_rebuild_probe")]
+    let stats = if std::env::var("VORONOI_MESH_LOCAL_REBUILD_GLOBAL_DELAUNAY").is_ok() {
+        local_rebuild::rebuild_with_global_delaunay(
             effective_points,
             &mut work,
             &defect_pairs,
             merge_affected_cells,
-            ESCALATE_GATHER_K,
-            ESCALATE_MAX_ROUNDS,
+            LOCAL_REBUILD_GATHER_K,
+            LOCAL_REBUILD_MAX_ROUNDS,
         )
-    } else if matches!(repair_mode, RepairMode::LocalProjected) {
-        escalate::repair_local_exact(
+    } else if matches!(local_rebuild_mode, LocalRebuildMode::ProjectedDelaunay) {
+        local_rebuild::rebuild_with_projected_delaunay(
             effective_points,
             grid,
-            &mut repair_scratch,
+            &mut rebuild_scratch,
             &mut work,
             &defect_pairs,
             merge_affected_cells,
-            ESCALATE_GATHER_K,
-            ESCALATE_MAX_ROUNDS,
+            LOCAL_REBUILD_GATHER_K,
+            LOCAL_REBUILD_MAX_ROUNDS,
         )
     } else {
-        escalate::repair_local_hull(
+        local_rebuild::rebuild_with_local_hull(
             effective_points,
             grid,
-            &mut repair_scratch,
+            &mut rebuild_scratch,
             &mut work,
             &defect_pairs,
             merge_affected_cells,
-            ESCALATE_GATHER_K,
-            ESCALATE_MAX_ROUNDS,
+            LOCAL_REBUILD_GATHER_K,
+            LOCAL_REBUILD_MAX_ROUNDS,
         )
     };
-    #[cfg(not(feature = "escalate_probe"))]
-    let stats = if matches!(repair_mode, RepairMode::LocalProjected) {
-        escalate::repair_local_exact(
+    #[cfg(not(feature = "local_rebuild_probe"))]
+    let stats = if matches!(local_rebuild_mode, LocalRebuildMode::ProjectedDelaunay) {
+        local_rebuild::rebuild_with_projected_delaunay(
             effective_points,
             grid,
-            &mut repair_scratch,
+            &mut rebuild_scratch,
             &mut work,
             &defect_pairs,
             merge_affected_cells,
-            ESCALATE_GATHER_K,
-            ESCALATE_MAX_ROUNDS,
+            LOCAL_REBUILD_GATHER_K,
+            LOCAL_REBUILD_MAX_ROUNDS,
         )
     } else {
-        escalate::repair_local_hull(
+        local_rebuild::rebuild_with_local_hull(
             effective_points,
             grid,
-            &mut repair_scratch,
+            &mut rebuild_scratch,
             &mut work,
             &defect_pairs,
             merge_affected_cells,
-            ESCALATE_GATHER_K,
-            ESCALATE_MAX_ROUNDS,
+            LOCAL_REBUILD_GATHER_K,
+            LOCAL_REBUILD_MAX_ROUNDS,
         )
     };
-    // No splices means the repair did not modify `work` (a `splice_generator`
+    // No splices means the local rebuild did not modify `work` (a `splice_generator`
     // call is the only mutation, tracked 1:1 by `spliced_generators`). Skip the
     // flatten + full-diagram clone + validate of an unchanged diagram, which is
-    // the dominant cost of a no-op repair (~12.6s of a 15s tail at 2.5M).
+    // the dominant cost of a no-op local rebuild (~12.6s of a 15s tail at 2.5M).
     if stats.spliced_generators == 0 {
-        return RepairResult::unchanged(outcome(false));
+        return LocalRebuildResult::unchanged(outcome(false));
     }
 
     // Materialize the overlay: minted vertex positions (vids past the base
     // length) plus the full cell arrays. The base vertex array is extended in
-    // place — and truncated back on rejection — so an accepted repair never
+    // place — and truncated back on rejection — so an accepted local rebuild never
     // copies the base positions.
     let t_flat = std::time::Instant::now();
     let resolution_scan_cells = work.overridden_cells();
     let (minted_vertices, new_cells, mut new_cell_indices) = work.into_flat();
     // The in-place and rebuild reconciliation oracles can present the same
-    // cyclic boundary with different starting slots. Local3d preserves that
+    // cyclic boundary with different starting slots. Hull3d preserves that
     // arbitrary rotation when it splices a neighborhood. Canonicalize only
-    // this cold repaired output so semantically identical repair backends
+    // this cold rebuilt output so semantically identical local rebuild backends
     // remain byte-for-byte differential oracles; winding is unchanged.
     canonicalize_cell_cycle_starts(&new_cells, &mut new_cell_indices);
     let base_vertex_count = vertices.len();
@@ -934,23 +937,24 @@ fn maybe_repair_effective(
     let flat_elapsed = t_flat.elapsed();
     let t_gate = std::time::Instant::now();
 
-    // Whole-diagram never-worse gate: accept only if the repaired diagram is
+    // Whole-diagram never-worse gate: accept only if the rebuilt diagram is
     // strictly valid. Validate the effective arrays in place via
     // `verify_sphere_effective_strict` (same strict contract as `validate`,
     // pinned by the `effective_strict_matches_fast` differential test) rather
     // than cloning all of `effective_points`/vertices/cells/indices into a
     // temporary `SphericalVoronoi` — the clone was the dominant cost of a
-    // committed repair. The validate itself stays whole-diagram (the repair's
-    // blast radius is vertex-triple-identity-wide, so a local gate is unsound).
+    // committed local rebuild. The validation itself stays whole-diagram: the
+    // rebuild's blast radius is vertex-triple-identity-wide, so a local gate
+    // is unsound.
     let gate = crate::validation::verify_sphere_effective_strict(
         effective_points,
         vertices,
         &new_cells,
         &new_cell_indices,
     );
-    if std::env::var("VORONOI_MESH_ESCALATE_DEBUG").is_ok() {
+    if std::env::var("VORONOI_MESH_LOCAL_REBUILD_DEBUG").is_ok() {
         eprintln!(
-            "repair commit: into_flat {:?}, gate {:?} ({} verts, {} cells, gate {})",
+            "local rebuild commit: into_flat {:?}, gate {:?} ({} verts, {} cells, gate {})",
             flat_elapsed,
             t_gate.elapsed(),
             vertices.len(),
@@ -958,17 +962,17 @@ fn maybe_repair_effective(
             if gate.is_ok() { "accepted" } else { "rejected" },
         );
         if let Err(err) = &gate {
-            eprintln!("  repair gate rejection: {err}");
+            eprintln!("  local rebuild gate rejection: {err}");
         }
     }
     if gate.is_err() {
         vertices.truncate(base_vertex_count);
-        return RepairResult::unchanged(outcome(false));
+        return LocalRebuildResult::unchanged(outcome(false));
     }
 
     *eff_cells = new_cells;
     *eff_cell_indices = new_cell_indices;
-    RepairResult {
+    LocalRebuildResult {
         outcome: outcome(true),
         resolution_scan_cells,
     }
@@ -1125,7 +1129,7 @@ fn validate_generator_capacity(num_points: usize) -> Result<(), crate::VoronoiEr
 /// sees the raw count; welds are far too few to shift it.
 /// Canonicalize input points once at entry — f64-normalize and
 /// round back to f32 — so every consumer (grid, weld, charts, certificates,
-/// and repair) sees identical bits per generator. The
+/// and local rebuild) sees identical bits per generator. The
 /// per-builder f64 renormalization is gone; without this pass the pipeline
 /// solved a ~1-ulp-perturbed, asymmetrically-treated point set. Out-of-band lengths
 /// (contract-violating inputs) are left untouched and fail downstream as
@@ -1657,16 +1661,15 @@ fn assemble_shards(
     Ok(assembled)
 }
 
-/// Reconciled cell arrays plus the reconcile outcome: the post-repair
-/// output-invariant residuals (cell pairs whose shared edge stayed unpaired
-/// after both repair passes) and the merge-rewritten cells the local repair's
-/// residual scan must keep in scope.
+/// Reconciled cell arrays plus the reconciliation outcome: residual cell pairs whose
+/// shared edge stayed unpaired, and merge-rewritten cells that the local rebuild's
+/// localized residual scan must keep in scope.
 type ReconciledWithResiduals = (Vec<VoronoiCell>, Vec<u32>, edge_reconcile::ReconcileResult);
 
 fn reconcile_edges(
     vertices: &mut Vec<Vec3>,
     vertex_keys: &live_dedup::ShardedVertexKeys,
-    unresolved_edges: &[live_dedup::UnresolvedEdgeMismatch],
+    edge_mismatches: &[live_dedup::EdgeMismatch],
     mut cells: Vec<VoronoiCell>,
     mut cell_indices: Vec<u32>,
     tb: &mut TimingBuilder,
@@ -1674,9 +1677,9 @@ fn reconcile_edges(
     // Keep the clean production path free of even an environment lookup.
     // `ComputeReport` already records that a zero-record case was clean; the
     // detailed reconciliation telemetry is useful only on defect runs.
-    if !unresolved_edges.is_empty() {
+    if !edge_mismatches.is_empty() {
         edge_reconcile::emit_primary_reconcile_telemetry(
-            unresolved_edges,
+            edge_mismatches,
             vertices.as_slice(),
             &cells,
             &cell_indices,
@@ -1685,27 +1688,27 @@ fn reconcile_edges(
         );
     }
 
-    let repair_edges_storage: Vec<live_dedup::EdgeRecord> = unresolved_edges
+    let reconciliation_edge_storage: Vec<live_dedup::EdgeRecord> = edge_mismatches
         .iter()
         .map(|b| live_dedup::EdgeRecord { key: b.key })
         .collect();
 
     let t = Timer::start();
     // The sphere has no boundary: every interior edge must pair.
-    let reconcile_result = edge_reconcile::reconcile_unresolved_edges(
-        &repair_edges_storage,
+    let reconcile_result = edge_reconcile::reconcile_edge_mismatches(
+        &reconciliation_edge_storage,
         vertices.as_slice(),
         &mut cells,
         &mut cell_indices,
         edge_reconcile::VertexKeys::Sharded(vertex_keys),
         crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-        edge_reconcile::repair_apply_from_env(),
+        edge_reconcile::reconcile_apply_from_env(),
         |_, _| false,
     )?;
-    // The simple cross-bin stitch above is the only repair pass: any surviving
+    // The simple cross-bin stitch above is the only local rebuild pass: any surviving
     // unpaired interior edge is surfaced as a residual error by the caller
     // (valid-or-error contract — see docs/correctness.md; the dropped
-    // post-hoc Tier-2 repair investigation lives in git history).
+    // post-hoc Tier-2 local rebuild investigation lives in git history).
     tb.set_edge_reconcile(
         t.elapsed(),
         reconcile_result.merge_safety_scan_cells,
@@ -1752,14 +1755,14 @@ mod tests {
         check_plain_return_signals, classify_exact_affine_circle, classify_near_great_circle,
         map_build_cells_error, map_cell_build_error, max_cell_occupancy,
         resolution_discovery_decision, run_core_pipeline, stable_rank2_normal, summarize_topology,
-        validate_and_canonicalize_unit_points, validate_generator_capacity, RepairOutcome,
+        validate_and_canonicalize_unit_points, validate_generator_capacity, LocalRebuildOutcome,
     };
     use crate::diagram::VoronoiCell;
     use crate::knn_clipping::cell_build::{CellBuildError, CellFailure};
     use crate::knn_clipping::live_dedup::{
         BuildCellsError, PackedLayoutCapacityError, ShardedVertexKeys,
     };
-    use crate::{PreprocessMode, RepairMode, VoronoiError};
+    use crate::{LocalRebuildMode, PreprocessMode, VoronoiError};
     use glam::Vec3;
 
     fn zero_edge_cube_fixture() -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>, ShardedVertexKeys) {
@@ -1852,7 +1855,7 @@ mod tests {
             points.clone(),
             super::TerminationConfig::default(),
             PreprocessMode::Disabled,
-            RepairMode::Local3d,
+            LocalRebuildMode::Hull3d,
         )
         .expect("cell-killing fixture should reach output resolution");
         assert_eq!(state.cell_killing_generators, [1, 10]);
@@ -1898,7 +1901,7 @@ mod tests {
             welded_points.clone(),
             super::TerminationConfig::default(),
             PreprocessMode::MergeWithin(1.0e-10),
-            RepairMode::Local3d,
+            LocalRebuildMode::Hull3d,
         )
         .expect("welded extension should reach output resolution");
         let merge = welded_state
@@ -1983,27 +1986,27 @@ mod tests {
             );
         }
 
-        // Model a post-construction repair which creates the zero edge in one
+        // Model a post-construction local rebuild which creates the zero edge in one
         // rewritten cell. It was absent from construction hints, but the local
         // mutation footprint is sufficient to discover the same quotient.
-        let (_, mut repaired_cells, mut repaired_indices, repaired_keys) = zero_edge_cube_fixture();
-        let repaired_report = canonicalize_pipeline_exact_zero_edges(
+        let (_, mut rebuilt_cells, mut rebuilt_indices, rebuilt_keys) = zero_edge_cube_fixture();
+        let rebuilt_report = canonicalize_pipeline_exact_zero_edges(
             &vertices,
-            &repaired_keys,
-            &mut repaired_cells,
-            &mut repaired_indices,
+            &rebuilt_keys,
+            &mut rebuilt_cells,
+            &mut rebuilt_indices,
             Vec::new(),
             &[0],
             resolution_discovery_decision(false),
         )
         .expect("local mutation scan should discover an unhinted zero edge");
-        assert_eq!(repaired_report, report);
-        for (repaired, exhaustive) in repaired_cells.iter().zip(&exhaustive_cells) {
-            assert_eq!(repaired.vertex_count(), exhaustive.vertex_count());
-            let rs = repaired.vertex_start();
+        assert_eq!(rebuilt_report, report);
+        for (rebuilt, exhaustive) in rebuilt_cells.iter().zip(&exhaustive_cells) {
+            assert_eq!(rebuilt.vertex_count(), exhaustive.vertex_count());
+            let rs = rebuilt.vertex_start();
             let es = exhaustive.vertex_start();
             assert_eq!(
-                &repaired_indices[rs..rs + repaired.vertex_count()],
+                &rebuilt_indices[rs..rs + rebuilt.vertex_count()],
                 &exhaustive_indices[es..es + exhaustive.vertex_count()]
             );
         }
@@ -2032,35 +2035,35 @@ mod tests {
     }
 
     #[test]
-    fn disabled_repair_cannot_hide_low_incidence_from_plain_return_gate() {
+    fn disabled_local_rebuild_cannot_hide_low_incidence_from_plain_return_gate() {
         let cells = [VoronoiCell::new(0, 1), VoronoiCell::new(1, 1)];
         let indices = [0, 0];
         let topology = summarize_topology(1, &cells, &indices);
         assert!(topology.low_incidence);
 
-        // This is the outcome produced by RepairMode::Disabled: no repair was
+        // This is the outcome produced by LocalRebuildMode::Disabled: no local rebuild was
         // attempted, but the independently-computed safety signal survives.
-        let repair = RepairOutcome::not_attempted(
+        let local_rebuild = LocalRebuildOutcome::not_attempted(
             topology.low_incidence,
             !topology.has_sphere_euler(cells.len()),
         );
-        assert!(!repair.attempted);
-        assert!(!repair.accepted);
-        let err = check_plain_return_signals(repair, &[], &[])
-            .expect_err("known-invalid output must not escape when repair is disabled");
+        assert!(!local_rebuild.attempted);
+        assert!(!local_rebuild.accepted);
+        let err = check_plain_return_signals(local_rebuild, &[], &[])
+            .expect_err("known-invalid output must not escape when local_rebuild is disabled");
         assert!(matches!(err, VoronoiError::ComputationFailed(_)));
     }
 
     #[test]
-    fn accepted_strict_repair_supersedes_pre_repair_signals() {
-        let repair = RepairOutcome {
+    fn accepted_strict_local_rebuild_supersedes_pre_local_rebuild_signals() {
+        let local_rebuild = LocalRebuildOutcome {
             attempted: true,
             accepted: true,
             low_incidence_defect: true,
             euler_defect: true,
         };
-        check_plain_return_signals(repair, &[(1, 2)], &[(2, 3)])
-            .expect("accepted repair was already strictly validated");
+        check_plain_return_signals(local_rebuild, &[(1, 2)], &[(2, 3)])
+            .expect("accepted local_rebuild was already strictly validated");
     }
 
     fn fib_sphere(n: usize) -> Vec<[f32; 3]> {
@@ -2094,9 +2097,9 @@ mod tests {
         vertices: &[Vec3],
         cells: &[VoronoiCell],
         cell_indices: &[u32],
-    ) -> RepairOutcome {
+    ) -> LocalRebuildOutcome {
         let topology = summarize_topology(vertices.len(), cells, cell_indices);
-        RepairOutcome::not_attempted(
+        LocalRebuildOutcome::not_attempted(
             topology.low_incidence,
             !topology.has_sphere_euler(cells.len()),
         )
@@ -2117,8 +2120,8 @@ mod tests {
         );
         assert!(strict.is_err(), "{name}: injected defect must be invalid");
 
-        let repair = unaccepted_outcome(vertices, cells, cell_indices);
-        let gate = check_plain_return_signals(repair, &[], &[]);
+        let local_rebuild = unaccepted_outcome(vertices, cells, cell_indices);
+        let gate = check_plain_return_signals(local_rebuild, &[], &[]);
         assert!(
             gate.is_ok(),
             "{name}: expected this mutation to isolate a missing certificate; \
@@ -2148,12 +2151,12 @@ mod tests {
             topology.low_incidence,
             "{name}: fixture must be low-incidence"
         );
-        let repair = RepairOutcome::not_attempted(
+        let local_rebuild = LocalRebuildOutcome::not_attempted(
             topology.low_incidence,
             !topology.has_sphere_euler(cells.len()),
         );
         assert!(
-            check_plain_return_signals(repair, &[], &[]).is_err(),
+            check_plain_return_signals(local_rebuild, &[], &[]).is_err(),
             "{name}: low-incidence mutation must be rejected by the plain gate"
         );
     }
@@ -2182,7 +2185,7 @@ mod tests {
         );
         assert!(
             check_plain_return_signals(
-                RepairOutcome::not_attempted(topology.low_incidence, true),
+                LocalRebuildOutcome::not_attempted(topology.low_incidence, true),
                 &[],
                 &[],
             )
@@ -2313,7 +2316,7 @@ mod tests {
         assert_signal_free_gap("antipodal edge", &vertices, &cells, &indices);
 
         // Weld maps are created after the effective-space gate. An arbitrary
-        // corrupt alias is strictly invalid but has no pre-remap repair signal;
+        // corrupt alias is strictly invalid but has no pre-remap local rebuild signal;
         // its production safety rests on `remap_cells_to_original_indices`.
         let generators = good
             .generators()
@@ -2334,9 +2337,9 @@ mod tests {
             "corrupt weld alias must fail strict validation"
         );
         assert!(
-            check_plain_return_signals(RepairOutcome::not_attempted(false, false), &[], &[])
+            check_plain_return_signals(LocalRebuildOutcome::not_attempted(false, false), &[], &[])
                 .is_ok(),
-            "weld-map validity is not represented by a pre-remap repair signal"
+            "weld-map validity is not represented by a pre-remap local_rebuild signal"
         );
     }
 

@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use voronoi_mesh::{
-    compute_with, compute_with_report, validation::validate, RepairMode, UnitVec3, UnitVec3Like,
-    VoronoiConfig,
+    compute_with, compute_with_report, validation::validate, LocalRebuildMode, UnitVec3,
+    UnitVec3Like, VoronoiConfig,
 };
 
 const HEALTHY_F32_DOT_RESIDUAL: f64 = 2.0e-6;
@@ -113,12 +113,12 @@ fn assert_aud_002_voronoi_geometry() {
 
 #[test]
 fn aud_002_five_sites_preserve_voronoi_geometry() {
-    let disabled = VoronoiConfig::default().with_repair_mode(RepairMode::Disabled);
+    let disabled = VoronoiConfig::default().with_local_rebuild_mode(LocalRebuildMode::Disabled);
     if let Ok(diagram) = compute_with(&aud_002_points(), disabled) {
         let validation = validate(&diagram);
         assert!(
             validation.is_strictly_valid(),
-            "repair-disabled construction may succeed directly, but never invalidly: {}",
+            "local-rebuild-disabled construction may succeed directly, but never invalidly: {}",
             validation.headline()
         );
     }

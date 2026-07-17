@@ -50,7 +50,7 @@ pub(super) fn clip_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuff
     // input whose polygons fill the buffer; regression test below).
     let trans_mask = (mask ^ prev_mask) & full_mask;
 
-    // Exactly 2 for a single surviving arc; escalated flips can transiently
+    // Exactly 2 for a single surviving arc; epsilon-classification flips can transiently
     // produce multiple arcs (the first is kept, the established epsilon
     // policy — see small.rs's transition doc).
     debug_assert!(trans_mask.count_ones() >= 2);

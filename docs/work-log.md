@@ -17,7 +17,7 @@ moved here or treated as stale.
   correctness or policy finding under the documented production contract.
 - The production promise is a construction-certified, edge-agreeing, Euler-valid spherical mesh
   or a defined error. It is not exact combinatorial equality with one ideal normalized-site model.
-- Exact stored-zero edges are detected after final repair and safely contracted when doing so does
+- Exact stored-zero edges are detected after final topology mutation and safely contracted when doing so does
   not remove an effective generator cell.
 - Every current post-assembly mutator reports a complete changed-cell footprint for terminal
   exact-zero scanning; only globally uncertified representative drift forces global discovery.
@@ -54,12 +54,12 @@ prevention rather than an overclaimed proof.
 
 | ID | Priority | Status | Next gate |
 |---|---:|---|---|
-| WORK-002 | P2 | Ongoing | Exercise after construction/repair changes |
+| WORK-002 | P2 | Ongoing | Exercise after construction/reconciliation/rebuild changes |
 | POINT-001 | P2 | Completed | Checked `SpherePoint`, audited storage rule, and packed views landed |
 | POINT-002 | P2 | Completed | Closure-based zero-intermediate ingest landed without direct-path regression |
 | POINT-003 | P1 | Completed | Locator query validation and normalized ranking/certification landed |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
-| QUAL-001 | P2 | Ready | Apply the pinned lifecycle rename map |
+| QUAL-001 | P2 | Active | Remove obsolete compatibility surfaces and empty wrappers (QUAL-001F) |
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
@@ -108,7 +108,7 @@ prevention rather than an overclaimed proof.
   interoperability boundary; glam remains internal arithmetic.
 - **Numerical rule:** replace the existing ordinary/fallback f32 normalization at its current
   producer seam with promoted-f64-normalize-then-round. Generators, centroids, embedding
-  projection, and Local3d minting already use that order.
+  projection, and Hull3d minting already use that order.
 - **Evidence:** the producer audit, candidate topology/fidelity campaign, full release suite,
   Cachegrind/Linux counters, and native Mac timing are recorded in
   [`point-api-plan.md`](point-api-plan.md#stage-0-findings-and-decision).
@@ -133,7 +133,7 @@ prevention rather than an overclaimed proof.
 - **Starting theorem:** minimum geodesic site separation `alpha` gives every exact Voronoi cell a
   contained spherical cap of radius `alpha / 2`.
 - **Required composition:** bound input canonicalization/normalization, f64 clipping, gnomonic and
-  spherical fallback conversion, reconciliation/repair displacement, and final f32 storage against
+  spherical fallback conversion, reconciliation/local-rebuild displacement, and final f32 storage against
   that cap floor. Separate whole-cell survival from cocircular non-cell-killing zero edges, which
   welding cannot prevent.
 - **Finding:** the default recomputed squared weld threshold is
@@ -145,7 +145,7 @@ prevention rather than an overclaimed proof.
   larger than those inradius margins. It cannot simply be charged as arbitrary coordinate
   displacement—reconciliation changes IDs, retains positions, and transactionally rejects fewer
   than three IDs—but the current structural gates do not prove three final coordinate classes.
-  Local3d likewise passes whole-diagram strict topology validation without a coordinate-separation
+  Hull3d likewise passes whole-diagram strict topology validation without a coordinate-separation
   or Hausdorff certificate. A naïve displacement composition would require a weld chord above
   roughly `2.0e-6` nominal, `2.2384e-6` with normalization slack, or `2.4768e-6` under the
   conservative off-shell model, before other construction/storage errors.
@@ -157,7 +157,7 @@ prevention rather than an overclaimed proof.
   half/quarter exponent-boundary orientations, two rotations, and near-cocircular stress. The
   manually run extended campaign covered 256 rotated threshold-adjacent cases. Direct final
   coordinate scans found no collapse and agreed with full validation. Forced spherical handoff,
-  repair/fallback output, and welding-disabled positive controls are pinned separately.
+  reconciliation/local-rebuild/fallback output, and welding-disabled positive controls are pinned separately.
 - **Rejected fast-path certificate:** a construction-local x-separation certificate plus sparse
   terminal scans was implemented and measured. Ten-round interleaved 500k counters added about
   0.75–0.80% retired instructions and 0.41–0.45% branches. It changed no current policy outcome:
@@ -177,23 +177,23 @@ prevention rather than an overclaimed proof.
 - **Status:** Ongoing
 - **Scope:**
   - keep the exhaustive uniform small-`n` geometry campaign active;
-  - after reconciliation or Local3d edits, check owner equality and edge-bisector residuals as well
+  - after reconciliation or Hull3d edits, check owner equality and edge-bisector residuals as well
     as topology;
   - retain negative controls for reversed faces, duplicate faces/references, moved vertices, and
     disconnected unions of closed complexes;
   - compare semantic topology across thread counts, bin counts, default/scalar SIMD, and FMA; and
   - keep welding and deterministic perturbation in separate expected-policy buckets.
 - **Acceptance:** every supported successful result passes the relevant strict and intrinsic
-  geometry checks; Local3d escalation remains a valid success rather than a failure count.
+  geometry checks; Hull3d rebuilding remains a valid success rather than a failure count.
 - **Latest maintenance (2026-07-15):**
   - the extended uniform small-`n` campaign passed 62,464 intrinsic assessments; worst ownership,
     vertex cross-track, and edge cross-track errors were respectively `1.507e-7`, `7.918e-8`, and
     `1.833e-16` radians;
   - clustered 1M seed 1 remained strict-valid across 1/6 threads and 6/96 bins, with the same three
-    pre-repair defects, four-cell reconciliation footprint, 18 hinted versus 17 terminal zero
+    assembly defects, four-cell reconciliation footprint, 18 hinted versus 17 terminal zero
     edges, zero ownership mismatches in 733 samples, and `5.875e-8 rad` maximum sampled edge
     cross-track error;
-  - the repair-net suite passed all five active tests, including exact output agreement between
+  - the edge-reconciliation suite passed all five active tests, including exact output agreement between
     the production in-place reconciler and full-rebuild oracle; and
   - a vertex-id-independent semantic-topology fingerprint agreed across 1/6 threads, 6/96 bins,
     default SIMD, scalar SIMD, and hardware FMA. Default/scalar representations were byte-identical
@@ -266,7 +266,7 @@ default `Preserve` behavior.
   every generator for some cells. The existing exhaustion replay is correct but does not detect
   this successful high-work regime.
 - **Candidate direction:** a progress-aware total-work budget followed by unrestricted spherical,
-  Local3d, or global-hull escalation.
+  Hull3d, or global-hull rebuilding.
 - **Measurement available:** timing builds report total candidate-work and no-geometric-progress
   tail quantiles plus counts at 4x/16x/64x each run's median. Batched exhaustion-recovery cells are
   reported as exclusions from the latter. `bench_voronoi --dist great-circle` provides a directly
@@ -287,7 +287,7 @@ tasks and are not duplicated here.
 ### QUAL-001 — Performance-preserving cleanup
 
 - **Priority:** P2
-- **Status:** Ready; direction accepted 2026-07-17
+- **Status:** Active; baseline and QUAL-001A vocabulary migration completed 2026-07-17
 - **Goal:** reduce change amplification and make pipeline invariants structural without giving back
   established throughput, memory behavior, or numerical/correctness guarantees.
 - **Compatibility posture:** there are no external users as of 2026-07-17. Use this window for
@@ -301,6 +301,16 @@ tasks and are not duplicated here.
 - **Baseline:** counter-oriented Milestone 0 evidence and the exact atomic lifecycle rename map are
   pinned in [`code-quality-baseline.md`](code-quality-baseline.md). The shared host's wall clock is
   advisory; single-thread retired instructions/branches are the primary first-change sentinel.
+- **QUAL-001A result:** public, internal, feature, environment, CLI, report, test, and current-doc
+  terminology now distinguishes assembly mismatches, reconciliation, residual output facts, and
+  local rebuilding. The migration was breaking and alias-free; the unread reclip knob was removed.
+  Semantic fingerprints matched exactly, single-thread retired work was effectively identical,
+  multi-thread retired work remained within its declared noise band, and code size/RSS gates
+  passed. Detailed measurements are in
+  [`code-quality-baseline.md`](code-quality-baseline.md#qual-001a-validation-result).
+- **Next gate:** QUAL-001F—remove unused compatibility re-exports, resolve empty
+  `TerminationConfig`, decide the current planar abstraction, and audit doc-hidden/internal
+  visibility before changing state shapes.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.
@@ -317,7 +327,7 @@ tasks and are not duplicated here.
 - **Status:** Backburner
 - **Scope if revived:** choose one normalized site model, add filtered exact clipping signs, derive
   compatible kNN termination bounds, share one exact-zero/SoS policy, handle non-simplicial
-  (>3-generator) vertices, and prevent tolerance repair from becoming an authority over exact
+  (>3-generator) vertices, and prevent tolerance-based reconciliation from becoming an authority over exact
   combinatorics.
 - **Gate:** first measure exact-filter activation and fast-path cost. This is an optional add-on,
   not the core graphical contract.
@@ -344,14 +354,14 @@ tasks and are not duplicated here.
 
 - **Priority:** P3
 - **Status:** Backburner
-- **Scope:** parallel f64 site/output types, f64 clipping/repair/validation/measures, a sound f64
+- **Scope:** parallel f64 site/output types, f64 clipping/reconciliation/local-rebuild/validation/measures, a sound f64
   search certificate, and an exact-duplicate policy. An f64 API must not silently round through the
   existing f32 representation.
 - **Reference:** [`../ROADMAP.md`](../ROADMAP.md).
 
 ## Suggested order
 
-1. Continue WORK-002 whenever construction, reconciliation, or Local3d changes.
+1. Continue WORK-002 whenever construction, reconciliation, or Hull3d changes.
 2. Execute QUAL-001 in staged, independently benchmarked milestones.
 3. Decide RES-002 only when positive-threshold mesh conditioning is wanted.
 4. Revisit PERF-001 only with a motivating workload and crossover measurements.
@@ -372,9 +382,9 @@ tasks and are not duplicated here.
   density-contrast distributions at 50k plus focused 1M clustered and 100k mega cases. All 29 used
   certified discovery with no drift fallback. The runs visited 235,681 hint cells, rechecked 72
   construction candidates, and detected 71 final exact-zero edges.
-- **Repair evidence:** clustered 1M seed 1 reported four reconciliation scan cells and changed 18
+- **Mutation evidence:** clustered 1M seed 1 reported four reconciliation scan cells and changed 18
   construction candidates into 17 actual terminal edges, directly exercising the stale-hint
-  recheck. No accepted Local3d repair occurred naturally in the bounded soak; its complete splice
+  recheck. No accepted Hull3d rebuild occurred naturally in the bounded soak; its complete splice
   footprint remains pinned by a direct regression and stays observable in ongoing WORK-002 runs.
 - **Boundary coverage:** signed zero, exact threshold, and adjacent-f32 cases remain pinned.
 
@@ -383,17 +393,17 @@ tasks and are not duplicated here.
 - **Priority:** P2
 - **Status:** Completed 2026-07-15
 - **Resolution:** reconciliation reports the exact local cover for accepted merges and collinear
-  drops; accepted Local3d reports every spliced cell. Terminal discovery rescans those final cycles
+  drops; accepted Hull3d rebuilding reports every spliced cell. Terminal discovery rescans those final cycles
   and rechecks construction-candidate neighborhoods before canonicalization.
 - **Locality rule:** a cycle rewrite can only create an edge in a rewritten cycle. A mutator that
   changes an existing vertex position must report every incident cell. Representative-drift or
   missing provenance retains the whole-diagram fallback.
 - **Regression:** an unhinted zero edge attributed to a post-construction mutation produces the
-  same report and quotient as exhaustive discovery; direct tests pin reconciliation and Local3d
+  same report and quotient as exhaustive discovery; direct tests pin reconciliation and Hull3d
   footprint reporting.
 - **Fast path:** 10-round, 500k, single-thread perf counters versus `43a125a` measured
   instruction/branch ratios of `1.00126`/`1.00172` for Fibonacci and `0.99943`/`1.00174` for
-  uniform. The repair footprints were empty in ordinary runs; release inlining at the existing
+  uniform. The mutation footprints were empty in ordinary runs; release inlining at the existing
   per-generator phase seams is pinned to prevent unrelated cold-path codegen perturbation.
 
 - AUD-001 through AUD-017: closed; see [`audit-triage.md`](audit-triage.md).

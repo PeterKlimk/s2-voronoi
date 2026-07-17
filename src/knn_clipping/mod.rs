@@ -14,8 +14,8 @@ pub(crate) mod edge_reconcile;
 // and serves both the spherical and planar drivers); re-exported so
 // existing paths keep working.
 pub(crate) use crate::live_dedup;
-pub(crate) mod escalate;
 pub(crate) mod local_hull;
+pub(crate) mod local_rebuild;
 pub(crate) mod output_resolution;
 pub(crate) mod preprocess;
 // Timing instrumentation moved to the crate root (the live-dedup engine

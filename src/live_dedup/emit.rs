@@ -115,7 +115,7 @@ impl EdgeScratch {
             };
             let thirds = thirds_for_emit(
                 keys_verified,
-                &mut shard.output.unresolved_edges,
+                &mut shard.output.edge_mismatches,
                 entry.key,
                 keys,
             );
@@ -150,7 +150,7 @@ impl EdgeScratch {
             };
             let thirds = thirds_for_emit(
                 keys_verified,
-                &mut shard.output.unresolved_edges,
+                &mut shard.output.edge_mismatches,
                 entry.key,
                 keys,
             );

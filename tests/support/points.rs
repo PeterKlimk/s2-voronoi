@@ -147,7 +147,7 @@ pub fn clustered_cap_points(n: usize, cap_radius_rad: f32, seed: u64) -> Vec<Uni
 /// Mega density-contrast: a `frac` fraction of the points packed into a tiny
 /// cap (radius 0.05 rad) around the north pole, the rest uniform over the
 /// sphere. This manufactures the high-degree cocircular degenerate vertices that
-/// drive the fallback extractor + Tier-2 re-clip repair — the only distribution
+/// drive fallback extraction, reconciliation, and local rebuilding — the only distribution
 /// observed to exercise that path. `frac` is the cap fraction (default 0.8 when
 /// `<= 0`); mirrors `bench_voronoi`'s `mega` distribution.
 pub fn mega_points(n: usize, frac: f32, seed: u64) -> Vec<UnitVec3> {

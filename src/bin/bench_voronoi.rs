@@ -20,7 +20,7 @@ use std::io::{self, Write};
 use std::time::Instant;
 #[cfg(feature = "profiling")]
 use std::{collections::hash_map::DefaultHasher, hash::Hasher};
-use voronoi_mesh::{PreprocessMode, RepairMode, UnitVec3, VoronoiConfig};
+use voronoi_mesh::{LocalRebuildMode, PreprocessMode, UnitVec3, VoronoiConfig};
 
 fn parse_count(s: &str) -> Result<usize, String> {
     let s = s.to_lowercase();
@@ -293,9 +293,9 @@ struct Args {
     #[arg(long)]
     no_preprocess: bool,
 
-    /// Disable local repair for benchmarking raw fast-path behavior.
+    /// Disable local rebuilding for benchmarking raw fast-path behavior.
     #[arg(long)]
-    no_repair: bool,
+    no_local_rebuild: bool,
 
     /// Number of iterations to run (useful for profiling)
     #[arg(short = 'n', long, default_value_t = 1)]
@@ -541,7 +541,7 @@ fn format_num(n: usize) -> String {
     }
 }
 
-fn validate_output(points: &[Vec3], preprocess: bool, repair: bool, dist: &str, seed: u64) {
+fn validate_output(points: &[Vec3], preprocess: bool, local_rebuild: bool, dist: &str, seed: u64) {
     println!("\nRunning strict validation and sampled quality checks...");
     let unit_points: Vec<UnitVec3> = points
         .iter()
@@ -557,10 +557,10 @@ fn validate_output(points: &[Vec3], preprocess: bool, repair: bool, dist: &str, 
             } else {
                 PreprocessMode::Disabled
             })
-            .with_repair_mode(if repair {
-                RepairMode::Local3d
+            .with_local_rebuild_mode(if local_rebuild {
+                LocalRebuildMode::Hull3d
             } else {
-                RepairMode::Disabled
+                LocalRebuildMode::Disabled
             }),
     )
     .expect("voronoi-mesh should succeed");
@@ -588,12 +588,12 @@ fn validate_output(points: &[Vec3], preprocess: bool, repair: bool, dist: &str, 
         );
     }
     println!(
-        "FIDELITY_KV dist={dist} n={} seed={seed} valid={} pre_defects={} repair_attempted={} repair_accepted={} {}",
+        "FIDELITY_KV dist={dist} n={} seed={seed} valid={} pre_defects={} local_rebuild_attempted={} local_rebuild_accepted={} {}",
         output.preferred_diagram().num_cells(),
         report.is_strictly_valid(),
-        output.report.pre_repair_edge_mismatch_count,
-        output.report.repair.attempted,
-        output.report.repair.accepted,
+        output.report.assembly_edge_mismatch_count,
+        output.report.local_rebuild.attempted,
+        output.report.local_rebuild.accepted,
         quality.fidelity_kv_fields(),
     );
     if report.degenerate_cells > 0 {
@@ -732,8 +732,8 @@ fn main() {
     if args.no_preprocess {
         println!("  preprocess = disabled (no point merging)");
     }
-    if args.no_repair {
-        println!("  repair = disabled");
+    if args.no_local_rebuild {
+        println!("  local rebuild = disabled");
     }
     if args.repeat > 1 {
         println!("  repeat = {}", args.repeat);
@@ -767,10 +767,10 @@ fn main() {
             } else {
                 PreprocessMode::Weld
             })
-            .with_repair_mode(if args.no_repair {
-                RepairMode::Disabled
+            .with_local_rebuild_mode(if args.no_local_rebuild {
+                LocalRebuildMode::Disabled
             } else {
-                RepairMode::Local3d
+                LocalRebuildMode::Hull3d
             });
 
         for iter in 0..args.repeat {
@@ -820,7 +820,7 @@ fn main() {
             validate_output(
                 &points,
                 !args.no_preprocess,
-                !args.no_repair,
+                !args.no_local_rebuild,
                 &args.dist,
                 args.seed,
             );
