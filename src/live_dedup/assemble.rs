@@ -36,9 +36,8 @@ fn prefer_shard_order_scatter(bin_generators: &[Vec<usize>], num_cells: usize) -
     // The measured crossover lies widely between Fibonacci (~0.2% of n)
     // and shuffled/uniform input (~7% of n). One percent keeps ordered
     // inputs on contiguous destination writes and scrambled inputs on
-    // contiguous shard-source reads. BinId and LocalId representation limits
-    // keep both products well below u64::MAX.
-    samples != 0 && abs_delta * 100 > num_cells as u64 * samples
+    // contiguous shard-source reads.
+    crate::spatial_order::classify_spatial_correlation(abs_delta, samples, num_cells).is_scrambled()
 }
 
 #[inline(always)]

@@ -31,6 +31,27 @@ enum PointViewsBuild {
     Deferred,
 }
 
+const INPUT_ORDER_SAMPLES: usize = 32;
+
+fn input_spatial_correlation(
+    point_cells: &[u32],
+    num_cells: usize,
+) -> (crate::spatial_order::SpatialOrderCorrelation, u64, u64) {
+    let pair_count = point_cells.len().saturating_sub(1);
+    let sample_count = pair_count.min(INPUT_ORDER_SAMPLES);
+    let mut abs_delta = 0u64;
+    for sample in 0..sample_count {
+        let i = sample * pair_count / sample_count;
+        abs_delta += point_cells[i + 1].abs_diff(point_cells[i]) as u64;
+    }
+    let samples = sample_count as u64;
+    (
+        crate::spatial_order::classify_spatial_correlation(abs_delta, samples, num_cells),
+        abs_delta,
+        samples,
+    )
+}
+
 /// Build a conservatively rounded cap directly from the cell's projected
 /// corners. Deriving the sine as `sqrt(1 - cos_radius^2)` is ill-conditioned
 /// for small cells and loses the entire radius once the cosine rounds to 1.
@@ -81,6 +102,91 @@ pub(super) fn build_pos_aos(
             idx: point_indices[i],
         })
         .collect()
+}
+
+/// Materialize the coordinate SoA from the grid's spatial slot order.
+///
+/// The index stream is sequential here; generator positions may be gathered
+/// from caller order. This is the source/destination-locality counterpart to
+/// scattering all four streams while traversing the caller's point slice.
+fn materialize_slot_coordinates(
+    points: &[Vec3],
+    point_indices: &[u32],
+) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+    let n = point_indices.len();
+    let mut xs = Vec::<f32>::with_capacity(n);
+    let mut ys = Vec::<f32>::with_capacity(n);
+    let mut zs = Vec::<f32>::with_capacity(n);
+    let x_addr = xs.spare_capacity_mut().as_mut_ptr() as usize;
+    let y_addr = ys.spare_capacity_mut().as_mut_ptr() as usize;
+    let z_addr = zs.spare_capacity_mut().as_mut_ptr() as usize;
+
+    let write_slot = |slot: usize, global: u32| {
+        let point = points[global as usize];
+        // SAFETY: each slot is visited exactly once and lies within all three
+        // allocations' spare capacities. The vectors remain length zero until
+        // every parallel worker has joined.
+        unsafe {
+            (x_addr as *mut f32).add(slot).write(point.x);
+            (y_addr as *mut f32).add(slot).write(point.y);
+            (z_addr as *mut f32).add(slot).write(point.z);
+        }
+    };
+
+    #[cfg(feature = "parallel")]
+    point_indices
+        .par_iter()
+        .enumerate()
+        .for_each(|(slot, &global)| write_slot(slot, global));
+    #[cfg(not(feature = "parallel"))]
+    point_indices
+        .iter()
+        .enumerate()
+        .for_each(|(slot, &global)| write_slot(slot, global));
+
+    // SAFETY: the traversal above initializes every slot exactly once.
+    unsafe {
+        xs.set_len(n);
+        ys.set_len(n);
+        zs.set_len(n);
+    }
+    (xs, ys, zs)
+}
+
+#[derive(Clone, Copy)]
+struct GridScatterDestinations {
+    indices: usize,
+    xs: usize,
+    ys: usize,
+    zs: usize,
+}
+
+#[inline(always)]
+unsafe fn scatter_input_chunk<const WRITE_COORDINATES: bool>(
+    points: &[Vec3],
+    point_cells: &[u32],
+    cursors: &mut [u32],
+    global_offset: usize,
+    destinations: GridScatterDestinations,
+) {
+    debug_assert!(!WRITE_COORDINATES || points.len() == point_cells.len());
+    for (i, &cell) in point_cells.iter().enumerate() {
+        let original_idx = global_offset + i;
+        let cell = cell as usize;
+        let pos = cursors[cell] as usize;
+        cursors[cell] += 1;
+        unsafe {
+            (destinations.indices as *mut u32)
+                .add(pos)
+                .write(original_idx as u32);
+            if WRITE_COORDINATES {
+                let point = *points.get_unchecked(i);
+                (destinations.xs as *mut f32).add(pos).write(point.x);
+                (destinations.ys as *mut f32).add(pos).write(point.y);
+                (destinations.zs as *mut f32).add(pos).write(point.z);
+            }
+        }
+    }
 }
 
 impl CubeMapGrid {
@@ -201,6 +307,16 @@ impl CubeMapGrid {
                 face_uv_to_cell(face, u, v, res) as u32
             })
             .collect();
+        #[allow(unused_variables)]
+        let (input_correlation, input_order_abs_delta, input_order_pairs) =
+            input_spatial_correlation(&point_cells, num_cells);
+        let materialize_coordinates_by_slot = input_correlation.is_scrambled();
+        #[cfg(feature = "timing")]
+        if let Some(timings) = timings.as_deref_mut() {
+            timings.input_order_abs_delta += input_order_abs_delta;
+            timings.input_order_pairs += input_order_pairs;
+            timings.materialize_coordinates_by_slot |= materialize_coordinates_by_slot;
+        }
 
         // Step 2, 3, 4: Count, Prefix Sum, Scatter.
         // These are distinct in implementation between parallel and sequential strategies.
@@ -269,52 +385,59 @@ impl CubeMapGrid {
             // 4. Parallel Scatter
             let n = points.len();
             let mut point_indices = Vec::<u32>::with_capacity(n);
-            let mut cell_points_x = Vec::<f32>::with_capacity(n);
-            let mut cell_points_y = Vec::<f32>::with_capacity(n);
-            let mut cell_points_z = Vec::<f32>::with_capacity(n);
+            let mut cell_points_x = Vec::<f32>::new();
+            let mut cell_points_y = Vec::<f32>::new();
+            let mut cell_points_z = Vec::<f32>::new();
+            if !materialize_coordinates_by_slot {
+                cell_points_x.reserve_exact(n);
+                cell_points_y.reserve_exact(n);
+                cell_points_z.reserve_exact(n);
+            }
 
             // Keep the Vec lengths at zero while the parallel scatter initializes
             // their spare capacity. If a worker panics, unwinding therefore never
             // observes or drops partially initialized elements.
-            let ptr_indices_addr = point_indices.spare_capacity_mut().as_mut_ptr() as usize;
-            let ptr_x_addr = cell_points_x.spare_capacity_mut().as_mut_ptr() as usize;
-            let ptr_y_addr = cell_points_y.spare_capacity_mut().as_mut_ptr() as usize;
-            let ptr_z_addr = cell_points_z.spare_capacity_mut().as_mut_ptr() as usize;
+            let destinations = GridScatterDestinations {
+                indices: point_indices.spare_capacity_mut().as_mut_ptr() as usize,
+                xs: cell_points_x.spare_capacity_mut().as_mut_ptr() as usize,
+                ys: cell_points_y.spare_capacity_mut().as_mut_ptr() as usize,
+                zs: cell_points_z.spare_capacity_mut().as_mut_ptr() as usize,
+            };
 
-            // Let's stick to the `zip` approach but fix the index issue.
-            // We can calculate the start index: zip with `(0..num_chunks)`.
-            points
-                .par_chunks(chunk_size)
-                .zip(point_cells.par_chunks(chunk_size))
-                .zip(chunk_cursors.into_par_iter())
-                .enumerate()
-                .for_each(
-                    move |(chunk_idx, ((points_chunk, cells_chunk), mut cursors))| {
-                        let indices_base = ptr_indices_addr as *mut u32;
-                        let x_base = ptr_x_addr as *mut f32;
-                        let y_base = ptr_y_addr as *mut f32;
-                        let z_base = ptr_z_addr as *mut f32;
-
+            if materialize_coordinates_by_slot {
+                point_cells
+                    .par_chunks(chunk_size)
+                    .zip(chunk_cursors.into_par_iter())
+                    .enumerate()
+                    .for_each(move |(chunk_idx, (cells_chunk, mut cursors))| unsafe {
                         let global_offset = chunk_idx * chunk_size;
-
-                        unsafe {
-                            for i in 0..points_chunk.len() {
-                                let original_idx = global_offset + i;
-                                let cell = cells_chunk[i] as usize;
-                                let p = points_chunk[i];
-
-                                let pos = cursors[cell] as usize;
-                                // Increment cursor for next point in this cell
-                                cursors[cell] += 1;
-
-                                *indices_base.add(pos) = original_idx as u32;
-                                *x_base.add(pos) = p.x;
-                                *y_base.add(pos) = p.y;
-                                *z_base.add(pos) = p.z;
-                            }
-                        }
-                    },
-                );
+                        scatter_input_chunk::<false>(
+                            &[],
+                            cells_chunk,
+                            &mut cursors,
+                            global_offset,
+                            destinations,
+                        );
+                    });
+            } else {
+                points
+                    .par_chunks(chunk_size)
+                    .zip(point_cells.par_chunks(chunk_size))
+                    .zip(chunk_cursors.into_par_iter())
+                    .enumerate()
+                    .for_each(
+                        move |(chunk_idx, ((points_chunk, cells_chunk), mut cursors))| unsafe {
+                            let global_offset = chunk_idx * chunk_size;
+                            scatter_input_chunk::<true>(
+                                points_chunk,
+                                cells_chunk,
+                                &mut cursors,
+                                global_offset,
+                                destinations,
+                            );
+                        },
+                    );
+            }
 
             // SAFETY: The prefix sums partition `0..n` into disjoint ranges for
             // every (chunk, cell) pair. Each input point advances exactly one
@@ -322,9 +445,16 @@ impl CubeMapGrid {
             // every slot exactly once. Rayon has joined all workers at this point.
             unsafe {
                 point_indices.set_len(n);
-                cell_points_x.set_len(n);
-                cell_points_y.set_len(n);
-                cell_points_z.set_len(n);
+            }
+            if materialize_coordinates_by_slot {
+                (cell_points_x, cell_points_y, cell_points_z) =
+                    materialize_slot_coordinates(points, &point_indices);
+            } else {
+                unsafe {
+                    cell_points_x.set_len(n);
+                    cell_points_y.set_len(n);
+                    cell_points_z.set_len(n);
+                }
             }
 
             #[cfg(feature = "timing")]
@@ -376,27 +506,42 @@ impl CubeMapGrid {
             debug_assert_eq!(cell_offsets[num_cells] as usize, n, "prefix sum mismatch");
 
             let mut point_indices = Vec::<u32>::with_capacity(n);
-            let mut cell_points_x = Vec::<f32>::with_capacity(n);
-            let mut cell_points_y = Vec::<f32>::with_capacity(n);
-            let mut cell_points_z = Vec::<f32>::with_capacity(n);
-
-            let indices_spare = point_indices.spare_capacity_mut();
-            let x_spare = cell_points_x.spare_capacity_mut();
-            let y_spare = cell_points_y.spare_capacity_mut();
-            let z_spare = cell_points_z.spare_capacity_mut();
+            let mut cell_points_x = Vec::<f32>::new();
+            let mut cell_points_y = Vec::<f32>::new();
+            let mut cell_points_z = Vec::<f32>::new();
+            if !materialize_coordinates_by_slot {
+                cell_points_x.reserve_exact(n);
+                cell_points_y.reserve_exact(n);
+                cell_points_z.reserve_exact(n);
+            }
+            let destinations = GridScatterDestinations {
+                indices: point_indices.spare_capacity_mut().as_mut_ptr() as usize,
+                xs: cell_points_x.spare_capacity_mut().as_mut_ptr() as usize,
+                ys: cell_points_y.spare_capacity_mut().as_mut_ptr() as usize,
+                zs: cell_points_z.spare_capacity_mut().as_mut_ptr() as usize,
+            };
 
             let mut cell_cursors = cell_offsets[..num_cells].to_vec();
-            for (i, cell_u32) in point_cells.iter().copied().enumerate() {
-                let cell = cell_u32 as usize;
-                let pos = cell_cursors[cell] as usize;
-                let p = points[i];
-
-                indices_spare[pos].write(i as u32);
-                x_spare[pos].write(p.x);
-                y_spare[pos].write(p.y);
-                z_spare[pos].write(p.z);
-
-                cell_cursors[cell] += 1;
+            if materialize_coordinates_by_slot {
+                unsafe {
+                    scatter_input_chunk::<false>(
+                        &[],
+                        &point_cells,
+                        &mut cell_cursors,
+                        0,
+                        destinations,
+                    );
+                }
+            } else {
+                unsafe {
+                    scatter_input_chunk::<true>(
+                        points,
+                        &point_cells,
+                        &mut cell_cursors,
+                        0,
+                        destinations,
+                    );
+                }
             }
 
             debug_assert!(
@@ -410,9 +555,16 @@ impl CubeMapGrid {
             // SAFETY: The prefix-sum scatter visits each `pos` in `0..n` exactly once
             unsafe {
                 point_indices.set_len(n);
-                cell_points_x.set_len(n);
-                cell_points_y.set_len(n);
-                cell_points_z.set_len(n);
+            }
+            if materialize_coordinates_by_slot {
+                (cell_points_x, cell_points_y, cell_points_z) =
+                    materialize_slot_coordinates(points, &point_indices);
+            } else {
+                unsafe {
+                    cell_points_x.set_len(n);
+                    cell_points_y.set_len(n);
+                    cell_points_z.set_len(n);
+                }
             }
             #[cfg(feature = "timing")]
             if let Some(timings) = timings.as_deref_mut() {
@@ -809,5 +961,27 @@ impl CubeMapGrid {
             u_line_planes: u_planes,
             v_line_planes: v_planes,
         }
+    }
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::*;
+
+    #[test]
+    fn input_order_gate_distinguishes_cell_major_and_scrambled_cells() {
+        let cell_major: Vec<u32> = (0..64).flat_map(|cell| [cell, cell]).collect();
+        assert_eq!(
+            input_spatial_correlation(&cell_major, 10_000).0,
+            crate::spatial_order::SpatialOrderCorrelation::Correlated
+        );
+
+        let scrambled: Vec<u32> = (0..128)
+            .map(|i| if i % 2 == 0 { i / 2 } else { 9_999 - i / 2 })
+            .collect();
+        assert_eq!(
+            input_spatial_correlation(&scrambled, 10_000).0,
+            crate::spatial_order::SpatialOrderCorrelation::Scrambled
+        );
     }
 }

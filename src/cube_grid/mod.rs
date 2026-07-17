@@ -57,6 +57,9 @@ pub(crate) struct CubeMapGridBuildTimings {
     pub ring2: Duration,
     pub cell_bounds: Duration,
     pub security_3x3: Duration,
+    pub input_order_abs_delta: u64,
+    pub input_order_pairs: u64,
+    pub materialize_coordinates_by_slot: bool,
 }
 
 /// Dummy timings when feature is disabled (zero-sized).

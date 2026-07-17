@@ -717,6 +717,12 @@ impl PhaseTimings {
                     sub_pct(sub.scatter_soa)
                 );
                 eprintln!(
+                    "    grid_order_sample: pairs={} mean_abs_cell_delta={:.1} materialize_by_slot={}",
+                    sub.input_order_pairs,
+                    sub.input_order_abs_delta as f64 / sub.input_order_pairs.max(1) as f64,
+                    sub.materialize_coordinates_by_slot,
+                );
+                eprintln!(
                     "    grid_neighbors:  {:7.1}ms ({:4.1}%)",
                     ms(sub.neighbors),
                     sub_pct(sub.neighbors)

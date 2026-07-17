@@ -540,7 +540,7 @@ Recently accepted optimizations:
   uniform changed -0.05% (-0.59% to +0.49%, 11/20). Keep the lower-work lifecycle and named build
   modes; the intervals rule out the noisy Linux Fibonacci cycle regression on the outcome host.
 
-Accepted output-materialization result:
+Spatial-order materialization policy candidate:
 
 - **Adaptive final index scatter:** phase attribution showed that the apparent final typed point
   conversion was already an allocation-preserving ownership transfer. An isolated cell-metadata
@@ -564,6 +564,27 @@ Accepted output-materialization result:
   counters reduced retired instructions by 0.25% on Fibonacci and 0.55% on uniform in every one of
   nine pairs. This is a locality trade selected from the input's existing spatial-order signal,
   not a public-format change.
+
+- **Adaptive grid coordinate materialization:** the same one-percent mean-delta policy now also
+  classifies the grid-build boundary. The grid samples 32 adjacent input point-to-cell addresses.
+  A correlated, already cell-major input retains the fused pass that scatters ids and XYZ together.
+  A scrambled input first scatters only ids, then traverses spatial slots to gather each input point
+  and write the three coordinate arrays sequentially. This adds a pass and about 0.19--0.21% whole-
+  build Linux instructions, but the final readable implementation reduced 1M uniform cycles by
+  8.27%, cache references by 16.11%, and cache misses by 26.67% in all five confirmation pairs;
+  Fibonacci cycles were 0.80% lower with four of five pairs favorable and cache traffic neutral.
+
+  The quiet eight-thread Intel Mac supplied the outcome signal against the accepted output-scatter
+  baseline. In the final 20-pair 2M multithreaded build, Fibonacci was neutral (643.2ms versus
+  642.8ms median), while uniform improved from 790.4ms to 769.8ms; the uniform geometric ratio was
+  0.9754 with a 0.9685--0.9824 interval and all 20 pairs favorable. A focused 30-pair Fibonacci
+  run on the pre-readability form was likewise neutral (ratio 0.9958, interval 0.9897--1.0020). The
+  final code was also neutral single-threaded at 1M (Fibonacci 1003.7ms versus 1008.5ms; uniform
+  1264.2ms versus 1261.0ms). With preprocessing disabled at 2M multithreaded, Fibonacci remained
+  neutral (643.7ms versus 650.0ms) and uniform improved from 802.5ms to 777.8ms. The cell-major
+  `cubed` guard retained the fused path and was neutral over 20 pairs. This makes the final-scatter
+  choice part of one cross-pipeline address-order policy rather than a distribution-named assembly
+  exception.
 
 Untried probes and candidates (2026-07-17 triage; each begins with a cheap measurement gate):
 

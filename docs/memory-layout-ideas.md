@@ -535,7 +535,7 @@ takeover path; this table is too small to create a useful memory-envelope win.
 
 ## 7. Final output materialization
 
-**Status: adaptive final index scatter accepted (2026-07-17).**
+**Status: shared spatial-order materialization policy candidate (2026-07-17).**
 
 ### Current cost and ceiling probe
 
@@ -592,6 +592,26 @@ a roughly 0.3% median regression and an interval spanning neutral. Linux fixed-w
 reduced instructions by 0.25% on Fibonacci and 0.55% on uniform in all nine pairs. The larger null
 write result remains only an upper bound: direct flat backing stores or segmented public storage
 would add substantially more coupling for an unproven residual benefit.
+
+The follow-up grid experiment established that this is broader than one final-scatter exception.
+Both grid construction and final output now use the same classification rule: sample adjacent
+addresses in the current traversal, and treat their order as scrambled when the mean absolute
+delta exceeds 1% of the destination/source domain. The two boundaries apply that result differently:
+
+- grid construction keeps its fused input-order scatter for correlated cell-major input, but for
+  scrambled input scatters ids first and then writes XYZ sequentially in spatial-slot order;
+- final assembly retains generator order when spatial shard sources correlate with generator ids,
+  and otherwise streams each shard source while scattering into fixed generator-ordered spans.
+
+On the quiet Mac, the final combined policy left 2M multithreaded Fibonacci neutral and improved
+uniform by 2.46% geometrically (ratio 0.9754, interval 0.9685--0.9824, 20/20 favorable). A focused
+30-pair Fibonacci control was neutral. The final code was also neutral single-threaded for both
+Fibonacci and uniform; with preprocessing disabled, multithreaded Fibonacci remained neutral and
+uniform improved by about 3.1% by median. The already cell-major `cubed` guard was neutral in the
+preceding policy build. The grid half adds roughly 0.2% retired instructions to buy lower
+multithreaded cache traffic; it is a measured locality win rather than a retired-work reduction.
+The policy is based on address correlation, not benchmark distribution names, and leaves every
+public order and storage contract unchanged.
 
 Do not couple the clipper to final addresses merely to chase the full null-write percentage. Counts
 and offsets are not known until shard construction completes, and a counting prepass or synchronized
