@@ -12,7 +12,7 @@ use rustc_hash::FxHashMap;
 
 use super::{
     bound_merge_components, collect_merges, dist_sq, edge_segments_for_neighbor_into, unpack_edge,
-    vertex_pos, MergeLedger, MergeMode, VertexKeys,
+    vertex_pos, MergeLedger, MergeMode, ReconcileOptions, VertexKeys,
 };
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::union_find::SparseUnionFind;
@@ -133,13 +133,18 @@ pub(crate) fn emit_primary_reconcile_telemetry(
     cell_indices: &[u32],
     vertex_keys: VertexKeys<'_>,
     eps: f32,
+    options: ReconcileOptions,
 ) {
-    if std::env::var_os("VORONOI_MESH_RECONCILE_TELEMETRY").is_none() {
-        return;
-    }
-
     let started = Instant::now();
-    match analyze_primary(unresolved, vertices, cells, cell_indices, vertex_keys, eps) {
+    match analyze_primary(
+        unresolved,
+        vertices,
+        cells,
+        cell_indices,
+        vertex_keys,
+        eps,
+        options,
+    ) {
         Ok(stats) => emit_stats(&stats, eps, started.elapsed().as_secs_f64() * 1_000.0),
         Err(err) => {
             eprintln!(
@@ -159,6 +164,7 @@ fn analyze_primary(
     cell_indices: &[u32],
     vertex_keys: VertexKeys<'_>,
     eps: f32,
+    options: ReconcileOptions,
 ) -> Result<PrimaryTelemetry, crate::VoronoiError> {
     let mut stats = PrimaryTelemetry {
         records: unresolved.len(),
@@ -262,6 +268,7 @@ fn analyze_primary(
             eps,
             MergeMode::Primary,
             true,
+            options,
         )?;
         let (mut uf, simulated_unions, rejected_components, _) = bound_merge_components(
             &mut proposed,
@@ -503,6 +510,7 @@ mod tests {
             &cell_indices,
             VertexKeys::Flat(&vertex_keys),
             1.0e-6,
+            ReconcileOptions::default(),
         )
         .expect("telemetry analysis");
 

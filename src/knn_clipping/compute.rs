@@ -1684,19 +1684,26 @@ fn reconcile_edges(
     mut cell_indices: Vec<u32>,
     tb: &mut TimingBuilder,
 ) -> Result<ReconciledWithResiduals, crate::VoronoiError> {
-    // Keep the clean production path free of even an environment lookup.
-    // `ComputeReport` already records that a zero-record case was clean; the
-    // detailed reconciliation telemetry is useful only on defect runs.
-    if !edge_mismatches.is_empty() {
-        edge_reconcile::emit_primary_reconcile_telemetry(
-            edge_mismatches,
-            vertices.as_slice(),
-            &cells,
-            &cell_indices,
-            edge_reconcile::VertexKeys::Sharded(vertex_keys),
-            crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-        );
-    }
+    // Snapshot all reconciliation diagnostics/oracles once, but only after a
+    // mismatch exists. `ComputeReport` already records that a zero-record case
+    // was clean, so that path remains free of environment lookups.
+    let reconcile_options = if edge_mismatches.is_empty() {
+        edge_reconcile::ReconcileOptions::default()
+    } else {
+        let options = edge_reconcile::ReconcileOptions::read_from_env();
+        if options.emit_telemetry() {
+            edge_reconcile::emit_primary_reconcile_telemetry(
+                edge_mismatches,
+                vertices.as_slice(),
+                &cells,
+                &cell_indices,
+                edge_reconcile::VertexKeys::Sharded(vertex_keys),
+                crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
+                options,
+            );
+        }
+        options
+    };
 
     let reconciliation_edge_storage: Vec<live_dedup::EdgeRecord> = edge_mismatches
         .iter()
@@ -1712,7 +1719,7 @@ fn reconcile_edges(
         &mut cell_indices,
         edge_reconcile::VertexKeys::Sharded(vertex_keys),
         crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-        edge_reconcile::reconcile_apply_from_env(),
+        reconcile_options,
     )?;
     // The simple cross-bin stitch above is the only local rebuild pass: any surviving
     // unpaired interior edge is surfaced as a residual error by the caller

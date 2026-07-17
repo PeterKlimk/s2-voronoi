@@ -331,9 +331,13 @@ tasks and are not duplicated here.
 - **QUAL-001H local-rebuild options result:** debug output and the feature-only global-Delaunay
   selector are snapshotted once per actual rebuild attempt and passed explicitly through the grow
   loop. Disabled and no-trigger computations return before either lookup.
-- **Next gate:** give reconciliation the same defect-scoped options treatment; its apply-mode reader
-  currently runs before the empty-record early return, and its duplicate-scan selector is read from
-  inside reconciliation rounds.
+- **QUAL-001H reconciliation options result:** telemetry, apply-backend selection, and the global
+  duplicate-scan fallback are snapshotted together only after mismatch records exist, then passed
+  explicitly through telemetry and reconciliation rounds. Clean computations perform no
+  reconciliation environment lookup.
+- **Next gate:** audit the remaining singleton stage diagnostics, starting with the live-assembly
+  mismatch-origin reader and terminal output-resolution telemetry. Preserve useful zero-event
+  diagnostics rather than moving reads merely for symmetry.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

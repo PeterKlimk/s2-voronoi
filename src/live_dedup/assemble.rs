@@ -705,7 +705,8 @@ pub(super) fn assemble_sharded_live_dedup(
 mod tests {
     use super::*;
     use crate::knn_clipping::edge_reconcile::{
-        edge_segments_for_neighbor, reconcile_edge_mismatches, ReconcileApply, VertexKeys,
+        edge_segments_for_neighbor, reconcile_edge_mismatches, ReconcileApply, ReconcileOptions,
+        VertexKeys,
     };
     use crate::live_dedup::binning::BinAssignment;
     use crate::live_dedup::packed::{pack_edge, INVALID_INDEX};
@@ -1136,7 +1137,7 @@ mod tests {
             &mut cell_indices,
             VertexKeys::Sharded(&assembled.vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-            ReconcileApply::InPlace,
+            ReconcileOptions::with_apply(ReconcileApply::InPlace),
         )
         .expect("reconciliation should succeed without capacity overflow");
         let spans_after: Vec<Vec<u32>> = cells

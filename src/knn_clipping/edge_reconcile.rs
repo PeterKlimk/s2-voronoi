@@ -332,20 +332,56 @@ impl MergeLedger {
 /// `Rebuild` is the original full rewrite, retained as the differential
 /// oracle: the two backends must produce identical per-cell vertex
 /// sequences (pinned by the unit tests below and the full-pipeline
-/// differential in tests/edge_reconcile_net.rs via `VORONOI_MESH_RECONCILE_REBUILD`).
+/// differential in tests/edge_reconciliation.rs via `VORONOI_MESH_RECONCILE_REBUILD`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ReconcileApply {
     InPlace,
     Rebuild,
 }
 
-/// Production apply mode: in-place unless `VORONOI_MESH_RECONCILE_REBUILD=1`
-/// selects the rebuild oracle (diagnostic / differential-testing knob,
-/// read once per compute on the cold path).
-pub(crate) fn reconcile_apply_from_env() -> ReconcileApply {
-    match std::env::var("VORONOI_MESH_RECONCILE_REBUILD") {
-        Ok(v) if v == "1" => ReconcileApply::Rebuild,
-        _ => ReconcileApply::InPlace,
+/// Immutable diagnostic/oracle choices for one defect-bearing reconciliation.
+/// Production constructs this only after confirming that mismatch records exist;
+/// explicit constructors keep unit differentials independent of process state.
+#[derive(Clone, Copy)]
+pub(crate) struct ReconcileOptions {
+    apply: ReconcileApply,
+    force_global_dupscan: bool,
+    emit_telemetry: bool,
+}
+
+impl ReconcileOptions {
+    pub(crate) const fn with_apply(apply: ReconcileApply) -> Self {
+        Self {
+            apply,
+            force_global_dupscan: false,
+            emit_telemetry: false,
+        }
+    }
+
+    /// Snapshot all reconciliation environment knobs once per defect-bearing
+    /// computation. Keep each knob's historical value semantics exact.
+    pub(crate) fn read_from_env() -> Self {
+        Self {
+            apply: match std::env::var("VORONOI_MESH_RECONCILE_REBUILD") {
+                Ok(v) if v == "1" => ReconcileApply::Rebuild,
+                _ => ReconcileApply::InPlace,
+            },
+            force_global_dupscan: matches!(
+                std::env::var("VORONOI_MESH_RECONCILE_GLOBAL_DUPSCAN"),
+                Ok(v) if v == "1"
+            ),
+            emit_telemetry: std::env::var_os("VORONOI_MESH_RECONCILE_TELEMETRY").is_some(),
+        }
+    }
+
+    pub(crate) const fn emit_telemetry(self) -> bool {
+        self.emit_telemetry
+    }
+}
+
+impl Default for ReconcileOptions {
+    fn default() -> Self {
+        Self::with_apply(ReconcileApply::InPlace)
     }
 }
 
@@ -385,7 +421,7 @@ pub(crate) fn reconcile_edge_mismatches(
     vertex_keys: VertexKeys<'_>,
     // Degenerate-length threshold in spherical chord units.
     degenerate_len_eps: f32,
-    apply: ReconcileApply,
+    options: ReconcileOptions,
 ) -> Result<ReconcileResult, crate::VoronoiError> {
     if edge_records.is_empty() {
         // Production fast path: with no detected mismatch there is nothing to
@@ -451,7 +487,7 @@ pub(crate) fn reconcile_edge_mismatches(
         cell_indices,
         vertex_keys,
         degenerate_len_eps,
-        apply,
+        options,
         MergeMode::Primary,
         &mut merge_ledger,
         &mut local_rebuild_seed_pairs,
@@ -483,7 +519,7 @@ pub(crate) fn reconcile_edge_mismatches(
             cell_indices,
             vertex_keys,
             degenerate_len_eps,
-            apply,
+            options,
             MergeMode::ProximityOnly,
             &mut merge_ledger,
             &mut local_rebuild_seed_pairs,
@@ -637,7 +673,7 @@ fn run_reconciliation_rounds(
     cell_indices: &mut Vec<u32>,
     vertex_keys: VertexKeys<'_>,
     degenerate_len_eps: f32,
-    apply: ReconcileApply,
+    options: ReconcileOptions,
     mode: MergeMode,
     merge_ledger: &mut MergeLedger,
     local_rebuild_seed_pairs: &mut Vec<(u32, u32)>,
@@ -673,6 +709,7 @@ fn run_reconciliation_rounds(
             degenerate_len_eps,
             mode,
             scan_dup_keys,
+            options,
         )?;
         let (mut uf, merged, rejected_components, round_merge_safety) = bound_merge_components(
             &mut proposed,
@@ -709,7 +746,7 @@ fn run_reconciliation_rounds(
                         .extend(key.iter().copied().filter(|&g| (g as usize) < cells.len()));
                 }
             }
-            match apply {
+            match options.apply {
                 ReconcileApply::Rebuild => {
                     let (new_cells, new_indices) =
                         apply_merges_rebuild(&mut uf, cells, cell_indices)?;
@@ -1026,13 +1063,6 @@ fn proximity_union_segments(
     Ok(())
 }
 
-/// Escape hatch: force the O(V) global same-key duplicate scan instead of the
-/// localized BFS. Diagnostic / differential safety valve, read once on the cold
-/// defect path.
-fn dupscan_force_global() -> bool {
-    matches!(std::env::var("VORONOI_MESH_RECONCILE_GLOBAL_DUPSCAN"), Ok(v) if v == "1")
-}
-
 /// Union all same-key vertex duplicates by a single O(V) pass over every key.
 /// First-seen (lowest id, since iteration is sequential) is the representative.
 fn global_dup_key_unions(
@@ -1170,6 +1200,7 @@ fn collect_merges(
     degenerate_len_eps: f32,
     mode: MergeMode,
     scan_dup_keys: bool,
+    options: ReconcileOptions,
 ) -> Result<(SparseUnionFind, usize), crate::VoronoiError> {
     // Sparse: only the handful of vertices named by defective edges ever
     // enter the structure, so clean and near-clean runs skip the O(V) init
@@ -1189,7 +1220,7 @@ fn collect_merges(
     // the same vertex by model definition: union them all up front. Gated
     // on defect runs, so clean runs never pay the O(V) scan.
     if scan_dup_keys {
-        if dupscan_force_global() {
+        if options.force_global_dupscan {
             global_dup_key_unions(vertex_keys, &mut uf, &mut merged);
         } else {
             localized_dup_key_unions(
@@ -1931,7 +1962,7 @@ mod tests {
             &mut idx_r,
             VertexKeys::Flat(vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-            ReconcileApply::Rebuild,
+            ReconcileOptions::with_apply(ReconcileApply::Rebuild),
         )
         .expect("rebuild reconciliation should succeed");
 
@@ -1943,7 +1974,7 @@ mod tests {
             &mut idx_p,
             VertexKeys::Flat(vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-            ReconcileApply::InPlace,
+            ReconcileOptions::with_apply(ReconcileApply::InPlace),
         )
         .expect("in-place reconciliation should succeed");
 
@@ -2201,7 +2232,7 @@ mod tests {
             &mut cell_indices,
             VertexKeys::Flat(&vertex_keys),
             eps,
-            ReconcileApply::InPlace,
+            ReconcileOptions::with_apply(ReconcileApply::InPlace),
             MergeMode::Primary,
             &mut ledger,
             &mut local_rebuild_seed_pairs,
@@ -2303,7 +2334,7 @@ mod tests {
             &mut reconciled_indices,
             VertexKeys::Flat(&vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-            ReconcileApply::InPlace,
+            ReconcileOptions::with_apply(ReconcileApply::InPlace),
         )
         .expect("cell-killing one-sided edge should local_rebuild cleanly");
 
@@ -2375,6 +2406,7 @@ mod tests {
                 eps,
                 MergeMode::Primary,
                 false,
+                ReconcileOptions::default(),
             )
             .expect("one-shared-endpoint merge collection");
             assert_eq!(
@@ -2446,7 +2478,7 @@ mod tests {
             &mut footprint_indices,
             VertexKeys::Flat(&vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-            ReconcileApply::InPlace,
+            ReconcileOptions::with_apply(ReconcileApply::InPlace),
         )
         .expect("reconciliation should report its mutation footprint");
         assert!(!result.resolution_scan_cells.is_empty());
@@ -2473,7 +2505,7 @@ mod tests {
             &mut reconciled_indices,
             VertexKeys::Flat(&vertex_keys),
             crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
-            ReconcileApply::InPlace,
+            ReconcileOptions::with_apply(ReconcileApply::InPlace),
         )
         .expect("distant mismatch should remain a controlled residual");
         assert!(

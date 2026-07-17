@@ -313,6 +313,37 @@ The fourth diagnostics/test-layout slice was validated on 2026-07-18 against imm
   Every measured run had zero context switches and CPU migrations. There was no adverse counter
   signal warranting a quiet wall-clock run.
 
+## QUAL-001H reconciliation cold-options result
+
+The fifth diagnostics/test-layout slice was validated on 2026-07-18 against immediate parent
+`76942be`.
+
+- `ReconcileOptions` snapshots telemetry, apply-backend selection, and the global duplicate-scan
+  fallback once per defect-bearing computation. The immutable record is passed through telemetry,
+  primary/backstop rounds, and duplicate collection; explicit test options remain independent of
+  process state.
+- A zero mismatch-record computation constructs only the default value and performs no
+  reconciliation environment lookup. Previously the apply-backend variable was read on every
+  computation, while telemetry and the duplicate-scan selector read process state inside their
+  respective stage helpers.
+- The record preserves each variable's exact historical value semantics and combined settings:
+  telemetry analysis still honors the captured global-scan override when both are enabled.
+- All 13 reconciliation unit tests and the complete deterministic defect suite passed. Targeted
+  runs also passed with the global duplicate scan forced, telemetry enabled, and both flags enabled
+  together; the existing differential continued to cover both apply backends.
+- `cargo clippy --all-targets --all-features -- -D warnings`, the complete release and checked
+  suites, the no-default-features release suite, and the `serde,glam` release suite all passed.
+- The 100k semantic fingerprint remained `961e56d915d09a4e` in both the 1-thread/6-bin and
+  6-thread/96-bin checks, with representation fingerprints `0991e1df6f60d5de` and
+  `0e65ca5dbe8fe07c`, 199,996 vertices, and 100,000 cells.
+- Matched native release builds reported 2,177,671 text, 55,784 data, and 1,579 BSS bytes for the
+  candidate versus 2,177,651 text, 55,784 data, and 1,611 BSS bytes for the parent. Text grew 20
+  bytes, data was unchanged, BSS fell 32 bytes, and the total footprint fell 12 bytes.
+- Seven interleaved, CPU-pinned 500k Fibonacci runs retired a mean 3,420,119,124 instructions for
+  the candidate and 3,420,122,919 for the parent, a neutral -3,795 (-0.00011%) candidate delta.
+  Five of seven pairs favored the candidate; every run had zero context switches and CPU
+  migrations. There was no adverse counter signal warranting a quiet wall-clock run.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
@@ -356,7 +387,7 @@ diagram, and cell-mesh wire types; their field names and formats are outside thi
 | `unresolved_edges` variables | `edge_mismatches` |
 | `reconcile_unresolved_edges` | `reconcile_edge_mismatches` |
 | `RepairApply` | `ReconcileApply` |
-| `repair_apply_from_env` | `reconcile_apply_from_env` |
+| `repair_apply_from_env` | `ReconcileOptions::read_from_env` |
 | `MAX_REPAIR_ROUNDS` | `MAX_RECONCILIATION_ROUNDS` |
 | `run_repair_rounds` | `run_reconciliation_rounds` |
 | reconciliation-local `repaired_*` variables | `reconciled_*` |

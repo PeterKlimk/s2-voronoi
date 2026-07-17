@@ -22,12 +22,12 @@ mutation.
 | `VORONOI_MESH_GRID_DENSITY` | benchmark tuning | `policy::knn_grid_target_density`, first use via `OnceLock` | Parsed `f64` at least 1; intended for grid-density sweeps, not per-computation mutation. |
 | `VORONOI_MESH_VERIFY` | supported verification | `validation::verify_enabled`, ordinary compute return gate | Exact value `1` enables the O(E) strict-validation gate. |
 | `VORONOI_MESH_TIMING_KV` | instrumentation | `timing::real::PhaseTimings::report` | Presence emits machine-readable timing output when the `timing` feature is enabled. |
-| `VORONOI_MESH_RECONCILE_TELEMETRY` | correctness diagnostic | reconciliation telemetry, defect path only | Presence repeats a read-only primary-round analysis and emits `RECONCILE_KV`; the clean path avoids even the lookup. |
+| `VORONOI_MESH_RECONCILE_TELEMETRY` | correctness diagnostic | defect-scoped `ReconcileOptions` snapshot | Presence repeats a read-only primary-round analysis and emits `RECONCILE_KV`. Read once with the other reconciliation options only after mismatch records exist. |
 | `VORONOI_MESH_RESOLUTION_KV` | correctness diagnostic | terminal output-resolution pass | Presence emits exact-zero resolution statistics. |
 | `VORONOI_MESH_UNPAIRED_ORIGINS` | correctness diagnostic | live assembly, after mismatch collection | Presence prints mismatch-origin counts. |
 | `VORONOI_MESH_VERIFY_TRACE` | correctness diagnostic | verification gate, only after fast verification rejects | Exact value `1` prints the fast-verifier fallback reason. |
-| `VORONOI_MESH_RECONCILE_REBUILD` | differential oracle | reconciliation apply-mode selection | Exact value `1` selects the whole-buffer rebuild oracle instead of production in-place application. |
-| `VORONOI_MESH_RECONCILE_GLOBAL_DUPSCAN` | differential safety valve | reconciliation defect path | Exact value `1` substitutes the O(V) global duplicate scan for localized traversal. |
+| `VORONOI_MESH_RECONCILE_REBUILD` | differential oracle | defect-scoped `ReconcileOptions` snapshot | Exact value `1` selects the whole-buffer rebuild oracle instead of production in-place application. Read once only after mismatch records exist. |
+| `VORONOI_MESH_RECONCILE_GLOBAL_DUPSCAN` | differential safety valve | defect-scoped `ReconcileOptions` snapshot | Exact value `1` substitutes the O(V) global duplicate scan for localized traversal. Read once only after mismatch records exist. |
 | `VORONOI_MESH_LOCAL_REBUILD_DEBUG` | correctness diagnostic | attempt-scoped local-rebuild snapshot | Presence prints rebuild phase and acceptance diagnostics. Read once only after a rebuild trigger; disabled and clean computations perform no lookup. |
 | `VORONOI_MESH_LOCAL_REBUILD_GLOBAL_DELAUNAY` | feature probe | attempt-scoped `local_rebuild_probe` snapshot | Presence selects the global projected-Delaunay oracle. Read alongside the debug flag after a rebuild trigger; internal feature only. |
 

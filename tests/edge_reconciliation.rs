@@ -340,7 +340,7 @@ fn net_reconcile_backends_agree() {
 /// great-circle / cap stress) produces zero unresolved edges; uniform runs
 /// produce none up to 1M, and ~1 site per multi-million run (2M seed 1 has
 /// one 3-defect site; seeds 2-4 have none). Run with
-/// `cargo test --release --test edge_reconcile_net probe_site_scan -- --ignored --nocapture`
+/// `cargo test --release --test edge_reconciliation probe_site_scan -- --ignored --nocapture`
 #[test]
 #[ignore]
 fn probe_site_scan() {
@@ -379,7 +379,7 @@ fn probe_site_scan() {
 /// (the finding-#12 regime where f32 threshold pressure grows) and on
 /// adversarial distributions, to size the remaining reconciliation payload
 /// 2-4. Run with
-/// `cargo test --release --test edge_reconcile_net probe_defect_rate -- --ignored --nocapture`
+/// `cargo test --release --test edge_reconciliation probe_defect_rate -- --ignored --nocapture`
 #[test]
 #[ignore]
 fn probe_defect_rate_at_scale() {
@@ -452,7 +452,7 @@ fn probe_defect_rate_adversarial() {
 /// across window radii. Findings (2026-06): defects survive windowing at
 /// 5-40x mean spacing and scaffold changes, but not rotation (f32
 /// re-rounding) and not input-order reversal. Run with
-/// `cargo test --release --test edge_reconcile_net probe_window -- --ignored --nocapture`
+/// `cargo test --release --test edge_reconciliation probe_window -- --ignored --nocapture`
 #[test]
 #[ignore]
 fn probe_window() {
@@ -480,7 +480,7 @@ fn probe_window() {
 /// each at 36-54 bins; the defect pair set is bin-count invariant while the
 /// site stays interior to a bin, but can change when the boundary cuts the
 /// site (see module docs). Run with
-/// `cargo test --release --test edge_reconcile_net probe_scaffold_sweep -- --ignored --nocapture`
+/// `cargo test --release --test edge_reconciliation probe_scaffold_sweep -- --ignored --nocapture`
 #[test]
 #[ignore]
 fn probe_scaffold_sweep() {
