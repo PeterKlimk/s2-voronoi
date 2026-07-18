@@ -290,6 +290,8 @@ record-based live-span access. The scalar/parallel topology summary and reconcil
 checked reader now use the view. The shared-edge segment reader family also carries one layout
 through primary reconciliation, rejected-component seeding, optional telemetry, and focused
 cross-module tests, so those call sites cannot pair cells with a different index buffer. Its
+localized duplicate-key BFS now consumes that same operation-owned layout, so merge collection
+constructs the cell/index pairing once for both duplicate and segment scans. Its
 explicit cell-bound/end-bound check sequence is intentional: a superficially idiomatic
 `slice.get(start..end)` form added repeatable clean-path work and was rejected by the counter gate.
 Converting the rebuild backend's semantic old/new span comparison to two layouts was also rejected:

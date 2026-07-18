@@ -832,6 +832,24 @@ The next candidate was measured on 2026-07-19 against immediate parent `d925745`
   clean-path optimization outside its nominally cold work. The raw semantic-comparison signature
   remains in place; retry only after a material surrounding codegen or compiler change.
 
+## QUAL-001B localized duplicate-reader result
+
+The third accepted live-layout slice was validated on 2026-07-19 against immediate parent
+`33d5888`.
+
+- `localized_dup_key_unions` now takes one `LiveCellLayout`. `collect_merges` constructs the view
+  once and reuses it for the defect-only duplicate-key BFS and the shared-edge segment scan,
+  preventing those readers from observing differently paired cell/index slices.
+- The focused localized-versus-global duplicate-scan oracle passed. Aggregate release section
+  sizes were identical (`2,183,212` text, `55,512` data, `4,520` BSS), while the executable file
+  changed from `2,999,024` to `2,998,992` bytes.
+- Across seven interleaved 500k single-threaded Fibonacci counter pairs, mean candidate/parent
+  ratios were `1.000001526` instructions and `1.000002087` branches, with pair ranges
+  `0.999998548..=1.000004487` and `0.999997928..=1.000011972`; there was no directional signal.
+  Wall clock was intentionally ignored on the busy host.
+- Formatting, all-target/all-feature Clippy with warnings denied, the complete release suite, and
+  the checked suite passed.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

@@ -1102,8 +1102,7 @@ fn global_dup_key_unions(
 /// A `#[cfg(debug_assertions)]` oracle pins the result equal to the global scan.
 fn localized_dup_key_unions(
     edge_records: &[EdgeRecord],
-    cells: &[VoronoiCell],
-    cell_indices: &[u32],
+    layout: LiveCellLayout<'_, '_>,
     vertex_keys: VertexKeys<'_>,
     uf: &mut SparseUnionFind,
     merged: &mut usize,
@@ -1115,10 +1114,10 @@ fn localized_dup_key_unions(
     let mut worklist: Vec<u32> = affected_cells_from_records(edge_records);
 
     while let Some(cell) = worklist.pop() {
-        if cell as usize >= cells.len() || !scanned.insert(cell) {
+        if cell as usize >= layout.cell_count() || !scanned.insert(cell) {
             continue;
         }
-        let slice = cell_vertex_slice(cell, cells, cell_indices)?;
+        let slice = cell_vertex_slice_from_layout(cell, layout)?;
         let mut damaged = false;
         for &v in slice {
             let Some(key) = vertex_keys.get(v) else {
@@ -1202,6 +1201,7 @@ fn collect_merges(
     let mut uf = SparseUnionFind::new();
     let mut merged = 0usize;
     let degenerate_len_eps_sq: f32 = degenerate_len_eps * degenerate_len_eps;
+    let layout = LiveCellLayout::new(cells, cell_indices);
 
     // Identity backstop: the keyed-identity model admits exactly one vertex
     // per key, but index propagation fails across a defective edge (the
@@ -1216,14 +1216,7 @@ fn collect_merges(
         if options.force_global_dupscan {
             global_dup_key_unions(vertex_keys, &mut uf, &mut merged);
         } else {
-            localized_dup_key_unions(
-                edge_records,
-                cells,
-                cell_indices,
-                vertex_keys,
-                &mut uf,
-                &mut merged,
-            )?;
+            localized_dup_key_unions(edge_records, layout, vertex_keys, &mut uf, &mut merged)?;
             // Debug oracle: the localized BFS must union exactly the same
             // same-key duplicates as the O(V) global scan. Costs nothing in
             // release; catches any gap in the connectivity contract immediately.
@@ -1238,7 +1231,6 @@ fn collect_merges(
     // a fixed-size/capped representation.
     let mut seg_a = Vec::new();
     let mut seg_b = Vec::new();
-    let layout = LiveCellLayout::new(cells, cell_indices);
     for record in edge_records {
         let (a, b) = unpack_edge(record.key.as_u64());
         edge_segments_for_neighbor_into(a, b, layout, vertex_keys, &mut seg_a)?;
@@ -2269,8 +2261,7 @@ mod tests {
         let mut merged_local = 0usize;
         localized_dup_key_unions(
             &records,
-            &cells,
-            &cell_indices,
+            LiveCellLayout::new(&cells, &cell_indices),
             VertexKeys::Flat(&vertex_keys),
             &mut uf_local,
             &mut merged_local,

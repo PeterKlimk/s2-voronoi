@@ -716,7 +716,9 @@ Do not broadly retry these without a materially different design or workload:
   explicit cell-bound/end-bound checks followed by ordinary slicing; that form improved
   instructions by 0.0262% with neutral branches while retaining typed malformed-layout errors.
   Threading that accepted view through the shared-edge segment reader was subsequently neutral
-  (-0.000097% instructions, -0.000004% branches) and reduced the executable file by 48 bytes.
+  (-0.000097% instructions, -0.000004% branches) and reduced the executable file by 48 bytes. The
+  adjacent localized duplicate-key BFS was also neutral (+0.000153% instructions, +0.000209%
+  branches), with identical aggregate section sizes and a 32-byte-smaller executable.
 - Replacing `cell_spans_differ`'s four raw slices with two `LiveCellLayout` values perturbed
   clean-path codegen despite making the executable eight bytes smaller. Default, never-inline, and
   always-inline forms all repeated approximately +0.1597% instructions and +1.6620% branches in

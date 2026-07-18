@@ -440,9 +440,14 @@ tasks and are not duplicated here.
   the same repeatable clean-path regression (about +0.1597% instructions and +1.6620% branches),
   despite an eight-byte-smaller executable. Keep this isolated signature raw unless compiler shape
   or the surrounding reconciliation round changes materially.
-- **Next gate:** evaluate the defect-only localized duplicate-key reader as the next cohesive
-  `LiveCellLayout` family. It may carry one view through its BFS, but must retain the raw signature
-  if the clean-path codegen gate flips again. Continue to defer mutation ownership and compaction.
+- **QUAL-001B duplicate-reader result:** the defect-only localized duplicate-key BFS now consumes
+  the same `LiveCellLayout` that merge collection passes to segment readers. Its localized/global
+  oracle remains unchanged. Seven counter pairs were neutral (mean +0.000153% instructions and
+  +0.000209% branches), aggregate section sizes were identical, and the executable is 32 bytes
+  smaller.
+- **Next gate:** evaluate the localized unpaired-edge scan as one read-only layout family,
+  including its partner-cell lookup and debug global oracle. Keep mutation ownership and
+  compaction deferred, and split or revert the family if clean-path counters move.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

@@ -34,6 +34,12 @@ impl<'cells, 'indices> LiveCellLayout<'cells, 'indices> {
         Self { cells, indices }
     }
 
+    /// Number of cell records paired with the backing index buffer.
+    #[inline]
+    pub(crate) const fn cell_count(self) -> usize {
+        self.cells.len()
+    }
+
     /// Return a live span when both the cell id and declared buffer range are valid.
     #[inline]
     pub(crate) fn checked_span(self, cell: usize) -> Result<&'indices [u32], CellSpanError> {
