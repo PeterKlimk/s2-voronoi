@@ -65,6 +65,7 @@
 //! ```
 
 pub mod adjacency;
+mod cell_layout;
 mod cell_mesh;
 mod delaunay;
 mod diagram;

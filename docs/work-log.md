@@ -422,11 +422,18 @@ tasks and are not duplicated here.
   remains at collection and stored-boundary edges. The release artifact added 32 `.text` bytes and
   four unwind bytes, offset by 32 fewer padding bytes; seven counter pairs were neutral (mean
   +0.000307% instructions and -0.000152% branches).
-- **Next gate:** treat the local overlay's `VertexId` seam as complete rather than spreading
-  wrappers through raw traversal collections. Inventory the next cold identity boundary and take
-  it only if one wrapper can protect a whole operation; otherwise advance to QUAL-001B's live
-  cell-layout abstraction.
-- **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
+- **QUAL-001G boundary decision:** the local overlay's `VertexId` seam is complete. The remaining
+  candidates either stay raw throughout traversal/storage or recreate the rejected cross-phase
+  pair owner, so mechanical wrapper expansion stops here.
+- **QUAL-001B first reader result:** `LiveCellLayout` now owns live-span lookup for topology and
+  reconciliation readers, with typed invalid-cell/invalid-span failures and unit coverage for
+  stale tails. Seven counter pairs improved instructions by 0.02623% with neutral branches
+  (+0.000040%); the release artifact grew 12 bytes overall. A `slice.get(range)` accessor was
+  rejected after repeatable +0.1337% instructions and +1.6620% branches.
+- **Next gate:** thread `LiveCellLayout` through a small set of cold reconciliation reader
+  signatures so cells and indices cannot be mismatched at call sites. Do not migrate mutation or
+  ownership yet, and retain the explicit check shape unless counters justify changing it.
+- **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.
 - **Gate:** every production refactor preserves semantic fingerprints and passes the affected

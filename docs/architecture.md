@@ -156,6 +156,8 @@ memory. `UnitVec3` remains an unchecked raw input adapter and is not a stored-ou
 
 - `lib.rs` owns the public compute/configuration/report surface. `types.rs`, `diagram.rs`, and
   `error.rs` own checked point storage, diagram storage/views, and public errors respectively.
+- `cell_layout.rs` pairs internal cell records with their shared index buffer and owns live-span
+  access, including the stale-tail rule used after in-place reconciliation shrinkage.
 - `cell_mesh.rs` owns explicitly simplified spherical cell meshes and provenance. `adjacency.rs`
   and `delaunay.rs` derive graph views; `measures.rs` and `spherical_arc.rs` own area, centroid,
   Lloyd, and owner-conditioned edge geometry.

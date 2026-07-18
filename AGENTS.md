@@ -79,6 +79,7 @@ src/
 ├── lib.rs                         # Public API and feature-gated internal exports
 ├── types.rs                       # SpherePoint storage + raw input adapters
 ├── diagram.rs                     # SphericalVoronoi storage
+├── cell_layout.rs                 # Internal live cell-span view
 ├── cell_mesh.rs                   # Explicitly simplified S2 cell meshes + provenance
 ├── adjacency.rs                   # Generator adjacency derived from diagram/cell mesh
 ├── delaunay.rs                    # Dual triangulation views

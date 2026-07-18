@@ -284,6 +284,13 @@ behavioral categories may not change as part of this workstream.
 
 **Hot-path impact expected:** none on cell construction; possible cold-path/assembly impact
 
+**Progress:** started 2026-07-19. `LiveCellLayout` now pairs internal cell records with their
+backing index buffer, distinguishes invalid cell ids from invalid live spans, and provides
+record-based live-span access. The scalar/parallel topology summary and reconciliation's shared
+checked reader now use the view. Its explicit cell-bound/end-bound check sequence is intentional:
+a superficially idiomatic `slice.get(start..end)` form added repeatable clean-path work and was
+rejected by the counter gate.
+
 Introduce a small internal view/owner around cells and their backing index buffer. The abstraction
 should provide:
 

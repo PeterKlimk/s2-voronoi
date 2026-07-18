@@ -14,6 +14,7 @@ mod telemetry;
 
 use glam::Vec3;
 
+use crate::cell_layout::{CellSpanError, LiveCellLayout};
 use crate::diagram::VoronoiCell;
 use crate::live_dedup::VertexKey;
 use crate::live_dedup::{EdgeKey, EdgeRecord, ShardedVertexKeys};
@@ -136,27 +137,22 @@ fn cell_vertex_slice<'a>(
     cells: &[VoronoiCell],
     cell_indices: &'a [u32],
 ) -> Result<&'a [u32], crate::VoronoiError> {
-    let cell_idx_usize = cell_idx as usize;
-    if cell_idx_usize >= cells.len() {
-        return Err(reconcile_state_error(format!(
-            "edge reconciliation referenced out-of-range cell {} (cells={})",
-            cell_idx_usize,
-            cells.len()
-        )));
-    }
-    let cell = &cells[cell_idx_usize];
-    let start = cell.vertex_start();
-    let end = start + cell.vertex_count();
-    if end > cell_indices.len() {
-        return Err(reconcile_state_error(format!(
-            "edge reconciliation cell {} span [{}..{}) exceeds cell index buffer len {}",
-            cell_idx_usize,
+    match LiveCellLayout::new(cells, cell_indices).checked_span(cell_idx as usize) {
+        Ok(span) => Ok(span),
+        Err(CellSpanError::CellOutOfBounds { cell, cell_count }) => {
+            Err(reconcile_state_error(format!(
+                "edge reconciliation referenced out-of-range cell {cell} (cells={cell_count})"
+            )))
+        }
+        Err(CellSpanError::SpanOutOfBounds {
+            cell,
             start,
             end,
-            cell_indices.len()
-        )));
+            index_count,
+        }) => Err(reconcile_state_error(format!(
+            "edge reconciliation cell {cell} span [{start}..{end}) exceeds cell index buffer len {index_count}"
+        ))),
     }
-    Ok(&cell_indices[start..end])
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

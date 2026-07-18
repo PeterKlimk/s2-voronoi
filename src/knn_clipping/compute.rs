@@ -6,6 +6,7 @@ use super::edge_reconcile;
 use super::local_rebuild;
 use super::output_resolution;
 use super::preprocess::{try_merge_close_points, MergeResult};
+use crate::cell_layout::LiveCellLayout;
 use crate::cube_grid::CubeMapGrid;
 #[cfg(feature = "timing")]
 use crate::cube_grid::CubeMapGridBuildTimings;
@@ -603,11 +604,10 @@ fn summarize_topology_scalar(
 ) -> TopologySummary {
     let mut cnt = vec![0u32; vertex_count];
     let mut live_half_edges = 0usize;
+    let layout = LiveCellLayout::new(cells, cell_indices);
     for cell in cells {
-        let start = cell.vertex_start();
-        let end = start + cell.vertex_count();
         live_half_edges += cell.vertex_count();
-        for &v in &cell_indices[start..end] {
+        for &v in layout.span_for(cell) {
             cnt[v as usize] += 1;
         }
     }
@@ -641,15 +641,14 @@ fn summarize_topology(
         // `cell_indices.len()`.)
         let cnt: Vec<AtomicU32> = (0..vertex_count).map(|_| AtomicU32::new(0)).collect();
         let chunk = cells.len().div_ceil(threads * 4).max(1024);
+        let layout = LiveCellLayout::new(cells, cell_indices);
         let live_half_edges = cells
             .par_chunks(chunk)
             .map(|cells_chunk| {
                 let mut half_edges = 0usize;
                 for cell in cells_chunk {
-                    let start = cell.vertex_start();
-                    let end = start + cell.vertex_count();
                     half_edges += cell.vertex_count();
-                    for &v in &cell_indices[start..end] {
+                    for &v in layout.span_for(cell) {
                         cnt[v as usize].fetch_add(1, Relaxed);
                     }
                 }

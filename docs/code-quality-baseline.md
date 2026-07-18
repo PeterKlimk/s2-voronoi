@@ -775,6 +775,29 @@ The third typed-identity slice was validated on 2026-07-19 against immediate par
   raw traversal collections would add conversion syntax without making an operation's contract
   clearer, so further adoption requires a distinct identity boundary rather than mechanical spread.
 
+## QUAL-001B first live-layout reader result
+
+The first live-layout slice was validated on 2026-07-19 against immediate parent `e038336`.
+
+- A private `LiveCellLayout` now pairs `VoronoiCell` records with their backing index buffer. It
+  offers record-based live-span access plus checked lookup whose typed errors distinguish an
+  invalid cell id from a live span beyond the buffer. Independent lifetimes correctly express that
+  returned spans borrow only the index buffer.
+- Scalar and parallel topology summaries now use record-based access, while reconciliation's
+  existing shared reader delegates checked access to the view. Unit tests pin stale-tail exclusion
+  and both malformed-layout outcomes. Storage, compaction, and mutation behavior are unchanged.
+- The accepted accessor preserves the old explicit check sequence: cell bound, span end bound,
+  then normal slicing. An initial `slice.get(start..end)` form was reverted after seven interleaved
+  500k single-threaded Fibonacci pairs showed repeatable +0.1337% instructions and +1.6620%
+  branches.
+- The accepted release `tools` artifact changed from `2,183,064` to `2,183,140` text bytes, from
+  `55,536` to `55,512` data bytes, and from `544` to `504` BSS bytes, for 12 bytes more overall.
+  Across seven counter pairs, mean candidate/parent ratios were `0.999737702` instructions and
+  `1.000000400` branches, with pair ranges `0.999736172..=0.999739930` and
+  `0.999997418..=1.000004913`. Wall clock was intentionally ignored on the busy host.
+- Formatting, all-target/all-feature Clippy with warnings denied, the complete release and checked
+  suites, and the no-default-features release suite passed.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

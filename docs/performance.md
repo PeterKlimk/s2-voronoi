@@ -710,6 +710,11 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Implementing `LiveCellLayout` checked spans with `slice.get(start..end)` added a redundant range
+  validity branch to clean-path reconciliation traversal. Seven interleaved 500k single-threaded
+  Fibonacci pairs showed +0.1337% instructions and +1.6620% branches. Preserve the accepted
+  explicit cell-bound/end-bound checks followed by ordinary slicing; that form improved
+  instructions by 0.0262% with neutral branches while retaining typed malformed-layout errors.
 - Carrying reconciliation-produced local-rebuild seed pairs through pipeline state as a typed
   owner perturbed clean-path codegen despite retaining tuple storage. Seven interleaved 500k
   single-threaded Fibonacci counter pairs showed +0.1602% instructions and +1.6619% branches in
