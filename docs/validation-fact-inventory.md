@@ -1,6 +1,6 @@
 # Validation fact inventory
 
-**Status:** QUAL-001C pre-extraction inventory, 2026-07-19
+**Status:** QUAL-001C inventory and first negative-control expansion, 2026-07-19
 
 This document maps the three strict sphere-validation consumers before any shared-fact
 refactoring. The purpose is to preserve their different cost, input, and diagnostic policies while
@@ -94,35 +94,31 @@ behavior test rather than assumption.
 | Category | Exact fast/effective differential | Other current coverage | Gap |
 |---|---|---|---|
 | Valid no-weld diagram | Yes | Public validation integration tests | None |
-| Boundary edges / low incidence | Yes, through the one-cell fixture | Plain-gate fault injection | Literal expected reason is not separately asserted |
-| Duplicate vertex id | Yes | Plain-gate fault injection | Literal expected reason is not separately asserted |
-| Duplicate cell signature | Yes | Plain-gate fault injection | Literal expected reason is not separately asserted |
+| Boundary edges / low incidence | Yes, with literal reason | Report pins the boundary-edge subclass | None for the shared strict reason |
+| Duplicate vertex id | Yes, with literal reason | Plain-gate fault injection | None |
+| Duplicate cell signature | Yes, with literal reason | Plain-gate fault injection | None |
 | Off-sphere finite/non-finite vertex | Effective-only exact reason | Input and checked-storage tests | Diagram/effective differential is intentionally unavailable without violating `SpherePoint` construction invariants |
-| Same-direction edge pair | No | Effective gate rejects fault injection | Exact reason/differential missing |
-| Overused edge | No | Effective gate rejects fault injection | Exact reason/differential missing |
-| Antipodal edge | No | Effective gate rejects fault injection | Exact reason/differential missing |
-| Disconnected subdivision / Euler | No | Effective gate rejects fault injection | Need fixtures isolating each ordering outcome |
-| Invalid vertex id | No | Checked deserialization rejects malformed storage | Fast/effective exact differential missing |
-| Degenerate distinct-id count | No isolated case | General correctness tests require real cells | Exact reason/differential missing |
-| Generator/cell mismatch | Not applicable to diagram input | Effective code path only | Effective exact negative control missing |
-| Invalid live span | Not applicable to a valid diagram | Checked deserialization has separate span tests | Effective exact negative control missing |
+| Same-direction edge pair | Yes, with combined strict reason | Report pins the same-direction subclass | None for edge-use extraction |
+| Overused edge | Yes, with combined strict reason | Report pins the overused subclass | None for edge-use extraction |
+| Antipodal edge | Yes, with literal reason | Effective gate rejects fault injection | None |
+| Disconnected subdivision / Euler | Yes; isolated fixtures pin both ordering outcomes | Effective gate rejects fault injection | None |
+| Invalid vertex id | Yes, with literal reason | Checked deserialization rejects malformed storage | None |
+| Degenerate distinct-id count | Yes, with literal reason | General correctness tests require real cells | None |
+| Generator/cell mismatch | Not applicable to diagram input | Effective-only literal reason pinned | None |
+| Invalid live span | Not applicable to a valid diagram | Effective-only literal reason pinned; deserialization has separate tests | None |
 | Weld-map inconsistency | Not applicable to effective space | Public report rejects a corrupt-alias fixture | Fast/report semantic comparison missing |
-| Self-loop reason | Structurally dominated in fail-fast order | Report counter and earlier duplicate-id rejection | Prove dominance before deleting strict branch |
+| Self-loop reason | Structurally dominated in fail-fast order | Exhaustive small-cycle proof plus representative literal reasons | Report telemetry remains independently covered |
 
-The current `effective_strict_matches_fast` test is valuable but not yet a complete extraction
-oracle. Several fault-injection tests assert only `is_err()`, so they protect the validity contract
-without pinning classification or first-error ordering.
+The expanded test-only matrix now pins every safely constructible fail-fast reason shared by the
+no-weld diagram/effective domain, isolates connectivity from Euler with a connected 3x3 toroidal
+quadrangulation, and pins the effective-only structural-input reasons. Separate report fixtures pin
+boundary, overused, and same-direction edge counters. The weld-map comparison remains deliberately
+outside the effective domain and should be completed before sharing weld-specific facts.
 
 ## First safe gate
 
-Before sharing another production fact, expand the no-weld differential fixture matrix for every
-category constructible in both representations: invalid vertex id, isolated degeneracy,
-same-direction/overused edge groups, owner-conditioned antipodal edges, connectivity, and Euler.
-Each fixture should assert the exact static reason from both fail-fast consumers. Add separate
-effective-only controls for generator/cardinality and invalid spans, and a focused proof test for
-self-loop dominance.
-
-After that matrix is independent, the narrowest production candidate is a typed edge-use
+The no-weld differential matrix and edge-report subclass controls are now independent. The
+narrowest production candidate is a typed edge-use
 classification (`paired`, `boundary`, `overused`, `same direction`) mapped to the existing consumer
 outputs. It is allocation-free and semantically shared by all three consumers, while allowing the
 strict gates to retain one combined message and the report to retain separate counters. It still

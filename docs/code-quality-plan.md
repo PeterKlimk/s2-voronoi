@@ -338,7 +338,10 @@ iteration difficult outside the defining module while producing identical final 
 policies, existing shared primitives, reason ordering, and negative-control gaps are recorded in
 [`validation-fact-inventory.md`](validation-fact-inventory.md). The main duplication is traversal
 policy rather than fact identity, so no universal report-building scan is planned. Differential
-coverage must be completed before the first new shared classification.
+coverage now pins every safely constructible no-weld shared fail-fast reason, effective-only
+cardinality/span failures, connectivity-versus-Euler ordering, self-loop dominance, and the
+report's three edge-use subclasses. The first new shared classification may now proceed behind the
+usual release codegen gate.
 
 1. Define shared cell and edge issue classifications, including stable internal reason enums rather
    than repeated string literals.

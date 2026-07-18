@@ -904,6 +904,23 @@ and reverted.
 - The implementation was reverted. Rebuilding the restored source reproduced the initially
   captured parent artifact hash, confirming that no production change remains.
 
+## QUAL-001C validation-oracle expansion
+
+The pre-extraction validation oracle was expanded on 2026-07-19 against immediate parent `9dd46db`.
+
+- Exact fast-diagram/effective-array reasons are now pinned for low incidence, invalid vertex ids,
+  degeneracy, duplicate vertex ids, duplicate cell signatures, grouped edge-use failures,
+  owner-conditioned antipodal edges, disconnected subdivisions, and bad Euler characteristic.
+- A connected, closed, oriented 3x3 toroidal quadrangulation with degree-four vertices isolates the
+  Euler reason (`V-E+F = 0`) from the earlier connectivity check. Separate effective-only fixtures
+  pin generator/cell cardinality and invalid live-span failures.
+- An exhaustive enumeration of small cycles proves that fail-fast self-loop classification is
+  dominated by duplicate-id or degeneracy checks; representative fixtures pin the observable
+  earlier reasons. Accumulating-report fixtures independently pin boundary, overused, and
+  same-direction edge counters.
+- All additions are test-only. The complete release `tools` artifact, including its SHA-256 hash
+  and file size, is byte-identical to the parent, so no counter comparison is warranted.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

@@ -465,9 +465,15 @@ tasks and are not duplicated here.
   shared; the remaining duplication is primarily traversal policy. The inventory also identifies
   incomplete exact-reason differential coverage and a fail-fast self-loop reason dominated by
   earlier duplicate/degenerate checks.
-- **Next gate:** expand the no-weld fast/effective negative-control matrix and pin exact reasons for
-  every mutually constructible category, plus effective-only cardinality/span controls and a
-  self-loop-dominance proof. Do not extract a production fact until that oracle is complete.
+- **QUAL-001C oracle result:** test-only fixtures now pin literal shared reasons for low incidence,
+  invalid references, degeneracy, duplicate vertices/cells, grouped-edge failures, antipodal arcs,
+  connectivity, and Euler. Effective-only cardinality/span reasons, exhaustive self-loop dominance,
+  and the report's boundary/overused/same-direction counters are also pinned. A connected closed
+  torus fixture isolates Euler from the earlier connectivity check. The release artifact is
+  byte-identical to parent.
+- **Next gate:** introduce the smallest typed edge-use classification shared by strict grouping and
+  report accumulation, preserving the strict gates' combined message and the report's separate
+  counters. Compare release codegen before any runtime measurement.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.
