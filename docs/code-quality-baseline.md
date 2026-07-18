@@ -817,6 +817,21 @@ The second live-layout slice was validated on 2026-07-19 against immediate paren
 - Formatting, all-target/all-feature Clippy with warnings denied, the complete release suite, and
   the checked suite passed.
 
+## QUAL-001B rejected semantic-comparison experiment
+
+The next candidate was measured on 2026-07-19 against immediate parent `d925745` and reverted.
+
+- `cell_spans_differ` was changed from four independently pairable slices to two
+  `LiveCellLayout` values. The executable became eight bytes smaller and aggregate text accounting
+  fell by 252 bytes, so code size was not the rejection reason.
+- The default form produced mean candidate/parent ratios of `1.001597135` instructions and
+  `1.016621779` branches across seven interleaved 500k single-threaded Fibonacci pairs. Every pair
+  regressed. Marking the cold comparison never-inline produced `1.001595237` and `1.016619152`;
+  forcing it always-inline produced `1.001597995` and `1.016619828`.
+- The invariant result across all three compiler shapes shows that this signature change perturbs
+  clean-path optimization outside its nominally cold work. The raw semantic-comparison signature
+  remains in place; retry only after a material surrounding codegen or compiler change.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

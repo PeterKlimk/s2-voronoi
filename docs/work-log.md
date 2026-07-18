@@ -435,9 +435,14 @@ tasks and are not duplicated here.
   and tests. Deliberate between-round mutation rebuilds the view at that boundary. Seven counter
   pairs were neutral (mean -0.000097% instructions and -0.000004% branches), and the release
   executable file is 48 bytes smaller.
-- **Next gate:** make semantic old/new cell-span comparison accept two `LiveCellLayout` values,
-  eliminating the four-slice pairing hazard while keeping the operation read-only. Continue to
-  defer mutation ownership and buffer compaction.
+- **QUAL-001B semantic-comparison decision:** converting the old/new live-span comparison from four
+  slices to two layouts was reverted. Default, never-inline, and always-inline forms all produced
+  the same repeatable clean-path regression (about +0.1597% instructions and +1.6620% branches),
+  despite an eight-byte-smaller executable. Keep this isolated signature raw unless compiler shape
+  or the surrounding reconciliation round changes materially.
+- **Next gate:** evaluate the defect-only localized duplicate-key reader as the next cohesive
+  `LiveCellLayout` family. It may carry one view through its BFS, but must retain the raw signature
+  if the clean-path codegen gate flips again. Continue to defer mutation ownership and compaction.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

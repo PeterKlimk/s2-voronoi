@@ -292,6 +292,9 @@ through primary reconciliation, rejected-component seeding, optional telemetry, 
 cross-module tests, so those call sites cannot pair cells with a different index buffer. Its
 explicit cell-bound/end-bound check sequence is intentional: a superficially idiomatic
 `slice.get(start..end)` form added repeatable clean-path work and was rejected by the counter gate.
+Converting the rebuild backend's semantic old/new span comparison to two layouts was also rejected:
+default, never-inline, and always-inline forms all caused the same repeatable clean-path codegen
+regression, so that isolated four-slice signature remains raw for now.
 
 Introduce a small internal view/owner around cells and their backing index buffer. The abstraction
 should provide:
