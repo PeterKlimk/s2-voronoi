@@ -334,6 +334,12 @@ iteration difficult outside the defining module while producing identical final 
 
 **Hot-path impact expected:** none unless optional verification/reporting is requested
 
+**Progress:** inventory completed 2026-07-19. The three consumers, their input/weld/failure
+policies, existing shared primitives, reason ordering, and negative-control gaps are recorded in
+[`validation-fact-inventory.md`](validation-fact-inventory.md). The main duplication is traversal
+policy rather than fact identity, so no universal report-building scan is planned. Differential
+coverage must be completed before the first new shared classification.
+
 1. Define shared cell and edge issue classifications, including stable internal reason enums rather
    than repeated string literals.
 2. Share cell-signature, edge-group, owner-conditioned antipodal, incidence, connectivity, and

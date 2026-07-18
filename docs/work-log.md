@@ -459,9 +459,15 @@ tasks and are not duplicated here.
   direct coverage for stale-tail preservation. Despite full inlining, it reproduced the known
   optimizer cliff in all seven pairs: +0.15987% instructions and +1.66186% branches. The source was
   reverted; keep this local mutation flattened until surrounding codegen changes materially.
-- **Next gate:** pause QUAL-001B release-signature expansion at the measured Pareto frontier and
-  start QUAL-001C with a read-only inventory of duplicated validation facts, policies, and negative
-  controls. Choose the first shared fact only after the three consumers' semantics are explicit.
+- **QUAL-001C inventory result:** the fast diagram gate, raw effective-array gate, and accumulating
+  public report share the strict contract but intentionally differ in structural-input checks,
+  welded-face policy, stopping behavior, and diagnostics. Several low-level facts are already
+  shared; the remaining duplication is primarily traversal policy. The inventory also identifies
+  incomplete exact-reason differential coverage and a fail-fast self-loop reason dominated by
+  earlier duplicate/degenerate checks.
+- **Next gate:** expand the no-weld fast/effective negative-control matrix and pin exact reasons for
+  every mutually constructible category, plus effective-only cardinality/span controls and a
+  self-loop-dominance proof. Do not extract a production fact until that oracle is complete.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.
