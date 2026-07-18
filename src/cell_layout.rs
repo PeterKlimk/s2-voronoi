@@ -40,6 +40,34 @@ impl<'cells, 'indices> LiveCellLayout<'cells, 'indices> {
         self.cells.len()
     }
 
+    /// Assert the structural invariants required by every live-span reader.
+    ///
+    /// This is compiled only when debug assertions are enabled so production
+    /// traversal and code generation remain unchanged.
+    #[cfg(debug_assertions)]
+    pub(crate) fn debug_assert_valid(self) {
+        assert!(
+            u32::try_from(self.cells.len()).is_ok(),
+            "live cell layout has {} cells, exceeding u32 cell-id capacity",
+            self.cells.len()
+        );
+        assert!(
+            u32::try_from(self.indices.len()).is_ok(),
+            "live cell layout has {} indices, exceeding u32 offset capacity",
+            self.indices.len()
+        );
+
+        for (cell, record) in self.cells.iter().enumerate() {
+            let start = record.vertex_start();
+            let end = start + record.vertex_count();
+            assert!(
+                end <= self.indices.len(),
+                "live cell layout cell {cell} span [{start}..{end}) exceeds index buffer len {}",
+                self.indices.len()
+            );
+        }
+    }
+
     /// Return a live span when both the cell id and declared buffer range are valid.
     #[inline]
     pub(crate) fn checked_span(self, cell: usize) -> Result<&'indices [u32], CellSpanError> {
@@ -86,8 +114,20 @@ mod tests {
         let indices = [10, 11, 99, 98, 20, 21, 22];
         let layout = LiveCellLayout::new(&cells, &indices);
 
+        #[cfg(debug_assertions)]
+        layout.debug_assert_valid();
         assert_eq!(layout.span_for(&cells[0]), &[10, 11]);
         assert_eq!(layout.checked_span(1), Ok(&[20, 21, 22][..]));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "cell 0 span [2..4) exceeds index buffer len 3")]
+    fn debug_validation_rejects_out_of_bounds_live_span() {
+        let cells = [VoronoiCell::new(2, 2)];
+        let indices = [10, 11, 12];
+
+        LiveCellLayout::new(&cells, &indices).debug_assert_valid();
     }
 
     #[test]

@@ -449,9 +449,14 @@ tasks and are not duplicated here.
   and debug global oracle was reverted. The whole-family form produced +0.1598% instructions and
   +1.6619% branches; retaining the raw outer ABI and typing only internals produced +0.1600% and
   +1.6625%. Reader-signature expansion stops at the accepted segment and duplicate-key families.
-- **Next gate:** add debug-only structural validation to `LiveCellLayout` for span bounds and
-  representation limits, then call it only at cold checked-build boundaries. This strengthens the
-  abstraction without changing release traversal signatures, mutation ownership, or compaction.
+- **QUAL-001B structural-audit result:** `LiveCellLayout::debug_assert_valid` now checks u32-backed
+  cell/index capacity and every declared live span. Reconciliation invokes it only after the clean
+  no-record fast path, so only defect-bearing checked builds pay for the scan. The release `.text`,
+  `.rodata`, unwind sections, aggregate section sizes, and symbol addresses are identical to parent;
+  only source-location/build metadata changed, so counter runs were unnecessary.
+- **Next gate:** give the narrowest defect-only reconciliation shrink operation an explicit
+  live-cycle rewrite helper that documents stale-tail preservation. Keep the outer traversal ABI
+  stable, compare release codegen first, and run counters only if runtime sections change.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

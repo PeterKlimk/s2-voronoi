@@ -294,6 +294,10 @@ localized duplicate-key BFS now consumes that same operation-owned layout, so me
 constructs the cell/index pairing once for both duplicate and segment scans. Its
 explicit cell-bound/end-bound check sequence is intentional: a superficially idiomatic
 `slice.get(start..end)` form added repeatable clean-path work and was rejected by the counter gate.
+Checked builds now also audit cell-id/index-buffer representation capacity and every declared live
+span once on reconciliation's defect path. The no-record fast path returns before that audit, and
+the audit is absent from release builds; the accepted release runtime sections are byte-identical
+to the immediate parent.
 Converting the rebuild backend's semantic old/new span comparison to two layouts was also rejected:
 default, never-inline, and always-inline forms all caused the same repeatable clean-path codegen
 regression, so that isolated four-slice signature remains raw for now. The localized unpaired-edge

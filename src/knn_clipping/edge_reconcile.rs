@@ -446,6 +446,13 @@ pub(crate) fn reconcile_edge_mismatches(
         }
         return Ok(ReconcileResult::default());
     }
+
+    // Defect-bearing checked builds audit the cell/index pairing once before
+    // reconciliation's readers and mutators rely on it. The clean fast path
+    // above and every release build remain untouched.
+    #[cfg(debug_assertions)]
+    LiveCellLayout::new(cells, cell_indices).debug_assert_valid();
+
     let mut merge_affected_cells: Vec<u32> = Vec::new();
     let mut local_rebuild_seed_pairs: Vec<(u32, u32)> = Vec::new();
     let mut merge_ledger = MergeLedger::default();

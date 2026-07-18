@@ -866,6 +866,24 @@ and reverted.
   added 16, while aggregate mapped accounting was flat or smaller. Both implementations were
   reverted, and the rebuilt source is identical to the parent.
 
+## QUAL-001B checked structural-audit result
+
+The checked-build invariant slice was validated on 2026-07-19 against immediate parent `47d2e02`.
+
+- `LiveCellLayout::debug_assert_valid` checks that the cell count and backing index-buffer length
+  fit their u32-backed representations, then verifies every record's live span is contained in the
+  buffer. Unit coverage includes a valid stale-tail layout and a malformed out-of-bounds span.
+- Reconciliation invokes the audit only after its empty-record early return. Clean checked runs
+  retain their existing fast path; defect-bearing checked runs validate the pairing once before
+  readers or mutators rely on it. The method and call are both absent when debug assertions are
+  disabled.
+- The release `tools` artifact retained identical aggregate accounting (`2,183,212` text, `55,512`
+  data, `4,520` BSS). `.text`, `.rodata`, `.eh_frame`, and `.gcc_except_table` were byte-identical,
+  and executable symbol addresses were unchanged. The file grew 40 bytes solely through changed
+  compiler-symbol/source-location and build metadata; no runtime counter comparison was warranted.
+- The focused checked test passed. Formatting, all-target/all-feature Clippy with warnings denied,
+  and the complete release and checked suites passed.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
