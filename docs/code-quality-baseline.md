@@ -884,6 +884,26 @@ The checked-build invariant slice was validated on 2026-07-19 against immediate 
 - The focused checked test passed. Formatting, all-target/all-feature Clippy with warnings denied,
   and the complete release and checked suites passed.
 
+## QUAL-001B rejected mutable-layout experiment
+
+The first mutation-owner candidate was measured on 2026-07-19 against immediate parent `51669ba`
+and reverted.
+
+- A private `LiveCellLayoutMut` paired mutable cell records with their backing index buffer. Its
+  `rewrite_and_shrink` operation wrote a shorter cycle into the existing prefix, updated the cell
+  count, and deliberately preserved the stale tail. The defect-only collinear-drop path used it
+  without changing its outer signature or malformed-span behavior; a focused unit test pinned both
+  live-cycle and stale-tail results.
+- The helper was fully inlined, but the release artifact reproduced the earlier optimizer-cliff
+  fingerprint: aggregate text fell from `2,183,212` to `2,182,960` bytes, BSS fell from `4,520` to
+  `680` bytes, and the executable became 48 bytes smaller.
+- Across seven interleaved 500k single-threaded Fibonacci counter pairs, mean candidate/parent
+  ratios were `1.001598698` instructions and `1.016618637` branches, with pair ranges
+  `1.001596324..=1.001600426` and `1.016613236..=1.016624389`. Every pair regressed; all samples
+  recorded zero context switches and CPU migrations.
+- The implementation was reverted. Rebuilding the restored source reproduced the initially
+  captured parent artifact hash, confirming that no production change remains.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

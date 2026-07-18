@@ -731,6 +731,11 @@ Do not broadly retry these without a materially different design or workload:
   instructions and +1.6619% branches; retaining the raw entry and typing only the internal family
   produced +0.1600% and +1.6625%. Both regressed in every one of seven pairs and were reverted.
   Keep this reader family raw until its surrounding codegen changes materially.
+- Introducing `LiveCellLayoutMut::rewrite_and_shrink` for the defect-only collinear-drop mutation
+  reproduced the same cliff despite full inlining and an unchanged outer reconciliation signature.
+  Seven pairs averaged +0.15987% instructions and +1.66186% branches, with every pair regressing
+  and no context switches or migrations. The helper and its mutable view were reverted; keep this
+  small prefix-write/count-shrink operation flattened until surrounding codegen changes materially.
 - Carrying reconciliation-produced local-rebuild seed pairs through pipeline state as a typed
   owner perturbed clean-path codegen despite retaining tuple storage. Seven interleaved 500k
   single-threaded Fibonacci counter pairs showed +0.1602% instructions and +1.6619% branches in

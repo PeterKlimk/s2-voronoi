@@ -302,8 +302,10 @@ Converting the rebuild backend's semantic old/new span comparison to two layouts
 default, never-inline, and always-inline forms all caused the same repeatable clean-path codegen
 regression, so that isolated four-slice signature remains raw for now. The localized unpaired-edge
 scan family likewise remains raw: both whole-family and internal-only view migrations reproduced
-the same optimizer cliff. Reader-signature expansion therefore stops at the accepted segment and
-duplicate-key families until surrounding codegen changes materially.
+the same optimizer cliff. A mutable paired view for the collinear-drop rewrite was also fully
+inlined but reproduced that exact clean-path regression. Reader- and mutation-signature expansion
+therefore stops at the accepted segment and duplicate-key families until surrounding codegen
+changes materially; the existing local rewrite remains explicit at its call site.
 
 Introduce a small internal view/owner around cells and their backing index buffer. The abstraction
 should provide:

@@ -454,9 +454,14 @@ tasks and are not duplicated here.
   no-record fast path, so only defect-bearing checked builds pay for the scan. The release `.text`,
   `.rodata`, unwind sections, aggregate section sizes, and symbol addresses are identical to parent;
   only source-location/build metadata changed, so counter runs were unnecessary.
-- **Next gate:** give the narrowest defect-only reconciliation shrink operation an explicit
-  live-cycle rewrite helper that documents stale-tail preservation. Keep the outer traversal ABI
-  stable, compare release codegen first, and run counters only if runtime sections change.
+- **QUAL-001B mutation-owner decision:** a `LiveCellLayoutMut::rewrite_and_shrink` helper was tested
+  on the defect-only collinear-drop mutation, with the outer reconciliation signature unchanged and
+  direct coverage for stale-tail preservation. Despite full inlining, it reproduced the known
+  optimizer cliff in all seven pairs: +0.15987% instructions and +1.66186% branches. The source was
+  reverted; keep this local mutation flattened until surrounding codegen changes materially.
+- **Next gate:** pause QUAL-001B release-signature expansion at the measured Pareto frontier and
+  start QUAL-001C with a read-only inventory of duplicated validation facts, policies, and negative
+  controls. Choose the first shared fact only after the three consumers' semantics are explicit.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.
