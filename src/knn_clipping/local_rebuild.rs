@@ -606,7 +606,7 @@ fn run_rebuild_growth(
                 continue;
             }
             touched_vids.extend(work.boundary(g).iter().copied());
-            work.splice_generator(points, g, fan, target_sign);
+            work.splice_generator(points, CellId::new(g), fan, target_sign);
             touched_vids.extend(work.boundary(g).iter().copied());
             spliced.insert(g);
         }
@@ -930,6 +930,23 @@ fn low_incidence_gens(work: &WorkingDiagram) -> Vec<u32> {
     out
 }
 
+/// Effective-cell identity at overlay mutation seams.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CellId(u32);
+
+impl CellId {
+    #[inline]
+    const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    #[inline]
+    const fn get(self) -> u32 {
+        self.0
+    }
+}
+
 /// A triple-keyed OVERLAY view of the assembled diagram, in effective-generator
 /// index space. The base arrays are borrowed read-only; splicing records a
 /// per-generator boundary override, and freshly minted vertices live in side
@@ -1081,10 +1098,11 @@ impl<'a> WorkingDiagram<'a> {
     fn splice_generator(
         &mut self,
         points: &[Vec3],
-        g: u32,
+        cell: CellId,
         fan: &[RebuildVertex],
         target_sign: f64,
     ) {
+        let g = cell.get();
         let mut list: Vec<u32> = fan
             .iter()
             .map(|&vertex| self.vid_for(points, vertex))
@@ -1623,6 +1641,13 @@ mod tests {
     }
 
     #[test]
+    fn cell_id_is_layout_transparent() {
+        assert_eq!(CellId::new(7).get(), 7);
+        assert_eq!(std::mem::size_of::<CellId>(), std::mem::size_of::<u32>());
+        assert_eq!(std::mem::align_of::<CellId>(), std::mem::align_of::<u32>());
+    }
+
+    #[test]
     fn local3d_overlay_reports_every_spliced_cell_for_resolution_scan() {
         let points = [Vec3::X, Vec3::Y, Vec3::Z];
         let keys = ShardedVertexKeys::new(vec![0], vec![]);
@@ -1642,8 +1667,8 @@ mod tests {
                 mint_pos: Some(Vec3::Z),
             },
         ];
-        work.splice_generator(&points, 2, &fan, 0.0);
-        work.splice_generator(&points, 0, &fan, 0.0);
+        work.splice_generator(&points, CellId::new(2), &fan, 0.0);
+        work.splice_generator(&points, CellId::new(0), &fan, 0.0);
         assert_eq!(work.overridden_cells(), [0, 2]);
     }
 

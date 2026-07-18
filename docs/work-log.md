@@ -407,9 +407,14 @@ tasks and are not duplicated here.
   Cargo features from internal hooks. The environment inventory now states its compiled-code scope,
   records both private test-only variables, and distinguishes the verification fast path from its
   strict fallback. Existing rejected-experiment records close the final durable-documentation item.
-- **Next gate:** begin QUAL-001G with one cold identity boundary in reconciliation or local
-  rebuilding. Introduce no generic index framework and prove optimized representation/codegen is
-  unchanged before widening adoption.
+- **QUAL-001G first identity result:** a transparent `CellId` now protects the local-rebuild
+  overlay's splice mutation from accidental vertex/generator id substitution while raw storage and
+  neighboring algorithms remain unchanged. A broader typed rebuild-seed owner was rejected after
+  seven counter pairs showed +0.1602% instructions and +1.6619% branches on the clean path. The
+  splice-local form was structurally neutral in the same matrix and reduced total size accounting
+  by eight bytes.
+- **Next gate:** try one adjacent cold identity seam—prefer a vertex-id boundary inside the local
+  overlay—without changing collection element types, sort monomorphizations, or packed storage.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

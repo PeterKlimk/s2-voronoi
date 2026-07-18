@@ -710,6 +710,12 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Carrying reconciliation-produced local-rebuild seed pairs through pipeline state as a typed
+  owner perturbed clean-path codegen despite retaining tuple storage. Seven interleaved 500k
+  single-threaded Fibonacci counter pairs showed +0.1602% instructions and +1.6619% branches in
+  every pair. The implementation was reverted. The accepted narrower `CellId` boundary exists
+  only at the cold overlay splice mutation; the same counter matrix was neutral (mean changes
+  -0.000066% instructions and +0.000082% branches).
 - Reusing the backend's final `Vec<VoronoiCell>` allocation as the diagram's
   layout-identical cell storage removed the per-cell conversion allocation and copy. Both a shared
   internal record and a `repr(C)` ownership-transfer implementation reduced 1M native uniform

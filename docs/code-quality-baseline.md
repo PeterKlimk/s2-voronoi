@@ -720,6 +720,24 @@ The final durable-documentation slice was validated on 2026-07-19 against immedi
   BSS), build IDs, and byte-identical stripped files. Executable, read-only, relocation-backed, and
   unwind sections were also byte-identical, so no counter or quiet wall-clock run was warranted.
 
+## QUAL-001G first typed-identity result
+
+The first typed-identity slice was validated on 2026-07-19 against immediate parent `ddb1fee`.
+
+- A transparent `CellId(u32)` now guards `WorkingDiagram::splice_generator`; conversion occurs at
+  the production mutation call site and focused unit fixture, while the overlay's maps, sets,
+  boundaries, and vertex ids retain their existing raw representations. Unit coverage pins the
+  wrapper's value, size, and alignment.
+- A broader reconciliation-to-pipeline seed-pair owner was measured and reverted. Seven
+  interleaved 500k single-threaded Fibonacci pairs showed repeatable +0.1602% instructions and
+  +1.6619% branches despite near-neutral size.
+- The accepted splice-local candidate changed release size from `2,183,020` to `2,183,028` text
+  bytes, left data at `55,536`, and reduced BSS from `592` to `576`. Across the same seven counter
+  pairs, mean candidate/parent ratios were `0.999999342` instructions and `1.000000817` branches,
+  with no directional signal. Wall clock was intentionally ignored on the busy host.
+- All-target/all-feature Clippy with warnings denied, the complete release suite, and compilation
+  of the feature-gated local-rebuild probe target passed.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
