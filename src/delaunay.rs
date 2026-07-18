@@ -18,6 +18,7 @@
 
 use glam::DVec3;
 
+use crate::policy::REFERENCE_AXIS_COMPONENT_SWITCH_F64;
 use crate::SphericalVoronoi;
 
 /// CSR incidence: for each vertex, the canonical cells whose boundary uses
@@ -116,7 +117,7 @@ impl SphericalVoronoi {
 
 /// Any axis not parallel to `p`, for building a tangent basis.
 fn reference_axis(p: DVec3) -> DVec3 {
-    if p.x.abs() < 0.9 {
+    if p.x.abs() < REFERENCE_AXIS_COMPONENT_SWITCH_F64 {
         DVec3::X
     } else {
         DVec3::Y

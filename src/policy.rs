@@ -35,6 +35,19 @@ pub(crate) const GNOMONIC_TANGENT_BASIS_SOUTH_POLE_SWITCH_Z: f64 = -0.999_999_9;
 /// constraints, not this synthetic square, determine accepted final geometry.
 pub(crate) const GNOMONIC_INITIAL_BOUNDING_EXTENT: f64 = 1e6;
 
+/// Absolute x-component below which an `f32` direction uses the X axis as a
+/// well-separated reference; otherwise it uses Y.
+///
+/// This is a deterministic basis-conditioning policy, not a geometric
+/// acceptance tolerance. Callers retain the strict `<` branch.
+pub(crate) const REFERENCE_AXIS_COMPONENT_SWITCH_F32: f32 = 0.9;
+
+/// `f64` counterpart of [`REFERENCE_AXIS_COMPONENT_SWITCH_F32`].
+///
+/// The separately typed value avoids inserting casts into promoted geometry
+/// and preserves the existing strict `< 0.9` decisions exactly.
+pub(crate) const REFERENCE_AXIS_COMPONENT_SWITCH_F64: f64 = 0.9;
+
 /// Target mean points per query-grid cell.
 ///
 /// Set from the 2026-06 reference-machine sweep (Ryzen 3600,

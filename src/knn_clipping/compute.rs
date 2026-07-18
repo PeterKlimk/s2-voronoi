@@ -11,7 +11,7 @@ use crate::cube_grid::CubeMapGrid;
 use crate::cube_grid::CubeMapGridBuildTimings;
 use crate::diagram::VoronoiCell;
 use crate::live_dedup::{self, CellBuildError, CellFailure};
-use crate::policy::COPLANAR_PERTURBATION_SCALE;
+use crate::policy::{COPLANAR_PERTURBATION_SCALE, REFERENCE_AXIS_COMPONENT_SWITCH_F64};
 use crate::timing::{Timer, TimingBuilder};
 use crate::tolerances::{NEAR_GREAT_CIRCLE_MAX_PLANE_SIN_TOL, NEAR_GREAT_CIRCLE_RMS_PLANE_SIN_TOL};
 use crate::{
@@ -1382,7 +1382,7 @@ fn stable_rank2_normal(points: &[Vec3]) -> Option<DVec3> {
 }
 
 fn covers_great_circle(points: &[Vec3], normal: DVec3) -> bool {
-    let seed = if normal.x.abs() < 0.9 {
+    let seed = if normal.x.abs() < REFERENCE_AXIS_COMPONENT_SWITCH_F64 {
         DVec3::X
     } else {
         DVec3::Y

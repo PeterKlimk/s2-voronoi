@@ -378,13 +378,18 @@ tasks and are not duplicated here.
   initial chart bound now have separate construction-policy names; the neighbor norm check is a
   named local debug diagnostic. Values, branch equality, initial geometry, and assertion direction
   are unchanged. The complete optimized artifact is byte-identical.
+- **QUAL-001E reference-axis result:** production helper-axis selection now uses separately typed
+  `f32` and `f64` policy constants. Every exact `0.9` value, strict `<` comparison, X/Y choice, and
+  operand type is unchanged; tool helpers and the feature-only A/B probe remain local. Optimized
+  executable sections and numeric data are byte-identical; only source metadata moved.
 - **Final-inventory result:** exact mathematical coefficients remain inline, and quality,
-  reconciliation, and point-envelope bucket ranges remain named local diagnostics. Raw production
-  policy still exists in helper-axis `0.9` switches and the locator's distinct grid density, so
-  QUAL-001E remains active.
-- **Next gate:** unify the repeated helper-axis component switch under separately typed `f32` and
-  `f64` policy constants. Preserve every `< 0.9` branch and axis choice; do not force the types into
-  one casted value or include tool/test fixtures in the production policy surface.
+  reconciliation, and point-envelope bucket ranges remain named local diagnostics. Raw policy
+  remains in the locator's distinct target density and the tools-only low-degree quality hash-grid
+  size, so QUAL-001E remains active.
+- **Next gate:** name the locator target density centrally and the low-degree quality hash-grid size
+  locally. Preserve the locator's exact sizing formula and its distinction from the kNN query-grid
+  density; keep the quality value diagnostic-only. Rerun the inventory afterward and close
+  QUAL-001E if no unclassified production policy remains.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

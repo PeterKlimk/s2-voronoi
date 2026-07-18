@@ -616,6 +616,29 @@ The tenth numerical/policy-constant slice was validated on 2026-07-18 against im
   `f15123985e07e8a880813669dcdc3a12c2488f0f66bd4be688717b04118172ef`. No counter or quiet
   wall-clock run was warranted.
 
+## QUAL-001E reference-axis policy result
+
+The eleventh numerical/policy-constant slice was validated on 2026-07-18 against immediate parent
+`fcd12c4`.
+
+- The repeated helper-axis component boundary moved to `policy.rs` as separately typed
+  `REFERENCE_AXIS_COMPONENT_SWITCH_F32` and `REFERENCE_AXIS_COMPONENT_SWITCH_F64` construction
+  policies. The `f64` value serves the Delaunay dual and near-great-circle coverage paths; the
+  `f32` value serves projected local rebuilding.
+- Every site retains the exact value `0.9`, strict `<` comparison, and X-on-true/Y-on-false choice;
+  equality therefore still selects Y. Keeping both types avoids casts or type widening in promoted
+  geometry.
+- Tool helpers and the feature-only global-Delaunay A/B probe retain local literals. They are not
+  production policy consumers and were deliberately excluded from the shared policy surface.
+- `cargo fmt`, both default and native all-feature Clippy with warnings denied, the complete release
+  and checked suites, the no-default-features release suite, and the `serde,glam` release suite
+  passed.
+- The matched release `tools` artifacts had identical sizes (`2,183,020` text, `55,536` data, `592`
+  BSS) and byte-identical `.text`, `.rodata`, exception-table, and unwind sections. The whole-file
+  difference was confined to build/symbol metadata and 18 changed source-location bytes in
+  `.data.rel.ro`; executable code and numeric data did not change. No counter or quiet wall-clock
+  run was warranted.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

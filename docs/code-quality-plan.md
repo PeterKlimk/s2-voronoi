@@ -357,7 +357,7 @@ only setup, classification, and invariant-bearing state.
 
 **Hot-path impact expected:** none
 
-**Progress:** started 2026-07-18 with ten name-only slices. The dense-cell gather-radius inflation
+**Progress:** started 2026-07-18 with eleven name-only slices. The dense-cell gather-radius inflation
 is now the named, dimensionless `f32` policy `DENSE_BAND_RADIUS_INFLATION`. The repeated fallback
 `1e-24` spellings are now separately owned as `FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR` (a
 dimensionless squared-sine conditioning floor) and `FALLBACK_VERTEX_DEDUP_LEN2` (a dimensionless
@@ -378,9 +378,12 @@ fallback despite both using `f64::EPSILON`. Profiling-only point-envelope bands 
 local diagnostic bounds, and their public/internal fields plus emitted keys spell negative
 exponents unambiguously. Gnomonic chart initialization now names its south-pole basis switch and
 synthetic bounding extent as construction policy while retaining its neighbor-norm check as a local
-debug diagnostic. The dense-band and gnomonic-initialization policy slices produced byte-identical
-optimized benchmarks; the fallback, unit-distinct, weld-wall, coplanar-policy, and
-projected-Delaunay slices produced identical executable code/read-only data with only source-line
+debug diagnostic. Helper-axis construction now shares a semantic component switch through
+separately typed `REFERENCE_AXIS_COMPONENT_SWITCH_F32` and
+`REFERENCE_AXIS_COMPONENT_SWITCH_F64` policies, avoiding casts while preserving every strict
+branch. The dense-band and gnomonic-initialization policy slices produced byte-identical optimized
+benchmarks; the fallback, unit-distinct, weld-wall, coplanar-policy, projected-Delaunay, and
+reference-axis slices produced identical executable code/read-only data with only source-line
 metadata movement, the owner-arc and centroid slices produced identical stripped optimized
 binaries, and the diagnostic rename leaves the non-profiling stripped artifact identical.
 

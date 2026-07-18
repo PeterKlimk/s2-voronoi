@@ -24,7 +24,7 @@ use super::local_hull::LocalHull;
 use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch};
 use crate::diagram::VoronoiCell;
 use crate::live_dedup::ShardedVertexKeys;
-use crate::policy::LOCAL_REBUILD_SUPER_TRIANGLE_SCALE;
+use crate::policy::{LOCAL_REBUILD_SUPER_TRIANGLE_SCALE, REFERENCE_AXIS_COMPONENT_SWITCH_F32};
 use crate::tolerances::{
     LOCAL_REBUILD_DELAUNAY_SPAN_FLOOR, LOCAL_REBUILD_STEREOGRAPHIC_DENOMINATOR_FLOOR,
 };
@@ -478,7 +478,11 @@ fn local_exact_fans(
         centroid += points[id as usize];
     }
     let pole = (-centroid).normalize();
-    let ax = if pole.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+    let ax = if pole.x.abs() < REFERENCE_AXIS_COMPONENT_SWITCH_F32 {
+        Vec3::X
+    } else {
+        Vec3::Y
+    };
     let e1 = (ax - pole * ax.dot(pole)).normalize();
     let e2 = pole.cross(e1);
     let proj: Vec<Coord<f64>> = local_ids
