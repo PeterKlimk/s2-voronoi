@@ -357,7 +357,7 @@ only setup, classification, and invariant-bearing state.
 
 **Hot-path impact expected:** none
 
-**Progress:** started 2026-07-18 with eight name-only slices. The dense-cell gather-radius inflation
+**Progress:** started 2026-07-18 with nine name-only slices. The dense-cell gather-radius inflation
 is now the named, dimensionless `f32` policy `DENSE_BAND_RADIUS_INFLATION`. The repeated fallback
 `1e-24` spellings are now separately owned as `FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR` (a
 dimensionless squared-sine conditioning floor) and `FALLBACK_VERTEX_DEDUP_LEN2` (a dimensionless
@@ -374,11 +374,13 @@ plane-residual tolerances, while `COPLANAR_PERTURBATION_SCALE` is explicitly rob
 rather than an acceptance tolerance. The local projected-Delaunay construction now similarly owns
 its minimum chart-span conditioning floor separately from its super-triangle expansion policy. The
 centroid path now distinguishes its per-edge cross-length floor from its final integral-length
-fallback despite both using `f64::EPSILON`. The dense-band policy slice produced a byte-identical
-optimized benchmark; the fallback, unit-distinct, weld-wall, coplanar-policy, and
-projected-Delaunay slices produced identical executable code/read-only data with only source-line
-metadata movement, and the owner-arc and centroid slices produced identical stripped optimized
-binaries.
+fallback despite both using `f64::EPSILON`. Profiling-only point-envelope bands are now explicitly
+local diagnostic bounds, and their public/internal fields plus emitted keys spell negative
+exponents unambiguously. The dense-band policy slice produced a byte-identical optimized benchmark;
+the fallback, unit-distinct, weld-wall, coplanar-policy, and projected-Delaunay slices produced
+identical executable code/read-only data with only source-line metadata movement, the owner-arc and
+centroid slices produced identical stripped optimized binaries, and the diagnostic rename leaves
+the non-profiling stripped artifact identical.
 
 Classify every production floating-point literal outside tests/benchmarks as one of:
 

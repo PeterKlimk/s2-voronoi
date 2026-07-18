@@ -638,7 +638,7 @@ fn run_benchmark_with_config(
         std::hint::black_box(diagram.lloyd_step());
         for row in voronoi_mesh::profile_point_envelopes() {
             println!(
-                "POINT_ENVELOPE producer={} count={} non_finite={} max={:.9e} gt_1eps={} gt_2eps={} gt_4eps={} gt_8eps={} gt_1e6={} gt_1e5={} gt_1e4={} f32_changed={} f32_max={:.9e} f64_changed={} f64_max={:.9e} rules_differ={}",
+                "POINT_ENVELOPE producer={} count={} non_finite={} max={:.9e} gt_1eps={} gt_2eps={} gt_4eps={} gt_8eps={} gt_1e_minus_6={} gt_1e_minus_5={} gt_1e_minus_4={} f32_changed={} f32_max={:.9e} f64_changed={} f64_max={:.9e} rules_differ={}",
                 row.producer,
                 row.count,
                 row.non_finite,
@@ -647,9 +647,9 @@ fn run_benchmark_with_config(
                 row.over_2eps,
                 row.over_4eps,
                 row.over_8eps,
-                row.over_1e6,
-                row.over_1e5,
-                row.over_1e4,
+                row.over_1e_minus_6,
+                row.over_1e_minus_5,
+                row.over_1e_minus_4,
                 row.f32_rule_changed,
                 row.f32_rule_max_abs_error,
                 row.f64_rule_changed,

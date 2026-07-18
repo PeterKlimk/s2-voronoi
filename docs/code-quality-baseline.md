@@ -561,6 +561,35 @@ The eighth numerical/policy-constant slice was validated on 2026-07-18 against i
   `802417baf66cc5394d41803f3478134478e1aaae57c3843bebe1180e2f2ae495`. No counter or quiet
   wall-clock run was warranted.
 
+## QUAL-001E point-envelope diagnostic result
+
+The ninth numerical/policy-constant slice was validated on 2026-07-18 against immediate parent
+`2db0296`.
+
+- The profiling-only point-envelope absolute-error bands are now named local constants:
+  `ABS_ERROR_1E_MINUS_6_BOUND`, `ABS_ERROR_1E_MINUS_5_BOUND`, and
+  `ABS_ERROR_1E_MINUS_4_BOUND`. The f32 epsilon band base is likewise the explicit local
+  `F32_EPSILON_BOUND`. These values remain diagnostic bucket boundaries and do not participate in
+  normalization, geometry, validation, or acceptance policy.
+- Every bucket still counts with a strict `error > bound` comparison. The four epsilon-relative
+  multipliers and three absolute values are unchanged.
+- The profiling summary fields changed from ambiguous `over_1e6` / `over_1e5` / `over_1e4` to
+  exponent-aware `over_1e_minus_6` / `over_1e_minus_5` / `over_1e_minus_4`. The benchmark's emitted
+  keys changed in parallel from `gt_1e6` etc. to `gt_1e_minus_6` etc. This intentionally breaks the
+  doc-hidden profiling surface while no external users exist; no compatibility aliases remain.
+- Matched deterministic 1k profiling runs produced identical per-producer counts, maxima, rule
+  comparisons, topology hash `f36e65e7876fa06a`, and coordinate hash `62c6f747b95ed029`; only the
+  three corrected key names and noisy timing fields differed.
+- The non-profiling release `tools` artifact remained byte-identical after stripping symbols and the
+  build-id note, with SHA-256
+  `802417baf66cc5394d41803f3478134478e1aaae57c3843bebe1180e2f2ae495`. The profiling artifact's
+  total footprint remained 2,264,940 bytes; with its longer diagnostic labels and resulting
+  alignment, `size` reported 32 more text bytes and 32 fewer BSS bytes. Production builds were
+  unaffected, so no counter or quiet wall-clock run was warranted.
+- `cargo fmt`, both default and native all-feature Clippy with warnings denied, the complete release
+  and checked suites, the no-default-features release suite, the `serde,glam` release suite, and an
+  explicit `tools,profiling` release suite passed.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

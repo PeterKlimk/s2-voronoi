@@ -370,9 +370,13 @@ tasks and are not duplicated here.
 - **QUAL-001E centroid result:** the per-edge cross-length skip and final accumulated-integral
   fallback now use independently named `f64::EPSILON` floors. Both `<=` boundaries and their
   respective skip/generator outcomes are unchanged. Stripped optimized binaries are identical.
-- **Next gate:** classify the profiling-only point-envelope thresholds as local diagnostic bucket
-  boundaries, not production tolerances. Replace ambiguous `1e6` field/column vocabulary with
-  exponent-aware names while preserving every strict `>` comparison and emitted value.
+- **QUAL-001E point-envelope result:** profiling-only epsilon/absolute-error bands are named local
+  diagnostic boundaries, and ambiguous `1e6` field/output vocabulary now spells negative exponents
+  explicitly. Thresholds, strict `>` comparisons, counts, maxima, and semantic hashes are
+  unchanged. The non-profiling stripped artifact is identical.
+- **Next gate:** complete a final remaining-production-literal inventory. Confirm that exact
+  mathematical coefficients and already-named local diagnostic ranges stay local, identify any
+  still-raw tolerance or policy value, and either land one final name-only slice or close QUAL-001E.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

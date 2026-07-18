@@ -2,7 +2,13 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-const EPS: f64 = f32::EPSILON as f64;
+// Local diagnostic bucket boundaries. These classify observations only; they
+// never participate in normalization or geometry decisions. Every bucket is
+// counted with a strict `error > bound` comparison.
+const F32_EPSILON_BOUND: f64 = f32::EPSILON as f64;
+const ABS_ERROR_1E_MINUS_6_BOUND: f64 = 1.0e-6;
+const ABS_ERROR_1E_MINUS_5_BOUND: f64 = 1.0e-5;
+const ABS_ERROR_1E_MINUS_4_BOUND: f64 = 1.0e-4;
 
 #[derive(Clone, Copy, Debug)]
 #[repr(usize)]
@@ -58,9 +64,9 @@ struct AtomicEnvelope {
     over_2eps: AtomicU64,
     over_4eps: AtomicU64,
     over_8eps: AtomicU64,
-    over_1e6: AtomicU64,
-    over_1e5: AtomicU64,
-    over_1e4: AtomicU64,
+    over_1e_minus_6: AtomicU64,
+    over_1e_minus_5: AtomicU64,
+    over_1e_minus_4: AtomicU64,
     max_abs_error_bits: AtomicU64,
     f32_rule_changed: AtomicU64,
     f64_rule_changed: AtomicU64,
@@ -78,9 +84,9 @@ impl AtomicEnvelope {
             over_2eps: AtomicU64::new(0),
             over_4eps: AtomicU64::new(0),
             over_8eps: AtomicU64::new(0),
-            over_1e6: AtomicU64::new(0),
-            over_1e5: AtomicU64::new(0),
-            over_1e4: AtomicU64::new(0),
+            over_1e_minus_6: AtomicU64::new(0),
+            over_1e_minus_5: AtomicU64::new(0),
+            over_1e_minus_4: AtomicU64::new(0),
             max_abs_error_bits: AtomicU64::new(0),
             f32_rule_changed: AtomicU64::new(0),
             f64_rule_changed: AtomicU64::new(0),
@@ -97,9 +103,9 @@ impl AtomicEnvelope {
         self.over_2eps.store(0, Ordering::Relaxed);
         self.over_4eps.store(0, Ordering::Relaxed);
         self.over_8eps.store(0, Ordering::Relaxed);
-        self.over_1e6.store(0, Ordering::Relaxed);
-        self.over_1e5.store(0, Ordering::Relaxed);
-        self.over_1e4.store(0, Ordering::Relaxed);
+        self.over_1e_minus_6.store(0, Ordering::Relaxed);
+        self.over_1e_minus_5.store(0, Ordering::Relaxed);
+        self.over_1e_minus_4.store(0, Ordering::Relaxed);
         self.max_abs_error_bits.store(0, Ordering::Relaxed);
         self.f32_rule_changed.store(0, Ordering::Relaxed);
         self.f64_rule_changed.store(0, Ordering::Relaxed);
@@ -132,19 +138,31 @@ impl AtomicEnvelope {
             return;
         }
         self.over_1eps
-            .fetch_add(u64::from(error > EPS), Ordering::Relaxed);
-        self.over_2eps
-            .fetch_add(u64::from(error > 2.0 * EPS), Ordering::Relaxed);
-        self.over_4eps
-            .fetch_add(u64::from(error > 4.0 * EPS), Ordering::Relaxed);
-        self.over_8eps
-            .fetch_add(u64::from(error > 8.0 * EPS), Ordering::Relaxed);
-        self.over_1e6
-            .fetch_add(u64::from(error > 1.0e-6), Ordering::Relaxed);
-        self.over_1e5
-            .fetch_add(u64::from(error > 1.0e-5), Ordering::Relaxed);
-        self.over_1e4
-            .fetch_add(u64::from(error > 1.0e-4), Ordering::Relaxed);
+            .fetch_add(u64::from(error > F32_EPSILON_BOUND), Ordering::Relaxed);
+        self.over_2eps.fetch_add(
+            u64::from(error > 2.0 * F32_EPSILON_BOUND),
+            Ordering::Relaxed,
+        );
+        self.over_4eps.fetch_add(
+            u64::from(error > 4.0 * F32_EPSILON_BOUND),
+            Ordering::Relaxed,
+        );
+        self.over_8eps.fetch_add(
+            u64::from(error > 8.0 * F32_EPSILON_BOUND),
+            Ordering::Relaxed,
+        );
+        self.over_1e_minus_6.fetch_add(
+            u64::from(error > ABS_ERROR_1E_MINUS_6_BOUND),
+            Ordering::Relaxed,
+        );
+        self.over_1e_minus_5.fetch_add(
+            u64::from(error > ABS_ERROR_1E_MINUS_5_BOUND),
+            Ordering::Relaxed,
+        );
+        self.over_1e_minus_4.fetch_add(
+            u64::from(error > ABS_ERROR_1E_MINUS_4_BOUND),
+            Ordering::Relaxed,
+        );
         self.max_abs_error_bits
             .fetch_max(error.to_bits(), Ordering::Relaxed);
 
@@ -217,9 +235,9 @@ pub struct PointEnvelopeSummary {
     pub over_2eps: u64,
     pub over_4eps: u64,
     pub over_8eps: u64,
-    pub over_1e6: u64,
-    pub over_1e5: u64,
-    pub over_1e4: u64,
+    pub over_1e_minus_6: u64,
+    pub over_1e_minus_5: u64,
+    pub over_1e_minus_4: u64,
     pub max_abs_error: f64,
     pub f32_rule_changed: u64,
     pub f64_rule_changed: u64,
@@ -286,9 +304,9 @@ pub(crate) fn snapshot() -> Vec<PointEnvelopeSummary> {
                 over_2eps: envelope.over_2eps.load(Ordering::Relaxed),
                 over_4eps: envelope.over_4eps.load(Ordering::Relaxed),
                 over_8eps: envelope.over_8eps.load(Ordering::Relaxed),
-                over_1e6: envelope.over_1e6.load(Ordering::Relaxed),
-                over_1e5: envelope.over_1e5.load(Ordering::Relaxed),
-                over_1e4: envelope.over_1e4.load(Ordering::Relaxed),
+                over_1e_minus_6: envelope.over_1e_minus_6.load(Ordering::Relaxed),
+                over_1e_minus_5: envelope.over_1e_minus_5.load(Ordering::Relaxed),
+                over_1e_minus_4: envelope.over_1e_minus_4.load(Ordering::Relaxed),
                 max_abs_error: f64::from_bits(envelope.max_abs_error_bits.load(Ordering::Relaxed)),
                 f32_rule_changed: envelope.f32_rule_changed.load(Ordering::Relaxed),
                 f64_rule_changed: envelope.f64_rule_changed.load(Ordering::Relaxed),
