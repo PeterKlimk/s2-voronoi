@@ -798,6 +798,25 @@ The first live-layout slice was validated on 2026-07-19 against immediate parent
 - Formatting, all-target/all-feature Clippy with warnings denied, the complete release and checked
   suites, and the no-default-features release suite passed.
 
+## QUAL-001B threaded segment-reader result
+
+The second live-layout slice was validated on 2026-07-19 against immediate parent `d2467c8`.
+
+- The shared-edge segment reader and its reuse-buffer form now take one `LiveCellLayout` instead of
+  independent cell/index slices. Primary merge collection, rejected-component seed discovery,
+  optional reconciliation telemetry, and focused cross-module tests construct the pairing once per
+  read operation. A test that deliberately shrinks a cell between rounds reconstructs the view
+  after each mutation, making its borrow boundary explicit.
+- The release executable file changed from `2,999,072` to `2,999,024` bytes. Section accounting
+  moved 464 bytes into `.text` and 392 bytes out of unwind data; a 4 KiB virtual alignment shift
+  does not increase the file.
+- Across seven interleaved 500k single-threaded Fibonacci counter pairs, mean candidate/parent
+  ratios were `0.999999033` instructions and `0.999999956` branches, with pair ranges
+  `0.999994779..=1.000001060` and `0.999998867..=1.000000665`; there was no directional signal.
+  Wall clock was intentionally ignored on the busy host.
+- Formatting, all-target/all-feature Clippy with warnings denied, the complete release suite, and
+  the checked suite passed.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

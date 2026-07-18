@@ -14,6 +14,7 @@ use super::{
     bound_merge_components, collect_merges, dist_sq, edge_segments_for_neighbor_into, unpack_edge,
     vertex_pos, MergeLedger, MergeMode, ReconcileOptions, VertexKeys,
 };
+use crate::cell_layout::LiveCellLayout;
 use crate::diagram::VoronoiCell;
 use crate::knn_clipping::union_find::SparseUnionFind;
 use crate::live_dedup::{EdgeMismatch, EdgeMismatchOrigin, EdgeRecord};
@@ -180,12 +181,13 @@ fn analyze_primary(
 
     let mut seg_a = Vec::new();
     let mut seg_b = Vec::new();
+    let layout = LiveCellLayout::new(cells, cell_indices);
     for record in unresolved {
         let origin = stats.origins.entry(record.origin).or_default();
         origin.records += 1;
         let (a, b) = unpack_edge(record.key.as_u64());
-        edge_segments_for_neighbor_into(a, b, cells, cell_indices, vertex_keys, &mut seg_a)?;
-        edge_segments_for_neighbor_into(b, a, cells, cell_indices, vertex_keys, &mut seg_b)?;
+        edge_segments_for_neighbor_into(a, b, layout, vertex_keys, &mut seg_a)?;
+        edge_segments_for_neighbor_into(b, a, layout, vertex_keys, &mut seg_b)?;
 
         if seg_a.len() != 1 || seg_b.len() != 1 {
             stats.irregular += 1;

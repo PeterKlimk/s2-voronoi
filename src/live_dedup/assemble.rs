@@ -1153,16 +1153,14 @@ mod tests {
         let seg_a = edge_segments_for_neighbor(
             0,
             1,
-            &cells,
-            &cell_indices,
+            crate::cell_layout::LiveCellLayout::new(&cells, &cell_indices),
             VertexKeys::Sharded(&assembled.vertex_keys),
         )
         .expect("edge segments should resolve after reconciliation");
         let seg_b = edge_segments_for_neighbor(
             1,
             0,
-            &cells,
-            &cell_indices,
+            crate::cell_layout::LiveCellLayout::new(&cells, &cell_indices),
             VertexKeys::Sharded(&assembled.vertex_keys),
         )
         .expect("edge segments should resolve after reconciliation");

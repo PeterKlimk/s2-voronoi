@@ -715,6 +715,8 @@ Do not broadly retry these without a materially different design or workload:
   Fibonacci pairs showed +0.1337% instructions and +1.6620% branches. Preserve the accepted
   explicit cell-bound/end-bound checks followed by ordinary slicing; that form improved
   instructions by 0.0262% with neutral branches while retaining typed malformed-layout errors.
+  Threading that accepted view through the shared-edge segment reader was subsequently neutral
+  (-0.000097% instructions, -0.000004% branches) and reduced the executable file by 48 bytes.
 - Carrying reconciliation-produced local-rebuild seed pairs through pipeline state as a typed
   owner perturbed clean-path codegen despite retaining tuple storage. Seven interleaved 500k
   single-threaded Fibonacci counter pairs showed +0.1602% instructions and +1.6619% branches in

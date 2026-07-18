@@ -430,9 +430,14 @@ tasks and are not duplicated here.
   stale tails. Seven counter pairs improved instructions by 0.02623% with neutral branches
   (+0.000040%); the release artifact grew 12 bytes overall. A `slice.get(range)` accessor was
   rejected after repeatable +0.1337% instructions and +1.6620% branches.
-- **Next gate:** thread `LiveCellLayout` through a small set of cold reconciliation reader
-  signatures so cells and indices cannot be mismatched at call sites. Do not migrate mutation or
-  ownership yet, and retain the explicit check shape unless counters justify changing it.
+- **QUAL-001B segment-reader result:** the shared-edge segment family now accepts one
+  `LiveCellLayout` through primary reconciliation, rejected-component seeding, optional telemetry,
+  and tests. Deliberate between-round mutation rebuilds the view at that boundary. Seven counter
+  pairs were neutral (mean -0.000097% instructions and -0.000004% branches), and the release
+  executable file is 48 bytes smaller.
+- **Next gate:** make semantic old/new cell-span comparison accept two `LiveCellLayout` values,
+  eliminating the four-slice pairing hazard while keeping the operation read-only. Continue to
+  defer mutation ownership and buffer compaction.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

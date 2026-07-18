@@ -137,7 +137,14 @@ fn cell_vertex_slice<'a>(
     cells: &[VoronoiCell],
     cell_indices: &'a [u32],
 ) -> Result<&'a [u32], crate::VoronoiError> {
-    match LiveCellLayout::new(cells, cell_indices).checked_span(cell_idx as usize) {
+    cell_vertex_slice_from_layout(cell_idx, LiveCellLayout::new(cells, cell_indices))
+}
+
+fn cell_vertex_slice_from_layout<'a>(
+    cell_idx: u32,
+    layout: LiveCellLayout<'_, 'a>,
+) -> Result<&'a [u32], crate::VoronoiError> {
+    match layout.checked_span(cell_idx as usize) {
         Ok(span) => Ok(span),
         Err(CellSpanError::CellOutOfBounds { cell, cell_count }) => {
             Err(reconcile_state_error(format!(
@@ -159,32 +166,23 @@ fn cell_vertex_slice<'a>(
 pub(crate) fn edge_segments_for_neighbor(
     cell_idx: u32,
     neighbor: u32,
-    cells: &[VoronoiCell],
-    cell_indices: &[u32],
+    layout: LiveCellLayout<'_, '_>,
     vertex_keys: VertexKeys<'_>,
 ) -> Result<Vec<(u32, u32)>, crate::VoronoiError> {
     let mut out = Vec::new();
-    edge_segments_for_neighbor_into(
-        cell_idx,
-        neighbor,
-        cells,
-        cell_indices,
-        vertex_keys,
-        &mut out,
-    )?;
+    edge_segments_for_neighbor_into(cell_idx, neighbor, layout, vertex_keys, &mut out)?;
     Ok(out)
 }
 
 fn edge_segments_for_neighbor_into(
     cell_idx: u32,
     neighbor: u32,
-    cells: &[VoronoiCell],
-    cell_indices: &[u32],
+    layout: LiveCellLayout<'_, '_>,
     vertex_keys: VertexKeys<'_>,
     out: &mut Vec<(u32, u32)>,
 ) -> Result<(), crate::VoronoiError> {
     out.clear();
-    let slice = cell_vertex_slice(cell_idx, cells, cell_indices)?;
+    let slice = cell_vertex_slice_from_layout(cell_idx, layout)?;
     let n = slice.len();
     if n < 2 {
         return Ok(());
@@ -1240,10 +1238,11 @@ fn collect_merges(
     // a fixed-size/capped representation.
     let mut seg_a = Vec::new();
     let mut seg_b = Vec::new();
+    let layout = LiveCellLayout::new(cells, cell_indices);
     for record in edge_records {
         let (a, b) = unpack_edge(record.key.as_u64());
-        edge_segments_for_neighbor_into(a, b, cells, cell_indices, vertex_keys, &mut seg_a)?;
-        edge_segments_for_neighbor_into(b, a, cells, cell_indices, vertex_keys, &mut seg_b)?;
+        edge_segments_for_neighbor_into(a, b, layout, vertex_keys, &mut seg_a)?;
+        edge_segments_for_neighbor_into(b, a, layout, vertex_keys, &mut seg_b)?;
         if mode == MergeMode::ProximityOnly {
             proximity_union_segments(
                 &seg_a,
@@ -1632,6 +1631,7 @@ fn record_rejected_component_seeds(
 
     let mut seg_a = Vec::new();
     let mut seg_b = Vec::new();
+    let layout = LiveCellLayout::new(cells, cell_indices);
     for component in rejected {
         let current_ids: FxHashSet<u32> = component.current_ids.iter().copied().collect();
         for &id in &component.member_ids {
@@ -1644,8 +1644,8 @@ fn record_rejected_component_seeds(
         let seeds_before = local_rebuild_seed_pairs.len();
         for record in edge_records {
             let (a, b) = unpack_edge(record.key.as_u64());
-            edge_segments_for_neighbor_into(a, b, cells, cell_indices, vertex_keys, &mut seg_a)?;
-            edge_segments_for_neighbor_into(b, a, cells, cell_indices, vertex_keys, &mut seg_b)?;
+            edge_segments_for_neighbor_into(a, b, layout, vertex_keys, &mut seg_a)?;
+            edge_segments_for_neighbor_into(b, a, layout, vertex_keys, &mut seg_b)?;
             let touches_rejected = seg_a
                 .iter()
                 .chain(&seg_b)
@@ -1908,9 +1908,10 @@ mod tests {
                     edge_segments_allocating_baseline(a, b, &cells, &cell_indices, keys);
                 let expected_b =
                     edge_segments_allocating_baseline(b, a, &cells, &cell_indices, keys);
-                edge_segments_for_neighbor_into(a, b, &cells, &cell_indices, keys, &mut seg_a)
+                let layout = LiveCellLayout::new(&cells, &cell_indices);
+                edge_segments_for_neighbor_into(a, b, layout, keys, &mut seg_a)
                     .expect("reused A collector");
-                edge_segments_for_neighbor_into(b, a, &cells, &cell_indices, keys, &mut seg_b)
+                edge_segments_for_neighbor_into(b, a, layout, keys, &mut seg_b)
                     .expect("reused B collector");
                 assert_eq!(seg_a, expected_a, "round {round}, record {record_idx}, A");
                 assert_eq!(seg_b, expected_b, "round {round}, record {record_idx}, B");
@@ -2415,13 +2416,12 @@ mod tests {
     fn reconcile_reconciles_epsilon_close_shared_edge_endpoints() {
         let (vertices, vertex_keys, cells, cell_indices) =
             mismatched_shared_edge_fixture(2.0e-7, 4.0e-8);
+        let layout = LiveCellLayout::new(&cells, &cell_indices);
 
         let seg_a_before =
-            edge_segments_for_neighbor(0, 1, &cells, &cell_indices, VertexKeys::Flat(&vertex_keys))
-                .unwrap();
+            edge_segments_for_neighbor(0, 1, layout, VertexKeys::Flat(&vertex_keys)).unwrap();
         let seg_b_before =
-            edge_segments_for_neighbor(1, 0, &cells, &cell_indices, VertexKeys::Flat(&vertex_keys))
-                .unwrap();
+            edge_segments_for_neighbor(1, 0, layout, VertexKeys::Flat(&vertex_keys)).unwrap();
         assert_eq!(seg_a_before.len(), 1);
         assert_eq!(seg_b_before.len(), 1);
         let before_a = BTreeSet::from([seg_a_before[0].0, seg_a_before[0].1]);
@@ -2441,16 +2441,14 @@ mod tests {
         let seg_a = edge_segments_for_neighbor(
             0,
             1,
-            &new_cells,
-            &new_indices,
+            LiveCellLayout::new(&new_cells, &new_indices),
             VertexKeys::Flat(&vertex_keys),
         )
         .unwrap();
         let seg_b = edge_segments_for_neighbor(
             1,
             0,
-            &new_cells,
-            &new_indices,
+            LiveCellLayout::new(&new_cells, &new_indices),
             VertexKeys::Flat(&vertex_keys),
         )
         .unwrap();
