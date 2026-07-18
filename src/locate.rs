@@ -21,6 +21,7 @@ use glam::Vec3;
 use rayon::prelude::*;
 
 use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch};
+use crate::policy::LOCATOR_GRID_TARGET_DENSITY;
 use crate::{SpherePoint, SpherePointError, SphericalVoronoi, UnitVec3Like};
 
 /// Why a unit-sphere locator query could not define a direction.
@@ -130,7 +131,7 @@ impl SphericalVoronoi {
             .map(|g| Vec3::from_array(g.to_array()))
             .collect();
         let n = generators.len();
-        let res = ((n as f64 / (6.0 * 16.0)).sqrt() as usize).max(4);
+        let res = ((n as f64 / (6.0 * LOCATOR_GRID_TARGET_DENSITY)).sqrt() as usize).max(4);
         let grid = CubeMapGrid::new(&generators, res);
         let scratch = grid.make_scratch();
         SphereLocator {

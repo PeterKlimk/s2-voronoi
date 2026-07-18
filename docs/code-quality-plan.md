@@ -357,7 +357,7 @@ only setup, classification, and invariant-bearing state.
 
 **Hot-path impact expected:** none
 
-**Progress:** started 2026-07-18 with eleven name-only slices. The dense-cell gather-radius inflation
+**Progress:** completed 2026-07-18 in twelve name-only slices. The dense-cell gather-radius inflation
 is now the named, dimensionless `f32` policy `DENSE_BAND_RADIUS_INFLATION`. The repeated fallback
 `1e-24` spellings are now separately owned as `FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR` (a
 dimensionless squared-sine conditioning floor) and `FALLBACK_VERTEX_DEDUP_LEN2` (a dimensionless
@@ -381,11 +381,15 @@ synthetic bounding extent as construction policy while retaining its neighbor-no
 debug diagnostic. Helper-axis construction now shares a semantic component switch through
 separately typed `REFERENCE_AXIS_COMPONENT_SWITCH_F32` and
 `REFERENCE_AXIS_COMPONENT_SWITCH_F64` policies, avoiding casts while preserving every strict
-branch. The dense-band and gnomonic-initialization policy slices produced byte-identical optimized
-benchmarks; the fallback, unit-distinct, weld-wall, coplanar-policy, projected-Delaunay, and
-reference-axis slices produced identical executable code/read-only data with only source-line
-metadata movement, the owner-arc and centroid slices produced identical stripped optimized
-binaries, and the diagnostic rename leaves the non-profiling stripped artifact identical.
+branch. The final grid-policy slice distinguishes the production locator's
+`LOCATOR_GRID_TARGET_DENSITY` from both the tuned kNN density and the tools-only
+`LOW_DEGREE_NEIGHBOR_GRID_CELL_SIZE` diagnostic policy. The closing inventory classified all
+remaining literals without finding another relocation candidate. The dense-band and
+gnomonic-initialization policy slices produced byte-identical optimized benchmarks; the fallback,
+unit-distinct, weld-wall, coplanar-policy, projected-Delaunay, reference-axis, and final grid-policy
+slices produced identical executable code/read-only data with only source-line metadata movement,
+the owner-arc and centroid slices produced identical stripped optimized binaries, and the
+diagnostic rename leaves the non-profiling stripped artifact identical.
 
 Classify every production floating-point literal outside tests/benchmarks as one of:
 
@@ -520,7 +524,7 @@ repeatable adverse counter signal.
 2. ~~QUAL-001F compatibility-surface removal, empty wrappers, planar decision, and module maps.~~
    Completed 2026-07-17.
 3. ~~QUAL-001H stale test knob and probe organization.~~ Completed 2026-07-18.
-4. QUAL-001E constant inventory and name-only relocation.
+4. ~~QUAL-001E constant inventory and name-only relocation.~~ Completed 2026-07-18.
 5. QUAL-001I durable comment/documentation updates.
 
 These changes should be small, independently reviewable commits except where a public/internal

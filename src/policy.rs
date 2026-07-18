@@ -48,6 +48,12 @@ pub(crate) const REFERENCE_AXIS_COMPONENT_SWITCH_F32: f32 = 0.9;
 /// and preserves the existing strict `< 0.9` decisions exactly.
 pub(crate) const REFERENCE_AXIS_COMPONENT_SWITCH_F64: f64 = 0.9;
 
+/// Target mean generators per point-locator grid cell.
+///
+/// This `f64` lookup-policy value is intentionally independent of the kNN
+/// construction grid's tuned density and environment override.
+pub(crate) const LOCATOR_GRID_TARGET_DENSITY: f64 = 16.0;
+
 /// Target mean points per query-grid cell.
 ///
 /// Set from the 2026-06 reference-machine sweep (Ryzen 3600,

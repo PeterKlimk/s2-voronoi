@@ -13,6 +13,11 @@ use std::collections::{HashMap, HashSet};
 
 const GRID_TARGET_DENSITY: f64 = 16.0;
 const LOW_DEGREE_DUPLICATE_EPS: f32 = 1e-6;
+
+/// Spatial-hash cell side used by the tools-only low-degree neighbor diagnostic.
+///
+/// This candidate-search policy is distinct from the duplicate threshold.
+const LOW_DEGREE_NEIGHBOR_GRID_CELL_SIZE: f32 = 1e-4;
 const SITE_CHORD_BUCKET_UPPERS: [f64; 5] = [2e-6, 1e-5, 1e-4, 1e-3, f64::INFINITY];
 
 #[derive(Debug, Clone, Copy)]
@@ -637,8 +642,7 @@ fn analyze_low_degree_vertices(diagram: &SphericalVoronoi) -> LowDegreeQualitySt
         return LowDegreeQualityStats::default();
     }
 
-    let grid_size = 1e-4_f32;
-    let inv_grid = 1.0 / grid_size;
+    let inv_grid = 1.0 / LOW_DEGREE_NEIGHBOR_GRID_CELL_SIZE;
     let grid_key = |v: &crate::SpherePoint| -> (i32, i32, i32) {
         (
             (v.x() * inv_grid) as i32,

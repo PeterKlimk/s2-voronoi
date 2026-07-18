@@ -59,7 +59,7 @@ prevention rather than an overclaimed proof.
 | POINT-002 | P2 | Completed | Closure-based zero-intermediate ingest landed without direct-path regression |
 | POINT-003 | P1 | Completed | Locator query validation and normalized ranking/certification landed |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
-| QUAL-001 | P2 | Active | Inventory constants and name-only relocation (QUAL-001E) |
+| QUAL-001 | P2 | Active | Durable documentation and stale-comment audit (QUAL-001I) |
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
@@ -287,7 +287,7 @@ tasks and are not duplicated here.
 ### QUAL-001 — Performance-preserving cleanup
 
 - **Priority:** P2
-- **Status:** Active; baseline, QUAL-001A, QUAL-001F, and QUAL-001H completed; QUAL-001E active
+- **Status:** Active; baseline, QUAL-001A, QUAL-001E, QUAL-001F, and QUAL-001H completed; QUAL-001I next
 - **Goal:** reduce change amplification and make pipeline invariants structural without giving back
   established throughput, memory behavior, or numerical/correctness guarantees.
 - **Compatibility posture:** there are no external users as of 2026-07-17. Use this window for
@@ -382,14 +382,17 @@ tasks and are not duplicated here.
   `f32` and `f64` policy constants. Every exact `0.9` value, strict `<` comparison, X/Y choice, and
   operand type is unchanged; tool helpers and the feature-only A/B probe remain local. Optimized
   executable sections and numeric data are byte-identical; only source metadata moved.
-- **Final-inventory result:** exact mathematical coefficients remain inline, and quality,
-  reconciliation, and point-envelope bucket ranges remain named local diagnostics. Raw policy
-  remains in the locator's distinct target density and the tools-only low-degree quality hash-grid
-  size, so QUAL-001E remains active.
-- **Next gate:** name the locator target density centrally and the low-degree quality hash-grid size
-  locally. Preserve the locator's exact sizing formula and its distinction from the kNN query-grid
-  density; keep the quality value diagnostic-only. Rerun the inventory afterward and close
-  QUAL-001E if no unclassified production policy remains.
+- **QUAL-001E final grid-policy result:** the locator's exact `16.0` target density is now a central
+  production policy distinct from the kNN construction grid, while the low-degree diagnostic's
+  exact `1e-4` hash-grid cell size is named locally and remains separate from its duplicate
+  threshold. Formulas and types are unchanged; optimized executable sections and numeric data are
+  byte-identical, with only source metadata movement.
+- **Final-inventory result:** exact mathematical coefficients remain inline; tolerance and policy
+  registries own production boundaries; and quality, reconciliation, point-envelope, feature-probe,
+  and tool values remain named or deliberately local diagnostics. No unclassified production
+  floating-point policy remains, closing QUAL-001E.
+- **Next gate:** begin QUAL-001I by auditing the architecture/module ownership narrative and stale
+  source vocabulary, keeping current operational guidance distinct from historical records.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

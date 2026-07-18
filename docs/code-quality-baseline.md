@@ -639,6 +639,31 @@ The eleventh numerical/policy-constant slice was validated on 2026-07-18 against
   `.data.rel.ro`; executable code and numeric data did not change. No counter or quiet wall-clock
   run was warranted.
 
+## QUAL-001E final grid-policy result
+
+The twelfth and final numerical/policy-constant slice was validated on 2026-07-18 against immediate
+parent `197e539`.
+
+- The locator's raw target density moved to `policy.rs` as
+  `LOCATOR_GRID_TARGET_DENSITY: f64`. Its value remains exactly `16.0`, and the resolution formula,
+  truncating cast, and minimum resolution remain unchanged. It is explicitly independent of the
+  tuned kNN construction density and its environment override.
+- The tools-only low-degree neighbor diagnostic now names its module-local `f32` spatial-hash cell
+  side as `LOW_DEGREE_NEIGHBOR_GRID_CELL_SIZE`. The exact `1e-4` value, reciprocal calculation,
+  neighboring-bin scan, and separate `LOW_DEGREE_DUPLICATE_EPS` classification threshold are
+  unchanged.
+- A closing inventory of non-test source classified the remaining nontrivial literals as registry
+  tolerances, named policy or diagnostic constants, exact formula coefficients, or deliberately
+  local feature/tool values. No unclassified production policy remains, closing QUAL-001E.
+- `cargo fmt`, both default and all-feature Clippy with warnings denied, the complete release and
+  checked suites, the no-default-features release suite, and the `serde,glam` release suite passed.
+  The explicit `tools,profiling` release suite also passed for the diagnostic consumer.
+- The matched release `tools` artifacts had identical sizes (`2,183,020` text, `55,536` data, `592`
+  BSS) and byte-identical `.text`, `.rodata`, exception-table, and unwind sections. The whole-file
+  difference was confined to build/symbol metadata and 23 changed source-location bytes in
+  `.data.rel.ro`; executable code and numeric data did not change. No counter or quiet wall-clock
+  run was warranted.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
