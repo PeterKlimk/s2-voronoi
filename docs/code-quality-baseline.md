@@ -664,6 +664,26 @@ parent `197e539`.
   `.data.rel.ro`; executable code and numeric data did not change. No counter or quiet wall-clock
   run was warranted.
 
+## QUAL-001I architecture vocabulary result
+
+The first durable-documentation slice was validated on 2026-07-19 against immediate parent
+`d04b085`.
+
+- `architecture.md` now defines the execution-ordered stages from input adaptation through
+  original-index remapping, with an explicit contract and primary owner for each. Assembly, edge
+  reconciliation, local-rebuild acceptance, and output resolution are separate terms; validation
+  and derived views are consumers rather than hidden repair stages.
+- The module map now assigns construction/query/performance policy to `policy.rs` and distinguishes
+  the `tools`-only quality surface from the `profiling`-only point audit. The `cube_grid` header no
+  longer advertises removed kNN/range methods, and the `live_dedup` header describes current
+  sharded ownership and assembly rather than a versioned design sketch.
+- All-feature Clippy with warnings denied, all-feature doc tests, and the release API/correctness
+  suites passed.
+- The matched release `tools` artifacts had identical sizes (`2,183,020` text, `55,536` data, `592`
+  BSS) and byte-identical `.text`, `.rodata`, exception-table, and unwind sections. Only 28
+  source-location bytes in `.data.rel.ro` moved; executable code and numeric data did not change,
+  so no counter or quiet wall-clock run was warranted.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

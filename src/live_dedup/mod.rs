@@ -1,9 +1,10 @@
-//! Live vertex deduplication during cell construction using sharded ownership.
+//! Sharded vertex ownership and global assembly for independently built cells.
 //!
-//! V1 design:
-//! - Parallel cell building by spatial bin
-//! - Single-threaded overflow flush (simplifies correctness)
-//! - Per-cell duplicate index checks handled by validation (not in hot path)
+//! Spatial bins build in parallel while each bin deduplicates its owned vertex
+//! keys locally. The post-build assembly phase resolves cross-bin edge-check
+//! overflow, patches deferred slots, concatenates global cell/vertex storage,
+//! and records mismatches for the narrow reconciliation stage. Full validation
+//! remains outside the construction hot path.
 
 use crate::diagram::VoronoiCell;
 

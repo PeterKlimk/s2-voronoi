@@ -492,7 +492,13 @@ QUAL-001H completed 2026-07-18.
 
 **Hot-path impact expected:** none
 
-1. Update `docs/architecture.md` with the stage glossary and current module ownership.
+**Progress:** started 2026-07-19. The architecture now has an execution-ordered stage glossary and
+an ownership map that distinguishes assembly, reconciliation, local-rebuild acceptance, output
+resolution, and return remapping. Stale `cube_grid` and `live_dedup` module headers were aligned
+with their current query and assembly contracts.
+
+1. ~~Update `docs/architecture.md` with the stage glossary and current module ownership.~~
+   Completed 2026-07-19.
 2. Move detailed historical timing claims out of source when a durable decision record already
    exists, leaving the invariant and a link.
 3. Audit comments containing `old`, `legacy`, `current`, `only repair pass`, or retired feature

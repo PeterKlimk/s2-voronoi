@@ -156,9 +156,10 @@ fn canonicalize_pipeline_exact_zero_edges(
     )
 }
 
-/// The shared front of both compute paths: validate → canonicalize → grid →
-/// per-cell shards → assemble → reconcile → local rebuild. The plain path
-/// fails loud on residuals; the report path surfaces them in `ComputeReport`.
+/// The shared front of both compute paths: validate/canonicalize → preprocess
+/// and grid → per-cell construction → assemble → reconcile → optional local
+/// rebuild → output resolution. The plain path fails loud on residuals; the
+/// report path surfaces them in `ComputeReport`.
 fn run_core_pipeline(
     points: Vec<Vec3>,
     preprocess_mode: PreprocessMode,

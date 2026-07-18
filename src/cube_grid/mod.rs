@@ -1,15 +1,12 @@
-//! Cube-map based spatial grid for fast spatial queries on unit sphere.
+//! Cube-map spatial index for unit-sphere construction and point location.
 //!
-//! Projects sphere onto 6 cube faces, divides each into a regular grid.
-//! O(n) build, O(1) cell lookup.
-//!
-//! Supports two query types:
-//! - `knn_into`: k-nearest neighbors
-//! - `within_cos_into`: all points within angular distance (range query)
-//!
-//! Queries use best-first expansion over neighboring cells with conservative
-//! distance bounds. Typical uniform inputs terminate after visiting a handful
-//! of cells; worst-case falls back to brute force.
+//! The grid projects the sphere onto six cube faces, subdivides each face, and
+//! stores generators in cell order. Its query layer supplies certified,
+//! resumable nearest-candidate frontiers: a packed batched front end handles
+//! the common construction path, directed shell traversal resumes it when
+//! needed, and unrestricted shell traversal serves point location. The same
+//! storage also supports preprocessing weld scans and an optional dense-cell
+//! side index.
 
 mod build;
 mod dense;

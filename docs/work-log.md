@@ -287,7 +287,7 @@ tasks and are not duplicated here.
 ### QUAL-001 — Performance-preserving cleanup
 
 - **Priority:** P2
-- **Status:** Active; baseline, QUAL-001A, QUAL-001E, QUAL-001F, and QUAL-001H completed; QUAL-001I next
+- **Status:** Active; baseline, QUAL-001A, QUAL-001E, QUAL-001F, and QUAL-001H completed; QUAL-001I active
 - **Goal:** reduce change amplification and make pipeline invariants structural without giving back
   established throughput, memory behavior, or numerical/correctness guarantees.
 - **Compatibility posture:** there are no external users as of 2026-07-17. Use this window for
@@ -391,8 +391,15 @@ tasks and are not duplicated here.
   registries own production boundaries; and quality, reconciliation, point-envelope, feature-probe,
   and tool values remain named or deliberately local diagnostics. No unclassified production
   floating-point policy remains, closing QUAL-001E.
-- **Next gate:** begin QUAL-001I by auditing the architecture/module ownership narrative and stale
-  source vocabulary, keeping current operational guidance distinct from historical records.
+- **QUAL-001I architecture result:** `architecture.md` now defines the execution-ordered stage
+  vocabulary and primary owners from input adaptation through original-index remapping. It keeps
+  validation/derived views outside hidden repair terminology, distinguishes the `tools` and
+  `profiling` diagnostic owners, and corrects stale `cube_grid` and `live_dedup` module headers.
+  Optimized executable sections and numeric data are byte-identical to the parent; only source
+  metadata moved.
+- **Next gate:** audit comparative source comments (`old`, `legacy`, and time-relative `current`)
+  plus embedded timing narratives. Keep invariant-bearing explanations near code, move durable
+  historical evidence to the performance record, and leave intentional fixture/probe names alone.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.
