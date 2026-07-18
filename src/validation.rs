@@ -408,6 +408,24 @@ struct EdgeUse {
     cell: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EdgeUseClass {
+    Paired,
+    Boundary,
+    Overused,
+    SameDirection,
+}
+
+#[inline]
+const fn classify_edge_uses(total: usize, opposite_pair: bool) -> EdgeUseClass {
+    match total {
+        0 | 1 => EdgeUseClass::Boundary,
+        2 if opposite_pair => EdgeUseClass::Paired,
+        2 => EdgeUseClass::SameDirection,
+        _ => EdgeUseClass::Overused,
+    }
+}
+
 #[inline]
 fn edge_key(lo: u32, hi: u32) -> u64 {
     ((lo as u64) << 32) | hi as u64
@@ -587,7 +605,8 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
         }
 
         let group = &edge_uses[i..j];
-        if group.len() != 2 || group[0].forward == group[1].forward {
+        let opposite_pair = group.len() == 2 && group[0].forward != group[1].forward;
+        if classify_edge_uses(group.len(), opposite_pair) != EdgeUseClass::Paired {
             return Err("unpaired, overused, or misoriented edge");
         }
         let (a, b) = edge_vertices(first.key);
@@ -901,7 +920,8 @@ pub(crate) fn verify_sphere_effective_strict(
             j += 1;
         }
         let group = &edge_uses[i..j];
-        if group.len() != 2 || group[0].forward == group[1].forward {
+        let opposite_pair = group.len() == 2 && group[0].forward != group[1].forward;
+        if classify_edge_uses(group.len(), opposite_pair) != EdgeUseClass::Paired {
             return Err("unpaired, overused, or misoriented edge");
         }
         let (a, b) = edge_vertices(first.key);
@@ -1175,12 +1195,11 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
     let mut dsu = DisjointSet::new(num_cells);
     for stat in edges.values() {
         let total = stat.forward + stat.reverse;
-        if total < 2 {
-            boundary_edges += 1;
-        } else if total > 2 {
-            overused_edges += 1;
-        } else if stat.forward != 1 || stat.reverse != 1 {
-            same_direction_edge_pairs += 1;
+        match classify_edge_uses(total, stat.forward == 1 && stat.reverse == 1) {
+            EdgeUseClass::Boundary => boundary_edges += 1,
+            EdgeUseClass::Overused => overused_edges += 1,
+            EdgeUseClass::SameDirection => same_direction_edge_pairs += 1,
+            EdgeUseClass::Paired => {}
         }
 
         if let Some((&first, rest)) = stat.cells.split_first() {
@@ -1795,5 +1814,15 @@ mod verify_gate_tests {
         assert_eq!(overused.boundary_edges, 0);
         assert_eq!(overused.overused_edges, span.len());
         assert_eq!(overused.same_direction_edge_pairs, 0);
+    }
+
+    #[test]
+    fn edge_use_classifier_distinguishes_all_outcomes() {
+        assert_eq!(classify_edge_uses(0, false), EdgeUseClass::Boundary);
+        assert_eq!(classify_edge_uses(1, false), EdgeUseClass::Boundary);
+        assert_eq!(classify_edge_uses(2, true), EdgeUseClass::Paired);
+        assert_eq!(classify_edge_uses(2, false), EdgeUseClass::SameDirection);
+        assert_eq!(classify_edge_uses(3, false), EdgeUseClass::Overused);
+        assert_eq!(classify_edge_uses(3, true), EdgeUseClass::Overused);
     }
 }

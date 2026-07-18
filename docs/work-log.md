@@ -471,9 +471,14 @@ tasks and are not duplicated here.
   and the report's boundary/overused/same-direction counters are also pinned. A connected closed
   torus fixture isolates Euler from the earlier connectivity check. The release artifact is
   byte-identical to parent.
-- **Next gate:** introduce the smallest typed edge-use classification shared by strict grouping and
-  report accumulation, preserving the strict gates' combined message and the report's separate
-  counters. Compare release codegen before any runtime measurement.
+- **QUAL-001C edge-class result:** `EdgeUseClass` now centrally distinguishes paired, boundary,
+  overused, and same-direction groups. Both strict gates retain their combined error string and the
+  report retains separate counters. The artifact added 12 text bytes, removed 16 BSS bytes, and
+  grew 16 file bytes. Seven counter pairs were neutral (mean `0.999995974` instructions and
+  `0.999993778` branches); all samples had zero context switches and migrations.
+- **Next gate:** replace duplicated static fail-fast strings with the smallest typed internal strict
+  reason while preserving exact text and the effective scan's `(cell, check_rank)` ordering. Keep
+  the accumulating report independent.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

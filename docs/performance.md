@@ -504,7 +504,9 @@ modules without making the non-obvious code shape look accidental.
   Candidate-local collinear cleanup avoided seconds of whole-vertex work on a three-defect 2.5M
   run, and the localized unpaired-edge scan avoids a roughly 17-second global scan in the same
   scale regime. Strict validation sorts about six million edge-use records at one million cells,
-  which is why the available parallel sort owns that stage.
+  which is why the available parallel sort owns that stage. Centralizing paired/boundary/overused/
+  same-direction classification was neutral in seven 500k single-threaded pairs (mean ratios
+  `0.9999960` instructions and `0.9999938` branches), so the typed classifier is retained.
 - **Local-rebuild cold path.** Reusing the construction grid replaces an all-generator neighbor
   scan that became minutes-long for thousand-generator closures on dense defects. Returning before
   flatten/clone/validation when no splice occurred removed about 12.6 seconds from a 15-second

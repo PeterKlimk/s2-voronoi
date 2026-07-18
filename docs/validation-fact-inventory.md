@@ -57,6 +57,11 @@ replacements for them:
 - `DisjointSet`: connectivity primitive; and
 - `EdgeUse` plus `sort_edge_uses`: strict-verifier grouping and deterministic verdict semantics.
 
+The first post-inventory extraction is also now shared: `EdgeUseClass` and `classify_edge_uses`
+classify paired, boundary, overused, and same-direction groups. Both strict gates still map every
+non-paired class to their existing combined reason, while the report maps the same classes to its
+three separate counters.
+
 The largest remaining duplication is the per-cell scan and grouped-edge loop. Their facts overlap,
 but their execution policy does not: sequential early return, deterministic parallel early return,
 and full accumulation require different storage and stopping behavior.
@@ -115,12 +120,14 @@ quadrangulation, and pins the effective-only structural-input reasons. Separate 
 boundary, overused, and same-direction edge counters. The weld-map comparison remains deliberately
 outside the effective domain and should be completed before sharing weld-specific facts.
 
-## First safe gate
+## First accepted fact and next gate
 
-The no-weld differential matrix and edge-report subclass controls are now independent. The
-narrowest production candidate is a typed edge-use
-classification (`paired`, `boundary`, `overused`, `same direction`) mapped to the existing consumer
-outputs. It is allocation-free and semantically shared by all three consumers, while allowing the
-strict gates to retain one combined message and the report to retain separate counters. It still
-requires release codegen and counter gates; validation cleanup is not exempt from the established
-Pareto rule.
+The typed edge-use classification was accepted after the no-weld differential matrix and report
+subclass controls were independent. It is allocation-free and preserves all consumer outputs. The
+release artifact added 12 text bytes, removed 16 BSS bytes, and remained neutral across seven
+instruction/branch counter pairs.
+
+The next narrow candidate is a typed internal strict-failure reason replacing duplicated static
+strings in the two fail-fast consumers. It must preserve the effective parallel scan's
+`(cell, check_rank)` ordering, the exact strings pinned by the oracle, and the report's independent
+counter taxonomy. Introduce it without routing the accumulating report through fail-fast state.

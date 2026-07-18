@@ -340,8 +340,10 @@ policies, existing shared primitives, reason ordering, and negative-control gaps
 policy rather than fact identity, so no universal report-building scan is planned. Differential
 coverage now pins every safely constructible no-weld shared fail-fast reason, effective-only
 cardinality/span failures, connectivity-versus-Euler ordering, self-loop dominance, and the
-report's three edge-use subclasses. The first new shared classification may now proceed behind the
-usual release codegen gate.
+report's three edge-use subclasses. `EdgeUseClass` is the first accepted shared classification: it
+preserves the strict gates' combined message and the report's separate counters, with neutral
+release counters. The next slice may type the duplicated internal fail-fast reasons without
+changing public diagnostics or report traversal.
 
 1. Define shared cell and edge issue classifications, including stable internal reason enums rather
    than repeated string literals.

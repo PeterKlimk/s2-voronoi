@@ -921,6 +921,22 @@ The pre-extraction validation oracle was expanded on 2026-07-19 against immediat
 - All additions are test-only. The complete release `tools` artifact, including its SHA-256 hash
   and file size, is byte-identical to the parent, so no counter comparison is warranted.
 
+## QUAL-001C typed edge-use classification
+
+The first shared validation fact was accepted on 2026-07-19 against immediate parent `367dc4e`.
+
+- Private `EdgeUseClass` and `classify_edge_uses` now define paired, boundary, overused, and
+  same-direction outcomes once. The two fail-fast gates map all non-paired outcomes to the existing
+  `"unpaired, overused, or misoriented edge"` reason; the accumulating report maps them to its
+  existing separate counters.
+- The release `tools` artifact changed from `2,183,212` to `2,183,224` text bytes, retained `55,512`
+  data bytes, changed from `4,520` to `4,504` BSS bytes, and grew from `2,999,032` to `2,999,048`
+  file bytes.
+- Across seven interleaved 500k single-threaded Fibonacci counter pairs, mean candidate/parent
+  ratios were `0.999995974` instructions and `0.999993778` branches, with pair ranges
+  `0.999991449..=1.000002457` and `0.999971992..=1.000009634`. There was no directional regression;
+  every sample recorded zero context switches and CPU migrations.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
