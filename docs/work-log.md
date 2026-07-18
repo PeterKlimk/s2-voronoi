@@ -413,8 +413,13 @@ tasks and are not duplicated here.
   seven counter pairs showed +0.1602% instructions and +1.6619% branches on the clean path. The
   splice-local form was structurally neutral in the same matrix and reduced total size accounting
   by eight bytes.
-- **Next gate:** try one adjacent cold identity seam—prefer a vertex-id boundary inside the local
-  overlay—without changing collection element types, sort monomorphizations, or packed storage.
+- **QUAL-001G vertex-lookup result:** a transparent `VertexId` now guards the local overlay's
+  position and key accessors. Raw collection/storage element types are unchanged, release section
+  sizes are identical, and seven counter pairs were neutral (mean -0.000058% instructions and
+  -0.000133% branches).
+- **Next gate:** evaluate the adjacent `owners`/vertex-creation seam. Extend `VertexId` only where
+  it removes an internal raw-id ambiguity; stop if conversion syntax merely spreads without
+  strengthening a boundary.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

@@ -430,7 +430,7 @@ fn gather_two_ring(
         let mut ns: Vec<u32> = work
             .boundary(g)
             .iter()
-            .flat_map(|&v| work.vkey(v))
+            .flat_map(|&v| work.vkey(VertexId::new(v)))
             .filter(|&x| x != g && x != u32::MAX)
             .collect();
         ns.sort_unstable();
@@ -924,7 +924,7 @@ fn low_incidence_gens(work: &WorkingDiagram) -> Vec<u32> {
     let mut out = Vec::new();
     for (v, &c) in cnt.iter().enumerate() {
         if c == 1 || c == 2 {
-            out.extend(work.vkey(v as u32));
+            out.extend(work.vkey(VertexId::new(v as u32)));
         }
     }
     out
@@ -936,6 +936,23 @@ fn low_incidence_gens(work: &WorkingDiagram) -> Vec<u32> {
 struct CellId(u32);
 
 impl CellId {
+    #[inline]
+    const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    #[inline]
+    const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// Overlay vertex identity at position/key lookup seams.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct VertexId(u32);
+
+impl VertexId {
     #[inline]
     const fn new(raw: u32) -> Self {
         Self(raw)
@@ -1013,7 +1030,8 @@ impl<'a> WorkingDiagram<'a> {
     }
 
     /// Position of vertex `vid` (base or minted).
-    fn vpos(&self, vid: u32) -> Vec3 {
+    fn vpos(&self, vertex: VertexId) -> Vec3 {
+        let vid = vertex.get();
         let base = self.base_vertices.len();
         if (vid as usize) < base {
             self.base_vertices[vid as usize]
@@ -1025,7 +1043,8 @@ impl<'a> WorkingDiagram<'a> {
     /// Triple of vertex `vid` (base or minted). A base vid past the key store
     /// (a vertex appended by reconciliation without a key) reads as all-MAX,
     /// matching the flattened-array sentinel contract.
-    fn vkey(&self, vid: u32) -> [u32; 3] {
+    fn vkey(&self, vertex: VertexId) -> [u32; 3] {
+        let vid = vertex.get();
         let base = self.base_vertices.len();
         if (vid as usize) < base {
             self.base_keys.get(vid).unwrap_or([u32::MAX; 3])
@@ -1064,7 +1083,7 @@ impl<'a> WorkingDiagram<'a> {
                 continue;
             }
             for &v in self.boundary(g) {
-                if self.vkey(v) == t {
+                if self.vkey(VertexId::new(v)) == t {
                     found = Some(match found {
                         Some(best) => best.min(v),
                         None => v,
@@ -1143,7 +1162,7 @@ impl<'a> WorkingDiagram<'a> {
                 } else {
                     (to, from, false)
                 };
-                let (ka, kb) = (self.vkey(lo), self.vkey(hi));
+                let (ka, kb) = (self.vkey(VertexId::new(lo)), self.vkey(VertexId::new(hi)));
                 let mut common = ka
                     .iter()
                     .copied()
@@ -1194,7 +1213,9 @@ impl<'a> WorkingDiagram<'a> {
     /// area normal dotted with the generator direction. Positive and negative
     /// distinguish CCW vs CW as seen from outside the sphere.
     fn polygon_sign(&self, points: &[Vec3], g: u32, list: &[u32]) -> f64 {
-        polygon_sign_f64(points[g as usize], list.len(), |i| self.vpos(list[i]))
+        polygon_sign_f64(points[g as usize], list.len(), |i| {
+            self.vpos(VertexId::new(list[i]))
+        })
     }
 
     /// Majority signed-orientation of the existing (unspliced) cells — the
@@ -1252,7 +1273,7 @@ impl<'a> WorkingDiagram<'a> {
     /// one production exception — reconcile merges remapping a reference into
     /// a foreign cell — is carved out by the caller via `merge_affected`.
     fn owners(&self, vid: u32) -> impl Iterator<Item = u32> + '_ {
-        let k = self.vkey(vid);
+        let k = self.vkey(VertexId::new(vid));
         let n = self.num_cells();
         (0..3).filter_map(move |i| {
             let g = k[i];
@@ -1359,7 +1380,7 @@ impl<'a> WorkingDiagram<'a> {
                     group_len == 2 && fwd_count == 1
                 };
                 if !paired {
-                    let (ka, kb) = (self.vkey(a), self.vkey(b));
+                    let (ka, kb) = (self.vkey(VertexId::new(a)), self.vkey(VertexId::new(b)));
                     grow.extend(ka.iter().chain(kb.iter()));
                 }
             }
@@ -1367,7 +1388,7 @@ impl<'a> WorkingDiagram<'a> {
         }
         for (&v, &c) in &cnt {
             if c == 1 || c == 2 {
-                grow.extend(self.vkey(v));
+                grow.extend(self.vkey(VertexId::new(v)));
             }
         }
         grow.sort_unstable();
@@ -1435,14 +1456,14 @@ impl<'a> WorkingDiagram<'a> {
                 group_len == 2 && fwd_count == 1
             };
             if !paired {
-                let (ka, kb) = (self.vkey(a), self.vkey(b));
+                let (ka, kb) = (self.vkey(VertexId::new(a)), self.vkey(VertexId::new(b)));
                 grow.extend(ka.iter().chain(kb.iter()));
             }
             i = j;
         }
         for (v, &c) in cnt.iter().enumerate() {
             if c == 1 || c == 2 {
-                grow.extend(self.vkey(v as u32));
+                grow.extend(self.vkey(VertexId::new(v as u32)));
             }
         }
         grow.sort_unstable();
@@ -1636,15 +1657,21 @@ mod tests {
         let cells = vec![VoronoiCell::new(0, 0); points.len()];
         let mut work = WorkingDiagram::from_assembled(&[], &keys, &cells, &[]);
         let vid = work.vid_for(&points, vertex);
-        assert_eq!(work.vkey(vid), vertex.key);
-        assert_eq!(work.vpos(vid), expected);
+        assert_eq!(work.vkey(VertexId::new(vid)), vertex.key);
+        assert_eq!(work.vpos(VertexId::new(vid)), expected);
     }
 
     #[test]
-    fn cell_id_is_layout_transparent() {
+    fn overlay_ids_are_layout_transparent() {
         assert_eq!(CellId::new(7).get(), 7);
         assert_eq!(std::mem::size_of::<CellId>(), std::mem::size_of::<u32>());
         assert_eq!(std::mem::align_of::<CellId>(), std::mem::align_of::<u32>());
+        assert_eq!(VertexId::new(11).get(), 11);
+        assert_eq!(std::mem::size_of::<VertexId>(), std::mem::size_of::<u32>());
+        assert_eq!(
+            std::mem::align_of::<VertexId>(),
+            std::mem::align_of::<u32>()
+        );
     }
 
     #[test]

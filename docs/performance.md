@@ -715,7 +715,9 @@ Do not broadly retry these without a materially different design or workload:
   single-threaded Fibonacci counter pairs showed +0.1602% instructions and +1.6619% branches in
   every pair. The implementation was reverted. The accepted narrower `CellId` boundary exists
   only at the cold overlay splice mutation; the same counter matrix was neutral (mean changes
-  -0.000066% instructions and +0.000082% branches).
+  -0.000066% instructions and +0.000082% branches). Extending the same local pattern to
+  `VertexId` position/key lookups was also neutral in seven pairs (-0.000058% instructions and
+  -0.000133% branches) with identical section sizes.
 - Reusing the backend's final `Vec<VoronoiCell>` allocation as the diagram's
   layout-identical cell storage removed the per-cell conversion allocation and copy. Both a shared
   internal record and a `repr(C)` ownership-transfer implementation reduced 1M native uniform

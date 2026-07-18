@@ -738,6 +738,22 @@ The first typed-identity slice was validated on 2026-07-19 against immediate par
 - All-target/all-feature Clippy with warnings denied, the complete release suite, and compilation
   of the feature-gated local-rebuild probe target passed.
 
+## QUAL-001G vertex-lookup result
+
+The second typed-identity slice was validated on 2026-07-19 against immediate parent `8126d07`.
+
+- A transparent `VertexId(u32)` now guards `WorkingDiagram::vpos` and `WorkingDiagram::vkey`.
+  Explicit construction occurs at lookup sites; vectors, maps, sets, sorted records, probe/public
+  data, and `vid_for` output retain raw `u32` representations.
+- Unit coverage pins both overlay identity wrappers' values, sizes, and alignments. The matched
+  release `tools` artifacts have identical sizes (`2,183,028` text, `55,536` data, `576` BSS).
+- Across seven interleaved 500k single-threaded Fibonacci counter pairs, mean candidate/parent
+  ratios were `0.999999422` instructions and `0.999998669` branches, with pair ranges
+  `0.999995618..=1.000002622` and `0.999993350..=1.000000549`; there was no directional signal.
+  Wall clock was intentionally ignored on the busy host.
+- All-target/all-feature Clippy with warnings denied, the complete release suite, and compilation
+  of the feature-gated local-rebuild probe target passed.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
