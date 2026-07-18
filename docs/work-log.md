@@ -417,9 +417,15 @@ tasks and are not duplicated here.
   position and key accessors. Raw collection/storage element types are unchanged, release section
   sizes are identical, and seven counter pairs were neutral (mean -0.000058% instructions and
   -0.000133% branches).
-- **Next gate:** evaluate the adjacent `owners`/vertex-creation seam. Extend `VertexId` only where
-  it removes an internal raw-id ambiguity; stop if conversion syntax merely spreads without
-  strengthening a boundary.
+- **QUAL-001G owner/creation result:** `vid_for` now returns `VertexId` and `owners` consumes it,
+  keeping the identity typed through creation, key/position access, and owner lookup. Raw `u32`
+  remains at collection and stored-boundary edges. The release artifact added 32 `.text` bytes and
+  four unwind bytes, offset by 32 fewer padding bytes; seven counter pairs were neutral (mean
+  +0.000307% instructions and -0.000152% branches).
+- **Next gate:** treat the local overlay's `VertexId` seam as complete rather than spreading
+  wrappers through raw traversal collections. Inventory the next cold identity boundary and take
+  it only if one wrapper can protect a whole operation; otherwise advance to QUAL-001B's live
+  cell-layout abstraction.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

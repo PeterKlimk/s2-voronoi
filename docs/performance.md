@@ -717,7 +717,9 @@ Do not broadly retry these without a materially different design or workload:
   only at the cold overlay splice mutation; the same counter matrix was neutral (mean changes
   -0.000066% instructions and +0.000082% branches). Extending the same local pattern to
   `VertexId` position/key lookups was also neutral in seven pairs (-0.000058% instructions and
-  -0.000133% branches) with identical section sizes.
+  -0.000133% branches) with identical section sizes. Carrying `VertexId` across adjacent vertex
+  creation and owner lookup was likewise neutral (+0.000307% instructions and -0.000152%
+  branches); it added 32 `.text` bytes and four unwind bytes, offset by 32 fewer padding bytes.
 - Reusing the backend's final `Vec<VoronoiCell>` allocation as the diagram's
   layout-identical cell storage removed the per-cell conversion allocation and copy. Both a shared
   internal record and a `repr(C)` ownership-transfer implementation reduced 1M native uniform

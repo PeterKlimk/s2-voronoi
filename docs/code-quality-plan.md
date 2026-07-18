@@ -439,9 +439,11 @@ decision.
 **Progress:** started 2026-07-19. A transparent `CellId` now guards the
 `WorkingDiagram::splice_generator` mutation seam while the overlay's maps and packed boundaries
 retain raw `u32` storage. A transparent `VertexId` similarly guards the overlay's position/key
-lookup accessors without changing collection element types. A broader typed owner for
-reconciliation-produced rebuild seed pairs was rejected after the clean-path counter gate showed
-repeatable codegen regressions; see the retired experiment record.
+lookup accessors, vertex creation result, and owner lookup without changing collection element
+types. The remaining raw conversions mark storage/traversal boundaries rather than being hidden
+inside those accessors. A broader typed owner for reconciliation-produced rebuild seed pairs was
+rejected after the clean-path counter gate showed repeatable codegen regressions; see the retired
+experiment record.
 
 Start with reconciliation and local rebuilding, where roles are most ambiguous and work is cold.
 Candidate types are `GeneratorId`, `CellId`, `VertexId`, `SlotId`, and `CellPair`. Reuse existing

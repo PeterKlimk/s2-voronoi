@@ -1072,10 +1072,10 @@ impl<'a> WorkingDiagram<'a> {
     /// different vid than the spliced cell, so both feed the same grow-or-
     /// reject machinery; only the vertex id (and its f32-vs-recomputed
     /// position) differs.
-    fn vid_for(&mut self, points: &[Vec3], vertex: RebuildVertex) -> u32 {
+    fn vid_for(&mut self, points: &[Vec3], vertex: RebuildVertex) -> VertexId {
         let t = vertex.key;
         if let Some(&vid) = self.triple_to_vid.get(&t) {
-            return vid;
+            return VertexId::new(vid);
         }
         let mut found: Option<u32> = None;
         for &g in &t {
@@ -1106,7 +1106,7 @@ impl<'a> WorkingDiagram<'a> {
             vid
         });
         self.triple_to_vid.insert(t, vid);
-        vid
+        VertexId::new(vid)
     }
 
     /// Replace generator `g`'s boundary with the rebuilt fan `fan`, oriented to
@@ -1124,7 +1124,7 @@ impl<'a> WorkingDiagram<'a> {
         let g = cell.get();
         let mut list: Vec<u32> = fan
             .iter()
-            .map(|&vertex| self.vid_for(points, vertex))
+            .map(|&vertex| self.vid_for(points, vertex).get())
             .collect();
         if target_sign != 0.0 && self.polygon_sign(points, g, &list) * target_sign < 0.0 {
             list.reverse();
@@ -1272,8 +1272,8 @@ impl<'a> WorkingDiagram<'a> {
     /// `b`, `c` (the same invariant `vid_for`'s local lookup rests on). The
     /// one production exception — reconcile merges remapping a reference into
     /// a foreign cell — is carved out by the caller via `merge_affected`.
-    fn owners(&self, vid: u32) -> impl Iterator<Item = u32> + '_ {
-        let k = self.vkey(VertexId::new(vid));
+    fn owners(&self, vertex: VertexId) -> impl Iterator<Item = u32> + '_ {
+        let k = self.vkey(vertex);
         let n = self.num_cells();
         (0..3).filter_map(move |i| {
             let g = k[i];
@@ -1318,7 +1318,7 @@ impl<'a> WorkingDiagram<'a> {
             .filter(|&g| (g as usize) < n_cells)
             .collect();
         for &v in touched_vids {
-            dirty.extend(self.owners(v));
+            dirty.extend(self.owners(VertexId::new(v)));
         }
         let mut dirty_vids: BTreeSet<u32> = BTreeSet::new();
         for &g in &dirty {
@@ -1326,7 +1326,7 @@ impl<'a> WorkingDiagram<'a> {
         }
         let mut emit: BTreeSet<u32> = dirty.clone();
         for &v in &dirty_vids {
-            emit.extend(self.owners(v));
+            emit.extend(self.owners(VertexId::new(v)));
         }
 
         // Same record scheme as `residual_scan`, plus a from-DIRTY bit; the
@@ -1657,8 +1657,8 @@ mod tests {
         let cells = vec![VoronoiCell::new(0, 0); points.len()];
         let mut work = WorkingDiagram::from_assembled(&[], &keys, &cells, &[]);
         let vid = work.vid_for(&points, vertex);
-        assert_eq!(work.vkey(VertexId::new(vid)), vertex.key);
-        assert_eq!(work.vpos(VertexId::new(vid)), expected);
+        assert_eq!(work.vkey(vid), vertex.key);
+        assert_eq!(work.vpos(vid), expected);
     }
 
     #[test]

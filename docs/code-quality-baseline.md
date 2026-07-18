@@ -754,6 +754,27 @@ The second typed-identity slice was validated on 2026-07-19 against immediate pa
 - All-target/all-feature Clippy with warnings denied, the complete release suite, and compilation
   of the feature-gated local-rebuild probe target passed.
 
+## QUAL-001G owner/creation result
+
+The third typed-identity slice was validated on 2026-07-19 against immediate parent `933f312`.
+
+- `WorkingDiagram::vid_for` now returns `VertexId`, and `WorkingDiagram::owners` accepts it. New
+  and cached ids therefore remain typed through creation, key/position lookup, and owner lookup;
+  conversion back to `u32` occurs only when the splice path stores its boundary vector. Existing
+  raw vectors, maps, sets, sorted records, and probe/public representations are unchanged.
+- The release `tools` artifact changed from `2,183,028` to `2,183,064` text bytes, retained
+  `55,536` data bytes, and changed from `576` to `544` BSS bytes. At section granularity, `.text`
+  added 32 bytes and `.eh_frame` added four, while relocation padding fell by 32 bytes.
+- Across seven interleaved 500k single-threaded Fibonacci counter pairs, mean candidate/parent
+  ratios were `1.000003070` instructions and `0.999998483` branches, with pair ranges
+  `1.000000984..=1.000004778` and `0.999989737..=1.000001551`; there was no directional signal.
+  Wall clock was intentionally ignored on the busy host.
+- Formatting, all-target/all-feature Clippy with warnings denied, the complete release suite, and
+  compilation of the feature-gated local-rebuild probe target passed.
+- The local overlay's `VertexId` boundary now has a natural endpoint. Extending the wrapper through
+  raw traversal collections would add conversion syntax without making an operation's contract
+  clearer, so further adoption requires a distinct identity boundary rather than mechanical spread.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
