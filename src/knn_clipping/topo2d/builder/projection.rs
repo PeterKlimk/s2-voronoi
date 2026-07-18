@@ -3,9 +3,14 @@ use super::{
 };
 use crate::fp;
 use crate::live_dedup::CellFailure;
+use crate::policy::{GNOMONIC_INITIAL_BOUNDING_EXTENT, GNOMONIC_TANGENT_BASIS_SOUTH_POLE_SWITCH_Z};
 use crate::tolerances::GNOMONIC_METRIC_R2_RELATIVE_PAD;
 use glam::{DVec3, Vec3};
 use std::hint::select_unpredictable;
+
+// Debug-only invariant threshold for canonical f32 neighbors. This remains
+// local diagnostic policy rather than a production acceptance tolerance.
+const DEBUG_NEIGHBOR_NORM_SQUARED_ERROR_LIMIT: f32 = 1e-5;
 
 #[inline(always)]
 fn cswap_u32(a: &mut u32, b: &mut u32) {
@@ -46,7 +51,7 @@ impl TangentBasis {
             };
         }
 
-        let (mut t1, mut t2) = if g.z < -0.999_999_9 {
+        let (mut t1, mut t2) = if g.z < GNOMONIC_TANGENT_BASIS_SOUTH_POLE_SWITCH_Z {
             (DVec3::NEG_Y, DVec3::NEG_X)
         } else {
             let a = 1.0 / (1.0 + g.z);
@@ -130,7 +135,7 @@ impl GnomonicBuilder {
         let chart_metric_r2_scale = Self::chart_metric_r2_bound(&basis, inv_two_gg);
 
         let mut poly_a = PolyBuffer::new();
-        poly_a.init_bounding(1e6);
+        poly_a.init_bounding(GNOMONIC_INITIAL_BOUNDING_EXTENT);
 
         Self {
             generator_idx,
@@ -168,7 +173,7 @@ impl GnomonicBuilder {
         self.chart_metric_r2_scale = Self::chart_metric_r2_bound(&self.basis, self.inv_two_gg);
         self.constraints.clear();
         self.generator_raw = generator;
-        self.poly_a.init_bounding(1e6);
+        self.poly_a.init_bounding(GNOMONIC_INITIAL_BOUNDING_EXTENT);
         self.poly_b.clear();
         self.use_a = true;
         self.failed = None;
@@ -183,7 +188,7 @@ impl GnomonicBuilder {
     #[inline]
     pub(super) fn bisector_coefficients(&self, neighbor: Vec3) -> (f64, f64, f64) {
         debug_assert!(
-            (neighbor.length_squared() - 1.0).abs() < 1e-5,
+            (neighbor.length_squared() - 1.0).abs() < DEBUG_NEIGHBOR_NORM_SQUARED_ERROR_LIMIT,
             "neighbor not unit-normalized: |N|² = {}",
             neighbor.length_squared()
         );

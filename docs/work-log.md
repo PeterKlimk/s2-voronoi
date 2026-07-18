@@ -374,9 +374,17 @@ tasks and are not duplicated here.
   diagnostic boundaries, and ambiguous `1e6` field/output vocabulary now spells negative exponents
   explicitly. Thresholds, strict `>` comparisons, counts, maxima, and semantic hashes are
   unchanged. The non-profiling stripped artifact is identical.
-- **Next gate:** complete a final remaining-production-literal inventory. Confirm that exact
-  mathematical coefficients and already-named local diagnostic ranges stay local, identify any
-  still-raw tolerance or policy value, and either land one final name-only slice or close QUAL-001E.
+- **QUAL-001E gnomonic-initialization result:** the south-pole tangent-basis branch and duplicated
+  initial chart bound now have separate construction-policy names; the neighbor norm check is a
+  named local debug diagnostic. Values, branch equality, initial geometry, and assertion direction
+  are unchanged. The complete optimized artifact is byte-identical.
+- **Final-inventory result:** exact mathematical coefficients remain inline, and quality,
+  reconciliation, and point-envelope bucket ranges remain named local diagnostics. Raw production
+  policy still exists in helper-axis `0.9` switches and the locator's distinct grid density, so
+  QUAL-001E remains active.
+- **Next gate:** unify the repeated helper-axis component switch under separately typed `f32` and
+  `f64` policy constants. Preserve every `< 0.9` branch and axis choice; do not force the types into
+  one casted value or include tool/test fixtures in the production policy surface.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

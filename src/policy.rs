@@ -20,6 +20,21 @@ pub(crate) const COPLANAR_PERTURBATION_SCALE: f64 = 1.0e-2;
 /// minimum-span conditioning floor.
 pub(crate) const LOCAL_REBUILD_SUPER_TRIANGLE_SCALE: f64 = 1000.0;
 
+/// Generator-z boundary below which the gnomonic tangent-basis builder uses
+/// its explicit south-pole branch.
+///
+/// This `f64` conditioning policy avoids the `1 + z` denominator becoming too
+/// small in the general closed-form basis. The alternate branch is selected
+/// for `z <` this value; equality retains the general formula.
+pub(crate) const GNOMONIC_TANGENT_BASIS_SOUTH_POLE_SWITCH_Z: f64 = -0.999_999_9;
+
+/// Initial half-extent of the gnomonic chart's synthetic bounding square.
+///
+/// This dimensionless `f64` construction policy supplies a large finite seed
+/// envelope for half-plane clipping. Projection-limit handoff and cell
+/// constraints, not this synthetic square, determine accepted final geometry.
+pub(crate) const GNOMONIC_INITIAL_BOUNDING_EXTENT: f64 = 1e6;
+
 /// Target mean points per query-grid cell.
 ///
 /// Set from the 2026-06 reference-machine sweep (Ryzen 3600,

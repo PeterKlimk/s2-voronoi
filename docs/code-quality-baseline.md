@@ -590,6 +590,32 @@ The ninth numerical/policy-constant slice was validated on 2026-07-18 against im
   and checked suites, the no-default-features release suite, the `serde,glam` release suite, and an
   explicit `tools,profiling` release suite passed.
 
+## QUAL-001E gnomonic initialization-policy result
+
+The tenth numerical/policy-constant slice was validated on 2026-07-18 against immediate parent
+`82c9ab1`.
+
+- The gnomonic tangent-basis builder's raw south-pole branch boundary moved to `policy.rs` as
+  `GNOMONIC_TANGENT_BASIS_SOUTH_POLE_SWITCH_Z: f64`. The alternate basis is still selected only
+  when `g.z < -0.999_999_9`; equality still uses the general `1 + z` formula.
+- Both raw `init_bounding(1e6)` calls now use the independent
+  `GNOMONIC_INITIAL_BOUNDING_EXTENT: f64` construction policy. New and reset builders still begin
+  with the same synthetic square before clipping; no projection-limit or cell-acceptance boundary
+  changed.
+- The raw debug assertion band is now the module-local `f32`
+  `DEBUG_NEIGHBOR_NORM_SQUARED_ERROR_LIMIT`. It remains exactly `1e-5` with the same strict `<`
+  comparison and is explicitly diagnostic rather than a production tolerance.
+- The final inventory also confirmed that quality and reconciliation histogram ranges are already
+  named local diagnostic boundaries, and exact coefficients such as halves, double-angle factors,
+  and unit clamps should remain inline. Still-raw production policy remains in the `0.9` reference-
+  axis switches and the locator's distinct target density; QUAL-001E therefore remains active.
+- `cargo fmt`, both default and native all-feature Clippy with warnings denied, the complete release
+  and checked suites, the no-default-features release suite, and the `serde,glam` release suite
+  passed.
+- The matched release `tools` artifacts were completely byte-identical, both with SHA-256
+  `f15123985e07e8a880813669dcdc3a12c2488f0f66bd4be688717b04118172ef`. No counter or quiet
+  wall-clock run was warranted.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
