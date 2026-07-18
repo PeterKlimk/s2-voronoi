@@ -724,6 +724,11 @@ Do not broadly retry these without a materially different design or workload:
   always-inline forms all repeated approximately +0.1597% instructions and +1.6620% branches in
   every one of seven pairs. The implementation was reverted; keep this isolated comparison raw
   until its surrounding reconciliation round or compiler shape changes materially.
+- Carrying `LiveCellLayout` through the localized unpaired-edge scan reproduced the same optimizer
+  cliff. Typing the entry, localized scan, partner lookup, and debug oracle produced +0.1598%
+  instructions and +1.6619% branches; retaining the raw entry and typing only the internal family
+  produced +0.1600% and +1.6625%. Both regressed in every one of seven pairs and were reverted.
+  Keep this reader family raw until its surrounding codegen changes materially.
 - Carrying reconciliation-produced local-rebuild seed pairs through pipeline state as a typed
   owner perturbed clean-path codegen despite retaining tuple storage. Seven interleaved 500k
   single-threaded Fibonacci counter pairs showed +0.1602% instructions and +1.6619% branches in

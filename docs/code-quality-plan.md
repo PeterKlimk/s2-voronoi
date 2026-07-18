@@ -296,7 +296,10 @@ explicit cell-bound/end-bound check sequence is intentional: a superficially idi
 `slice.get(start..end)` form added repeatable clean-path work and was rejected by the counter gate.
 Converting the rebuild backend's semantic old/new span comparison to two layouts was also rejected:
 default, never-inline, and always-inline forms all caused the same repeatable clean-path codegen
-regression, so that isolated four-slice signature remains raw for now.
+regression, so that isolated four-slice signature remains raw for now. The localized unpaired-edge
+scan family likewise remains raw: both whole-family and internal-only view migrations reproduced
+the same optimizer cliff. Reader-signature expansion therefore stops at the accepted segment and
+duplicate-key families until surrounding codegen changes materially.
 
 Introduce a small internal view/owner around cells and their backing index buffer. The abstraction
 should provide:

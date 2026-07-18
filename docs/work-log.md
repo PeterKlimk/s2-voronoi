@@ -445,9 +445,13 @@ tasks and are not duplicated here.
   oracle remains unchanged. Seven counter pairs were neutral (mean +0.000153% instructions and
   +0.000209% branches), aggregate section sizes were identical, and the executable is 32 bytes
   smaller.
-- **Next gate:** evaluate the localized unpaired-edge scan as one read-only layout family,
-  including its partner-cell lookup and debug global oracle. Keep mutation ownership and
-  compaction deferred, and split or revert the family if clean-path counters move.
+- **QUAL-001B unpaired-reader decision:** migrating the localized unpaired-edge scan, partner lookup,
+  and debug global oracle was reverted. The whole-family form produced +0.1598% instructions and
+  +1.6619% branches; retaining the raw outer ABI and typing only internals produced +0.1600% and
+  +1.6625%. Reader-signature expansion stops at the accepted segment and duplicate-key families.
+- **Next gate:** add debug-only structural validation to `LiveCellLayout` for span bounds and
+  representation limits, then call it only at cold checked-build boundaries. This strengthens the
+  abstraction without changing release traversal signatures, mutation ownership, or compaction.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

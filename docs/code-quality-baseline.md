@@ -850,6 +850,22 @@ The third accepted live-layout slice was validated on 2026-07-19 against immedia
 - Formatting, all-target/all-feature Clippy with warnings denied, the complete release suite, and
   the checked suite passed.
 
+## QUAL-001B rejected unpaired-reader experiment
+
+The next reader-family candidate was measured on 2026-07-19 against immediate parent `7f45956`
+and reverted.
+
+- The whole-family form passed one `LiveCellLayout` through the unpaired-scan entry, localized
+  region scan, partner-cell edge count, and debug global oracle. Seven interleaved 500k
+  single-threaded Fibonacci pairs produced mean candidate/parent ratios of `1.001598315`
+  instructions and `1.016619163` branches; every pair regressed.
+- A split form restored the raw outer ABI and constructed the view inside the entry, leaving only
+  the localized scan, partner lookup, and debug oracle typed. It repeated the same signal:
+  `1.001599651` instructions and `1.016624977` branches.
+- Code size was not deciding evidence: the whole form added 360 executable bytes and the split form
+  added 16, while aggregate mapped accounting was flat or smaller. Both implementations were
+  reverted, and the rebuilt source is identical to the parent.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
