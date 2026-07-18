@@ -271,8 +271,8 @@ struct EmittedRun {
 /// must scale with `n_target` — k can shrink after the first packed chunk,
 /// and partitioning is what keeps small-k asks from sorting large remainders
 /// (e.g. k=8). Const-generic + inline(always) so each call site keeps its
-/// pre-extraction codegen (an out-of-line call here measured +0.6%
-/// instructions on the whole build).
+/// specialized pre-extraction codegen. See
+/// `docs/performance.md#source-pinned-performance-decisions`.
 #[inline(always)]
 fn emit_run<const WHOLE_SORT_SMALL: bool>(
     keys: &mut [u64],

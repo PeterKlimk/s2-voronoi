@@ -16,9 +16,9 @@
 //!
 //! Exact `orient3d == 0` (a coplanar = exactly-cocircular set) is a high-degree
 //! degeneracy that needs explicit policy (deterministic split vs merge); it is
-//! measured to never occur on random `mega`. `build` treats a strictly-positive
-//! orientation as "visible", so an exact tie is currently resolved by insertion
-//! order — callers that must handle exact cliques deterministically should
+//! not exercised by the random `mega` probes. `build` treats a strictly-positive
+//! orientation as "visible", so an exact tie resolves by insertion order —
+//! callers that must handle exact cliques deterministically should
 //! detect `orient == 0` separately. See `docs/correctness.md`.
 
 // The consumer (the Tier-2 resolver wiring) lands in a follow-up; until then the

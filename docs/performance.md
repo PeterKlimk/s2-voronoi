@@ -473,6 +473,45 @@ multithreaded phase timing reduced `ring_pass` by 6.97% on Fibonacci (95% interv
 1.69--1.95%; uninstrumented whole-build estimates were 0.50% faster on Fibonacci and 0.79% faster
 on uniform but remained below the machine's resolution.
 
+### Source-pinned performance decisions
+
+Source comments retain the invariant that constrains a local implementation choice and link here
+for its historical measurement. This keeps host-specific timing narratives out of production
+modules without making the non-obvious code shape look accidental.
+
+- **Numeric backend and grid policy.** The stable `wide` backend matched the retired nightly
+  `portable_simd` path within roughly 1–2% on the June 2026 Ryzen 3600 campaign while preserving
+  backend fingerprints. On the same reference family, query-grid density 24 beat 16 by 4.8–7.1%
+  across 100k, 500k, and 2M uniform inputs. The quiet 2026-06-14 occupancy-feedback sweep placed
+  the beneficial `Σocc²/n` crossover near 450: measured 274/331 cases lost 19%/8%, while 536/712
+  cases gained 18%/29%. The selected threshold 500 separates all recorded cases; the superseded
+  noisy-host value 2000 placed the crossover 4–7× too high.
+- **Pinned hot-path codegen.** Keeping worker setup folded into the shard driver avoided about 1%
+  more retired instructions after unrelated cold growth caused LLVM outlining. Verified-cell XOR
+  extraction avoided a 1.3% whole-build instruction increase from repeated endpoint membership
+  checks. Small-N sorting networks beat `sort_unstable` by about 5% total time at 500k in their
+  measured regime, while extracting the shared packed emit sequence out of line added 0.6%
+  whole-build instructions; these helpers therefore retain their explicit inline boundaries.
+- **Canonicalization and dense-query gating.** The scalar f64-normalize/store pass measured about
+  20 ms at 2M single-threaded (roughly 0.5–0.8% of total) and is chunk-parallel by default. The
+  dense-cell band plus takeover lost about 13% on the 500k moderate-cluster control, so it remains
+  gated on occupancy feedback having rebuilt the grid. The one-percent final-scatter classifier
+  lies between the measured spatial-order signals for Fibonacci (about 0.2% of `n`) and
+  shuffled/uniform input (about 7%).
+- **Defect-local reconciliation.** Scanning a stale cell-index tail could create a phantom
+  low-incidence trigger whose acceptance work cost about 13 seconds at 2.5M; topology scans must
+  use live cell windows. In-place merge application saved about 382 ms at 2M single-threaded.
+  Candidate-local collinear cleanup avoided seconds of whole-vertex work on a three-defect 2.5M
+  run, and the localized unpaired-edge scan avoids a roughly 17-second global scan in the same
+  scale regime. Strict validation sorts about six million edge-use records at one million cells,
+  which is why the available parallel sort owns that stage.
+- **Local-rebuild cold path.** Reusing the construction grid replaces an all-generator neighbor
+  scan that became minutes-long for thousand-generator closures on dense defects. Returning before
+  flatten/clone/validation when no splice occurred removed about 12.6 seconds from a 15-second
+  2.5M tail. The borrowed overlay avoids about one second of eager diagram-wide setup at 2.5M, and
+  its sorted residual scan replaced an unreserved, per-round ~2E hash map that cost about 1.3
+  seconds per round at 1M; the sorted form was roughly ten times cheaper and parallelizable.
+
 ### Open optimization queue
 
 These are code-specific hypotheses from a 2026-07 subsystem scan. Each item is an isolated

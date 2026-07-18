@@ -397,9 +397,14 @@ tasks and are not duplicated here.
   `profiling` diagnostic owners, and corrects stale `cube_grid` and `live_dedup` module headers.
   Optimized executable sections and numeric data are byte-identical to the parent; only source
   metadata moved.
-- **Next gate:** audit comparative source comments (`old`, `legacy`, and time-relative `current`)
-  plus embedded timing narratives. Keep invariant-bearing explanations near code, move durable
-  historical evidence to the performance record, and leave intentional fixture/probe names alone.
+- **QUAL-001I source-comment result:** production comments now state local invariants and link to a
+  consolidated performance-decision record instead of carrying host-specific timing anecdotes.
+  Comparative wording names the actual superseded mechanism; remaining runtime-state uses,
+  correctness tolerance evidence, and intentional fixture/probe names were retained. Optimized
+  executable sections and numeric data are byte-identical; only source metadata moved.
+- **Next gate:** align `AGENTS.md`, README feature descriptions, environment documentation, and test
+  maps with Cargo features and the actual tree. Treat historical audit/benchmark records as records,
+  not current instructions.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
   specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
   assembly, and packed-query phase programs one measured change at a time.

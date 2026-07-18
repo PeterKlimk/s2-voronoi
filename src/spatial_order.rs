@@ -28,7 +28,7 @@ pub(crate) fn classify_spatial_correlation(
     samples: u64,
     domain_len: usize,
 ) -> SpatialOrderCorrelation {
-    // Representation limits in both current callers keep these products well
+    // Representation limits in both callers keep these products well
     // below u64::MAX.
     let scaled_domain = domain_len.max(100) as u64;
     if samples != 0 && abs_delta * 100 > scaled_domain * samples {

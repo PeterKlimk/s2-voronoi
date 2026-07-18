@@ -495,14 +495,17 @@ QUAL-001H completed 2026-07-18.
 **Progress:** started 2026-07-19. The architecture now has an execution-ordered stage glossary and
 an ownership map that distinguishes assembly, reconciliation, local-rebuild acceptance, output
 resolution, and return remapping. Stale `cube_grid` and `live_dedup` module headers were aligned
-with their current query and assembly contracts.
+with their current query and assembly contracts. Host-specific source timing anecdotes now live in
+the durable performance record; production comments retain the invariant and a stable reference.
+Comparative vocabulary was audited, with runtime-state uses and intentional fixture/probe names
+left intact.
 
 1. ~~Update `docs/architecture.md` with the stage glossary and current module ownership.~~
    Completed 2026-07-19.
-2. Move detailed historical timing claims out of source when a durable decision record already
-   exists, leaving the invariant and a link.
-3. Audit comments containing `old`, `legacy`, `current`, `only repair pass`, or retired feature
-   names for accuracy.
+2. ~~Move detailed historical timing claims out of source when a durable decision record already
+   exists, leaving the invariant and a link.~~ Completed 2026-07-19.
+3. ~~Audit comments containing `old`, `legacy`, `current`, `only repair pass`, or retired feature
+   names for accuracy.~~ Completed 2026-07-19.
 4. Keep `AGENTS.md`, README feature descriptions, environment knobs, and test maps aligned with the
    actual tree.
 5. Record rejected cleanup attempts with measurements so future passes do not repeat them.

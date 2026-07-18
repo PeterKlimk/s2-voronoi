@@ -19,7 +19,7 @@ fn vertex_is_on_sphere(x: f32, y: f32, z: f32) -> bool {
 ///
 /// Stability: [`ValidationReport::is_strictly_valid`] is the authoritative
 /// verdict and the stable contract. The individual counters expose the
-/// current defect taxonomy for telemetry and tests; new fields may be added
+/// defect taxonomy used by telemetry and tests; new fields may be added
 /// in minor releases (the struct is `#[non_exhaustive]`). Human-readable
 /// output ([`ValidationReport::headline`] and issue strings) is diagnostic
 /// only — its wording is not stable.
@@ -429,7 +429,7 @@ fn owner_arc_class(
 }
 
 /// Sort edge-use records by key — in parallel when available. This sort is the
-/// dominant cost of the strict verifiers at scale (~6M records at 1M cells).
+/// dominant cost of the strict verifiers at scale.
 /// The downstream pairing scan only groups records by key and applies
 /// order-symmetric checks within a group (`len == 2`, opposite `forward`,
 /// commutative DSU union), so an unstable parallel sort is verdict-equivalent

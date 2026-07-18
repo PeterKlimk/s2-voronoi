@@ -327,7 +327,7 @@ pub struct LocalRebuildReport {
 
 /// Observable outcome of final exact-zero output canonicalization.
 ///
-/// The current baseline preserves one effective cell per effective generator:
+/// The storage contract preserves one effective cell per effective generator:
 /// exact stored-zero components are contracted only when every cell remains
 /// representable. Positive-length edge simplification is not included here.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -535,7 +535,7 @@ impl VoronoiConfig {
 
 /// Compute a spherical Voronoi diagram with default settings.
 ///
-/// Errors are returned for invalid inputs, unsupported geometry in the current
+/// Errors are returned for invalid inputs, unsupported geometry in this
 /// clipping model, or unrecoverable internal failures.
 pub fn compute<P: UnitVec3Like>(points: &[P]) -> Result<SphericalVoronoi, VoronoiError> {
     compute_with(points, VoronoiConfig::default())

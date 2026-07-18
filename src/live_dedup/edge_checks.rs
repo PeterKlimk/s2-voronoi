@@ -62,8 +62,9 @@ pub(super) fn third_for_edge_endpoint(key: VertexKey, a: u32, b: u32) -> Option<
 
 /// Unchecked XOR "third" — valid only for cells whose extractor guarantees
 /// key/edge consistency (`CellOutputBuffer::edge_keys_verified`); the hot
-/// path for every gnomonic-built cell. Measured +1.3% whole-build
-/// instructions when the membership checks ran here per edge instead.
+/// path for every gnomonic-built cell. The verified-cell contract keeps
+/// repeated membership checks out of this edge path. See
+/// `docs/performance.md#source-pinned-performance-decisions`.
 #[inline]
 fn xor_third(key: VertexKey, a: u32, b: u32) -> u32 {
     key[0] ^ key[1] ^ key[2] ^ a ^ b

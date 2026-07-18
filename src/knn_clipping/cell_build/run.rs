@@ -82,9 +82,9 @@ pub(crate) struct CellBuildContext {
 
 impl CellBuildContext {
     // Keep worker setup folded into the shard driver. This and the phase
-    // annotations below pin the previously measured release-codegen shape;
-    // unrelated cold-pipeline growth otherwise caused LLVM to outline the
-    // per-generator driver and regress retired instructions by about 1%.
+    // annotations below pin the release-codegen shape; unrelated cold-pipeline
+    // growth can otherwise make LLVM outline the per-generator driver. See
+    // docs/performance.md#source-pinned-performance-decisions.
     #[inline(always)]
     pub(crate) fn new(grid: &crate::cube_grid::CubeMapGrid, policy: PackedNeighborPolicy) -> Self {
         Self {

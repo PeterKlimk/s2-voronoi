@@ -67,9 +67,9 @@ pub(crate) struct GnomonicBuilder {
     pub(crate) basis: TangentBasis,
 
     /// 0.5 / |generator|^2, cached per cell: the exact chord-bisector scale
-    /// correction for a generator that is (post stage-0) the raw f32 bits
+    /// correction for a generator represented by its canonicalized raw f32 bits
     /// rather than an f64-renormalized unit vector. Equal to 0.5 exactly for
-    /// exactly-unit generators, reproducing the legacy formula bit-for-bit.
+    /// exactly-unit generators, matching the unit-generator formula bit-for-bit.
     inv_two_gg: f64,
     generator_dot_g: f64,
 

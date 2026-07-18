@@ -495,8 +495,8 @@ impl PackedKnnCellScratch {
                         }
 
                         // Split into hi (above the tightened threshold -> chunk0)
-                        // and the [security, t] band (-> tail) in one pass; the old
-                        // post-hoc demotion loop is gone.
+                        // and the [security, t] band (-> tail) during extraction,
+                        // avoiding a second demotion pass.
                         let hi_bits = dots.mask_gt(hi_threshold) & mask_bits;
                         let band_bits = mask_bits & !hi_bits;
                         if hi_bits != 0 {
@@ -589,9 +589,9 @@ impl PackedKnnCellScratch {
 
         // === Ring pass: collect "hi" candidates into chunk0.
         //
-        // (A per-(ring cell, query) cap-prune was tried here and measured
-        // as a net loss: ring cells are adjacent cells, whose caps almost
-        // always overlap the threshold region, so the prune rarely fires.)
+        // Per-(ring cell, query) cap pruning is intentionally absent: adjacent
+        // cell caps almost always overlap the threshold region, so the extra
+        // test rarely prunes. See docs/performance.md#retired-experiments.
         let thresholds = &self.thresholds[..num_queries];
         for r in &self.cell_ranges[1..] {
             if r.kind == PackedCellRangeKind::SameBinEarlier {

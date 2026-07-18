@@ -21,10 +21,10 @@ pub enum VoronoiError {
     /// A computation option has an unsupported value.
     InvalidConfiguration(String),
 
-    /// The input induced geometry outside the currently supported clipping model.
+    /// The input induced geometry outside the supported clipping model.
     ///
     /// This is used for expected algorithm boundaries such as cells that extend beyond the
-    /// generator hemisphere in the current gnomonic projection model.
+    /// generator hemisphere in the gnomonic projection model.
     UnsupportedGeometry {
         /// Generator whose cell hit the model boundary.
         generator_index: usize,
@@ -43,7 +43,7 @@ pub enum VoronoiError {
 
     /// Computation exceeded a concrete representation or packing limit.
     ///
-    /// This is not necessarily a logic bug; it means the current internal
+    /// This is not necessarily a logic bug; it means the selected internal
     /// storage/layout could not represent the requested computation.
     RepresentationLimit(String),
 

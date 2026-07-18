@@ -1,4 +1,5 @@
-//! Defect-driven local rebuild (current state in `docs/correctness.md`).
+//! Defect-driven local rebuild; its output contract is documented in
+//! `docs/correctness.md`.
 //!
 //! When post-assembly detection finds residual topology defects (unpaired
 //! edges / degree-1-or-2 vertices), the affected neighborhood is rebuilt from
@@ -933,10 +934,9 @@ fn low_incidence_gens(work: &WorkingDiagram) -> Vec<u32> {
 /// index space. The base arrays are borrowed read-only; splicing records a
 /// per-generator boundary override, and freshly minted vertices live in side
 /// arrays (their vids continue past the base vertex count). Building the view
-/// is O(1) and splicing is O(defect region) — the rebuild's entry cost no longer
-/// scales with the diagram (the old form copied every vertex, built a
-/// triple→vid map over all of them, and materialized every cell as its own
-/// `Vec`, ~1s at 2.5M generators before a single defect was examined).
+/// is O(1) and splicing is O(defect region); entry does not copy every vertex,
+/// build a diagram-wide triple map, or materialize every cell. See
+/// `docs/performance.md#source-pinned-performance-decisions`.
 pub(crate) struct WorkingDiagram<'a> {
     base_vertices: &'a [Vec3],
     base_keys: &'a ShardedVertexKeys,
@@ -1007,7 +1007,7 @@ impl<'a> WorkingDiagram<'a> {
 
     /// Triple of vertex `vid` (base or minted). A base vid past the key store
     /// (a vertex appended by reconciliation without a key) reads as all-MAX,
-    /// matching the old flattened-array initialization.
+    /// matching the flattened-array sentinel contract.
     fn vkey(&self, vid: u32) -> [u32; 3] {
         let base = self.base_vertices.len();
         if (vid as usize) < base {
@@ -1028,8 +1028,8 @@ impl<'a> WorkingDiagram<'a> {
     /// neighbors. Ties (a triple at several vids, proximity-merge leftovers)
     /// resolve to the smallest vid, deterministically.
     ///
-    /// Divergence from the old global-map form, accepted under the valid-or-
-    /// error contract (the whole-diagram gate is unchanged): the global map
+    /// Difference from the eager global-map oracle, accepted under the
+    /// valid-or-error contract (the whole-diagram gate is unchanged): that map
     /// also indexed UNREFERENCED vertices — e.g. a vertex orphaned by a
     /// reconciliation merge — and would resurrect such a vid instead of
     /// minting a twin. Both choices leave the surrounding cells referencing a
@@ -1359,10 +1359,9 @@ impl<'a> WorkingDiagram<'a> {
 
     fn residual_scan(&self, include_low_incidence: bool) -> Vec<u32> {
         // One record per directed half-edge: (canonical undirected key, is
-        // lower-id direction). Sort + run-scan instead of a hashmap build —
-        // the map (unreserved, ~2E entries, rebuilt every grow round) was the
-        // dominant rebuild cost at scale (~1.3s/round at 1M cells; the sorted
-        // scan is ~10x cheaper and parallelizes).
+        // lower-id direction). Sort + run-scan avoids rebuilding a ~2E-entry
+        // hash map every grow round and permits parallel sorting. See
+        // docs/performance.md#source-pinned-performance-decisions.
         let mut uses: Vec<(u64, bool)> = Vec::with_capacity(self.base_cell_indices.len() + 64);
         // Per-vertex live-cell reference counts, matching `low_incidence_gens`
         // (counts every boundary, including sub-3 ones the edge scan skips).

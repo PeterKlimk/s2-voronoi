@@ -56,15 +56,10 @@ pub(crate) const LOCATOR_GRID_TARGET_DENSITY: f64 = 16.0;
 
 /// Target mean points per query-grid cell.
 ///
-/// Set from the 2026-06 reference-machine sweep (Ryzen 3600,
-/// target-cpu=native, single-thread, uniform 100k/500k/2M): density 24 was
-/// fastest at every size (4.8-7.1% over the previous 16), and the optimum is
-/// flat across that range, so a constant suffices for now. Mean
-/// neighbors-before-termination rises mildly with n (8.16 -> 8.44 from 100k
-/// to 2M) and is density-independent; revisit beyond ~4M points or for
-/// strongly non-uniform inputs. Use `VORONOI_MESH_GRID_DENSITY` to override
-/// for sweeps (scripts/sweep_grid_density.sh); the `neighbors_total` /
-/// `grid_*` TIMING_KV fields are the model inputs.
+/// Density 24 is the calibrated default; use `VORONOI_MESH_GRID_DENSITY` to
+/// override it for sweeps (`scripts/sweep_grid_density.sh`). Revisit the
+/// policy for substantially larger or strongly non-uniform inputs. Calibration
+/// is recorded in `docs/performance.md#source-pinned-performance-decisions`.
 pub(crate) const KNN_GRID_TARGET_DENSITY: f64 = 24.0;
 
 /// Largest cube-face resolution whose `6 * res²` cells fit the grid's `u32`
@@ -84,19 +79,14 @@ pub(crate) const MAX_GRID_RESOLUTION: usize = 26_754;
 /// it high. The earlier `max_occ > 16×target` trigger fired far too eagerly
 /// (re-grids on any cell over the bar, even when not rebuilding is faster).
 ///
-/// Threshold calibrated on a QUIET box (2026-06-14): a clean OFF-vs-ON sweep
-/// across two cluster shapes located the beneficial crossover at `Σocc²/n ≈
-/// 450`, shape-invariant — rebuild HURTS below it (splittable ssn=274 −19%,
-/// mega ssn=331 −8%) and HELPS above it (splittable ssn=536 +18%, mega ssn=712
-/// +29%, rising to +60%/rescue at higher concentration); uniform (ssn~26) and
-/// smooth gradients (ssn~187) sit well below. 500 classifies every measured
-/// point correctly. NOTE: an earlier value of 2000 (committed `33b4962`) was
-/// set from NOISY-box data that wildly overstated the effect (claimed 9× where
-/// the truth is ±15-20%) and put the crossover 4-7× too high — corrected here.
+/// The calibrated threshold is above ordinary uniform/gradient occupancy and
+/// below the concentration regimes that benefit from rebuilding. Measurement
+/// history is in `docs/performance.md#source-pinned-performance-decisions`.
 pub(crate) const GRID_REBUILD_SUMSQ_PER_N: f64 = 500.0;
 
 /// Post-rebuild target for the fullest cell (drives the new resolution):
-/// `new_res = res · sqrt(max_occ / this)`. Half the legacy 16×target band.
+/// `new_res = res · sqrt(max_occ / this)`. This leaves headroom below the
+/// feedback trigger after rebuilding.
 pub(crate) const GRID_REBUILD_TARGET_MAX_OCC: f64 = 192.0;
 
 /// Memory cap for the feedback rebuild: total grid cells stay O(n).

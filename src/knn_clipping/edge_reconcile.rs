@@ -326,10 +326,10 @@ impl MergeLedger {
 /// `InPlace` is the production default: only cells naming a merged vertex
 /// are touched (found via the vertex-key triplets), spans shrink in place,
 /// and the index buffer keeps stale tail slots (never read — cells are
-/// `(start, count)` spans). O(defects) instead of O(diagram); measured
-/// ~382ms saved at 2M single-threaded on a defect-bearing run.
+/// `(start, count)` spans). Its work is O(defects), not O(diagram). See
+/// `docs/performance.md#source-pinned-performance-decisions`.
 ///
-/// `Rebuild` is the original full rewrite, retained as the differential
+/// `Rebuild` is the full-rewrite differential
 /// oracle: the two backends must produce identical per-cell vertex
 /// sequences (pinned by the unit tests below and the full-pipeline
 /// differential in tests/edge_reconciliation.rs via `VORONOI_MESH_RECONCILE_REBUILD`).
@@ -623,9 +623,9 @@ fn assert_candidate_covers_droppable(
 /// not the whole vertex set: by the detection-completeness contract, every
 /// droppable degenerate vertex's owner cell is an endpoint of some unresolved
 /// edge, so the records' cells cover them all. This keeps a reconciliation round
-/// O(defect size) instead of O(total vertices) per round — the latter made a
-/// 3-defect run cost seconds at 2.5M. Debug
-/// builds assert the coverage via `assert_candidate_covers_droppable`.
+/// O(defect size) instead of O(total vertices) per round. Debug builds assert
+/// the coverage via `assert_candidate_covers_droppable`; scale evidence is in
+/// `docs/performance.md#source-pinned-performance-decisions`.
 fn drop_degenerate_collinear_vertices(
     cells: &mut [VoronoiCell],
     cell_indices: &mut [u32],
@@ -803,8 +803,7 @@ fn cell_spans_differ(
 /// partner-verify each locally-single use against the true neighbor cell's span
 /// (recovered from the endpoint keys) to reject edges whose real partner merely
 /// lies outside the scanned region. This makes the scan O(defect) instead of
-/// O(total edges) — the global scan cost ~17 s on a 2.5M run with only 3
-/// defects.
+/// O(total edges). See `docs/performance.md#source-pinned-performance-decisions`.
 ///
 /// Debug builds assert the localized result is identical to the global scan, so
 /// any gap in the locality argument is caught immediately at zero release cost.

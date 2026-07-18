@@ -81,9 +81,9 @@ impl FallbackConstraint {
         neighbor_slot: u32,
         neighbor: Vec3,
     ) -> Self {
-        // The fallback builder is a separate algorithm (ProjectionLimit
-        // path) whose plane math expects unit vectors; it keeps the legacy
-        // f64 normalization of both sides.
+        // The fallback builder is a separate algorithm (ProjectionLimit path)
+        // whose plane math expects unit vectors, so it normalizes both sides in
+        // f64 explicitly.
         let neighbor =
             DVec3::new(neighbor.x as f64, neighbor.y as f64, neighbor.z as f64).normalize();
         let normal = generator.normalize() - neighbor;
@@ -125,9 +125,9 @@ impl GnomonicBuilder {
     pub(super) fn new(generator_idx: usize, generator: Vec3) -> Self {
         let angle_pad = crate::tolerances::TERMINATION_ANGLE_PAD;
         let (term_sin_pad, term_cos_pad) = angle_pad.sin_cos();
-        // Promote the canonicalized f32 bits exactly — no
-        // renormalization (the old per-builder normalize made each chart
-        // solve a ~1-ulp-perturbed point set).
+        // Promote the canonicalized f32 bits exactly. Per-builder
+        // renormalization would make each chart solve a separately perturbed
+        // point set.
         let gen64 = DVec3::new(generator.x as f64, generator.y as f64, generator.z as f64);
         let inv_two_gg = 0.5 / gen64.length_squared();
         let basis = TangentBasis::new(gen64);

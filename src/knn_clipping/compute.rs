@@ -587,14 +587,15 @@ impl TopologySummary {
 /// `drop_degenerate_collinear_vertices` in `edge_reconcile`), so the buffer can
 /// retain stale tail slots that no live cell references. Scanning the whole
 /// buffer counts those stale slots as phantom degree-1/2 vertices and trips a
-/// no-op local rebuild (a single stale slot cost ~13s of acceptance-gate work at
-/// 2.5M). Counting live windows matches the validators (`validate_impl`,
+/// no-op local rebuild. Counting live windows matches the validators (`validate_impl`,
 /// `verify_sphere_fast`) and the local rebuild's own `low_incidence_gens`.
 /// This scan runs on EVERY build as a plain-return safety signal (and, when
 /// enabled, a local rebuild trigger). It cannot piggyback on reconcile, which
 /// early-returns when no edge is unresolved. Multi-threaded builds use exact
 /// shared atomic counters, read only after the chunk-parallel scan; a one-thread
 /// Rayon pool uses the same plain-counter path as a build without `parallel`.
+/// The scale evidence for avoiding stale-slot false positives is recorded in
+/// `docs/performance.md#source-pinned-performance-decisions`.
 fn summarize_topology_scalar(
     vertex_count: usize,
     cells: &[VoronoiCell],
@@ -852,13 +853,12 @@ fn maybe_rebuild_effective(
         euler_defect,
     };
 
-    // Local-neighbor gather index for the local rebuild: O(local) shell-frontier kNN per
-    // seed instead of the old O(n) brute force (a closure of thousands on a
-    // dense-defect input made the brute force minutes-long). Reuse the construction
-    // `grid` (occupancy-tuned; `compact_welded` keeps it bit-equivalent to a fresh
-    // effective-point build) rather than rebuilding. Local rebuild uses the grid's
-    // unrestricted shell frontier because it wants every nearby generator, not
-    // the directed construction subset.
+    // Local-neighbor gathering uses an O(local) shell frontier per seed. Reuse
+    // the occupancy-tuned construction grid (`compact_welded` keeps it
+    // bit-equivalent to a fresh effective-point build) rather than rebuilding
+    // or scanning all generators. Local rebuild needs the unrestricted frontier,
+    // not the directed construction subset. See
+    // docs/performance.md#source-pinned-performance-decisions.
     let mut rebuild_scratch = grid.make_scratch();
 
     let mut work = local_rebuild::WorkingDiagram::from_assembled(
@@ -931,8 +931,8 @@ fn maybe_rebuild_effective(
     };
     // No splices means the local rebuild did not modify `work` (a `splice_generator`
     // call is the only mutation, tracked 1:1 by `spliced_generators`). Skip the
-    // flatten + full-diagram clone + validate of an unchanged diagram, which is
-    // the dominant cost of a no-op local rebuild (~12.6s of a 15s tail at 2.5M).
+    // flatten + full-diagram clone + validation of an unchanged diagram. See
+    // docs/performance.md#source-pinned-performance-decisions.
     if stats.spliced_generators == 0 {
         return LocalRebuildResult::unchanged(outcome(false));
     }
@@ -1147,11 +1147,10 @@ fn validate_generator_capacity(num_points: usize) -> Result<(), crate::VoronoiEr
 /// sees the raw count; welds are far too few to shift it.
 /// Canonicalize input points once at entry — f64-normalize and
 /// round back to f32 — so every consumer (grid, weld, charts, certificates,
-/// and local rebuild) sees identical bits per generator. The
-/// per-builder f64 renormalization is gone; without this pass the pipeline
-/// solved a ~1-ulp-perturbed, asymmetrically-treated point set. Out-of-band lengths
-/// (contract-violating inputs) are left untouched and fail downstream as
-/// before, rather than being turned into NaNs here.
+/// and local rebuild) sees identical bits per generator rather than
+/// independently renormalizing. Out-of-band lengths (contract-violating
+/// inputs) are left untouched to fail downstream instead of being turned into
+/// NaNs here.
 fn canonicalize_and_find_first_non_finite(points: &mut [Vec3]) -> Option<usize> {
     fn canonicalize_chunk(chunk: &mut [Vec3]) -> Option<usize> {
         let mut first_bad = None;
@@ -1174,9 +1173,9 @@ fn canonicalize_and_find_first_non_finite(points: &mut [Vec3]) -> Option<usize> 
         }
         first_bad
     }
-    // ~10ns/point scalar (f64 sqrt + div); parallel chunks so the default
-    // build pays ~nothing. Measured ST cost: ~20ms at 2M (the bulk of stage
-    // 0's +0.5-0.8% single-threaded total).
+    // Parallel chunks keep this required normalization pass off the default
+    // build's serial critical path. See
+    // docs/performance.md#source-pinned-performance-decisions.
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
@@ -1338,9 +1337,8 @@ fn classify_near_great_circle(points: &[Vec3]) -> Option<CoplanarClass> {
 }
 
 /// Find a numerically stable candidate normal in a fixed number of linear
-/// sweeps. The old implementation searched every pair for the largest cross
-/// product, making *any* failed million-point build fall into an O(n²)
-/// great-circle probe before it could return the original error.
+/// sweeps. Fixed-count linear sweeps keep a failed large build from entering a
+/// quadratic all-pairs great-circle probe before returning the original error.
 ///
 /// This selection is deliberately conservative: failure to find a pair with
 /// enough angular separation merely declines the perturbation retry. It cannot
@@ -1414,7 +1412,7 @@ fn covers_great_circle(points: &[Vec3], normal: DVec3) -> bool {
 
 fn perturb_coplanar_points(points: &[Vec3], normal: DVec3) -> Vec<Vec3> {
     // This is a realized robust-mode joggle, not a symbolic-only SoS epsilon.
-    // The current f32 topology/validation path still sees near-antipodal pole
+    // The stored-f32 topology/validation path still sees near-antipodal pole
     // edges for microscopic offsets on exact great-circle fixtures; the named
     // scale is the already-tested small-jitter regime for these inputs.
     let scale = COPLANAR_PERTURBATION_SCALE;
@@ -1636,10 +1634,9 @@ fn build_query_grid(
     // wins on deep-certificate, un-splittable concentration (cap-like), which
     // is exactly the regime that triggers the occupancy rebuild and survives
     // it (a cell still over the dense threshold). Moderate clusters that never
-    // trip the rebuild close fast in the packed path, where the band + takeover
-    // is a measured net loss (clustered 500k ~ -13%); disable it there. Scale-
-    // invariant, unlike a fixed occupancy threshold (clustered occ grows with
-    // n).
+    // trip the rebuild close fast in the packed path, so the band and takeover
+    // are disabled there. The gate is scale-invariant, unlike a fixed occupancy
+    // threshold. See docs/performance.md#source-pinned-performance-decisions.
     tb.set_knn_build(t.elapsed());
     tb.set_grid_stats(res, max_occupancy as u64, rebuilt);
     #[cfg(feature = "timing")]

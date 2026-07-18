@@ -26,8 +26,9 @@ pub(super) fn make_desc_key(dot: f32, idx: u32) -> u64 {
 
 #[inline(always)]
 pub(super) fn sort_keys_u64(keys: &mut [u64]) {
-    // Sorting networks for small N: paired A/B (quiet box, 8/8 rounds)
-    // measured ~5% total-time win at 500k over sort_unstable here.
+    // Sorting networks own the measured small-N regime; larger slices keep the
+    // standard unstable sort. See
+    // docs/performance.md#source-pinned-performance-decisions.
     if keys.len() <= 35 {
         sort_small_u64(keys);
         return;

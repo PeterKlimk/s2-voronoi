@@ -684,6 +684,25 @@ The first durable-documentation slice was validated on 2026-07-19 against immedi
   source-location bytes in `.data.rel.ro` moved; executable code and numeric data did not change,
   so no counter or quiet wall-clock run was warranted.
 
+## QUAL-001I source-comment result
+
+The second durable-documentation slice was validated on 2026-07-19 against immediate parent
+`1c7d3aa`.
+
+- Host-specific codegen, grid-policy, reconciliation, and local-rebuild measurements moved from
+  production comments into `performance.md#source-pinned-performance-decisions`. Source comments
+  retain the local invariant and link to that record instead of embedding mutable timing history.
+- Comparative `old`/`legacy` wording was replaced with the actual alternative contract: all-pairs
+  probes, full-rewrite or eager-map oracles, per-builder normalization, second-pass demotion, and
+  unit-generator formulas. Remaining `current` uses refer to live runtime state; correctness
+  tolerance evidence and intentional fixture/probe names remain explicit.
+- All-feature Clippy with warnings denied, all-feature doc tests, and the release API/correctness
+  suites passed.
+- The matched release `tools` artifacts had identical sizes (`2,183,020` text, `55,536` data, `592`
+  BSS) and byte-identical `.text`, `.rodata`, exception-table, and unwind sections. Only 74
+  source-location bytes in `.data.rel.ro` moved; executable code and numeric data did not change,
+  so no counter or quiet wall-clock run was warranted.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

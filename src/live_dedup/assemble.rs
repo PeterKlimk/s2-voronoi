@@ -47,10 +47,10 @@ fn prefer_shard_order_scatter(bin_generators: &[Vec<usize>], num_cells: usize) -
             samples += 1;
         }
     }
-    // The measured crossover lies widely between Fibonacci (~0.2% of n)
-    // and shuffled/uniform input (~7% of n). One percent keeps ordered
-    // inputs on contiguous destination writes and scrambled inputs on
-    // contiguous shard-source reads.
+    // The one-percent classifier keeps spatially correlated inputs on
+    // contiguous destination writes and scrambled inputs on contiguous
+    // shard-source reads. See
+    // docs/performance.md#source-pinned-performance-decisions.
     crate::spatial_order::classify_spatial_correlation(abs_delta, samples, num_cells).is_scrambled()
 }
 

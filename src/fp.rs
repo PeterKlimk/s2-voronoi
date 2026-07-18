@@ -10,10 +10,8 @@
 //! All backends are lane-wise only (no horizontal reductions), so results
 //! are bit-identical across them (see tests/backend_fingerprint.rs).
 //!
-//! History: the original backend was nightly `portable_simd`. Benchmarks on
-//! the reference Ryzen 3600 (2026-06) showed `wide` at parity (within ~1-2%,
-//! winning some runs), so the nightly requirement was dropped. The portable
-//! backend can be recovered from git history if `std::simd` stabilizes.
+//! Backend-selection measurements and the retired nightly implementation are
+//! recorded in `docs/performance.md#source-pinned-performance-decisions`.
 
 // The `fma` feature is only sound when the SIMD backend actually fuses. On
 // x86/x86_64 the `wide` crate's `mul_add` lowers to a true FMA *only* when the
