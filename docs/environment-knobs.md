@@ -2,11 +2,15 @@
 
 **Status:** authoritative inventory; QUAL-001H completed 2026-07-18
 
-**Audited:** 2026-07-18
+**Audited:** 2026-07-19
 
-This document owns the process-environment inventory for the library, repository tools, campaigns,
-and tests. Environment variables are process-global: library code must read them only at documented
-cold seams, and tests that mutate them must restore the exact prior value even during unwinding.
+This document owns the environment-variable inventory read by compiled library, tool, campaign,
+and test code. Shell-only orchestration controls are documented in each script's header or
+`--help`; general build/toolchain inputs such as `RUSTFLAGS` and allocator controls such as
+`MALLOC_ARENA_MAX` remain external contracts rather than crate runtime knobs.
+
+Environment variables are process-global: library code must read them only at documented cold
+seams, and tests that mutate them must restore the exact prior value even during unwinding.
 
 Each Rust integration-test target runs in its own process. Isolation is therefore required between
 parallel tests within a target, not between different files in `tests/`. Library unit tests share
@@ -20,7 +24,7 @@ mutation.
 | `RAYON_NUM_THREADS` | supported operational | Rayon, before pool initialization | External Rayon contract; used to pin concurrency. |
 | `VORONOI_MESH_BIN_COUNT` | supported tuning | `live_dedup::binning::target_bin_count`, once per computation | Integer shard target, clamped to `[6, 96]`; tests and `bench_bins` are current writers. |
 | `VORONOI_MESH_GRID_DENSITY` | benchmark tuning | `policy::knn_grid_target_density`, first use via `OnceLock` | Parsed `f64` at least 1; intended for grid-density sweeps, not per-computation mutation. |
-| `VORONOI_MESH_VERIFY` | supported verification | `validation::verify_enabled`, ordinary compute return gate | Exact value `1` enables the O(E) strict-validation gate. |
+| `VORONOI_MESH_VERIFY` | supported verification | `validation::verify_enabled`, ordinary compute return gate | Exact value `1` enables the fast verifier with an O(E) strict-validation fallback. |
 | `VORONOI_MESH_TIMING_KV` | instrumentation | `timing::real::PhaseTimings::report` | Presence emits machine-readable timing output when the `timing` feature is enabled. |
 | `VORONOI_MESH_RECONCILE_TELEMETRY` | correctness diagnostic | defect-scoped `ReconcileOptions` snapshot | Presence repeats a read-only primary-round analysis and emits `RECONCILE_KV`. Read once with the other reconciliation options only after mismatch records exist. |
 | `VORONOI_MESH_RESOLUTION_KV` | correctness diagnostic | terminal output-resolution pass | Presence emits exact-zero resolution statistics. |
@@ -55,6 +59,15 @@ ordinary library API unless also listed above.
 | `VORONOI_MESH_LOCAL_REBUILD_DIST`, `VORONOI_MESH_LOCAL_REBUILD_N`, `VORONOI_MESH_LOCAL_REBUILD_SEED`, `VORONOI_MESH_LOCAL_REBUILD_K` | ignored local-rebuild integration probes | Select manual defect/oracle workloads. |
 | `VORONOI_MESH_CGAL_HULL3_BIN`, `VORONOI_MESH_NORM3D_FLAG_BANDS` | ignored external-oracle probes | Locate the CGAL helper and configure conditioning bands. |
 | `VORONOI_SMALL_N_MAX`, `VORONOI_SMALL_N_SEEDS` | ignored small-N campaign | Bound an extended deterministic geometry campaign. Historical names lack the `MESH` component; they remain manual inputs until probe reorganization. |
+
+## Private test-process variables
+
+These names are test implementation details, not runtime knobs:
+
+| Variable | Owner | Purpose |
+|---|---|---|
+| `VORONOI_MESH_VERIFY_GATE_CHILD` | `validation` unit test | Selects the enabled/disabled child-process branch used to test the real verification reader without mutating the parent unit-test process. |
+| `VORONOI_MESH_TEST_ENV_RESTORE` | `tests/env_isolation.rs` | Private sentinel used only to prove exact restoration after panic and lock poisoning. |
 
 ## Test mutation policy and current writers
 

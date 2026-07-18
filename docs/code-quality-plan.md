@@ -1,8 +1,8 @@
 # Code quality and maintainability plan
 
-**Status:** active; baseline, QUAL-001A vocabulary migration, and QUAL-001F architecture hygiene completed
+**Status:** active; Milestone 1 completed, with QUAL-001A state modeling deferred to Milestone 2
 
-**Date:** 2026-07-17
+**Date:** 2026-07-19
 
 This plan records the readability, maintainability, and code-quality pass requested after the
 July 2026 optimization work. The objective is to move the implementation toward the Pareto
@@ -492,13 +492,14 @@ QUAL-001H completed 2026-07-18.
 
 **Hot-path impact expected:** none
 
-**Progress:** started 2026-07-19. The architecture now has an execution-ordered stage glossary and
+**Progress:** completed 2026-07-19. The architecture now has an execution-ordered stage glossary and
 an ownership map that distinguishes assembly, reconciliation, local-rebuild acceptance, output
 resolution, and return remapping. Stale `cube_grid` and `live_dedup` module headers were aligned
 with their current query and assembly contracts. Host-specific source timing anecdotes now live in
 the durable performance record; production comments retain the invariant and a stable reference.
 Comparative vocabulary was audited, with runtime-state uses and intentional fixture/probe names
-left intact.
+left intact. Current-facing agent, feature, environment, module, and test maps are aligned with
+Cargo and the live tree; the performance record owns rejected experiments and their measurements.
 
 1. ~~Update `docs/architecture.md` with the stage glossary and current module ownership.~~
    Completed 2026-07-19.
@@ -506,9 +507,11 @@ left intact.
    exists, leaving the invariant and a link.~~ Completed 2026-07-19.
 3. ~~Audit comments containing `old`, `legacy`, `current`, `only repair pass`, or retired feature
    names for accuracy.~~ Completed 2026-07-19.
-4. Keep `AGENTS.md`, README feature descriptions, environment knobs, and test maps aligned with the
-   actual tree.
-5. Record rejected cleanup attempts with measurements so future passes do not repeat them.
+4. ~~Keep `AGENTS.md`, README feature descriptions, environment knobs, and test maps aligned with
+   the actual tree.~~ Completed 2026-07-19.
+5. ~~Record rejected cleanup attempts with measurements so future passes do not repeat them.~~
+   Confirmed 2026-07-19 in `docs/performance.md#retired-experiments` and the source-pinned decision
+   record.
 
 ## Execution order
 
@@ -534,7 +537,7 @@ repeatable adverse counter signal.
    Completed 2026-07-17.
 3. ~~QUAL-001H stale test knob and probe organization.~~ Completed 2026-07-18.
 4. ~~QUAL-001E constant inventory and name-only relocation.~~ Completed 2026-07-18.
-5. QUAL-001I durable comment/documentation updates.
+5. ~~QUAL-001I durable comment/documentation updates.~~ Completed 2026-07-19.
 
 These changes should be small, independently reviewable commits except where a public/internal
 rename must be atomic to keep the repository compiling. They establish the vocabulary used by

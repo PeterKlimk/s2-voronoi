@@ -402,12 +402,17 @@ tasks and are not duplicated here.
   Comparative wording names the actual superseded mechanism; remaining runtime-state uses,
   correctness tolerance evidence, and intentional fixture/probe names were retained. Optimized
   executable sections and numeric data are byte-identical; only source metadata moved.
-- **Next gate:** align `AGENTS.md`, README feature descriptions, environment documentation, and test
-  maps with Cargo features and the actual tree. Treat historical audit/benchmark records as records,
-  not current instructions.
+- **QUAL-001I current-guidance result:** the root agent guide now identifies its actual scope and
+  matches the live module, feature, and test-target sets. README distinguishes the three supported
+  Cargo features from internal hooks. The environment inventory now states its compiled-code scope,
+  records both private test-only variables, and distinguishes the verification fast path from its
+  strict fallback. Existing rejected-experiment records close the final durable-documentation item.
+- **Next gate:** begin QUAL-001G with one cold identity boundary in reconciliation or local
+  rebuilding. Introduce no generic index framework and prove optimized representation/codegen is
+  unchanged before widening adoption.
 - **Later milestones:** add a live cell-layout abstraction, share validation facts while retaining
-  specialized traversals, type ambiguity-prone cold ids, and split reconciliation, local-rebuild,
-  assembly, and packed-query phase programs one measured change at a time.
+  specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
+  local-rebuild, assembly, and packed-query phase programs one measured change at a time.
 - **Gate:** every production refactor preserves semantic fingerprints and passes the affected
   workload's interleaved performance gate against its immediate parent. Readability alone does not
   justify a repeatable throughput, memory, or code-size regression.

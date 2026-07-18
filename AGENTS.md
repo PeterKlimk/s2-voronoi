@@ -1,7 +1,6 @@
 # AGENTS.md
 
-This file provides guidance for coding agents working in the `voronoi-mesh` crate.
-For workspace-level guidance, see the repo-root `AGENTS.md`.
+This repo-root file provides guidance for coding agents working in the `voronoi-mesh` crate.
 
 For user-facing crate docs, see `README.md` and `docs/`.
 
@@ -15,7 +14,7 @@ For user-facing crate docs, see `README.md` and `docs/`.
 
 ```bash
 cargo test --release
-cargo clippy
+cargo clippy --all-targets
 cargo fmt
 ```
 
@@ -43,11 +42,14 @@ VORONOI_MESH_TIMING_KV=1 cargo run --release --features tools,timing --bin bench
 ./scripts/bench_run.sh -s 500k -r 20 -m total
 ```
 
-## Environment Knobs
+## Common Environment Knobs
 
 - `RAYON_NUM_THREADS=1`: force single-threaded mode (stable perf comparisons).
 - `VORONOI_MESH_BIN_COUNT=<n>`: override sharded bin count (defaults to about 2x threads).
 - `VORONOI_MESH_TIMING_KV=1`: emit machine-readable timing lines (`timing` feature).
+
+The authoritative inventory, including diagnostic/oracle knobs and mutation policy, is
+`docs/environment-knobs.md`.
 
 ## Crate Overview
 
@@ -101,13 +103,16 @@ src/
 │   ├── output_resolution.rs       # Exact stored-zero canonicalization
 │   ├── local_rebuild.rs           # Hull3d/projected local-rebuild orchestration
 │   ├── local_hull.rs              # Robust local 3D hull
+│   ├── union_find.rs              # Deterministic component tracking
 │   ├── cell_build/                # Single-cell construction loop
 │   └── topo2d/                    # Gnomonic/topological clipping
 ├── live_dedup/                    # Sharded dedup + assembly
 ├── timing/                        # Real/zero-sized timing backends
 ├── cube_grid/                     # Spatial index + query stack
 │   ├── build.rs                   # Grid construction
+│   ├── dense.rs                   # Dense-cell detection and feedback policy
 │   ├── projection.rs              # Face/uv/st conversion helpers
+│   ├── weld.rs                    # Near-coincident pair discovery
 │   ├── query/                     # Directed resumable kNN query path
 │   └── packed_knn/                # Packed batched directed kNN
 ├── generated/
@@ -120,28 +125,42 @@ Reintroduce a shared position abstraction only when a second in-repository backe
 current consumer and contract tests. `src/generated/sort_nets.rs` must be changed through
 `scripts/gen_sort_nets.py`, not by editing the generated body.
 
-## Features
+## Supported Features
 
-- `parallel` (default): rayon-based parallel cell construction.
+- `parallel` (default): rayon-based parallel execution across eligible build/query work.
 - `glam`: public input support and checked `SpherePoint` conversions for `glam::Vec3`.
+- `serde`: checked serialization/deserialization support for diagram types.
+
+## Internal Features
+
+These are repository instrumentation, benchmark, comparison, or probe hooks and are not
+semver-covered public features:
+
 - `timing`: detailed timing instrumentation.
 - `profiling`: helpers for profiling runs (e.g. inline control).
 - `microbench`: internal microbench harnesses.
-- `serde`: checked serialization/deserialization support for diagram types.
 - `local_rebuild_probe`: local-rebuild internals for ignored research probes.
 - `manual_probes`: wholly manual/ignored integration-test targets.
 - `simd_scalar`: scalar/autovectorized comparison backend.
 - `fma`: prefer fused multiply-add (`mul_add`) where used.
-- `tools`: benchmark/utility binaries.
+- `tools`: benchmark/utility binaries, the fidelity campaign, and quality diagnostics.
 
 ## Tests
 
-Primary integration tests in `tests/`:
+Default integration-test targets in `tests/`:
 
-- `api.rs`: public API behavior.
-- `correctness.rs`: geometric/topological invariants.
-- `validation.rs`: validation report checks.
-- `adversarial.rs`: stress and pathological distributions.
+- Core contracts: `api`, `correctness`, `validation`, and `backend_fingerprint`.
+- Derived/public views: `delaunay`, `embedding`, and `locate`.
+- Geometry and representation regimes: `adversarial`, `geometric_regressions`, `high_degree`,
+  `output_resolution`, `small_n_geometry`, `weird_geometry`, and `weld_cell_survival`.
+- Pipeline regressions: `edge_reconciliation`, `local_rebuild`, and `local_rebuild_contract`.
+- Test infrastructure: `env_isolation`; `tests/support/` is shared code, not a test target.
+
+Feature-gated targets declared explicitly in `Cargo.toml`:
+
+- `coincidence_probes` and `robustness_campaign`: `manual_probes`.
+- `fidelity_campaign`: `tools`.
+- `local_rebuild_probe`: `local_rebuild_probe`.
 
 ## Git Workflow Policy For Agents
 

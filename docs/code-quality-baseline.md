@@ -703,6 +703,23 @@ The second durable-documentation slice was validated on 2026-07-19 against immed
   source-location bytes in `.data.rel.ro` moved; executable code and numeric data did not change,
   so no counter or quiet wall-clock run was warranted.
 
+## QUAL-001I current-guidance result
+
+The final durable-documentation slice was validated on 2026-07-19 against immediate parent
+`9f93333`.
+
+- Cargo metadata confirmed 11 explicit features, 18 default integration-test targets, and four
+  feature-gated test targets. `AGENTS.md` now matches those sets and the live module tree; README
+  distinguishes the three semver-covered features from internal repository hooks.
+- The compiled-code environment inventory contains every `VORONOI_*` name present in Rust source
+  and tests. Its scope now excludes shell-only orchestration and external build/allocator contracts,
+  and it records the two private child/sentinel variables used only by tests.
+- All-feature Clippy with warnings denied, all-feature doc tests, and the release API/correctness
+  suites passed.
+- The matched release `tools` artifacts had identical sizes (`2,183,020` text, `55,536` data, `592`
+  BSS), build IDs, and byte-identical stripped files. Executable, read-only, relocation-backed, and
+  unwind sections were also byte-identical, so no counter or quiet wall-clock run was warranted.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

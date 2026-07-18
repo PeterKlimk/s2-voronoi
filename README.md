@@ -181,13 +181,17 @@ Multithreaded on a Ryzen 3600 (6 cores), uniform input:
 Single-threaded, ~1.8s at 1M. Per-build peak memory is roughly 0.65 KB/point.
 [docs/performance.md](docs/performance.md) covers benchmarking and reproduction.
 
-## Features
+## Supported Cargo features
 
-- `parallel` (default): rayon parallelism in cell construction.
+- `parallel` (default): Rayon parallelism across eligible build and query work.
 - `glam`: `UnitVec3Like` input support for `glam::Vec3` and checked `SpherePoint` conversions.
 - `serde`: `Serialize`/checked `Deserialize` for diagram types; invalid stored sphere points are
   rejected rather than silently normalized.
-- `timing`: phase and sub-phase timing reports.
+
+Other Cargo features (`timing`, `profiling`, `microbench`, `local_rebuild_probe`, `manual_probes`,
+`simd_scalar`, `fma`, and `tools`) are internal repository instrumentation, comparison, benchmark,
+or probe hooks. They are not semver-covered API. See [performance.md](docs/performance.md) for the
+supported benchmark workflows.
 
 ## Development documents
 
