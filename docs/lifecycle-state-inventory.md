@@ -1,6 +1,7 @@
 # Lifecycle State Inventory
 
-**Status:** QUAL-001A first two state-model migrations implemented, 2026-07-19
+**Status:** QUAL-001A first two state-model migrations implemented; effective-input boundary
+inventoried, 2026-07-19
 
 This inventory identifies the first correlated cold state to replace with an enum. It records the
 current behavior before changing representation; geometry, trigger policy, validation, and report
@@ -87,7 +88,64 @@ pin both behavior and telemetry.
 The release artifact exchanged 16 BSS bytes for 16 text bytes without changing aggregate or file
 size. Seven instruction/branch counter pairs were neutral.
 
-The next correlated state is the pair `PipelineState::effective_points` and `merge_result`. They
-describe one preprocessing choice but are stored as independent `Option`s and can theoretically
-disagree. Inventory their construction, borrow, remap, report, and retry consumers before choosing
-an owned enum or phase record.
+## Effective-input ownership
+
+`PipelineState::effective_points` and `PipelineState::merge_result` describe one preprocessing
+decision but are stored as independent `Option`s. Production constructs only two combinations:
+
+| `effective_points` | `merge_result` | Meaning | Reachable |
+|---|---|---|---|
+| `None` | `None` | Use the original points directly | Yes |
+| `Some` | `Some` | Use welded representatives and retain the original-to-effective map | Yes |
+| `Some` | `None` | Effective geometry without a way to remap it | No |
+| `None` | `Some` | Remap metadata without its effective geometry | No |
+
+Disabled preprocessing and a weld pass that finds no pairs both retain the identity state. In
+particular, the steady pipeline must continue to borrow `PipelineState::points` in that state; the
+cleanup must not retain a duplicate point vector or identity remap merely to simplify the type.
+Only an actual merge enters the welded state.
+
+The current split is sharper than the two fields suggest. `MergeResult` initially owns
+`effective_points`, `original_to_effective`, and `num_merged`. `prepare_points_and_grid` moves the
+point vector out with `mem::take`, stores it in the first `Option`, and stores the now-empty result
+in the second. The invariant therefore depends on coordinated mutation as well as coordinated
+presence.
+
+### Consumers and lifetime
+
+- grid compaction/rebuilding and all effective-cell construction use the representative points;
+- construction error reporting uses the merge map to translate effective generator ids back to
+  original ids;
+- report mode clones the effective arrays into `effective_diagram` only after an actual merge;
+- final assembly expands effective cells back to original generators and installs the weld map;
+- output-resolution mesh tests need both the effective geometry and original-to-effective map; and
+- coplanar perturbation retry creates a fresh core pipeline for each attempt, so no prepared-input
+  state is shared across attempts.
+
+`PreprocessReport::effective_points` and `num_merged` are observations of the same decision. They
+must be derived from its owner rather than used as another source of truth.
+
+### Selected boundary
+
+Use one cold orchestration enum, provisionally `EffectiveInput`, with two variants:
+
+```rust,ignore
+enum EffectiveInput {
+    Identity,
+    Merged(MergeResult),
+}
+```
+
+`MergeResult` will retain its effective point vector. Methods on the enum will select the original
+or representative slice, expose optional merge metadata, and derive the effective length and merge
+count. `PipelineState` will own this enum instead of the two `Option`s.
+
+Replace the four-element `PreparedPointsAndGrid` tuple with a named phase record containing this
+enum, the preprocessing report, and the grid. This keeps preparation ownership explicit without
+moving a larger record through the per-cell hot path. Construction should continue to receive the
+same point slice and optional map it does today.
+
+The implementation gate must pin all three policy outcomes—disabled, weld-with-no-merge, and
+actual merge—plus unchanged report, effective-diagram, error-index, and final-remap behavior.
+Because representative selection feeds the full construction pipeline, release artifact size and
+interleaved instruction/branch counters remain mandatory even though the new state is cold.

@@ -257,7 +257,7 @@ and diagnostic-knob documentation should be refreshed as part of the same hygien
 **Hot-path impact expected:** none
 
 **Progress:** vocabulary items 1–3 completed and validated 2026-07-17. The state-model inventory is
-now recorded in [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md). The first selected
+recorded in [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md). The first selected
 boundary, local rebuilding, is implemented: one status enum replaces the internal/public
 `attempted` + `accepted` pair while low-incidence and Euler defect facts remain independent. With
 no external users, the migration was atomic and left no deprecated boolean fields; existing KV
@@ -265,7 +265,10 @@ names derive identical values from status methods. Seven release counter pairs w
 state-enum and fact/action work in items 4–5 remains in Milestone 2 and will follow as separate
 measured commits. The second migration replaces the exact-inverse resolution-discovery booleans
 with `ResolutionDiscoveryMode`; timing derives the existing two KV values from one fallback bit.
-It retained identical aggregate/file size and neutral release counters.
+It retained identical aggregate/file size and neutral release counters. The third boundary is now
+inventoried: identity input and an actual merged result will be variants of one effective-input
+owner, with `MergeResult` retaining its representative points. A named preparation record will
+replace the current tuple of two correlated `Option`s, report, and grid.
 
 1. Add the stage glossary above to `docs/architecture.md` and inventory the public/internal names
    that map to each stage.

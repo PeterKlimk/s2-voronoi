@@ -510,8 +510,15 @@ tasks and are not duplicated here.
   existing KV values. The artifact exchanged 16 BSS bytes for 16 text bytes with identical total
   and file size. Seven counter pairs were neutral (mean `1.000000548` instructions and
   `1.000004166` branches).
-- **Next gate:** inventory the independently optional effective-points and merge-result fields and
-  choose one preprocessing-state owner that cannot represent disagreement.
+- **QUAL-001A effective-input inventory:** production permits only identity or actually merged
+  input, but currently splits the representative points out of `MergeResult` and stores both halves
+  as independent `Option`s. The selected boundary is one identity/merged enum that retains the
+  complete merge result; a named preparation record will replace the ambiguous return tuple. The
+  identity state continues to borrow original points without retained duplicate storage. Exact
+  consumers and the migration gate are recorded in
+  [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md).
+- **Next gate:** implement the effective-input owner and named preparation record, pin disabled,
+  no-merge, and actual-merge outcomes, then run the release artifact and interleaved counter gates.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.
