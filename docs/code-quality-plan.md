@@ -319,6 +319,12 @@ inlined but reproduced that exact clean-path regression. Reader- and mutation-si
 therefore stops at the accepted segment and duplicate-key families until surrounding codegen
 changes materially; the existing local rewrite remains explicit at its call site.
 
+The post-`EffectiveGeometry` overlay/materialization reassessment is recorded in
+[`live-cell-layout-inventory.md`](live-cell-layout-inventory.md). `WorkingDiagram` is the next
+selected boundary: it will own one read-only layout instead of independent base cell/index
+references, using direct-index access that preserves the current trusted grow-loop expression.
+This does not reopen any rejected reconciliation signature.
+
 Introduce a small internal view/owner around cells and their backing index buffer. The abstraction
 should provide:
 

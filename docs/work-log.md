@@ -540,9 +540,16 @@ tasks and are not duplicated here.
   bytes, and reduced file size by 1,040 bytes. Seven counter pairs were neutral (mean
   `1.000000038` instructions and `0.999998878` branches), with zero context switches and
   migrations. This completes the planned QUAL-001A cold-state modeling slice.
-- **Next gate:** resume QUAL-001B at the local-rebuild overlay/materialization boundary. Reassess
-  the previously deferred live-layout migration now that effective arrays have one owner, while
-  retaining the measured raw-signature fallbacks wherever the optimizer cliff persists.
+- **QUAL-001B overlay reassessment:** `WorkingDiagram` borrows reconciled cell records and their
+  backing index buffer independently even though every base-boundary read and materialization needs
+  the pair. The selected slice stores one `LiveCellLayout`, adds only direct-index span and backing
+  length accessors, and renames the constructor to describe its post-reconciliation input. The
+  previously rejected semantic-comparison, unpaired-scan, and mutable-rewrite signatures remain
+  raw measured fallbacks. Exact consumers and the migration gate are recorded in
+  [`live-cell-layout-inventory.md`](live-cell-layout-inventory.md).
+- **Next gate:** implement the overlay-owned live layout, pin base/override/materialization
+  behavior, then run the complete artifact and structural-counter gates, including a deterministic
+  mega counter pair only if the workload actually enters rebuilding.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.
