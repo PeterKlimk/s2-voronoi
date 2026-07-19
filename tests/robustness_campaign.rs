@@ -125,8 +125,8 @@ fn campaign_case() {
             let defects = out.report.reconciliation_edge_records.len();
             let reconciliation_residual = out.report.residual_reconciliation_pairs.len();
             let residual_edges = out.report.residual_unpaired_edges.len() + reconciliation_residual;
-            let local_rebuild_attempted = out.report.local_rebuild.attempted;
-            let local_rebuild_accepted = out.report.local_rebuild.accepted;
+            let local_rebuild_attempted = out.report.local_rebuild.attempted();
+            let local_rebuild_accepted = out.report.local_rebuild.accepted();
             let origins_str = if origins.is_empty() {
                 "none".to_string()
             } else {

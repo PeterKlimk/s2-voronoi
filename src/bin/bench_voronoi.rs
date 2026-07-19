@@ -592,8 +592,8 @@ fn validate_output(points: &[Vec3], preprocess: bool, local_rebuild: bool, dist:
         output.preferred_diagram().num_cells(),
         report.is_strictly_valid(),
         output.report.assembly_edge_mismatch_count,
-        output.report.local_rebuild.attempted,
-        output.report.local_rebuild.accepted,
+        output.report.local_rebuild.attempted(),
+        output.report.local_rebuild.accepted(),
         quality.fidelity_kv_fields(),
     );
     if report.degenerate_cells > 0 {

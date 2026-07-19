@@ -1,6 +1,6 @@
 # Lifecycle State Inventory
 
-**Status:** QUAL-001A state-model inventory, 2026-07-19
+**Status:** QUAL-001A first state-model migration implemented, 2026-07-19
 
 This inventory identifies the first correlated cold state to replace with an enum. It records the
 current behavior before changing representation; geometry, trigger policy, validation, and report
@@ -51,9 +51,9 @@ as status variants and do not infer them from the rebuild action.
 - No repository code constructs `LocalRebuildReport` outside the backend. There are no external
   users, so the public Rust field migration can be atomic without deprecated compatibility fields.
 
-## Selected first enum boundary
+## Implemented first enum boundary
 
-Introduce one public, non-exhaustive `LocalRebuildStatus` and use it directly inside
+One public, non-exhaustive `LocalRebuildStatus` now flows directly through
 `LocalRebuildOutcome`:
 
 - `NotTriggered` — ordinary enabled pipeline did not run the stage;
@@ -62,12 +62,16 @@ Introduce one public, non-exhaustive `LocalRebuildStatus` and use it directly in
 - `Accepted` — the strict gate passed and the rebuilt state committed; and
 - a doc-hidden diagnostic-capture status for the feature-gated A0 interception path.
 
-`LocalRebuildReport` should contain the status and expose derived `attempted()` and `accepted()`
-methods. Repository consumers should migrate atomically to those methods while retaining the KV
-field names and values. Do not keep public boolean fields: doing so would preserve the invalid
-state the enum is intended to remove.
+`LocalRebuildReport` contains the status and exposes derived `attempted()` and `accepted()` methods.
+Repository consumers migrated atomically to those methods while retaining the KV field names and
+values. No public compatibility booleans remain, so the invalid false/true combination is no longer
+representable.
 
-The first implementation must pin the status truth table and the ordinary clean/disabled paths.
-The existing local-rebuild contract and fault-injection tests continue to own accepted/rejected and
-fail-loud behavior. Since the status is carried through the main pipeline, acceptance requires the
-usual release artifact comparison and hardware-counter gate.
+The status truth table and ordinary clean/disabled paths are pinned directly. Existing
+local-rebuild contract and fault-injection tests continue to own accepted/rejected and fail-loud
+behavior. Seven release counter pairs were neutral; the attempted/accepted KV semantics are
+unchanged.
+
+The next correlated state is `ResolutionDiscoveryDecision`: `certified_hint` and `drift_fallback`
+are exact inverses constructed from one input boolean. Its two valid states and exhaustive-fallback
+telemetry should be inventoried before replacement.

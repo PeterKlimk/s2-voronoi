@@ -314,16 +314,58 @@ pub struct DegenerateReport {
     pub perturbation_applied: bool,
 }
 
+/// Status of the optional post-assembly local-rebuild pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LocalRebuildStatus {
+    /// The mode was enabled, but the assembled topology did not trigger a rebuild.
+    NotTriggered,
+    /// [`LocalRebuildMode::Disabled`] prevented the stage from running.
+    Disabled,
+    /// The stage ran but did not commit a rebuilt diagram.
+    Rejected,
+    /// The rebuilt diagram passed strict validation and was committed.
+    Accepted,
+    /// Internal diagnostic capture intercepted the assembled state before the
+    /// ordinary rebuild trigger was evaluated.
+    #[doc(hidden)]
+    DiagnosticCapture,
+}
+
+impl LocalRebuildStatus {
+    /// True when the local-rebuild stage ran.
+    #[inline]
+    pub const fn attempted(self) -> bool {
+        matches!(self, Self::Rejected | Self::Accepted)
+    }
+
+    /// True when a rebuilt diagram passed strict validation and was committed.
+    #[inline]
+    pub const fn accepted(self) -> bool {
+        matches!(self, Self::Accepted)
+    }
+}
+
 /// Observable outcome of the optional post-assembly local-rebuild pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct LocalRebuildReport {
-    /// A local rebuild pass ran (defects were detected and the configured
-    /// [`LocalRebuildMode`] is not `Disabled`). False on clean builds.
-    pub attempted: bool,
-    /// The rebuilt diagram passed whole-diagram strict validation and was
-    /// committed. Always false when `attempted` is false.
-    pub accepted: bool,
+    /// What the local-rebuild stage did this run.
+    pub status: LocalRebuildStatus,
+}
+
+impl LocalRebuildReport {
+    /// True when the local-rebuild stage ran.
+    #[inline]
+    pub const fn attempted(&self) -> bool {
+        self.status.attempted()
+    }
+
+    /// True when a rebuilt diagram passed strict validation and was committed.
+    #[inline]
+    pub const fn accepted(&self) -> bool {
+        self.status.accepted()
+    }
 }
 
 /// Observable outcome of final exact-zero output canonicalization.
@@ -427,7 +469,7 @@ impl ComputeReport {
         !self.residual_unpaired_edges.is_empty()
             || !self.residual_reconciliation_pairs.is_empty()
             || !self.preferred_validation().is_strictly_valid()
-            || (self.local_rebuild.attempted && !self.local_rebuild.accepted)
+            || (self.local_rebuild.attempted() && !self.local_rebuild.accepted())
     }
 }
 

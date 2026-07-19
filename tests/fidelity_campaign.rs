@@ -103,8 +103,8 @@ fn fidelity_case() {
         output.report.preprocess.num_merged,
         output.report.degenerate.perturbation_applied,
         output.report.assembly_edge_mismatch_count,
-        output.report.local_rebuild.attempted,
-        output.report.local_rebuild.accepted,
+        output.report.local_rebuild.attempted(),
+        output.report.local_rebuild.accepted(),
         report.fidelity_kv_fields(),
     );
 }

@@ -999,6 +999,25 @@ The proposed weld-alias predicate was rejected on 2026-07-19 against immediate p
   `8613a4c080929a18d960e93da2212f18d0be8b2c6c415cf0979d9d1e641eb946`; the duplicated local
   expression remains the measured Pareto choice.
 
+## QUAL-001A local-rebuild status enum
+
+The first lifecycle-state migration was accepted on 2026-07-19 against immediate parent `520ff78`.
+
+- Public non-exhaustive `LocalRebuildStatus` distinguishes `NotTriggered`, `Disabled`, `Rejected`,
+  `Accepted`, and the doc-hidden diagnostic-capture path. The same status flows through the
+  internal outcome. Low-incidence and Euler defect facts remain separate.
+- `LocalRebuildReport` now stores the status and derives `attempted()`/`accepted()` from it. All
+  repository consumers migrated atomically; the machine-readable `local_rebuild_attempted` and
+  `local_rebuild_accepted` field names and boolean values are unchanged. The impossible
+  false-attempted/true-accepted state is no longer representable.
+- The release `tools` artifact changed from `2,183,164` to `2,183,376` text bytes, retained `55,512`
+  data bytes, changed from `472` to `4,360` BSS bytes, and grew from `2,998,984` to `2,999,192` file
+  bytes.
+- Across seven interleaved 500k single-threaded Fibonacci counter pairs, mean candidate/parent
+  ratios were `1.000001952` instructions and `0.999998724` branches, with pair ranges
+  `0.999994359..=1.000005231` and `0.999993544..=1.000004873`. There was no directional regression;
+  every sample recorded zero context switches and CPU migrations.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

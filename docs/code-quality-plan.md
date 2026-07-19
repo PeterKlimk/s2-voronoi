@@ -260,11 +260,12 @@ and diagnostic-knob documentation should be refreshed as part of the same hygien
 
 **Progress:** vocabulary items 1–3 completed and validated 2026-07-17. The state-model inventory is
 now recorded in [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md). The first selected
-boundary is local rebuilding: replace the internal/public `attempted` + `accepted` pair atomically
-with one status enum while keeping low-incidence and Euler defect facts independent. With no
-external users, no deprecated boolean fields are planned; existing KV names will derive their
-values from status methods. Other state-enum and fact/action work in items 4–5 remains in
-Milestone 2 and will follow as separate measured commits.
+boundary, local rebuilding, is implemented: one status enum replaces the internal/public
+`attempted` + `accepted` pair while low-incidence and Euler defect facts remain independent. With
+no external users, the migration was atomic and left no deprecated boolean fields; existing KV
+names derive identical values from status methods. Seven release counter pairs were neutral. Other
+state-enum and fact/action work in items 4–5 remains in Milestone 2 and will follow as separate
+measured commits.
 
 1. Add the stage glossary above to `docs/architecture.md` and inventory the public/internal names
    that map to each stage.

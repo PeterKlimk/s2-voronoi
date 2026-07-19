@@ -17,7 +17,7 @@ use crate::timing::{Timer, TimingBuilder};
 use crate::tolerances::{NEAR_GREAT_CIRCLE_MAX_PLANE_SIN_TOL, NEAR_GREAT_CIRCLE_RMS_PLANE_SIN_TOL};
 use crate::{
     CellKillingPolicy, ComputeOutput, ComputeReport, DegenerateMode, DegenerateReport,
-    LocalRebuildMode, PreprocessMode, PreprocessReport, VoronoiConfig,
+    LocalRebuildMode, LocalRebuildStatus, PreprocessMode, PreprocessReport, VoronoiConfig,
 };
 
 /// Per-seed neighbor count for the local rebuild's grid kNN gather (the 2-ring gather
@@ -455,7 +455,7 @@ fn compute_voronoi_knn_clipping_report_core(
 ) -> Result<ComputeOutput, crate::VoronoiError> {
     let mut state = run_core_pipeline(points, preprocess_mode, local_rebuild_mode)?;
     enforce_cell_killing_policy(&state, cell_killing_policy)?;
-    let local_rebuild_accepted = state.local_rebuild.accepted;
+    let local_rebuild_accepted = state.local_rebuild.status.accepted();
     // Surface output-invariant residuals alongside the detection records. If
     // local rebuild was accepted, the returned diagram is strictly valid and
     // these residuals no longer survive to output.
@@ -534,8 +534,7 @@ fn compute_voronoi_knn_clipping_report_core(
             effective_validation,
             assembly_edge_mismatch_count: assembly_edge_mismatches.len(),
             local_rebuild: crate::LocalRebuildReport {
-                attempted: state.local_rebuild.attempted,
-                accepted: state.local_rebuild.accepted,
+                status: state.local_rebuild.status,
             },
             output_resolution: state.output_resolution,
             assembly_edge_mismatches,
@@ -675,11 +674,7 @@ fn summarize_topology(
 /// Outcome of the local rebuild attempt, for the caller's fail-loud decision.
 #[derive(Clone, Copy)]
 struct LocalRebuildOutcome {
-    /// A local rebuild pass ran: defects were detected and the configured mode is
-    /// enabled. False on clean builds and when local rebuild is disabled.
-    attempted: bool,
-    /// The rebuilt effective diagram passed the strict gate and was committed.
-    accepted: bool,
+    status: LocalRebuildStatus,
     /// Detection found a low-incidence (degree-1/2) vertex defect. Such a
     /// vertex is strictly-invalid output even when every edge pairs (it fails
     /// `verify_sphere_effective_strict`'s "low-incidence vertex" check), so
@@ -693,10 +688,13 @@ struct LocalRebuildOutcome {
 }
 
 impl LocalRebuildOutcome {
-    const fn not_attempted(low_incidence_defect: bool, euler_defect: bool) -> LocalRebuildOutcome {
+    const fn new(
+        status: LocalRebuildStatus,
+        low_incidence_defect: bool,
+        euler_defect: bool,
+    ) -> LocalRebuildOutcome {
         LocalRebuildOutcome {
-            attempted: false,
-            accepted: false,
+            status,
             low_incidence_defect,
             euler_defect,
         }
@@ -730,7 +728,7 @@ fn check_plain_return_signals(
 ) -> Result<(), crate::VoronoiError> {
     // A committed local rebuild has already passed whole-diagram strict validation,
     // so pre-rebuild signals no longer describe the returned geometry.
-    if local_rebuild.accepted {
+    if local_rebuild.status.accepted() {
         return Ok(());
     }
     if !residual_unpaired.is_empty() {
@@ -807,7 +805,8 @@ fn maybe_rebuild_effective(
     #[cfg(feature = "local_rebuild_probe")]
     if local_rebuild::a0_fast_capture_active() {
         local_rebuild::stash_a0_fast(effective_points, vertex_keys, eff_cells, eff_cell_indices);
-        return LocalRebuildResult::unchanged(LocalRebuildOutcome::not_attempted(
+        return LocalRebuildResult::unchanged(LocalRebuildOutcome::new(
+            LocalRebuildStatus::DiagnosticCapture,
             has_low_incidence,
             euler_defect,
         ));
@@ -815,7 +814,8 @@ fn maybe_rebuild_effective(
 
     let local_rebuild_enabled = !matches!(local_rebuild_mode, LocalRebuildMode::Disabled);
     if !local_rebuild_enabled {
-        return LocalRebuildResult::unchanged(LocalRebuildOutcome::not_attempted(
+        return LocalRebuildResult::unchanged(LocalRebuildOutcome::new(
+            LocalRebuildStatus::Disabled,
             has_low_incidence,
             euler_defect,
         ));
@@ -829,7 +829,8 @@ fn maybe_rebuild_effective(
     defect_pairs.sort_unstable();
     defect_pairs.dedup();
     if defect_pairs.is_empty() && !has_low_incidence {
-        return LocalRebuildResult::unchanged(LocalRebuildOutcome::not_attempted(
+        return LocalRebuildResult::unchanged(LocalRebuildOutcome::new(
+            LocalRebuildStatus::NotTriggered,
             false,
             euler_defect,
         ));
@@ -845,12 +846,7 @@ fn maybe_rebuild_effective(
             has_low_incidence,
         );
     }
-    let outcome = |accepted: bool| LocalRebuildOutcome {
-        attempted: true,
-        accepted,
-        low_incidence_defect: has_low_incidence,
-        euler_defect,
-    };
+    let outcome = |status| LocalRebuildOutcome::new(status, has_low_incidence, euler_defect);
 
     // Local-neighbor gathering uses an O(local) shell frontier per seed. Reuse
     // the occupancy-tuned construction grid (`compact_welded` keeps it
@@ -933,7 +929,7 @@ fn maybe_rebuild_effective(
     // flatten + full-diagram clone + validation of an unchanged diagram. See
     // docs/performance.md#source-pinned-performance-decisions.
     if stats.spliced_generators == 0 {
-        return LocalRebuildResult::unchanged(outcome(false));
+        return LocalRebuildResult::unchanged(outcome(LocalRebuildStatus::Rejected));
     }
 
     // Materialize the overlay: minted vertex positions (vids past the base
@@ -984,13 +980,13 @@ fn maybe_rebuild_effective(
     }
     if gate.is_err() {
         vertices.truncate(base_vertex_count);
-        return LocalRebuildResult::unchanged(outcome(false));
+        return LocalRebuildResult::unchanged(outcome(LocalRebuildStatus::Rejected));
     }
 
     *eff_cells = new_cells;
     *eff_cell_indices = new_cell_indices;
     LocalRebuildResult {
-        outcome: outcome(true),
+        outcome: outcome(LocalRebuildStatus::Accepted),
         resolution_scan_cells,
     }
 }
@@ -1777,7 +1773,10 @@ mod tests {
     use crate::diagram::VoronoiCell;
     use crate::live_dedup::{BuildCellsError, PackedLayoutCapacityError, ShardedVertexKeys};
     use crate::live_dedup::{CellBuildError, CellFailure};
-    use crate::{LocalRebuildMode, PreprocessMode, VoronoiError};
+    use crate::{
+        LocalRebuildMode, LocalRebuildReport, LocalRebuildStatus, PreprocessMode, VoronoiConfig,
+        VoronoiError,
+    };
     use glam::Vec3;
 
     fn zero_edge_cube_fixture() -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>, ShardedVertexKeys) {
@@ -2056,12 +2055,12 @@ mod tests {
 
         // This is the outcome produced by LocalRebuildMode::Disabled: no local rebuild was
         // attempted, but the independently-computed safety signal survives.
-        let local_rebuild = LocalRebuildOutcome::not_attempted(
+        let local_rebuild = LocalRebuildOutcome::new(
+            LocalRebuildStatus::Disabled,
             topology.low_incidence,
             !topology.has_sphere_euler(cells.len()),
         );
-        assert!(!local_rebuild.attempted);
-        assert!(!local_rebuild.accepted);
+        assert_eq!(local_rebuild.status, LocalRebuildStatus::Disabled);
         let err = check_plain_return_signals(local_rebuild, &[], &[])
             .expect_err("known-invalid output must not escape when local_rebuild is disabled");
         assert!(matches!(err, VoronoiError::ComputationFailed(_)));
@@ -2069,14 +2068,41 @@ mod tests {
 
     #[test]
     fn accepted_strict_local_rebuild_supersedes_pre_local_rebuild_signals() {
-        let local_rebuild = LocalRebuildOutcome {
-            attempted: true,
-            accepted: true,
-            low_incidence_defect: true,
-            euler_defect: true,
-        };
+        let local_rebuild = LocalRebuildOutcome::new(LocalRebuildStatus::Accepted, true, true);
         check_plain_return_signals(local_rebuild, &[(1, 2)], &[(2, 3)])
             .expect("accepted local_rebuild was already strictly validated");
+    }
+
+    #[test]
+    fn local_rebuild_status_truth_table_and_ordinary_paths() {
+        for (status, attempted, accepted) in [
+            (LocalRebuildStatus::NotTriggered, false, false),
+            (LocalRebuildStatus::Disabled, false, false),
+            (LocalRebuildStatus::Rejected, true, false),
+            (LocalRebuildStatus::Accepted, true, true),
+            (LocalRebuildStatus::DiagnosticCapture, false, false),
+        ] {
+            let report = LocalRebuildReport { status };
+            assert_eq!(report.attempted(), attempted, "status={status:?}");
+            assert_eq!(report.accepted(), accepted, "status={status:?}");
+        }
+
+        let points = fib_sphere(64);
+        let clean = crate::compute_with_report(&points, VoronoiConfig::default()).expect("clean");
+        assert_eq!(
+            clean.report.local_rebuild.status,
+            LocalRebuildStatus::NotTriggered
+        );
+
+        let disabled = crate::compute_with_report(
+            &points,
+            VoronoiConfig::default().with_local_rebuild_mode(LocalRebuildMode::Disabled),
+        )
+        .expect("disabled");
+        assert_eq!(
+            disabled.report.local_rebuild.status,
+            LocalRebuildStatus::Disabled
+        );
     }
 
     fn fib_sphere(n: usize) -> Vec<[f32; 3]> {
@@ -2112,7 +2138,8 @@ mod tests {
         cell_indices: &[u32],
     ) -> LocalRebuildOutcome {
         let topology = summarize_topology(vertices.len(), cells, cell_indices);
-        LocalRebuildOutcome::not_attempted(
+        LocalRebuildOutcome::new(
+            LocalRebuildStatus::NotTriggered,
             topology.low_incidence,
             !topology.has_sphere_euler(cells.len()),
         )
@@ -2164,7 +2191,8 @@ mod tests {
             topology.low_incidence,
             "{name}: fixture must be low-incidence"
         );
-        let local_rebuild = LocalRebuildOutcome::not_attempted(
+        let local_rebuild = LocalRebuildOutcome::new(
+            LocalRebuildStatus::NotTriggered,
             topology.low_incidence,
             !topology.has_sphere_euler(cells.len()),
         );
@@ -2198,7 +2226,11 @@ mod tests {
         );
         assert!(
             check_plain_return_signals(
-                LocalRebuildOutcome::not_attempted(topology.low_incidence, true),
+                LocalRebuildOutcome::new(
+                    LocalRebuildStatus::NotTriggered,
+                    topology.low_incidence,
+                    true,
+                ),
                 &[],
                 &[],
             )
@@ -2350,8 +2382,12 @@ mod tests {
             "corrupt weld alias must fail strict validation"
         );
         assert!(
-            check_plain_return_signals(LocalRebuildOutcome::not_attempted(false, false), &[], &[])
-                .is_ok(),
+            check_plain_return_signals(
+                LocalRebuildOutcome::new(LocalRebuildStatus::NotTriggered, false, false),
+                &[],
+                &[],
+            )
+            .is_ok(),
             "weld-map validity is not represented by a pre-remap local_rebuild signal"
         );
     }

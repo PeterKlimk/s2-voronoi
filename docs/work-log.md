@@ -500,8 +500,13 @@ tasks and are not duplicated here.
   ordinary no-trigger, disabled-policy, and diagnostic-capture paths. Low-incidence and Euler
   signals are independent defect facts, not action states. The exact consumers and migration are
   recorded in [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md).
-- **Next gate:** introduce one local-rebuild status enum end-to-end, migrate repository consumers
-  atomically, and preserve the existing attempted/accepted KV values through derived methods.
+- **QUAL-001A local-rebuild state result:** `LocalRebuildStatus` now represents not-triggered,
+  disabled, rejected, accepted, and diagnostic-capture outcomes end-to-end. Public report booleans
+  were removed atomically; derived methods preserve the existing KV values. The artifact added 212
+  text bytes, 3,888 BSS bytes, and 208 file bytes. Seven counter pairs were neutral (mean
+  `1.000001952` instructions and `0.999998724` branches).
+- **Next gate:** inventory the exact-inverse `ResolutionDiscoveryDecision` booleans and their
+  telemetry consumers before replacing them with the next cold enum.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

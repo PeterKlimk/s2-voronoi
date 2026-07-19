@@ -175,7 +175,7 @@ fn dense_cap_frontier_is_strict_without_local_rebuild() {
         rebuilt.report.returned_validation.headline()
     );
     assert!(
-        !rebuilt.report.local_rebuild.attempted,
+        !rebuilt.report.local_rebuild.attempted(),
         "upstream-valid dense-cap fixture should not invoke local rebuilding"
     );
     assert!(

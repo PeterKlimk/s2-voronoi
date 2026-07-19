@@ -85,7 +85,7 @@ fn projected_rebuild_makes_mega_strictly_valid() {
         // The strengthened cell fallback may resolve the defect before rebuild.
         // If the coarse rebuild pass is triggered, it must be accepted.
         assert!(
-            !out.report.local_rebuild.attempted || out.report.local_rebuild.accepted,
+            !out.report.local_rebuild.attempted() || out.report.local_rebuild.accepted(),
             "mega 100k s{seed}: attempted rebuild was rejected: {:?}",
             out.report.local_rebuild
         );
