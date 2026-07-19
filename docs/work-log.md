@@ -597,25 +597,20 @@ tasks and are not duplicated here.
   (`1.000010280`, `1.000020864`); every sample had zero switches/migrations. The artifact added 8
   text bytes and 24 file bytes, retained data size, and removed 16 BSS bytes. Details are in
   [`reconciliation-defect-body-inventory.md`](reconciliation-defect-body-inventory.md).
-- **QUAL-001D local-rebuild transaction inventory:** keep A0 capture, disabled/no-trigger returns,
-  defect-pair normalization, diagnostic reads, overlay growth, and zero-splice rejection in
-  `maybe_rebuild_effective`. After a productive overlay, group minted vertices, replacement cells
-  and indices, and overridden-cell footprint into one private candidate whose consuming method
-  owns append, whole-diagram validation, and truncate-or-commit. Do not add a broad borrowed
-  context, clone base positions, localize the validity gate, or change the grow loop concurrently.
-  The boundary and gates are recorded in
-  [`local-rebuild-transaction-inventory.md`](local-rebuild-transaction-inventory.md).
-- **QUAL-001D local-rebuild trigger hunt:** default preprocessing produced no trigger across wide
-  100k seed/placement/fraction/bin sweeps or focused 300k/500k/1M cases. With preprocessing
-  disabled, a corner-centered 100k `mega` at fraction `0.8`, seed `224`, deterministically performs
-  two Hull3d rounds, splices seven generators, materializes the complete candidate, and reaches the
-  strict gate before low-incidence rejection and rollback. No natural accepted transaction was
-  found. Search coverage, other hits, and the expected-error benchmark contract are recorded in
-  [`local-rebuild-trigger-hunt.md`](local-rebuild-trigger-hunt.md).
-- **Next gate:** implement the candidate transaction as one default-inline measured slice. Retain
-  it only if direct accepted/rejected transaction semantics pass, ordinary Fibonacci counters
-  remain neutral, the seed-224 rejected-path counters remain neutral, and artifact inspection shows
-  no unexplained active-path boundary.
+- **QUAL-001D local-rebuild transaction result:** `LocalRebuildCandidate` now owns minted
+  positions, complete replacement arrays, and the sorted mutation footprint after consuming the
+  overlay. Its consuming method owns append, whole-diagram validation, diagnostics, rollback, and
+  paired commit; all trigger and growth policy remains in `maybe_rebuild_effective`. Direct
+  accepted/rejected transaction tests and complete validation passed. LLVM emitted no standalone
+  boundary. Seven 500k Fibonacci pairs were neutral (`0.999999187` instructions,
+  `0.999999792` branches), as were seven verified seed-224 productive-rejection pairs
+  (`0.999991525`, `1.000000202`); all samples had zero switches/migrations. Actual `.bss` was
+  unchanged, while the artifact added 1,308 text bytes and 992 file bytes. Details are in
+  [`local-rebuild-transaction-inventory.md`](local-rebuild-transaction-inventory.md); the fixture
+  search remains in [`local-rebuild-trigger-hunt.md`](local-rebuild-trigger-hunt.md).
+- **Next gate:** inventory the live assembly phase program and select at most one narrow ownership
+  or setup extraction. Keep the accepted `EffectiveGeometry` handoff and raw mutable layout
+  signatures intact unless a new boundary owns a meaningful lifetime and remains counter-neutral.
 - **Later milestones:** split reconciliation, local-rebuild, assembly, and packed-query phase
   programs one measured change at a time.
 - **Gate:** every production refactor preserves semantic fingerprints and passes the affected

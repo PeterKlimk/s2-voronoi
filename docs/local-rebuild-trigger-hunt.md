@@ -93,3 +93,9 @@ The transaction refactor can now use three complementary checks:
 
 The rejected fixture is not a reason to weaken the valid-or-error contract or tune Hull3d. Oracle
 quality and acceptance-rate work remain separate from the structural cleanup.
+
+The accepted transaction extraction used this fixture for seven interleaved candidate/parent
+counter pairs. Every sample reproduced the complete fingerprint above. Candidate/parent ratios
+were `0.999991525` instructions and `1.000000202` branches, with zero context switches and CPU
+migrations in every sample. The productive materialize/validate/rollback path is therefore
+counter-neutral after the ownership extraction.

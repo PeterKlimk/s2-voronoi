@@ -777,6 +777,94 @@ impl LocalRebuildResult {
     }
 }
 
+/// One fully materialized local-rebuild proposal. The replacement cells and
+/// indices travel with the minted positions they reference and the exact
+/// footprint needed by terminal output resolution.
+struct LocalRebuildCandidate {
+    minted_vertices: Vec<Vec3>,
+    cells: Vec<VoronoiCell>,
+    cell_indices: Vec<u32>,
+    resolution_scan_cells: Vec<u32>,
+}
+
+impl LocalRebuildCandidate {
+    fn from_work(work: local_rebuild::WorkingDiagram<'_>) -> Self {
+        let resolution_scan_cells = work.overridden_cells();
+        let (minted_vertices, cells, mut cell_indices) = work.into_flat();
+
+        // The in-place and rebuild reconciliation oracles can present the same
+        // cyclic boundary with different starting slots. Hull3d preserves that
+        // arbitrary rotation when it splices a neighborhood. Canonicalize only
+        // this cold rebuilt output so semantically identical local rebuild
+        // backends remain byte-for-byte differential oracles; winding is
+        // unchanged.
+        canonicalize_cell_cycle_starts(&cells, &mut cell_indices);
+
+        Self {
+            minted_vertices,
+            cells,
+            cell_indices,
+            resolution_scan_cells,
+        }
+    }
+
+    /// Append the candidate's new positions for whole-diagram validation,
+    /// then either roll that append back or install both replacement arrays.
+    fn try_commit(
+        self,
+        effective_points: &[Vec3],
+        geometry: &mut EffectiveGeometry,
+        debug: bool,
+        materialization_started: std::time::Instant,
+    ) -> Option<Vec<u32>> {
+        let Self {
+            minted_vertices,
+            cells,
+            cell_indices,
+            resolution_scan_cells,
+        } = self;
+        let base_vertex_count = geometry.vertices.len();
+        geometry.vertices.extend(minted_vertices);
+        let flat_elapsed = materialization_started.elapsed();
+        let t_gate = std::time::Instant::now();
+
+        // Whole-diagram never-worse gate: accept only if the rebuilt diagram is
+        // strictly valid. Validate the effective arrays in place via
+        // `verify_sphere_effective_strict` (same strict contract as `validate`,
+        // pinned by the `effective_strict_matches_fast` differential test)
+        // rather than cloning all arrays into a temporary `SphericalVoronoi`.
+        // The gate must remain whole-diagram: minted triple identities can
+        // affect cells beyond the immediate splice footprint.
+        let gate = crate::validation::verify_sphere_effective_strict(
+            effective_points,
+            &geometry.vertices,
+            &cells,
+            &cell_indices,
+        );
+        if debug {
+            eprintln!(
+                "local rebuild commit: into_flat {:?}, gate {:?} ({} verts, {} cells, gate {})",
+                flat_elapsed,
+                t_gate.elapsed(),
+                geometry.vertices.len(),
+                cells.len(),
+                if gate.is_ok() { "accepted" } else { "rejected" },
+            );
+            if let Err(err) = &gate {
+                eprintln!("  local rebuild gate rejection: {err}");
+            }
+        }
+        if gate.is_err() {
+            geometry.vertices.truncate(base_vertex_count);
+            return None;
+        }
+
+        geometry.cells = cells;
+        geometry.cell_indices = cell_indices;
+        Some(resolution_scan_cells)
+    }
+}
+
 /// Reject defect signals that cannot be surfaced by the plain compute API.
 ///
 /// Kept as one pure decision seam so fault-injection tests can pin the exact
@@ -995,59 +1083,18 @@ fn maybe_rebuild_effective(
         return LocalRebuildResult::unchanged(outcome(LocalRebuildStatus::Rejected));
     }
 
-    // Materialize the overlay: minted vertex positions (vids past the base
-    // length) plus the full cell arrays. The base vertex array is extended in
-    // place — and truncated back on rejection — so an accepted local rebuild never
-    // copies the base positions.
+    // Materialize the overlay into one owned transaction before mutably
+    // borrowing the geometry it was built over. The base vertex array is
+    // extended in place — and truncated back on rejection — so an accepted
+    // local rebuild never copies the base positions.
     let t_flat = std::time::Instant::now();
-    let resolution_scan_cells = work.overridden_cells();
-    let (minted_vertices, new_cells, mut new_cell_indices) = work.into_flat();
-    // The in-place and rebuild reconciliation oracles can present the same
-    // cyclic boundary with different starting slots. Hull3d preserves that
-    // arbitrary rotation when it splices a neighborhood. Canonicalize only
-    // this cold rebuilt output so semantically identical local rebuild backends
-    // remain byte-for-byte differential oracles; winding is unchanged.
-    canonicalize_cell_cycle_starts(&new_cells, &mut new_cell_indices);
-    let base_vertex_count = geometry.vertices.len();
-    geometry.vertices.extend(minted_vertices);
-    let flat_elapsed = t_flat.elapsed();
-    let t_gate = std::time::Instant::now();
-
-    // Whole-diagram never-worse gate: accept only if the rebuilt diagram is
-    // strictly valid. Validate the effective arrays in place via
-    // `verify_sphere_effective_strict` (same strict contract as `validate`,
-    // pinned by the `effective_strict_matches_fast` differential test) rather
-    // than cloning all of `effective_points`/vertices/cells/indices into a
-    // temporary `SphericalVoronoi` — the clone was the dominant cost of a
-    // committed local rebuild. The validation itself stays whole-diagram: the
-    // rebuild's blast radius is vertex-triple-identity-wide, so a local gate
-    // is unsound.
-    let gate = crate::validation::verify_sphere_effective_strict(
-        effective_points,
-        &geometry.vertices,
-        &new_cells,
-        &new_cell_indices,
-    );
-    if diagnostics.debug {
-        eprintln!(
-            "local rebuild commit: into_flat {:?}, gate {:?} ({} verts, {} cells, gate {})",
-            flat_elapsed,
-            t_gate.elapsed(),
-            geometry.vertices.len(),
-            new_cells.len(),
-            if gate.is_ok() { "accepted" } else { "rejected" },
-        );
-        if let Err(err) = &gate {
-            eprintln!("  local rebuild gate rejection: {err}");
-        }
-    }
-    if gate.is_err() {
-        geometry.vertices.truncate(base_vertex_count);
+    let candidate = LocalRebuildCandidate::from_work(work);
+    let Some(resolution_scan_cells) =
+        candidate.try_commit(effective_points, geometry, diagnostics.debug, t_flat)
+    else {
         return LocalRebuildResult::unchanged(outcome(LocalRebuildStatus::Rejected));
-    }
+    };
 
-    geometry.cells = new_cells;
-    geometry.cell_indices = new_cell_indices;
     LocalRebuildResult {
         outcome: outcome(LocalRebuildStatus::Accepted),
         resolution_scan_cells,
@@ -1822,8 +1869,8 @@ mod tests {
         check_plain_return_signals, classify_exact_affine_circle, classify_near_great_circle,
         map_build_cells_error, map_cell_build_error, max_cell_occupancy, prepare_points_and_grid,
         run_core_pipeline, stable_rank2_normal, summarize_topology,
-        validate_and_canonicalize_unit_points, validate_generator_capacity, EffectiveInput,
-        LocalRebuildOutcome, ResolutionDiscoveryMode,
+        validate_and_canonicalize_unit_points, validate_generator_capacity, EffectiveGeometry,
+        EffectiveInput, LocalRebuildCandidate, LocalRebuildOutcome, ResolutionDiscoveryMode,
     };
     use crate::diagram::VoronoiCell;
     use crate::live_dedup::{BuildCellsError, PackedLayoutCapacityError, ShardedVertexKeys};
@@ -2239,6 +2286,87 @@ mod tests {
             .map(|i| VoronoiCell::new(diagram.cell_start(i), diagram.cell(i).len() as u16))
             .collect();
         (vertices, cells, diagram.cell_indices_raw().to_vec())
+    }
+
+    fn effective_generators(diagram: &crate::SphericalVoronoi) -> Vec<Vec3> {
+        diagram
+            .generators()
+            .iter()
+            .map(|generator| Vec3::from_array(generator.to_array()))
+            .collect()
+    }
+
+    #[test]
+    fn local_rebuild_candidate_commits_positions_arrays_and_footprint_together() {
+        let diagram = crate::compute(&fib_sphere(64)).expect("valid baseline");
+        let generators = effective_generators(&diagram);
+        let (vertices, cells, indices) = effective_arrays(&diagram);
+        let replacement_vertex = indices[0];
+        let minted_vertex = vertices[replacement_vertex as usize];
+        let minted_vertex_id = vertices.len() as u32;
+
+        let mut replacement_indices = indices.clone();
+        for vertex in &mut replacement_indices {
+            if *vertex == replacement_vertex {
+                *vertex = minted_vertex_id;
+            }
+        }
+        let candidate = LocalRebuildCandidate {
+            minted_vertices: vec![minted_vertex],
+            cells: cells.clone(),
+            cell_indices: replacement_indices.clone(),
+            resolution_scan_cells: vec![2, 7, 11],
+        };
+        let replacement_cells_ptr = candidate.cells.as_ptr();
+        let replacement_indices_ptr = candidate.cell_indices.as_ptr();
+        let mut geometry = EffectiveGeometry {
+            vertices,
+            cells,
+            cell_indices: indices,
+        };
+
+        let footprint = candidate
+            .try_commit(&generators, &mut geometry, false, std::time::Instant::now())
+            .expect("equivalent replacement should pass the whole-diagram gate");
+
+        assert_eq!(footprint, [2, 7, 11]);
+        assert_eq!(geometry.vertices.len(), minted_vertex_id as usize + 1);
+        assert_eq!(geometry.vertices.last(), Some(&minted_vertex));
+        assert_eq!(geometry.cells.as_ptr(), replacement_cells_ptr);
+        assert_eq!(geometry.cell_indices.as_ptr(), replacement_indices_ptr);
+        assert_eq!(geometry.cell_indices, replacement_indices);
+        assert!(!geometry.cell_indices.contains(&replacement_vertex));
+    }
+
+    #[test]
+    fn local_rebuild_candidate_rejection_restores_base_geometry() {
+        let diagram = crate::compute(&fib_sphere(64)).expect("valid baseline");
+        let generators = effective_generators(&diagram);
+        let (vertices, cells, indices) = effective_arrays(&diagram);
+        let mut invalid_indices = indices.clone();
+        invalid_indices[0] = u32::MAX;
+        let candidate = LocalRebuildCandidate {
+            minted_vertices: vec![vertices[0]],
+            cells: cells.clone(),
+            cell_indices: invalid_indices,
+            resolution_scan_cells: vec![0],
+        };
+        let mut geometry = EffectiveGeometry {
+            vertices: vertices.clone(),
+            cells,
+            cell_indices: indices.clone(),
+        };
+        let base_cells_ptr = geometry.cells.as_ptr();
+        let base_indices_ptr = geometry.cell_indices.as_ptr();
+
+        let footprint =
+            candidate.try_commit(&generators, &mut geometry, false, std::time::Instant::now());
+
+        assert!(footprint.is_none());
+        assert_eq!(geometry.vertices, vertices);
+        assert_eq!(geometry.cells.as_ptr(), base_cells_ptr);
+        assert_eq!(geometry.cell_indices.as_ptr(), base_indices_ptr);
+        assert_eq!(geometry.cell_indices, indices);
     }
 
     fn unaccepted_outcome(

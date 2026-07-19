@@ -1,6 +1,6 @@
 # Local-Rebuild Transaction Inventory
 
-**Status:** one QUAL-001D ownership/extraction slice selected, 2026-07-20
+**Status:** selected QUAL-001D ownership/extraction slice accepted, 2026-07-20
 
 This inventory covers the local-rebuild phase after the accepted reconciliation orchestration
 boundaries. It selects one representation-preserving cleanup; trigger policy, oracle algorithms,
@@ -127,3 +127,35 @@ transaction before accepting the sample. No natural accepted transaction was fou
 accepted append/swap/footprint path with a direct deterministic transaction test. Artifact evidence
 must still show that default inlining introduced no unexplained boundary. Wall clock remains
 advisory on the busy shared host.
+
+## Accepted result
+
+`LocalRebuildCandidate` now owns the minted positions, complete replacement cell/index arrays, and
+sorted override footprint produced by a productive `WorkingDiagram`. `from_work` consumes the
+borrowed overlay and canonicalizes cycle starts before any mutable geometry borrow. Its consuming
+`try_commit` method preserves the append, whole-diagram strict gate, debug timing and diagnostics,
+truncate-on-rejection, and paired-array installation. `maybe_rebuild_effective` retains every
+entry gate, environment-read boundary, oracle decision, growth call, and zero-splice return.
+
+Two direct tests pin both sides of the transaction. The accepted fixture replaces every use of one
+live vertex id with an appended equal-position vertex and verifies that the candidate's two array
+allocations and complete footprint move into `EffectiveGeometry` together. The rejected fixture
+appends a position, supplies an invalid candidate reference, and verifies exact base-position
+restoration while the original cell and index allocations remain installed. Existing
+accepted-rebuild integration fixtures also remain green.
+
+Complete release, checked, no-default-feature, and all-target/all-feature Clippy gates passed.
+LLVM emitted no standalone candidate or `maybe_rebuild_effective` body; the boundary remains folded
+into `run_core_pipeline`, whose symbol grew from `0x4a16` to `0x4b96` bytes. GNU aggregate size
+accounting added 1,308 text bytes and 2,784 alignment-accounted BSS bytes with unchanged data;
+the file grew by 992 bytes. Actual `.bss` remained 291 bytes, and the aggregate BSS delta is wholly
+the corresponding RELRO-padding shift rather than new mutable storage.
+
+Seven interleaved 500k single-threaded Fibonacci pairs measured candidate/parent ratios of
+`0.999999187` instructions and `0.999999792` branches (ranges
+`0.999990973..=1.000007501` and `0.999985103..=1.000010080`). Seven interleaved seed-224 active
+rejection pairs each verified the full two-round/seven-splice/strict-rejection fingerprint and
+measured `0.999991525` instructions and `1.000000202` branches (ranges
+`0.999987191..=0.999994591` and `0.999997381..=1.000003300`). Every sample recorded zero context
+switches and CPU migrations. The default-inline source boundary is accepted; no optimization
+attribute or quiet wall-clock run is warranted.

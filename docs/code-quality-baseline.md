@@ -1202,6 +1202,31 @@ parent `971c378`.
   `cubed` confirmation was unnecessary because both the active counters and relevant symbol sizes
   were unambiguous. Wall clock was ignored on the busy host.
 
+## QUAL-001D local-rebuild candidate transaction
+
+The first local-rebuild extraction was accepted on 2026-07-20 against immediate parent `2026037`.
+
+- Private `LocalRebuildCandidate` owns the minted positions, complete replacement cell/index
+  arrays, and sorted override footprint after consuming `WorkingDiagram`. Candidate construction
+  retains cycle-start canonicalization; consuming commit retains append, whole-diagram strict
+  validation, diagnostics, truncate-on-rejection, and paired replacement.
+- A0 capture, disabled/no-trigger returns, defect normalization, diagnostic environment reads,
+  grid scratch, overlay growth, oracle selection, and zero-splice rejection remain in
+  `maybe_rebuild_effective` with their original ordering.
+- Direct tests pin accepted position/array/footprint installation and rejected exact-length
+  rollback with the original cell/index allocations untouched. Complete release, checked,
+  no-default-feature, and all-target/all-feature Clippy gates passed.
+- LLVM emitted no standalone candidate or `maybe_rebuild_effective` body. `run_core_pipeline` grew
+  by 384 bytes. GNU aggregate accounting added 1,308 text bytes and 2,784 bytes of alignment
+  padding reported as BSS, data was unchanged, actual `.bss` stayed at 291 bytes, and file size
+  grew by 992 bytes.
+- Seven 500k single-threaded Fibonacci pairs were neutral at `0.999999187` instructions and
+  `0.999999792` branches. Seven deterministic productive-rejection pairs were also neutral at
+  `0.999991525` and `1.000000202`; every pair verified the two-round, seven-splice, full-candidate,
+  strict-rejection fingerprint.
+- Every counter sample recorded zero context switches and CPU migrations. No inline attribute or
+  quiet wall-clock confirmation was justified.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
