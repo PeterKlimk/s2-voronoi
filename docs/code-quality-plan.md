@@ -428,7 +428,12 @@ recorded in
 [`reconciliation-defect-body-inventory.md`](reconciliation-defect-body-inventory.md): the
 empty-record return and checked structural audit remain in the entry, while the nonempty-record
 program now has a private helper with the same explicit inputs. LLVM retained the prior function
-sizes, and clean Fibonacci plus active `cubed` counters were neutral.
+sizes, and clean Fibonacci plus active `cubed` counters were neutral. The next local-rebuild slice
+is inventoried in
+[`local-rebuild-transaction-inventory.md`](local-rebuild-transaction-inventory.md): keep every
+ordinary-path gate and overlay-growth decision in place, but make the productive overlay's minted
+vertices, replacement cell arrays, and mutation footprint one owned candidate whose consuming
+commit method preserves append, strict validation, and truncate-or-swap behavior.
 
 Apply one phase extraction at a time:
 

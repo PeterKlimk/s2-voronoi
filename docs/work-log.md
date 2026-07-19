@@ -597,8 +597,21 @@ tasks and are not duplicated here.
   (`1.000010280`, `1.000020864`); every sample had zero switches/migrations. The artifact added 8
   text bytes and 24 file bytes, retained data size, and removed 16 BSS bytes. Details are in
   [`reconciliation-defect-body-inventory.md`](reconciliation-defect-body-inventory.md).
-- **Next gate:** inventory the local-rebuild phase program and select one coherent ownership or
-  orchestration boundary before making another production change.
+- **QUAL-001D local-rebuild transaction inventory:** keep A0 capture, disabled/no-trigger returns,
+  defect-pair normalization, diagnostic reads, overlay growth, and zero-splice rejection in
+  `maybe_rebuild_effective`. After a productive overlay, group minted vertices, replacement cells
+  and indices, and overridden-cell footprint into one private candidate whose consuming method
+  owns append, whole-diagram validation, and truncate-or-commit. Do not add a broad borrowed
+  context, clone base positions, localize the validity gate, or change the grow loop concurrently.
+  The boundary and gates are recorded in
+  [`local-rebuild-transaction-inventory.md`](local-rebuild-transaction-inventory.md).
+- **Fixture note:** exact `4d15619` emitted no local-rebuild trigger for 100k single-threaded
+  `mega` at fraction `0.8`, seeds 1 through 20, with preprocessing disabled. Historical mega tests
+  also now resolve upstream. Do not claim active-path counters from those workloads.
+- **Next gate:** implement the candidate transaction as one default-inline measured slice. Retain
+  it only if direct transaction semantics pass, the ordinary Fibonacci counters remain neutral,
+  and artifact inspection shows no unexplained active-path boundary; otherwise defer until a
+  deterministic trigger exists.
 - **Later milestones:** split reconciliation, local-rebuild, assembly, and packed-query phase
   programs one measured change at a time.
 - **Gate:** every production refactor preserves semantic fingerprints and passes the affected
