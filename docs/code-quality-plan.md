@@ -155,8 +155,10 @@ state objects can alter inlining, alias analysis, and cache behavior.
 
 The local-rebuild attempted/accepted pair, exact-inverse resolution-discovery booleans, and split
 effective-input/merge-result ownership were resolved by the first three QUAL-001A state
-migrations. The remaining example is the group of raw vectors in `PipelineState` whose meaning
-changes after a local rebuild is accepted.
+migrations. The remaining group of raw geometry vectors in `PipelineState` is now inventoried: it
+is one coherent effective-geometry record across reconciliation, local rebuilding, output
+resolution, report cloning, and remapping. Assembly provenance and historical diagnostics have
+separate lifetimes and remain outside that owner.
 
 Cold orchestration should use enums or phase-owned records so invalid combinations cannot be
 constructed. This is not a request to replace compact hot-path flags where their representation is
@@ -267,7 +269,9 @@ It retained identical aggregate/file size and neutral release counters. The thir
 implemented: identity input and an actual merged result are variants of one effective-input owner,
 with `MergeResult` retaining its representative points. A named preparation record replaces the
 former tuple of two correlated `Option`s, report, and grid. Aggregate artifact size was unchanged,
-file size fell by 664 bytes, and seven release counter pairs were neutral.
+file size fell by 664 bytes, and seven release counter pairs were neutral. The fourth boundary is
+now inventoried: a private `EffectiveGeometry` record will own positions, cell spans, and the live
+index buffer without changing the append-only accepted-rebuild strategy.
 
 1. Add the stage glossary above to `docs/architecture.md` and inventory the public/internal names
    that map to each stage.

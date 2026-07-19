@@ -524,9 +524,17 @@ tasks and are not duplicated here.
   at `2,239,146` bytes, moved 656 bytes from text to BSS, and reduced file size by 664 bytes. Seven
   counter pairs were neutral (mean `0.999998159` instructions and `0.999998587` branches), with
   zero context switches and migrations.
-- **Next gate:** inventory the effective geometry vectors whose ownership and meaning change when
-  local rebuilding commits, then choose the smallest phase record that makes that transition
-  explicit without widening per-cell state.
+- **QUAL-001A effective-geometry inventory:** positions, cell spans, and the live index buffer form
+  one coherent mutable diagram across reconciliation, local rebuilding, output resolution, report
+  cloning, and remapping. Assembly vertex keys are intentionally partial provenance after minted
+  rebuild vertices and remain outside the geometry owner; residual records and mutation footprints
+  also have independent lifetimes. The selected boundary is one private `EffectiveGeometry` record
+  that preserves accepted rebuilding's append-only base-position reuse. Exact consumers and the
+  migration gate are recorded in
+  [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md).
+- **Next gate:** implement the effective-geometry record, correct the stale vertex-key ownership
+  comment, pin rejected rollback and accepted commit semantics, then run the release artifact and
+  interleaved counter gates.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

@@ -1,6 +1,7 @@
 # Lifecycle State Inventory
 
-**Status:** QUAL-001A first three state-model migrations implemented, 2026-07-19
+**Status:** QUAL-001A first three state-model migrations implemented; effective-geometry boundary
+inventoried, 2026-07-19
 
 This inventory identifies the first correlated cold state to replace with an enum. It records the
 current behavior before changing representation; geometry, trigger policy, validation, and report
@@ -152,3 +153,83 @@ The matched release artifact kept aggregate size unchanged, moved 656 bytes from
 reduced file size by 664 bytes. Seven interleaved counter pairs were neutral: mean
 candidate/parent ratios were `0.999998159` instructions and `0.999998587` branches, with zero
 context switches and migrations.
+
+## Effective-geometry ownership
+
+Three vectors form the live effective diagram throughout the post-assembly pipeline:
+
+- `vertices: Vec<Vec3>` owns the effective-space vertex positions;
+- `eff_cells: Vec<VoronoiCell>` owns one live span descriptor per effective generator; and
+- `eff_cell_indices: Vec<u32>` owns the flattened boundaries addressed by those spans.
+
+They are currently unpacked into independent locals and later stored as independent
+`PipelineState` fields. Every consumer requires a coherent triple, but the type permits cells from
+one phase to be paired with positions or indices from another.
+
+### Mutation sequence
+
+1. Assembly creates all three arrays together. Its incidence summary is exact for these initial
+   live spans.
+2. Reconciliation mutates cell spans and vertex ids in the index buffer. Vertex positions remain
+   allocated in place, and replaced ids may become unreferenced.
+3. Local rebuilding overlays the reconciled arrays. A rejected candidate appends minted positions
+   only temporarily, then truncates back to the exact base length without changing the live cell
+   arrays. An accepted candidate keeps those appended positions and replaces the complete cell and
+   index arrays together.
+4. Output resolution may contract vertex ids in the live boundaries. It deliberately retains the
+   position allocation, including any vertices made unreferenced by reconciliation, rebuilding, or
+   contraction.
+5. Report mode may clone the terminal effective arrays; final remapping consumes cells and indices
+   while reusing the same positions for the returned diagram.
+
+This is one mutable geometry object across phases, not separate assembled and rebuilt allocations.
+Representing the phases as an enum would either duplicate the same storage shapes or pressure the
+accepted local-rebuild path to copy all base positions, losing its current append-only behavior.
+
+### State that must remain outside
+
+`ShardedVertexKeys` is assembly provenance, not a fourth parallel geometry vector. It initially
+describes assembly vertex ids, but local rebuilding can append minted positions without extending
+the sharded key store. That partial provenance is intentional: local rebuilding resolves minted
+keys inside its overlay, while terminal output-resolution localization treats a missing key as a
+certificate failure and falls back conservatively. The current `live_dedup` comment claiming that
+the keys are consumed only by reconciliation is stale; they also support local rebuilding and
+output-resolution discovery.
+
+Assembly mismatch records, reconciliation residuals, rejected-component seed pairs, and the
+local-rebuild status are historical diagnostic facts. An accepted rebuild supersedes some of them
+for fail-loud/output validity while report mode still retains assembly evidence. They must not be
+inferred from the terminal geometry or absorbed into its owner.
+
+Construction exact-zero candidates and reconciliation/rebuild scan-cell lists are mutation
+certificates. They select which terminal cycles must be rescanned; they are neither terminal
+geometry nor independently authoritative evidence about its contents. The construction incidence
+summary similarly expires as soon as a later phase changes a live span.
+
+### Selected boundary
+
+Introduce one private cold-orchestration record:
+
+```rust,ignore
+struct EffectiveGeometry {
+    vertices: Vec<Vec3>,
+    cells: Vec<VoronoiCell>,
+    cell_indices: Vec<u32>,
+}
+```
+
+Create it immediately after assembly. Reconciliation should mutate it and return only its
+diagnostic result; local rebuilding should receive it as one mutable object; output resolution
+should mutate its live boundaries; and `PipelineState` should own it as one field. This also
+removes the `ReconciledWithResiduals` tuple without introducing a second wrapper with the same
+ownership.
+
+Keep `assembly_vertex_keys` as a clearly named, separately borrowed provenance store until output
+resolution finishes. Correct its stale ownership comment in the implementation commit, but do not
+flatten or extend it merely to make lengths match.
+
+The first implementation should be representation-only: no compaction, provenance expansion,
+candidate ownership change, or local-rebuild transaction redesign. Pin rejected rollback and
+accepted commit behavior, effective-report cloning, welded remapping, and output-resolution
+footprints. Because the record changes borrow shapes around reconciliation and rebuilding, require
+the full release artifact and interleaved instruction/branch counter gates.
