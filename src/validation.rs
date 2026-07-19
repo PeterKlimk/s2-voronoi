@@ -1513,6 +1513,31 @@ mod verify_gate_tests {
     }
 
     #[test]
+    fn weld_map_policy_matches_between_fast_gate_and_report() {
+        let good = crate::compute(&fib_sphere(64)).expect("compute");
+        let generators = effective_generators(&good);
+        let (vertices, cells, indices) = effective_arrays(&good);
+        let first = cells[0];
+        let second = cells[1];
+        assert_ne!(
+            &indices[first.vertex_start()..first.vertex_start() + first.vertex_count()],
+            &indices[second.vertex_start()..second.vertex_start() + second.vertex_count()],
+            "fixture cells must differ",
+        );
+
+        let mut weld_map: Vec<u32> = (0..cells.len() as u32).collect();
+        weld_map[1] = 0;
+        let corrupt =
+            SphericalVoronoi::from_raw_parts(generators, vertices, cells, indices, Some(weld_map));
+
+        assert_eq!(verify_sphere_fast(&corrupt), Err("weld map"));
+        let report = validate_impl(&corrupt);
+        assert_eq!(report.welded_twin_cells, 1);
+        assert_eq!(report.weld_map_issues, 1);
+        assert!(!report.is_strictly_valid());
+    }
+
+    #[test]
     fn strict_negative_controls_pin_shared_reasons() {
         let good = crate::compute(&fib_sphere(64)).expect("compute");
         let base_generators = effective_generators(&good);

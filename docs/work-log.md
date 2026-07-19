@@ -485,8 +485,11 @@ tasks and are not duplicated here.
   duplicate/degenerate checks are removed. A direct assertion retains the accumulating report's
   self-loop telemetry. The artifact removed 60 text bytes, 4,032 BSS bytes, and 64 file bytes;
   seven counter pairs were neutral (mean `0.999998353` instructions and `0.999999721` branches).
-- **Next gate:** add the missing semantic comparison between the fast gate and accumulating report
-  for a corrupt weld map before considering any weld-specific fact extraction.
+- **QUAL-001C weld-oracle result:** a corrupt alias fixture now pins the fast gate's exact
+  `"weld map"` reason and the accumulating report's matching welded-twin/issue counts. The change is
+  test-only and the complete release artifact is byte-identical to parent.
+- **Next gate:** share only the duplicated weld-alias consistency predicate while retaining the
+  fast gate's early return and the report's accumulating count.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

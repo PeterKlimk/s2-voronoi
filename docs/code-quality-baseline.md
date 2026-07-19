@@ -971,6 +971,17 @@ The dead fail-fast branches were removed on 2026-07-19 against immediate parent 
   `0.999994632..=1.000003450` and `0.999990385..=1.000012341`. There was no directional regression;
   every sample recorded zero context switches and CPU migrations.
 
+## QUAL-001C weld-policy oracle
+
+The weld-specific policy boundary was pinned on 2026-07-19 against immediate parent `b730470`.
+
+- A deliberately corrupt alias maps one cell to a canonical cell with a different boundary. The
+  fast validator must return the exact `"weld map"` reason; the accumulating report must record one
+  welded twin, one weld-map issue, and a non-strict verdict.
+- The addition is test-only. The complete release `tools` artifact retained SHA-256
+  `8613a4c080929a18d960e93da2212f18d0be8b2c6c415cf0979d9d1e641eb946` and file size `2,998,984`
+  bytes exactly, so no counter comparison was warranted.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

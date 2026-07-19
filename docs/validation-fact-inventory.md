@@ -110,14 +110,15 @@ regression assertion pins that independent behavior.
 | Degenerate distinct-id count | Yes, with literal reason | General correctness tests require real cells | None |
 | Generator/cell mismatch | Not applicable to diagram input | Effective-only literal reason pinned | None |
 | Invalid live span | Not applicable to a valid diagram | Effective-only literal reason pinned; deserialization has separate tests | None |
-| Weld-map inconsistency | Not applicable to effective space | Public report rejects a corrupt-alias fixture | Fast/report semantic comparison missing |
+| Weld-map inconsistency | Not applicable to effective space | Fast exact reason and report alias/issue counts share a corrupt fixture | None; effective input intentionally has no weld map |
 | Self-loop reason | Structurally dominated in fail-fast order | Exhaustive small-cycle proof plus representative literal reasons | Report telemetry remains independently covered |
 
 The expanded test-only matrix now pins every safely constructible fail-fast reason shared by the
 no-weld diagram/effective domain, isolates connectivity from Euler with a connected 3x3 toroidal
 quadrangulation, and pins the effective-only structural-input reasons. Separate report fixtures pin
 boundary, overused, and same-direction edge counters. The weld-map comparison remains deliberately
-outside the effective domain and should be completed before sharing weld-specific facts.
+outside the effective domain; its fast reason and accumulating counts are now pinned by one shared
+corrupt-alias fixture.
 
 ## Accepted decisions and next gate
 
@@ -135,6 +136,7 @@ The dominated fail-fast self-loop branches were then removed. The accumulating r
 independent self-loop telemetry, now pinned directly. The release artifact became smaller and seven
 instruction/branch counter pairs remained neutral.
 
-The next narrow candidate is the missing fast-gate/report semantic comparison for a corrupt weld
-map. Pin that policy boundary before considering any weld-specific fact extraction; the effective
+The corrupt-weld oracle now pins the fast gate's exact reason and the report's matching alias/issue
+counts. The next narrow candidate is sharing only the duplicated weld-alias consistency predicate.
+Keep the fast gate's early return and the report's accumulating count separate; the effective
 validator intentionally has no weld input.

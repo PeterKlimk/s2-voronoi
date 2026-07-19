@@ -347,7 +347,9 @@ ordering was rejected: despite the small artifact delta, it reproduced the estab
 cliff (+0.1866% instructions and +1.6622% branches). The structurally dominated fail-fast self-loop
 branches have now been removed; direct coverage retains the accumulating report's independent
 telemetry. This reduced text/BSS/file size with neutral release counters. Before sharing any
-weld-specific fact, the next slice will pin fast-gate/report agreement on a corrupt weld map.
+weld-specific fact, fast-gate/report agreement on a corrupt weld map is now pinned: the gate keeps
+its exact reason and the report counts the same bad alias. The next measured slice may share only
+the weld-alias consistency predicate, retaining the consumers' distinct stopping/counting policy.
 
 1. Define shared cell and edge issue classifications, including stable internal reason enums rather
    than repeated string literals.
