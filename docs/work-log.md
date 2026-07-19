@@ -547,9 +547,17 @@ tasks and are not duplicated here.
   previously rejected semantic-comparison, unpaired-scan, and mutable-rewrite signatures remain
   raw measured fallbacks. Exact consumers and the migration gate are recorded in
   [`live-cell-layout-inventory.md`](live-cell-layout-inventory.md).
-- **Next gate:** implement the overlay-owned live layout, pin base/override/materialization
-  behavior, then run the complete artifact and structural-counter gates, including a deterministic
-  mega counter pair only if the workload actually enters rebuilding.
+- **QUAL-001B overlay result:** `WorkingDiagram` now stores one `LiveCellLayout`; its
+  `from_reconciled` boundary requires the caller to pair cell records with their backing indices.
+  Base traversal, residual capacity, and flattening use direct accessors while override and minted
+  storage remain unchanged. Release/checked/no-default/Clippy gates passed. The artifact shrank 16
+  aggregate bytes and 48 file bytes; seven 500k single-thread Fibonacci pairs were neutral (mean
+  `1.000000228` instructions, `1.000001841` branches), with zero switches/migrations. The 100k mega
+  seeds 1, 2, and 15 are now valid with rebuilding disabled, and a debug run of that test did not
+  trigger the overlay, so no active-overlay counter result is claimed.
+- **Next gate:** inventory QUAL-001B effective-validation inputs and consumers, explicitly checking
+  the boundary against QUAL-001C's retained codegen-sensitive traversal decisions before selecting
+  any migration.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

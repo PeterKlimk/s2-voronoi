@@ -1,6 +1,6 @@
 # Live Cell Layout Boundary Inventory
 
-**Status:** local-rebuild overlay/materialization slice selected, 2026-07-19
+**Status:** local-rebuild overlay/materialization slice accepted, 2026-07-20
 
 This inventory records the next QUAL-001B ownership boundary after `EffectiveGeometry` made the
 terminal position/cell/index arrays one coherent owner. It does not reopen the reconciliation
@@ -82,3 +82,28 @@ matched release artifact and the usual seven 500k single-thread Fibonacci instru
 pairs. Because the new accessor is active only during a rebuild attempt, also run a structural
 counter comparison on a deterministic mega workload if it actually triggers the overlay; wall
 clock remains advisory on the shared host.
+
+## Result
+
+`WorkingDiagram` now stores one `LiveCellLayout` and its `from_reconciled` constructor requires the
+caller to form that pairing explicitly. Base-boundary traversal, cell count, residual-scan
+reservation, and flattening all read through the view. Override selection, minted vertex storage,
+flattening order, and the returned materialization tuple are unchanged. Checked construction audits
+the layout; release construction remains a two-reference move with no scan.
+
+Focused coverage pins direct live-span reads through stale backing slots, override substitution,
+and flattened output. The complete release, checked, no-default-feature, and all-feature Clippy
+gates passed, including the production local-rebuild contract suites.
+
+Against parent `72a681d`, the matched release artifact removed 64 text bytes and 48 data bytes,
+added 96 BSS bytes, reduced aggregate accounting by 16 bytes, and reduced file size by 48 bytes.
+Seven interleaved 500k single-threaded Fibonacci pairs produced mean candidate/parent ratios of
+`1.000000228` instructions and `1.000001841` branches, with pair ranges
+`0.999997202..=1.000004276` and `0.999996770..=1.000010283`. Every sample recorded zero context
+switches and CPU migrations.
+
+A separate overlay counter run was not claimed. The deterministic 100k mega fixtures at fraction
+`0.8`, seeds 1, 2, and 15, are now strict-valid with rebuilding disabled, and a debug run of that
+test did not enter the overlay. Existing direct overlay tests and the release/checked local-rebuild
+suites therefore provide the active-path semantic evidence until a natural accepted splice fixture
+reappears.

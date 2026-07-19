@@ -919,11 +919,11 @@ fn maybe_rebuild_effective(
     // docs/performance.md#source-pinned-performance-decisions.
     let mut rebuild_scratch = grid.make_scratch();
 
-    let mut work = local_rebuild::WorkingDiagram::from_assembled(
+    let base_layout = LiveCellLayout::new(&geometry.cells, &geometry.cell_indices);
+    let mut work = local_rebuild::WorkingDiagram::from_reconciled(
         &geometry.vertices,
         vertex_keys,
-        &geometry.cells,
-        &geometry.cell_indices,
+        base_layout,
     );
     #[cfg(feature = "local_rebuild_probe")]
     let stats = if diagnostics.use_global_delaunay {

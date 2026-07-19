@@ -319,11 +319,18 @@ inlined but reproduced that exact clean-path regression. Reader- and mutation-si
 therefore stops at the accepted segment and duplicate-key families until surrounding codegen
 changes materially; the existing local rewrite remains explicit at its call site.
 
-The post-`EffectiveGeometry` overlay/materialization reassessment is recorded in
-[`live-cell-layout-inventory.md`](live-cell-layout-inventory.md). `WorkingDiagram` is the next
-selected boundary: it will own one read-only layout instead of independent base cell/index
-references, using direct-index access that preserves the current trusted grow-loop expression.
-This does not reopen any rejected reconciliation signature.
+The post-`EffectiveGeometry` overlay/materialization slice is accepted and recorded in
+[`live-cell-layout-inventory.md`](live-cell-layout-inventory.md). `WorkingDiagram` now owns one
+read-only layout instead of independent base cell/index references. Direct-index base traversal,
+override substitution, and materialization are pinned, and the clean release counter gate was
+neutral. No deterministic mega fixture currently reaches the overlay—the same seeds are valid
+with rebuilding disabled—so no triggered counter result is claimed. This does not reopen any
+rejected reconciliation signature.
+
+The next step in this workstream is a read-only inventory of the effective-validation boundary.
+QUAL-001C already established that validation traversal expressions can be codegen-sensitive, so
+the inventory must identify a representation gain that does not reopen its rejected shared-enum or
+weld-predicate experiments before any source migration is selected.
 
 Introduce a small internal view/owner around cells and their backing index buffer. The abstraction
 should provide:

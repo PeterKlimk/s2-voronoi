@@ -22,6 +22,7 @@ use glam::{DVec3, Vec3};
 use rustc_hash::FxHashMap;
 
 use super::local_hull::LocalHull;
+use crate::cell_layout::LiveCellLayout;
 use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch};
 use crate::diagram::VoronoiCell;
 use crate::live_dedup::ShardedVertexKeys;
@@ -974,8 +975,7 @@ impl VertexId {
 pub(crate) struct WorkingDiagram<'a> {
     base_vertices: &'a [Vec3],
     base_keys: &'a ShardedVertexKeys,
-    base_cells: &'a [VoronoiCell],
-    base_cell_indices: &'a [u32],
+    base_layout: LiveCellLayout<'a, 'a>,
     /// Spliced boundaries: generator → replacement vertex-id list.
     overrides: FxHashMap<u32, Vec<u32>>,
     /// Positions of minted vertices (vid = base vertex count + index).
@@ -989,19 +989,19 @@ pub(crate) struct WorkingDiagram<'a> {
 }
 
 impl<'a> WorkingDiagram<'a> {
-    /// Overlay over the assembled global arrays (post-reconcile). `keys` is the
-    /// per-vertex triple store; `cells`/`cell_indices` the flat CSR boundaries.
-    pub(crate) fn from_assembled(
+    /// Overlay over the reconciled global arrays. `keys` is the per-vertex
+    /// triple store; `base_layout` owns the flat CSR boundary pairing.
+    pub(crate) fn from_reconciled(
         vertices: &'a [Vec3],
         keys: &'a ShardedVertexKeys,
-        cells: &'a [VoronoiCell],
-        cell_indices: &'a [u32],
+        base_layout: LiveCellLayout<'a, 'a>,
     ) -> Self {
+        #[cfg(debug_assertions)]
+        base_layout.debug_assert_valid();
         Self {
             base_vertices: vertices,
             base_keys: keys,
-            base_cells: cells,
-            base_cell_indices: cell_indices,
+            base_layout,
             overrides: FxHashMap::default(),
             minted_pos: Vec::new(),
             minted_key: Vec::new(),
@@ -1011,7 +1011,7 @@ impl<'a> WorkingDiagram<'a> {
 
     /// Number of effective generators (splices never add generators).
     fn num_cells(&self) -> usize {
-        self.base_cells.len()
+        self.base_layout.cell_count()
     }
 
     /// Total vertex-id space: base vertices plus minted ones.
@@ -1025,8 +1025,7 @@ impl<'a> WorkingDiagram<'a> {
         if let Some(list) = self.overrides.get(&g) {
             return list;
         }
-        let c = &self.base_cells[g as usize];
-        &self.base_cell_indices[c.vertex_start()..c.vertex_start() + c.vertex_count()]
+        self.base_layout.span(g as usize)
     }
 
     /// Position of vertex `vid` (base or minted).
@@ -1401,7 +1400,7 @@ impl<'a> WorkingDiagram<'a> {
         // lower-id direction). Sort + run-scan avoids rebuilding a ~2E-entry
         // hash map every grow round and permits parallel sorting. See
         // docs/performance.md#source-pinned-performance-decisions.
-        let mut uses: Vec<(u64, bool)> = Vec::with_capacity(self.base_cell_indices.len() + 64);
+        let mut uses: Vec<(u64, bool)> = Vec::with_capacity(self.base_layout.index_count() + 64);
         // Per-vertex live-cell reference counts, matching `low_incidence_gens`
         // (counts every boundary, including sub-3 ones the edge scan skips).
         let mut cnt: Vec<u32> = if include_low_incidence {
@@ -1483,15 +1482,14 @@ impl<'a> WorkingDiagram<'a> {
     }
 
     pub(crate) fn into_flat(self) -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>) {
-        let n = self.base_cells.len();
+        let n = self.base_layout.cell_count();
         let mut cells = Vec::with_capacity(n);
-        let mut cell_indices = Vec::with_capacity(self.base_cell_indices.len());
+        let mut cell_indices = Vec::with_capacity(self.base_layout.index_count());
         for g in 0..n as u32 {
             let list = if let Some(list) = self.overrides.get(&g) {
                 list.as_slice()
             } else {
-                let c = &self.base_cells[g as usize];
-                &self.base_cell_indices[c.vertex_start()..c.vertex_start() + c.vertex_count()]
+                self.base_layout.span(g as usize)
             };
             let start = cell_indices.len() as u32;
             cell_indices.extend_from_slice(list);
@@ -1655,7 +1653,8 @@ mod tests {
 
         let keys = ShardedVertexKeys::new(vec![0], vec![]);
         let cells = vec![VoronoiCell::new(0, 0); points.len()];
-        let mut work = WorkingDiagram::from_assembled(&[], &keys, &cells, &[]);
+        let mut work =
+            WorkingDiagram::from_reconciled(&[], &keys, LiveCellLayout::new(&cells, &[]));
         let vid = work.vid_for(&points, vertex);
         assert_eq!(work.vkey(vid), vertex.key);
         assert_eq!(work.vpos(vid), expected);
@@ -1679,7 +1678,8 @@ mod tests {
         let points = [Vec3::X, Vec3::Y, Vec3::Z];
         let keys = ShardedVertexKeys::new(vec![0], vec![]);
         let cells = vec![VoronoiCell::new(0, 0); points.len()];
-        let mut work = WorkingDiagram::from_assembled(&[], &keys, &cells, &[]);
+        let mut work =
+            WorkingDiagram::from_reconciled(&[], &keys, LiveCellLayout::new(&cells, &[]));
         let fan = [
             RebuildVertex {
                 key: [0, 1, 2],
@@ -1697,6 +1697,30 @@ mod tests {
         work.splice_generator(&points, CellId::new(2), &fan, 0.0);
         work.splice_generator(&points, CellId::new(0), &fan, 0.0);
         assert_eq!(work.overridden_cells(), [0, 2]);
+    }
+
+    #[test]
+    fn overlay_uses_live_base_spans_and_materializes_overrides() {
+        let keys = ShardedVertexKeys::new(vec![0], vec![]);
+        let cells = [VoronoiCell::new(1, 2), VoronoiCell::new(4, 1)];
+        let indices = [99, 10, 11, 98, 20, 97];
+        let mut work =
+            WorkingDiagram::from_reconciled(&[], &keys, LiveCellLayout::new(&cells, &indices));
+
+        assert_eq!(work.num_cells(), 2);
+        assert_eq!(work.boundary(0), [10, 11]);
+        assert_eq!(work.boundary(1), [20]);
+
+        work.overrides.insert(1, vec![7, 8, 9]);
+        assert_eq!(work.boundary(1), [7, 8, 9]);
+
+        let (minted, flat_cells, flat_indices) = work.into_flat();
+        assert!(minted.is_empty());
+        assert_eq!(flat_indices, [10, 11, 7, 8, 9]);
+        assert_eq!(flat_cells[0].vertex_start(), 0);
+        assert_eq!(flat_cells[0].vertex_count(), 2);
+        assert_eq!(flat_cells[1].vertex_start(), 2);
+        assert_eq!(flat_cells[1].vertex_count(), 3);
     }
 
     #[test]

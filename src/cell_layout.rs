@@ -40,6 +40,12 @@ impl<'cells, 'indices> LiveCellLayout<'cells, 'indices> {
         self.cells.len()
     }
 
+    /// Length of the backing index buffer, including any stale tail slots.
+    #[inline]
+    pub(crate) const fn index_count(self) -> usize {
+        self.indices.len()
+    }
+
     /// Assert the structural invariants required by every live-span reader.
     ///
     /// This is compiled only when debug assertions are enabled so production
@@ -91,6 +97,15 @@ impl<'cells, 'indices> LiveCellLayout<'cells, 'indices> {
         Ok(&self.indices[start..end])
     }
 
+    /// Return the live span for a trusted in-bounds cell id.
+    #[inline]
+    pub(crate) fn span(self, cell: usize) -> &'indices [u32] {
+        let record = &self.cells[cell];
+        let start = record.vertex_start();
+        let end = start + record.vertex_count();
+        &self.indices[start..end]
+    }
+
     /// Return the live span for a record already obtained from this layout.
     ///
     /// This skips a second cell-id lookup but retains normal slice bounds
@@ -116,6 +131,10 @@ mod tests {
 
         #[cfg(debug_assertions)]
         layout.debug_assert_valid();
+        assert_eq!(layout.cell_count(), 2);
+        assert_eq!(layout.index_count(), 7);
+        assert_eq!(layout.span(0), &[10, 11]);
+        assert_eq!(layout.span(1), &[20, 21, 22]);
         assert_eq!(layout.span_for(&cells[0]), &[10, 11]);
         assert_eq!(layout.checked_span(1), Ok(&[20, 21, 22][..]));
     }

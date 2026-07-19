@@ -1084,6 +1084,33 @@ The fourth lifecycle-state migration was accepted on 2026-07-19 against immediat
   `0.999987021..=1.000009329` and `0.999983860..=1.000013754`. There was no directional regression;
   every sample recorded zero context switches and CPU migrations.
 
+## QUAL-001B local-rebuild overlay layout
+
+The fourth accepted live-layout slice was validated on 2026-07-20 against immediate parent
+`72a681d`.
+
+- `WorkingDiagram` now owns one `LiveCellLayout` instead of independently pairable base cell and
+  index references. Its renamed `from_reconciled` constructor accepts the already-paired view and
+  audits it only in checked builds.
+- Base-boundary lookup retains the trusted direct cell-index and slice expression. Cell count,
+  residual-scan capacity, and unspliced materialization also read through the view. Override
+  selection, minted vertex storage, flattening order, and returned arrays are unchanged.
+- Focused coverage includes stale backing slots, base-span reads, override substitution, and final
+  flattening. The production Hull3d/projected rebuild, rebuild-contract, reconciliation,
+  output-resolution, API, and correctness suites passed, followed by the complete release,
+  checked, no-default-feature, and all-feature Clippy gates.
+- The matched release `tools` artifact changed from `2,179,291` to `2,179,227` text bytes, from
+  `55,456` to `55,408` data bytes, and from `4,403` to `4,499` BSS bytes. Aggregate accounting fell
+  from `2,239,150` to `2,239,134`, and file size fell from `2,993,880` to `2,993,832` bytes.
+- Across seven interleaved 500k single-threaded Fibonacci counter pairs, mean candidate/parent
+  ratios were `1.000000228` instructions and `1.000001841` branches, with pair ranges
+  `0.999997202..=1.000004276` and `0.999996770..=1.000010283`. Every sample recorded zero context
+  switches and CPU migrations; wall clock was treated as advisory on the shared host.
+- No active-overlay counter result is claimed. The deterministic 100k mega fixtures at fraction
+  `0.8`, seeds 1, 2, and 15, are now strict-valid with local rebuilding disabled, and a debug run
+  of that test did not trigger the overlay. Direct overlay tests and the production rebuild suites
+  retain semantic coverage until a natural accepted-splice workload is available.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
