@@ -481,8 +481,12 @@ tasks and are not duplicated here.
   `(cell, check_rank)` ordering. It reproduced the optimizer cliff in every one of seven pairs:
   +0.18657% instructions and +1.66216% branches, with zero context switches and migrations. The
   implementation was reverted; keep static fail-fast strings until surrounding codegen changes.
-- **Next gate:** remove the fail-fast self-loop branches proven structurally dominated by the
-  earlier duplicate/degenerate checks. Preserve the accumulating report's self-loop telemetry.
+- **QUAL-001C dead-branch result:** the fail-fast self-loop returns proven dominated by earlier
+  duplicate/degenerate checks are removed. A direct assertion retains the accumulating report's
+  self-loop telemetry. The artifact removed 60 text bytes, 4,032 BSS bytes, and 64 file bytes;
+  seven counter pairs were neutral (mean `0.999998353` instructions and `0.999999721` branches).
+- **Next gate:** add the missing semantic comparison between the fast gate and accumulating report
+  for a corrupt weld map before considering any weld-specific fact extraction.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

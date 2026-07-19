@@ -955,6 +955,22 @@ The proposed fail-fast reason enum was rejected on 2026-07-19 against immediate 
 - The implementation was reverted. Static fail-fast strings remain the measured Pareto choice
   until surrounding codegen changes enough to justify retesting.
 
+## QUAL-001C dominated self-loop branches
+
+The dead fail-fast branches were removed on 2026-07-19 against immediate parent `6099b9f`.
+
+- Both strict validators already reject every self-loop cycle during the earlier duplicate-id or
+  degeneracy checks, as pinned by exhaustive small-cycle coverage. Their unreachable
+  `"self-loop edge"` branches and the now-unused effective-scan rank were deleted. The accumulating
+  report still counts self-loops, with a direct regression assertion.
+- The release `tools` artifact changed from `2,183,224` to `2,183,164` text bytes, retained `55,512`
+  data bytes, changed from `4,504` to `472` BSS bytes, and shrank from `2,999,048` to `2,998,984`
+  file bytes.
+- Across seven interleaved 500k single-threaded Fibonacci counter pairs, mean candidate/parent
+  ratios were `0.999998353` instructions and `0.999999721` branches, with pair ranges
+  `0.999994632..=1.000003450` and `0.999990385..=1.000012341`. There was no directional regression;
+  every sample recorded zero context switches and CPU migrations.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

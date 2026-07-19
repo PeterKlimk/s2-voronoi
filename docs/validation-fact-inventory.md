@@ -87,12 +87,11 @@ from downstream facts, and separates grouped-edge failure classes. Reusing a fai
 report fact would lose counts; building report state for a success gate would add allocations and
 work.
 
-One currently dead fail-fast classification is worth retaining in the inventory: after duplicate-id
-and degeneracy checks have passed, a cycle cannot contain an adjacent `(v, v)` self-loop. Therefore
-the strict gates' later `"self-loop edge"` return is dominated by earlier checks. The accumulating
-report's `self_loop_edges` counter is still reachable and useful because that traversal records
-multiple simultaneous defects. Removal or reordering of the strict branch requires a dedicated
-behavior test rather than assumption.
+After duplicate-id and degeneracy checks have passed, a cycle cannot contain an adjacent `(v, v)`
+self-loop. The strict gates' later `"self-loop edge"` returns were therefore removed after exhaustive
+small-cycle coverage proved them dominated. The accumulating report's `self_loop_edges` counter is
+still reachable and useful because that traversal records multiple simultaneous defects; a direct
+regression assertion pins that independent behavior.
 
 ## Negative-control coverage before extraction
 
@@ -120,7 +119,7 @@ quadrangulation, and pins the effective-only structural-input reasons. Separate 
 boundary, overused, and same-direction edge counters. The weld-map comparison remains deliberately
 outside the effective domain and should be completed before sharing weld-specific facts.
 
-## First accepted fact and next gate
+## Accepted decisions and next gate
 
 The typed edge-use classification was accepted after the no-weld differential matrix and report
 subclass controls were independent. It is allocation-free and preserves all consumer outputs. The
@@ -132,6 +131,10 @@ effective parallel scan's `(cell, check_rank)` ordering, every exact string pinn
 and the report's independent taxonomy, but reproduced the optimizer cliff: +0.1866% instructions
 and +1.6622% branches across seven clean counter pairs. The source was reverted.
 
-The next narrow candidate is deletion of the fail-fast self-loop branches. The exhaustive cycle
-oracle proves they are structurally dominated by the earlier duplicate/degenerate checks. The
-accumulating report's self-loop telemetry remains independent and must not change.
+The dominated fail-fast self-loop branches were then removed. The accumulating report retained its
+independent self-loop telemetry, now pinned directly. The release artifact became smaller and seven
+instruction/branch counter pairs remained neutral.
+
+The next narrow candidate is the missing fast-gate/report semantic comparison for a corrupt weld
+map. Pin that policy boundary before considering any weld-specific fact extraction; the effective
+validator intentionally has no weld input.

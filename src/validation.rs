@@ -568,10 +568,6 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
         for edge_idx in 0..len {
             let a = cell.vertex_indices[edge_idx];
             let b = cell.vertex_indices[(edge_idx + 1) % len];
-            if a == b {
-                return Err("self-loop edge");
-            }
-
             let (lo, hi, forward) = if a < b { (a, b, true) } else { (b, a, false) };
             edge_uses.push(EdgeUse {
                 key: edge_key(lo, hi),
@@ -673,13 +669,11 @@ struct CellScan {
 /// Check ranks mirror the sequential validator's within-cell check order, so
 /// the lexicographic minimum over `(cell, rank)` reproduces the sequential
 /// first error exactly: span(0) → vertex-ref/duplicate-vertex(1) →
-/// degenerate(2) → duplicate-cell(3, needs cross-cell info) →
-/// self-loop/arc(4).
+/// degenerate(2) → duplicate-cell(3, needs cross-cell info).
 const RANK_SPAN: u8 = 0;
 const RANK_VERTEX: u8 = 1;
 const RANK_DEGENERATE: u8 = 2;
 const RANK_DUP_CELL: u8 = 3;
-const RANK_EDGE: u8 = 4;
 
 /// Scan `range` of cells: per-cell structural checks, exact vertex-incidence
 /// counting into the shared atomics, and edge-use/signature collection. Stops
@@ -773,10 +767,6 @@ fn scan_cells_strict(
         for edge_idx in 0..len {
             let a = span[edge_idx];
             let b = span[(edge_idx + 1) % len];
-            if a == b {
-                out.err = Some((ci as u32, RANK_EDGE, "self-loop edge"));
-                break 'cells;
-            }
             let (lo, hi, forward) = if a < b { (a, b, true) } else { (b, a, false) };
             out.edge_uses.push(EdgeUse {
                 key: edge_key(lo, hi),
@@ -1765,6 +1755,15 @@ mod verify_gate_tests {
             let (cells, indices) = cells_from_cycles(&[cycle]);
             assert_strict_reason(&generators, &vertices, &cells, &indices, expected);
         }
+
+        let (cells, indices) = cells_from_cycles(&[vec![0, 1, 1]]);
+        let report = validate_impl(&diagram_from_effective(
+            &generators,
+            &vertices,
+            &cells,
+            &indices,
+        ));
+        assert_eq!(report.self_loop_edges, 1);
     }
 
     #[test]

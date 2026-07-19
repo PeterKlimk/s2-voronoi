@@ -344,8 +344,10 @@ report's three edge-use subclasses. `EdgeUseClass` is the first accepted shared 
 preserves the strict gates' combined message and the report's separate counters, with neutral
 release counters. A follow-up `StrictValidationIssue` enum preserving the exact messages and scan
 ordering was rejected: despite the small artifact delta, it reproduced the established optimizer
-cliff (+0.1866% instructions and +1.6622% branches). The next slice will remove the structurally
-dominated fail-fast self-loop branches, retaining the accumulating report's independent telemetry.
+cliff (+0.1866% instructions and +1.6622% branches). The structurally dominated fail-fast self-loop
+branches have now been removed; direct coverage retains the accumulating report's independent
+telemetry. This reduced text/BSS/file size with neutral release counters. Before sharing any
+weld-specific fact, the next slice will pin fast-gate/report agreement on a corrupt weld map.
 
 1. Define shared cell and edge issue classifications, including stable internal reason enums rather
    than repeated string literals.
