@@ -327,10 +327,13 @@ neutral. No deterministic mega fixture currently reaches the overlay—the same 
 with rebuilding disabled—so no triggered counter result is claimed. This does not reopen any
 rejected reconciliation signature.
 
-The next step in this workstream is a read-only inventory of the effective-validation boundary.
-QUAL-001C already established that validation traversal expressions can be codegen-sensitive, so
-the inventory must identify a representation gain that does not reopen its rejected shared-enum or
-weld-predicate experiments before any source migration is selected.
+The effective-validation boundary inventory is complete in
+[`effective-validation-layout-inventory.md`](effective-validation-layout-inventory.md). The
+selected migration pairs only the effective gate's cell records and backing indices, preserving
+its independent generator-cardinality check, candidate-vertex transaction, parallel rank ordering,
+and static reasons. Before routing malformed spans through the view, `checked_span` must gain an
+explicit end-overflow outcome so the current checked-add release behavior remains portable. This
+does not reopen QUAL-001C's rejected shared-enum, weld-predicate, or common-traversal experiments.
 
 Introduce a small internal view/owner around cells and their backing index buffer. The abstraction
 should provide:
