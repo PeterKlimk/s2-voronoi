@@ -505,8 +505,13 @@ tasks and are not duplicated here.
   were removed atomically; derived methods preserve the existing KV values. The artifact added 212
   text bytes, 3,888 BSS bytes, and 208 file bytes. Seven counter pairs were neutral (mean
   `1.000001952` instructions and `0.999998724` branches).
-- **Next gate:** inventory the exact-inverse `ResolutionDiscoveryDecision` booleans and their
-  telemetry consumers before replacing them with the next cold enum.
+- **QUAL-001A resolution state result:** `ResolutionDiscoveryMode` replaces the exact-inverse
+  certified-hint/drift-fallback booleans, and timing stores only the fallback bit while deriving both
+  existing KV values. The artifact exchanged 16 BSS bytes for 16 text bytes with identical total
+  and file size. Seven counter pairs were neutral (mean `1.000000548` instructions and
+  `1.000004166` branches).
+- **Next gate:** inventory the independently optional effective-points and merge-result fields and
+  choose one preprocessing-state owner that cannot represent disagreement.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

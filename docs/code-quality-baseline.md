@@ -1018,6 +1018,25 @@ The first lifecycle-state migration was accepted on 2026-07-19 against immediate
   `0.999994359..=1.000005231` and `0.999993544..=1.000004873`. There was no directional regression;
   every sample recorded zero context switches and CPU migrations.
 
+## QUAL-001A resolution discovery mode
+
+The second lifecycle-state migration was accepted on 2026-07-19 against immediate parent
+`1faedea`.
+
+- Private `ResolutionDiscoveryMode` has exactly `CertifiedHint` and
+  `ExhaustiveDriftFallback` states, replacing the exact-inverse `certified_hint` and
+  `drift_fallback` booleans. Exact-zero candidate discovery branches directly on the mode.
+- Timing now stores only the fallback bit. Human-readable mode output and the machine-readable
+  `resolution_certified_hint` and `resolution_fallback_drift` fields are derived with their exact
+  existing names and values.
+- The release `tools` artifact changed from `2,183,376` to `2,183,392` text bytes, retained
+  `55,512` data bytes, changed from `4,360` to `4,344` BSS bytes, and retained both aggregate size
+  `2,243,248` and file size `2,999,192` bytes.
+- Across seven interleaved 500k single-threaded Fibonacci counter pairs, mean candidate/parent
+  ratios were `1.000000548` instructions and `1.000004166` branches, with pair ranges
+  `0.999995682..=1.000005031` and `0.999995948..=1.000011936`. There was no directional regression;
+  every sample recorded zero context switches and CPU migrations.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

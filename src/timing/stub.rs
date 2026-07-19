@@ -169,7 +169,6 @@ impl TimingBuilder {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn set_output_resolution_discovery(
         &mut self,
-        _certified_hint: bool,
         _drift_fallback: bool,
         _reconcile_scan_cells: usize,
         _rebuild_scan_cells: usize,

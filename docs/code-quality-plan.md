@@ -153,13 +153,11 @@ state objects can alter inlining, alias analysis, and cache behavior.
 
 ### F5 — Correlated fields permit impossible states
 
-Examples include:
+The local-rebuild attempted/accepted pair and the exact-inverse resolution-discovery booleans were
+resolved by the first two QUAL-001A state migrations. Remaining examples include:
 
 - `effective_points: Option<_>` and `merge_result: Option<_>`, which describe one preprocessing
-  choice but can theoretically disagree;
-- `RepairOutcome { attempted, accepted, ... }`, where acceptance implies an attempt;
-- `ResolutionDiscoveryDecision { certified_hint, drift_fallback }`, whose booleans are inverses;
-  and
+  choice but can theoretically disagree; and
 - multiple raw vectors in `PipelineState` whose meaning changes after a local rebuild is accepted.
 
 Cold orchestration should use enums or phase-owned records so invalid combinations cannot be
@@ -265,7 +263,9 @@ boundary, local rebuilding, is implemented: one status enum replaces the interna
 no external users, the migration was atomic and left no deprecated boolean fields; existing KV
 names derive identical values from status methods. Seven release counter pairs were neutral. Other
 state-enum and fact/action work in items 4–5 remains in Milestone 2 and will follow as separate
-measured commits.
+measured commits. The second migration replaces the exact-inverse resolution-discovery booleans
+with `ResolutionDiscoveryMode`; timing derives the existing two KV values from one fallback bit.
+It retained identical aggregate/file size and neutral release counters.
 
 1. Add the stage glossary above to `docs/architecture.md` and inventory the public/internal names
    that map to each stage.

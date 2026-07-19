@@ -57,15 +57,26 @@ impl PipelineState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ResolutionDiscoveryDecision {
-    certified_hint: bool,
-    drift_fallback: bool,
+enum ResolutionDiscoveryMode {
+    CertifiedHint,
+    ExhaustiveDriftFallback,
 }
 
-fn resolution_discovery_decision(resolution_drift_exceeded: bool) -> ResolutionDiscoveryDecision {
-    ResolutionDiscoveryDecision {
-        certified_hint: !resolution_drift_exceeded,
-        drift_fallback: resolution_drift_exceeded,
+impl ResolutionDiscoveryMode {
+    const fn from_drift(resolution_drift_exceeded: bool) -> Self {
+        if resolution_drift_exceeded {
+            Self::ExhaustiveDriftFallback
+        } else {
+            Self::CertifiedHint
+        }
+    }
+
+    const fn drift_fallback(self) -> bool {
+        matches!(self, Self::ExhaustiveDriftFallback)
+    }
+
+    const fn certified_hint(self) -> bool {
+        matches!(self, Self::CertifiedHint)
     }
 }
 
@@ -76,9 +87,9 @@ fn canonicalize_pipeline_exact_zero_edges(
     cell_indices: &mut [u32],
     hinted_candidates: Vec<(u32, u32)>,
     mutation_scan_cells: &[u32],
-    decision: ResolutionDiscoveryDecision,
+    mode: ResolutionDiscoveryMode,
 ) -> Result<output_resolution::CanonicalizationOutcome, crate::VoronoiError> {
-    let (exact_zero_candidates, localized_candidate_cells) = if decision.certified_hint {
+    let (exact_zero_candidates, localized_candidate_cells) = if mode.certified_hint() {
         // Construction hints name pre-reconciliation edges. Re-scan their
         // degree-local incident cells in the terminal diagram so a local rebuild
         // cannot leave a stale candidate, and add the complete footprint of
@@ -263,7 +274,7 @@ fn run_core_pipeline(
     mutation_scan_cells.sort_unstable();
     mutation_scan_cells.dedup();
 
-    let resolution_decision = resolution_discovery_decision(resolution_drift_exceeded);
+    let resolution_mode = ResolutionDiscoveryMode::from_drift(resolution_drift_exceeded);
     let hinted_candidate_count = exact_zero_edge_candidates.len();
     let resolution_outcome = canonicalize_pipeline_exact_zero_edges(
         &vertices,
@@ -272,11 +283,10 @@ fn run_core_pipeline(
         &mut eff_cell_indices,
         exact_zero_edge_candidates,
         &mutation_scan_cells,
-        resolution_decision,
+        resolution_mode,
     )?;
     tb.set_output_resolution_discovery(
-        resolution_decision.certified_hint,
-        resolution_decision.drift_fallback,
+        resolution_mode.drift_fallback(),
         reconcile_resolution_scan_cell_count,
         local_rebuild_resolution_scan_cell_count,
         exact_zero_edge_hint_cells,
@@ -1766,9 +1776,9 @@ mod tests {
     use super::{
         build_query_grid, canonicalize_pipeline_exact_zero_edges, cell_sum_sq_per_n,
         check_plain_return_signals, classify_exact_affine_circle, classify_near_great_circle,
-        map_build_cells_error, map_cell_build_error, max_cell_occupancy,
-        resolution_discovery_decision, run_core_pipeline, stable_rank2_normal, summarize_topology,
-        validate_and_canonicalize_unit_points, validate_generator_capacity, LocalRebuildOutcome,
+        map_build_cells_error, map_cell_build_error, max_cell_occupancy, run_core_pipeline,
+        stable_rank2_normal, summarize_topology, validate_and_canonicalize_unit_points,
+        validate_generator_capacity, LocalRebuildOutcome, ResolutionDiscoveryMode,
     };
     use crate::diagram::VoronoiCell;
     use crate::live_dedup::{BuildCellsError, PackedLayoutCapacityError, ShardedVertexKeys};
@@ -1944,19 +1954,21 @@ mod tests {
     }
 
     #[test]
-    fn resolution_discovery_decision_falls_back_only_on_global_drift() {
-        for drift in [false, true] {
-            let decision = resolution_discovery_decision(drift);
-            assert_eq!(decision.certified_hint, !drift);
-            assert_eq!(decision.drift_fallback, drift);
-        }
+    fn resolution_discovery_mode_falls_back_only_on_global_drift() {
+        assert_eq!(
+            ResolutionDiscoveryMode::from_drift(false),
+            ResolutionDiscoveryMode::CertifiedHint
+        );
+        assert_eq!(
+            ResolutionDiscoveryMode::from_drift(true),
+            ResolutionDiscoveryMode::ExhaustiveDriftFallback
+        );
     }
 
     #[test]
     fn drift_violation_forces_exhaustive_zero_edge_discovery() {
-        let decision = resolution_discovery_decision(true);
-        assert!(!decision.certified_hint);
-        assert!(decision.drift_fallback);
+        let mode = ResolutionDiscoveryMode::from_drift(true);
+        assert_eq!(mode, ResolutionDiscoveryMode::ExhaustiveDriftFallback);
 
         let (vertices, mut exhaustive_cells, mut exhaustive_indices, keys) =
             zero_edge_cube_fixture();
@@ -1967,7 +1979,7 @@ mod tests {
             &mut exhaustive_indices,
             Vec::new(),
             &[],
-            decision,
+            mode,
         )
         .expect("drift fallback should run exhaustive discovery");
         assert_eq!(report.report.exact_zero_edges_detected, 1);
@@ -1983,7 +1995,7 @@ mod tests {
             &mut hinted_indices,
             vec![(0, 1)],
             &[],
-            resolution_discovery_decision(false),
+            ResolutionDiscoveryMode::CertifiedHint,
         )
         .expect("certified candidate should produce the same quotient");
         assert_eq!(hinted_report, report);
@@ -2009,7 +2021,7 @@ mod tests {
             &mut rebuilt_indices,
             Vec::new(),
             &[0],
-            resolution_discovery_decision(false),
+            ResolutionDiscoveryMode::CertifiedHint,
         )
         .expect("local mutation scan should discover an unhinted zero edge");
         assert_eq!(rebuilt_report, report);

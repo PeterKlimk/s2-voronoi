@@ -668,7 +668,6 @@ pub(crate) struct PhaseTimings {
     pub grid_res: usize,
     pub grid_max_occupancy: u64,
     pub grid_rebuilt: bool,
-    pub resolution_certified_hint: bool,
     pub resolution_drift_fallback: bool,
     pub resolution_reconcile_scan_cells: u64,
     pub resolution_rebuild_scan_cells: u64,
@@ -1015,10 +1014,10 @@ impl PhaseTimings {
         );
         eprintln!(
             "  output_resolution: mode={} drift_fallback={} local_scan(reconcile_cells={},rebuild_cells={}) hint_cells={} hinted_candidates={} detected_edges={}",
-            if self.resolution_certified_hint {
-                "certified_hint"
-            } else {
+            if self.resolution_drift_fallback {
                 "exhaustive"
+            } else {
+                "certified_hint"
             },
             self.resolution_drift_fallback as u8,
             self.resolution_reconcile_scan_cells,
@@ -1071,7 +1070,7 @@ impl PhaseTimings {
                 mssc = self.merge_safety_scan_cells,
                 msgf = self.merge_safety_global_fallbacks,
                 asmb = ms(self.assemble),
-                rch = self.resolution_certified_hint as u8,
+                rch = (!self.resolution_drift_fallback) as u8,
                 rfd = self.resolution_drift_fallback as u8,
                 rrsc = self.resolution_reconcile_scan_cells,
                 rpsc = self.resolution_rebuild_scan_cells,
@@ -1166,7 +1165,6 @@ pub(crate) struct TimingBuilder {
     grid_res: usize,
     grid_max_occupancy: u64,
     grid_rebuilt: bool,
-    resolution_certified_hint: bool,
     resolution_drift_fallback: bool,
     resolution_reconcile_scan_cells: u64,
     resolution_rebuild_scan_cells: u64,
@@ -1195,7 +1193,6 @@ impl TimingBuilder {
             grid_res: 0,
             grid_max_occupancy: 0,
             grid_rebuilt: false,
-            resolution_certified_hint: false,
             resolution_drift_fallback: false,
             resolution_reconcile_scan_cells: 0,
             resolution_rebuild_scan_cells: 0,
@@ -1260,7 +1257,6 @@ impl TimingBuilder {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn set_output_resolution_discovery(
         &mut self,
-        certified_hint: bool,
         drift_fallback: bool,
         reconcile_scan_cells: usize,
         rebuild_scan_cells: usize,
@@ -1268,7 +1264,6 @@ impl TimingBuilder {
         hinted_candidates: usize,
         detected_edges: usize,
     ) {
-        self.resolution_certified_hint = certified_hint;
         self.resolution_drift_fallback = drift_fallback;
         self.resolution_reconcile_scan_cells = reconcile_scan_cells as u64;
         self.resolution_rebuild_scan_cells = rebuild_scan_cells as u64;
@@ -1296,7 +1291,6 @@ impl TimingBuilder {
             grid_res: self.grid_res,
             grid_max_occupancy: self.grid_max_occupancy,
             grid_rebuilt: self.grid_rebuilt,
-            resolution_certified_hint: self.resolution_certified_hint,
             resolution_drift_fallback: self.resolution_drift_fallback,
             resolution_reconcile_scan_cells: self.resolution_reconcile_scan_cells,
             resolution_rebuild_scan_cells: self.resolution_rebuild_scan_cells,
@@ -1368,18 +1362,19 @@ mod tests {
 
     #[test]
     fn output_resolution_discovery_fields_survive_finish() {
-        let mut builder = TimingBuilder::new();
-        builder.set_edge_reconcile(std::time::Duration::from_millis(2), 17, 1);
-        builder.set_output_resolution_discovery(false, true, 13, 5, 11, 7, 3);
-        let timings = builder.finish();
-        assert_eq!(timings.merge_safety_scan_cells, 17);
-        assert_eq!(timings.merge_safety_global_fallbacks, 1);
-        assert!(!timings.resolution_certified_hint);
-        assert!(timings.resolution_drift_fallback);
-        assert_eq!(timings.resolution_reconcile_scan_cells, 13);
-        assert_eq!(timings.resolution_rebuild_scan_cells, 5);
-        assert_eq!(timings.resolution_hint_cells, 11);
-        assert_eq!(timings.resolution_hinted_candidates, 7);
-        assert_eq!(timings.resolution_detected_edges, 3);
+        for drift_fallback in [false, true] {
+            let mut builder = TimingBuilder::new();
+            builder.set_edge_reconcile(std::time::Duration::from_millis(2), 17, 1);
+            builder.set_output_resolution_discovery(drift_fallback, 13, 5, 11, 7, 3);
+            let timings = builder.finish();
+            assert_eq!(timings.merge_safety_scan_cells, 17);
+            assert_eq!(timings.merge_safety_global_fallbacks, 1);
+            assert_eq!(timings.resolution_drift_fallback, drift_fallback);
+            assert_eq!(timings.resolution_reconcile_scan_cells, 13);
+            assert_eq!(timings.resolution_rebuild_scan_cells, 5);
+            assert_eq!(timings.resolution_hint_cells, 11);
+            assert_eq!(timings.resolution_hinted_candidates, 7);
+            assert_eq!(timings.resolution_detected_edges, 3);
+        }
     }
 }

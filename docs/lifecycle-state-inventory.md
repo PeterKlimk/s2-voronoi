@@ -1,6 +1,6 @@
 # Lifecycle State Inventory
 
-**Status:** QUAL-001A first state-model migration implemented, 2026-07-19
+**Status:** QUAL-001A first two state-model migrations implemented, 2026-07-19
 
 This inventory identifies the first correlated cold state to replace with an enum. It records the
 current behavior before changing representation; geometry, trigger policy, validation, and report
@@ -72,6 +72,22 @@ local-rebuild contract and fault-injection tests continue to own accepted/reject
 behavior. Seven release counter pairs were neutral; the attempted/accepted KV semantics are
 unchanged.
 
-The next correlated state is `ResolutionDiscoveryDecision`: `certified_hint` and `drift_fallback`
-are exact inverses constructed from one input boolean. Its two valid states and exhaustive-fallback
-telemetry should be inventoried before replacement.
+## Resolution discovery state
+
+The former `ResolutionDiscoveryDecision` stored `certified_hint` and `drift_fallback`, exact
+inverses constructed from one drift boolean. Timing repeated both fields and accepted the impossible
+equal-value combinations.
+
+`ResolutionDiscoveryMode` now has exactly two states: `CertifiedHint` and
+`ExhaustiveDriftFallback`. Candidate discovery branches on the enum. Timing retains only the
+fallback bit and derives both existing `resolution_certified_hint` and `resolution_fallback_drift`
+KV values, so their names and output are unchanged. The exhaustive-fallback and timing-finish tests
+pin both behavior and telemetry.
+
+The release artifact exchanged 16 BSS bytes for 16 text bytes without changing aggregate or file
+size. Seven instruction/branch counter pairs were neutral.
+
+The next correlated state is the pair `PipelineState::effective_points` and `merge_result`. They
+describe one preprocessing choice but are stored as independent `Option`s and can theoretically
+disagree. Inventory their construction, borrow, remap, report, and retry consumers before choosing
+an owned enum or phase record.
