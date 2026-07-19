@@ -589,9 +589,15 @@ tasks and are not duplicated here.
   `1.000004527`). All samples had zero switches/migrations. The artifact removed 544 text bytes,
   3,552 BSS bytes, and 616 file bytes. Details are in
   [`reconciliation-orchestration-inventory.md`](reconciliation-orchestration-inventory.md).
-- **Next gate:** inventory the defect-body function boundary now exposed by `ReconcileRunState`,
-  keeping the zero-record return in the entry and treating any helper extraction as a separate
-  clean/active counter experiment.
+- **QUAL-001D reconciliation helper inventory:** keep the empty-record return and checked global
+  oracle in `reconcile_edge_mismatches`, audit the nonempty layout at that entry boundary, then
+  delegate only the recorded-mismatch program to a private helper with the same seven explicit
+  arguments. Do not introduce a context object, change raw layout signatures, move caller
+  options/telemetry, add rollback, or mark the helper cold. The boundary and default-inlining gate
+  are recorded in
+  [`reconciliation-defect-body-inventory.md`](reconciliation-defect-body-inventory.md).
+- **Next gate:** implement the default-inlining defect-body helper as one measured slice; retain it
+  only if both the 500k Fibonacci empty-record path and active `cubed` counters remain neutral.
 - **Later milestones:** split reconciliation, local-rebuild, assembly, and packed-query phase
   programs one measured change at a time.
 - **Gate:** every production refactor preserves semantic fingerprints and passes the affected

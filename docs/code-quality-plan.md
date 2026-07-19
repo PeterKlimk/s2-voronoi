@@ -423,7 +423,10 @@ backstop rounds. It replaces the finalizing closure and four independently threa
 without moving the primary/backstop control flow. The empty-record return remains before state
 construction, and measured raw cell-layout signatures remain unchanged. Complete validation passed;
 clean Fibonacci and active 100k/500k `cubed` counters were neutral. The artifact removed 544 text
-bytes, 3,552 BSS bytes, and 616 file bytes.
+bytes, 3,552 BSS bytes, and 616 file bytes. The next boundary is inventoried in
+[`reconciliation-defect-body-inventory.md`](reconciliation-defect-body-inventory.md): retain the
+empty-record return and checked structural audit in the entry, then move only the nonempty-record
+program behind a private helper with the same explicit inputs and default compiler inlining policy.
 
 Apply one phase extraction at a time:
 
