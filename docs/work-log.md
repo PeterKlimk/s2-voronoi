@@ -578,8 +578,17 @@ tasks and are not duplicated here.
   The stage is closed without a production candidate or benchmark. Retry only if a second consumer
   or a natural shared owner appears; details are in
   [`assembly-handoff-layout-inventory.md`](assembly-handoff-layout-inventory.md).
-- **Next gate:** inventory the first QUAL-001D reconciliation-orchestration phase extraction,
-  preserving the measured raw layout signatures and the mismatch-free early return.
+- **QUAL-001D reconciliation inventory:** five values persist across primary and synthesized
+  backstop rounds: the merge ledger, rejected-component rebuild seeds, merge-affected cells,
+  mutation scan cells, and merge-safety counters. The selected first extraction groups only those
+  values in a defect-local run-state owner, replaces the finalizing closure, and shortens the round
+  API. It leaves the empty-record return, flattened pass sequence, allocations, option boundary,
+  and measured raw layout signatures unchanged. Exact semantics and the clean/active counter gates
+  are recorded in
+  [`reconciliation-orchestration-inventory.md`](reconciliation-orchestration-inventory.md).
+- **Next gate:** implement the reconciliation run-state owner as one measured slice; reject or
+  narrow it on any repeatable 500k Fibonacci clean-path regression, and require neutral active-path
+  counters on deterministic `cubed` input.
 - **Later milestones:** split reconciliation, local-rebuild, assembly, and packed-query phase
   programs one measured change at a time.
 - **Gate:** every production refactor preserves semantic fingerprints and passes the affected

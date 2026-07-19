@@ -142,7 +142,7 @@ The clearest hotspots are:
 - `assemble_sharded_live_dedup` — bookkeeping collection, overflow resolution, deferred patching,
   shard finalization, vertex materialization, cell prefixing/scatter, incidence reduction,
   overrides, exact-zero hints, and timing assembly;
-- `reconcile_unresolved_edges` / `run_repair_rounds` — primary and backstop evidence, fixpoint
+- `reconcile_edge_mismatches` / `run_reconciliation_rounds` — primary and backstop evidence, fixpoint
   rounds, merge safety, application, residual scans, and escalation seeding; and
 - `WorkingDiagram` / the grow loop — oracle gathering, overlay mutation, winding reconciliation,
   local/global residual scans, and materialization.
@@ -414,6 +414,15 @@ for an ordinary success gate that did not previously need them.
 **Risk:** varies; reconcile/escalate medium, assembly/packed high
 
 **Hot-path impact expected:** must be proven neutral
+
+**Progress:** the first reconciliation boundary is inventoried in
+[`reconciliation-orchestration-inventory.md`](reconciliation-orchestration-inventory.md). The
+selected slice introduces one defect-local run-state owner for the merge ledger, rebuild seeds,
+merge-affected cells, mutation scan cells, and merge-safety counters shared across primary and
+backstop rounds. It replaces the finalizing closure and four independently threaded accumulators
+without moving the primary/backstop control flow. The empty-record return remains before state
+construction, and measured raw cell-layout signatures remain unchanged. Clean Fibonacci and active
+`cubed` counters are both required.
 
 Apply one phase extraction at a time:
 
