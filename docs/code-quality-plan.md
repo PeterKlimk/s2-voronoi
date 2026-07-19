@@ -258,9 +258,13 @@ and diagnostic-knob documentation should be refreshed as part of the same hygien
 
 **Hot-path impact expected:** none
 
-**Progress:** vocabulary items 1–3 completed and validated 2026-07-17. The state-enum and
-fact/action separation in items 4–5 remain deliberately deferred to Milestone 2 so the behavioral
-state-model change has its own attributable commit.
+**Progress:** vocabulary items 1–3 completed and validated 2026-07-17. The state-model inventory is
+now recorded in [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md). The first selected
+boundary is local rebuilding: replace the internal/public `attempted` + `accepted` pair atomically
+with one status enum while keeping low-incidence and Euler defect facts independent. With no
+external users, no deprecated boolean fields are planned; existing KV names will derive their
+values from status methods. Other state-enum and fact/action work in items 4–5 remains in
+Milestone 2 and will follow as separate measured commits.
 
 1. Add the stage glossary above to `docs/architecture.md` and inventory the public/internal names
    that map to each stage.

@@ -495,8 +495,13 @@ tasks and are not duplicated here.
 - **QUAL-001C boundary:** differential reason coverage and the profitable shared facts are complete.
   Remaining scan duplication expresses different traversal policy or has failed the counter gate;
   stop mechanical validation extraction here.
-- **Next gate:** inventory the remaining correlated cold lifecycle state for QUAL-001A and choose
-  the first enum boundary, starting with local-rebuild outcomes.
+- **QUAL-001A state inventory:** internal and public local-rebuild outcomes duplicate
+  `attempted`/`accepted` booleans, admit the impossible false/true combination, and conflate
+  ordinary no-trigger, disabled-policy, and diagnostic-capture paths. Low-incidence and Euler
+  signals are independent defect facts, not action states. The exact consumers and migration are
+  recorded in [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md).
+- **Next gate:** introduce one local-rebuild status enum end-to-end, migrate repository consumers
+  atomically, and preserve the existing attempted/accepted KV values through derived methods.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.
