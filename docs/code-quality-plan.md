@@ -342,8 +342,10 @@ coverage now pins every safely constructible no-weld shared fail-fast reason, ef
 cardinality/span failures, connectivity-versus-Euler ordering, self-loop dominance, and the
 report's three edge-use subclasses. `EdgeUseClass` is the first accepted shared classification: it
 preserves the strict gates' combined message and the report's separate counters, with neutral
-release counters. The next slice may type the duplicated internal fail-fast reasons without
-changing public diagnostics or report traversal.
+release counters. A follow-up `StrictValidationIssue` enum preserving the exact messages and scan
+ordering was rejected: despite the small artifact delta, it reproduced the established optimizer
+cliff (+0.1866% instructions and +1.6622% branches). The next slice will remove the structurally
+dominated fail-fast self-loop branches, retaining the accumulating report's independent telemetry.
 
 1. Define shared cell and edge issue classifications, including stable internal reason enums rather
    than repeated string literals.

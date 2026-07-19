@@ -937,6 +937,24 @@ The first shared validation fact was accepted on 2026-07-19 against immediate pa
   `0.999991449..=1.000002457` and `0.999971992..=1.000009634`. There was no directional regression;
   every sample recorded zero context switches and CPU migrations.
 
+## QUAL-001C typed strict-reason experiment
+
+The proposed fail-fast reason enum was rejected on 2026-07-19 against immediate parent `2813e0e`.
+
+- A private `StrictValidationIssue` represented every reason returned by the two fail-fast
+  validators. Its exact-text mapping preserved existing logging, tests, and diagnostics; the
+  effective parallel scan retained its `(cell, check_rank)` first-failure ordering. The accumulating
+  report was unchanged.
+- The release `tools` artifact changed from `2,183,224` to `2,183,324` text bytes, from `55,512` to
+  `55,632` data bytes, from `4,504` to `4,304` BSS bytes, and from `2,999,048` to `3,000,384` file
+  bytes.
+- Across seven interleaved 500k single-threaded Fibonacci counter pairs, mean candidate/parent
+  ratios were `1.001865670` instructions and `1.016621585` branches, with pair ranges
+  `1.001860072..=1.001870619` and `1.016612677..=1.016631824`. Every pair regressed; every sample
+  recorded zero context switches and CPU migrations.
+- The implementation was reverted. Static fail-fast strings remain the measured Pareto choice
+  until surrounding codegen changes enough to justify retesting.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

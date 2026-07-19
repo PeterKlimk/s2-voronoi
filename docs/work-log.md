@@ -476,9 +476,13 @@ tasks and are not duplicated here.
   report retains separate counters. The artifact added 12 text bytes, removed 16 BSS bytes, and
   grew 16 file bytes. Seven counter pairs were neutral (mean `0.999995974` instructions and
   `0.999993778` branches); all samples had zero context switches and migrations.
-- **Next gate:** replace duplicated static fail-fast strings with the smallest typed internal strict
-  reason while preserving exact text and the effective scan's `(cell, check_rank)` ordering. Keep
-  the accumulating report independent.
+- **QUAL-001C typed-reason decision:** a private `StrictValidationIssue` enum and exact-text mapping
+  were tested in both fail-fast validators while preserving the effective scan's
+  `(cell, check_rank)` ordering. It reproduced the optimizer cliff in every one of seven pairs:
+  +0.18657% instructions and +1.66216% branches, with zero context switches and migrations. The
+  implementation was reverted; keep static fail-fast strings until surrounding codegen changes.
+- **Next gate:** remove the fail-fast self-loop branches proven structurally dominated by the
+  earlier duplicate/degenerate checks. Preserve the accumulating report's self-loop telemetry.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

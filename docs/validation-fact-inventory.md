@@ -1,6 +1,6 @@
 # Validation fact inventory
 
-**Status:** QUAL-001C inventory and first negative-control expansion, 2026-07-19
+**Status:** QUAL-001C inventory and measured extraction decisions, 2026-07-19
 
 This document maps the three strict sphere-validation consumers before any shared-fact
 refactoring. The purpose is to preserve their different cost, input, and diagnostic policies while
@@ -127,7 +127,11 @@ subclass controls were independent. It is allocation-free and preserves all cons
 release artifact added 12 text bytes, removed 16 BSS bytes, and remained neutral across seven
 instruction/branch counter pairs.
 
-The next narrow candidate is a typed internal strict-failure reason replacing duplicated static
-strings in the two fail-fast consumers. It must preserve the effective parallel scan's
-`(cell, check_rank)` ordering, the exact strings pinned by the oracle, and the report's independent
-counter taxonomy. Introduce it without routing the accumulating report through fail-fast state.
+A typed internal strict-failure reason was tested in both fail-fast consumers. It preserved the
+effective parallel scan's `(cell, check_rank)` ordering, every exact string pinned by the oracle,
+and the report's independent taxonomy, but reproduced the optimizer cliff: +0.1866% instructions
+and +1.6622% branches across seven clean counter pairs. The source was reverted.
+
+The next narrow candidate is deletion of the fail-fast self-loop branches. The exhaustive cycle
+oracle proves they are structurally dominated by the earlier duplicate/degenerate checks. The
+accumulating report's self-loop telemetry remains independent and must not change.
