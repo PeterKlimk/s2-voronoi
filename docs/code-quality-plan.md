@@ -337,6 +337,15 @@ parallel rank ordering, and static reasons. This result reinforces QUAL-001C's r
 validation expressions without reopening its shared-enum, weld-predicate, or common-traversal
 experiments.
 
+The final assembly-handoff inventory is closed in
+[`assembly-handoff-layout-inventory.md`](assembly-handoff-layout-inventory.md). Assembly produces a
+freshly compacted layout and has one production consumer, which immediately moves the cell vectors
+into the already-accepted `EffectiveGeometry` owner. An owned layout nested in `AssemblyResult`
+would therefore exist only for a wrapper/unwrapper move, while propagating it would duplicate the
+geometry owner and reopen codegen-sensitive mutation signatures. No production candidate or
+runtime benchmark was justified. QUAL-001B is complete at this measured and documented boundary;
+the retained raw expressions have explicit counter evidence or local stronger invariants.
+
 Introduce a small internal view/owner around cells and their backing index buffer. The abstraction
 should provide:
 
@@ -349,11 +358,11 @@ should provide:
 
 Migration order:
 
-1. topology summary and reconciliation readers;
-2. reconciliation mutation backends;
-3. local rebuild overlay/materialization;
-4. effective validation; and
-5. assembly handoff.
+1. topology summary and reconciliation readers — accepted selectively;
+2. reconciliation mutation backends — measured and retained raw;
+3. local rebuild overlay/materialization — accepted;
+4. effective validation — measured and retained raw; and
+5. assembly handoff — closed without a redundant owner.
 
 Do not change `SphericalVoronoi` storage or force compaction. A successful version makes raw buffer
 iteration difficult outside the defining module while producing identical final bytes.

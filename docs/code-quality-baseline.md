@@ -1137,6 +1137,25 @@ The effective-validation migration was measured on 2026-07-20 against immediate 
   expression, and `LiveCellLayout::checked_span` remains limited to current internal valid-layout
   callers. Retry only after a material compiler or surrounding-codegen change.
 
+## QUAL-001B assembly-handoff closure
+
+The final live-layout stage was inventoried on 2026-07-20 and closed without a production change.
+
+- Assembly constructs a freshly compacted, generator-ordered layout: checked prefixes partition an
+  exactly sized index buffer, direct scatter initializes every slot, and sparse overrides finish
+  before any live-window read or return.
+- `run_core_pipeline` is the sole production consumer of `AssemblyResult`. It immediately moves
+  vertices, cells, and indices into the accepted `EffectiveGeometry` owner, with no intervening
+  branch, failure, mutation, or independent use.
+- An owned cell-layout field in `AssemblyResult` would be unpacked immediately or propagated into
+  the whole post-assembly pipeline. The first form protects no meaningful lifetime; the second
+  duplicates the geometry owner and reopens codegen-sensitive mutable signatures.
+- A read-only layout inside assembly cannot cover scatter/override mutation and would only replace
+  exact-zero hint discovery's one trusted local span expression.
+- No candidate offered a maintainability gain proportional to its hot assembly ABI/codegen risk,
+  so no runtime measurement was warranted. Retry only if a second consumer or natural shared owner
+  creates a real ownership lifetime.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

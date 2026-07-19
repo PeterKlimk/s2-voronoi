@@ -571,11 +571,17 @@ tasks and are not duplicated here.
   familiar BSS-collapse fingerprint. All samples had zero switches/migrations; all production
   changes were reverted. Keep the effective gate's raw checked-add traversal until compiler or
   surrounding codegen changes materially.
-- **Next gate:** inventory the final QUAL-001B assembly-handoff boundary without reopening the
-  measured effective-validation or reconciliation signatures.
-- **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
-  specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
-  local-rebuild, assembly, and packed-query phase programs one measured change at a time.
+- **QUAL-001B assembly-handoff decision:** assembly creates a stronger freshly compacted layout and
+  has one production consumer, which immediately moves its vectors into `EffectiveGeometry`.
+  Nesting an owned layout in `AssemblyResult` would add only a wrapper/unwrapper move; carrying it
+  farther would duplicate the accepted geometry owner and reopen measured mutation signatures.
+  The stage is closed without a production candidate or benchmark. Retry only if a second consumer
+  or a natural shared owner appears; details are in
+  [`assembly-handoff-layout-inventory.md`](assembly-handoff-layout-inventory.md).
+- **Next gate:** inventory the first QUAL-001D reconciliation-orchestration phase extraction,
+  preserving the measured raw layout signatures and the mismatch-free early return.
+- **Later milestones:** split reconciliation, local-rebuild, assembly, and packed-query phase
+  programs one measured change at a time.
 - **Gate:** every production refactor preserves semantic fingerprints and passes the affected
   workload's interleaved performance gate against its immediate parent. Readability alone does not
   justify a repeatable throughput, memory, or code-size regression.
