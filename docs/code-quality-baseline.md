@@ -1180,6 +1180,28 @@ parent `37b0f65`.
 - Every counter sample recorded zero context switches and CPU migrations. Wall clock was ignored
   on the busy host.
 
+## QUAL-001D reconciliation defect-body helper
+
+The second reconciliation-orchestration extraction was accepted on 2026-07-20 against immediate
+parent `971c378`.
+
+- `reconcile_edge_mismatches` retains the empty-record return, checked detection-completeness
+  oracle, and checked defect-layout audit. Only the nonempty-record program moved to the private
+  `reconcile_recorded_mismatches` helper with the same seven explicit inputs.
+- Primary/backstop ordering, options, allocations, mutation and error timing, raw layout
+  signatures, numeric policy, apply backends, and `ReconcileResult` are unchanged. Complete
+  release, checked, no-default-feature, and all-feature Clippy gates passed.
+- LLVM inlined the source boundary. `reconcile_edge_mismatches` remained `0xc6a` bytes and
+  `run_reconciliation_rounds` remained `0x2d10` bytes; no standalone helper symbol was emitted.
+  Text grew by 8 bytes, data was unchanged, BSS shrank by 16 bytes, aggregate section accounting
+  shrank by 8 bytes, and file size grew by 24 bytes.
+- Seven 500k single-threaded Fibonacci pairs were neutral: mean candidate/parent ratios were
+  `0.999998589` instructions and `0.999999242` branches. Seven approximately 100k `cubed` pairs
+  were also neutral at `1.000010280` and `1.000020864`.
+- Every counter sample recorded zero context switches and CPU migrations. The conditional 500k
+  `cubed` confirmation was unnecessary because both the active counters and relevant symbol sizes
+  were unambiguous. Wall clock was ignored on the busy host.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

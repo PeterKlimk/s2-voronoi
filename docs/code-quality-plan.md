@@ -423,10 +423,12 @@ backstop rounds. It replaces the finalizing closure and four independently threa
 without moving the primary/backstop control flow. The empty-record return remains before state
 construction, and measured raw cell-layout signatures remain unchanged. Complete validation passed;
 clean Fibonacci and active 100k/500k `cubed` counters were neutral. The artifact removed 544 text
-bytes, 3,552 BSS bytes, and 616 file bytes. The next boundary is inventoried in
-[`reconciliation-defect-body-inventory.md`](reconciliation-defect-body-inventory.md): retain the
-empty-record return and checked structural audit in the entry, then move only the nonempty-record
-program behind a private helper with the same explicit inputs and default compiler inlining policy.
+bytes, 3,552 BSS bytes, and 616 file bytes. The second reconciliation boundary is also accepted and
+recorded in
+[`reconciliation-defect-body-inventory.md`](reconciliation-defect-body-inventory.md): the
+empty-record return and checked structural audit remain in the entry, while the nonempty-record
+program now has a private helper with the same explicit inputs. LLVM retained the prior function
+sizes, and clean Fibonacci plus active `cubed` counters were neutral.
 
 Apply one phase extraction at a time:
 

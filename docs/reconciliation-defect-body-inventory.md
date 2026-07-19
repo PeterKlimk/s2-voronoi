@@ -1,6 +1,6 @@
 # Reconciliation Defect-Body Boundary Inventory
 
-**Status:** one QUAL-001D helper extraction selected, 2026-07-20
+**Status:** QUAL-001D helper extraction accepted, 2026-07-20
 
 This inventory covers the next reconciliation-orchestration boundary after
 `ReconcileRunState` grouped state shared by the primary and synthesized-backstop passes. It does
@@ -114,3 +114,26 @@ symbol layout, then run interleaved Linux perf counters:
 Retired instructions and branches are primary on the busy shared host; context switches and CPU
 migrations identify contaminated samples. Wall clock is advisory. A repeatable clean-path loss
 rejects or reshapes the helper even if the defect path improves.
+
+## Accepted result
+
+The default-inlining candidate was accepted against immediate parent `971c378`.
+
+- `reconcile_edge_mismatches` retains the empty-record gate and checked structural audit, then
+  delegates the nonempty program to `reconcile_recorded_mismatches` with the same seven explicit
+  arguments. The helper asserts its nonempty precondition only in checked builds.
+- Focused reconciliation, output-resolution, and local-rebuild coverage passed, followed by the
+  complete release, checked, no-default-feature, and all-feature Clippy gates.
+- LLVM inlined the helper: `reconcile_edge_mismatches` remained `0xc6a` bytes and
+  `run_reconciliation_rounds` remained `0x2d10` bytes, with no standalone helper symbol. Text grew
+  by 8 bytes, data was unchanged, BSS shrank by 16 bytes, aggregate section accounting shrank by 8
+  bytes, and file size grew by 24 bytes.
+- Seven 500k single-threaded Fibonacci pairs were neutral. Mean candidate/parent ratios were
+  `0.999998589` instructions and `0.999999242` branches, with ranges
+  `0.999992152..=1.000007117` and `0.999973859..=1.000013976`.
+- Seven approximately 100k single-threaded `cubed` pairs were also neutral. Mean ratios were
+  `1.000010280` instructions and `1.000020864` branches, with ranges
+  `0.999983822..=1.000031277` and `0.999974253..=1.000060501`.
+- Every sample recorded zero context switches and CPU migrations. Because the active result was
+  neutral and the relevant function sizes were identical, the conditional 500k `cubed`
+  disambiguation run was not needed. Wall clock was ignored on the busy host.

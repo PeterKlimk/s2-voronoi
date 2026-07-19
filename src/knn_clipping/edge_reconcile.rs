@@ -492,6 +492,29 @@ pub(crate) fn reconcile_edge_mismatches(
     #[cfg(debug_assertions)]
     LiveCellLayout::new(cells, cell_indices).debug_assert_valid();
 
+    reconcile_recorded_mismatches(
+        edge_records,
+        vertices,
+        cells,
+        cell_indices,
+        vertex_keys,
+        degenerate_len_eps,
+        options,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reconcile_recorded_mismatches(
+    edge_records: &[EdgeRecord],
+    vertices: &[Vec3],
+    cells: &mut Vec<VoronoiCell>,
+    cell_indices: &mut Vec<u32>,
+    vertex_keys: VertexKeys<'_>,
+    degenerate_len_eps: f32,
+    options: ReconcileOptions,
+) -> Result<ReconcileResult, crate::VoronoiError> {
+    debug_assert!(!edge_records.is_empty());
+
     let mut state = ReconcileRunState::default();
     let primary_candidates = affected_cells_from_records(edge_records);
     let primary_changed = run_reconciliation_rounds(
