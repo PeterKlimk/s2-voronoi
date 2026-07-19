@@ -116,14 +116,14 @@ Compare immediate-parent and dirty-candidate release artifacts, including the em
 Fibonacci counter pairs to detect whole-binary layout movement on the ordinary no-trigger path.
 Retired instructions and branches remain primary; reject repeatable clean-path loss.
 
-There is currently no honest natural active-path counter fixture. On exact `4d15619`, twenty 100k
-single-threaded `mega` runs at fraction `0.8` (seeds 1 through 20, preprocessing disabled) emitted
-no local-rebuild trigger. The existing production tests likewise note that their historical mega
-fixtures now resolve before rebuilding. Do not label these workloads active or infer transaction
-performance from their total time.
+A stable rejected-transaction fixture is now available: 100k `mega`, corner-centered cap, fraction
+`0.8`, seed `224`, preprocessing disabled, and one Rayon thread. It deterministically performs two
+growth rounds, splices seven generators, materializes the full candidate, and reaches the strict
+gate before rejection and rollback. The search and exact fingerprint are recorded in
+[`local-rebuild-trigger-hunt.md`](local-rebuild-trigger-hunt.md).
 
-If a deterministic accepted/rejected end-to-end trigger is found, add paired counters for it. If
-none is found, acceptance requires direct transaction semantics plus artifact evidence that the
-default-inline extraction did not introduce an out-of-line active-path boundary or materially
-change the surrounding emitted shape. Otherwise defer the source change until an active fixture or
-more faithful probe exists. Wall clock remains advisory on the busy shared host.
+Use paired counters on that expected-error fixture with a harness that verifies completion of the
+transaction before accepting the sample. No natural accepted transaction was found; pin the
+accepted append/swap/footprint path with a direct deterministic transaction test. Artifact evidence
+must still show that default inlining introduced no unexplained boundary. Wall clock remains
+advisory on the busy shared host.

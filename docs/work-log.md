@@ -605,13 +605,17 @@ tasks and are not duplicated here.
   context, clone base positions, localize the validity gate, or change the grow loop concurrently.
   The boundary and gates are recorded in
   [`local-rebuild-transaction-inventory.md`](local-rebuild-transaction-inventory.md).
-- **Fixture note:** exact `4d15619` emitted no local-rebuild trigger for 100k single-threaded
-  `mega` at fraction `0.8`, seeds 1 through 20, with preprocessing disabled. Historical mega tests
-  also now resolve upstream. Do not claim active-path counters from those workloads.
+- **QUAL-001D local-rebuild trigger hunt:** default preprocessing produced no trigger across wide
+  100k seed/placement/fraction/bin sweeps or focused 300k/500k/1M cases. With preprocessing
+  disabled, a corner-centered 100k `mega` at fraction `0.8`, seed `224`, deterministically performs
+  two Hull3d rounds, splices seven generators, materializes the complete candidate, and reaches the
+  strict gate before low-incidence rejection and rollback. No natural accepted transaction was
+  found. Search coverage, other hits, and the expected-error benchmark contract are recorded in
+  [`local-rebuild-trigger-hunt.md`](local-rebuild-trigger-hunt.md).
 - **Next gate:** implement the candidate transaction as one default-inline measured slice. Retain
-  it only if direct transaction semantics pass, the ordinary Fibonacci counters remain neutral,
-  and artifact inspection shows no unexplained active-path boundary; otherwise defer until a
-  deterministic trigger exists.
+  it only if direct accepted/rejected transaction semantics pass, ordinary Fibonacci counters
+  remain neutral, the seed-224 rejected-path counters remain neutral, and artifact inspection shows
+  no unexplained active-path boundary.
 - **Later milestones:** split reconciliation, local-rebuild, assembly, and packed-query phase
   programs one measured change at a time.
 - **Gate:** every production refactor preserves semantic fingerprints and passes the affected
