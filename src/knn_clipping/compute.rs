@@ -34,9 +34,7 @@ struct PipelineState {
     points: Vec<Vec3>,
     effective_input: EffectiveInput,
     preprocess_report: PreprocessReport,
-    vertices: Vec<Vec3>,
-    eff_cells: Vec<VoronoiCell>,
-    eff_cell_indices: Vec<u32>,
+    geometry: EffectiveGeometry,
     edge_mismatches: Vec<live_dedup::EdgeMismatch>,
     residual_unpaired: Vec<(u32, u32)>,
     local_rebuild_seed_pairs: Vec<(u32, u32)>,
@@ -44,6 +42,15 @@ struct PipelineState {
     output_resolution: crate::OutputResolutionReport,
     cell_killing_generators: Vec<usize>,
     tb: TimingBuilder,
+}
+
+/// Coherent effective-space diagram storage from assembly through final
+/// output resolution. Later phases may leave positions unreferenced, but the
+/// cell spans and index buffer always describe this vertex-id space together.
+struct EffectiveGeometry {
+    vertices: Vec<Vec3>,
+    cells: Vec<VoronoiCell>,
+    cell_indices: Vec<u32>,
 }
 
 impl PipelineState {
@@ -242,8 +249,8 @@ fn run_core_pipeline(
     )?;
     let assembled = assemble_shards(sharded, &mut tb)?;
     let live_dedup::AssemblyResult {
-        mut vertices,
-        vertex_keys,
+        vertices,
+        vertex_keys: assembly_vertex_keys,
         edge_mismatches,
         cells,
         cell_indices,
@@ -253,12 +260,15 @@ fn run_core_pipeline(
         incidence_summary,
         dedup_sub: _,
     } = assembled;
-    let (mut eff_cells, mut eff_cell_indices, reconcile_result) = reconcile_edges(
-        &mut vertices,
-        &vertex_keys,
-        &edge_mismatches,
+    let mut geometry = EffectiveGeometry {
+        vertices,
         cells,
         cell_indices,
+    };
+    let reconcile_result = reconcile_edges(
+        &mut geometry,
+        &assembly_vertex_keys,
+        &edge_mismatches,
         &mut tb,
     )?;
     let edge_reconcile::ReconcileResult {
@@ -281,12 +291,20 @@ fn run_core_pipeline(
         #[cfg(debug_assertions)]
         debug_assert_eq!(
             incremental,
-            summarize_topology_scalar(vertices.len(), &eff_cells, &eff_cell_indices),
+            summarize_topology_scalar(
+                geometry.vertices.len(),
+                &geometry.cells,
+                &geometry.cell_indices,
+            ),
             "owner-local incidence summary diverged from the live-window scan"
         );
         incremental
     } else {
-        summarize_topology(vertices.len(), &eff_cells, &eff_cell_indices)
+        summarize_topology(
+            geometry.vertices.len(),
+            &geometry.cells,
+            &geometry.cell_indices,
+        )
     };
     let low_incidence_scan_time = t_low_incidence.elapsed();
     let LocalRebuildResult {
@@ -295,10 +313,8 @@ fn run_core_pipeline(
     } = maybe_rebuild_effective(
         effective_points_ref,
         &grid,
-        &mut vertices,
-        &vertex_keys,
-        &mut eff_cells,
-        &mut eff_cell_indices,
+        &mut geometry,
+        &assembly_vertex_keys,
         &residual_unpaired,
         &local_rebuild_seed_pairs,
         &merge_affected_cells,
@@ -316,10 +332,10 @@ fn run_core_pipeline(
     let resolution_mode = ResolutionDiscoveryMode::from_drift(resolution_drift_exceeded);
     let hinted_candidate_count = exact_zero_edge_candidates.len();
     let resolution_outcome = canonicalize_pipeline_exact_zero_edges(
-        &vertices,
-        &vertex_keys,
-        &mut eff_cells,
-        &mut eff_cell_indices,
+        &geometry.vertices,
+        &assembly_vertex_keys,
+        &mut geometry.cells,
+        &mut geometry.cell_indices,
         exact_zero_edge_candidates,
         &mutation_scan_cells,
         resolution_mode,
@@ -336,9 +352,7 @@ fn run_core_pipeline(
         points,
         effective_input,
         preprocess_report,
-        vertices,
-        eff_cells,
-        eff_cell_indices,
+        geometry,
         edge_mismatches,
         residual_unpaired,
         local_rebuild_seed_pairs,
@@ -415,13 +429,13 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     let (cells, cell_indices, weld_map) = remap_cells_to_original_indices(
         &state.points,
         state.effective_input.merge_result(),
-        state.eff_cells,
-        state.eff_cell_indices,
+        state.geometry.cells,
+        state.geometry.cell_indices,
     );
 
     let diagram = crate::SphericalVoronoi::from_raw_parts(
         state.points,
-        state.vertices,
+        state.geometry.vertices,
         cells,
         cell_indices,
         weld_map,
@@ -541,9 +555,9 @@ fn compute_voronoi_knn_clipping_report_core(
     let effective_diagram = state.merge_result().map(|merge| {
         crate::SphericalVoronoi::from_raw_parts(
             merge.effective_points.clone(),
-            state.vertices.clone(),
-            state.eff_cells.clone(),
-            state.eff_cell_indices.clone(),
+            state.geometry.vertices.clone(),
+            state.geometry.cells.clone(),
+            state.geometry.cell_indices.clone(),
             None,
         )
     });
@@ -553,13 +567,13 @@ fn compute_voronoi_knn_clipping_report_core(
     let (cells, cell_indices, weld_map) = remap_cells_to_original_indices(
         &state.points,
         state.effective_input.merge_result(),
-        state.eff_cells,
-        state.eff_cell_indices,
+        state.geometry.cells,
+        state.geometry.cell_indices,
     );
 
     let diagram = crate::SphericalVoronoi::from_raw_parts(
         state.points,
-        state.vertices,
+        state.geometry.vertices,
         cells,
         cell_indices,
         weld_map,
@@ -834,10 +848,8 @@ impl LocalRebuildDiagnostics {
 fn maybe_rebuild_effective(
     effective_points: &[Vec3],
     grid: &CubeMapGrid,
-    vertices: &mut Vec<Vec3>,
+    geometry: &mut EffectiveGeometry,
     vertex_keys: &live_dedup::ShardedVertexKeys,
-    eff_cells: &mut Vec<VoronoiCell>,
-    eff_cell_indices: &mut Vec<u32>,
     residual_unpaired: &[(u32, u32)],
     local_rebuild_seed_pairs: &[(u32, u32)],
     merge_affected_cells: &[u32],
@@ -846,11 +858,16 @@ fn maybe_rebuild_effective(
     local_rebuild_mode: LocalRebuildMode,
 ) -> LocalRebuildResult {
     let has_low_incidence = topology.low_incidence;
-    let euler_defect = !topology.has_sphere_euler(eff_cells.len());
+    let euler_defect = !topology.has_sphere_euler(geometry.cells.len());
     // A0 probes need the fast assembled state, not the rebuilt one.
     #[cfg(feature = "local_rebuild_probe")]
     if local_rebuild::a0_fast_capture_active() {
-        local_rebuild::stash_a0_fast(effective_points, vertex_keys, eff_cells, eff_cell_indices);
+        local_rebuild::stash_a0_fast(
+            effective_points,
+            vertex_keys,
+            &geometry.cells,
+            &geometry.cell_indices,
+        );
         return LocalRebuildResult::unchanged(LocalRebuildOutcome::new(
             LocalRebuildStatus::DiagnosticCapture,
             has_low_incidence,
@@ -903,10 +920,10 @@ fn maybe_rebuild_effective(
     let mut rebuild_scratch = grid.make_scratch();
 
     let mut work = local_rebuild::WorkingDiagram::from_assembled(
-        vertices,
+        &geometry.vertices,
         vertex_keys,
-        eff_cells,
-        eff_cell_indices,
+        &geometry.cells,
+        &geometry.cell_indices,
     );
     #[cfg(feature = "local_rebuild_probe")]
     let stats = if diagnostics.use_global_delaunay {
@@ -991,8 +1008,8 @@ fn maybe_rebuild_effective(
     // this cold rebuilt output so semantically identical local rebuild backends
     // remain byte-for-byte differential oracles; winding is unchanged.
     canonicalize_cell_cycle_starts(&new_cells, &mut new_cell_indices);
-    let base_vertex_count = vertices.len();
-    vertices.extend(minted_vertices);
+    let base_vertex_count = geometry.vertices.len();
+    geometry.vertices.extend(minted_vertices);
     let flat_elapsed = t_flat.elapsed();
     let t_gate = std::time::Instant::now();
 
@@ -1007,7 +1024,7 @@ fn maybe_rebuild_effective(
     // is unsound.
     let gate = crate::validation::verify_sphere_effective_strict(
         effective_points,
-        vertices,
+        &geometry.vertices,
         &new_cells,
         &new_cell_indices,
     );
@@ -1016,7 +1033,7 @@ fn maybe_rebuild_effective(
             "local rebuild commit: into_flat {:?}, gate {:?} ({} verts, {} cells, gate {})",
             flat_elapsed,
             t_gate.elapsed(),
-            vertices.len(),
+            geometry.vertices.len(),
             new_cells.len(),
             if gate.is_ok() { "accepted" } else { "rejected" },
         );
@@ -1025,12 +1042,12 @@ fn maybe_rebuild_effective(
         }
     }
     if gate.is_err() {
-        vertices.truncate(base_vertex_count);
+        geometry.vertices.truncate(base_vertex_count);
         return LocalRebuildResult::unchanged(outcome(LocalRebuildStatus::Rejected));
     }
 
-    *eff_cells = new_cells;
-    *eff_cell_indices = new_cell_indices;
+    geometry.cells = new_cells;
+    geometry.cell_indices = new_cell_indices;
     LocalRebuildResult {
         outcome: outcome(LocalRebuildStatus::Accepted),
         resolution_scan_cells,
@@ -1712,19 +1729,12 @@ fn assemble_shards(
     Ok(assembled)
 }
 
-/// Reconciled cell arrays plus the reconciliation outcome: residual cell pairs whose
-/// shared edge stayed unpaired, and merge-rewritten cells that the local rebuild's
-/// localized residual scan must keep in scope.
-type ReconciledWithResiduals = (Vec<VoronoiCell>, Vec<u32>, edge_reconcile::ReconcileResult);
-
 fn reconcile_edges(
-    vertices: &mut Vec<Vec3>,
+    geometry: &mut EffectiveGeometry,
     vertex_keys: &live_dedup::ShardedVertexKeys,
     edge_mismatches: &[live_dedup::EdgeMismatch],
-    mut cells: Vec<VoronoiCell>,
-    mut cell_indices: Vec<u32>,
     tb: &mut TimingBuilder,
-) -> Result<ReconciledWithResiduals, crate::VoronoiError> {
+) -> Result<edge_reconcile::ReconcileResult, crate::VoronoiError> {
     // Snapshot all reconciliation diagnostics/oracles once, but only after a
     // mismatch exists. `ComputeReport` already records that a zero-record case
     // was clean, so that path remains free of environment lookups.
@@ -1735,9 +1745,9 @@ fn reconcile_edges(
         if options.emit_telemetry() {
             edge_reconcile::emit_primary_reconcile_telemetry(
                 edge_mismatches,
-                vertices.as_slice(),
-                &cells,
-                &cell_indices,
+                geometry.vertices.as_slice(),
+                &geometry.cells,
+                &geometry.cell_indices,
                 edge_reconcile::VertexKeys::Sharded(vertex_keys),
                 crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
                 options,
@@ -1755,9 +1765,9 @@ fn reconcile_edges(
     // The sphere has no boundary: every interior edge must pair.
     let reconcile_result = edge_reconcile::reconcile_edge_mismatches(
         &reconciliation_edge_storage,
-        vertices.as_slice(),
-        &mut cells,
-        &mut cell_indices,
+        geometry.vertices.as_slice(),
+        &mut geometry.cells,
+        &mut geometry.cell_indices,
         edge_reconcile::VertexKeys::Sharded(vertex_keys),
         crate::tolerances::RECONCILE_DEGENERATE_LEN_EPS,
         reconcile_options,
@@ -1771,7 +1781,7 @@ fn reconcile_edges(
         reconcile_result.merge_safety_scan_cells,
         reconcile_result.merge_safety_global_fallbacks,
     );
-    Ok((cells, cell_indices, reconcile_result))
+    Ok(reconcile_result)
 }
 
 /// Map effective cells back to original input indices.
@@ -1974,9 +1984,9 @@ mod tests {
 
         let elision = super::output_resolution::elide_exact_zero_cells_for_mesh(
             state.effective_points_ref(),
-            &state.vertices,
-            &state.eff_cells,
-            &state.eff_cell_indices,
+            &state.geometry.vertices,
+            &state.geometry.cells,
+            &state.geometry.cell_indices,
         )
         .expect("global exact-zero elision quotient should be a valid cell mesh");
         assert_eq!(elision.zero_edges_before, 3);
@@ -2019,9 +2029,9 @@ mod tests {
             .expect("duplicate generator should be welded");
         let welded_elision = super::output_resolution::elide_exact_zero_cells_for_mesh(
             welded_state.effective_points_ref(),
-            &welded_state.vertices,
-            &welded_state.eff_cells,
-            &welded_state.eff_cell_indices,
+            &welded_state.geometry.vertices,
+            &welded_state.geometry.cells,
+            &welded_state.geometry.cell_indices,
         )
         .expect("welded effective mesh should admit the same quotient");
         let original_to_cell: Vec<Option<u32>> = merge

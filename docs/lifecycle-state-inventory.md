@@ -1,7 +1,6 @@
 # Lifecycle State Inventory
 
-**Status:** QUAL-001A first three state-model migrations implemented; effective-geometry boundary
-inventoried, 2026-07-19
+**Status:** QUAL-001A first four state-model migrations implemented, 2026-07-19
 
 This inventory identifies the first correlated cold state to replace with an enum. It records the
 current behavior before changing representation; geometry, trigger policy, validation, and report
@@ -156,15 +155,14 @@ context switches and migrations.
 
 ## Effective-geometry ownership
 
-Three vectors form the live effective diagram throughout the post-assembly pipeline:
+Three vectors formerly existed as separate state throughout the post-assembly pipeline:
 
 - `vertices: Vec<Vec3>` owns the effective-space vertex positions;
 - `eff_cells: Vec<VoronoiCell>` owns one live span descriptor per effective generator; and
 - `eff_cell_indices: Vec<u32>` owns the flattened boundaries addressed by those spans.
 
-They are currently unpacked into independent locals and later stored as independent
-`PipelineState` fields. Every consumer requires a coherent triple, but the type permits cells from
-one phase to be paired with positions or indices from another.
+Every consumer requires a coherent triple, but the former representation permitted cells from one
+phase to be paired with positions or indices from another.
 
 ### Mutation sequence
 
@@ -192,9 +190,8 @@ accepted local-rebuild path to copy all base positions, losing its current appen
 describes assembly vertex ids, but local rebuilding can append minted positions without extending
 the sharded key store. That partial provenance is intentional: local rebuilding resolves minted
 keys inside its overlay, while terminal output-resolution localization treats a missing key as a
-certificate failure and falls back conservatively. The current `live_dedup` comment claiming that
-the keys are consumed only by reconciliation is stale; they also support local rebuilding and
-output-resolution discovery.
+certificate failure and falls back conservatively. The corrected `live_dedup` ownership comment
+now records all three consumers and the missing-provenance behavior.
 
 Assembly mismatch records, reconciliation residuals, rejected-component seed pairs, and the
 local-rebuild status are historical diagnostic facts. An accepted rebuild supersedes some of them
@@ -206,9 +203,9 @@ certificates. They select which terminal cycles must be rescanned; they are neit
 geometry nor independently authoritative evidence about its contents. The construction incidence
 summary similarly expires as soon as a later phase changes a live span.
 
-### Selected boundary
+### Implemented boundary
 
-Introduce one private cold-orchestration record:
+One private cold-orchestration record now owns the geometry:
 
 ```rust,ignore
 struct EffectiveGeometry {
@@ -218,18 +215,21 @@ struct EffectiveGeometry {
 }
 ```
 
-Create it immediately after assembly. Reconciliation should mutate it and return only its
-diagnostic result; local rebuilding should receive it as one mutable object; output resolution
-should mutate its live boundaries; and `PipelineState` should own it as one field. This also
-removes the `ReconciledWithResiduals` tuple without introducing a second wrapper with the same
-ownership.
+It is created immediately after assembly. Reconciliation mutates it and returns only its
+diagnostic result; local rebuilding receives it as one mutable object; output resolution mutates
+its live boundaries; and `PipelineState` owns it as one field. The
+`ReconciledWithResiduals` tuple is gone, without a second wrapper duplicating the same ownership.
 
-Keep `assembly_vertex_keys` as a clearly named, separately borrowed provenance store until output
-resolution finishes. Correct its stale ownership comment in the implementation commit, but do not
-flatten or extend it merely to make lengths match.
+`assembly_vertex_keys` remains a clearly named, separately borrowed provenance store until output
+resolution finishes. It is neither flattened nor extended merely to make lengths match.
 
-The first implementation should be representation-only: no compaction, provenance expansion,
-candidate ownership change, or local-rebuild transaction redesign. Pin rejected rollback and
-accepted commit behavior, effective-report cloning, welded remapping, and output-resolution
-footprints. Because the record changes borrow shapes around reconciliation and rebuilding, require
-the full release artifact and interleaved instruction/branch counter gates.
+The implementation is representation-only: no compaction, provenance expansion, candidate
+ownership change, or local-rebuild transaction redesign. Existing focused suites cover accepted
+commits, effective-report cloning, welded remapping, reconciliation, and output-resolution
+footprints; the append/validate/truncate rejection sequence is unchanged within the new owner. The
+complete release, checked, no-default-feature, and all-feature Clippy gates passed.
+
+The matched release artifact removed 1,484 text bytes, added 1,488 BSS bytes, retained data size,
+grew aggregate section accounting by four bytes, and reduced file size by 1,040 bytes. Seven
+interleaved counter pairs were neutral: mean candidate/parent ratios were `1.000000038`
+instructions and `0.999998878` branches, with zero context switches and migrations.

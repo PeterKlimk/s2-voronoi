@@ -33,12 +33,15 @@ pub(crate) use types::{EdgeCheck, EdgeKey, EdgeMismatch, EdgeRecord};
 
 /// Per-shard vertex keys kept un-concatenated.
 ///
-/// `vertex_keys` is consumed only by edge reconciliation, which — after the
-/// same-key dup-scan was localized — touches keys for at most the defect
-/// region (typically nothing). Concatenating all shards' keys into one flat
-/// array is then O(V) copy + a 12·V-byte allocation that is essentially never
-/// read. Instead we **move** the per-shard key vecs here (O(num_bins), zero
-/// copy) and look up the handful reconciliation needs by `(bin, local)`.
+/// `vertex_keys` is sparse-use provenance for edge reconciliation, local
+/// rebuilding, and output-resolution discovery. Those consumers normally
+/// touch at most a defect or mutation region. Concatenating all shards' keys
+/// into one flat array would therefore add an O(V) copy and 12·V-byte
+/// allocation that is essentially never read. Instead we **move** the
+/// per-shard key vecs here (O(num_bins), zero copy) and look up the handful of
+/// ids those phases need by `(bin, local)`. Rebuild-minted ids deliberately
+/// lie past this assembly store; consumers treat a missing key as incomplete
+/// provenance and fall back conservatively where required.
 pub(crate) struct ShardedVertexKeys {
     /// Prefix-sum starts, length `num_bins + 1`; bin `b` owns global vertex
     /// ids `[offsets[b], offsets[b+1])`.

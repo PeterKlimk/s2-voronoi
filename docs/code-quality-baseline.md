@@ -1059,6 +1059,31 @@ The third lifecycle-state migration was accepted on 2026-07-19 against immediate
   `0.999993028..=1.000001173` and `0.999987382..=1.000003031`. There was no directional regression;
   every sample recorded zero context switches and CPU migrations.
 
+## QUAL-001A effective-geometry ownership
+
+The fourth lifecycle-state migration was accepted on 2026-07-19 against immediate parent
+`c39f83f`.
+
+- Private `EffectiveGeometry` now owns effective-space vertex positions, cell span records, and
+  their live index buffer from assembly through final remapping. `PipelineState` no longer carries
+  those arrays as independently replaceable fields.
+- Reconciliation mutates the geometry owner and returns only `ReconcileResult`; the former
+  `ReconciledWithResiduals` tuple is removed. Local rebuilding retains the exact append, strict
+  validation, truncate-on-rejection, and cell-array swap-on-acceptance sequence.
+- Assembly vertex keys remain separately borrowed partial provenance. Their ownership comment now
+  records reconciliation, local-rebuild, and output-resolution consumers plus conservative
+  fallback for rebuild-minted ids beyond the assembly store.
+- The complete release, checked, no-default-feature, and all-feature Clippy gates passed. Focused
+  API, reconciliation, local-rebuild, output-resolution, and effective-mesh elision suites also
+  passed.
+- The matched release `tools` artifact changed from `2,180,775` to `2,179,291` text bytes, retained
+  `55,456` data bytes, changed from `2,915` to `4,403` BSS bytes, changed aggregate size from
+  `2,239,146` to `2,239,150`, and shrank from `2,994,920` to `2,993,880` file bytes.
+- Across seven interleaved 500k single-threaded Fibonacci counter pairs, mean candidate/parent
+  ratios were `1.000000038` instructions and `0.999998878` branches, with pair ranges
+  `0.999987021..=1.000009329` and `0.999983860..=1.000013754`. There was no directional regression;
+  every sample recorded zero context switches and CPU migrations.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

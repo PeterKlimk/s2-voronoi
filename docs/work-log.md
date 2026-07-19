@@ -532,9 +532,17 @@ tasks and are not duplicated here.
   that preserves accepted rebuilding's append-only base-position reuse. Exact consumers and the
   migration gate are recorded in
   [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md).
-- **Next gate:** implement the effective-geometry record, correct the stale vertex-key ownership
-  comment, pin rejected rollback and accepted commit semantics, then run the release artifact and
-  interleaved counter gates.
+- **QUAL-001A effective-geometry result:** private `EffectiveGeometry` now owns positions, cell
+  spans, and the live index buffer from assembly through remapping. Reconciliation returns only its
+  diagnostics, local rebuilding mutates the owner without changing append/rollback behavior, and
+  assembly provenance remains separately named and intentionally partial. The artifact removed
+  1,484 text bytes, added 1,488 BSS bytes, retained data size, grew aggregate accounting by four
+  bytes, and reduced file size by 1,040 bytes. Seven counter pairs were neutral (mean
+  `1.000000038` instructions and `0.999998878` branches), with zero context switches and
+  migrations. This completes the planned QUAL-001A cold-state modeling slice.
+- **Next gate:** resume QUAL-001B at the local-rebuild overlay/materialization boundary. Reassess
+  the previously deferred live-layout migration now that effective arrays have one owner, while
+  retaining the measured raw-signature fallbacks wherever the optimizer cliff persists.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.
