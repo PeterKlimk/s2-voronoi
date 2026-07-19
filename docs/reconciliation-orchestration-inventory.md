@@ -1,6 +1,6 @@
 # Reconciliation Orchestration Inventory
 
-**Status:** first QUAL-001D round-state extraction selected, 2026-07-20
+**Status:** first QUAL-001D round-state extraction accepted, 2026-07-20
 
 This inventory covers reconciliation orchestration and state carried across its primary and
 backstop passes. It does not change reconciliation evidence, numeric policy, cell mutation,
@@ -137,3 +137,36 @@ switches and CPU migrations and ignore contaminated samples. Artifact sections/f
 `edge_reconcile` timing phase provide attribution; wall clock alone is not a decision criterion.
 Any repeatable clean-path regression rejects or narrows the extraction even if defect-path timing
 improves.
+
+## Result
+
+`ReconcileRunState` now owns the five cross-pass values selected above. Both primary and
+proximity-only fixpoint calls receive one mutable state reference instead of four independent
+accumulators. The state records changed-region cells and consumes itself to normalize the unchanged
+`ReconcileResult`. The zero-record branch and debug oracle remain textually before state
+construction, while the primary/backstop sequence and raw geometry arguments remain flattened.
+
+The direct rejected-component test now also consumes the run state through production
+finalization. Existing tests continue to pin changed and rejected-only resolution footprints, and
+the deterministic integration net retained strict validity, mismatch origins, and in-place/rebuild
+cycle agreement. The complete release, checked, no-default-feature, and all-feature Clippy gates
+passed.
+
+Against parent `37b0f65`, the matched release artifact removed 544 text bytes and 3,552 BSS bytes,
+kept data size unchanged, reduced aggregate section accounting by 4,096 bytes, and reduced file
+size by 616 bytes. Although that resembled an earlier optimizer-cliff fingerprint, the counter
+gates were neutral:
+
+- Seven 500k single-threaded Fibonacci pairs produced mean candidate/parent ratios of
+  `1.000003220` instructions and `1.000004729` branches, with ranges
+  `0.999993432..=1.000006944` and `0.999990748..=1.000013778`.
+- Seven approximately 100k single-threaded `cubed` pairs produced `1.000010264` instructions and
+  `1.000007825` branches, with ranges `0.999999243..=1.000032918` and
+  `0.999988724..=1.000041528`.
+- Five approximately 500k single-threaded `cubed` confirmation pairs produced `1.000003216`
+  instructions and `1.000004527` branches, with ranges `0.999999901..=1.000006197` and
+  `0.999998370..=1.000009988`.
+
+Every measured sample recorded zero context switches and CPU migrations. Wall clock was ignored on
+the busy host. The state owner is accepted; any further defect-body function extraction remains a
+separate measured slice.

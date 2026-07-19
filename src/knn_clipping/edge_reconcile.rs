@@ -292,6 +292,45 @@ struct MergeSafetyStats {
     global_fallbacks: usize,
 }
 
+/// Mutable bookkeeping shared by the primary and synthesized-backstop
+/// reconciliation passes. Constructed only after the empty-record fast path.
+#[derive(Default)]
+struct ReconcileRunState {
+    merge_ledger: MergeLedger,
+    local_rebuild_seed_pairs: Vec<(u32, u32)>,
+    merge_affected_cells: Vec<u32>,
+    resolution_scan_cells: Vec<u32>,
+    merge_safety: MergeSafetyStats,
+}
+
+impl ReconcileRunState {
+    fn record_changed_cells(&mut self, candidate_cells: &[u32]) {
+        self.resolution_scan_cells
+            .extend_from_slice(candidate_cells);
+    }
+
+    fn into_result(mut self, residual_pairs: Vec<(u32, u32)>) -> ReconcileResult {
+        self.local_rebuild_seed_pairs.sort_unstable();
+        self.local_rebuild_seed_pairs.dedup();
+        self.merge_affected_cells.sort_unstable();
+        self.merge_affected_cells.dedup();
+        if !self.resolution_scan_cells.is_empty() {
+            self.resolution_scan_cells
+                .extend_from_slice(&self.merge_affected_cells);
+        }
+        self.resolution_scan_cells.sort_unstable();
+        self.resolution_scan_cells.dedup();
+        ReconcileResult {
+            residual_pairs,
+            local_rebuild_seed_pairs: self.local_rebuild_seed_pairs,
+            merge_affected_cells: self.merge_affected_cells,
+            resolution_scan_cells: self.resolution_scan_cells,
+            merge_safety_scan_cells: self.merge_safety.scanned_cells,
+            merge_safety_global_fallbacks: self.merge_safety.global_fallbacks,
+        }
+    }
+}
+
 impl MergeLedger {
     fn expanded_members(&self, current_ids: &[u32]) -> Vec<u32> {
         let mut expanded = Vec::new();
@@ -453,33 +492,7 @@ pub(crate) fn reconcile_edge_mismatches(
     #[cfg(debug_assertions)]
     LiveCellLayout::new(cells, cell_indices).debug_assert_valid();
 
-    let mut merge_affected_cells: Vec<u32> = Vec::new();
-    let mut local_rebuild_seed_pairs: Vec<(u32, u32)> = Vec::new();
-    let mut merge_ledger = MergeLedger::default();
-    let done = |residual_pairs: Vec<(u32, u32)>,
-                mut local_rebuild_seed_pairs: Vec<(u32, u32)>,
-                mut affected: Vec<u32>,
-                mut resolution_scan_cells: Vec<u32>,
-                merge_safety: MergeSafetyStats| {
-        local_rebuild_seed_pairs.sort_unstable();
-        local_rebuild_seed_pairs.dedup();
-        affected.sort_unstable();
-        affected.dedup();
-        if !resolution_scan_cells.is_empty() {
-            resolution_scan_cells.extend_from_slice(&affected);
-        }
-        resolution_scan_cells.sort_unstable();
-        resolution_scan_cells.dedup();
-        ReconcileResult {
-            residual_pairs,
-            local_rebuild_seed_pairs,
-            merge_affected_cells: affected,
-            resolution_scan_cells,
-            merge_safety_scan_cells: merge_safety.scanned_cells,
-            merge_safety_global_fallbacks: merge_safety.global_fallbacks,
-        }
-    };
-    let mut merge_safety = MergeSafetyStats::default();
+    let mut state = ReconcileRunState::default();
     let primary_candidates = affected_cells_from_records(edge_records);
     let primary_changed = run_reconciliation_rounds(
         edge_records,
@@ -490,26 +503,15 @@ pub(crate) fn reconcile_edge_mismatches(
         degenerate_len_eps,
         options,
         MergeMode::Primary,
-        &mut merge_ledger,
-        &mut local_rebuild_seed_pairs,
-        &mut merge_affected_cells,
-        &mut merge_safety,
+        &mut state,
     )?;
-    let mut resolution_scan_cells = if primary_changed {
-        primary_candidates.clone()
-    } else {
-        Vec::new()
-    };
+    if primary_changed {
+        state.record_changed_cells(&primary_candidates);
+    }
 
     let unpaired = scan_unpaired_interior(cells, cell_indices, vertex_keys, &primary_candidates)?;
     if unpaired.is_empty() {
-        return Ok(done(
-            Vec::new(),
-            local_rebuild_seed_pairs,
-            merge_affected_cells,
-            resolution_scan_cells,
-            merge_safety,
-        ));
+        return Ok(state.into_result(Vec::new()));
     }
     let synth = synthesize_backstop_records(&unpaired, vertex_keys, cells.len());
     if !synth.is_empty() {
@@ -522,13 +524,10 @@ pub(crate) fn reconcile_edge_mismatches(
             degenerate_len_eps,
             options,
             MergeMode::ProximityOnly,
-            &mut merge_ledger,
-            &mut local_rebuild_seed_pairs,
-            &mut merge_affected_cells,
-            &mut merge_safety,
+            &mut state,
         )?;
         if synth_changed {
-            resolution_scan_cells.extend(affected_cells_from_records(&synth));
+            state.record_changed_cells(&affected_cells_from_records(&synth));
         }
     }
     // Residual scan covers both passes' touched regions.
@@ -537,15 +536,11 @@ pub(crate) fn reconcile_edge_mismatches(
     residual_candidates.sort_unstable();
     residual_candidates.dedup();
     let residual = scan_unpaired_interior(cells, cell_indices, vertex_keys, &residual_candidates)?;
-    Ok(done(
+    Ok(state.into_result(
         residual
             .iter()
             .map(|&(va, vb, owner)| cell_pair_for_unpaired(va, vb, owner, vertex_keys))
             .collect(),
-        local_rebuild_seed_pairs,
-        merge_affected_cells,
-        resolution_scan_cells,
-        merge_safety,
     ))
 }
 
@@ -676,12 +671,7 @@ fn run_reconciliation_rounds(
     degenerate_len_eps: f32,
     options: ReconcileOptions,
     mode: MergeMode,
-    merge_ledger: &mut MergeLedger,
-    local_rebuild_seed_pairs: &mut Vec<(u32, u32)>,
-    // Accumulates the cells whose spans a merge apply may rewrite (see
-    // `ReconcileResult::merge_affected_cells`); the caller sorts/dedups.
-    merge_affected_cells: &mut Vec<u32>,
-    merge_safety: &mut MergeSafetyStats,
+    state: &mut ReconcileRunState,
 ) -> Result<bool, crate::VoronoiError> {
     let mut any = false;
     // The only cells a round can need to touch are those named by the records.
@@ -718,11 +708,11 @@ fn run_reconciliation_rounds(
             cells,
             cell_indices,
             vertex_keys,
-            merge_ledger,
+            &mut state.merge_ledger,
             degenerate_len_eps,
         )?;
-        merge_safety.scanned_cells += round_merge_safety.scanned_cells;
-        merge_safety.global_fallbacks += round_merge_safety.global_fallbacks;
+        state.merge_safety.scanned_cells += round_merge_safety.scanned_cells;
+        state.merge_safety.global_fallbacks += round_merge_safety.global_fallbacks;
         if !rejected_components.is_empty() {
             record_rejected_component_seeds(
                 &rejected_components,
@@ -730,8 +720,8 @@ fn run_reconciliation_rounds(
                 cells,
                 cell_indices,
                 vertex_keys,
-                local_rebuild_seed_pairs,
-                merge_affected_cells,
+                &mut state.local_rebuild_seed_pairs,
+                &mut state.merge_affected_cells,
             )?;
         }
         let merged_changed = if merged == 0 {
@@ -743,7 +733,8 @@ fn run_reconciliation_rounds(
             // the rebuild backend tolerates synthetic fixtures without them.
             for v in uf.touched_ids() {
                 if let Some(key) = vertex_keys.get(v) {
-                    merge_affected_cells
+                    state
+                        .merge_affected_cells
                         .extend(key.iter().copied().filter(|&g| (g as usize) < cells.len()));
                 }
             }
@@ -2215,10 +2206,7 @@ mod tests {
         let mut cell_indices = vec![0, 1, 2, 3, 4, 5];
         let records = [edge_record(0, 1)];
         let before = cell_sequences(&cells, &cell_indices);
-        let mut ledger = MergeLedger::default();
-        let mut local_rebuild_seed_pairs = Vec::new();
-        let mut affected = Vec::new();
-        let mut merge_safety = MergeSafetyStats::default();
+        let mut state = ReconcileRunState::default();
 
         run_reconciliation_rounds(
             &records,
@@ -2229,18 +2217,14 @@ mod tests {
             eps,
             ReconcileOptions::with_apply(ReconcileApply::InPlace),
             MergeMode::Primary,
-            &mut ledger,
-            &mut local_rebuild_seed_pairs,
-            &mut affected,
-            &mut merge_safety,
+            &mut state,
         )
         .expect("chain reconciliation");
 
-        affected.sort_unstable();
-        affected.dedup();
+        let result = state.into_result(Vec::new());
         assert_eq!(cell_sequences(&cells, &cell_indices), before);
-        assert_eq!(local_rebuild_seed_pairs, [(0, 1)]);
-        assert_eq!(affected, [0, 1, 2, 3, 4]);
+        assert_eq!(result.local_rebuild_seed_pairs, [(0, 1)]);
+        assert_eq!(result.merge_affected_cells, [0, 1, 2, 3, 4]);
     }
 
     /// The localized BFS dup-scan must union the same components as the global

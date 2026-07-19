@@ -578,17 +578,20 @@ tasks and are not duplicated here.
   The stage is closed without a production candidate or benchmark. Retry only if a second consumer
   or a natural shared owner appears; details are in
   [`assembly-handoff-layout-inventory.md`](assembly-handoff-layout-inventory.md).
-- **QUAL-001D reconciliation inventory:** five values persist across primary and synthesized
-  backstop rounds: the merge ledger, rejected-component rebuild seeds, merge-affected cells,
-  mutation scan cells, and merge-safety counters. The selected first extraction groups only those
-  values in a defect-local run-state owner, replaces the finalizing closure, and shortens the round
-  API. It leaves the empty-record return, flattened pass sequence, allocations, option boundary,
-  and measured raw layout signatures unchanged. Exact semantics and the clean/active counter gates
-  are recorded in
+- **QUAL-001D reconciliation state result:** `ReconcileRunState` now owns the merge ledger,
+  rejected-component rebuild seeds, merge-affected cells, mutation scan cells, and merge-safety
+  counters shared across primary and synthesized backstop rounds. It replaces the finalizing
+  closure and four independently threaded accumulators while leaving the empty-record return,
+  flattened pass sequence, allocations, option boundary, and measured raw layout signatures
+  unchanged. Complete validation passed. Seven 500k Fibonacci pairs were neutral
+  (`1.000003220` instructions, `1.000004729` branches); active 100k `cubed` pairs were neutral
+  (`1.000010264`, `1.000007825`), as were five 500k `cubed` confirmations (`1.000003216`,
+  `1.000004527`). All samples had zero switches/migrations. The artifact removed 544 text bytes,
+  3,552 BSS bytes, and 616 file bytes. Details are in
   [`reconciliation-orchestration-inventory.md`](reconciliation-orchestration-inventory.md).
-- **Next gate:** implement the reconciliation run-state owner as one measured slice; reject or
-  narrow it on any repeatable 500k Fibonacci clean-path regression, and require neutral active-path
-  counters on deterministic `cubed` input.
+- **Next gate:** inventory the defect-body function boundary now exposed by `ReconcileRunState`,
+  keeping the zero-record return in the entry and treating any helper extraction as a separate
+  clean/active counter experiment.
 - **Later milestones:** split reconciliation, local-rebuild, assembly, and packed-query phase
   programs one measured change at a time.
 - **Gate:** every production refactor preserves semantic fingerprints and passes the affected

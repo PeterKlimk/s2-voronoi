@@ -1156,6 +1156,30 @@ The final live-layout stage was inventoried on 2026-07-20 and closed without a p
   so no runtime measurement was warranted. Retry only if a second consumer or natural shared owner
   creates a real ownership lifetime.
 
+## QUAL-001D reconciliation run state
+
+The first reconciliation-orchestration extraction was accepted on 2026-07-20 against immediate
+parent `37b0f65`.
+
+- Private `ReconcileRunState` owns the merge ledger, rejected-component rebuild seeds,
+  merge-affected cells, mutation scan cells, and merge-safety counters shared across the primary
+  and synthesized-backstop fixpoints.
+- `run_reconciliation_rounds` receives one state reference instead of four independently pairable
+  mutable accumulators, and consuming finalization replaces the local result-building closure.
+- The empty-record release return and checked detection-completeness oracle remain before state
+  construction. Primary/backstop order, options, allocations, raw cell-layout signatures, numeric
+  policy, apply backends, and `ReconcileResult` are unchanged.
+- Complete release, checked, no-default-feature, and all-feature Clippy gates passed, including the
+  real-defect reconciliation net and in-place/full-rebuild differential.
+- The artifact removed 544 text bytes and 3,552 BSS bytes, retained data size, reduced aggregate
+  accounting by 4,096 bytes, and reduced file size by 616 bytes.
+- Seven 500k single-threaded Fibonacci pairs were neutral: mean candidate/parent ratios were
+  `1.000003220` instructions and `1.000004729` branches. Seven approximately 100k `cubed` pairs
+  were also neutral at `1.000010264` and `1.000007825`; five approximately 500k `cubed`
+  confirmation pairs measured `1.000003216` and `1.000004527`.
+- Every counter sample recorded zero context switches and CPU migrations. Wall clock was ignored
+  on the busy host.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

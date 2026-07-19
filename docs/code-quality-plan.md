@@ -415,14 +415,15 @@ for an ordinary success gate that did not previously need them.
 
 **Hot-path impact expected:** must be proven neutral
 
-**Progress:** the first reconciliation boundary is inventoried in
+**Progress:** the first reconciliation boundary is accepted and recorded in
 [`reconciliation-orchestration-inventory.md`](reconciliation-orchestration-inventory.md). The
-selected slice introduces one defect-local run-state owner for the merge ledger, rebuild seeds,
+implementation introduces one defect-local run-state owner for the merge ledger, rebuild seeds,
 merge-affected cells, mutation scan cells, and merge-safety counters shared across primary and
 backstop rounds. It replaces the finalizing closure and four independently threaded accumulators
 without moving the primary/backstop control flow. The empty-record return remains before state
-construction, and measured raw cell-layout signatures remain unchanged. Clean Fibonacci and active
-`cubed` counters are both required.
+construction, and measured raw cell-layout signatures remain unchanged. Complete validation passed;
+clean Fibonacci and active 100k/500k `cubed` counters were neutral. The artifact removed 544 text
+bytes, 3,552 BSS bytes, and 616 file bytes.
 
 Apply one phase extraction at a time:
 
