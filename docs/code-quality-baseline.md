@@ -1111,6 +1111,32 @@ The fourth accepted live-layout slice was validated on 2026-07-20 against immedi
   of that test did not trigger the overlay. Direct overlay tests and the production rebuild suites
   retain semantic coverage until a natural accepted-splice workload is available.
 
+## QUAL-001B rejected effective-validation layout
+
+The effective-validation migration was measured on 2026-07-20 against immediate parent
+`7c70983` and fully reverted.
+
+- The full form passed `LiveCellLayout` from the local-rebuild candidate transaction through
+  `verify_sphere_effective_strict` and its parallel cell scan. It preserved exact error ordering,
+  messages, malformed-span rejection, capacity, and transaction behavior; the complete release,
+  checked, no-default-feature, and all-feature Clippy gates passed.
+- Seven 500k single-threaded Fibonacci pairs all regressed. Mean candidate/parent ratios were
+  `1.001290682` instructions and `1.013601256` branches, with ranges
+  `1.001285718..=1.001295949` and `1.013587754..=1.013614888`.
+- Restoring the raw four-slice verifier ABI while retaining one layout only inside the private scan
+  did not change the result: `1.001293695` instructions and `1.013603930` branches, ranges
+  `1.001289474..=1.001299176` and `1.013599255..=1.013611676`.
+- Restoring the validator completely and retaining only overflow-safe `checked_span` hardening also
+  reproduced it: `1.001294912` instructions and `1.013604706` branches, ranges
+  `1.001284480..=1.001299841` and `1.013583502..=1.013616981`.
+- The isolated hardening produced the familiar optimizer-cliff artifact fingerprint: text fell 364
+  bytes, BSS fell 3,744 bytes, aggregate accounting fell 4,108 bytes, and the executable file grew
+  368 bytes. Every sample in all three experiments recorded zero context switches and CPU
+  migrations; wall clock was ignored on the busy host.
+- All production changes were reverted. The effective gate retains its raw portable checked-add
+  expression, and `LiveCellLayout::checked_span` remains limited to current internal valid-layout
+  callers. Retry only after a material compiler or surrounding-codegen change.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

@@ -327,13 +327,15 @@ neutral. No deterministic mega fixture currently reaches the overlay—the same 
 with rebuilding disabled—so no triggered counter result is claimed. This does not reopen any
 rejected reconciliation signature.
 
-The effective-validation boundary inventory is complete in
-[`effective-validation-layout-inventory.md`](effective-validation-layout-inventory.md). The
-selected migration pairs only the effective gate's cell records and backing indices, preserving
-its independent generator-cardinality check, candidate-vertex transaction, parallel rank ordering,
-and static reasons. Before routing malformed spans through the view, `checked_span` must gain an
-explicit end-overflow outcome so the current checked-add release behavior remains portable. This
-does not reopen QUAL-001C's rejected shared-enum, weld-predicate, or common-traversal experiments.
+The effective-validation boundary experiment is closed in
+[`effective-validation-layout-inventory.md`](effective-validation-layout-inventory.md). The full
+caller-to-scan layout, an internal-scan-only form, and isolated checked-span overflow hardening all
+reproduced the same clean-path optimizer cliff (about `+0.129%` instructions and `+1.360%`
+branches in every pair). All production changes were reverted. The effective gate retains its raw
+checked-add span expression, independent generator-cardinality check, candidate-vertex transaction,
+parallel rank ordering, and static reasons. This result reinforces QUAL-001C's retained local
+validation expressions without reopening its shared-enum, weld-predicate, or common-traversal
+experiments.
 
 Introduce a small internal view/owner around cells and their backing index buffer. The abstraction
 should provide:

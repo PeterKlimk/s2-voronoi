@@ -1,6 +1,6 @@
 # Effective Validation Layout Boundary Inventory
 
-**Status:** one representation-preserving QUAL-001B migration selected, 2026-07-20
+**Status:** migration and narrower variants measured and rejected, 2026-07-20
 
 This inventory covers the fourth QUAL-001B migration stage: the live cell layout consumed by the
 whole-effective-diagram strict gate. It does not reopen QUAL-001C's closed validation-fact
@@ -134,3 +134,58 @@ changes perturbed clean-path codegen. Compare release section and file sizes. An
 run is required only if a deterministic workload actually enters local rebuilding; the current
 100k mega fixtures do not. Any repeatable clean-path regression rejects the migration or requires
 a smaller seam.
+
+## Measured result
+
+All production changes were reverted. Three forms were measured against parent `7c70983`; every
+seven-pair matrix reproduced the same clean-path optimizer cliff despite the effective gate being
+cold on the Fibonacci workload.
+
+### Full boundary
+
+The selected form passed `LiveCellLayout` from the local-rebuild candidate transaction through
+`verify_sphere_effective_strict` and its private parallel scan. It also made checked span addition
+overflow-safe as specified above.
+
+- Mean candidate/parent ratios were `1.001290682` instructions and `1.013601256` branches.
+- Pair ranges were `1.001285718..=1.001295949` and `1.013587754..=1.013614888`; every pair
+  regressed.
+- The release artifact added 332 text bytes, removed 24 data bytes and 312 BSS bytes, reduced
+  aggregate accounting by four bytes, and grew the file by 848 bytes.
+
+### Internal-only layout
+
+The outer verifier ABI was restored to the original four slices. The verifier constructed one
+layout internally and passed it only through `scan_cells_strict`.
+
+- Mean ratios were `1.001293695` instructions and `1.013603930` branches.
+- Pair ranges were `1.001289474..=1.001299176` and `1.013599255..=1.013611676`; every pair
+  regressed.
+- The artifact added 356 text bytes, removed 24 data bytes and 328 BSS bytes, grew aggregate
+  accounting by four bytes, and grew the file by 928 bytes.
+
+This rules out the outer call signature as the cause. Routing the effective scan through the
+checked layout accessor is sufficient to perturb ordinary codegen.
+
+### Overflow-safe checked accessor only
+
+The validator and scan were restored completely. The remaining candidate only added the typed
+span-end-overflow outcome, checked addition in `checked_span`/the checked-build audit, controlled
+reconciliation error mapping, and 32-bit-only coverage.
+
+- Mean ratios were `1.001294912` instructions and `1.013604706` branches.
+- Pair ranges were `1.001284480..=1.001299841` and `1.013583502..=1.013616981`; every pair
+  regressed.
+- The artifact removed 364 text bytes and 3,744 BSS bytes, reduced aggregate accounting by 4,108
+  bytes, and grew the file by 368 bytes—the characteristic section-layout fingerprint seen in
+  earlier rejected layout experiments.
+
+All samples across all forms recorded zero context switches and CPU migrations. Wall clock was
+ignored on the busy host.
+
+The original effective validator already retains portable `checked_add` malformed-span rejection.
+`LiveCellLayout::checked_span` remains appropriate only for its current internal layouts, whose
+u32/u16 span arithmetic is representable on the measured 64-bit target; it must not replace the
+effective validator's raw checked expression. Revisit only after a material compiler or surrounding
+codegen change. The final QUAL-001B assembly-handoff stage remains independent and may still be
+inventoried.

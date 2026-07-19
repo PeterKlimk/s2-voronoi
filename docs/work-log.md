@@ -563,9 +563,16 @@ tasks and are not duplicated here.
   an explicit checked-span end-overflow error so 32-bit malformed input retains the gate's current
   checked-add behavior. The boundary, rejected shapes, and gate are recorded in
   [`effective-validation-layout-inventory.md`](effective-validation-layout-inventory.md).
-- **Next gate:** implement the overflow-safe checked layout operation and effective-gate migration
-  as one measured slice; retain exact error rank/strings and revert on a repeatable clean-path
-  counter regression.
+- **QUAL-001B effective-validation decision:** the full caller-to-scan layout regressed clean
+  Fibonacci counters in all seven pairs (`1.001290682` instructions, `1.013601256` branches).
+  Restoring the raw outer ABI and typing only the private scan reproduced the result
+  (`1.001293695`, `1.013603930`). Restoring the validator completely and retaining only
+  overflow-safe checked-span hardening also reproduced it (`1.001294912`, `1.013604706`) with the
+  familiar BSS-collapse fingerprint. All samples had zero switches/migrations; all production
+  changes were reverted. Keep the effective gate's raw checked-add traversal until compiler or
+  surrounding codegen changes materially.
+- **Next gate:** inventory the final QUAL-001B assembly-handoff boundary without reopening the
+  measured effective-validation or reconciliation signatures.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.
