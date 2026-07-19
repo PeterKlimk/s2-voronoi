@@ -488,8 +488,15 @@ tasks and are not duplicated here.
 - **QUAL-001C weld-oracle result:** a corrupt alias fixture now pins the fast gate's exact
   `"weld map"` reason and the accumulating report's matching welded-twin/issue counts. The change is
   test-only and the complete release artifact is byte-identical to parent.
-- **Next gate:** share only the duplicated weld-alias consistency predicate while retaining the
-  fast gate's early return and the report's accumulating count.
+- **QUAL-001C weld-predicate decision:** an inline shared predicate preserved the fast gate's early
+  return and the report's accumulating count, but reproduced the optimizer cliff in all seven
+  pairs: +0.16037% instructions and +1.66184% branches, with zero context switches and migrations.
+  The helper was reverted and the restored artifact matches parent exactly.
+- **QUAL-001C boundary:** differential reason coverage and the profitable shared facts are complete.
+  Remaining scan duplication expresses different traversal policy or has failed the counter gate;
+  stop mechanical validation extraction here.
+- **Next gate:** inventory the remaining correlated cold lifecycle state for QUAL-001A and choose
+  the first enum boundary, starting with local-rebuild outcomes.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

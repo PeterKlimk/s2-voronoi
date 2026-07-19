@@ -348,8 +348,10 @@ cliff (+0.1866% instructions and +1.6622% branches). The structurally dominated 
 branches have now been removed; direct coverage retains the accumulating report's independent
 telemetry. This reduced text/BSS/file size with neutral release counters. Before sharing any
 weld-specific fact, fast-gate/report agreement on a corrupt weld map is now pinned: the gate keeps
-its exact reason and the report counts the same bad alias. The next measured slice may share only
-the weld-alias consistency predicate, retaining the consumers' distinct stopping/counting policy.
+its exact reason and the report counts the same bad alias. Sharing only the weld-alias consistency
+predicate was then rejected after it reproduced the optimizer cliff (+0.1604% instructions and
++1.6618% branches). QUAL-001C is closed at that measured boundary: shared fact primitives and
+differential coverage remain, while codegen-sensitive traversal expressions stay local.
 
 1. Define shared cell and edge issue classifications, including stable internal reason enums rather
    than repeated string literals.

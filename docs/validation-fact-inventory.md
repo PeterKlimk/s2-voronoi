@@ -120,7 +120,7 @@ boundary, overused, and same-direction edge counters. The weld-map comparison re
 outside the effective domain; its fast reason and accumulating counts are now pinned by one shared
 corrupt-alias fixture.
 
-## Accepted decisions and next gate
+## Accepted decisions and measured boundary
 
 The typed edge-use classification was accepted after the no-weld differential matrix and report
 subclass controls were independent. It is allocation-free and preserves all consumer outputs. The
@@ -137,6 +137,12 @@ independent self-loop telemetry, now pinned directly. The release artifact becam
 instruction/branch counter pairs remained neutral.
 
 The corrupt-weld oracle now pins the fast gate's exact reason and the report's matching alias/issue
-counts. The next narrow candidate is sharing only the duplicated weld-alias consistency predicate.
-Keep the fast gate's early return and the report's accumulating count separate; the effective
-validator intentionally has no weld input.
+counts. A shared inline weld-alias consistency predicate was then tested while keeping the fast
+gate's early return and the report's accumulating count separate. It reproduced the optimizer
+cliff: +0.1604% instructions and +1.6618% branches across seven clean counter pairs, so the source
+was reverted.
+
+QUAL-001C stops here. The semantic facts with profitable shared forms remain centralized; the three
+consumers retain their distinct traversal and reporting policies, and codegen-sensitive expressions
+stay local. Revisit only if surrounding codegen changes materially or a new invariant requires a
+shared contract.

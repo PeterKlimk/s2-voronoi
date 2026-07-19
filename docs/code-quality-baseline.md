@@ -982,6 +982,23 @@ The weld-specific policy boundary was pinned on 2026-07-19 against immediate par
   `8613a4c080929a18d960e93da2212f18d0be8b2c6c415cf0979d9d1e641eb946` and file size `2,998,984`
   bytes exactly, so no counter comparison was warranted.
 
+## QUAL-001C shared weld-predicate experiment
+
+The proposed weld-alias predicate was rejected on 2026-07-19 against immediate parent `2db1ffc`.
+
+- One inline helper owned the canonical-target and identical-boundary checks duplicated by the fast
+  and accumulating validators. Both callers retained their existing traversal, twin count, and
+  fail-fast versus accumulating behavior; the weld-policy oracle passed.
+- The release `tools` artifact changed from `2,183,164` to `2,183,216` text bytes, from `55,512` to
+  `55,464` data bytes, from `472` to `488` BSS bytes, and from `2,998,984` to `2,999,264` file bytes.
+- Across seven interleaved 500k single-threaded Fibonacci counter pairs, mean candidate/parent
+  ratios were `1.001603680` instructions and `1.016618430` branches, with pair ranges
+  `1.001600829..=1.001607581` and `1.016615165..=1.016621164`. Every pair regressed; every sample
+  recorded zero context switches and CPU migrations.
+- The helper was reverted. Rebuilding restored parent SHA-256
+  `8613a4c080929a18d960e93da2212f18d0be8b2c6c415cf0979d9d1e641eb946`; the duplicated local
+  expression remains the measured Pareto choice.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
