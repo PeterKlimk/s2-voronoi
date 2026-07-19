@@ -1037,6 +1037,28 @@ The second lifecycle-state migration was accepted on 2026-07-19 against immediat
   `0.999995682..=1.000005031` and `0.999995948..=1.000011936`. There was no directional regression;
   every sample recorded zero context switches and CPU migrations.
 
+## QUAL-001A effective-input ownership
+
+The third lifecycle-state migration was accepted on 2026-07-19 against immediate parent
+`a7595c2`.
+
+- Private `EffectiveInput` has exactly identity and merged states. The identity state borrows the
+  canonicalized original points; the merged state owns the complete `MergeResult`, including its
+  representative points and original-to-effective map.
+- `PipelineState` no longer contains independently optional effective points and merge metadata.
+  The preparation phase returns a named `PreparedPointsAndGrid` record instead of an ambiguous
+  four-element tuple. Preprocess report counts derive from the effective-input owner.
+- A direct test pins disabled, weld-with-no-merge, and actual-merge preparation. The complete
+  release, checked, no-default-feature, and all-feature Clippy gates passed, including existing API
+  coverage for effective diagrams, standalone large-threshold welding, and final remapping.
+- The matched release `tools` artifact changed from `2,181,431` to `2,180,775` text bytes, retained
+  `55,456` data bytes, changed from `2,259` to `2,915` BSS bytes, retained aggregate size
+  `2,239,146`, and shrank from `2,995,584` to `2,994,920` file bytes.
+- Across seven interleaved 500k single-threaded Fibonacci counter pairs, mean candidate/parent
+  ratios were `0.999998159` instructions and `0.999998587` branches, with pair ranges
+  `0.999993028..=1.000001173` and `0.999987382..=1.000003031`. There was no directional regression;
+  every sample recorded zero context switches and CPU migrations.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

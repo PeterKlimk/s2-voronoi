@@ -517,8 +517,16 @@ tasks and are not duplicated here.
   identity state continues to borrow original points without retained duplicate storage. Exact
   consumers and the migration gate are recorded in
   [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md).
-- **Next gate:** implement the effective-input owner and named preparation record, pin disabled,
-  no-merge, and actual-merge outcomes, then run the release artifact and interleaved counter gates.
+- **QUAL-001A effective-input result:** `EffectiveInput` now owns either identity state or the
+  complete `MergeResult`; representative points are no longer moved out and paired with independent
+  optional metadata. `PreparedPointsAndGrid` is a named record, and a direct contract test pins
+  disabled, no-merge, and actual-merge outcomes. The matched release artifact kept aggregate size
+  at `2,239,146` bytes, moved 656 bytes from text to BSS, and reduced file size by 664 bytes. Seven
+  counter pairs were neutral (mean `0.999998159` instructions and `0.999998587` branches), with
+  zero context switches and migrations.
+- **Next gate:** inventory the effective geometry vectors whose ownership and meaning change when
+  local rebuilding commits, then choose the smallest phase record that makes that transition
+  explicit without widening per-cell state.
 - **Later milestones:** continue the live cell-layout migration, share validation facts while retaining
   specialized traversals, complete the deferred lifecycle state enums, and split reconciliation,
   local-rebuild, assembly, and packed-query phase programs one measured change at a time.

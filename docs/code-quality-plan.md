@@ -153,12 +153,10 @@ state objects can alter inlining, alias analysis, and cache behavior.
 
 ### F5 — Correlated fields permit impossible states
 
-The local-rebuild attempted/accepted pair and the exact-inverse resolution-discovery booleans were
-resolved by the first two QUAL-001A state migrations. Remaining examples include:
-
-- `effective_points: Option<_>` and `merge_result: Option<_>`, which describe one preprocessing
-  choice but can theoretically disagree; and
-- multiple raw vectors in `PipelineState` whose meaning changes after a local rebuild is accepted.
+The local-rebuild attempted/accepted pair, exact-inverse resolution-discovery booleans, and split
+effective-input/merge-result ownership were resolved by the first three QUAL-001A state
+migrations. The remaining example is the group of raw vectors in `PipelineState` whose meaning
+changes after a local rebuild is accepted.
 
 Cold orchestration should use enums or phase-owned records so invalid combinations cannot be
 constructed. This is not a request to replace compact hot-path flags where their representation is
@@ -265,10 +263,11 @@ names derive identical values from status methods. Seven release counter pairs w
 state-enum and fact/action work in items 4–5 remains in Milestone 2 and will follow as separate
 measured commits. The second migration replaces the exact-inverse resolution-discovery booleans
 with `ResolutionDiscoveryMode`; timing derives the existing two KV values from one fallback bit.
-It retained identical aggregate/file size and neutral release counters. The third boundary is now
-inventoried: identity input and an actual merged result will be variants of one effective-input
-owner, with `MergeResult` retaining its representative points. A named preparation record will
-replace the current tuple of two correlated `Option`s, report, and grid.
+It retained identical aggregate/file size and neutral release counters. The third migration is now
+implemented: identity input and an actual merged result are variants of one effective-input owner,
+with `MergeResult` retaining its representative points. A named preparation record replaces the
+former tuple of two correlated `Option`s, report, and grid. Aggregate artifact size was unchanged,
+file size fell by 664 bytes, and seven release counter pairs were neutral.
 
 1. Add the stage glossary above to `docs/architecture.md` and inventory the public/internal names
    that map to each stage.

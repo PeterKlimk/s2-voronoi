@@ -32,8 +32,7 @@ const LOCAL_REBUILD_MAX_ROUNDS: usize = 12;
 /// lands in the same timing report.
 struct PipelineState {
     points: Vec<Vec3>,
-    effective_points: Option<Vec<Vec3>>,
-    merge_result: Option<MergeResult>,
+    effective_input: EffectiveInput,
     preprocess_report: PreprocessReport,
     vertices: Vec<Vec3>,
     eff_cells: Vec<VoronoiCell>,
@@ -48,10 +47,50 @@ struct PipelineState {
 }
 
 impl PipelineState {
+    #[cfg(test)]
     fn effective_points_ref(&self) -> &[Vec3] {
-        match &self.effective_points {
-            Some(v) => v.as_slice(),
-            None => self.points.as_slice(),
+        self.effective_input.points(&self.points)
+    }
+
+    fn merge_result(&self) -> Option<&MergeResult> {
+        self.effective_input.merge_result()
+    }
+}
+
+/// The point set selected by preprocessing. Identity input borrows the
+/// canonicalized original points; only an actual merge owns representatives
+/// and the map needed to expand their cells back to original generators.
+enum EffectiveInput {
+    Identity,
+    Merged(MergeResult),
+}
+
+impl EffectiveInput {
+    fn points<'a>(&'a self, original_points: &'a [Vec3]) -> &'a [Vec3] {
+        match self {
+            Self::Identity => original_points,
+            Self::Merged(result) => &result.effective_points,
+        }
+    }
+
+    fn merge_result(&self) -> Option<&MergeResult> {
+        match self {
+            Self::Identity => None,
+            Self::Merged(result) => Some(result),
+        }
+    }
+
+    fn effective_len(&self, original_len: usize) -> usize {
+        match self {
+            Self::Identity => original_len,
+            Self::Merged(result) => result.effective_points.len(),
+        }
+    }
+
+    fn num_merged(&self) -> usize {
+        match self {
+            Self::Identity => 0,
+            Self::Merged(result) => result.num_merged,
         }
     }
 }
@@ -183,13 +222,13 @@ fn run_core_pipeline(
     validate_preprocess_mode(preprocess_mode)?;
     let mut tb = TimingBuilder::new();
 
-    let (effective_points, merge_result, preprocess_report, mut grid) =
-        prepare_points_and_grid(&points, preprocess_mode, &mut tb)?;
+    let PreparedPointsAndGrid {
+        effective_input,
+        report: preprocess_report,
+        mut grid,
+    } = prepare_points_and_grid(&points, preprocess_mode, &mut tb)?;
 
-    let effective_points_ref: &[Vec3] = match &effective_points {
-        Some(v) => v.as_slice(),
-        None => points.as_slice(),
-    };
+    let effective_points_ref = effective_input.points(&points);
 
     grid.release_point_slots();
     let point_cell_storage = grid.take_point_cells();
@@ -198,7 +237,7 @@ fn run_core_pipeline(
         effective_points_ref,
         &grid,
         point_cell_storage,
-        merge_result.as_ref(),
+        effective_input.merge_result(),
         &mut tb,
     )?;
     let assembled = assemble_shards(sharded, &mut tb)?;
@@ -295,8 +334,7 @@ fn run_core_pipeline(
     );
     Ok(PipelineState {
         points,
-        effective_points,
-        merge_result,
+        effective_input,
         preprocess_report,
         vertices,
         eff_cells,
@@ -324,7 +362,7 @@ fn enforce_cell_killing_policy(
         CellKillingPolicy::Error => {}
     }
 
-    let generator_indices = if let Some(merge) = &state.merge_result {
+    let generator_indices = if let Some(merge) = state.merge_result() {
         merge
             .original_to_effective
             .iter()
@@ -376,7 +414,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     let t = Timer::start();
     let (cells, cell_indices, weld_map) = remap_cells_to_original_indices(
         &state.points,
-        state.merge_result.as_ref(),
+        state.effective_input.merge_result(),
         state.eff_cells,
         state.eff_cell_indices,
     );
@@ -500,23 +538,21 @@ fn compute_voronoi_knn_clipping_report_core(
         }
     }
 
-    let effective_diagram = if state.merge_result.is_some() {
-        Some(crate::SphericalVoronoi::from_raw_parts(
-            state.effective_points_ref().to_vec(),
+    let effective_diagram = state.merge_result().map(|merge| {
+        crate::SphericalVoronoi::from_raw_parts(
+            merge.effective_points.clone(),
             state.vertices.clone(),
             state.eff_cells.clone(),
             state.eff_cell_indices.clone(),
             None,
-        ))
-    } else {
-        None
-    };
+        )
+    });
     let effective_validation = effective_diagram.as_ref().map(crate::validation::validate);
 
     let t = Timer::start();
     let (cells, cell_indices, weld_map) = remap_cells_to_original_indices(
         &state.points,
-        state.merge_result.as_ref(),
+        state.effective_input.merge_result(),
         state.eff_cells,
         state.eff_cell_indices,
     );
@@ -1455,12 +1491,11 @@ fn dvec(p: Vec3) -> DVec3 {
     DVec3::new(p.x as f64, p.y as f64, p.z as f64)
 }
 
-type PreparedPointsAndGrid = (
-    Option<Vec<Vec3>>,
-    Option<MergeResult>,
-    PreprocessReport,
-    CubeMapGrid,
-);
+struct PreparedPointsAndGrid {
+    effective_input: EffectiveInput,
+    report: PreprocessReport,
+    grid: CubeMapGrid,
+}
 
 fn prepare_points_and_grid(
     points: &[Vec3],
@@ -1476,8 +1511,7 @@ fn prepare_points_and_grid(
     let (mut grid, mut dense_index_eligible) = build_query_grid(points, tb, threshold.is_some());
 
     let t = Timer::start();
-    let mut effective_points = None;
-    let mut merge_result = None;
+    let mut effective_input = EffectiveInput::Identity;
     if let Some(threshold) = threshold {
         if threshold <= grid.max_grid_weld_threshold() {
             let pairs = grid
@@ -1491,20 +1525,18 @@ fn prepare_points_and_grid(
                 })?;
             tb.set_weld_pair_stats(pairs.len(), pairs.capacity());
             if !pairs.is_empty() {
-                let (mut result, kept) = super::preprocess::merge_result_from_pairs(points, &pairs);
+                let (result, kept) = super::preprocess::merge_result_from_pairs(points, &pairs);
                 grid.compact_welded(
                     &kept,
                     &result.original_to_effective,
                     result.effective_points.len(),
                 );
-                let pts = std::mem::take(&mut result.effective_points);
-                effective_points = Some(pts);
-                merge_result = Some(result);
+                effective_input = EffectiveInput::Merged(result);
             }
         } else {
             // Radius too large for grid adjacency (large `MergeWithin`):
             // standalone detector, then rebuild the grid on the survivors.
-            let mut result = try_merge_close_points(points, threshold).map_err(|coincident_pairs| {
+            let result = try_merge_close_points(points, threshold).map_err(|coincident_pairs| {
                 crate::VoronoiError::DegenerateInput {
                     coincident_pairs,
                     message: format!(
@@ -1514,10 +1546,8 @@ fn prepare_points_and_grid(
                 }
             })?;
             if result.num_merged > 0 {
-                let pts = std::mem::take(&mut result.effective_points);
-                (grid, dense_index_eligible) = build_query_grid(&pts, tb, true);
-                effective_points = Some(pts);
-                merge_result = Some(result);
+                (grid, dense_index_eligible) = build_query_grid(&result.effective_points, tb, true);
+                effective_input = EffectiveInput::Merged(result);
             }
             grid.finalize_slot_points();
         }
@@ -1538,10 +1568,14 @@ fn prepare_points_and_grid(
         requested_mode: preprocess_mode,
         threshold_used: threshold,
         original_points: points.len(),
-        effective_points: effective_points.as_ref().map_or(points.len(), |p| p.len()),
-        num_merged: merge_result.as_ref().map_or(0, |m| m.num_merged),
+        effective_points: effective_input.effective_len(points.len()),
+        num_merged: effective_input.num_merged(),
     };
-    Ok((effective_points, merge_result, report, grid))
+    Ok(PreparedPointsAndGrid {
+        effective_input,
+        report,
+        grid,
+    })
 }
 
 fn max_cell_occupancy(grid: &crate::cube_grid::CubeMapGrid) -> usize {
@@ -1776,18 +1810,72 @@ mod tests {
     use super::{
         build_query_grid, canonicalize_pipeline_exact_zero_edges, cell_sum_sq_per_n,
         check_plain_return_signals, classify_exact_affine_circle, classify_near_great_circle,
-        map_build_cells_error, map_cell_build_error, max_cell_occupancy, run_core_pipeline,
-        stable_rank2_normal, summarize_topology, validate_and_canonicalize_unit_points,
-        validate_generator_capacity, LocalRebuildOutcome, ResolutionDiscoveryMode,
+        map_build_cells_error, map_cell_build_error, max_cell_occupancy, prepare_points_and_grid,
+        run_core_pipeline, stable_rank2_normal, summarize_topology,
+        validate_and_canonicalize_unit_points, validate_generator_capacity, EffectiveInput,
+        LocalRebuildOutcome, ResolutionDiscoveryMode,
     };
     use crate::diagram::VoronoiCell;
     use crate::live_dedup::{BuildCellsError, PackedLayoutCapacityError, ShardedVertexKeys};
     use crate::live_dedup::{CellBuildError, CellFailure};
+    use crate::timing::TimingBuilder;
     use crate::{
         LocalRebuildMode, LocalRebuildReport, LocalRebuildStatus, PreprocessMode, VoronoiConfig,
         VoronoiError,
     };
     use glam::Vec3;
+
+    fn separated_preprocess_points() -> Vec<Vec3> {
+        let unit = |x: f32, y: f32, z: f32| Vec3::new(x, y, z).normalize();
+        vec![
+            unit(1.0, 1.0, 1.0),
+            unit(-1.0, -1.0, 1.0),
+            unit(-1.0, 1.0, -1.0),
+            unit(1.0, -1.0, -1.0),
+        ]
+    }
+
+    #[test]
+    fn prepared_input_owns_only_actual_merges() {
+        let points = separated_preprocess_points();
+
+        for mode in [PreprocessMode::Disabled, PreprocessMode::Weld] {
+            let mut tb = TimingBuilder::new();
+            let prepared = prepare_points_and_grid(&points, mode, &mut tb)
+                .expect("separated points should prepare without merging");
+            assert!(matches!(
+                &prepared.effective_input,
+                EffectiveInput::Identity
+            ));
+            assert!(std::ptr::eq(
+                prepared.effective_input.points(&points).as_ptr(),
+                points.as_ptr()
+            ));
+            assert_eq!(prepared.report.requested_mode, mode);
+            assert_eq!(prepared.report.original_points, points.len());
+            assert_eq!(prepared.report.effective_points, points.len());
+            assert_eq!(prepared.report.num_merged, 0);
+        }
+
+        let mut duplicated = points;
+        duplicated.push(duplicated[0]);
+        let mut tb = TimingBuilder::new();
+        let prepared = prepare_points_and_grid(&duplicated, PreprocessMode::Weld, &mut tb)
+            .expect("exact duplicate should prepare as one merged input");
+        let EffectiveInput::Merged(merge) = &prepared.effective_input else {
+            panic!("actual merge must own one complete merge result");
+        };
+        assert_eq!(merge.effective_points.len(), duplicated.len() - 1);
+        assert_eq!(merge.original_to_effective.len(), duplicated.len());
+        assert_eq!(
+            merge.original_to_effective[0],
+            merge.original_to_effective[duplicated.len() - 1]
+        );
+        assert_eq!(merge.num_merged, 1);
+        assert_eq!(prepared.report.original_points, duplicated.len());
+        assert_eq!(prepared.report.effective_points, duplicated.len() - 1);
+        assert_eq!(prepared.report.num_merged, 1);
+    }
 
     fn zero_edge_cube_fixture() -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>, ShardedVertexKeys) {
         let unit = |x: f32, y: f32, z: f32| Vec3::new(x, y, z).normalize();
@@ -1927,8 +2015,7 @@ mod tests {
         )
         .expect("welded extension should reach output resolution");
         let merge = welded_state
-            .merge_result
-            .as_ref()
+            .merge_result()
             .expect("duplicate generator should be welded");
         let welded_elision = super::output_resolution::elide_exact_zero_cells_for_mesh(
             welded_state.effective_points_ref(),

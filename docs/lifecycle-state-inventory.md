@@ -1,7 +1,6 @@
 # Lifecycle State Inventory
 
-**Status:** QUAL-001A first two state-model migrations implemented; effective-input boundary
-inventoried, 2026-07-19
+**Status:** QUAL-001A first three state-model migrations implemented, 2026-07-19
 
 This inventory identifies the first correlated cold state to replace with an enum. It records the
 current behavior before changing representation; geometry, trigger policy, validation, and report
@@ -125,9 +124,9 @@ presence.
 `PreprocessReport::effective_points` and `num_merged` are observations of the same decision. They
 must be derived from its owner rather than used as another source of truth.
 
-### Selected boundary
+### Implemented boundary
 
-Use one cold orchestration enum, provisionally `EffectiveInput`, with two variants:
+One cold orchestration enum, `EffectiveInput`, now has two variants:
 
 ```rust,ignore
 enum EffectiveInput {
@@ -136,16 +135,20 @@ enum EffectiveInput {
 }
 ```
 
-`MergeResult` will retain its effective point vector. Methods on the enum will select the original
-or representative slice, expose optional merge metadata, and derive the effective length and merge
-count. `PipelineState` will own this enum instead of the two `Option`s.
+`MergeResult` retains its effective point vector. Methods on the enum select the original or
+representative slice, expose optional merge metadata, and derive the effective length and merge
+count. `PipelineState` owns this enum instead of the two `Option`s.
 
-Replace the four-element `PreparedPointsAndGrid` tuple with a named phase record containing this
-enum, the preprocessing report, and the grid. This keeps preparation ownership explicit without
-moving a larger record through the per-cell hot path. Construction should continue to receive the
-same point slice and optional map it does today.
+The four-element `PreparedPointsAndGrid` tuple is now a named phase record containing this enum,
+the preprocessing report, and the grid. This keeps preparation ownership explicit without moving a
+larger record through the per-cell hot path. Construction continues to receive the same point slice
+and optional map it did before the migration.
 
-The implementation gate must pin all three policy outcomes—disabled, weld-with-no-merge, and
-actual merge—plus unchanged report, effective-diagram, error-index, and final-remap behavior.
-Because representative selection feeds the full construction pipeline, release artifact size and
-interleaved instruction/branch counters remain mandatory even though the new state is cold.
+A direct contract test pins all three policy outcomes—disabled, weld-with-no-merge, and actual
+merge—including borrowed identity storage and report counts. Existing release API tests pin the
+effective diagram, standalone large-threshold merge, error-index, and final-remap behavior.
+
+The matched release artifact kept aggregate size unchanged, moved 656 bytes from text to BSS, and
+reduced file size by 664 bytes. Seven interleaved counter pairs were neutral: mean
+candidate/parent ratios were `0.999998159` instructions and `0.999998587` branches, with zero
+context switches and migrations.
