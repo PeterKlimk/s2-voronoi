@@ -39,12 +39,12 @@ The measured result is also recorded in [`performance.md`](performance.md).
 
 ### Post-review kernel hypotheses
 
-The July 2026 multi-model kernel shortlist has been measured and closed. Its tried branches,
+The original July 2026 multi-model kernel shortlist has been measured and closed. Its tried branches,
 counter results, and retained oracles are summarized in the
 [`kernel optimization experiment log`](kernel-optimization-experiment-log.md#pass-closeout).
-The following hypotheses were derived from those failures. None became an accepted optimization;
-their read-only gates and reopening conditions are recorded below so future work does not repeat
-the same mechanisms without materially different evidence.
+The first three hypotheses below were derived from those failures and closed by their read-only
+gates. A later fourth hypothesis, group-shared shell traversal, passed its gate and is promoted to
+`PERF-003`; it is not yet an accepted optimization.
 
 #### 1. Center-informed one-shot high-threshold correction — rejected and closed
 
@@ -150,6 +150,34 @@ they first need either a subquadratic regional triangulation, reuse of an alread
 triangulation, or a certificate that produces a much smaller candidate union. Any promoted design
 still requires a deterministic boundary certificate and a stitching plan that cannot turn an
 ordinary successful construction into a failure.
+
+#### 4. Group-shared shell traversal — gate passed, prototype promoted
+
+Shell takeover currently creates an independent Chebyshev BFS frontier for every query. Queries
+in an existing same-grid-cell generator group frequently revisit the same grid cells and resident
+point ranges, even when their termination depths differ. A timing-only trace measured 93.5--99.1%
+group-local cell-visit redundancy on uniform, clustered, mega, great-circle, and 500k clustered
+inputs; at least 95% of resident/query work in each positive workload occurred at an active width
+of 16 or more. Fibonacci performed no shell traversal and remains a clean control. Full counters
+and the deliberately optimistic position-load ceiling are in the
+[`kernel optimization experiment log`](kernel-optimization-experiment-log.md#group-shared-shell-traversal-census).
+
+Keep two mechanisms distinct. The first is a shared immutable layer schedule consumed by cells in
+their current sequential order. It can remove repeated visited-stamp and neighbor-enumeration work
+without changing candidate dots, bounds, ordering, clipping, or edge forwarding. This is the
+lowest-risk prototype and must win retired instructions or branches on its own; the much larger
+resident ratio is not its saving.
+
+The second is a tiled resident-by-query kernel that loads a point range once and evaluates it for
+multiple active queries. It retains every query-specific dot and key but may reduce point-load and
+loop overhead and expose SIMD across queries. It is also a dataflow change: later cells currently
+receive constraints forwarded by earlier cells, traces are not uniformly lockstep, and eager
+cross-query preparation can compute and store rows that sequential termination would avoid.
+Before implementing it, specify how block boundaries preserve directed eligibility and forwarding,
+then charge lost same-block seeds, speculative rows, per-query masks, and key sorting/storage.
+
+The authoritative prototype task is `PERF-003` in [`work-log.md`](work-log.md). Use single-threaded
+Linux `perf` instructions and branches as the deciding signals while the shared machine is noisy.
 
 ### Selected-neighbor constraint batches — closed negative 2026-07-16
 

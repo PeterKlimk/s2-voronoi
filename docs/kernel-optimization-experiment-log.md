@@ -7,9 +7,11 @@ counts are used for workload censuses.
 
 ## Pass closeout
 
-The multi-model shortlist is exhausted. The measurement infrastructure and read-only oracles were
-retained; every production behavior experiment was rejected and reverted. The branch names below
-are archival experiment labels, not outstanding merge candidates.
+The original multi-model shortlist is exhausted. The measurement infrastructure and read-only
+oracles were retained; every production behavior experiment in that shortlist was rejected and
+reverted. A later structural follow-up, group-shared shell traversal, passed its read-only gate and
+is recorded separately below. The branch names in this table are archival experiment labels, not
+outstanding merge candidates.
 
 | Family | Branches | Final decision |
 | --- | --- | --- |
@@ -19,6 +21,7 @@ are archival experiment labels, not outstanding merge candidates.
 | Center-informed high threshold | `agent/kernel-threshold-shadow`, `agent/kernel-threshold-one-shot` | Center-only prediction and per-ring-cell sampling were rejected first. The final exact-center pre-gate plus one-vector ring sample isolated clustered overshoot, but its margin collapsed with scale and on splittable controls; no probe code retained. |
 | Seed-first packed preparation | `agent/kernel-seed-first-oracle` | Rejected with current metadata: the exact ceiling is only 3--6% of row dots, production visits one later candidate per exact-batch hit, and whole-cell caps retain at most 1.43% of row dots with negligible key savings. No probe code retained. |
 | Same-cell regional local hull | `agent/kernel-regional-hull-oracle` | Rejected before replay: no measured same-grid-cell group repaid even the optimistic pair-count floor of the current naive local hull. The best case reached 74.4% before guard expansion, exact-predicate cost, certification, or stitching. No probe code retained. |
+| Group-shared shell traversal | `agent/kernel-shared-shell-oracle` | Read-only gate passed: repeated group-local cell traversal is 93.5--99.1% redundant and resident/query work has high active width on every shell-using workload. Promoted to `PERF-003`; no probe code retained. |
 
 The negative results share a useful conclusion: the existing width-one unchanged clip and
 append-then-partition selection paths are already cheap. A successor should remove dot/key work
@@ -27,7 +30,7 @@ whose construction cost is materially below the current naive local hull. The cl
 follow-ups are recorded in
 [`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md#post-review-kernel-hypotheses);
 `PERF-002` in [`work-log.md`](work-log.md#perf-002--post-review-kernel-hypotheses) records the
-closure and reopening conditions.
+closure and reopening conditions. `PERF-003` records the distinct shared-shell successor.
 
 ## Common census baseline
 
@@ -451,3 +454,57 @@ proved impossible by this census, but overlap alone is no longer a sufficient pr
 regional proposal needs a subquadratic construction or reusable triangulation, plus a cheap way to
 form a much tighter certified candidate set. Do not add guard rings, replay machinery, or stitching
 for the current `LocalHull` on the strength of duplicated-attempt counts.
+
+## Group-shared shell traversal census
+
+- Branch: `agent/kernel-shared-shell-oracle`
+- Experiment: timing-only traces of the real shell frontier, aggregated at the existing
+  same-grid-cell generator-group boundary after each query completed. The trace recorded every
+  grid cell scanned, its BFS layer, and the number of resident slots whose dot was evaluated.
+- Exact low-risk ceiling: compare per-query cell visits with the union of visited cells within the
+  group. This is the repeated BFS visitation/neighbor-enumeration work that a shared layer schedule
+  could remove while cells still clip and forward edge checks sequentially.
+- Optimistic high ceiling: compare resident/query slot pairs with the sum of the maximum emitted
+  residents for each union cell. This estimates position-data reuse for a multi-query kernel; it
+  does **not** call the query-specific dot arithmetic, bounds, sorting, clipping, or dependency
+  restructuring free.
+- Divergence accounting: common prefix, per-group minimum/maximum trace and layer counts, active
+  width thresholds, and groups whose traces were not simple prefixes were retained. A production
+  form therefore cannot assume one lockstep cursor.
+- Validation while present: `cargo test --release --features timing --lib` passed (270 passed, 5
+  ignored). The probe was then removed; it never changed candidate order or construction behavior.
+
+The structural overlap is large and survives scale:
+
+| Workload | Multi-shell groups | Shell queries | Cell visits / union | Cell reuse ceiling | Resident/query slots / optimistic union | Position-load ceiling |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 100k Fibonacci | 0 | 0 | 0 / 0 | n/a | 0 / 0 | n/a |
+| 100k uniform, seed 1 | 4,054 | 99,947 | 2,482,397 / 102,487 | 95.87% | 35,568,880 / 1,468,769 | 95.87% |
+| 100k clustered, seed 1 | 2,956 | 99,038 | 2,521,759 / 91,008 | 96.39% | 77,335,225 / 1,271,065 | 98.36% |
+| 100k mega, default seed | 862 | 81,065 | 11,482,468 / 744,280 | 93.52% | 478,947,438 / 2,438,920 | 99.49% |
+| 100k great-circle, default jitter | 208 | 99,980 | 97,911,396 / 843,320 | 99.14% | 2,042,135,167 / 18,216,395 | 99.11% |
+| 500k clustered, seed 1 | 15,815 | 496,812 | 12,693,912 / 480,409 | 96.22% | 342,651,200 / 6,585,338 | 98.08% |
+
+At least 95% of the resident/query work in every positive row occurs in cells shared by 16 or more
+active shell queries. The signal is not just a few pathological rows: 500k clustered retains
+roughly 26 query visits per union cell and 52 resident/query pairs per optimistic unique resident.
+Uniform is also diagnostic: only 357 shell batches reached clipping, but nearly every query entered
+takeover far enough to scan a shell layer and obtain its bound. Existing `shell_layer_*` counters
+therefore substantially understate the shell-frontier work available to this restructuring.
+
+The gate promotes two deliberately separate implementations:
+
+1. First test a shared group-local layer schedule while retaining sequential cell construction,
+   query-specific bounds, exact candidate order, and all edge forwarding. Its ceiling is only the
+   repeated BFS/stamp/neighbor-enumeration work, so accept it only on retired instructions and
+   branches, not on the large resident ratio.
+2. If the schedule result is modest, design a tiled resident-by-query dot/key kernel for groups
+   with high active width. That can reuse point loads and expose SIMD across queries, but the dot
+   count remains query-specific and current within-group forwarding creates a real dependency.
+   The design must account for block boundaries, lost same-block seeds, extra speculative rows,
+   per-query termination masks, sorting/storage traffic, and the broad great-circle divergence.
+
+This is a promoted hypothesis, not an accepted optimization. Fibonacci is the natural zero-shell
+control. Compare behavioral prototypes with single-threaded Linux `perf` counters on uniform,
+clustered, mega, great-circle, and 500k clustered; defer cycle/wall conclusions while the machine
+is noisy.
