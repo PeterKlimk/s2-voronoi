@@ -67,6 +67,10 @@ pub(crate) struct PackedKnnTimings {
     pub center_tail_dot_evaluations: u64,
     pub chunk0_keys: u64,
     pub unused_chunk0_keys: u64,
+    /// Exact packed batches and slots emitted, split into chunk0-first,
+    /// chunk0-later, tail-first, and tail-later classes.
+    pub exact_batch_counts: [u64; 4],
+    pub exact_slots_emitted: [u64; 4],
 }
 
 #[cfg(feature = "timing")]
@@ -98,6 +102,8 @@ impl Default for PackedKnnTimings {
             center_tail_dot_evaluations: 0,
             chunk0_keys: 0,
             unused_chunk0_keys: 0,
+            exact_batch_counts: [0; 4],
+            exact_slots_emitted: [0; 4],
         }
     }
 }
@@ -225,6 +231,22 @@ impl PackedKnnTimings {
     #[inline]
     pub(crate) fn add_unused_chunk0_keys(&mut self, count: usize) {
         self.unused_chunk0_keys += count as u64;
+    }
+
+    #[inline]
+    pub(crate) fn record_exact_batch_emitted(
+        &mut self,
+        source: super::PackedNeighborBatchSource,
+        first: bool,
+        slots: usize,
+    ) {
+        let stage = match source {
+            super::PackedNeighborBatchSource::Chunk0 => 0,
+            super::PackedNeighborBatchSource::Tail => 1,
+        };
+        let class = stage * 2 + usize::from(!first);
+        self.exact_batch_counts[class] += 1;
+        self.exact_slots_emitted[class] += slots as u64;
     }
 
     #[inline]

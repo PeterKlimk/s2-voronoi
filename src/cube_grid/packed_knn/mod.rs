@@ -175,6 +175,8 @@ pub(crate) struct PackedQuery<'a, 'p, 'g> {
     cached_frontier: Option<CachedFrontier>,
     tail_used: bool,
     safe_exhausted: bool,
+    #[cfg(feature = "timing")]
+    exact_batches_emitted_in_stage: usize,
 }
 
 impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
@@ -193,6 +195,8 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
             cached_frontier: None,
             tail_used: false,
             safe_exhausted: false,
+            #[cfg(feature = "timing")]
+            exact_batches_emitted_in_stage: 0,
         }
     }
 
@@ -261,6 +265,13 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
                 unseen_bound: chunk.unseen_bound,
                 source,
             };
+            #[cfg(feature = "timing")]
+            {
+                let first = self.exact_batches_emitted_in_stage == 0;
+                self.timings
+                    .record_exact_batch_emitted(source, first, chunk.n);
+                self.exact_batches_emitted_in_stage += 1;
+            }
             self.cached_frontier = Some(CachedFrontier::ExactBatch(batch));
             return PackedNeighborFrontier::ExactBatch(batch);
         }
@@ -295,6 +306,10 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
                 .ensure_tail_directed_for(self.query_index, grid, self.timings);
             self.stage = PackedQueryStage::Tail;
             self.tail_used = true;
+            #[cfg(feature = "timing")]
+            {
+                self.exact_batches_emitted_in_stage = 0;
+            }
             return;
         }
 

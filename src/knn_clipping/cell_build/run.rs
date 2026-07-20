@@ -163,6 +163,10 @@ pub(crate) struct CellBuildStats {
     shell_layer_prefix_consumed: usize,
     #[cfg(feature = "timing")]
     shell_midlayer_terminations: usize,
+    #[cfg(feature = "timing")]
+    packed_exact_slots_visited: [usize; 4],
+    #[cfg(feature = "timing")]
+    packed_exact_slots_abandoned: [usize; 4],
     /// Candidates examined after the final polygon-changing constraint. This
     /// is a direct lack-of-progress signal for high-work successful cells.
     #[cfg(feature = "timing")]
@@ -223,6 +227,11 @@ impl CellBuildStats {
             self.shell_layer_slots,
             self.shell_layer_prefix_consumed,
             self.shell_midlayer_terminations,
+        );
+        #[cfg(feature = "timing")]
+        cell_sub.add_packed_batch_usage(
+            self.packed_exact_slots_visited,
+            self.packed_exact_slots_abandoned,
         );
 
         let stage = if self.used_knn {
@@ -327,6 +336,12 @@ pub(super) struct BuildCounters {
     #[cfg(feature = "timing")]
     shell_midlayer_terminations: usize,
     #[cfg(feature = "timing")]
+    packed_exact_batch_usage_counts: [usize; 2],
+    #[cfg(feature = "timing")]
+    packed_exact_slots_visited: [usize; 4],
+    #[cfg(feature = "timing")]
+    packed_exact_slots_abandoned: [usize; 4],
+    #[cfg(feature = "timing")]
     last_progress_neighbor: usize,
     #[cfg(feature = "timing")]
     progress_tail_valid: bool,
@@ -371,6 +386,12 @@ impl BuildCounters {
             #[cfg(feature = "timing")]
             shell_midlayer_terminations: 0,
             #[cfg(feature = "timing")]
+            packed_exact_batch_usage_counts: [0; 2],
+            #[cfg(feature = "timing")]
+            packed_exact_slots_visited: [0; 4],
+            #[cfg(feature = "timing")]
+            packed_exact_slots_abandoned: [0; 4],
+            #[cfg(feature = "timing")]
             last_progress_neighbor: 0,
             #[cfg(feature = "timing")]
             progress_tail_valid: true,
@@ -404,6 +425,26 @@ impl BuildCounters {
             BuilderFallbackTrigger::PolygonVertexLimit => self.fallback_polygon_cap += 1,
             BuilderFallbackTrigger::ClippedAway => self.fallback_all_constraints += 1,
         }
+    }
+
+    #[cfg(feature = "timing")]
+    pub(super) fn record_packed_batch_usage(
+        &mut self,
+        source: DirectedNeighborBatchSource,
+        emitted: usize,
+        visited: usize,
+    ) {
+        debug_assert!(visited <= emitted);
+        let stage = match source {
+            DirectedNeighborBatchSource::PackedChunk0 => 0,
+            DirectedNeighborBatchSource::PackedTail => 1,
+            DirectedNeighborBatchSource::ShellExpand => return,
+        };
+        let first = self.packed_exact_batch_usage_counts[stage] == 0;
+        self.packed_exact_batch_usage_counts[stage] += 1;
+        let class = stage * 2 + usize::from(!first);
+        self.packed_exact_slots_visited[class] += visited;
+        self.packed_exact_slots_abandoned[class] += emitted - visited;
     }
 }
 
@@ -788,6 +829,8 @@ fn clip_batch_source<const SHELL: bool>(
         }
     }
     #[cfg(feature = "timing")]
+    counters.record_packed_batch_usage(batch.source, batch.n, prefix_consumed);
+    #[cfg(feature = "timing")]
     if SHELL {
         counters.shell_layer_batches += 1;
         counters.shell_layer_slots += batch.n;
@@ -1017,6 +1060,10 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         shell_layer_prefix_consumed: counters.shell_layer_prefix_consumed,
         #[cfg(feature = "timing")]
         shell_midlayer_terminations: counters.shell_midlayer_terminations,
+        #[cfg(feature = "timing")]
+        packed_exact_slots_visited: counters.packed_exact_slots_visited,
+        #[cfg(feature = "timing")]
+        packed_exact_slots_abandoned: counters.packed_exact_slots_abandoned,
         #[cfg(feature = "timing")]
         neighbors_after_last_progress: counters
             .neighbors_processed

@@ -233,6 +233,12 @@ pub(crate) struct CellSubPhases {
     pub center_tail_dot_evaluations: u64,
     pub chunk0_keys: u64,
     pub unused_chunk0_keys: u64,
+    /// Counts are split into chunk0-first, chunk0-later, tail-first, and
+    /// tail-later exact packed batches.
+    pub packed_exact_batch_counts: [u64; 4],
+    pub packed_exact_slots_emitted: [u64; 4],
+    pub packed_exact_slots_visited: [u64; 4],
+    pub packed_exact_slots_abandoned: [u64; 4],
     pub shell_layer_batches: u64,
     pub shell_layer_slots: u64,
     pub shell_layer_prefix_consumed: u64,
@@ -331,6 +337,10 @@ pub(crate) struct CellSubAccum {
     center_tail_dot_evaluations: u64,
     chunk0_keys: u64,
     unused_chunk0_keys: u64,
+    packed_exact_batch_counts: [u64; 4],
+    packed_exact_slots_emitted: [u64; 4],
+    packed_exact_slots_visited: [u64; 4],
+    packed_exact_slots_abandoned: [u64; 4],
     shell_layer_batches: u64,
     shell_layer_slots: u64,
     shell_layer_prefix_consumed: u64,
@@ -394,6 +404,10 @@ impl CellSubAccum {
         self.center_tail_dot_evaluations += timings.center_tail_dot_evaluations;
         self.chunk0_keys += timings.chunk0_keys;
         self.unused_chunk0_keys += timings.unused_chunk0_keys;
+        for class in 0..4 {
+            self.packed_exact_batch_counts[class] += timings.exact_batch_counts[class];
+            self.packed_exact_slots_emitted[class] += timings.exact_slots_emitted[class];
+        }
     }
 
     #[inline]
@@ -493,6 +507,14 @@ impl CellSubAccum {
     }
 
     #[inline]
+    pub(crate) fn add_packed_batch_usage(&mut self, visited: [usize; 4], abandoned: [usize; 4]) {
+        for class in 0..4 {
+            self.packed_exact_slots_visited[class] += visited[class] as u64;
+            self.packed_exact_slots_abandoned[class] += abandoned[class] as u64;
+        }
+    }
+
+    #[inline]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn add_directional_shadow(
         &mut self,
@@ -558,6 +580,12 @@ impl CellSubAccum {
         self.center_tail_dot_evaluations += other.center_tail_dot_evaluations;
         self.chunk0_keys += other.chunk0_keys;
         self.unused_chunk0_keys += other.unused_chunk0_keys;
+        for class in 0..4 {
+            self.packed_exact_batch_counts[class] += other.packed_exact_batch_counts[class];
+            self.packed_exact_slots_emitted[class] += other.packed_exact_slots_emitted[class];
+            self.packed_exact_slots_visited[class] += other.packed_exact_slots_visited[class];
+            self.packed_exact_slots_abandoned[class] += other.packed_exact_slots_abandoned[class];
+        }
         self.shell_layer_batches += other.shell_layer_batches;
         self.shell_layer_slots += other.shell_layer_slots;
         self.shell_layer_prefix_consumed += other.shell_layer_prefix_consumed;
@@ -584,6 +612,13 @@ impl CellSubAccum {
 
     #[inline]
     pub(crate) fn into_sub_phases(self) -> CellSubPhases {
+        for class in 0..4 {
+            debug_assert_eq!(
+                self.packed_exact_slots_emitted[class],
+                self.packed_exact_slots_visited[class] + self.packed_exact_slots_abandoned[class],
+                "every emitted exact packed slot must be visited or abandoned"
+            );
+        }
         CellSubPhases {
             knn_query: self.knn_query,
             packed_knn: self.packed_knn,
@@ -623,6 +658,10 @@ impl CellSubAccum {
             center_tail_dot_evaluations: self.center_tail_dot_evaluations,
             chunk0_keys: self.chunk0_keys,
             unused_chunk0_keys: self.unused_chunk0_keys,
+            packed_exact_batch_counts: self.packed_exact_batch_counts,
+            packed_exact_slots_emitted: self.packed_exact_slots_emitted,
+            packed_exact_slots_visited: self.packed_exact_slots_visited,
+            packed_exact_slots_abandoned: self.packed_exact_slots_abandoned,
             shell_layer_batches: self.shell_layer_batches,
             shell_layer_slots: self.shell_layer_slots,
             shell_layer_prefix_consumed: self.shell_layer_prefix_consumed,
@@ -833,6 +872,20 @@ impl PhaseTimings {
                         self.cell_sub.chunk0_keys, self.cell_sub.unused_chunk0_keys,
                     );
                 }
+                let packed_batch_classes =
+                    ["chunk0_first", "chunk0_later", "tail_first", "tail_later"];
+                for (class, label) in packed_batch_classes.into_iter().enumerate() {
+                    let batches = self.cell_sub.packed_exact_batch_counts[class];
+                    if batches > 0 {
+                        eprintln!(
+                            "      packed_batch_{label}: batches={} emitted={} visited={} abandoned={}",
+                            batches,
+                            self.cell_sub.packed_exact_slots_emitted[class],
+                            self.cell_sub.packed_exact_slots_visited[class],
+                            self.cell_sub.packed_exact_slots_abandoned[class],
+                        );
+                    }
+                }
             }
             eprintln!(
                 "    clipping:        {:7.1}ms ({:4.1}%)",
@@ -1040,7 +1093,7 @@ impl PhaseTimings {
                 })
                 .unwrap_or((0, 0, 0));
             eprintln!(
-                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} grid_order_pairs={gop} grid_order_abs_delta={goa} grid_materialize_by_slot={gms} cell_construction_ms={cc:.3} dedup_ms={dd:.3} dedup_bookkeeping_ms={dbk:.3} dedup_overflow_ms={dof:.3} dedup_deferred_ms={ddp:.3} dedup_finalize_ms={dfs:.3} dedup_vertices_ms={dvt:.3} dedup_prefixes_ms={dcp:.3} dedup_incidence_ms={dis:.3} dedup_indices_ms={dci:.3} dedup_overrides_ms={dro:.3} dedup_zero_hints_ms={dzh:.3} shard_order_descents={sod} shard_order_pairs={sop} shard_order_abs_delta={soa} scatter_by_shard={sbs} edge_reconcile_ms={er:.3} merge_safety_scan_cells={mssc} merge_safety_global_fallbacks={msgf} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_reconcile_scan_cells={rrsc} resolution_rebuild_scan_cells={rpsc} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} candidate_work_samples={cws} candidate_work_p50_lb={cw50} candidate_work_p90_lb={cw90} candidate_work_p99_lb={cw99} candidate_work_p999_lb={cw999} candidate_work_max={cwm} candidate_work_relative_base={cwb} candidate_work_ge4x_median_lb={cw4} candidate_work_ge16x_median_lb={cw16} candidate_work_ge64x_median_lb={cw64} no_progress_tail_samples={nps} no_progress_tail_excluded={npx} no_progress_tail_p50_lb={np50} no_progress_tail_p90_lb={np90} no_progress_tail_p99_lb={np99} no_progress_tail_p999_lb={np999} no_progress_tail_max={npm} no_progress_tail_relative_base={npb} no_progress_tail_ge4x_median_lb={np4} no_progress_tail_ge16x_median_lb={np16} no_progress_tail_ge64x_median_lb={np64} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
+                "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} grid_order_pairs={gop} grid_order_abs_delta={goa} grid_materialize_by_slot={gms} cell_construction_ms={cc:.3} dedup_ms={dd:.3} dedup_bookkeeping_ms={dbk:.3} dedup_overflow_ms={dof:.3} dedup_deferred_ms={ddp:.3} dedup_finalize_ms={dfs:.3} dedup_vertices_ms={dvt:.3} dedup_prefixes_ms={dcp:.3} dedup_incidence_ms={dis:.3} dedup_indices_ms={dci:.3} dedup_overrides_ms={dro:.3} dedup_zero_hints_ms={dzh:.3} shard_order_descents={sod} shard_order_pairs={sop} shard_order_abs_delta={soa} scatter_by_shard={sbs} edge_reconcile_ms={er:.3} merge_safety_scan_cells={mssc} merge_safety_global_fallbacks={msgf} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_reconcile_scan_cells={rrsc} resolution_rebuild_scan_cells={rpsc} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_total_ms={ptm:.3} packed_select_partition_ms={psp:.3} packed_select_sort_ms={pss:.3} packed_select_scatter_ms={psc:.3} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} packed_chunk0_first_batches={pc0fb} packed_chunk0_first_emitted={pc0fe} packed_chunk0_first_visited={pc0fv} packed_chunk0_first_abandoned={pc0fa} packed_chunk0_later_batches={pc0lb} packed_chunk0_later_emitted={pc0le} packed_chunk0_later_visited={pc0lv} packed_chunk0_later_abandoned={pc0la} packed_tail_first_batches={ptfb} packed_tail_first_emitted={ptfe} packed_tail_first_visited={ptfv} packed_tail_first_abandoned={ptfa} packed_tail_later_batches={ptlb} packed_tail_later_emitted={ptle} packed_tail_later_visited={ptlv} packed_tail_later_abandoned={ptla} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} candidate_work_samples={cws} candidate_work_p50_lb={cw50} candidate_work_p90_lb={cw90} candidate_work_p99_lb={cw99} candidate_work_p999_lb={cw999} candidate_work_max={cwm} candidate_work_relative_base={cwb} candidate_work_ge4x_median_lb={cw4} candidate_work_ge16x_median_lb={cw16} candidate_work_ge64x_median_lb={cw64} no_progress_tail_samples={nps} no_progress_tail_excluded={npx} no_progress_tail_p50_lb={np50} no_progress_tail_p90_lb={np90} no_progress_tail_p99_lb={np99} no_progress_tail_p999_lb={np999} no_progress_tail_max={npm} no_progress_tail_relative_base={npb} no_progress_tail_ge4x_median_lb={np4} no_progress_tail_ge16x_median_lb={np16} no_progress_tail_ge64x_median_lb={np64} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
                 total = total_ms,
                 pre = ms(self.preprocess),
@@ -1082,6 +1135,10 @@ impl PhaseTimings {
                 fpj = self.cell_sub.fallback_projection,
                 fpc = self.cell_sub.fallback_polygon_cap,
                 fac = self.cell_sub.fallback_all_constraints,
+                ptm = ms(self.cell_sub.packed_knn),
+                psp = ms(self.cell_sub.packed_select_partition),
+                pss = ms(self.cell_sub.packed_select_sort),
+                psc = ms(self.cell_sub.packed_select_scatter),
                 ptb = self.cell_sub.packed_tail_builds,
                 pkm = self.cell_sub.packed_keys_materialized,
                 pkp = self.cell_sub.packed_key_capacity_peak,
@@ -1095,6 +1152,22 @@ impl PhaseTimings {
                 ctd = self.cell_sub.center_tail_dot_evaluations,
                 c0k = self.cell_sub.chunk0_keys,
                 uc0k = self.cell_sub.unused_chunk0_keys,
+                pc0fb = self.cell_sub.packed_exact_batch_counts[0],
+                pc0fe = self.cell_sub.packed_exact_slots_emitted[0],
+                pc0fv = self.cell_sub.packed_exact_slots_visited[0],
+                pc0fa = self.cell_sub.packed_exact_slots_abandoned[0],
+                pc0lb = self.cell_sub.packed_exact_batch_counts[1],
+                pc0le = self.cell_sub.packed_exact_slots_emitted[1],
+                pc0lv = self.cell_sub.packed_exact_slots_visited[1],
+                pc0la = self.cell_sub.packed_exact_slots_abandoned[1],
+                ptfb = self.cell_sub.packed_exact_batch_counts[2],
+                ptfe = self.cell_sub.packed_exact_slots_emitted[2],
+                ptfv = self.cell_sub.packed_exact_slots_visited[2],
+                ptfa = self.cell_sub.packed_exact_slots_abandoned[2],
+                ptlb = self.cell_sub.packed_exact_batch_counts[3],
+                ptle = self.cell_sub.packed_exact_slots_emitted[3],
+                ptlv = self.cell_sub.packed_exact_slots_visited[3],
+                ptla = self.cell_sub.packed_exact_slots_abandoned[3],
                 slb = self.cell_sub.shell_layer_batches,
                 sls = self.cell_sub.shell_layer_slots,
                 slp = self.cell_sub.shell_layer_prefix_consumed,
