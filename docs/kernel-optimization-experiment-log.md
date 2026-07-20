@@ -16,12 +16,13 @@ are archival experiment labels, not outstanding merge candidates.
 | Fixed smaller packed prefix | `agent/kernel-demand-prefix` | Rejected: the 8-slot first batch saved 0.315% instructions on Fibonacci but added 2.777% on uniform and increased branches on both. |
 | Compact high-key overflow | `agent/kernel-compact-overflow`, `agent/kernel-compact-top64-cost`, `agent/kernel-compact-overflow-rebuild` | Shadow census retained; heap-based additive and true-replacement forms rejected at +5.1--11.4% and +6.9--7.7% instructions respectively. |
 | Shell-cell rejection | `agent/kernel-shell-cell-reject`, `agent/kernel-shell-cell-cap`, `agent/kernel-shell-cell-cap-skip` | Exact and conservative-cap oracles retained; the order-preserving production form was rejected at +1.8--3.5% instructions. |
+| Center-informed high threshold | `agent/kernel-threshold-shadow` | Center-only prediction rejected. A ring-sampled refinement found useful clustered/splittable key ceilings, but its work arithmetic cannot justify the sample on mega, bimodal, gradient, and outlier inputs; no probe code retained. |
 
 The negative results share a useful conclusion: the existing width-one unchanged clip and
 append-then-partition selection paths are already cheap. A successor should remove dot/key work
 before those paths, change the cutoff without per-key maintenance, or replace repeated per-cell
 work with a regional algorithm. The untried follow-ups are recorded in
-[`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md#post-review-kernel-hypotheses-untried);
+[`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md#post-review-kernel-hypotheses);
 `PERF-002` in [`work-log.md`](work-log.md#perf-002--post-review-kernel-hypotheses) owns the next
 measurement gate.
 
@@ -254,3 +255,57 @@ Do not promote the cap certificate merely because its geometric coverage is high
 interesting again only as part of a design that removes earlier work—resident dot/key generation
 or sorting—while preserving exact stream order across a possible later fallback. That is a
 different, more structural experiment.
+
+## Center-informed threshold shadow branch
+
+- Branch: `agent/kernel-threshold-shadow`
+- Experiment: timing-only simulation of a one-shot raised packed high threshold. Production
+  thresholds, exact ordering, emitted batches, and fallback behavior were unchanged.
+- Validation while the probe was present: `cargo test --release --features timing --lib` passed
+  (273 passed, 5 ignored), including histogram boundary tests. The probe was removed after the
+  decision so rejected instrumentation did not become permanent code burden.
+
+The first form used only already-computed directed center-cell dots. It was decisively biased:
+center residents are systematically nearer than ring residents, so the estimator raised thresholds
+on ordinary controls whose baseline key count was already at the intended budget.
+
+| 100k workload | Baseline keys | Predicted keys | Budget oracle | New tail visits | Rescan dots |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Clustered, seed 1 | 16,286,039 | 8,445,319 | 2,437,927 | 5,458 | 2,551,410 |
+| Mega, default seed | 1,283,904 | 667,885 | 1,210,366 | 2,296 | 995,931 |
+| Fibonacci | 1,281,679 | 496,173 | 1,281,662 | 22,733 | 2,697,862 |
+| Uniform, seed 1 | 1,307,579 | 484,429 | 1,302,857 | 46,092 | 5,487,269 |
+
+The Fibonacci and uniform rows reject center-only prediction: it invents roughly 0.8M of apparent
+key savings where the exact 32-key budget oracle says essentially none exist, then forces tens of
+thousands of queries across the new tail boundary.
+
+A single refinement sampled up to eight actual residents from every eligible ring cell, maintained
+per-query 64-bin normalized histograms, and limited the census to non-band center cells with at
+least 64 residents. This fixed the control failure—Fibonacci and uniform were excluded by the
+occupancy gate—and made the tail-crossing estimate conservative enough to expose a real clustered
+ceiling:
+
+| Workload | Baseline keys | Predicted keys | Ring sample dots | New tail visits | Rescan dots |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 100k clustered, seed 1 | 16,085,400 | 8,982,206 | 1,457,003 | 775 | 283,515 |
+| 100k clustered, seed 2 | 15,058,067 | 8,928,951 | 1,562,101 | 783 | 309,504 |
+| 100k clustered, seed 3 | 16,611,473 | 9,339,342 | 1,508,341 | 808 | 314,187 |
+| 500k clustered, seed 1 | 35,421,070 | 17,156,691 | 8,145,817 | 2,934 | 1,212,254 |
+| 100k splittable, seed 1 | 4,277,219 | 2,172,807 | 1,436,647 | 459 | 209,845 |
+| 100k mega, default seed | 1,264,380 | 1,201,864 | 2,461,875 | 165 | 62,865 |
+| 100k bimodal, seed 1 | 1,285,036 | 1,236,323 | 2,490,626 | 146 | 98,126 |
+| 100k gradient, seed 1 | 930,603 | 920,816 | 2,059,448 | 121 | 87,473 |
+| 100k outlier, seed 1 | 129,009 | 127,727 | 17,184 | 4 | 2,536 |
+
+The refinement is not a production candidate as measured. On 100k clustered seed 1 it removes
+7.10M keys for 1.46M sample dots plus 0.28M newly required rescan dots, but at 500k the ratio falls
+to 18.26M keys for 9.36M extra dots. More importantly, the same occupancy gate spends 2.06--2.49M
+sample dots to save only 0.01--0.06M keys on mega, bimodal, and gradient inputs. Grid rebuild state
+does not separate the regimes: both useful and useless non-rebuilt cases exist.
+
+The original center-only hypothesis is closed. A narrower follow-up remains plausible but starts
+from a new gate: use exact center-pass high-key counts to omit clearly non-overshooting queries,
+sample at most one SIMD vector across the whole ring rather than one vector per ring cell, and
+accept a raised threshold only when the sampled reduction clears an explicit instruction-cost
+margin. Measure that pre-gate and estimator offline before changing production behavior.

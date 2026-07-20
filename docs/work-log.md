@@ -62,7 +62,7 @@ prevention rather than an overclaimed proof.
 | QUAL-001 | P2 | Completed | Reopen only for a new invariant/consumer or changed codegen evidence |
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
-| PERF-002 | P3 | Backburner | Run the center-informed threshold shadow gate |
+| PERF-002 | P3 | Backburner | Center-only threshold gate closed; cheaper ring-sample pre-gate remains optional |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
 | RESEARCH-002 | P3 | Backburner | Justify diagnostic cost and conditioning policy |
 | RESEARCH-003 | P3 | Backburner | First choose a compatible exact-zero/SoS model |
@@ -280,21 +280,24 @@ default `Preserve` behavior.
 ### PERF-002 — Post-review kernel hypotheses
 
 - **Priority:** P3
-- **Status:** Backburner; multi-model shortlist closed 2026-07-21
+- **Status:** Backburner; center-informed threshold gate closed 2026-07-21
 - **Closed experiments:** fixed smaller packed prefixes, heap-maintained compact overflow with
-  exact rebuild, and order-preserving shell-cell clip bypass were behaviorally validated and
-  rejected by retired-instruction and branch counters. Timing-only census/oracle code was retained;
-  production prototypes were reverted. Full branch and counter history is in
+  exact rebuild, order-preserving shell-cell clip bypass, and center-only high-threshold prediction
+  were rejected. The first three were decided by retired-instruction and branch counters; the last
+  by timing-only workload counts showing severe center/ring sampling bias. The rejected threshold
+  probe was removed; earlier generally useful census/oracle code remains. Full branch and counter
+  history is in
   [`kernel-optimization-experiment-log.md`](kernel-optimization-experiment-log.md#pass-closeout).
-- **New hypotheses:** (1) correct the packed high threshold once from already-observed center dots
-  before the dominant ring scan, (2) use forwarded constraints before micro-batched packed
-  preparation so certifiable queries can omit complete dot rows, and (3) replace repeated dense
-  regional queries with one guarded local hull. Designs and proof obligations are in
-  [`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md#post-review-kernel-hypotheses-untried).
-- **Next gate:** implement only a timing-feature shadow for center-informed threshold correction on
-  occupancy-rebuilt, non-band groups. Measure predicted ring-key reduction, consumed-depth
-  crossings, and exact tail-rescan work. Do not change production behavior until that arithmetic
-  establishes a positive instruction-cost budget.
+- **Remaining hypotheses:** (1) pre-gate overshooting queries from exact center counts and use at
+  most one SIMD vector sampled across the whole ring before correcting the packed high threshold,
+  (2) use forwarded constraints before micro-batched packed preparation so certifiable queries can
+  omit complete dot rows, and (3) replace repeated dense regional queries with one guarded local
+  hull. Designs and proof obligations are in
+  [`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md#post-review-kernel-hypotheses).
+- **Optional next threshold gate:** before another behavioral branch, measure a per-query center
+  overshoot pre-gate plus a single-vector whole-ring sample. It must avoid the 2M-plus wasted sample
+  dots observed on mega, bimodal, and gradient controls and establish an explicit positive
+  instruction-cost margin. Otherwise move to the seed-first or guarded local-hull hypotheses.
 
 The remaining code-specific performance experiments are maintained separately in the open queue in
 [`performance.md`](performance.md) and the memory backlog in

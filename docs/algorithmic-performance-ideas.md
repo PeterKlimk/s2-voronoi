@@ -37,15 +37,16 @@ The measured result is also recorded in [`performance.md`](performance.md).
 
 ## Candidate ideas
 
-### Post-review kernel hypotheses — untried
+### Post-review kernel hypotheses
 
 The July 2026 multi-model kernel shortlist has been measured and closed. Its tried branches,
 counter results, and retained oracles are summarized in the
 [`kernel optimization experiment log`](kernel-optimization-experiment-log.md#pass-closeout).
-The following are new hypotheses derived from those failures. None is an accepted optimization or
-authorization to combine experiments; each starts with its stated read-only gate.
+The following hypotheses were derived from those failures. None is an accepted optimization or
+authorization to combine experiments; each starts with its stated read-only gate. The first gate
+has now been run and its narrower follow-up is recorded below.
 
-#### 1. Center-informed one-shot high-threshold correction
+#### 1. Center-informed one-shot high-threshold correction — center-only form rejected
 
 The packed high threshold is currently selected before candidate dots are observed, using a count
 model whose distributional assumption substantially over-retains keys on clustered inputs. The
@@ -68,6 +69,19 @@ retained keys, the number of queries whose observed consumed depth crosses each 
 corresponding exact tail-rescan dots. Reject it if the center sample does not predict ring
 overshoot, if productive rescans recover most saved work, or if the eligible key volume is too
 small to repay even gated histogram maintenance.
+
+That gate rejected the center-only estimator: it treated systematically nearer center residents as
+representative of the ring and grossly overraised thresholds on Fibonacci and uniform controls. A
+stratified ring-prefix refinement correctly exposed large key ceilings on clustered and splittable
+inputs, but a per-cell eight-resident sample performed far more extra dot work than the keys it
+saved on mega, bimodal, gradient, and outlier cases. Full census values are in the
+[`kernel optimization experiment log`](kernel-optimization-experiment-log.md#center-informed-threshold-shadow-branch).
+
+Do not revive the center-only model. The remaining version is a distinct, narrower hypothesis:
+pre-gate individual queries from exact center-pass high-key counts, gather no more than one SIMD
+vector across the entire ring, and apply a correction only when its predicted key reduction clears
+an explicit instruction-cost margin. Its first gate is again timing-only; it must demonstrate low
+sampling work on the negative density-contrast cases before a behavioral branch is justified.
 
 #### 2. Seed-first micro-batched packed preparation
 
