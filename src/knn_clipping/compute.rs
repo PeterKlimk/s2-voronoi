@@ -838,8 +838,7 @@ impl LocalRebuildCandidate {
         let gate = crate::validation::verify_sphere_effective_strict(
             effective_points,
             &geometry.vertices,
-            &cells,
-            &cell_indices,
+            LiveCellLayout::new(&cells, &cell_indices),
         );
         if debug {
             eprintln!(
@@ -1872,6 +1871,7 @@ mod tests {
         validate_and_canonicalize_unit_points, validate_generator_capacity, EffectiveGeometry,
         EffectiveInput, LocalRebuildCandidate, LocalRebuildOutcome, ResolutionDiscoveryMode,
     };
+    use crate::cell_layout::LiveCellLayout;
     use crate::diagram::VoronoiCell;
     use crate::live_dedup::{BuildCellsError, PackedLayoutCapacityError, ShardedVertexKeys};
     use crate::live_dedup::{CellBuildError, CellFailure};
@@ -2392,8 +2392,7 @@ mod tests {
         let strict = crate::validation::verify_sphere_effective_strict(
             &generators,
             vertices,
-            cells,
-            cell_indices,
+            LiveCellLayout::new(cells, cell_indices),
         );
         assert!(strict.is_err(), "{name}: injected defect must be invalid");
 
@@ -2417,8 +2416,7 @@ mod tests {
             crate::validation::verify_sphere_effective_strict(
                 &generators,
                 vertices,
-                cells,
-                cell_indices,
+                LiveCellLayout::new(cells, cell_indices),
             )
             .is_err(),
             "{name}: injected defect must be invalid"
@@ -2450,8 +2448,7 @@ mod tests {
             crate::validation::verify_sphere_effective_strict(
                 &generators,
                 vertices,
-                cells,
-                cell_indices,
+                LiveCellLayout::new(cells, cell_indices),
             )
             .is_err(),
             "{name}: injected defect must be invalid"
@@ -2492,8 +2489,7 @@ mod tests {
         crate::validation::verify_sphere_effective_strict(
             &base_generators,
             &base_vertices,
-            &base_cells,
-            &base_indices,
+            LiveCellLayout::new(&base_cells, &base_indices),
         )
         .expect("baseline must be strictly valid");
 

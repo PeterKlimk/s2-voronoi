@@ -575,14 +575,16 @@ tasks and are not duplicated here.
   an explicit checked-span end-overflow error so 32-bit malformed input retains the gate's current
   checked-add behavior. The boundary, rejected shapes, and gate are recorded in
   [`effective-validation-layout-inventory.md`](effective-validation-layout-inventory.md).
-- **QUAL-001B effective-validation decision:** the full caller-to-scan layout regressed clean
+- **QUAL-001B effective-validation result:** the full caller-to-scan layout originally displaced clean
   Fibonacci counters in all seven pairs (`1.001290682` instructions, `1.013601256` branches).
   Restoring the raw outer ABI and typing only the private scan reproduced the result
   (`1.001293695`, `1.013603930`). Restoring the validator completely and retaining only
   overflow-safe checked-span hardening also reproduced it (`1.001294912`, `1.013604706`) with the
-  familiar BSS-collapse fingerprint. All samples had zero switches/migrations; all production
-  changes were reverted. Keep the effective gate's raw checked-add traversal until compiler or
-  surrounding codegen changes materially.
+  familiar BSS-collapse fingerprint, so all production changes were reverted. The 2026-07-20
+  retest after surrounding codegen changes retained the full boundary: default instructions added
+  only `0.012%..=0.031%` across four regimes with neutral branches and no adverse cycle signal,
+  while a one-codegen-unit control was neutral. The effective gate now owns one portable checked
+  cell/index layout through its private parallel scan.
 - **QUAL-001B assembly-handoff decision:** assembly creates a stronger freshly compacted layout and
   has one production consumer, which immediately moves its vectors into `EffectiveGeometry`.
   Nesting an owned layout in `AssemblyResult` would add only a wrapper/unwrapper move; carrying it

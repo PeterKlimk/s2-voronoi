@@ -1162,7 +1162,7 @@ The fourth accepted live-layout slice was validated on 2026-07-20 against immedi
   of that test did not trigger the overlay. Direct overlay tests and the production rebuild suites
   retain semantic coverage until a natural accepted-splice workload is available.
 
-## QUAL-001B rejected effective-validation layout
+## QUAL-001B effective-validation layout and retest
 
 The effective-validation migration was measured on 2026-07-20 against immediate parent
 `7c70983` and fully reverted.
@@ -1187,6 +1187,24 @@ The effective-validation migration was measured on 2026-07-20 against immediate 
 - All production changes were reverted. The effective gate retains its raw portable checked-add
   expression, and `LiveCellLayout::checked_span` remains limited to current internal valid-layout
   callers. Retry only after a material compiler or surrounding-codegen change.
+
+The full boundary was retested on 2026-07-20 against parent `b8bd22e` and is now retained.
+
+- The verifier receives generators, candidate vertices, and one `LiveCellLayout`; only the
+  cell/index pair is coupled. Parallel scan ordering, static reasons, and transaction timing are
+  unchanged. Checked span-end addition and a typed overflow error preserve the former portable raw
+  rejection contract.
+- Seven-pair instruction/branch means were `1.000296110` / `0.999999107` on 500k Fibonacci,
+  `1.000310428` / `1.000001768` on 500k uniform seed 12345, `1.000176884` / `0.999996530` on 100k
+  clustered seed 1, and `1.000119413` / `0.999999036` on 100k mega seed 1. Cycles had no adverse
+  signal; every sample had zero switches/migrations.
+- A one-codegen-unit control was neutral at `1.000002647` instructions and `1.000002939` branches
+  on Fibonacci, identifying the small default instruction movement as codegen partitioning. The
+  default artifact removes 44 text and 24 data bytes, adds 72 BSS bytes and four aggregate bytes,
+  and grows the file by 832 bytes.
+
+The historical optimizer cliff is absent, and the stronger transaction boundary plus portable
+overflow behavior justify retaining the current form.
 
 ## QUAL-001B assembly-handoff closure
 

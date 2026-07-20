@@ -151,6 +151,11 @@ fn cell_vertex_slice_from_layout<'a>(
                 "edge reconciliation referenced out-of-range cell {cell} (cells={cell_count})"
             )))
         }
+        Err(CellSpanError::SpanEndOverflow { cell, start, count }) => {
+            Err(reconcile_state_error(format!(
+                "edge reconciliation cell {cell} span start {start} + count {count} overflows usize"
+            )))
+        }
         Err(CellSpanError::SpanOutOfBounds {
             cell,
             start,

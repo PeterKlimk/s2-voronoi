@@ -333,15 +333,15 @@ neutral. No deterministic mega fixture currently reaches the overlay—the same 
 with rebuilding disabled—so no triggered counter result is claimed. This does not reopen any
 rejected reconciliation signature.
 
-The effective-validation boundary experiment is closed in
-[`effective-validation-layout-inventory.md`](effective-validation-layout-inventory.md). The full
-caller-to-scan layout, an internal-scan-only form, and isolated checked-span overflow hardening all
-reproduced the same clean-path optimizer cliff (about `+0.129%` instructions and `+1.360%`
-branches in every pair). All production changes were reverted. The effective gate retains its raw
-checked-add span expression, independent generator-cardinality check, candidate-vertex transaction,
-parallel rank ordering, and static reasons. This result reinforces QUAL-001C's retained local
-validation expressions without reopening its shared-enum, weld-predicate, or common-traversal
-experiments.
+The effective-validation boundary is accepted and recorded in
+[`effective-validation-layout-inventory.md`](effective-validation-layout-inventory.md). The
+original caller-to-scan layout, internal-scan-only form, and isolated checked-span hardening all
+reproduced the historical clean-path optimizer cliff and were reverted. After surrounding codegen
+changed, the full boundary retested with neutral branches, no adverse cycle signal, and only
+`+0.012%..=+0.031%` default instructions across four regimes; a one-codegen-unit control was
+neutral. The effective gate now receives one cell/index layout while retaining independent
+generator cardinality, candidate vertices, parallel rank ordering, and static reasons. Checked
+span-end addition preserves portable malformed-input rejection.
 
 The final assembly-handoff inventory is closed in
 [`assembly-handoff-layout-inventory.md`](assembly-handoff-layout-inventory.md). Assembly produces a

@@ -11,6 +11,12 @@ use crate::diagram::VoronoiCell;
 pub(crate) enum CellSpanError {
     /// The requested cell is not present in the layout.
     CellOutOfBounds { cell: usize, cell_count: usize },
+    /// The cell's declared live-span end cannot be represented as `usize`.
+    SpanEndOverflow {
+        cell: usize,
+        start: usize,
+        count: usize,
+    },
     /// The cell's declared live span exceeds the backing index buffer.
     SpanOutOfBounds {
         cell: usize,
@@ -65,7 +71,10 @@ impl<'cells, 'indices> LiveCellLayout<'cells, 'indices> {
 
         for (cell, record) in self.cells.iter().enumerate() {
             let start = record.vertex_start();
-            let end = start + record.vertex_count();
+            let count = record.vertex_count();
+            let end = start.checked_add(count).unwrap_or_else(|| {
+                panic!("live cell layout cell {cell} span start {start} + count {count} overflows usize")
+            });
             assert!(
                 end <= self.indices.len(),
                 "live cell layout cell {cell} span [{start}..{end}) exceeds index buffer len {}",
@@ -85,7 +94,10 @@ impl<'cells, 'indices> LiveCellLayout<'cells, 'indices> {
         }
         let record = &self.cells[cell];
         let start = record.vertex_start();
-        let end = start + record.vertex_count();
+        let count = record.vertex_count();
+        let end = start
+            .checked_add(count)
+            .ok_or(CellSpanError::SpanEndOverflow { cell, start, count })?;
         if end > self.indices.len() {
             return Err(CellSpanError::SpanOutOfBounds {
                 cell,
@@ -169,6 +181,23 @@ mod tests {
                 start: 2,
                 end: 4,
                 index_count: 3,
+            })
+        );
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    #[test]
+    fn checked_lookup_rejects_span_end_overflow() {
+        let cells = [VoronoiCell::new(u32::MAX, 1)];
+        let indices = [];
+        let layout = LiveCellLayout::new(&cells, &indices);
+
+        assert_eq!(
+            layout.checked_span(0),
+            Err(CellSpanError::SpanEndOverflow {
+                cell: 0,
+                start: u32::MAX as usize,
+                count: 1,
             })
         );
     }

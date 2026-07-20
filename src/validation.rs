@@ -4,7 +4,7 @@
 //! exact representation invariants hold. It intentionally does not try to score
 //! approximate Voronoi fidelity or generic-position heuristics.
 
-use crate::SphericalVoronoi;
+use crate::{cell_layout::LiveCellLayout, SphericalVoronoi};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::tolerances::{ANTIPODAL_DOT_EPS, VERTEX_ON_SPHERE_EPS};
@@ -683,8 +683,7 @@ const RANK_DUP_CELL: u8 = 3;
 /// `verify_sphere_effective_strict`).
 fn scan_cells_strict(
     vertices: &[glam::Vec3],
-    cells: &[crate::diagram::VoronoiCell],
-    cell_indices: &[u32],
+    layout: LiveCellLayout<'_, '_>,
     range: std::ops::Range<usize>,
     vertex_cell_count: &[std::sync::atomic::AtomicU32],
 ) -> CellScan {
@@ -696,16 +695,11 @@ fn scan_cells_strict(
         err: None,
     };
     'cells: for ci in range {
-        let cell = &cells[ci];
-        let start = cell.vertex_start();
-        let len = cell.vertex_count();
-        let Some(span) = len
-            .checked_add(start)
-            .and_then(|end| cell_indices.get(start..end))
-        else {
+        let Ok(span) = layout.checked_span(ci) else {
             out.err = Some((ci as u32, RANK_SPAN, "invalid cell span"));
             break 'cells;
         };
+        let len = span.len();
 
         let mut seen_stack = [0u32; 64];
         let mut seen_stack_len = 0usize;
@@ -799,11 +793,10 @@ fn scan_cells_strict(
 pub(crate) fn verify_sphere_effective_strict(
     generators: &[glam::Vec3],
     vertices: &[glam::Vec3],
-    cells: &[crate::diagram::VoronoiCell],
-    cell_indices: &[u32],
+    layout: LiveCellLayout<'_, '_>,
 ) -> Result<(), &'static str> {
     use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
-    let num_cells = cells.len();
+    let num_cells = layout.cell_count();
     let num_vertices = vertices.len();
 
     if generators.len() != num_cells {
@@ -816,7 +809,7 @@ pub(crate) fn verify_sphere_effective_strict(
 
     // Exact incidence counters, shared across chunks; only read after the
     // scan completes. (u32: cannot saturate — total increments are bounded by
-    // `cell_indices.len()`.)
+    // `layout.index_count()`.)
     let vertex_cell_count: Vec<AtomicU32> = (0..num_vertices).map(|_| AtomicU32::new(0)).collect();
 
     #[cfg(feature = "parallel")]
@@ -830,15 +823,14 @@ pub(crate) fn verify_sphere_effective_strict(
             .map(|i| {
                 let lo = i * chunk;
                 let hi = ((i + 1) * chunk).min(num_cells);
-                scan_cells_strict(vertices, cells, cell_indices, lo..hi, &vertex_cell_count)
+                scan_cells_strict(vertices, layout, lo..hi, &vertex_cell_count)
             })
             .collect()
     };
     #[cfg(not(feature = "parallel"))]
     let scans: Vec<CellScan> = vec![scan_cells_strict(
         vertices,
-        cells,
-        cell_indices,
+        layout,
         0..num_cells,
         &vertex_cell_count,
     )];
@@ -893,7 +885,7 @@ pub(crate) fn verify_sphere_effective_strict(
         }
     }
 
-    let mut edge_uses: Vec<EdgeUse> = Vec::with_capacity(cell_indices.len());
+    let mut edge_uses: Vec<EdgeUse> = Vec::with_capacity(layout.index_count());
     for scan in &scans {
         edge_uses.extend_from_slice(&scan.edge_uses);
     }
@@ -1415,7 +1407,11 @@ mod verify_gate_tests {
         let diagram = diagram_from_effective(generators, vertices, cells, cell_indices);
         assert_eq!(verify_sphere_fast(&diagram), Err(expected));
         assert_eq!(
-            verify_sphere_effective_strict(generators, vertices, cells, cell_indices),
+            verify_sphere_effective_strict(
+                generators,
+                vertices,
+                LiveCellLayout::new(cells, cell_indices),
+            ),
             Err(expected)
         );
     }
@@ -1442,7 +1438,7 @@ mod verify_gate_tests {
         let (v, c, ci) = effective_arrays(d);
         let generators = effective_generators(d);
         let fast = verify_sphere_fast(d);
-        let eff = verify_sphere_effective_strict(&generators, &v, &c, &ci);
+        let eff = verify_sphere_effective_strict(&generators, &v, LiveCellLayout::new(&c, &ci));
         assert_eq!(fast, eff, "fast={fast:?} effective={eff:?}");
     }
 
@@ -1495,7 +1491,7 @@ mod verify_gate_tests {
         v[0] *= 2.0;
         let generators = vec![Vec3::new(0.0, 0.0, 1.0); c.len()];
         assert_eq!(
-            verify_sphere_effective_strict(&generators, &v, &c, &ci),
+            verify_sphere_effective_strict(&generators, &v, LiveCellLayout::new(&c, &ci)),
             Err("off-sphere vertex")
         );
 
@@ -1506,7 +1502,7 @@ mod verify_gate_tests {
             v[0].x = coordinate;
             let generators = vec![Vec3::new(0.0, 0.0, 1.0); c.len()];
             assert_eq!(
-                verify_sphere_effective_strict(&generators, &v, &c, &ci),
+                verify_sphere_effective_strict(&generators, &v, LiveCellLayout::new(&c, &ci)),
                 Err("off-sphere vertex")
             );
         }
@@ -1734,15 +1730,18 @@ mod verify_gate_tests {
             verify_sphere_effective_strict(
                 &generators[..generators.len() - 1],
                 &vertices,
-                &cells,
-                &indices,
+                LiveCellLayout::new(&cells, &indices),
             ),
             Err("generator/cell count mismatch")
         );
 
         cells[0] = crate::diagram::VoronoiCell::new(indices.len() as u32, 1);
         assert_eq!(
-            verify_sphere_effective_strict(&generators, &vertices, &cells, &indices),
+            verify_sphere_effective_strict(
+                &generators,
+                &vertices,
+                LiveCellLayout::new(&cells, &indices),
+            ),
             Err("invalid cell span")
         );
     }

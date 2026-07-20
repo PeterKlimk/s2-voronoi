@@ -1158,8 +1158,7 @@ mod tests {
         assert!(crate::validation::verify_sphere_effective_strict(
             &generators,
             &vertices,
-            &cells,
-            &indices
+            crate::cell_layout::LiveCellLayout::new(&cells, &indices),
         )
         .is_ok());
 

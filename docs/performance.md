@@ -745,6 +745,13 @@ Do not broadly retry these without a materially different design or workload:
   Seven pairs averaged +0.15987% instructions and +1.66186% branches, with every pair regressing
   and no context switches or migrations. The helper and its mutable view were reverted; keep this
   small prefix-write/count-shrink operation flattened until surrounding codegen changes materially.
+- Passing one overflow-safe `LiveCellLayout` through the effective-array validator and its private
+  parallel scan originally reproduced the optimizer cliff (+0.129% instructions, +1.360%
+  branches) even though the gate was inactive, so three forms were reverted. A 2026-07-20 retest
+  after surrounding codegen changed retained the full boundary: default instructions moved
+  +0.012% to +0.031% across Fibonacci, uniform, clustered, and mega with neutral branches and no
+  adverse cycle signal; a `-C codegen-units=1` Fibonacci control was neutral at roughly three ppm.
+  The remaining default displacement is codegen-partition noise rather than validation work.
 - Carrying reconciliation-produced local-rebuild seed pairs through pipeline state as a typed
   owner perturbed clean-path codegen despite retaining tuple storage. Seven interleaved 500k
   single-threaded Fibonacci counter pairs showed +0.1602% instructions and +1.6619% branches in

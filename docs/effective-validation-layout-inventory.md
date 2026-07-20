@@ -1,6 +1,6 @@
 # Effective Validation Layout Boundary Inventory
 
-**Status:** migration and narrower variants measured and rejected, 2026-07-20
+**Status:** migration accepted after controlled layout retest, 2026-07-20
 
 This inventory covers the fourth QUAL-001B migration stage: the live cell layout consumed by the
 whole-effective-diagram strict gate. It does not reopen QUAL-001C's closed validation-fact
@@ -137,7 +137,7 @@ a smaller seam.
 
 ## Measured result
 
-All production changes were reverted. Three forms were measured against parent `7c70983`; every
+The original production changes were reverted. Three forms were measured against parent `7c70983`; every
 seven-pair matrix reproduced the same clean-path optimizer cliff despite the effective gate being
 cold on the Fibonacci workload.
 
@@ -189,3 +189,28 @@ u32/u16 span arithmetic is representable on the measured 64-bit target; it must 
 effective validator's raw checked expression. Revisit only after a material compiler or surrounding
 codegen change. The final QUAL-001B assembly-handoff stage remains independent and may still be
 inventoried.
+
+## Controlled retest
+
+The full selected migration was retested on 2026-07-20 against parent `b8bd22e` after the semantic
+comparison and unpaired-reader boundaries changed the surrounding codegen. It is now retained.
+
+- `verify_sphere_effective_strict` receives generator and vertex slices plus one
+  `LiveCellLayout`. Its parallel chunks copy that view and obtain every span through
+  `checked_span`; generator cardinality, temporarily appended vertices, ranked error ordering,
+  allocation points, and static reasons remain independent and unchanged.
+- `CellSpanError::SpanEndOverflow` and checked span-end addition preserve the former raw
+  validator's malformed-input behavior on 32-bit targets. Reconciliation maps the new outcome to
+  its existing controlled-state error; trusted direct accessors remain unchanged.
+- Default-build seven-pair instruction/branch means were `1.000296110` / `0.999999107` on 500k
+  Fibonacci, `1.000310428` / `1.000001768` on 500k uniform seed 12345, `1.000176884` /
+  `0.999996530` on 100k clustered seed 1, and `1.000119413` / `0.999999036` on 100k mega seed 1.
+  Cycles showed no adverse signal; every sample recorded zero context switches/migrations.
+- A `-C codegen-units=1` control reduced the Fibonacci displacement to `1.000002647`
+  instructions and `1.000002939` branches, isolating the small default instruction increase to
+  codegen partitioning. Under the retained default build, text fell 44 bytes, data fell 24 bytes,
+  BSS grew 72 bytes, aggregate accounting grew four bytes, and file size grew 832 bytes.
+
+The current boundary therefore supplies a portable malformed-layout contract and prevents the
+candidate cell records/backing indices from being independently paired, without a measured
+throughput regression.
