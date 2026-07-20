@@ -1,6 +1,6 @@
 # Packed Group Preparation Inventory
 
-**Status:** one QUAL-001D range-setup extraction selected, 2026-07-20
+**Status:** closed after measured rejection, 2026-07-20
 
 This inventory covers `PackedKnnCellScratch::prepare_group_directed`. The routine is the hot
 directed packed-query preparation path used by live cell construction. Its output deliberately
@@ -173,3 +173,42 @@ for:
 Use `--no-preprocess` for all pairs. Retired instructions and branches are primary; retain
 switch/migration telemetry. Reject a repeatable whole-build loss in any ordinary, high-bin, dense,
 or rebuilt-grid regime. Run a quiet wall-clock confirmation only for a strong unexplained signal.
+
+## Measured result and decision
+
+The extraction was implemented and validated against immediate parent `eb56662`, then reverted.
+The direct range-classification regression and complete release, checked, no-default-feature, and
+all-target/all-feature Clippy gates passed, but neither tested code shape reached the performance
+Pareto frontier.
+
+The first shape used the returned center bounds for both query slices and the later center scan.
+LLVM fully inlined the helper; the main cell-driver closure remained `0x1199` bytes, aggregate
+`.text` shrank by 512 bytes, data and actual `.bss` were unchanged, and file size shrank by 720
+bytes. Seven interleaved pairs produced these candidate/parent instruction and branch means:
+
+| Workload | Instructions | Branches |
+|---|---:|---:|
+| 500k Fibonacci | `0.999834538` | `0.999676382` |
+| 500k uniform seed 12345 | `0.999976891` | `0.999712105` |
+| 500k uniform seed 12345, 96 bins | `0.999936075` | `0.999728022` |
+| 100k clustered seed 1 | `1.001397086` | `0.999952846` |
+| 100k mega seed 1 | `1.000127213` | `0.999910407` |
+
+Every sample had zero context switches and CPU migrations. `#[inline(always)]` produced the same
+artifact shape and reproduced the split: clustered measured `1.001398595` instructions and
+`0.999956567` branches, while Fibonacci and mega remained at `0.999832850` / `0.999678887` and
+`1.000126525` / `0.999910138`. The loss was therefore not call overhead.
+
+The second shape restored the original later `self.cell_ranges[0]` read while retaining the helper
+and summary. That removed the clustered and mega instruction losses but moved the regression to the
+ordinary path: seven-pair instruction/branch means were `1.000102288` / `0.999942805` for 500k
+Fibonacci, `1.000010707` / `0.999988071` for 100k clustered, and `1.000004870` / `0.999983614` for
+100k mega. It added 64 bytes of `.text` and 88 file bytes while leaving data, actual `.bss`, and the
+`0x1199` driver closure unchanged. All samples again had zero switches/migrations.
+
+The first form improved ordinary retired work but repeatably regressed the dense distribution; the
+source-shaped form traded a smaller ordinary instruction loss for fewer branches and a larger
+artifact. Neither is neutral or dominant. No quiet wall-clock run can resolve a deterministic
+cross-regime structural trade. Keep directed range discovery, budget checks, and their downstream
+center-range read flattened until compiler codegen or the surrounding packed program changes
+materially.

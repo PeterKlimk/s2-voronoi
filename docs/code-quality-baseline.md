@@ -1249,6 +1249,25 @@ The first live-assembly extraction was accepted on 2026-07-20 against immediate 
 - Every counter sample recorded zero context switches and CPU migrations. No forced inline
   attribute, cache attribution, or quiet wall-clock confirmation was justified.
 
+## QUAL-001D rejected packed range extraction
+
+The first packed-preparation extraction was tested on 2026-07-20 against `eb56662` and reverted.
+
+- `collect_directed_ranges` owned center-plus-neighbor ordering, same-bin classification, and the
+  hard/aggregate work gates. A four-field summary returned center bounds and eligible/all-ring
+  counts. Direct classification, packed brute-force, complete release, checked,
+  no-default-feature, and all-target/all-feature Clippy gates passed.
+- LLVM fully inlined the default helper and kept the main driver closure at `0x1199` bytes. The
+  compact form shrank `.text` by 512 bytes and file size by 720 bytes, with unchanged data and
+  actual `.bss`. It improved instructions on 500k Fibonacci and default/high-bin uniform, but added
+  a repeatable 0.1397% on 100k clustered and 0.0127% on 100k mega. Branches improved in every
+  regime. Forced inlining reproduced the same result.
+- Restoring the original later center-range read removed the clustered and mega instruction losses,
+  but added a repeatable 0.0102% instructions on 500k Fibonacci, 64 text bytes, and 88 file bytes;
+  branches improved slightly. All samples for both shapes recorded zero switches/migrations.
+- Neither shape dominated the original across ordinary and dense regimes. Both production changes
+  and their direct helper test were removed; the existing flattened setup is the retained baseline.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated
