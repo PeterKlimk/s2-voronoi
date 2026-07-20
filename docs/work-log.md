@@ -301,6 +301,12 @@ tasks and are not duplicated here.
 - **Baseline:** counter-oriented Milestone 0 evidence and the exact atomic lifecycle rename map are
   pinned in [`code-quality-baseline.md`](code-quality-baseline.md). The shared host's wall clock is
   advisory; single-thread retired instructions/branches are the primary first-change sentinel.
+- **Post-closeout layout audit:** the formerly rejected semantic old/new cell-span comparison now
+  takes two coherent `LiveCellLayout` values. Its ordinary benchmark path is inactive, a
+  one-codegen-unit control produced byte-identical executable code and neutral counters, and the
+  default multi-regime matrices showed no cycle regression. The repeated historical clean-path
+  fingerprint is now classified as codegen-partition/layout movement; other candidates sharing it
+  remain deferred until their value and current outcome are tested independently.
 - **QUAL-001A result:** public, internal, feature, environment, CLI, report, test, and current-doc
   terminology now distinguishes assembly mismatches, reconciliation, residual output facts, and
   local rebuilding. The migration was breaking and alias-free; the unread reclip knob was removed.
@@ -435,11 +441,14 @@ tasks and are not duplicated here.
   and tests. Deliberate between-round mutation rebuilds the view at that boundary. Seven counter
   pairs were neutral (mean -0.000097% instructions and -0.000004% branches), and the release
   executable file is 48 bytes smaller.
-- **QUAL-001B semantic-comparison decision:** converting the old/new live-span comparison from four
-  slices to two layouts was reverted. Default, never-inline, and always-inline forms all produced
-  the same repeatable clean-path regression (about +0.1597% instructions and +1.6620% branches),
-  despite an eight-byte-smaller executable. Keep this isolated signature raw unless compiler shape
-  or the surrounding reconciliation round changes materially.
+- **QUAL-001B semantic-comparison result:** converting the old/new live-span comparison from four
+  slices to two layouts was initially reverted. Default, never-inline, and always-inline forms all
+  produced the same repeatable clean-path counter displacement (about +0.1597% instructions and
+  +1.6620% branches), despite an eight-byte-smaller executable. The 2026-07-20 retest established
+  that this diagnostic-rebuild function is inactive in the ordinary benchmark and that a
+  one-codegen-unit control makes candidate/parent executable code byte-identical. With no measured
+  cycle regression across four default-build regimes, the typed signature is now retained and the
+  historical signal is classified as codegen-partition/layout movement.
 - **QUAL-001B duplicate-reader result:** the defect-only localized duplicate-key BFS now consumes
   the same `LiveCellLayout` that merge collection passes to segment readers. Its localized/global
   oracle remains unchanged. Seven counter pairs were neutral (mean +0.000153% instructions and
@@ -544,8 +553,9 @@ tasks and are not duplicated here.
   backing index buffer independently even though every base-boundary read and materialization needs
   the pair. The selected slice stores one `LiveCellLayout`, adds only direct-index span and backing
   length accessors, and renames the constructor to describe its post-reconciliation input. The
-  previously rejected semantic-comparison, unpaired-scan, and mutable-rewrite signatures remain
-  raw measured fallbacks. Exact consumers and the migration gate are recorded in
+  previously rejected unpaired-scan and mutable-rewrite signatures remain raw measured fallbacks;
+  the semantic comparison was accepted by the later controlled layout retest. Exact consumers and
+  the migration gate are recorded in
   [`live-cell-layout-inventory.md`](live-cell-layout-inventory.md).
 - **QUAL-001B overlay result:** `WorkingDiagram` now stores one `LiveCellLayout`; its
   `from_reconciled` boundary requires the caller to pair cell records with their backing indices.

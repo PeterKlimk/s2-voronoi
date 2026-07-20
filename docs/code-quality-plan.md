@@ -310,14 +310,18 @@ Checked builds now also audit cell-id/index-buffer representation capacity and e
 span once on reconciliation's defect path. The no-record fast path returns before that audit, and
 the audit is absent from release builds; the accepted release runtime sections are byte-identical
 to the immediate parent.
-Converting the rebuild backend's semantic old/new span comparison to two layouts was also rejected:
-default, never-inline, and always-inline forms all caused the same repeatable clean-path codegen
-regression, so that isolated four-slice signature remains raw for now. The localized unpaired-edge
-scan family likewise remains raw: both whole-family and internal-only view migrations reproduced
-the same optimizer cliff. A mutable paired view for the collinear-drop rewrite was also fully
-inlined but reproduced that exact clean-path regression. Reader- and mutation-signature expansion
-therefore stops at the accepted segment and duplicate-key families until surrounding codegen
-changes materially; the existing local rewrite remains explicit at its call site.
+The rebuild backend's semantic old/new span comparison now also takes two layouts. Its original
+default, never-inline, and always-inline forms all caused the same repeatable clean-path counter
+displacement and were reverted. After the surrounding reconciliation code changed, a controlled
+retest established that the benchmark cannot execute the diagnostic-rebuild comparison and that
+candidate/parent executable code becomes byte-identical with one codegen unit; the old signal was
+therefore codegen-partition/layout movement, not added comparison work. Default-build cycles did
+not regress across Fibonacci, uniform, clustered, or mega, so the coherent boundary is retained.
+The localized unpaired-edge scan family remains raw: both whole-family and internal-only view
+migrations reproduced the historical optimizer cliff but have not received the same independent
+value/outcome retest. A mutable paired view for the collinear-drop rewrite likewise remains
+deferred. Reader- and mutation-signature expansion otherwise stops at the accepted segment and
+duplicate-key families; the existing local rewrite remains explicit at its call site.
 
 The post-`EffectiveGeometry` overlay/materialization slice is accepted and recorded in
 [`live-cell-layout-inventory.md`](live-cell-layout-inventory.md). `WorkingDiagram` now owns one

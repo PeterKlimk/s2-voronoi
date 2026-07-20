@@ -817,9 +817,9 @@ The second live-layout slice was validated on 2026-07-19 against immediate paren
 - Formatting, all-target/all-feature Clippy with warnings denied, the complete release suite, and
   the checked suite passed.
 
-## QUAL-001B rejected semantic-comparison experiment
+## QUAL-001B semantic-comparison experiment and layout retest
 
-The next candidate was measured on 2026-07-19 against immediate parent `d925745` and reverted.
+The first form was measured on 2026-07-19 against immediate parent `d925745` and reverted.
 
 - `cell_spans_differ` was changed from four independently pairable slices to two
   `LiveCellLayout` values. The executable became eight bytes smaller and aggregate text accounting
@@ -828,9 +828,42 @@ The next candidate was measured on 2026-07-19 against immediate parent `d925745`
   `1.016621779` branches across seven interleaved 500k single-threaded Fibonacci pairs. Every pair
   regressed. Marking the cold comparison never-inline produced `1.001595237` and `1.016619152`;
   forcing it always-inline produced `1.001597995` and `1.016619828`.
-- The invariant result across all three compiler shapes shows that this signature change perturbs
+- The invariant result across all three inline shapes showed that this signature change perturbed
   clean-path optimization outside its nominally cold work. The raw semantic-comparison signature
-  remains in place; retry only after a material surrounding codegen or compiler change.
+  remained in place pending a material surrounding-codegen or compiler change.
+
+The candidate was re-audited on 2026-07-20 after reconciliation orchestration and the surrounding
+pipeline had changed materially. The two-layout signature is now retained.
+
+- The ordinary benchmark cannot execute the changed comparison: `cell_spans_differ` is reachable
+  only through `ReconcileApply::Rebuild`, while the default benchmark uses the in-place backend.
+  Any ordinary-run counter movement therefore comes from compiler partition/layout effects rather
+  than work performed by the new abstraction.
+- The default multi-codegen-unit artifact reproduced the family fingerprint at a changed scale.
+  Seven-pair candidate/parent instruction and branch means were `1.000996118` / `1.013599487` on
+  500k Fibonacci, `1.000966835` / `1.011605457` on 500k uniform seed 12345,
+  `1.000151321` / `1.001864842` on 100k clustered seed 1, and `1.000075869` /
+  `1.000731124` on 100k mega seed 1. Cycles were noise-dominated and directionally favorable in
+  all four matrices; every sample recorded zero context switches and CPU migrations.
+- Rebuilding the same source pair with `-C codegen-units=1` removed the displacement completely.
+  Candidate and parent had identical section and file sizes; `.text`, `.rodata`, exception, and
+  unwind sections were byte-identical. Seven 500k Fibonacci pairs were neutral at
+  `0.999999795` instructions and `0.999998433` branches. This isolates the default-build result to
+  codegen partitioning rather than the typed comparison itself.
+- Under the retained default build the candidate removes 444 text bytes, adds 448 BSS bytes,
+  changes aggregate accounting by four bytes, and reduces file size by 168 bytes. The comparison
+  now requires two coherent layouts at its boundary; exact rebuild/in-place reconciliation
+  coverage remains the active-path semantic oracle.
+
+This retest also changes how the repeated 2026-07-19 fingerprint should be read. The rejected
+unpaired-reader, mutable-layout, strict-reason, weld-predicate, and effective-validation forms all
+changed code that was inactive in their clean Fibonacci counter workload and produced the same
+roughly `+0.16%` instructions / `+1.66%` branches (later `+0.129%` / `+1.36%`) artifact. Those are
+evidence that the then-current default artifact moved to a less favorable optimizer/layout state,
+not evidence that each abstraction performed that much extra work. They remain deferred because
+this audit does not establish their independent maintainability value or default-build outcome;
+future retests should include an alternate codegen-partition control before attributing clean-path
+counters to inactive code.
 
 ## QUAL-001B localized duplicate-reader result
 

@@ -765,7 +765,10 @@ fn run_reconciliation_rounds(
                 ReconcileApply::Rebuild => {
                     let (new_cells, new_indices) =
                         apply_merges_rebuild(&mut uf, cells, cell_indices)?;
-                    let changed = cell_spans_differ(cells, cell_indices, &new_cells, &new_indices)?;
+                    let changed = cell_spans_differ(
+                        LiveCellLayout::new(cells, cell_indices),
+                        LiveCellLayout::new(&new_cells, &new_indices),
+                    )?;
                     *cells = new_cells;
                     *cell_indices = new_indices;
                     changed
@@ -789,17 +792,15 @@ fn run_reconciliation_rounds(
 /// Semantic per-cell sequence comparison (the rebuild backend compacts the
 /// index buffer, so raw buffer equality would spin the fixpoint loop).
 fn cell_spans_differ(
-    old_cells: &[VoronoiCell],
-    old_indices: &[u32],
-    new_cells: &[VoronoiCell],
-    new_indices: &[u32],
+    old_layout: LiveCellLayout<'_, '_>,
+    new_layout: LiveCellLayout<'_, '_>,
 ) -> Result<bool, crate::VoronoiError> {
-    if old_cells.len() != new_cells.len() {
+    if old_layout.cell_count() != new_layout.cell_count() {
         return Ok(true);
     }
-    for ci in 0..old_cells.len() {
-        let o = cell_vertex_slice(ci as u32, old_cells, old_indices)?;
-        let n = cell_vertex_slice(ci as u32, new_cells, new_indices)?;
+    for ci in 0..old_layout.cell_count() {
+        let o = cell_vertex_slice_from_layout(ci as u32, old_layout)?;
+        let n = cell_vertex_slice_from_layout(ci as u32, new_layout)?;
         if o != n {
             return Ok(true);
         }

@@ -723,11 +723,16 @@ Do not broadly retry these without a materially different design or workload:
   branches), with identical aggregate section sizes and a 32-byte-smaller executable. Its later
   checked-only structural audit leaves release `.text`, `.rodata`, and unwind sections
   byte-identical to the parent, so it requires no runtime counter gate.
-- Replacing `cell_spans_differ`'s four raw slices with two `LiveCellLayout` values perturbed
-  clean-path codegen despite making the executable eight bytes smaller. Default, never-inline, and
-  always-inline forms all repeated approximately +0.1597% instructions and +1.6620% branches in
-  every one of seven pairs. The implementation was reverted; keep this isolated comparison raw
-  until its surrounding reconciliation round or compiler shape changes materially.
+- Replacing `cell_spans_differ`'s four raw slices with two `LiveCellLayout` values originally
+  perturbed clean-path codegen despite making the executable eight bytes smaller. Default,
+  never-inline, and always-inline forms all repeated approximately +0.1597% instructions and
+  +1.6620% branches in every one of seven pairs, so the first implementation was reverted. A
+  2026-07-20 retest after the surrounding reconciliation code changed retained the typed boundary:
+  the changed diagnostic-rebuild function is unreachable under the ordinary in-place benchmark,
+  default-build movement varied from +0.0996% instructions/+1.3600% branches on Fibonacci to
+  +0.0076%/+0.0731% on mega with no cycle regression, and a `-C codegen-units=1` control produced
+  byte-identical executable code and neutral counters. The historical clean-path signal was a
+  codegen-partition/layout artifact rather than work added by the comparison.
 - Carrying `LiveCellLayout` through the localized unpaired-edge scan reproduced the same optimizer
   cliff. Typing the entry, localized scan, partner lookup, and debug oracle produced +0.1598%
   instructions and +1.6619% branches; retaining the raw entry and typing only the internal family

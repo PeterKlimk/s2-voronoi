@@ -1,10 +1,12 @@
 # Live Cell Layout Boundary Inventory
 
-**Status:** local-rebuild overlay/materialization slice accepted, 2026-07-20
+**Status:** selective boundary complete; semantic comparison accepted after layout retest,
+2026-07-20
 
-This inventory records the next QUAL-001B ownership boundary after `EffectiveGeometry` made the
-terminal position/cell/index arrays one coherent owner. It does not reopen the reconciliation
-signatures that already failed the release counter gate.
+This inventory records the selective QUAL-001B ownership boundary after `EffectiveGeometry` made
+the terminal position/cell/index arrays one coherent owner. A post-closeout audit reopened the
+semantic old/new span comparison after isolating its prior counter signal to codegen partitioning;
+the other rejected reconciliation signatures remain closed.
 
 ## Existing measured boundary
 
@@ -12,14 +14,34 @@ signatures that already failed the release counter gate.
 The segment-reader and localized duplicate-key families carry one paired view. Checked builds audit
 the cell-id/index capacities and declared live spans on reconciliation's defect path.
 
-The following expansions were tested and reverted after reproducing the same optimizer cliff:
+The following expansions originally reproduced the same optimizer cliff:
 
-- the semantic old/new span comparison;
+- the semantic old/new span comparison, now accepted after the controlled retest below;
 - the localized unpaired-edge scan family; and
 - a mutable collinear-drop rewrite owner.
 
-Those raw signatures remain explicit measured fallbacks. The overlay migration must not route
-through them or use its success to claim that their codegen has changed.
+The unpaired-reader and mutable-layout raw signatures remain explicit measured fallbacks. The
+overlay migration does not route through them or claim that their default codegen has changed.
+
+## Semantic-comparison retest
+
+`cell_spans_differ` now receives an old and a new `LiveCellLayout`, preventing its cell records and
+backing index buffers from being cross-paired at the semantic fixpoint boundary. The rebuild and
+in-place reconciliation oracle continues to pin the active behavior.
+
+The default benchmark cannot execute this function because it selects `ReconcileApply::InPlace`;
+the comparison exists only in the diagnostic rebuild backend. Nevertheless, the ordinary default
+artifact repeated a smaller version of the earlier counter fingerprint. The displacement varied
+substantially by workload, from `+0.0996%` instructions / `+1.3600%` branches on 500k Fibonacci to
+`+0.0076%` / `+0.0731%` on 100k mega. Cycles were noisy and directionally favorable in Fibonacci,
+uniform, clustered, and mega matrices, with no scheduling contamination.
+
+As a controlled codegen-partition test, rebuilding candidate and parent with
+`-C codegen-units=1` produced byte-identical `.text`, `.rodata`, exception, and unwind sections,
+identical aggregate/file sizes, and neutral seven-pair Fibonacci counters (`0.999999795`
+instructions, `0.999998433` branches). The default-build movement is therefore an optimizer/layout
+artifact from inactive code, not additional comparison work. The typed boundary is retained; the
+other formerly rejected readers are not implicitly accepted by this result.
 
 ## Local-rebuild overlay
 
