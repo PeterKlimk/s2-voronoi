@@ -30,6 +30,48 @@ fn dist_sq_f64(a: Vec3, b: Vec3) -> f64 {
     dx * dx + dy * dy + dz * dz
 }
 
+/// Exact stored-zero evidence confirmed from final post-patch cell cycles.
+struct ConfirmedZeroEdgeHints {
+    candidates: Vec<(u32, u32)>,
+    hinted_cell_count: usize,
+}
+
+fn confirm_exact_zero_edge_hints(
+    finals: &[ShardFinal],
+    vertices: &[Vec3],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+) -> ConfirmedZeroEdgeHints {
+    let mut hinted_cells = Vec::new();
+    for shard in finals {
+        hinted_cells.extend_from_slice(&shard.output.exact_zero_edge_hint_cells);
+    }
+    let hinted_cell_count = hinted_cells.len();
+    let mut candidates = Vec::new();
+    for cell_idx in hinted_cells {
+        let cell = &cells[cell_idx as usize];
+        let span = &cell_indices[cell.vertex_start()..cell.vertex_start() + cell.vertex_count()];
+        for edge_idx in 0..span.len() {
+            let a = span[edge_idx];
+            let b = span[(edge_idx + 1) % span.len()];
+            if a == b {
+                continue;
+            }
+            let pa = vertices[a as usize];
+            let pb = vertices[b as usize];
+            if dist_sq_f64(pa, pb) == 0.0 {
+                candidates.push((a.min(b), a.max(b)));
+            }
+        }
+    }
+    candidates.sort_unstable();
+    candidates.dedup();
+    ConfirmedZeroEdgeHints {
+        candidates,
+        hinted_cell_count,
+    }
+}
+
 /// Choose shard-order scatter only when spatial order has little correlation
 /// with the caller's generator order. In that regime generator-order scatter
 /// jumps through each shard's source arrays; shard order makes those reads
@@ -615,30 +657,10 @@ pub(super) fn assemble_sharded_live_dedup(
     );
 
     let t_zero_hints = Timer::start();
-    let mut exact_zero_edge_hint_cells = Vec::new();
-    for shard in &finals {
-        exact_zero_edge_hint_cells.extend_from_slice(&shard.output.exact_zero_edge_hint_cells);
-    }
-    let exact_zero_edge_hint_cell_count = exact_zero_edge_hint_cells.len();
-    let mut exact_zero_edge_candidates = Vec::new();
-    for cell_idx in exact_zero_edge_hint_cells {
-        let cell = &cells[cell_idx as usize];
-        let span = &cell_indices[cell.vertex_start()..cell.vertex_start() + cell.vertex_count()];
-        for edge_idx in 0..span.len() {
-            let a = span[edge_idx];
-            let b = span[(edge_idx + 1) % span.len()];
-            if a == b {
-                continue;
-            }
-            let pa = all_vertices[a as usize];
-            let pb = all_vertices[b as usize];
-            if dist_sq_f64(pa, pb) == 0.0 {
-                exact_zero_edge_candidates.push((a.min(b), a.max(b)));
-            }
-        }
-    }
-    exact_zero_edge_candidates.sort_unstable();
-    exact_zero_edge_candidates.dedup();
+    let ConfirmedZeroEdgeHints {
+        candidates: exact_zero_edge_candidates,
+        hinted_cell_count: exact_zero_edge_hint_cell_count,
+    } = confirm_exact_zero_edge_hints(&finals, &all_vertices, &cells, &cell_indices);
     #[allow(unused_variables)]
     let exact_zero_hints_time = t_zero_hints.elapsed();
 
@@ -738,6 +760,21 @@ mod tests {
         assert!(!prefer_shard_order_scatter(&at_threshold, 10_000));
         let above_threshold = vec![(0..33).map(|i| i * 101).collect()];
         assert!(prefer_shard_order_scatter(&above_threshold, 10_000));
+    }
+
+    #[test]
+    fn exact_zero_hint_confirmation_preserves_count_and_deduplicates_pairs() {
+        let mut shard = ShardState::new(2);
+        shard.output.exact_zero_edge_hint_cells = vec![0, 1];
+        let finals = vec![shard.into_final()];
+        let vertices = [Vec3::X, Vec3::X, Vec3::Y, Vec3::Z];
+        let cells = [VoronoiCell::new(0, 3), VoronoiCell::new(3, 3)];
+        let cell_indices = [0, 1, 2, 1, 0, 3];
+
+        let confirmed = confirm_exact_zero_edge_hints(&finals, &vertices, &cells, &cell_indices);
+
+        assert_eq!(confirmed.hinted_cell_count, 2);
+        assert_eq!(confirmed.candidates, [(0, 1)]);
     }
 
     #[test]

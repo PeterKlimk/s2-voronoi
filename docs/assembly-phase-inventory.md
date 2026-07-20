@@ -1,6 +1,6 @@
 # Live Assembly Phase Inventory
 
-**Status:** one QUAL-001D post-scatter extraction selected, 2026-07-20
+**Status:** first QUAL-001D post-scatter extraction accepted, 2026-07-20
 
 This inventory covers `live_dedup::assemble::assemble_sharded_live_dedup`. It is independent of
 the closed QUAL-001B handoff question: `AssemblyResult` still moves its global geometry arrays
@@ -157,3 +157,28 @@ Retired instructions and branches are primary; cache counters help attribute a c
 the hinted-cell gather. Every sample retains switch/migration telemetry. Reject a repeatable loss
 in either scatter regime or the dense-hint workload. A quiet wall-clock run is needed only for a
 strong unexplained signal; readability alone does not justify an assembly regression.
+
+## Accepted result
+
+The selected extraction was accepted on 2026-07-20 against immediate parent `62b7851`.
+
+- Private `ConfirmedZeroEdgeHints` now owns the candidate vector and pre-scan hint-cell count;
+  `confirm_exact_zero_edge_hints` owns only the final read-only gather, scan, normalization, sort,
+  and dedup phase. The existing timer remains around the helper call.
+- A direct regression pins two hinted cells rediscovering one equal-position, distinct-id pair:
+  the result retains hint count two and returns one normalized candidate. Complete release,
+  checked, no-default-feature, and all-target/all-feature Clippy gates passed.
+- LLVM fully inlined the helper. `assemble_sharded_live_dedup` shrank from `0x2fee` to `0x2fbc`
+  bytes; aggregate `.text` shrank by 48 bytes, data and actual `.bss` were unchanged, and file size
+  shrank by 72 bytes. No inline attribute was needed.
+- Seven interleaved single-thread counter pairs for each gate were neutral. Candidate/parent mean
+  instruction and branch ratios were respectively `1.00000131` / `0.99999811` for default-bin
+  Fibonacci, `0.99999901` / `0.99999471` for default-bin uniform seed 12345, `0.99999881` /
+  `0.99999586` for 96-bin Fibonacci, `1.00000183` / `0.99999503` for 96-bin uniform seed 12345,
+  and `1.00000211` / `1.00000062` for clustered seed 1.
+- Every sample recorded zero context switches and CPU migrations. The artifact and primary
+  counters were unambiguous, so neither cache-counter attribution nor a quiet wall-clock rerun was
+  justified.
+
+The remaining assembly materialization and unsafe scatter shapes stay deliberately flattened.
+Revisit them only when a new ownership invariant or consumer creates a narrower natural seam.

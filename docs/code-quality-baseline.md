@@ -1227,6 +1227,28 @@ The first local-rebuild extraction was accepted on 2026-07-20 against immediate 
 - Every counter sample recorded zero context switches and CPU migrations. No inline attribute or
   quiet wall-clock confirmation was justified.
 
+## QUAL-001D assembly exact-zero hint confirmation
+
+The first live-assembly extraction was accepted on 2026-07-20 against immediate parent `62b7851`.
+
+- Private `ConfirmedZeroEdgeHints` owns the exact stored-zero candidate vector and the pre-scan
+  hint-cell count. `confirm_exact_zero_edge_hints` owns only the final read-only gather, cell-cycle
+  scan, normalized-pair insertion, sort, and dedup after sparse patching.
+- The timer stays outside and around the helper. Mutable shard repair, global materialization,
+  generator-/shard-order unsafe scatter, sparse overrides, construction hints, and output policy
+  are unchanged. A direct duplicate-discovery regression and complete release, checked,
+  no-default-feature, and all-target/all-feature Clippy gates passed.
+- LLVM fully inlined the helper. `assemble_sharded_live_dedup` shrank from `0x2fee` to `0x2fbc`
+  bytes; aggregate `.text` shrank by 48 bytes, data and actual `.bss` were unchanged, and file size
+  shrank by 72 bytes.
+- Seven interleaved single-thread pairs per gate were neutral. Candidate/parent instruction and
+  branch means were `1.00000131` / `0.99999811` for default-bin Fibonacci, `0.99999901` /
+  `0.99999471` for default-bin uniform seed 12345, `0.99999881` / `0.99999586` for 96-bin
+  Fibonacci, `1.00000183` / `0.99999503` for 96-bin uniform seed 12345, and `1.00000211` /
+  `1.00000062` for clustered seed 1.
+- Every counter sample recorded zero context switches and CPU migrations. No forced inline
+  attribute, cache attribution, or quiet wall-clock confirmation was justified.
+
 ## QUAL-001A lifecycle rename map
 
 The migration is intentionally breaking and atomic across the compiling repository. No deprecated

@@ -436,13 +436,16 @@ minted vertices, replacement arrays, and mutation footprint become one owned can
 consuming commit method preserves append, strict validation, diagnostics, and truncate-or-swap
 behavior. Direct accepted/rejected transaction tests pass; clean Fibonacci and the deterministic
 seed-224 productive-rejection counters are neutral, and LLVM emits no standalone boundary.
-The live assembly program is now inventoried in
+The first live-assembly boundary is accepted and recorded in
 [`assembly-phase-inventory.md`](assembly-phase-inventory.md). Mutable shard repair already has
 meaningful helpers, while vertex/cell materialization and the two-mode unsafe scatter retain their
-explicit performance-shaped control flow. The selected first assembly slice extracts only final
-exact-zero hint confirmation after sparse patching, returning the correlated candidate vector and
-hint-cell count. Ordered Fibonacci, scrambled uniform, high-bin variants, and a denser clustered
-hint workload form its counter gate.
+explicit performance-shaped control flow. Private `ConfirmedZeroEdgeHints` and
+`confirm_exact_zero_edge_hints` own only final exact-zero hint confirmation after sparse patching,
+returning the correlated candidate vector and hint-cell count. Direct evidence semantics and all
+complete validation gates pass. LLVM fully inlines the helper, shrinks the assembly body by 50
+bytes, and the ordered Fibonacci, scrambled uniform, high-bin, and denser clustered counter gates
+are neutral. This closes the presently justified assembly extraction surface; packed preparation
+is the next phase to inventory.
 
 Apply one phase extraction at a time:
 

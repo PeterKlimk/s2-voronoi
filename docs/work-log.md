@@ -608,18 +608,20 @@ tasks and are not duplicated here.
   unchanged, while the artifact added 1,308 text bytes and 992 file bytes. Details are in
   [`local-rebuild-transaction-inventory.md`](local-rebuild-transaction-inventory.md); the fixture
   search remains in [`local-rebuild-trigger-hunt.md`](local-rebuild-trigger-hunt.md).
-- **QUAL-001D assembly-phase inventory:** mutable shard repair already has meaningful drain,
-  overflow, deferred-fallback, and finalization seams. Global vertex/cell materialization and the
-  generator-/shard-order unsafe scatter remain deliberately flattened. The selected first slice is
-  only the read-only post-patch exact-zero hint confirmation, returning its correlated candidate
-  vector and pre-scan hint-cell count. It introduces no geometry/layout owner and does not alter
-  construction hints, sparse patching, or output-resolution policy. Current 500k Fibonacci,
-  uniform, and clustered runs all exercise the scan; exact workloads and gates are recorded in
+- **QUAL-001D assembly hint-confirmation result:** private `ConfirmedZeroEdgeHints` and
+  `confirm_exact_zero_edge_hints` now own only the read-only final post-patch exact-zero scan and
+  its correlated candidate/count result. Mutable repair, materialization, unsafe scatter, sparse
+  patching, timing, and output policy remain unchanged. The direct evidence regression and complete
+  validation gates passed. LLVM fully inlined the helper, shrank the assembly body by 50 bytes and
+  aggregate text by 48 bytes, retained data and actual `.bss`, and reduced file size by 72 bytes.
+  Seven counter pairs for each default/high-bin Fibonacci and uniform gate plus clustered seed 1
+  were neutral; instruction means ranged from `0.99999881` to `1.00000211`, branch means from
+  `0.99999471` to `1.00000062`, and every sample had zero switches/migrations. Details are in
   [`assembly-phase-inventory.md`](assembly-phase-inventory.md).
-- **Next gate:** implement the selected exact-zero hint helper as one default-inline measured
-  slice. Retain it only if direct evidence semantics pass, ordered and scrambled scatter counters
-  remain neutral at default/high bin counts, the denser clustered-hint path remains neutral, and
-  artifact inspection shows no unexplained boundary.
+- **Next gate:** inventory `PackedKnnCellScratch::prepare_group_directed` and select at most one
+  narrow setup, threshold-selection, or prepared-state boundary. Preserve the SIMD center/ring
+  loops and their current inline/code-shape decisions until a separately measured candidate earns
+  a change.
 - **Later milestones:** split reconciliation, local-rebuild, assembly, and packed-query phase
   programs one measured change at a time.
 - **Gate:** every production refactor preserves semantic fingerprints and passes the affected
