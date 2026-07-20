@@ -883,7 +883,7 @@ The third accepted live-layout slice was validated on 2026-07-19 against immedia
 - Formatting, all-target/all-feature Clippy with warnings denied, the complete release suite, and
   the checked suite passed.
 
-## QUAL-001B rejected unpaired-reader experiment
+## QUAL-001B unpaired-reader experiment and retest
 
 The next reader-family candidate was measured on 2026-07-19 against immediate parent `7f45956`
 and reverted.
@@ -898,6 +898,24 @@ and reverted.
 - Code size was not deciding evidence: the whole form added 360 executable bytes and the split form
   added 16, while aggregate mapped accounting was flat or smaller. Both implementations were
   reverted, and the rebuilt source is identical to the parent.
+
+The whole-family form was retested on 2026-07-20 against parent `add4409` after the semantic span
+comparison and surrounding reconciliation orchestration changed. It is now retained.
+
+- `scan_unpaired_interior`, its localized region scan, partner-cell lookup, and checked-only global
+  oracle now receive one `LiveCellLayout`. Production constructs a fresh view after each possible
+  reconciliation mutation, so the paired borrow cannot outlive the arrays it describes.
+- Seven-pair candidate/parent instruction and branch means were `0.999998856` / `0.999999338` on
+  500k Fibonacci, `0.999999804` / `1.000000368` on 500k uniform seed 12345,
+  `0.999998424` / `0.999997622` on 100k clustered seed 1, and `0.999995289` /
+  `0.999999346` on 100k mega seed 1. Cycles were noise-dominated, and every sample recorded zero
+  context switches and CPU migrations.
+- The release artifact added 168 text bytes, removed 160 BSS bytes, grew aggregate accounting by
+  eight bytes, and grew the file by 120 bytes. Focused release and checked reconciliation oracles
+  passed.
+
+The prior optimizer cliff is absent in the current compiler/surrounding-code shape, so this reader
+family no longer needs the alternate-codegen control used for the semantic comparison.
 
 ## QUAL-001B checked structural-audit result
 

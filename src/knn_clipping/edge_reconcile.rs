@@ -474,7 +474,7 @@ pub(crate) fn reconcile_edge_mismatches(
         // that input class (revisit the contract, not just this assert).
         #[cfg(debug_assertions)]
         {
-            let unpaired = scan_unpaired_interior_global(cells, cell_indices)?;
+            let unpaired = scan_unpaired_interior_global(LiveCellLayout::new(cells, cell_indices))?;
             assert!(
                 unpaired.is_empty(),
                 "edge-reconcile early-return invariant violated: {} bad interior \
@@ -532,7 +532,11 @@ fn reconcile_recorded_mismatches(
         state.record_changed_cells(&primary_candidates);
     }
 
-    let unpaired = scan_unpaired_interior(cells, cell_indices, vertex_keys, &primary_candidates)?;
+    let unpaired = scan_unpaired_interior(
+        LiveCellLayout::new(cells, cell_indices),
+        vertex_keys,
+        &primary_candidates,
+    )?;
     if unpaired.is_empty() {
         return Ok(state.into_result(Vec::new()));
     }
@@ -558,7 +562,11 @@ fn reconcile_recorded_mismatches(
     residual_candidates.extend(affected_cells_from_records(&synth));
     residual_candidates.sort_unstable();
     residual_candidates.dedup();
-    let residual = scan_unpaired_interior(cells, cell_indices, vertex_keys, &residual_candidates)?;
+    let residual = scan_unpaired_interior(
+        LiveCellLayout::new(cells, cell_indices),
+        vertex_keys,
+        &residual_candidates,
+    )?;
     Ok(state.into_result(
         residual
             .iter()
@@ -824,15 +832,14 @@ fn cell_spans_differ(
 /// Debug builds assert the localized result is identical to the global scan, so
 /// any gap in the locality argument is caught immediately at zero release cost.
 pub(crate) fn scan_unpaired_interior(
-    cells: &[VoronoiCell],
-    cell_indices: &[u32],
+    layout: LiveCellLayout<'_, '_>,
     vertex_keys: VertexKeys<'_>,
     candidate_cells: &[u32],
 ) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
-    let out = scan_unpaired_interior_localized(cells, cell_indices, vertex_keys, candidate_cells)?;
+    let out = scan_unpaired_interior_localized(layout, vertex_keys, candidate_cells)?;
     #[cfg(debug_assertions)]
     {
-        let global = scan_unpaired_interior_global(cells, cell_indices)?;
+        let global = scan_unpaired_interior_global(layout)?;
         // Both are sorted; compare directly.
         debug_assert_eq!(
             out, global,
@@ -844,8 +851,7 @@ pub(crate) fn scan_unpaired_interior(
 }
 
 fn scan_unpaired_interior_localized(
-    cells: &[VoronoiCell],
-    cell_indices: &[u32],
+    layout: LiveCellLayout<'_, '_>,
     vertex_keys: VertexKeys<'_>,
     candidate_cells: &[u32],
 ) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
@@ -854,15 +860,15 @@ fn scan_unpaired_interior_localized(
     // generators in their vertices' keys).
     let mut region: Vec<u32> = Vec::new();
     for &c in candidate_cells {
-        if (c as usize) >= cells.len() {
+        if (c as usize) >= layout.cell_count() {
             continue;
         }
         region.push(c);
-        let span = cell_vertex_slice(c, cells, cell_indices)?;
+        let span = cell_vertex_slice_from_layout(c, layout)?;
         for &v in span {
             if let Some(key) = vertex_keys.get(v) {
                 for g in key {
-                    if (g as usize) < cells.len() {
+                    if (g as usize) < layout.cell_count() {
                         region.push(g);
                     }
                 }
@@ -875,7 +881,7 @@ fn scan_unpaired_interior_localized(
     // value = (use count, lower->higher count, first owner)
     let mut uses: HashMap<(u32, u32), (u32, u32, u32)> = HashMap::default();
     for &ci in &region {
-        let span = cell_vertex_slice(ci, cells, cell_indices)?;
+        let span = cell_vertex_slice_from_layout(ci, layout)?;
         let n = span.len();
         // Degenerate (< 3 vertex) cells have no well-formed edge cycle;
         // validation reports them separately.
@@ -911,7 +917,7 @@ fn scan_unpaired_interior_localized(
                     };
                     if let Some(partner) = partner.filter(|&p| p != owner) {
                         let (partner_count, partner_forward) =
-                            cell_edge_uses(partner, a, b, cells, cell_indices)?;
+                            cell_edge_uses(partner, a, b, layout)?;
                         total_count += partner_count;
                         total_forward += partner_forward;
                     }
@@ -931,13 +937,12 @@ fn cell_edge_uses(
     cell_id: u32,
     a: u32,
     b: u32,
-    cells: &[VoronoiCell],
-    cell_indices: &[u32],
+    layout: LiveCellLayout<'_, '_>,
 ) -> Result<(u32, u32), crate::VoronoiError> {
-    if (cell_id as usize) >= cells.len() {
+    if (cell_id as usize) >= layout.cell_count() {
         return Ok((0, 0));
     }
-    let span = cell_vertex_slice(cell_id, cells, cell_indices)?;
+    let span = cell_vertex_slice_from_layout(cell_id, layout)?;
     let n = span.len();
     if n < 3 {
         return Ok((0, 0));
@@ -960,13 +965,12 @@ fn cell_edge_uses(
 /// empty-records early return. Debug-only; the production path is localized.
 #[cfg(debug_assertions)]
 fn scan_unpaired_interior_global(
-    cells: &[VoronoiCell],
-    cell_indices: &[u32],
+    layout: LiveCellLayout<'_, '_>,
 ) -> Result<Vec<(u32, u32, u32)>, crate::VoronoiError> {
     use rustc_hash::FxHashMap as HashMap;
     let mut uses: HashMap<(u32, u32), (u32, u32, u32)> = HashMap::default();
-    for ci in 0..cells.len() {
-        let span = cell_vertex_slice(ci as u32, cells, cell_indices)?;
+    for ci in 0..layout.cell_count() {
+        let span = cell_vertex_slice_from_layout(ci as u32, layout)?;
         let n = span.len();
         if n < 3 {
             continue;
@@ -1840,17 +1844,23 @@ mod tests {
 
         let cells = vec![VoronoiCell::new(0, 3), VoronoiCell::new(3, 3)];
         let opposite = vec![0, 1, 2, 2, 1, 0];
-        assert!(
-            scan_unpaired_interior(&cells, &opposite, VertexKeys::Flat(&keys), &[0, 1],)
-                .expect("valid paired scan")
-                .is_empty()
-        );
+        assert!(scan_unpaired_interior(
+            LiveCellLayout::new(&cells, &opposite),
+            VertexKeys::Flat(&keys),
+            &[0, 1],
+        )
+        .expect("valid paired scan")
+        .is_empty());
 
         let same_direction = vec![0, 1, 2, 0, 1, 2];
         assert_eq!(
-            scan_unpaired_interior(&cells, &same_direction, VertexKeys::Flat(&keys), &[0, 1],)
-                .expect("same-direction scan")
-                .len(),
+            scan_unpaired_interior(
+                LiveCellLayout::new(&cells, &same_direction),
+                VertexKeys::Flat(&keys),
+                &[0, 1],
+            )
+            .expect("same-direction scan")
+            .len(),
             3,
             "every shared edge is misoriented"
         );
@@ -1862,16 +1872,24 @@ mod tests {
         ];
         let overused = vec![0, 1, 2, 2, 1, 0, 0, 1, 2];
         assert_eq!(
-            scan_unpaired_interior(&cells, &overused, VertexKeys::Flat(&keys), &[0, 1, 2],)
-                .expect("overused scan")
-                .len(),
+            scan_unpaired_interior(
+                LiveCellLayout::new(&cells, &overused),
+                VertexKeys::Flat(&keys),
+                &[0, 1, 2],
+            )
+            .expect("overused scan")
+            .len(),
             3,
             "every shared edge has a third use"
         );
 
         let self_loop = vec![0, 1, 2, 0, 0, 2];
-        let bad = scan_unpaired_interior(&cells[..2], &self_loop, VertexKeys::Flat(&keys), &[0, 1])
-            .expect("self-loop scan");
+        let bad = scan_unpaired_interior(
+            LiveCellLayout::new(&cells[..2], &self_loop),
+            VertexKeys::Flat(&keys),
+            &[0, 1],
+        )
+        .expect("self-loop scan");
         assert!(bad.iter().any(|&(a, b, _)| a == b));
     }
 

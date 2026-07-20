@@ -317,11 +317,13 @@ retest established that the benchmark cannot execute the diagnostic-rebuild comp
 candidate/parent executable code becomes byte-identical with one codegen unit; the old signal was
 therefore codegen-partition/layout movement, not added comparison work. Default-build cycles did
 not regress across Fibonacci, uniform, clustered, or mega, so the coherent boundary is retained.
-The localized unpaired-edge scan family remains raw: both whole-family and internal-only view
-migrations reproduced the historical optimizer cliff but have not received the same independent
-value/outcome retest. A mutable paired view for the collinear-drop rewrite likewise remains
-deferred. Reader- and mutation-signature expansion otherwise stops at the accepted segment and
-duplicate-key families; the existing local rewrite remains explicit at its call site.
+The localized unpaired-edge scan family now also carries one layout through localized traversal,
+partner lookup, and its checked-only global oracle. Both whole-family and internal-only forms had
+reproduced the historical optimizer cliff, but a current whole-family retest was neutral across
+Fibonacci, uniform, clustered, and mega, so the coherent reader boundary is retained. A mutable
+paired view for the collinear-drop rewrite remains deferred. Reader-signature expansion otherwise
+stops at the accepted segment, duplicate-key, semantic-comparison, and unpaired families; the
+existing local rewrite remains explicit at its call site.
 
 The post-`EffectiveGeometry` overlay/materialization slice is accepted and recorded in
 [`live-cell-layout-inventory.md`](live-cell-layout-inventory.md). `WorkingDiagram` now owns one

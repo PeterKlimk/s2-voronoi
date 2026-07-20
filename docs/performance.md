@@ -733,11 +733,13 @@ Do not broadly retry these without a materially different design or workload:
   +0.0076%/+0.0731% on mega with no cycle regression, and a `-C codegen-units=1` control produced
   byte-identical executable code and neutral counters. The historical clean-path signal was a
   codegen-partition/layout artifact rather than work added by the comparison.
-- Carrying `LiveCellLayout` through the localized unpaired-edge scan reproduced the same optimizer
-  cliff. Typing the entry, localized scan, partner lookup, and debug oracle produced +0.1598%
-  instructions and +1.6619% branches; retaining the raw entry and typing only the internal family
-  produced +0.1600% and +1.6625%. Both regressed in every one of seven pairs and were reverted.
-  Keep this reader family raw until its surrounding codegen changes materially.
+- Carrying `LiveCellLayout` through the localized unpaired-edge scan originally reproduced the same
+  optimizer cliff. Typing the entry, localized scan, partner lookup, and debug oracle produced
+  +0.1598% instructions and +1.6619% branches; retaining the raw entry and typing only the internal
+  family produced +0.1600% and +1.6625%. Both were initially reverted. A 2026-07-20 retest after
+  surrounding reconciliation changes was neutral across Fibonacci, uniform, clustered, and mega:
+  instruction means ranged from `0.999995289` to `0.999999804`, and branch means ranged from
+  `0.999997622` to `1.000000368`. The whole paired reader family is now retained.
 - Introducing `LiveCellLayoutMut::rewrite_and_shrink` for the defect-only collinear-drop mutation
   reproduced the same cliff despite full inlining and an unchanged outer reconciliation signature.
   Seven pairs averaged +0.15987% instructions and +1.66186% branches, with every pair regressing

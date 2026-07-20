@@ -455,9 +455,11 @@ tasks and are not duplicated here.
   +0.000209% branches), aggregate section sizes were identical, and the executable is 32 bytes
   smaller.
 - **QUAL-001B unpaired-reader decision:** migrating the localized unpaired-edge scan, partner lookup,
-  and debug global oracle was reverted. The whole-family form produced +0.1598% instructions and
-  +1.6619% branches; retaining the raw outer ABI and typing only internals produced +0.1600% and
-  +1.6625%. Reader-signature expansion stops at the accepted segment and duplicate-key families.
+  and debug global oracle was initially reverted. The whole-family form produced +0.1598%
+  instructions and +1.6619% branches; retaining the raw outer ABI and typing only internals
+  produced +0.1600% and +1.6625%. The 2026-07-20 whole-family retest was neutral across Fibonacci,
+  uniform, clustered, and mega, so the layout boundary is now retained through the full reader
+  family.
 - **QUAL-001B structural-audit result:** `LiveCellLayout::debug_assert_valid` now checks u32-backed
   cell/index capacity and every declared live span. Reconciliation invokes it only after the clean
   no-record fast path, so only defect-bearing checked builds pay for the scan. The release `.text`,
@@ -553,9 +555,9 @@ tasks and are not duplicated here.
   backing index buffer independently even though every base-boundary read and materialization needs
   the pair. The selected slice stores one `LiveCellLayout`, adds only direct-index span and backing
   length accessors, and renames the constructor to describe its post-reconciliation input. The
-  previously rejected unpaired-scan and mutable-rewrite signatures remain raw measured fallbacks;
-  the semantic comparison was accepted by the later controlled layout retest. Exact consumers and
-  the migration gate are recorded in
+  previously rejected mutable-rewrite signature remains a raw measured fallback; the semantic
+  comparison and unpaired scan were accepted by later layout retests. Exact consumers and the
+  migration gate are recorded in
   [`live-cell-layout-inventory.md`](live-cell-layout-inventory.md).
 - **QUAL-001B overlay result:** `WorkingDiagram` now stores one `LiveCellLayout`; its
   `from_reconciled` boundary requires the caller to pair cell records with their backing indices.

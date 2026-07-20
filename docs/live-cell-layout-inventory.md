@@ -1,12 +1,13 @@
 # Live Cell Layout Boundary Inventory
 
-**Status:** selective boundary complete; semantic comparison accepted after layout retest,
-2026-07-20
+**Status:** selective boundary complete; semantic comparison and unpaired readers accepted after
+layout retests, 2026-07-20
 
 This inventory records the selective QUAL-001B ownership boundary after `EffectiveGeometry` made
 the terminal position/cell/index arrays one coherent owner. A post-closeout audit reopened the
-semantic old/new span comparison after isolating its prior counter signal to codegen partitioning;
-the other rejected reconciliation signatures remain closed.
+semantic old/new span comparison after isolating its prior counter signal to codegen partitioning.
+The unpaired-reader family was then reopened after its earlier cliff disappeared; the mutable
+reconciliation signature remains closed.
 
 ## Existing measured boundary
 
@@ -17,11 +18,11 @@ the cell-id/index capacities and declared live spans on reconciliation's defect 
 The following expansions originally reproduced the same optimizer cliff:
 
 - the semantic old/new span comparison, now accepted after the controlled retest below;
-- the localized unpaired-edge scan family; and
+- the localized unpaired-edge scan family, now accepted after a neutral default-build retest; and
 - a mutable collinear-drop rewrite owner.
 
-The unpaired-reader and mutable-layout raw signatures remain explicit measured fallbacks. The
-overlay migration does not route through them or claim that their default codegen has changed.
+The mutable-layout raw signature remains an explicit measured fallback. The overlay migration does
+not route through it or claim that its default codegen has changed.
 
 ## Semantic-comparison retest
 
@@ -42,6 +43,19 @@ identical aggregate/file sizes, and neutral seven-pair Fibonacci counters (`0.99
 instructions, `0.999998433` branches). The default-build movement is therefore an optimizer/layout
 artifact from inactive code, not additional comparison work. The typed boundary is retained; the
 other formerly rejected readers are not implicitly accepted by this result.
+
+## Unpaired-reader retest
+
+The whole unpaired-edge reader family now carries one `LiveCellLayout` through localized region
+expansion, partner-cell edge counting, and the checked-only global differential. Each scan forms
+its view after the preceding reconciliation round, preserving the existing mutation boundary.
+
+Against parent `add4409`, seven-pair instruction/branch means were neutral on 500k Fibonacci
+(`0.999998856` / `0.999999338`), 500k uniform seed 12345 (`0.999999804` / `1.000000368`), 100k
+clustered seed 1 (`0.999998424` / `0.999997622`), and 100k mega seed 1 (`0.999995289` /
+`0.999999346`). Cycles were unresolved; every sample had zero context switches/migrations. The
+artifact added 168 text bytes, removed 160 BSS bytes, and grew by 120 file bytes. The historical
+optimizer cliff is absent, so the paired reader boundary is retained.
 
 ## Local-rebuild overlay
 
