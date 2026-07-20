@@ -618,10 +618,17 @@ tasks and are not duplicated here.
   were neutral; instruction means ranged from `0.99999881` to `1.00000211`, branch means from
   `0.99999471` to `1.00000062`, and every sample had zero switches/migrations. Details are in
   [`assembly-phase-inventory.md`](assembly-phase-inventory.md).
-- **Next gate:** inventory `PackedKnnCellScratch::prepare_group_directed` and select at most one
-  narrow setup, threshold-selection, or prepared-state boundary. Preserve the SIMD center/ring
-  loops and their current inline/code-shape decisions until a separately measured candidate earns
-  a change.
+- **QUAL-001D packed-preparation inventory:** the selected first slice owns only center-plus-neighbor
+  range discovery and hard/aggregate candidate-budget classification. A private summary returns
+  center SoA bounds and the correlated eligible/all-ring counts. Entry/generation policy, reusable
+  scratch reset, the source-pinned indexed threshold loop, dense takeover, and center/ring SIMD
+  kernels remain in place. Ordinary, high-bin, clustered, and rebuilt-grid/mega workloads form the
+  counter gate; details are in
+  [`packed-preparation-inventory.md`](packed-preparation-inventory.md).
+- **Next gate:** implement `collect_directed_ranges` as one default-inline measured slice. Retain it
+  only if direct range-classification and existing packed contracts pass, the complete validation
+  gates pass, structural counters remain neutral across all five selected regimes, and artifact
+  inspection shows no unexplained driver boundary.
 - **Later milestones:** split reconciliation, local-rebuild, assembly, and packed-query phase
   programs one measured change at a time.
 - **Gate:** every production refactor preserves semantic fingerprints and passes the affected

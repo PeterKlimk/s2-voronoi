@@ -444,8 +444,11 @@ explicit performance-shaped control flow. Private `ConfirmedZeroEdgeHints` and
 returning the correlated candidate vector and hint-cell count. Direct evidence semantics and all
 complete validation gates pass. LLVM fully inlines the helper, shrinks the assembly body by 50
 bytes, and the ordered Fibonacci, scrambled uniform, high-bin, and denser clustered counter gates
-are neutral. This closes the presently justified assembly extraction surface; packed preparation
-is the next phase to inventory.
+are neutral. This closes the presently justified assembly extraction surface. Packed preparation
+is now inventoried in [`packed-preparation-inventory.md`](packed-preparation-inventory.md). Its
+selected first slice owns only directed neighborhood range discovery and hard/aggregate budget
+classification, returning center bounds and correlated eligible/all-ring counts. Scratch reset,
+threshold selection, dense takeover, and the center/ring SIMD kernels remain flattened.
 
 Apply one phase extraction at a time:
 
