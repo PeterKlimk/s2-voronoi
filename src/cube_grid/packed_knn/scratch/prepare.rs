@@ -7,6 +7,14 @@ use crate::policy::{
     PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER, PACKED_HI_BUDGET,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DirectedRangeSummary {
+    center_soa_start: usize,
+    center_soa_end: usize,
+    ring_candidates_eligible: usize,
+    ring_candidates_all: usize,
+}
+
 #[inline]
 fn finish_interior_security(
     s_min: f32,
@@ -111,45 +119,23 @@ fn append_interior_security_thresholds(
 }
 
 impl PackedKnnCellScratch {
-    #[cfg_attr(feature = "profiling", inline(never))]
-    // Loop indices address several parallel per-query arrays at once;
-    // iterator zips would obscure rather than clarify.
-    #[allow(clippy::needless_range_loop)]
-    pub(crate) fn prepare_group_directed<'a, 'g>(
-        &'a mut self,
+    fn collect_directed_ranges(
+        &mut self,
         grid: &CubeMapGrid,
-        group: PackedGroupInput<'g>,
-        timings: &mut PackedKnnTimings,
-    ) -> PreparedPackedGroupStatus<'a, 'g> {
-        timings.clear();
-
+        group: PackedGroupInput<'_>,
+    ) -> Option<DirectedRangeSummary> {
         let cell = group.cell();
-        let num_cells = 6 * grid.res * grid.res;
-        if cell >= num_cells {
-            return PreparedPackedGroupStatus::SlowPath;
-        }
-
-        group.debug_assert_matches_grid(grid);
-
         let query_bin = group.query_bin();
         let layout = group.layout();
         let num_queries = group.query_count();
-        let mut group_gen = self.next_group_gen.wrapping_add(1).max(1);
-        if group_gen == u32::MAX {
-            // Reserve `0` as "never set"; on wrap, clear all generation stamps.
-            group_gen = 1;
-            self.tail_ready_gen.fill(0);
-        }
-        self.next_group_gen = group_gen;
 
-        let mut t = PackedLapTimer::start();
         self.cell_ranges.clear();
 
-        let q_start = grid.cell_offsets[cell] as usize;
-        let q_end = grid.cell_offsets[cell + 1] as usize;
+        let center_soa_start = grid.cell_offsets[cell] as usize;
+        let center_soa_end = grid.cell_offsets[cell + 1] as usize;
         self.cell_ranges.push(PackedCellRange {
-            soa_start: q_start,
-            soa_end: q_end,
+            soa_start: center_soa_start,
+            soa_end: center_soa_end,
             kind: PackedCellRangeKind::CrossBin,
         });
 
@@ -185,34 +171,82 @@ impl PackedKnnCellScratch {
         }
 
         let mut num_candidates = 0usize;
-        for r in &self.cell_ranges {
+        for range in &self.cell_ranges {
             // If this neighbor cell is earlier-local in the same bin, we never consider it for
             // directed kNN (the earlier side already sent adjacency via edge checks).
-            if r.kind == PackedCellRangeKind::SameBinEarlier {
+            if range.kind == PackedCellRangeKind::SameBinEarlier {
                 continue;
             }
-            num_candidates += r.soa_end - r.soa_start;
+            num_candidates += range.soa_end - range.soa_start;
         }
         if num_candidates > MAX_CANDIDATES_HARD {
-            timings.add_setup(t.lap());
-            return PreparedPackedGroupStatus::SlowPath;
+            return None;
         }
         if num_queries
             .checked_mul(num_candidates)
             .is_none_or(|work| work > MAX_AGGREGATE_CANDIDATE_WORK)
         {
-            timings.add_setup(t.lap());
-            return PreparedPackedGroupStatus::SlowPath;
+            return None;
         }
+
         let mut ring_candidates_eligible = 0usize;
         let mut ring_candidates_all = 0usize;
-        for r in &self.cell_ranges[1..] {
-            ring_candidates_all += r.soa_end - r.soa_start;
-            if r.kind == PackedCellRangeKind::SameBinEarlier {
+        for range in &self.cell_ranges[1..] {
+            ring_candidates_all += range.soa_end - range.soa_start;
+            if range.kind == PackedCellRangeKind::SameBinEarlier {
                 continue;
             }
-            ring_candidates_eligible += r.soa_end - r.soa_start;
+            ring_candidates_eligible += range.soa_end - range.soa_start;
         }
+
+        Some(DirectedRangeSummary {
+            center_soa_start,
+            center_soa_end,
+            ring_candidates_eligible,
+            ring_candidates_all,
+        })
+    }
+
+    #[cfg_attr(feature = "profiling", inline(never))]
+    // Loop indices address several parallel per-query arrays at once;
+    // iterator zips would obscure rather than clarify.
+    #[allow(clippy::needless_range_loop)]
+    pub(crate) fn prepare_group_directed<'a, 'g>(
+        &'a mut self,
+        grid: &CubeMapGrid,
+        group: PackedGroupInput<'g>,
+        timings: &mut PackedKnnTimings,
+    ) -> PreparedPackedGroupStatus<'a, 'g> {
+        timings.clear();
+
+        let cell = group.cell();
+        let num_cells = 6 * grid.res * grid.res;
+        if cell >= num_cells {
+            return PreparedPackedGroupStatus::SlowPath;
+        }
+
+        group.debug_assert_matches_grid(grid);
+
+        let num_queries = group.query_count();
+        let mut group_gen = self.next_group_gen.wrapping_add(1).max(1);
+        if group_gen == u32::MAX {
+            // Reserve `0` as "never set"; on wrap, clear all generation stamps.
+            group_gen = 1;
+            self.tail_ready_gen.fill(0);
+        }
+        self.next_group_gen = group_gen;
+
+        let mut t = PackedLapTimer::start();
+        let Some(DirectedRangeSummary {
+            center_soa_start,
+            center_soa_end,
+            ring_candidates_eligible,
+            ring_candidates_all,
+        }) = self.collect_directed_ranges(grid, group)
+        else {
+            timings.add_setup(t.lap());
+            return PreparedPackedGroupStatus::SlowPath;
+        };
         timings.add_setup(t.lap());
 
         let ring2 = grid.cell_ring2(cell);
@@ -221,9 +255,9 @@ impl PackedKnnCellScratch {
         // live_dedup invariant: groups are complete center-cell runs in slot order.
         // Query coordinates are already stored in SoA order by slot; borrow the center-cell
         // slices directly instead of copying into scratch.
-        let qx_src = &grid.cell_points_x[q_start..q_end];
-        let qy_src = &grid.cell_points_y[q_start..q_end];
-        let qz_src = &grid.cell_points_z[q_start..q_end];
+        let qx_src = &grid.cell_points_x[center_soa_start..center_soa_end];
+        let qy_src = &grid.cell_points_y[center_soa_start..center_soa_end];
+        let qz_src = &grid.cell_points_z[center_soa_start..center_soa_end];
         timings.add_query_cache(t.lap());
 
         self.security_thresholds.clear();
@@ -772,6 +806,109 @@ impl PackedKnnCellScratch {
             group_gen,
             tail_built_any: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod range_tests {
+    use super::*;
+    use crate::packed_layout::PackedSlotLayout;
+
+    fn fibonacci_points(n: usize) -> Vec<glam::Vec3> {
+        let golden_angle = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
+        (0..n)
+            .map(|i| {
+                let y = 1.0 - 2.0 * (i as f32 + 0.5) / n as f32;
+                let radius = (1.0 - y * y).sqrt();
+                let theta = golden_angle * i as f32;
+                glam::Vec3::new(radius * theta.cos(), y, radius * theta.sin())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn directed_ranges_retain_earlier_neighbors_but_exclude_their_work() {
+        const LOCAL_SHIFT: u32 = 24;
+        const LOCAL_MASK: u32 = (1 << LOCAL_SHIFT) - 1;
+
+        let points = fibonacci_points(512);
+        let grid = CubeMapGrid::new(&points, 6);
+        let cell = (0..grid.cell_offsets.len() - 1)
+            .find(|&candidate| {
+                if grid.cell_offsets[candidate] == grid.cell_offsets[candidate + 1] {
+                    return false;
+                }
+                let mut has_earlier = false;
+                let mut has_later = false;
+                for &neighbor in grid.cell_neighbors(candidate) {
+                    if neighbor == u32::MAX || neighbor == candidate as u32 {
+                        continue;
+                    }
+                    let neighbor = neighbor as usize;
+                    if grid.cell_offsets[neighbor] == grid.cell_offsets[neighbor + 1] {
+                        continue;
+                    }
+                    has_earlier |= neighbor < candidate;
+                    has_later |= neighbor > candidate;
+                }
+                has_earlier && has_later
+            })
+            .expect("expected a populated cell with earlier and later populated neighbors");
+
+        let slot_gen_map: Vec<u32> = (0..points.len() as u32).collect();
+        let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
+        let center_start = grid.cell_offsets[cell] as usize;
+        let center_end = grid.cell_offsets[cell + 1] as usize;
+        let group = PackedGroupInput::new(
+            cell,
+            0,
+            center_start as u32,
+            center_end - center_start,
+            center_start as u32,
+            layout,
+        );
+
+        let mut expected_ranges = vec![(center_start, center_end, PackedCellRangeKind::CrossBin)];
+        let mut ring_candidates_all = 0usize;
+        let mut ring_candidates_eligible = 0usize;
+        for &neighbor in grid.cell_neighbors(cell) {
+            if neighbor == u32::MAX || neighbor == cell as u32 {
+                continue;
+            }
+            let neighbor = neighbor as usize;
+            let start = grid.cell_offsets[neighbor] as usize;
+            let end = grid.cell_offsets[neighbor + 1] as usize;
+            if start == end {
+                continue;
+            }
+            let kind = if neighbor < cell {
+                PackedCellRangeKind::SameBinEarlier
+            } else {
+                PackedCellRangeKind::SameBinLater
+            };
+            expected_ranges.push((start, end, kind));
+            ring_candidates_all += end - start;
+            if kind != PackedCellRangeKind::SameBinEarlier {
+                ring_candidates_eligible += end - start;
+            }
+        }
+
+        let mut scratch = PackedKnnCellScratch::new();
+        let summary = scratch
+            .collect_directed_ranges(&grid, group)
+            .expect("small directed neighborhood should remain within the packed budget");
+
+        assert_eq!(summary.center_soa_start, center_start);
+        assert_eq!(summary.center_soa_end, center_end);
+        assert_eq!(summary.ring_candidates_all, ring_candidates_all);
+        assert_eq!(summary.ring_candidates_eligible, ring_candidates_eligible);
+        assert!(ring_candidates_eligible < ring_candidates_all);
+        assert_eq!(scratch.cell_ranges.len(), expected_ranges.len());
+        for (actual, &(start, end, kind)) in scratch.cell_ranges.iter().zip(&expected_ranges) {
+            assert_eq!(actual.soa_start, start);
+            assert_eq!(actual.soa_end, end);
+            assert_eq!(actual.kind, kind);
+        }
     }
 }
 

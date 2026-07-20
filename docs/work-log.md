@@ -618,13 +618,15 @@ tasks and are not duplicated here.
   were neutral; instruction means ranged from `0.99999881` to `1.00000211`, branch means from
   `0.99999471` to `1.00000062`, and every sample had zero switches/migrations. Details are in
   [`assembly-phase-inventory.md`](assembly-phase-inventory.md).
-- **QUAL-001D packed-range decision:** `collect_directed_ranges` and its four-field summary passed
-  direct range invariants and every complete validation gate, but the fully inlined compact form
-  added 0.1397% instructions on clustered input despite improving Fibonacci and uniform. Forced
-  inlining reproduced the split. Restoring the original later center-range read removed the dense
-  loss but added 0.0102% instructions on Fibonacci and 64 text bytes. Both shapes were reverted;
-  all counter samples had zero switches/migrations. Keep packed range setup, thresholds, dense
-  takeover, and SIMD scans flattened. Details are in
+- **QUAL-001D packed-range result:** `collect_directed_ranges` and its four-field summary now own
+  center-plus-neighbor ordering, same-bin eligibility, and hard/aggregate work gates. The compact
+  form was rejected after adding 0.1397% instructions on clustered input. The retained form keeps
+  the original later center-range read: ordinary Fibonacci and default/high-bin uniform add about
+  0.009–0.010% instructions while removing about 0.004–0.006% branches; clustered and mega are
+  effectively neutral. It adds 64 text bytes and 88 file bytes, with unchanged data, actual `.bss`,
+  and driver-closure size. Direct invariants and every complete validation gate pass; all counter
+  samples had zero switches/migrations. This is accepted as practical neutrality for a useful
+  tested phase boundary. Details are in
   [`packed-preparation-inventory.md`](packed-preparation-inventory.md).
 - **Next gate:** reconcile the milestone checklist with the accepted and rejected records, then
   inventory any remaining cold typed-identity boundary before selecting another production change.

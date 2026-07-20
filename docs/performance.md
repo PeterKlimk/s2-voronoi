@@ -979,9 +979,10 @@ Do not broadly retry these without a materially different design or workload:
   improved 500k Fibonacci and uniform retired work but added 0.1397% instructions on 100k clustered
   and 0.0127% on 100k mega in every seven-pair gate; forced inlining did not change the split.
   Restoring the original later center-range read removed the dense losses but added 0.0102%
-  instructions on Fibonacci and 64 text bytes. Branches improved slightly in both shapes, but
-  neither dominated the flattened original across regimes, so both were reverted. See
-  `packed-preparation-inventory.md` for the full matrix.
+  instructions on Fibonacci and 64 text bytes. The compact shape was reverted. The source-shaped
+  form was retained as practically neutral after default/high-bin uniform reproduced the same
+  roughly one-basis-point instruction displacement with fewer branches, while clustered and mega
+  remained neutral. See `packed-preparation-inventory.md` for the full matrix.
 - Hoisting shard-local `usize` to `u32` validation from every generator to once per grid-cell group
   saved about 0.05% native instructions, but slightly increased native branches. Rotated 1M cycles
   split by distribution: Fibonacci favored the candidate in 3/4 pairs while uniform rejected it in

@@ -1249,9 +1249,10 @@ The first live-assembly extraction was accepted on 2026-07-20 against immediate 
 - Every counter sample recorded zero context switches and CPU migrations. No forced inline
   attribute, cache attribution, or quiet wall-clock confirmation was justified.
 
-## QUAL-001D rejected packed range extraction
+## QUAL-001D packed directed range extraction
 
-The first packed-preparation extraction was tested on 2026-07-20 against `eb56662` and reverted.
+The first packed-preparation extraction was accepted on 2026-07-20 against source baseline
+`eb56662` after one compact variant was rejected.
 
 - `collect_directed_ranges` owned center-plus-neighbor ordering, same-bin classification, and the
   hard/aggregate work gates. A four-field summary returned center bounds and eligible/all-ring
@@ -1262,11 +1263,16 @@ The first packed-preparation extraction was tested on 2026-07-20 against `eb5666
   actual `.bss`. It improved instructions on 500k Fibonacci and default/high-bin uniform, but added
   a repeatable 0.1397% on 100k clustered and 0.0127% on 100k mega. Branches improved in every
   regime. Forced inlining reproduced the same result.
-- Restoring the original later center-range read removed the clustered and mega instruction losses,
-  but added a repeatable 0.0102% instructions on 500k Fibonacci, 64 text bytes, and 88 file bytes;
-  branches improved slightly. All samples for both shapes recorded zero switches/migrations.
-- Neither shape dominated the original across ordinary and dense regimes. Both production changes
-  and their direct helper test were removed; the existing flattened setup is the retained baseline.
+- The retained form restores the original later center-range read. Seven-pair means are
+  `1.000102288` / `0.999942805` instructions/branches on 500k Fibonacci, `1.000099301` /
+  `0.999959540` on 500k uniform, `1.000091140` / `0.999953536` on 96-bin uniform,
+  `1.000010707` / `0.999988071` on 100k clustered, and `1.000004870` / `0.999983614` on 100k mega.
+  It adds 64 text bytes and 88 file bytes; data, actual `.bss`, and the `0x1199` driver closure are
+  unchanged. All samples for both shapes recorded zero switches/migrations.
+- The approximately one-basis-point ordinary instruction displacement is accepted as practical
+  neutrality: branches fall slightly, dense/rebuilt-grid regimes are neutral, and the helper gives
+  one named, independently tested classification and budget boundary. The retained rebuilt artifact
+  is byte-identical to the measured source-shaped artifact.
 
 ## QUAL-001A lifecycle rename map
 

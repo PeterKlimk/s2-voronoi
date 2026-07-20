@@ -447,11 +447,12 @@ bytes, and the ordered Fibonacci, scrambled uniform, high-bin, and denser cluste
 are neutral. This closes the presently justified assembly extraction surface. Packed preparation
 is inventoried and closed in
 [`packed-preparation-inventory.md`](packed-preparation-inventory.md). The range-discovery and budget
-helper passed all semantic gates but split codegen by workload: the compact form improved ordinary
-inputs while adding 0.1397% instructions on clustered input, and restoring the source-shaped center
-read removed that loss but added 0.0102% instructions on Fibonacci plus 64 text bytes. Both forms
-were reverted. Scratch reset, threshold selection, dense takeover, range setup, and the center/ring
-SIMD kernels remain flattened.
+helper passes all semantic gates. Its compact form was rejected after adding 0.1397% instructions
+on clustered input. The retained source-shaped form preserves the later center-range read; it adds
+about 0.01% instructions and removes about 0.004–0.006% branches on ordinary inputs, is neutral on
+clustered/mega, and adds 64 text bytes. That is accepted as practical performance neutrality for a
+named, directly tested classification boundary. Scratch reset, threshold selection, dense
+takeover, and the center/ring SIMD kernels remain flattened.
 
 Apply one phase extraction at a time:
 
