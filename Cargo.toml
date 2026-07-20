@@ -20,6 +20,7 @@ exclude = [
     "docs/*-idea.md",
     "docs/*-ideas.md",
     "docs/feature-api-wishlist.md",
+    "docs/kernel-optimization-brief.md",
     "docs/local-rebuild-trigger-hunt.md",
     "docs/point-api-plan.md",
     "docs/work-log.md",
