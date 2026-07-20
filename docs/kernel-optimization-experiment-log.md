@@ -104,6 +104,56 @@ streaming top-64 maintenance on all 17.1M high keys. Do not build the behavioral
 cheap bounded-selection design has an instruction-cost model or isolated microbenchmark capable
 of overcoming that eager cost.
 
+### Cap-64 maintenance and rebuild follow-up
+
+Two production-codegen experiments tested the unresolved eager cost. Both were exploratory,
+rejected, reverted, and left uncommitted.
+
+The first, on `agent/kernel-compact-top64-cost`, added a fixed-capacity max-heap of the best 64
+full keys at every existing key-production site while retaining the baseline vectors and emissions.
+The heap matched a fully sorted top-64 at every tested prefix, including ties and key extrema; all
+packed ordering/bound tests remained unchanged. This is an intentionally conservative additive
+cost ceiling because it does not claim the later storage/selection savings.
+
+Seven pinned native single-threaded `perf stat` pairs, no preprocessing:
+
+| Workload | Instructions | Branches | Branch misses | Cycles |
+| --- | ---: | ---: | ---: | ---: |
+| 500k Fibonacci | +5.114% | +8.238% | +47.78% | +12.79% mean |
+| 100k clustered, seed 1 | +11.353% | +22.984% | +74.77% | +28.02% mean |
+
+The second, on `agent/kernel-compact-overflow-rebuild`, replaced ordinary retention for non-band
+queries rather than adding to it. It:
+
+- kept the exact best 64 keys under the production `(descending dot, ascending slot)` order;
+- recorded deduplicated absolute-slot block-16 source masks;
+- exposed the retained worst-key dot as the exact unseen bound;
+- rebuilt and fully ordered overflow only when the consumer advanced past that bound; and
+- left dense-band queries on the baseline path.
+
+A 256-way tied fixture forced the rebuild seam and reproduced the complete ascending-slot tie
+order. Packed brute-force order/bound tests, the API suite, and the correctness suite passed.
+Nevertheless, deleting overflow vector growth and unused partition/sort work did not repay the
+streaming heap and block bookkeeping:
+
+| Workload | Instructions | Branches | Branch misses | Cycles |
+| --- | ---: | ---: | ---: | ---: |
+| 500k Fibonacci | +6.914% | +15.712% | +55.84% | +14.45% |
+| 100k clustered, seed 1 | +7.721% | +30.451% | +83.44% | +18.93% |
+
+The retired-instruction and branch losses are decisive; wall clock was not used. The compact
+overflow line is closed for this selection strategy. Its memory ceiling is real, but the current
+append-then-partition kernel is substantially cheaper than exact streaming top-64 maintenance.
+Revisit only if a future design avoids a data-dependent heap comparison/repair for every high key,
+or if memory—not construction throughput—becomes the explicit objective.
+
+Raw counter files for this workspace session:
+
+- `/tmp/compact_top64_fib.csv`
+- `/tmp/compact_top64_clustered.csv`
+- `/tmp/compact_rebuild_fib.csv`
+- `/tmp/compact_rebuild_clustered.csv`
+
 ## Exact shell-cell oracle branch
 
 - Branch: `agent/kernel-shell-cell-reject`
