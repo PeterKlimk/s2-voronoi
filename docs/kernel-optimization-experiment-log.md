@@ -1,0 +1,105 @@
+# Kernel optimization experiment log
+
+This log records the read-only review synthesis, measurement gates, and branch outcomes from the
+July 2026 kernel pass. Wall-clock measurements taken while the shared machine is busy are
+non-decisive. Retired instructions and branches are the primary behavioral signals; timing-only
+counts are used for workload censuses.
+
+## Common census baseline
+
+- Branch: `agent/kernel-census`
+- Commit: `22a1ea4` (`perf: add packed batch timing census`)
+- Parent: `badfa64`
+- Adds timing-feature-only emitted/visited/abandoned exact-batch counts, split into chunk0/tail and
+  first/later batches, plus machine-readable packed selection timings.
+- The ordinary `tools` release build has a byte-identical `.text` section to `badfa64`, so the
+  census has zero production instruction impact.
+- Validation: `cargo test --release --features timing --lib` and `cargo test --release` passed.
+
+### Packed batch census
+
+| Workload | Class | Emitted | Visited | Abandoned | Abandoned |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 500k Fibonacci | chunk0 first | 5,737,473 | 2,115,115 | 3,622,358 | 63.1% |
+| 500k Fibonacci | tail first | 39,956 | 9,569 | 30,387 | 76.1% |
+| 500k uniform | chunk0 first | 5,838,059 | 3,223,654 | 2,614,405 | 44.8% |
+| 500k uniform | chunk0 later | 134,152 | 43,812 | 90,340 | 67.3% |
+| 500k uniform | tail first | 246,344 | 100,528 | 145,816 | 59.2% |
+| 500k uniform | tail later | 29,521 | 11,691 | 17,830 | 60.4% |
+| 100k clustered | chunk0 first | 1,351,073 | 788,457 | 562,616 | 41.6% |
+| 100k clustered | chunk0 later | 968,719 | 807,035 | 161,684 | 16.7% |
+| 100k clustered | tail first | 47,166 | 40,113 | 7,053 | 15.0% |
+| 100k clustered | tail later | 746,116 | 733,567 | 12,549 | 1.7% |
+
+The abandoned-slot premise for demand-sized prefixes is real on ordinary inputs. It is not by
+itself proof that a smaller request saves work: a smaller ask can add another full-remainder
+partition pass, and chunk0's small-remainder path may replace one whole sort with repeated
+partitioning.
+
+## Adversarial review decisions
+
+All three blind adversarial reviews returned **measure-only**:
+
+- Demand-sized prefix: runtime-sized extraction is locally sound, but request-aware frontier-cache
+  contracts and a cheap deterministic demand policy are missing. Measure selection path and
+  remainder shape; if abandonment is strong, test only a fixed 8-versus-16 probe first.
+- Compact overflow: preserve the full `(descending dot, ascending slot)` key order and keep overflow
+  inside chunk0 before tail. First simulate cap exceedance and marked-block density using existing
+  exact keys. Dense-band queries require separate treatment.
+- Shell-cell rejection: a gnomonic rejection can become invalid if a later candidate triggers
+  spherical fallback. First run an exact layer-start resident-cell oracle; any implementation needs
+  replay/restart or a proof that crosses representation changes.
+
+## Demand-prefix branch
+
+- Branch: `agent/kernel-demand-prefix`
+- Experiment: change the fixed first packed batch from 16 to 8; no adaptive policy.
+- Result: rejected and left uncommitted. Targeted ordering/bound/termination tests passed.
+
+Seven interleaved native single-threaded `perf stat` pairs at 500k, no preprocessing:
+
+| Workload | Instructions | Branches | Branch misses | Cycles |
+| --- | ---: | ---: | ---: | ---: |
+| Fibonacci | -0.315% (7/7) | +3.913% (0/7) | +13.23% (0/7) | -3.58% (5/7) |
+| Uniform | +2.777% (0/7) | +7.435% (0/7) | +12.78% (0/7) | -0.55% (3/7) |
+
+The uniform instruction and branch regressions decisively reject a globally smaller first batch.
+Fibonacci confirms that useful saved work exists, but selecting when to request less must be
+predictable from cheap, deterministic cell state and must avoid repeated partition scans.
+
+Raw counter files for this workspace session:
+
+- `/tmp/kernel-demand-prefix-fib.csv`
+- `/tmp/kernel-demand-prefix-uniform.csv`
+
+## Compact-overflow branch
+
+- Branch: `agent/kernel-compact-overflow`
+- Commit: `e147a93` (`perf: simulate compact packed overflow`)
+- Timing-only shadow simulator; ordinary release `.text` remains byte-identical to the common
+  census baseline.
+- The simulator sorts each dead post-group exact key list by the production full `u64` order, then
+  models a retained prefix plus absolute-slot blocks. It distinguishes all over-cap queries from
+  the subset whose baseline frontier actually emitted beyond the cap.
+- Validation: `cargo test --release --features timing --lib` passed.
+
+100k clustered, normal packed queries only (no ready packed query used dense-band mode):
+
+| Metric | cap 32, block 16 | cap 64, block 16 |
+| --- | ---: | ---: |
+| Ready packed queries | 96,433 | 96,433 |
+| Queries over cap | 63,588 (65.9%) | 49,562 (51.4%) |
+| Queries that emitted beyond cap | 5,556 (5.8%) | 2,570 (2.7%) |
+| High keys | 17,098,541 | 17,098,541 |
+| Keys beyond cap | 14,630,501 (85.6%) | 12,842,865 (75.1%) |
+| Eligible slots for demanded rescans | 3,254,908 | 1,367,804 |
+| Slots covered by cheap any-high blocks | 2,891,515 (88.8%) | 1,237,094 (90.4%) |
+| Slots covered by exact deferred blocks | 2,806,536 (86.2%) | 1,186,506 (86.7%) |
+
+This is mixed rather than an automatic promotion. A cap removes most retained keys and few queries
+request reconstruction, but requested block masks are effectively dense: they revisit about 90%
+of those queries' eligible neighborhoods. Cap 64 reduces absolute rescan work to 1.24M dots, over
+an order of magnitude below total high-key materialization, but a production design must also pay
+streaming top-64 maintenance on all 17.1M high keys. Do not build the behavioral version until a
+cheap bounded-selection design has an instruction-cost model or isolated microbenchmark capable
+of overcoming that eager cost.
