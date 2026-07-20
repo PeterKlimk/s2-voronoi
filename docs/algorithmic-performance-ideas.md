@@ -35,6 +35,21 @@ At approximately 500k, it examined 2,084 of 501,126 cells and seven rounds reduc
 retired instructions by 13.47%, branches by 21.80%, and cycles by 9.74%, with every pair favorable.
 The measured result is also recorded in [`performance.md`](performance.md).
 
+### Group-shared shell schedule — implemented 2026-07-21
+
+Shell frontiers now retain the query-independent BFS cell order and layer offsets across
+consecutive queries with the same start cell. Queries remain sequential and still compute their
+own bounds, resident dots, key ordering, clipping, and directed edge forwarding; a later query only
+avoids rediscovering layers already reached by an earlier group member.
+
+Three native single-threaded Linux perf pairs reduced instructions and branches on every workload:
+0.043%/0.129% on 100k Fibonacci, 0.066%/0.172% on uniform, 0.392%/0.893% on clustered,
+3.048%/5.271% on mega, 0.655%/1.921% on great-circle, and 0.455%/1.014% on 500k clustered. Mega
+also improved cycles by 3.06% in every pair; other cycle results were noisy. The full retained
+schedule added about 1.2 MiB peak RSS on single-threaded 100k mega and 5.6 MiB with default
+threading. Detailed census, counter, and memory evidence is in the
+[`kernel optimization experiment log`](kernel-optimization-experiment-log.md#group-shared-shell-traversal-census).
+
 ## Candidate ideas
 
 ### Post-review kernel hypotheses
@@ -43,8 +58,8 @@ The original July 2026 multi-model kernel shortlist has been measured and closed
 counter results, and retained oracles are summarized in the
 [`kernel optimization experiment log`](kernel-optimization-experiment-log.md#pass-closeout).
 The first three hypotheses below were derived from those failures and closed by their read-only
-gates. A later fourth hypothesis, group-shared shell traversal, passed its gate and is promoted to
-`PERF-003`; it is not yet an accepted optimization.
+gates. The later group-shared shell traversal passed its gate and is now listed in the implemented
+section above.
 
 #### 1. Center-informed one-shot high-threshold correction — rejected and closed
 
@@ -151,7 +166,7 @@ triangulation, or a certificate that produces a much smaller candidate union. An
 still requires a deterministic boundary certificate and a stitching plan that cannot turn an
 ordinary successful construction into a failure.
 
-#### 4. Group-shared shell traversal — gate passed, prototype promoted
+#### 4. Group-shared shell traversal — implemented
 
 Shell takeover currently creates an independent Chebyshev BFS frontier for every query. Queries
 in an existing same-grid-cell generator group frequently revisit the same grid cells and resident
@@ -162,10 +177,10 @@ of 16 or more. Fibonacci performed no shell traversal and remains a clean contro
 and the deliberately optimistic position-load ceiling are in the
 [`kernel optimization experiment log`](kernel-optimization-experiment-log.md#group-shared-shell-traversal-census).
 
-Keep two mechanisms distinct. The first is a shared immutable layer schedule consumed by cells in
+Keep two mechanisms distinct. The accepted first form is a shared immutable layer schedule consumed by cells in
 their current sequential order. It can remove repeated visited-stamp and neighbor-enumeration work
-without changing candidate dots, bounds, ordering, clipping, or edge forwarding. This is the
-lowest-risk prototype and must win retired instructions or branches on its own; the much larger
+without changing candidate dots, bounds, ordering, clipping, or edge forwarding. It passed native
+counter and memory gates; results are summarized in the implemented section above. The much larger
 resident ratio is not its saving.
 
 The second is a tiled resident-by-query kernel that loads a point range once and evaluates it for
@@ -176,8 +191,8 @@ cross-query preparation can compute and store rows that sequential termination w
 Before implementing it, specify how block boundaries preserve directed eligibility and forwarding,
 then charge lost same-block seeds, speculative rows, per-query masks, and key sorting/storage.
 
-The authoritative prototype task is `PERF-003` in [`work-log.md`](work-log.md). Use single-threaded
-Linux `perf` instructions and branches as the deciding signals while the shared machine is noisy.
+`PERF-003` in [`work-log.md`](work-log.md) records the completed implementation. Do not treat the
+second mechanism as automatic follow-up work; it needs its own dependency design and gate.
 
 ### Selected-neighbor constraint batches — closed negative 2026-07-16
 

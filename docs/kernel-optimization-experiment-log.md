@@ -10,8 +10,8 @@ counts are used for workload censuses.
 The original multi-model shortlist is exhausted. The measurement infrastructure and read-only
 oracles were retained; every production behavior experiment in that shortlist was rejected and
 reverted. A later structural follow-up, group-shared shell traversal, passed its read-only gate and
-is recorded separately below. The branch names in this table are archival experiment labels, not
-outstanding merge candidates.
+its conservative schedule form was accepted separately below. The branch names in this table are
+archival experiment labels, not outstanding merge candidates.
 
 | Family | Branches | Final decision |
 | --- | --- | --- |
@@ -21,7 +21,7 @@ outstanding merge candidates.
 | Center-informed high threshold | `agent/kernel-threshold-shadow`, `agent/kernel-threshold-one-shot` | Center-only prediction and per-ring-cell sampling were rejected first. The final exact-center pre-gate plus one-vector ring sample isolated clustered overshoot, but its margin collapsed with scale and on splittable controls; no probe code retained. |
 | Seed-first packed preparation | `agent/kernel-seed-first-oracle` | Rejected with current metadata: the exact ceiling is only 3--6% of row dots, production visits one later candidate per exact-batch hit, and whole-cell caps retain at most 1.43% of row dots with negligible key savings. No probe code retained. |
 | Same-cell regional local hull | `agent/kernel-regional-hull-oracle` | Rejected before replay: no measured same-grid-cell group repaid even the optimistic pair-count floor of the current naive local hull. The best case reached 74.4% before guard expansion, exact-predicate cost, certification, or stitching. No probe code retained. |
-| Group-shared shell traversal | `agent/kernel-shared-shell-oracle` | Read-only gate passed: repeated group-local cell traversal is 93.5--99.1% redundant and resident/query work has high active width on every shell-using workload. Promoted to `PERF-003`; no probe code retained. |
+| Group-shared shell traversal | `agent/kernel-shared-shell-oracle`, `agent/kernel-shared-shell-schedule` | Accepted conservative form: retain the BFS layer schedule across same-start-cell queries. Instructions and branches improved throughout the workload matrix; query-specific work and sequential dependencies are unchanged. |
 
 The negative results share a useful conclusion: the existing width-one unchanged clip and
 append-then-partition selection paths are already cheap. A successor should remove dot/key work
@@ -504,7 +504,38 @@ The gate promotes two deliberately separate implementations:
    The design must account for block boundaries, lost same-block seeds, extra speculative rows,
    per-query termination masks, sorting/storage traffic, and the broad great-circle divergence.
 
-This is a promoted hypothesis, not an accepted optimization. Fibonacci is the natural zero-shell
-control. Compare behavioral prototypes with single-threaded Linux `perf` counters on uniform,
-clustered, mega, great-circle, and 500k clustered; defer cycle/wall conclusions while the machine
-is noisy.
+### Shared schedule production result
+
+The first form was implemented on `agent/kernel-shared-shell-schedule`. `CubeMapGridScratch` now
+retains BFS cell IDs and layer offsets until the next query with a different start cell. A later
+same-cell query consumes the exact retained order and extends it only if it reaches a new layer.
+Query-specific cap bounds, resident dots, key ordering, directed eligibility, clipping, and
+sequential edge forwarding are unchanged. A focused test exhausts two same-cell unrestricted
+queries and proves that the reused second traversal has bit-identical batches and bound bits to a
+fresh scratch traversal.
+
+Three alternating native single-threaded Linux perf pairs on ordinary non-timing builds produced:
+
+| Workload | Instructions | Branches | Cycles |
+| --- | ---: | ---: | ---: |
+| 100k Fibonacci | -0.0431% | -0.1288% | noisy |
+| 100k uniform, seed 1 | -0.0660% | -0.1716% | noisy |
+| 100k clustered, seed 1 | -0.3917% | -0.8925% | noisy |
+| 100k mega, seed 1 | -3.0479% | -5.2711% | -3.0552% |
+| 100k great-circle, seed 1 | -0.6553% | -1.9213% | noisy |
+| 500k clustered, seed 1 | -0.4549% | -1.0136% | noisy |
+
+Every instructions and branch pair agreed to the displayed direction. Fibonacci is neutral-to-
+better despite performing no shell work, and uniform is also favorable, so no distribution gate
+is required. Mega realizes the largest benefit and was the only workload with a stable cycle
+result on the busy host.
+
+Retaining the discovered schedule replaces the old two-layer scratch with up to the visited cell
+union. One-shot maximum-RSS checks changed from 98,012 to 99,184 KiB on 100k single-threaded mega,
+37,164 to 37,436 KiB on single-threaded great-circle, 145,340 to 145,408 KiB on 500k clustered, and
+129,708 to 135,408 KiB on default-thread 100k mega. The modest memory increase is accepted rather
+than cap the schedule and forfeit the strongest overlap regime.
+
+The sequential shared schedule is accepted. The resident-by-query tiled kernel remains a separate
+research idea, not an implied next stage: this implementation claims none of the optimistic
+position-load ceiling and already captures the safe traversal reuse without changing dependencies.

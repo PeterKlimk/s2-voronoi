@@ -494,6 +494,17 @@ modules without making the non-obvious code shape look accidental.
   gated on occupancy feedback having rebuilt the grid. The one-percent final-scatter classifier
   lies between the measured spatial-order signals for Fibonacci (about 0.2% of `n`) and
   shuffled/uniform input (about 7%).
+- **Shared shell layer schedule.** A shell frontier retains the query-independent BFS cell order
+  and layer offsets while consecutive queries have the same start cell. Each query still computes
+  its own bounds, resident dots, sorting, clipping, and directed forwarding. Three native
+  single-threaded Linux perf pairs reduced instructions/branches by 0.043%/0.129% on 100k
+  Fibonacci, 0.066%/0.172% on uniform, 0.392%/0.893% on clustered, 3.048%/5.271% on mega,
+  0.655%/1.921% on great-circle, and 0.455%/1.014% on 500k clustered. Every structural pair
+  agreed; cycles were noisy except for mega, where all pairs improved by about 3.06%. One-shot
+  peak-RSS checks changed by +1.2 MiB on 100k single-threaded mega, +0.3 MiB on great-circle,
+  +0.1 MiB on 500k clustered, and +5.6 MiB on default-thread mega. Retain the full discovered
+  schedule: the measured memory increase is modest and bounding it would discard the strongest
+  reuse regimes.
 - **Defect-local reconciliation.** Scanning a stale cell-index tail could create a phantom
   low-incidence trigger whose acceptance work cost about 13 seconds at 2.5M; topology scans must
   use live cell windows. In-place merge application saved about 382 ms at 2M single-threaded.

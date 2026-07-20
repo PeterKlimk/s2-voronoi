@@ -131,6 +131,7 @@ pub(crate) struct ShellFrontier<'a, E: ShellEligibility> {
     pending_bound: f32,
     pending_pos: usize,
     pending_prefix_len: usize,
+    layer_idx: usize,
     has_pending: bool,
     exhausted: bool,
 }
@@ -154,6 +155,7 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
             pending_bound: -1.0,
             pending_pos: 0,
             pending_prefix_len: 0,
+            layer_idx: 0,
             has_pending: false,
             exhausted: false,
         }
@@ -167,17 +169,35 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
         } else {
             self.grid.point_to_cell(self.query) as u32
         };
-        self.scratch.stamp = self.scratch.stamp.wrapping_add(1).max(1);
-        if self.scratch.stamp == u32::MAX {
-            self.scratch.visited_stamp.fill(0);
-            self.scratch.stamp = 1;
+        if self.scratch.shell_schedule_start != self.start_cell {
+            self.scratch.reset_shell_schedule(self.start_cell);
         }
-        self.scratch.mark_visited(self.start_cell);
-        self.scratch.current.clear();
-        self.scratch.current.push(self.start_cell);
-        self.scratch.next.clear();
         self.scratch.pending.clear();
         self.initialized = true;
+    }
+
+    /// Extend the query-independent BFS schedule through `layer_idx`.
+    /// Existing layers remain valid for later queries from the same start
+    /// cell, which still evaluate their own bounds and resident dots.
+    /// See `docs/performance.md#source-pinned-performance-decisions`.
+    fn ensure_schedule_layer(&mut self, layer_idx: usize) {
+        while self.scratch.shell_layer_offsets.len() <= layer_idx + 1 {
+            let previous = self.scratch.shell_layer_offsets.len() - 2;
+            let start = self.scratch.shell_layer_offsets[previous];
+            let end = self.scratch.shell_layer_offsets[previous + 1];
+            for pos in start..end {
+                let cell = self.scratch.shell_schedule_cells[pos];
+                for &ncell in self.grid.cell_neighbors(cell as usize) {
+                    if ncell == u32::MAX || !self.scratch.mark_visited(ncell) {
+                        continue;
+                    }
+                    self.scratch.shell_schedule_cells.push(ncell);
+                }
+            }
+            self.scratch
+                .shell_layer_offsets
+                .push(self.scratch.shell_schedule_cells.len());
+        }
     }
 
     /// Gather the eligible points of one cell into `pending`.
@@ -214,39 +234,40 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
         // Most directed queries finish in the packed path. Normalize only
         // after shell takeover, keeping its f64 work and state off that path.
         let query_unit = self.query.as_dvec3().normalize();
-        while !self.scratch.current.is_empty() {
-            // Discover the next ring and its certificate while scanning the
-            // current ring's points.
-            self.scratch.pending.clear();
-            self.scratch.next.clear();
-            let mut next_min_dist_sq = f32::INFINITY;
+        loop {
+            self.ensure_schedule_layer(self.layer_idx + 1);
+            let current_start = self.scratch.shell_layer_offsets[self.layer_idx];
+            let current_end = self.scratch.shell_layer_offsets[self.layer_idx + 1];
+            if current_start == current_end {
+                self.exhausted = true;
+                return;
+            }
+            let next_end = self.scratch.shell_layer_offsets[self.layer_idx + 2];
 
-            for layer_idx in 0..self.scratch.current.len() {
-                let cell = self.scratch.current[layer_idx];
+            self.scratch.pending.clear();
+            for pos in current_start..current_end {
+                let cell = self.scratch.shell_schedule_cells[pos];
                 let mode = self.eligibility.cell_mode(
                     &self.grid.cell_offsets,
                     self.start_cell,
                     cell as usize,
                 );
                 self.scan_cell(cell as usize, mode);
-
-                for &ncell in self.grid.cell_neighbors(cell as usize) {
-                    if ncell == u32::MAX || !self.scratch.mark_visited(ncell) {
-                        continue;
-                    }
-                    self.scratch.next.push(ncell);
-                    let bound = self.grid.cell_min_dist_sq(query_unit, ncell as usize);
-                    next_min_dist_sq = next_min_dist_sq.min(bound);
-                }
             }
 
-            std::mem::swap(&mut self.scratch.current, &mut self.scratch.next);
-            self.pending_bound = if self.scratch.current.is_empty() {
+            let mut next_min_dist_sq = f32::INFINITY;
+            for pos in current_end..next_end {
+                let cell = self.scratch.shell_schedule_cells[pos];
+                let bound = self.grid.cell_min_dist_sq(query_unit, cell as usize);
+                next_min_dist_sq = next_min_dist_sq.min(bound);
+            }
+            self.pending_bound = if current_end == next_end {
                 -1.0
             } else {
                 (1.0 - 0.5 * next_min_dist_sq).clamp(-1.0, 1.0)
                     + crate::tolerances::GRID_DOT_BOUND_PAD
             };
+            self.layer_idx += 1;
 
             if !self.scratch.pending.is_empty() {
                 // Nearest-first within the layer.
@@ -256,7 +277,6 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
                 return;
             }
         }
-        self.exhausted = true;
     }
 
     /// Current frontier: fills `out` with the pending layer's next sorted
@@ -354,6 +374,26 @@ impl CubeMapGrid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn collect_unrestricted(
+        grid: &CubeMapGrid,
+        points: &[Vec3],
+        query_idx: usize,
+        scratch: &mut CubeMapGridScratch,
+    ) -> Vec<(Vec<u32>, u32, u32)> {
+        let mut frontier = grid.unrestricted_shell_frontier(points[query_idx], query_idx, scratch);
+        let mut batch = Vec::new();
+        let mut result = Vec::new();
+        while let Some(layer) = frontier.frontier(&mut batch) {
+            result.push((
+                batch.clone(),
+                layer.first_dot.to_bits(),
+                layer.unseen_bound.to_bits(),
+            ));
+            frontier.advance();
+        }
+        result
+    }
 
     fn fixture_points() -> Vec<Vec3> {
         [
@@ -491,5 +531,44 @@ mod tests {
             .unwrap();
 
         assert_eq!(grid.point_indices()[slot as usize] as usize, expected);
+    }
+
+    #[test]
+    fn same_cell_queries_reuse_the_exact_shell_schedule() {
+        let points: Vec<Vec3> = [
+            (1.0, 0.01, 0.01),
+            (1.0, 0.02, 0.01),
+            (1.0, -0.4, 0.3),
+            (0.3, 1.0, -0.2),
+            (-0.6, 1.0, 0.2),
+            (-1.0, -0.1, 0.4),
+            (0.2, -1.0, -0.5),
+            (0.1, 0.3, 1.0),
+            (-0.2, 0.4, -1.0),
+        ]
+        .into_iter()
+        .map(|(x, y, z)| Vec3::new(x, y, z).normalize())
+        .collect();
+        let grid = CubeMapGrid::new(&points, 5);
+        assert_eq!(
+            grid.point_index_to_cell(0),
+            grid.point_index_to_cell(1),
+            "fixture queries must share a start cell"
+        );
+
+        let mut reused = grid.make_scratch();
+        collect_unrestricted(&grid, &points, 0, &mut reused);
+        let retained_cells = reused.shell_schedule_cells.len();
+        let retained_offsets = reused.shell_layer_offsets.len();
+        let retained_stamp = reused.stamp;
+        let second_reused = collect_unrestricted(&grid, &points, 1, &mut reused);
+
+        assert_eq!(reused.shell_schedule_cells.len(), retained_cells);
+        assert_eq!(reused.shell_layer_offsets.len(), retained_offsets);
+        assert_eq!(reused.stamp, retained_stamp);
+
+        let mut fresh = grid.make_scratch();
+        let second_fresh = collect_unrestricted(&grid, &points, 1, &mut fresh);
+        assert_eq!(second_reused, second_fresh);
     }
 }

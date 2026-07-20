@@ -281,13 +281,16 @@ fn diagonal_from_edge_neighbors(center: u32, a: u32, b: u32, res: usize) -> u32 
 ///
 /// For performance (especially parallel queries), prefer `CubeMapGrid::make_scratch()`.
 pub(crate) struct CubeMapGridScratch {
-    /// Cell visitation stamps (avoids clearing between queries)
+    /// Cell visitation stamps for the retained shell schedule.
     visited_stamp: Vec<u32>,
     stamp: u32,
-    /// BFS layer whose points have not been emitted yet.
-    current: Vec<u32>,
-    /// Layer discovered while emitting `current`.
-    next: Vec<u32>,
+    /// Start cell for the retained query-independent shell schedule.
+    shell_schedule_start: u32,
+    /// BFS cells in discovery order. Layers are delimited by
+    /// `shell_layer_offsets`.
+    shell_schedule_cells: Vec<u32>,
+    /// Start offsets for every complete retained layer, plus the current end.
+    shell_layer_offsets: Vec<usize>,
     /// Packed `(descending total-order dot, ascending slot)` keys for the
     /// pending shell batch.
     pending: Vec<u64>,

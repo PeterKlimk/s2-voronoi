@@ -63,7 +63,7 @@ prevention rather than an overclaimed proof.
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | PERF-002 | P3 | Completed | Reopen only for a materially different kernel mechanism or workload |
-| PERF-003 | P3 | Ready | Prototype a shared shell layer schedule; decide with Linux perf counters |
+| PERF-003 | P3 | Completed | Reopen only for a separately designed multi-query resident kernel |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
 | RESEARCH-002 | P3 | Backburner | Justify diagnostic cost and conditioning policy |
 | RESEARCH-003 | P3 | Backburner | First choose a compatible exact-zero/SoS model |
@@ -302,20 +302,23 @@ default `Preserve` behavior.
 ### PERF-003 — Group-shared shell traversal
 
 - **Priority:** P3
-- **Status:** Ready; timing-only structural gate passed 2026-07-21
+- **Status:** Completed 2026-07-21; sequential shared schedule implemented
 - **Evidence:** same-cell shell queries repeat 93.5--99.1% of group-local grid-cell visits on 100k
   uniform, clustered, mega, and great-circle inputs and 500k clustered. At least 95% of positive
   resident/query work occurs at active width 16 or greater. Fibonacci performs no shell work. The
   temporary oracle was removed; full counters and caveats are in the
   [`kernel optimization experiment log`](kernel-optimization-experiment-log.md#group-shared-shell-traversal-census).
-- **First prototype:** cache one group-local shell layer schedule and let cells consume it in the
-  existing sequential build order. Preserve query-specific bounds and candidate order, directed
-  eligibility, clipping, and edge-check forwarding. This prototype may claim only repeated
-  visitation/stamp/neighbor-enumeration savings.
-- **Decision gate:** compare normal non-timing builds with single-threaded Linux `perf`
-  instructions and branches on Fibonacci, uniform, clustered, mega, great-circle, and 500k
-  clustered. Reject if metadata/materialization offsets traversal savings or any ordinary control
-  regresses materially; defer cycle and wall-clock conclusions while the machine is noisy.
+- **Result:** `CubeMapGridScratch` retains the discovered BFS cell order and layer offsets while
+  consecutive queries share a start cell. Queries still compute their own cap bounds, resident
+  dots, key ordering, clipping, and edge forwarding; later queries extend the schedule only when
+  necessary. Focused tests prove reused batches and bound bits match fresh traversal.
+- **Counters:** three native single-threaded pairs reduced instructions/branches by 0.043%/0.129%
+  on Fibonacci, 0.066%/0.172% on uniform, 0.392%/0.893% on clustered, 3.048%/5.271% on mega,
+  0.655%/1.921% on great-circle, and 0.455%/1.014% on 500k clustered. All structural pairs agreed;
+  cycles were noisy except for a consistent 3.06% mega improvement.
+- **Memory:** the retained union added about 1.2 MiB peak RSS on single-threaded 100k mega and
+  5.6 MiB with default threading; great-circle and 500k clustered changes were below 0.3 MiB.
+  This is accepted rather than cap away the strongest reuse regime.
 - **Higher-ceiling follow-up:** a resident-by-query tiled dot/key kernel is separate work. Do not
   infer its saving from the optimistic position-load ratio. First specify the block dependency
   model and account for lost same-block forwarded seeds, speculative rows, query termination
@@ -753,9 +756,8 @@ tasks and are not duplicated here.
 1. Continue WORK-002 whenever construction, reconciliation, or Hull3d changes.
 2. Execute QUAL-001 in staged, independently benchmarked milestones.
 3. Decide RES-002 only when positive-threshold mesh conditioning is wanted.
-4. Prototype PERF-003's sequential shared shell schedule and decide it with Linux perf counters.
-5. Revisit PERF-001 only with a motivating workload and crossover measurements.
-6. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
+4. Revisit PERF-001 only with a motivating workload and crossover measurements.
+5. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
 
 ## Closed and retired work
 
