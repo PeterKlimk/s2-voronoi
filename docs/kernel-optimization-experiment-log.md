@@ -17,6 +17,7 @@ are archival experiment labels, not outstanding merge candidates.
 | Compact high-key overflow | `agent/kernel-compact-overflow`, `agent/kernel-compact-top64-cost`, `agent/kernel-compact-overflow-rebuild` | Shadow census retained; heap-based additive and true-replacement forms rejected at +5.1--11.4% and +6.9--7.7% instructions respectively. |
 | Shell-cell rejection | `agent/kernel-shell-cell-reject`, `agent/kernel-shell-cell-cap`, `agent/kernel-shell-cell-cap-skip` | Exact and conservative-cap oracles retained; the order-preserving production form was rejected at +1.8--3.5% instructions. |
 | Center-informed high threshold | `agent/kernel-threshold-shadow` | Center-only prediction rejected. A ring-sampled refinement found useful clustered/splittable key ceilings, but its work arithmetic cannot justify the sample on mega, bimodal, gradient, and outlier inputs; no probe code retained. |
+| Seed-first packed preparation | `agent/kernel-seed-first-oracle` | Rejected with current metadata: the exact ceiling is only 3--6% of row dots, production visits one later candidate per exact-batch hit, and whole-cell caps retain at most 1.43% of row dots with negligible key savings. No probe code retained. |
 
 The negative results share a useful conclusion: the existing width-one unchanged clip and
 append-then-partition selection paths are already cheap. A successor should remove dot/key work
@@ -309,3 +310,60 @@ from a new gate: use exact center-pass high-key counts to omit clearly non-overs
 sample at most one SIMD vector across the whole ring rather than one vector per ring cell, and
 accept a raised threshold only when the sampled reduction clears an explicit instruction-cost
 margin. Measure that pre-gate and estimator offline before changing production behavior.
+
+## Seed-first packed-preparation oracle branch
+
+- Branch: `agent/kernel-seed-first-oracle`
+- Experiment: timing-only oracle after forwarded edge-check constraints and before stream
+  consumption. Production still consumed the cached frontier normally.
+- Exact gate: ask the existing termination certificate whether the already-prepared initial packed
+  frontier proves that zero packed candidates are needed. Count the ordinary non-band dot row and
+  high keys that a hypothetical micro-batched preparation could have omitted.
+- Cheap gate: replace the prepared frontier bound with the existing conservative caps of every
+  eligible grid cell plus the outside-neighborhood security bound. Validate the cap against the
+  first retained candidate dot.
+- Validation while the probe was present: timing-feature library tests passed (270 passed, 5
+  ignored), timing-feature release clippy passed, and all reported cap-bound violations were zero.
+  The 518-line probe was then removed.
+
+The exact prepared-frontier ceiling is real but small. “Post-seed candidates” is work production
+actually performed after a successful oracle result:
+
+| Workload | Eligible rows | Exact hits | Hit row dots | Hit row keys | Post-seed candidates |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 100k Fibonacci | 100,000 | 4,399 | 453,702 / 11,615,720 (3.91%) | 5,761 / 1,287,986 (0.45%) | 2,529 |
+| 100k uniform, seed 1 | 100,000 | 5,655 | 598,194 / 11,667,968 (5.13%) | 26,634 / 1,353,556 (1.97%) | 4,231 |
+| 100k clustered, seed 1 | 94,563 | 4,902 | 1,269,011 / 42,482,658 (2.99%) | 234,669 / 16,346,361 (1.44%) | 4,610 |
+| 100k splittable, seed 1 | 92,070 | 5,009 | 1,408,963 / 35,064,474 (4.02%) | 118,610 / 4,925,098 (2.41%) | 4,546 |
+| 100k gradient, seed 1 | 100,000 | 6,313 | 2,989,816 / 47,719,773 (6.27%) | 19,644 / 1,341,017 (1.46%) | 4,430 |
+| 100k mega, default seed | 100,000 | 103 | 32,681 / 89,563,732 (0.04%) | 407 / 1,286,994 (0.03%) | 68 |
+| 500k clustered, seed 1 | 485,739 | 23,665 | 6,472,117 / 193,668,163 (3.34%) | 496,429 / 37,544,161 (1.32%) | 20,582 |
+
+Total oracle hits and post-seed candidate counts differ because some oracle hits see an empty first
+packed stage represented only by an upper bound; production already terminates those without
+visiting a candidate. Across every row above, production visited exactly one later packed candidate
+for each exact-batch hit. Therefore a simple pre-batch certificate, without restructuring
+preparation, has only a one-candidate-per-exact-hit ceiling.
+
+The existing cell caps are cheap enough to evaluate before row preparation, but the query's own
+center-cell cap contains the generator and consequently has an upper bound near one. Useful hits
+therefore concentrate on the final directed query in each grid cell, whose center suffix is empty:
+
+| Workload | Cell-cap hits | Hit row dots | Hit row keys | Bound violations |
+| --- | ---: | ---: | ---: | ---: |
+| 100k Fibonacci | 1,635 | 166,289 (1.43%) | 133 (0.01%) | 0 |
+| 100k uniform, seed 1 | 561 | 58,799 (0.50%) | 217 (0.02%) | 0 |
+| 100k clustered, seed 1 | 149 | 25,212 (0.06%) | 1,031 (0.01%) | 0 |
+| 100k splittable, seed 1 | 276 | 36,144 (0.10%) | 696 (0.01%) | 0 |
+| 100k gradient, seed 1 | 295 | 109,485 (0.23%) | 78 (0.01%) | 0 |
+| 100k mega, default seed | 112 | 104,918 (0.12%) | 6 (<0.01%) | 0 |
+| 500k clustered, seed 1 | 1,271 | 231,105 (0.12%) | 4,058 (0.01%) | 0 |
+
+Cell-cap hits can exceed prepared-frontier hits because the direct cap can be tighter than the
+count-model threshold used as the packed frontier's conservative unseen bound. Zero first-dot
+violations confirm that this is not an under-bound in the measured matrix.
+
+The seed-first micro-batching hypothesis is closed for existing metadata. A finer precomputed
+center-suffix decomposition could approach the 3--6% exact ceiling, but that ceiling is too small
+to justify new cap storage, more preparation boundaries, and reduced group-wide SIMD without a
+separate motivating workload. Do not build the behavioral form from hit counts alone.

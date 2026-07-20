@@ -83,7 +83,7 @@ vector across the entire ring, and apply a correction only when its predicted ke
 an explicit instruction-cost margin. Its first gate is again timing-only; it must demonstrate low
 sampling work on the negative density-contrast cases before a behavioral branch is justified.
 
-#### 2. Seed-first micro-batched packed preparation
+#### 2. Seed-first micro-batched packed preparation — rejected with current bounds
 
 Incoming edge checks are real neighboring constraints and are clipped before the ordinary query
 stream, but a complete same-grid-cell group is prepared before any cell in that group is emitted.
@@ -103,6 +103,18 @@ cells that would need zero packed candidates if the already-prepared initial exa
 were available. If that ceiling is material, test how much survives replacement by a cheap
 conservative grid-cell bound. Only then compare micro-block sizes and account for dot rows saved,
 extra preparation calls, forwarded-edge volume, and lost SIMD occupancy.
+
+Both gates have now run. The exact prepared-frontier oracle covers only 3--6% of ordinary row dots
+(and 0.04% on mega), while production visits exactly one later packed candidate per exact-batch
+hit. Existing whole-cell caps retain at most 1.43% of row dots on Fibonacci and only 0.06--0.23%
+on the density-contrast targets, with effectively no high-key savings. The center-cell cap contains
+the generator and becomes useful almost exclusively when the directed center suffix is empty.
+Full counters are in the
+[`kernel optimization experiment log`](kernel-optimization-experiment-log.md#seed-first-packed-preparation-oracle-branch).
+
+Do not introduce micro-batch boundaries for this ceiling. Revisit only if another workload makes
+row preparation dominant enough to justify finer center-suffix cap metadata, and charge that
+metadata plus lost group-wide SIMD against the exact 3--6% upper bound.
 
 #### 3. Certified dense-region local-hull handoff
 
