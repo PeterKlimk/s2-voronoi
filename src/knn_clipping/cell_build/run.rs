@@ -186,6 +186,14 @@ pub(crate) struct CellBuildStats {
     #[cfg(feature = "timing")]
     shell_oracle_hit_slots: [usize; 4],
     #[cfg(feature = "timing")]
+    shell_oracle_cap_hit_cells: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_cap_hit_slots: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_cap_false_positive_cells: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_cap_false_positive_slots: [usize; 4],
+    #[cfg(feature = "timing")]
     shell_oracle_layers: usize,
     #[cfg(feature = "timing")]
     shell_oracle_unbounded_layers: usize,
@@ -203,6 +211,12 @@ pub(crate) struct CellBuildStats {
     shell_oracle_fallback_after_hit_events: usize,
     #[cfg(feature = "timing")]
     shell_oracle_fallback_remaining_slots: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_cap_baseline_visited_hit_slots: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_cap_fallback_after_hit_events: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_cap_fallback_remaining_slots: usize,
     #[cfg(feature = "timing")]
     packed_exact_slots_visited: [usize; 4],
     #[cfg(feature = "timing")]
@@ -276,6 +290,10 @@ impl CellBuildStats {
             self.shell_oracle_predicate_tests,
             self.shell_oracle_hit_cells,
             self.shell_oracle_hit_slots,
+            self.shell_oracle_cap_hit_cells,
+            self.shell_oracle_cap_hit_slots,
+            self.shell_oracle_cap_false_positive_cells,
+            self.shell_oracle_cap_false_positive_slots,
             self.shell_oracle_layers,
             self.shell_oracle_unbounded_layers,
             self.shell_oracle_fallback_layers,
@@ -285,6 +303,9 @@ impl CellBuildStats {
             self.shell_oracle_baseline_visited_hit_slots,
             self.shell_oracle_fallback_after_hit_events,
             self.shell_oracle_fallback_remaining_slots,
+            self.shell_oracle_cap_baseline_visited_hit_slots,
+            self.shell_oracle_cap_fallback_after_hit_events,
+            self.shell_oracle_cap_fallback_remaining_slots,
         );
         #[cfg(feature = "timing")]
         cell_sub.add_packed_batch_usage(
@@ -406,6 +427,14 @@ pub(super) struct BuildCounters {
     #[cfg(feature = "timing")]
     shell_oracle_hit_slots_by_class: [usize; 4],
     #[cfg(feature = "timing")]
+    shell_oracle_cap_hit_cells: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_cap_hit_slots: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_cap_false_positive_cells: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_cap_false_positive_slots: [usize; 4],
+    #[cfg(feature = "timing")]
     shell_oracle_layers: usize,
     #[cfg(feature = "timing")]
     shell_oracle_unbounded_layers: usize,
@@ -425,6 +454,14 @@ pub(super) struct BuildCounters {
     shell_oracle_fallback_after_hit_events: usize,
     #[cfg(feature = "timing")]
     shell_oracle_fallback_remaining_slots: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_cap_hit_slot_ids: Vec<u32>,
+    #[cfg(feature = "timing")]
+    shell_oracle_cap_baseline_visited_hit_slots: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_cap_fallback_after_hit_events: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_cap_fallback_remaining_slots: usize,
     #[cfg(feature = "timing")]
     packed_exact_batch_usage_counts: [usize; 2],
     #[cfg(feature = "timing")]
@@ -488,6 +525,14 @@ impl BuildCounters {
             #[cfg(feature = "timing")]
             shell_oracle_hit_slots_by_class: [0; 4],
             #[cfg(feature = "timing")]
+            shell_oracle_cap_hit_cells: [0; 4],
+            #[cfg(feature = "timing")]
+            shell_oracle_cap_hit_slots: [0; 4],
+            #[cfg(feature = "timing")]
+            shell_oracle_cap_false_positive_cells: [0; 4],
+            #[cfg(feature = "timing")]
+            shell_oracle_cap_false_positive_slots: [0; 4],
+            #[cfg(feature = "timing")]
             shell_oracle_layers: 0,
             #[cfg(feature = "timing")]
             shell_oracle_unbounded_layers: 0,
@@ -507,6 +552,14 @@ impl BuildCounters {
             shell_oracle_fallback_after_hit_events: 0,
             #[cfg(feature = "timing")]
             shell_oracle_fallback_remaining_slots: 0,
+            #[cfg(feature = "timing")]
+            shell_oracle_cap_hit_slot_ids: Vec::new(),
+            #[cfg(feature = "timing")]
+            shell_oracle_cap_baseline_visited_hit_slots: 0,
+            #[cfg(feature = "timing")]
+            shell_oracle_cap_fallback_after_hit_events: 0,
+            #[cfg(feature = "timing")]
+            shell_oracle_cap_fallback_remaining_slots: 0,
             #[cfg(feature = "timing")]
             packed_exact_batch_usage_counts: [0; 2],
             #[cfg(feature = "timing")]
@@ -551,6 +604,14 @@ impl BuildCounters {
             if remaining > 0 {
                 self.shell_oracle_fallback_after_hit_events += 1;
                 self.shell_oracle_fallback_remaining_slots += remaining;
+            }
+            let cap_remaining = self
+                .shell_oracle_cap_hit_slot_ids
+                .len()
+                .saturating_sub(self.shell_oracle_cap_baseline_visited_hit_slots);
+            if cap_remaining > 0 {
+                self.shell_oracle_cap_fallback_after_hit_events += 1;
+                self.shell_oracle_cap_fallback_remaining_slots += cap_remaining;
             }
         }
         match request.trigger {
@@ -615,6 +676,18 @@ fn audit_shell_oracle_layer(
         }
 
         counters.shell_oracle_tested_cells[class] += 1;
+        let (center, cos_radius, sin_radius) = cell.cap(&layer);
+        let cap_hit = builder.cell_cap_would_be_unchanged(center, cos_radius, sin_radius);
+        if cap_hit {
+            counters.shell_oracle_cap_hit_cells[class] += 1;
+            counters.shell_oracle_cap_hit_slots[class] += slots.len();
+            counters.shell_oracle_cap_hit_slot_ids.extend(
+                slots
+                    .iter()
+                    .copied()
+                    .filter(|&slot| !attempted_neighbors.contains(slot as usize)),
+            );
+        }
         let mut all_unchanged = true;
         for &slot in slots {
             if attempted_neighbors.contains(slot as usize) {
@@ -627,6 +700,10 @@ fn audit_shell_oracle_layer(
             }
         }
         if !all_unchanged {
+            if cap_hit {
+                counters.shell_oracle_cap_false_positive_cells[class] += 1;
+                counters.shell_oracle_cap_false_positive_slots[class] += slots.len();
+            }
             continue;
         }
 
@@ -640,6 +717,7 @@ fn audit_shell_oracle_layer(
         );
     }
     counters.shell_oracle_hit_slot_ids.sort_unstable();
+    counters.shell_oracle_cap_hit_slot_ids.sort_unstable();
 }
 
 #[cfg(feature = "timing")]
@@ -933,6 +1011,15 @@ fn clip_batch_source<const SHELL: bool>(
                 .is_ok()
         {
             counters.shell_oracle_baseline_visited_hit_slots += 1;
+        }
+        #[cfg(feature = "timing")]
+        if SHELL
+            && counters
+                .shell_oracle_cap_hit_slot_ids
+                .binary_search(&neighbor_slot)
+                .is_ok()
+        {
+            counters.shell_oracle_cap_baseline_visited_hit_slots += 1;
         }
         // One fused load gets both the global index and the position (one cache
         // line) instead of two separate random by-slot loads.
@@ -1305,6 +1392,14 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         #[cfg(feature = "timing")]
         shell_oracle_hit_slots: counters.shell_oracle_hit_slots_by_class,
         #[cfg(feature = "timing")]
+        shell_oracle_cap_hit_cells: counters.shell_oracle_cap_hit_cells,
+        #[cfg(feature = "timing")]
+        shell_oracle_cap_hit_slots: counters.shell_oracle_cap_hit_slots,
+        #[cfg(feature = "timing")]
+        shell_oracle_cap_false_positive_cells: counters.shell_oracle_cap_false_positive_cells,
+        #[cfg(feature = "timing")]
+        shell_oracle_cap_false_positive_slots: counters.shell_oracle_cap_false_positive_slots,
+        #[cfg(feature = "timing")]
         shell_oracle_layers: counters.shell_oracle_layers,
         #[cfg(feature = "timing")]
         shell_oracle_unbounded_layers: counters.shell_oracle_unbounded_layers,
@@ -1322,6 +1417,15 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         shell_oracle_fallback_after_hit_events: counters.shell_oracle_fallback_after_hit_events,
         #[cfg(feature = "timing")]
         shell_oracle_fallback_remaining_slots: counters.shell_oracle_fallback_remaining_slots,
+        #[cfg(feature = "timing")]
+        shell_oracle_cap_baseline_visited_hit_slots: counters
+            .shell_oracle_cap_baseline_visited_hit_slots,
+        #[cfg(feature = "timing")]
+        shell_oracle_cap_fallback_after_hit_events: counters
+            .shell_oracle_cap_fallback_after_hit_events,
+        #[cfg(feature = "timing")]
+        shell_oracle_cap_fallback_remaining_slots: counters
+            .shell_oracle_cap_fallback_remaining_slots,
         #[cfg(feature = "timing")]
         packed_exact_slots_visited: counters.packed_exact_slots_visited,
         #[cfg(feature = "timing")]

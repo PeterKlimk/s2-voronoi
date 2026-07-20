@@ -249,6 +249,10 @@ pub(crate) struct CellSubPhases {
     pub shell_oracle_predicate_tests: [u64; 4],
     pub shell_oracle_hit_cells: [u64; 4],
     pub shell_oracle_hit_slots: [u64; 4],
+    pub shell_oracle_cap_hit_cells: [u64; 4],
+    pub shell_oracle_cap_hit_slots: [u64; 4],
+    pub shell_oracle_cap_false_positive_cells: [u64; 4],
+    pub shell_oracle_cap_false_positive_slots: [u64; 4],
     pub shell_oracle_layers: u64,
     pub shell_oracle_unbounded_layers: u64,
     pub shell_oracle_fallback_layers: u64,
@@ -258,6 +262,9 @@ pub(crate) struct CellSubPhases {
     pub shell_oracle_baseline_visited_hit_slots: u64,
     pub shell_oracle_fallback_after_hit_events: u64,
     pub shell_oracle_fallback_remaining_slots: u64,
+    pub shell_oracle_cap_baseline_visited_hit_slots: u64,
+    pub shell_oracle_cap_fallback_after_hit_events: u64,
+    pub shell_oracle_cap_fallback_remaining_slots: u64,
     /// Sum of neighbors processed before termination across all cells
     /// (mean = total / n; input for the grid-density tuning model).
     pub neighbors_processed_total: u64,
@@ -366,6 +373,10 @@ pub(crate) struct CellSubAccum {
     shell_oracle_predicate_tests: [u64; 4],
     shell_oracle_hit_cells: [u64; 4],
     shell_oracle_hit_slots: [u64; 4],
+    shell_oracle_cap_hit_cells: [u64; 4],
+    shell_oracle_cap_hit_slots: [u64; 4],
+    shell_oracle_cap_false_positive_cells: [u64; 4],
+    shell_oracle_cap_false_positive_slots: [u64; 4],
     shell_oracle_layers: u64,
     shell_oracle_unbounded_layers: u64,
     shell_oracle_fallback_layers: u64,
@@ -375,6 +386,9 @@ pub(crate) struct CellSubAccum {
     shell_oracle_baseline_visited_hit_slots: u64,
     shell_oracle_fallback_after_hit_events: u64,
     shell_oracle_fallback_remaining_slots: u64,
+    shell_oracle_cap_baseline_visited_hit_slots: u64,
+    shell_oracle_cap_fallback_after_hit_events: u64,
+    shell_oracle_cap_fallback_remaining_slots: u64,
     neighbors_processed_total: u64,
     neighbors_processed_max: u64,
     final_edges_total: u64,
@@ -546,6 +560,10 @@ impl CellSubAccum {
         predicate_tests: [usize; 4],
         hit_cells: [usize; 4],
         hit_slots: [usize; 4],
+        cap_hit_cells: [usize; 4],
+        cap_hit_slots: [usize; 4],
+        cap_false_positive_cells: [usize; 4],
+        cap_false_positive_slots: [usize; 4],
         layers: usize,
         unbounded_layers: usize,
         fallback_layers: usize,
@@ -555,6 +573,9 @@ impl CellSubAccum {
         baseline_visited_hit_slots: usize,
         fallback_after_hit_events: usize,
         fallback_remaining_slots: usize,
+        cap_baseline_visited_hit_slots: usize,
+        cap_fallback_after_hit_events: usize,
+        cap_fallback_remaining_slots: usize,
     ) {
         for class in 0..4 {
             self.shell_oracle_tested_cells[class] += tested_cells[class] as u64;
@@ -564,6 +585,12 @@ impl CellSubAccum {
             self.shell_oracle_predicate_tests[class] += predicate_tests[class] as u64;
             self.shell_oracle_hit_cells[class] += hit_cells[class] as u64;
             self.shell_oracle_hit_slots[class] += hit_slots[class] as u64;
+            self.shell_oracle_cap_hit_cells[class] += cap_hit_cells[class] as u64;
+            self.shell_oracle_cap_hit_slots[class] += cap_hit_slots[class] as u64;
+            self.shell_oracle_cap_false_positive_cells[class] +=
+                cap_false_positive_cells[class] as u64;
+            self.shell_oracle_cap_false_positive_slots[class] +=
+                cap_false_positive_slots[class] as u64;
         }
         self.shell_oracle_layers += layers as u64;
         self.shell_oracle_unbounded_layers += unbounded_layers as u64;
@@ -574,6 +601,9 @@ impl CellSubAccum {
         self.shell_oracle_baseline_visited_hit_slots += baseline_visited_hit_slots as u64;
         self.shell_oracle_fallback_after_hit_events += fallback_after_hit_events as u64;
         self.shell_oracle_fallback_remaining_slots += fallback_remaining_slots as u64;
+        self.shell_oracle_cap_baseline_visited_hit_slots += cap_baseline_visited_hit_slots as u64;
+        self.shell_oracle_cap_fallback_after_hit_events += cap_fallback_after_hit_events as u64;
+        self.shell_oracle_cap_fallback_remaining_slots += cap_fallback_remaining_slots as u64;
     }
 
     #[inline]
@@ -668,6 +698,12 @@ impl CellSubAccum {
             self.shell_oracle_predicate_tests[class] += other.shell_oracle_predicate_tests[class];
             self.shell_oracle_hit_cells[class] += other.shell_oracle_hit_cells[class];
             self.shell_oracle_hit_slots[class] += other.shell_oracle_hit_slots[class];
+            self.shell_oracle_cap_hit_cells[class] += other.shell_oracle_cap_hit_cells[class];
+            self.shell_oracle_cap_hit_slots[class] += other.shell_oracle_cap_hit_slots[class];
+            self.shell_oracle_cap_false_positive_cells[class] +=
+                other.shell_oracle_cap_false_positive_cells[class];
+            self.shell_oracle_cap_false_positive_slots[class] +=
+                other.shell_oracle_cap_false_positive_slots[class];
         }
         self.shell_oracle_layers += other.shell_oracle_layers;
         self.shell_oracle_unbounded_layers += other.shell_oracle_unbounded_layers;
@@ -679,6 +715,12 @@ impl CellSubAccum {
             other.shell_oracle_baseline_visited_hit_slots;
         self.shell_oracle_fallback_after_hit_events += other.shell_oracle_fallback_after_hit_events;
         self.shell_oracle_fallback_remaining_slots += other.shell_oracle_fallback_remaining_slots;
+        self.shell_oracle_cap_baseline_visited_hit_slots +=
+            other.shell_oracle_cap_baseline_visited_hit_slots;
+        self.shell_oracle_cap_fallback_after_hit_events +=
+            other.shell_oracle_cap_fallback_after_hit_events;
+        self.shell_oracle_cap_fallback_remaining_slots +=
+            other.shell_oracle_cap_fallback_remaining_slots;
         self.neighbors_processed_total += other.neighbors_processed_total;
         self.neighbors_processed_max = self
             .neighbors_processed_max
@@ -761,6 +803,10 @@ impl CellSubAccum {
             shell_oracle_predicate_tests: self.shell_oracle_predicate_tests,
             shell_oracle_hit_cells: self.shell_oracle_hit_cells,
             shell_oracle_hit_slots: self.shell_oracle_hit_slots,
+            shell_oracle_cap_hit_cells: self.shell_oracle_cap_hit_cells,
+            shell_oracle_cap_hit_slots: self.shell_oracle_cap_hit_slots,
+            shell_oracle_cap_false_positive_cells: self.shell_oracle_cap_false_positive_cells,
+            shell_oracle_cap_false_positive_slots: self.shell_oracle_cap_false_positive_slots,
             shell_oracle_layers: self.shell_oracle_layers,
             shell_oracle_unbounded_layers: self.shell_oracle_unbounded_layers,
             shell_oracle_fallback_layers: self.shell_oracle_fallback_layers,
@@ -770,6 +816,12 @@ impl CellSubAccum {
             shell_oracle_baseline_visited_hit_slots: self.shell_oracle_baseline_visited_hit_slots,
             shell_oracle_fallback_after_hit_events: self.shell_oracle_fallback_after_hit_events,
             shell_oracle_fallback_remaining_slots: self.shell_oracle_fallback_remaining_slots,
+            shell_oracle_cap_baseline_visited_hit_slots: self
+                .shell_oracle_cap_baseline_visited_hit_slots,
+            shell_oracle_cap_fallback_after_hit_events: self
+                .shell_oracle_cap_fallback_after_hit_events,
+            shell_oracle_cap_fallback_remaining_slots: self
+                .shell_oracle_cap_fallback_remaining_slots,
             neighbors_processed_total: self.neighbors_processed_total,
             neighbors_processed_max: self.neighbors_processed_max,
             final_edges_total: self.final_edges_total,
@@ -1039,7 +1091,7 @@ impl PhaseTimings {
             }
             if self.cell_sub.shell_oracle_layers > 0 {
                 eprintln!(
-                    "    shell_oracle: layers={} unbounded={} fallback={} traversed_cells={} transit={} empty={} baseline_visited_hit_slots={} fallback_after_hit_events={} fallback_remaining_slots={}",
+                    "    shell_oracle: layers={} unbounded={} fallback={} traversed_cells={} transit={} empty={} baseline_visited_hit_slots={} fallback_after_hit_events={} fallback_remaining_slots={} cap_baseline_visited_hit_slots={} cap_fallback_after_hit_events={} cap_fallback_remaining_slots={}",
                     self.cell_sub.shell_oracle_layers,
                     self.cell_sub.shell_oracle_unbounded_layers,
                     self.cell_sub.shell_oracle_fallback_layers,
@@ -1049,6 +1101,9 @@ impl PhaseTimings {
                     self.cell_sub.shell_oracle_baseline_visited_hit_slots,
                     self.cell_sub.shell_oracle_fallback_after_hit_events,
                     self.cell_sub.shell_oracle_fallback_remaining_slots,
+                    self.cell_sub.shell_oracle_cap_baseline_visited_hit_slots,
+                    self.cell_sub.shell_oracle_cap_fallback_after_hit_events,
+                    self.cell_sub.shell_oracle_cap_fallback_remaining_slots,
                 );
                 let shell_oracle_classes =
                     ["first_all", "first_center", "later_all", "later_center"];
@@ -1056,13 +1111,17 @@ impl PhaseTimings {
                     let eligible = self.cell_sub.shell_oracle_eligible_slots[class];
                     if eligible > 0 {
                         eprintln!(
-                            "      shell_oracle_{label}: tested_cells={} eligible_slots={} already_attempted={} predicate_tests={} hit_cells={} hit_slots={}",
+                            "      shell_oracle_{label}: tested_cells={} eligible_slots={} already_attempted={} predicate_tests={} hit_cells={} hit_slots={} cap_hit_cells={} cap_hit_slots={} cap_false_positive_cells={} cap_false_positive_slots={}",
                             self.cell_sub.shell_oracle_tested_cells[class],
                             eligible,
                             self.cell_sub.shell_oracle_already_attempted_slots[class],
                             self.cell_sub.shell_oracle_predicate_tests[class],
                             self.cell_sub.shell_oracle_hit_cells[class],
                             self.cell_sub.shell_oracle_hit_slots[class],
+                            self.cell_sub.shell_oracle_cap_hit_cells[class],
+                            self.cell_sub.shell_oracle_cap_hit_slots[class],
+                            self.cell_sub.shell_oracle_cap_false_positive_cells[class],
+                            self.cell_sub.shell_oracle_cap_false_positive_slots[class],
                         );
                     }
                 }
@@ -1227,7 +1286,7 @@ impl PhaseTimings {
                 })
                 .unwrap_or((0, 0, 0));
             eprintln!(
-                "TIMING_SHELL_ORACLE_KV layers={} unbounded_layers={} fallback_layers={} traversed_cells={} transit_cells={} empty_cells={} baseline_visited_hit_slots={} fallback_after_hit_events={} fallback_remaining_slots={}",
+                "TIMING_SHELL_ORACLE_KV layers={} unbounded_layers={} fallback_layers={} traversed_cells={} transit_cells={} empty_cells={} baseline_visited_hit_slots={} fallback_after_hit_events={} fallback_remaining_slots={} cap_baseline_visited_hit_slots={} cap_fallback_after_hit_events={} cap_fallback_remaining_slots={}",
                 self.cell_sub.shell_oracle_layers,
                 self.cell_sub.shell_oracle_unbounded_layers,
                 self.cell_sub.shell_oracle_fallback_layers,
@@ -1237,19 +1296,26 @@ impl PhaseTimings {
                 self.cell_sub.shell_oracle_baseline_visited_hit_slots,
                 self.cell_sub.shell_oracle_fallback_after_hit_events,
                 self.cell_sub.shell_oracle_fallback_remaining_slots,
+                self.cell_sub.shell_oracle_cap_baseline_visited_hit_slots,
+                self.cell_sub.shell_oracle_cap_fallback_after_hit_events,
+                self.cell_sub.shell_oracle_cap_fallback_remaining_slots,
             );
             for (class, label) in ["first_all", "first_center", "later_all", "later_center"]
                 .into_iter()
                 .enumerate()
             {
                 eprintln!(
-                    "TIMING_SHELL_ORACLE_CLASS_KV class={label} tested_cells={} eligible_slots={} already_attempted_slots={} predicate_tests={} hit_cells={} hit_slots={}",
+                    "TIMING_SHELL_ORACLE_CLASS_KV class={label} tested_cells={} eligible_slots={} already_attempted_slots={} predicate_tests={} hit_cells={} hit_slots={} cap_hit_cells={} cap_hit_slots={} cap_false_positive_cells={} cap_false_positive_slots={}",
                     self.cell_sub.shell_oracle_tested_cells[class],
                     self.cell_sub.shell_oracle_eligible_slots[class],
                     self.cell_sub.shell_oracle_already_attempted_slots[class],
                     self.cell_sub.shell_oracle_predicate_tests[class],
                     self.cell_sub.shell_oracle_hit_cells[class],
                     self.cell_sub.shell_oracle_hit_slots[class],
+                    self.cell_sub.shell_oracle_cap_hit_cells[class],
+                    self.cell_sub.shell_oracle_cap_hit_slots[class],
+                    self.cell_sub.shell_oracle_cap_false_positive_cells[class],
+                    self.cell_sub.shell_oracle_cap_false_positive_slots[class],
                 );
             }
             eprintln!(

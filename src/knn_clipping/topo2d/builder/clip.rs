@@ -8,6 +8,8 @@ use crate::live_dedup::CellFailure;
 use crate::tolerances::{
     FALLBACK_EDGE_ARC_ANGLE_PAD, FALLBACK_INTERSECTION_CROSS_LEN2_FLOOR, FALLBACK_VERTEX_DEDUP_LEN2,
 };
+#[cfg(feature = "timing")]
+use glam::DVec3;
 use glam::Vec3;
 
 impl GnomonicBuilder {
@@ -115,6 +117,59 @@ impl GnomonicBuilder {
         let poly = self.current_poly();
         for i in 0..poly.len {
             if hp.signed_dist(poly.us[i], poly.vs[i]) < 0.0 {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Conservative cell-level version of the unchanged test. The supplied
+    /// spherical cap must contain every normalized point direction in the
+    /// cell; the global canonical-point norm envelope covers their raw f32
+    /// lengths. A true result therefore certifies every resident constraint
+    /// against the current frozen polygon without loading those residents.
+    #[cfg(feature = "timing")]
+    pub(super) fn cell_cap_would_be_unchanged(
+        &self,
+        center_unit: DVec3,
+        cos_radius: f64,
+        sin_radius: f64,
+    ) -> bool {
+        if !self.is_bounded() || self.vertex_count() < 3 {
+            return false;
+        }
+
+        const ROUND_GUARD: f64 = 64.0 * f64::EPSILON;
+        let norm_slack = crate::tolerances::CANONICAL_UNIT_NORM_SLACK + ROUND_GUARD;
+        let min_norm = 1.0 - norm_slack;
+        let max_norm = 1.0 + norm_slack;
+        let half_generator_norm_sq = 0.5 * self.generator.length_squared();
+        let poly = self.current_poly();
+
+        for i in 0..poly.len {
+            let vertex = self.basis.g + poly.us[i] * self.basis.t1 + poly.vs[i] * self.basis.t2;
+            let vertex_len_sq = vertex.length_squared();
+            if !vertex_len_sq.is_finite() || vertex_len_sq <= 0.0 {
+                return false;
+            }
+            let vertex_len = vertex_len_sq.sqrt();
+            let center_dot = vertex.dot(center_unit);
+            let max_direction_dot = if center_dot > vertex_len * cos_radius {
+                vertex_len
+            } else {
+                let transverse = (vertex_len_sq - center_dot * center_dot).max(0.0).sqrt();
+                center_dot * cos_radius + transverse * sin_radius
+            };
+            let max_direction_dot = max_direction_dot + ROUND_GUARD * vertex_len.max(1.0);
+            let minimizing_norm = max_direction_dot.clamp(min_norm, max_norm);
+            let lower = half_generator_norm_sq + 0.5 * minimizing_norm * minimizing_norm
+                - minimizing_norm * max_direction_dot;
+            let comparison_guard = ROUND_GUARD
+                * (half_generator_norm_sq.abs()
+                    + max_direction_dot.abs() * max_norm
+                    + vertex_len
+                    + 1.0);
+            if lower < comparison_guard {
                 return false;
             }
         }
@@ -560,6 +615,21 @@ impl Topo2DBuilder {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder.candidate_would_be_unchanged(neighbor),
             BuilderImpl::Fallback(builder) => builder.candidate_would_be_unchanged(neighbor),
+        }
+    }
+
+    #[cfg(feature = "timing")]
+    pub(crate) fn cell_cap_would_be_unchanged(
+        &self,
+        center_unit: DVec3,
+        cos_radius: f64,
+        sin_radius: f64,
+    ) -> bool {
+        match &self.inner {
+            BuilderImpl::Gnomonic(builder) => {
+                builder.cell_cap_would_be_unchanged(center_unit, cos_radius, sin_radius)
+            }
+            BuilderImpl::Fallback(_) => false,
         }
     }
 

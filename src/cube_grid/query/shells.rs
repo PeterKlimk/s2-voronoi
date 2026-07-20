@@ -123,6 +123,7 @@ pub(crate) struct ShellBatch {
 #[cfg(feature = "timing")]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ShellOracleCell {
+    cell: u32,
     slot_start: usize,
     slot_end: usize,
     class: usize,
@@ -130,6 +131,7 @@ pub(crate) struct ShellOracleCell {
 
 #[cfg(feature = "timing")]
 pub(crate) struct ShellOracleLayer<'a> {
+    grid: &'a CubeMapGrid,
     slots: &'a [u32],
     cells: &'a [ShellOracleCell],
     layers: usize,
@@ -168,6 +170,18 @@ impl ShellOracleLayer<'_> {
 
 #[cfg(feature = "timing")]
 impl ShellOracleCell {
+    #[inline]
+    pub(crate) fn cap(&self, layer: &ShellOracleLayer<'_>) -> (glam::DVec3, f64, f64) {
+        let cell = self.cell as usize;
+        let center =
+            layer.grid.cell_centers[cell].as_dvec3() * layer.grid.cell_center_inv_norms[cell];
+        (
+            center,
+            layer.grid.cell_cos_radius[cell] as f64,
+            layer.grid.cell_sin_radius[cell] as f64,
+        )
+    }
+
     #[inline]
     pub(crate) fn slots<'a>(&self, layer: &'a ShellOracleLayer<'_>) -> &'a [u32] {
         &layer.slots[self.slot_start..self.slot_end]
@@ -359,6 +373,7 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
                         DirectedCellMode::TransitOnly => unreachable!(),
                     };
                     self.oracle_cells.push(ShellOracleCell {
+                        cell,
                         slot_start: oracle_slot_start,
                         slot_end: self.oracle_slots.len(),
                         class: usize::from(self.oracle_layer_index > 0) * 2 + mode_class,
@@ -459,6 +474,7 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
         }
         self.oracle_ready = false;
         Some(ShellOracleLayer {
+            grid: self.grid,
             slots: &self.oracle_slots,
             cells: &self.oracle_cells,
             layers: self.oracle_layers,
