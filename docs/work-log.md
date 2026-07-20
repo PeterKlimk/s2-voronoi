@@ -59,7 +59,7 @@ prevention rather than an overclaimed proof.
 | POINT-002 | P2 | Completed | Closure-based zero-intermediate ingest landed without direct-path regression |
 | POINT-003 | P1 | Completed | Locator query validation and normalized ranking/certification landed |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
-| QUAL-001 | P2 | Active | Durable documentation and stale-comment audit (QUAL-001I) |
+| QUAL-001 | P2 | Completed | Reopen only for a new invariant/consumer or changed codegen evidence |
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
@@ -287,7 +287,7 @@ tasks and are not duplicated here.
 ### QUAL-001 — Performance-preserving cleanup
 
 - **Priority:** P2
-- **Status:** Active; baseline, QUAL-001A, QUAL-001E, QUAL-001F, and QUAL-001H completed; QUAL-001I active
+- **Status:** Completed 2026-07-20 at measured selective boundaries
 - **Goal:** reduce change amplification and make pipeline invariants structural without giving back
   established throughput, memory behavior, or numerical/correctness guarantees.
 - **Compatibility posture:** there are no external users as of 2026-07-17. Use this window for
@@ -628,12 +628,16 @@ tasks and are not duplicated here.
   samples had zero switches/migrations. This is accepted as practical neutrality for a useful
   tested phase boundary. Details are in
   [`packed-preparation-inventory.md`](packed-preparation-inventory.md).
-- **Next gate:** reconcile the milestone checklist with the accepted and rejected records, then
-  inventory any remaining cold typed-identity boundary before selecting another production change.
-  Do not attempt another hot assembly/packed extraction without a materially new invariant or
-  compiler/codegen change.
-- **Later milestones:** split reconciliation, local-rebuild, assembly, and packed-query phase
-  programs one measured change at a time.
+- **Closeout:** all nine workstreams are completed or closed at explicit measured boundaries.
+  `CellId`/`VertexId` cover the remaining ambiguity-prone cold overlay seams; other raw identities
+  are storage/traversal values or recreate the rejected rebuild-pair owner. Selective cell-layout
+  and validation sharing stops at the accepted readers/classifications, while measured
+  optimizer-sensitive expressions remain local. Reconciliation, local-rebuild transaction,
+  assembly hint confirmation, and packed range setup provide the justified phase boundaries;
+  remaining hot programs stay flattened.
+- **Reopen condition:** a new consumer or ownership invariant, a correctness defect, or a material
+  compiler/profile change that invalidates the recorded codegen evidence. Function length or an
+  old unchecked milestone item alone is not sufficient.
 - **Gate:** every production refactor preserves semantic fingerprints and passes the affected
   workload's interleaved performance gate against its immediate parent. Readability alone does not
   justify a repeatable throughput, memory, or code-size regression.

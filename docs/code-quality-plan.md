@@ -1,8 +1,8 @@
 # Code quality and maintainability plan
 
-**Status:** active; Milestone 1 completed, with QUAL-001A state modeling deferred to Milestone 2
+**Status:** completed 2026-07-20 at the measured boundaries recorded below
 
-**Date:** 2026-07-19
+**Dates:** 2026-07-17 through 2026-07-20
 
 This plan records the readability, maintainability, and code-quality pass requested after the
 July 2026 optimization work. The objective is to move the implementation toward the Pareto
@@ -36,8 +36,9 @@ After this program:
 - the public API, reports, diagnostics, and internal implementation use distinct names and explicit
   state transitions for construction, reconciliation, local rebuilding, validation, and output
   resolution;
-- live cell-cycle access is mediated by one internal abstraction that makes stale backing-buffer
-  tails impossible to consume accidentally;
+- ambiguity-prone live cell-cycle readers and the local-rebuild overlay use one paired internal
+  abstraction, while measured optimizer-sensitive mutation/validation sites retain documented raw
+  span expressions;
 - strict validation has one shared invariant vocabulary and shared classification primitives,
   while retaining allocation-free/fail-fast and detailed-report traversal strategies;
 - large phase-oriented functions are split at their existing semantic boundaries without changing
@@ -255,14 +256,13 @@ and diagnostic-knob documentation should be refreshed as part of the same hygien
 
 **Hot-path impact expected:** none
 
-**Progress:** vocabulary items 1–3 completed and validated 2026-07-17. The state-model inventory is
-recorded in [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md). The first selected
+**Progress:** completed 2026-07-20. Vocabulary items 1–3 were validated 2026-07-17. The state-model
+inventory is recorded in [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md). The first selected
 boundary, local rebuilding, is implemented: one status enum replaces the internal/public
 `attempted` + `accepted` pair while low-incidence and Euler defect facts remain independent. With
 no external users, the migration was atomic and left no deprecated boolean fields; existing KV
-names derive identical values from status methods. Seven release counter pairs were neutral. Other
-state-enum and fact/action work in items 4–5 remains in Milestone 2 and will follow as separate
-measured commits. The second migration replaces the exact-inverse resolution-discovery booleans
+names derive identical values from status methods. Seven release counter pairs were neutral. The
+second migration replaces the exact-inverse resolution-discovery booleans
 with `ResolutionDiscoveryMode`; timing derives the existing two KV values from one fallback bit.
 It retained identical aggregate/file size and neutral release counters. The third migration is now
 implemented: identity input and an actual merged result are variants of one effective-input owner,
@@ -296,8 +296,8 @@ behavioral categories may not change as part of this workstream.
 
 **Hot-path impact expected:** none on cell construction; possible cold-path/assembly impact
 
-**Progress:** started 2026-07-19. `LiveCellLayout` now pairs internal cell records with their
-backing index buffer, distinguishes invalid cell ids from invalid live spans, and provides
+**Progress:** completed 2026-07-20 at the measured selective boundary. `LiveCellLayout` pairs
+internal cell records with their backing index buffer, distinguishes invalid cell ids from invalid live spans, and provides
 record-based live-span access. The scalar/parallel topology summary and reconciliation's shared
 checked reader now use the view. The shared-edge segment reader family also carries one layout
 through primary reconciliation, rejected-component seeding, optional telemetry, and focused
@@ -454,6 +454,9 @@ clustered/mega, and adds 64 text bytes. That is accepted as practical performanc
 named, directly tested classification boundary. Scratch reset, threshold selection, dense
 takeover, and the center/ring SIMD kernels remain flattened.
 
+QUAL-001D is complete at these boundaries. Further extraction requires a new ownership invariant,
+consumer, or materially changed compiler/codegen context rather than function length alone.
+
 Apply one phase extraction at a time:
 
 1. reconciliation orchestration and round state;
@@ -556,14 +559,15 @@ decision.
 
 **Hot-path impact expected:** none at first; later adoption must be measured
 
-**Progress:** started 2026-07-19. A transparent `CellId` now guards the
+**Progress:** completed 2026-07-20 at the local overlay boundary. A transparent `CellId` guards the
 `WorkingDiagram::splice_generator` mutation seam while the overlay's maps and packed boundaries
 retain raw `u32` storage. A transparent `VertexId` similarly guards the overlay's position/key
 lookup accessors, vertex creation result, and owner lookup without changing collection element
 types. The remaining raw conversions mark storage/traversal boundaries rather than being hidden
 inside those accessors. A broader typed owner for reconciliation-produced rebuild seed pairs was
 rejected after the clean-path counter gate showed repeatable codegen regressions; see the retired
-experiment record.
+experiment record. Further wrapper expansion would either decorate an already-unambiguous raw
+storage traversal or recreate that rejected cross-phase owner, so no production candidate remains.
 
 Start with reconciliation and local rebuilding, where roles are most ambiguous and work is cold.
 Candidate types are `GeneratorId`, `CellId`, `VertexId`, `SlotId`, and `CellPair`. Reuse existing
@@ -642,9 +646,30 @@ Cargo and the live tree; the performance record owns rejected experiments and th
    Confirmed 2026-07-19 in `docs/performance.md#retired-experiments` and the source-pinned decision
    record.
 
-## Execution order
+## Closeout disposition
+
+| Workstream | Disposition |
+|---|---|
+| QUAL-001A | Completed: vocabulary and four lifecycle/state ownership migrations landed. |
+| QUAL-001B | Completed selectively: paired readers and overlay landed; measured mutation, validation, and handoff shapes remain raw or closed. |
+| QUAL-001C | Closed at the shared edge-use classification and differential-coverage boundary; broader shared traversal/enums were measured and rejected. |
+| QUAL-001D | Completed selectively: reconciliation, local-rebuild transaction, assembly hint confirmation, and packed range setup landed; remaining hot loops stay flattened. |
+| QUAL-001E | Completed: production numerical/policy literals are classified and owned. |
+| QUAL-001F | Completed: obsolete compatibility/generalization surfaces and excess visibility were removed. |
+| QUAL-001G | Completed selectively: `CellId` and `VertexId` guard ambiguous overlay seams; raw storage identities and the rejected pair owner remain documented. |
+| QUAL-001H | Completed: diagnostic ownership, environment mutation, and manual-probe boundaries are explicit. |
+| QUAL-001I | Completed: architecture, comments, repository guidance, and decision history match the live tree. |
+
+No unresolved finding from the original audit currently justifies another production cleanup.
+Retained raw expressions and flattened programs are evidence-backed decisions, not unfinished
+checklist items. Reopen QUAL-001 only for a new consumer/invariant, a correctness issue, or a
+material compiler/profile change that invalidates the recorded codegen evidence.
+
+## Execution record
 
 ### Milestone 0 — Pin the baseline
+
+**Status:** completed 2026-07-17.
 
 - Record the starting commit, supported feature matrix, binary sizes, and representative benchmark
   commands.
@@ -660,8 +685,10 @@ repeatable adverse counter signal.
 
 ### Milestone 1 — Low-risk semantic cleanup
 
-1. ~~QUAL-001A coordinated public/internal vocabulary migration.~~ Completed 2026-07-17; state
-   enums remain in Milestone 2.
+**Status:** completed 2026-07-19.
+
+1. ~~QUAL-001A coordinated public/internal vocabulary migration.~~ Completed 2026-07-17; its state
+   enums were completed in Milestone 2.
 2. ~~QUAL-001F compatibility-surface removal, empty wrappers, planar decision, and module maps.~~
    Completed 2026-07-17.
 3. ~~QUAL-001H stale test knob and probe organization.~~ Completed 2026-07-18.
@@ -674,28 +701,42 @@ later structural work without carrying a deprecated parallel API.
 
 ### Milestone 2 — Make invariants structural
 
-1. QUAL-001G typed ids at cold reconciliation/rebuild boundaries.
-2. QUAL-001B live cell-layout abstraction and migration through cold consumers.
-3. QUAL-001C shared validation facts and differential coverage.
-4. Complete QUAL-001A state enums once phase ownership is clear.
+**Status:** completed 2026-07-20 at measured selective boundaries.
 
-The existing whole-diagram validation and differential oracles remain in place throughout this
-milestone; they are removed or simplified only after the replacement has independent negative
-controls.
+1. ~~QUAL-001G typed ids at cold reconciliation/rebuild boundaries.~~ Completed at the local
+   overlay seam; broader pair ownership was rejected.
+2. ~~QUAL-001B live cell-layout abstraction and migration through cold consumers.~~ Completed
+   selectively; optimizer-sensitive consumers retain documented raw expressions.
+3. ~~QUAL-001C shared validation facts and differential coverage.~~ Completed at the shared-fact
+   boundary; universal traversal/reason forms were rejected.
+4. ~~Complete QUAL-001A state enums once phase ownership is clear.~~ Completed through the four
+   recorded lifecycle/state ownership migrations.
+
+The existing whole-diagram validation and differential oracles remained in place throughout this
+milestone; no replacement justified removing or simplifying them.
 
 ### Milestone 3 — Split cold phase programs
 
-1. Reconciliation orchestration.
-2. Local-rebuild oracle/overlay/residual modules.
-3. Report/output-resolution orchestration if the earlier state model exposes a useful seam.
+**Status:** completed/closed 2026-07-20.
 
-Run defect-scale performance checks even though these paths are cold: cubed and defect-bearing
-large inputs can make reconciliation scale with `n`.
+1. ~~Reconciliation orchestration.~~ Run-state and defect-body boundaries accepted.
+2. ~~Local-rebuild oracle/overlay/residual modules.~~ Candidate transaction boundary accepted;
+   trigger/growth policy remains cohesive in the caller.
+3. ~~Report/output-resolution orchestration if the earlier state model exposes a useful seam.~~ No
+   additional owner emerged; discovery mode and effective-geometry state already carry the useful
+   invariants, so this conditional item closed without another wrapper.
+
+Defect-scale performance checks used `cubed` and defect-bearing large inputs because reconciliation
+can scale with `n` even though its ordinary path is cold.
 
 ### Milestone 4 — Split hot phase programs
 
-1. Live assembly.
-2. Packed group preparation.
+**Status:** completed 2026-07-20 at narrow measured boundaries.
+
+1. ~~Live assembly.~~ Final exact-zero hint confirmation accepted; unsafe scatter and
+   materialization remain deliberately flattened.
+2. ~~Packed group preparation.~~ Directed range setup accepted in its source-shaped form; threshold,
+   dense-takeover, and SIMD scan kernels remain deliberately flattened.
 
 These are last because the present flattened forms encode recent optimizations and compiler-shape
 knowledge. Extract one phase, inspect optimized code where necessary, run the full performance
