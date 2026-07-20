@@ -387,16 +387,17 @@ coverage now pins every safely constructible no-weld shared fail-fast reason, ef
 cardinality/span failures, connectivity-versus-Euler ordering, self-loop dominance, and the
 report's three edge-use subclasses. `EdgeUseClass` is the first accepted shared classification: it
 preserves the strict gates' combined message and the report's separate counters, with neutral
-release counters. A follow-up `StrictValidationIssue` enum preserving the exact messages and scan
-ordering was rejected: despite the small artifact delta, it reproduced the established optimizer
-cliff (+0.1866% instructions and +1.6622% branches). The structurally dominated fail-fast self-loop
-branches have now been removed; direct coverage retains the accumulating report's independent
-telemetry. This reduced text/BSS/file size with neutral release counters. Before sharing any
+release counters. A follow-up `StrictValidationIssue` enum initially reproduced the established
+optimizer cliff and was reverted. Its current retest is retained: the typed scan ordering and all
+13 exact messages are pinned once, a one-codegen-unit control is neutral, the default artifact is
+12 KiB smaller, and ordinary instructions fall about 0.12% while branches rise about 0.12% with no
+resolved cycle loss. The structurally dominated fail-fast self-loop branches have also been
+removed; direct coverage retains the accumulating report's independent telemetry. Before sharing any
 weld-specific fact, fast-gate/report agreement on a corrupt weld map is now pinned: the gate keeps
 its exact reason and the report counts the same bad alias. Sharing only the weld-alias consistency
 predicate was then rejected after it reproduced the optimizer cliff (+0.1604% instructions and
-+1.6618% branches). QUAL-001C is closed at that measured boundary: shared fact primitives and
-differential coverage remain, while codegen-sensitive traversal expressions stay local.
++1.6618% branches). QUAL-001C is complete at the typed shared-fact boundary; traversal policies
+stay distinct, and the low-value weld expression remains local.
 
 1. Define shared cell and edge issue classifications, including stable internal reason enums rather
    than repeated string literals.

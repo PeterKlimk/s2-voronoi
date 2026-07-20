@@ -462,6 +462,47 @@ fn sort_edge_uses(edge_uses: &mut [EdgeUse]) {
     edge_uses.sort_unstable_by_key(|edge| edge.key);
 }
 
+/// Exact failure taxonomy shared by the two fail-fast sphere validators.
+///
+/// The public/reporting validator deliberately retains its accumulating
+/// counters; only the strict gates share these first-failure identities.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StrictValidationIssue {
+    GeneratorCellCountMismatch,
+    OffSphereVertex,
+    WeldMap,
+    InvalidCellSpan,
+    InvalidVertexReference,
+    DuplicateVertexInCell,
+    DegenerateCell,
+    DuplicateCell,
+    LowIncidenceVertex,
+    UnpairedOverusedOrMisorientedEdge,
+    AntipodalEdge,
+    DisconnectedSubdivision,
+    BadEulerCharacteristic,
+}
+
+impl StrictValidationIssue {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::GeneratorCellCountMismatch => "generator/cell count mismatch",
+            Self::OffSphereVertex => "off-sphere vertex",
+            Self::WeldMap => "weld map",
+            Self::InvalidCellSpan => "invalid cell span",
+            Self::InvalidVertexReference => "invalid vertex reference",
+            Self::DuplicateVertexInCell => "duplicate vertex in cell",
+            Self::DegenerateCell => "degenerate cell",
+            Self::DuplicateCell => "duplicate cell",
+            Self::LowIncidenceVertex => "low-incidence vertex",
+            Self::UnpairedOverusedOrMisorientedEdge => "unpaired, overused, or misoriented edge",
+            Self::AntipodalEdge => "antipodal edge",
+            Self::DisconnectedSubdivision => "disconnected subdivision",
+            Self::BadEulerCharacteristic => "bad euler characteristic",
+        }
+    }
+}
+
 /// Fast success-path verifier for `VORONOI_MESH_VERIFY`.
 ///
 /// This checks the same strict sphere contract as [`validate_impl`], but does
@@ -476,7 +517,7 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
         .iter()
         .any(|v| !vertex_is_on_sphere(v.x(), v.y(), v.z()))
     {
-        return Err("off-sphere vertex");
+        return Err(StrictValidationIssue::OffSphereVertex.message());
     }
 
     let mut welded_twin_cells = 0usize;
@@ -493,7 +534,7 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
         if !canonical_is_canonical
             || diagram.cell(i).vertex_indices != diagram.cell(canonical).vertex_indices
         {
-            return Err("weld map");
+            return Err(StrictValidationIssue::WeldMap.message());
         }
     }
     let num_faces = num_cells - welded_twin_cells;
@@ -520,7 +561,7 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
 
         for &vi in cell.vertex_indices {
             if (vi as usize) >= num_vertices {
-                return Err("invalid vertex reference");
+                return Err(StrictValidationIssue::InvalidVertexReference.message());
             }
 
             let is_duplicate = if use_spill {
@@ -539,7 +580,7 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
             };
 
             if is_duplicate {
-                return Err("duplicate vertex in cell");
+                return Err(StrictValidationIssue::DuplicateVertexInCell.message());
             }
             let count = &mut vertex_cell_count[vi as usize];
             *count = count.saturating_add(1);
@@ -551,7 +592,7 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
             seen_stack_len
         };
         if seen_valid_len < 3 {
-            return Err("degenerate cell");
+            return Err(StrictValidationIssue::DegenerateCell.message());
         }
 
         let signature = if use_spill {
@@ -561,7 +602,7 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
         };
         if let Some(signature) = signature {
             if !unique_cell_signatures.insert(signature) {
-                return Err("duplicate cell");
+                return Err(StrictValidationIssue::DuplicateCell.message());
             }
         }
 
@@ -582,7 +623,7 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
         if count > 0 {
             used_vertices += 1;
             if count < 3 {
-                return Err("low-incidence vertex");
+                return Err(StrictValidationIssue::LowIncidenceVertex.message());
             }
         }
     }
@@ -603,7 +644,7 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
         let group = &edge_uses[i..j];
         let opposite_pair = group.len() == 2 && group[0].forward != group[1].forward;
         if classify_edge_uses(group.len(), opposite_pair) != EdgeUseClass::Paired {
-            return Err("unpaired, overused, or misoriented edge");
+            return Err(StrictValidationIssue::UnpairedOverusedOrMisorientedEdge.message());
         }
         let (a, b) = edge_vertices(first.key);
         let va = diagram.vertex(a);
@@ -623,7 +664,7 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
                 crate::spherical_arc::OwnerArcClass::ExactPi
                     | crate::spherical_arc::OwnerArcClass::Invalid
             ) {
-                return Err("antipodal edge");
+                return Err(StrictValidationIssue::AntipodalEdge.message());
             }
         }
         if group[0].cell != group[1].cell {
@@ -646,12 +687,12 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
         roots.len()
     };
     if connected_components != 1 {
-        return Err("disconnected subdivision");
+        return Err(StrictValidationIssue::DisconnectedSubdivision.message());
     }
 
     let euler_characteristic = used_vertices as i32 - num_edges as i32 + num_faces as i32;
     if euler_characteristic != 2 {
-        return Err("bad euler characteristic");
+        return Err(StrictValidationIssue::BadEulerCharacteristic.message());
     }
 
     Ok(())
@@ -663,7 +704,7 @@ fn verify_sphere_fast(diagram: &SphericalVoronoi) -> Result<(), &'static str> {
 struct CellScan {
     edge_uses: Vec<EdgeUse>,
     signatures: Vec<(CellSignature, u32)>,
-    err: Option<(u32, u8, &'static str)>,
+    err: Option<(u32, u8, StrictValidationIssue)>,
 }
 
 /// Check ranks mirror the sequential validator's within-cell check order, so
@@ -696,7 +737,7 @@ fn scan_cells_strict(
     };
     'cells: for ci in range {
         let Ok(span) = layout.checked_span(ci) else {
-            out.err = Some((ci as u32, RANK_SPAN, "invalid cell span"));
+            out.err = Some((ci as u32, RANK_SPAN, StrictValidationIssue::InvalidCellSpan));
             break 'cells;
         };
         let len = span.len();
@@ -712,7 +753,11 @@ fn scan_cells_strict(
 
         for &vi in span {
             if (vi as usize) >= num_vertices {
-                out.err = Some((ci as u32, RANK_VERTEX, "invalid vertex reference"));
+                out.err = Some((
+                    ci as u32,
+                    RANK_VERTEX,
+                    StrictValidationIssue::InvalidVertexReference,
+                ));
                 break 'cells;
             }
             let is_duplicate = if use_spill {
@@ -730,7 +775,11 @@ fn scan_cells_strict(
                 false
             };
             if is_duplicate {
-                out.err = Some((ci as u32, RANK_VERTEX, "duplicate vertex in cell"));
+                out.err = Some((
+                    ci as u32,
+                    RANK_VERTEX,
+                    StrictValidationIssue::DuplicateVertexInCell,
+                ));
                 break 'cells;
             }
             vertex_cell_count[vi as usize].fetch_add(1, Relaxed);
@@ -742,7 +791,11 @@ fn scan_cells_strict(
             seen_stack_len
         };
         if seen_valid_len < 3 {
-            out.err = Some((ci as u32, RANK_DEGENERATE, "degenerate cell"));
+            out.err = Some((
+                ci as u32,
+                RANK_DEGENERATE,
+                StrictValidationIssue::DegenerateCell,
+            ));
             break 'cells;
         }
 
@@ -800,11 +853,11 @@ pub(crate) fn verify_sphere_effective_strict(
     let num_vertices = vertices.len();
 
     if generators.len() != num_cells {
-        return Err("generator/cell count mismatch");
+        return Err(StrictValidationIssue::GeneratorCellCountMismatch.message());
     }
 
     if vertices.iter().any(|v| !vertex_is_on_sphere(v.x, v.y, v.z)) {
-        return Err("off-sphere vertex");
+        return Err(StrictValidationIssue::OffSphereVertex.message());
     }
 
     // Exact incidence counters, shared across chunks; only read after the
@@ -837,8 +890,9 @@ pub(crate) fn verify_sphere_effective_strict(
 
     // Lexicographic-first error across chunks (chunks are disjoint ascending
     // cell ranges, so per-chunk firsts merge by (cell, rank)).
-    let mut first_err: Option<(u32, u8, &'static str)> = None;
-    let lower = |cand: (u32, u8, &'static str), cur: &mut Option<(u32, u8, &'static str)>| {
+    let mut first_err: Option<(u32, u8, StrictValidationIssue)> = None;
+    let lower = |cand: (u32, u8, StrictValidationIssue),
+                 cur: &mut Option<(u32, u8, StrictValidationIssue)>| {
         if cur.is_none_or(|c| (cand.0, cand.1) < (c.0, c.1)) {
             *cur = Some(cand);
         }
@@ -865,13 +919,20 @@ pub(crate) fn verify_sphere_effective_strict(
     signatures.sort_unstable();
     for pair in signatures.windows(2) {
         if pair[0].0 == pair[1].0 {
-            lower((pair[1].1, RANK_DUP_CELL, "duplicate cell"), &mut first_err);
+            lower(
+                (
+                    pair[1].1,
+                    RANK_DUP_CELL,
+                    StrictValidationIssue::DuplicateCell,
+                ),
+                &mut first_err,
+            );
             // Runs are cell-ascending, so the first adjacent duplicate in a
             // run is that run's minimal candidate; keep scanning other runs.
         }
     }
-    if let Some((_, _, msg)) = first_err {
-        return Err(msg);
+    if let Some((_, _, issue)) = first_err {
+        return Err(issue.message());
     }
 
     let mut used_vertices = 0usize;
@@ -880,7 +941,7 @@ pub(crate) fn verify_sphere_effective_strict(
         if count > 0 {
             used_vertices += 1;
             if count < 3 {
-                return Err("low-incidence vertex");
+                return Err(StrictValidationIssue::LowIncidenceVertex.message());
             }
         }
     }
@@ -904,7 +965,7 @@ pub(crate) fn verify_sphere_effective_strict(
         let group = &edge_uses[i..j];
         let opposite_pair = group.len() == 2 && group[0].forward != group[1].forward;
         if classify_edge_uses(group.len(), opposite_pair) != EdgeUseClass::Paired {
-            return Err("unpaired, overused, or misoriented edge");
+            return Err(StrictValidationIssue::UnpairedOverusedOrMisorientedEdge.message());
         }
         let (a, b) = edge_vertices(first.key);
         let va = vertices[a];
@@ -921,7 +982,7 @@ pub(crate) fn verify_sphere_effective_strict(
                 crate::spherical_arc::OwnerArcClass::ExactPi
                     | crate::spherical_arc::OwnerArcClass::Invalid
             ) {
-                return Err("antipodal edge");
+                return Err(StrictValidationIssue::AntipodalEdge.message());
             }
         }
         if group[0].cell != group[1].cell {
@@ -941,12 +1002,12 @@ pub(crate) fn verify_sphere_effective_strict(
         roots.len()
     };
     if connected_components != 1 {
-        return Err("disconnected subdivision");
+        return Err(StrictValidationIssue::DisconnectedSubdivision.message());
     }
 
     let euler_characteristic = used_vertices as i32 - num_edges as i32 + num_cells as i32;
     if euler_characteristic != 2 {
-        return Err("bad euler characteristic");
+        return Err(StrictValidationIssue::BadEulerCharacteristic.message());
     }
 
     Ok(())
@@ -1252,6 +1313,37 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
 mod verify_gate_tests {
     use super::*;
     use glam::Vec3;
+
+    #[test]
+    fn strict_issue_messages_are_stable() {
+        use StrictValidationIssue as Issue;
+
+        let cases = [
+            (
+                Issue::GeneratorCellCountMismatch,
+                "generator/cell count mismatch",
+            ),
+            (Issue::OffSphereVertex, "off-sphere vertex"),
+            (Issue::WeldMap, "weld map"),
+            (Issue::InvalidCellSpan, "invalid cell span"),
+            (Issue::InvalidVertexReference, "invalid vertex reference"),
+            (Issue::DuplicateVertexInCell, "duplicate vertex in cell"),
+            (Issue::DegenerateCell, "degenerate cell"),
+            (Issue::DuplicateCell, "duplicate cell"),
+            (Issue::LowIncidenceVertex, "low-incidence vertex"),
+            (
+                Issue::UnpairedOverusedOrMisorientedEdge,
+                "unpaired, overused, or misoriented edge",
+            ),
+            (Issue::AntipodalEdge, "antipodal edge"),
+            (Issue::DisconnectedSubdivision, "disconnected subdivision"),
+            (Issue::BadEulerCharacteristic, "bad euler characteristic"),
+        ];
+
+        for (issue, expected) in cases {
+            assert_eq!(issue.message(), expected);
+        }
+    }
 
     /// A single triangular cell: its three edges are each used once, and the
     /// sphere has no boundary, so all three are unpaired interior edges —

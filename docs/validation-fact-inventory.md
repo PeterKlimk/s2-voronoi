@@ -1,6 +1,7 @@
 # Validation fact inventory
 
-**Status:** QUAL-001C inventory and measured extraction decisions, 2026-07-19
+**Status:** QUAL-001C selective boundary complete; typed reasons accepted after layout retest,
+2026-07-20
 
 This document maps the three strict sphere-validation consumers before any shared-fact
 refactoring. The purpose is to preserve their different cost, input, and diagnostic policies while
@@ -130,7 +131,12 @@ instruction/branch counter pairs.
 A typed internal strict-failure reason was tested in both fail-fast consumers. It preserved the
 effective parallel scan's `(cell, check_rank)` ordering, every exact string pinned by the oracle,
 and the report's independent taxonomy, but reproduced the optimizer cliff: +0.1866% instructions
-and +1.6622% branches across seven clean counter pairs. The source was reverted.
+and +1.6622% branches across seven clean counter pairs. The first source was reverted. A
+2026-07-20 retest after surrounding codegen changed retained the taxonomy: ordinary instructions
+fell about 0.12% while branches rose about 0.12%, clustered remained closer to neutral, and mega
+moved by roughly one basis point. A one-codegen-unit control was neutral, cycles had no resolved
+loss, and the default artifact shrank by 12 KiB aggregate. All 13 exact messages are now mapped and
+tested once through `StrictValidationIssue`; the accumulating report remains independent.
 
 The dominated fail-fast self-loop branches were then removed. The accumulating report retained its
 independent self-loop telemetry, now pinned directly. The release artifact became smaller and seven
@@ -142,7 +148,6 @@ gate's early return and the report's accumulating count separate. It reproduced 
 cliff: +0.1604% instructions and +1.6618% branches across seven clean counter pairs, so the source
 was reverted.
 
-QUAL-001C stops here. The semantic facts with profitable shared forms remain centralized; the three
-consumers retain their distinct traversal and reporting policies, and codegen-sensitive expressions
-stay local. Revisit only if surrounding codegen changes materially or a new invariant requires a
-shared contract.
+QUAL-001C stops here. Shared edge-use and strict-reason facts are centralized; the three consumers
+retain their distinct traversal and reporting policies. The weld-specific local expression remains
+duplicated because its standalone abstraction has little value and has not been retested.

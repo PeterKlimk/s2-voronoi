@@ -752,6 +752,13 @@ Do not broadly retry these without a materially different design or workload:
   +0.012% to +0.031% across Fibonacci, uniform, clustered, and mega with neutral branches and no
   adverse cycle signal; a `-C codegen-units=1` Fibonacci control was neutral at roughly three ppm.
   The remaining default displacement is codegen-partition noise rather than validation work.
+- Replacing duplicated fail-fast validation strings with a 13-variant typed issue taxonomy
+  originally reproduced the optimizer cliff and was reverted. The current retest is retained:
+  default Fibonacci/uniform instructions fall about 0.12% while branches rise about 0.12%,
+  clustered is closer to neutral, and mega changes by roughly one basis point. Cycles show no
+  resolved loss, a one-codegen-unit control is neutral, and the default artifact shrinks 12 KiB
+  aggregate. This is a compiler-layout tradeoff with a favorable code-size/ordinary-instruction
+  side, not validation work added to ordinary construction.
 - Carrying reconciliation-produced local-rebuild seed pairs through pipeline state as a typed
   owner perturbed clean-path codegen despite retaining tuple storage. Seven interleaved 500k
   single-threaded Fibonacci counter pairs showed +0.1602% instructions and +1.6619% branches in

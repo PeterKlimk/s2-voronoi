@@ -487,11 +487,13 @@ tasks and are not duplicated here.
   report retains separate counters. The artifact added 12 text bytes, removed 16 BSS bytes, and
   grew 16 file bytes. Seven counter pairs were neutral (mean `0.999995974` instructions and
   `0.999993778` branches); all samples had zero context switches and migrations.
-- **QUAL-001C typed-reason decision:** a private `StrictValidationIssue` enum and exact-text mapping
-  were tested in both fail-fast validators while preserving the effective scan's
-  `(cell, check_rank)` ordering. It reproduced the optimizer cliff in every one of seven pairs:
-  +0.18657% instructions and +1.66216% branches, with zero context switches and migrations. The
-  implementation was reverted; keep static fail-fast strings until surrounding codegen changes.
+- **QUAL-001C typed-reason result:** a private `StrictValidationIssue` enum and exact-text mapping
+  initially reproduced the optimizer cliff and was reverted. The 2026-07-20 retest is retained:
+  both fail-fast validators now select one of 13 typed reasons, the effective scan carries it
+  through `(cell, check_rank)` ordering, and direct coverage pins every message. Default ordinary
+  instructions fall about 0.12% while branches rise about 0.12%; clustered is closer to neutral,
+  mega moves by roughly one basis point, cycles show no resolved loss, and a one-codegen-unit
+  control is neutral. The default artifact shrinks by 12 KiB aggregate.
 - **QUAL-001C dead-branch result:** the fail-fast self-loop returns proven dominated by earlier
   duplicate/degenerate checks are removed. A direct assertion retains the accumulating report's
   self-loop telemetry. The artifact removed 60 text bytes, 4,032 BSS bytes, and 64 file bytes;

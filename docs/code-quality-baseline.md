@@ -860,10 +860,10 @@ unpaired-reader, mutable-layout, strict-reason, weld-predicate, and effective-va
 changed code that was inactive in their clean Fibonacci counter workload and produced the same
 roughly `+0.16%` instructions / `+1.66%` branches (later `+0.129%` / `+1.36%`) artifact. Those are
 evidence that the then-current default artifact moved to a less favorable optimizer/layout state,
-not evidence that each abstraction performed that much extra work. They remain deferred because
-this audit does not establish their independent maintainability value or default-build outcome;
-future retests should include an alternate codegen-partition control before attributing clean-path
-counters to inactive code.
+not evidence that each abstraction performed that much extra work. Subsequent retests accepted the
+unpaired-reader, strict-reason, and effective-validation boundaries. The low-value mutable helper
+and weld predicate remain deferred; future inactive-path retests should include an alternate
+codegen-partition control before attributing clean-path counters to the changed source.
 
 ## QUAL-001B localized duplicate-reader result
 
@@ -988,7 +988,7 @@ The first shared validation fact was accepted on 2026-07-19 against immediate pa
   `0.999991449..=1.000002457` and `0.999971992..=1.000009634`. There was no directional regression;
   every sample recorded zero context switches and CPU migrations.
 
-## QUAL-001C typed strict-reason experiment
+## QUAL-001C typed strict-reason experiment and retest
 
 The proposed fail-fast reason enum was rejected on 2026-07-19 against immediate parent `2813e0e`.
 
@@ -1005,6 +1005,28 @@ The proposed fail-fast reason enum was rejected on 2026-07-19 against immediate 
   recorded zero context switches and CPU migrations.
 - The implementation was reverted. Static fail-fast strings remain the measured Pareto choice
   until surrounding codegen changes enough to justify retesting.
+
+The typed taxonomy was retested on 2026-07-20 against parent `4ec759c` and is now retained.
+
+- `StrictValidationIssue` owns all 13 fail-fast identities and their exact messages. Both strict
+  validators select variants rather than spelling messages locally; the effective parallel scan
+  carries a typed issue through lexicographic `(cell, check_rank)` selection. A direct mapping test
+  pins every string. The accumulating report remains independent.
+- Default-build seven-pair instruction/branch means were `0.998721841` / `1.001286980` on 500k
+  Fibonacci, `0.998828952` / `1.001126394` on 500k uniform seed 12345, `0.999821539` /
+  `1.000186691` on 100k clustered seed 1, and `1.000135946` / `1.000075151` on 100k mega seed 1.
+  Ordinary regimes retire about 0.12% fewer instructions in exchange for 0.11%--0.13% more
+  branches; mega movement is about one basis point. Cycles were unresolved and every sample had
+  zero switches/migrations.
+- A one-codegen-unit Fibonacci control was neutral at `0.999997298` instructions and
+  `0.999995896` branches. The retained default artifact removes 11,376 text and 1,192 BSS bytes,
+  adds 280 data bytes, shrinks aggregate accounting by 12,288 bytes, and reduces file size by 7,480
+  bytes. The cross-regime/default split is therefore another codegen-layout tradeoff rather than
+  work performed by validation on the ordinary path.
+
+The substantial code-size and ordinary instruction reductions, neutral controlled build, exact
+typed contract, and absence of a resolved cycle loss justify retaining the enum. The tiny mega
+counter increase remains below the practical noise threshold; no forced-inline attribute is kept.
 
 ## QUAL-001C dominated self-loop branches
 
