@@ -11,19 +11,18 @@ mod support;
 use std::f32::consts::PI;
 use support::points::{
     benchmark_cap_points, clustered_cap_points, cubed_sphere_points, great_circle_points,
-    hemisphere_points,
+    hemisphere_points, TestPoint,
 };
 use voronoi_mesh::{
-    compute, validation::validate, DegenerateMode, LocalRebuildMode, PreprocessMode, UnitVec3,
-    VoronoiConfig,
+    compute, validation::validate, DegenerateMode, LocalRebuildMode, PreprocessMode, VoronoiConfig,
 };
 
-fn u(x: f32, y: f32, z: f32) -> UnitVec3 {
+fn u(x: f32, y: f32, z: f32) -> TestPoint {
     let l = (x * x + y * y + z * z).sqrt();
-    UnitVec3::new(x / l, y / l, z / l)
+    TestPoint::new(x / l, y / l, z / l)
 }
 
-fn expect_strict_success(name: &str, points: Vec<UnitVec3>) {
+fn expect_strict_success(name: &str, points: Vec<TestPoint>) {
     let diagram =
         compute(&points).unwrap_or_else(|err| panic!("{name}: expected success: {err:?}"));
     let report = validate(&diagram);
@@ -34,14 +33,14 @@ fn expect_strict_success(name: &str, points: Vec<UnitVec3>) {
     );
 }
 
-fn equator_with_poles(n: usize) -> Vec<UnitVec3> {
+fn equator_with_poles(n: usize) -> Vec<TestPoint> {
     let mut points = great_circle_points(n, 0.0, 0);
     points.push(u(0.0, 0.0, 1.0));
     points.push(u(0.0, 0.0, -1.0));
     points
 }
 
-fn latitude_ring_with_apex(n: usize) -> Vec<UnitVec3> {
+fn latitude_ring_with_apex(n: usize) -> Vec<TestPoint> {
     let r = (0.5f32).sqrt();
     let mut points = Vec::with_capacity(n + 1);
     for i in 0..n {
@@ -52,7 +51,7 @@ fn latitude_ring_with_apex(n: usize) -> Vec<UnitVec3> {
     points
 }
 
-fn pole_with_latitude_ring(n: usize, z: f32) -> Vec<UnitVec3> {
+fn pole_with_latitude_ring(n: usize, z: f32) -> Vec<TestPoint> {
     let r = (1.0 - z * z).sqrt();
     let mut points = Vec::with_capacity(n + 2);
     points.push(u(0.0, 0.0, 1.0));
@@ -66,7 +65,7 @@ fn pole_with_latitude_ring(n: usize, z: f32) -> Vec<UnitVec3> {
 
 #[test]
 fn weird_geometry_contract_cases() {
-    let cases: [(&str, Vec<UnitVec3>); 8] = [
+    let cases: [(&str, Vec<TestPoint>); 8] = [
         ("pure_great_circle_rank2", great_circle_points(50, 0.0, 42)),
         (
             "small_jitter_great_circle",
@@ -212,7 +211,7 @@ fn classify_weird_geometry_failures() {
                 "WEIRDCASE {name}: ok cells={} validation={} assembly_mismatches={}",
                 output.preferred_diagram().num_cells(),
                 output.report.preferred_validation().headline(),
-                output.report.assembly_edge_mismatches.len()
+                output.report.assembly_edge_mismatch_count
             ),
             Err(err) => eprintln!("WEIRDCASE {name}: err {err:?}"),
         }

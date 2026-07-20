@@ -1,8 +1,6 @@
 use super::KnnCellStage;
 use std::time::Duration;
 
-use crate::cube_grid::packed_knn::PackedKnnTimings;
-
 /// Dummy timer when `timing` is disabled (zero-sized).
 pub(crate) struct Timer;
 
@@ -54,9 +52,6 @@ impl CellSubAccum {
     pub(crate) fn add_knn(&mut self, _d: Duration) {}
     #[inline(always)]
     pub(crate) fn add_packed_knn(&mut self, _d: Duration) {}
-    #[inline(always)]
-    #[allow(dead_code)]
-    pub(crate) fn add_packed_knn_breakdown(&mut self, _timings: &PackedKnnTimings) {}
     #[inline(always)]
     pub(crate) fn add_clip(&mut self, _d: Duration) {}
     #[inline(always)]

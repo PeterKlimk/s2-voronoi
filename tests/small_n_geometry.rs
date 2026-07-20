@@ -12,11 +12,10 @@ use glam::DVec3;
 use support::points::{
     bimodal_density_points, clustered_cap_points, cube_vertex_stress_points,
     fibonacci_sphere_points, hemisphere_points, near_cocircular_stress_points,
-    random_sphere_points,
+    random_sphere_points, TestPoint,
 };
 use voronoi_mesh::{
-    compute_with_report, validation::validate, SphericalVoronoi, UnitVec3, UnitVec3Like,
-    VoronoiConfig,
+    compute_with_report, validation::validate, SphericalVoronoi, UnitVec3Like, VoronoiConfig,
 };
 
 // Small diagrams can contain nearly antipodal edge endpoints, where rounding
@@ -175,7 +174,7 @@ fn diagram_cells(diagram: &SphericalVoronoi) -> Vec<Vec<u32>> {
         .collect()
 }
 
-fn assert_case(points: &[UnitVec3], label: &str) -> IntrinsicGeometry {
+fn assert_case(points: &[TestPoint], label: &str) -> IntrinsicGeometry {
     let output = compute_with_report(points, VoronoiConfig::default())
         .unwrap_or_else(|err| panic!("{label}: computation failed: {err}; points={points:?}"));
     assert!(
@@ -240,12 +239,12 @@ fn structured_small_n_cases_have_intrinsic_voronoi_geometry() {
 #[test]
 fn intrinsic_oracle_rejects_topologically_unchanged_vertex_rotation() {
     let points = [
-        UnitVec3::new(1.0, 0.0, 0.0),
-        UnitVec3::new(-1.0, 0.0, 0.0),
-        UnitVec3::new(0.0, 1.0, 0.0),
-        UnitVec3::new(0.0, -1.0, 0.0),
-        UnitVec3::new(0.0, 0.0, 1.0),
-        UnitVec3::new(0.0, 0.0, -1.0),
+        TestPoint::new(1.0, 0.0, 0.0),
+        TestPoint::new(-1.0, 0.0, 0.0),
+        TestPoint::new(0.0, 1.0, 0.0),
+        TestPoint::new(0.0, -1.0, 0.0),
+        TestPoint::new(0.0, 0.0, 1.0),
+        TestPoint::new(0.0, 0.0, -1.0),
     ];
     let diagram = voronoi_mesh::compute(&points).unwrap();
     assert!(validate(&diagram).is_strictly_valid());
@@ -258,11 +257,11 @@ fn intrinsic_oracle_rejects_topologically_unchanged_vertex_rotation() {
     let rotate = |p: DVec3| {
         p * angle.cos() + axis.cross(p) * angle.sin() + axis * axis.dot(p) * (1.0 - angle.cos())
     };
-    let rotated: Vec<UnitVec3> = diagram
+    let rotated: Vec<TestPoint> = diagram
         .vertices()
         .iter()
         .map(|p| rotate(normalized(p)))
-        .map(|p| UnitVec3::new(p.x as f32, p.y as f32, p.z as f32))
+        .map(|p| TestPoint::new(p.x as f32, p.y as f32, p.z as f32))
         .collect();
     let geometry =
         measure_intrinsic_geometry(diagram.generators(), &rotated, &diagram_cells(&diagram));

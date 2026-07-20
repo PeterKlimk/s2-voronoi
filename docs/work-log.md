@@ -371,8 +371,8 @@ tasks and are not duplicated here.
 - **QUAL-001E projected-Delaunay result:** the local rebuild's `f64` minimum chart-span guard and
   super-triangle expansion factor now live separately as conditioning tolerance and construction
   policy. Values, `max`/multiplication expressions, synthetic geometry, and robust predicate inputs
-  are unchanged. Optimized executable sections and numeric data are byte-identical; only source
-  metadata moved.
+  were unchanged in that experiment. The projected diagnostic oracle and these constants were
+  subsequently removed in the final pre-API-lock cleanup; Hull3d is now the sole rebuild model.
 - **QUAL-001E centroid result:** the per-edge cross-length skip and final accumulated-integral
   fallback now use independently named `f64::EPSILON` floors. Both `<=` boundaries and their
   respective skip/generator outcomes are unchanged. Stripped optimized binaries are identical.

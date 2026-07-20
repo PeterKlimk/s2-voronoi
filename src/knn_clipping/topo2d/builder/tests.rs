@@ -589,10 +589,6 @@ fn polygon_vertex_limit_handoff_replays_overflowing_constraint() {
         },
     ));
 
-    assert_eq!(
-        builder.as_fallback().trigger,
-        BuilderFallbackTrigger::PolygonVertexLimit
-    );
     assert_eq!(builder.as_fallback().constraints.len(), 4);
     assert_eq!(builder.as_fallback().constraints[3].neighbor_idx, 14);
     assert_eq!(builder.as_fallback().constraints[3].neighbor_slot, 24);
@@ -643,10 +639,6 @@ fn fallback_handoff_switches_builder_variant_and_replays_constraints() {
     assert!(!builder.is_failed());
     assert!(builder.is_bounded());
     assert_eq!(builder.failure(), None);
-    assert_eq!(
-        builder.as_fallback().trigger,
-        BuilderFallbackTrigger::ProjectionLimit
-    );
     assert_eq!(builder.as_fallback().constraints.len(), 3);
     assert_eq!(builder.as_fallback().constraints[0].neighbor_idx, 11);
     assert_eq!(builder.as_fallback().constraints[0].neighbor_slot, 21);
@@ -784,7 +776,6 @@ fn fallback_stale_corner_is_rebuilt_from_all_constraints() {
             // incoming label at the first (stale) corner.
             edge_planes: vec![1, 2, 3, 0],
         },
-        trigger: BuilderFallbackTrigger::ProjectionLimit,
     };
 
     let mut buffer = CellOutputBuffer::default();

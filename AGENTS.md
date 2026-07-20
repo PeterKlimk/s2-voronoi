@@ -102,7 +102,7 @@ src/
 │   ├── preprocess.rs              # Near-coincident merge pass
 │   ├── edge_reconcile.rs          # Post-assembly edge reconciliation
 │   ├── output_resolution.rs       # Exact stored-zero canonicalization
-│   ├── local_rebuild.rs           # Hull3d/projected local-rebuild orchestration
+│   ├── local_rebuild.rs           # Hull3d local-rebuild orchestration
 │   ├── local_hull.rs              # Robust local 3D hull
 │   ├── union_find.rs              # Deterministic component tracking
 │   ├── cell_build/                # Single-cell construction loop
@@ -140,7 +140,6 @@ semver-covered public features:
 - `timing`: detailed timing instrumentation.
 - `profiling`: helpers for profiling runs (e.g. inline control).
 - `microbench`: internal microbench harnesses.
-- `local_rebuild_probe`: local-rebuild internals for ignored research probes.
 - `manual_probes`: wholly manual/ignored integration-test targets.
 - `simd_scalar`: scalar/autovectorized comparison backend.
 - `fma`: prefer fused multiply-add (`mul_add`) where used.
@@ -161,7 +160,6 @@ Feature-gated targets declared explicitly in `Cargo.toml`:
 
 - `coincidence_probes` and `robustness_campaign`: `manual_probes`.
 - `fidelity_campaign`: `tools`.
-- `local_rebuild_probe`: `local_rebuild_probe`.
 
 ## Git Workflow Policy For Agents
 

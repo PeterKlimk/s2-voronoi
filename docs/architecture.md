@@ -39,7 +39,7 @@ the post-construction stages, but it is not a synonym for reconciliation or loca
 | Cell construction | Stream certified nearest candidates and clip one independent cell per effective generator, emitting sharded cell/vertex records. | `cube_grid/query/`, `cube_grid/packed_knn/`, `knn_clipping/driver.rs`, `knn_clipping/cell_build/`, `knn_clipping/topo2d/` |
 | Assembly | Resolve sharded vertex ownership, patch deferred cross-bin slots, assemble global arrays, and record shared-edge mismatches. | `live_dedup/` |
 | Edge reconciliation | Apply bounded, transactional identity/cycle changes to recorded mismatches and identify regions that still require rebuilding. | `knn_clipping/edge_reconcile.rs` |
-| Local rebuild and acceptance | Rebuild defect-bearing neighborhoods with Hull3d or projected Delaunay; commit a candidate only after the strict whole-diagram gate accepts it. | `knn_clipping/local_rebuild.rs`, `knn_clipping/local_hull.rs`, `knn_clipping/compute.rs` |
+| Local rebuild and acceptance | Rebuild defect-bearing neighborhoods with Hull3d; commit a candidate only after the strict whole-diagram gate accepts it. | `knn_clipping/local_rebuild.rs`, `knn_clipping/local_hull.rs`, `knn_clipping/compute.rs` |
 | Output resolution | Canonicalize exact zero-length edges in the final stored-f32 realization without silently deleting a cell, and report cell-killing components to the return-policy gate. | `knn_clipping/output_resolution.rs`, `knn_clipping/compute.rs` |
 | Original-index remap and return | Expand effective cells back to original generator indices, attach the weld map, and construct the returned diagram/report. | `knn_clipping/compute.rs`, `diagram.rs` |
 
@@ -150,7 +150,7 @@ of the mechanisms above.
 Final generators and vertices are stored as `SpherePoint`: a private-field, 12-byte `[f32; 3]`
 wrapper enforcing the common finite squared-norm envelope. Backend `glam::Vec3` allocations are
 transferred directly into this layout after construction; public packed xyz views borrow the same
-memory. `UnitVec3` remains an unchecked raw input adapter and is not a stored-output certificate.
+memory. Raw inputs remain unchecked until entry canonicalization.
 
 ## Module map
 

@@ -4,63 +4,87 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::f32::consts::PI;
-use voronoi_mesh::UnitVec3;
+use voronoi_mesh::UnitVec3Like;
+
+/// Lightweight unchecked coordinate used by test fixtures.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TestPoint {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl TestPoint {
+    pub const fn new(x: f32, y: f32, z: f32) -> Self {
+        Self { x, y, z }
+    }
+
+    pub fn dot(self, other: Self) -> f32 {
+        self.x * other.x + self.y * other.y + self.z * other.z
+    }
+
+    pub fn length_squared(self) -> f32 {
+        self.dot(self)
+    }
+
+    pub fn length(self) -> f32 {
+        self.length_squared().sqrt()
+    }
+
+    pub fn normalize(self) -> Self {
+        let length = self.length();
+        if length == 0.0 {
+            self
+        } else {
+            Self::new(self.x / length, self.y / length, self.z / length)
+        }
+    }
+}
+
+impl UnitVec3Like for TestPoint {
+    fn x(&self) -> f32 {
+        self.x
+    }
+
+    fn y(&self) -> f32 {
+        self.y
+    }
+
+    fn z(&self) -> f32 {
+        self.z
+    }
+}
 
 /// Generate random points uniformly distributed on the unit sphere.
-pub fn random_sphere_points(n: usize, seed: u64) -> Vec<UnitVec3> {
+pub fn random_sphere_points(n: usize, seed: u64) -> Vec<TestPoint> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     random_sphere_points_with_rng(n, &mut rng)
 }
 
-pub fn random_sphere_points_with_rng<R: Rng + ?Sized>(n: usize, rng: &mut R) -> Vec<UnitVec3> {
+pub fn random_sphere_points_with_rng<R: Rng + ?Sized>(n: usize, rng: &mut R) -> Vec<TestPoint> {
     (0..n)
         .map(|_| {
             let z: f32 = rng.gen_range(-1.0..1.0);
             let theta: f32 = rng.gen_range(0.0..2.0 * PI);
             let r = (1.0 - z * z).sqrt();
-            UnitVec3::new(r * theta.cos(), r * theta.sin(), z)
+            TestPoint::new(r * theta.cos(), r * theta.sin(), z)
         })
         .collect()
 }
 
 /// Generate Fibonacci sphere points (more uniform than random).
-pub fn fibonacci_sphere_points(n: usize, jitter: f32, seed: u64) -> Vec<UnitVec3> {
-    fibonacci_sphere_points_impl(n, jitter, seed, false)
-}
-
-/// Historical Fibonacci fixture whose unbounded phase was evaluated in f32.
-/// Retained only for comparisons with campaigns recorded before 2026-07-16.
-pub fn fibonacci_sphere_points_legacy(n: usize, jitter: f32, seed: u64) -> Vec<UnitVec3> {
-    fibonacci_sphere_points_impl(n, jitter, seed, true)
-}
-
-fn fibonacci_sphere_points_impl(
-    n: usize,
-    jitter: f32,
-    seed: u64,
-    legacy_phase: bool,
-) -> Vec<UnitVec3> {
+pub fn fibonacci_sphere_points(n: usize, jitter: f32, seed: u64) -> Vec<TestPoint> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let golden_angle = std::f64::consts::PI * (3.0 - 5.0f64.sqrt());
-    let legacy_golden_angle = PI * (3.0 - 5.0f32.sqrt());
 
     (0..n)
         .map(|i| {
-            let (mut x, y, mut z) = if legacy_phase {
-                let y = 1.0 - (2.0 * i as f32 + 1.0) / n as f32;
-                let radius = (1.0 - y * y).sqrt();
-                let theta = legacy_golden_angle * i as f32;
-                (radius * theta.cos(), y, radius * theta.sin())
-            } else {
-                let y = 1.0 - (2.0 * i as f64 + 1.0) / n as f64;
-                let radius = (1.0 - y * y).sqrt();
-                let theta = golden_angle * i as f64;
-                (
-                    (radius * theta.cos()) as f32,
-                    y as f32,
-                    (radius * theta.sin()) as f32,
-                )
-            };
+            let y64 = 1.0 - (2.0 * i as f64 + 1.0) / n as f64;
+            let radius = (1.0 - y64 * y64).sqrt();
+            let theta = golden_angle * i as f64;
+            let mut x = (radius * theta.cos()) as f32;
+            let y = y64 as f32;
+            let mut z = (radius * theta.sin()) as f32;
 
             if jitter > 0.0 {
                 x += rng.gen_range(-jitter..jitter);
@@ -68,7 +92,7 @@ fn fibonacci_sphere_points_impl(
             }
 
             let len = (x * x + y * y + z * z).sqrt();
-            UnitVec3::new(x / len, y / len, z / len)
+            TestPoint::new(x / len, y / len, z / len)
         })
         .collect()
 }
@@ -82,7 +106,7 @@ fn fibonacci_sphere_points_impl(
 /// This is an extreme degenerate case: all Voronoi edges are along the
 /// perpendicular great circle, and vertices are at the poles of the circle.
 /// The algorithm should handle this gracefully (may degrade but shouldn't panic).
-pub fn great_circle_points(n: usize, jitter: f32, seed: u64) -> Vec<UnitVec3> {
+pub fn great_circle_points(n: usize, jitter: f32, seed: u64) -> Vec<TestPoint> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
     (0..n)
@@ -99,7 +123,7 @@ pub fn great_circle_points(n: usize, jitter: f32, seed: u64) -> Vec<UnitVec3> {
             }
 
             let len = (x * x + y * y + z * z).sqrt();
-            UnitVec3::new(x / len, y / len, z / len)
+            TestPoint::new(x / len, y / len, z / len)
         })
         .collect()
 }
@@ -112,7 +136,7 @@ pub fn great_circle_points(n: usize, jitter: f32, seed: u64) -> Vec<UnitVec3> {
 /// Includes 6 "anchor" points on the axes to prevent any cell from spanning >90°.
 /// Without anchors, a single clustered region creates cells that extend beyond
 /// the gnomonic projection limit.
-pub fn clustered_cap_points(n: usize, cap_radius_rad: f32, seed: u64) -> Vec<UnitVec3> {
+pub fn clustered_cap_points(n: usize, cap_radius_rad: f32, seed: u64) -> Vec<TestPoint> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let n_anchors = 6;
     let n_clustered = n.saturating_sub(n_anchors);
@@ -120,12 +144,12 @@ pub fn clustered_cap_points(n: usize, cap_radius_rad: f32, seed: u64) -> Vec<Uni
     let mut points = Vec::with_capacity(n);
 
     // Anchor points on axes (octahedron vertices) to bound cell sizes
-    points.push(UnitVec3::new(1.0, 0.0, 0.0));
-    points.push(UnitVec3::new(-1.0, 0.0, 0.0));
-    points.push(UnitVec3::new(0.0, 1.0, 0.0));
-    points.push(UnitVec3::new(0.0, -1.0, 0.0));
-    points.push(UnitVec3::new(0.0, 0.0, 1.0));
-    points.push(UnitVec3::new(0.0, 0.0, -1.0));
+    points.push(TestPoint::new(1.0, 0.0, 0.0));
+    points.push(TestPoint::new(-1.0, 0.0, 0.0));
+    points.push(TestPoint::new(0.0, 1.0, 0.0));
+    points.push(TestPoint::new(0.0, -1.0, 0.0));
+    points.push(TestPoint::new(0.0, 0.0, 1.0));
+    points.push(TestPoint::new(0.0, 0.0, -1.0));
 
     // Clustered points around north pole
     for _ in 0..n_clustered {
@@ -134,7 +158,7 @@ pub fn clustered_cap_points(n: usize, cap_radius_rad: f32, seed: u64) -> Vec<Uni
         let cos_theta = 1.0 - u * (1.0 - cos_theta_max);
         let sin_theta = (1.0 - cos_theta * cos_theta).sqrt();
         let phi: f32 = rng.gen_range(0.0..2.0 * PI);
-        points.push(UnitVec3::new(
+        points.push(TestPoint::new(
             sin_theta * phi.cos(),
             sin_theta * phi.sin(),
             cos_theta,
@@ -150,7 +174,7 @@ pub fn clustered_cap_points(n: usize, cap_radius_rad: f32, seed: u64) -> Vec<Uni
 /// drive fallback extraction, reconciliation, and local rebuilding — the only distribution
 /// observed to exercise that path. `frac` is the cap fraction (default 0.8 when
 /// `<= 0`); mirrors `bench_voronoi`'s `mega` distribution.
-pub fn mega_points(n: usize, frac: f32, seed: u64) -> Vec<UnitVec3> {
+pub fn mega_points(n: usize, frac: f32, seed: u64) -> Vec<TestPoint> {
     let frac = if frac > 0.0 { frac.min(1.0) } else { 0.8 };
     let bulk = ((n as f32) * frac) as usize;
     let background = n.saturating_sub(bulk);
@@ -165,7 +189,7 @@ pub fn mega_points(n: usize, frac: f32, seed: u64) -> Vec<UnitVec3> {
         let cos_theta = 1.0 - u * (1.0 - cos_theta_max);
         let sin_theta = (1.0 - cos_theta * cos_theta).max(0.0).sqrt();
         let phi: f32 = rng.gen_range(0.0..2.0 * PI);
-        points.push(UnitVec3::new(
+        points.push(TestPoint::new(
             sin_theta * phi.cos(),
             sin_theta * phi.sin(),
             cos_theta,
@@ -177,18 +201,18 @@ pub fn mega_points(n: usize, frac: f32, seed: u64) -> Vec<UnitVec3> {
 /// Dense single-cap benchmark fixture: almost all points in a tangent-plane
 /// disk around +Z, with a sparse uniform background to bound rim cells. Mirrors
 /// `bench_voronoi --dist cap` for correctness regressions rather than timing.
-pub fn benchmark_cap_points(n: usize, radius_rad: f32, seed: u64) -> Vec<UnitVec3> {
+pub fn benchmark_cap_points(n: usize, radius_rad: f32, seed: u64) -> Vec<TestPoint> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let background = (n / 50).max(16).min(n);
     let bulk = n.saturating_sub(background);
-    let mut points: Vec<UnitVec3> = (0..background)
+    let mut points: Vec<TestPoint> = (0..background)
         .map(|_| random_unit_cube_with_rng(&mut rng))
         .collect();
     points.extend((0..bulk).map(|_| tangent_cap_point_z(radius_rad, &mut rng)));
     points
 }
 
-fn random_unit_cube_with_rng<R: Rng + ?Sized>(rng: &mut R) -> UnitVec3 {
+fn random_unit_cube_with_rng<R: Rng + ?Sized>(rng: &mut R) -> TestPoint {
     loop {
         let x: f32 = rng.gen_range(-1.0..1.0);
         let y: f32 = rng.gen_range(-1.0..1.0);
@@ -196,17 +220,17 @@ fn random_unit_cube_with_rng<R: Rng + ?Sized>(rng: &mut R) -> UnitVec3 {
         let len_sq = x * x + y * y + z * z;
         if len_sq > 1e-6 && len_sq <= 1.0 {
             let inv_len = 1.0 / len_sq.sqrt();
-            return UnitVec3::new(x * inv_len, y * inv_len, z * inv_len);
+            return TestPoint::new(x * inv_len, y * inv_len, z * inv_len);
         }
     }
 }
 
-fn tangent_cap_point_z<R: Rng + ?Sized>(radius_rad: f32, rng: &mut R) -> UnitVec3 {
+fn tangent_cap_point_z<R: Rng + ?Sized>(radius_rad: f32, rng: &mut R) -> TestPoint {
     let r = radius_rad * rng.gen_range(0.0f32..1.0).sqrt();
     let theta = rng.gen_range(0.0..2.0 * PI);
     let x = -r * theta.sin();
     let y = r * theta.cos();
-    UnitVec3::new(x, y, 1.0)
+    TestPoint::new(x, y, 1.0)
 }
 
 /// Cubed-sphere grid: 6 cube faces, each a ~k×k grid of interior cell centers
@@ -215,7 +239,7 @@ fn tangent_cap_point_z<R: Rng + ?Sized>(radius_rad: f32, rng: &mut R) -> UnitVec
 /// spread-out, high-degeneracy construction at normal density (the opposite of
 /// `mega`'s clustered noise). Exercises the reconcile's high-degree / coincident-
 /// vertex merge path at O(n) defects. `seed` is ignored (fully deterministic).
-pub fn cubed_sphere_points(n: usize, _seed: u64) -> Vec<UnitVec3> {
+pub fn cubed_sphere_points(n: usize, _seed: u64) -> Vec<TestPoint> {
     let k = ((n as f64 / 6.0).sqrt().round() as usize).max(1);
     let mut pts = Vec::with_capacity(6 * k * k);
     let axes: [[f32; 3]; 6] = [
@@ -245,7 +269,7 @@ pub fn cubed_sphere_points(n: usize, _seed: u64) -> Vec<UnitVec3> {
                 let y = nrm[1] + u * t1[1] + v * t2[1];
                 let z = nrm[2] + u * t1[2] + v * t2[2];
                 let l = (x * x + y * y + z * z).sqrt();
-                pts.push(UnitVec3::new(x / l, y / l, z / l));
+                pts.push(TestPoint::new(x / l, y / l, z / l));
             }
         }
     }
@@ -256,7 +280,7 @@ pub fn cubed_sphere_points(n: usize, _seed: u64) -> Vec<UnitVec3> {
 ///
 /// Places points near the 8 corners of the inscribed cube, where 3 cube faces
 /// meet. This stresses the `CubeMapGrid` neighbor/ring2 computations.
-pub fn cube_vertex_stress_points(n: usize, spread_rad: f32, seed: u64) -> Vec<UnitVec3> {
+pub fn cube_vertex_stress_points(n: usize, spread_rad: f32, seed: u64) -> Vec<TestPoint> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
     // 8 cube vertices (normalized to unit sphere)
@@ -304,7 +328,7 @@ pub fn cube_vertex_stress_points(n: usize, spread_rad: f32, seed: u64) -> Vec<Un
             let pz = cz + u * t1.2 + v * t2.2;
 
             let len = (px * px + py * py + pz * pz).sqrt();
-            UnitVec3::new(px / len, py / len, pz / len)
+            TestPoint::new(px / len, py / len, pz / len)
         })
         .collect()
 }
@@ -319,7 +343,7 @@ pub fn near_cocircular_stress_points(
     n_groups: usize,
     perturbation: f32,
     seed: u64,
-) -> Vec<UnitVec3> {
+) -> Vec<TestPoint> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     let mut points = Vec::with_capacity(n_groups * 4);
 
@@ -362,7 +386,7 @@ pub fn near_cocircular_stress_points(
             let pz = center.2 + r_perturb * (angle.cos() * t1.2 + angle.sin() * t2.2);
 
             let len = (px * px + py * py + pz * pz).sqrt();
-            points.push(UnitVec3::new(px / len, py / len, pz / len));
+            points.push(TestPoint::new(px / len, py / len, pz / len));
         }
     }
 
@@ -373,7 +397,7 @@ pub fn near_cocircular_stress_points(
 ///
 /// Tests behavior when points don't cover the full sphere.
 /// The opposite hemisphere will have very large cells or undefined behavior.
-pub fn hemisphere_points(n: usize, seed: u64) -> Vec<UnitVec3> {
+pub fn hemisphere_points(n: usize, seed: u64) -> Vec<TestPoint> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
     (0..n)
@@ -381,7 +405,7 @@ pub fn hemisphere_points(n: usize, seed: u64) -> Vec<UnitVec3> {
             let z: f32 = rng.gen_range(0.0..1.0); // Only upper hemisphere
             let theta: f32 = rng.gen_range(0.0..2.0 * PI);
             let r = (1.0 - z * z).sqrt();
-            UnitVec3::new(r * theta.cos(), r * theta.sin(), z)
+            TestPoint::new(r * theta.cos(), r * theta.sin(), z)
         })
         .collect()
 }
@@ -392,7 +416,7 @@ pub fn hemisphere_points(n: usize, seed: u64) -> Vec<UnitVec3> {
 /// Tests algorithms that rely on uniform density assumptions.
 ///
 /// The sparse points naturally serve as anchors, preventing cells from spanning >90°.
-pub fn bimodal_density_points(n: usize, cluster_radius_rad: f32, seed: u64) -> Vec<UnitVec3> {
+pub fn bimodal_density_points(n: usize, cluster_radius_rad: f32, seed: u64) -> Vec<TestPoint> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
     // Ensure at least 6 sparse anchor points
@@ -407,7 +431,7 @@ pub fn bimodal_density_points(n: usize, cluster_radius_rad: f32, seed: u64) -> V
         let z: f32 = rng.gen_range(-1.0..1.0);
         let theta: f32 = rng.gen_range(0.0..2.0 * PI);
         let r = (1.0 - z * z).sqrt();
-        points.push(UnitVec3::new(r * theta.cos(), r * theta.sin(), z));
+        points.push(TestPoint::new(r * theta.cos(), r * theta.sin(), z));
     }
 
     // Clustered half (around north pole)
@@ -417,7 +441,7 @@ pub fn bimodal_density_points(n: usize, cluster_radius_rad: f32, seed: u64) -> V
         let cos_theta = 1.0 - u * (1.0 - cos_theta_max);
         let sin_theta = (1.0 - cos_theta * cos_theta).sqrt();
         let phi: f32 = rng.gen_range(0.0..2.0 * PI);
-        points.push(UnitVec3::new(
+        points.push(TestPoint::new(
             sin_theta * phi.cos(),
             sin_theta * phi.sin(),
             cos_theta,

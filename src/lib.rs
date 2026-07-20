@@ -48,16 +48,16 @@
 //! # Example
 //!
 //! ```
-//! use voronoi_mesh::{compute, UnitVec3};
+//! use voronoi_mesh::compute;
 //!
 //! // Generate some points on the unit sphere
 //! let points = vec![
-//!     UnitVec3::new(1.0, 0.0, 0.0),
-//!     UnitVec3::new(0.0, 1.0, 0.0),
-//!     UnitVec3::new(0.0, 0.0, 1.0),
-//!     UnitVec3::new(-1.0, 0.0, 0.0),
-//!     UnitVec3::new(0.0, -1.0, 0.0),
-//!     UnitVec3::new(0.0, 0.0, -1.0),
+//!     [1.0, 0.0, 0.0],
+//!     [0.0, 1.0, 0.0],
+//!     [0.0, 0.0, 1.0],
+//!     [-1.0, 0.0, 0.0],
+//!     [0.0, -1.0, 0.0],
+//!     [0.0, 0.0, -1.0],
 //! ];
 //!
 //! let diagram = compute(&points).expect("computation should succeed");
@@ -139,12 +139,6 @@ pub fn run_clip_convex_microbench() {
     knn_clipping::topo2d::run_clip_convex_microbench();
 }
 
-/// Run the internal batch-clip microbench harness (feature: `microbench`).
-#[cfg(feature = "microbench")]
-pub fn run_batch_clip_microbench() {
-    knn_clipping::topo2d::run_batch_clip_microbench();
-}
-
 pub use adjacency::CellAdjacency;
 pub use cell_mesh::{
     CellElisionError, CellElisionErrorKind, CellElisionReport, CellMeshCellView, CellMeshOutput,
@@ -163,22 +157,8 @@ pub use error::VoronoiError;
 #[doc(hidden)]
 pub use live_dedup::EdgeMismatchOrigin;
 
-/// Defect-driven local-rebuild probe (feature `local_rebuild_probe`); lets an
-/// integration test drive the rebuild oracles over real defect sites.
-/// Diagnostic only.
-#[cfg(feature = "local_rebuild_probe")]
-#[doc(hidden)]
-pub mod local_rebuild_probe {
-    pub use crate::knn_clipping::local_rebuild::{
-        check_cell_internally_paired, gather_local, rebuild_cells, shared_neighbor,
-        with_a0_fast_capture, RebuiltCell,
-    };
-}
-
 pub use locate::{IndexedSphereQueryError, SphereLocator, SphereQueryError};
-pub use types::{
-    SpherePoint, SpherePointError, UnitVec3, UnitVec3Like, SPHERE_POINT_MAX_NORM_SQUARED_ERROR,
-};
+pub use types::{SpherePoint, SpherePointError, UnitVec3Like, SPHERE_POINT_MAX_NORM_SQUARED_ERROR};
 
 /// Reset profiling-only spherical point-envelope counters.
 #[cfg(feature = "profiling")]
@@ -233,13 +213,6 @@ pub enum LocalRebuildMode {
     /// Rebuild residual near-degenerate neighborhoods with one normalized local
     /// 3D hull and accept only if whole-diagram validation passes.
     Hull3d,
-    /// Rebuild residual near-degenerate neighborhoods with one shared local
-    /// stereographic Delaunay and accept only if whole-diagram validation passes.
-    ///
-    /// This remains available as a projected-oracle diagnostic path. The default
-    /// uses [`LocalRebuildMode::Hull3d`], which avoids the large-chart failure mode of
-    /// projected local rebuild in extreme closures.
-    ProjectedDelaunay,
 }
 
 /// Policy for degenerate spherical inputs that do not have a stable
@@ -342,28 +315,6 @@ impl LocalRebuildStatus {
     }
 }
 
-/// Observable outcome of the optional post-assembly local-rebuild pass.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct LocalRebuildReport {
-    /// What the local-rebuild stage did this run.
-    pub status: LocalRebuildStatus,
-}
-
-impl LocalRebuildReport {
-    /// True when the local-rebuild stage ran.
-    #[inline]
-    pub const fn attempted(&self) -> bool {
-        self.status.attempted()
-    }
-
-    /// True when a rebuilt diagram passed strict validation and was committed.
-    #[inline]
-    pub const fn accepted(&self) -> bool {
-        self.status.accepted()
-    }
-}
-
 /// Observable outcome of final exact-zero output canonicalization.
 ///
 /// The storage contract preserves one effective cell per effective generator:
@@ -415,7 +366,7 @@ pub struct ComputeReport {
     /// [`ComputeReport::preferred_validation`] for the output contract.
     pub assembly_edge_mismatch_count: usize,
     /// What the local-rebuild stage did this run.
-    pub local_rebuild: LocalRebuildReport,
+    pub local_rebuild: LocalRebuildStatus,
     /// What final exact-zero output canonicalization did this run.
     pub output_resolution: OutputResolutionReport,
     /// Interior edges that remained unpaired, overused, or misoriented after
@@ -428,17 +379,10 @@ pub struct ComputeReport {
     #[doc(hidden)]
     pub residual_reconciliation_pairs: Vec<(u32, u32)>,
     /// EXPERIMENTAL DIAGNOSTIC (unsupported surface; taxonomy changes in
-    /// patch releases): the assembly mismatches behind
-    /// [`ComputeReport::assembly_edge_mismatch_count`], as effective-diagram
-    /// generator pairs plus the detection path that recorded each.
-    #[doc(hidden)]
-    pub assembly_edge_mismatches: Vec<(u32, u32, EdgeMismatchOrigin)>,
-    /// EXPERIMENTAL DIAGNOSTIC (unsupported surface; taxonomy changes in
     /// patch releases): unresolved shared-edge mismatches handed to
     /// post-assembly reconciliation, as effective-diagram generator pairs plus
-    /// detection origins. Historical aggregate: contains
-    /// `assembly_edge_mismatches` plus `PostReconciliationUnpaired` records when
-    /// [`ComputeReport::residual_unpaired_edges`] is non-empty. Tests use
+    /// detection origins. It also contains `PostReconciliationUnpaired` records
+    /// when [`ComputeReport::residual_unpaired_edges`] is non-empty. Tests use
     /// this to prove defect-forcing inputs exercise each detection path (see
     /// `tests/edge_reconciliation.rs`).
     #[doc(hidden)]

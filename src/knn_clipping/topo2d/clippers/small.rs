@@ -9,7 +9,7 @@
 /// reconciliation layer owns any resulting cross-cell disagreement.
 // Retained for the baseline bool clipper (microbench comparisons); the hot
 // clippers use the branchless bitmask form.
-#[cfg(any(test, feature = "microbench"))]
+#[cfg(feature = "microbench")]
 #[inline(always)]
 fn find_entry_exit_transitions<const N: usize>(
     inside: &[bool; N],
@@ -39,8 +39,7 @@ fn find_entry_exit_transitions<const N: usize>(
 }
 
 /// Baseline small-N clipper for microbenchmark comparisons.
-#[cfg(any(test, feature = "microbench"))]
-#[allow(dead_code)]
+#[cfg(feature = "microbench")]
 #[allow(clippy::needless_range_loop)] // index drives 3 parallel outputs + pointer reads
 pub(crate) fn clip_convex_small_bool<const N: usize>(
     poly: &PolyBuffer,

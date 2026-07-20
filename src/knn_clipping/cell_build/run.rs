@@ -402,9 +402,7 @@ impl BuildCounters {
         match request.trigger {
             BuilderFallbackTrigger::ProjectionLimit => self.fallback_projection += 1,
             BuilderFallbackTrigger::PolygonVertexLimit => self.fallback_polygon_cap += 1,
-            BuilderFallbackTrigger::ClippedAway | BuilderFallbackTrigger::ExhaustionRecovery => {
-                self.fallback_all_constraints += 1
-            }
+            BuilderFallbackTrigger::ClippedAway => self.fallback_all_constraints += 1,
         }
     }
 }

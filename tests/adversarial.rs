@@ -288,7 +288,7 @@ fn test_multi_distribution_robustness() {
 // =============================================================================
 
 /// Compute, validate, and assert strict validity for one fuzz case.
-fn assert_fuzz_strictly_valid(name: &str, points: &[voronoi_mesh::UnitVec3]) {
+fn assert_fuzz_strictly_valid(name: &str, points: &[support::points::TestPoint]) {
     let diagram = compute(points).unwrap_or_else(|e| panic!("{name}: compute failed with {e:?}"));
     let report = validate(&diagram);
     eprintln!(
@@ -380,10 +380,10 @@ fn test_weld_ulp_cluster_strictly_valid_by_default() {
     // the enclosed micro-cell) without welding; the default weld absorbs it.
     let mut points = random_sphere_points(2_000, 11);
     let p = points[500];
-    points.push(voronoi_mesh::UnitVec3::new(p.x.next_up(), p.y, p.z));
-    points.push(voronoi_mesh::UnitVec3::new(p.x, p.y.next_up(), p.z));
-    points.push(voronoi_mesh::UnitVec3::new(p.x, p.y, p.z.next_up()));
-    points.push(voronoi_mesh::UnitVec3::new(
+    points.push(support::points::TestPoint::new(p.x.next_up(), p.y, p.z));
+    points.push(support::points::TestPoint::new(p.x, p.y.next_up(), p.z));
+    points.push(support::points::TestPoint::new(p.x, p.y, p.z.next_up()));
+    points.push(support::points::TestPoint::new(
         p.x.next_down(),
         p.y.next_up(),
         p.z,
@@ -409,22 +409,26 @@ fn test_weld_seam_ulp_pairs_strictly_valid_by_default() {
     let mut points = random_sphere_points(2_000, 13);
     let inv3 = 1.0f32 / 3.0f32.sqrt();
     let inv2 = 1.0f32 / 2.0f32.sqrt();
-    let mut seam_points: Vec<voronoi_mesh::UnitVec3> = Vec::new();
+    let mut seam_points: Vec<support::points::TestPoint> = Vec::new();
     for sx in [-1.0f32, 1.0] {
         for sy in [-1.0f32, 1.0] {
             for sz in [-1.0f32, 1.0] {
-                seam_points.push(voronoi_mesh::UnitVec3::new(sx * inv3, sy * inv3, sz * inv3));
+                seam_points.push(support::points::TestPoint::new(
+                    sx * inv3,
+                    sy * inv3,
+                    sz * inv3,
+                ));
             }
         }
     }
     for s in [-1.0f32, 1.0] {
-        seam_points.push(voronoi_mesh::UnitVec3::new(s * inv2, s * inv2, 0.0));
-        seam_points.push(voronoi_mesh::UnitVec3::new(s, 0.0, 0.0));
-        seam_points.push(voronoi_mesh::UnitVec3::new(0.0, 0.0, s));
+        seam_points.push(support::points::TestPoint::new(s * inv2, s * inv2, 0.0));
+        seam_points.push(support::points::TestPoint::new(s, 0.0, 0.0));
+        seam_points.push(support::points::TestPoint::new(0.0, 0.0, s));
     }
     let num_pairs = seam_points.len();
     for p in seam_points {
-        let twin = voronoi_mesh::UnitVec3::new(
+        let twin = support::points::TestPoint::new(
             if p.x.abs() > 0.5 { p.x.next_up() } else { p.x },
             if p.y.abs() > 0.5 { p.y.next_up() } else { p.y },
             if p.z.abs() > 0.5 { p.z.next_up() } else { p.z },
@@ -446,7 +450,7 @@ fn test_weld_seam_ulp_pairs_strictly_valid_by_default() {
 #[test]
 fn test_nan_input_rejected_with_index() {
     let mut points = random_sphere_points(1_000, 17);
-    points[437] = voronoi_mesh::UnitVec3::new(f32::NAN, 0.5, 0.5);
+    points[437] = support::points::TestPoint::new(f32::NAN, 0.5, 0.5);
 
     match compute(&points) {
         Err(VoronoiError::InvalidInput { point_index, .. }) => {
@@ -459,7 +463,7 @@ fn test_nan_input_rejected_with_index() {
 #[test]
 fn test_infinite_input_rejected_with_index() {
     let mut points = random_sphere_points(1_000, 17);
-    points[12] = voronoi_mesh::UnitVec3::new(0.0, f32::INFINITY, 0.0);
+    points[12] = support::points::TestPoint::new(0.0, f32::INFINITY, 0.0);
 
     match compute(&points) {
         Err(VoronoiError::InvalidInput { point_index, .. }) => {
@@ -497,7 +501,7 @@ fn test_sub_weld_cluster_without_welding_is_degenerate_input() {
             );
             let t = (r - c64 * r.dot(c64)).normalize();
             let q64 = (c64 + t * (1e-8 * rng.gen_range(0.1..1.0))).normalize();
-            let q = voronoi_mesh::UnitVec3::new(q64.x as f32, q64.y as f32, q64.z as f32);
+            let q = support::points::TestPoint::new(q64.x as f32, q64.y as f32, q64.z as f32);
             let dup = points.iter().any(|p| (p.x, p.y, p.z) == (q.x, q.y, q.z));
             if !dup {
                 points.push(q);
@@ -560,7 +564,7 @@ fn test_above_weld_pairs_resolve_without_welding() {
             );
             let t = (r - p64 * r.dot(p64)).normalize();
             let q64 = (p64 + t * sep).normalize();
-            points.push(voronoi_mesh::UnitVec3::new(
+            points.push(support::points::TestPoint::new(
                 q64.x as f32,
                 q64.y as f32,
                 q64.z as f32,
@@ -611,10 +615,10 @@ fn test_rotated_symmetric_pairs_resolve_without_welding() {
         let arbitrary = if r.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
         let t = r.cross(arbitrary).normalize();
         let q = (r + t * 3e-7).normalize();
-        points.push(voronoi_mesh::UnitVec3::new(
+        points.push(support::points::TestPoint::new(
             r.x as f32, r.y as f32, r.z as f32,
         ));
-        points.push(voronoi_mesh::UnitVec3::new(
+        points.push(support::points::TestPoint::new(
             q.x as f32, q.y as f32, q.z as f32,
         ));
     }

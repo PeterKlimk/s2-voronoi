@@ -114,7 +114,7 @@ fn mega_rebuild_is_deterministic_single_threaded() {
         .expect("1-thread pool");
     with_env_vars(&[], || {
         let pts = mega_points(N, 0.8, 2);
-        let layout = |pts: &[voronoi_mesh::UnitVec3]| {
+        let layout = |pts: &[support::points::TestPoint]| {
             let out =
                 pool.install(|| compute_with_report(pts, VoronoiConfig::default()).expect("build"));
             let verts: Vec<(u32, u32, u32)> = out

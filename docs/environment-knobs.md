@@ -22,7 +22,7 @@ mutation.
 | Variable | Class | Owner / read boundary | Contract |
 |---|---|---|---|
 | `RAYON_NUM_THREADS` | supported operational | Rayon, before pool initialization | External Rayon contract; used to pin concurrency. |
-| `VORONOI_MESH_BIN_COUNT` | supported tuning | `live_dedup::binning::target_bin_count`, once per computation | Integer shard target, clamped to `[6, 96]`; tests and `bench_bins` are current writers. |
+| `VORONOI_MESH_BIN_COUNT` | supported tuning | `live_dedup::binning::target_bin_count`, once per computation | Integer shard target, clamped to `[6, 96]`; tests and benchmark invocations may override it. |
 | `VORONOI_MESH_GRID_DENSITY` | benchmark tuning | `policy::knn_grid_target_density`, first use via `OnceLock` | Parsed `f64` at least 1; intended for grid-density sweeps, not per-computation mutation. |
 | `VORONOI_MESH_VERIFY` | supported verification | `validation::verify_enabled`, ordinary compute return gate | Exact value `1` enables the fast verifier with an O(E) strict-validation fallback. |
 | `VORONOI_MESH_TIMING_KV` | instrumentation | `timing::real::PhaseTimings::report` | Presence emits machine-readable timing output when the `timing` feature is enabled. |
@@ -33,16 +33,10 @@ mutation.
 | `VORONOI_MESH_RECONCILE_REBUILD` | differential oracle | defect-scoped `ReconcileOptions` snapshot | Exact value `1` selects the whole-buffer rebuild oracle instead of production in-place application. Read once only after mismatch records exist. |
 | `VORONOI_MESH_RECONCILE_GLOBAL_DUPSCAN` | differential safety valve | defect-scoped `ReconcileOptions` snapshot | Exact value `1` substitutes the O(V) global duplicate scan for localized traversal. Read once only after mismatch records exist. |
 | `VORONOI_MESH_LOCAL_REBUILD_DEBUG` | correctness diagnostic | attempt-scoped local-rebuild snapshot | Presence prints rebuild phase and acceptance diagnostics. Read once only after a rebuild trigger; disabled and clean computations perform no lookup. |
-| `VORONOI_MESH_LOCAL_REBUILD_GLOBAL_DELAUNAY` | feature probe | attempt-scoped `local_rebuild_probe` snapshot | Presence selects the global projected-Delaunay oracle. Read alongside the debug flag after a rebuild trigger; internal feature only. |
 
 `VORONOI_MESH_PLANE_GRID_DENSITY` had no reader or backend in this repository. Its stale
 performance-documentation entry was removed by QUAL-001H; reintroducing it requires a current
 planar backend rather than a compatibility-only environment name.
-
-`VORONOI_MESH_LOCAL_REBUILD_PROBE_A0` was retired by QUAL-001H. A0 snapshot capture is now an
-explicit `local_rebuild_probe` feature API scope. The scope is thread-local, composes when nested,
-and restores its prior state during panic unwinding; it adds no ordinary production-path state or
-environment lookup.
 
 ## Campaign, benchmark, and manual-probe inputs
 
@@ -56,8 +50,6 @@ ordinary library API unless also listed above.
 | `VORONOI_MESH_BENCH_CAP_CENTER` | `bench_voronoi` | Choose the dense-cap placement for a benchmark distribution. |
 | `VORONOI_MESH_BENCH_TARGET_MS`, `VORONOI_MESH_BENCH_SAMPLES`, `VORONOI_MESH_BENCH_HP_POOL`, `VORONOI_MESH_BENCH_CASE` | clipping microbench | Control sample sizing and case selection. |
 | `VORONOI_MESH_PROBE_TARGETS`, `VORONOI_MESH_PROBE_LARGE`, `VORONOI_MESH_PROBE_N` | ignored cell-build unit probes | Select manual fallback/exhaustion probe scale and targets. |
-| `VORONOI_MESH_LOCAL_REBUILD_DIST`, `VORONOI_MESH_LOCAL_REBUILD_N`, `VORONOI_MESH_LOCAL_REBUILD_SEED`, `VORONOI_MESH_LOCAL_REBUILD_K` | ignored local-rebuild integration probes | Select manual defect/oracle workloads. |
-| `VORONOI_MESH_CGAL_HULL3_BIN`, `VORONOI_MESH_NORM3D_FLAG_BANDS` | ignored external-oracle probes | Locate the CGAL helper and configure conditioning bands. |
 | `VORONOI_SMALL_N_MAX`, `VORONOI_SMALL_N_SEEDS` | ignored small-N campaign | Bound an extended deterministic geometry campaign. Historical names lack the `MESH` component; they remain manual inputs until probe reorganization. |
 
 ## Private test-process variables
@@ -84,12 +76,6 @@ These names are test implementation details, not runtime knobs:
 - The library verification-gate unit test no longer mutates `VORONOI_MESH_VERIFY` in the shared
   unit-test process. It runs filtered child-test processes for enabled and disabled cases, testing
   the real environment reader and error mapping without a production-only injection seam.
-- `src/bin/bench_bins.rs` mutates `VORONOI_MESH_BIN_COUNT` as a standalone process before running
-  its workload; no test-process guard is required.
-- Ignored `local_rebuild_probe` cases share one `stash_fast_triples` helper. Its explicit A0 scope
-  is thread-local and panic-safe, so these probes do not mutate the process environment or a
-  process-global rebuild switch. Cargo marks the all-ignored target as requiring the internal
-  `local_rebuild_probe` feature; each research workload remains selected by test name.
 - Cargo excludes the wholly ignored `coincidence_probes` and `robustness_campaign` targets unless
   the internal `manual_probes` feature is selected, and excludes `fidelity_campaign` unless
   `tools` is selected. Campaign variables are read-only process inputs set before each isolated

@@ -14,7 +14,7 @@
 mod support;
 
 use support::points::*;
-use voronoi_mesh::{compute_with_report, quality, LocalRebuildMode, UnitVec3, VoronoiConfig};
+use voronoi_mesh::{compute_with_report, quality, LocalRebuildMode, VoronoiConfig};
 
 fn env_str(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -27,19 +27,18 @@ fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
-fn welded_points(n: usize, seed: u64) -> Vec<UnitVec3> {
+fn welded_points(n: usize, seed: u64) -> Vec<TestPoint> {
     let duplicates = 16.min(n / 4);
     let mut points = random_sphere_points(n.saturating_sub(duplicates), seed);
-    let twins: Vec<UnitVec3> = points.iter().take(duplicates).copied().collect();
+    let twins: Vec<TestPoint> = points.iter().take(duplicates).copied().collect();
     points.extend(twins);
     points
 }
 
-fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<UnitVec3> {
+fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<TestPoint> {
     match dist {
         "uniform" => random_sphere_points(n, seed),
         "fibonacci" => fibonacci_sphere_points(n, param, seed),
-        "fibonacci_legacy" => fibonacci_sphere_points_legacy(n, param, seed),
         "clustered" => clustered_cap_points(n, param, seed),
         "bimodal" => bimodal_density_points(n, param, seed),
         "cube" => cube_vertex_stress_points(n, param, seed),
@@ -65,7 +64,6 @@ fn fidelity_case() {
     let edge_samples: usize = env_parse("VORONOI_MESH_FIDELITY_EDGE_SAMPLES", 3usize);
     let local_rebuild_mode = match env_str("VORONOI_MESH_LOCAL_REBUILD_MODE", "hull3d").as_str() {
         "hull3d" => LocalRebuildMode::Hull3d,
-        "projected-delaunay" => LocalRebuildMode::ProjectedDelaunay,
         "disabled" => LocalRebuildMode::Disabled,
         mode => panic!("unknown VORONOI_MESH_LOCAL_REBUILD_MODE '{mode}'"),
     };

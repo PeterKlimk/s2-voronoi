@@ -746,9 +746,15 @@ fn nearest_generator_index(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{compute, UnitVec3};
+    use crate::compute;
 
-    fn fibonacci_sphere_points(n: usize, jitter: f32) -> Vec<UnitVec3> {
+    type TestPoint = [f32; 3];
+
+    const fn raw(x: f32, y: f32, z: f32) -> TestPoint {
+        [x, y, z]
+    }
+
+    fn fibonacci_sphere_points(n: usize, jitter: f32) -> Vec<TestPoint> {
         let golden_angle = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
         (0..n)
             .map(|i| {
@@ -758,19 +764,19 @@ mod tests {
                 let x = radius * theta.cos() + (((i * 37 + 11) as f32) * 0.12345).sin() * jitter;
                 let z = radius * theta.sin() + (((i * 53 + 7) as f32) * 0.23456).cos() * jitter;
                 let p = Vec3::new(x, y, z).normalize();
-                UnitVec3::new(p.x, p.y, p.z)
+                raw(p.x, p.y, p.z)
             })
             .collect()
     }
 
-    fn clustered_cap_points(n: usize, cap_radius_rad: f32) -> Vec<UnitVec3> {
+    fn clustered_cap_points(n: usize, cap_radius_rad: f32) -> Vec<TestPoint> {
         let mut points = Vec::with_capacity(n);
-        points.push(UnitVec3::new(1.0, 0.0, 0.0));
-        points.push(UnitVec3::new(-1.0, 0.0, 0.0));
-        points.push(UnitVec3::new(0.0, 1.0, 0.0));
-        points.push(UnitVec3::new(0.0, -1.0, 0.0));
-        points.push(UnitVec3::new(0.0, 0.0, 1.0));
-        points.push(UnitVec3::new(0.0, 0.0, -1.0));
+        points.push(raw(1.0, 0.0, 0.0));
+        points.push(raw(-1.0, 0.0, 0.0));
+        points.push(raw(0.0, 1.0, 0.0));
+        points.push(raw(0.0, -1.0, 0.0));
+        points.push(raw(0.0, 0.0, 1.0));
+        points.push(raw(0.0, 0.0, -1.0));
 
         let clustered = n.saturating_sub(6);
         for i in 0..clustered {
@@ -780,7 +786,7 @@ mod tests {
                 * std::f32::consts::PI;
             let cos_theta = 1.0 - t * (1.0 - cap_radius_rad.cos());
             let sin_theta = (1.0 - cos_theta * cos_theta).sqrt();
-            points.push(UnitVec3::new(
+            points.push(raw(
                 sin_theta * theta.cos(),
                 sin_theta * theta.sin(),
                 cos_theta,
@@ -858,10 +864,10 @@ mod tests {
     #[test]
     fn near_pi_edge_sampling_uses_owner_plane() {
         let points = [
-            UnitVec3::new(-0.346_064_27, -0.758_758, -0.551_838_64),
-            UnitVec3::new(0.672_760_4, -0.217_307_08, -0.707_227_7),
-            UnitVec3::new(-0.753_194_45, 0.368_890_3, 0.544_626_5),
-            UnitVec3::new(-0.661_814_2, -0.681_742_25, -0.311_816_45),
+            raw(-0.346_064_27, -0.758_758, -0.551_838_64),
+            raw(0.672_760_4, -0.217_307_08, -0.707_227_7),
+            raw(-0.753_194_45, 0.368_890_3, 0.544_626_5),
+            raw(-0.661_814_2, -0.681_742_25, -0.311_816_45),
         ];
         let diagram = compute(&points).expect("near-pi fixture should compute");
         let report = assess_with_config(

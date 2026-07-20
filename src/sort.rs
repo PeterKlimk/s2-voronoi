@@ -288,7 +288,7 @@ fn panic_on_ord_violation() -> ! {
     panic!("user-provided comparison function does not correctly implement a total order");
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 const SENTINEL: u64 = u64::MAX;
 
 /// Sort a small slice (N <= 35) using sorting networks + insertion sort.

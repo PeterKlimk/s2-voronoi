@@ -9,11 +9,8 @@
 //! the oracle agrees with the fast clipper, so rebuilt rim vertices reuse the
 //! surrounding cells' vertex ids and pair with the unspliced neighbors too.
 //!
-//! Two production oracles share one grow loop ([`run_rebuild_growth`]):
-//! - [`rebuild_with_local_hull`] (default, [`crate::LocalRebuildMode::Hull3d`]): a
-//!   normalized local 3D hull ([`LocalHull`], exact `orient3d`).
-//! - [`rebuild_with_projected_delaunay`] ([`crate::LocalRebuildMode::ProjectedDelaunay`]): exact 2D
-//!   Delaunay (`robust::incircle`) in a single shared stereographic chart.
+//! The rebuild oracle is a normalized local 3D hull ([`LocalHull`], exact
+//! `orient3d`) shared by every cell in the affected neighborhood.
 //!
 //! The caller (`maybe_rebuild_effective`) commits the result only if the whole
 //! rebuilt diagram passes strict validation — the never-worse gate.
@@ -26,77 +23,15 @@ use crate::cell_layout::LiveCellLayout;
 use crate::cube_grid::{CubeMapGrid, CubeMapGridScratch};
 use crate::diagram::VoronoiCell;
 use crate::live_dedup::ShardedVertexKeys;
-use crate::policy::{LOCAL_REBUILD_SUPER_TRIANGLE_SCALE, REFERENCE_AXIS_COMPONENT_SWITCH_F32};
-use crate::tolerances::{
-    LOCAL_REBUILD_DELAUNAY_SPAN_FLOOR, LOCAL_REBUILD_STEREOGRAPHIC_DENOMINATOR_FLOOR,
-};
-
-/// A generator's rebuilt Voronoi cell: its vertices as the ordered cyclic fan
-/// of sorted global-id triples (each triple = the three generators meeting at
-/// that Voronoi vertex). Same identity space as the production `VertexKey`.
-#[cfg(feature = "local_rebuild_probe")]
-#[derive(Debug, Clone)]
-pub struct RebuiltCell {
-    /// The generator (global id) whose Voronoi cell this is.
-    pub generator: u32,
-    /// The cell's vertices, in cyclic fan order, each a sorted global-id triple.
-    pub vertices: Vec<[u32; 3]>,
-}
 
 #[derive(Clone, Copy)]
 struct RebuildVertex {
     key: [u32; 3],
-    /// Oracle-selected position for a newly minted vertex. Hull3d supplies
-    /// the oriented hull support normal; other diagnostic oracles retain the
-    /// historical triple-derived fallback by leaving this as `None`.
-    mint_pos: Option<Vec3>,
+    /// Oracle-selected position for a newly minted vertex.
+    mint_pos: Vec3,
 }
 
 type RebuildFan = Vec<RebuildVertex>;
-
-#[cfg(feature = "local_rebuild_probe")]
-impl RebuiltCell {
-    /// The vertices of this cell incident to the edge it shares with `other`
-    /// (the two Voronoi vertices whose triple contains both generators), as a
-    /// sorted set. An interior edge has exactly two; non-adjacent cells, zero.
-    pub fn shared_edge_with(&self, other: u32) -> Vec<[u32; 3]> {
-        let mut v: Vec<[u32; 3]> = self
-            .vertices
-            .iter()
-            .copied()
-            .filter(|t| t.contains(&self.generator) && t.contains(&other))
-            .collect();
-        v.sort_unstable();
-        v.dedup();
-        v
-    }
-}
-
-/// Gather a local generator id set: the `seeds` plus their `k` nearest
-/// neighbors (largest dot product on the unit sphere). Brute force — probe/test
-/// use only; the production path uses [`gather_knn_grid`].
-#[cfg(feature = "local_rebuild_probe")]
-pub fn gather_local(points: &[Vec3], seeds: &[u32], k: usize) -> Vec<u32> {
-    use std::collections::BTreeSet;
-    let mut set: BTreeSet<u32> = seeds.iter().copied().collect();
-    let mut scored: Vec<(f32, u32)> = Vec::with_capacity(points.len());
-    for &s in seeds {
-        let sp = points[s as usize];
-        scored.clear();
-        scored.extend(
-            points
-                .iter()
-                .enumerate()
-                .map(|(i, &p)| (sp.dot(p), i as u32)),
-        );
-        // Partial sort: largest dot = nearest. (Test-scale brute force.)
-        scored.sort_unstable_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
-        for &(_, id) in scored.iter().take(k + 1) {
-            set.insert(id);
-        }
-    }
-    set.into_iter().collect()
-}
 
 /// O(local) kNN gather used by the production rebuild oracles. For each seed,
 /// walk the cube-map shell frontier nearest-first (the same machinery the point
@@ -161,92 +96,8 @@ fn gather_knn_grid(
     set.into_iter().collect()
 }
 
-/// The common third generator of two vertices of `g`'s cell that share an edge:
-/// each vertex triple contains `g`; consecutive cell vertices also share the
-/// neighbor `m` whose bisector carries the edge `g–m`. Returns `m`, or `None`
-/// if the two triples don't share exactly one other generator (not an edge).
-#[cfg(feature = "local_rebuild_probe")]
-pub fn shared_neighbor(g: u32, t0: [u32; 3], t1: [u32; 3]) -> Option<u32> {
-    let common: Vec<u32> = t0
-        .iter()
-        .copied()
-        .filter(|&x| x != g && t1.contains(&x))
-        .collect();
-    if common.len() == 1 {
-        Some(common[0])
-    } else {
-        None
-    }
-}
-
-/// Whether two vertices are cyclically adjacent in a cell's fan.
-#[cfg(feature = "local_rebuild_probe")]
-fn cyclically_adjacent(verts: &[[u32; 3]], a: [u32; 3], b: [u32; 3]) -> bool {
-    let n = verts.len();
-    let pa = verts.iter().position(|&t| t == a);
-    let pb = verts.iter().position(|&t| t == b);
-    match (pa, pb) {
-        (Some(pa), Some(pb)) => {
-            let d = (pa as isize - pb as isize).rem_euclid(n as isize);
-            d == 1 || d == n as isize - 1
-        }
-        _ => false,
-    }
-}
-
-/// Verify every interior edge of `g`'s rebuilt cell pairs: for each edge `g–m`
-/// whose neighbor `m` is also rebuilt (`cells_by_gen`), `m`'s cell must carry
-/// the same two endpoint triples, cyclically adjacent. Returns the number of
-/// edges that could NOT be checked because `m` is outside the rebuilt set (the
-/// rim) — 0 means the cell is fully internally paired. Panics on a genuine
-/// pairing disagreement (an interior defect the rebuild failed to resolve).
-#[cfg(feature = "local_rebuild_probe")]
-pub fn check_cell_internally_paired(
-    cell: &RebuiltCell,
-    cells_by_gen: &std::collections::HashMap<u32, RebuiltCell>,
-) -> usize {
-    let g = cell.generator;
-    let n = cell.vertices.len();
-    let mut rim = 0usize;
-    for i in 0..n {
-        let t0 = cell.vertices[i];
-        let t1 = cell.vertices[(i + 1) % n];
-        let Some(m) = shared_neighbor(g, t0, t1) else {
-            continue; // coincident / degenerate vertex pair — skip
-        };
-        match cells_by_gen.get(&m) {
-            Some(mc) => assert!(
-                cyclically_adjacent(&mc.vertices, t0, t1),
-                "edge {g}-{m} present in {g}'s cell ({t0:?},{t1:?}) but not paired in {m}'s cell"
-            ),
-            None => rim += 1,
-        }
-    }
-    rim
-}
-
-/// Rebuild the `seeds`' Voronoi cells from one exact local hull over
-/// `local_ids`. Returns one [`RebuiltCell`] per seed, or `None` if the local
-/// set has no 3D hull (all generators coplanar — a measure-zero pathology).
-#[cfg(feature = "local_rebuild_probe")]
-pub fn rebuild_cells(
-    points: &[Vec3],
-    local_ids: &[u32],
-    seeds: &[u32],
-) -> Option<Vec<RebuiltCell>> {
-    rebuild_hull_cells(points, local_ids, seeds).map(|cells| {
-        cells
-            .into_iter()
-            .map(|(generator, fan)| RebuiltCell {
-                generator,
-                vertices: fan.into_iter().map(|v| v.key).collect(),
-            })
-            .collect()
-    })
-}
-
-/// Internal Hull3d form of [`rebuild_cells`], retaining the hull face's
-/// oriented support normal alongside the sorted triple identity.
+/// Build Hull3d fans while retaining each face's oriented support normal
+/// alongside the sorted triple identity.
 fn rebuild_hull_cells(
     points: &[Vec3],
     local_ids: &[u32],
@@ -281,127 +132,13 @@ fn rebuild_hull_cells(
                 let n = hull.face_circumcenter(fi);
                 RebuildVertex {
                     key: t,
-                    mint_pos: Some(Vec3::new(n.x as f32, n.y as f32, n.z as f32)),
+                    mint_pos: Vec3::new(n.x as f32, n.y as f32, n.z as f32),
                 }
             })
             .collect();
         out.push((g, vertices));
     }
     Some(out)
-}
-
-/// Cyclically chain a generator's incident sorted-global triples into its
-/// Voronoi fan: each consecutive pair shares the edge `g–x` (two common
-/// generators). Returns `None` if the fan doesn't close (the generator is on the
-/// gather frontier — an incomplete neighborhood, deferred to the grow loop), so
-/// only genuinely-interior cells are spliced.
-fn chain_fan(tris: &[[u32; 3]]) -> Option<Vec<[u32; 3]>> {
-    let adj = |a: [u32; 3], b: [u32; 3]| a != b && a.iter().filter(|x| b.contains(x)).count() == 2;
-    let n = tris.len();
-    if n < 3 {
-        return None;
-    }
-    let mut used = vec![false; n];
-    let mut order = vec![tris[0]];
-    used[0] = true;
-    for _ in 1..n {
-        let cur = *order.last().unwrap();
-        let j = (0..n).find(|&j| !used[j] && adj(cur, tris[j]))?;
-        used[j] = true;
-        order.push(tris[j]);
-    }
-    if adj(*order.last().unwrap(), order[0]) {
-        Some(order)
-    } else {
-        None
-    }
-}
-
-fn unpositioned_fan(keys: Vec<[u32; 3]>) -> RebuildFan {
-    keys.into_iter()
-        .map(|key| RebuildVertex {
-            key,
-            mint_pos: None,
-        })
-        .collect()
-}
-
-/// Exact 2D Delaunay triangulation of `proj` via Bowyer–Watson incremental
-/// insertion (dependency-free: `robust` exact `incircle`/`orient2d`, already a
-/// crate dep). Returns CCW triangles as input-index triples; triangles touching
-/// the bounding super-triangle are dropped. The point set is small (a local
-/// gather), so the simple O(n·triangles) cavity walk is ample.
-///
-/// One triangulation makes every interior generator's incident triangles a
-/// closed, manifold fan by construction — the property a per-generator
-/// empty-circle enumeration can't guarantee for cluster-boundary cells (whose
-/// fans thread through far neighbors a per-cell candidate ring won't surface).
-fn local_delaunay_2d(proj: &[robust::Coord<f64>]) -> Vec<[usize; 3]> {
-    use robust::{incircle, orient2d, Coord};
-    let n = proj.len();
-    if n < 3 {
-        return Vec::new();
-    }
-    let (mut minx, mut miny, mut maxx, mut maxy) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
-    for c in proj {
-        minx = minx.min(c.x);
-        miny = miny.min(c.y);
-        maxx = maxx.max(c.x);
-        maxy = maxy.max(c.y);
-    }
-    let span = (maxx - minx)
-        .max(maxy - miny)
-        .max(LOCAL_REBUILD_DELAUNAY_SPAN_FLOOR);
-    let (midx, midy) = ((minx + maxx) * 0.5, (miny + maxy) * 0.5);
-    // Super-triangle vertices (indices n, n+1, n+2), generously enclosing all.
-    let big = span * LOCAL_REBUILD_SUPER_TRIANGLE_SCALE;
-    let mut pts: Vec<Coord<f64>> = proj.to_vec();
-    pts.push(Coord {
-        x: midx - 2.0 * big,
-        y: midy - big,
-    });
-    pts.push(Coord {
-        x: midx + 2.0 * big,
-        y: midy - big,
-    });
-    pts.push(Coord {
-        x: midx,
-        y: midy + 2.0 * big,
-    });
-    let ccw = |a: usize, b: usize, c: usize| -> [usize; 3] {
-        if orient2d(pts[a], pts[b], pts[c]) > 0.0 {
-            [a, b, c]
-        } else {
-            [a, c, b]
-        }
-    };
-    let mut tris: Vec<[usize; 3]> = vec![ccw(n, n + 1, n + 2)];
-    let mut bad_edges: FxHashMap<(usize, usize), u32> = FxHashMap::default();
-    for i in 0..n {
-        let p = pts[i];
-        // Triangles whose circumcircle contains p (each stored CCW).
-        bad_edges.clear();
-        let mut keep: Vec<[usize; 3]> = Vec::with_capacity(tris.len());
-        for &t in &tris {
-            if incircle(pts[t[0]], pts[t[1]], pts[t[2]], p) > 0.0 {
-                for &(u, v) in &[(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
-                    *bad_edges.entry((u, v)).or_default() += 1;
-                }
-            } else {
-                keep.push(t);
-            }
-        }
-        tris = keep;
-        // Re-triangulate the cavity: each boundary directed edge (u,v) — one whose
-        // reverse (v,u) is not also a bad edge — forms a new CCW triangle (u,v,i).
-        for &(u, v) in bad_edges.keys() {
-            if !bad_edges.contains_key(&(v, u)) {
-                tris.push([u, v, i]);
-            }
-        }
-    }
-    tris.retain(|t| t.iter().all(|&v| v < n));
-    tris
 }
 
 /// Union gather (2-RING) for a rebuild oracle: the closure, each closure cell's
@@ -445,79 +182,6 @@ fn gather_two_ring(
     }
     let seeds2: Vec<u32> = seeds2.into_iter().collect();
     gather_knn_grid(grid, scratch, points, &seeds2, ring_k)
-}
-
-/// Per-generator ready-to-splice fans for `closure`, read off ONE exact 2D
-/// Delaunay (`robust::incircle`) built in a single shared stereographic chart
-/// over a local gather.
-///
-/// A triple `(g,a,b)` is a Delaunay triangle (hence a Voronoi vertex of `g`) iff
-/// no other nearby generator falls strictly inside its circumcircle. That
-/// predicate is a pure function of the four points, so it returns the IDENTICAL
-/// verdict no matter which cell evaluates it — the cross-cell consistency that
-/// per-cell gnomonic-chart f64 rounding lacks. Correctness is local because a
-/// point inside a closure triangle's circumcircle lies within ~2× the cell
-/// radius, so it is present in the SHARED union gather every emptiness test
-/// scans — a proper restricted local Delaunay, not per-generator triangle tests.
-fn local_exact_fans(
-    points: &[Vec3],
-    grid: &CubeMapGrid,
-    scratch: &mut CubeMapGridScratch,
-    work: &WorkingDiagram,
-    closure: &[u32],
-    ring_k: usize,
-) -> FxHashMap<u32, RebuildFan> {
-    use robust::Coord;
-    use std::collections::BTreeSet;
-
-    let local_ids = gather_two_ring(points, grid, scratch, work, closure, ring_k);
-
-    // SINGLE shared stereographic chart over the gather, pole at the antipode of
-    // the local centroid. One exact 2D triangulation produces all closure fans,
-    // so rebuilt cells agree with each other.
-    let mut centroid = Vec3::ZERO;
-    for &id in &local_ids {
-        centroid += points[id as usize];
-    }
-    let pole = (-centroid).normalize();
-    let ax = if pole.x.abs() < REFERENCE_AXIS_COMPONENT_SWITCH_F32 {
-        Vec3::X
-    } else {
-        Vec3::Y
-    };
-    let e1 = (ax - pole * ax.dot(pole)).normalize();
-    let e2 = pole.cross(e1);
-    let proj: Vec<Coord<f64>> = local_ids
-        .iter()
-        .map(|&id| {
-            let p = points[id as usize];
-            let d = (1.0 - p.dot(pole)).max(LOCAL_REBUILD_STEREOGRAPHIC_DENOMINATOR_FLOOR);
-            Coord {
-                x: (p.dot(e1) / d) as f64,
-                y: (p.dot(e2) / d) as f64,
-            }
-        })
-        .collect();
-
-    // One Delaunay triangulation; read each closure generator's incident fan off
-    // it (the same triple seen from a/b's cells, so spliced cells pair).
-    let tri = local_delaunay_2d(&proj);
-    let closureset: BTreeSet<u32> = closure.iter().copied().collect();
-    let mut incident: FxHashMap<u32, Vec<[u32; 3]>> = FxHashMap::default();
-    for t in &tri {
-        let gs = [local_ids[t[0]], local_ids[t[1]], local_ids[t[2]]];
-        let mut sorted = gs;
-        sorted.sort_unstable();
-        for &g in &gs {
-            if closureset.contains(&g) {
-                incident.entry(g).or_default().push(sorted);
-            }
-        }
-    }
-    incident
-        .into_iter()
-        .filter_map(|(g, tris)| chain_fan(&tris).map(|fan| (g, unpositioned_fan(fan))))
-        .collect()
 }
 
 /// Per-generator ready-to-splice fans for `closure`, read off ONE normalized
@@ -705,112 +369,11 @@ pub(crate) fn rebuild_with_local_hull(
     )
 }
 
-/// Projected local rebuild ([`crate::LocalRebuildMode::ProjectedDelaunay`]): the grow loop
-/// over the shared-stereographic-chart exact 2D Delaunay oracle
-/// ([`local_exact_fans`]). Kept as a projected-oracle diagnostic path.
-#[allow(clippy::too_many_arguments)] // grid and scratch form the reusable gather index
-pub(crate) fn rebuild_with_projected_delaunay(
-    points: &[Vec3],
-    grid: &CubeMapGrid,
-    scratch: &mut CubeMapGridScratch,
-    work: &mut WorkingDiagram,
-    defect_pairs: &[(u32, u32)],
-    merge_affected: &[u32],
-    ring_k: usize,
-    max_rounds: usize,
-    debug: bool,
-) -> LocalRebuildStats {
-    run_rebuild_growth(
-        points,
-        work,
-        defect_pairs,
-        merge_affected,
-        max_rounds,
-        GrowthDiagnostics {
-            enabled: debug,
-            name: "rebuild_with_projected_delaunay",
-        },
-        |work, closure| local_exact_fans(points, grid, scratch, work, closure, ring_k),
-    )
-}
-
-/// Probe-only global oracle (feature `local_rebuild_probe`): ONE GLOBAL stereographic
-/// Delaunay (fixed pole, `delaunator`) over all generators, read per closure
-/// generator through the shared grow loop. A global pole is what makes the
-/// rebuilt rim agree with the fast diagram (fast ≈ the global-pole Delaunay).
-/// A/B reference for the local rebuilds; not a production path.
-#[cfg(feature = "local_rebuild_probe")]
-pub(crate) fn rebuild_with_global_delaunay(
-    points: &[Vec3],
-    work: &mut WorkingDiagram,
-    defect_pairs: &[(u32, u32)],
-    merge_affected: &[u32],
-    _gather_k: usize,
-    max_rounds: usize,
-    debug: bool,
-) -> LocalRebuildStats {
-    let mut centroid = Vec3::ZERO;
-    for &p in points {
-        centroid += p;
-    }
-    let pole = (-centroid).normalize();
-    let a = if pole.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
-    let e1 = (a - pole * a.dot(pole)).normalize();
-    let e2 = pole.cross(e1);
-    let proj: Vec<delaunator::Point> = points
-        .iter()
-        .map(|&p| {
-            let d = (1.0 - p.dot(pole)).max(LOCAL_REBUILD_STEREOGRAPHIC_DENOMINATOR_FLOOR);
-            delaunator::Point {
-                x: (p.dot(e1) / d) as f64,
-                y: (p.dot(e2) / d) as f64,
-            }
-        })
-        .collect();
-    let tri = delaunator::triangulate(&proj);
-    if tri.triangles.is_empty() {
-        return LocalRebuildStats::default();
-    }
-    // generator -> incident sorted-global triples (the global Delaunay fan)
-    let mut incident: FxHashMap<u32, Vec<[u32; 3]>> = FxHashMap::default();
-    for t in tri.triangles.chunks_exact(3) {
-        let mut k = [t[0] as u32, t[1] as u32, t[2] as u32];
-        k.sort_unstable();
-        for &li in t {
-            incident.entry(li as u32).or_default().push(k);
-        }
-    }
-    run_rebuild_growth(
-        points,
-        work,
-        defect_pairs,
-        merge_affected,
-        max_rounds,
-        GrowthDiagnostics {
-            enabled: debug,
-            name: "rebuild_with_global_delaunay",
-        },
-        |_work, closure| {
-            closure
-                .iter()
-                .filter_map(|&g| {
-                    incident
-                        .get(&g)
-                        .and_then(|tris| chain_fan(tris))
-                        .map(|fan| (g, unpositioned_fan(fan)))
-                })
-                .collect()
-        },
-    )
-}
-
 // ===========================================================================
 // Splicing rebuilt cells into the assembled diagram.
 //
-// The splice is SOURCE-AGNOSTIC: it consumes triple-keyed fans and does not
-// care which oracle produced them. The only contract is "a generator's cell as
-// an ordered cyclic fan of sorted global-id triples", same identity space as
-// the production `VertexKey`.
+// The splice consumes Hull3d fans keyed by sorted generator triples, the same
+// identity space as the production `VertexKey`.
 //
 // The load-bearing trick: a rebuilt vertex looks up the EXISTING fast-path
 // vertex id for its triple and reuses it. On the well-conditioned rim
@@ -818,25 +381,6 @@ pub(crate) fn rebuild_with_global_delaunay(
 // surrounding cells' vertices and pairs with them automatically. Only the
 // corrected near-cocircular defect vertices are minted fresh.
 // ===========================================================================
-
-/// The f64 spherical circumcenter of a generator triple, as a (near-)unit
-/// `Vec3` — one of the two antipodal circumcenters of the three generators.
-/// This same-generator-side choice remains the fallback for projected/probe
-/// oracles. Hull3d instead supplies the hull-winding-selected support normal,
-/// which is essential when the local hull does not contain the origin.
-fn triple_circumcenter(points: &[Vec3], t: [u32; 3]) -> Vec3 {
-    let p = |i: u32| {
-        let v = points[i as usize];
-        DVec3::new(v.x as f64, v.y as f64, v.z as f64)
-    };
-    let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
-    let mut n = (b - a).cross(c - a).normalize();
-    // Outward = same side as the generators (matches local_hull::face_circumcenter).
-    if n.dot(a) < 0.0 {
-        n = -n;
-    }
-    Vec3::new(n.x as f32, n.y as f32, n.z as f32)
-}
 
 /// Signed spherical polygon orientation, accumulated in f64. Rebuild is entered
 /// precisely for numerically difficult neighborhoods, and the O(radius²)
@@ -1071,7 +615,7 @@ impl<'a> WorkingDiagram<'a> {
     /// different vid than the spliced cell, so both feed the same grow-or-
     /// reject machinery; only the vertex id (and its f32-vs-recomputed
     /// position) differs.
-    fn vid_for(&mut self, points: &[Vec3], vertex: RebuildVertex) -> VertexId {
+    fn vid_for(&mut self, vertex: RebuildVertex) -> VertexId {
         let t = vertex.key;
         if let Some(&vid) = self.triple_to_vid.get(&t) {
             return VertexId::new(vid);
@@ -1092,9 +636,7 @@ impl<'a> WorkingDiagram<'a> {
         }
         let vid = found.unwrap_or_else(|| {
             let vid = self.num_vertices() as u32;
-            let position = vertex
-                .mint_pos
-                .unwrap_or_else(|| triple_circumcenter(points, t));
+            let position = vertex.mint_pos;
             #[cfg(feature = "profiling")]
             crate::point_audit::record_vec3(
                 crate::point_audit::PointProducer::RebuildVertex,
@@ -1123,7 +665,7 @@ impl<'a> WorkingDiagram<'a> {
         let g = cell.get();
         let mut list: Vec<u32> = fan
             .iter()
-            .map(|&vertex| self.vid_for(points, vertex).get())
+            .map(|&vertex| self.vid_for(vertex).get())
             .collect();
         if target_sign != 0.0 && self.polygon_sign(points, g, &list) * target_sign < 0.0 {
             list.reverse();
@@ -1511,121 +1053,12 @@ pub(crate) struct LocalRebuildStats {
     pub stuck_components: usize,
 }
 
-/// A0 probe stash payload: (effective points, fast per-cell triples).
-#[cfg(feature = "local_rebuild_probe")]
-pub(crate) type A0Stash = (Vec<Vec3>, Vec<Vec<[u32; 3]>>);
-
-#[cfg(feature = "local_rebuild_probe")]
-thread_local! {
-    /// Whether the current thread requested an A0 fast-state snapshot.
-    static A0_CAPTURE_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// A0 probe stash from the last build, for an exact-reference comparison
-    /// test. See `with_a0_fast_capture`.
-    static A0_STASH: std::cell::RefCell<Option<A0Stash>> = const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(feature = "local_rebuild_probe")]
-struct A0CaptureScope {
-    previous_active: bool,
-    previous_stash: Option<A0Stash>,
-}
-
-#[cfg(feature = "local_rebuild_probe")]
-impl Drop for A0CaptureScope {
-    fn drop(&mut self) {
-        A0_CAPTURE_ACTIVE.with(|active| active.set(self.previous_active));
-        A0_STASH.with(|stash| *stash.borrow_mut() = self.previous_stash.take());
-    }
-}
-
-/// Run `f` with A0 fast-state capture enabled on the current thread, returning
-/// both its result and the snapshot produced by the computation, if any.
-///
-/// The previous state and stash are restored during unwinding, nested scopes
-/// restore the outer scope, and probes on other test threads remain independent.
-#[cfg(feature = "local_rebuild_probe")]
-pub fn with_a0_fast_capture<R>(f: impl FnOnce() -> R) -> (R, Option<A0Stash>) {
-    let previous_active = A0_CAPTURE_ACTIVE.with(|active| active.replace(true));
-    let previous_stash = A0_STASH.with(|stash| stash.borrow_mut().take());
-    let scope = A0CaptureScope {
-        previous_active,
-        previous_stash,
-    };
-    let result = f();
-    let captured = A0_STASH.with(|stash| stash.borrow_mut().take());
-    drop(scope);
-    (result, captured)
-}
-
-/// Whether the current thread requested an A0 fast-state snapshot.
-#[cfg(feature = "local_rebuild_probe")]
-pub(crate) fn a0_fast_capture_active() -> bool {
-    A0_CAPTURE_ACTIVE.with(std::cell::Cell::get)
-}
-
-/// Stash the assembled fast per-cell triple fans for A0 exact-reference probes.
-#[cfg(feature = "local_rebuild_probe")]
-pub(crate) fn stash_a0_fast(
-    points: &[Vec3],
-    keys: &ShardedVertexKeys,
-    cells: &[VoronoiCell],
-    cell_indices: &[u32],
-) {
-    let mut vkey = vec![[u32::MAX; 3]; keys.len()];
-    keys.for_each(|vid, k| {
-        if let Some(slot) = vkey.get_mut(vid as usize) {
-            *slot = k;
-        }
-    });
-    let triples: Vec<Vec<[u32; 3]>> = cells
-        .iter()
-        .map(|c| {
-            cell_indices[c.vertex_start()..c.vertex_start() + c.vertex_count()]
-                .iter()
-                .map(|&v| vkey[v as usize])
-                .collect()
-        })
-        .collect();
-    A0_STASH.with(|s| *s.borrow_mut() = Some((points.to_vec(), triples)));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn u(x: f32, y: f32, z: f32) -> Vec3 {
         Vec3::new(x, y, z).normalize()
-    }
-
-    #[cfg(feature = "local_rebuild_probe")]
-    #[test]
-    fn a0_capture_scope_is_nested_thread_local_and_panic_safe() {
-        assert!(!a0_fast_capture_active());
-
-        let ((), captured) = with_a0_fast_capture(|| {
-            assert!(a0_fast_capture_active());
-            let ((), nested_capture) = with_a0_fast_capture(|| assert!(a0_fast_capture_active()));
-            assert!(nested_capture.is_none());
-            assert!(a0_fast_capture_active());
-
-            std::thread::scope(|scope| {
-                scope
-                    .spawn(|| assert!(!a0_fast_capture_active()))
-                    .join()
-                    .expect("probe thread");
-            });
-        });
-        assert!(captured.is_none());
-        assert!(!a0_fast_capture_active());
-
-        A0_STASH.with(|stash| *stash.borrow_mut() = Some((vec![Vec3::X], vec![vec![[0, 1, 2]]])));
-        let panic = std::panic::catch_unwind(|| {
-            with_a0_fast_capture(|| panic!("exercise A0 capture unwinding"));
-        });
-        assert!(panic.is_err());
-        assert!(!a0_fast_capture_active());
-        let restored = A0_STASH.with(|stash| stash.borrow_mut().take());
-        assert_eq!(restored, Some((vec![Vec3::X], vec![vec![[0, 1, 2]]])));
     }
 
     #[test]
@@ -1643,19 +1076,15 @@ mod tests {
             .iter()
             .flat_map(|(_, fan)| fan)
             .copied()
-            .find(|v| {
-                v.mint_pos
-                    .is_some_and(|p| p.dot(points[v.key[0] as usize]) < 0.0)
-            })
+            .find(|v| v.mint_pos.dot(points[v.key[0] as usize]) < 0.0)
             .expect("origin-outside hull must have an opposing support normal");
-        let expected = vertex.mint_pos.unwrap();
-        assert!(triple_circumcenter(&points, vertex.key).dot(expected) < -0.999_999);
+        let expected = vertex.mint_pos;
 
         let keys = ShardedVertexKeys::new(vec![0], vec![]);
         let cells = vec![VoronoiCell::new(0, 0); points.len()];
         let mut work =
             WorkingDiagram::from_reconciled(&[], &keys, LiveCellLayout::new(&cells, &[]));
-        let vid = work.vid_for(&points, vertex);
+        let vid = work.vid_for(vertex);
         assert_eq!(work.vkey(vid), vertex.key);
         assert_eq!(work.vpos(vid), expected);
     }
@@ -1683,15 +1112,15 @@ mod tests {
         let fan = [
             RebuildVertex {
                 key: [0, 1, 2],
-                mint_pos: Some(Vec3::X),
+                mint_pos: Vec3::X,
             },
             RebuildVertex {
                 key: [0, 1, 2],
-                mint_pos: Some(Vec3::Y),
+                mint_pos: Vec3::Y,
             },
             RebuildVertex {
                 key: [0, 1, 2],
-                mint_pos: Some(Vec3::Z),
+                mint_pos: Vec3::Z,
             },
         ];
         work.splice_generator(&points, CellId::new(2), &fan, 0.0);

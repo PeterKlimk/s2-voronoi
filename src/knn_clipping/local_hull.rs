@@ -1,5 +1,4 @@
-//! Incremental local 3D convex hull (= spherical Delaunay) for the Tier-2
-//! re-clip resolver.
+//! Incremental local 3D convex hull (= spherical Delaunay) for local rebuilding.
 //!
 //! On the unit sphere the convex hull of the generator directions IS the
 //! Delaunay triangulation: each hull face `(a,b,c)` is a Delaunay triangle, and
@@ -20,11 +19,6 @@
 //! orientation as "visible", so an exact tie resolves by insertion order —
 //! callers that must handle exact cliques deterministically should
 //! detect `orient == 0` separately. See `docs/correctness.md`.
-
-// The consumer (the Tier-2 resolver wiring) lands in a follow-up; until then the
-// hull core is exercised only by its unit tests, so silence dead-code in the
-// (non-test) lib build.
-#![allow(dead_code)]
 
 use glam::{DVec3, Vec3};
 use robust::Coord3D;

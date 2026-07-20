@@ -234,24 +234,6 @@ const OUTPUT_RESOLUTION_ZERO_HINT_X_BASE: f32 = 2.0 * OUTPUT_RESOLUTION_REPRESEN
 pub(crate) const OUTPUT_RESOLUTION_ZERO_HINT_X_EPS: f32 =
     f32::from_bits(OUTPUT_RESOLUTION_ZERO_HINT_X_BASE.to_bits() + 1);
 
-// === Local rebuilding ===
-
-/// Minimum projected coordinate span used to size the local 2D Delaunay
-/// super-triangle.
-///
-/// Stereographic chart coordinates are dimensionless `f64` values. The
-/// measured maximum axis span is clamped with `max` to this floor so a
-/// coincident or extremely narrow local set still receives a nonzero
-/// construction envelope. This is a sizing guard, not a point classifier.
-pub(crate) const LOCAL_REBUILD_DELAUNAY_SPAN_FLOOR: f64 = 1e-9;
-
-/// Minimum stereographic projection denominator `1 - dot(point, pole)`.
-///
-/// Projection inputs and the dot are `f32`; retaining an explicit `f32` floor
-/// preserves that arithmetic. The dimensionless denominator is clamped with
-/// `max` before division so an exact projection-pole hit stays finite.
-pub(crate) const LOCAL_REBUILD_STEREOGRAPHIC_DENOMINATOR_FLOOR: f32 = 1e-12;
-
 // === Cube-grid conservative bounds ===
 
 /// Slack subtracted from security-plane distances when deriving per-query

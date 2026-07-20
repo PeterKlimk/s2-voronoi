@@ -927,7 +927,10 @@ fn validate_cell_mesh(mesh: &SphericalCellMesh) -> CellMeshValidationReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::UnitVec3;
+
+    const fn raw(x: f32, y: f32, z: f32) -> [f32; 3] {
+        [x, y, z]
+    }
 
     fn unit(x: f32, y: f32, z: f32) -> SpherePoint {
         SpherePoint::try_from_xyz([x, y, z]).unwrap()
@@ -984,12 +987,12 @@ mod tests {
     #[test]
     fn rejected_conversion_returns_the_original_successful_output() {
         let points = [
-            UnitVec3::new(1.0, 0.0, 0.0),
-            UnitVec3::new(-1.0, 0.0, 0.0),
-            UnitVec3::new(0.0, 1.0, 0.0),
-            UnitVec3::new(0.0, -1.0, 0.0),
-            UnitVec3::new(0.0, 0.0, 1.0),
-            UnitVec3::new(0.0, 0.0, -1.0),
+            raw(1.0, 0.0, 0.0),
+            raw(-1.0, 0.0, 0.0),
+            raw(0.0, 1.0, 0.0),
+            raw(0.0, -1.0, 0.0),
+            raw(0.0, 0.0, 1.0),
+            raw(0.0, 0.0, -1.0),
         ];
         let mut output = crate::compute_with_report(&points, crate::VoronoiConfig::default())
             .expect("octahedral source should compute");
@@ -1010,12 +1013,12 @@ mod tests {
     #[test]
     fn serde_round_trip_revalidates_dense_mesh() {
         let points = [
-            UnitVec3::new(1.0, 0.0, 0.0),
-            UnitVec3::new(-1.0, 0.0, 0.0),
-            UnitVec3::new(0.0, 1.0, 0.0),
-            UnitVec3::new(0.0, -1.0, 0.0),
-            UnitVec3::new(0.0, 0.0, 1.0),
-            UnitVec3::new(0.0, 0.0, -1.0),
+            raw(1.0, 0.0, 0.0),
+            raw(-1.0, 0.0, 0.0),
+            raw(0.0, 1.0, 0.0),
+            raw(0.0, -1.0, 0.0),
+            raw(0.0, 0.0, 1.0),
+            raw(0.0, 0.0, -1.0),
         ];
         let mesh = crate::compute_with_report(&points, crate::VoronoiConfig::default())
             .unwrap()

@@ -190,14 +190,14 @@ fn test_cell_areas_sum_to_sphere_area() {
 
 #[test]
 fn test_octahedron_cells_have_equal_areas() {
-    use voronoi_mesh::UnitVec3;
+    use support::points::TestPoint;
     let points = vec![
-        UnitVec3::new(1.0, 0.0, 0.0),
-        UnitVec3::new(-1.0, 0.0, 0.0),
-        UnitVec3::new(0.0, 1.0, 0.0),
-        UnitVec3::new(0.0, -1.0, 0.0),
-        UnitVec3::new(0.0, 0.0, 1.0),
-        UnitVec3::new(0.0, 0.0, -1.0),
+        TestPoint::new(1.0, 0.0, 0.0),
+        TestPoint::new(-1.0, 0.0, 0.0),
+        TestPoint::new(0.0, 1.0, 0.0),
+        TestPoint::new(0.0, -1.0, 0.0),
+        TestPoint::new(0.0, 0.0, 1.0),
+        TestPoint::new(0.0, 0.0, -1.0),
     ];
     let diagram = compute(&points).unwrap();
     let expected = 4.0 * std::f64::consts::PI / 6.0;
@@ -212,16 +212,16 @@ fn test_octahedron_cells_have_equal_areas() {
 
 #[test]
 fn test_welded_twins_share_conditioned_measure_results() {
-    use voronoi_mesh::UnitVec3;
+    use support::points::TestPoint;
 
     let points = vec![
-        UnitVec3::new(1.0, 0.0, 0.0),
-        UnitVec3::new(-1.0, 0.0, 0.0),
-        UnitVec3::new(0.0, 1.0, 0.0),
-        UnitVec3::new(0.0, -1.0, 0.0),
-        UnitVec3::new(0.0, 0.0, 1.0),
-        UnitVec3::new(0.0, 0.0, -1.0),
-        UnitVec3::new(1.0, 0.0, 0.0),
+        TestPoint::new(1.0, 0.0, 0.0),
+        TestPoint::new(-1.0, 0.0, 0.0),
+        TestPoint::new(0.0, 1.0, 0.0),
+        TestPoint::new(0.0, -1.0, 0.0),
+        TestPoint::new(0.0, 0.0, 1.0),
+        TestPoint::new(0.0, 0.0, -1.0),
+        TestPoint::new(1.0, 0.0, 0.0),
     ];
     let diagram = compute(&points).unwrap();
     assert_eq!(diagram.canonical_cell_index(6), 0);

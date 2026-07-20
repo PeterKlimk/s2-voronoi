@@ -28,7 +28,7 @@ pub(crate) use telemetry::emit_primary_reconcile_telemetry;
 #[derive(Clone, Copy)]
 pub(crate) enum VertexKeys<'a> {
     // Used by the unit tests (and any caller holding a contiguous array).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     Flat(&'a [VertexKey]),
     Sharded(&'a ShardedVertexKeys),
 }
@@ -37,6 +37,7 @@ impl VertexKeys<'_> {
     #[inline]
     fn get(&self, vid: u32) -> Option<VertexKey> {
         match self {
+            #[cfg(test)]
             VertexKeys::Flat(s) => s.get(vid as usize).copied(),
             VertexKeys::Sharded(s) => s.get(vid),
         }
@@ -45,6 +46,7 @@ impl VertexKeys<'_> {
     #[inline]
     fn len(&self) -> usize {
         match self {
+            #[cfg(test)]
             VertexKeys::Flat(s) => s.len(),
             VertexKeys::Sharded(s) => s.len(),
         }
@@ -52,9 +54,11 @@ impl VertexKeys<'_> {
 
     /// Visit every `(vid, key)` in global slot order. Only the global-scan
     /// escape path and the debug oracle need this; the localized BFS does not.
-    fn for_each(&self, mut f: impl FnMut(u32, VertexKey)) {
+    fn for_each(&self, f: impl FnMut(u32, VertexKey)) {
         match self {
+            #[cfg(test)]
             VertexKeys::Flat(s) => {
+                let mut f = f;
                 for (i, &k) in s.iter().enumerate() {
                     f(i as u32, k);
                 }
@@ -167,7 +171,7 @@ fn cell_vertex_slice_from_layout<'a>(
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn edge_segments_for_neighbor(
     cell_idx: u32,
     neighbor: u32,

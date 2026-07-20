@@ -549,11 +549,3 @@ pub(crate) fn run_clip_convex_microbench() {
     run_for::<7>(target, samples, hp_pool_len);
     run_for::<8>(target, samples, hp_pool_len);
 }
-
-/// Batch clipping microbench: compare serial vs batched clip_convex.
-#[cfg(feature = "microbench")]
-pub(crate) fn run_batch_clip_microbench() {
-    eprintln!("\n=== Batch Clip Microbench ===\n");
-    eprintln!("Batch clipping has been removed.\n");
-    eprintln!("=== End Batch Clip Microbench ===\n");
-}

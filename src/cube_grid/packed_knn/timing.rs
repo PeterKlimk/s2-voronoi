@@ -286,13 +286,7 @@ impl PackedKnnTimings {
     #[inline(always)]
     pub(crate) fn add_center_tail_keys(&mut self, _count: usize) {}
     #[inline(always)]
-    #[allow(dead_code)]
-    pub(crate) fn add_unused_center_tail_keys(&mut self, _count: usize) {}
-    #[inline(always)]
     pub(crate) fn add_center_tail_dot_evaluations(&mut self, _count: usize) {}
     #[inline(always)]
     pub(crate) fn add_chunk0_keys(&mut self, _count: usize) {}
-    #[inline(always)]
-    #[allow(dead_code)]
-    pub(crate) fn add_unused_chunk0_keys(&mut self, _count: usize) {}
 }

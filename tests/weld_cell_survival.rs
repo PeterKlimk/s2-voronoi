@@ -6,12 +6,12 @@
 mod support;
 
 use glam::{DQuat, DVec3};
-use support::points::{near_cocircular_stress_points, random_sphere_points};
-use voronoi_mesh::{compute_with_report, UnitVec3, VoronoiConfig};
+use support::points::{near_cocircular_stress_points, random_sphere_points, TestPoint};
+use voronoi_mesh::{compute_with_report, VoronoiConfig};
 
 const DEFAULT_WELD_DISTANCE_SQ: f32 = 128.0 * f32::EPSILON * f32::EPSILON;
 
-fn canonical(mut point: DVec3) -> UnitVec3 {
+fn canonical(mut point: DVec3) -> TestPoint {
     // Reach a fixed point of the public entry canonicalization so the pair's
     // measured lattice separation is the one construction actually receives.
     for _ in 0..4 {
@@ -22,10 +22,10 @@ fn canonical(mut point: DVec3) -> UnitVec3 {
         )
         .normalize();
     }
-    UnitVec3::new(point.x as f32, point.y as f32, point.z as f32)
+    TestPoint::new(point.x as f32, point.y as f32, point.z as f32)
 }
 
-fn chord_sq(a: UnitVec3, b: UnitVec3) -> f32 {
+fn chord_sq(a: TestPoint, b: TestPoint) -> f32 {
     let dx = a.x - b.x;
     let dy = a.y - b.y;
     let dz = a.z - b.z;
@@ -34,7 +34,7 @@ fn chord_sq(a: UnitVec3, b: UnitVec3) -> f32 {
 
 /// Find the first representable canonical direction reached along one tangent
 /// ray whose f32 chord predicate lies strictly outside the default weld.
-fn threshold_adjacent_pair(center: DVec3) -> (UnitVec3, UnitVec3) {
+fn threshold_adjacent_pair(center: DVec3) -> (TestPoint, TestPoint) {
     let p = canonical(center);
     let p64 = DVec3::new(p.x as f64, p.y as f64, p.z as f64);
     let reference = if p64.z.abs() < 0.8 {
@@ -75,7 +75,7 @@ fn exact_position_class_count(output: &voronoi_mesh::SphericalVoronoi, cell: usi
     classes.len()
 }
 
-fn assert_no_stored_cell_collapse(name: &str, points: &[UnitVec3]) {
+fn assert_no_stored_cell_collapse(name: &str, points: &[TestPoint]) {
     let output = compute_with_report(points, VoronoiConfig::default())
         .unwrap_or_else(|error| panic!("{name}: computation failed: {error}"));
     assert_eq!(
@@ -105,7 +105,7 @@ fn assert_no_stored_cell_collapse(name: &str, points: &[UnitVec3]) {
     );
 }
 
-fn rotated_pair_case(center: DVec3, rotation: DQuat, seed: u64) -> Vec<UnitVec3> {
+fn rotated_pair_case(center: DVec3, rotation: DQuat, seed: u64) -> Vec<TestPoint> {
     let rotated_center = rotation * center.normalize();
     let (p, q) = threshold_adjacent_pair(rotated_center);
     let mut points: Vec<_> = random_sphere_points(512, seed)

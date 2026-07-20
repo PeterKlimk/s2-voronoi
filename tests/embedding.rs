@@ -1,9 +1,12 @@
 use std::cell::Cell;
 
+mod support;
+
+use support::points::TestPoint;
+
 use voronoi_mesh::{
     compute, compute_on_sphere, compute_on_sphere_with_report, SphereEmbedding,
-    SphereEmbeddingError, SphereProjectionError, UnitVec3, VoronoiConfig, VoronoiError,
-    WorldVec3Like,
+    SphereEmbeddingError, SphereProjectionError, VoronoiConfig, VoronoiError, WorldVec3Like,
 };
 
 struct NonSyncPoint {
@@ -26,25 +29,25 @@ impl WorldVec3Like for NonSyncPoint {
     }
 }
 
-fn octahedron_unit() -> Vec<UnitVec3> {
+fn octahedron_unit() -> Vec<TestPoint> {
     vec![
-        UnitVec3::new(1.0, 0.0, 0.0),
-        UnitVec3::new(-1.0, 0.0, 0.0),
-        UnitVec3::new(0.0, 1.0, 0.0),
-        UnitVec3::new(0.0, -1.0, 0.0),
-        UnitVec3::new(0.0, 0.0, 1.0),
-        UnitVec3::new(0.0, 0.0, -1.0),
+        TestPoint::new(1.0, 0.0, 0.0),
+        TestPoint::new(-1.0, 0.0, 0.0),
+        TestPoint::new(0.0, 1.0, 0.0),
+        TestPoint::new(0.0, -1.0, 0.0),
+        TestPoint::new(0.0, 0.0, 1.0),
+        TestPoint::new(0.0, 0.0, -1.0),
     ]
 }
 
-fn fibonacci_unit(count: usize) -> Vec<UnitVec3> {
+fn fibonacci_unit(count: usize) -> Vec<TestPoint> {
     let golden_angle = std::f64::consts::PI * (3.0 - 5.0f64.sqrt());
     (0..count)
         .map(|i| {
             let z = 1.0 - 2.0 * (i as f64 + 0.5) / count as f64;
             let radial = (1.0 - z * z).sqrt();
             let theta = i as f64 * golden_angle;
-            UnitVec3::new(
+            TestPoint::new(
                 (radial * theta.cos()) as f32,
                 (radial * theta.sin()) as f32,
                 z as f32,
@@ -53,7 +56,7 @@ fn fibonacci_unit(count: usize) -> Vec<UnitVec3> {
         .collect()
 }
 
-fn embed(center: [f64; 3], direction: UnitVec3, distance: f64) -> [f64; 3] {
+fn embed(center: [f64; 3], direction: TestPoint, distance: f64) -> [f64; 3] {
     [
         center[0] + distance * direction.x as f64,
         center[1] + distance * direction.y as f64,
@@ -106,11 +109,11 @@ fn translated_scaled_non_axis_points_match_recovered_unit_computation() {
         .enumerate()
         .map(|(i, &direction)| embed(center, direction, 0.25 + (i % 19) as f64))
         .collect();
-    let recovered: Vec<UnitVec3> = world
+    let recovered: Vec<TestPoint> = world
         .iter()
         .map(|point| {
             let u = embedding.project_world_to_unit(point).unwrap();
-            UnitVec3::new(u[0] as f32, u[1] as f32, u[2] as f32)
+            TestPoint::new(u[0] as f32, u[1] as f32, u[2] as f32)
         })
         .collect();
 

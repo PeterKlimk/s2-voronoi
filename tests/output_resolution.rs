@@ -1,12 +1,16 @@
 //! Output-resolution regressions, including the minimized Hex3 zero-edge core.
 
+mod support;
+
+use support::points::TestPoint;
+
 use voronoi_mesh::{
     compute_on_sphere_with_report, compute_with, compute_with_report, CellKillingPolicy,
-    PreprocessMode, SphereEmbedding, UnitVec3, VoronoiConfig, VoronoiError,
+    PreprocessMode, SphereEmbedding, VoronoiConfig, VoronoiError,
 };
 
-fn point(x: f32, y: f32, z: f32) -> UnitVec3 {
-    UnitVec3::new(x, y, z)
+fn point(x: f32, y: f32, z: f32) -> TestPoint {
+    TestPoint::new(x, y, z)
 }
 
 #[test]
@@ -132,8 +136,8 @@ fn separated_tiny_cell_survives_increasing_weld_radius() {
 /// A representable set of distinct f32 generators whose stored Voronoi output
 /// contains cell-killing exact-zero edges when preprocessing welding is off.
 /// Keep this fixture reusable as the public output policy gains Error/Elide.
-fn disabled_weld_cell_killing_points() -> Vec<UnitVec3> {
-    fn displaced(mut b: [f64; 3], theta: f64, phi: f64) -> UnitVec3 {
+fn disabled_weld_cell_killing_points() -> Vec<TestPoint> {
+    fn displaced(mut b: [f64; 3], theta: f64, phi: f64) -> TestPoint {
         let bl = (b[0] * b[0] + b[1] * b[1] + b[2] * b[2]).sqrt();
         for x in &mut b {
             *x /= bl;
@@ -147,7 +151,7 @@ fn disabled_weld_cell_killing_points() -> Vec<UnitVec3> {
         ];
         let c = theta.cos();
         let s = theta.sin();
-        UnitVec3::new(
+        TestPoint::new(
             (c * b[0] + s * (phi.cos() * e[0] + phi.sin() * f[0])) as f32,
             (c * b[1] + s * (phi.cos() * e[1] + phi.sin() * f[1])) as f32,
             (c * b[2] + s * (phi.cos() * e[2] + phi.sin() * f[2])) as f32,

@@ -67,7 +67,7 @@ while [[ $# -gt 0 ]]; do
 Usage: bench_run.sh [opts] [-- bench_voronoi_args...]
   -r, --rounds N      Rounds per cell (default: 5)
   -s, --sizes "..."   Size(s), space-separated to sweep (default: 100k)
-  -d, --dists "..."   Distribution(s) to sweep: fib fib-legacy uniform clustered
+  -d, --dists "..."   Distribution(s) to sweep: fib uniform clustered
                       bimodal gradient outlier splittable mega cubed great-circle
                       (default: fib)
       --seeds "..."   Seed(s) to sweep (default: bench_voronoi default, one run)

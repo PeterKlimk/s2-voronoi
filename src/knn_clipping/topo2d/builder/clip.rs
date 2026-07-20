@@ -650,7 +650,6 @@ mod fallback_tolerance_tests {
                     .collect(),
                 edge_planes: vec![usize::MAX; 3],
             },
-            trigger: super::super::BuilderFallbackTrigger::ProjectionLimit,
         }
     }
 

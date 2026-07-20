@@ -37,7 +37,7 @@ use std::collections::BTreeMap;
 use support::points::*;
 use voronoi_mesh::{
     compute_with, compute_with_report, validation::validate, EdgeMismatchOrigin, LocalRebuildMode,
-    UnitVec3, VoronoiConfig,
+    VoronoiConfig,
 };
 
 /// Process peak RSS (high-water mark) in MB, from /proc/self/status.
@@ -73,7 +73,7 @@ fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
 /// (group count for `cocircular`, which emits 4*n points); `param` is the
 /// distribution's shape knob (cap radius, perturbation, jitter), ignored by
 /// `uniform`.
-fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<UnitVec3> {
+fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<TestPoint> {
     match dist {
         "uniform" => random_sphere_points(n, seed),
         "clustered" => clustered_cap_points(n, param, seed),
@@ -81,7 +81,6 @@ fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<UnitVec3> {
         "cube" => cube_vertex_stress_points(n, param, seed),
         "cocircular" => near_cocircular_stress_points(n, param, seed),
         "fibonacci" => fibonacci_sphere_points(n, param, seed),
-        "fibonacci_legacy" => fibonacci_sphere_points_legacy(n, param, seed),
         // `param` is the cap fraction; the only distribution dense enough to
         // drive the contested near-cocircular regime (which now errors loudly
         // per the valid-or-error contract).
@@ -95,7 +94,7 @@ fn make_points(dist: &str, n: usize, seed: u64, param: f32) -> Vec<UnitVec3> {
 
 /// One campaign case, parameterized entirely by environment so the driver
 /// script can fork a fresh process per case:
-///   VORONOI_MESH_CASE_DIST  (uniform|clustered|bimodal|cube|cocircular|fibonacci|fibonacci_legacy|mega)
+///   VORONOI_MESH_CASE_DIST  (uniform|clustered|bimodal|cube|cocircular|fibonacci|mega)
 ///   VORONOI_MESH_CASE_N     point count (group count for cocircular)
 ///   VORONOI_MESH_CASE_SEED  rng seed
 ///   VORONOI_MESH_CASE_PARAM shape knob (f32; default 0.3 — for mega it is the cap fraction)

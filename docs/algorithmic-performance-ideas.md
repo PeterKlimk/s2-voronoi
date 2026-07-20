@@ -105,8 +105,9 @@ one radian, quantizing the nominal golden-angle lattice before `sin`/`cos`. Adja
 different jitter seeds, native instructions, and FMA all reproduced the artifact. Promoting phase
 and latitude generation to f64 removed it: at 3M, candidate p50/p90/p99/p999/max changed from
 9/15/26/116/167 to 7/9/10/11/14, examine-per-edge from 1.709 to 1.222, and unrestricted shell
-takeovers from 5,775 cells to zero. `fib-legacy` retains the old input for historical comparisons.
-This case is not evidence for a production handoff or query-policy change.
+takeovers from 5,775 cells to zero. The legacy generator was subsequently removed; this measured
+record remains because it explains why the case is not evidence for a production handoff or
+query-policy change.
 
 The `mega` dense-cap workload grew from median 21 at 100k to 70 at 500k, confirming separately that
 a fixed candidate threshold would misclassify scale growth within some distributions. Despite that

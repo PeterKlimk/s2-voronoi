@@ -20,10 +20,10 @@ mod support;
 use glam::DVec3;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use support::points::random_sphere_points;
-use voronoi_mesh::{compute_with, validation::validate, PreprocessMode, UnitVec3, VoronoiConfig};
+use support::points::{random_sphere_points, TestPoint};
+use voronoi_mesh::{compute_with, validation::validate, PreprocessMode, VoronoiConfig};
 
-fn run(name: &str, points: &[UnitVec3]) {
+fn run(name: &str, points: &[TestPoint]) {
     let config = VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled);
     match compute_with(points, config) {
         Ok(diagram) => {
@@ -47,13 +47,13 @@ fn run(name: &str, points: &[UnitVec3]) {
     }
 }
 
-fn dvec(p: UnitVec3) -> DVec3 {
+fn dvec(p: TestPoint) -> DVec3 {
     DVec3::new(p.x as f64, p.y as f64, p.z as f64)
 }
 
 /// Twin at target geodesic-ish separation `s`, built in f64 then cast to f32.
 /// Returns None if it rounds back to the identical bit pattern.
-fn offset_twin(p: UnitVec3, s: f64, rng: &mut ChaCha8Rng) -> Option<(UnitVec3, f64)> {
+fn offset_twin(p: TestPoint, s: f64, rng: &mut ChaCha8Rng) -> Option<(TestPoint, f64)> {
     let p64 = dvec(p);
     let r = DVec3::new(
         rng.gen_range(-1.0..1.0),
@@ -62,7 +62,7 @@ fn offset_twin(p: UnitVec3, s: f64, rng: &mut ChaCha8Rng) -> Option<(UnitVec3, f
     );
     let t = (r - p64 * r.dot(p64)).normalize();
     let q64 = (p64 + t * s).normalize();
-    let q = UnitVec3::new(q64.x as f32, q64.y as f32, q64.z as f32);
+    let q = TestPoint::new(q64.x as f32, q64.y as f32, q64.z as f32);
     if (q.x.to_bits(), q.y.to_bits(), q.z.to_bits())
         == (p.x.to_bits(), p.y.to_bits(), p.z.to_bits())
     {
@@ -110,30 +110,30 @@ fn probe_seam_pairs_ulp_scale() {
     // guaranteeing ulp-scale separation, never denormal-scale.
     let inv3 = 1.0f32 / 3.0f32.sqrt();
     let inv2 = 1.0f32 / 2.0f32.sqrt();
-    let mut seam_points: Vec<UnitVec3> = Vec::new();
+    let mut seam_points: Vec<TestPoint> = Vec::new();
     for sx in [-1.0f32, 1.0] {
         for sy in [-1.0f32, 1.0] {
             for sz in [-1.0f32, 1.0] {
-                seam_points.push(UnitVec3::new(sx * inv3, sy * inv3, sz * inv3));
+                seam_points.push(TestPoint::new(sx * inv3, sy * inv3, sz * inv3));
             }
         }
     }
     for s in [-1.0f32, 1.0] {
         for t in [-1.0f32, 1.0] {
-            seam_points.push(UnitVec3::new(s * inv2, t * inv2, 0.0));
-            seam_points.push(UnitVec3::new(s * inv2, 0.0, t * inv2));
-            seam_points.push(UnitVec3::new(0.0, s * inv2, t * inv2));
+            seam_points.push(TestPoint::new(s * inv2, t * inv2, 0.0));
+            seam_points.push(TestPoint::new(s * inv2, 0.0, t * inv2));
+            seam_points.push(TestPoint::new(0.0, s * inv2, t * inv2));
         }
     }
     for s in [-1.0f32, 1.0] {
-        seam_points.push(UnitVec3::new(s, 0.0, 0.0));
-        seam_points.push(UnitVec3::new(0.0, s, 0.0));
-        seam_points.push(UnitVec3::new(0.0, 0.0, s));
+        seam_points.push(TestPoint::new(s, 0.0, 0.0));
+        seam_points.push(TestPoint::new(0.0, s, 0.0));
+        seam_points.push(TestPoint::new(0.0, 0.0, s));
     }
 
     let mut pts = base.clone();
     for &p in &seam_points {
-        let twin = UnitVec3::new(
+        let twin = TestPoint::new(
             if p.x.abs() > 0.5 { p.x.next_up() } else { p.x },
             if p.y.abs() > 0.5 { p.y.next_up() } else { p.y },
             if p.z.abs() > 0.5 { p.z.next_up() } else { p.z },
@@ -181,8 +181,8 @@ fn probe_seam_pairs_rotated() {
     let mut pts = base.clone();
     for &p64 in &seam_points64 {
         let r = (rot * p64).normalize();
-        let p = UnitVec3::new(r.x as f32, r.y as f32, r.z as f32);
-        let twin = UnitVec3::new(
+        let p = TestPoint::new(r.x as f32, r.y as f32, r.z as f32);
+        let twin = TestPoint::new(
             if p.x.abs() > 0.5 { p.x.next_up() } else { p.x },
             if p.y.abs() > 0.5 { p.y.next_up() } else { p.y },
             if p.z.abs() > 0.5 { p.z.next_up() } else { p.z },
@@ -196,9 +196,9 @@ fn probe_seam_pairs_rotated() {
 /// k points scattered in a tangent disc of `radius` around `center`, cast to
 /// f32, bitwise-distinct (re-rolled on collision). Returns the points plus the
 /// realized min pairwise chord distance.
-fn cluster_at(center: DVec3, k: usize, radius: f64, rng: &mut ChaCha8Rng) -> (Vec<UnitVec3>, f64) {
+fn cluster_at(center: DVec3, k: usize, radius: f64, rng: &mut ChaCha8Rng) -> (Vec<TestPoint>, f64) {
     let c = center.normalize();
-    let mut pts: Vec<UnitVec3> = Vec::with_capacity(k);
+    let mut pts: Vec<TestPoint> = Vec::with_capacity(k);
     let mut tries = 0;
     while pts.len() < k && tries < 200 {
         tries += 1;
@@ -209,7 +209,7 @@ fn cluster_at(center: DVec3, k: usize, radius: f64, rng: &mut ChaCha8Rng) -> (Ve
         );
         let t = (r - c * r.dot(c)).normalize();
         let q64 = (c + t * (radius * rng.gen_range(0.1..1.0))).normalize();
-        let q = UnitVec3::new(q64.x as f32, q64.y as f32, q64.z as f32);
+        let q = TestPoint::new(q64.x as f32, q64.y as f32, q64.z as f32);
         let dup = pts.iter().any(|p| {
             (p.x.to_bits(), p.y.to_bits(), p.z.to_bits())
                 == (q.x.to_bits(), q.y.to_bits(), q.z.to_bits())
@@ -315,9 +315,9 @@ fn probe_aligned_separated_pairs() {
         let mut realized_min = f64::MAX;
         for _ in 0..30 {
             let theta: f64 = rng.gen_range(0.0..std::f64::consts::TAU);
-            let a = UnitVec3::new(theta.cos() as f32, theta.sin() as f32, 0.0);
+            let a = TestPoint::new(theta.cos() as f32, theta.sin() as f32, 0.0);
             let t2 = theta + sep;
-            let b = UnitVec3::new(t2.cos() as f32, t2.sin() as f32, 0.0);
+            let b = TestPoint::new(t2.cos() as f32, t2.sin() as f32, 0.0);
             if (a.x.to_bits(), a.y.to_bits()) == (b.x.to_bits(), b.y.to_bits()) {
                 continue;
             }

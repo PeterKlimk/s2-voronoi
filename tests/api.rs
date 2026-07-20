@@ -4,12 +4,12 @@ mod support;
 
 use support::points::{
     clustered_cap_points, fibonacci_sphere_points, great_circle_points, hemisphere_points,
-    random_sphere_points,
+    random_sphere_points, TestPoint,
 };
 use voronoi_mesh::{
     compute, compute_by, compute_with, compute_with_by, compute_with_report,
-    compute_with_report_by, validation::validate, DegenerateMode, PreprocessMode, UnitVec3,
-    VoronoiConfig, VoronoiError,
+    compute_with_report_by, validation::validate, DegenerateMode, PreprocessMode, VoronoiConfig,
+    VoronoiError,
 };
 
 #[test]
@@ -32,9 +32,9 @@ fn test_compute_small_set() {
 #[test]
 fn test_compute_insufficient_points() {
     let points = vec![
-        UnitVec3::new(1.0, 0.0, 0.0),
-        UnitVec3::new(-1.0, 0.0, 0.0),
-        UnitVec3::new(0.0, 1.0, 0.0),
+        TestPoint::new(1.0, 0.0, 0.0),
+        TestPoint::new(-1.0, 0.0, 0.0),
+        TestPoint::new(0.0, 1.0, 0.0),
     ];
     let result = compute(&points);
     assert!(matches!(result, Err(VoronoiError::InsufficientPoints(3))));
@@ -70,10 +70,10 @@ fn test_merge_within_rejects_unsupported_thresholds() {
 fn test_dense_duplicate_cluster_returns_controlled_error() {
     let s = 1.0 / 3.0f32.sqrt();
     let mut points = vec![
-        UnitVec3::new(s, s, s),
-        UnitVec3::new(s, -s, -s),
-        UnitVec3::new(-s, s, -s),
-        UnitVec3::new(-s, -s, s),
+        TestPoint::new(s, s, s),
+        TestPoint::new(s, -s, -s),
+        TestPoint::new(-s, s, -s),
+        TestPoint::new(-s, -s, s),
     ];
     points.extend(std::iter::repeat_n(points[0], 1_450));
 
@@ -113,12 +113,12 @@ fn test_report_residual_helper_includes_low_incidence_vertices() {
 fn test_compute_octahedron() {
     // 6 axis-aligned points form an octahedron
     let points = vec![
-        UnitVec3::new(1.0, 0.0, 0.0),
-        UnitVec3::new(-1.0, 0.0, 0.0),
-        UnitVec3::new(0.0, 1.0, 0.0),
-        UnitVec3::new(0.0, -1.0, 0.0),
-        UnitVec3::new(0.0, 0.0, 1.0),
-        UnitVec3::new(0.0, 0.0, -1.0),
+        TestPoint::new(1.0, 0.0, 0.0),
+        TestPoint::new(-1.0, 0.0, 0.0),
+        TestPoint::new(0.0, 1.0, 0.0),
+        TestPoint::new(0.0, -1.0, 0.0),
+        TestPoint::new(0.0, 0.0, 1.0),
+        TestPoint::new(0.0, 0.0, -1.0),
     ];
     let diagram = compute(&points).expect("octahedron should work");
 
@@ -240,10 +240,10 @@ fn test_rank2_great_circle_policy_is_explicit() {
 #[test]
 fn test_exact_small_circle_uses_coplanar_perturbation_policy() {
     let points = [
-        UnitVec3::new(0.8, 0.0, 0.6),
-        UnitVec3::new(0.0, 0.8, 0.6),
-        UnitVec3::new(-0.8, 0.0, 0.6),
-        UnitVec3::new(0.0, -0.8, 0.6),
+        TestPoint::new(0.8, 0.0, 0.6),
+        TestPoint::new(0.0, 0.8, 0.6),
+        TestPoint::new(-0.8, 0.0, 0.6),
+        TestPoint::new(0.0, -0.8, 0.6),
     ];
 
     let strict = compute_with(
@@ -404,13 +404,13 @@ fn test_clustered_cap_extreme_weld_keeps_returned_diagram_strictly_valid() {
 #[test]
 fn test_compute_with_report_exposes_effective_diagram_when_merges_occur() {
     let points = vec![
-        UnitVec3::new(1.0, 0.0, 0.0),
-        UnitVec3::new(0.999_999_94, 0.0003, 0.0),
-        UnitVec3::new(-1.0, 0.0, 0.0),
-        UnitVec3::new(0.0, 1.0, 0.0),
-        UnitVec3::new(0.0, -1.0, 0.0),
-        UnitVec3::new(0.0, 0.0, 1.0),
-        UnitVec3::new(0.0, 0.0, -1.0),
+        TestPoint::new(1.0, 0.0, 0.0),
+        TestPoint::new(0.999_999_94, 0.0003, 0.0),
+        TestPoint::new(-1.0, 0.0, 0.0),
+        TestPoint::new(0.0, 1.0, 0.0),
+        TestPoint::new(0.0, -1.0, 0.0),
+        TestPoint::new(0.0, 0.0, 1.0),
+        TestPoint::new(0.0, 0.0, -1.0),
     ];
 
     let output = compute_with_report(

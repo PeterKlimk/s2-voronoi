@@ -2,9 +2,13 @@
 
 use std::collections::BTreeMap;
 
+mod support;
+
+use support::points::TestPoint;
+
 use voronoi_mesh::{
-    compute_with, compute_with_report, validation::validate, LocalRebuildMode, UnitVec3,
-    UnitVec3Like, VoronoiConfig,
+    compute_with, compute_with_report, validation::validate, LocalRebuildMode, UnitVec3Like,
+    VoronoiConfig,
 };
 
 const HEALTHY_F32_DOT_RESIDUAL: f64 = 2.0e-6;
@@ -13,27 +17,27 @@ fn dot<A: UnitVec3Like, B: UnitVec3Like>(a: &A, b: &B) -> f64 {
     a.x() as f64 * b.x() as f64 + a.y() as f64 * b.y() as f64 + a.z() as f64 * b.z() as f64
 }
 
-fn normalized_chord_sample<A: UnitVec3Like, B: UnitVec3Like>(a: &A, b: &B, t: f64) -> UnitVec3 {
+fn normalized_chord_sample<A: UnitVec3Like, B: UnitVec3Like>(a: &A, b: &B, t: f64) -> TestPoint {
     let x = a.x() as f64 * (1.0 - t) + b.x() as f64 * t;
     let y = a.y() as f64 * (1.0 - t) + b.y() as f64 * t;
     let z = a.z() as f64 * (1.0 - t) + b.z() as f64 * t;
     let inv_len = 1.0 / x.hypot(y).hypot(z);
-    UnitVec3::new(
+    TestPoint::new(
         (x * inv_len) as f32,
         (y * inv_len) as f32,
         (z * inv_len) as f32,
     )
 }
 
-fn aud_002_points() -> [UnitVec3; 5] {
+fn aud_002_points() -> [TestPoint; 5] {
     // Explicit public-input counterexample from docs/audit-triage.md. Keep the
     // coordinates here so changes to random fixture generation cannot hide it.
     [
-        UnitVec3::new(0.580_496_5, -0.535_992_44, -0.612_973),
-        UnitVec3::new(-0.953_108_8, -0.299_328_3, 0.044_567_585),
-        UnitVec3::new(0.086_291_43, -0.342_774_1, -0.935_446_26),
-        UnitVec3::new(0.526_091_1, -0.658_014_7, -0.538_743_73),
-        UnitVec3::new(0.134_592_53, 0.759_519, -0.636_408_57),
+        TestPoint::new(0.580_496_5, -0.535_992_44, -0.612_973),
+        TestPoint::new(-0.953_108_8, -0.299_328_3, 0.044_567_585),
+        TestPoint::new(0.086_291_43, -0.342_774_1, -0.935_446_26),
+        TestPoint::new(0.526_091_1, -0.658_014_7, -0.538_743_73),
+        TestPoint::new(0.134_592_53, 0.759_519, -0.636_408_57),
     ]
 }
 
@@ -128,10 +132,10 @@ fn aud_002_five_sites_preserve_voronoi_geometry() {
 #[test]
 fn aud_016_near_pi_edge_is_a_strict_valid_edge() {
     let points = [
-        UnitVec3::new(-0.346_064_27, -0.758_758, -0.551_838_64),
-        UnitVec3::new(0.672_760_4, -0.217_307_08, -0.707_227_7),
-        UnitVec3::new(-0.753_194_45, 0.368_890_3, 0.544_626_5),
-        UnitVec3::new(-0.661_814_2, -0.681_742_25, -0.311_816_45),
+        TestPoint::new(-0.346_064_27, -0.758_758, -0.551_838_64),
+        TestPoint::new(0.672_760_4, -0.217_307_08, -0.707_227_7),
+        TestPoint::new(-0.753_194_45, 0.368_890_3, 0.544_626_5),
+        TestPoint::new(-0.661_814_2, -0.681_742_25, -0.311_816_45),
     ];
     let output = compute_with_report(&points, VoronoiConfig::default())
         .expect("AUD-016 near-pi fixture should compute");

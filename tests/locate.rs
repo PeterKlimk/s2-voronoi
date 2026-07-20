@@ -4,8 +4,8 @@
 
 mod support;
 
-use support::points::random_sphere_points;
-use voronoi_mesh::{compute, SpherePoint, SphereQueryError, UnitVec3, UnitVec3Like};
+use support::points::{random_sphere_points, TestPoint};
+use voronoi_mesh::{compute, SpherePoint, SphereQueryError, UnitVec3Like};
 
 /// Distance-comparison slack: locator canonicalization and the raw-query
 /// brute-force oracle may round differently, so a tie can resolve to a
@@ -16,7 +16,7 @@ fn dot<A: UnitVec3Like, B: UnitVec3Like>(a: &A, b: &B) -> f64 {
     a.x() as f64 * b.x() as f64 + a.y() as f64 * b.y() as f64 + a.z() as f64 * b.z() as f64
 }
 
-fn brute_nearest_sphere(generators: &[SpherePoint], q: &UnitVec3) -> (usize, f64) {
+fn brute_nearest_sphere(generators: &[SpherePoint], q: &TestPoint) -> (usize, f64) {
     let mut best = (0usize, f64::NEG_INFINITY);
     for (i, g) in generators.iter().enumerate() {
         let d = dot(g, q);
@@ -115,8 +115,8 @@ fn scaled_query_uses_the_same_normalized_ranking_and_bound() {
     // 16 while the unseen-cell bound was normalized. That made the search
     // stop in the first occupied shell and returned generator 211 rather
     // than the actual nearest generator 576 for this query.
-    let query = UnitVec3::new(-0.022_981_111, 0.561_943_7, 0.826_856_14);
-    let scaled = UnitVec3::new(query.x * 16.0, query.y * 16.0, query.z * 16.0);
+    let query = TestPoint::new(-0.022_981_111, 0.561_943_7, 0.826_856_14);
+    let scaled = TestPoint::new(query.x * 16.0, query.y * 16.0, query.z * 16.0);
     let unit_result = locator.locate(&query).unwrap();
     let scaled_result = locator.locate(&scaled).unwrap();
     let (brute, _) = brute_nearest_sphere(diagram.generators(), &query);
@@ -149,7 +149,7 @@ fn locate_many_reports_the_lowest_invalid_query_index() {
     let locator = diagram.build_locator();
     let mut queries = random_sphere_points(20, 113);
     queries[11].z = f32::NAN;
-    queries[4] = UnitVec3::new(0.0, 0.0, 0.0);
+    queries[4] = TestPoint::new(0.0, 0.0, 0.0);
 
     let error = locator.locate_many(&queries).unwrap_err();
     assert_eq!(error.query_index(), 4);

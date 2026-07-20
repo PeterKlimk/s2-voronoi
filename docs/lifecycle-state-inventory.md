@@ -1,6 +1,9 @@
 # Lifecycle State Inventory
 
-**Status:** QUAL-001A first four state-model migrations implemented, 2026-07-19
+**Status:** archived pre-migration inventory; superseded by the final 2026-07-20 pruning pass
+
+Names and reachability statements below describe the audited pre-migration tree, not the current
+API. The resulting model is recorded in [`code-quality-plan.md`](code-quality-plan.md).
 
 This inventory identifies the first correlated cold state to replace with an enum. It records the
 current behavior before changing representation; geometry, trigger policy, validation, and report

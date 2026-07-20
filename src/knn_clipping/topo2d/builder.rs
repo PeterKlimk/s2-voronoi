@@ -28,7 +28,6 @@ pub(crate) enum BuilderFallbackTrigger {
     ProjectionLimit,
     PolygonVertexLimit,
     ClippedAway,
-    ExhaustionRecovery,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +43,6 @@ impl BuilderFallbackRequest {
             BuilderFallbackTrigger::ProjectionLimit => CellFailure::ProjectionInvalid,
             BuilderFallbackTrigger::PolygonVertexLimit => CellFailure::TooManyVertices,
             BuilderFallbackTrigger::ClippedAway => CellFailure::ClippedAway,
-            BuilderFallbackTrigger::ExhaustionRecovery => CellFailure::UnboundedAfterExhaustion,
         }
     }
 }
@@ -107,9 +105,6 @@ pub(crate) struct FallbackBuilder {
     pub(crate) generator: DVec3,
     constraints: Vec<FallbackConstraint>,
     poly: SphericalPoly,
-    /// Which limit forced the fallback handoff; read by handoff tests.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) trigger: BuilderFallbackTrigger,
 }
 
 #[derive(Clone)]
@@ -235,9 +230,7 @@ impl Topo2DBuilder {
             BuilderImpl::Gnomonic(builder) => {
                 FallbackBuilder::from_gnomonic(builder, points, request.trigger)
             }
-            BuilderImpl::Fallback(builder) => {
-                FallbackBuilder::from_fallback(builder, request.trigger)
-            }
+            BuilderImpl::Fallback(builder) => FallbackBuilder::from_fallback(builder),
         };
         // A gnomonic ClippedAway result has already committed the triggering
         // constraint and reduced its f32 chart polygon below three vertices.
@@ -360,7 +353,6 @@ impl FallbackBuilder {
             generator: builder.generator,
             constraints,
             poly: SphericalPoly::from_gnomonic(builder),
-            trigger,
         };
 
         if trigger == BuilderFallbackTrigger::ClippedAway {
@@ -402,13 +394,12 @@ impl FallbackBuilder {
         fallback
     }
 
-    fn from_fallback(builder: &FallbackBuilder, trigger: BuilderFallbackTrigger) -> Self {
+    fn from_fallback(builder: &FallbackBuilder) -> Self {
         Self {
             generator_idx: builder.generator_idx,
             generator: builder.generator,
             constraints: builder.constraints.clone(),
             poly: builder.poly.clone(),
-            trigger,
         }
     }
 }

@@ -12,14 +12,6 @@
 /// robust-mode policy, not a coplanarity acceptance tolerance.
 pub(crate) const COPLANAR_PERTURBATION_SCALE: f64 = 1.0e-2;
 
-/// Expansion applied to the local projected-Delaunay span when sizing its
-/// bounding super-triangle.
-///
-/// This dimensionless `f64` construction policy keeps the synthetic vertices
-/// generously outside the projected point set. It is independent of the
-/// minimum-span conditioning floor.
-pub(crate) const LOCAL_REBUILD_SUPER_TRIANGLE_SCALE: f64 = 1000.0;
-
 /// Generator-z boundary below which the gnomonic tangent-basis builder uses
 /// its explicit south-pole branch.
 ///
@@ -35,17 +27,9 @@ pub(crate) const GNOMONIC_TANGENT_BASIS_SOUTH_POLE_SWITCH_Z: f64 = -0.999_999_9;
 /// constraints, not this synthetic square, determine accepted final geometry.
 pub(crate) const GNOMONIC_INITIAL_BOUNDING_EXTENT: f64 = 1e6;
 
-/// Absolute x-component below which an `f32` direction uses the X axis as a
-/// well-separated reference; otherwise it uses Y.
-///
-/// This is a deterministic basis-conditioning policy, not a geometric
-/// acceptance tolerance. Callers retain the strict `<` branch.
-pub(crate) const REFERENCE_AXIS_COMPONENT_SWITCH_F32: f32 = 0.9;
-
-/// `f64` counterpart of [`REFERENCE_AXIS_COMPONENT_SWITCH_F32`].
-///
-/// The separately typed value avoids inserting casts into promoted geometry
-/// and preserves the existing strict `< 0.9` decisions exactly.
+/// Absolute x-component below which an `f64` direction uses the X axis as a
+/// well-separated reference; otherwise it uses Y. This is a deterministic
+/// basis-conditioning policy, not a geometric acceptance tolerance.
 pub(crate) const REFERENCE_AXIS_COMPONENT_SWITCH_F64: f64 = 0.9;
 
 /// Target mean generators per point-locator grid cell.

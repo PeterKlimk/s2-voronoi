@@ -1,9 +1,6 @@
-//! Production-path regression for the dependency-free, local exact defect
-//! rebuild (the local rebuilding engine). Unlike `local_rebuild.rs`, this file is NOT gated
-//! on `local_rebuild_probe` and pulls in NO `delaunator` crate — it exercises the
-//! exact path a default build ships. The cell fallback may now resolve the
-//! historical mega defects upstream; otherwise this proves the local oracle
-//! reaches strict validity with no external dependency.
+//! Production-path regression for the local exact defect rebuild. The cell
+//! fallback may resolve historical mega defects upstream; otherwise this proves
+//! the Hull3d oracle reaches strict validity.
 //!
 //!   cargo test --release --test local_rebuild
 
@@ -64,34 +61,6 @@ fn default_compute_rebuilds_known_mega_defects() {
     }
 }
 
-/// The projected-oracle diagnostic mode must also rebuild the known mega
-/// defects to strict validity (it shares the grow loop with the default
-/// `Hull3d` mode but uses the shared-stereographic-chart exact 2D Delaunay
-/// oracle). These seeds historically required rebuild, but may now resolve in
-/// the strengthened per-cell fallback before the rebuild trigger.
-#[test]
-fn projected_rebuild_makes_mega_strictly_valid() {
-    let on =
-        || VoronoiConfig::default().with_local_rebuild_mode(LocalRebuildMode::ProjectedDelaunay);
-    for seed in [1u64, 15] {
-        let points = mega_points(100_000, 0.8, seed);
-        let out = compute_with_report(&points, on())
-            .unwrap_or_else(|e| panic!("mega 100k s{seed}: projected build failed: {e:?}"));
-        assert!(
-            out.report.returned_validation.is_strictly_valid(),
-            "mega 100k s{seed}: ProjectedDelaunay rebuild did not reach strict validity: {}",
-            out.report.returned_validation.headline()
-        );
-        // The strengthened cell fallback may resolve the defect before rebuild.
-        // If the coarse rebuild pass is triggered, it must be accepted.
-        assert!(
-            !out.report.local_rebuild.attempted() || out.report.local_rebuild.accepted(),
-            "mega 100k s{seed}: attempted rebuild was rejected: {:?}",
-            out.report.local_rebuild
-        );
-    }
-}
-
 #[test]
 fn accepted_default_rebuild_clears_surviving_residual_report() {
     for seed in [1u64, 2, 15] {
@@ -110,9 +79,8 @@ fn accepted_default_rebuild_clears_surviving_residual_report() {
     }
 }
 
-/// Broader parity sweep against the delaunator baseline: every defective input
-/// the global oracle resolved must also resolve with the local engine. Ignored
-/// (minutes at the larger sizes); run with `--ignored --nocapture`.
+/// Broader Hull3d regression sweep over historically defective inputs. Ignored
+/// because the larger sizes take minutes; run with `--ignored --nocapture`.
 #[test]
 #[ignore = "broad local rebuilding sweep; run with --ignored --nocapture"]
 fn local_rebuild_broad_sweep() {

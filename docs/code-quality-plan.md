@@ -833,3 +833,35 @@ current rationale, owner, and test; all accepted changes pass their semantic and
 the future-facing public surface and the internal lifecycle vocabulary agree; the current
 module/test/knob documentation agrees with the tree; and there is no known repeatable regression
 against the pinned baseline.
+
+## Final pre-API-lock pruning
+
+The 2026-07-20 deletion audit removed the remaining historical and compatibility burden rather
+than carrying it into the first stable surface:
+
+- Hull3d became the sole local-rebuild model. The public projected-Delaunay mode, probe feature,
+  optional `delaunator` dependency, wholly ignored 1,304-line probe target, CGAL helper, A0 capture
+  state, and alternate splice-position branch were removed together.
+- The unchecked `UnitVec3` wrapper was removed. Raw arrays, tuples, checked `SpherePoint` values,
+  optional glam inputs, and closure-based ingest retain the useful input paths without a second
+  public point representation.
+- `ComputeReport` now stores `LocalRebuildStatus` directly and no longer duplicates the detailed
+  mismatch aggregate merely to expose its length.
+- Obsolete clip-table generation, batch-microbench, bin-count benchmark, Windows branch-specific
+  A/B helper, two-line benchmark wrapper, and legacy Fibonacci fixture were removed.
+- Stale dead-code suppressions and test-only mirrors were tightened or deleted, and historical
+  planning/inventory records were excluded from the published crate while remaining in Git.
+- An existing all-features test incompatibility was made explicit: the scalar comparison backend
+  validates the endpoint-key regression but does not promise the SIMD-layout control mismatches.
+
+This phase changes no numerical policy or hot-path algorithm. Its performance risk is code layout,
+so acceptance uses release semantic checks and structural counters; noisy wall time alone is not a
+rejection signal.
+
+Acceptance evidence against `cd187ac` used seven paired, interleaved, single-threaded `perf stat`
+runs per workload. Retired code reduced the native benchmark's `.text` from 2,168,311 to 2,109,647
+bytes (-2.7%). Retired instructions were consistent on ordinary 500k inputs: -0.34% on Fibonacci
+and -0.31% on uniform, while cycles were +0.29% and -1.21%, respectively. The 100k mega path was
+instruction-neutral (-0.04%) with cycles -1.89%. Branch counts were within 0.01% in all three
+workloads. This is performance-neutral acceptance with a smaller code footprint; cache-event and
+wall-clock movement on the shared host was treated as layout/scheduling noise.

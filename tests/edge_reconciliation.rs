@@ -112,7 +112,7 @@ fn mean_spacing() -> f32 {
 }
 
 /// The defect-site cap of the uniform-2M-seed-1 input.
-fn defect_window() -> Vec<voronoi_mesh::UnitVec3> {
+fn defect_window() -> Vec<support::points::TestPoint> {
     let cos_window = (WINDOW_RADIUS_MULT * mean_spacing()).cos();
     let c = SITE_CENTER;
     random_sphere_points(SOURCE_N, 1)
@@ -127,9 +127,9 @@ fn defect_window() -> Vec<voronoi_mesh::UnitVec3> {
 /// bin-boundary lines relative to the site. Order matters: window first,
 /// scaffold second (the defect is input-order sensitive).
 fn with_scaffold(
-    window: &[voronoi_mesh::UnitVec3],
+    window: &[support::points::TestPoint],
     scaffold_n: usize,
-) -> Vec<voronoi_mesh::UnitVec3> {
+) -> Vec<support::points::TestPoint> {
     let cos_excl = (SCAFFOLD_EXCL_MULT * mean_spacing()).cos();
     let c = SITE_CENTER;
     let mut fixture = window.to_vec();
@@ -145,7 +145,7 @@ fn with_scaffold(
 /// valid (both the effective and the returned diagram).
 fn compute_strict(
     name: &str,
-    points: &[voronoi_mesh::UnitVec3],
+    points: &[support::points::TestPoint],
     bins: Option<usize>,
 ) -> ComputeOutput {
     let out = with_bin_count(bins, || {
@@ -271,6 +271,9 @@ fn fallback_f64_vertices_avoid_endpoint_key_mismatch() {
         !os.contains(&EdgeMismatchOrigin::EndpointKeyMismatch),
         "f64 fallback retained the former EndpointKeyMismatch: {os:?}"
     );
+    // The scalar comparison backend does not reproduce the two SIMD-layout
+    // control mismatches, but still exercises the regression assertion above.
+    #[cfg(not(feature = "simd_scalar"))]
     assert!(
         os.contains(&EdgeMismatchOrigin::InBinThirdsMismatch)
             && os.contains(&EdgeMismatchOrigin::InBinUnconsumedCheck),
@@ -344,7 +347,7 @@ fn net_reconcile_backends_agree() {
 #[test]
 #[ignore]
 fn probe_site_scan() {
-    let mut candidates: Vec<(String, Vec<voronoi_mesh::UnitVec3>)> = Vec::new();
+    let mut candidates: Vec<(String, Vec<support::points::TestPoint>)> = Vec::new();
     for seed in 1..=10u64 {
         candidates.push((
             format!("uniform_2m_s{seed}"),
@@ -383,7 +386,7 @@ fn probe_site_scan() {
 #[test]
 #[ignore]
 fn probe_defect_rate_at_scale() {
-    let run = |name: &str, points: Vec<voronoi_mesh::UnitVec3>| {
+    let run = |name: &str, points: Vec<support::points::TestPoint>| {
         let out = with_bin_count(None, || {
             compute_with_report(&points, VoronoiConfig::default())
         });
@@ -425,7 +428,7 @@ fn probe_defect_rate_at_scale() {
 #[test]
 #[ignore]
 fn probe_defect_rate_adversarial() {
-    let run = |name: &str, points: Vec<voronoi_mesh::UnitVec3>| {
+    let run = |name: &str, points: Vec<support::points::TestPoint>| {
         let out = with_bin_count(None, || {
             compute_with_report(&points, VoronoiConfig::default())
         });

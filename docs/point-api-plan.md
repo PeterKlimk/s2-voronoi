@@ -1,6 +1,10 @@
 # Point representation and interoperability plan
 
-**Status:** Stage 0 audited; Option B selected for implementation.
+**Status:** archived decision record; superseded by the final 2026-07-20 pruning pass
+
+References below to the then-current `UnitVec3` surface describe the audited historical tree. The
+final API keeps checked `SpherePoint`, raw `UnitVec3Like` adapters, and closure ingest without the
+second owned point wrapper; see [`code-quality-plan.md`](code-quality-plan.md).
 
 This plan records the public-point decision around the measured output-materialization
 optimization. It compares whether a checked semantic `SpherePoint` earns its additional API and

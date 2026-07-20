@@ -635,7 +635,6 @@ impl Topo2DBuilder {
             generator,
             constraints,
             poly,
-            trigger: super::BuilderFallbackTrigger::ExhaustionRecovery,
         });
         true
     }

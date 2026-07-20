@@ -521,14 +521,7 @@ fn compute_voronoi_knn_clipping_report_core(
     // Surface output-invariant residuals alongside the detection records. If
     // local rebuild was accepted, the returned diagram is strictly valid and
     // these residuals no longer survive to output.
-    let assembly_edge_mismatches: Vec<(u32, u32, live_dedup::EdgeMismatchOrigin)> = state
-        .edge_mismatches
-        .iter()
-        .map(|m| {
-            let (a, b) = edge_reconcile::unpack_edge(m.key.as_u64());
-            (a.min(b), a.max(b), m.origin)
-        })
-        .collect();
+    let assembly_edge_mismatch_count = state.edge_mismatches.len();
     let residual_unpaired_edges: Vec<(u32, u32)> = if local_rebuild_accepted {
         Vec::new()
     } else {
@@ -592,12 +585,9 @@ fn compute_voronoi_knn_clipping_report_core(
             degenerate: degenerate_report,
             returned_validation,
             effective_validation,
-            assembly_edge_mismatch_count: assembly_edge_mismatches.len(),
-            local_rebuild: crate::LocalRebuildReport {
-                status: state.local_rebuild.report_status(),
-            },
+            assembly_edge_mismatch_count,
+            local_rebuild: state.local_rebuild.report_status(),
             output_resolution: state.output_resolution,
-            assembly_edge_mismatches,
             residual_unpaired_edges,
             residual_reconciliation_pairs,
             reconciliation_edge_records: state
@@ -731,21 +721,10 @@ fn summarize_topology(
     summarize_topology_scalar(vertex_count, cells, cell_indices)
 }
 
-/// Whether local rebuilding reached an ordinary outcome or a probe intercepted it.
-#[derive(Clone, Copy)]
-enum LocalRebuildExecution {
-    /// A normal computation reached a user-meaningful local-rebuild outcome.
-    Completed(LocalRebuildStatus),
-    /// The feature-gated probe captured the assembled state before the
-    /// ordinary mode and trigger decisions.
-    #[cfg(feature = "local_rebuild_probe")]
-    DiagnosticCapture,
-}
-
 /// Outcome of local-rebuild processing, for the caller's fail-loud decision.
 #[derive(Clone, Copy)]
 struct LocalRebuildOutcome {
-    execution: LocalRebuildExecution,
+    status: LocalRebuildStatus,
     /// Detection found a low-incidence (degree-1/2) vertex defect. Such a
     /// vertex is strictly-invalid output even when every edge pairs (it fails
     /// `verify_sphere_effective_strict`'s "low-incidence vertex" check), so
@@ -765,42 +744,18 @@ impl LocalRebuildOutcome {
         euler_defect: bool,
     ) -> LocalRebuildOutcome {
         LocalRebuildOutcome {
-            execution: LocalRebuildExecution::Completed(status),
-            low_incidence_defect,
-            euler_defect,
-        }
-    }
-
-    #[cfg(feature = "local_rebuild_probe")]
-    const fn diagnostic_capture(
-        low_incidence_defect: bool,
-        euler_defect: bool,
-    ) -> LocalRebuildOutcome {
-        LocalRebuildOutcome {
-            execution: LocalRebuildExecution::DiagnosticCapture,
+            status,
             low_incidence_defect,
             euler_defect,
         }
     }
 
     const fn accepted(self) -> bool {
-        matches!(
-            self.execution,
-            LocalRebuildExecution::Completed(LocalRebuildStatus::Accepted)
-        )
+        self.status.accepted()
     }
 
-    /// Convert internal execution control into the public report taxonomy.
-    ///
-    /// Probe callers consume the capture side channel and discard the compute
-    /// result. If their callback nevertheless finishes report construction,
-    /// expose no diagnostic-only status through the public API.
     const fn report_status(self) -> LocalRebuildStatus {
-        match self.execution {
-            LocalRebuildExecution::Completed(status) => status,
-            #[cfg(feature = "local_rebuild_probe")]
-            LocalRebuildExecution::DiagnosticCapture => LocalRebuildStatus::NotTriggered,
-        }
+        self.status
     }
 }
 
@@ -956,8 +911,6 @@ fn check_plain_return_signals(
 #[derive(Clone, Copy)]
 struct LocalRebuildDiagnostics {
     debug: bool,
-    #[cfg(feature = "local_rebuild_probe")]
-    use_global_delaunay: bool,
 }
 
 impl LocalRebuildDiagnostics {
@@ -967,9 +920,6 @@ impl LocalRebuildDiagnostics {
     fn read_from_env() -> Self {
         Self {
             debug: std::env::var("VORONOI_MESH_LOCAL_REBUILD_DEBUG").is_ok(),
-            #[cfg(feature = "local_rebuild_probe")]
-            use_global_delaunay: std::env::var("VORONOI_MESH_LOCAL_REBUILD_GLOBAL_DELAUNAY")
-                .is_ok(),
         }
     }
 }
@@ -989,21 +939,6 @@ fn maybe_rebuild_effective(
 ) -> LocalRebuildResult {
     let has_low_incidence = topology.low_incidence;
     let euler_defect = !topology.has_sphere_euler(geometry.cells.len());
-    // A0 probes need the fast assembled state, not the rebuilt one.
-    #[cfg(feature = "local_rebuild_probe")]
-    if local_rebuild::a0_fast_capture_active() {
-        local_rebuild::stash_a0_fast(
-            effective_points,
-            vertex_keys,
-            &geometry.cells,
-            &geometry.cell_indices,
-        );
-        return LocalRebuildResult::unchanged(LocalRebuildOutcome::diagnostic_capture(
-            has_low_incidence,
-            euler_defect,
-        ));
-    }
-
     let local_rebuild_enabled = !matches!(local_rebuild_mode, LocalRebuildMode::Disabled);
     if !local_rebuild_enabled {
         return LocalRebuildResult::unchanged(LocalRebuildOutcome::new(
@@ -1054,68 +989,17 @@ fn maybe_rebuild_effective(
         vertex_keys,
         base_layout,
     );
-    #[cfg(feature = "local_rebuild_probe")]
-    let stats = if diagnostics.use_global_delaunay {
-        local_rebuild::rebuild_with_global_delaunay(
-            effective_points,
-            &mut work,
-            &defect_pairs,
-            merge_affected_cells,
-            LOCAL_REBUILD_GATHER_K,
-            LOCAL_REBUILD_MAX_ROUNDS,
-            diagnostics.debug,
-        )
-    } else if matches!(local_rebuild_mode, LocalRebuildMode::ProjectedDelaunay) {
-        local_rebuild::rebuild_with_projected_delaunay(
-            effective_points,
-            grid,
-            &mut rebuild_scratch,
-            &mut work,
-            &defect_pairs,
-            merge_affected_cells,
-            LOCAL_REBUILD_GATHER_K,
-            LOCAL_REBUILD_MAX_ROUNDS,
-            diagnostics.debug,
-        )
-    } else {
-        local_rebuild::rebuild_with_local_hull(
-            effective_points,
-            grid,
-            &mut rebuild_scratch,
-            &mut work,
-            &defect_pairs,
-            merge_affected_cells,
-            LOCAL_REBUILD_GATHER_K,
-            LOCAL_REBUILD_MAX_ROUNDS,
-            diagnostics.debug,
-        )
-    };
-    #[cfg(not(feature = "local_rebuild_probe"))]
-    let stats = if matches!(local_rebuild_mode, LocalRebuildMode::ProjectedDelaunay) {
-        local_rebuild::rebuild_with_projected_delaunay(
-            effective_points,
-            grid,
-            &mut rebuild_scratch,
-            &mut work,
-            &defect_pairs,
-            merge_affected_cells,
-            LOCAL_REBUILD_GATHER_K,
-            LOCAL_REBUILD_MAX_ROUNDS,
-            diagnostics.debug,
-        )
-    } else {
-        local_rebuild::rebuild_with_local_hull(
-            effective_points,
-            grid,
-            &mut rebuild_scratch,
-            &mut work,
-            &defect_pairs,
-            merge_affected_cells,
-            LOCAL_REBUILD_GATHER_K,
-            LOCAL_REBUILD_MAX_ROUNDS,
-            diagnostics.debug,
-        )
-    };
+    let stats = local_rebuild::rebuild_with_local_hull(
+        effective_points,
+        grid,
+        &mut rebuild_scratch,
+        &mut work,
+        &defect_pairs,
+        merge_affected_cells,
+        LOCAL_REBUILD_GATHER_K,
+        LOCAL_REBUILD_MAX_ROUNDS,
+        diagnostics.debug,
+    );
     // No splices means the local rebuild did not modify `work` (a `splice_generator`
     // call is the only mutation, tracked 1:1 by `spliced_generators`). Skip the
     // flatten + full-diagram clone + validation of an unchanged diagram. See
@@ -1919,8 +1803,7 @@ mod tests {
     use crate::live_dedup::{CellBuildError, CellFailure};
     use crate::timing::TimingBuilder;
     use crate::{
-        LocalRebuildMode, LocalRebuildReport, LocalRebuildStatus, PreprocessMode, VoronoiConfig,
-        VoronoiError,
+        LocalRebuildMode, LocalRebuildStatus, PreprocessMode, VoronoiConfig, VoronoiError,
     };
     use glam::Vec3;
 
@@ -2279,43 +2162,20 @@ mod tests {
             (LocalRebuildStatus::Rejected, true, false),
             (LocalRebuildStatus::Accepted, true, true),
         ] {
-            let report = LocalRebuildReport { status };
-            assert_eq!(report.attempted(), attempted, "status={status:?}");
-            assert_eq!(report.accepted(), accepted, "status={status:?}");
+            assert_eq!(status.attempted(), attempted, "status={status:?}");
+            assert_eq!(status.accepted(), accepted, "status={status:?}");
         }
 
         let points = fib_sphere(64);
         let clean = crate::compute_with_report(&points, VoronoiConfig::default()).expect("clean");
-        assert_eq!(
-            clean.report.local_rebuild.status,
-            LocalRebuildStatus::NotTriggered
-        );
+        assert_eq!(clean.report.local_rebuild, LocalRebuildStatus::NotTriggered);
 
         let disabled = crate::compute_with_report(
             &points,
             VoronoiConfig::default().with_local_rebuild_mode(LocalRebuildMode::Disabled),
         )
         .expect("disabled");
-        assert_eq!(
-            disabled.report.local_rebuild.status,
-            LocalRebuildStatus::Disabled
-        );
-    }
-
-    #[cfg(feature = "local_rebuild_probe")]
-    #[test]
-    fn diagnostic_capture_stays_internal_to_the_public_status_model() {
-        let points = fib_sphere(64);
-        let (result, captured) = super::local_rebuild::with_a0_fast_capture(|| {
-            crate::compute_with_report(&points, VoronoiConfig::default())
-        });
-        let output = result.expect("diagnostic capture build");
-
-        assert!(captured.is_some());
-        assert_eq!(
-            output.report.local_rebuild.status,
-            LocalRebuildStatus::NotTriggered
-        );
+        assert_eq!(disabled.report.local_rebuild, LocalRebuildStatus::Disabled);
     }
 
     fn fib_sphere(n: usize) -> Vec<[f32; 3]> {

@@ -13,15 +13,15 @@ Status: pre-release (0.1). The API is not yet stable. Stable Rust, MSRV 1.88.
 ## Quickstart
 
 ```rust
-use voronoi_mesh::{compute, UnitVec3};
+use voronoi_mesh::compute;
 
 let points = vec![
-    UnitVec3::new(1.0, 0.0, 0.0),
-    UnitVec3::new(0.0, 1.0, 0.0),
-    UnitVec3::new(0.0, 0.0, 1.0),
-    UnitVec3::new(-1.0, 0.0, 0.0),
-    UnitVec3::new(0.0, -1.0, 0.0),
-    UnitVec3::new(0.0, 0.0, -1.0),
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0, 1.0],
+    [-1.0, 0.0, 0.0],
+    [0.0, -1.0, 0.0],
+    [0.0, 0.0, -1.0],
 ];
 
 let diagram = compute(&points)?;
@@ -40,10 +40,9 @@ let vertex_xyz: &[[f32; 3]] = diagram.vertices_xyz();
 Inputs are assumed unit-normalized. They are canonicalized once at entry (renormalized in f64,
 rounded back to f32), so `generators()` may differ from the raw input by ~1 ulp.
 
-Raw f32 input can be supplied as `UnitVec3`, `[f32; 3]`, `(f32, f32, f32)`, or—behind the
-`glam` feature—`glam::Vec3`. `UnitVec3` is an unchecked input adapter: its public fields make
-bulk import convenient, but it is never used to certify stored output. Diagram generators,
-vertices, centroids, and Lloyd targets use `SpherePoint`, whose private packed `[f32; 3]` field
+Raw f32 input can be supplied as `[f32; 3]`, `(f32, f32, f32)`, `SpherePoint`, or—behind the
+`glam` feature—`glam::Vec3`. Diagram generators, vertices, centroids, and Lloyd targets use
+`SpherePoint`, whose private packed `[f32; 3]` field
 guarantees finite coordinates within `2 * f32::EPSILON` of unit squared length. Use `to_array()`,
 `as_array()`, component methods, or the zero-copy `generators_xyz()` / `vertices_xyz()` views to
 export into another math, rendering, or serialization format.
@@ -188,19 +187,10 @@ Single-threaded, ~1.8s at 1M. Per-build peak memory is roughly 0.65 KB/point.
 - `serde`: `Serialize`/checked `Deserialize` for diagram types; invalid stored sphere points are
   rejected rather than silently normalized.
 
-Other Cargo features (`timing`, `profiling`, `microbench`, `local_rebuild_probe`, `manual_probes`,
+Other Cargo features (`timing`, `profiling`, `microbench`, `manual_probes`,
 `simd_scalar`, `fma`, and `tools`) are internal repository instrumentation, comparison, benchmark,
 or probe hooks. They are not semver-covered API. See [performance.md](docs/performance.md) for the
 supported benchmark workflows.
-
-## Development documents
-
-- [Active triage and work log](docs/work-log.md)
-- [Roadmap](ROADMAP.md)
-- [Algorithmic performance ideas](docs/algorithmic-performance-ideas.md)
-- [Feature and API wishlist](docs/feature-api-wishlist.md)
-- [Correctness and safety audit record](docs/audit-triage.md)
-- [Output-resolution policy](docs/output-resolution-policy.md)
 
 ## License
 

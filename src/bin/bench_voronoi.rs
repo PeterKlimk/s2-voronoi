@@ -20,7 +20,7 @@ use std::io::{self, Write};
 use std::time::Instant;
 #[cfg(feature = "profiling")]
 use std::{collections::hash_map::DefaultHasher, hash::Hasher};
-use voronoi_mesh::{LocalRebuildMode, PreprocessMode, UnitVec3, VoronoiConfig};
+use voronoi_mesh::{LocalRebuildMode, PreprocessMode, VoronoiConfig};
 
 fn parse_count(s: &str) -> Result<usize, String> {
     let s = s.to_lowercase();
@@ -54,14 +54,6 @@ fn fibonacci_sphere_point(n: usize, i: usize) -> Vec3 {
     Vec3::new((r * theta.cos()) as f32, y as f32, (r * theta.sin()) as f32)
 }
 
-fn legacy_fibonacci_sphere_point(n: usize, i: usize) -> Vec3 {
-    const LEGACY_PHI: f32 = 1.618_034;
-    let y = 1.0 - (2.0 * i as f32 + 1.0) / n as f32;
-    let r = (1.0 - y * y).sqrt();
-    let theta = std::f32::consts::TAU * i as f32 / LEGACY_PHI;
-    Vec3::new(r * theta.cos(), y, r * theta.sin())
-}
-
 fn fibonacci_sphere_points_with_rng<R: Rng>(n: usize, jitter: f32, rng: &mut R) -> Vec<Vec3> {
     (0..n)
         .map(|i| {
@@ -72,23 +64,6 @@ fn fibonacci_sphere_points_with_rng<R: Rng>(n: usize, jitter: f32, rng: &mut R) 
                 p = (p + tangent * jitter).normalize();
             }
 
-            p
-        })
-        .collect()
-}
-
-fn legacy_fibonacci_sphere_points_with_rng<R: Rng>(
-    n: usize,
-    jitter: f32,
-    rng: &mut R,
-) -> Vec<Vec3> {
-    (0..n)
-        .map(|i| {
-            let mut p = legacy_fibonacci_sphere_point(n, i);
-            if jitter > 0.0 {
-                let tangent = random_tangent_vector(p, rng);
-                p = (p + tangent * jitter).normalize();
-            }
             p
         })
         .collect()
@@ -265,8 +240,7 @@ struct Args {
     #[arg(long)]
     lloyd: bool,
 
-    /// Point distribution. Well-distributed: fib (default), fib-legacy
-    /// (historical f32-phase generator), uniform (true random).
+    /// Point distribution. Well-distributed: fib (default), uniform (true random).
     /// Density-contrast: clustered (caps mixture), bimodal (one dense
     /// cap over a sparse bg), gradient (smooth density ~exp(k·z)), outlier
     /// (uniform plus one tiny pile), splittable (many cell-scale clusters),
@@ -345,11 +319,7 @@ fn generate_points(n: usize, seed: u64, lloyd: bool, dist: &str, param: f64) -> 
     }
     let jitter_scale = if lloyd { 0.1 } else { 0.25 };
     let jitter = mean_spacing(n) * jitter_scale;
-    let mut points = if dist == "fib-legacy" {
-        legacy_fibonacci_sphere_points_with_rng(n, jitter, &mut rng)
-    } else {
-        fibonacci_sphere_points_with_rng(n, jitter, &mut rng)
-    };
+    let mut points = fibonacci_sphere_points_with_rng(n, jitter, &mut rng);
     if lloyd {
         lloyd_relax_kmeans(&mut points, 2, 20, &mut rng);
     }
@@ -543,10 +513,7 @@ fn format_num(n: usize) -> String {
 
 fn validate_output(points: &[Vec3], preprocess: bool, local_rebuild: bool, dist: &str, seed: u64) {
     println!("\nRunning strict validation and sampled quality checks...");
-    let unit_points: Vec<UnitVec3> = points
-        .iter()
-        .map(|p| UnitVec3::new(p.x, p.y, p.z))
-        .collect();
+    let unit_points: Vec<[f32; 3]> = points.iter().map(|p| p.to_array()).collect();
 
     let t0 = Instant::now();
     let output = voronoi_mesh::compute_with_report(
@@ -619,7 +586,7 @@ struct BenchResult {
 }
 
 fn run_benchmark_with_config(
-    points: &[UnitVec3],
+    points: &[[f32; 3]],
     config: VoronoiConfig,
     #[cfg(feature = "profiling")] point_envelope_audit: bool,
 ) -> BenchResult {
@@ -751,10 +718,7 @@ fn main() {
 
         let t_gen = Instant::now();
         let points = generate_points(*n, args.seed, args.lloyd, &args.dist, args.dist_param);
-        let unit_points: Vec<UnitVec3> = points
-            .iter()
-            .map(|p| UnitVec3::new(p.x, p.y, p.z))
-            .collect();
+        let unit_points: Vec<[f32; 3]> = points.iter().map(|p| p.to_array()).collect();
         let gen_time = t_gen.elapsed().as_secs_f64() * 1000.0;
         println!("Point generation: {:.1}ms", gen_time);
 
@@ -855,7 +819,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{fibonacci_sphere_point, legacy_fibonacci_sphere_point, PHI};
+    use super::{fibonacci_sphere_point, PHI};
 
     fn longitude(point: glam::Vec3) -> f64 {
         (point.z as f64).atan2(point.x as f64)
@@ -870,7 +834,6 @@ mod tests {
         let n = 3_000_000;
         let expected_step = wrap_angle(std::f64::consts::TAU / PHI);
         let mut corrected_max_error = 0.0_f64;
-        let mut legacy_max_error = 0.0_f64;
 
         for i in 2_500_000..2_500_128 {
             let corrected_step = wrap_angle(
@@ -879,21 +842,11 @@ mod tests {
             );
             corrected_max_error =
                 corrected_max_error.max(wrap_angle(corrected_step - expected_step).abs());
-
-            let legacy_step = wrap_angle(
-                longitude(legacy_fibonacci_sphere_point(n, i + 1))
-                    - longitude(legacy_fibonacci_sphere_point(n, i)),
-            );
-            legacy_max_error = legacy_max_error.max(wrap_angle(legacy_step - expected_step).abs());
         }
 
         assert!(
             corrected_max_error < 1.0e-5,
             "promoted Fibonacci phase drifted by {corrected_max_error:e} radians"
-        );
-        assert!(
-            legacy_max_error > 0.1,
-            "legacy fixture no longer demonstrates f32 phase quantization: {legacy_max_error:e}"
         );
     }
 }

@@ -181,13 +181,14 @@ impl ComputeOutput {
 
 Requiring `ComputeOutput` rather than an arbitrary `SphericalVoronoi` provides the effective
 preprocessed diagram, original-input weld aliases, and the authoritative validation report. The
-operation first rejects a source with post-repair residuals or a non-strict preferred validation.
-It then applies one global, deterministic transaction to the effective diagram and composes the
-result back to original input indices. A source with no cell-killing exact-zero component succeeds
-as an identity conversion to the distinct mesh type. The method is consuming so the implementation
-can discard duplicated returned/effective diagrams and reuse large buffers. A failure owns and
-returns the original successful `ComputeOutput` through `CellElisionError`, avoiding both data loss
-and a defensive whole-diagram clone. This remains a requested cold `O(V + E + F)` operation and
+operation first rejects a source with post-reconciliation residuals or a non-strict preferred
+validation. It then applies one global, deterministic transaction to the effective diagram and
+composes the result back to original input indices. A source with no cell-killing exact-zero
+component succeeds as an identity conversion to the distinct mesh type. The method is consuming,
+so the implementation can discard duplicated returned/effective diagrams and reuse large buffers.
+A failure owns and returns the original successful `ComputeOutput` through `CellElisionError`,
+avoiding both data loss and a defensive whole-diagram clone. This remains a requested cold
+`O(V + E + F)` operation and
 never runs from `compute` or `compute_with_report` implicitly.
 
 The minimal types are conceptually:
@@ -195,12 +196,12 @@ The minimal types are conceptually:
 ```rust,ignore
 pub struct SphericalCellMesh {
     // compact spherical geometry and ordered face cycles
-    vertices: Vec<UnitVec3>,
+    vertices: Vec<SpherePoint>,
     cells: Vec<CellData>,
     cell_indices: Vec<u32>,
 
     // provenance, not a nearest-site claim
-    cell_source_sites: Vec<UnitVec3>,
+    cell_source_sites: Vec<SpherePoint>,
     cell_to_input: Vec<u32>,
     input_to_cell: Vec<u32>, // private NO_CELL sentinel
 }
@@ -218,7 +219,7 @@ The private sentinel keeps the input mapping at four bytes per input while acces
 - `num_source_inputs()`;
 - `cell_for_input(input) -> Option<usize>` plus a checked out-of-range form;
 - `source_input_index(cell) -> usize` plus a checked form; and
-- `source_site(cell) -> UnitVec3` plus a checked form.
+- `source_site(cell) -> SpherePoint` plus a checked form.
 
 Welded inputs all map to the same `Some(cell)`. If their effective cell is elided, every original
 member maps to `None`. `source_input_index(cell)` is the smallest original index in the surviving

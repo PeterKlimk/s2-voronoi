@@ -541,10 +541,9 @@ takeover path; this table is too small to create a useful memory-envelope win.
 
 Live dedup retains vertices and cell references in shard-owned buffers, then assembly allocates and
 fills contiguous global vertex, cell-metadata, and cell-index buffers. Final diagram construction
-subsequently maps the backend's `Vec3` generators and vertices into `UnitVec3` vectors and maps
-`VoronoiCell` into the private cell-storage type. The public representation requires contiguous
-vertex storage and contiguous index windows for `cell()`, but these intermediate-to-final copies
-are not themselves part of that contract.
+transfers the certified backend `Vec3` generator and vertex allocations directly into packed
+`SpherePoint` storage and maps `VoronoiCell` into the private cell-storage type. The public
+representation requires contiguous vertex storage and contiguous index windows for `cell()`.
 
 A profiling-only ablation measured the assembly destination writes without changing candidate or
 topology work. Both modes ran normal preprocessing, construction, construction-time reconciliation,

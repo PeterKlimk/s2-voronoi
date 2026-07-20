@@ -11,17 +11,17 @@
 //! at O(n) defects (a structured grid produces thousands).
 
 mod support;
-use support::points::cubed_sphere_points;
+use support::points::{cubed_sphere_points, TestPoint};
 
 use std::f32::consts::PI;
-use voronoi_mesh::{compute, compute_with_report, validation::validate, UnitVec3, VoronoiConfig};
+use voronoi_mesh::{compute, compute_with_report, validation::validate, VoronoiConfig};
 
-fn u(x: f32, y: f32, z: f32) -> UnitVec3 {
+fn u(x: f32, y: f32, z: f32) -> TestPoint {
     let l = (x * x + y * y + z * z).sqrt();
-    UnitVec3::new(x / l, y / l, z / l)
+    TestPoint::new(x / l, y / l, z / l)
 }
 
-fn assert_valid(name: &str, pts: &[UnitVec3]) {
+fn assert_valid(name: &str, pts: &[TestPoint]) {
     let diagram = compute(pts).unwrap_or_else(|e| panic!("{name}: compute failed: {e:?}"));
     let report = validate(&diagram);
     assert!(
@@ -95,9 +95,9 @@ fn cubed_sphere_grid_degree4_at_scale() {
 /// `n` generators equally spaced on the latitude-45°N small circle (exactly
 /// cocircular) plus a south-pole apex: the true Voronoi has a single degree-`n`
 /// vertex at the north pole. Exact cocircular clique fixture.
-fn cocircular_pyramid(n: usize) -> Vec<UnitVec3> {
+fn cocircular_pyramid(n: usize) -> Vec<TestPoint> {
     let r = (0.5f32).sqrt(); // latitude 45N
-    let mut pts: Vec<UnitVec3> = (0..n)
+    let mut pts: Vec<TestPoint> = (0..n)
         .map(|i| {
             let t = 2.0 * PI * i as f32 / n as f32;
             u(r * t.cos(), r * t.sin(), r)
