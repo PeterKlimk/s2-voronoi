@@ -5,6 +5,26 @@ July 2026 kernel pass. Wall-clock measurements taken while the shared machine is
 non-decisive. Retired instructions and branches are the primary behavioral signals; timing-only
 counts are used for workload censuses.
 
+## Pass closeout
+
+The multi-model shortlist is exhausted. The measurement infrastructure and read-only oracles were
+retained; every production behavior experiment was rejected and reverted. The branch names below
+are archival experiment labels, not outstanding merge candidates.
+
+| Family | Branches | Final decision |
+| --- | --- | --- |
+| Fixed smaller packed prefix | `agent/kernel-demand-prefix` | Rejected: the 8-slot first batch saved 0.315% instructions on Fibonacci but added 2.777% on uniform and increased branches on both. |
+| Compact high-key overflow | `agent/kernel-compact-overflow`, `agent/kernel-compact-top64-cost`, `agent/kernel-compact-overflow-rebuild` | Shadow census retained; heap-based additive and true-replacement forms rejected at +5.1--11.4% and +6.9--7.7% instructions respectively. |
+| Shell-cell rejection | `agent/kernel-shell-cell-reject`, `agent/kernel-shell-cell-cap`, `agent/kernel-shell-cell-cap-skip` | Exact and conservative-cap oracles retained; the order-preserving production form was rejected at +1.8--3.5% instructions. |
+
+The negative results share a useful conclusion: the existing width-one unchanged clip and
+append-then-partition selection paths are already cheap. A successor should remove dot/key work
+before those paths, change the cutoff without per-key maintenance, or replace repeated per-cell
+work with a regional algorithm. The untried follow-ups are recorded in
+[`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md#post-review-kernel-hypotheses-untried);
+`PERF-002` in [`work-log.md`](work-log.md#perf-002--post-review-kernel-hypotheses) owns the next
+measurement gate.
+
 ## Common census baseline
 
 - Branch: `agent/kernel-census`

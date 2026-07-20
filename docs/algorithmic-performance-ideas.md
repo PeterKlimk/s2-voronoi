@@ -37,6 +37,76 @@ The measured result is also recorded in [`performance.md`](performance.md).
 
 ## Candidate ideas
 
+### Post-review kernel hypotheses — untried
+
+The July 2026 multi-model kernel shortlist has been measured and closed. Its tried branches,
+counter results, and retained oracles are summarized in the
+[`kernel optimization experiment log`](kernel-optimization-experiment-log.md#pass-closeout).
+The following are new hypotheses derived from those failures. None is an accepted optimization or
+authorization to combine experiments; each starts with its stated read-only gate.
+
+#### 1. Center-informed one-shot high-threshold correction
+
+The packed high threshold is currently selected before candidate dots are observed, using a count
+model whose distributional assumption substantially over-retains keys on clustered inputs. The
+failed compact-overflow experiments tried to repair that overshoot by maintaining an exact top 64
+while all high keys streamed past. The per-key heap comparison and repair was decisively more
+expensive than the append-then-partition work it removed.
+
+A different cost model is to correct the threshold once, before the dominant ring scan. Use the
+already-computed directed center-cell dots to estimate a group-level normalized dot distribution,
+then raise (never lower) the per-query high threshold for occupancy-rebuilt, ordinary non-band
+groups predicted to overshoot. Ring dots below the corrected threshold become part of the existing
+lazy tail. Exact candidate order, the security floor, and fallback behavior remain unchanged; a
+query that needs the demoted band reconstructs it through the existing exact tail path.
+
+This would leave candidate dot count unchanged but could remove ring-key construction and writes,
+allocator growth, partition depth, and sorting without a data-dependent selection operation on
+every high key. Its first experiment is timing-only: build a small center-derived histogram,
+simulate several corrected thresholds against the exact ring keys already produced, and record
+retained keys, the number of queries whose observed consumed depth crosses each threshold, and the
+corresponding exact tail-rescan dots. Reject it if the center sample does not predict ring
+overshoot, if productive rescans recover most saved work, or if the eligible key volume is too
+small to repay even gated histogram maintenance.
+
+#### 2. Seed-first micro-batched packed preparation
+
+Incoming edge checks are real neighboring constraints and are clipped before the ordinary query
+stream, but a complete same-grid-cell group is prepared before any cell in that group is emitted.
+Consequently, later generators pay their full row of the group query-candidate matrix even when
+constraints forwarded from earlier work may already make the cell certifiable or sharply reduce
+its remaining demand.
+
+A possible restructuring would process a group in small blocks, apply every currently available
+forwarded constraint first, and prepare packed ring work only for unresolved queries. A four- or
+eight-query block may retain enough of the current SIMD sharing while allowing newly completed
+cells to seed the next block. The upside is deletion of complete query rows rather than shorter
+already-produced batches; the main risk is that lost group-wide SIMD and more preparation
+boundaries cost more than the skipped rows.
+
+Do not restructure the driver first. Add an exact timing-only oracle after seed clipping and count
+cells that would need zero packed candidates if the already-prepared initial exact frontier bound
+were available. If that ceiling is material, test how much survives replacement by a cheap
+conservative grid-cell bound. Only then compare micro-block sizes and account for dot rows saved,
+extra preparation calls, forwarded-edge volume, and lost SIMD occupancy.
+
+#### 3. Certified dense-region local-hull handoff
+
+For `mega`, great-circle, and isolated high-work regions, many generators can repeatedly search and
+clip against nearly the same large candidate set. Instead, run the existing robust local 3D hull
+once over a dense region plus a guard ring, derive cells for several interior generators together,
+and accept only cells certified independent of points outside the region. Boundary or uncertified
+cells remain on the current path. This is a concrete regional form of the progress-aware handoff
+described below: it attempts to replace repeated query-by-candidate work rather than accelerate
+one query.
+
+The first gate is an offline replay, not a production handoff. Capture high-work groups from the
+existing telemetry, run the local hull over progressively larger guard regions, compare the
+derived cells and strict validation outcome with the production result, and measure the crossover
+against the baseline work for those same groups. Promotion also requires a deterministic boundary
+certificate and a stitching plan that cannot turn an ordinary successful construction into a
+failure.
+
 ### Selected-neighbor constraint batches — closed negative 2026-07-16
 
 The directed neighbor pipeline collapses selected, dot-bearing batches to slot ids before the
