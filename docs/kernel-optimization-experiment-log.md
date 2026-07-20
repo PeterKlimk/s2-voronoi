@@ -103,3 +103,84 @@ an order of magnitude below total high-key materialization, but a production des
 streaming top-64 maintenance on all 17.1M high keys. Do not build the behavioral version until a
 cheap bounded-selection design has an instruction-cost model or isolated microbenchmark capable
 of overcoming that eager cost.
+
+## Exact shell-cell oracle branch
+
+- Branch: `agent/kernel-shell-cell-reject`
+- Commit: `d6c6bef` (`perf: add shell-cell rejection oracle`)
+- Timing-only exact oracle at frozen shell-layer start. It groups emitted residents by grid cell,
+  tests every not-yet-attempted resident against the current gnomonic polygon, and records the
+  ideal cell/slot ceiling plus fallback-after-hit exposure.
+- The ordinary `tools` release `.text` is byte-identical to the common census baseline.
+- Validation: timing-feature library tests (271 passed, 5 ignored), timing-feature all-target
+  clippy, and the shell grouping/one-shot snapshot test passed.
+
+The useful class is `later_all`: later shell layers whose cells emit every resident. First-layer
+center-directed cells expose only a directional subset, so a whole-cell certificate is naturally
+too coarse there.
+
+| Workload | Exact hit cells | Exact hit slots | Eligible slots | Exact hit slots |
+| --- | ---: | ---: | ---: | ---: |
+| 100k clustered, seed 1 | 97,403 / 102,472 | 3,959,094 | 4,170,867 | 94.9% |
+| 500k uniform, seed 1 | 8,500 / 8,675 | 155,545 | 158,423 | 98.2% |
+| 100k mega, default seed | 177,271 / 211,777 | 2,451,104 | 3,033,579 | 80.8% |
+
+The upper bound is strong, but the exact per-resident predicate is not a candidate implementation:
+clustered alone performs 3.73M exact predicate calls to find 3.96M hit slots. More importantly, the
+default mega run records three later spherical handoffs with 5,244 previously certified slots
+still unconsumed. Gnomonic monotonicity therefore does not authorize deleting a whole layer's
+residents from the stream.
+
+## Conservative shell-cell cap branch
+
+- Branch: `agent/kernel-shell-cell-cap`
+- Commit: `7587bed` (`perf: measure shell cell cap certificate`)
+- Timing-only cell certificate. For each polygon vertex it minimizes the exact chord-bisector
+  half-space value over the grid cell's conservative spherical cap and the global canonical-point
+  norm envelope. It does not load individual residents.
+- Differential comparison against the exact oracle reported zero false-positive cells/slots on
+  clustered, uniform, and two mega seeds.
+- The ordinary `tools` release `.text` remains byte-identical to `d6c6bef`.
+- Validation: timing-feature library tests (271 passed, 5 ignored), timing-feature all-target
+  clippy, and ordinary-release codegen comparison passed.
+
+| Workload | Cap hit cells | Cap hit slots | Of exact hit slots | Of eligible slots |
+| --- | ---: | ---: | ---: | ---: |
+| 100k clustered, seed 1 | 75,368 | 3,300,214 | 83.4% | 79.1% |
+| 500k uniform, seed 1 | 7,211 | 132,909 | 85.4% | 83.9% |
+| 100k mega, default seed | 164,503 | 2,371,392 | 96.7% | 78.2% |
+
+The fallback hazard survives the conservative filter: on default-seed mega, two handoffs occur
+with 4,757 cap-certified slots still unconsumed. Any future pre-scan rejection must retain exact
+logical ordering or supply a correct replay/restart mechanism.
+
+### Order-preserving production prototype
+
+A separate `agent/kernel-shell-cell-cap-skip` prototype retained every candidate in the existing
+dot/sort stream and in its existing logical position. It bypassed only the gnomonic clip for a
+cap-certified candidate and disabled all later bypasses immediately after spherical handoff. This
+avoided the replay ambiguity, but it did not remove resident dot products, key construction, or
+sorting. The exploratory changes were rejected and reverted without a commit after validation.
+
+Seven interleaved pinned, native, single-threaded `perf stat` pairs, no preprocessing:
+
+| Workload | Instructions | Branches | Branch misses | Cycles |
+| --- | ---: | ---: | ---: | ---: |
+| 100k clustered, seed 1 | +1.804% | +3.401% | +1.435% | -2.02% mean, noisy |
+| 100k mega, default seed | +3.499% | +2.905% | +8.148% | +11.56% |
+
+The deterministic instruction and branch losses reject this form. The existing unchanged clip is
+already cheap (including its radial early rejection), so a polygon-versus-cap test plus per-layer
+metadata and range membership costs more than bypassing the remaining clip plumbing. The mega
+cycle result was adverse in all seven pairs (+4.1% to +18.7%), despite wall clock being otherwise
+ignored on the busy host.
+
+Raw counter files for this workspace session:
+
+- `/tmp/shell_cap_clustered.csv`
+- `/tmp/shell_cap_mega.csv`
+
+Do not promote the cap certificate merely because its geometric coverage is high. It becomes
+interesting again only as part of a design that removes earlier work—resident dot/key generation
+or sorting—while preserving exact stream order across a possible later fallback. That is a
+different, more structural experiment.
