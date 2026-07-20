@@ -19,6 +19,8 @@ pub(crate) use weld::{is_weld_pair, MAX_RETAINED_WELD_PAIRS};
 pub(crate) use packed_knn::PackedQuery;
 pub(crate) use projection::{cell_to_face_ij, face_uv_to_3d, st_to_uv};
 use projection::{face_uv_to_cell, point_to_face_uv};
+#[cfg(feature = "timing")]
+pub(crate) use query::ShellOracleLayer;
 pub(crate) use query::{
     DirectedEligibility, DirectedNeighborBatch, DirectedNeighborBatchSource,
     DirectedNeighborFrontier, DirectedNeighborStream,

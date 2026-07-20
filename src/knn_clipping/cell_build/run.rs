@@ -68,6 +68,13 @@ impl AttemptedNeighbors {
         debug_assert!(slot < self.seen_stamp.len(), "neighbor slot out of bounds");
         self.seen_stamp[slot] = self.stamp;
     }
+
+    #[cfg(feature = "timing")]
+    #[inline]
+    fn contains(&self, slot: usize) -> bool {
+        debug_assert!(slot < self.seen_stamp.len(), "neighbor slot out of bounds");
+        self.seen_stamp[slot] == self.stamp
+    }
 }
 
 pub(crate) struct CellBuildContext {
@@ -163,6 +170,39 @@ pub(crate) struct CellBuildStats {
     shell_layer_prefix_consumed: usize,
     #[cfg(feature = "timing")]
     shell_midlayer_terminations: usize,
+    /// Exact shell-cell oracle classes: first-layer EmitAll,
+    /// first-layer center-directed, later-layer EmitAll, later-layer
+    /// center-directed.
+    #[cfg(feature = "timing")]
+    shell_oracle_tested_cells: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_eligible_slots: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_already_attempted_slots: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_predicate_tests: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_hit_cells: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_hit_slots: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_layers: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_unbounded_layers: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_fallback_layers: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_traversed_cells: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_transit_cells: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_empty_cells: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_baseline_visited_hit_slots: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_fallback_after_hit_events: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_fallback_remaining_slots: usize,
     #[cfg(feature = "timing")]
     packed_exact_slots_visited: [usize; 4],
     #[cfg(feature = "timing")]
@@ -227,6 +267,24 @@ impl CellBuildStats {
             self.shell_layer_slots,
             self.shell_layer_prefix_consumed,
             self.shell_midlayer_terminations,
+        );
+        #[cfg(feature = "timing")]
+        cell_sub.add_shell_oracle(
+            self.shell_oracle_tested_cells,
+            self.shell_oracle_eligible_slots,
+            self.shell_oracle_already_attempted_slots,
+            self.shell_oracle_predicate_tests,
+            self.shell_oracle_hit_cells,
+            self.shell_oracle_hit_slots,
+            self.shell_oracle_layers,
+            self.shell_oracle_unbounded_layers,
+            self.shell_oracle_fallback_layers,
+            self.shell_oracle_traversed_cells,
+            self.shell_oracle_transit_cells,
+            self.shell_oracle_empty_cells,
+            self.shell_oracle_baseline_visited_hit_slots,
+            self.shell_oracle_fallback_after_hit_events,
+            self.shell_oracle_fallback_remaining_slots,
         );
         #[cfg(feature = "timing")]
         cell_sub.add_packed_batch_usage(
@@ -336,6 +394,38 @@ pub(super) struct BuildCounters {
     #[cfg(feature = "timing")]
     shell_midlayer_terminations: usize,
     #[cfg(feature = "timing")]
+    shell_oracle_tested_cells: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_eligible_slots: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_already_attempted_slots: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_predicate_tests: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_hit_cells: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_hit_slots_by_class: [usize; 4],
+    #[cfg(feature = "timing")]
+    shell_oracle_layers: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_unbounded_layers: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_fallback_layers: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_traversed_cells: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_transit_cells: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_empty_cells: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_hit_slot_ids: Vec<u32>,
+    #[cfg(feature = "timing")]
+    shell_oracle_baseline_visited_hit_slots: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_fallback_after_hit_events: usize,
+    #[cfg(feature = "timing")]
+    shell_oracle_fallback_remaining_slots: usize,
+    #[cfg(feature = "timing")]
     packed_exact_batch_usage_counts: [usize; 2],
     #[cfg(feature = "timing")]
     packed_exact_slots_visited: [usize; 4],
@@ -386,6 +476,38 @@ impl BuildCounters {
             #[cfg(feature = "timing")]
             shell_midlayer_terminations: 0,
             #[cfg(feature = "timing")]
+            shell_oracle_tested_cells: [0; 4],
+            #[cfg(feature = "timing")]
+            shell_oracle_eligible_slots: [0; 4],
+            #[cfg(feature = "timing")]
+            shell_oracle_already_attempted_slots: [0; 4],
+            #[cfg(feature = "timing")]
+            shell_oracle_predicate_tests: [0; 4],
+            #[cfg(feature = "timing")]
+            shell_oracle_hit_cells: [0; 4],
+            #[cfg(feature = "timing")]
+            shell_oracle_hit_slots_by_class: [0; 4],
+            #[cfg(feature = "timing")]
+            shell_oracle_layers: 0,
+            #[cfg(feature = "timing")]
+            shell_oracle_unbounded_layers: 0,
+            #[cfg(feature = "timing")]
+            shell_oracle_fallback_layers: 0,
+            #[cfg(feature = "timing")]
+            shell_oracle_traversed_cells: 0,
+            #[cfg(feature = "timing")]
+            shell_oracle_transit_cells: 0,
+            #[cfg(feature = "timing")]
+            shell_oracle_empty_cells: 0,
+            #[cfg(feature = "timing")]
+            shell_oracle_hit_slot_ids: Vec::new(),
+            #[cfg(feature = "timing")]
+            shell_oracle_baseline_visited_hit_slots: 0,
+            #[cfg(feature = "timing")]
+            shell_oracle_fallback_after_hit_events: 0,
+            #[cfg(feature = "timing")]
+            shell_oracle_fallback_remaining_slots: 0,
+            #[cfg(feature = "timing")]
             packed_exact_batch_usage_counts: [0; 2],
             #[cfg(feature = "timing")]
             packed_exact_slots_visited: [0; 4],
@@ -420,6 +542,17 @@ impl BuildCounters {
     }
 
     fn record_fallback(&mut self, request: BuilderFallbackRequest) {
+        #[cfg(feature = "timing")]
+        {
+            let remaining = self
+                .shell_oracle_hit_slot_ids
+                .len()
+                .saturating_sub(self.shell_oracle_baseline_visited_hit_slots);
+            if remaining > 0 {
+                self.shell_oracle_fallback_after_hit_events += 1;
+                self.shell_oracle_fallback_remaining_slots += remaining;
+            }
+        }
         match request.trigger {
             BuilderFallbackTrigger::ProjectionLimit => self.fallback_projection += 1,
             BuilderFallbackTrigger::PolygonVertexLimit => self.fallback_polygon_cap += 1,
@@ -445,6 +578,80 @@ impl BuildCounters {
         let class = stage * 2 + usize::from(!first);
         self.packed_exact_slots_visited[class] += visited;
         self.packed_exact_slots_abandoned[class] += emitted - visited;
+    }
+}
+
+#[cfg(feature = "timing")]
+fn audit_shell_oracle_layer(
+    layer: crate::cube_grid::ShellOracleLayer<'_>,
+    builder: &crate::knn_clipping::topo2d::Topo2DBuilder,
+    attempted_neighbors: &AttemptedNeighbors,
+    pos_slots: &[crate::cube_grid::SlotPoint],
+    counters: &mut BuildCounters,
+) {
+    counters.shell_oracle_layers += layer.layers();
+    counters.shell_oracle_traversed_cells += layer.traversed_cells();
+    counters.shell_oracle_transit_cells += layer.transit_cells();
+    counters.shell_oracle_empty_cells += layer.empty_cells();
+
+    let can_test = builder.is_bounded() && !builder.is_fallback();
+    if !builder.is_bounded() {
+        counters.shell_oracle_unbounded_layers += layer.layers();
+    } else if builder.is_fallback() {
+        counters.shell_oracle_fallback_layers += layer.layers();
+    }
+
+    for cell in layer.cells() {
+        let class = cell.class();
+        let slots = cell.slots(&layer);
+        counters.shell_oracle_eligible_slots[class] += slots.len();
+        let already_attempted = slots
+            .iter()
+            .filter(|&&slot| attempted_neighbors.contains(slot as usize))
+            .count();
+        counters.shell_oracle_already_attempted_slots[class] += already_attempted;
+        if !can_test {
+            continue;
+        }
+
+        counters.shell_oracle_tested_cells[class] += 1;
+        let mut all_unchanged = true;
+        for &slot in slots {
+            if attempted_neighbors.contains(slot as usize) {
+                continue;
+            }
+            counters.shell_oracle_predicate_tests[class] += 1;
+            if !builder.candidate_would_be_unchanged(pos_slots[slot as usize].pos) {
+                all_unchanged = false;
+                break;
+            }
+        }
+        if !all_unchanged {
+            continue;
+        }
+
+        counters.shell_oracle_hit_cells[class] += 1;
+        counters.shell_oracle_hit_slots_by_class[class] += slots.len();
+        counters.shell_oracle_hit_slot_ids.extend(
+            slots
+                .iter()
+                .copied()
+                .filter(|&slot| !attempted_neighbors.contains(slot as usize)),
+        );
+    }
+    counters.shell_oracle_hit_slot_ids.sort_unstable();
+}
+
+#[cfg(feature = "timing")]
+fn audit_pending_shell_oracle_layer(
+    stream: &mut DirectedNeighborStream<'_, '_, '_, '_>,
+    builder: &crate::knn_clipping::topo2d::Topo2DBuilder,
+    attempted_neighbors: &AttemptedNeighbors,
+    pos_slots: &[crate::cube_grid::SlotPoint],
+    counters: &mut BuildCounters,
+) {
+    if let Some(layer) = stream.take_shell_oracle_layer() {
+        audit_shell_oracle_layer(layer, builder, attempted_neighbors, pos_slots, counters);
     }
 }
 
@@ -718,6 +925,15 @@ fn clip_batch_source<const SHELL: bool>(
             prefix_consumed = pos + 1;
         }
         let neighbor_slot = packed_chunk[pos];
+        #[cfg(feature = "timing")]
+        if SHELL
+            && counters
+                .shell_oracle_hit_slot_ids
+                .binary_search(&neighbor_slot)
+                .is_ok()
+        {
+            counters.shell_oracle_baseline_visited_hit_slots += 1;
+        }
         // One fused load gets both the global index and the position (one cache
         // line) instead of two separate random by-slot loads.
         let slot_point = pos_slots[neighbor_slot as usize];
@@ -861,6 +1077,14 @@ fn consume_stream(
             &mut counters.knn_stage,
             &mut counters.knn_query_time,
         );
+        #[cfg(feature = "timing")]
+        audit_pending_shell_oracle_layer(
+            stream,
+            phase.builder,
+            phase.attempted_neighbors,
+            pos_slots,
+            counters,
+        );
 
         match frontier {
             DirectedNeighborFrontier::ExactBatch(batch) => {
@@ -882,6 +1106,14 @@ fn consume_stream(
                         stream,
                         phase.packed_chunk,
                         phase.builder,
+                        pos_slots,
+                        counters,
+                    );
+                    #[cfg(feature = "timing")]
+                    audit_pending_shell_oracle_layer(
+                        stream,
+                        phase.builder,
+                        phase.attempted_neighbors,
                         pos_slots,
                         counters,
                     );
@@ -1060,6 +1292,36 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         shell_layer_prefix_consumed: counters.shell_layer_prefix_consumed,
         #[cfg(feature = "timing")]
         shell_midlayer_terminations: counters.shell_midlayer_terminations,
+        #[cfg(feature = "timing")]
+        shell_oracle_tested_cells: counters.shell_oracle_tested_cells,
+        #[cfg(feature = "timing")]
+        shell_oracle_eligible_slots: counters.shell_oracle_eligible_slots,
+        #[cfg(feature = "timing")]
+        shell_oracle_already_attempted_slots: counters.shell_oracle_already_attempted_slots,
+        #[cfg(feature = "timing")]
+        shell_oracle_predicate_tests: counters.shell_oracle_predicate_tests,
+        #[cfg(feature = "timing")]
+        shell_oracle_hit_cells: counters.shell_oracle_hit_cells,
+        #[cfg(feature = "timing")]
+        shell_oracle_hit_slots: counters.shell_oracle_hit_slots_by_class,
+        #[cfg(feature = "timing")]
+        shell_oracle_layers: counters.shell_oracle_layers,
+        #[cfg(feature = "timing")]
+        shell_oracle_unbounded_layers: counters.shell_oracle_unbounded_layers,
+        #[cfg(feature = "timing")]
+        shell_oracle_fallback_layers: counters.shell_oracle_fallback_layers,
+        #[cfg(feature = "timing")]
+        shell_oracle_traversed_cells: counters.shell_oracle_traversed_cells,
+        #[cfg(feature = "timing")]
+        shell_oracle_transit_cells: counters.shell_oracle_transit_cells,
+        #[cfg(feature = "timing")]
+        shell_oracle_empty_cells: counters.shell_oracle_empty_cells,
+        #[cfg(feature = "timing")]
+        shell_oracle_baseline_visited_hit_slots: counters.shell_oracle_baseline_visited_hit_slots,
+        #[cfg(feature = "timing")]
+        shell_oracle_fallback_after_hit_events: counters.shell_oracle_fallback_after_hit_events,
+        #[cfg(feature = "timing")]
+        shell_oracle_fallback_remaining_slots: counters.shell_oracle_fallback_remaining_slots,
         #[cfg(feature = "timing")]
         packed_exact_slots_visited: counters.packed_exact_slots_visited,
         #[cfg(feature = "timing")]

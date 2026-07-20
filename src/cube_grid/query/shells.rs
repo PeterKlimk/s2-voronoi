@@ -120,6 +120,65 @@ pub(crate) struct ShellBatch {
     pub(crate) unseen_bound: f32,
 }
 
+#[cfg(feature = "timing")]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ShellOracleCell {
+    slot_start: usize,
+    slot_end: usize,
+    class: usize,
+}
+
+#[cfg(feature = "timing")]
+pub(crate) struct ShellOracleLayer<'a> {
+    slots: &'a [u32],
+    cells: &'a [ShellOracleCell],
+    layers: usize,
+    traversed_cells: usize,
+    transit_cells: usize,
+    empty_cells: usize,
+}
+
+#[cfg(feature = "timing")]
+impl ShellOracleLayer<'_> {
+    #[inline]
+    pub(crate) fn cells(&self) -> &[ShellOracleCell] {
+        self.cells
+    }
+
+    #[inline]
+    pub(crate) fn layers(&self) -> usize {
+        self.layers
+    }
+
+    #[inline]
+    pub(crate) fn traversed_cells(&self) -> usize {
+        self.traversed_cells
+    }
+
+    #[inline]
+    pub(crate) fn transit_cells(&self) -> usize {
+        self.transit_cells
+    }
+
+    #[inline]
+    pub(crate) fn empty_cells(&self) -> usize {
+        self.empty_cells
+    }
+}
+
+#[cfg(feature = "timing")]
+impl ShellOracleCell {
+    #[inline]
+    pub(crate) fn slots<'a>(&self, layer: &'a ShellOracleLayer<'_>) -> &'a [u32] {
+        &layer.slots[self.slot_start..self.slot_end]
+    }
+
+    #[inline]
+    pub(crate) fn class(&self) -> usize {
+        self.class
+    }
+}
+
 pub(crate) struct ShellFrontier<'a, E: ShellEligibility> {
     grid: &'a CubeMapGrid,
     scratch: &'a mut CubeMapGridScratch,
@@ -133,6 +192,22 @@ pub(crate) struct ShellFrontier<'a, E: ShellEligibility> {
     pending_prefix_len: usize,
     has_pending: bool,
     exhausted: bool,
+    #[cfg(feature = "timing")]
+    oracle_slots: Vec<u32>,
+    #[cfg(feature = "timing")]
+    oracle_cells: Vec<ShellOracleCell>,
+    #[cfg(feature = "timing")]
+    oracle_ready: bool,
+    #[cfg(feature = "timing")]
+    oracle_layer_index: usize,
+    #[cfg(feature = "timing")]
+    oracle_layers: usize,
+    #[cfg(feature = "timing")]
+    oracle_traversed_cells: usize,
+    #[cfg(feature = "timing")]
+    oracle_transit_cells: usize,
+    #[cfg(feature = "timing")]
+    oracle_empty_cells: usize,
 }
 
 impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
@@ -156,6 +231,22 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
             pending_prefix_len: 0,
             has_pending: false,
             exhausted: false,
+            #[cfg(feature = "timing")]
+            oracle_slots: Vec::new(),
+            #[cfg(feature = "timing")]
+            oracle_cells: Vec::new(),
+            #[cfg(feature = "timing")]
+            oracle_ready: false,
+            #[cfg(feature = "timing")]
+            oracle_layer_index: 0,
+            #[cfg(feature = "timing")]
+            oracle_layers: 0,
+            #[cfg(feature = "timing")]
+            oracle_traversed_cells: 0,
+            #[cfg(feature = "timing")]
+            oracle_transit_cells: 0,
+            #[cfg(feature = "timing")]
+            oracle_empty_cells: 0,
         }
     }
 
@@ -203,6 +294,8 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
             {
                 continue;
             }
+            #[cfg(feature = "timing")]
+            self.oracle_slots.push(slot);
             let dot = fp::dot3_f32(xs[i], ys[i], zs[i], qx, qy, qz);
             self.scratch.pending.push(make_pending_key(dot, slot));
         }
@@ -211,6 +304,16 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
     /// Build the next non-empty layer batch, or mark exhaustion.
     fn build_pending(&mut self) {
         debug_assert!(!self.has_pending);
+        #[cfg(feature = "timing")]
+        {
+            self.oracle_slots.clear();
+            self.oracle_cells.clear();
+            self.oracle_ready = false;
+            self.oracle_layers = 0;
+            self.oracle_traversed_cells = 0;
+            self.oracle_transit_cells = 0;
+            self.oracle_empty_cells = 0;
+        }
         // Most directed queries finish in the packed path. Normalize only
         // after shell takeover, keeping its f64 work and state off that path.
         let query_unit = self.query.as_dvec3().normalize();
@@ -221,6 +324,11 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
             self.scratch.next.clear();
             let mut next_min_dist_sq = f32::INFINITY;
 
+            #[cfg(feature = "timing")]
+            {
+                self.oracle_layers += 1;
+            }
+
             for layer_idx in 0..self.scratch.current.len() {
                 let cell = self.scratch.current[layer_idx];
                 let mode = self.eligibility.cell_mode(
@@ -228,7 +336,34 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
                     self.start_cell,
                     cell as usize,
                 );
+                #[cfg(feature = "timing")]
+                {
+                    self.oracle_traversed_cells += 1;
+                    if mode == DirectedCellMode::TransitOnly {
+                        self.oracle_transit_cells += 1;
+                    }
+                    let start = self.grid.cell_offsets[cell as usize] as usize;
+                    let end = self.grid.cell_offsets[cell as usize + 1] as usize;
+                    if start == end {
+                        self.oracle_empty_cells += 1;
+                    }
+                }
+                #[cfg(feature = "timing")]
+                let oracle_slot_start = self.oracle_slots.len();
                 self.scan_cell(cell as usize, mode);
+                #[cfg(feature = "timing")]
+                if self.oracle_slots.len() > oracle_slot_start {
+                    let mode_class = match mode {
+                        DirectedCellMode::EmitAll => 0,
+                        DirectedCellMode::EmitCenterDirected => 1,
+                        DirectedCellMode::TransitOnly => unreachable!(),
+                    };
+                    self.oracle_cells.push(ShellOracleCell {
+                        slot_start: oracle_slot_start,
+                        slot_end: self.oracle_slots.len(),
+                        class: usize::from(self.oracle_layer_index > 0) * 2 + mode_class,
+                    });
+                }
 
                 for &ncell in self.grid.cell_neighbors(cell as usize) {
                     if ncell == u32::MAX || !self.scratch.mark_visited(ncell) {
@@ -241,6 +376,10 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
             }
 
             std::mem::swap(&mut self.scratch.current, &mut self.scratch.next);
+            #[cfg(feature = "timing")]
+            {
+                self.oracle_layer_index += 1;
+            }
             self.pending_bound = if self.scratch.current.is_empty() {
                 -1.0
             } else {
@@ -253,8 +392,18 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
                 self.pending_pos = 0;
                 self.pending_prefix_len = 0;
                 self.has_pending = true;
+                #[cfg(feature = "timing")]
+                {
+                    self.oracle_ready = true;
+                }
                 return;
             }
+        }
+        #[cfg(feature = "timing")]
+        {
+            // Preserve any final empty/transit-only rings for the diagnostic
+            // census even though they contain no resident slots to emit.
+            self.oracle_ready = self.oracle_layers > 0;
         }
         self.exhausted = true;
     }
@@ -301,6 +450,22 @@ impl<'a, E: ShellEligibility> ShellFrontier<'a, E> {
             self.has_pending = false;
             self.scratch.pending.clear();
         }
+    }
+
+    #[cfg(feature = "timing")]
+    pub(crate) fn take_oracle_layer(&mut self) -> Option<ShellOracleLayer<'_>> {
+        if !self.oracle_ready {
+            return None;
+        }
+        self.oracle_ready = false;
+        Some(ShellOracleLayer {
+            slots: &self.oracle_slots,
+            cells: &self.oracle_cells,
+            layers: self.oracle_layers,
+            traversed_cells: self.oracle_traversed_cells,
+            transit_cells: self.oracle_transit_cells,
+            empty_cells: self.oracle_empty_cells,
+        })
     }
 
     #[inline]
@@ -471,6 +636,43 @@ mod tests {
         }
 
         assert!(unseen.iter().all(|&is_unseen| !is_unseen));
+    }
+
+    #[cfg(feature = "timing")]
+    #[test]
+    fn shell_oracle_snapshot_groups_each_layer_once_without_changing_emission() {
+        let points = fixture_points();
+        let grid = CubeMapGrid::new(&points, 3);
+        let query_idx = 0usize;
+        let mut scratch = grid.make_scratch();
+        let mut frontier =
+            grid.unrestricted_shell_frontier(points[query_idx], query_idx, &mut scratch);
+        let mut batch = Vec::new();
+        let mut oracle_slots = Vec::new();
+        let mut emitted_slots = Vec::new();
+
+        while frontier.frontier(&mut batch).is_some() {
+            if let Some(layer) = frontier.take_oracle_layer() {
+                assert!(layer.layers() > 0);
+                for cell in layer.cells() {
+                    oracle_slots.extend_from_slice(cell.slots(&layer));
+                }
+                assert!(frontier.take_oracle_layer().is_none());
+            }
+            emitted_slots.extend_from_slice(&batch);
+            frontier.advance();
+        }
+
+        if let Some(layer) = frontier.take_oracle_layer() {
+            assert!(layer.layers() > 0);
+            assert!(layer.cells().is_empty());
+            assert!(frontier.take_oracle_layer().is_none());
+        }
+
+        oracle_slots.sort_unstable();
+        emitted_slots.sort_unstable();
+        assert_eq!(oracle_slots, emitted_slots);
+        assert_eq!(oracle_slots.len(), points.len() - 1);
     }
 
     #[test]

@@ -300,7 +300,7 @@ impl Topo2DBuilder {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(feature = "timing", test))]
     #[inline]
     pub(crate) fn is_fallback(&self) -> bool {
         matches!(self.inner, BuilderImpl::Fallback(_))

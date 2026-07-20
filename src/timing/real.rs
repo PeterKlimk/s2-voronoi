@@ -243,6 +243,21 @@ pub(crate) struct CellSubPhases {
     pub shell_layer_slots: u64,
     pub shell_layer_prefix_consumed: u64,
     pub shell_midlayer_terminations: u64,
+    pub shell_oracle_tested_cells: [u64; 4],
+    pub shell_oracle_eligible_slots: [u64; 4],
+    pub shell_oracle_already_attempted_slots: [u64; 4],
+    pub shell_oracle_predicate_tests: [u64; 4],
+    pub shell_oracle_hit_cells: [u64; 4],
+    pub shell_oracle_hit_slots: [u64; 4],
+    pub shell_oracle_layers: u64,
+    pub shell_oracle_unbounded_layers: u64,
+    pub shell_oracle_fallback_layers: u64,
+    pub shell_oracle_traversed_cells: u64,
+    pub shell_oracle_transit_cells: u64,
+    pub shell_oracle_empty_cells: u64,
+    pub shell_oracle_baseline_visited_hit_slots: u64,
+    pub shell_oracle_fallback_after_hit_events: u64,
+    pub shell_oracle_fallback_remaining_slots: u64,
     /// Sum of neighbors processed before termination across all cells
     /// (mean = total / n; input for the grid-density tuning model).
     pub neighbors_processed_total: u64,
@@ -345,6 +360,21 @@ pub(crate) struct CellSubAccum {
     shell_layer_slots: u64,
     shell_layer_prefix_consumed: u64,
     shell_midlayer_terminations: u64,
+    shell_oracle_tested_cells: [u64; 4],
+    shell_oracle_eligible_slots: [u64; 4],
+    shell_oracle_already_attempted_slots: [u64; 4],
+    shell_oracle_predicate_tests: [u64; 4],
+    shell_oracle_hit_cells: [u64; 4],
+    shell_oracle_hit_slots: [u64; 4],
+    shell_oracle_layers: u64,
+    shell_oracle_unbounded_layers: u64,
+    shell_oracle_fallback_layers: u64,
+    shell_oracle_traversed_cells: u64,
+    shell_oracle_transit_cells: u64,
+    shell_oracle_empty_cells: u64,
+    shell_oracle_baseline_visited_hit_slots: u64,
+    shell_oracle_fallback_after_hit_events: u64,
+    shell_oracle_fallback_remaining_slots: u64,
     neighbors_processed_total: u64,
     neighbors_processed_max: u64,
     final_edges_total: u64,
@@ -507,6 +537,46 @@ impl CellSubAccum {
     }
 
     #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn add_shell_oracle(
+        &mut self,
+        tested_cells: [usize; 4],
+        eligible_slots: [usize; 4],
+        already_attempted_slots: [usize; 4],
+        predicate_tests: [usize; 4],
+        hit_cells: [usize; 4],
+        hit_slots: [usize; 4],
+        layers: usize,
+        unbounded_layers: usize,
+        fallback_layers: usize,
+        traversed_cells: usize,
+        transit_cells: usize,
+        empty_cells: usize,
+        baseline_visited_hit_slots: usize,
+        fallback_after_hit_events: usize,
+        fallback_remaining_slots: usize,
+    ) {
+        for class in 0..4 {
+            self.shell_oracle_tested_cells[class] += tested_cells[class] as u64;
+            self.shell_oracle_eligible_slots[class] += eligible_slots[class] as u64;
+            self.shell_oracle_already_attempted_slots[class] +=
+                already_attempted_slots[class] as u64;
+            self.shell_oracle_predicate_tests[class] += predicate_tests[class] as u64;
+            self.shell_oracle_hit_cells[class] += hit_cells[class] as u64;
+            self.shell_oracle_hit_slots[class] += hit_slots[class] as u64;
+        }
+        self.shell_oracle_layers += layers as u64;
+        self.shell_oracle_unbounded_layers += unbounded_layers as u64;
+        self.shell_oracle_fallback_layers += fallback_layers as u64;
+        self.shell_oracle_traversed_cells += traversed_cells as u64;
+        self.shell_oracle_transit_cells += transit_cells as u64;
+        self.shell_oracle_empty_cells += empty_cells as u64;
+        self.shell_oracle_baseline_visited_hit_slots += baseline_visited_hit_slots as u64;
+        self.shell_oracle_fallback_after_hit_events += fallback_after_hit_events as u64;
+        self.shell_oracle_fallback_remaining_slots += fallback_remaining_slots as u64;
+    }
+
+    #[inline]
     pub(crate) fn add_packed_batch_usage(&mut self, visited: [usize; 4], abandoned: [usize; 4]) {
         for class in 0..4 {
             self.packed_exact_slots_visited[class] += visited[class] as u64;
@@ -590,6 +660,25 @@ impl CellSubAccum {
         self.shell_layer_slots += other.shell_layer_slots;
         self.shell_layer_prefix_consumed += other.shell_layer_prefix_consumed;
         self.shell_midlayer_terminations += other.shell_midlayer_terminations;
+        for class in 0..4 {
+            self.shell_oracle_tested_cells[class] += other.shell_oracle_tested_cells[class];
+            self.shell_oracle_eligible_slots[class] += other.shell_oracle_eligible_slots[class];
+            self.shell_oracle_already_attempted_slots[class] +=
+                other.shell_oracle_already_attempted_slots[class];
+            self.shell_oracle_predicate_tests[class] += other.shell_oracle_predicate_tests[class];
+            self.shell_oracle_hit_cells[class] += other.shell_oracle_hit_cells[class];
+            self.shell_oracle_hit_slots[class] += other.shell_oracle_hit_slots[class];
+        }
+        self.shell_oracle_layers += other.shell_oracle_layers;
+        self.shell_oracle_unbounded_layers += other.shell_oracle_unbounded_layers;
+        self.shell_oracle_fallback_layers += other.shell_oracle_fallback_layers;
+        self.shell_oracle_traversed_cells += other.shell_oracle_traversed_cells;
+        self.shell_oracle_transit_cells += other.shell_oracle_transit_cells;
+        self.shell_oracle_empty_cells += other.shell_oracle_empty_cells;
+        self.shell_oracle_baseline_visited_hit_slots +=
+            other.shell_oracle_baseline_visited_hit_slots;
+        self.shell_oracle_fallback_after_hit_events += other.shell_oracle_fallback_after_hit_events;
+        self.shell_oracle_fallback_remaining_slots += other.shell_oracle_fallback_remaining_slots;
         self.neighbors_processed_total += other.neighbors_processed_total;
         self.neighbors_processed_max = self
             .neighbors_processed_max
@@ -666,6 +755,21 @@ impl CellSubAccum {
             shell_layer_slots: self.shell_layer_slots,
             shell_layer_prefix_consumed: self.shell_layer_prefix_consumed,
             shell_midlayer_terminations: self.shell_midlayer_terminations,
+            shell_oracle_tested_cells: self.shell_oracle_tested_cells,
+            shell_oracle_eligible_slots: self.shell_oracle_eligible_slots,
+            shell_oracle_already_attempted_slots: self.shell_oracle_already_attempted_slots,
+            shell_oracle_predicate_tests: self.shell_oracle_predicate_tests,
+            shell_oracle_hit_cells: self.shell_oracle_hit_cells,
+            shell_oracle_hit_slots: self.shell_oracle_hit_slots,
+            shell_oracle_layers: self.shell_oracle_layers,
+            shell_oracle_unbounded_layers: self.shell_oracle_unbounded_layers,
+            shell_oracle_fallback_layers: self.shell_oracle_fallback_layers,
+            shell_oracle_traversed_cells: self.shell_oracle_traversed_cells,
+            shell_oracle_transit_cells: self.shell_oracle_transit_cells,
+            shell_oracle_empty_cells: self.shell_oracle_empty_cells,
+            shell_oracle_baseline_visited_hit_slots: self.shell_oracle_baseline_visited_hit_slots,
+            shell_oracle_fallback_after_hit_events: self.shell_oracle_fallback_after_hit_events,
+            shell_oracle_fallback_remaining_slots: self.shell_oracle_fallback_remaining_slots,
             neighbors_processed_total: self.neighbors_processed_total,
             neighbors_processed_max: self.neighbors_processed_max,
             final_edges_total: self.final_edges_total,
@@ -933,6 +1037,36 @@ impl PhaseTimings {
                     self.cell_sub.shell_midlayer_terminations,
                 );
             }
+            if self.cell_sub.shell_oracle_layers > 0 {
+                eprintln!(
+                    "    shell_oracle: layers={} unbounded={} fallback={} traversed_cells={} transit={} empty={} baseline_visited_hit_slots={} fallback_after_hit_events={} fallback_remaining_slots={}",
+                    self.cell_sub.shell_oracle_layers,
+                    self.cell_sub.shell_oracle_unbounded_layers,
+                    self.cell_sub.shell_oracle_fallback_layers,
+                    self.cell_sub.shell_oracle_traversed_cells,
+                    self.cell_sub.shell_oracle_transit_cells,
+                    self.cell_sub.shell_oracle_empty_cells,
+                    self.cell_sub.shell_oracle_baseline_visited_hit_slots,
+                    self.cell_sub.shell_oracle_fallback_after_hit_events,
+                    self.cell_sub.shell_oracle_fallback_remaining_slots,
+                );
+                let shell_oracle_classes =
+                    ["first_all", "first_center", "later_all", "later_center"];
+                for (class, label) in shell_oracle_classes.into_iter().enumerate() {
+                    let eligible = self.cell_sub.shell_oracle_eligible_slots[class];
+                    if eligible > 0 {
+                        eprintln!(
+                            "      shell_oracle_{label}: tested_cells={} eligible_slots={} already_attempted={} predicate_tests={} hit_cells={} hit_slots={}",
+                            self.cell_sub.shell_oracle_tested_cells[class],
+                            eligible,
+                            self.cell_sub.shell_oracle_already_attempted_slots[class],
+                            self.cell_sub.shell_oracle_predicate_tests[class],
+                            self.cell_sub.shell_oracle_hit_cells[class],
+                            self.cell_sub.shell_oracle_hit_slots[class],
+                        );
+                    }
+                }
+            }
             if self.cell_sub.fallback_projection > 0
                 || self.cell_sub.fallback_polygon_cap > 0
                 || self.cell_sub.fallback_all_constraints > 0
@@ -1092,6 +1226,32 @@ impl PhaseTimings {
                     )
                 })
                 .unwrap_or((0, 0, 0));
+            eprintln!(
+                "TIMING_SHELL_ORACLE_KV layers={} unbounded_layers={} fallback_layers={} traversed_cells={} transit_cells={} empty_cells={} baseline_visited_hit_slots={} fallback_after_hit_events={} fallback_remaining_slots={}",
+                self.cell_sub.shell_oracle_layers,
+                self.cell_sub.shell_oracle_unbounded_layers,
+                self.cell_sub.shell_oracle_fallback_layers,
+                self.cell_sub.shell_oracle_traversed_cells,
+                self.cell_sub.shell_oracle_transit_cells,
+                self.cell_sub.shell_oracle_empty_cells,
+                self.cell_sub.shell_oracle_baseline_visited_hit_slots,
+                self.cell_sub.shell_oracle_fallback_after_hit_events,
+                self.cell_sub.shell_oracle_fallback_remaining_slots,
+            );
+            for (class, label) in ["first_all", "first_center", "later_all", "later_center"]
+                .into_iter()
+                .enumerate()
+            {
+                eprintln!(
+                    "TIMING_SHELL_ORACLE_CLASS_KV class={label} tested_cells={} eligible_slots={} already_attempted_slots={} predicate_tests={} hit_cells={} hit_slots={}",
+                    self.cell_sub.shell_oracle_tested_cells[class],
+                    self.cell_sub.shell_oracle_eligible_slots[class],
+                    self.cell_sub.shell_oracle_already_attempted_slots[class],
+                    self.cell_sub.shell_oracle_predicate_tests[class],
+                    self.cell_sub.shell_oracle_hit_cells[class],
+                    self.cell_sub.shell_oracle_hit_slots[class],
+                );
+            }
             eprintln!(
                 "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} grid_order_pairs={gop} grid_order_abs_delta={goa} grid_materialize_by_slot={gms} cell_construction_ms={cc:.3} dedup_ms={dd:.3} dedup_bookkeeping_ms={dbk:.3} dedup_overflow_ms={dof:.3} dedup_deferred_ms={ddp:.3} dedup_finalize_ms={dfs:.3} dedup_vertices_ms={dvt:.3} dedup_prefixes_ms={dcp:.3} dedup_incidence_ms={dis:.3} dedup_indices_ms={dci:.3} dedup_overrides_ms={dro:.3} dedup_zero_hints_ms={dzh:.3} shard_order_descents={sod} shard_order_pairs={sop} shard_order_abs_delta={soa} scatter_by_shard={sbs} edge_reconcile_ms={er:.3} merge_safety_scan_cells={mssc} merge_safety_global_fallbacks={msgf} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_reconcile_scan_cells={rrsc} resolution_rebuild_scan_cells={rpsc} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_total_ms={ptm:.3} packed_select_partition_ms={psp:.3} packed_select_sort_ms={pss:.3} packed_select_scatter_ms={psc:.3} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} packed_chunk0_first_batches={pc0fb} packed_chunk0_first_emitted={pc0fe} packed_chunk0_first_visited={pc0fv} packed_chunk0_first_abandoned={pc0fa} packed_chunk0_later_batches={pc0lb} packed_chunk0_later_emitted={pc0le} packed_chunk0_later_visited={pc0lv} packed_chunk0_later_abandoned={pc0la} packed_tail_first_batches={ptfb} packed_tail_first_emitted={ptfe} packed_tail_first_visited={ptfv} packed_tail_first_abandoned={ptfa} packed_tail_later_batches={ptlb} packed_tail_later_emitted={ptle} packed_tail_later_visited={ptlv} packed_tail_later_abandoned={ptla} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} candidate_work_samples={cws} candidate_work_p50_lb={cw50} candidate_work_p90_lb={cw90} candidate_work_p99_lb={cw99} candidate_work_p999_lb={cw999} candidate_work_max={cwm} candidate_work_relative_base={cwb} candidate_work_ge4x_median_lb={cw4} candidate_work_ge16x_median_lb={cw16} candidate_work_ge64x_median_lb={cw64} no_progress_tail_samples={nps} no_progress_tail_excluded={npx} no_progress_tail_p50_lb={np50} no_progress_tail_p90_lb={np90} no_progress_tail_p99_lb={np99} no_progress_tail_p999_lb={np999} no_progress_tail_max={npm} no_progress_tail_relative_base={npb} no_progress_tail_ge4x_median_lb={np4} no_progress_tail_ge16x_median_lb={np16} no_progress_tail_ge64x_median_lb={np64} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,

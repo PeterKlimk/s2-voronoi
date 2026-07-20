@@ -3,6 +3,8 @@ use crate::cube_grid::packed_knn::{
 };
 
 use super::shells::ShellFrontier;
+#[cfg(feature = "timing")]
+use super::shells::ShellOracleLayer;
 use super::{CubeMapGrid, CubeMapGridScratch, DirectedEligibility};
 use glam::Vec3;
 
@@ -240,6 +242,11 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
     #[inline]
     pub(crate) fn is_takeover_stage(&self) -> bool {
         self.stage == StreamStage::Takeover
+    }
+
+    #[cfg(feature = "timing")]
+    pub(crate) fn take_shell_oracle_layer(&mut self) -> Option<ShellOracleLayer<'_>> {
+        self.takeover.take_oracle_layer()
     }
 }
 

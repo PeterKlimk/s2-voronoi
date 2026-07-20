@@ -6,6 +6,8 @@ mod shells;
 mod stream;
 
 pub(crate) use directed::DirectedEligibility;
+#[cfg(feature = "timing")]
+pub(crate) use shells::ShellOracleLayer;
 pub(crate) use stream::{
     DirectedNeighborBatch, DirectedNeighborBatchSource, DirectedNeighborFrontier,
     DirectedNeighborStream,
