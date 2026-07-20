@@ -513,11 +513,15 @@ tasks and are not duplicated here.
   ordinary no-trigger, disabled-policy, and diagnostic-capture paths. Low-incidence and Euler
   signals are independent defect facts, not action states. The exact consumers and migration are
   recorded in [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md).
-- **QUAL-001A local-rebuild state result:** `LocalRebuildStatus` now represents not-triggered,
-  disabled, rejected, accepted, and diagnostic-capture outcomes end-to-end. Public report booleans
-  were removed atomically; derived methods preserve the existing KV values. The artifact added 212
-  text bytes, 3,888 BSS bytes, and 208 file bytes. Seven counter pairs were neutral (mean
-  `1.000001952` instructions and `0.999998724` branches).
+- **QUAL-001A local-rebuild state result:** `LocalRebuildStatus` represents the four public
+  not-triggered, disabled, rejected, and accepted outcomes. Public report booleans were removed
+  atomically; derived methods preserve the existing KV values. Private `LocalRebuildExecution`
+  now owns the feature-gated diagnostic interception, so repository probe control cannot become a
+  public status. The original enum migration added 212 text bytes, 3,888 BSS bytes, and 208 file
+  bytes; seven counter pairs were neutral (mean `1.000001952` instructions and `0.999998724`
+  branches). The seam-removal follow-up leaves every default artifact size identical and is neutral
+  across seven pairs (`0.999997426` instructions, `0.999994791` branches); its feature-gated test
+  pins capture plus public conversion.
 - **QUAL-001A resolution state result:** `ResolutionDiscoveryMode` replaces the exact-inverse
   certified-hint/drift-fallback booleans, and timing stores only the fallback bit while deriving both
   existing KV values. The artifact exchanged 16 BSS bytes for 16 text bytes with identical total

@@ -326,10 +326,6 @@ pub enum LocalRebuildStatus {
     Rejected,
     /// The rebuilt diagram passed strict validation and was committed.
     Accepted,
-    /// Internal diagnostic capture intercepted the assembled state before the
-    /// ordinary rebuild trigger was evaluated.
-    #[doc(hidden)]
-    DiagnosticCapture,
 }
 
 impl LocalRebuildStatus {

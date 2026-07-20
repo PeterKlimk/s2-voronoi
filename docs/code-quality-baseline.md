@@ -1076,9 +1076,9 @@ The proposed weld-alias predicate was rejected on 2026-07-19 against immediate p
 
 The first lifecycle-state migration was accepted on 2026-07-19 against immediate parent `520ff78`.
 
-- Public non-exhaustive `LocalRebuildStatus` distinguishes `NotTriggered`, `Disabled`, `Rejected`,
-  `Accepted`, and the doc-hidden diagnostic-capture path. The same status flows through the
-  internal outcome. Low-incidence and Euler defect facts remain separate.
+- Public non-exhaustive `LocalRebuildStatus` initially distinguished `NotTriggered`, `Disabled`,
+  `Rejected`, `Accepted`, and a doc-hidden diagnostic-capture path. Low-incidence and Euler defect
+  facts remained separate.
 - `LocalRebuildReport` now stores the status and derives `attempted()`/`accepted()` from it. All
   repository consumers migrated atomically; the machine-readable `local_rebuild_attempted` and
   `local_rebuild_accepted` field names and boolean values are unchanged. The impossible
@@ -1090,6 +1090,17 @@ The first lifecycle-state migration was accepted on 2026-07-19 against immediate
   ratios were `1.000001952` instructions and `0.999998724` branches, with pair ranges
   `0.999994359..=1.000005231` and `0.999993544..=1.000004873`. There was no directional regression;
   every sample recorded zero context switches and CPU migrations.
+
+A 2026-07-20 API-boundary follow-up removed diagnostic interception from the public enum.
+
+- Private `LocalRebuildExecution` now distinguishes `Completed(LocalRebuildStatus)` from the
+  feature-gated A0 capture. The public status has only the four ordinary outcomes; a probe callback
+  that completes report construction maps to `NotTriggered` at that final boundary while the
+  existing side channel retains the captured state.
+- A feature-gated integration-path unit test pins both the capture and the public conversion. The
+  default `tools` artifact retains identical text, data, BSS, aggregate, and file sizes. Seven 500k
+  Fibonacci pairs were neutral at `0.999997426` instructions and `0.999994791` branches; all
+  samples recorded zero context switches and CPU migrations.
 
 ## QUAL-001A resolution discovery mode
 

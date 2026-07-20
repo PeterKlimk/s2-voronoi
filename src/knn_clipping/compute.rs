@@ -517,7 +517,7 @@ fn compute_voronoi_knn_clipping_report_core(
 ) -> Result<ComputeOutput, crate::VoronoiError> {
     let mut state = run_core_pipeline(points, preprocess_mode, local_rebuild_mode)?;
     enforce_cell_killing_policy(&state, cell_killing_policy)?;
-    let local_rebuild_accepted = state.local_rebuild.status.accepted();
+    let local_rebuild_accepted = state.local_rebuild.accepted();
     // Surface output-invariant residuals alongside the detection records. If
     // local rebuild was accepted, the returned diagram is strictly valid and
     // these residuals no longer survive to output.
@@ -594,7 +594,7 @@ fn compute_voronoi_knn_clipping_report_core(
             effective_validation,
             assembly_edge_mismatch_count: assembly_edge_mismatches.len(),
             local_rebuild: crate::LocalRebuildReport {
-                status: state.local_rebuild.status,
+                status: state.local_rebuild.report_status(),
             },
             output_resolution: state.output_resolution,
             assembly_edge_mismatches,
@@ -731,10 +731,21 @@ fn summarize_topology(
     summarize_topology_scalar(vertex_count, cells, cell_indices)
 }
 
-/// Outcome of the local rebuild attempt, for the caller's fail-loud decision.
+/// Whether local rebuilding reached an ordinary outcome or a probe intercepted it.
+#[derive(Clone, Copy)]
+enum LocalRebuildExecution {
+    /// A normal computation reached a user-meaningful local-rebuild outcome.
+    Completed(LocalRebuildStatus),
+    /// The feature-gated probe captured the assembled state before the
+    /// ordinary mode and trigger decisions.
+    #[cfg(feature = "local_rebuild_probe")]
+    DiagnosticCapture,
+}
+
+/// Outcome of local-rebuild processing, for the caller's fail-loud decision.
 #[derive(Clone, Copy)]
 struct LocalRebuildOutcome {
-    status: LocalRebuildStatus,
+    execution: LocalRebuildExecution,
     /// Detection found a low-incidence (degree-1/2) vertex defect. Such a
     /// vertex is strictly-invalid output even when every edge pairs (it fails
     /// `verify_sphere_effective_strict`'s "low-incidence vertex" check), so
@@ -754,9 +765,41 @@ impl LocalRebuildOutcome {
         euler_defect: bool,
     ) -> LocalRebuildOutcome {
         LocalRebuildOutcome {
-            status,
+            execution: LocalRebuildExecution::Completed(status),
             low_incidence_defect,
             euler_defect,
+        }
+    }
+
+    #[cfg(feature = "local_rebuild_probe")]
+    const fn diagnostic_capture(
+        low_incidence_defect: bool,
+        euler_defect: bool,
+    ) -> LocalRebuildOutcome {
+        LocalRebuildOutcome {
+            execution: LocalRebuildExecution::DiagnosticCapture,
+            low_incidence_defect,
+            euler_defect,
+        }
+    }
+
+    const fn accepted(self) -> bool {
+        matches!(
+            self.execution,
+            LocalRebuildExecution::Completed(LocalRebuildStatus::Accepted)
+        )
+    }
+
+    /// Convert internal execution control into the public report taxonomy.
+    ///
+    /// Probe callers consume the capture side channel and discard the compute
+    /// result. If their callback nevertheless finishes report construction,
+    /// expose no diagnostic-only status through the public API.
+    const fn report_status(self) -> LocalRebuildStatus {
+        match self.execution {
+            LocalRebuildExecution::Completed(status) => status,
+            #[cfg(feature = "local_rebuild_probe")]
+            LocalRebuildExecution::DiagnosticCapture => LocalRebuildStatus::NotTriggered,
         }
     }
 }
@@ -875,7 +918,7 @@ fn check_plain_return_signals(
 ) -> Result<(), crate::VoronoiError> {
     // A committed local rebuild has already passed whole-diagram strict validation,
     // so pre-rebuild signals no longer describe the returned geometry.
-    if local_rebuild.status.accepted() {
+    if local_rebuild.accepted() {
         return Ok(());
     }
     if !residual_unpaired.is_empty() {
@@ -955,8 +998,7 @@ fn maybe_rebuild_effective(
             &geometry.cells,
             &geometry.cell_indices,
         );
-        return LocalRebuildResult::unchanged(LocalRebuildOutcome::new(
-            LocalRebuildStatus::DiagnosticCapture,
+        return LocalRebuildResult::unchanged(LocalRebuildOutcome::diagnostic_capture(
             has_low_incidence,
             euler_defect,
         ));
@@ -2216,7 +2258,7 @@ mod tests {
             topology.low_incidence,
             !topology.has_sphere_euler(cells.len()),
         );
-        assert_eq!(local_rebuild.status, LocalRebuildStatus::Disabled);
+        assert_eq!(local_rebuild.report_status(), LocalRebuildStatus::Disabled);
         let err = check_plain_return_signals(local_rebuild, &[], &[])
             .expect_err("known-invalid output must not escape when local_rebuild is disabled");
         assert!(matches!(err, VoronoiError::ComputationFailed(_)));
@@ -2236,7 +2278,6 @@ mod tests {
             (LocalRebuildStatus::Disabled, false, false),
             (LocalRebuildStatus::Rejected, true, false),
             (LocalRebuildStatus::Accepted, true, true),
-            (LocalRebuildStatus::DiagnosticCapture, false, false),
         ] {
             let report = LocalRebuildReport { status };
             assert_eq!(report.attempted(), attempted, "status={status:?}");
@@ -2258,6 +2299,22 @@ mod tests {
         assert_eq!(
             disabled.report.local_rebuild.status,
             LocalRebuildStatus::Disabled
+        );
+    }
+
+    #[cfg(feature = "local_rebuild_probe")]
+    #[test]
+    fn diagnostic_capture_stays_internal_to_the_public_status_model() {
+        let points = fib_sphere(64);
+        let (result, captured) = super::local_rebuild::with_a0_fast_capture(|| {
+            crate::compute_with_report(&points, VoronoiConfig::default())
+        });
+        let output = result.expect("diagnostic capture build");
+
+        assert!(captured.is_some());
+        assert_eq!(
+            output.report.local_rebuild.status,
+            LocalRebuildStatus::NotTriggered
         );
     }
 

@@ -53,24 +53,29 @@ as status variants and do not infer them from the rebuild action.
 
 ## Implemented first enum boundary
 
-One public, non-exhaustive `LocalRebuildStatus` now flows directly through
-`LocalRebuildOutcome`:
+The public, non-exhaustive `LocalRebuildStatus` contains only user-meaningful outcomes:
 
 - `NotTriggered` — ordinary enabled pipeline did not run the stage;
 - `Disabled` — policy prevented the stage from running;
 - `Rejected` — the stage ran but committed nothing, including the zero-splice and failed-gate paths;
-- `Accepted` — the strict gate passed and the rebuilt state committed; and
-- a doc-hidden diagnostic-capture status for the feature-gated A0 interception path.
+  and
+- `Accepted` — the strict gate passed and the rebuilt state committed.
+
+Private `LocalRebuildExecution` distinguishes an ordinary completed status from the feature-gated
+A0 diagnostic interception. Probe callers consume the existing capture side channel and discard
+the compute result. If their callback nevertheless completes report construction, the conversion
+boundary reports `NotTriggered`; the public status taxonomy does not expose repository test
+control.
 
 `LocalRebuildReport` contains the status and exposes derived `attempted()` and `accepted()` methods.
 Repository consumers migrated atomically to those methods while retaining the KV field names and
 values. No public compatibility booleans remain, so the invalid false/true combination is no longer
 representable.
 
-The status truth table and ordinary clean/disabled paths are pinned directly. Existing
-local-rebuild contract and fault-injection tests continue to own accepted/rejected and fail-loud
-behavior. Seven release counter pairs were neutral; the attempted/accepted KV semantics are
-unchanged.
+The public status truth table, ordinary clean/disabled paths, and feature-gated capture conversion
+are pinned directly. Existing local-rebuild contract and fault-injection tests continue to own
+accepted/rejected and fail-loud behavior. Seven release counter pairs for the original enum
+migration were neutral; the attempted/accepted KV semantics remain unchanged.
 
 ## Resolution discovery state
 

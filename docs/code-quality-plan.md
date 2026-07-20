@@ -658,8 +658,8 @@ Cargo and the live tree; the performance record owns rejected experiments and th
 | Workstream | Disposition |
 |---|---|
 | QUAL-001A | Completed: vocabulary and four lifecycle/state ownership migrations landed. |
-| QUAL-001B | Completed selectively: paired readers and overlay landed; measured mutation, validation, and handoff shapes remain raw or closed. |
-| QUAL-001C | Closed at the shared edge-use classification and differential-coverage boundary; broader shared traversal/enums were measured and rejected. |
+| QUAL-001B | Completed selectively: paired readers, overlay, and effective-validation layout landed; the measured mutable helper remains raw and the assembly handoff is closed. |
+| QUAL-001C | Completed at shared edge-use and typed strict-reason boundaries; traversal policies remain distinct and the low-value weld expression stays local. |
 | QUAL-001D | Completed selectively: reconciliation, local-rebuild transaction, assembly hint confirmation, and packed range setup landed; remaining hot loops stay flattened. |
 | QUAL-001E | Completed: production numerical/policy literals are classified and owned. |
 | QUAL-001F | Completed: obsolete compatibility/generalization surfaces and excess visibility were removed. |
@@ -713,9 +713,11 @@ later structural work without carrying a deprecated parallel API.
 1. ~~QUAL-001G typed ids at cold reconciliation/rebuild boundaries.~~ Completed at the local
    overlay seam; broader pair ownership was rejected.
 2. ~~QUAL-001B live cell-layout abstraction and migration through cold consumers.~~ Completed
-   selectively; optimizer-sensitive consumers retain documented raw expressions.
-3. ~~QUAL-001C shared validation facts and differential coverage.~~ Completed at the shared-fact
-   boundary; universal traversal/reason forms were rejected.
+   selectively; paired readers and effective validation use the view, while the measured mutable
+   helper remains raw.
+3. ~~QUAL-001C shared validation facts and differential coverage.~~ Completed with shared edge-use
+   classification and typed strict reasons; the three traversal/reporting policies remain
+   intentionally distinct.
 4. ~~Complete QUAL-001A state enums once phase ownership is clear.~~ Completed through the four
    recorded lifecycle/state ownership migrations.
 
