@@ -7,6 +7,59 @@ algorithmic or structural rather than local source reshuffling. Preserve correct
 existing performance frontier: reduced work is valuable, but a cleaner-looking loop that worsens
 cache behavior, code layout, or cycles is not.
 
+Use [`kernel-optimization-agent-prompt.md`](kernel-optimization-agent-prompt.md) as the identical
+entry point for each independent fishing pass. It enforces read-only work and a common response
+schema so reports from different models can be compared directly.
+
+## Multi-model workflow
+
+### 1. Independent fishing
+
+Run three to five models against the same frozen revision, prompt, and minimal source packet. Each
+model works independently and must not read another model's report. The agents return analysis only:
+no patches, source edits, commits, or implementation-shaped pseudo-diffs.
+
+The common schema is important, but agreement is not automatically correctness. Similar models may
+share the same blind spot or be anchored by the same source organization. Preserve dissenting
+hypotheses and explicit uncertainty for synthesis.
+
+### 2. Optional diversity round
+
+After the blind pass, use narrowly assigned reviewers only where the initial reports are thin. Useful
+lenses include traversal/batching, clipping or constraint representation, data movement/cache
+behavior, numerical geometry, and scheduling/stitching. These are supplements, not replacements for
+the comparable broad reports.
+
+### 3. Synthesis
+
+A fresh reviewer receives all independent reports plus this brief and the performance ledger. It
+should:
+
+1. normalize differently worded versions of the same mechanism;
+2. distinguish genuine independent convergence from a shared premise;
+3. map proposals to accepted, rejected, or untested prior experiments;
+4. identify contradictions and the observation that would resolve each one;
+5. rank hypotheses by expected work reduction, correctness risk, experiment cost, and breadth of
+   workload benefit; and
+6. recommend no more than three candidates for adversarial review.
+
+The synthesis must not average confidence scores into false precision. A minority proposal with a
+clear mechanism and cheap falsification test can outrank a vague consensus.
+
+### 4. Adversarial review
+
+Give the shortlisted candidates to a reviewer whose job is to reject them. Check conservative
+bounds, directed ownership, deterministic ordering, topology and rounding, fallback behavior,
+state-size/code-layout costs, and distribution-specific regressions. Record whether each concern is
+a proof obligation, a measurable risk, or merely speculative.
+
+### 5. Experiment selection
+
+Only after synthesis and adversarial review should an implementation agent receive one hypothesis.
+The assignment should define one predicted reduced-work mechanism, one smallest falsifying
+experiment, semantic gates, counter workloads, and an explicit revert condition. Do not bundle
+multiple hypotheses into the first patch.
+
 ## Central framing
 
 The primary kernel is the feedback loop between neighbor discovery, half-space clipping, and the
@@ -130,17 +183,11 @@ algorithmic change alters its cost model, and state what changed.
 
 ## Expected first deliverable
 
-Do not edit immediately. Return a short analysis containing:
-
-1. a call/data-flow description of the joint NN–clip–termination kernel;
-2. three to five structural optimization hypotheses;
-3. the expected reduced-work mechanism for each hypothesis;
-4. correctness and determinism risks;
-5. the smallest experiment that can falsify each hypothesis; and
-6. which existing telemetry is sufficient and which additional counter would be required.
-
-Prefer one independently measurable experiment at a time. Avoid bundling a traversal change, a
-representation change, and clip arithmetic into one result.
+The independent agents use the exact response format in
+[`kernel-optimization-agent-prompt.md`](kernel-optimization-agent-prompt.md). In substance, each
+report must explain the joint kernel, rank three to five structural hypotheses, identify the work
+each would remove, state risks and unknowns, and define the smallest falsifying experiment. Prefer
+one independently measurable mechanism at a time.
 
 ## Measurement and acceptance
 
@@ -160,13 +207,9 @@ An ordinary-path win that materially regresses clustered/mega work, or the rever
 workload classifier with a clear cost model. Do not add a distribution-sensitive heuristic solely
 to rescue a mixed benchmark result.
 
-## Assignment prompt
+## Agent entry point
 
-> Analyze the spherical Voronoi construction kernel as one coupled NN–clipping–termination system.
-> Start with the four files in the minimal source packet. Look for algorithmic or structural ways to
-> reduce candidate dot products, candidate materialization/ordering, or clipping operations; do not
-> begin with instruction-level loop rewrites. Preserve conservative frontier bounds, directed
-> ownership, deterministic output, and bit-sensitive topology contracts. Read the source-pinned
-> performance ledger before proposing a local optimization. First return a ranked set of hypotheses
-> with cost models, risks, and minimal falsification experiments. Do not edit code until one
-> hypothesis has a plausible end-to-end work reduction and a measurement plan.
+Point every independent reviewer at
+[`kernel-optimization-agent-prompt.md`](kernel-optimization-agent-prompt.md). Do not add leading
+suggestions or model-specific hints during the blind pass; the shared prompt and frozen revision are
+the experimental control.
