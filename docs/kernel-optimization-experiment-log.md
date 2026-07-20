@@ -16,18 +16,18 @@ are archival experiment labels, not outstanding merge candidates.
 | Fixed smaller packed prefix | `agent/kernel-demand-prefix` | Rejected: the 8-slot first batch saved 0.315% instructions on Fibonacci but added 2.777% on uniform and increased branches on both. |
 | Compact high-key overflow | `agent/kernel-compact-overflow`, `agent/kernel-compact-top64-cost`, `agent/kernel-compact-overflow-rebuild` | Shadow census retained; heap-based additive and true-replacement forms rejected at +5.1--11.4% and +6.9--7.7% instructions respectively. |
 | Shell-cell rejection | `agent/kernel-shell-cell-reject`, `agent/kernel-shell-cell-cap`, `agent/kernel-shell-cell-cap-skip` | Exact and conservative-cap oracles retained; the order-preserving production form was rejected at +1.8--3.5% instructions. |
-| Center-informed high threshold | `agent/kernel-threshold-shadow` | Center-only prediction rejected. A ring-sampled refinement found useful clustered/splittable key ceilings, but its work arithmetic cannot justify the sample on mega, bimodal, gradient, and outlier inputs; no probe code retained. |
+| Center-informed high threshold | `agent/kernel-threshold-shadow`, `agent/kernel-threshold-one-shot` | Center-only prediction and per-ring-cell sampling were rejected first. The final exact-center pre-gate plus one-vector ring sample isolated clustered overshoot, but its margin collapsed with scale and on splittable controls; no probe code retained. |
 | Seed-first packed preparation | `agent/kernel-seed-first-oracle` | Rejected with current metadata: the exact ceiling is only 3--6% of row dots, production visits one later candidate per exact-batch hit, and whole-cell caps retain at most 1.43% of row dots with negligible key savings. No probe code retained. |
 | Same-cell regional local hull | `agent/kernel-regional-hull-oracle` | Rejected before replay: no measured same-grid-cell group repaid even the optimistic pair-count floor of the current naive local hull. The best case reached 74.4% before guard expansion, exact-predicate cost, certification, or stitching. No probe code retained. |
 
 The negative results share a useful conclusion: the existing width-one unchanged clip and
 append-then-partition selection paths are already cheap. A successor should remove dot/key work
 before those paths, change the cutoff without per-key maintenance, or use a regional algorithm
-whose construction cost is materially below the current naive local hull. The remaining narrower
-follow-up is recorded in
+whose construction cost is materially below the current naive local hull. The closed structural
+follow-ups are recorded in
 [`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md#post-review-kernel-hypotheses);
-`PERF-002` in [`work-log.md`](work-log.md#perf-002--post-review-kernel-hypotheses) owns the next
-measurement gate.
+`PERF-002` in [`work-log.md`](work-log.md#perf-002--post-review-kernel-hypotheses) records the
+closure and reopening conditions.
 
 ## Common census baseline
 
@@ -307,11 +307,53 @@ to 18.26M keys for 9.36M extra dots. More importantly, the same occupancy gate s
 sample dots to save only 0.01--0.06M keys on mega, bimodal, and gradient inputs. Grid rebuild state
 does not separate the regimes: both useful and useless non-rebuilt cases exist.
 
-The original center-only hypothesis is closed. A narrower follow-up remains plausible but starts
-from a new gate: use exact center-pass high-key counts to omit clearly non-overshooting queries,
-sample at most one SIMD vector across the whole ring rather than one vector per ring cell, and
-accept a raised threshold only when the sampled reduction clears an explicit instruction-cost
-margin. Measure that pre-gate and estimator offline before changing production behavior.
+The original center-only hypothesis is closed. The narrower exact-center pre-gate and one-vector
+ring sample were subsequently measured and also closed; see the next section.
+
+## One-shot threshold refinement oracle branch
+
+- Branch: `agent/kernel-threshold-one-shot`
+- Experiment: timing-only simulation after the directed center pass. Non-band queries were eligible
+  only when their exact center high-key count already exceeded the 32-key budget. Each eligible
+  query evaluated one evenly distributed eight-resident ring sample, estimated a raised threshold,
+  and was tested at raw, 1x, 2x, 4x, 8x, and 16x predicted-saving margins.
+- Cheap feasibility gate: before sampling, reject any query whose absolute maximum possible saving
+  from the known center count and ring population could not meet the selected margin.
+- Accounting: eager keys demoted on a query that would use the tail were classified as rebuilt,
+  not saved. The oracle separately charged feasible sample-vector evaluations, selected center keys
+  that a threshold selection must scan, newly induced tail requests, and their full rescan dots.
+- Validation while present: timing-feature release library tests passed (271 passed, 5 ignored),
+  including a weighted-budget estimator test; timing-feature all-target release clippy passed. The
+  415-line probe was then removed.
+
+The pre-gate correctly left 100k Fibonacci untouched and admitted only 72 of 100k uniform queries;
+no strict-margin uniform proposal survived. Mega, bimodal, gradient, and outlier controls likewise
+had no meaningful strict-margin saving. Clustered overshoot was real, but not scale-stable:
+
+| Workload | Margin | Feasible sample vectors | Accepted | Center keys scanned | Net keys avoided | New tails / rescan dots |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 100k clustered, seed 1 | 4x | 11,947 | 1,338 | 110,641 | 540,823 | 150 / 108,678 |
+| 100k clustered, seed 2 | 4x | 12,151 | 780 | 48,793 | 240,441 | 125 / 107,228 |
+| 100k clustered, seed 3 | 4x | 11,798 | 1,073 | 75,016 | 406,938 | 123 / 83,936 |
+| 500k clustered, seed 1 | 4x | 57,208 | 1,227 | 63,442 | 179,853 | 218 / 182,768 |
+| 100k clustered, seed 1 | 8x | 4,844 | 311 | 16,723 | 152,741 | 29 / 22,289 |
+| 500k clustered, seed 1 | 8x | 24,950 | 58 | 2,222 | 9,158 | 14 / 14,500 |
+| 100k splittable, seed 1 | 4x | 14,918 | 122 | 5,372 | 5,884 | 42 / 41,344 |
+| 100k mega, default seed | 4x | 4,506 | 0 | 0 | 0 | 0 / 0 |
+
+“Sample vectors” counts one SIMD dot operation per feasible query, not eight scalar dots. Even with
+that favorable interpretation, the 500k clustered 4x form has only about 179.9k permanently
+avoided keys against 57.2k sample-vector evaluations, 63.4k center-key visits, and at least 22.8k
+eight-wide rescan chunks. That is roughly a 1.25x primitive-work margin before threshold selection,
+partitioning, estimator control flow, and imperfect SIMD tails—not the requested 4x margin. At 8x,
+the same scale samples 24,950 queries to accept 58 and avoids only 9,158 keys. Splittable is already
+negative before selection overhead.
+
+The narrow 100k clustered signal does not justify a scale-sensitive behavioral path. This closes
+the high-threshold correction family for the current count model and lazy-tail representation. Do
+not reopen it with another sampling geometry; a successor needs an already-available distribution
+statistic or a representation in which changing the split does not require extra selection and
+tail reconstruction.
 
 ## Seed-first packed-preparation oracle branch
 

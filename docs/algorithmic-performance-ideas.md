@@ -42,11 +42,11 @@ The measured result is also recorded in [`performance.md`](performance.md).
 The July 2026 multi-model kernel shortlist has been measured and closed. Its tried branches,
 counter results, and retained oracles are summarized in the
 [`kernel optimization experiment log`](kernel-optimization-experiment-log.md#pass-closeout).
-The following hypotheses were derived from those failures. None is an accepted optimization or
-authorization to combine experiments; each starts with its stated read-only gate. The first gate
-has now been run and its narrower follow-up is recorded below.
+The following hypotheses were derived from those failures. None became an accepted optimization;
+their read-only gates and reopening conditions are recorded below so future work does not repeat
+the same mechanisms without materially different evidence.
 
-#### 1. Center-informed one-shot high-threshold correction — center-only form rejected
+#### 1. Center-informed one-shot high-threshold correction — rejected and closed
 
 The packed high threshold is currently selected before candidate dots are observed, using a count
 model whose distributional assumption substantially over-retains keys on clustered inputs. The
@@ -77,11 +77,19 @@ inputs, but a per-cell eight-resident sample performed far more extra dot work t
 saved on mega, bimodal, gradient, and outlier cases. Full census values are in the
 [`kernel optimization experiment log`](kernel-optimization-experiment-log.md#center-informed-threshold-shadow-branch).
 
-Do not revive the center-only model. The remaining version is a distinct, narrower hypothesis:
-pre-gate individual queries from exact center-pass high-key counts, gather no more than one SIMD
-vector across the entire ring, and apply a correction only when its predicted key reduction clears
-an explicit instruction-cost margin. Its first gate is again timing-only; it must demonstrate low
-sampling work on the negative density-contrast cases before a behavioral branch is justified.
+The final narrower gate also ran. It pre-gated individual queries from exact center high-key counts,
+used a cheap maximum-possible-saving test before one whole-ring SIMD sample, and charged keys rebuilt
+by tail use rather than calling every eager demotion a saving. Strict 4x and 8x policies isolated a
+small clustered opportunity at 100k, but it collapsed at 500k: the 4x form permanently avoided
+179,853 keys while paying 57,208 sample-vector evaluations, 63,442 selected-center key visits, and
+182,768 rescan dots; the 8x form sampled 24,950 queries to accept 58 and avoided only 9,158 keys.
+Splittable was negative and the other density-contrast controls produced no useful strict-margin
+work. Full counters are in the
+[`kernel optimization experiment log`](kernel-optimization-experiment-log.md#one-shot-threshold-refinement-oracle-branch).
+
+Do not revive this family with another sampling geometry. Revisit only if a future representation
+provides a suitable ring-distribution statistic for free or makes threshold changes avoid both
+center selection and lazy-tail reconstruction.
 
 #### 2. Seed-first micro-batched packed preparation — rejected with current bounds
 

@@ -62,7 +62,7 @@ prevention rather than an overclaimed proof.
 | QUAL-001 | P2 | Completed | Reopen only for a new invariant/consumer or changed codegen evidence |
 | RES-002 | P2 | Decision | Choose positive-threshold units and certificates |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
-| PERF-002 | P3 | Backburner | Threshold and seed-first gates closed; guarded regional hull remains |
+| PERF-002 | P3 | Completed | Reopen only for a materially different kernel mechanism or workload |
 | RESEARCH-001 | P3 | Backburner | Expand the production combinatorics contract |
 | RESEARCH-002 | P3 | Backburner | Justify diagnostic cost and conditioning policy |
 | RESEARCH-003 | P3 | Backburner | First choose a compatible exact-zero/SoS model |
@@ -280,22 +280,19 @@ default `Preserve` behavior.
 ### PERF-002 — Post-review kernel hypotheses
 
 - **Priority:** P3
-- **Status:** Backburner; threshold, seed-first, and same-cell regional-hull gates closed 2026-07-21
+- **Status:** Completed 2026-07-21; post-review shortlist exhausted
 - **Closed experiments:** fixed smaller packed prefixes, heap-maintained compact overflow with
   exact rebuild, order-preserving shell-cell clip bypass, center-only high-threshold prediction,
-  seed-first micro-batched preparation, and a same-grid-cell regional local hull were rejected. The
-  first three were decided by retired-instruction and branch counters; the latter three failed
-  timing-only workload gates. The temporary rejected probes were removed; earlier generally useful
-  census/oracle code remains. Full branch and counter history is in
+  the final one-vector high-threshold refinement, seed-first micro-batched preparation, and a
+  same-grid-cell regional local hull were rejected. The first three were decided by
+  retired-instruction and branch counters; the latter four failed timing-only workload gates. The
+  temporary rejected probes were removed; earlier generally useful census/oracle code remains.
+  Full branch and counter history is in
   [`kernel-optimization-experiment-log.md`](kernel-optimization-experiment-log.md#pass-closeout).
-- **Remaining hypothesis:** optionally pre-gate overshooting queries from exact center counts and
-  use at most one SIMD vector sampled across the whole ring before correcting the packed high
-  threshold. Design and proof obligations are in
-  [`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md#post-review-kernel-hypotheses).
-- **Optional next threshold gate:** before another behavioral branch, measure a per-query center
-  overshoot pre-gate plus a single-vector whole-ring sample. It must avoid the 2M-plus wasted sample
-  dots observed on mega, bimodal, and gradient controls and establish an explicit positive
-  instruction-cost margin.
+- **Threshold result:** exact center overshoot plus one whole-ring sample removed the ordinary and
+  negative density-contrast false positives, but its apparent 100k clustered margin collapsed at
+  500k and on splittable input. Reopen only if the distribution statistic becomes free or changing
+  the threshold no longer requires center selection and lazy-tail reconstruction.
 - **Regional result:** exact same-cell overlap did not repay even the optimistic pair-count floor
   of the current naive local hull in any measured group. Reopen regional construction only with a
   subquadratic algorithm, reusable triangulation, or a materially tighter certified candidate set;
