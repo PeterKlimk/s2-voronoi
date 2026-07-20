@@ -116,7 +116,7 @@ Do not introduce micro-batch boundaries for this ceiling. Revisit only if anothe
 row preparation dominant enough to justify finer center-suffix cap metadata, and charge that
 metadata plus lost group-wide SIMD against the exact 3--6% upper bound.
 
-#### 3. Certified dense-region local-hull handoff
+#### 3. Certified dense-region local-hull handoff — same-cell form rejected
 
 For `mega`, great-circle, and isolated high-work regions, many generators can repeatedly search and
 clip against nearly the same large candidate set. Instead, run the existing robust local 3D hull
@@ -126,12 +126,22 @@ cells remain on the current path. This is a concrete regional form of the progre
 described below: it attempts to replace repeated query-by-candidate work rather than accelerate
 one query.
 
-The first gate is an offline replay, not a production handoff. Capture high-work groups from the
-existing telemetry, run the local hull over progressively larger guard regions, compare the
-derived cells and strict validation outcome with the production result, and measure the crossover
-against the baseline work for those same groups. Promotion also requires a deterministic boundary
-certificate and a stitching plan that cannot turn an ordinary successful construction into a
-failure.
+The first, cheaper gate counted exact attempted-neighbor overlap for every existing same-grid-cell
+group before attempting an offline replay. It compared each group's repeated candidate attempts
+with the pair-count floor for running the current naive `O(p²)` local hull over the smallest
+possible union. No group qualified across 100k Fibonacci, uniform, clustered, splittable,
+gradient, mega, or great-circle inputs, nor at 500k clustered. The best case reached 74.4% of that
+optimistic floor before guard expansion, robust orientation cost, certification, cell extraction,
+or stitching. Mega's most expensive group was a single 98,444-attempt row, so it had no regional
+work to amortize. Full counters are in the
+[`kernel optimization experiment log`](kernel-optimization-experiment-log.md#same-cell-regional-local-hull-oracle-branch).
+
+Do not proceed to guard-region replay with the current `LocalHull` and same-grid-cell regions.
+Larger or differently shaped regions remain a research possibility, not a queued implementation:
+they first need either a subquadratic regional triangulation, reuse of an already available
+triangulation, or a certificate that produces a much smaller candidate union. Any promoted design
+still requires a deterministic boundary certificate and a stitching plan that cannot turn an
+ordinary successful construction into a failure.
 
 ### Selected-neighbor constraint batches — closed negative 2026-07-16
 

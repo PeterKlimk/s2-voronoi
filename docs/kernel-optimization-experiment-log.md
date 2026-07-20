@@ -18,11 +18,13 @@ are archival experiment labels, not outstanding merge candidates.
 | Shell-cell rejection | `agent/kernel-shell-cell-reject`, `agent/kernel-shell-cell-cap`, `agent/kernel-shell-cell-cap-skip` | Exact and conservative-cap oracles retained; the order-preserving production form was rejected at +1.8--3.5% instructions. |
 | Center-informed high threshold | `agent/kernel-threshold-shadow` | Center-only prediction rejected. A ring-sampled refinement found useful clustered/splittable key ceilings, but its work arithmetic cannot justify the sample on mega, bimodal, gradient, and outlier inputs; no probe code retained. |
 | Seed-first packed preparation | `agent/kernel-seed-first-oracle` | Rejected with current metadata: the exact ceiling is only 3--6% of row dots, production visits one later candidate per exact-batch hit, and whole-cell caps retain at most 1.43% of row dots with negligible key savings. No probe code retained. |
+| Same-cell regional local hull | `agent/kernel-regional-hull-oracle` | Rejected before replay: no measured same-grid-cell group repaid even the optimistic pair-count floor of the current naive local hull. The best case reached 74.4% before guard expansion, exact-predicate cost, certification, or stitching. No probe code retained. |
 
 The negative results share a useful conclusion: the existing width-one unchanged clip and
 append-then-partition selection paths are already cheap. A successor should remove dot/key work
-before those paths, change the cutoff without per-key maintenance, or replace repeated per-cell
-work with a regional algorithm. The untried follow-ups are recorded in
+before those paths, change the cutoff without per-key maintenance, or use a regional algorithm
+whose construction cost is materially below the current naive local hull. The remaining narrower
+follow-up is recorded in
 [`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md#post-review-kernel-hypotheses);
 `PERF-002` in [`work-log.md`](work-log.md#perf-002--post-review-kernel-hypotheses) owns the next
 measurement gate.
@@ -367,3 +369,43 @@ The seed-first micro-batching hypothesis is closed for existing metadata. A fine
 center-suffix decomposition could approach the 3--6% exact ceiling, but that ceiling is too small
 to justify new cap storage, more preparation boundaries, and reduced group-wide SIMD without a
 separate motivating workload. Do not build the behavioral form from hit counts alone.
+
+## Same-cell regional local-hull oracle branch
+
+- Branch: `agent/kernel-regional-hull-oracle`
+- Experiment: timing-only census over each existing same-grid-cell generator group. For every
+  group it recorded the exact union of distinct neighbor slots attempted by its cells, the sum of
+  those attempts, and the union after adding the group's generators.
+- Gate: compare repeated baseline candidate attempts with `p * (p - 1) / 2`, where `p` is the
+  number of points the smallest same-cell local hull would contain. This is deliberately favorable
+  to the proposal: it is only an arithmetic proxy for the current naive `O(p²)` hull, not a charge
+  for its robust orientation predicates, face/horizon maintenance, a guard ring, certification,
+  cell extraction, or stitching.
+- Validation while present: the timing-enabled release benchmark built and completed the full
+  workload matrix. The timing-only probe was then removed.
+
+No group in the matrix reached the optimistic floor:
+
+| Workload | Attempts | Duplicated attempts | Best group (rows / attempts / points) | Best attempts / pair floor | Qualifying groups |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 100k Fibonacci | 721,993 | 515,913 | 17 / 121 / 35 | 20.34% | 0 |
+| 100k uniform, seed 1 | 990,804 | 747,686 | 25 / 227 / 42 | 26.36% | 0 |
+| 100k clustered, seed 1 | 5,824,287 | 5,207,306 | 1,339 / 739,404 / 1,490 | 66.65% | 0 |
+| 100k splittable, seed 1 | 4,377,803 | 4,103,080 | 1,102 / 467,600 / 1,173 | 68.03% | 0 |
+| 100k gradient, seed 1 | 992,070 | 791,962 | 2 / 13 / 8 | 46.43% | 0 |
+| 100k mega, default seed | 4,371,527 | 2,988,912 | 2 / 9 / 6 | 60.00% | 0 |
+| 100k great-circle, default jitter | 86,201,995 | 68,194,785 | 528 / 511,773 / 77,220 | 0.017% | 0 |
+| 500k clustered, seed 1 | 16,993,127 | 14,593,205 | 1,037 / 481,454 / 1,138 | 74.42% | 0 |
+
+The aggregate duplication is real, but it is attached to candidate unions large enough that the
+current local hull's quadratic construction dominates. The `mega` maximum-work group is especially
+diagnostic: it contains one row with 98,444 attempts and therefore offers no regional
+amortization; a hull over its 98,445-point union would be pathological. Great-circle has broad
+repetition, but its candidate unions are so large that even the optimistic floor misses by orders
+of magnitude.
+
+The same-grid-cell local-hull form is closed before guard-region replay. Enlarging regions is not
+proved impossible by this census, but overlap alone is no longer a sufficient premise: a future
+regional proposal needs a subquadratic construction or reusable triangulation, plus a cheap way to
+form a much tighter certified candidate set. Do not add guard rings, replay machinery, or stitching
+for the current `LocalHull` on the strength of duplicated-attempt counts.

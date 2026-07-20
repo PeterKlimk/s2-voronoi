@@ -280,26 +280,26 @@ default `Preserve` behavior.
 ### PERF-002 — Post-review kernel hypotheses
 
 - **Priority:** P3
-- **Status:** Backburner; threshold and seed-first gates closed 2026-07-21
+- **Status:** Backburner; threshold, seed-first, and same-cell regional-hull gates closed 2026-07-21
 - **Closed experiments:** fixed smaller packed prefixes, heap-maintained compact overflow with
   exact rebuild, order-preserving shell-cell clip bypass, center-only high-threshold prediction,
-  and seed-first micro-batched preparation were rejected. The first three were decided by
-  retired-instruction and branch counters; the threshold and seed-first ideas failed their
-  timing-only workload gates. Both rejected probes were removed; earlier generally useful
+  seed-first micro-batched preparation, and a same-grid-cell regional local hull were rejected. The
+  first three were decided by retired-instruction and branch counters; the latter three failed
+  timing-only workload gates. The temporary rejected probes were removed; earlier generally useful
   census/oracle code remains. Full branch and counter history is in
   [`kernel-optimization-experiment-log.md`](kernel-optimization-experiment-log.md#pass-closeout).
-- **Remaining hypotheses:** (1) optionally pre-gate overshooting queries from exact center counts
-  and use at most one SIMD vector sampled across the whole ring before correcting the packed high
-  threshold, and (2) replace repeated dense regional queries with one guarded local hull. Designs
-  and proof obligations are in
+- **Remaining hypothesis:** optionally pre-gate overshooting queries from exact center counts and
+  use at most one SIMD vector sampled across the whole ring before correcting the packed high
+  threshold. Design and proof obligations are in
   [`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md#post-review-kernel-hypotheses).
 - **Optional next threshold gate:** before another behavioral branch, measure a per-query center
   overshoot pre-gate plus a single-vector whole-ring sample. It must avoid the 2M-plus wasted sample
   dots observed on mega, bimodal, and gradient controls and establish an explicit positive
   instruction-cost margin.
-- **Next structural gate:** measure guarded regional overlap and the local-hull amortization ceiling
-  before changing construction. The seed-first exact and cell-cap ceilings are too small to justify
-  micro-batch boundaries or finer center-suffix metadata on current workloads.
+- **Regional result:** exact same-cell overlap did not repay even the optimistic pair-count floor
+  of the current naive local hull in any measured group. Reopen regional construction only with a
+  subquadratic algorithm, reusable triangulation, or a materially tighter certified candidate set;
+  duplicated-attempt counts alone do not justify guard/replay/stitching work.
 
 The remaining code-specific performance experiments are maintained separately in the open queue in
 [`performance.md`](performance.md) and the memory backlog in
