@@ -71,6 +71,23 @@ pub(crate) struct PackedKnnTimings {
     /// chunk0-later, tail-first, and tail-later classes.
     pub exact_batch_counts: [u64; 4],
     pub exact_slots_emitted: [u64; 4],
+    /// Timing-only cap-64/block-16 compact-overflow shadow simulation, split
+    /// into normal and dense-band query modes.
+    pub compact_queries: [u64; 2],
+    pub compact_queries_over_cap: [u64; 2],
+    pub compact_queries_emitted_beyond_cap: [u64; 2],
+    pub compact_high_keys: [u64; 2],
+    pub compact_overflow_keys: [u64; 2],
+    pub compact_emitted_beyond_cap_slots: [u64; 2],
+    pub compact_any_high_blocks: [u64; 2],
+    pub compact_deferred_blocks: [u64; 2],
+    pub compact_any_high_rescan_slots: [u64; 2],
+    pub compact_deferred_rescan_slots: [u64; 2],
+    pub compact_requested_any_high_blocks: [u64; 2],
+    pub compact_requested_deferred_blocks: [u64; 2],
+    pub compact_requested_any_high_rescan_slots: [u64; 2],
+    pub compact_requested_deferred_rescan_slots: [u64; 2],
+    pub compact_requested_eligible_slots: [u64; 2],
 }
 
 #[cfg(feature = "timing")]
@@ -104,6 +121,21 @@ impl Default for PackedKnnTimings {
             unused_chunk0_keys: 0,
             exact_batch_counts: [0; 4],
             exact_slots_emitted: [0; 4],
+            compact_queries: [0; 2],
+            compact_queries_over_cap: [0; 2],
+            compact_queries_emitted_beyond_cap: [0; 2],
+            compact_high_keys: [0; 2],
+            compact_overflow_keys: [0; 2],
+            compact_emitted_beyond_cap_slots: [0; 2],
+            compact_any_high_blocks: [0; 2],
+            compact_deferred_blocks: [0; 2],
+            compact_any_high_rescan_slots: [0; 2],
+            compact_deferred_rescan_slots: [0; 2],
+            compact_requested_any_high_blocks: [0; 2],
+            compact_requested_deferred_blocks: [0; 2],
+            compact_requested_any_high_rescan_slots: [0; 2],
+            compact_requested_deferred_rescan_slots: [0; 2],
+            compact_requested_eligible_slots: [0; 2],
         }
     }
 }
@@ -247,6 +279,42 @@ impl PackedKnnTimings {
         let class = stage * 2 + usize::from(!first);
         self.exact_batch_counts[class] += 1;
         self.exact_slots_emitted[class] += slots as u64;
+    }
+
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn add_compact_overflow_shadow(
+        &mut self,
+        band_mode: bool,
+        high_keys: usize,
+        emitted: usize,
+        cap: usize,
+        any_high_blocks: usize,
+        deferred_blocks: usize,
+        any_high_rescan_slots: usize,
+        deferred_rescan_slots: usize,
+        eligible_slots: usize,
+    ) {
+        let mode = usize::from(band_mode);
+        self.compact_queries[mode] += 1;
+        self.compact_high_keys[mode] += high_keys as u64;
+        if high_keys > cap {
+            self.compact_queries_over_cap[mode] += 1;
+            self.compact_overflow_keys[mode] += (high_keys - cap) as u64;
+            self.compact_any_high_blocks[mode] += any_high_blocks as u64;
+            self.compact_deferred_blocks[mode] += deferred_blocks as u64;
+            self.compact_any_high_rescan_slots[mode] += any_high_rescan_slots as u64;
+            self.compact_deferred_rescan_slots[mode] += deferred_rescan_slots as u64;
+        }
+        if emitted > cap {
+            self.compact_queries_emitted_beyond_cap[mode] += 1;
+            self.compact_emitted_beyond_cap_slots[mode] += (emitted - cap) as u64;
+            self.compact_requested_any_high_blocks[mode] += any_high_blocks as u64;
+            self.compact_requested_deferred_blocks[mode] += deferred_blocks as u64;
+            self.compact_requested_any_high_rescan_slots[mode] += any_high_rescan_slots as u64;
+            self.compact_requested_deferred_rescan_slots[mode] += deferred_rescan_slots as u64;
+            self.compact_requested_eligible_slots[mode] += eligible_slots as u64;
+        }
     }
 
     #[inline]

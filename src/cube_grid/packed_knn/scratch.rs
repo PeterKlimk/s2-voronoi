@@ -125,9 +125,14 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
     }
 
     #[cfg(feature = "timing")]
-    pub(crate) fn record_tail_usage(&self, timings: &mut PackedKnnTimings) {
+    pub(crate) fn record_tail_usage(&mut self, timings: &mut PackedKnnTimings) {
+        const COMPACT_CAP: usize = 64;
+        const COMPACT_BLOCK_SIZE: usize = 16;
+
         let mut unused_center_keys = 0usize;
         let mut unused_chunk0_keys = 0usize;
+        let mut any_high_blocks = Vec::new();
+        let mut deferred_blocks = Vec::new();
         for qi in 0..self.group.query_count() {
             if self.scratch.tail_ready_gen.get(qi).copied().unwrap_or(0) != self.group_gen {
                 unused_center_keys += self
@@ -140,10 +145,115 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
             unused_chunk0_keys += self.scratch.chunk0_keys[qi]
                 .len()
                 .saturating_sub(self.scratch.chunk0_pos[qi]);
+
+            let high_keys = &mut self.scratch.chunk0_keys[qi];
+            let high_count = high_keys.len();
+            let emitted = self.scratch.chunk0_pos[qi];
+            any_high_blocks.clear();
+            deferred_blocks.clear();
+            if high_count > COMPACT_CAP {
+                // The group is finished, so mutating its dead key list cannot
+                // affect frontier behavior. Full-key order is the production
+                // descending-dot/ascending-slot order.
+                high_keys.sort_unstable();
+                any_high_blocks.extend(
+                    high_keys
+                        .iter()
+                        .map(|&key| helpers::key_to_idx(key) as usize / COMPACT_BLOCK_SIZE),
+                );
+                deferred_blocks.extend(
+                    high_keys[COMPACT_CAP..]
+                        .iter()
+                        .map(|&key| helpers::key_to_idx(key) as usize / COMPACT_BLOCK_SIZE),
+                );
+                any_high_blocks.sort_unstable();
+                any_high_blocks.dedup();
+                deferred_blocks.sort_unstable();
+                deferred_blocks.dedup();
+            }
+            let any_high_rescan_slots = eligible_slots_in_blocks(
+                &any_high_blocks,
+                COMPACT_BLOCK_SIZE,
+                self.group,
+                qi,
+                &self.scratch.cell_ranges,
+            );
+            let deferred_rescan_slots = eligible_slots_in_blocks(
+                &deferred_blocks,
+                COMPACT_BLOCK_SIZE,
+                self.group,
+                qi,
+                &self.scratch.cell_ranges,
+            );
+            let eligible_slots =
+                eligible_slots_in_ranges(self.group, qi, &self.scratch.cell_ranges);
+            timings.add_compact_overflow_shadow(
+                self.scratch.band_mode.get(qi).copied().unwrap_or(false),
+                high_count,
+                emitted,
+                COMPACT_CAP,
+                any_high_blocks.len(),
+                deferred_blocks.len(),
+                any_high_rescan_slots,
+                deferred_rescan_slots,
+                eligible_slots,
+            );
         }
         timings.add_unused_center_tail_keys(unused_center_keys);
         timings.add_unused_chunk0_keys(unused_chunk0_keys);
     }
+}
+
+#[cfg(feature = "timing")]
+fn eligible_slots_in_ranges(
+    group: PackedGroupInput<'_>,
+    qi: usize,
+    ranges: &[PackedCellRange],
+) -> usize {
+    let query_slot = group.query_slot_start() as usize + qi;
+    ranges
+        .iter()
+        .enumerate()
+        .filter(|(_, range)| range.kind != PackedCellRangeKind::SameBinEarlier)
+        .map(|(range_index, range)| {
+            let start = if range_index == 0 {
+                range.soa_start.max(query_slot + 1)
+            } else {
+                range.soa_start
+            };
+            range.soa_end.saturating_sub(start)
+        })
+        .sum()
+}
+
+#[cfg(feature = "timing")]
+fn eligible_slots_in_blocks(
+    blocks: &[usize],
+    block_size: usize,
+    group: PackedGroupInput<'_>,
+    qi: usize,
+    ranges: &[PackedCellRange],
+) -> usize {
+    let query_slot = group.query_slot_start() as usize + qi;
+    let mut covered = 0usize;
+    for &block in blocks {
+        let block_start = block * block_size;
+        let block_end = block_start + block_size;
+        for (range_index, range) in ranges.iter().enumerate() {
+            if range.kind == PackedCellRangeKind::SameBinEarlier {
+                continue;
+            }
+            let eligible_start = if range_index == 0 {
+                range.soa_start.max(query_slot + 1)
+            } else {
+                range.soa_start
+            };
+            let start = eligible_start.max(block_start);
+            let end = range.soa_end.min(block_end);
+            covered += end.saturating_sub(start);
+        }
+    }
+    covered
 }
 
 impl PackedKnnCellScratch {

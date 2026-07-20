@@ -239,6 +239,21 @@ pub(crate) struct CellSubPhases {
     pub packed_exact_slots_emitted: [u64; 4],
     pub packed_exact_slots_visited: [u64; 4],
     pub packed_exact_slots_abandoned: [u64; 4],
+    pub compact_queries: [u64; 2],
+    pub compact_queries_over_cap: [u64; 2],
+    pub compact_queries_emitted_beyond_cap: [u64; 2],
+    pub compact_high_keys: [u64; 2],
+    pub compact_overflow_keys: [u64; 2],
+    pub compact_emitted_beyond_cap_slots: [u64; 2],
+    pub compact_any_high_blocks: [u64; 2],
+    pub compact_deferred_blocks: [u64; 2],
+    pub compact_any_high_rescan_slots: [u64; 2],
+    pub compact_deferred_rescan_slots: [u64; 2],
+    pub compact_requested_any_high_blocks: [u64; 2],
+    pub compact_requested_deferred_blocks: [u64; 2],
+    pub compact_requested_any_high_rescan_slots: [u64; 2],
+    pub compact_requested_deferred_rescan_slots: [u64; 2],
+    pub compact_requested_eligible_slots: [u64; 2],
     pub shell_layer_batches: u64,
     pub shell_layer_slots: u64,
     pub shell_layer_prefix_consumed: u64,
@@ -341,6 +356,21 @@ pub(crate) struct CellSubAccum {
     packed_exact_slots_emitted: [u64; 4],
     packed_exact_slots_visited: [u64; 4],
     packed_exact_slots_abandoned: [u64; 4],
+    compact_queries: [u64; 2],
+    compact_queries_over_cap: [u64; 2],
+    compact_queries_emitted_beyond_cap: [u64; 2],
+    compact_high_keys: [u64; 2],
+    compact_overflow_keys: [u64; 2],
+    compact_emitted_beyond_cap_slots: [u64; 2],
+    compact_any_high_blocks: [u64; 2],
+    compact_deferred_blocks: [u64; 2],
+    compact_any_high_rescan_slots: [u64; 2],
+    compact_deferred_rescan_slots: [u64; 2],
+    compact_requested_any_high_blocks: [u64; 2],
+    compact_requested_deferred_blocks: [u64; 2],
+    compact_requested_any_high_rescan_slots: [u64; 2],
+    compact_requested_deferred_rescan_slots: [u64; 2],
+    compact_requested_eligible_slots: [u64; 2],
     shell_layer_batches: u64,
     shell_layer_slots: u64,
     shell_layer_prefix_consumed: u64,
@@ -407,6 +437,30 @@ impl CellSubAccum {
         for class in 0..4 {
             self.packed_exact_batch_counts[class] += timings.exact_batch_counts[class];
             self.packed_exact_slots_emitted[class] += timings.exact_slots_emitted[class];
+        }
+        for mode in 0..2 {
+            self.compact_queries[mode] += timings.compact_queries[mode];
+            self.compact_queries_over_cap[mode] += timings.compact_queries_over_cap[mode];
+            self.compact_queries_emitted_beyond_cap[mode] +=
+                timings.compact_queries_emitted_beyond_cap[mode];
+            self.compact_high_keys[mode] += timings.compact_high_keys[mode];
+            self.compact_overflow_keys[mode] += timings.compact_overflow_keys[mode];
+            self.compact_emitted_beyond_cap_slots[mode] +=
+                timings.compact_emitted_beyond_cap_slots[mode];
+            self.compact_any_high_blocks[mode] += timings.compact_any_high_blocks[mode];
+            self.compact_deferred_blocks[mode] += timings.compact_deferred_blocks[mode];
+            self.compact_any_high_rescan_slots[mode] += timings.compact_any_high_rescan_slots[mode];
+            self.compact_deferred_rescan_slots[mode] += timings.compact_deferred_rescan_slots[mode];
+            self.compact_requested_any_high_blocks[mode] +=
+                timings.compact_requested_any_high_blocks[mode];
+            self.compact_requested_deferred_blocks[mode] +=
+                timings.compact_requested_deferred_blocks[mode];
+            self.compact_requested_any_high_rescan_slots[mode] +=
+                timings.compact_requested_any_high_rescan_slots[mode];
+            self.compact_requested_deferred_rescan_slots[mode] +=
+                timings.compact_requested_deferred_rescan_slots[mode];
+            self.compact_requested_eligible_slots[mode] +=
+                timings.compact_requested_eligible_slots[mode];
         }
     }
 
@@ -586,6 +640,30 @@ impl CellSubAccum {
             self.packed_exact_slots_visited[class] += other.packed_exact_slots_visited[class];
             self.packed_exact_slots_abandoned[class] += other.packed_exact_slots_abandoned[class];
         }
+        for mode in 0..2 {
+            self.compact_queries[mode] += other.compact_queries[mode];
+            self.compact_queries_over_cap[mode] += other.compact_queries_over_cap[mode];
+            self.compact_queries_emitted_beyond_cap[mode] +=
+                other.compact_queries_emitted_beyond_cap[mode];
+            self.compact_high_keys[mode] += other.compact_high_keys[mode];
+            self.compact_overflow_keys[mode] += other.compact_overflow_keys[mode];
+            self.compact_emitted_beyond_cap_slots[mode] +=
+                other.compact_emitted_beyond_cap_slots[mode];
+            self.compact_any_high_blocks[mode] += other.compact_any_high_blocks[mode];
+            self.compact_deferred_blocks[mode] += other.compact_deferred_blocks[mode];
+            self.compact_any_high_rescan_slots[mode] += other.compact_any_high_rescan_slots[mode];
+            self.compact_deferred_rescan_slots[mode] += other.compact_deferred_rescan_slots[mode];
+            self.compact_requested_any_high_blocks[mode] +=
+                other.compact_requested_any_high_blocks[mode];
+            self.compact_requested_deferred_blocks[mode] +=
+                other.compact_requested_deferred_blocks[mode];
+            self.compact_requested_any_high_rescan_slots[mode] +=
+                other.compact_requested_any_high_rescan_slots[mode];
+            self.compact_requested_deferred_rescan_slots[mode] +=
+                other.compact_requested_deferred_rescan_slots[mode];
+            self.compact_requested_eligible_slots[mode] +=
+                other.compact_requested_eligible_slots[mode];
+        }
         self.shell_layer_batches += other.shell_layer_batches;
         self.shell_layer_slots += other.shell_layer_slots;
         self.shell_layer_prefix_consumed += other.shell_layer_prefix_consumed;
@@ -662,6 +740,21 @@ impl CellSubAccum {
             packed_exact_slots_emitted: self.packed_exact_slots_emitted,
             packed_exact_slots_visited: self.packed_exact_slots_visited,
             packed_exact_slots_abandoned: self.packed_exact_slots_abandoned,
+            compact_queries: self.compact_queries,
+            compact_queries_over_cap: self.compact_queries_over_cap,
+            compact_queries_emitted_beyond_cap: self.compact_queries_emitted_beyond_cap,
+            compact_high_keys: self.compact_high_keys,
+            compact_overflow_keys: self.compact_overflow_keys,
+            compact_emitted_beyond_cap_slots: self.compact_emitted_beyond_cap_slots,
+            compact_any_high_blocks: self.compact_any_high_blocks,
+            compact_deferred_blocks: self.compact_deferred_blocks,
+            compact_any_high_rescan_slots: self.compact_any_high_rescan_slots,
+            compact_deferred_rescan_slots: self.compact_deferred_rescan_slots,
+            compact_requested_any_high_blocks: self.compact_requested_any_high_blocks,
+            compact_requested_deferred_blocks: self.compact_requested_deferred_blocks,
+            compact_requested_any_high_rescan_slots: self.compact_requested_any_high_rescan_slots,
+            compact_requested_deferred_rescan_slots: self.compact_requested_deferred_rescan_slots,
+            compact_requested_eligible_slots: self.compact_requested_eligible_slots,
             shell_layer_batches: self.shell_layer_batches,
             shell_layer_slots: self.shell_layer_slots,
             shell_layer_prefix_consumed: self.shell_layer_prefix_consumed,
@@ -886,6 +979,29 @@ impl PhaseTimings {
                         );
                     }
                 }
+                for (mode, label) in ["normal", "dense_band"].into_iter().enumerate() {
+                    let queries = self.cell_sub.compact_queries[mode];
+                    if queries > 0 {
+                        eprintln!(
+                            "      compact64_{label}: queries={} over_cap={} emitted_beyond_cap={} high_keys={} overflow_keys={} emitted_beyond_cap_slots={} any_blocks={} deferred_blocks={} any_rescan_slots={} deferred_rescan_slots={} requested_any_blocks={} requested_deferred_blocks={} requested_any_rescan_slots={} requested_deferred_rescan_slots={} requested_eligible_slots={}",
+                            queries,
+                            self.cell_sub.compact_queries_over_cap[mode],
+                            self.cell_sub.compact_queries_emitted_beyond_cap[mode],
+                            self.cell_sub.compact_high_keys[mode],
+                            self.cell_sub.compact_overflow_keys[mode],
+                            self.cell_sub.compact_emitted_beyond_cap_slots[mode],
+                            self.cell_sub.compact_any_high_blocks[mode],
+                            self.cell_sub.compact_deferred_blocks[mode],
+                            self.cell_sub.compact_any_high_rescan_slots[mode],
+                            self.cell_sub.compact_deferred_rescan_slots[mode],
+                            self.cell_sub.compact_requested_any_high_blocks[mode],
+                            self.cell_sub.compact_requested_deferred_blocks[mode],
+                            self.cell_sub.compact_requested_any_high_rescan_slots[mode],
+                            self.cell_sub.compact_requested_deferred_rescan_slots[mode],
+                            self.cell_sub.compact_requested_eligible_slots[mode],
+                        );
+                    }
+                }
             }
             eprintln!(
                 "    clipping:        {:7.1}ms ({:4.1}%)",
@@ -1092,6 +1208,39 @@ impl PhaseTimings {
                     )
                 })
                 .unwrap_or((0, 0, 0));
+            eprintln!(
+                "TIMING_COMPACT_KV cap=64 block=16 normal_queries={nq} normal_over_cap={noc} normal_emitted_beyond_cap={nebc} normal_high_keys={nhk} normal_overflow_keys={nok} normal_emitted_beyond_cap_slots={nebcs} normal_any_blocks={nab} normal_deferred_blocks={ndb} normal_any_rescan_slots={nars} normal_deferred_rescan_slots={ndrs} normal_requested_any_blocks={nrab} normal_requested_deferred_blocks={nrdb} normal_requested_any_rescan_slots={nrars} normal_requested_deferred_rescan_slots={nrdrs} normal_requested_eligible_slots={nres} band_queries={bq} band_over_cap={boc} band_emitted_beyond_cap={bebc} band_high_keys={bhk} band_overflow_keys={bok} band_emitted_beyond_cap_slots={bebcs} band_any_blocks={bab} band_deferred_blocks={bdb} band_any_rescan_slots={bars} band_deferred_rescan_slots={bdrs} band_requested_any_blocks={brab} band_requested_deferred_blocks={brdb} band_requested_any_rescan_slots={brars} band_requested_deferred_rescan_slots={brdrs} band_requested_eligible_slots={bres}",
+                nq = self.cell_sub.compact_queries[0],
+                noc = self.cell_sub.compact_queries_over_cap[0],
+                nebc = self.cell_sub.compact_queries_emitted_beyond_cap[0],
+                nhk = self.cell_sub.compact_high_keys[0],
+                nok = self.cell_sub.compact_overflow_keys[0],
+                nebcs = self.cell_sub.compact_emitted_beyond_cap_slots[0],
+                nab = self.cell_sub.compact_any_high_blocks[0],
+                ndb = self.cell_sub.compact_deferred_blocks[0],
+                nars = self.cell_sub.compact_any_high_rescan_slots[0],
+                ndrs = self.cell_sub.compact_deferred_rescan_slots[0],
+                nrab = self.cell_sub.compact_requested_any_high_blocks[0],
+                nrdb = self.cell_sub.compact_requested_deferred_blocks[0],
+                nrars = self.cell_sub.compact_requested_any_high_rescan_slots[0],
+                nrdrs = self.cell_sub.compact_requested_deferred_rescan_slots[0],
+                nres = self.cell_sub.compact_requested_eligible_slots[0],
+                bq = self.cell_sub.compact_queries[1],
+                boc = self.cell_sub.compact_queries_over_cap[1],
+                bebc = self.cell_sub.compact_queries_emitted_beyond_cap[1],
+                bhk = self.cell_sub.compact_high_keys[1],
+                bok = self.cell_sub.compact_overflow_keys[1],
+                bebcs = self.cell_sub.compact_emitted_beyond_cap_slots[1],
+                bab = self.cell_sub.compact_any_high_blocks[1],
+                bdb = self.cell_sub.compact_deferred_blocks[1],
+                bars = self.cell_sub.compact_any_high_rescan_slots[1],
+                bdrs = self.cell_sub.compact_deferred_rescan_slots[1],
+                brab = self.cell_sub.compact_requested_any_high_blocks[1],
+                brdb = self.cell_sub.compact_requested_deferred_blocks[1],
+                brars = self.cell_sub.compact_requested_any_high_rescan_slots[1],
+                brdrs = self.cell_sub.compact_requested_deferred_rescan_slots[1],
+                bres = self.cell_sub.compact_requested_eligible_slots[1],
+            );
             eprintln!(
                 "TIMING_KV n={n} total_ms={total:.3} preprocess_ms={pre:.3} weld_pairs={wp} weld_pair_capacity={wpc} knn_build_ms={kb:.3} grid_order_pairs={gop} grid_order_abs_delta={goa} grid_materialize_by_slot={gms} cell_construction_ms={cc:.3} dedup_ms={dd:.3} dedup_bookkeeping_ms={dbk:.3} dedup_overflow_ms={dof:.3} dedup_deferred_ms={ddp:.3} dedup_finalize_ms={dfs:.3} dedup_vertices_ms={dvt:.3} dedup_prefixes_ms={dcp:.3} dedup_incidence_ms={dis:.3} dedup_indices_ms={dci:.3} dedup_overrides_ms={dro:.3} dedup_zero_hints_ms={dzh:.3} shard_order_descents={sod} shard_order_pairs={sop} shard_order_abs_delta={soa} scatter_by_shard={sbs} edge_reconcile_ms={er:.3} merge_safety_scan_cells={mssc} merge_safety_global_fallbacks={msgf} assemble_ms={asmb:.3} resolution_certified_hint={rch} resolution_fallback_drift={rfd} resolution_reconcile_scan_cells={rrsc} resolution_rebuild_scan_cells={rpsc} resolution_hint_cells={rhc} resolution_hinted_candidates={rhcand} resolution_detected_edges={rde} cells_used_knn={cuk} cells_packed_tail_used={cpt} fallback_projection={fpj} fallback_polygon_cap={fpc} fallback_all_constraints={fac} packed_total_ms={ptm:.3} packed_select_partition_ms={psp:.3} packed_select_sort_ms={pss:.3} packed_select_scatter_ms={psc:.3} packed_tail_builds={ptb} packed_keys_materialized={pkm} packed_key_capacity_peak={pkp} tail_possible_queries={tpq} tail_requested_queries={trq} ring_tail_rescans={rtr} ring_tail_empty_rescans={rte} ring_tail_dot_evaluations={rtd} center_tail_keys={ctk} unused_center_tail_keys={uctk} center_tail_dot_evaluations={ctd} chunk0_keys={c0k} unused_chunk0_keys={uc0k} packed_chunk0_first_batches={pc0fb} packed_chunk0_first_emitted={pc0fe} packed_chunk0_first_visited={pc0fv} packed_chunk0_first_abandoned={pc0fa} packed_chunk0_later_batches={pc0lb} packed_chunk0_later_emitted={pc0le} packed_chunk0_later_visited={pc0lv} packed_chunk0_later_abandoned={pc0la} packed_tail_first_batches={ptfb} packed_tail_first_emitted={ptfe} packed_tail_first_visited={ptfv} packed_tail_first_abandoned={ptfa} packed_tail_later_batches={ptlb} packed_tail_later_emitted={ptle} packed_tail_later_visited={ptlv} packed_tail_later_abandoned={ptla} shell_layer_batches={slb} shell_layer_slots={sls} shell_layer_prefix_consumed={slp} shell_midlayer_terminations={slm} neighbors_total={nt} neighbors_max={nm} candidate_work_samples={cws} candidate_work_p50_lb={cw50} candidate_work_p90_lb={cw90} candidate_work_p99_lb={cw99} candidate_work_p999_lb={cw999} candidate_work_max={cwm} candidate_work_relative_base={cwb} candidate_work_ge4x_median_lb={cw4} candidate_work_ge16x_median_lb={cw16} candidate_work_ge64x_median_lb={cw64} no_progress_tail_samples={nps} no_progress_tail_excluded={npx} no_progress_tail_p50_lb={np50} no_progress_tail_p90_lb={np90} no_progress_tail_p99_lb={np99} no_progress_tail_p999_lb={np999} no_progress_tail_max={npm} no_progress_tail_relative_base={npb} no_progress_tail_ge4x_median_lb={np4} no_progress_tail_ge16x_median_lb={np16} no_progress_tail_ge64x_median_lb={np64} final_edges_total={fet} final_edges_max={fem} examine_per_edge={epe:.6} dir_shadow_checks={dsc} dir_shadow_candidate_tests={dst} dir_shadow_hits={dsh} dir_shadow_saved={dss} dir_support_candidate_tests={dpt} dir_support_hits={dph} dir_support_saved={dps} dir_support_false_positive_hits={dpf} grid_res={gr} grid_max_occ={gmo} grid_rebuilt={grb}",
                 n = n,
