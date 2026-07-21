@@ -245,8 +245,8 @@ default `Preserve` behavior.
 ### RES-002 — Optional positive-threshold edge simplification
 
 - **Priority:** P2
-- **Status:** Blocked
-- **Dependencies:** RES-001
+- **Status:** Decision
+- **Dependencies:** RES-001 (completed)
 - **Goal:** let graphical or physics consumers explicitly remove represented nonzero slivers.
 - **Decisions required:**
   - canonical threshold units (squared chord internally, with or without an angular convenience
@@ -256,7 +256,8 @@ default `Preserve` behavior.
   - the component-diameter and geometric-deviation certificate.
 - **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
   exact Voronoi diagram of the original generators.
-- **Reference:** [`output-resolution-policy.md`](output-resolution-policy.md).
+- **References:** [`output-resolution-policy.md`](output-resolution-policy.md) and
+  [`positive-edge-simplification-plan.md`](positive-edge-simplification-plan.md).
 
 ## Performance robustness
 
