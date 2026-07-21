@@ -505,6 +505,13 @@ modules without making the non-obvious code shape look accidental.
   +0.1 MiB on 500k clustered, and +5.6 MiB on default-thread mega. Retain the full discovered
   schedule: the measured memory increase is modest and bounding it would discard the strongest
   reuse regimes.
+  A later 12-core guardrail confirmed the decision. Instructions/branches changed by
+  -0.158%/-0.350% on 500k Fibonacci, -0.052%/-0.156% on uniform, -0.493%/-1.071% on clustered,
+  -2.582%/-4.649% on 100k mega, -0.583%/-1.657% on great-circle, and -2.148%/-4.201% on 500k
+  mega. The large mega case added 26.2 MiB peak RSS (about 4.0%) and 3.18% cache references, while
+  cache misses were neutral (-0.51%). Its aggregate cycles improved 2.67%, but individual pairs
+  ranged from +1.84% to -8.36% on the busy host; retain the optimization on structural counters
+  and use a future quiet run only to resolve all-core mega throughput.
 - **Defect-local reconciliation.** Scanning a stale cell-index tail could create a phantom
   low-incidence trigger whose acceptance work cost about 13 seconds at 2.5M; topology scans must
   use live cell windows. In-place merge application saved about 382 ms at 2M single-threaded.

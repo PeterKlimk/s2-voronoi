@@ -536,6 +536,24 @@ union. One-shot maximum-RSS checks changed from 98,012 to 99,184 KiB on 100k sin
 129,708 to 135,408 KiB on default-thread 100k mega. The modest memory increase is accepted rather
 than cap the schedule and forfeit the strongest overlap regime.
 
+A subsequent 12-core comparison checked whether per-worker retained schedules overturned the
+single-thread result:
+
+| Workload | Instructions | Branches | Aggregate cycles |
+| --- | ---: | ---: | ---: |
+| 500k Fibonacci | -0.158% | -0.350% | -1.32% (noisy) |
+| 500k uniform | -0.052% | -0.156% | +0.02% (neutral) |
+| 500k clustered | -0.493% | -1.071% | -2.20% |
+| 100k mega | -2.582% | -4.649% | -4.16% |
+| 100k great-circle | -0.583% | -1.657% | -0.84% |
+| 500k mega | -2.148% | -4.201% | -2.67% (noisy) |
+
+The 500k mega guardrail raised peak RSS from 678,500 to 705,336 KiB (+26.2 MiB, about 4.0%) and
+cache references by 3.18%; cache misses were neutral at -0.51%. Its three cycle pairs were +1.84%,
+-1.16%, and -8.36%, so the busy-host aggregate is not a quiet throughput claim. Instructions and
+branches were stable and favorable in every pair. The memory cost therefore does not reverse the
+acceptance; it does provide a specific reason to repeat 500k mega all-core cycles on a quiet host.
+
 The sequential shared schedule is accepted. The resident-by-query tiled kernel remains a separate
 research idea, not an implied next stage: this implementation claims none of the optimistic
 position-load ceiling and already captures the safe traversal reuse without changing dependencies.

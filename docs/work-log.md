@@ -319,6 +319,10 @@ default `Preserve` behavior.
 - **Memory:** the retained union added about 1.2 MiB peak RSS on single-threaded 100k mega and
   5.6 MiB with default threading; great-circle and 500k clustered changes were below 0.3 MiB.
   This is accepted rather than cap away the strongest reuse regime.
+- **All-core guardrail:** on 12 cores, instructions and branches remained favorable throughout the
+  matrix, including -2.148%/-4.201% at 500k mega. That case added 26.2 MiB peak RSS and 3.18% cache
+  references with neutral cache misses. Aggregate cycles improved 2.67%, but pair noise was large;
+  a quiet repeat may refine throughput evidence but is not required to retain the optimization.
 - **Higher-ceiling follow-up:** a resident-by-query tiled dot/key kernel is separate work. Do not
   infer its saving from the optimistic position-load ratio. First specify the block dependency
   model and account for lost same-block forwarded seeds, speculative rows, query termination
