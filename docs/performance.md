@@ -47,6 +47,14 @@ opt-in recipe for benchmark headlines and deployment binaries rather than someth
 should be tuned against. The 1–2% per-binary layout noise documented under
 [Comparing commits](#comparing-commits) is the same effect uncontrolled.
 
+The archived LLVM PGO experiment also established a real workload-policy tradeoff. A balanced
+profile trained on Fibonacci, uniform, clustered, and mega reduced binary text by 6.8%; at 2.5M
+multithreaded Fibonacci it reduced cycles 4.16%, instructions 3.36%, and branches 3.85%. Clustered
+cycles improved 2.1% despite 0.8% more branches, while mega was approximately cycle-neutral
+(+0.7%) with 0.6% fewer instructions and 4.3% more branches. Fibonacci-only training reached about
+6.3% fewer Fibonacci cycles but regressed mega by roughly 3.5%. Profile choice must therefore be
+explicit; the old build-helper scripts were not retained on main.
+
 ## Running the benchmarks
 
 The benchmark binaries need the `tools` feature:

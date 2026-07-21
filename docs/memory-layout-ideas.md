@@ -369,6 +369,14 @@ pinned one-thread Fibonacci guardrail remained favorable. An Intel i5-1038NG7 Ma
 interval 1.4--4.3%, 14/16 pairs) and 2.6% on uniform (2.0--3.2%, 16/16 pairs). This completes
 progression step 2.
 
+An earlier isolated form reconstructed the generator from the three slot-ordered coordinate SoA
+arrays while retaining a packed-path selection. It regressed 1M Fibonacci by about 0.4% retired
+instructions and 0.7% branches; Cachegrind also measured 0.4% more instruction references, 0.6%
+more data references, and roughly 20% more I1 misses, with data-cache behavior effectively
+unchanged. The accepted result above depends on loading the already-fused `SlotPoint` record and
+forwarding that position through construction. Do not infer that replacing one scattered point
+load with three separate SoA loads is independently beneficial.
+
 ### Slot-forwarded edge-check and inverse-map result (2026-07-16)
 
 Progression step 3 is accepted. An in-bin `EdgeCheck` now carries the earlier generator's grid slot
@@ -390,6 +398,13 @@ instructions and branches changed by less than 0.01%, cycles were neutral (-0.22
 cache references/misses fell 2.05%/4.33%. The Mac measured exactly neutral geometric-mean wall time
 for both Fibonacci and uniform over 32 pairs each (both 95% intervals -0.5% to +0.6%). The full
 checked suite passes with both steps.
+
+The first isolated slot-forwarding prototype predated the surrounding slot-native position and
+inverse-map lifetime changes. On that baseline it added about 0.52% retired instructions, 0.50%
+branches, and 1.6% branch misses at 1M Fibonacci. Cachegrind reported 0.51% more instruction
+references, 0.59% more data references, 5.8% more I1 misses, and 3.9% more mispredicts, despite
+2.4% fewer D1 misses. The later accepted composition is therefore a locality/lifetime result, not
+evidence that changing the identifier carried by `EdgeCheck` is a standalone arithmetic win.
 
 ### Known-cell takeover result — closed neutral 2026-07-15
 
