@@ -191,13 +191,6 @@ impl WorkTracker {
     }
 }
 
-fn charge_cycle_entries(work: &mut WorkTracker, count: usize, phase: Phase) -> Result<(), Failure> {
-    for _ in 0..count {
-        work.charge_cell_indices(1, phase)?;
-    }
-    Ok(())
-}
-
 #[derive(Debug, Clone, Copy)]
 struct EdgeUse {
     cell: usize,
@@ -247,8 +240,8 @@ fn build_snapshot(
 
     for (cell, cycle) in cycles.iter().enumerate() {
         let Some(cycle) = cycle else { continue };
-        charge_cycle_entries(work, cycle.len(), phase)?;
         for (offset, &from) in cycle.iter().enumerate() {
+            work.charge_cell_indices(1, phase)?;
             let to = cycle[(offset + 1) % cycle.len()];
             if from as usize >= vertex_count || to as usize >= vertex_count {
                 return Err(work.failure(
@@ -504,9 +497,9 @@ fn interaction_groups(
     let mut marked = vec![false; components.len()];
     let mut touched = Vec::new();
     for cycle in cycles.iter().flatten() {
-        charge_cycle_entries(work, cycle.len(), phase)?;
         touched.clear();
         for &vertex in cycle {
+            work.charge_cell_indices(1, phase)?;
             let component = component_for_vertex[vertex as usize];
             if component != usize::MAX && !marked[component] {
                 marked[component] = true;
@@ -563,9 +556,10 @@ fn rewrite_all_cycles(
             rewritten_cycles.push(None);
             continue;
         };
-        charge_cycle_entries(work, cycle.len(), phase).map_err(RewriteFailure::Work)?;
         let mut rewritten = Vec::with_capacity(cycle.len());
         for &vertex in cycle {
+            work.charge_cell_indices(1, phase)
+                .map_err(RewriteFailure::Work)?;
             let mapped = replacements[vertex as usize];
             if rewritten.last().copied() != Some(mapped) {
                 rewritten.push(mapped);
@@ -601,6 +595,54 @@ fn rewrite_all_cycles(
     Ok(rewritten_cycles)
 }
 
+#[derive(Debug)]
+struct AffectedCover {
+    cells: Vec<bool>,
+    vertices: Vec<bool>,
+    edges: FxHashSet<EdgeKey>,
+}
+
+fn transaction_affected_cover(
+    before: &[Option<Vec<u32>>],
+    after: &[Option<Vec<u32>>],
+    vertex_count: usize,
+) -> AffectedCover {
+    debug_assert_eq!(before.len(), after.len());
+    let mut cells = vec![false; before.len()];
+    let mut vertices = vec![false; vertex_count];
+    let mut edges = FxHashSet::default();
+    for cell in 0..before.len() {
+        if before[cell] == after[cell] {
+            continue;
+        }
+        cells[cell] = true;
+        for cycle in [before[cell].as_deref(), after[cell].as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            for (offset, &vertex) in cycle.iter().enumerate() {
+                vertices[vertex as usize] = true;
+                let next = cycle[(offset + 1) % cycle.len()];
+                edges.insert(edge_key(vertex, next));
+            }
+        }
+    }
+    AffectedCover {
+        cells,
+        vertices,
+        edges,
+    }
+}
+
+fn changed_ledger_vertices(before: &[Vec<u32>], after: &[Vec<u32>]) -> Vec<bool> {
+    debug_assert_eq!(before.len(), after.len());
+    before
+        .iter()
+        .zip(after)
+        .map(|(before, after)| before != after)
+        .collect()
+}
+
 fn is_work_failure(kind: FailureKind) -> bool {
     matches!(
         kind,
@@ -630,15 +672,32 @@ fn face_has_three_stored_positions(vertices: &[Vec3], cycle: &[u32]) -> bool {
     false
 }
 
+fn face_has_exact_edge(vertices: &[Vec3], cycle: &[u32]) -> bool {
+    cycle.iter().enumerate().any(|(offset, &vertex)| {
+        let next = cycle[(offset + 1) % cycle.len()];
+        same_stored_position(vertices[vertex as usize], vertices[next as usize])
+    })
+}
+
+struct TopologyCertification<'a> {
+    require_no_exact_edges: bool,
+    affected_cells: Option<&'a [bool]>,
+    pending: Option<&'a [Option<SuppressionCause>]>,
+}
+
 fn certify_topology(
     vertices: &[Vec3],
     cycles: &[Option<Vec<u32>>],
     snapshot: &Snapshot,
-    require_no_exact_edges: bool,
-    pending: Option<&[Option<SuppressionCause>]>,
+    certification: TopologyCertification<'_>,
     work: &mut WorkTracker,
     phase: Phase,
 ) -> Result<(), Failure> {
+    let TopologyCertification {
+        require_no_exact_edges,
+        affected_cells,
+        pending,
+    } = certification;
     let mut live_cells = Vec::new();
     let mut signatures = FxHashSet::<Vec<u32>>::default();
     let mut link_edges = vec![Vec::<(u32, u32)>::new(); vertices.len()];
@@ -646,31 +705,15 @@ fn certify_topology(
     for (cell, cycle) in cycles.iter().enumerate() {
         let Some(cycle) = cycle else { continue };
         live_cells.push(cell);
-        charge_cycle_entries(work, cycle.len(), phase)?;
-        // Exact transactions may deliberately leave an unrelated exact-zero
-        // edge for the next fixed-point round.  Such a face can temporarily
-        // have fewer than three distinct stored positions even though its
-        // combinatorial cycle is still valid.  Positive/final certification
-        // forbids exact edges and therefore enforces both conditions.
-        if cycle.len() < 3
-            || (require_no_exact_edges && !face_has_three_stored_positions(vertices, cycle))
-        {
+        if cycle.len() < 3 {
             return Err(work.failure(
                 FailureKind::UnsafeQuotient,
                 phase,
-                "live face has fewer than three vertices or exact stored positions",
-            ));
-        }
-        let mut signature = cycle.clone();
-        signature.sort_unstable();
-        if !signatures.insert(signature) {
-            return Err(work.failure(
-                FailureKind::UnsafeQuotient,
-                phase,
-                "quotient produced duplicate live faces",
+                "live face has fewer than three vertices",
             ));
         }
         for (offset, &vertex) in cycle.iter().enumerate() {
+            work.charge_cell_indices(1, phase)?;
             let previous = cycle[(offset + cycle.len() - 1) % cycle.len()];
             let next = cycle[(offset + 1) % cycle.len()];
             if previous == next {
@@ -681,6 +724,28 @@ fn certify_topology(
                 ));
             }
             link_edges[vertex as usize].push((previous, next));
+        }
+        let affected = affected_cells
+            .and_then(|affected| affected.get(cell))
+            .copied()
+            .unwrap_or(false);
+        if !face_has_three_stored_positions(vertices, cycle)
+            && (require_no_exact_edges || affected || !face_has_exact_edge(vertices, cycle))
+        {
+            return Err(work.failure(
+                FailureKind::UnsafeQuotient,
+                phase,
+                "live face has fewer than three exact stored positions",
+            ));
+        }
+        let mut signature = cycle.clone();
+        signature.sort_unstable();
+        if !signatures.insert(signature) {
+            return Err(work.failure(
+                FailureKind::UnsafeQuotient,
+                phase,
+                "quotient produced duplicate live faces",
+            ));
         }
     }
 
@@ -785,13 +850,21 @@ fn certify_topology(
                 "quotient produced an exactly antipodal edge",
             ));
         }
-        if require_no_exact_edges
+        let affected_edge = affected_cells.is_some_and(|affected| {
+            affected.get(record.first.cell).copied().unwrap_or(false)
+                || record
+                    .second
+                    .and_then(|second| affected.get(second.cell))
+                    .copied()
+                    .unwrap_or(false)
+        });
+        if (require_no_exact_edges || affected_edge)
             && same_stored_position(vertices[a as usize], vertices[b as usize])
         {
             return Err(work.failure(
                 FailureKind::UnsafeQuotient,
                 phase,
-                "positive transaction retained an induced exact-zero edge",
+                "transaction retained an induced exact-zero edge",
             ));
         }
         let second = record.second.unwrap();
@@ -1022,13 +1095,18 @@ fn attempt_non_elide_transaction(
             ));
         }
     };
+    let affected_cover =
+        transaction_affected_cover(request.cycles, &cycles, request.vertices.len());
     let snapshot = build_snapshot(&cycles, request.vertices.len(), work, phase)?;
     match certify_topology(
         request.vertices,
         &cycles,
         &snapshot,
-        request.positive,
-        None,
+        TopologyCertification {
+            require_no_exact_edges: request.positive,
+            affected_cells: Some(&affected_cover.cells),
+            pending: None,
+        },
         work,
         phase,
     ) {
@@ -1062,7 +1140,7 @@ enum BagNode {
     Meld(usize, usize),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct BagRoot {
     node: usize,
     positive: bool,
@@ -1075,6 +1153,40 @@ struct ProvenanceState {
     sinks: Vec<Option<BagRoot>>,
     expected: Vec<bool>,
     exact_cross_track: Vec<Option<f64>>,
+}
+
+#[derive(Debug, Clone)]
+struct ProvenanceOwners {
+    edge_roots: FxHashMap<EdgeKey, BagRoot>,
+    sinks: Vec<Option<BagRoot>>,
+}
+
+#[derive(Debug)]
+struct AffectedProvenanceOwners {
+    edges: Vec<EdgeKey>,
+    sinks: Vec<u32>,
+}
+
+struct BagMembers<'a> {
+    nodes: &'a [BagNode],
+    stack: Vec<usize>,
+}
+
+impl Iterator for BagMembers<'_> {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(node) = self.stack.pop() {
+            match self.nodes[node] {
+                BagNode::Leaf(source) => return Some(source),
+                BagNode::Meld(a, b) => {
+                    self.stack.push(b);
+                    self.stack.push(a);
+                }
+            }
+        }
+        None
+    }
 }
 
 impl ProvenanceState {
@@ -1119,20 +1231,47 @@ impl ProvenanceState {
         *destination = Some(root);
     }
 
-    fn member_ids(&self, root: BagRoot) -> Vec<u32> {
-        let mut members = Vec::new();
-        let mut stack = vec![root.node];
-        while let Some(node) = stack.pop() {
-            match self.nodes[node] {
-                BagNode::Leaf(source) => members.push(source),
-                BagNode::Meld(a, b) => {
-                    stack.push(b);
-                    stack.push(a);
-                }
-            }
+    fn owner_snapshot(&self) -> ProvenanceOwners {
+        ProvenanceOwners {
+            edge_roots: self.edge_roots.clone(),
+            sinks: self.sinks.clone(),
         }
-        members
     }
+
+    fn members(&self, root: BagRoot) -> BagMembers<'_> {
+        BagMembers {
+            nodes: &self.nodes,
+            stack: vec![root.node],
+        }
+    }
+}
+
+fn affected_provenance_owners(
+    before: &ProvenanceOwners,
+    after: &ProvenanceState,
+    cover: &AffectedCover,
+) -> AffectedProvenanceOwners {
+    let mut edges: Vec<EdgeKey> = after
+        .edge_roots
+        .iter()
+        .filter_map(|(&key, &root)| {
+            (before.edge_roots.get(&key).copied() != Some(root) || cover.edges.contains(&key))
+                .then_some(key)
+        })
+        .collect();
+    edges.sort_unstable();
+    let sinks = after
+        .sinks
+        .iter()
+        .enumerate()
+        .filter_map(|(representative, &root)| {
+            let root = root?;
+            (before.sinks.get(representative).copied().flatten() != Some(root)
+                || cover.vertices.get(representative).copied().unwrap_or(false))
+            .then_some(representative as u32)
+        })
+        .collect();
+    AffectedProvenanceOwners { edges, sinks }
 }
 
 fn normalized(point: Vec3) -> Option<glam::DVec3> {
@@ -1260,10 +1399,20 @@ fn reconcile_provenance(
     live_edges: &FxHashMap<EdgeKey, EdgeRecord>,
     live_vertices: &[bool],
     positive_origin: bool,
+    changed_ledger_vertices: &[bool],
 ) -> Result<(), &'static str> {
     let owners = owner_for_source(ledger, provenance.sinks.len());
     let old_edges = std::mem::take(&mut provenance.edge_roots);
     for ((old_a, old_b), root) in old_edges {
+        let positive_endpoint_change = positive_origin
+            && (changed_ledger_vertices
+                .get(old_a as usize)
+                .copied()
+                .unwrap_or(false)
+                || changed_ledger_vertices
+                    .get(old_b as usize)
+                    .copied()
+                    .unwrap_or(false));
         let a = owners[old_a as usize]
             .filter(|&owner| live_vertices.get(owner as usize).copied() == Some(true));
         let b = owners[old_b as usize]
@@ -1271,19 +1420,34 @@ fn reconcile_provenance(
         let (a, b) = match (a, b) {
             (None, None) => return Err("carrying edge lost both live endpoint owners"),
             (Some(owner), None) | (None, Some(owner)) => {
-                put_sink_root(provenance, owner, root, positive_origin);
+                put_sink_root(
+                    provenance,
+                    owner,
+                    root,
+                    positive_origin || positive_endpoint_change,
+                );
                 continue;
             }
             (Some(a), Some(b)) => (a, b),
         };
         if a == b {
-            put_sink_root(provenance, a, root, positive_origin);
+            put_sink_root(
+                provenance,
+                a,
+                root,
+                positive_origin || positive_endpoint_change,
+            );
             continue;
         }
         let key = edge_key(a, b);
         let changed = key != edge_key(old_a, old_b);
         if live_edges.contains_key(&key) {
-            put_edge_root(provenance, key, root, positive_origin && changed);
+            put_edge_root(
+                provenance,
+                key,
+                root,
+                positive_endpoint_change || (positive_origin && changed),
+            );
         } else {
             put_sink_root(provenance, a.min(b), root, positive_origin);
         }
@@ -1300,7 +1464,9 @@ fn reconcile_provenance(
             provenance,
             representative,
             root,
-            positive_origin && representative as usize != old,
+            positive_origin
+                && (representative as usize != old
+                    || changed_ledger_vertices.get(old).copied().unwrap_or(false)),
         );
     }
     Ok(())
@@ -1310,15 +1476,27 @@ fn certify_positive_provenance(
     provenance: &ProvenanceState,
     vertices: &[Vec3],
     threshold: f64,
+    affected: Option<&AffectedProvenanceOwners>,
     work: &mut WorkTracker,
     phase: Phase,
 ) -> Result<f64, Failure> {
     let mut maximum = 0.0f64;
-    for (&(a, b), &root) in &provenance.edge_roots {
+    let edge_keys: Vec<EdgeKey> = match affected {
+        Some(affected) => affected.edges.clone(),
+        None => {
+            let mut keys: Vec<_> = provenance.edge_roots.keys().copied().collect();
+            keys.sort_unstable();
+            keys
+        }
+    };
+    for (a, b) in edge_keys {
+        let Some(&root) = provenance.edge_roots.get(&(a, b)) else {
+            continue;
+        };
         if !root.positive {
             continue;
         }
-        for member in provenance.member_ids(root) {
+        for member in provenance.members(root) {
             work.charge_provenance_member(phase)?;
             let Some(chord) = point_to_minor_arc_chord(
                 vertices[member as usize],
@@ -1341,16 +1519,28 @@ fn certify_positive_provenance(
             maximum = maximum.max(chord);
         }
     }
-    for (representative, &root) in provenance.sinks.iter().enumerate() {
-        let Some(root) = root else { continue };
+    let sink_ids: Vec<u32> = match affected {
+        Some(affected) => affected.sinks.clone(),
+        None => provenance
+            .sinks
+            .iter()
+            .enumerate()
+            .filter_map(|(representative, root)| root.is_some().then_some(representative as u32))
+            .collect(),
+    };
+    for representative in sink_ids {
+        let Some(root) = provenance.sinks[representative as usize] else {
+            continue;
+        };
         if !root.positive {
             continue;
         }
-        for member in provenance.member_ids(root) {
+        for member in provenance.members(root) {
             work.charge_provenance_member(phase)?;
-            let Some(chord) =
-                point_to_representative_chord(vertices[member as usize], vertices[representative])
-            else {
+            let Some(chord) = point_to_representative_chord(
+                vertices[member as usize],
+                vertices[representative as usize],
+            ) else {
                 return Err(work.failure(
                     FailureKind::IllConditionedReplacementArc,
                     phase,
@@ -1381,9 +1571,13 @@ struct ElideState {
 fn refresh_pending(
     pending: &mut [Option<SuppressionCause>],
     snapshot: &Snapshot,
+    affected_vertices: &[bool],
     transaction_cause: SuppressionCause,
 ) {
     for (vertex, pending_cause) in pending.iter_mut().enumerate() {
+        if !affected_vertices.get(vertex).copied().unwrap_or(false) {
+            continue;
+        }
         if !snapshot.live_vertices[vertex] || snapshot.incidence[vertex].len() != 2 {
             *pending_cause = None;
             continue;
@@ -1456,6 +1650,7 @@ fn attempt_elide_transaction(
     let mut scratch_cycles = state.cycles.clone();
     let mut scratch_ledger = state.ledger.clone();
     let mut scratch_pending = state.pending.clone();
+    let provenance_before = state.provenance.owner_snapshot();
     let replacements =
         replacements_for_group(request.vertices.len(), request.components, request.group);
     scratch_cycles = match rewrite_all_cycles(&scratch_cycles, &replacements, true, work, phase) {
@@ -1498,10 +1693,14 @@ fn attempt_elide_transaction(
         }
         Err(RewriteFailure::CellKilling(_)) => unreachable!("Elide permits cell removal"),
     };
+    let affected_cover =
+        transaction_affected_cover(&state.cycles, &scratch_cycles, request.vertices.len());
+    let changed_ledger = changed_ledger_vertices(&state.ledger, &scratch_ledger);
     let snapshot = build_snapshot(&scratch_cycles, request.vertices.len(), work, phase)?;
     refresh_pending(
         &mut scratch_pending,
         &snapshot,
+        &affected_cover.vertices,
         if request.positive {
             SuppressionCause::Positive
         } else {
@@ -1514,14 +1713,20 @@ fn attempt_elide_transaction(
         &snapshot.edges,
         &snapshot.live_vertices,
         request.positive,
+        &changed_ledger,
     )
     .map_err(|message| work.failure(FailureKind::UnsafeQuotient, phase, message))?;
+    let affected_provenance =
+        affected_provenance_owners(&provenance_before, &state.provenance, &affected_cover);
     certify_topology(
         request.vertices,
         &scratch_cycles,
         &snapshot,
-        request.positive,
-        Some(&scratch_pending),
+        TopologyCertification {
+            require_no_exact_edges: request.positive,
+            affected_cells: Some(&affected_cover.cells),
+            pending: Some(&scratch_pending),
+        },
         work,
         phase,
     )?;
@@ -1529,6 +1734,7 @@ fn attempt_elide_transaction(
         &state.provenance,
         request.vertices,
         request.threshold,
+        Some(&affected_provenance),
         work,
         phase,
     )?;
@@ -1638,6 +1844,7 @@ fn suppress_one_pending(
     let mut scratch_cycles = state.cycles.clone();
     let mut scratch_ledger = state.ledger.clone();
     let mut scratch_pending = state.pending.clone();
+    let provenance_before = state.provenance.owner_snapshot();
     let consumed_keys = [
         edge_key(vertex, start),
         edge_key(vertex, end),
@@ -1722,27 +1929,46 @@ fn suppress_one_pending(
             "suppression-induced exact closure failed",
         ),
     })?;
+    let affected_cover = transaction_affected_cover(&state.cycles, &scratch_cycles, vertices.len());
+    let changed_ledger = changed_ledger_vertices(&state.ledger, &scratch_ledger);
     let final_snapshot = build_snapshot(&scratch_cycles, vertices.len(), work, phase)?;
-    refresh_pending(&mut scratch_pending, &final_snapshot, transaction_cause);
+    refresh_pending(
+        &mut scratch_pending,
+        &final_snapshot,
+        &affected_cover.vertices,
+        transaction_cause,
+    );
     reconcile_provenance(
         &mut state.provenance,
         &scratch_ledger,
         &final_snapshot.edges,
         &final_snapshot.live_vertices,
         positive_origin,
+        &changed_ledger,
     )
     .map_err(|message| work.failure(FailureKind::UnsafeQuotient, phase, message))?;
+    let affected_provenance =
+        affected_provenance_owners(&provenance_before, &state.provenance, &affected_cover);
     certify_topology(
         vertices,
         &scratch_cycles,
         &final_snapshot,
-        true,
-        Some(&scratch_pending),
+        TopologyCertification {
+            require_no_exact_edges: true,
+            affected_cells: Some(&affected_cover.cells),
+            pending: Some(&scratch_pending),
+        },
         work,
         phase,
     )?;
-    let positive_deviation =
-        certify_positive_provenance(&state.provenance, vertices, threshold, work, phase)?;
+    let positive_deviation = certify_positive_provenance(
+        &state.provenance,
+        vertices,
+        threshold,
+        Some(&affected_provenance),
+        work,
+        phase,
+    )?;
     state.cycles = scratch_cycles;
     state.ledger = scratch_ledger;
     state.pending = scratch_pending;
@@ -2071,8 +2297,11 @@ fn simplify_elide(
         vertices,
         &state.cycles,
         &final_snapshot,
-        true,
-        Some(&state.pending),
+        TopologyCertification {
+            require_no_exact_edges: true,
+            affected_cells: None,
+            pending: Some(&state.pending),
+        },
         &mut work,
         Phase::FinalCertification,
     )?;
@@ -2087,6 +2316,7 @@ fn simplify_elide(
         &state.provenance,
         vertices,
         threshold,
+        None,
         &mut work,
         Phase::FinalCertification,
     )?;
@@ -2400,8 +2630,11 @@ pub(crate) fn simplify(
         vertices,
         &cycles,
         &final_snapshot,
-        true,
-        None,
+        TopologyCertification {
+            require_no_exact_edges: true,
+            affected_cells: None,
+            pending: None,
+        },
         &mut work,
         Phase::FinalCertification,
     )?;
@@ -2708,6 +2941,7 @@ mod tests {
             &provenance,
             &vertices,
             2.0,
+            None,
             &mut work,
             Phase::FinalCertification,
         )
@@ -2721,6 +2955,7 @@ mod tests {
                 &provenance,
                 &vertices,
                 2.0,
+                None,
                 &mut work,
                 Phase::FinalCertification,
             )
@@ -2728,6 +2963,163 @@ mod tests {
             0.0
         );
         assert_eq!(work.stats.provenance_member_checks, 1);
+    }
+
+    #[test]
+    fn positive_pending_refresh_only_upgrades_affected_vertices() {
+        let snapshot = Snapshot {
+            edges: FxHashMap::default(),
+            incidence: vec![vec![0, 1], vec![0, 1], vec![0, 1]],
+            live_vertices: vec![true; 3],
+        };
+        let mut pending = vec![
+            Some(SuppressionCause::Exact),
+            None,
+            Some(SuppressionCause::Exact),
+        ];
+        refresh_pending(
+            &mut pending,
+            &snapshot,
+            &[false, true, true],
+            SuppressionCause::Positive,
+        );
+
+        assert_eq!(pending[0], Some(SuppressionCause::Exact));
+        assert_eq!(pending[1], Some(SuppressionCause::Positive));
+        assert_eq!(pending[2], Some(SuppressionCause::Positive));
+    }
+
+    #[test]
+    fn current_provenance_certificate_only_checks_affected_owners() {
+        let vertices = vec![Vec3::X, Vec3::Y, Vec3::X, Vec3::Y, Vec3::Z];
+        let mut provenance = ProvenanceState::new(vertices.len());
+        let affected_root = provenance.leaf(0, true);
+        let unrelated_root = provenance.leaf(4, true);
+        provenance.edge_roots.insert((0, 1), affected_root);
+        provenance.edge_roots.insert((2, 3), unrelated_root);
+        let affected = AffectedProvenanceOwners {
+            edges: vec![(0, 1)],
+            sinks: Vec::new(),
+        };
+        let mut work = WorkTracker::new(Limits {
+            provenance_member_checks: 1,
+            ..generous_limits()
+        });
+
+        assert_eq!(
+            certify_positive_provenance(
+                &provenance,
+                &vertices,
+                0.1,
+                Some(&affected),
+                &mut work,
+                Phase::Positive,
+            )
+            .unwrap(),
+            0.0
+        );
+        assert_eq!(work.stats.provenance_member_checks, 1);
+
+        let mut global_work = WorkTracker::new(generous_limits());
+        let failure = certify_positive_provenance(
+            &provenance,
+            &vertices,
+            0.1,
+            None,
+            &mut global_work,
+            Phase::FinalCertification,
+        )
+        .unwrap_err();
+        assert_eq!(failure.kind, FailureKind::PositiveSuppressionDeviation);
+    }
+
+    #[test]
+    fn positive_endpoint_contraction_upgrades_unchanged_edge_and_sink_owners() {
+        let mut provenance = ProvenanceState::new(3);
+        let edge_root = provenance.leaf(0, false);
+        let sink_root = provenance.leaf(1, false);
+        provenance.edge_roots.insert((0, 2), edge_root);
+        provenance.sinks[0] = Some(sink_root);
+        let ledger = vec![vec![0, 1], Vec::new(), vec![2]];
+        let live_edges = FxHashMap::from_iter([(
+            (0, 2),
+            EdgeRecord {
+                first: EdgeUse {
+                    cell: 0,
+                    from: 0,
+                    to: 2,
+                },
+                second: Some(EdgeUse {
+                    cell: 1,
+                    from: 2,
+                    to: 0,
+                }),
+            },
+        )]);
+
+        reconcile_provenance(
+            &mut provenance,
+            &ledger,
+            &live_edges,
+            &[true, false, true],
+            true,
+            &[true, true, false],
+        )
+        .unwrap();
+
+        assert!(provenance.edge_roots[&(0, 2)].positive);
+        assert!(provenance.sinks[0].unwrap().positive);
+    }
+
+    #[test]
+    fn exact_transaction_rejects_an_affected_two_position_face() {
+        let (mut vertices, _, _) = cube_fixture();
+        vertices[0] = Vec3::X;
+        vertices[1] = Vec3::Y;
+        vertices[2] = Vec3::X;
+        vertices[3] = Vec3::Y;
+        let cycles = vec![
+            Some(vec![0, 3, 2, 1]),
+            Some(vec![4, 5, 6, 7]),
+            Some(vec![0, 1, 5, 4]),
+            Some(vec![1, 2, 6, 5]),
+            Some(vec![2, 3, 7, 6]),
+            Some(vec![3, 0, 4, 7]),
+        ];
+        let mut work = WorkTracker::new(generous_limits());
+        let snapshot = build_snapshot(&cycles, vertices.len(), &mut work, Phase::Exact).unwrap();
+        let mut affected_cells = vec![false; cycles.len()];
+        affected_cells[0] = true;
+
+        let failure = certify_topology(
+            &vertices,
+            &cycles,
+            &snapshot,
+            TopologyCertification {
+                require_no_exact_edges: false,
+                affected_cells: Some(&affected_cells),
+                pending: None,
+            },
+            &mut work,
+            Phase::Exact,
+        )
+        .unwrap_err();
+        assert_eq!(failure.kind, FailureKind::UnsafeQuotient);
+        assert!(failure.message.contains("exact stored positions"));
+    }
+
+    #[test]
+    fn entry_semantics_precede_later_cell_index_charges() {
+        let mut work = WorkTracker::new(Limits {
+            cell_index_visits: 1,
+            ..generous_limits()
+        });
+        let failure =
+            build_snapshot(&[Some(vec![3, 0, 1])], 3, &mut work, Phase::Preparation).unwrap_err();
+
+        assert_eq!(failure.kind, FailureKind::UnsafeQuotient);
+        assert_eq!(failure.work.cell_index_visits, 1);
+        assert!(failure.message.contains("out-of-range"));
     }
 
     #[test]

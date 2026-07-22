@@ -60,7 +60,7 @@ prevention rather than an overclaimed proof.
 | POINT-003 | P1 | Completed | Locator query validation and normalized ranking/certification landed |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
 | QUAL-001 | P2 | Completed | Reopen only for a new invariant/consumer or changed codegen evidence |
-| RES-002 | P2 | Ready | Fix post-implementation review blockers and add mixed-cause Elide coverage |
+| RES-002 | P2 | Completed | Post-review affected-state and resource contracts landed |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | PERF-002 | P3 | Completed | Reopen only for a materially different kernel mechanism or workload |
 | PERF-003 | P3 | Completed | Reopen only for a separately designed multi-query resident kernel |
@@ -245,7 +245,7 @@ default `Preserve` behavior.
 ### RES-002 — Optional positive-threshold edge simplification
 
 - **Priority:** P2
-- **Status:** Reopened 2026-07-23 after post-implementation review
+- **Status:** Completed 2026-07-23 after post-implementation review fixes
 - **Dependencies:** RES-001 (completed)
 - **Goal:** let graphical or physics consumers explicitly remove represented nonzero slivers.
 - **Landed implementation:** explicit consuming unit and embedded conversions; inclusive stored-chord
@@ -253,11 +253,11 @@ default `Preserve` behavior.
   point; transactional complete-mesh topology certification; `Preserve`, first-failure `Error`,
   and provenance-preserving `Elide`; checked work budgets; and distinct success/failure reports
   which retain the untouched source on error.
-- **Open review blockers:** scope pending-suppression cause upgrades to the transaction's affected
-  cover; enforce stored-position cardinality on affected faces during exact transactions; certify
-  only affected positive-tainted provenance owners before publication; interleave cell-index
-  charging with semantic examination; and add an end-to-end mixed exact/positive Elide fixture
-  covering positive-caused suppression and owner recertification.
+- **Post-review fixes:** pending-suppression cause upgrades now follow the transaction's affected
+  cover; exact transactions certify stored-position cardinality and induced exact edges on affected
+  faces; current provenance checks visit only affected owners and stream bag members under the work
+  budget; cell-index charging is interleaved with examination; and mixed exact/positive Elide plus
+  unchanged-edge/sink cause-upgrade regressions pin the corrected behavior.
 - **Pinned policy:** default work limits are 100,000,000 diameter comparisons, 100,000,000
   cell-index visits, and 100,000,000 provenance checks. Positive suppression uses `1e-24`
   squared endpoint-cross/projection floors and `64 * f64::EPSILON` arc-membership tolerance.

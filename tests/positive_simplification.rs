@@ -197,6 +197,53 @@ fn elide_matches_the_exact_cell_killing_fixture() {
 }
 
 #[test]
+fn elide_does_not_upgrade_unrelated_exact_suppressions_after_positive_work() {
+    let points = disabled_weld_cell_killing_points();
+    let output = compute_with_report(
+        &points,
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled),
+    )
+    .unwrap();
+    let diagram = output.preferred_diagram();
+    let mut edges = BTreeSet::new();
+    for cell in diagram.iter_cells() {
+        for offset in 0..cell.vertex_indices.len() {
+            let a = cell.vertex_indices[offset];
+            let b = cell.vertex_indices[(offset + 1) % cell.vertex_indices.len()];
+            edges.insert((a.min(b), a.max(b)));
+        }
+    }
+    let mut thresholds: Vec<f64> = edges
+        .into_iter()
+        .map(|(a, b)| stored_chord(diagram.vertex(a as usize), diagram.vertex(b as usize)))
+        .filter(|&length| length > 0.0)
+        .collect();
+    thresholds.sort_by(f64::total_cmp);
+    thresholds.dedup_by(|a, b| a.to_bits() == b.to_bits());
+
+    for threshold in thresholds {
+        let threshold = (threshold * (1.0 + 8.0 * f32::EPSILON as f64)) as f32;
+        if threshold > 2.0 {
+            continue;
+        }
+        let Ok(simplified) = output.clone().into_simplified_cell_mesh(
+            CellSimplificationOptions::from_chord_length(threshold)
+                .unwrap()
+                .with_cell_policy(SimplificationCellPolicy::Elide),
+        ) else {
+            continue;
+        };
+        let report = &simplified.simplification_report;
+        if report.positive_components_committed > 0 && report.exact_suppression_members == 2 {
+            assert!(simplified.mesh.validate().is_strictly_valid());
+            return;
+        }
+    }
+
+    panic!("fixture did not expose unrelated positive work before exact suppression");
+}
+
+#[test]
 fn error_policy_reports_the_first_unresolved_exact_group_and_returns_source() {
     let points = disabled_weld_cell_killing_points();
     let output = compute_with_report(
