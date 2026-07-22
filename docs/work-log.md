@@ -255,7 +255,10 @@ default `Preserve` behavior.
   - approve Preserve/Error/Elide failure and retry semantics;
   - approve threshold-independent exact suppression plus final cause-aware positive
     point-to-minor-arc/representative certification, move-only lazy-taint provenance bags, and
-    deterministic cause-upgraded sinks for collapsed or deleted carrying edges;
+    deterministic cause-upgraded sinks for collapsed/deleted carrying edges or suppressed sink
+    representatives;
+  - approve charged pre-publication current-geometry checks for every affected positive-tainted edge
+    and sink root, with occupied destinations always melded;
   - approve source-bounded provenance storage/final sorting plus a cumulative
     provenance-member-distance limit for repeated geometric checks;
   - approve the abstract-complex geometry contract;
@@ -264,7 +267,8 @@ default `Preserve` behavior.
   - select deterministic candidate, diameter-work, cell-index-visit, and provenance-distance limits
     plus endpoint-cross and projection-conditioning floors, `tau`, and the exact stored-antipodal
     predicate; and
-  - pin unique-candidate accounting, checked-counter overflow/error precedence,
+  - pin online unique-candidate interning, `O(d log d)` face-local checks, atomic publication-counter
+    updates, checked-counter overflow/error precedence, bitmap-backed ownership audit,
     positive-threshold option/report fields, and quantitative performance gates.
 - **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
   exact Voronoi diagram of the original generators.
