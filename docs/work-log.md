@@ -250,15 +250,16 @@ default `Preserve` behavior.
 - **Goal:** let graphical or physics consumers explicitly remove represented nonzero slivers.
 - **Decisions required:**
   - approve stored-chord discovery and normalized unit-arc suppression metrics;
-  - approve exact-zero precedence, restart-after-commit snapshots, and stable-id fixed-point
-    simplification;
+  - approve exact-zero precedence, two-level scratch/persistent transaction atomicity,
+    restart-after-commit snapshots, and stable-id fixed-point simplification;
   - approve Preserve/Error/Elide failure and retry semantics;
   - approve threshold-independent exact suppression plus final cause-aware positive
-    point-to-minor-arc/representative certification and provenance sinks;
+    point-to-minor-arc/representative certification, collision-safe edge payloads, and
+    cause-upgraded provenance sinks;
   - approve the abstract-complex geometry contract;
-  - approve unsupported stored-degeneracy preflight and phase-complete failure reports;
-  - select deterministic candidate, diameter-work, and cell-index-visit limits plus the arc
-    conditioning floor; and
+  - approve charged unsupported stored-degeneracy preflight and phase-complete failure reports;
+  - select deterministic candidate, diameter-work, and cell-index-visit limits plus endpoint-cross
+    and projection-conditioning floors and the exact stored-antipodal predicate; and
   - pin positive-threshold option/report fields and quantitative performance gates.
 - **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
   exact Voronoi diagram of the original generators.
