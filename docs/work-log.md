@@ -254,13 +254,18 @@ default `Preserve` behavior.
     restart-after-commit snapshots, and stable-id fixed-point simplification;
   - approve Preserve/Error/Elide failure and retry semantics;
   - approve threshold-independent exact suppression plus final cause-aware positive
-    point-to-minor-arc/representative certification, collision-safe edge payloads, and
-    cause-upgraded provenance sinks;
+    point-to-minor-arc/representative certification, move-only lazy-taint provenance bags, and
+    deterministic cause-upgraded sinks for collapsed or deleted carrying edges;
+  - approve source-bounded provenance storage/final sorting plus a cumulative
+    provenance-member-distance limit for repeated geometric checks;
   - approve the abstract-complex geometry contract;
-  - approve charged unsupported stored-degeneracy preflight and phase-complete failure reports;
-  - select deterministic candidate, diameter-work, and cell-index-visit limits plus endpoint-cross
-    and projection-conditioning floors and the exact stored-antipodal predicate; and
-  - pin positive-threshold option/report fields and quantitative performance gates.
+  - approve charged unsupported stored-degeneracy preflight, affected-face stored-position
+    certification, and phase-complete failure reports;
+  - select deterministic candidate, diameter-work, cell-index-visit, and provenance-distance limits
+    plus endpoint-cross and projection-conditioning floors, `tau`, and the exact stored-antipodal
+    predicate; and
+  - pin unique-candidate accounting, checked-counter overflow/error precedence,
+    positive-threshold option/report fields, and quantitative performance gates.
 - **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
   exact Voronoi diagram of the original generators.
 - **References:** [`output-resolution-policy.md`](output-resolution-policy.md) and

@@ -1,8 +1,8 @@
 # Positive-threshold edge simplification plan
 
-**Status:** revision 6; policy approval and Stage 0 calibration required before production work
+**Status:** revision 7; policy approval and Stage 0 calibration required before production work
 
-**Date:** 2026-07-22
+**Date:** 2026-07-23
 
 This plan defines RES-002: an explicit, consumer-selected positive edge threshold over a completed
 Voronoi computation. The result is a simplified `SphericalCellMesh`, not a Voronoi diagram of the
@@ -34,6 +34,13 @@ commits, replaces singular edge paths with collision-safe per-edge member payloa
 vertex-sink causes whenever their representative moves through positive contraction. It also
 defines projection-singularity and exact-antipodal predicates, applies the full production
 certificate to suppression, and charges source preflight under the public resource policy.
+
+Revision 7 gives provenance a deterministic sink whenever face elision deletes a carrying edge
+without merging its endpoints, makes the unit-arc predicate executable at every conditioning and
+orientation boundary, and adds exact stored-position cardinality to every production certificate.
+It replaces repeatedly sorted payload vectors with move-only lazily tainted bags, bounds final
+flattening by the source vertex count, and pins unique-candidate, counter-increment, overflow, and
+error-precedence semantics.
 
 ## Goal and non-goals
 
@@ -280,6 +287,17 @@ leave one connected component as well as satisfying local quotient/link checks. 
 intermediate topology check remains a debug/test oracle; connectivity itself is a required
 production certificate and consumes the public cell-index budget.
 
+Every old or new affected live face must also retain at least three distinct exact stored-position
+triples after cycle normalization and induced exact closure. This is the same representation
+predicate used by source preflight, not merely a three-vertex-id check. A deficient face with an
+adjacent exact-zero edge keeps the scratch transaction in mandatory closure; a deficient face with
+no such edge is an unsupported created degeneracy and cannot publish. For an optional positive
+group, Preserve and Error decline and report the representation-unsafe occurrence. A mandatory
+exact transaction returns `ExactPhaseIncomplete`. Under Elide, failure inside the combined quotient
+or suppression transaction rejects the conversion and returns the untouched source because the
+first version does not retry subsets. Terminal validation remains a backstop, not the first place
+this condition is discovered.
+
 The table is rebuilt after each committed round initially. Incremental maintenance is deferred
 until profiling shows that it matters. The cold path favors a simple exhaustive certificate over a
 second provenance invariant.
@@ -298,7 +316,9 @@ The conversion uses a cell-mesh-specific policy enum:
   cannot be resolved, return a recoverable error containing the untouched source, affected original
   input indices, and a failure report. Every affected effective generator expands through
   preprocessing weld classes to all original input members. If no such condition occurs, return
-  the same mesh `Preserve` would produce.
+  the same mesh `Preserve` would produce. Positive groups which are topology- or
+  representation-unsafe rather than otherwise admissible cell-killing requests are declined just
+  as under Preserve.
 - `Elide`: permit cell-killing groups and apply the global face quotient. Diameter-rejected and
   locally topology-unsafe positive groups remain declined. Exact-zero obligations are never
   declined for positive-diameter reasons; the exact phase either contracts/elides them or rejects
@@ -358,33 +378,53 @@ raw component of one endpoint compares equal to the negated corresponding compon
 matching generic cell-mesh validation; it is not a normalized near-pi test.
 
 Suppression records stable source-member provenance, but geometric path order is not part of the
-contract. A live undirected edge key `(lo, hi)` owns a deterministic payload of suppressed source
-vertex ids and their causes. Suppressing `v` between `a-v` and `v-b` moves both incident-edge
-payloads plus `v` onto the replacement key, maintaining member-id order. If contraction rekeys two
-or more carrying edges to the same live key, move-merge all payloads in member-id order. An exact
-rekey retains each member's cause; a positive rekey upgrades every carried exact-caused member. A
-source member must occur in exactly one edge payload or vertex sink; a duplicate during merge is an
-invariant failure rather than silently duplicated provenance.
+contract. Each suppressed source vertex creates one immutable member record. A live undirected edge
+key `(lo, hi)` or live representative sink owns a move-only bag root over those records. Bag melding,
+edge rekeying, and edge-to-sink transfer consume their input roots and create or move a root in
+`O(1)` without traversing members. Scratch uses journaled roots or an arena checkpoint so rollback
+never copies a bag and discarded scratch nodes are reclaimed together.
+
+Each bag carries a lazy positive-cause taint. Exact rekeying retains its current taint. A positive
+rekey, positive representative contraction, or suppression combining any positive-caused input sets
+the result root's taint without visiting descendants. Taint is inherited while flattening. A source
+member must be reachable from exactly one live edge or sink root; sharing a consumed root or finding
+a duplicate member during final flattening is an invariant failure.
 
 This representation deliberately supports edge-key collisions: two geometrically distinct source
-strands need not be concatenable into one path because final certification depends only on each
-member, its cause, and the final carrying edge. Move-merging payloads keeps cascading suppression
-linear in retained provenance instead of copying prior chains quadratically.
+strands need not concatenate into one path because final certification depends only on each member,
+its inherited cause, and its final owner. If contraction maps several carrying edges to the same
+live key, meld their roots. No public or intermediate semantic depends on member order. Final
+certification flattens each root once and sorts its member ids once for deterministic diagnostics.
 
-Edge provenance has a defined sink if later discovery collapses both replacement endpoints. Move
-every suppressed edge-payload member to a provenance list attached to the surviving representative.
-Positive-caused members must have final normalized point-to-representative chord `<=` the requested
-threshold. Exact-caused members retain threshold-independent exact telemetry unless the edge
-collapse itself was positive-caused, in which case they are upgraded to positive-caused. Vertex
-sink lists follow later representative contraction exactly like the source-member ledger and are
-recertified against the final live representative. Whenever a positive contraction changes the
-representative carrying a sink, every exact-caused member already attached to that sink is upgraded
-to positive-caused even if no live edge payload participates in that contraction. Thus no
-suppressed member disappears or evades the final bound merely because its carrying edge was
-normalized away.
+After every scratch topology mutation, reconcile every root whose old key, endpoint, or incident
+face occurs in the expanding affected cover against the scratch live-edge set after endpoint
+representative mapping. Unaffected roots retain their proven live keys and are not rescanned:
 
-Edge payloads plus vertex sinks require `O(number of suppressed source vertices)` storage and permit
-final-output recertification after any number of later contraction rounds.
+1. if the mapped endpoints are distinct and their canonical edge remains live, rekey or meld onto
+   that live edge;
+2. if both map to one live representative, move the root to that representative's sink; and
+3. if the mapped endpoints remain distinct but the carrying edge has no live use because face
+   elision or suppression removed it, move the root to the lower stable-id endpoint's sink.
+
+If neither endpoint resolves to a live representative, reject the transaction as whole-mesh
+collapse. A disappearance caused by positive work taints the transferred root; an exact-only
+disappearance retains exact cause and threshold-independent acceptance telemetry. A positive-taint
+sink transfer must satisfy the current normalized point-to-representative chord bound before
+publication and is checked again against the final representative. Whenever later positive work
+changes a sink representative, taint the entire sink root in `O(1)`, apply the same current sink
+bound before publication, and recertify it again at the fixed point. A current sink-bound failure
+declines an optional positive group under Preserve/Error and rejects a combined Elide transaction;
+exact-only transfer remains threshold-independent. Every transfer occurs only in transaction
+scratch, so rejection rolls back ownership and cause together with topology. Before publication,
+every affected root must have exactly one live edge or sink owner and no root may remain keyed to an
+absent edge.
+
+Member records, bag nodes, live roots, and sinks require `O(S + E + V)` auxiliary storage, where
+`S` is the number of suppressed source vertices and `S <= V_source`. Productive suppression creates
+one member record once. Ownership/cause operations never traverse prior members. A required current
+or final geometric certificate may traverse a root, charging every member-distance check under the
+resource policy below. Final ownership flattening is `O(S)`, with at most `O(S log S)` deterministic
+member-id sorting across owners.
 
 Suppression has two causes:
 
@@ -396,54 +436,71 @@ Suppression has two causes:
   topology/provenance parity with `into_elided_cell_mesh` on the shared domain where baseline exact
   elision succeeds without suppression-created edge rediscovery.
 - **Positive-caused:** the pending vertex arose from a positive contraction, a positively elided
-  cell, or a payload containing any positive-caused suppressed member. Its final replacement arc
+  cell, or a bag carrying positive taint. Its final replacement arc
   must satisfy the unit-arc chord deviation bound below. Cause composes conservatively: if a
-  suppression combines any positive-caused input, every member of its replacement payload becomes
-  positive-caused; a later positive contraction of either endpoint upgrades every exact-caused
-  member carried by that edge; and a later positive contraction of a sink representative upgrades
-  every exact-caused member in that sink.
+  suppression combines any positive-caused input, its replacement root is tainted; a later positive
+  contraction of either endpoint taints the carried edge root; and a later positive contraction of
+  a sink representative taints that sink root.
 
-For final endpoints `a`, `b` and every positive-caused suppressed source position `v`, normalize
-all three stored directions in f64. Let `n_raw = a x b`, `n = n_raw / length(n_raw)`, and
-`theta = atan2(length(n_raw), clamp(a dot b, -1, 1))`. Project with
-`q_raw = v - n * (n dot v)` and compute its squared norm. If it is strictly above the named
-projection-conditioning floor, normalize it and consider both `q` and `-q`. If it is at or below
-the floor, or non-finite, skip projection candidates and use the endpoint fallback below. This
-includes the singular case where `v` is parallel to the arc-plane normal and every point on the
-supporting great circle is equally distant.
+For final endpoints `a`, `b` and every positive-tainted suppressed source position `v`, promote each
+stored vector `x` to f64, compute `len_sq = x dot x`, require finite `len_sq > 0.0`, and normalize as
+`x / sqrt(len_sq)` in that order. Compute
+`n_raw = a x b` and `cross_sq = n_raw dot n_raw`. Before division, require finite
+`cross_sq > endpoint_cross_sq_floor`; equality or a smaller value is
+`IllConditionedReplacementArc`. Only then compute `cross_len = sqrt(cross_sq)`,
+`n = n_raw / cross_len`, and
+`theta = atan2(cross_len, clamp(a dot b, -1, 1))` in that order. The earlier raw-coordinate equality
+and antipodality predicates still run first.
 
-For candidate `p`, define the oriented angle
-`phi(x, y) = atan2(n dot cross(x,y), clamp(x dot y, -1, 1))`, mapped into `[0, 2*pi)`. The candidate
-lies on the minor arc only when `phi(a,p)`, `phi(p,b)`, and their sum agree with `theta` within a
-named f64 orientation/angle-sum tolerance. If both projected candidates pass because of tolerance,
-choose the one with smaller `phi(a,p)`, then `q` before `-q` as the final tie-break. If no
-projection lies on the arc, compute each endpoint distance as
+Project with `q_raw = v - n * (n dot v)` and compute `projection_sq = q_raw dot q_raw`. If finite
+`projection_sq > projection_sq_floor`, normalize it and consider `q` followed by `-q`. Equality or a
+smaller value, and non-finite values, skip projection candidates and use the endpoint fallback
+below. This includes the singular case where `v` is parallel to the arc-plane normal and every
+point on the supporting great circle is equally distant.
+
+For candidate `p`, compute
+`raw_phi(x,y) = atan2(n dot cross(x,y), clamp(x dot y, -1, 1))`. Using
+`core::f64::consts::{PI, TAU}`, map it into `[0, TAU)` by first canonicalizing either signed zero to
+`+0.0`, then adding `TAU` exactly once only when the result is strictly negative. A finite candidate
+lies on the closed minor arc exactly when all three inclusive tests hold for the named nonnegative
+f64 tolerance `tau`:
+
+- `phi(a,p) <= theta + tau`;
+- `phi(p,b) <= theta + tau`; and
+- `abs((phi(a,p) + phi(p,b)) - theta) <= tau`.
+
+Stage 0 pins finite `0 <= tau < PI`; because conditioned `theta` is strictly below `PI`, this keeps
+`theta + tau < TAU`. No comparison silently clamps an angle. If both projected candidates pass
+because of tolerance, choose the one with smaller `phi(a,p)`, then `q` before `-q` on an exact tie.
+If no projection lies on the arc, compute each endpoint distance as
 `atan2(length(v x endpoint), clamp(v dot endpoint, -1, 1))`; choose the smaller distance, with `a`
 winning an exact tie. No fallback uses `acos`.
 
 For the selected nearest point `p`, compute
 `delta = atan2(length(v x p), clamp(v dot p, -1, 1))` and unit-arc chord
-`2 * sin(delta / 2)` in that order. Require it to be `<=` the requested threshold without an
-additional acceptance pad. Stage 0 pins both conditioning floors and the orientation/angle-sum
-tolerance with immediately adjacent tests.
+`chord = 2.0 * sin(delta * 0.5)` in that order. Require `chord <= requested_threshold` without an
+additional acceptance pad. Stage 0 pins both conditioning floors and `tau` with immediately adjacent
+tests.
 
-For a positive-caused vertex-sink member `v` and final representative `r`, normalize both stored
-directions in f64, compute
-`2 * sin(atan2(length(v x r), clamp(v dot r, -1, 1)) / 2)`, and require it to be `<=` the requested
-threshold. This is the degenerate-edge counterpart of final minor-arc recertification.
+For a positive-tainted vertex-sink member `v` and final representative `r`, apply the same ordered
+f64 normalization to both stored directions, compute
+`delta = atan2(length(v x r), clamp(v dot r, -1, 1))`, then
+`chord = 2.0 * sin(delta * 0.5)`, and require `chord <= requested_threshold`. This is the
+degenerate-edge counterpart of final minor-arc recertification.
 
 Coincident, exactly antipodal, non-finite, or insufficiently conditioned final endpoints do not
 define an acceptable positive replacement arc. Coincident endpoints have already transferred their
-payload to exact closure/vertex provenance before this check. Stage 0 pins named squared-cross and
-projection-conditioning floors and every normalization/orientation boundary with adjacent-value
-tests. After the outer fixed point, recertify every positive-caused edge-payload member against its
-final live-edge endpoints and every positive-caused sink member against its final representative;
+bag root to exact closure/vertex provenance before this check. Stage 0 pins named squared-cross and
+projection-conditioning floors as finite nonnegative values below `1.0`, plus every
+normalization/orientation boundary with adjacent-value tests. After the outer fixed point,
+recertify every positive-tainted edge-root member against its final live-edge endpoints and every
+positive-tainted sink member against its final representative;
 compaction subsequently renumbers those endpoints without moving them. Failure rejects the entire
 Elide conversion; the first version does not retry without the originating cell-elision group.
 
 The successful report distinguishes threshold-independent exact suppression telemetry from the
-maximum final unit-arc chord deviation of positive-caused suppression. It does not combine them
-into one claimed positive-threshold bound.
+maximum final unit-arc chord deviation of finally positive-tainted suppression. It does not combine
+them into one claimed positive-threshold bound.
 
 ### Resource policy
 
@@ -451,8 +508,16 @@ Fixed-point rescans and exact all-pairs diameter checks require an explicit dete
 budget. The public options contain a `CellSimplificationLimits` value covering at least:
 
 - maximum candidate edges retained in one phase;
-- maximum total diameter pair comparisons; and
-- maximum total live cell-index visits across rounds.
+- maximum total diameter pair comparisons;
+- maximum total live cell-index visits across rounds; and
+- maximum total provenance member-distance checks across current and final certification.
+
+The candidate limit counts distinct canonical edge keys retained in one exact or positive phase
+attempt, after phase separation but before component building. Repeated face uses of an existing key
+do not consume capacity or increment the per-phase candidate occurrence count. Permit exactly the
+configured limit; before inserting a previously unseen key, checked-increment the retained count and
+return a resource error if the new value would exceed the limit. Exact and positive discovery obey
+the same rule.
 
 The structural progress bound is the initial number of live vertices plus cells, so a separately
 configurable round cap is unnecessary. Reports still count attempted and productive rounds. A
@@ -465,27 +530,47 @@ construction, source preflight, discovery, face classification, star certificati
 production global fallback. Debug/test shadow oracles maintain private counters and never consume
 public budgets or change a public outcome. Repeated arithmetic over data already copied into a
 temporary cycle is not charged again. Diameter pair comparisons are charged before evaluation.
-Candidate retention is checked before insertion.
+Candidate uniqueness lookup occurs before the checked retention increment.
 
 Nested exact closure, connectivity checks, suppression-triggered rediscovery, and the terminal
 probe charge the same candidate, pair, and cell-index counters as their top-level equivalents.
-Restarting after a commit resets temporary candidate/group storage but never resets cumulative work
-budgets.
+Any nested provenance geometry check also charges the provenance-distance counter. Restarting after
+a commit resets temporary candidate/group storage but never resets cumulative work budgets.
+
+A provenance member-distance check is one point-to-current-arc or point-to-current-representative
+classification for a suppressed member. Charge it before evaluating the metric. This counter covers
+every pre-publication positive-taint sink check and every final positive-tainted edge/sink
+recertification. Lazy root melding and taint do not consume it because they inspect no member.
 
 Exceeding a limit returns a recoverable resource-limit error with the untouched source and consumed
 work counters. It never silently changes to representative-radius approximation, skips candidates,
 or accepts an uncertified component.
 
-Incidence, suppression provenance, and the persistent ledger require `O(I + V)` auxiliary storage,
-bounded by the source mesh itself. Configured candidate limits prevent feature-specific unbounded
+All public limits, cumulative work counters, occurrence counts, and high-water marks use checked
+`u64` arithmetic. Charge or increment before performing the governed work. Arithmetic overflow
+returns `CounterOverflow` before configured-limit comparison; otherwise the first increment which
+would exceed a configured limit returns that resource-limit kind. Semantic classification runs only
+after its charge succeeds. Overflow and resource limits stop immediately even during the exact
+phase; only successfully charged semantic exact-group failures participate in its documented
+all-group accumulation. Otherwise the first failure in deterministic algorithm, cell-id, edge-key,
+and member-id order wins. A failure report contains the successfully consumed count before the
+rejected increment and never wraps or saturates.
+
+Incidence and the persistent component ledger require `O(I + V)` auxiliary storage. Suppression
+bags add `O(S + E + V)` live storage with `S <= V_source`; root melding, rekeying, lazy taint, and
+sink transfer are `O(1)` and do not traverse members. Each such handle operation corresponds to a
+rewritten/certified edge already covered by charged cell-index work. Final flattening visits each
+member once and deterministic per-owner sorting totals at most `O(S log S)`, bounded by the source
+vertex count like final compaction. Any repeated geometric traversal is instead bounded by the
+provenance member-distance limit. Configured candidate limits prevent feature-specific unbounded
 candidate retention. RES-002 follows the crate's existing allocator behavior; it does not add a
 crate-wide fallible-allocation seam or promise recovery from allocator exhaustion.
 
 Stage 0 must select and document default numeric limits, the endpoint-cross and projection
-conditioning floors, and numeric performance gates using private instrumentation or a throwaway
-prototype on targeted candidate-heavy workloads. Callers may raise work limits explicitly. An
-unlimited convenience mode is not provided initially. No production API is committed until those
-values are pinned.
+conditioning floors, `tau`, checked counter/error kinds, and numeric performance gates using private
+instrumentation or a throwaway prototype on targeted candidate-heavy workloads. Callers may raise
+work limits explicitly. An unlimited convenience mode is not provided initially. No production API
+is committed until those values are pinned.
 
 ## Proposed API shape
 
@@ -540,8 +625,8 @@ Fields which require a fixed point or validation are optional as defined below. 
 - per-phase candidate-edge occurrences, summed after per-phase deduplication;
 - later-round candidate-edge occurrences, without claiming cross-round identity;
 - scratch transactions which would publish, excluding their inner scratch mutations;
-- working-buffer zero-component and positive-component would-accept occurrences, promoted to
-  committed counts only on success;
+- zero-component and positive-component would-accept occurrences contained in those transactions,
+  promoted to committed counts only on success;
 - positive component occurrences declined for excess diameter;
 - positive interaction-group occurrences declined for cell preservation, topology, representation,
   or arc reasons;
@@ -551,9 +636,10 @@ Fields which require a fixed point or validation are optional as defined below. 
 - total source-buffer vertex entries absent after final compaction, including pre-existing orphans;
 - maximum component member count;
 - maximum accepted component diameter and representative displacement;
-- exact-caused suppression count and maximum cross-track telemetry;
-- positive-caused suppression count and maximum final unit-arc chord deviation;
-- candidate high-water mark, diameter pair comparisons, and charged live cell-index visits; and
+- initially exact suppression occurrences and maximum acceptance-time cross-track telemetry;
+- finally positive-tainted suppressed-member count and maximum final unit-arc chord deviation;
+- candidate high-water mark, diameter pair comparisons, charged live cell-index visits, and charged
+  provenance member-distance checks; and
 - final `CellMeshValidationReport` on success.
 
 Components and interaction groups are occurrence counts: reconsidering a declined group in a later
@@ -563,6 +649,22 @@ cross-round geometric identity. `remaining_edges_at_or_below_threshold` is the s
 positive-nonzero and exact-zero fields; exact-zero remaining is zero on every successful strict
 output and can be nonzero only in a failure report. Diameter and displacement maxima cover accepted
 components only.
+
+Counter increment points are exact. A component occurrence increments
+`would_accept_occurrences` only after its complete enclosing scratch transaction—including induced
+closure and the production certificate—has succeeded and would publish; a transaction with `n`
+components increments the component field by `n`. At that same boundary, immediately before a real
+or Error-simulated publish, increment `would_publish_transactions` once. Failed, resource-limited,
+or declined scratch work increments neither field, although its attempted/candidate/decline/work
+counters remain. Inner scratch mutations never increment either field. On successful output these
+same counts are exposed as committed transactions/components; on any error they retain `would_*`
+names because the original source is returned untouched.
+
+Suppression telemetry uses two intentionally non-disjoint populations. An initially exact
+suppression always contributes to exact acceptance-time telemetry. If later lazy positive taint
+reaches that member, it also contributes to the final positive-tainted member count and final bound.
+This preserves baseline exact telemetry without allowing a later positive move to evade
+recertification.
 
 Report completeness is explicit rather than inferred from zero values. The shared payload records
 a `last_completed_phase` and a completeness class:
@@ -576,10 +678,9 @@ a `last_completed_phase` and a completeness class:
 
 Failures caused by preflight, exact-phase incompleteness, positive Error policy, resource limits,
 arc recertification, or terminal validation expose only the fields justified by their completeness
-class. Work performed on the private buffer is reported as `would_publish_transactions` or
-`would_accept_occurrences`; only a successful output calls transactions committed/accepted. Inner
-scratch mutations are never counted as commits. A resource failure never performs extra discovery
-merely to populate final report fields beyond its budget.
+class. Only a successful output renames would-publish/would-accept counts as committed/accepted.
+Inner scratch mutations are never counted as commits. A resource failure never performs extra
+discovery merely to populate final report fields beyond its budget.
 
 An incomplete preflight reports `last_completed_phase = Preparation`; a completed preflight,
 including one which returns `UnsupportedStoredDegeneracy`, reports
@@ -596,13 +697,13 @@ The initial implementation uses simple cold-path data structures:
    `UnsupportedStoredDegeneracy` for a face with fewer than three exact stored positions and no
    edge-driven exact closure. A limit hit before completion returns the resource error instead.
 3. Build vertex-to-live-cell incidence and live face adjacency from all current face cycles.
-4. Collect, sort, and deduplicate exact stored-zero edges. Preserve/Error classify every independent
-   exact group before an `ExactPhaseIncomplete` return. If closure is possible, open transaction
-   scratch for only the first exact group in deterministic order and resolve every exact edge it
-   induces, including any Elide face removal. Publish that complete closure as one commit, then
-   discard the outer snapshot and restart at step 3. Exact commits use the same complete-star,
-   incidence, representation, and production-connectivity certificate as positive commits.
-   Continue until the exact phase is empty.
+4. Collect, sort, and deduplicate exact stored-zero edges under the unique canonical candidate limit.
+   Preserve/Error classify every independent exact group before an `ExactPhaseIncomplete` return.
+   If closure is possible, open transaction scratch for only the first exact group in deterministic
+   order and resolve every exact edge it induces, including any Elide face removal. Publish that
+   complete closure as one commit, then discard the outer snapshot and restart at step 3. Exact
+   commits use the same complete-star, incidence, stored-position-cardinality, representation, and
+   production-connectivity certificate as positive commits. Continue until the exact phase is empty.
 5. Scan every unique live edge and collect positive, nonzero edges within the inclusive squared
    chord threshold, stopping with a resource error at the candidate limit.
 6. Build minimum-id positive components while expanding each representative through the persistent
@@ -615,18 +716,21 @@ The initial implementation uses simple cold-path data structures:
 9. Simulate groups in deterministic order over every affected face until one can commit. Classify
    cell-killing and non-simple cycles; declined groups do not invalidate the snapshot.
 10. Copy or journal the complete affected state into transaction scratch and tentatively rewrite
-   its complete cover. Extend through scratch incidence to the complete stars of every old/new
-   affected-face vertex, then certify unique faces, paired opposite edge uses, Euler delta, every
-   unmarked live vertex has incidence at least three, every marked pending subdivision has incidence
-   exactly two, all affected links are single cycles, and live face adjacency remains connected.
-   Scan every newly created edge: exact-zero edges enter nested mandatory closure and antipodal
-   edges reject. Each inner scratch mutation rebuilds the invalidated scratch discovery/incidence,
-   but nothing publishes yet. The positive group commits atomically only with all induced closure;
-   Preserve rolls the whole scratch transaction back if closure would kill a cell, Error records
-   its defined failure, and Elide includes it in the scratch quotient. Rekeying edge provenance
-   move-merges colliding payloads; collapsing both endpoints transfers every payload member to the
-   surviving vertex sink and propagates/upgrades cause. After the one persistent commit, abandon the
-   outer snapshot and restart at step 3.
+   its complete cover. Scan every newly created edge: exact-zero edges enter nested mandatory
+   closure and antipodal edges reject. Each inner scratch mutation expands the cover and rebuilds
+   invalidated scratch discovery/incidence, but nothing publishes yet. Once induced exact closure is
+   empty, extend through scratch incidence to the complete stars of every old/new affected-face
+   vertex, then certify unique faces, at least three distinct exact stored positions in every
+   affected live face, paired opposite edge uses, Euler delta, every unmarked live vertex has
+   incidence at least three, every marked pending subdivision has incidence exactly two, all
+   affected links are single cycles, and live face adjacency remains connected. The positive group
+   commits atomically only with all induced closure; Preserve rolls the whole scratch transaction
+   back if closure would kill a cell, Error records its defined failure, and Elide includes it in the
+   scratch quotient. Reconcile every affected bag root against the scratch live-edge set: meld rekey
+   collisions, sink a collapsed edge at its live representative, and sink an edge deleted with
+   distinct endpoints at the lower-id live endpoint. Apply lazy positive taint and the current sink
+   bound, then certify exactly one live owner for every affected root before publication. After the
+   one persistent commit, abandon the outer snapshot and restart at step 3.
 11. Under Elide, a group may remove killed faces in transaction scratch and mark resulting
    degree-two subdivisions with exact/positive cause. Any combined quotient failure rejects the
    conversion rather than retrying subsets. Face removal publishes only as part of the single
@@ -635,20 +739,25 @@ The initial implementation uses simple cold-path data structures:
    vertex and open transaction scratch. Verify opposite owner rotation, tentatively construct its
    replacement endpoint pair, and classify the raw stored pair before resolving an arc: equality
    enters nested exact closure, exact componentwise antipodality rejects, and only a surviving
-   nonzero pair must define a great circle. Move-merge both incident edge payloads, the suppressed
-   member, and any pre-existing replacement-key payload. Rebuild scratch incidence after every
-   induced closure mutation. Before publishing, apply the same complete-star, unique-face,
-   paired-edge, Euler, incidence/pending, link-cycle, newly-zero/antipodal, and global-connectivity
-   production certificate used by quotient transactions. Commit the suppression plus all induced
-   closure as one persistent mutation, then abandon the outer snapshot and restart at step 3. The
-   new edge is thereby reconsidered by exact and positive discovery before another suppression.
+   nonzero pair must define a great circle. Meld both incident move-only bag roots, the new member
+   record, and any pre-existing replacement-key root without visiting descendants. Rebuild scratch
+   incidence and reconcile every affected root with the live-edge set after each induced closure
+   mutation.
+   Before publishing, apply the same complete-star, unique-face, stored-position-cardinality,
+   paired-edge, Euler, incidence/pending, link-cycle, newly-zero/antipodal, root-ownership, and
+   global-connectivity production certificate used by quotient transactions. Commit the suppression
+   plus all induced closure as one persistent mutation, then abandon the outer snapshot and restart
+   at step 3. The new edge is thereby reconsidered by exact and positive discovery before another
+   suppression.
 13. A no-progress attempt with no pending subdivision performs the terminal discovery needed to
     prove the fixed point and records all remaining threshold edges. It counts as attempted, not
     productive.
-14. Resolve current endpoints for every edge payload and the current representative for every vertex
-    sink. Apply threshold-independent exact suppression checks/telemetry, recertify positive-caused
-    edge members against their final minor arc, and recertify positive-caused sink members against
-    their final representative. Any failure rejects the conversion.
+14. Flatten every move-only root once, reject shared/duplicate/missing ownership, sort member ids per
+    owner for deterministic diagnostics, resolve current endpoints for every edge root and the
+    current representative for every sink, then apply threshold-independent exact suppression
+    telemetry, recertify positive-tainted edge members against their final minor arc, and recertify
+    positive-tainted sink members against their final representative. Any failure rejects the
+    conversion.
 15. Compact once, compose provenance, run full strict validation once, and return the distinct mesh
     output.
 
@@ -670,14 +779,15 @@ Before implementation:
 
 1. approve cold placement, chord units, exact-zero precedence, fixed-point semantics, whole-chain
    rejection, two-level scratch/persistent transaction atomicity, restart-after-commit snapshots,
-   stable ids, deferred cause-aware suppression, collision-safe edge payloads and vertex sinks,
-   complete-star/connectivity certification, source-degeneracy preflight accounting, cell-policy
-   failure behavior, report completeness, and abstract geometry wording;
+   stable ids, deferred cause-aware suppression, move-only lazy-taint provenance bags, deterministic
+   sinks for deleted carrying edges, complete-star/connectivity/stored-position certification,
+   source-degeneracy preflight accounting, cell-policy failure behavior, report completeness, and
+   abstract geometry wording;
 2. use a private instrumented harness or throwaway prototype to benchmark candidate-heavy
-   components and degree-two arc conditioning, then pin stored-chord/unit-arc formulas, numeric
-   default work limits, named endpoint-cross and projection-conditioning floors, and the
-   orientation/angle-sum tolerance;
-3. define stable report count names and error kinds;
+   components, degree-two arc conditioning, and suppression-heavy bag rekey/sink/flatten work, then
+   pin stored-chord/unit-arc formulas, numeric default work limits, named endpoint-cross and
+   projection-conditioning floors, `tau`, and checked counter types/overflow precedence;
+3. define stable report count names, exact increment points, and error kinds;
 4. update `output-resolution-policy.md` and the RES-002 work-log status; and
 5. capture ordinary-compute and exact-elision release baselines with numeric acceptance gates.
 
@@ -710,7 +820,8 @@ Generalize output-resolution internals for cold positive use:
 - exact diameter and work accounting;
 - transitive face-interaction groups;
 - complete face simulation and complete affected-star expansion;
-- generalized quotient/link, low-incidence, connectivity, zero, and antipodal checks;
+- generalized quotient/link, low-incidence, connectivity, stored-position-cardinality, zero, and
+  antipodal checks;
 - pending-subdivision marking without suppression;
 - rollback and fixed-point rescans; and
 - complete Preserve reporting.
@@ -726,7 +837,7 @@ validation cannot accept it.
 Add the simulation report and affected-input mapping for `Error`. Then adapt the existing exact
 global quotient for positive `Elide`, including fixed-point rounds, combined exact/positive
 phases, stable ids through every round, cause-aware suppression provenance, replacement-edge
-rediscovery, collision-safe edge-payload merging, edge-to-vertex provenance transfer, final
+rediscovery, move-only lazy-taint bag melding, deleted-edge and collapsed-edge sink transfer, final
 point-to-minor-arc and point-to-representative recertification, all-or-error global validation, one
 final compaction, and successful provenance composition.
 
@@ -756,8 +867,8 @@ every post-assembly mutation footprint, and fall back globally on drift or incom
 ## Complexity and resource model
 
 Let `I` be the total number of live cell-index entries, `E` the number of unique live edges, `K`
-the number of candidate edges in a round, and `m_c` the retained source-member count of component
-`c`.
+the number of distinct canonical candidate edges in a phase attempt, `S` the number of suppressed
+source vertices, and `m_c` the retained source-member count of component `c`.
 
 Per round:
 
@@ -766,13 +877,23 @@ Per round:
 - sparse component building is expected `O(K alpha(K))`;
 - exact diameter work is `O(sum_c m_c^2)` and explicitly budgeted;
 - face simulation and quotient checks are proportional to the complete affected-cell index cover;
-  and
+- provenance root melding, rekeying, lazy taint, and sink transfer are `O(1)` per rewritten carrying
+  edge without member traversal;
+- current and final provenance geometry work is proportional to the explicitly budgeted number of
+  member-distance checks; and
 - validation includes expected hash-table work plus `O(sum_f d_f log d_f)` face-signature sorting.
+
+Across the successful conversion, each suppressed source vertex creates one member record, so
+`S <= V_source`. Final provenance ownership flattening is `O(S)` and deterministic per-owner member
+sorting is at most `O(S log S)`. Failed scratch transactions may allocate temporary root nodes, but
+journal or arena rollback reclaims them without visiting member records; their handle operations
+correspond to already charged rewrite/certificate work. Repeated point checks do visit members and
+are governed by their own cumulative limit.
 
 Fixed-point work multiplies scans by the number of productive rounds. Structural progress bounds
 those rounds by the initial live vertices plus cells; the configured candidate, pair-comparison,
-and cell-index-visit limits provide the practical cutoff. Documentation must not summarize the
-general conversion as unconditionally `O(V + E + F)`.
+cell-index-visit, and provenance-distance limits provide the practical cutoff. Documentation must
+not summarize the general conversion as unconditionally `O(V + E + F)`.
 
 Do not replace all-pairs diameter with distance from the representative alone; that permits twice
 the requested component diameter.
@@ -798,9 +919,16 @@ the requested component diameter.
   incidence, diameter, and interaction discovery;
 - no-progress fixed point with remaining declined candidates;
 - persistent member ledger preventing cross-round diameter escape;
-- candidate, pair-comparison, and cell-index-visit limits exactly met and exceeded by one unit;
+- candidate, pair-comparison, cell-index-visit, and provenance-member-distance limits exactly met
+  and exceeded by one unit;
+- repeated face uses consume one unique canonical candidate slot, and exact discovery obeys the
+  same candidate limit as positive discovery;
+- every `u64` counter boundary and synthetic overflow returns the pinned error before semantic
+  classification, without wrapping or saturating;
 - preflight cell-index limit exactly met and exceeded, with deterministic resource-versus-
   degeneracy error precedence and `last_completed_phase`;
+- would-accept and would-publish counters increment only at the fully certified transaction
+  boundary, with multi-component, declined, failed-scratch, Error-simulated, and later-failure cases;
 - the terminal no-progress probe is charged and counted as attempted but not productive; and
 - debug/test shadow-oracle scans do not change public work counters or limit outcomes.
 
@@ -812,6 +940,8 @@ the requested component diameter.
 - complete neighboring-vertex stars when link-changing faces do not contain a merged member;
 - non-simple face, duplicate face, incidence/orientation, Euler, connectivity, and pinched-link
   rejection;
+- a rewrite or suppression which creates an alternating two-position face with no zero edge fails
+  the production stored-position-cardinality certificate under each cell policy;
 - a locally valid quotient which disconnects live face adjacency is rejected before commit;
 - low-incidence degree-one and degree-two live vertices rejected independently of link cyclicity;
 - newly created exact-zero edge resolved in the positive transaction and newly antipodal edge
@@ -832,6 +962,8 @@ the requested component diameter.
 - replacement-arc cross conditioning immediately below, equal to, and above its named floor;
 - projection conditioning immediately below, equal to, and above its named floor, including a
   source position parallel to the arc-plane normal and deterministic endpoint fallback;
+- arc membership immediately inside, equal to, and outside every inclusive `tau` boundary, with
+  wrapped negative angles, signed zero, endpoint candidates, and both projections passing;
 - exact raw componentwise antipodality is rejected before normalization, with nearby normalized
   near-pi endpoints proceeding to the ordinary conditioning rule;
 - exact-caused suppression succeeds independently of a positive threshold smaller than its
@@ -842,16 +974,21 @@ the requested component diameter.
   respectively restart exact closure, restart positive discovery, or reject;
 - coincident suppression endpoints route to exact closure before any great-circle conditioning
   check;
-- exact and positive contraction of a suppression-carrying edge transfer every payload member to the
+- exact and positive contraction of a suppression-carrying edge transfer every bag member to the
   surviving vertex sink, with positive cause upgraded and finally bounded;
 - positive contraction of a representative carrying only an exact-caused vertex sink upgrades and
   finally bounds those sink members without requiring a live carrying edge;
-- contraction which rekeys multiple carrying edges onto one key move-merges every payload
+- contraction which rekeys multiple carrying edges onto one key melds every bag
   deterministically and certifies every member against the final edge;
-- cascading suppression move-merges member provenance without losing or duplicating a removed
-  source member;
-- a suppression transaction passes the same complete-star, paired-edge, Euler, incidence,
-  link-cycle, and connectivity certificate as a quotient transaction;
+- exact and positive face deletion which removes every use of a carrying edge while both endpoints
+  survive transfers its bag to the lower-id sink, with rollback, lazy taint, current bound, and final
+  recertification pinned;
+- repeated rekey, bag melding, sink merging, and cause upgrade do not traverse existing member
+  records; required current/final geometry traversals charge every member, and final ownership
+  flatten finds every source member exactly once and detects shared/duplicate roots;
+- a suppression transaction passes the same complete-star, paired-edge, Euler,
+  stored-position-cardinality, incidence, link-cycle, ownership, and connectivity certificate as a
+  quotient transaction;
 - whole-mesh collapse and invalid replacement arc rejection;
 - exact-zero closure followed by positive components interacting through the same face; and
 - exact-only topology/provenance parity with `into_elided_cell_mesh` at multiple positive
@@ -891,6 +1028,8 @@ and peak-memory method. Final acceptance requires:
   shift versus the immediate parent;
 - no material exact-elision regression from shared preparation/finalization;
 - separate conversion timings for candidate-free, sparse-candidate, and candidate-heavy inputs;
+- suppression-heavy scaling confirms ownership/cause operations do not traverse existing bag
+  members, geometry traversals match their charged counter, and one-time flatten/sort is bounded;
 - report counters agreeing with instrumented phase totals; and
 - deterministic candidate/work-limit behavior, with debug shadow oracles excluded.
 
@@ -913,22 +1052,27 @@ RES-002 is complete when:
    no-pending-subdivision fixed point;
 8. accepted positive components use deterministic minimum-id representatives and certified
    all-pairs diameter;
-9. complete rewrite incidence, affected vertex stars, connectivity, and transitive face interaction
-   make transactions independent of discovery order;
-10. every accepted Preserve contraction passes quotient, link, incidence, connectivity, zero, and
-    antipodal checks;
+9. complete rewrite incidence, affected vertex stars, connectivity, stored-position cardinality,
+   and transitive face interaction make transactions independent of discovery order;
+10. every published transaction passes quotient, link, incidence, connectivity, representation,
+    root-ownership, zero, and antipodal checks;
 11. Preserve, Error, and Elide implement their documented recoverable outcomes;
 12. exact-caused suppression is threshold-independent and preserves exact-elision parity on the
-    shared baseline success domain, while positive-caused suppression retains collision-safe member
+    shared baseline success domain, while positive-caused suppression retains move-only lazy-taint
     provenance and passes final point-to-minor-arc certification;
-13. colliding carrying edges move-merge every member deterministically, and a collapsed suppression
-    edge transfers every member to a cause-upgraded, recertified representative sink;
-14. every success passes one final strict validation with coherent original-input provenance;
-15. reports distinguish completeness, stored-chord and unit-arc metrics, exact and positive
+13. colliding carrying edges meld roots without member traversal, and both collapsed and deleted
+    carrying edges transfer every member to a deterministic cause-upgraded, recertified sink;
+14. endpoint-cross, projection, orientation, signed-zero, tolerance, endpoint-fallback, and chord
+    boundaries implement the pinned executable unit-arc formula;
+15. every success passes one final strict validation with coherent original-input provenance;
+16. reports distinguish completeness, stored-chord and unit-arc metrics, exact and positive
     suppression, accepted/declined occurrences, final remaining edge classes, elision,
-    displacement, and resource units;
-16. ordinary computation and exact elision retain their correctness and performance contracts; and
-17. public documentation states the approximate non-Voronoi, abstract-complex geometry limit.
+    displacement, resource units, and exact counter increment points without overflow;
+17. provenance storage/final sorting has the documented source-size bound and repeated work is
+    governed by deterministic unique-candidate, pair-comparison, cell-index, and
+    provenance-member-distance limits;
+18. ordinary computation and exact elision retain their correctness and performance contracts; and
+19. public documentation states the approximate non-Voronoi, abstract-complex geometry limit.
 
 ## Deferred extensions
 
