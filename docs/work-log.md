@@ -256,8 +256,9 @@ default `Preserve` behavior.
 - **Post-review fixes:** pending-suppression cause upgrades now follow the transaction's affected
   cover; exact transactions certify stored-position cardinality and induced exact edges on affected
   faces; current provenance checks visit only affected owners and stream bag members under the work
-  budget; cell-index charging is interleaved with examination; and mixed exact/positive Elide plus
-  unchanged-edge/sink cause-upgrade regressions pin the corrected behavior.
+  budget; charged vertex-id validation precedes adjacency lookahead; affected endpoint stars retain
+  current positive-owner recertification; and mixed exact/positive Elide, unchanged-edge/sink cause
+  upgrades, and a positive cell-killing triangular-prism suppression pin the corrected behavior.
 - **Pinned policy:** default work limits are 100,000,000 diameter comparisons, 100,000,000
   cell-index visits, and 100,000,000 provenance checks. Positive suppression uses `1e-24`
   squared endpoint-cross/projection floors and `64 * f64::EPSILON` arc-membership tolerance.

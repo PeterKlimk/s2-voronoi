@@ -240,16 +240,18 @@ fn build_snapshot(
 
     for (cell, cycle) in cycles.iter().enumerate() {
         let Some(cycle) = cycle else { continue };
-        for (offset, &from) in cycle.iter().enumerate() {
+        for &vertex in cycle {
             work.charge_cell_indices(1, phase)?;
-            let to = cycle[(offset + 1) % cycle.len()];
-            if from as usize >= vertex_count || to as usize >= vertex_count {
+            if vertex as usize >= vertex_count {
                 return Err(work.failure(
                     FailureKind::UnsafeQuotient,
                     phase,
                     "cell cycle references an out-of-range vertex",
                 ));
             }
+        }
+        for (offset, &from) in cycle.iter().enumerate() {
+            let to = cycle[(offset + 1) % cycle.len()];
             live_vertices[from as usize] = true;
             incidence[from as usize].push(cell);
             let edge_use = EdgeUse { cell, from, to };
@@ -306,12 +308,21 @@ fn preflight_stored_positions(
 ) -> Result<(), Failure> {
     for (cell, cycle) in cycles.iter().enumerate() {
         let Some(cycle) = cycle else { continue };
+        for &vertex in cycle {
+            work.charge_cell_indices(1, Phase::Preparation)?;
+            if vertex as usize >= vertices.len() {
+                return Err(work.failure(
+                    FailureKind::Validation,
+                    Phase::Preparation,
+                    "source cell cycle references an out-of-range vertex",
+                ));
+            }
+        }
         let mut first = None;
         let mut second = None;
         let mut has_three = false;
         let mut has_zero_edge = false;
         for (offset, &vertex) in cycle.iter().enumerate() {
-            work.charge_cell_indices(1, Phase::Preparation)?;
             let point = vertices[vertex as usize];
             match (first, second) {
                 (None, _) => first = Some(point),
@@ -712,8 +723,10 @@ fn certify_topology(
                 "live face has fewer than three vertices",
             ));
         }
-        for (offset, &vertex) in cycle.iter().enumerate() {
+        for _ in cycle {
             work.charge_cell_indices(1, phase)?;
+        }
+        for (offset, &vertex) in cycle.iter().enumerate() {
             let previous = cycle[(offset + cycle.len() - 1) % cycle.len()];
             let next = cycle[(offset + 1) % cycle.len()];
             if previous == next {
@@ -1255,8 +1268,11 @@ fn affected_provenance_owners(
         .edge_roots
         .iter()
         .filter_map(|(&key, &root)| {
-            (before.edge_roots.get(&key).copied() != Some(root) || cover.edges.contains(&key))
-                .then_some(key)
+            (before.edge_roots.get(&key).copied() != Some(root)
+                || cover.edges.contains(&key)
+                || cover.vertices.get(key.0 as usize).copied().unwrap_or(false)
+                || cover.vertices.get(key.1 as usize).copied().unwrap_or(false))
+            .then_some(key)
         })
         .collect();
     edges.sort_unstable();
@@ -2709,6 +2725,35 @@ mod tests {
         (vertices, cells, indices)
     }
 
+    fn triangular_prism_fixture() -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>) {
+        fn equator(angle: f32) -> Vec3 {
+            Vec3::new(angle.cos(), angle.sin(), 0.0)
+        }
+
+        let vertices = vec![
+            equator(0.0),
+            equator(0.01),
+            equator(0.5),
+            equator(2.0),
+            equator(1.5),
+            equator(1.0),
+        ];
+        let cycles: [&[u32]; 5] = [
+            &[0, 2, 1],
+            &[3, 4, 5],
+            &[0, 1, 4, 3],
+            &[1, 2, 5, 4],
+            &[2, 0, 3, 5],
+        ];
+        let mut cells = Vec::new();
+        let mut indices = Vec::new();
+        for cycle in cycles {
+            cells.push(VoronoiCell::new(indices.len() as u32, cycle.len() as u16));
+            indices.extend_from_slice(cycle);
+        }
+        (vertices, cells, indices)
+    }
+
     #[test]
     fn preserve_collapses_one_isolated_short_cube_edge() {
         let (vertices, cells, indices) = cube_fixture();
@@ -2774,6 +2819,33 @@ mod tests {
         assert_eq!(failure.kind, FailureKind::CellEliminationRequired);
         assert_eq!(failure.phase, Phase::Positive);
         assert_eq!(failure.affected_effective_cells, vec![0, 1]);
+    }
+
+    #[test]
+    fn elide_positive_cell_killing_suppresses_and_certifies_the_subdivision() {
+        let (vertices, cells, indices) = triangular_prism_fixture();
+        let threshold = stored_distance_squared(vertices[0], vertices[1]).sqrt() * 1.01;
+
+        let outcome = simplify(
+            &vertices,
+            &cells,
+            &indices,
+            threshold,
+            CellPolicy::Elide,
+            generous_limits(),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.vertices.len(), 4);
+        assert_eq!(outcome.cycles.len(), 4);
+        assert_eq!(outcome.stats.positive_components_committed, 1);
+        assert_eq!(outcome.stats.effective_cells_elided, 1);
+        assert_eq!(outcome.stats.exact_suppression_members, 0);
+        assert_eq!(outcome.stats.positive_suppression_members, 1);
+        assert!(outcome.stats.max_positive_suppression_unit_arc_chord <= threshold);
+        assert_eq!(outcome.work.provenance_member_checks, 2);
+        assert_eq!(outcome.stats.final_exact_edges, 0);
+        assert_eq!(outcome.stats.final_positive_edges, 0);
     }
 
     #[test]
@@ -3072,6 +3144,24 @@ mod tests {
     }
 
     #[test]
+    fn affected_endpoint_recertifies_an_unchanged_positive_edge_root() {
+        let mut provenance = ProvenanceState::new(3);
+        let root = provenance.leaf(0, true);
+        provenance.edge_roots.insert((0, 2), root);
+        let before = provenance.owner_snapshot();
+        let cover = AffectedCover {
+            cells: vec![true],
+            vertices: vec![true, true, false],
+            edges: FxHashSet::default(),
+        };
+
+        let affected = affected_provenance_owners(&before, &provenance, &cover);
+
+        assert_eq!(affected.edges, vec![(0, 2)]);
+        assert!(affected.sinks.is_empty());
+    }
+
+    #[test]
     fn exact_transaction_rejects_an_affected_two_position_face() {
         let (mut vertices, _, _) = cube_fixture();
         vertices[0] = Vec3::X;
@@ -3120,6 +3210,34 @@ mod tests {
         assert_eq!(failure.kind, FailureKind::UnsafeQuotient);
         assert_eq!(failure.work.cell_index_visits, 1);
         assert!(failure.message.contains("out-of-range"));
+
+        let mut limited_lookahead = WorkTracker::new(Limits {
+            cell_index_visits: 1,
+            ..generous_limits()
+        });
+        let failure = build_snapshot(
+            &[Some(vec![0, 3, 1])],
+            3,
+            &mut limited_lookahead,
+            Phase::Preparation,
+        )
+        .unwrap_err();
+        assert_eq!(failure.kind, FailureKind::CellIndexLimit);
+        assert_eq!(failure.work.cell_index_visits, 1);
+
+        let mut charged_lookahead = WorkTracker::new(Limits {
+            cell_index_visits: 2,
+            ..generous_limits()
+        });
+        let failure = build_snapshot(
+            &[Some(vec![0, 3, 1])],
+            3,
+            &mut charged_lookahead,
+            Phase::Preparation,
+        )
+        .unwrap_err();
+        assert_eq!(failure.kind, FailureKind::UnsafeQuotient);
+        assert_eq!(failure.work.cell_index_visits, 2);
     }
 
     #[test]

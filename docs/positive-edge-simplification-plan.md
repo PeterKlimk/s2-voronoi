@@ -28,6 +28,11 @@ semantic failure precedence while charging cell-index work, streams provenance m
 budget, and adds mixed exact/positive Elide coverage. The focused checked/default/feature variants,
 all-target all-feature clippy, and the complete release suite pass with those fixes.
 
+A second follow-up review pins charged vertex-id validation before any adjacency lookahead, includes
+unchanged positive edge roots whenever either endpoint is in the affected cover, and adds a
+triangular-prism transaction fixture which positively elides one face, suppresses one degree-two
+subdivision, and charges both its current and final provenance certificates.
+
 Implementation pins the public threshold and report shape described below. The checked default
 budgets are 100,000,000 diameter pair comparisons, 100,000,000 cell-index visits, and
 100,000,000 provenance member checks. The executable minor-arc predicate uses finite squared-cross
