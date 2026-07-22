@@ -249,27 +249,16 @@ default `Preserve` behavior.
 - **Dependencies:** RES-001 (completed)
 - **Goal:** let graphical or physics consumers explicitly remove represented nonzero slivers.
 - **Decisions required:**
-  - approve stored-chord discovery and normalized unit-arc suppression metrics;
-  - approve exact-zero precedence, two-level scratch/persistent transaction atomicity,
-    restart-after-commit snapshots, and stable-id fixed-point simplification;
-  - approve Preserve/Error/Elide failure and retry semantics;
-  - approve threshold-independent exact suppression plus final cause-aware positive
-    point-to-minor-arc/representative certification, move-only lazy-taint provenance bags, and
-    deterministic cause-upgraded sinks for collapsed/deleted carrying edges or suppressed sink
-    representatives;
-  - approve charged pre-publication current-geometry checks for every affected positive-tainted edge
-    and sink root, with occupied destinations always melded;
-  - approve source-bounded provenance storage/final sorting plus a cumulative
-    provenance-member-distance limit for repeated geometric checks;
-  - approve the abstract-complex geometry contract;
-  - approve charged unsupported stored-degeneracy preflight, affected-face stored-position
-    certification, and phase-complete failure reports;
-  - select deterministic candidate, diameter-work, cell-index-visit, and provenance-distance limits
-    plus endpoint-cross and projection-conditioning floors, `tau`, and the exact stored-antipodal
-    predicate; and
-  - pin online unique-candidate interning, `O(d log d)` face-local checks, atomic publication-counter
-    updates, checked-counter overflow/error precedence, bitmap-backed ownership audit,
-    positive-threshold option/report fields, and quantitative performance gates.
+  - approve stored-chord discovery, normalized unit-arc suppression, and the abstract-complex
+    geometry contract;
+  - approve diameter-bounded stable-id fixed-point transactions with exact-zero precedence,
+    rollbackable scratch, and restart after each published mutation;
+  - approve Preserve/Elide retry behavior, deterministic first-failure Error behavior, and
+    unsupported-source preflight;
+  - approve threshold-independent exact suppression plus cause-aware current/final positive
+    certification for Elide-created subdivisions; and
+  - pin the three deterministic work limits, numeric arc-conditioning constants, public
+    option/report fields, and quantitative performance gates.
 - **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
   exact Voronoi diagram of the original generators.
 - **References:** [`output-resolution-policy.md`](output-resolution-policy.md) and
