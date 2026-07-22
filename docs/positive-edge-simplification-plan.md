@@ -1,6 +1,6 @@
 # Positive-threshold edge simplification plan
 
-**Status:** revision 9 implemented; final validation and performance acceptance recorded with RES-002
+**Status:** revision 9 implementation reopened after post-implementation review
 
 **Date:** 2026-07-23
 
@@ -20,6 +20,11 @@ arrays instead of per-face sorting, deterministic first-failure Error semantics 
 exhaustive simulation, stable source ids instead of rollback-sensitive dense member ordinals, and
 success-only result counters instead of a fallible multi-field publication delta. It also requires
 iterative bag traversal and clarifies that work-counter overflow precedes only the work it charges.
+
+Post-implementation review reopened RES-002 on 2026-07-23. The implementation must still restrict
+pending-suppression cause upgrades and current provenance recertification to affected state, enforce
+stored-position cardinality for affected faces in exact transactions, preserve per-entry semantic
+failure precedence while charging cell-index work, and add mixed exact/positive Elide coverage.
 
 Implementation pins the public threshold and report shape described below. The checked default
 budgets are 100,000,000 diameter pair comparisons, 100,000,000 cell-index visits, and
