@@ -250,10 +250,11 @@ default `Preserve` behavior.
 - **Goal:** let graphical or physics consumers explicitly remove represented nonzero slivers.
 - **Decisions required:**
   - approve chord-length units with promoted-f64 squared comparison;
-  - approve fixed-point rather than source-edge-only simplification;
+  - approve exact-zero precedence and stable-id fixed-point simplification;
   - approve Preserve/Error/Elide failure and retry semantics;
-  - approve the abstract-complex geometry contract and degree-two shorter-arc certificate;
-  - select deterministic round, diameter-work, and cell-index-visit limits; and
+  - approve the abstract-complex geometry contract and degree-two point-to-minor-arc certificate;
+  - select deterministic candidate, diameter-work, and cell-index-visit limits plus the arc
+    conditioning floor; and
   - pin positive-threshold option/report fields and quantitative performance gates.
 - **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
   exact Voronoi diagram of the original generators.
