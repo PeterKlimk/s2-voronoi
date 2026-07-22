@@ -60,7 +60,7 @@ prevention rather than an overclaimed proof.
 | POINT-003 | P1 | Completed | Locator query validation and normalized ranking/certification landed |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
 | QUAL-001 | P2 | Completed | Reopen only for a new invariant/consumer or changed codegen evidence |
-| RES-002 | P2 | Completed | Post-review affected-state and resource contracts landed |
+| RES-002 | P2 | Ready | Review replacement plan, then prototype sparse cell-preserving resolution |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | PERF-002 | P3 | Completed | Reopen only for a materially different kernel mechanism or workload |
 | PERF-003 | P3 | Completed | Reopen only for a separately designed multi-query resident kernel |
@@ -245,10 +245,10 @@ default `Preserve` behavior.
 ### RES-002 — Optional positive-threshold edge simplification
 
 - **Priority:** P2
-- **Status:** Completed 2026-07-23 after post-implementation review fixes
+- **Status:** Ready; reopened 2026-07-23 for replacement after performance and scope review
 - **Dependencies:** RES-001 (completed)
 - **Goal:** let graphical or physics consumers explicitly remove represented nonzero slivers.
-- **Landed implementation:** explicit consuming unit and embedded conversions; inclusive stored-chord
+- **Current comparison implementation:** explicit consuming unit and embedded conversions; inclusive stored-chord
   discovery; all-pairs diameter-bounded minimum-id components; exact-first deterministic fixed
   point; transactional complete-mesh topology certification; `Preserve`, first-failure `Error`,
   and provenance-preserving `Elide`; checked work budgets; and distinct success/failure reports
@@ -271,6 +271,14 @@ default `Preserve` behavior.
   100,000,000-visit ceiling after 10.86 s rather than running unbounded. These are cold conversion
   characterizations, not ordinary-path budgets. Shared exact-elision focused and full release
   suites remain unchanged and passing.
+- **Replacement decision:** the threshold must be supplied before construction. Reuse the existing
+  widened hot hint, final-position confirmation, affected-cell exact-resolution rewrite, and local
+  quotient ownership. The first replacement is cell-preserving only, processes candidate edges in
+  deterministic length/key order, bounds every source member's displacement to its retained
+  representative, revisits only locally changed edges, and validates globally once. Post-compute
+  thresholds, positive `Error`/`Elide`, whole-mesh proposal clones, global per-commit rescans,
+  public work budgets, and suppression provenance are removed or deferred. The current engine is
+  retained only as a benchmark/correctness oracle until replacement parity is established.
 - **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
   exact Voronoi diagram of the original generators.
 - **References:** [`output-resolution-policy.md`](output-resolution-policy.md) and
@@ -776,8 +784,9 @@ tasks and are not duplicated here.
 ## Suggested order
 
 1. Continue WORK-002 whenever construction, reconciliation, or Hull3d changes.
-2. Revisit PERF-001 only with a motivating workload and crossover measurements.
-3. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
+2. Replace RES-002 with the construction-aware sparse cell-preserving design.
+3. Revisit PERF-001 only with a motivating workload and crossover measurements.
+4. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
 
 ## Closed and retired work
 
