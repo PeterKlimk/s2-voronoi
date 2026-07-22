@@ -249,11 +249,12 @@ default `Preserve` behavior.
 - **Dependencies:** RES-001 (completed)
 - **Goal:** let graphical or physics consumers explicitly remove represented nonzero slivers.
 - **Decisions required:**
-  - canonical threshold units (squared chord internally, with or without an angular convenience
-    API);
-  - positive-threshold option/report fields on the distinct cell-mesh conversion;
-  - whether pre-storage f64 collision telemetry is useful; and
-  - the component-diameter and geometric-deviation certificate.
+  - approve chord-length units with promoted-f64 squared comparison;
+  - approve fixed-point rather than source-edge-only simplification;
+  - approve Preserve/Error/Elide failure and retry semantics;
+  - approve the abstract-complex geometry contract and degree-two shorter-arc certificate;
+  - select deterministic round, diameter-work, and cell-index-visit limits; and
+  - pin positive-threshold option/report fields and quantitative performance gates.
 - **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
   exact Voronoi diagram of the original generators.
 - **References:** [`output-resolution-policy.md`](output-resolution-policy.md) and
