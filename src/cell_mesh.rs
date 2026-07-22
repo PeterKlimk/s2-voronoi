@@ -480,6 +480,160 @@ impl fmt::Display for CellElisionError {
 
 impl std::error::Error for CellElisionError {}
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum CellMeshPreparationErrorKind {
+    InvalidSource,
+    RepresentationLimit,
+}
+
+#[derive(Debug)]
+pub(crate) struct CellMeshPreparationError {
+    pub kind: CellMeshPreparationErrorKind,
+    pub message: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct PreparedCellMeshSource {
+    pub generators: Vec<glam::Vec3>,
+    pub vertices: Vec<glam::Vec3>,
+    pub cells: Vec<crate::diagram::VoronoiCell>,
+    pub cell_indices: Vec<u32>,
+    pub effective_source_sites: Vec<SpherePoint>,
+    pub effective_to_input: Vec<u32>,
+    pub input_to_effective: Vec<u32>,
+}
+
+pub(crate) fn prepare_cell_mesh_source(
+    source: &crate::ComputeOutput,
+) -> Result<PreparedCellMeshSource, CellMeshPreparationError> {
+    let invalid = |message: &str| CellMeshPreparationError {
+        kind: CellMeshPreparationErrorKind::InvalidSource,
+        message: message.into(),
+    };
+    let representation = |message: &str| CellMeshPreparationError {
+        kind: CellMeshPreparationErrorKind::RepresentationLimit,
+        message: message.into(),
+    };
+
+    if source.report.has_output_residuals() {
+        return Err(invalid(
+            "source computation has output or strict-validation residuals",
+        ));
+    }
+
+    let preferred = source.preferred_diagram();
+    let generators: Vec<glam::Vec3> = preferred
+        .generators()
+        .iter()
+        .map(|site| glam::Vec3::from_array(site.to_array()))
+        .collect();
+    let vertices: Vec<glam::Vec3> = preferred
+        .vertices()
+        .iter()
+        .map(|vertex| glam::Vec3::from_array(vertex.to_array()))
+        .collect();
+    let effective_source_sites = preferred.generators().to_vec();
+    let mut cells = Vec::with_capacity(preferred.num_cells());
+    let mut cell_indices = Vec::new();
+    for cell in preferred.iter_cells() {
+        if cell.vertex_indices.len() > u16::MAX as usize || cell_indices.len() > u32::MAX as usize {
+            return Err(representation(
+                "source cell layout exceeds compact mesh index capacity",
+            ));
+        }
+        cells.push(crate::diagram::VoronoiCell::new(
+            cell_indices.len() as u32,
+            cell.vertex_indices.len() as u16,
+        ));
+        cell_indices.extend_from_slice(cell.vertex_indices);
+    }
+
+    let original_cells = source.diagram.num_cells();
+    if original_cells > u32::MAX as usize || preferred.num_cells() > u32::MAX as usize {
+        return Err(representation("source input mapping exceeds u32 capacity"));
+    }
+    let mut effective_to_input = Vec::with_capacity(preferred.num_cells());
+    let mut canonical_to_effective = vec![u32::MAX; original_cells];
+    for (input, slot) in canonical_to_effective.iter_mut().enumerate() {
+        if source.diagram.canonical_cell_index(input) == input {
+            let effective = effective_to_input.len() as u32;
+            *slot = effective;
+            effective_to_input.push(input as u32);
+        }
+    }
+    if effective_to_input.len() != preferred.num_cells() {
+        return Err(invalid(
+            "source weld mapping does not match the effective diagram",
+        ));
+    }
+    let mut input_to_effective = Vec::with_capacity(original_cells);
+    for input in 0..original_cells {
+        let canonical = source.diagram.canonical_cell_index(input);
+        let effective = canonical_to_effective[canonical];
+        if effective == u32::MAX {
+            return Err(invalid(
+                "source weld mapping names a noncanonical effective cell",
+            ));
+        }
+        input_to_effective.push(effective);
+    }
+
+    Ok(PreparedCellMeshSource {
+        generators,
+        vertices,
+        cells,
+        cell_indices,
+        effective_source_sites,
+        effective_to_input,
+        input_to_effective,
+    })
+}
+
+pub(crate) struct FinalizedCellMesh {
+    pub mesh: SphericalCellMesh,
+    pub source_inputs_elided: usize,
+    pub validation: CellMeshValidationReport,
+}
+
+pub(crate) fn finalize_cell_mesh_source(
+    prepared: &PreparedCellMeshSource,
+    final_vertices: Vec<SpherePoint>,
+    final_cycles: Vec<Vec<u32>>,
+    effective_to_cell: &[Option<u32>],
+    cell_to_effective: &[u32],
+) -> Result<FinalizedCellMesh, String> {
+    let input_to_cell: Vec<Option<u32>> = prepared
+        .input_to_effective
+        .iter()
+        .map(|&effective| effective_to_cell[effective as usize])
+        .collect();
+    let source_inputs_elided = input_to_cell.iter().filter(|cell| cell.is_none()).count();
+    let cell_to_input: Vec<u32> = cell_to_effective
+        .iter()
+        .map(|&effective| prepared.effective_to_input[effective as usize])
+        .collect();
+    let cell_source_sites: Vec<SpherePoint> = cell_to_effective
+        .iter()
+        .map(|&effective| prepared.effective_source_sites[effective as usize])
+        .collect();
+    let mesh = SphericalCellMesh::from_raw_parts(
+        final_vertices,
+        final_cycles,
+        cell_source_sites,
+        cell_to_input,
+        input_to_cell,
+    );
+    let validation = mesh.validate();
+    if !validation.is_strictly_valid() {
+        return Err(validation.headline());
+    }
+    Ok(FinalizedCellMesh {
+        mesh,
+        source_inputs_elided,
+        validation,
+    })
+}
+
 /// Observable result of exact stored-zero cell elision.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -552,128 +706,50 @@ impl crate::ComputeOutput {
 fn prepare_elided_cell_mesh(
     source: &crate::ComputeOutput,
 ) -> Result<(SphericalCellMesh, CellElisionReport), (CellElisionErrorKind, String)> {
-    if source.report.has_output_residuals() {
-        return Err((
-            CellElisionErrorKind::InvalidSource,
-            "source computation has output or strict-validation residuals".into(),
-        ));
-    }
-
-    let preferred = source.preferred_diagram();
-    let generators: Vec<glam::Vec3> = preferred
-        .generators()
-        .iter()
-        .map(|site| glam::Vec3::from_array(site.to_array()))
-        .collect();
-    let vertices: Vec<glam::Vec3> = preferred
-        .vertices()
-        .iter()
-        .map(|vertex| glam::Vec3::from_array(vertex.to_array()))
-        .collect();
-    let mut cells = Vec::with_capacity(preferred.num_cells());
-    let mut cell_indices = Vec::new();
-    for cell in preferred.iter_cells() {
-        if cell.vertex_indices.len() > u16::MAX as usize || cell_indices.len() > u32::MAX as usize {
-            return Err((
-                CellElisionErrorKind::RepresentationLimit,
-                "source cell layout exceeds compact mesh index capacity".into(),
-            ));
-        }
-        cells.push(crate::diagram::VoronoiCell::new(
-            cell_indices.len() as u32,
-            cell.vertex_indices.len() as u16,
-        ));
-        cell_indices.extend_from_slice(cell.vertex_indices);
-    }
+    let prepared = prepare_cell_mesh_source(source).map_err(|error| {
+        let kind = match error.kind {
+            CellMeshPreparationErrorKind::InvalidSource => CellElisionErrorKind::InvalidSource,
+            CellMeshPreparationErrorKind::RepresentationLimit => {
+                CellElisionErrorKind::RepresentationLimit
+            }
+        };
+        (kind, error.message)
+    })?;
 
     let elision = crate::knn_clipping::output_resolution::elide_exact_zero_cells_for_mesh(
-        &generators,
-        &vertices,
-        &cells,
-        &cell_indices,
+        &prepared.generators,
+        &prepared.vertices,
+        &prepared.cells,
+        &prepared.cell_indices,
     )
     .map_err(|error| (CellElisionErrorKind::UnsafeQuotient, error.to_string()))?;
-
-    let original_cells = source.diagram.num_cells();
-    if original_cells > u32::MAX as usize || preferred.num_cells() > u32::MAX as usize {
-        return Err((
-            CellElisionErrorKind::RepresentationLimit,
-            "source input mapping exceeds u32 capacity".into(),
-        ));
-    }
-    let mut effective_to_input = Vec::with_capacity(preferred.num_cells());
-    let mut canonical_to_effective = vec![u32::MAX; original_cells];
-    for (input, slot) in canonical_to_effective.iter_mut().enumerate() {
-        if source.diagram.canonical_cell_index(input) == input {
-            let effective = effective_to_input.len() as u32;
-            *slot = effective;
-            effective_to_input.push(input as u32);
-        }
-    }
-    if effective_to_input.len() != preferred.num_cells() {
-        return Err((
-            CellElisionErrorKind::InvalidSource,
-            "source weld mapping does not match the effective diagram".into(),
-        ));
-    }
-    let mut input_to_effective = Vec::with_capacity(original_cells);
-    for input in 0..original_cells {
-        let canonical = source.diagram.canonical_cell_index(input);
-        let effective = canonical_to_effective[canonical];
-        if effective == u32::MAX {
-            return Err((
-                CellElisionErrorKind::InvalidSource,
-                "source weld mapping names a noncanonical effective cell".into(),
-            ));
-        }
-        input_to_effective.push(effective);
-    }
-
-    let input_to_cell: Vec<Option<u32>> = input_to_effective
-        .iter()
-        .map(|&effective| elision.effective_to_cell[effective as usize])
-        .collect();
-    let source_inputs_elided = input_to_cell.iter().filter(|cell| cell.is_none()).count();
-    let cell_to_input: Vec<u32> = elision
-        .cell_to_effective
-        .iter()
-        .map(|&effective| effective_to_input[effective as usize])
-        .collect();
-    let cell_source_sites: Vec<SpherePoint> = elision
-        .cell_to_effective
-        .iter()
-        .map(|&effective| preferred.generator(effective as usize))
-        .collect();
     let final_vertices = elision.diagram.vertices().to_vec();
     let final_cycles: Vec<Vec<u32>> = elision
         .diagram
         .iter_cells()
         .map(|cell| cell.vertex_indices.to_vec())
         .collect();
-    let vertices_removed = preferred.num_vertices() - final_vertices.len();
-    let mesh = SphericalCellMesh::from_raw_parts(
+    let vertices_removed = prepared.vertices.len() - final_vertices.len();
+    let finalized = finalize_cell_mesh_source(
+        &prepared,
         final_vertices,
         final_cycles,
-        cell_source_sites,
-        cell_to_input,
-        input_to_cell,
-    );
-    let validation = mesh.validate();
-    if !validation.is_strictly_valid() {
-        return Err((CellElisionErrorKind::UnsafeQuotient, validation.headline()));
-    }
+        &elision.effective_to_cell,
+        &elision.cell_to_effective,
+    )
+    .map_err(|message| (CellElisionErrorKind::UnsafeQuotient, message))?;
 
     Ok((
-        mesh,
+        finalized.mesh,
         CellElisionReport {
             exact_zero_edges_detected: elision.zero_edges_before,
             exact_zero_components_detected: elision.zero_components_before,
             effective_cells_elided: elision.effective_cells_elided,
-            source_inputs_elided,
+            source_inputs_elided: finalized.source_inputs_elided,
             degree_two_vertices_suppressed: elision.degree_two_vertices_suppressed,
             vertices_removed,
             max_suppression_cross_track_radians: elision.max_suppression_cross_track_radians,
-            validation,
+            validation: finalized.validation,
         },
     ))
 }
