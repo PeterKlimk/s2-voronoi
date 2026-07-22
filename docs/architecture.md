@@ -173,9 +173,9 @@ memory. Raw inputs remain unchecked until entry canonicalization.
   `driver.rs` builds bins; `cell_build/` runs one cell; `topo2d/` performs gnomonic clipping;
   `preprocess.rs` merges near-coincident inputs; `edge_reconcile.rs` reconciles assembled cycles;
   `local_rebuild.rs` and `local_hull.rs` own cold neighborhood rebuilding;
-  `positive_simplification.rs` owns the explicit post-compute stored-chord fixed point, quotient
-  certificates, work accounting, and Elide suppression provenance. It is not called by ordinary
-  construction; and `output_resolution.rs` owns terminal stored-zero policy.
+  `output_resolution.rs` owns terminal stored-zero policy and the construction-aware, single-batch
+  positive resolver. `positive_simplification.rs` is retained temporarily as the post-compute
+  comparison oracle and is not called by the new or ordinary construction paths.
 - `live_dedup/` owns spherical sharded vertex ownership, forwarded edge checks, deferred-slot
   patching, and global assembly. It is specialized to `Vec3`; a future second geometry backend
   must earn any shared abstraction with a current consumer and tests.

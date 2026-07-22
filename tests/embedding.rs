@@ -5,9 +5,10 @@ mod support;
 use support::points::TestPoint;
 
 use voronoi_mesh::{
-    compute, compute_on_sphere, compute_on_sphere_with_report, CellSimplificationErrorKind,
-    CellSimplificationLimits, CellSimplificationOptions, CellSimplificationPhase, SphereEmbedding,
-    SphereEmbeddingError, SphereProjectionError, VoronoiConfig, VoronoiError, WorldVec3Like,
+    compute, compute_on_sphere, compute_on_sphere_simplified_with, compute_on_sphere_with_report,
+    CellSimplificationErrorKind, CellSimplificationLimits, CellSimplificationOptions,
+    CellSimplificationPhase, SphereEmbedding, SphereEmbeddingError, SphereProjectionError,
+    VoronoiConfig, VoronoiError, WorldVec3Like,
 };
 
 struct NonSyncPoint {
@@ -280,6 +281,19 @@ fn embedded_positive_simplification_preserves_embedding_and_error_recovery() {
 
     let output =
         compute_on_sphere_with_report(&world, embedding, VoronoiConfig::default()).unwrap();
+    let construction_aware = compute_on_sphere_simplified_with(
+        &world,
+        embedding,
+        VoronoiConfig::default(),
+        CellSimplificationOptions::from_chord_length(f32::from_bits(1)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(construction_aware.mesh.embedding(), embedding);
+    assert!(construction_aware
+        .mesh
+        .mesh()
+        .validate()
+        .is_strictly_valid());
     let simplified = output
         .clone()
         .into_simplified_cell_mesh(

@@ -1,7 +1,7 @@
 # RES-002 replacement plan: sparse positive-edge resolution
 
-**Status:** reviewed redesign approved for implementation; current implementation remains only as
-a comparison oracle
+**Status:** replacement prototype implemented and validated; legacy implementation remains only as
+a comparison oracle pending its deletion gate
 
 **Date:** 2026-07-23
 

@@ -44,9 +44,9 @@
 //! [`ComputeOutput::into_elided_cell_mesh`]. The resulting
 //! [`SphericalCellMesh`] is separately typed and does not claim Voronoi
 //! locator, Delaunay, or Lloyd semantics.
-//! Positive stored-chord simplification is likewise available only through
-//! the explicit consuming [`ComputeOutput::into_simplified_cell_mesh`]
-//! conversion.
+//! Positive stored-chord simplification is available through
+//! [`compute_simplified`] and [`compute_simplified_with`], so its threshold is
+//! known during construction.
 //!
 //! # Example
 //!
@@ -152,11 +152,12 @@ pub use cell_mesh::{
 };
 pub use diagram::{CellView, SphericalVoronoi};
 pub use embedding::{
-    compute_on_sphere, compute_on_sphere_with, compute_on_sphere_with_report,
-    EmbeddedCellElisionError, EmbeddedCellMeshOutput, EmbeddedCellSimplificationError,
-    EmbeddedComputeOutput, EmbeddedSimplifiedCellMeshOutput, EmbeddedSphereLocator,
-    EmbeddedSphericalCellMesh, EmbeddedSphericalVoronoi, IndexedSphereProjectionError,
-    SphereEmbedding, SphereEmbeddingError, SphereProjectionError, WorldVec3Like,
+    compute_on_sphere, compute_on_sphere_simplified, compute_on_sphere_simplified_with,
+    compute_on_sphere_with, compute_on_sphere_with_report, EmbeddedCellElisionError,
+    EmbeddedCellMeshOutput, EmbeddedCellSimplificationError, EmbeddedComputeOutput,
+    EmbeddedSimplifiedCellMeshOutput, EmbeddedSphereLocator, EmbeddedSphericalCellMesh,
+    EmbeddedSphericalVoronoi, IndexedSphereProjectionError, SphereEmbedding, SphereEmbeddingError,
+    SphereProjectionError, WorldVec3Like,
 };
 pub use error::VoronoiError;
 /// EXPERIMENTAL DIAGNOSTIC re-export — see the type's documentation; not
@@ -605,6 +606,89 @@ pub fn compute_with_report<P: UnitVec3Like>(
 ) -> Result<ComputeOutput, VoronoiError> {
     let vec3_points = backend_points(points)?;
     knn_clipping::compute::compute_voronoi_knn_clipping_with_report_owned(vec3_points, &config)
+}
+
+/// Compute and simplify positive edges using a threshold known before cell
+/// construction.
+///
+/// Candidate cells are recorded by the construction hot loop and the terminal
+/// diagram is processed in one deterministic, cell-preserving batch. Positive
+/// edges exposed by that batch are reported rather than recursively collapsed.
+pub fn compute_simplified<P: UnitVec3Like>(
+    points: &[P],
+    options: CellSimplificationOptions,
+) -> Result<SimplifiedCellMeshOutput, VoronoiError> {
+    compute_simplified_with(points, VoronoiConfig::default(), options)
+}
+
+/// Closure-ingest form of [`compute_simplified`].
+pub fn compute_simplified_by<T, F>(
+    points: &[T],
+    options: CellSimplificationOptions,
+    xyz: F,
+) -> Result<SimplifiedCellMeshOutput, VoronoiError>
+where
+    F: Fn(&T) -> [f32; 3],
+{
+    compute_simplified_with_by(points, VoronoiConfig::default(), options, xyz)
+}
+
+/// Configured form of [`compute_simplified`].
+pub fn compute_simplified_with<P: UnitVec3Like>(
+    points: &[P],
+    config: VoronoiConfig,
+    options: CellSimplificationOptions,
+) -> Result<SimplifiedCellMeshOutput, VoronoiError> {
+    if options.cell_policy() != SimplificationCellPolicy::Preserve {
+        return Err(VoronoiError::InvalidConfiguration(
+            "construction-aware simplification is cell-preserving; Error and Elide belong to the legacy comparison conversion"
+                .into(),
+        ));
+    }
+    if options.limits() != CellSimplificationLimits::default() {
+        return Err(VoronoiError::InvalidConfiguration(
+            "construction-aware simplification has structurally bounded work and does not accept legacy work limits"
+                .into(),
+        ));
+    }
+    let vec3_points = backend_points(points)?;
+    let (output, report) = knn_clipping::compute::compute_voronoi_knn_clipping_simplified_owned(
+        vec3_points,
+        &config,
+        options.chord_threshold(),
+    )?;
+    cell_mesh::finish_construction_simplification(output, options, report)
+}
+
+/// Closure-ingest configured form of [`compute_simplified`].
+pub fn compute_simplified_with_by<T, F>(
+    points: &[T],
+    config: VoronoiConfig,
+    options: CellSimplificationOptions,
+    xyz: F,
+) -> Result<SimplifiedCellMeshOutput, VoronoiError>
+where
+    F: Fn(&T) -> [f32; 3],
+{
+    if options.cell_policy() != SimplificationCellPolicy::Preserve {
+        return Err(VoronoiError::InvalidConfiguration(
+            "construction-aware simplification is cell-preserving; Error and Elide belong to the legacy comparison conversion"
+                .into(),
+        ));
+    }
+    if options.limits() != CellSimplificationLimits::default() {
+        return Err(VoronoiError::InvalidConfiguration(
+            "construction-aware simplification has structurally bounded work and does not accept legacy work limits"
+                .into(),
+        ));
+    }
+    let vec3_points = collect_points_by(points, xyz)?;
+    let (output, report) = knn_clipping::compute::compute_voronoi_knn_clipping_simplified_owned(
+        vec3_points,
+        &config,
+        options.chord_threshold(),
+    )?;
+    cell_mesh::finish_construction_simplification(output, options, report)
 }
 
 /// Compute through a coordinate extractor and return preprocessing and

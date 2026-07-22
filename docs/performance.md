@@ -1058,17 +1058,17 @@ Group-wide shell takeover batching is not an isolated query optimization in the 
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
 later cells. Sharing traversal and emission across a group would therefore require a corresponding
 stitching/scheduling redesign; revisit it only as that larger architectural change.
-## Positive simplification conversion
+## Positive simplification
 
-Positive simplification is a cold, explicit conversion and is not included in ordinary
-`bench_voronoi` timing. The tools feature provides a separate probe:
+Construction-aware positive simplification has a separate probe:
 
 ```bash
 RAYON_NUM_THREADS=1 cargo run --release --features tools --bin bench_simplify -- \
-  10000 1e-10 10 preserve
+  10000 1e-4 10 batched
 ```
 
-Arguments are point count, unit-sphere chord threshold, timed rounds, and cell policy
-(`preserve`, `error`, or `elide`). Source computation and per-round source cloning are outside the
-reported interval. The output includes candidate, commit, cell-index, diameter-pair, and provenance
-work counts so timing changes can be distinguished from workload changes.
+Arguments are point count, unit-sphere chord threshold, timed rounds, and mode. `batched` measures
+the complete construction-aware computation. The legacy `preserve`, `error`, and `elide` modes
+remain temporarily available as comparison oracles and time only their post-compute conversion.
+The output distinguishes hot-hinted cells, terminal candidates, accepted contractions, newly
+exposed edges, and legacy work counters.

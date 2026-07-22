@@ -33,7 +33,7 @@ fn dist_sq_f64(a: Vec3, b: Vec3) -> f64 {
 /// Exact stored-zero evidence confirmed from final post-patch cell cycles.
 struct ConfirmedZeroEdgeHints {
     candidates: Vec<(u32, u32)>,
-    hinted_cell_count: usize,
+    hinted_cells: Vec<u32>,
 }
 
 fn confirm_exact_zero_edge_hints(
@@ -46,9 +46,10 @@ fn confirm_exact_zero_edge_hints(
     for shard in finals {
         hinted_cells.extend_from_slice(&shard.output.exact_zero_edge_hint_cells);
     }
-    let hinted_cell_count = hinted_cells.len();
+    hinted_cells.sort_unstable();
+    hinted_cells.dedup();
     let mut candidates = Vec::new();
-    for cell_idx in hinted_cells {
+    for &cell_idx in &hinted_cells {
         let cell = &cells[cell_idx as usize];
         let span = &cell_indices[cell.vertex_start()..cell.vertex_start() + cell.vertex_count()];
         for edge_idx in 0..span.len() {
@@ -68,7 +69,7 @@ fn confirm_exact_zero_edge_hints(
     candidates.dedup();
     ConfirmedZeroEdgeHints {
         candidates,
-        hinted_cell_count,
+        hinted_cells,
     }
 }
 
@@ -657,10 +658,17 @@ pub(super) fn assemble_sharded_live_dedup(
     );
 
     let t_zero_hints = Timer::start();
+    let mut resolution_edge_hint_cells = Vec::new();
+    for shard in &finals {
+        resolution_edge_hint_cells.extend_from_slice(&shard.output.resolution_edge_hint_cells);
+    }
+    resolution_edge_hint_cells.sort_unstable();
+    resolution_edge_hint_cells.dedup();
     let ConfirmedZeroEdgeHints {
         candidates: exact_zero_edge_candidates,
-        hinted_cell_count: exact_zero_edge_hint_cell_count,
+        hinted_cells: exact_zero_edge_hint_cells,
     } = confirm_exact_zero_edge_hints(&finals, &all_vertices, &cells, &cell_indices);
+    let exact_zero_edge_hint_cell_count = exact_zero_edge_hint_cells.len();
     #[allow(unused_variables)]
     let exact_zero_hints_time = t_zero_hints.elapsed();
 
@@ -717,6 +725,7 @@ pub(super) fn assemble_sharded_live_dedup(
         cells,
         cell_indices,
         exact_zero_edge_candidates,
+        resolution_edge_hint_cells,
         exact_zero_edge_hint_cells: exact_zero_edge_hint_cell_count,
         resolution_drift_exceeded,
         incidence_summary,
@@ -773,7 +782,7 @@ mod tests {
 
         let confirmed = confirm_exact_zero_edge_hints(&finals, &vertices, &cells, &cell_indices);
 
-        assert_eq!(confirmed.hinted_cell_count, 2);
+        assert_eq!(confirmed.hinted_cells, vec![0, 1]);
         assert_eq!(confirmed.candidates, [(0, 1)]);
     }
 

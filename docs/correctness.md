@@ -67,18 +67,16 @@ that instead accepts generator removal can consume a successful `ComputeOutput` 
 `into_elided_cell_mesh`, receiving a separately typed valid spherical cell mesh with explicit
 `input -> Option<cell>` provenance. It does not inherit Voronoi locator, Delaunay, or Lloyd claims.
 
-`ComputeOutput::into_simplified_cell_mesh` is the separate opt-in approximation surface for
-positive edges. Its public threshold is unit-sphere chord length; candidate and component-diameter
-tests use raw stored-f32 coordinates promoted to f64, with an inclusive comparison. Exact stored
-zero is resolved first in every fixed-point round. `Preserve` declines optional contractions that
-would remove a cell, `Error` stops at the first such requested removal or unresolved exact base,
-and `Elide` permits cell removal while preserving explicit input provenance. All successful modes
-return a strictly validated `SphericalCellMesh`, not a promise that retained boundaries remain
-Voronoi bisectors. Elide-created degree-two subdivisions are suppressed only after opposite-owner
-rotation checks; positive-caused suppression is additionally certified against the final minor
-arc using normalized unit-sphere chord deviation. Configured checked work limits make expensive
-fixed-point, all-pairs, and provenance recertification failures recoverable with the original
-`ComputeOutput` intact.
+`compute_simplified` and `compute_simplified_with` are the opt-in approximation surfaces for
+positive edges. Their unit-sphere chord threshold is known before construction. The existing hot
+cell scan records a conservative hint; after repair and exact-zero resolution, stored-f32
+coordinates promoted to f64 confirm the terminal candidates inclusively. Candidates are considered
+once in deterministic length/key order and form components only while a triangle-inequality radius
+bound keeps every retired source vertex within epsilon of its retained representative. One
+cell-preserving affected-cell batch is locally certified and then strictly validated. Positive
+edges exposed by that batch are reported rather than recursively simplified. The returned
+`SphericalCellMesh` is valid, but its retained boundaries are not promised to remain Voronoi
+bisectors.
 
 Clean construction performs one degree-local necessary-coordinate scan after each cell's final f32
 extraction, then checks complete final assembled positions only for flagged cells. The hot scan

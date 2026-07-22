@@ -60,7 +60,7 @@ prevention rather than an overclaimed proof.
 | POINT-003 | P1 | Completed | Locator query validation and normalized ranking/certification landed |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
 | QUAL-001 | P2 | Completed | Reopen only for a new invariant/consumer or changed codegen evidence |
-| RES-002 | P2 | Ready | Prototype the approved sparse batched cell-preserving resolution |
+| RES-002 | P2 | In progress | Delete the legacy oracle after feature/API parity review |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | PERF-002 | P3 | Completed | Reopen only for a materially different kernel mechanism or workload |
 | PERF-003 | P3 | Completed | Reopen only for a separately designed multi-query resident kernel |
@@ -280,6 +280,15 @@ default `Preserve` behavior.
   `Error`/`Elide`, dynamic candidate queues, whole-mesh proposal clones, global per-commit rescans,
   public work budgets, and suppression provenance are removed or deferred. The current engine is
   retained only as a benchmark/correctness oracle until replacement parity is established.
+- **Replacement prototype:** `compute_simplified[_with]` now feeds epsilon into the existing hot
+  hint and performs one terminal candidate confirmation, radius-bounded selection, affected-cell
+  batch, induced exact closure, and strict final validation. The full release suite and all-target
+  clippy pass. A 20-round ordinary 500k Fibonacci comparison showed no regression (537.5 ms
+  replacement worktree versus 544.8 ms baseline median on the noisy wall-time probe). At
+  10k/`1e-4`, the new complete computation took
+  about 48 ms for 82 terminal candidates/contractions, versus about 2.18 s for the legacy cold
+  conversion's 3,403 repeated occurrences/82 commits. The 100k/`1e-3` replacement completed in
+  about 748 ms with 10,572 terminal contractions.
 - **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
   exact Voronoi diagram of the original generators.
 - **References:** [`output-resolution-policy.md`](output-resolution-policy.md) and

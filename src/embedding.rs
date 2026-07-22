@@ -851,6 +851,49 @@ pub fn compute_on_sphere_with<P: WorldVec3Like>(
     Ok(EmbeddedSphericalVoronoi::new(diagram, embedding))
 }
 
+/// Compute a construction-aware simplified cell mesh on an embedded sphere.
+pub fn compute_on_sphere_simplified<P: WorldVec3Like>(
+    points: &[P],
+    embedding: SphereEmbedding,
+    options: crate::CellSimplificationOptions,
+) -> Result<EmbeddedSimplifiedCellMeshOutput, VoronoiError> {
+    compute_on_sphere_simplified_with(points, embedding, VoronoiConfig::default(), options)
+}
+
+/// Configured form of [`compute_on_sphere_simplified`].
+pub fn compute_on_sphere_simplified_with<P: WorldVec3Like>(
+    points: &[P],
+    embedding: SphereEmbedding,
+    config: VoronoiConfig,
+    options: crate::CellSimplificationOptions,
+) -> Result<EmbeddedSimplifiedCellMeshOutput, VoronoiError> {
+    if options.cell_policy() != crate::SimplificationCellPolicy::Preserve {
+        return Err(VoronoiError::InvalidConfiguration(
+            "construction-aware simplification is cell-preserving; Error and Elide belong to the legacy comparison conversion"
+                .into(),
+        ));
+    }
+    if options.limits() != crate::CellSimplificationLimits::default() {
+        return Err(VoronoiError::InvalidConfiguration(
+            "construction-aware simplification has structurally bounded work and does not accept legacy work limits"
+                .into(),
+        ));
+    }
+    let projected = project_points(points, embedding)?;
+    let (output, report) =
+        crate::knn_clipping::compute::compute_voronoi_knn_clipping_simplified_owned(
+            projected,
+            &config,
+            options.chord_threshold(),
+        )?;
+    let output = crate::cell_mesh::finish_construction_simplification(output, options, report)?;
+    Ok(EmbeddedSimplifiedCellMeshOutput {
+        mesh: EmbeddedSphericalCellMesh::new(output.mesh, embedding),
+        compute_report: output.compute_report,
+        simplification_report: output.simplification_report,
+    })
+}
+
 /// Compute an embedded diagram and return preprocessing and validation metadata.
 pub fn compute_on_sphere_with_report<P: WorldVec3Like>(
     points: &[P],

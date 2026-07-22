@@ -6,9 +6,99 @@ use std::collections::BTreeSet;
 
 use support::points::{fibonacci_sphere_points, TestPoint};
 use voronoi_mesh::{
-    compute_with_report, CellSimplificationErrorKind, CellSimplificationOptions,
-    CellSimplificationThresholdError, PreprocessMode, SimplificationCellPolicy, VoronoiConfig,
+    compute_simplified_with, compute_with_report, CellSimplificationErrorKind,
+    CellSimplificationOptions, CellSimplificationThresholdError, PreprocessMode,
+    SimplificationCellPolicy, VoronoiConfig, VoronoiError,
 };
+
+#[test]
+fn construction_aware_candidate_free_path_is_valid() {
+    let points = fibonacci_sphere_points(32, 0.05, 7);
+    let simplified = compute_simplified_with(
+        &points,
+        VoronoiConfig::default(),
+        CellSimplificationOptions::from_chord_length(f32::from_bits(1)).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(simplified.simplification_report.confirmed_positive_edges, 0);
+    assert_eq!(simplified.simplification_report.accepted_contractions, 0);
+    assert!(simplified.mesh.validate().is_strictly_valid());
+}
+
+#[test]
+fn construction_aware_path_rejects_unrepresentable_exact_source() {
+    let points = disabled_weld_cell_killing_points();
+    let error = compute_simplified_with(
+        &points,
+        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled),
+        CellSimplificationOptions::from_chord_length(f32::from_bits(1)).unwrap(),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        VoronoiError::CellEliminationRequired { .. }
+    ));
+}
+
+#[test]
+fn construction_aware_path_contracts_a_terminal_short_edge_once() {
+    let points = fibonacci_sphere_points(48, 0.35, 91);
+    let baseline = compute_with_report(&points, VoronoiConfig::default()).unwrap();
+    let diagram = baseline.preferred_diagram();
+    let mut edges = BTreeSet::new();
+    for cell in diagram.iter_cells() {
+        for offset in 0..cell.vertex_indices.len() {
+            let a = cell.vertex_indices[offset];
+            let b = cell.vertex_indices[(offset + 1) % cell.vertex_indices.len()];
+            edges.insert((a.min(b), a.max(b)));
+        }
+    }
+    let edge_lengths: Vec<f64> = edges
+        .into_iter()
+        .map(|(a, b)| stored_chord(diagram.vertex(a as usize), diagram.vertex(b as usize)))
+        .filter(|&distance| distance > 0.0)
+        .collect();
+    let mut thresholds = edge_lengths.clone();
+    thresholds.sort_by(f64::total_cmp);
+    thresholds.dedup_by(|a, b| a.to_bits() == b.to_bits());
+
+    for threshold in thresholds.into_iter().take(32) {
+        let threshold = (threshold * (1.0 + 8.0 * f32::EPSILON as f64)) as f32;
+        let simplified = compute_simplified_with(
+            &points,
+            VoronoiConfig::default(),
+            CellSimplificationOptions::from_chord_length(threshold).unwrap(),
+        )
+        .unwrap();
+        let exhaustive_candidates = edge_lengths
+            .iter()
+            .filter(|&&distance| distance <= f64::from(threshold))
+            .count();
+        assert_eq!(
+            simplified.simplification_report.confirmed_positive_edges, exhaustive_candidates,
+            "hot hint missed a terminal source edge at threshold {threshold:e}",
+        );
+        if simplified.simplification_report.accepted_contractions != 0 {
+            assert!(simplified.mesh.validate().is_strictly_valid());
+            assert!(
+                simplified
+                    .simplification_report
+                    .max_representative_displacement
+                    <= f64::from(threshold)
+            );
+            assert_eq!(simplified.simplification_report.round_attempts, 1);
+            assert_eq!(
+                simplified
+                    .simplification_report
+                    .later_round_candidate_occurrences,
+                0
+            );
+            return;
+        }
+    }
+    panic!("fixture did not expose a safe construction-aware contraction");
+}
 
 fn disabled_weld_cell_killing_points() -> Vec<TestPoint> {
     fn displaced(mut base: [f64; 3], theta: f64, phi: f64) -> TestPoint {

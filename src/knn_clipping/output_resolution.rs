@@ -65,6 +65,12 @@ pub(super) struct CanonicalizationOutcome {
     /// Effective generator cells that would become unrepresentable if their
     /// interacting exact-zero transaction were committed.
     pub cell_killing_generators: Vec<usize>,
+    /// Cells rewritten by a committed exact transaction.
+    pub changed_cells: Vec<usize>,
+    /// Stable ids identified by the committed exact transaction.
+    contracted_vertices: Vec<u32>,
+    /// Representatives retained by the committed exact transaction.
+    retained_representatives: Vec<u32>,
 }
 
 #[inline]
@@ -390,6 +396,473 @@ fn vertex_pos_for_resolution(vertices: &[Vec3], vertex: u32) -> Result<Vec3, cra
     })
 }
 
+#[inline]
+fn stored_chord_squared(a: Vec3, b: Vec3) -> f64 {
+    let dx = f64::from(a.x) - f64::from(b.x);
+    let dy = f64::from(a.y) - f64::from(b.y);
+    let dz = f64::from(a.z) - f64::from(b.z);
+    dx * dx + dy * dy + dz * dz
+}
+
+pub(super) fn collect_positive_edges_in_cells(
+    vertices: &[Vec3],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    cell_ids: &[usize],
+    threshold_squared: f64,
+) -> Result<Vec<(f64, u32, u32)>, crate::VoronoiError> {
+    let mut out = Vec::new();
+    for &cell_idx in cell_ids {
+        let span = cell_span(cell_idx, cells, cell_indices)?;
+        for edge_idx in 0..span.len() {
+            let a = span[edge_idx];
+            let b = span[(edge_idx + 1) % span.len()];
+            if a == b {
+                continue;
+            }
+            let distance_squared = stored_chord_squared(
+                vertex_pos_for_resolution(vertices, a)?,
+                vertex_pos_for_resolution(vertices, b)?,
+            );
+            if distance_squared > 0.0 && distance_squared <= threshold_squared {
+                out.push((distance_squared, a.min(b), a.max(b)));
+            }
+        }
+    }
+    out.sort_unstable_by(|left, right| {
+        left.0
+            .total_cmp(&right.0)
+            .then_with(|| left.1.cmp(&right.1))
+            .then_with(|| left.2.cmp(&right.2))
+    });
+    out.dedup_by(|left, right| left.1 == right.1 && left.2 == right.2);
+    Ok(out)
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct PositiveResolutionReport {
+    pub(crate) hinted_cells: usize,
+    pub(crate) confirmed_candidates: usize,
+    pub(crate) attempted_contractions: usize,
+    pub(crate) accepted_contractions: usize,
+    pub(crate) displacement_declines: usize,
+    pub(crate) cell_declined_components: usize,
+    pub(crate) topology_declined_components: usize,
+    pub(crate) newly_exposed_positive_edges: usize,
+    pub(crate) remaining_positive_edges: usize,
+    pub(crate) vertices_retired: usize,
+    pub(crate) max_component_members: usize,
+    pub(crate) max_representative_displacement_bound: f64,
+    pub(crate) changed_cells: Vec<usize>,
+}
+
+struct BoundedComponents {
+    parent: Vec<u32>,
+    representative: Vec<u32>,
+    members: Vec<usize>,
+    radius: Vec<f64>,
+}
+
+impl BoundedComponents {
+    fn new(vertices: &[u32]) -> Self {
+        Self {
+            parent: (0..vertices.len() as u32).collect(),
+            representative: vertices.to_vec(),
+            members: vec![1; vertices.len()],
+            radius: vec![0.0; vertices.len()],
+        }
+    }
+
+    fn find(&mut self, value: u32) -> u32 {
+        let mut root = value;
+        while self.parent[root as usize] != root {
+            root = self.parent[root as usize];
+        }
+        let mut current = value;
+        while self.parent[current as usize] != current {
+            let next = self.parent[current as usize];
+            self.parent[current as usize] = root;
+            current = next;
+        }
+        root
+    }
+
+    fn try_union(
+        &mut self,
+        a: u32,
+        b: u32,
+        vertices: &[Vec3],
+        threshold: f64,
+    ) -> Result<bool, crate::VoronoiError> {
+        let ra = self.find(a);
+        let rb = self.find(b);
+        if ra == rb {
+            return Ok(false);
+        }
+        let ia = ra as usize;
+        let ib = rb as usize;
+        let rep_a = self.representative[ia];
+        let rep_b = self.representative[ib];
+        let distance = stored_chord_squared(
+            vertex_pos_for_resolution(vertices, rep_a)?,
+            vertex_pos_for_resolution(vertices, rep_b)?,
+        )
+        .sqrt();
+        let bound_a = self.radius[ia].max(distance + self.radius[ib]);
+        let bound_b = self.radius[ib].max(distance + self.radius[ia]);
+        let admissible_a = bound_a <= threshold;
+        let admissible_b = bound_b <= threshold;
+        if !admissible_a && !admissible_b {
+            return Ok(false);
+        }
+        let retain_a = match (admissible_a, admissible_b) {
+            (true, false) => true,
+            (false, true) => false,
+            (true, true) => bound_a
+                .total_cmp(&bound_b)
+                .then_with(|| self.members[ib].cmp(&self.members[ia]))
+                .then_with(|| rep_a.cmp(&rep_b))
+                .is_le(),
+            (false, false) => unreachable!(),
+        };
+        let (keep, drop, bound) = if retain_a {
+            (ia, ib, bound_a)
+        } else {
+            (ib, ia, bound_b)
+        };
+        self.parent[drop] = keep as u32;
+        self.members[keep] += self.members[drop];
+        self.radius[keep] = bound;
+        Ok(true)
+    }
+}
+
+fn complete_links_are_single_cycles(
+    vertices: &FxHashSet<u32>,
+    cell_ids: &[usize],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+) -> Result<bool, crate::VoronoiError> {
+    let mut links = FxHashMap::<u32, Vec<(u32, u32)>>::default();
+    for &cell_idx in cell_ids {
+        let cycle = cell_span(cell_idx, cells, cell_indices)?;
+        for position in 0..cycle.len() {
+            let vertex = cycle[position];
+            if vertices.contains(&vertex) {
+                links.entry(vertex).or_default().push((
+                    cycle[(position + cycle.len() - 1) % cycle.len()],
+                    cycle[(position + 1) % cycle.len()],
+                ));
+            }
+        }
+    }
+    for edges in links.values() {
+        let mut next_for = FxHashMap::<u32, u32>::default();
+        let mut incoming = FxHashSet::<u32>::default();
+        for &(from, to) in edges {
+            if from == to || next_for.insert(from, to).is_some() || !incoming.insert(to) {
+                return Ok(false);
+            }
+        }
+        if next_for.len() != incoming.len()
+            || next_for.keys().any(|vertex| !incoming.contains(vertex))
+        {
+            return Ok(false);
+        }
+        let Some(&start) = next_for.keys().next() else {
+            continue;
+        };
+        let mut current = start;
+        let mut visited = FxHashSet::default();
+        loop {
+            if !visited.insert(current) {
+                if current != start {
+                    return Ok(false);
+                }
+                break;
+            }
+            let Some(&next) = next_for.get(&current) else {
+                return Ok(false);
+            };
+            current = next;
+        }
+        if visited.len() != next_for.len() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Apply one deterministic, cell-preserving positive-resolution batch.
+/// `candidates` is the terminal source set, `component_cells` contains every
+/// use of a selected endpoint, and `certificate_cells` additionally contains
+/// the complete stars of vertices in rewritten cells.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn simplify_positive_edges(
+    vertices: &[Vec3],
+    cells: &mut [VoronoiCell],
+    cell_indices: &mut [u32],
+    candidates: Vec<(f64, u32, u32)>,
+    component_cells: &[usize],
+    certificate_cells: &[usize],
+    threshold: f64,
+    hinted_cells: usize,
+) -> Result<PositiveResolutionReport, crate::VoronoiError> {
+    let threshold_squared = threshold * threshold;
+    let mut report = PositiveResolutionReport {
+        hinted_cells,
+        confirmed_candidates: candidates.len(),
+        attempted_contractions: candidates.len(),
+        ..PositiveResolutionReport::default()
+    };
+    if candidates.is_empty() {
+        return Ok(report);
+    }
+
+    let mut endpoint_ids = Vec::with_capacity(candidates.len() * 2);
+    for &(_, a, b) in &candidates {
+        endpoint_ids.extend([a, b]);
+    }
+    endpoint_ids.sort_unstable();
+    endpoint_ids.dedup();
+    let local_for_vertex: FxHashMap<u32, u32> = endpoint_ids
+        .iter()
+        .enumerate()
+        .map(|(local, &vertex)| (vertex, local as u32))
+        .collect();
+    let mut bounded = BoundedComponents::new(&endpoint_ids);
+    let mut accepted_unions = 0usize;
+    for &(_, a, b) in &candidates {
+        if bounded.try_union(
+            local_for_vertex[&a],
+            local_for_vertex[&b],
+            vertices,
+            threshold,
+        )? {
+            accepted_unions += 1;
+        } else if bounded.find(local_for_vertex[&a]) != bounded.find(local_for_vertex[&b]) {
+            report.displacement_declines += 1;
+        }
+    }
+
+    let mut members_by_root = BTreeMap::<u32, Vec<u32>>::new();
+    for &vertex in &endpoint_ids {
+        let root = bounded.find(local_for_vertex[&vertex]);
+        members_by_root.entry(root).or_default().push(vertex);
+    }
+    let mut component_for_vertex = FxHashMap::default();
+    let mut components = Vec::new();
+    let mut component_bounds = Vec::new();
+    for (root, members) in members_by_root {
+        if members.len() < 2 {
+            continue;
+        }
+        let component_idx = components.len();
+        for &member in &members {
+            component_for_vertex.insert(member, component_idx);
+        }
+        component_bounds.push(bounded.radius[root as usize]);
+        components.push(ZeroComponent {
+            representative: bounded.representative[root as usize],
+            edge_count: members.len() - 1,
+            members,
+        });
+    }
+    debug_assert_eq!(
+        components
+            .iter()
+            .map(|component| component.edge_count)
+            .sum::<usize>(),
+        accepted_unions
+    );
+    if components.is_empty() {
+        report.remaining_positive_edges = candidates.len();
+        return Ok(report);
+    }
+
+    let groups = interaction_groups(
+        &components,
+        &component_for_vertex,
+        component_cells,
+        cells,
+        cell_indices,
+    )?;
+    let mut group_for_component = vec![usize::MAX; components.len()];
+    for (group_idx, group) in groups.iter().enumerate() {
+        for &component_idx in group {
+            group_for_component[component_idx] = group_idx;
+        }
+    }
+    let mut group_failure = vec![None; groups.len()];
+    let mut cells_by_group = vec![Vec::<usize>::new(); groups.len()];
+    for &cell_idx in component_cells {
+        let span = cell_span(cell_idx, cells, cell_indices)?;
+        let mut touched_group = None;
+        let rewritten = rewrite_cycle(span, |vertex| {
+            let Some(&component_idx) = component_for_vertex.get(&vertex) else {
+                return vertex;
+            };
+            let group_idx = group_for_component[component_idx];
+            debug_assert!(touched_group.is_none_or(|seen| seen == group_idx));
+            touched_group = Some(group_idx);
+            components[component_idx].representative
+        });
+        if let Some(group_idx) = touched_group {
+            cells_by_group[group_idx].push(cell_idx);
+            if let Err(failure) = rewritten {
+                group_failure[group_idx] = Some(match (group_failure[group_idx], failure) {
+                    (Some(RewriteFailure::CellKilling), _) | (_, RewriteFailure::CellKilling) => {
+                        RewriteFailure::CellKilling
+                    }
+                    _ => RewriteFailure::NonSimple,
+                });
+            }
+        }
+    }
+
+    let mut replacements = FxHashMap::default();
+    let mut affected_cells = Vec::new();
+    let mut accepted_vertices = Vec::new();
+    let mut accepted_representatives = Vec::new();
+    let mut removed_vertex_count = 0usize;
+    let mut accepted_components = 0usize;
+    for (group_idx, group) in groups.iter().enumerate() {
+        if let Some(failure) = group_failure[group_idx] {
+            match failure {
+                RewriteFailure::CellKilling => report.cell_declined_components += group.len(),
+                RewriteFailure::NonSimple => report.topology_declined_components += group.len(),
+            }
+            continue;
+        }
+        accepted_components += group.len();
+        affected_cells.extend_from_slice(&cells_by_group[group_idx]);
+        for &component_idx in group {
+            let component = &components[component_idx];
+            report.max_component_members =
+                report.max_component_members.max(component.members.len());
+            report.max_representative_displacement_bound = report
+                .max_representative_displacement_bound
+                .max(component_bounds[component_idx]);
+            removed_vertex_count += component.members.len() - 1;
+            accepted_vertices.extend_from_slice(&component.members);
+            accepted_representatives.push(component.representative);
+            for &member in &component.members {
+                replacements.insert(member, component.representative);
+            }
+        }
+    }
+    if replacements.is_empty() {
+        report.remaining_positive_edges = candidates.len();
+        return Ok(report);
+    }
+    let positive_removed_vertex_count = removed_vertex_count;
+    affected_cells.sort_unstable();
+    affected_cells.dedup();
+
+    let mut saved = Vec::with_capacity(certificate_cells.len());
+    for &cell_idx in certificate_cells {
+        saved.push((cell_idx, cell_span(cell_idx, cells, cell_indices)?.to_vec()));
+    }
+    for &cell_idx in &affected_cells {
+        let original = cell_span(cell_idx, cells, cell_indices)?.to_vec();
+        let rewritten = rewrite_cycle(&original, |vertex| {
+            replacements.get(&vertex).copied().unwrap_or(vertex)
+        })
+        .map_err(|_| state_error("preclassified positive transaction changed classification"))?;
+        let start = cells[cell_idx].vertex_start();
+        cell_indices[start..start + rewritten.len()].copy_from_slice(&rewritten);
+        cells[cell_idx] = VoronoiCell::new(start as u32, rewritten.len() as u16);
+    }
+
+    let induced_exact =
+        collect_zero_edges_in_cells(vertices, cells, cell_indices, &affected_cells)?;
+    if !induced_exact.is_empty() {
+        let exact = canonicalize_exact_zero_edges(
+            vertices,
+            cells,
+            cell_indices,
+            Some(induced_exact),
+            Some(certificate_cells.to_vec()),
+        )?;
+        if exact.report.exact_zero_edges_remaining != 0 {
+            restore_cells(&saved, cells, cell_indices);
+            report.topology_declined_components += accepted_components;
+            report.remaining_positive_edges = candidates.len();
+            report.max_component_members = 0;
+            report.max_representative_displacement_bound = 0.0;
+            return Ok(report);
+        }
+        removed_vertex_count += exact
+            .contracted_vertices
+            .len()
+            .saturating_sub(exact.retained_representatives.len());
+        accepted_vertices.extend(exact.contracted_vertices);
+        accepted_representatives.extend(exact.retained_representatives);
+        affected_cells.extend(exact.changed_cells);
+        affected_cells.sort_unstable();
+        affected_cells.dedup();
+    }
+
+    let mut affected_vertices = FxHashSet::default();
+    for &cell_idx in &affected_cells {
+        affected_vertices.extend(cell_span(cell_idx, cells, cell_indices)?.iter().copied());
+    }
+    let quotient_ok = verify_affected_quotient(
+        &accepted_vertices,
+        &accepted_representatives,
+        removed_vertex_count,
+        &saved,
+        cells,
+        cell_indices,
+    )? && complete_links_are_single_cycles(
+        &affected_vertices,
+        certificate_cells,
+        cells,
+        cell_indices,
+    )?;
+    if !quotient_ok {
+        restore_cells(&saved, cells, cell_indices);
+        report.topology_declined_components += accepted_components;
+        report.remaining_positive_edges = candidates.len();
+        report.max_component_members = 0;
+        report.max_representative_displacement_bound = 0.0;
+        return Ok(report);
+    }
+
+    let source_edges: FxHashSet<(u32, u32)> = candidates.iter().map(|&(_, a, b)| (a, b)).collect();
+    let mut source_edges_in_affected_cells = FxHashSet::default();
+    for (cell_idx, original) in &saved {
+        if affected_cells.binary_search(cell_idx).is_err() {
+            continue;
+        }
+        for edge_idx in 0..original.len() {
+            let a = original[edge_idx];
+            let b = original[(edge_idx + 1) % original.len()];
+            let key = (a.min(b), a.max(b));
+            if source_edges.contains(&key) {
+                source_edges_in_affected_cells.insert(key);
+            }
+        }
+    }
+    let remaining = collect_positive_edges_in_cells(
+        vertices,
+        cells,
+        cell_indices,
+        &affected_cells,
+        threshold_squared,
+    )?;
+    report.newly_exposed_positive_edges = remaining
+        .iter()
+        .filter(|&&(_, a, b)| !source_edges.contains(&(a, b)))
+        .count();
+    report.remaining_positive_edges =
+        candidates.len() - source_edges_in_affected_cells.len() + remaining.len();
+    report.accepted_contractions = positive_removed_vertex_count;
+    report.vertices_retired = removed_vertex_count;
+    report.changed_cells = affected_cells;
+    Ok(report)
+}
+
 /// Canonicalize exact stored-zero edges under the default generator-preserving
 /// policy. Work beyond the initial edge scan is cold-path only.
 pub(super) fn canonicalize_exact_zero_edges(
@@ -411,6 +884,9 @@ pub(super) fn canonicalize_exact_zero_edges(
         return Ok(CanonicalizationOutcome {
             report,
             cell_killing_generators: Vec::new(),
+            changed_cells: Vec::new(),
+            contracted_vertices: Vec::new(),
+            retained_representatives: Vec::new(),
         });
     }
 
@@ -502,6 +978,9 @@ pub(super) fn canonicalize_exact_zero_edges(
         }
     }
 
+    let mut changed_cells = Vec::new();
+    let mut committed_vertices = Vec::new();
+    let mut committed_representatives = Vec::new();
     if !replacements.is_empty() {
         affected_cells.sort_unstable();
         affected_cells.dedup();
@@ -534,6 +1013,9 @@ pub(super) fn canonicalize_exact_zero_edges(
         } else {
             report.exact_zero_components_contracted = accepted_components;
             report.exact_zero_edges_contracted = accepted_edges;
+            changed_cells = affected_cells.clone();
+            committed_vertices = accepted_vertices;
+            committed_representatives = accepted_representatives;
 
             let local_remaining =
                 collect_zero_edges_in_cells(vertices, cells, cell_indices, &affected_cells)?;
@@ -565,6 +1047,9 @@ pub(super) fn canonicalize_exact_zero_edges(
     Ok(CanonicalizationOutcome {
         report,
         cell_killing_generators,
+        changed_cells,
+        contracted_vertices: committed_vertices,
+        retained_representatives: committed_representatives,
     })
 }
 
@@ -844,6 +1329,23 @@ pub(crate) fn elide_exact_zero_cells_for_mesh(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_components_do_not_collapse_a_long_epsilon_chain() {
+        let vertices = [
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.4, 0.0, 1.0),
+            Vec3::new(0.8, 0.0, 1.0),
+            Vec3::new(1.2, 0.0, 1.0),
+        ];
+        let mut components = BoundedComponents::new(&[0, 1, 2, 3]);
+        assert!(components.try_union(0, 1, &vertices, 0.75).unwrap());
+        assert!(!components.try_union(1, 2, &vertices, 0.75).unwrap());
+        assert!(components.try_union(2, 3, &vertices, 0.75).unwrap());
+        assert_eq!(components.find(0), components.find(1));
+        assert_eq!(components.find(2), components.find(3));
+        assert_ne!(components.find(0), components.find(2));
+    }
 
     #[derive(Clone)]
     struct ResolutionFixture {

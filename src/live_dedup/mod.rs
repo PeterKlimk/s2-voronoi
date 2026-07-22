@@ -117,6 +117,10 @@ pub(crate) struct AssemblyResult {
     /// Exact stored-zero candidates recovered from cells flagged while their
     /// extracted f32 realizations were already hot.
     pub exact_zero_edge_candidates: Vec<(u32, u32)>,
+    /// Cell ids selected by the construction-time resolution hint. With no
+    /// positive request these are exact-zero hints; a construction-aware
+    /// simplification request widens the same test by its chord threshold.
+    pub resolution_edge_hint_cells: Vec<u32>,
     /// Number of cells selected by the widened hot hint before final-position
     /// confirmation.
     pub exact_zero_edge_hint_cells: usize,

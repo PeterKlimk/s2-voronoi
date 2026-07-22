@@ -672,6 +672,14 @@ pub struct CellSimplificationReport {
     pub requested_chord_threshold: f32,
     /// Exact promoted-f64 squared threshold used for stored chords.
     pub stored_chord_threshold_squared: f64,
+    /// Construction-time cells selected by the conservative hot hint.
+    pub hinted_candidate_cells: usize,
+    /// Positive source edges confirmed in the terminal pre-simplification mesh.
+    pub confirmed_positive_edges: usize,
+    /// Positive source-edge contraction proposals considered once.
+    pub attempted_contractions: usize,
+    /// Positive vertex contractions published by the batch.
+    pub accepted_contractions: usize,
     /// Number of fixed-point attempts, including the terminal no-progress attempt.
     pub round_attempts: usize,
     /// Number of attempts which published one topology-changing transaction.
@@ -700,6 +708,8 @@ pub struct CellSimplificationReport {
     pub remaining_exact_edges: usize,
     /// Sum of final positive-nonzero and exact-zero threshold edges.
     pub remaining_edges_at_or_below_threshold: usize,
+    /// Positive edges first exposed by the single contraction batch.
+    pub newly_exposed_positive_edges: usize,
     /// Effective generator cells removed by Elide.
     pub effective_cells_elided: usize,
     /// Original input indices mapped to no final cell.
@@ -1022,6 +1032,112 @@ pub(crate) fn finalize_cell_mesh_source(
     })
 }
 
+pub(crate) fn finish_construction_simplification(
+    source: crate::ComputeOutput,
+    options: CellSimplificationOptions,
+    internal: crate::knn_clipping::output_resolution::PositiveResolutionReport,
+) -> Result<SimplifiedCellMeshOutput, crate::VoronoiError> {
+    let prepared = prepare_cell_mesh_source(&source).map_err(|error| match error.kind {
+        CellMeshPreparationErrorKind::InvalidSource => {
+            crate::VoronoiError::ComputationFailed(error.message)
+        }
+        CellMeshPreparationErrorKind::RepresentationLimit => {
+            crate::VoronoiError::RepresentationLimit(error.message)
+        }
+    })?;
+
+    let mut used = vec![false; prepared.vertices.len()];
+    for &vertex in &prepared.cell_indices {
+        let Some(slot) = used.get_mut(vertex as usize) else {
+            return Err(crate::VoronoiError::ComputationFailed(
+                "simplified cell references an out-of-range vertex".into(),
+            ));
+        };
+        *slot = true;
+    }
+    let mut dense_for = vec![u32::MAX; prepared.vertices.len()];
+    let mut dense_vertices = Vec::with_capacity(used.iter().filter(|&&live| live).count());
+    for (old, (&live, &position)) in used.iter().zip(&prepared.vertices).enumerate() {
+        if live {
+            dense_for[old] = dense_vertices.len() as u32;
+            dense_vertices.push(position);
+        }
+    }
+    let mut cycles = Vec::with_capacity(prepared.cells.len());
+    for cell in &prepared.cells {
+        let span =
+            &prepared.cell_indices[cell.vertex_start()..cell.vertex_start() + cell.vertex_count()];
+        cycles.push(
+            span.iter()
+                .map(|&vertex| dense_for[vertex as usize])
+                .collect(),
+        );
+    }
+    let effective_to_cell: Vec<Option<u32>> = (0..prepared.cells.len())
+        .map(|cell| Some(cell as u32))
+        .collect();
+    let cell_to_effective: Vec<u32> = (0..prepared.cells.len() as u32).collect();
+    let vertices_removed = prepared.vertices.len() - dense_vertices.len();
+    // SAFETY: the construction pipeline only retains its checked unit-sphere
+    // vertex records; this compaction neither edits nor creates positions.
+    let dense_vertices = unsafe { crate::types::sphere_points_from_vec3(dense_vertices) };
+    let finalized = finalize_cell_mesh_source(
+        &prepared,
+        dense_vertices,
+        cycles,
+        &effective_to_cell,
+        &cell_to_effective,
+    )
+    .map_err(|message| {
+        crate::VoronoiError::ComputationFailed(format!(
+            "construction-aware simplification failed strict validation: {message}"
+        ))
+    })?;
+
+    let threshold = f64::from(options.chord_threshold);
+    let productive = usize::from(internal.accepted_contractions != 0);
+    Ok(SimplifiedCellMeshOutput {
+        mesh: finalized.mesh,
+        compute_report: source.report,
+        simplification_report: CellSimplificationReport {
+            requested_chord_threshold: options.chord_threshold,
+            stored_chord_threshold_squared: threshold * threshold,
+            hinted_candidate_cells: internal.hinted_cells,
+            confirmed_positive_edges: internal.confirmed_candidates,
+            attempted_contractions: internal.attempted_contractions,
+            accepted_contractions: internal.accepted_contractions,
+            round_attempts: 1,
+            productive_rounds: productive,
+            exact_candidate_occurrences: 0,
+            positive_candidate_occurrences: internal.confirmed_candidates as u64,
+            later_round_candidate_occurrences: 0,
+            committed_transactions: productive,
+            exact_components_committed: 0,
+            positive_components_committed: internal.accepted_contractions,
+            positive_components_declined_diameter: internal.displacement_declines as u64,
+            positive_groups_declined_cell: internal.cell_declined_components as u64,
+            positive_groups_declined_topology: internal.topology_declined_components as u64,
+            remaining_positive_edges: internal.remaining_positive_edges,
+            remaining_exact_edges: 0,
+            remaining_edges_at_or_below_threshold: internal.remaining_positive_edges,
+            newly_exposed_positive_edges: internal.newly_exposed_positive_edges,
+            effective_cells_elided: 0,
+            source_inputs_elided: 0,
+            vertices_retired: internal.vertices_retired,
+            vertices_removed,
+            max_component_members: internal.max_component_members,
+            max_component_diameter: 0.0,
+            max_representative_displacement: internal.max_representative_displacement_bound,
+            exact_suppression_members: 0,
+            max_exact_suppression_cross_track_radians: 0.0,
+            positive_suppression_members: 0,
+            max_positive_suppression_unit_arc_chord: 0.0,
+            work: CellSimplificationWork::default(),
+            validation: finalized.validation,
+        },
+    })
+}
+
 /// Observable result of exact stored-zero cell elision.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -1277,6 +1393,10 @@ fn prepare_simplified_cell_mesh(
         CellSimplificationReport {
             requested_chord_threshold: options.chord_threshold,
             stored_chord_threshold_squared: threshold_squared,
+            hinted_candidate_cells: 0,
+            confirmed_positive_edges: stats.positive_candidate_occurrences as usize,
+            attempted_contractions: stats.positive_candidate_occurrences as usize,
+            accepted_contractions: stats.positive_components_committed,
             round_attempts: stats.round_attempts,
             productive_rounds: stats.productive_rounds,
             exact_candidate_occurrences: stats.exact_candidate_occurrences,
@@ -1292,6 +1412,7 @@ fn prepare_simplified_cell_mesh(
             remaining_exact_edges: stats.final_exact_edges,
             remaining_edges_at_or_below_threshold: stats.final_positive_edges
                 + stats.final_exact_edges,
+            newly_exposed_positive_edges: 0,
             effective_cells_elided: stats.effective_cells_elided,
             source_inputs_elided: finalized.source_inputs_elided,
             vertices_retired: stats.vertices_retired,

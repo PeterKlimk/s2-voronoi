@@ -3,7 +3,8 @@
 use std::time::Instant;
 
 use voronoi_mesh::{
-    compute_with_report, CellSimplificationOptions, SimplificationCellPolicy, VoronoiConfig,
+    compute_simplified_with, compute_with_report, CellSimplificationOptions,
+    SimplificationCellPolicy, VoronoiConfig,
 };
 
 fn fibonacci_points(count: usize) -> Vec<[f32; 3]> {
@@ -43,37 +44,46 @@ fn main() {
         .parse::<usize>()
         .expect("round count must be an integer");
     assert!(rounds > 0, "round count must be positive");
-    let policy = match args.next().as_deref().unwrap_or("preserve") {
+    let mode = args.next().unwrap_or_else(|| "batched".into());
+    let policy = match mode.as_str() {
+        "batched" => SimplificationCellPolicy::Preserve,
         "preserve" => SimplificationCellPolicy::Preserve,
         "error" => SimplificationCellPolicy::Error,
         "elide" => SimplificationCellPolicy::Elide,
-        value => panic!("unknown policy {value:?}; expected preserve, error, or elide"),
+        value => panic!("unknown mode {value:?}; expected batched, preserve, error, or elide"),
     };
 
     let points = fibonacci_points(count);
-    let output = compute_with_report(&points, VoronoiConfig::default())
-        .expect("benchmark source computation failed");
+    let output = (mode != "batched").then(|| {
+        compute_with_report(&points, VoronoiConfig::default())
+            .expect("benchmark source computation failed")
+    });
     let options = CellSimplificationOptions::from_chord_length(threshold)
         .expect("invalid threshold")
         .with_cell_policy(policy);
     let mut elapsed = Vec::with_capacity(rounds);
     let mut last_report = None;
     for _ in 0..rounds {
-        let source = output.clone();
         let start = Instant::now();
-        match source.into_simplified_cell_mesh(options) {
+        let result = if mode == "batched" {
+            compute_simplified_with(&points, VoronoiConfig::default(), options)
+                .map_err(|error| error.to_string())
+        } else {
+            output
+                .as_ref()
+                .unwrap()
+                .clone()
+                .into_simplified_cell_mesh(options)
+                .map_err(|error| format!("{:?}: {}", error.kind(), error))
+        };
+        match result {
             Ok(simplified) => {
                 elapsed.push(start.elapsed().as_secs_f64() * 1_000.0);
                 last_report = Some(simplified.simplification_report);
             }
             Err(error) => {
                 let elapsed_ms = start.elapsed().as_secs_f64() * 1_000.0;
-                eprintln!(
-                    "simplification failed after {elapsed_ms:.3}ms: kind={:?} phase={:?} work={:?}",
-                    error.kind(),
-                    error.report().failure_phase,
-                    error.report().work,
-                );
+                eprintln!("simplification failed after {elapsed_ms:.3}ms: {error}");
                 std::process::exit(1);
             }
         }
@@ -82,9 +92,13 @@ fn main() {
     let median = elapsed[elapsed.len() / 2];
     let report = last_report.unwrap();
     println!(
-        "points={count} threshold={threshold:e} policy={policy:?} rounds={rounds} median_ms={median:.3} candidates={} commits={} cell_visits={} pair_checks={} provenance_checks={}",
+        "points={count} threshold={threshold:e} mode={mode} rounds={rounds} median_ms={median:.3} hinted_cells={} candidates={} attempts={} accepted={} newly_exposed={} remaining={} cell_visits={} pair_checks={} provenance_checks={}",
+        report.hinted_candidate_cells,
         report.positive_candidate_occurrences,
-        report.committed_transactions,
+        report.attempted_contractions,
+        report.accepted_contractions,
+        report.newly_exposed_positive_edges,
+        report.remaining_positive_edges,
         report.work.cell_index_visits,
         report.work.diameter_pair_comparisons,
         report.work.provenance_member_checks,

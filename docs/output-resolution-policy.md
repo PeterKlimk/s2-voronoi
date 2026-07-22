@@ -450,8 +450,10 @@ The exact stored-zero baseline is complete:
 
 The remaining follow-ups and their dependencies are tracked in [`work-log.md`](work-log.md).
 Positive-threshold simplification remains an optional extension, not an incomplete piece of the
-baseline. It is now implemented as the explicit consuming `into_simplified_cell_mesh` conversion,
-not as construction configuration or an always-on scan. The weld proof attempt classified the remaining metric gap and added stored-position
+baseline. Its replacement is construction-aware: epsilon widens the existing hot hint only for an
+explicit simplified computation, and the terminal source candidates are processed once in one
+cell-preserving batch. The old consuming conversion remains temporarily as a comparison oracle.
+The weld proof attempt classified the remaining metric gap and added stored-position
 validation plus the lattice campaign described above; it did not justify increasing the weld
 radius or charging an always-on construction certificate.
 
@@ -474,21 +476,13 @@ rotations, a pinched two-sphere vertex link, and a quotient that consumes the wh
 transaction is called only by `into_elided_cell_mesh` and adds no work to construction or the
 ordinary report path.
 
-The positive conversion uses an inclusive unit-sphere chord threshold in `(0, 2]`. Discovery and
-all-pairs component diameter operate on stored f32 coordinates promoted to f64. Exact-zero groups
-run first in every deterministic fixed-point round; a successful transaction invalidates the
-remaining snapshot and restarts discovery. The public `SimplificationCellPolicy` independently
-selects `Preserve`, `Error`, or `Elide`. Elide retains stable source IDs until final compaction,
-tracks suppressed vertices in move-only lazily tainted provenance bags, and certifies every
-positive-tainted member against its current and final minor-arc or representative owner. The
-checked default limits are 100,000,000 diameter comparisons, 100,000,000 cell-index visits, and
-100,000,000 provenance member checks. Arc conditioning uses squared cross/projection floors of
-`1e-24` and an inclusive angular membership tolerance of `64 * f64::EPSILON`.
-
-Success reports separate exact and positive candidates, commits and declines, remaining edge
-classes, cell/input elision, displacement and suppression metrics, deterministic work, and final
-strict validation. Failure reports intentionally contain only request, phase, consumed work, and
-affected original inputs. Unit and embedded errors retain the untouched report-bearing source.
+The replacement uses an inclusive unit-sphere chord threshold in `(0, 2]` over stored f32
+coordinates promoted to f64. Deterministic greedy unions carry a conservative representative
+radius, so merge checks are constant work and every retired source position stays within epsilon.
+Interaction groups that would kill a cell or produce a non-simple cycle are declined; accepted
+groups share one affected-cell rewrite and induced exact-zero closure. The operation does not seek
+a positive fixed point. Its compact report covers discovery, accepts/declines, newly exposed
+positive edges, representative displacement, and final strict validation.
 
 ## Deferred decisions
 

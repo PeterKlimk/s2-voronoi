@@ -22,6 +22,7 @@ pub(super) struct GridContext<'a> {
     pub(super) points: &'a [Vec3],
     pub(super) grid: &'a CubeMapGrid,
     pub(super) assignment: &'a crate::live_dedup::BinAssignment,
+    pub(super) positive_resolution_hint_x_threshold: Option<f32>,
 }
 
 struct SphereCellScratch {
@@ -36,13 +37,17 @@ impl SphereCellScratch {
     }
 }
 
-#[inline(always)]
-fn stored_x_outside_zero_hint(a: Vec3, b: Vec3) -> u32 {
-    ((a.x - b.x).abs() > crate::tolerances::OUTPUT_RESOLUTION_ZERO_HINT_X_EPS) as u32
+#[inline]
+fn resolution_hint_x_threshold(positive_chord_threshold: Option<f32>) -> f32 {
+    let Some(threshold) = positive_chord_threshold else {
+        return crate::tolerances::OUTPUT_RESOLUTION_ZERO_HINT_X_EPS;
+    };
+    let base = threshold + 2.0 * crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS;
+    f32::from_bits(base.to_bits().saturating_add(1))
 }
 
 #[inline(never)]
-fn has_zero_edge_candidate(vertices: &[VertexData]) -> bool {
+fn has_edge_candidate_at_x_threshold(vertices: &[VertexData], x_threshold: f32) -> bool {
     debug_assert!(vertices.len() >= 3);
     let mut all_edges_outside_hint = 1u32;
     let ptr = vertices.as_ptr();
@@ -53,20 +58,52 @@ fn has_zero_edge_candidate(vertices: &[VertexData]) -> bool {
         let mut previous = first;
         for i in 1..vertices.len() {
             let current = (*ptr.add(i)).1;
-            all_edges_outside_hint &= stored_x_outside_zero_hint(previous, current);
+            all_edges_outside_hint &= ((previous.x - current.x).abs() > x_threshold) as u32;
             previous = current;
         }
-        all_edges_outside_hint &= stored_x_outside_zero_hint(previous, first);
+        all_edges_outside_hint &= ((previous.x - first.x).abs() > x_threshold) as u32;
     }
     all_edges_outside_hint == 0
+}
+
+#[inline(never)]
+fn has_exact_and_positive_edge_candidate(
+    vertices: &[VertexData],
+    positive_x_threshold: f32,
+) -> (bool, bool) {
+    debug_assert!(vertices.len() >= 3);
+    let mut exact_outside = 1u32;
+    let mut positive_outside = 1u32;
+    let exact_threshold = crate::tolerances::OUTPUT_RESOLUTION_ZERO_HINT_X_EPS;
+    let ptr = vertices.as_ptr();
+    // SAFETY: successful final extraction has at least three initialized
+    // vertices. Both hints consume the same contiguous cycle traversal.
+    unsafe {
+        let first = (*ptr).1;
+        let mut previous = first;
+        for i in 1..vertices.len() {
+            let current = (*ptr.add(i)).1;
+            let delta = (previous.x - current.x).abs();
+            exact_outside &= (delta > exact_threshold) as u32;
+            positive_outside &= (delta > positive_x_threshold) as u32;
+            previous = current;
+        }
+        let delta = (previous.x - first.x).abs();
+        exact_outside &= (delta > exact_threshold) as u32;
+        positive_outside &= (delta > positive_x_threshold) as u32;
+    }
+    (exact_outside == 0, positive_outside == 0)
 }
 
 pub(crate) fn build_cells_sharded_live_dedup(
     points: &[Vec3],
     grid: &CubeMapGrid,
     point_cell_storage: Vec<u32>,
+    positive_chord_threshold: Option<f32>,
 ) -> Result<ShardedCellsData, BuildCellsError> {
     let policy = PackedNeighborPolicy::for_point_count(points.len());
+    let positive_resolution_hint_x_threshold =
+        positive_chord_threshold.map(|threshold| resolution_hint_x_threshold(Some(threshold)));
 
     let mut assignment = assign_bins(points, grid, point_cell_storage)
         .map_err(BuildCellsError::PackedLayoutCapacity)?;
@@ -119,6 +156,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                     points,
                     grid,
                     assignment: &assignment,
+                    positive_resolution_hint_x_threshold,
                 };
                 let packed_layout = PackedSlotLayout::new(
                     &assignment.slot_gen_map,
@@ -343,7 +381,18 @@ fn build_and_emit_cell<'a, 'b, 'c>(
         grid_ctx.grid.point_pos_slots(),
         incoming_checks,
     )?;
-    let exact_zero_edge_hint = has_zero_edge_candidate(&output_buffer.vertices);
+    let (exact_zero_edge_hint, resolution_edge_hint) =
+        if let Some(threshold) = grid_ctx.positive_resolution_hint_x_threshold {
+            has_exact_and_positive_edge_candidate(&output_buffer.vertices, threshold)
+        } else {
+            (
+                has_edge_candidate_at_x_threshold(
+                    &output_buffer.vertices,
+                    crate::tolerances::OUTPUT_RESOLUTION_ZERO_HINT_X_EPS,
+                ),
+                false,
+            )
+        };
     if exact_zero_edge_hint {
         shard_ctx
             .shard
@@ -351,12 +400,22 @@ fn build_and_emit_cell<'a, 'b, 'c>(
             .exact_zero_edge_hint_cells
             .push(cell_idx);
     }
+    if resolution_edge_hint {
+        shard_ctx
+            .shard
+            .output
+            .resolution_edge_hint_cells
+            .push(cell_idx);
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod resolution_hint_tests {
-    use super::has_zero_edge_candidate;
+    use super::{
+        has_edge_candidate_at_x_threshold, has_exact_and_positive_edge_candidate,
+        resolution_hint_x_threshold,
+    };
     use glam::Vec3;
 
     fn vertex(id: u32, x: f32) -> ([u32; 3], Vec3) {
@@ -366,32 +425,44 @@ mod resolution_hint_tests {
     #[test]
     fn widened_hint_includes_its_bound_and_rejects_separated_cycle() {
         let bound = crate::tolerances::OUTPUT_RESOLUTION_ZERO_HINT_X_EPS;
-        assert!(has_zero_edge_candidate(&[
-            vertex(0, 0.0),
-            vertex(1, bound),
-            vertex(2, 1.0),
-        ]));
+        assert!(has_edge_candidate_at_x_threshold(
+            &[vertex(0, 0.0), vertex(1, bound), vertex(2, 1.0)],
+            bound,
+        ));
         let representative_bound = crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS;
-        assert!(has_zero_edge_candidate(&[
-            vertex(0, representative_bound),
-            vertex(1, -representative_bound),
-            vertex(2, 1.0),
-        ]));
-        assert!(has_zero_edge_candidate(&[
-            vertex(0, 0.0),
-            vertex(1, -0.0),
-            vertex(2, 1.0),
-        ]));
+        assert!(has_edge_candidate_at_x_threshold(
+            &[
+                vertex(0, representative_bound),
+                vertex(1, -representative_bound),
+                vertex(2, 1.0),
+            ],
+            bound,
+        ));
+        assert!(has_edge_candidate_at_x_threshold(
+            &[vertex(0, 0.0), vertex(1, -0.0), vertex(2, 1.0)],
+            bound,
+        ));
         let just_outside = f32::from_bits(bound.to_bits() + 1);
-        assert!(!has_zero_edge_candidate(&[
-            vertex(0, 0.0),
-            vertex(1, just_outside),
-            vertex(2, -1.0),
-        ]));
-        assert!(!has_zero_edge_candidate(&[
-            vertex(0, -1.0),
-            vertex(1, 0.0),
-            vertex(2, 1.0),
-        ]));
+        assert!(!has_edge_candidate_at_x_threshold(
+            &[vertex(0, 0.0), vertex(1, just_outside), vertex(2, -1.0)],
+            bound,
+        ));
+        assert!(!has_edge_candidate_at_x_threshold(
+            &[vertex(0, -1.0), vertex(1, 0.0), vertex(2, 1.0)],
+            bound,
+        ));
+    }
+
+    #[test]
+    fn positive_hint_adds_representative_drift_conservatively() {
+        let epsilon = 1.0e-4;
+        let bound = resolution_hint_x_threshold(Some(epsilon));
+        assert!(bound > epsilon + 2.0 * crate::tolerances::OUTPUT_RESOLUTION_REPRESENTATIVE_X_EPS);
+        let (exact, positive) = has_exact_and_positive_edge_candidate(
+            &[vertex(0, 0.0), vertex(1, epsilon), vertex(2, 1.0)],
+            bound,
+        );
+        assert!(!exact);
+        assert!(positive);
     }
 }

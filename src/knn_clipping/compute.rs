@@ -40,6 +40,7 @@ struct PipelineState {
     local_rebuild_seed_pairs: Vec<(u32, u32)>,
     local_rebuild: LocalRebuildOutcome,
     output_resolution: crate::OutputResolutionReport,
+    positive_resolution: Option<output_resolution::PositiveResolutionReport>,
     cell_killing_generators: Vec<usize>,
     tb: TimingBuilder,
 }
@@ -214,6 +215,120 @@ fn canonicalize_pipeline_exact_zero_edges(
     )
 }
 
+struct ResolutionView<'a> {
+    vertices: &'a [Vec3],
+    vertex_keys: &'a live_dedup::ShardedVertexKeys,
+    cells: &'a [VoronoiCell],
+    cell_indices: &'a [u32],
+}
+
+struct PositiveResolutionCover {
+    candidates: Vec<(f64, u32, u32)>,
+    component_cells: Vec<usize>,
+    certificate_cells: Vec<usize>,
+}
+
+fn positive_resolution_cover(
+    view: ResolutionView<'_>,
+    hinted_cells: &[u32],
+    mutation_cells: &[u32],
+    exact_changed_cells: &[usize],
+    mode: ResolutionDiscoveryMode,
+    threshold: f64,
+) -> Result<PositiveResolutionCover, crate::VoronoiError> {
+    let mut discovery_cells = if mode.certified_hint() {
+        hinted_cells
+            .iter()
+            .chain(mutation_cells)
+            .map(|&cell| cell as usize)
+            .chain(exact_changed_cells.iter().copied())
+            .collect::<Vec<_>>()
+    } else {
+        (0..view.cells.len()).collect()
+    };
+    discovery_cells.sort_unstable();
+    discovery_cells.dedup();
+    let candidates = output_resolution::collect_positive_edges_in_cells(
+        view.vertices,
+        view.cells,
+        view.cell_indices,
+        &discovery_cells,
+        threshold * threshold,
+    )?;
+    if candidates.is_empty() {
+        return Ok(PositiveResolutionCover {
+            candidates,
+            component_cells: discovery_cells.clone(),
+            certificate_cells: discovery_cells,
+        });
+    }
+
+    let mut component_cells = discovery_cells;
+    let mut complete = true;
+    for &(_, a, b) in &candidates {
+        for vertex in [a, b] {
+            if let Some(key) = view.vertex_keys.get(vertex) {
+                component_cells.extend(key.map(|generator| generator as usize));
+            } else {
+                complete = false;
+                break;
+            }
+        }
+        if !complete {
+            break;
+        }
+    }
+    if !complete {
+        let exhaustive: Vec<usize> = (0..view.cells.len()).collect();
+        return Ok(PositiveResolutionCover {
+            candidates,
+            component_cells: exhaustive.clone(),
+            certificate_cells: exhaustive,
+        });
+    }
+    component_cells.sort_unstable();
+    component_cells.dedup();
+
+    let mut certificate_cells = component_cells.clone();
+    for &cell_idx in &component_cells {
+        let cell = view.cells.get(cell_idx).ok_or_else(|| {
+            crate::VoronoiError::ComputationFailed(format!(
+                "positive resolution referenced out-of-range cell {cell_idx}"
+            ))
+        })?;
+        let span = view
+            .cell_indices
+            .get(cell.vertex_start()..cell.vertex_start() + cell.vertex_count())
+            .ok_or_else(|| {
+                crate::VoronoiError::ComputationFailed(
+                    "positive-resolution certificate cell span is out of range".into(),
+                )
+            })?;
+        for &vertex in span {
+            if let Some(key) = view.vertex_keys.get(vertex) {
+                certificate_cells.extend(key.map(|generator| generator as usize));
+            } else {
+                complete = false;
+                break;
+            }
+        }
+        if !complete {
+            break;
+        }
+    }
+    if !complete {
+        certificate_cells = (0..view.cells.len()).collect();
+    } else {
+        certificate_cells.sort_unstable();
+        certificate_cells.dedup();
+    }
+    Ok(PositiveResolutionCover {
+        candidates,
+        component_cells,
+        certificate_cells,
+    })
+}
+
 /// The shared front of both compute paths: validate/canonicalize → preprocess
 /// and grid → per-cell construction → assemble → reconcile → optional local
 /// rebuild → output resolution. The plain path fails loud on residuals; the
@@ -222,6 +337,7 @@ fn run_core_pipeline(
     points: Vec<Vec3>,
     preprocess_mode: PreprocessMode,
     local_rebuild_mode: LocalRebuildMode,
+    positive_chord_threshold: Option<f32>,
 ) -> Result<PipelineState, crate::VoronoiError> {
     validate_generator_capacity(points.len())?;
     let mut points = points;
@@ -245,6 +361,7 @@ fn run_core_pipeline(
         &grid,
         point_cell_storage,
         effective_input.merge_result(),
+        positive_chord_threshold,
         &mut tb,
     )?;
     let assembled = assemble_shards(sharded, &mut tb)?;
@@ -255,6 +372,7 @@ fn run_core_pipeline(
         cells,
         cell_indices,
         exact_zero_edge_candidates,
+        resolution_edge_hint_cells,
         exact_zero_edge_hint_cells,
         resolution_drift_exceeded,
         incidence_summary,
@@ -340,6 +458,37 @@ fn run_core_pipeline(
         &mutation_scan_cells,
         resolution_mode,
     )?;
+    let positive_resolution = if let Some(threshold) = positive_chord_threshold {
+        if resolution_outcome.report.exact_zero_edges_remaining == 0 {
+            let cover = positive_resolution_cover(
+                ResolutionView {
+                    vertices: &geometry.vertices,
+                    vertex_keys: &assembly_vertex_keys,
+                    cells: &geometry.cells,
+                    cell_indices: &geometry.cell_indices,
+                },
+                &resolution_edge_hint_cells,
+                &mutation_scan_cells,
+                &resolution_outcome.changed_cells,
+                resolution_mode,
+                f64::from(threshold),
+            )?;
+            Some(output_resolution::simplify_positive_edges(
+                &geometry.vertices,
+                &mut geometry.cells,
+                &mut geometry.cell_indices,
+                cover.candidates,
+                &cover.component_cells,
+                &cover.certificate_cells,
+                f64::from(threshold),
+                resolution_edge_hint_cells.len(),
+            )?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     tb.set_output_resolution_discovery(
         resolution_mode.drift_fallback(),
         reconcile_resolution_scan_cell_count,
@@ -358,6 +507,7 @@ fn run_core_pipeline(
         local_rebuild_seed_pairs,
         local_rebuild,
         output_resolution: resolution_outcome.report,
+        positive_resolution,
         cell_killing_generators: resolution_outcome.cell_killing_generators,
         tb,
     })
@@ -417,7 +567,7 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     local_rebuild_mode: LocalRebuildMode,
     cell_killing_policy: CellKillingPolicy,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
-    let mut state = run_core_pipeline(points, preprocess_mode, local_rebuild_mode)?;
+    let mut state = run_core_pipeline(points, preprocess_mode, local_rebuild_mode, None)?;
     check_plain_return_signals(
         state.local_rebuild,
         &state.residual_unpaired,
@@ -499,11 +649,43 @@ pub(crate) fn compute_voronoi_knn_clipping_with_report_owned(
                 config.preprocess_mode,
                 config.local_rebuild_mode,
                 config.cell_killing_policy,
+                None,
                 DegenerateReport {
                     requested_mode: config.degenerate_mode,
                     perturbation_applied,
                 },
             )
+            .map(|(output, _)| output)
+        },
+    )
+}
+
+pub(crate) fn compute_voronoi_knn_clipping_simplified_owned(
+    points: Vec<Vec3>,
+    config: &VoronoiConfig,
+    threshold: f32,
+) -> Result<(ComputeOutput, output_resolution::PositiveResolutionReport), crate::VoronoiError> {
+    with_coplanar_perturb_retry(
+        points,
+        config.degenerate_mode,
+        |points, perturbation_applied| {
+            let (output, report) = compute_voronoi_knn_clipping_report_core(
+                points,
+                config.preprocess_mode,
+                config.local_rebuild_mode,
+                CellKillingPolicy::Error,
+                Some(threshold),
+                DegenerateReport {
+                    requested_mode: config.degenerate_mode,
+                    perturbation_applied,
+                },
+            )?;
+            let report = report.ok_or_else(|| {
+                crate::VoronoiError::ComputationFailed(
+                    "construction-aware simplification did not produce a resolution report".into(),
+                )
+            })?;
+            Ok((output, report))
         },
     )
 }
@@ -513,9 +695,21 @@ fn compute_voronoi_knn_clipping_report_core(
     preprocess_mode: PreprocessMode,
     local_rebuild_mode: LocalRebuildMode,
     cell_killing_policy: CellKillingPolicy,
+    positive_chord_threshold: Option<f32>,
     degenerate_report: DegenerateReport,
-) -> Result<ComputeOutput, crate::VoronoiError> {
-    let mut state = run_core_pipeline(points, preprocess_mode, local_rebuild_mode)?;
+) -> Result<
+    (
+        ComputeOutput,
+        Option<output_resolution::PositiveResolutionReport>,
+    ),
+    crate::VoronoiError,
+> {
+    let mut state = run_core_pipeline(
+        points,
+        preprocess_mode,
+        local_rebuild_mode,
+        positive_chord_threshold,
+    )?;
     enforce_cell_killing_policy(&state, cell_killing_policy)?;
     let local_rebuild_accepted = state.local_rebuild.accepted();
     // Surface output-invariant residuals alongside the detection records. If
@@ -577,29 +771,33 @@ fn compute_voronoi_knn_clipping_report_core(
     let timings = state.tb.finish();
     timings.report(diagram.num_cells());
 
-    Ok(ComputeOutput {
-        diagram,
-        effective_diagram,
-        report: ComputeReport {
-            preprocess: state.preprocess_report,
-            degenerate: degenerate_report,
-            returned_validation,
-            effective_validation,
-            assembly_edge_mismatch_count,
-            local_rebuild: state.local_rebuild.report_status(),
-            output_resolution: state.output_resolution,
-            residual_unpaired_edges,
-            residual_reconciliation_pairs,
-            reconciliation_edge_records: state
-                .edge_mismatches
-                .iter()
-                .map(|m| {
-                    let (a, b) = edge_reconcile::unpack_edge(m.key.as_u64());
-                    (a.min(b), a.max(b), m.origin)
-                })
-                .collect(),
+    let positive_resolution = state.positive_resolution.take();
+    Ok((
+        ComputeOutput {
+            diagram,
+            effective_diagram,
+            report: ComputeReport {
+                preprocess: state.preprocess_report,
+                degenerate: degenerate_report,
+                returned_validation,
+                effective_validation,
+                assembly_edge_mismatch_count,
+                local_rebuild: state.local_rebuild.report_status(),
+                output_resolution: state.output_resolution,
+                residual_unpaired_edges,
+                residual_reconciliation_pairs,
+                reconciliation_edge_records: state
+                    .edge_mismatches
+                    .iter()
+                    .map(|m| {
+                        let (a, b) = edge_reconcile::unpack_edge(m.key.as_u64());
+                        (a.min(b), a.max(b), m.origin)
+                    })
+                    .collect(),
+            },
         },
-    })
+        positive_resolution,
+    ))
 }
 
 /// Cheap topology facts collected by the incidence pass already required for
@@ -1677,12 +1875,17 @@ fn construct_cell_shards(
     grid: &CubeMapGrid,
     point_cell_storage: Vec<u32>,
     merge_result: Option<&MergeResult>,
+    positive_chord_threshold: Option<f32>,
     tb: &mut TimingBuilder,
 ) -> Result<live_dedup::ShardedCellsData, crate::VoronoiError> {
     let t = Timer::start();
-    let sharded =
-        super::driver::build_cells_sharded_live_dedup(effective_points, grid, point_cell_storage)
-            .map_err(|err| map_build_cells_error(err, effective_points, merge_result))?;
+    let sharded = super::driver::build_cells_sharded_live_dedup(
+        effective_points,
+        grid,
+        point_cell_storage,
+        positive_chord_threshold,
+    )
+    .map_err(|err| map_build_cells_error(err, effective_points, merge_result))?;
     #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]
     tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
     Ok(sharded)
@@ -1949,6 +2152,7 @@ mod tests {
             points.clone(),
             PreprocessMode::Disabled,
             LocalRebuildMode::Hull3d,
+            None,
         )
         .expect("cell-killing fixture should reach output resolution");
         assert_eq!(state.cell_killing_generators, [1, 10]);
@@ -1994,6 +2198,7 @@ mod tests {
             welded_points.clone(),
             PreprocessMode::MergeWithin(1.0e-10),
             LocalRebuildMode::Hull3d,
+            None,
         )
         .expect("welded extension should reach output resolution");
         let merge = welded_state

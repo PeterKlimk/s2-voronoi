@@ -7,9 +7,9 @@ use support::points::{
     random_sphere_points, TestPoint,
 };
 use voronoi_mesh::{
-    compute, compute_by, compute_with, compute_with_by, compute_with_report,
-    compute_with_report_by, validation::validate, DegenerateMode, PreprocessMode, VoronoiConfig,
-    VoronoiError,
+    compute, compute_by, compute_simplified_with, compute_simplified_with_by, compute_with,
+    compute_with_by, compute_with_report, compute_with_report_by, validation::validate,
+    CellSimplificationOptions, DegenerateMode, PreprocessMode, VoronoiConfig, VoronoiError,
 };
 
 #[test]
@@ -560,7 +560,7 @@ fn test_closure_ingest_matches_direct_input_across_api_family() {
     assert_eq!(mapped.vertices_xyz(), direct.vertices_xyz());
 
     let direct = compute_with_report(&points, config.clone()).unwrap();
-    let mapped = compute_with_report_by(&records, config, extract).unwrap();
+    let mapped = compute_with_report_by(&records, config.clone(), extract).unwrap();
     assert_eq!(
         mapped.diagram.generators_xyz(),
         direct.diagram.generators_xyz()
@@ -570,6 +570,16 @@ fn test_closure_ingest_matches_direct_input_across_api_family() {
     assert_eq!(
         mapped.report.returned_validation.headline(),
         direct.report.returned_validation.headline()
+    );
+
+    let options = CellSimplificationOptions::from_chord_length(f32::from_bits(1)).unwrap();
+    let direct = compute_simplified_with(&points, config.clone(), options).unwrap();
+    let mapped = compute_simplified_with_by(&records, config, options, extract).unwrap();
+    assert_eq!(mapped.mesh.vertices_xyz(), direct.mesh.vertices_xyz());
+    assert_eq!(mapped.mesh.num_cells(), direct.mesh.num_cells());
+    assert_eq!(
+        mapped.simplification_report.confirmed_positive_edges,
+        direct.simplification_report.confirmed_positive_edges
     );
 }
 
