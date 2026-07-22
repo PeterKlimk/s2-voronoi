@@ -1,6 +1,7 @@
 # RES-002 replacement plan: sparse positive-edge resolution
 
-**Status:** ready for review; the current implementation remains only as a comparison oracle
+**Status:** reviewed redesign approved for implementation; current implementation remains only as
+a comparison oracle
 
 **Date:** 2026-07-23
 
@@ -11,8 +12,8 @@ exact-zero output resolution.
 
 The caller supplies epsilon before construction. The existing per-cell resolution scan records a
 conservative positive candidate hint. After assembly, repair, and exact-zero resolution, the
-pipeline confirms candidates only in hinted or mutated cells. It then processes candidates through
-local affected-cell transactions and validates the final mesh once.
+pipeline confirms candidates only in hinted or mutated cells. It then selects deterministic bounded
+components, rewrites the affected cells as one batch, and validates the final mesh once.
 
 The replacement is cell-preserving. A positive contraction which would remove a generator cell or
 fail a local manifold check is declined. Positive `Error` and `Elide`, degree-two suppression, and
@@ -26,7 +27,7 @@ Given a positive unit-sphere chord threshold before construction:
 - contract safe positive edges using the sparse ownership model of exact-zero resolution;
 - preserve every effective generator cell;
 - bound every retired source vertex's displacement to its retained representative by epsilon;
-- reconsider only locally changed edges until no locally admissible candidate remains;
+- consider every positive edge in the terminal pre-simplification mesh once;
 - return a dense, strictly valid `SphericalCellMesh`; and
 - leave ordinary `compute` behavior and performance unchanged.
 
@@ -38,9 +39,11 @@ The result is an approximate spherical cell complex, not a Voronoi diagram of th
 - Positive cell elision or positive cell-killing errors.
 - General polyline/degree-two arc simplification.
 - Optimal decimation, optimized vertex positions, or adaptive thresholds.
+- Retrying subsets to maximize contractions after a combined batch fails certification.
 - Global Hausdorff, area, locator, Lloyd, or Delaunay guarantees.
 - Parallel contractions in the first implementation.
 - Public work-budget controls.
+- A fixed point over positive edges exposed by positive contraction.
 
 Ordinary exact-zero canonicalization and explicit exact-zero cell elision retain their current
 contracts.
@@ -80,14 +83,22 @@ Promote stored f32 coordinates to f64, then compare squared chord distance inclu
 
 ### Representative and displacement
 
-A contraction retains an existing live vertex; it does not average or create a position. Retain
-the representative of the larger source-member cluster, breaking an equal-size tie by lower stable
-vertex id.
+A contraction retains an existing live vertex; it does not average or create a position. Each
+provisional component stores its representative, member count, and a conservative upper bound `r`
+on stored-chord displacement from every source member to that representative.
 
-The retained cluster already satisfies its representative bound. Scan only the absorbed cluster's
-members and accept the union when every member is within epsilon of the retained representative.
-Union-by-size means a member can enter an absorbed cluster only `O(log V)` times, avoiding the
-current all-pairs diameter cost while providing the directly useful guarantee:
+For components represented by `a` and `b`, let `d` be their stored chord. Retaining `a` gives:
+
+```text
+r_to_a = max(r_a, d + r_b)
+```
+
+and retaining `b` gives the symmetric bound. These follow directly from the Euclidean triangle
+inequality over promoted stored coordinates. Accept a union when either bound is at most epsilon;
+choose the smaller admissible bound, then break ties by larger member count and lower stable id.
+
+This constant-work conservative test avoids both source-member scans and the current all-pairs
+diameter cost while providing the directly useful guarantee:
 
 ```text
 stored_chord(source_position, final_representative) <= epsilon
@@ -102,8 +113,12 @@ Order live candidates by:
 2. lower stable endpoint id; then
 3. higher stable endpoint id.
 
-Process them one at a time against current state. A long chain therefore becomes several bounded
+Use this order to build bounded provisional unions. A long chain therefore becomes several bounded
 clusters connected by coarser edges instead of being collapsed or declined wholesale.
+
+The operation does not recursively simplify positive edges exposed by its own contractions. Those
+edges were not candidates in the terminal source mesh. Exact-zero edges exposed by a contraction
+remain mandatory representation closure.
 
 ## Algorithm
 
@@ -146,37 +161,34 @@ an expected source outcome, not an internal validation failure.
 If no positive candidate remains, skip construction of the contraction engine and proceed directly
 to cell-mesh materialization and validation.
 
-### 3. Local candidate queue
+### 3. Deterministic batch selection
 
-Retain stable vertex ids until final compaction. Maintain:
+Retain stable vertex ids until final compaction. Build sparse provisional union state only for
+confirmed candidate endpoints.
 
-- live representative and member-list state;
-- current representative-to-cell incidence;
-- endpoint generations for stale queue entries; and
-- the deterministic candidate queue.
+Visit the sorted candidates once. For each edge:
 
-For a queued edge:
+1. resolve its provisional roots and skip a self-edge;
+2. compute the two triangle-inequality radius bounds;
+3. select the deterministic admissible representative; and
+4. union the clusters when a bound passes, otherwise record a displacement decline.
 
-1. resolve representatives and discard stale self/non-edge entries;
-2. reconfirm the current stored chord;
-3. select the union-by-size representative and check absorbed members;
-4. collect cells incident to both clusters and complete stars of vertices in those cycles;
-5. rewrite only those cycles on transaction scratch;
-6. certify the local quotient;
-7. decline without mutation on failure; or
-8. publish the local rewrite/incidence delta, retire one live representative, and enqueue edges
-   from the changed cover.
+This produces deterministic, radius-bounded components without constructing the whole
+threshold-connected graph or retrying rejected edges.
 
-A declined edge is reconsidered only when a later accepted transaction changes its local cover.
-Stale queue entries are discarded by endpoint generation.
+Use the existing vertex keys to collect every cell incident to a selected component. Transitively
+group selected components which co-occur in a cell, as in exact resolution. Classify every group in
+one pass over the candidate-cell cover. Cell-killing or non-simple groups are declined as a whole;
+accepted groups contribute replacements to one combined affected-cell rewrite.
 
-Every commit removes one live representative, so the algorithm terminates without a public round
-or work limit.
+Collect the complete stars needed by the link certificate before mutation. If a rebuilt vertex has
+no retained key provenance, build one exhaustive incidence view for this batch rather than
+maintaining a second dynamic topology representation or falling back per component.
 
-### 4. Local certificate
+### 4. Batched rewrite and local certificate
 
 Extend `output_resolution::verify_affected_quotient`; do not use the current global positive
-certificate. An accepted transaction must prove that:
+certificate. The tentative batch must prove that:
 
 - every affected face retains at least three ids and three stored positions;
 - no affected face repeats an id or duplicates another affected face;
@@ -187,24 +199,32 @@ certificate. An accepted transaction must prove that:
 - the local Euler delta matches the retired vertex and changed edges; and
 - no exact-zero or exactly antipodal edge remains from the transaction.
 
-An induced exact-zero edge is resolved on the same scratch state with the sparse exact helper. If
-that closure would remove a cell or fail its quotient certificate, decline the originating positive
-contraction as one transaction.
+After tentative rewriting, rescan the affected cells for induced exact-zero edges. Resolve those
+edges on the same scratch state using a narrowly extracted exact affected-cycle helper. If closure
+or the combined local certificate fails, roll back the entire tentative positive batch without
+retrying subsets. Do not attempt to invoke the existing whole-operation exact canonicalizer as a
+nested transaction.
 
 Scratch contains saved affected spans and local incidence/union state. Edge contraction only
 shrinks cycles, so no whole-mesh cycle or membership clone is needed.
 
+The source bounds the batch structurally: confirmed candidates are no more numerous than live
+edges, sorted union selection is `O(K log K)` with constant-work merge bounds, and candidate cells
+plus complete stars are classified once. The only unconditional whole-mesh work is final
+validation. This is why the replacement needs no public work budget.
+
 Identifying points in a connected complex cannot disconnect it; with no face deletion, complete
-manifold links and the local Euler check remove the need for a global connectivity traversal after
-each contraction. Final strict validation remains the independent backstop.
+manifold links and the local Euler check remove the need for a separate global connectivity
+traversal. Final strict validation remains the independent backstop.
 
-### 5. Finalization
+### 5. Affected rescan and finalization
 
-After the queue is empty:
+After publishing the accepted batch:
 
-1. compact live vertices once;
-2. rebuild dense cell spans and original-input mappings once; and
-3. run strict `SphericalCellMesh` validation once.
+1. rescan the affected cells once to count newly exposed positive edges;
+2. compact live vertices once;
+3. rebuild dense cell spans and original-input mappings once; and
+4. run strict `SphericalCellMesh` validation once.
 
 Unsafe candidates are normal declines. An unexpected final validation failure returns an internal
 computation error; no partial mesh is published.
@@ -217,11 +237,12 @@ Keep the public report limited to:
 - hinted and confirmed candidate counts;
 - attempted and accepted contractions;
 - displacement-, cell-, and topology-declined counts;
+- positive edges newly exposed by the accepted batch;
 - vertices removed;
-- maximum accepted representative displacement; and
+- maximum accepted representative-displacement bound; and
 - final validation.
 
-Detailed queue and affected-cover counters belong to tools/timing instrumentation.
+Detailed selection and affected-cover counters belong to tools/timing instrumentation.
 
 ## Reuse and deletion
 
@@ -242,6 +263,7 @@ Delete after the replacement passes correctness and performance gates:
 - whole-cycle and whole-ledger proposal clones;
 - all-pairs threshold-component diameter checks;
 - interaction-group global fixed-point rescans;
+- dynamic candidate queues, endpoint generations, and mutable whole-mesh incidence;
 - provenance bags, sinks, cause taint, and arc certification;
 - positive degree-two suppression and cell elision;
 - public simplification budgets/phase errors; and
@@ -260,8 +282,8 @@ Acceptance requires:
 
 - no material ordinary-compute counter regression;
 - no full final-edge scan or contraction-engine construction on the certified candidate-free path;
-- sparse proposals touching only incident cells and complete affected stars;
-- no work proportional to `commits * total_cell_indices`;
+- one candidate sort/selection pass and one affected-cell classification/rewrite pass;
+- no work proportional to `accepted_components * total_cell_indices`;
 - material improvement on the recorded sparse and heavy 10k fixtures;
 - the 100k heavy fixture completing or declining locally without the former global-work failure;
   and
@@ -282,8 +304,8 @@ not by extrapolation.
   antipodal proposals decline without mutation.
 - A long chain partitions into deterministic radius-bounded clusters.
 - Cumulative displacement passes below/at epsilon and declines above it.
-- Locally created candidates and stale queue entries behave deterministically.
-- Induced exact closure commits or rolls back with its originating positive transaction.
+- Positive edges exposed by the batch are reported but not recursively simplified.
+- Induced exact closure commits or rolls back with the tentative positive batch.
 - Local decisions agree with exhaustive scratch apply plus strict validation in property fixtures.
 - Original-input weld provenance remains coherent.
 - Repeated runs, thread counts, SIMD backends, FMA, supported features, checked tests, and the full
@@ -297,8 +319,8 @@ component semantics is not required.
 1. Preserve current benchmarks and fixtures as the comparison baseline.
 2. Add the internal preconstruction threshold, generalized hot hint, exact changed-cell footprint,
    and sparse-vs-exhaustive discovery tests without changing public behavior.
-3. Implement the local cell-preserving queue and strengthened affected-link certificate behind an
-   internal entry point.
+3. Implement deterministic bounded-component selection, one affected-cell batch, and the
+   strengthened affected-link certificate behind an internal entry point.
 4. Pass the performance gates before adding public API.
 5. Replace the unit-sphere and embedded public surfaces and documentation.
 6. Delete the old global engine and obsolete API/tests/telemetry.
@@ -311,9 +333,10 @@ stated goal; implementation nits do not justify expanding scope.
 ## Completion criteria
 
 RES-002 is complete when epsilon is supplied before construction, sparse discovery matches the
-exhaustive oracle, long chains simplify into displacement-bounded clusters, every accepted edit is
-local and cell-preserving, the final mesh validates strictly, ordinary computation does not
-regress, the heavy benchmarks materially improve, and the old global engine is deleted.
+exhaustive oracle, one deterministic batch partitions long chains into displacement-bounded
+clusters, every accepted edit is cell-preserving and locally certified, newly exposed positive
+edges are reported without recursion, the final mesh validates strictly, ordinary computation does
+not regress, the heavy benchmarks materially improve, and the old global engine is deleted.
 
 ## Deferred extensions
 

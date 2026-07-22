@@ -60,7 +60,7 @@ prevention rather than an overclaimed proof.
 | POINT-003 | P1 | Completed | Locator query validation and normalized ranking/certification landed |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
 | QUAL-001 | P2 | Completed | Reopen only for a new invariant/consumer or changed codegen evidence |
-| RES-002 | P2 | Ready | Review replacement plan, then prototype sparse cell-preserving resolution |
+| RES-002 | P2 | Ready | Prototype the approved sparse batched cell-preserving resolution |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | PERF-002 | P3 | Completed | Reopen only for a materially different kernel mechanism or workload |
 | PERF-003 | P3 | Completed | Reopen only for a separately designed multi-query resident kernel |
@@ -273,10 +273,11 @@ default `Preserve` behavior.
   suites remain unchanged and passing.
 - **Replacement decision:** the threshold must be supplied before construction. Reuse the existing
   widened hot hint, final-position confirmation, affected-cell exact-resolution rewrite, and local
-  quotient ownership. The first replacement is cell-preserving only, processes candidate edges in
-  deterministic length/key order, bounds every source member's displacement to its retained
-  representative, revisits only locally changed edges, and validates globally once. Post-compute
-  thresholds, positive `Error`/`Elide`, whole-mesh proposal clones, global per-commit rescans,
+  quotient ownership. The first replacement is cell-preserving only, greedily forms radius-bounded
+  components in deterministic length/key order, classifies and rewrites one affected-cell batch,
+  resolves only induced exact-zero geometry, reports rather than recursively simplifies newly
+  exposed positive edges, and validates globally once. Post-compute thresholds, positive
+  `Error`/`Elide`, dynamic candidate queues, whole-mesh proposal clones, global per-commit rescans,
   public work budgets, and suppression provenance are removed or deferred. The current engine is
   retained only as a benchmark/correctness oracle until replacement parity is established.
 - **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
