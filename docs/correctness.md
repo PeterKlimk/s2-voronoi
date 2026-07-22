@@ -117,8 +117,8 @@ classification and the quotient certificate remain local after discovery. `compu
 and testing subsequently apply the full strict validator. `OutputResolutionReport` records
 detected, contracted, declined, and remaining exact-zero features; validation's independent
 `zero_length_edges` count remains a representation note rather than a topology failure. The
-certificate concerns exact stored-zero discovery only; it does not yet enable the deferred public
-positive-edge-collapse policy.
+same construction scan can record a conservatively widened cell hint when an explicit positive
+threshold is supplied before construction; ordinary computation retains the exact-only path.
 
 Reconciliation collapses a positional equivalence component only when its full diameter over
 stored vertices is at most `RECONCILE_DEGENERATE_LEN_EPS`; pairwise chains cannot extend that
@@ -127,9 +127,8 @@ observed topology defect; exact degree-4+ grids require this established toleran
 transaction rejects a result that would kill or fold a cell and seeds that component for a
 Hull3d rebuild. This defect-local reconciliation is distinct from applying a consumer epsilon
 threshold to a clean diagram. The `Error` generator outcome and explicit exact-zero cell-mesh
-`Elide` conversion are
-implemented; an optional global positive edge threshold remains deferred, as recorded in
-[`output-resolution-policy.md`](output-resolution-policy.md).
+`Elide` conversion are implemented. Optional positive-threshold simplification uses the separate
+construction-aware APIs described above.
 
 ## Coincident generators (welding)
 

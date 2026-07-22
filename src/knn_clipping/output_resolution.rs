@@ -449,9 +449,6 @@ pub(crate) struct PositiveResolutionReport {
     pub(crate) cell_declined_components: usize,
     pub(crate) topology_declined_components: usize,
     pub(crate) newly_exposed_positive_edges: usize,
-    pub(crate) remaining_positive_edges: usize,
-    pub(crate) vertices_retired: usize,
-    pub(crate) max_component_members: usize,
     pub(crate) max_representative_displacement_bound: f64,
     pub(crate) changed_cells: Vec<usize>,
 }
@@ -676,7 +673,6 @@ pub(super) fn simplify_positive_edges(
         accepted_unions
     );
     if components.is_empty() {
-        report.remaining_positive_edges = candidates.len();
         return Ok(report);
     }
 
@@ -738,8 +734,6 @@ pub(super) fn simplify_positive_edges(
         affected_cells.extend_from_slice(&cells_by_group[group_idx]);
         for &component_idx in group {
             let component = &components[component_idx];
-            report.max_component_members =
-                report.max_component_members.max(component.members.len());
             report.max_representative_displacement_bound = report
                 .max_representative_displacement_bound
                 .max(component_bounds[component_idx]);
@@ -752,7 +746,6 @@ pub(super) fn simplify_positive_edges(
         }
     }
     if replacements.is_empty() {
-        report.remaining_positive_edges = candidates.len();
         return Ok(report);
     }
     let positive_removed_vertex_count = removed_vertex_count;
@@ -787,8 +780,6 @@ pub(super) fn simplify_positive_edges(
         if exact.report.exact_zero_edges_remaining != 0 {
             restore_cells(&saved, cells, cell_indices);
             report.topology_declined_components += accepted_components;
-            report.remaining_positive_edges = candidates.len();
-            report.max_component_members = 0;
             report.max_representative_displacement_bound = 0.0;
             return Ok(report);
         }
@@ -823,27 +814,11 @@ pub(super) fn simplify_positive_edges(
     if !quotient_ok {
         restore_cells(&saved, cells, cell_indices);
         report.topology_declined_components += accepted_components;
-        report.remaining_positive_edges = candidates.len();
-        report.max_component_members = 0;
         report.max_representative_displacement_bound = 0.0;
         return Ok(report);
     }
 
     let source_edges: FxHashSet<(u32, u32)> = candidates.iter().map(|&(_, a, b)| (a, b)).collect();
-    let mut source_edges_in_affected_cells = FxHashSet::default();
-    for (cell_idx, original) in &saved {
-        if affected_cells.binary_search(cell_idx).is_err() {
-            continue;
-        }
-        for edge_idx in 0..original.len() {
-            let a = original[edge_idx];
-            let b = original[(edge_idx + 1) % original.len()];
-            let key = (a.min(b), a.max(b));
-            if source_edges.contains(&key) {
-                source_edges_in_affected_cells.insert(key);
-            }
-        }
-    }
     let remaining = collect_positive_edges_in_cells(
         vertices,
         cells,
@@ -855,10 +830,7 @@ pub(super) fn simplify_positive_edges(
         .iter()
         .filter(|&&(_, a, b)| !source_edges.contains(&(a, b)))
         .count();
-    report.remaining_positive_edges =
-        candidates.len() - source_edges_in_affected_cells.len() + remaining.len();
     report.accepted_contractions = positive_removed_vertex_count;
-    report.vertices_retired = removed_vertex_count;
     report.changed_cells = affected_cells;
     Ok(report)
 }

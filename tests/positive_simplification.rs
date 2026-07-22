@@ -1,4 +1,4 @@
-//! Explicit positive-threshold cell-mesh simplification contracts.
+//! Construction-aware positive-threshold cell-mesh simplification contracts.
 
 mod support;
 
@@ -6,10 +6,35 @@ use std::collections::BTreeSet;
 
 use support::points::{fibonacci_sphere_points, TestPoint};
 use voronoi_mesh::{
-    compute_simplified_with, compute_with_report, CellSimplificationErrorKind,
-    CellSimplificationOptions, CellSimplificationThresholdError, PreprocessMode,
-    SimplificationCellPolicy, VoronoiConfig, VoronoiError,
+    compute_simplified_with, compute_with_report, CellSimplificationOptions,
+    CellSimplificationThresholdError, PreprocessMode, VoronoiConfig, VoronoiError,
 };
+
+#[test]
+fn chord_options_reject_invalid_thresholds() {
+    assert!(matches!(
+        CellSimplificationOptions::from_chord_length(0.0),
+        Err(CellSimplificationThresholdError::NonPositive)
+    ));
+    assert!(matches!(
+        CellSimplificationOptions::from_chord_length(-1.0),
+        Err(CellSimplificationThresholdError::NonPositive)
+    ));
+    assert!(matches!(
+        CellSimplificationOptions::from_chord_length(f32::NAN),
+        Err(CellSimplificationThresholdError::NonFinite)
+    ));
+    assert!(matches!(
+        CellSimplificationOptions::from_chord_length(f32::INFINITY),
+        Err(CellSimplificationThresholdError::NonFinite)
+    ));
+    assert!(matches!(
+        CellSimplificationOptions::from_chord_length(2.000_001),
+        Err(CellSimplificationThresholdError::ExceedsSphereDiameter)
+    ));
+    assert!(CellSimplificationOptions::from_chord_length(f32::from_bits(1)).is_ok());
+    assert!(CellSimplificationOptions::from_chord_length(2.0).is_ok());
+}
 
 #[test]
 fn construction_aware_candidate_free_path_is_valid() {
@@ -84,15 +109,8 @@ fn construction_aware_path_contracts_a_terminal_short_edge_once() {
             assert!(
                 simplified
                     .simplification_report
-                    .max_representative_displacement
+                    .max_representative_displacement_bound
                     <= f64::from(threshold)
-            );
-            assert_eq!(simplified.simplification_report.round_attempts, 1);
-            assert_eq!(
-                simplified
-                    .simplification_report
-                    .later_round_candidate_occurrences,
-                0
             );
             return;
         }
@@ -151,209 +169,4 @@ fn stored_chord(a: voronoi_mesh::SpherePoint, b: voronoi_mesh::SpherePoint) -> f
     let y = a[1] as f64 - b[1] as f64;
     let z = a[2] as f64 - b[2] as f64;
     (x * x + y * y + z * z).sqrt()
-}
-
-#[test]
-fn chord_options_reject_invalid_thresholds() {
-    assert!(matches!(
-        CellSimplificationOptions::from_chord_length(0.0),
-        Err(CellSimplificationThresholdError::NonPositive)
-    ));
-    assert!(matches!(
-        CellSimplificationOptions::from_chord_length(-1.0),
-        Err(CellSimplificationThresholdError::NonPositive)
-    ));
-    assert!(matches!(
-        CellSimplificationOptions::from_chord_length(f32::NAN),
-        Err(CellSimplificationThresholdError::NonFinite)
-    ));
-    assert!(matches!(
-        CellSimplificationOptions::from_chord_length(f32::INFINITY),
-        Err(CellSimplificationThresholdError::NonFinite)
-    ));
-    assert!(matches!(
-        CellSimplificationOptions::from_chord_length(2.000_001),
-        Err(CellSimplificationThresholdError::ExceedsSphereDiameter)
-    ));
-    assert!(CellSimplificationOptions::from_chord_length(f32::from_bits(1)).is_ok());
-    assert!(CellSimplificationOptions::from_chord_length(2.0).is_ok());
-}
-
-#[test]
-fn candidate_free_preserve_conversion_is_a_valid_identity() {
-    let points = fibonacci_sphere_points(32, 0.05, 7);
-    let output = compute_with_report(&points, VoronoiConfig::default()).unwrap();
-    let source_cells = output.preferred_diagram().num_cells();
-    let source_vertices = output.preferred_diagram().num_vertices();
-    let simplified = output
-        .into_simplified_cell_mesh(
-            CellSimplificationOptions::from_chord_length(f32::from_bits(1)).unwrap(),
-        )
-        .unwrap();
-
-    assert_eq!(simplified.mesh.num_cells(), source_cells);
-    assert_eq!(simplified.mesh.num_vertices(), source_vertices);
-    assert_eq!(
-        simplified
-            .simplification_report
-            .positive_components_committed,
-        0
-    );
-    assert_eq!(simplified.simplification_report.remaining_positive_edges, 0);
-    assert!(simplified.mesh.validate().is_strictly_valid());
-}
-
-#[test]
-fn preserve_contracts_a_real_isolated_short_edge() {
-    let points = fibonacci_sphere_points(48, 0.35, 91);
-    let output = compute_with_report(&points, VoronoiConfig::default()).unwrap();
-    let diagram = output.preferred_diagram();
-    let mut edges = BTreeSet::new();
-    for cell in diagram.iter_cells() {
-        for offset in 0..cell.vertex_indices.len() {
-            let a = cell.vertex_indices[offset];
-            let b = cell.vertex_indices[(offset + 1) % cell.vertex_indices.len()];
-            edges.insert((a.min(b), a.max(b)));
-        }
-    }
-    let mut thresholds: Vec<f64> = edges
-        .into_iter()
-        .map(|(a, b)| stored_chord(diagram.vertex(a as usize), diagram.vertex(b as usize)))
-        .collect();
-    thresholds.sort_by(f64::total_cmp);
-    thresholds.dedup_by(|a, b| a.to_bits() == b.to_bits());
-
-    for threshold in thresholds.into_iter().take(32) {
-        let threshold = (threshold * (1.0 + 8.0 * f32::EPSILON as f64)) as f32;
-        let simplified = output.clone().into_simplified_cell_mesh(
-            CellSimplificationOptions::from_chord_length(threshold).unwrap(),
-        );
-        let Ok(simplified) = simplified else {
-            continue;
-        };
-        if simplified
-            .simplification_report
-            .positive_components_committed
-            > 0
-        {
-            assert!(simplified.mesh.validate().is_strictly_valid());
-            assert!(simplified.simplification_report.max_component_diameter <= threshold as f64);
-            assert!(
-                simplified
-                    .simplification_report
-                    .max_representative_displacement
-                    <= threshold as f64
-            );
-            return;
-        }
-    }
-    panic!("fixture did not expose an admissible isolated short edge");
-}
-
-#[test]
-fn elide_matches_the_exact_cell_killing_fixture() {
-    let points = disabled_weld_cell_killing_points();
-    let output = compute_with_report(
-        &points,
-        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled),
-    )
-    .unwrap();
-    let exact = output.clone().into_elided_cell_mesh().unwrap();
-    let simplified = output
-        .into_simplified_cell_mesh(
-            CellSimplificationOptions::from_chord_length(f32::from_bits(1))
-                .unwrap()
-                .with_cell_policy(SimplificationCellPolicy::Elide),
-        )
-        .unwrap();
-
-    assert_eq!(simplified.mesh.num_cells(), 16);
-    assert_eq!(simplified.mesh.vertices(), exact.mesh.vertices());
-    for cell in 0..simplified.mesh.num_cells() {
-        assert_eq!(
-            simplified.mesh.cell(cell).vertex_indices,
-            exact.mesh.cell(cell).vertex_indices
-        );
-    }
-    assert_eq!(simplified.simplification_report.effective_cells_elided, 2);
-    assert_eq!(simplified.simplification_report.source_inputs_elided, 2);
-    assert_eq!(simplified.simplification_report.remaining_exact_edges, 0);
-    assert_eq!(simplified.simplification_report.remaining_positive_edges, 0);
-    assert_eq!(
-        simplified.simplification_report.exact_suppression_members,
-        2
-    );
-    assert!(simplified.mesh.validate().is_strictly_valid());
-}
-
-#[test]
-fn elide_does_not_upgrade_unrelated_exact_suppressions_after_positive_work() {
-    let points = disabled_weld_cell_killing_points();
-    let output = compute_with_report(
-        &points,
-        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled),
-    )
-    .unwrap();
-    let diagram = output.preferred_diagram();
-    let mut edges = BTreeSet::new();
-    for cell in diagram.iter_cells() {
-        for offset in 0..cell.vertex_indices.len() {
-            let a = cell.vertex_indices[offset];
-            let b = cell.vertex_indices[(offset + 1) % cell.vertex_indices.len()];
-            edges.insert((a.min(b), a.max(b)));
-        }
-    }
-    let mut thresholds: Vec<f64> = edges
-        .into_iter()
-        .map(|(a, b)| stored_chord(diagram.vertex(a as usize), diagram.vertex(b as usize)))
-        .filter(|&length| length > 0.0)
-        .collect();
-    thresholds.sort_by(f64::total_cmp);
-    thresholds.dedup_by(|a, b| a.to_bits() == b.to_bits());
-
-    for threshold in thresholds {
-        let threshold = (threshold * (1.0 + 8.0 * f32::EPSILON as f64)) as f32;
-        if threshold > 2.0 {
-            continue;
-        }
-        let Ok(simplified) = output.clone().into_simplified_cell_mesh(
-            CellSimplificationOptions::from_chord_length(threshold)
-                .unwrap()
-                .with_cell_policy(SimplificationCellPolicy::Elide),
-        ) else {
-            continue;
-        };
-        let report = &simplified.simplification_report;
-        if report.positive_components_committed > 0 && report.exact_suppression_members == 2 {
-            assert!(simplified.mesh.validate().is_strictly_valid());
-            return;
-        }
-    }
-
-    panic!("fixture did not expose unrelated positive work before exact suppression");
-}
-
-#[test]
-fn error_policy_reports_the_first_unresolved_exact_group_and_returns_source() {
-    let points = disabled_weld_cell_killing_points();
-    let output = compute_with_report(
-        &points,
-        VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled),
-    )
-    .unwrap();
-    let source_cells = output.diagram.num_cells();
-    let error = output
-        .into_simplified_cell_mesh(
-            CellSimplificationOptions::from_chord_length(f32::from_bits(1))
-                .unwrap()
-                .with_cell_policy(SimplificationCellPolicy::Error),
-        )
-        .unwrap_err();
-
-    assert_eq!(
-        error.kind(),
-        CellSimplificationErrorKind::UnresolvedExactGroup
-    );
-    assert!(!error.report().affected_original_inputs.is_empty());
-    assert_eq!(error.into_source_output().diagram.num_cells(), source_cells);
 }

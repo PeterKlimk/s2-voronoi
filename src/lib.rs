@@ -145,19 +145,17 @@ pub fn run_clip_convex_microbench() {
 pub use adjacency::CellAdjacency;
 pub use cell_mesh::{
     CellElisionError, CellElisionErrorKind, CellElisionReport, CellMeshCellView, CellMeshOutput,
-    CellMeshValidationReport, CellSimplificationError, CellSimplificationErrorKind,
-    CellSimplificationFailureReport, CellSimplificationLimits, CellSimplificationOptions,
-    CellSimplificationPhase, CellSimplificationReport, CellSimplificationThresholdError,
-    CellSimplificationWork, SimplificationCellPolicy, SimplifiedCellMeshOutput, SphericalCellMesh,
+    CellMeshValidationReport, CellSimplificationOptions, CellSimplificationReport,
+    CellSimplificationThresholdError, SimplifiedCellMeshOutput, SphericalCellMesh,
 };
 pub use diagram::{CellView, SphericalVoronoi};
 pub use embedding::{
     compute_on_sphere, compute_on_sphere_simplified, compute_on_sphere_simplified_with,
     compute_on_sphere_with, compute_on_sphere_with_report, EmbeddedCellElisionError,
-    EmbeddedCellMeshOutput, EmbeddedCellSimplificationError, EmbeddedComputeOutput,
-    EmbeddedSimplifiedCellMeshOutput, EmbeddedSphereLocator, EmbeddedSphericalCellMesh,
-    EmbeddedSphericalVoronoi, IndexedSphereProjectionError, SphereEmbedding, SphereEmbeddingError,
-    SphereProjectionError, WorldVec3Like,
+    EmbeddedCellMeshOutput, EmbeddedComputeOutput, EmbeddedSimplifiedCellMeshOutput,
+    EmbeddedSphereLocator, EmbeddedSphericalCellMesh, EmbeddedSphericalVoronoi,
+    IndexedSphereProjectionError, SphereEmbedding, SphereEmbeddingError, SphereProjectionError,
+    WorldVec3Like,
 };
 pub use error::VoronoiError;
 /// EXPERIMENTAL DIAGNOSTIC re-export — see the type's documentation; not
@@ -639,18 +637,6 @@ pub fn compute_simplified_with<P: UnitVec3Like>(
     config: VoronoiConfig,
     options: CellSimplificationOptions,
 ) -> Result<SimplifiedCellMeshOutput, VoronoiError> {
-    if options.cell_policy() != SimplificationCellPolicy::Preserve {
-        return Err(VoronoiError::InvalidConfiguration(
-            "construction-aware simplification is cell-preserving; Error and Elide belong to the legacy comparison conversion"
-                .into(),
-        ));
-    }
-    if options.limits() != CellSimplificationLimits::default() {
-        return Err(VoronoiError::InvalidConfiguration(
-            "construction-aware simplification has structurally bounded work and does not accept legacy work limits"
-                .into(),
-        ));
-    }
     let vec3_points = backend_points(points)?;
     let (output, report) = knn_clipping::compute::compute_voronoi_knn_clipping_simplified_owned(
         vec3_points,
@@ -670,18 +656,6 @@ pub fn compute_simplified_with_by<T, F>(
 where
     F: Fn(&T) -> [f32; 3],
 {
-    if options.cell_policy() != SimplificationCellPolicy::Preserve {
-        return Err(VoronoiError::InvalidConfiguration(
-            "construction-aware simplification is cell-preserving; Error and Elide belong to the legacy comparison conversion"
-                .into(),
-        ));
-    }
-    if options.limits() != CellSimplificationLimits::default() {
-        return Err(VoronoiError::InvalidConfiguration(
-            "construction-aware simplification has structurally bounded work and does not accept legacy work limits"
-                .into(),
-        ));
-    }
     let vec3_points = collect_points_by(points, xyz)?;
     let (output, report) = knn_clipping::compute::compute_voronoi_knn_clipping_simplified_owned(
         vec3_points,

@@ -6,8 +6,7 @@ use support::points::TestPoint;
 
 use voronoi_mesh::{
     compute, compute_on_sphere, compute_on_sphere_simplified_with, compute_on_sphere_with_report,
-    CellSimplificationErrorKind, CellSimplificationLimits, CellSimplificationOptions,
-    CellSimplificationPhase, SphereEmbedding, SphereEmbeddingError, SphereProjectionError,
+    CellSimplificationOptions, SphereEmbedding, SphereEmbeddingError, SphereProjectionError,
     VoronoiConfig, VoronoiError, WorldVec3Like,
 };
 
@@ -271,7 +270,7 @@ fn embedded_report_wraps_returned_and_effective_diagrams() {
 }
 
 #[test]
-fn embedded_positive_simplification_preserves_embedding_and_error_recovery() {
+fn embedded_positive_simplification_preserves_embedding() {
     let center = [7.0, -11.0, 13.0];
     let embedding = SphereEmbedding::new(center, 5.0).unwrap();
     let world: Vec<[f64; 3]> = octahedron_unit()
@@ -279,8 +278,6 @@ fn embedded_positive_simplification_preserves_embedding_and_error_recovery() {
         .map(|&direction| embed(center, direction, embedding.radius()))
         .collect();
 
-    let output =
-        compute_on_sphere_with_report(&world, embedding, VoronoiConfig::default()).unwrap();
     let construction_aware = compute_on_sphere_simplified_with(
         &world,
         embedding,
@@ -294,40 +291,7 @@ fn embedded_positive_simplification_preserves_embedding_and_error_recovery() {
         .mesh()
         .validate()
         .is_strictly_valid());
-    let simplified = output
-        .clone()
-        .into_simplified_cell_mesh(
-            CellSimplificationOptions::from_chord_length(f32::from_bits(1)).unwrap(),
-        )
-        .unwrap();
-    assert_eq!(simplified.mesh.embedding(), embedding);
-    assert!(simplified.mesh.mesh().validate().is_strictly_valid());
-    assert_eq!(simplified.mesh.vertex_world(0).len(), 3);
-
-    let error = output
-        .into_simplified_cell_mesh(
-            CellSimplificationOptions::from_chord_length(f32::from_bits(1))
-                .unwrap()
-                .with_limits(CellSimplificationLimits::new(u64::MAX, 0, u64::MAX)),
-        )
-        .unwrap_err();
-    assert_eq!(
-        error.kind(),
-        CellSimplificationErrorKind::CellIndexLimitExceeded
-    );
-    assert_eq!(
-        error.report().failure_phase,
-        CellSimplificationPhase::Preparation
-    );
-    assert_eq!(error.source_output().diagram.embedding(), embedding);
-    assert_eq!(
-        error
-            .into_source_output()
-            .preferred_diagram()
-            .diagram()
-            .num_cells(),
-        6
-    );
+    assert_eq!(construction_aware.mesh.vertex_world(0).len(), 3);
 }
 
 #[test]

@@ -1,7 +1,6 @@
 # RES-002 replacement plan: sparse positive-edge resolution
 
-**Status:** replacement prototype implemented and validated; legacy implementation remains only as
-a comparison oracle pending its deletion gate
+**Status:** implemented and validated; legacy implementation deleted
 
 **Date:** 2026-07-23
 
@@ -63,7 +62,7 @@ simplification report.
 
 `CellSimplificationOptions` initially contains only a finite chord threshold in `(0, 2]`.
 
-Remove the current positive-only surface rather than adapting it:
+The former positive-only surface was removed rather than adapted:
 
 - `ComputeOutput::into_simplified_cell_mesh`;
 - `SimplificationCellPolicy`;
@@ -257,7 +256,7 @@ Reuse or narrowly generalize:
 - the affected quotient certificate; and
 - cell-mesh mapping, compaction, and validation.
 
-Delete after the replacement passes correctness and performance gates:
+The deletion gate removed:
 
 - repeated whole-mesh snapshots and certification;
 - whole-cycle and whole-ledger proposal clones;
@@ -274,11 +273,11 @@ invariant in exact and positive resolution.
 
 ## Performance gates
 
-The current engine is the comparison baseline: 10k Fibonacci measured 42.9 ms candidate-free,
+The retired engine supplied the comparison baseline: 10k Fibonacci measured 42.9 ms candidate-free,
 297 ms for 36 candidate occurrences / 8 commits, and 2.28 s for 3,403 occurrences / 82 commits. A
 100k candidate-heavy run hit the 100,000,000 cell-visit limit after 10.86 s.
 
-Acceptance requires:
+The replacement met these acceptance requirements:
 
 - no material ordinary-compute counter regression;
 - no full final-edge scan or contraction-engine construction on the certified candidate-free path;
@@ -289,9 +288,8 @@ Acceptance requires:
   and
 - no whole-mesh clone per proposal.
 
-Record release wall time and structural counters for candidate-free, sparse, long-chain, and heavy
-inputs. Set absolute timing gates from the first minimal prototype on the same reference machine,
-not by extrapolation.
+Release wall time and structural counters were recorded for candidate-free, sparse, and heavy
+inputs on the same reference machine.
 
 ## Required tests
 
@@ -311,21 +309,20 @@ not by extrapolation.
 - Repeated runs, thread counts, SIMD backends, FMA, supported features, checked tests, and the full
   release suite retain their applicable contracts.
 
-The current engine may generate fixtures and negative cases; agreement with its all-or-nothing
-component semantics is not required.
+Fixtures retained from the old engine test the replacement contract rather than its former
+all-or-nothing component semantics.
 
-## Implementation sequence
+## Implementation record
 
-1. Preserve current benchmarks and fixtures as the comparison baseline.
-2. Add the internal preconstruction threshold, generalized hot hint, exact changed-cell footprint,
-   and sparse-vs-exhaustive discovery tests without changing public behavior.
-3. Implement deterministic bounded-component selection, one affected-cell batch, and the
-   strengthened affected-link certificate behind an internal entry point.
-4. Pass the performance gates before adding public API.
-5. Replace the unit-sphere and embedded public surfaces and documentation.
-6. Delete the old global engine and obsolete API/tests/telemetry.
-7. Run formatting, all-target clippy, focused checked/feature suites, full release tests, and
-   interleaved performance comparisons.
+1. Preserved the old benchmarks and fixtures long enough to establish a comparison baseline.
+2. Added the preconstruction threshold, widened hot hint, final confirmation, deterministic
+   bounded-component selection, one affected-cell batch, and local certification.
+3. Passed the performance gates and added unit-sphere, closure-ingest, configured, and embedded
+   public entry points.
+4. Deleted the old global engine and obsolete API, policy, budget, error, test, and telemetry
+   surface after the parity review.
+5. Ran formatting, all-target clippy, supported-feature suites, full release tests, and performance
+   comparisons.
 
 Each stage is one coherent commit. Review must first ask whether a mechanism is necessary for the
 stated goal; implementation nits do not justify expanding scope.

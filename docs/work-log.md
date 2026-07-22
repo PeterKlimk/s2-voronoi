@@ -60,7 +60,7 @@ prevention rather than an overclaimed proof.
 | POINT-003 | P1 | Completed | Locator query validation and normalized ranking/certification landed |
 | WELD-001 | P2 | Completed | Metric proof gap classified; validation telemetry retained |
 | QUAL-001 | P2 | Completed | Reopen only for a new invariant/consumer or changed codegen evidence |
-| RES-002 | P2 | In progress | Delete the legacy oracle after feature/API parity review |
+| RES-002 | P2 | Completed | Reopen only for a new simplification contract or regression |
 | PERF-001 | P3 | Backburner | Obtain motivating workload and crossover data |
 | PERF-002 | P3 | Completed | Reopen only for a materially different kernel mechanism or workload |
 | PERF-003 | P3 | Completed | Reopen only for a separately designed multi-query resident kernel |
@@ -245,32 +245,13 @@ default `Preserve` behavior.
 ### RES-002 — Optional positive-threshold edge simplification
 
 - **Priority:** P2
-- **Status:** Ready; reopened 2026-07-23 for replacement after performance and scope review
+- **Status:** Completed 2026-07-23 with the construction-aware replacement
 - **Dependencies:** RES-001 (completed)
 - **Goal:** let graphical or physics consumers explicitly remove represented nonzero slivers.
-- **Current comparison implementation:** explicit consuming unit and embedded conversions; inclusive stored-chord
-  discovery; all-pairs diameter-bounded minimum-id components; exact-first deterministic fixed
-  point; transactional complete-mesh topology certification; `Preserve`, first-failure `Error`,
-  and provenance-preserving `Elide`; checked work budgets; and distinct success/failure reports
-  which retain the untouched source on error.
-- **Post-review fixes:** pending-suppression cause upgrades now follow the transaction's affected
-  cover; exact transactions certify stored-position cardinality and induced exact edges on affected
-  faces; current provenance checks visit only affected owners and stream bag members under the work
-  budget; charged vertex-id validation precedes adjacency lookahead; affected endpoint stars retain
-  current positive-owner recertification; and mixed exact/positive Elide, unchanged-edge/sink cause
-  upgrades, and a positive cell-killing triangular-prism suppression pin the corrected behavior.
-- **Pinned policy:** default work limits are 100,000,000 diameter comparisons, 100,000,000
-  cell-index visits, and 100,000,000 provenance checks. Positive suppression uses `1e-24`
-  squared endpoint-cross/projection floors and `64 * f64::EPSILON` arc-membership tolerance.
-- **Performance acceptance:** ordinary 500k Fibonacci single-threaded construction is gated at no
-  more than +0.5% retired instructions and +1.0% branches versus revision `ee8e73b`; seven
-  interleaved `perf stat` rounds measured +0.127% and +0.366%, respectively. The dedicated
-  `bench_simplify` probe (10k Fibonacci, single-threaded) measured 42.9 ms candidate-free
-  (`239,952` cell-index visits), 297 ms with 36 candidate occurrences / 8 commits, and 2.28 s with
-  3,403 occurrences / 82 commits. A 100k candidate-heavy probe stopped recoverably at the default
-  100,000,000-visit ceiling after 10.86 s rather than running unbounded. These are cold conversion
-  characterizations, not ordinary-path budgets. Shared exact-elision focused and full release
-  suites remain unchanged and passing.
+- **Retired comparison baseline:** the old consuming conversion used all-pairs components, a
+  deterministic fixed point, complete-mesh transactional certification, positive `Error` and
+  `Elide`, work budgets, and recoverable errors. It established the correctness fixtures and the
+  performance failure motivating the replacement, then was deleted.
 - **Replacement decision:** the threshold must be supplied before construction. Reuse the existing
   widened hot hint, final-position confirmation, affected-cell exact-resolution rewrite, and local
   quotient ownership. The first replacement is cell-preserving only, greedily forms radius-bounded
@@ -278,9 +259,8 @@ default `Preserve` behavior.
   resolves only induced exact-zero geometry, reports rather than recursively simplifies newly
   exposed positive edges, and validates globally once. Post-compute thresholds, positive
   `Error`/`Elide`, dynamic candidate queues, whole-mesh proposal clones, global per-commit rescans,
-  public work budgets, and suppression provenance are removed or deferred. The current engine is
-  retained only as a benchmark/correctness oracle until replacement parity is established.
-- **Replacement prototype:** `compute_simplified[_with]` now feeds epsilon into the existing hot
+  public work budgets, and suppression provenance are removed or deferred.
+- **Implementation:** `compute_simplified[_with]` feeds epsilon into the existing hot
   hint and performs one terminal candidate confirmation, radius-bounded selection, affected-cell
   batch, induced exact closure, and strict final validation. The full release suite and all-target
   clippy pass. A 20-round ordinary 500k Fibonacci comparison showed no regression (537.5 ms
@@ -289,6 +269,10 @@ default `Preserve` behavior.
   about 48 ms for 82 terminal candidates/contractions, versus about 2.18 s for the legacy cold
   conversion's 3,403 repeated occurrences/82 commits. The 100k/`1e-3` replacement completed in
   about 748 ms with 10,572 terminal contractions.
+- **Deletion gate:** unit, closure-ingest, configured, and embedded entry-point parity was verified;
+  the post-computation conversion, positive policies, work budgets, recoverable simplification
+  errors, suppression telemetry, and global fixed-point engine were then deleted. Exact-zero
+  elision remains a separate supported conversion.
 - **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
   exact Voronoi diagram of the original generators.
 - **References:** [`output-resolution-policy.md`](output-resolution-policy.md) and
@@ -794,7 +778,7 @@ tasks and are not duplicated here.
 ## Suggested order
 
 1. Continue WORK-002 whenever construction, reconciliation, or Hull3d changes.
-2. Replace RES-002 with the construction-aware sparse cell-preserving design.
+2. Reopen RES-002 only for a new simplification contract or a measured regression.
 3. Revisit PERF-001 only with a motivating workload and crossover measurements.
 4. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
 

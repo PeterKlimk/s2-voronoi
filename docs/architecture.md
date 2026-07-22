@@ -174,8 +174,7 @@ memory. Raw inputs remain unchecked until entry canonicalization.
   `preprocess.rs` merges near-coincident inputs; `edge_reconcile.rs` reconciles assembled cycles;
   `local_rebuild.rs` and `local_hull.rs` own cold neighborhood rebuilding;
   `output_resolution.rs` owns terminal stored-zero policy and the construction-aware, single-batch
-  positive resolver. `positive_simplification.rs` is retained temporarily as the post-compute
-  comparison oracle and is not called by the new or ordinary construction paths.
+  positive resolver.
 - `live_dedup/` owns spherical sharded vertex ownership, forwarded edge checks, deferred-slot
   patching, and global assembly. It is specialized to `Vec3`; a future second geometry backend
   must earn any shared abstraction with a current consumer and tests.

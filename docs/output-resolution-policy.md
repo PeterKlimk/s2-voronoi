@@ -452,7 +452,8 @@ The remaining follow-ups and their dependencies are tracked in [`work-log.md`](w
 Positive-threshold simplification remains an optional extension, not an incomplete piece of the
 baseline. Its replacement is construction-aware: epsilon widens the existing hot hint only for an
 explicit simplified computation, and the terminal source candidates are processed once in one
-cell-preserving batch. The old consuming conversion remains temporarily as a comparison oracle.
+cell-preserving batch. The former post-computation conversion and global fixed-point engine have
+been removed.
 The weld proof attempt classified the remaining metric gap and added stored-position
 validation plus the lattice campaign described above; it did not justify increasing the weld
 radius or charging an always-on construction certificate.

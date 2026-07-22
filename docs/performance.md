@@ -1064,11 +1064,10 @@ Construction-aware positive simplification has a separate probe:
 
 ```bash
 RAYON_NUM_THREADS=1 cargo run --release --features tools --bin bench_simplify -- \
-  10000 1e-4 10 batched
+  10000 1e-4 10
 ```
 
-Arguments are point count, unit-sphere chord threshold, timed rounds, and mode. `batched` measures
-the complete construction-aware computation. The legacy `preserve`, `error`, and `elide` modes
-remain temporarily available as comparison oracles and time only their post-compute conversion.
-The output distinguishes hot-hinted cells, terminal candidates, accepted contractions, newly
-exposed edges, and legacy work counters.
+Arguments are point count, unit-sphere chord threshold, and timed rounds. The probe measures the
+complete construction-aware computation. Its output distinguishes hot-hinted cells, confirmed
+terminal candidates, accepted and declined contractions, newly exposed edges, removed vertices,
+and the maximum representative-displacement bound.

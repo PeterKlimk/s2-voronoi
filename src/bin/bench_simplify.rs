@@ -2,10 +2,7 @@
 
 use std::time::Instant;
 
-use voronoi_mesh::{
-    compute_simplified_with, compute_with_report, CellSimplificationOptions,
-    SimplificationCellPolicy, VoronoiConfig,
-};
+use voronoi_mesh::{compute_simplified_with, CellSimplificationOptions, VoronoiConfig};
 
 fn fibonacci_points(count: usize) -> Vec<[f32; 3]> {
     let golden_angle = core::f64::consts::PI * (3.0 - 5.0f64.sqrt());
@@ -44,38 +41,20 @@ fn main() {
         .parse::<usize>()
         .expect("round count must be an integer");
     assert!(rounds > 0, "round count must be positive");
-    let mode = args.next().unwrap_or_else(|| "batched".into());
-    let policy = match mode.as_str() {
-        "batched" => SimplificationCellPolicy::Preserve,
-        "preserve" => SimplificationCellPolicy::Preserve,
-        "error" => SimplificationCellPolicy::Error,
-        "elide" => SimplificationCellPolicy::Elide,
-        value => panic!("unknown mode {value:?}; expected batched, preserve, error, or elide"),
-    };
+    assert!(
+        args.next().is_none(),
+        "expected: [count] [threshold] [rounds]"
+    );
 
     let points = fibonacci_points(count);
-    let output = (mode != "batched").then(|| {
-        compute_with_report(&points, VoronoiConfig::default())
-            .expect("benchmark source computation failed")
-    });
-    let options = CellSimplificationOptions::from_chord_length(threshold)
-        .expect("invalid threshold")
-        .with_cell_policy(policy);
+    let options =
+        CellSimplificationOptions::from_chord_length(threshold).expect("invalid threshold");
     let mut elapsed = Vec::with_capacity(rounds);
     let mut last_report = None;
     for _ in 0..rounds {
         let start = Instant::now();
-        let result = if mode == "batched" {
-            compute_simplified_with(&points, VoronoiConfig::default(), options)
-                .map_err(|error| error.to_string())
-        } else {
-            output
-                .as_ref()
-                .unwrap()
-                .clone()
-                .into_simplified_cell_mesh(options)
-                .map_err(|error| format!("{:?}: {}", error.kind(), error))
-        };
+        let result = compute_simplified_with(&points, VoronoiConfig::default(), options)
+            .map_err(|error| error.to_string());
         match result {
             Ok(simplified) => {
                 elapsed.push(start.elapsed().as_secs_f64() * 1_000.0);
@@ -92,15 +71,16 @@ fn main() {
     let median = elapsed[elapsed.len() / 2];
     let report = last_report.unwrap();
     println!(
-        "points={count} threshold={threshold:e} mode={mode} rounds={rounds} median_ms={median:.3} hinted_cells={} candidates={} attempts={} accepted={} newly_exposed={} remaining={} cell_visits={} pair_checks={} provenance_checks={}",
+        "points={count} threshold={threshold:e} rounds={rounds} median_ms={median:.3} hinted_cells={} candidates={} attempts={} accepted={} displacement_declines={} cell_declines={} topology_declines={} newly_exposed={} vertices_removed={} max_representative_displacement_bound={:e}",
         report.hinted_candidate_cells,
-        report.positive_candidate_occurrences,
+        report.confirmed_positive_edges,
         report.attempted_contractions,
         report.accepted_contractions,
+        report.displacement_declines,
+        report.cell_declined_components,
+        report.topology_declined_components,
         report.newly_exposed_positive_edges,
-        report.remaining_positive_edges,
-        report.work.cell_index_visits,
-        report.work.diameter_pair_comparisons,
-        report.work.provenance_member_checks,
+        report.vertices_removed,
+        report.max_representative_displacement_bound,
     );
 }
