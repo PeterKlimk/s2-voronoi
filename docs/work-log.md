@@ -249,10 +249,12 @@ default `Preserve` behavior.
 - **Dependencies:** RES-001 (completed)
 - **Goal:** let graphical or physics consumers explicitly remove represented nonzero slivers.
 - **Decisions required:**
-  - approve chord-length units with promoted-f64 squared comparison;
+  - approve stored-chord discovery and normalized unit-arc suppression metrics;
   - approve exact-zero precedence and stable-id fixed-point simplification;
   - approve Preserve/Error/Elide failure and retry semantics;
-  - approve the abstract-complex geometry contract and degree-two point-to-minor-arc certificate;
+  - approve threshold-independent exact suppression plus final cause-aware positive
+    point-to-minor-arc certification;
+  - approve the abstract-complex geometry contract;
   - select deterministic candidate, diameter-work, and cell-index-visit limits plus the arc
     conditioning floor; and
   - pin positive-threshold option/report fields and quantitative performance gates.
