@@ -776,10 +776,8 @@ tasks and are not duplicated here.
 ## Suggested order
 
 1. Continue WORK-002 whenever construction, reconciliation, or Hull3d changes.
-2. Execute QUAL-001 in staged, independently benchmarked milestones.
-3. Decide RES-002 only when positive-threshold mesh conditioning is wanted.
-4. Revisit PERF-001 only with a motivating workload and crossover measurements.
-5. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
+2. Revisit PERF-001 only with a motivating workload and crossover measurements.
+3. Keep RESEARCH-001 through RESEARCH-004 parked unless the project contract expands.
 
 ## Closed and retired work
 
