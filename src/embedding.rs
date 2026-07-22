@@ -603,6 +603,55 @@ impl EmbeddedComputeOutput {
             }
         }
     }
+
+    /// Consume this embedded computation and simplify admissible live edges
+    /// within a positive unit-sphere chord threshold.
+    ///
+    /// The threshold and report metrics are expressed on the canonical unit
+    /// sphere. World-space vertices remain available through the returned
+    /// [`EmbeddedSphericalCellMesh`]. A rejected conversion retains the
+    /// original embedded computation in [`EmbeddedCellSimplificationError`].
+    pub fn into_simplified_cell_mesh(
+        self,
+        options: crate::CellSimplificationOptions,
+    ) -> Result<EmbeddedSimplifiedCellMeshOutput, EmbeddedCellSimplificationError> {
+        let embedding = self.diagram.embedding();
+        let EmbeddedComputeOutput {
+            diagram,
+            effective_diagram,
+            report,
+        } = self;
+        let unit_output = crate::ComputeOutput {
+            diagram: diagram.into_diagram(),
+            effective_diagram: effective_diagram.map(EmbeddedSphericalVoronoi::into_diagram),
+            report,
+        };
+        match unit_output.into_simplified_cell_mesh(options) {
+            Ok(output) => Ok(EmbeddedSimplifiedCellMeshOutput {
+                mesh: EmbeddedSphericalCellMesh::new(output.mesh, embedding),
+                compute_report: output.compute_report,
+                simplification_report: output.simplification_report,
+            }),
+            Err(error) => {
+                let kind = error.kind();
+                let message = error.message().to_owned();
+                let failure_report = error.report().clone();
+                let source = error.into_source_output();
+                Err(EmbeddedCellSimplificationError {
+                    kind,
+                    message,
+                    failure_report,
+                    source_output: Box::new(EmbeddedComputeOutput {
+                        diagram: EmbeddedSphericalVoronoi::new(source.diagram, embedding),
+                        effective_diagram: source
+                            .effective_diagram
+                            .map(|diagram| EmbeddedSphericalVoronoi::new(diagram, embedding)),
+                        report: source.report,
+                    }),
+                })
+            }
+        }
+    }
 }
 
 /// A simplified spherical cell mesh together with its world-space embedding.
@@ -667,6 +716,74 @@ pub struct EmbeddedCellMeshOutput {
     /// Explicit cell-elision transaction report.
     pub elision_report: crate::CellElisionReport,
 }
+
+/// Report-bearing result of embedded positive edge simplification.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct EmbeddedSimplifiedCellMeshOutput {
+    /// Dense simplified cell mesh and its world-space embedding.
+    pub mesh: EmbeddedSphericalCellMesh,
+    /// Original construction and repair report.
+    pub compute_report: ComputeReport,
+    /// Positive simplification result telemetry in unit-sphere metrics.
+    pub simplification_report: crate::CellSimplificationReport,
+}
+
+/// Failure of [`EmbeddedComputeOutput::into_simplified_cell_mesh`].
+///
+/// The original successful embedded computation remains recoverable without
+/// cloning through [`Self::into_source_output`].
+#[derive(Debug)]
+pub struct EmbeddedCellSimplificationError {
+    kind: crate::CellSimplificationErrorKind,
+    message: String,
+    failure_report: crate::CellSimplificationFailureReport,
+    source_output: Box<EmbeddedComputeOutput>,
+}
+
+impl EmbeddedCellSimplificationError {
+    /// Stable top-level rejection category.
+    #[inline]
+    pub fn kind(&self) -> crate::CellSimplificationErrorKind {
+        self.kind
+    }
+
+    /// Diagnostic detail. Wording is not a stable API contract.
+    #[inline]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Borrow failure phase, work, and affected-input diagnostics.
+    #[inline]
+    pub fn report(&self) -> &crate::CellSimplificationFailureReport {
+        &self.failure_report
+    }
+
+    /// Borrow the original successful embedded computation.
+    #[inline]
+    pub fn source_output(&self) -> &EmbeddedComputeOutput {
+        &self.source_output
+    }
+
+    /// Recover the original successful embedded computation without cloning.
+    #[inline]
+    pub fn into_source_output(self) -> EmbeddedComputeOutput {
+        *self.source_output
+    }
+}
+
+impl std::fmt::Display for EmbeddedCellSimplificationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "embedded cell simplification {:?}: {}",
+            self.kind, self.message
+        )
+    }
+}
+
+impl std::error::Error for EmbeddedCellSimplificationError {}
 
 /// Failure of [`EmbeddedComputeOutput::into_elided_cell_mesh`].
 ///

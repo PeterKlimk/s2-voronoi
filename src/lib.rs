@@ -44,6 +44,9 @@
 //! [`ComputeOutput::into_elided_cell_mesh`]. The resulting
 //! [`SphericalCellMesh`] is separately typed and does not claim Voronoi
 //! locator, Delaunay, or Lloyd semantics.
+//! Positive stored-chord simplification is likewise available only through
+//! the explicit consuming [`ComputeOutput::into_simplified_cell_mesh`]
+//! conversion.
 //!
 //! # Example
 //!
@@ -142,12 +145,16 @@ pub fn run_clip_convex_microbench() {
 pub use adjacency::CellAdjacency;
 pub use cell_mesh::{
     CellElisionError, CellElisionErrorKind, CellElisionReport, CellMeshCellView, CellMeshOutput,
-    CellMeshValidationReport, SphericalCellMesh,
+    CellMeshValidationReport, CellSimplificationError, CellSimplificationErrorKind,
+    CellSimplificationFailureReport, CellSimplificationLimits, CellSimplificationOptions,
+    CellSimplificationPhase, CellSimplificationReport, CellSimplificationThresholdError,
+    CellSimplificationWork, SimplificationCellPolicy, SimplifiedCellMeshOutput, SphericalCellMesh,
 };
 pub use diagram::{CellView, SphericalVoronoi};
 pub use embedding::{
     compute_on_sphere, compute_on_sphere_with, compute_on_sphere_with_report,
-    EmbeddedCellElisionError, EmbeddedCellMeshOutput, EmbeddedComputeOutput, EmbeddedSphereLocator,
+    EmbeddedCellElisionError, EmbeddedCellMeshOutput, EmbeddedCellSimplificationError,
+    EmbeddedComputeOutput, EmbeddedSimplifiedCellMeshOutput, EmbeddedSphereLocator,
     EmbeddedSphericalCellMesh, EmbeddedSphericalVoronoi, IndexedSphereProjectionError,
     SphereEmbedding, SphereEmbeddingError, SphereProjectionError, WorldVec3Like,
 };

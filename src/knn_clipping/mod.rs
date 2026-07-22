@@ -11,6 +11,7 @@ pub(crate) mod edge_reconcile;
 pub(crate) mod local_hull;
 pub(crate) mod local_rebuild;
 pub(crate) mod output_resolution;
+pub(crate) mod positive_simplification;
 pub(crate) mod preprocess;
 pub(crate) mod topo2d;
 pub(crate) mod union_find;

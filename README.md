@@ -125,6 +125,8 @@ Smaller inputs and single-threaded pools stay serial.
 - `ComputeOutput::into_elided_cell_mesh()` — explicit cold conversion that may remove
   unrepresentable zero-geometry cells and returns a separately typed, validated spherical cell
   mesh with original-input provenance.
+- `ComputeOutput::into_simplified_cell_mesh(options)` — explicit cold positive stored-chord
+  simplification with deterministic work limits and `Preserve`, `Error`, or `Elide` cell policy.
 
 Configuration is through `compute_with(points, VoronoiConfig)`; `compute_with_report` additionally
 returns what was welded, perturbed, reconciled, or locally rebuilt. The `_by` variants provide the same behavior for
@@ -133,7 +135,10 @@ closure-based ingest. Defaults handle coincident and degenerate inputs;
 fail rather than preserve an unrepresentable generator cell. Consumers that instead accept removal
 can call `into_elided_cell_mesh` on the successful report-bearing Preserve result. The cell mesh
 does not expose locator, Delaunay, or Lloyd methods because simplification can break those Voronoi
-interpretations. See
+interpretations. Positive simplification is likewise opt-in after computation: its threshold is a
+unit-sphere chord length in `(0, 2]`, components are bounded by all-pairs stored-chord diameter,
+and successful output is a validated abstract spherical cell complex rather than a Voronoi
+diagram of the retained sites. See
 [docs/correctness.md](docs/correctness.md).
 
 ## How it works

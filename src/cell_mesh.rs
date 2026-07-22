@@ -410,6 +410,394 @@ impl CellMeshValidationReport {
     }
 }
 
+/// Why a positive simplification chord threshold was rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CellSimplificationThresholdError {
+    /// The threshold is NaN or infinite.
+    NonFinite,
+    /// The threshold is zero or negative.
+    NonPositive,
+    /// A unit-sphere chord cannot exceed two.
+    ExceedsSphereDiameter,
+}
+
+impl fmt::Display for CellSimplificationThresholdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NonFinite => write!(f, "simplification chord threshold must be finite"),
+            Self::NonPositive => write!(f, "simplification chord threshold must be positive"),
+            Self::ExceedsSphereDiameter => {
+                write!(f, "simplification chord threshold must be at most 2")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CellSimplificationThresholdError {}
+
+/// What positive simplification should do when a requested contraction would
+/// remove an effective generator cell.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SimplificationCellPolicy {
+    /// Decline optional positive contractions which would remove a cell.
+    #[default]
+    Preserve,
+    /// Stop at the first otherwise admissible contraction which would remove a cell.
+    Error,
+    /// Permit requested cell removal and return a non-Voronoi cell mesh.
+    Elide,
+}
+
+/// Deterministic work limits for the cold simplification conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CellSimplificationLimits {
+    diameter_pair_comparisons: u64,
+    cell_index_visits: u64,
+    provenance_member_checks: u64,
+}
+
+impl CellSimplificationLimits {
+    /// Default maximum exact source-member distance comparisons.
+    pub const DEFAULT_DIAMETER_PAIR_COMPARISONS: u64 = 100_000_000;
+    /// Default maximum cumulative live cell-index visits.
+    pub const DEFAULT_CELL_INDEX_VISITS: u64 = 100_000_000;
+    /// Default maximum current/final suppressed-member geometry checks.
+    pub const DEFAULT_PROVENANCE_MEMBER_CHECKS: u64 = 100_000_000;
+
+    /// Construct explicit deterministic work limits.
+    pub const fn new(
+        diameter_pair_comparisons: u64,
+        cell_index_visits: u64,
+        provenance_member_checks: u64,
+    ) -> Self {
+        Self {
+            diameter_pair_comparisons,
+            cell_index_visits,
+            provenance_member_checks,
+        }
+    }
+
+    /// Maximum exact source-member distance comparisons.
+    pub const fn diameter_pair_comparisons(self) -> u64 {
+        self.diameter_pair_comparisons
+    }
+
+    /// Maximum cumulative live cell-index visits.
+    pub const fn cell_index_visits(self) -> u64 {
+        self.cell_index_visits
+    }
+
+    /// Maximum current/final suppressed-member geometry checks.
+    pub const fn provenance_member_checks(self) -> u64 {
+        self.provenance_member_checks
+    }
+
+    /// Replace the diameter-pair limit.
+    pub const fn with_diameter_pair_comparisons(mut self, limit: u64) -> Self {
+        self.diameter_pair_comparisons = limit;
+        self
+    }
+
+    /// Replace the live cell-index visit limit.
+    pub const fn with_cell_index_visits(mut self, limit: u64) -> Self {
+        self.cell_index_visits = limit;
+        self
+    }
+
+    /// Replace the suppressed-member geometry limit.
+    pub const fn with_provenance_member_checks(mut self, limit: u64) -> Self {
+        self.provenance_member_checks = limit;
+        self
+    }
+}
+
+impl Default for CellSimplificationLimits {
+    fn default() -> Self {
+        Self::new(
+            Self::DEFAULT_DIAMETER_PAIR_COMPARISONS,
+            Self::DEFAULT_CELL_INDEX_VISITS,
+            Self::DEFAULT_PROVENANCE_MEMBER_CHECKS,
+        )
+    }
+}
+
+/// Validated options for explicit positive edge simplification.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct CellSimplificationOptions {
+    chord_threshold: f32,
+    policy: SimplificationCellPolicy,
+    limits: CellSimplificationLimits,
+}
+
+impl CellSimplificationOptions {
+    /// Create options from a positive unit-sphere chord threshold.
+    pub fn from_chord_length(
+        chord_threshold: f32,
+    ) -> Result<Self, CellSimplificationThresholdError> {
+        if !chord_threshold.is_finite() {
+            return Err(CellSimplificationThresholdError::NonFinite);
+        }
+        if chord_threshold <= 0.0 {
+            return Err(CellSimplificationThresholdError::NonPositive);
+        }
+        if chord_threshold > 2.0 {
+            return Err(CellSimplificationThresholdError::ExceedsSphereDiameter);
+        }
+        Ok(Self {
+            chord_threshold,
+            policy: SimplificationCellPolicy::Preserve,
+            limits: CellSimplificationLimits::default(),
+        })
+    }
+
+    /// Replace the effective-cell outcome policy.
+    pub const fn with_cell_policy(mut self, policy: SimplificationCellPolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    /// Replace deterministic work limits.
+    pub const fn with_limits(mut self, limits: CellSimplificationLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Requested unit-sphere chord threshold.
+    pub const fn chord_threshold(self) -> f32 {
+        self.chord_threshold
+    }
+
+    /// Effective-cell outcome policy.
+    pub const fn cell_policy(self) -> SimplificationCellPolicy {
+        self.policy
+    }
+
+    /// Deterministic work limits.
+    pub const fn limits(self) -> CellSimplificationLimits {
+        self.limits
+    }
+}
+
+/// Phase in which an explicit simplification failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CellSimplificationPhase {
+    /// Source preparation has not completed.
+    Preparation,
+    /// Exact stored-position source preflight completed or failed.
+    SourcePreflight,
+    /// Mandatory exact-zero resolution.
+    Exact,
+    /// Optional positive-threshold contraction.
+    Positive,
+    /// Elision-created degree-two subdivision suppression.
+    Suppression,
+    /// Fixed-point provenance and topology certification.
+    FinalCertification,
+    /// Dense public mesh validation.
+    Validation,
+}
+
+/// Stable top-level reason a positive simplification was rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CellSimplificationErrorKind {
+    /// The report-bearing computation was not a valid simplification source.
+    InvalidSource,
+    /// A source face has fewer than three stored positions without exact closure.
+    UnsupportedStoredDegeneracy,
+    /// A mandatory exact-zero group could not be represented safely.
+    UnresolvedExactGroup,
+    /// Error policy encountered a requested cell-killing contraction.
+    CellEliminationRequired,
+    /// The diameter pair-comparison limit was exhausted.
+    DiameterPairLimitExceeded,
+    /// The cumulative cell-index visit limit was exhausted.
+    CellIndexLimitExceeded,
+    /// The suppressed-member geometry-check limit was exhausted.
+    ProvenanceMemberLimitExceeded,
+    /// A checked cumulative work counter overflowed.
+    CounterOverflow,
+    /// A requested quotient failed its topology or geometry certificate.
+    UnsafeQuotient,
+    /// Suppression endpoints could not define a sufficiently conditioned arc.
+    IllConditionedReplacementArc,
+    /// A positive-caused suppressed member exceeded the requested arc bound.
+    PositiveSuppressionDeviation,
+    /// Compact public mesh storage cannot represent the result.
+    RepresentationLimit,
+    /// Final strict cell-mesh validation rejected the result.
+    ValidationFailed,
+}
+
+/// Deterministic work consumed by simplification.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CellSimplificationWork {
+    /// Exact source-member pair comparisons performed by diameter checks.
+    pub diameter_pair_comparisons: u64,
+    /// Cumulative live cell-index entries examined.
+    pub cell_index_visits: u64,
+    /// Suppressed-member current/final geometry checks performed.
+    pub provenance_member_checks: u64,
+    /// Largest unique candidate count retained by one phase attempt.
+    pub candidate_high_water: u64,
+}
+
+/// Narrow diagnostic report returned with a failed conversion.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct CellSimplificationFailureReport {
+    /// Requested unit-sphere chord threshold.
+    pub requested_chord_threshold: f32,
+    /// Exact promoted-f64 squared threshold used for stored chords.
+    pub stored_chord_threshold_squared: f64,
+    /// Last phase reached by the failing operation.
+    pub failure_phase: CellSimplificationPhase,
+    /// Deterministic work successfully consumed before failure.
+    pub work: CellSimplificationWork,
+    /// Original input indices affected by the failing transaction, when known.
+    pub affected_original_inputs: Vec<usize>,
+}
+
+/// Observable result of a successful positive simplification.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct CellSimplificationReport {
+    /// Requested unit-sphere chord threshold.
+    pub requested_chord_threshold: f32,
+    /// Exact promoted-f64 squared threshold used for stored chords.
+    pub stored_chord_threshold_squared: f64,
+    /// Number of fixed-point attempts, including the terminal no-progress attempt.
+    pub round_attempts: usize,
+    /// Number of attempts which published one topology-changing transaction.
+    pub productive_rounds: usize,
+    /// Unique exact-zero candidate occurrences across phase attempts.
+    pub exact_candidate_occurrences: u64,
+    /// Unique positive candidate occurrences across phase attempts.
+    pub positive_candidate_occurrences: u64,
+    /// Candidate occurrences observed after the initial attempt.
+    pub later_round_candidate_occurrences: u64,
+    /// Fully certified transactions committed to the successful private buffer.
+    pub committed_transactions: usize,
+    /// Exact-zero component occurrences contained in committed transactions.
+    pub exact_components_committed: usize,
+    /// Positive component occurrences contained in committed transactions.
+    pub positive_components_committed: usize,
+    /// Positive component occurrences declined for excessive source diameter.
+    pub positive_components_declined_diameter: u64,
+    /// Positive interaction-group occurrences declined to preserve cells.
+    pub positive_groups_declined_cell: u64,
+    /// Positive interaction-group occurrences declined by topology/representation checks.
+    pub positive_groups_declined_topology: u64,
+    /// Positive threshold edges remaining at the final fixed point.
+    pub remaining_positive_edges: usize,
+    /// Exact stored-zero edges remaining at the final fixed point.
+    pub remaining_exact_edges: usize,
+    /// Sum of final positive-nonzero and exact-zero threshold edges.
+    pub remaining_edges_at_or_below_threshold: usize,
+    /// Effective generator cells removed by Elide.
+    pub effective_cells_elided: usize,
+    /// Original input indices mapped to no final cell.
+    pub source_inputs_elided: usize,
+    /// Live stable-id vertices retired by committed transactions.
+    pub vertices_retired: usize,
+    /// Source-buffer vertices absent after final compaction, including prior orphans.
+    pub vertices_removed: usize,
+    /// Largest retained source-member count of any considered component.
+    pub max_component_members: usize,
+    /// Largest stored-chord diameter of a committed positive component.
+    pub max_component_diameter: f64,
+    /// Largest stored-chord displacement to a selected representative.
+    pub max_representative_displacement: f64,
+    /// Suppressed vertices whose cause remained threshold-independent exact work.
+    pub exact_suppression_members: usize,
+    /// Largest acceptance-time exact suppression cross-track residual.
+    pub max_exact_suppression_cross_track_radians: f64,
+    /// Suppressed vertices finally carrying positive cause.
+    pub positive_suppression_members: usize,
+    /// Largest final positive suppressed-member deviation from its owner arc.
+    pub max_positive_suppression_unit_arc_chord: f64,
+    /// Deterministic work consumed by the successful conversion.
+    pub work: CellSimplificationWork,
+    /// Strict validation of the returned cell mesh.
+    pub validation: CellMeshValidationReport,
+}
+
+/// Successful explicit positive simplification.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct SimplifiedCellMeshOutput {
+    /// Dense simplified abstract S2 cell mesh.
+    pub mesh: SphericalCellMesh,
+    /// Original construction and repair report.
+    pub compute_report: crate::ComputeReport,
+    /// Positive simplification result telemetry.
+    pub simplification_report: CellSimplificationReport,
+}
+
+/// Failure of [`crate::ComputeOutput::into_simplified_cell_mesh`].
+#[derive(Debug)]
+pub struct CellSimplificationError {
+    kind: CellSimplificationErrorKind,
+    message: String,
+    report: CellSimplificationFailureReport,
+    source_output: Box<crate::ComputeOutput>,
+}
+
+impl CellSimplificationError {
+    fn new(
+        kind: CellSimplificationErrorKind,
+        message: impl Into<String>,
+        report: CellSimplificationFailureReport,
+        source_output: crate::ComputeOutput,
+    ) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            report,
+            source_output: Box::new(source_output),
+        }
+    }
+
+    /// Stable top-level rejection category.
+    pub fn kind(&self) -> CellSimplificationErrorKind {
+        self.kind
+    }
+
+    /// Unstable diagnostic detail.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Borrow failure phase, work, and affected-input diagnostics.
+    pub fn report(&self) -> &CellSimplificationFailureReport {
+        &self.report
+    }
+
+    /// Borrow the original successful computation.
+    pub fn source_output(&self) -> &crate::ComputeOutput {
+        &self.source_output
+    }
+
+    /// Recover the original successful computation without cloning.
+    pub fn into_source_output(self) -> crate::ComputeOutput {
+        *self.source_output
+    }
+}
+
+impl fmt::Display for CellSimplificationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "cell simplification {:?}: {}", self.kind, self.message)
+    }
+}
+
+impl std::error::Error for CellSimplificationError {}
+
 /// Stable top-level reason an explicit cell-elision conversion was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -701,6 +1089,225 @@ impl crate::ComputeOutput {
             Err((kind, message)) => Err(CellElisionError::new(kind, message, self)),
         }
     }
+
+    /// Consume a report-bearing computation and explicitly simplify every
+    /// admissible live edge within a positive chord threshold.
+    ///
+    /// This is a cold postprocess. It does not change ordinary construction or
+    /// exact-zero output resolution. The returned mesh is a valid abstract S2
+    /// cell complex, not necessarily a Voronoi diagram of the source sites.
+    pub fn into_simplified_cell_mesh(
+        self,
+        options: CellSimplificationOptions,
+    ) -> Result<SimplifiedCellMeshOutput, CellSimplificationError> {
+        match prepare_simplified_cell_mesh(&self, options) {
+            Ok((mesh, simplification_report)) => {
+                let crate::ComputeOutput { report, .. } = self;
+                Ok(SimplifiedCellMeshOutput {
+                    mesh,
+                    compute_report: report,
+                    simplification_report,
+                })
+            }
+            Err((kind, message, report)) => {
+                Err(CellSimplificationError::new(kind, message, report, self))
+            }
+        }
+    }
+}
+
+fn public_simplification_phase(
+    phase: crate::knn_clipping::positive_simplification::Phase,
+) -> CellSimplificationPhase {
+    use crate::knn_clipping::positive_simplification::Phase;
+    match phase {
+        Phase::Preparation => CellSimplificationPhase::Preparation,
+        Phase::SourcePreflight => CellSimplificationPhase::SourcePreflight,
+        Phase::Exact => CellSimplificationPhase::Exact,
+        Phase::Positive => CellSimplificationPhase::Positive,
+        Phase::Suppression => CellSimplificationPhase::Suppression,
+        Phase::FinalCertification => CellSimplificationPhase::FinalCertification,
+    }
+}
+
+fn public_simplification_work(
+    work: crate::knn_clipping::positive_simplification::WorkStats,
+) -> CellSimplificationWork {
+    CellSimplificationWork {
+        diameter_pair_comparisons: work.diameter_pair_comparisons,
+        cell_index_visits: work.cell_index_visits,
+        provenance_member_checks: work.provenance_member_checks,
+        candidate_high_water: work.candidate_high_water,
+    }
+}
+
+fn public_simplification_error_kind(
+    kind: crate::knn_clipping::positive_simplification::FailureKind,
+) -> CellSimplificationErrorKind {
+    use crate::knn_clipping::positive_simplification::FailureKind;
+    match kind {
+        FailureKind::UnsupportedStoredDegeneracy => {
+            CellSimplificationErrorKind::UnsupportedStoredDegeneracy
+        }
+        FailureKind::UnresolvedExactGroup => CellSimplificationErrorKind::UnresolvedExactGroup,
+        FailureKind::CellEliminationRequired => {
+            CellSimplificationErrorKind::CellEliminationRequired
+        }
+        FailureKind::DiameterLimit => CellSimplificationErrorKind::DiameterPairLimitExceeded,
+        FailureKind::CellIndexLimit => CellSimplificationErrorKind::CellIndexLimitExceeded,
+        FailureKind::ProvenanceLimit => CellSimplificationErrorKind::ProvenanceMemberLimitExceeded,
+        FailureKind::CounterOverflow => CellSimplificationErrorKind::CounterOverflow,
+        FailureKind::Validation => CellSimplificationErrorKind::ValidationFailed,
+        FailureKind::UnsafeQuotient => CellSimplificationErrorKind::UnsafeQuotient,
+        FailureKind::IllConditionedReplacementArc => {
+            CellSimplificationErrorKind::IllConditionedReplacementArc
+        }
+        FailureKind::PositiveSuppressionDeviation => {
+            CellSimplificationErrorKind::PositiveSuppressionDeviation
+        }
+    }
+}
+
+fn prepare_simplified_cell_mesh(
+    source: &crate::ComputeOutput,
+    options: CellSimplificationOptions,
+) -> Result<
+    (SphericalCellMesh, CellSimplificationReport),
+    (
+        CellSimplificationErrorKind,
+        String,
+        CellSimplificationFailureReport,
+    ),
+> {
+    let threshold = options.chord_threshold as f64;
+    let threshold_squared = threshold * threshold;
+    let basic_failure = |failure_phase| CellSimplificationFailureReport {
+        requested_chord_threshold: options.chord_threshold,
+        stored_chord_threshold_squared: threshold_squared,
+        failure_phase,
+        work: CellSimplificationWork::default(),
+        affected_original_inputs: Vec::new(),
+    };
+    let prepared = prepare_cell_mesh_source(source).map_err(|error| {
+        let (kind, phase) = match error.kind {
+            CellMeshPreparationErrorKind::InvalidSource => (
+                CellSimplificationErrorKind::InvalidSource,
+                CellSimplificationPhase::Preparation,
+            ),
+            CellMeshPreparationErrorKind::RepresentationLimit => (
+                CellSimplificationErrorKind::RepresentationLimit,
+                CellSimplificationPhase::Preparation,
+            ),
+        };
+        (kind, error.message, basic_failure(phase))
+    })?;
+    let policy = match options.policy {
+        SimplificationCellPolicy::Preserve => {
+            crate::knn_clipping::positive_simplification::CellPolicy::Preserve
+        }
+        SimplificationCellPolicy::Error => {
+            crate::knn_clipping::positive_simplification::CellPolicy::Error
+        }
+        SimplificationCellPolicy::Elide => {
+            crate::knn_clipping::positive_simplification::CellPolicy::Elide
+        }
+    };
+    let limits = crate::knn_clipping::positive_simplification::Limits {
+        diameter_pair_comparisons: options.limits.diameter_pair_comparisons,
+        cell_index_visits: options.limits.cell_index_visits,
+        provenance_member_checks: options.limits.provenance_member_checks,
+    };
+    let outcome = crate::knn_clipping::positive_simplification::simplify(
+        &prepared.vertices,
+        &prepared.cells,
+        &prepared.cell_indices,
+        threshold,
+        policy,
+        limits,
+    )
+    .map_err(|failure| {
+        let affected: FxHashSet<usize> = failure.affected_effective_cells.iter().copied().collect();
+        let affected_original_inputs = prepared
+            .input_to_effective
+            .iter()
+            .enumerate()
+            .filter_map(|(input, &effective)| {
+                affected.contains(&(effective as usize)).then_some(input)
+            })
+            .collect();
+        (
+            public_simplification_error_kind(failure.kind),
+            failure.message,
+            CellSimplificationFailureReport {
+                requested_chord_threshold: options.chord_threshold,
+                stored_chord_threshold_squared: threshold_squared,
+                failure_phase: public_simplification_phase(failure.phase),
+                work: public_simplification_work(failure.work),
+                affected_original_inputs,
+            },
+        )
+    })?;
+    let vertices_removed = prepared.vertices.len() - outcome.vertices.len();
+    // SAFETY: simplification only retains validated source vertex records; it
+    // neither edits their coordinates nor creates unchecked directions.
+    let final_vertices = unsafe { crate::types::sphere_points_from_vec3(outcome.vertices) };
+    let finalized = finalize_cell_mesh_source(
+        &prepared,
+        final_vertices,
+        outcome.cycles,
+        &outcome.effective_to_cell,
+        &outcome.cell_to_effective,
+    )
+    .map_err(|message| {
+        (
+            CellSimplificationErrorKind::ValidationFailed,
+            message,
+            CellSimplificationFailureReport {
+                requested_chord_threshold: options.chord_threshold,
+                stored_chord_threshold_squared: threshold_squared,
+                failure_phase: CellSimplificationPhase::Validation,
+                work: public_simplification_work(outcome.work),
+                affected_original_inputs: Vec::new(),
+            },
+        )
+    })?;
+    let stats = outcome.stats;
+    Ok((
+        finalized.mesh,
+        CellSimplificationReport {
+            requested_chord_threshold: options.chord_threshold,
+            stored_chord_threshold_squared: threshold_squared,
+            round_attempts: stats.round_attempts,
+            productive_rounds: stats.productive_rounds,
+            exact_candidate_occurrences: stats.exact_candidate_occurrences,
+            positive_candidate_occurrences: stats.positive_candidate_occurrences,
+            later_round_candidate_occurrences: stats.later_round_candidate_occurrences,
+            committed_transactions: stats.committed_transactions,
+            exact_components_committed: stats.exact_components_committed,
+            positive_components_committed: stats.positive_components_committed,
+            positive_components_declined_diameter: stats.positive_components_declined_diameter,
+            positive_groups_declined_cell: stats.positive_groups_declined_cell,
+            positive_groups_declined_topology: stats.positive_groups_declined_topology,
+            remaining_positive_edges: stats.final_positive_edges,
+            remaining_exact_edges: stats.final_exact_edges,
+            remaining_edges_at_or_below_threshold: stats.final_positive_edges
+                + stats.final_exact_edges,
+            effective_cells_elided: stats.effective_cells_elided,
+            source_inputs_elided: finalized.source_inputs_elided,
+            vertices_retired: stats.vertices_retired,
+            vertices_removed,
+            max_component_members: stats.max_component_members,
+            max_component_diameter: stats.max_component_diameter,
+            max_representative_displacement: stats.max_representative_displacement,
+            exact_suppression_members: stats.exact_suppression_members,
+            max_exact_suppression_cross_track_radians: stats
+                .max_exact_suppression_cross_track_radians,
+            positive_suppression_members: stats.positive_suppression_members,
+            max_positive_suppression_unit_arc_chord: stats.max_positive_suppression_unit_arc_chord,
+            work: public_simplification_work(outcome.work),
+            validation: finalized.validation,
+        },
+    ))
 }
 
 fn prepare_elided_cell_mesh(

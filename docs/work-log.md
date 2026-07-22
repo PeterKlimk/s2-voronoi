@@ -245,20 +245,26 @@ default `Preserve` behavior.
 ### RES-002 — Optional positive-threshold edge simplification
 
 - **Priority:** P2
-- **Status:** Decision
+- **Status:** Implemented 2026-07-23
 - **Dependencies:** RES-001 (completed)
 - **Goal:** let graphical or physics consumers explicitly remove represented nonzero slivers.
-- **Decisions required:**
-  - approve stored-chord discovery, normalized unit-arc suppression, and the abstract-complex
-    geometry contract;
-  - approve diameter-bounded stable-id fixed-point transactions with exact-zero precedence,
-    rollbackable scratch, and restart after each published mutation;
-  - approve Preserve/Elide retry behavior, deterministic first-failure Error behavior, and
-    unsupported-source preflight;
-  - approve threshold-independent exact suppression plus cause-aware current/final positive
-    certification for Elide-created subdivisions; and
-  - pin the three deterministic work limits, numeric arc-conditioning constants, public
-    option/report fields, and quantitative performance gates.
+- **Implemented:** explicit consuming unit and embedded conversions; inclusive stored-chord
+  discovery; all-pairs diameter-bounded minimum-id components; exact-first deterministic fixed
+  point; transactional complete-mesh topology certification; `Preserve`, first-failure `Error`,
+  and provenance-preserving `Elide`; checked work budgets; and distinct success/failure reports
+  which retain the untouched source on error.
+- **Pinned policy:** default work limits are 100,000,000 diameter comparisons, 100,000,000
+  cell-index visits, and 100,000,000 provenance checks. Positive suppression uses `1e-24`
+  squared endpoint-cross/projection floors and `64 * f64::EPSILON` arc-membership tolerance.
+- **Performance acceptance:** ordinary 500k Fibonacci single-threaded construction is gated at no
+  more than +0.5% retired instructions and +1.0% branches versus revision `ee8e73b`; seven
+  interleaved `perf stat` rounds measured +0.127% and +0.366%, respectively. The dedicated
+  `bench_simplify` probe (10k Fibonacci, single-threaded) measured 42.9 ms candidate-free
+  (`239,952` cell-index visits), 297 ms with 36 candidate occurrences / 8 commits, and 2.28 s with
+  3,403 occurrences / 82 commits. A 100k candidate-heavy probe stopped recoverably at the default
+  100,000,000-visit ceiling after 10.86 s rather than running unbounded. These are cold conversion
+  characterizations, not ordinary-path budgets. Shared exact-elision focused and full release
+  suites remain unchanged and passing.
 - **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
   exact Voronoi diagram of the original generators.
 - **References:** [`output-resolution-policy.md`](output-resolution-policy.md) and

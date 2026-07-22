@@ -1,6 +1,6 @@
 # Positive-threshold edge simplification plan
 
-**Status:** revision 9; policy approval and Stage 0 calibration required before production work
+**Status:** revision 9 implemented; final validation and performance acceptance recorded with RES-002
 
 **Date:** 2026-07-23
 
@@ -20,6 +20,19 @@ arrays instead of per-face sorting, deterministic first-failure Error semantics 
 exhaustive simulation, stable source ids instead of rollback-sensitive dense member ordinals, and
 success-only result counters instead of a fallible multi-field publication delta. It also requires
 iterative bag traversal and clarifies that work-counter overflow precedes only the work it charges.
+
+Implementation pins the public threshold and report shape described below. The checked default
+budgets are 100,000,000 diameter pair comparisons, 100,000,000 cell-index visits, and
+100,000,000 provenance member checks. The executable minor-arc predicate uses finite squared-cross
+and projection floors of `1e-24` and `tau = 64 * f64::EPSILON`. These constants are part of the
+documented policy surface; changes require adjacent-boundary tests and a new performance/resource
+review. Ordinary computation remains the numeric performance control because the simplifier is
+reachable only through an explicit consuming conversion. The accepted 500k Fibonacci,
+single-threaded ordinary-path gate is at most +0.5% retired instructions and +1.0% branches against
+the pre-implementation revision, using seven interleaved `perf stat` rounds. Cold conversion is
+reported separately with candidate-free, sparse-candidate, and candidate-heavy work counts; its
+first release values are characterization baselines rather than a promise of linear fixed-point
+runtime.
 
 ## Goal and non-goals
 

@@ -67,6 +67,19 @@ that instead accepts generator removal can consume a successful `ComputeOutput` 
 `into_elided_cell_mesh`, receiving a separately typed valid spherical cell mesh with explicit
 `input -> Option<cell>` provenance. It does not inherit Voronoi locator, Delaunay, or Lloyd claims.
 
+`ComputeOutput::into_simplified_cell_mesh` is the separate opt-in approximation surface for
+positive edges. Its public threshold is unit-sphere chord length; candidate and component-diameter
+tests use raw stored-f32 coordinates promoted to f64, with an inclusive comparison. Exact stored
+zero is resolved first in every fixed-point round. `Preserve` declines optional contractions that
+would remove a cell, `Error` stops at the first such requested removal or unresolved exact base,
+and `Elide` permits cell removal while preserving explicit input provenance. All successful modes
+return a strictly validated `SphericalCellMesh`, not a promise that retained boundaries remain
+Voronoi bisectors. Elide-created degree-two subdivisions are suppressed only after opposite-owner
+rotation checks; positive-caused suppression is additionally certified against the final minor
+arc using normalized unit-sphere chord deviation. Configured checked work limits make expensive
+fixed-point, all-pairs, and provenance recertification failures recoverable with the original
+`ComputeOutput` intact.
+
 Clean construction performs one degree-local necessary-coordinate scan after each cell's final f32
 extraction, then checks complete final assembled positions only for flagged cells. The hot scan
 flags local x-separations through `2 * 1e-6` (plus one threshold ULP). Dedup simultaneously
