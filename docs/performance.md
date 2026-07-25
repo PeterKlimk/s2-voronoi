@@ -734,6 +734,16 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- **Permutation-boundary two-pass scatter:** staging each cell as its generator id plus
+  already-globalized index payload, then filling cache-sized destination windows, passed its
+  isolated 2M uniform phase gate only after increasing the partition from the proposed 64 windows
+  to 128. The 128-window form reduced seven-pair all-core cycles by 1.60% at 1M uniform and 2.19%
+  at 2M uniform, but added about 0.4--0.5% instructions and 0.7--0.8% branches across ordinary
+  regimes. It regressed 2M Fibonacci cycles 1.88%, `cubed` cycles 0.58--0.75%, and 1M clustered
+  cycles 0.98%. This is the predeclared correlated-control falsifier, not a case for a fourth
+  distribution-sensitive scatter mode. The prototype and private switch were removed; the full
+  phase sweep and counter matrix are recorded in
+  [`permutation-boundary-scatter-idea.md`](permutation-boundary-scatter-idea.md#experiment-result).
 - Implementing `LiveCellLayout` checked spans with `slice.get(start..end)` added a redundant range
   validity branch to clean-path reconciliation traversal. Seven interleaved 500k single-threaded
   Fibonacci pairs showed +0.1337% instructions and +1.6620% branches. Preserve the accepted
