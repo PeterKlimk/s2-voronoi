@@ -8,14 +8,14 @@ removed. See [Experiment result](#experiment-result).
 Originally written after a read-only pass over `performance.md`,
 `algorithmic-performance-ideas.md`, `memory-layout-ideas.md`, and the kernel experiment log.
 
-[`work-log.md`](work-log.md) remains the authoritative queue. This document should move a candidate
-into the narrow experiment queue in [`performance.md`](performance.md#open-optimization-queue), or
+[`work-log.md`](../work-log.md) remains the authoritative queue. This document should move a candidate
+into the narrow experiment queue in [`performance.md`](../performance.md#open-optimization-queue), or
 into the retired list, only after the gate below has run.
 
 ## Why this boundary and not the kernel
 
 The July 2026 kernel pass is closed
-([`kernel-optimization-experiment-log.md`](kernel-optimization-experiment-log.md#pass-closeout)):
+([`kernel-optimization-experiment-log.md`](../internal/kernel-optimization-experiment-log.md#pass-closeout)):
 every shortlisted production hypothesis was rejected, and the surviving ceilings are all around one
 percent. Demand-sized prefixes have a real 44–63% first-batch abandonment premise but a fixed
 8-slot request cost +2.777% instructions on uniform. Regional local hull did not reach 74% of even
@@ -30,7 +30,7 @@ claim of this document is that the family was only half-explored.
 
 ## The framing gap
 
-[`performance.md`](performance.md#open-optimization-queue) states the accepted policy as a choice
+[`performance.md`](../performance.md#open-optimization-queue) states the accepted policy as a choice
 between two traversals:
 
 > Generator-order traversal gives sequential destination writes but can jump among shard source
@@ -58,7 +58,7 @@ the cheaper loss; it never removes the loss.
 
 ## Size of the prize
 
-From the existing attribution in [`performance.md`](performance.md#open-optimization-queue), at 2M
+From the existing attribution in [`performance.md`](../performance.md#open-optimization-queue), at 2M
 on the eight-thread Intel Mac:
 
 | Phase | Fibonacci | Uniform |

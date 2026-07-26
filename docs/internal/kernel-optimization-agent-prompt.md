@@ -45,7 +45,8 @@ Use this order to reduce anchoring:
    - `src/cube_grid/packed_knn/scratch/prepare.rs`
    - `src/cube_grid/packed_knn/scratch/emit.rs`
    - `src/knn_clipping/topo2d/clippers/small.rs`
-3. Read `docs/kernel-optimization-brief.md`, especially its contracts and focused-context routing.
+3. Read `docs/internal/kernel-optimization-brief.md`, especially its contracts and focused-context
+   routing.
 4. Read only the supporting files required to verify your hypotheses.
 5. Read `docs/performance.md`, especially “Source-pinned performance decisions,” after forming your
    preliminary hypotheses. Use it to identify collisions with prior work, not to erase an idea whose

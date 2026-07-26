@@ -214,7 +214,7 @@ remained uncorrelated shared-host noise.
 The first diagnostics/test-layout slice was validated on 2026-07-18 against immediate parent
 `a777508`.
 
-- [`environment-knobs.md`](environment-knobs.md) classifies every library, tool, campaign, and
+- [`environment-knobs.md`](../environment-knobs.md) classifies every library, tool, campaign, and
   manual-probe variable found in Rust and repository scripts. It records reader ownership,
   snapshot cadence, current writers, and the integration-test process boundary.
 - The stale `VORONOI_MESH_PLANE_GRID_DENSITY` documentation was removed; no planar backend or

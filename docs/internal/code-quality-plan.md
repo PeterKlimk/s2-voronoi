@@ -14,7 +14,7 @@ like ordinary application Rust. The SIMD kernels, SoA storage, direct scatters, 
 and defect-local algorithms exist for measured reasons. Cleanup is successful only when it
 clarifies ownership and invariants while preserving those reasons.
 
-[`work-log.md`](work-log.md) remains the authoritative queue. This document owns the detailed
+[`work-log.md`](../work-log.md) remains the authoritative queue. This document owns the detailed
 scope, ordering, and acceptance gates for `QUAL-001`.
 
 ## Compatibility posture
@@ -257,8 +257,9 @@ and diagnostic-knob documentation should be refreshed as part of the same hygien
 **Hot-path impact expected:** none
 
 **Progress:** completed 2026-07-20. Vocabulary items 1–3 were validated 2026-07-17. The state-model
-inventory is recorded in [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md). The first selected
-boundary, local rebuilding, is implemented: one status enum replaces the internal/public
+decisions are summarized in the
+[`code-quality closeout`](code-quality-closeout.md#lifecycle-and-effective-state-ownership). The
+first selected boundary, local rebuilding, is implemented: one status enum replaces the internal/public
 `attempted` + `accepted` pair while low-incidence and Euler defect facts remain independent. With
 no external users, the migration was atomic and left no deprecated boolean fields; existing KV
 names derive identical values from status methods. Seven release counter pairs were neutral. The
@@ -326,7 +327,7 @@ stops at the accepted segment, duplicate-key, semantic-comparison, and unpaired 
 existing local rewrite remains explicit at its call site.
 
 The post-`EffectiveGeometry` overlay/materialization slice is accepted and recorded in
-[`live-cell-layout-inventory.md`](live-cell-layout-inventory.md). `WorkingDiagram` now owns one
+[`code-quality closeout`](code-quality-closeout.md#live-cell-layout). `WorkingDiagram` now owns one
 read-only layout instead of independent base cell/index references. Direct-index base traversal,
 override substitution, and materialization are pinned, and the clean release counter gate was
 neutral. No deterministic mega fixture currently reaches the overlay—the same seeds are valid
@@ -334,7 +335,7 @@ with rebuilding disabled—so no triggered counter result is claimed. This does 
 rejected reconciliation signature.
 
 The effective-validation boundary is accepted and recorded in
-[`effective-validation-layout-inventory.md`](effective-validation-layout-inventory.md). The
+[`code-quality closeout`](code-quality-closeout.md#effective-validation-layout). The
 original caller-to-scan layout, internal-scan-only form, and isolated checked-span hardening all
 reproduced the historical clean-path optimizer cliff and were reverted. After surrounding codegen
 changed, the full boundary retested with neutral branches, no adverse cycle signal, and only
@@ -343,8 +344,8 @@ neutral. The effective gate now receives one cell/index layout while retaining i
 generator cardinality, candidate vertices, parallel rank ordering, and static reasons. Checked
 span-end addition preserves portable malformed-input rejection.
 
-The final assembly-handoff inventory is closed in
-[`assembly-handoff-layout-inventory.md`](assembly-handoff-layout-inventory.md). Assembly produces a
+The final assembly-handoff decision is recorded in
+[`code-quality closeout`](code-quality-closeout.md#assembly-handoff). Assembly produces a
 freshly compacted layout and has one production consumer, which immediately moves the cell vectors
 into the already-accepted `EffectiveGeometry` owner. An owned layout nested in `AssemblyResult`
 would therefore exist only for a wrapper/unwrapper move, while propagating it would duplicate the
@@ -379,10 +380,10 @@ iteration difficult outside the defining module while producing identical final 
 
 **Hot-path impact expected:** none unless optional verification/reporting is requested
 
-**Progress:** inventory completed 2026-07-19. The three consumers, their input/weld/failure
-policies, existing shared primitives, reason ordering, and negative-control gaps are recorded in
-[`validation-fact-inventory.md`](validation-fact-inventory.md). The main duplication is traversal
-policy rather than fact identity, so no universal report-building scan is planned. Differential
+**Progress:** analysis completed 2026-07-19. The three consumers, their input/weld/failure policies,
+existing shared primitives, reason ordering, and negative-control gaps are summarized in the
+[`code-quality closeout`](code-quality-closeout.md#shared-validation-facts). The main duplication is
+traversal policy rather than fact identity, so no universal report-building scan is planned. Differential
 coverage now pins every safely constructible no-weld shared fail-fast reason, effective-only
 cardinality/span failures, connectivity-versus-Euler ordering, self-loop dominance, and the
 report's three edge-use subclasses. `EdgeUseClass` is the first accepted shared classification: it
@@ -423,7 +424,7 @@ for an ordinary success gate that did not previously need them.
 **Hot-path impact expected:** must be proven neutral
 
 **Progress:** the first reconciliation boundary is accepted and recorded in
-[`reconciliation-orchestration-inventory.md`](reconciliation-orchestration-inventory.md). The
+[`code-quality closeout`](code-quality-closeout.md#reconciliation-orchestration). The
 implementation introduces one defect-local run-state owner for the merge ledger, rebuild seeds,
 merge-affected cells, mutation scan cells, and merge-safety counters shared across primary and
 backstop rounds. It replaces the finalizing closure and four independently threaded accumulators
@@ -432,29 +433,29 @@ construction, and measured raw cell-layout signatures remain unchanged. Complete
 clean Fibonacci and active 100k/500k `cubed` counters were neutral. The artifact removed 544 text
 bytes, 3,552 BSS bytes, and 616 file bytes. The second reconciliation boundary is also accepted and
 recorded in
-[`reconciliation-defect-body-inventory.md`](reconciliation-defect-body-inventory.md): the
+[`code-quality closeout`](code-quality-closeout.md#reconciliation-defect-body): the
 empty-record return and checked structural audit remain in the entry, while the nonempty-record
 program now has a private helper with the same explicit inputs. LLVM retained the prior function
 sizes, and clean Fibonacci plus active `cubed` counters were neutral. The local-rebuild transaction
 boundary is also accepted and recorded in
-[`local-rebuild-transaction-inventory.md`](local-rebuild-transaction-inventory.md): every
+[`code-quality closeout`](code-quality-closeout.md#local-rebuild-transaction): every
 ordinary-path gate and overlay-growth decision remains in place, while a productive overlay's
 minted vertices, replacement arrays, and mutation footprint become one owned candidate. Its
 consuming commit method preserves append, strict validation, diagnostics, and truncate-or-swap
 behavior. Direct accepted/rejected transaction tests pass; clean Fibonacci and the deterministic
 seed-224 productive-rejection counters are neutral, and LLVM emits no standalone boundary.
-The first live-assembly boundary is accepted and recorded in
-[`assembly-phase-inventory.md`](assembly-phase-inventory.md). Mutable shard repair already has
-meaningful helpers, while vertex/cell materialization and the two-mode unsafe scatter retain their
+The first live-assembly boundary is accepted and recorded in the
+[`code-quality closeout`](code-quality-closeout.md#live-assembly-phase). Mutable shard repair already
+has meaningful helpers, while vertex/cell materialization and the two-mode unsafe scatter retain their
 explicit performance-shaped control flow. Private `ConfirmedZeroEdgeHints` and
 `confirm_exact_zero_edge_hints` own only final exact-zero hint confirmation after sparse patching,
 returning the correlated candidate vector and hint-cell count. Direct evidence semantics and all
 complete validation gates pass. LLVM fully inlines the helper, shrinks the assembly body by 50
 bytes, and the ordered Fibonacci, scrambled uniform, high-bin, and denser clustered counter gates
 are neutral. This closes the presently justified assembly extraction surface. Packed preparation
-is inventoried and closed in
-[`packed-preparation-inventory.md`](packed-preparation-inventory.md). The range-discovery and budget
-helper passes all semantic gates. Its compact form was rejected after adding 0.1397% instructions
+is analyzed and closed in the
+[`code-quality closeout`](code-quality-closeout.md#packed-group-preparation). The range-discovery and
+budget helper passes all semantic gates. Its compact form was rejected after adding 0.1397% instructions
 on clustered input. The retained source-shaped form preserves the later center-range read; it adds
 about 0.01% instructions and removes about 0.004–0.006% branches on ordinary inputs, is neutral on
 clustered/mega, and adds 64 text bytes. That is accepted as practical performance neutrality for a
@@ -591,7 +592,7 @@ into packed/assembly hot arrays only if assembly output and benchmark counters r
 **Hot-path impact expected:** neutral or improved
 
 **Progress:** environment inventory and active-test isolation completed 2026-07-18. The inventory
-is maintained in [`environment-knobs.md`](environment-knobs.md); the stale planar density name was
+is maintained in [`environment-knobs.md`](../environment-knobs.md); the stale planar density name was
 retired. Active integration-test writers use one exact-restore, panic-safe scoped guard, while the
 verification-gate unit test uses isolated child processes and leaves the shared unit-test
 environment untouched. Ignored local-rebuild probes now use one thread-local, nested, panic-safe A0

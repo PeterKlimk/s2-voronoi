@@ -70,7 +70,9 @@ High-level flow per generator:
 - `docs/performance.md`: benchmark guidance and perf knobs.
 - `docs/environment-knobs.md`: environment-variable ownership and test-mutation policy.
 - `docs/work-log.md`: authoritative active triage, dependencies, and backburner.
-- `docs/audit-triage.md`: closed July 2026 correctness/safety audit record.
+- `docs/internal/README.md`: index of closed plans, audits, and experiment records.
+- `docs/internal/code-quality-closeout.md`: consolidated July 2026 cleanup decisions and evidence.
+- `docs/research/README.md`: uncommitted hypotheses and retired design ideas.
 
 ## Module Map (Current)
 

@@ -168,7 +168,7 @@ experiment.
 
 ## Prior-work guardrail
 
-Read [Source-pinned performance decisions](performance.md#source-pinned-performance-decisions)
+Read [Source-pinned performance decisions](../performance.md#source-pinned-performance-decisions)
 before implementing local changes. That ledger records accepted and rejected experiments involving:
 
 - lazy candidate and tail materialization;

@@ -30,7 +30,7 @@ fn normalized_chord_sample<A: UnitVec3Like, B: UnitVec3Like>(a: &A, b: &B, t: f6
 }
 
 fn aud_002_points() -> [TestPoint; 5] {
-    // Explicit public-input counterexample from docs/audit-triage.md. Keep the
+    // Explicit public-input counterexample from docs/internal/audit-triage.md. Keep the
     // coordinates here so changes to random fixture generation cannot hide it.
     [
         TestPoint::new(0.580_496_5, -0.535_992_44, -0.612_973),

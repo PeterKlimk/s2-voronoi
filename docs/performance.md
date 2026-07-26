@@ -544,11 +544,11 @@ measured results above or the retired list below. Do not bundle candidates befor
 
 The broader memory-layout and memory-traffic backlog, including regime-dependent tradeoffs,
 hybrid fast-path/fallback designs, and a shared experiment matrix, lives in the repository-only
-[`memory-layout-ideas.md`](https://github.com/PeterKlimk/voronoi-mesh/blob/main/docs/memory-layout-ideas.md).
+[`memory-layout-ideas.md`](https://github.com/PeterKlimk/voronoi-mesh/blob/main/docs/research/memory-layout-ideas.md).
 
 Larger changes to scheduling, local-rebuild scope, pathological-work handoff, and repeated-build reuse are
 kept in the repository-only, non-authoritative
-[`algorithmic performance ideas`](https://github.com/PeterKlimk/voronoi-mesh/blob/main/docs/algorithmic-performance-ideas.md)
+[`algorithmic performance ideas`](https://github.com/PeterKlimk/voronoi-mesh/blob/main/docs/research/algorithmic-performance-ideas.md)
 catalogue.
 
 Recently accepted optimizations:
@@ -744,7 +744,7 @@ Do not broadly retry these without a materially different design or workload:
   cycles 0.98%. This is the predeclared correlated-control falsifier, not a case for a fourth
   distribution-sensitive scatter mode. The prototype and private switch were removed; the full
   phase sweep and counter matrix are recorded in the repository-only
-  [`permutation-boundary-scatter-idea.md`](https://github.com/PeterKlimk/voronoi-mesh/blob/main/docs/permutation-boundary-scatter-idea.md#experiment-result).
+  [`permutation-boundary-scatter-idea.md`](https://github.com/PeterKlimk/voronoi-mesh/blob/main/docs/research/permutation-boundary-scatter-idea.md#experiment-result).
 - Implementing `LiveCellLayout` checked spans with `slice.get(start..end)` added a redundant range
   validity branch to clean-path reconciliation traversal. Seven interleaved 500k single-threaded
   Fibonacci pairs showed +0.1337% instructions and +1.6620% branches. Preserve the accepted
@@ -1036,7 +1036,8 @@ Do not broadly retry these without a materially different design or workload:
   instructions on Fibonacci and 64 text bytes. The compact shape was reverted. The source-shaped
   form was retained as practically neutral after default/high-bin uniform reproduced the same
   roughly one-basis-point instruction displacement with fewer branches, while clustered and mega
-  remained neutral. See `packed-preparation-inventory.md` for the full matrix.
+  remained neutral. The retained decision and reopening condition are summarized in the
+  repository-only [`code-quality closeout`](https://github.com/PeterKlimk/voronoi-mesh/blob/main/docs/internal/code-quality-closeout.md#packed-group-preparation).
 - Hoisting shard-local `usize` to `u32` validation from every generator to once per grid-cell group
   saved about 0.05% native instructions, but slightly increased native branches. Rotated 1M cycles
   split by distribution: Fibonacci favored the candidate in 3/4 pairs while uniform rejected it in

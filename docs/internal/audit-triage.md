@@ -4,7 +4,7 @@ This document is the historical record of findings from the July 2026 source aud
 spherical Voronoi pipeline. It is not the active task tracker and does not imply that every
 suspected issue was reachable from the public API. Each item distinguishes confirmed behavior from
 proof gaps and contract decisions. Unfinished work is tracked only in
-[`work-log.md`](work-log.md).
+[`work-log.md`](../work-log.md).
 
 The audit covered:
 
@@ -67,7 +67,7 @@ The initial source audit was read-only. Resolutions implemented afterward are tr
 
 There are no open correctness or policy findings in this audit. Follow-up hardening, optional
 policy extensions, performance ideas, and research are triaged in
-[`work-log.md`](work-log.md).
+[`work-log.md`](../work-log.md).
 
 The AUD-011 grid-frontier derivation now covers cell containment, forward-map/wall association,
 the packed ring-2 and interior-plane certificates, the dense-band chord certificate, and the final
@@ -1127,7 +1127,7 @@ reconciliation footprint and reduced 18 pre-repair candidates to 17 terminal edg
 confirming why final local cycles—not stale construction candidates—are authoritative.
 
 The separate generator `Error`/`Elide` choices and an optional positive edge threshold remain
-backburner API work in [`output-resolution-policy.md`](output-resolution-policy.md).
+backburner API work in [`output-resolution-policy.md`](../output-resolution-policy.md).
 
 ## Recommended implementation sequence
 

@@ -24,8 +24,8 @@ bisector, and processes candidates one at a time. A selected-constraint preparat
 the correctness responsibilities clear while preserving enough batch structure for SIMD,
 instruction-level parallelism, and redundant-constraint rejection.
 
-[`work-log.md`](work-log.md) remains the authoritative queue. A candidate from this plan should move
-there or into the narrow experiment queue in [`performance.md`](performance.md) only after it has a
+[`work-log.md`](../work-log.md) remains the authoritative queue. A candidate from this plan should move
+there or into the narrow experiment queue in [`performance.md`](../performance.md) only after it has a
 scoped implementation and motivating measurements.
 
 ## Current seam and lost information

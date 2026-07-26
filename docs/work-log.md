@@ -5,11 +5,11 @@
 **Last reorganized:** 2026-07-21
 
 This is the authoritative list of unfinished correctness, robustness, and design work. Historical
-investigations stay in [`audit-triage.md`](audit-triage.md); design rationale stays in the linked
-policy documents. Larger uncommitted possibilities are collected separately in
-[`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md) and
-[`feature-api-wishlist.md`](feature-api-wishlist.md). An unchecked item elsewhere should either be
-moved here or treated as stale.
+investigations stay in [`audit-triage.md`](internal/audit-triage.md); design rationale stays in the
+linked policy documents. Larger uncommitted possibilities are collected separately in
+[`algorithmic-performance-ideas.md`](research/algorithmic-performance-ideas.md) and
+[`feature-api-wishlist.md`](internal/feature-api-wishlist.md). An unchecked item elsewhere should
+either be moved here or treated as stale.
 
 ## Current state
 
@@ -85,7 +85,7 @@ prevention rather than an overclaimed proof.
   canonical queries, avoiding the measured 2.4--5.1% raw-query normalization cost and the
   12-byte/query batch buffer. Raw batch records no longer need to be `Sync`.
   Details are recorded in
-  [`point-api-plan.md`](point-api-plan.md#stage-3--design-locator-validation-as-a-correctness-change).
+  [`point-api-plan.md`](internal/point-api-plan.md#stage-3--design-locator-validation-as-a-correctness-change).
 
 ### POINT-002 — Closure-based point ingest
 
@@ -99,7 +99,7 @@ prevention rather than an overclaimed proof.
   before extraction, validation preserves original indices, and neither records nor extractors
   need to be `Sync` while adaptation remains serial. Exact-output API tests, release
   checks, Linux counters/Cachegrind, and native Mac interleaved timing passed. Detailed performance
-  evidence is recorded in [`point-api-plan.md`](point-api-plan.md#stage-2--add-closure-based-ingest-independently).
+  evidence is recorded in [`point-api-plan.md`](internal/point-api-plan.md#stage-2--add-closure-based-ingest-independently).
 
 ### POINT-001 — Checked spherical point boundary
 
@@ -113,7 +113,7 @@ prevention rather than an overclaimed proof.
   projection, and Hull3d minting already use that order.
 - **Evidence:** the producer audit, candidate topology/fidelity campaign, full release suite,
   Cachegrind/Linux counters, and native Mac timing are recorded in
-  [`point-api-plan.md`](point-api-plan.md#stage-0-findings-and-decision).
+  [`point-api-plan.md`](internal/point-api-plan.md#stage-0-findings-and-decision).
 - **Implementation scope:** migrate public producers/consumers and checked serde together; add the
   audited final allocation ownership transfer and packed xyz views; preserve safe raw import APIs.
   Locator query semantics remain a separate correctness/API stage.
@@ -122,7 +122,7 @@ prevention rather than an overclaimed proof.
   checked serde rejects invalid stored values. Full default and `serde,glam` release suites,
   no-default-feature checks, doctests, and focused Valgrind Memcheck passed. Clippy completed with
   the repository's existing warnings. The Mac and Linux performance evidence is recorded in
-  [`point-api-plan.md`](point-api-plan.md#stage-1--apply-the-representation-decision-and-remove-the-final-point-conversion).
+  [`point-api-plan.md`](internal/point-api-plan.md#stage-1--apply-the-representation-decision-and-remove-the-final-point-conversion).
 
 ## Ongoing work
 
@@ -276,7 +276,7 @@ default `Preserve` behavior.
 - **Contract:** the result is a valid spherical cell complex after explicit simplification, not the
   exact Voronoi diagram of the original generators.
 - **References:** [`output-resolution-policy.md`](output-resolution-policy.md) and
-  [`positive-edge-simplification-plan.md`](positive-edge-simplification-plan.md).
+  [`positive-edge-simplification-plan.md`](internal/positive-edge-simplification-plan.md).
 
 ## Performance robustness
 
@@ -296,7 +296,7 @@ default `Preserve` behavior.
   work.
 - **Before implementation:** measure the actual cold-replay crossover, avoid a fixed candidate
   count such as 128, and prove that the handoff cannot turn a valid success into a failure.
-- **Reference:** AUD-015 in [`audit-triage.md`](audit-triage.md).
+- **Reference:** AUD-015 in [`audit-triage.md`](internal/audit-triage.md).
 
 ### PERF-002 — Post-review kernel hypotheses
 
@@ -309,7 +309,7 @@ default `Preserve` behavior.
   retired-instruction and branch counters; the latter four failed timing-only workload gates. The
   temporary rejected probes were removed; earlier generally useful census/oracle code remains.
   Full branch and counter history is in
-  [`kernel-optimization-experiment-log.md`](kernel-optimization-experiment-log.md#pass-closeout).
+  [`kernel-optimization-experiment-log.md`](internal/kernel-optimization-experiment-log.md#pass-closeout).
 - **Threshold result:** exact center overshoot plus one whole-ring sample removed the ordinary and
   negative density-contrast false positives, but its apparent 100k clustered margin collapsed at
   500k and on splittable input. Reopen only if the distribution statistic becomes free or changing
@@ -327,7 +327,7 @@ default `Preserve` behavior.
   uniform, clustered, mega, and great-circle inputs and 500k clustered. At least 95% of positive
   resident/query work occurs at active width 16 or greater. Fibonacci performs no shell work. The
   temporary oracle was removed; full counters and caveats are in the
-  [`kernel optimization experiment log`](kernel-optimization-experiment-log.md#group-shared-shell-traversal-census).
+  [`kernel optimization experiment log`](internal/kernel-optimization-experiment-log.md#group-shared-shell-traversal-census).
 - **Result:** `CubeMapGridScratch` retains the discovered BFS cell order and layer offsets while
   consecutive queries share a start cell. Queries still compute their own cap bounds, resident
   dots, key ordering, clipping, and edge forwarding; later queries extend the schedule only when
@@ -350,8 +350,8 @@ default `Preserve` behavior.
 
 The remaining code-specific performance experiments are maintained separately in the open queue in
 [`performance.md`](performance.md) and the memory backlog in
-[`memory-layout-ideas.md`](memory-layout-ideas.md). Larger research hypotheses live in
-[`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md). They are not correctness
+[`memory-layout-ideas.md`](research/memory-layout-ideas.md). Larger research hypotheses live in
+[`algorithmic-performance-ideas.md`](research/algorithmic-performance-ideas.md). They are not correctness
 tasks and are not duplicated here.
 
 ## Code quality and maintainability
@@ -371,7 +371,7 @@ tasks and are not duplicated here.
   the public API and implementation, then remove stale compatibility aliases, obsolete test
   terminology, and inaccurate module maps.
 - **Baseline:** counter-oriented Milestone 0 evidence and the exact atomic lifecycle rename map are
-  pinned in [`code-quality-baseline.md`](code-quality-baseline.md). The shared host's wall clock is
+  pinned in [`code-quality-baseline.md`](internal/code-quality-baseline.md). The shared host's wall clock is
   advisory; single-thread retired instructions/branches are the primary first-change sentinel.
 - **Post-closeout layout audit:** the formerly rejected semantic old/new cell-span comparison now
   takes two coherent `LiveCellLayout` values. Its ordinary benchmark path is inactive, a
@@ -385,7 +385,7 @@ tasks and are not duplicated here.
   Semantic fingerprints matched exactly, single-thread retired work was effectively identical,
   multi-thread retired work remained within its declared noise band, and code size/RSS gates
   passed. Detailed measurements are in
-  [`code-quality-baseline.md`](code-quality-baseline.md#qual-001a-validation-result).
+  [`code-quality-baseline.md`](internal/code-quality-baseline.md#qual-001a-validation-result).
 - **QUAL-001F result:** unused compatibility re-exports and the empty `TerminationConfig` were
   removed. With no second backend in the repository, live dedup and reconciliation now own
   spherical `Vec3` positions directly. The compiler visibility audit restricted 216 unreachable
@@ -584,7 +584,7 @@ tasks and are not duplicated here.
   `attempted`/`accepted` booleans, admit the impossible false/true combination, and conflate
   ordinary no-trigger, disabled-policy, and diagnostic-capture paths. Low-incidence and Euler
   signals are independent defect facts, not action states. The exact consumers and migration are
-  recorded in [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md).
+  recorded in [`code-quality closeout`](internal/code-quality-closeout.md#lifecycle-and-effective-state-ownership).
 - **QUAL-001A local-rebuild state result:** `LocalRebuildStatus` represents the four public
   not-triggered, disabled, rejected, and accepted outcomes. Public report booleans were removed
   atomically; derived methods preserve the existing KV values. Private `LocalRebuildExecution`
@@ -605,7 +605,7 @@ tasks and are not duplicated here.
   complete merge result; a named preparation record will replace the ambiguous return tuple. The
   identity state continues to borrow original points without retained duplicate storage. Exact
   consumers and the migration gate are recorded in
-  [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md).
+  [`code-quality closeout`](internal/code-quality-closeout.md#lifecycle-and-effective-state-ownership).
 - **QUAL-001A effective-input result:** `EffectiveInput` now owns either identity state or the
   complete `MergeResult`; representative points are no longer moved out and paired with independent
   optional metadata. `PreparedPointsAndGrid` is a named record, and a direct contract test pins
@@ -620,7 +620,7 @@ tasks and are not duplicated here.
   also have independent lifetimes. The selected boundary is one private `EffectiveGeometry` record
   that preserves accepted rebuilding's append-only base-position reuse. Exact consumers and the
   migration gate are recorded in
-  [`lifecycle-state-inventory.md`](lifecycle-state-inventory.md).
+  [`code-quality closeout`](internal/code-quality-closeout.md#lifecycle-and-effective-state-ownership).
 - **QUAL-001A effective-geometry result:** private `EffectiveGeometry` now owns positions, cell
   spans, and the live index buffer from assembly through remapping. Reconciliation returns only its
   diagnostics, local rebuilding mutates the owner without changing append/rollback behavior, and
@@ -636,7 +636,7 @@ tasks and are not duplicated here.
   previously rejected mutable-rewrite signature remains a raw measured fallback; the semantic
   comparison and unpaired scan were accepted by later layout retests. Exact consumers and the
   migration gate are recorded in
-  [`live-cell-layout-inventory.md`](live-cell-layout-inventory.md).
+  [`code-quality closeout`](internal/code-quality-closeout.md#live-cell-layout).
 - **QUAL-001B overlay result:** `WorkingDiagram` now stores one `LiveCellLayout`; its
   `from_reconciled` boundary requires the caller to pair cell records with their backing indices.
   Base traversal, residual capacity, and flattening use direct accessors while override and minted
@@ -652,7 +652,7 @@ tasks and are not duplicated here.
   scan without sharing traversal or failure types with the other validators. Its prerequisite is
   an explicit checked-span end-overflow error so 32-bit malformed input retains the gate's current
   checked-add behavior. The boundary, rejected shapes, and gate are recorded in
-  [`effective-validation-layout-inventory.md`](effective-validation-layout-inventory.md).
+  [`code-quality closeout`](internal/code-quality-closeout.md#effective-validation-layout).
 - **QUAL-001B effective-validation result:** the full caller-to-scan layout originally displaced clean
   Fibonacci counters in all seven pairs (`1.001290682` instructions, `1.013601256` branches).
   Restoring the raw outer ABI and typing only the private scan reproduced the result
@@ -669,7 +669,7 @@ tasks and are not duplicated here.
   farther would duplicate the accepted geometry owner and reopen measured mutation signatures.
   The stage is closed without a production candidate or benchmark. Retry only if a second consumer
   or a natural shared owner appears; details are in
-  [`assembly-handoff-layout-inventory.md`](assembly-handoff-layout-inventory.md).
+  [`code-quality closeout`](internal/code-quality-closeout.md#assembly-handoff).
 - **QUAL-001D reconciliation state result:** `ReconcileRunState` now owns the merge ledger,
   rejected-component rebuild seeds, merge-affected cells, mutation scan cells, and merge-safety
   counters shared across primary and synthesized backstop rounds. It replaces the finalizing
@@ -680,7 +680,7 @@ tasks and are not duplicated here.
   (`1.000010264`, `1.000007825`), as were five 500k `cubed` confirmations (`1.000003216`,
   `1.000004527`). All samples had zero switches/migrations. The artifact removed 544 text bytes,
   3,552 BSS bytes, and 616 file bytes. Details are in
-  [`reconciliation-orchestration-inventory.md`](reconciliation-orchestration-inventory.md).
+  [`code-quality closeout`](internal/code-quality-closeout.md#reconciliation-orchestration).
 - **QUAL-001D reconciliation helper result:** `reconcile_edge_mismatches` retains the empty-record
   gate and checked layout audit, then delegates the recorded-mismatch program to a private helper
   with the same seven explicit arguments. LLVM inlined the boundary and retained the relevant
@@ -688,7 +688,7 @@ tasks and are not duplicated here.
   (`0.999998589` instructions, `0.999999242` branches), as were seven active 100k `cubed` pairs
   (`1.000010280`, `1.000020864`); every sample had zero switches/migrations. The artifact added 8
   text bytes and 24 file bytes, retained data size, and removed 16 BSS bytes. Details are in
-  [`reconciliation-defect-body-inventory.md`](reconciliation-defect-body-inventory.md).
+  [`code-quality closeout`](internal/code-quality-closeout.md#reconciliation-defect-body).
 - **QUAL-001D local-rebuild transaction result:** `LocalRebuildCandidate` now owns minted
   positions, complete replacement arrays, and the sorted mutation footprint after consuming the
   overlay. Its consuming method owns append, whole-diagram validation, diagnostics, rollback, and
@@ -698,8 +698,8 @@ tasks and are not duplicated here.
   `0.999999792` branches), as were seven verified seed-224 productive-rejection pairs
   (`0.999991525`, `1.000000202`); all samples had zero switches/migrations. Actual `.bss` was
   unchanged, while the artifact added 1,308 text bytes and 992 file bytes. Details are in
-  [`local-rebuild-transaction-inventory.md`](local-rebuild-transaction-inventory.md); the fixture
-  search remains in [`local-rebuild-trigger-hunt.md`](local-rebuild-trigger-hunt.md).
+  [`code-quality closeout`](internal/code-quality-closeout.md#local-rebuild-transaction); the fixture
+  search remains in [`local-rebuild-trigger-hunt.md`](internal/local-rebuild-trigger-hunt.md).
 - **QUAL-001D assembly hint-confirmation result:** private `ConfirmedZeroEdgeHints` and
   `confirm_exact_zero_edge_hints` now own only the read-only final post-patch exact-zero scan and
   its correlated candidate/count result. Mutable repair, materialization, unsafe scatter, sparse
@@ -709,7 +709,7 @@ tasks and are not duplicated here.
   Seven counter pairs for each default/high-bin Fibonacci and uniform gate plus clustered seed 1
   were neutral; instruction means ranged from `0.99999881` to `1.00000211`, branch means from
   `0.99999471` to `1.00000062`, and every sample had zero switches/migrations. Details are in
-  [`assembly-phase-inventory.md`](assembly-phase-inventory.md).
+  [`code-quality closeout`](internal/code-quality-closeout.md#live-assembly-phase).
 - **QUAL-001D packed-range result:** `collect_directed_ranges` and its four-field summary now own
   center-plus-neighbor ordering, same-bin eligibility, and hard/aggregate work gates. The compact
   form was rejected after adding 0.1397% instructions on clustered input. The retained form keeps
@@ -719,7 +719,7 @@ tasks and are not duplicated here.
   and driver-closure size. Direct invariants and every complete validation gate pass; all counter
   samples had zero switches/migrations. This is accepted as practical neutrality for a useful
   tested phase boundary. Details are in
-  [`packed-preparation-inventory.md`](packed-preparation-inventory.md).
+  [`code-quality closeout`](internal/code-quality-closeout.md#packed-group-preparation).
 - **Closeout:** all nine workstreams are completed or closed at explicit measured boundaries.
   `CellId`/`VertexId` cover the remaining ambiguity-prone cold overlay seams; other raw identities
   are storage/traversal values or recreate the rejected rebuild-pair owner. Selective cell-layout
@@ -733,7 +733,7 @@ tasks and are not duplicated here.
 - **Gate:** every production refactor preserves semantic fingerprints and passes the affected
   workload's interleaved performance gate against its immediate parent. Readability alone does not
   justify a repeatable throughput, memory, or code-size regression.
-- **Reference:** [`code-quality-plan.md`](code-quality-plan.md).
+- **Reference:** [`code-quality-plan.md`](internal/code-quality-plan.md).
 
 ## Research backburner
 
@@ -821,7 +821,7 @@ tasks and are not duplicated here.
   uniform. The mutation footprints were empty in ordinary runs; release inlining at the existing
   per-generator phase seams is pinned to prevent unrelated cold-path codegen perturbation.
 
-- AUD-001 through AUD-017: closed; see [`audit-triage.md`](audit-triage.md).
+- AUD-001 through AUD-017: closed; see [`audit-triage.md`](internal/audit-triage.md).
 - Exact stored-zero baseline and discovery certificate: implemented and reviewed.
 - Near-pi owner-plane validation and geometry consumers: implemented.
 - Actual-exhaustion spherical reconstruction: implemented; fixed-budget early handoff rejected for

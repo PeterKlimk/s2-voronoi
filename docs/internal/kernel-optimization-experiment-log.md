@@ -28,8 +28,8 @@ append-then-partition selection paths are already cheap. A successor should remo
 before those paths, change the cutoff without per-key maintenance, or use a regional algorithm
 whose construction cost is materially below the current naive local hull. The closed structural
 follow-ups are recorded in
-[`algorithmic-performance-ideas.md`](algorithmic-performance-ideas.md#post-review-kernel-hypotheses);
-`PERF-002` in [`work-log.md`](work-log.md#perf-002--post-review-kernel-hypotheses) records the
+[`algorithmic-performance-ideas.md`](../research/algorithmic-performance-ideas.md#post-review-kernel-hypotheses);
+`PERF-002` in [`work-log.md`](../work-log.md#perf-002--post-review-kernel-hypotheses) records the
 closure and reopening conditions. `PERF-003` records the distinct shared-shell successor.
 
 ## Common census baseline

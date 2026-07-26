@@ -3,7 +3,7 @@
 **Status:** uncommitted design catalogue
 
 This document collects useful caller-visible capabilities that are not release commitments. The
-promoted roadmap lives in [`ROADMAP.md`](../ROADMAP.md), and [`work-log.md`](work-log.md) remains the
+promoted roadmap lives in [`ROADMAP.md`](../../ROADMAP.md), and [`work-log.md`](../work-log.md) remains the
 authoritative source for active and decision-gated work. Entries here intentionally describe the
 shape of a feature and its safety boundary without prematurely fixing an API.
 
@@ -18,7 +18,7 @@ effective generator cell. The wishlist extension is an explicit positive epsilon
 or physics consumers remove represented nonzero slivers.
 
 This is existing decision-gated work, not a new proposal: `RES-002` in
-[`work-log.md`](work-log.md#res-002--optional-positive-threshold-edge-simplification) is canonical.
+[`work-log.md`](../work-log.md#res-002--optional-positive-threshold-edge-simplification) is canonical.
 It needs threshold units, option and report fields, component-diameter and geometric-deviation
 certificates, and a distinct cell-mesh result whose contract is a valid simplified spherical cell
 complex rather than the original exact Voronoi subdivision. The default remains `Preserve`.
@@ -64,6 +64,6 @@ success.
 
 ## Promotion rule
 
-A wishlist item moves into [`ROADMAP.md`](../ROADMAP.md) when its caller and compatibility value are
-clear. It moves into [`work-log.md`](work-log.md) when the next policy decision or implementation
+A wishlist item moves into [`ROADMAP.md`](../../ROADMAP.md) when its caller and compatibility value are
+clear. It moves into [`work-log.md`](../work-log.md) when the next policy decision or implementation
 slice is concrete. Until then, names and signatures in this document are illustrative only.

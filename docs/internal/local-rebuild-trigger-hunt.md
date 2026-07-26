@@ -4,7 +4,7 @@
 2026-07-20
 
 This search supports the candidate transaction selected in
-[`local-rebuild-transaction-inventory.md`](local-rebuild-transaction-inventory.md). Its purpose is
+[`code-quality closeout`](code-quality-closeout.md#local-rebuild-transaction). Its purpose is
 measurement and regression coverage, not to redefine which adversarial inputs must succeed.
 
 ## Signal and protocol

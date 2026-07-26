@@ -3,9 +3,9 @@
 **Status:** research catalogue, not an implementation queue
 
 This document collects larger algorithmic ideas that do not fit the code-specific experiment queue
-in [`performance.md`](performance.md) or the representation and memory-traffic backlog in
+in [`performance.md`](../performance.md) or the representation and memory-traffic backlog in
 [`memory-layout-ideas.md`](memory-layout-ideas.md). It records hypotheses and the evidence needed to
-promote them; it does not assign priority or imply a commitment. [`work-log.md`](work-log.md) remains
+promote them; it does not assign priority or imply a commitment. [`work-log.md`](../work-log.md) remains
 the authoritative queue.
 
 The current ordinary path is already fast enough that a more sophisticated algorithm is not a win
@@ -33,7 +33,7 @@ twelve interleaved single-threaded rounds reduced median reconciliation time fro
 At approximately 500k, it examined 2,084 of 501,126 cells and seven rounds reduced the phase from
 55.3 ms to 6.4 ms. Nine 100k Linux perf pairs on normal non-timing builds reduced whole-build
 retired instructions by 13.47%, branches by 21.80%, and cycles by 9.74%, with every pair favorable.
-The measured result is also recorded in [`performance.md`](performance.md).
+The measured result is also recorded in [`performance.md`](../performance.md).
 
 ### Group-shared shell schedule — implemented 2026-07-21
 
@@ -48,7 +48,7 @@ Three native single-threaded Linux perf pairs reduced instructions and branches 
 also improved cycles by 3.06% in every pair; other cycle results were noisy. The full retained
 schedule added about 1.2 MiB peak RSS on single-threaded 100k mega and 5.6 MiB with default
 threading. Detailed census, counter, and memory evidence is in the
-[`kernel optimization experiment log`](kernel-optimization-experiment-log.md#group-shared-shell-traversal-census).
+[`kernel optimization experiment log`](../internal/kernel-optimization-experiment-log.md#group-shared-shell-traversal-census).
 
 ## Candidate ideas
 
@@ -56,7 +56,7 @@ threading. Detailed census, counter, and memory evidence is in the
 
 The original July 2026 multi-model kernel shortlist has been measured and closed. Its tried branches,
 counter results, and retained oracles are summarized in the
-[`kernel optimization experiment log`](kernel-optimization-experiment-log.md#pass-closeout).
+[`kernel optimization experiment log`](../internal/kernel-optimization-experiment-log.md#pass-closeout).
 The first three hypotheses below were derived from those failures and closed by their read-only
 gates. The later group-shared shell traversal passed its gate and is now listed in the implemented
 section above.
@@ -90,7 +90,7 @@ representative of the ring and grossly overraised thresholds on Fibonacci and un
 stratified ring-prefix refinement correctly exposed large key ceilings on clustered and splittable
 inputs, but a per-cell eight-resident sample performed far more extra dot work than the keys it
 saved on mega, bimodal, gradient, and outlier cases. Full census values are in the
-[`kernel optimization experiment log`](kernel-optimization-experiment-log.md#center-informed-threshold-shadow-branch).
+[`kernel optimization experiment log`](../internal/kernel-optimization-experiment-log.md#center-informed-threshold-shadow-branch).
 
 The final narrower gate also ran. It pre-gated individual queries from exact center high-key counts,
 used a cheap maximum-possible-saving test before one whole-ring SIMD sample, and charged keys rebuilt
@@ -100,7 +100,7 @@ small clustered opportunity at 100k, but it collapsed at 500k: the 4x form perma
 182,768 rescan dots; the 8x form sampled 24,950 queries to accept 58 and avoided only 9,158 keys.
 Splittable was negative and the other density-contrast controls produced no useful strict-margin
 work. Full counters are in the
-[`kernel optimization experiment log`](kernel-optimization-experiment-log.md#one-shot-threshold-refinement-oracle-branch).
+[`kernel optimization experiment log`](../internal/kernel-optimization-experiment-log.md#one-shot-threshold-refinement-oracle-branch).
 
 Do not revive this family with another sampling geometry. Revisit only if a future representation
 provides a suitable ring-distribution statistic for free or makes threshold changes avoid both
@@ -133,7 +133,7 @@ hit. Existing whole-cell caps retain at most 1.43% of row dots on Fibonacci and 
 on the density-contrast targets, with effectively no high-key savings. The center-cell cap contains
 the generator and becomes useful almost exclusively when the directed center suffix is empty.
 Full counters are in the
-[`kernel optimization experiment log`](kernel-optimization-experiment-log.md#seed-first-packed-preparation-oracle-branch).
+[`kernel optimization experiment log`](../internal/kernel-optimization-experiment-log.md#seed-first-packed-preparation-oracle-branch).
 
 Do not introduce micro-batch boundaries for this ceiling. Revisit only if another workload makes
 row preparation dominant enough to justify finer center-suffix cap metadata, and charge that
@@ -157,7 +157,7 @@ gradient, mega, or great-circle inputs, nor at 500k clustered. The best case rea
 optimistic floor before guard expansion, robust orientation cost, certification, cell extraction,
 or stitching. Mega's most expensive group was a single 98,444-attempt row, so it had no regional
 work to amortize. Full counters are in the
-[`kernel optimization experiment log`](kernel-optimization-experiment-log.md#same-cell-regional-local-hull-oracle-branch).
+[`kernel optimization experiment log`](../internal/kernel-optimization-experiment-log.md#same-cell-regional-local-hull-oracle-branch).
 
 Do not proceed to guard-region replay with the current `LocalHull` and same-grid-cell regions.
 Larger or differently shaped regions remain a research possibility, not a queued implementation:
@@ -175,7 +175,7 @@ group-local cell-visit redundancy on uniform, clustered, mega, great-circle, and
 inputs; at least 95% of resident/query work in each positive workload occurred at an active width
 of 16 or more. Fibonacci performed no shell traversal and remains a clean control. Full counters
 and the deliberately optimistic position-load ceiling are in the
-[`kernel optimization experiment log`](kernel-optimization-experiment-log.md#group-shared-shell-traversal-census).
+[`kernel optimization experiment log`](../internal/kernel-optimization-experiment-log.md#group-shared-shell-traversal-census).
 
 Keep two mechanisms distinct. The accepted first form is a shared immutable layer schedule consumed by cells in
 their current sequential order. It can remove repeated visited-stamp and neighbor-enumeration work
@@ -191,7 +191,7 @@ cross-query preparation can compute and store rows that sequential termination w
 Before implementing it, specify how block boundaries preserve directed eligibility and forwarding,
 then charge lost same-block seeds, speculative rows, per-query masks, and key sorting/storage.
 
-`PERF-003` in [`work-log.md`](work-log.md) records the completed implementation. Do not treat the
+`PERF-003` in [`work-log.md`](../work-log.md) records the completed implementation. Do not treat the
 second mechanism as automatic follow-up work; it needs its own dependency design and gate.
 
 ### Selected-neighbor constraint batches — closed negative 2026-07-16
@@ -245,7 +245,7 @@ The existing exhaustive path is a correctness backstop, not a claim that its col
 optimal. Candidate replacements must establish crossover points for the affected-cell count,
 candidate work, and repair-region size, and must prove that handoff cannot turn a valid ordinary
 success into failure. The authoritative tracked form of this idea is `PERF-001` in
-[`work-log.md`](work-log.md#perf-001--total-query-work-circuit-breaker).
+[`work-log.md`](../work-log.md#perf-001--total-query-work-circuit-breaker).
 
 Timing builds now record two per-cell distributions: all examined candidates and candidates after
 the final polygon-changing constraint. They report raw quantiles together with counts at least
@@ -303,7 +303,7 @@ The first experiment should measure retained bytes and reuse hit rates; keeping 
 certificate structure for every ordinary build is unlikely to be free.
 
 Any caller-visible reuse contract belongs in the
-[`feature/API wishlist`](feature-api-wishlist.md#temporal-topology-hints). This entry is limited to
+[`feature/API wishlist`](../internal/feature-api-wishlist.md#temporal-topology-hints). This entry is limited to
 the internal cost model and representation question.
 
 ## Already addressed: dense-cap lookup
@@ -320,7 +320,7 @@ poorly.
 
 ## Promotion rule
 
-An idea moves from this catalogue into [`work-log.md`](work-log.md) only when it has a motivating
+An idea moves from this catalogue into [`work-log.md`](../work-log.md) only when it has a motivating
 workload, an explicit semantic invariant, a measurement plan, and a scoped next decision or
 experiment. Narrow implementation hypotheses may instead move into the open optimization queue in
-[`performance.md`](performance.md#open-optimization-queue).
+[`performance.md`](../performance.md#open-optimization-queue).
