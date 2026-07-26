@@ -22,8 +22,10 @@ exclude = [
     "docs/feature-api-wishlist.md",
     "docs/kernel-optimization-agent-prompt.md",
     "docs/kernel-optimization-brief.md",
+    "docs/kernel-optimization-experiment-log.md",
     "docs/local-rebuild-trigger-hunt.md",
     "docs/point-api-plan.md",
+    "docs/positive-edge-simplification-plan.md",
     "docs/work-log.md",
 ]
 keywords = ["voronoi", "sphere", "delaunay", "geometry", "mesh"]

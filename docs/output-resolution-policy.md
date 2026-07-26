@@ -448,7 +448,8 @@ The exact stored-zero baseline is complete:
 - clean discovery uses the degree-local hint and representative-drift certificate, with exhaustive
   terminal scanning whenever that certificate is unavailable.
 
-The remaining follow-ups and their dependencies are tracked in [`work-log.md`](work-log.md).
+The remaining follow-ups and their dependencies are tracked in the repository-only
+[`work-log.md`](https://github.com/PeterKlimk/voronoi-mesh/blob/main/docs/work-log.md).
 Positive-threshold simplification remains an optional extension, not an incomplete piece of the
 baseline. Its replacement is construction-aware: epsilon widens the existing hot hint only for an
 explicit simplified computation, and the terminal source candidates are processed once in one

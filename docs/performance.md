@@ -543,12 +543,13 @@ experiment: preserve its stated semantics, measure the named regime, and move it
 measured results above or the retired list below. Do not bundle candidates before attribution.
 
 The broader memory-layout and memory-traffic backlog, including regime-dependent tradeoffs,
-hybrid fast-path/fallback designs, and a shared experiment matrix, lives in
-[`memory-layout-ideas.md`](memory-layout-ideas.md).
+hybrid fast-path/fallback designs, and a shared experiment matrix, lives in the repository-only
+[`memory-layout-ideas.md`](https://github.com/PeterKlimk/voronoi-mesh/blob/main/docs/memory-layout-ideas.md).
 
 Larger changes to scheduling, local-rebuild scope, pathological-work handoff, and repeated-build reuse are
-kept in the non-authoritative
-[`algorithmic performance ideas`](algorithmic-performance-ideas.md) catalogue.
+kept in the repository-only, non-authoritative
+[`algorithmic performance ideas`](https://github.com/PeterKlimk/voronoi-mesh/blob/main/docs/algorithmic-performance-ideas.md)
+catalogue.
 
 Recently accepted optimizations:
 
@@ -742,8 +743,8 @@ Do not broadly retry these without a materially different design or workload:
   regimes. It regressed 2M Fibonacci cycles 1.88%, `cubed` cycles 0.58--0.75%, and 1M clustered
   cycles 0.98%. This is the predeclared correlated-control falsifier, not a case for a fourth
   distribution-sensitive scatter mode. The prototype and private switch were removed; the full
-  phase sweep and counter matrix are recorded in
-  [`permutation-boundary-scatter-idea.md`](permutation-boundary-scatter-idea.md#experiment-result).
+  phase sweep and counter matrix are recorded in the repository-only
+  [`permutation-boundary-scatter-idea.md`](https://github.com/PeterKlimk/voronoi-mesh/blob/main/docs/permutation-boundary-scatter-idea.md#experiment-result).
 - Implementing `LiveCellLayout` checked spans with `slice.get(start..end)` added a redundant range
   validity branch to clean-path reconciliation traversal. Seven interleaved 500k single-threaded
   Fibonacci pairs showed +0.1337% instructions and +1.6620% branches. Preserve the accepted

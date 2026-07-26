@@ -1866,7 +1866,7 @@ fn build_query_grid(
     tb.set_knn_build(t.elapsed());
     tb.set_grid_stats(res, max_occupancy as u64, rebuilt);
     #[cfg(feature = "timing")]
-    tb.set_knn_build_sub(grid_build_timings.clone());
+    tb.set_knn_build_sub(grid_build_timings);
     (grid, rebuilt)
 }
 
