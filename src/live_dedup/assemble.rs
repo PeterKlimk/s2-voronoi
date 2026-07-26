@@ -18,6 +18,8 @@ use crate::live_dedup::VertexKey;
 use crate::timing::{DedupSubPhases, Timer};
 
 const SHARD_ORDER_SAMPLES_PER_BIN: usize = 32;
+#[cfg(feature = "parallel")]
+const PAR_ZERO_HINT_CELL_THRESHOLD: usize = 4_096;
 
 #[inline]
 fn resolution_axis_delta(a: Vec3, b: Vec3) -> f64 {
@@ -38,6 +40,56 @@ struct ConfirmedZeroEdgeHints {
     hinted_cells: Vec<u32>,
 }
 
+#[inline(always)]
+fn append_exact_zero_edges_for_cell(
+    cell_idx: u32,
+    vertices: &[Vec3],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+    candidates: &mut Vec<(u32, u32)>,
+) {
+    let cell = &cells[cell_idx as usize];
+    let span = &cell_indices[cell.vertex_start()..cell.vertex_start() + cell.vertex_count()];
+    for edge_idx in 0..span.len() {
+        let a = span[edge_idx];
+        let b = span[(edge_idx + 1) % span.len()];
+        if a == b {
+            continue;
+        }
+        let pa = vertices[a as usize];
+        let pb = vertices[b as usize];
+        if dist_sq_f64(pa, pb) == 0.0 {
+            candidates.push((a.min(b), a.max(b)));
+        }
+    }
+}
+
+#[cfg(feature = "parallel")]
+#[inline(never)]
+fn confirm_exact_zero_edges_parallel(
+    hinted_cells: &[u32],
+    vertices: &[Vec3],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+) -> Vec<(u32, u32)> {
+    hinted_cells
+        .par_iter()
+        .fold(Vec::new, |mut candidates, &cell_idx| {
+            append_exact_zero_edges_for_cell(
+                cell_idx,
+                vertices,
+                cells,
+                cell_indices,
+                &mut candidates,
+            );
+            candidates
+        })
+        .reduce(Vec::new, |mut left, mut right| {
+            left.append(&mut right);
+            left
+        })
+}
+
 fn confirm_exact_zero_edge_hints(
     finals: &[ShardFinal],
     vertices: &[Vec3],
@@ -50,23 +102,39 @@ fn confirm_exact_zero_edge_hints(
     }
     hinted_cells.sort_unstable();
     hinted_cells.dedup();
-    let mut candidates = Vec::new();
-    for &cell_idx in &hinted_cells {
-        let cell = &cells[cell_idx as usize];
-        let span = &cell_indices[cell.vertex_start()..cell.vertex_start() + cell.vertex_count()];
-        for edge_idx in 0..span.len() {
-            let a = span[edge_idx];
-            let b = span[(edge_idx + 1) % span.len()];
-            if a == b {
-                continue;
+
+    #[cfg(feature = "parallel")]
+    let mut candidates =
+        if hinted_cells.len() >= PAR_ZERO_HINT_CELL_THRESHOLD && rayon::current_num_threads() > 1 {
+            confirm_exact_zero_edges_parallel(&hinted_cells, vertices, cells, cell_indices)
+        } else {
+            let mut candidates = Vec::new();
+            for &cell_idx in &hinted_cells {
+                append_exact_zero_edges_for_cell(
+                    cell_idx,
+                    vertices,
+                    cells,
+                    cell_indices,
+                    &mut candidates,
+                );
             }
-            let pa = vertices[a as usize];
-            let pb = vertices[b as usize];
-            if dist_sq_f64(pa, pb) == 0.0 {
-                candidates.push((a.min(b), a.max(b)));
-            }
+            candidates
+        };
+    #[cfg(not(feature = "parallel"))]
+    let mut candidates = {
+        let mut candidates = Vec::new();
+        for &cell_idx in &hinted_cells {
+            append_exact_zero_edges_for_cell(
+                cell_idx,
+                vertices,
+                cells,
+                cell_indices,
+                &mut candidates,
+            );
         }
-    }
+        candidates
+    };
+
     candidates.sort_unstable();
     candidates.dedup();
     ConfirmedZeroEdgeHints {
