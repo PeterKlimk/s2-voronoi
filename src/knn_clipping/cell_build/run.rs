@@ -2,6 +2,7 @@ mod failure;
 mod frontier;
 #[cfg(test)]
 mod tests;
+mod timing_detail;
 
 use std::time::Duration;
 
@@ -18,6 +19,7 @@ use crate::policy::PackedNeighborPolicy;
 use crate::live_dedup::{CellBuildError, CellFailure, CellOutputBuffer};
 use failure::{classify_terminal_failure, unexpected_failure_error};
 use frontier::{complete_exact_bound, maybe_terminate_or_advance_frontier, probe_frontier};
+use timing_detail::{BuildTimingDetail, CellTimingDetail};
 
 use glam::Vec3;
 
@@ -155,27 +157,7 @@ pub(crate) struct CellBuildStats {
     directional_support_hits: usize,
     directional_support_saved: usize,
     directional_support_false_positive_hits: usize,
-    #[cfg(feature = "timing")]
-    shell_layer_batches: usize,
-    #[cfg(feature = "timing")]
-    shell_layer_slots: usize,
-    #[cfg(feature = "timing")]
-    shell_layer_prefix_consumed: usize,
-    #[cfg(feature = "timing")]
-    shell_midlayer_terminations: usize,
-    #[cfg(feature = "timing")]
-    packed_exact_slots_visited: [usize; 4],
-    #[cfg(feature = "timing")]
-    packed_exact_slots_abandoned: [usize; 4],
-    /// Candidates examined after the final polygon-changing constraint. This
-    /// is a direct lack-of-progress signal for high-work successful cells.
-    #[cfg(feature = "timing")]
-    neighbors_after_last_progress: usize,
-    /// Exhaustion recovery counts candidates in batches without retaining
-    /// per-candidate clip outcomes, so its progress tail is intentionally
-    /// excluded rather than reported as precise.
-    #[cfg(feature = "timing")]
-    progress_tail_valid: bool,
+    timing_detail: CellTimingDetail,
     fallback_projection: usize,
     fallback_polygon_cap: usize,
     fallback_all_constraints: usize,
@@ -221,18 +203,8 @@ impl CellBuildStats {
             self.fallback_polygon_cap,
             self.fallback_all_constraints,
         );
-        #[cfg(feature = "timing")]
-        cell_sub.add_shell_layer_usage(
-            self.shell_layer_batches,
-            self.shell_layer_slots,
-            self.shell_layer_prefix_consumed,
-            self.shell_midlayer_terminations,
-        );
-        #[cfg(feature = "timing")]
-        cell_sub.add_packed_batch_usage(
-            self.packed_exact_slots_visited,
-            self.packed_exact_slots_abandoned,
-        );
+        self.timing_detail
+            .record_into(cell_sub, self.neighbors_processed);
 
         let stage = if self.used_knn {
             self.knn_stage
@@ -256,12 +228,6 @@ impl CellBuildStats {
             self.used_knn,
             self.incoming_seed_neighbors,
             self.edgecheck_seed_clips,
-        );
-        #[cfg(feature = "timing")]
-        cell_sub.add_work_profile(
-            self.neighbors_processed,
-            self.neighbors_after_last_progress,
-            self.progress_tail_valid,
         );
     }
 }
@@ -327,29 +293,10 @@ pub(super) struct BuildCounters {
     directional_support_hits: usize,
     directional_support_saved: usize,
     directional_support_false_positive_hits: usize,
-    #[cfg(feature = "timing")]
-    shell_layer_batches: usize,
-    #[cfg(feature = "timing")]
-    shell_layer_slots: usize,
-    #[cfg(feature = "timing")]
-    shell_layer_prefix_consumed: usize,
-    #[cfg(feature = "timing")]
-    shell_midlayer_terminations: usize,
-    #[cfg(feature = "timing")]
-    packed_exact_batch_usage_counts: [usize; 2],
-    #[cfg(feature = "timing")]
-    packed_exact_slots_visited: [usize; 4],
-    #[cfg(feature = "timing")]
-    packed_exact_slots_abandoned: [usize; 4],
-    #[cfg(feature = "timing")]
-    last_progress_neighbor: usize,
-    #[cfg(feature = "timing")]
-    progress_tail_valid: bool,
+    timing_detail: BuildTimingDetail,
     fallback_projection: usize,
     fallback_polygon_cap: usize,
     fallback_all_constraints: usize,
-    #[cfg(feature = "timing")]
-    directional_shadow_terminated: bool,
     terminated: bool,
     #[cfg(test)]
     termination_checkpoint: Option<TerminationCheckpoint>,
@@ -377,29 +324,10 @@ impl BuildCounters {
             directional_support_hits: 0,
             directional_support_saved: 0,
             directional_support_false_positive_hits: 0,
-            #[cfg(feature = "timing")]
-            shell_layer_batches: 0,
-            #[cfg(feature = "timing")]
-            shell_layer_slots: 0,
-            #[cfg(feature = "timing")]
-            shell_layer_prefix_consumed: 0,
-            #[cfg(feature = "timing")]
-            shell_midlayer_terminations: 0,
-            #[cfg(feature = "timing")]
-            packed_exact_batch_usage_counts: [0; 2],
-            #[cfg(feature = "timing")]
-            packed_exact_slots_visited: [0; 4],
-            #[cfg(feature = "timing")]
-            packed_exact_slots_abandoned: [0; 4],
-            #[cfg(feature = "timing")]
-            last_progress_neighbor: 0,
-            #[cfg(feature = "timing")]
-            progress_tail_valid: true,
+            timing_detail: BuildTimingDetail::new(),
             fallback_projection: 0,
             fallback_polygon_cap: 0,
             fallback_all_constraints: 0,
-            #[cfg(feature = "timing")]
-            directional_shadow_terminated: false,
             terminated: false,
             #[cfg(test)]
             termination_checkpoint: None,
@@ -426,26 +354,6 @@ impl BuildCounters {
             BuilderFallbackTrigger::ClippedAway => self.fallback_all_constraints += 1,
         }
     }
-
-    #[cfg(feature = "timing")]
-    pub(super) fn record_packed_batch_usage(
-        &mut self,
-        source: DirectedNeighborBatchSource,
-        emitted: usize,
-        visited: usize,
-    ) {
-        debug_assert!(visited <= emitted);
-        let stage = match source {
-            DirectedNeighborBatchSource::PackedChunk0 => 0,
-            DirectedNeighborBatchSource::PackedTail => 1,
-            DirectedNeighborBatchSource::ShellExpand => return,
-        };
-        let first = self.packed_exact_batch_usage_counts[stage] == 0;
-        self.packed_exact_batch_usage_counts[stage] += 1;
-        let class = stage * 2 + usize::from(!first);
-        self.packed_exact_slots_visited[class] += visited;
-        self.packed_exact_slots_abandoned[class] += emitted - visited;
-    }
 }
 
 /// Rebuild an actually exhausted, still-synthetic cell from an unrestricted
@@ -459,10 +367,7 @@ fn recover_unbounded_after_exhaustion(
     generator: Vec3,
     counters: &mut BuildCounters,
 ) -> bool {
-    #[cfg(feature = "timing")]
-    {
-        counters.progress_tail_valid = false;
-    }
+    counters.timing_detail.invalidate_progress_tail();
     let pos_slots = grid.point_pos_slots();
     let mut seed_slots = Vec::new();
     let mut seeded = false;
@@ -514,7 +419,9 @@ fn audit_directional_batch_skip(
     pos_slots: &[crate::cube_grid::SlotPoint],
     counters: &mut BuildCounters,
 ) {
-    if counters.directional_shadow_terminated || remaining_slots.is_empty() || !builder.is_bounded()
+    if counters.timing_detail.directional_shadow_terminated()
+        || remaining_slots.is_empty()
+        || !builder.is_bounded()
     {
         return;
     }
@@ -555,7 +462,7 @@ fn audit_directional_batch_skip(
         counters.directional_support_hits += 1;
         counters.directional_support_saved += remaining_slots.len();
     }
-    counters.directional_shadow_terminated = true;
+    counters.timing_detail.mark_directional_shadow_terminated();
 }
 
 /// The disjoint `CellBuildContext` borrows the stream-consumption phase needs
@@ -614,13 +521,12 @@ fn clip_seed_neighbors(
                 Err(_) => break,
             };
         counters.neighbors_processed += 1;
-        #[cfg(feature = "timing")]
-        {
-            // Forwarded edge checks are construction seeds rather than a
-            // proximity tail. Treat each accepted seed as progress; the
-            // subsequent stream tail remains exact.
-            counters.last_progress_neighbor = counters.neighbors_processed;
-        }
+        // Forwarded edge checks are construction seeds rather than a proximity
+        // tail. Treat each accepted seed as progress; the subsequent stream
+        // tail remains exact.
+        counters
+            .timing_detail
+            .record_progress(counters.neighbors_processed);
         if fallback_rejected {
             break;
         }
@@ -710,13 +616,9 @@ fn clip_batch_source<const SHELL: bool>(
     counters: &mut BuildCounters,
 ) {
     let packed_chunk = &phase.packed_chunk[..batch.n];
-    #[cfg(feature = "timing")]
     let mut prefix_consumed = 0usize;
     for pos in 0..batch.n {
-        #[cfg(feature = "timing")]
-        {
-            prefix_consumed = pos + 1;
-        }
+        prefix_consumed = pos + 1;
         let neighbor_slot = packed_chunk[pos];
         // One fused load gets both the global index and the position (one cache
         // line) instead of two separate random by-slot loads.
@@ -759,9 +661,10 @@ fn clip_batch_source<const SHELL: bool>(
             };
 
         counters.neighbors_processed += 1;
-        #[cfg(feature = "timing")]
         if clip_result == crate::knn_clipping::topo2d::types::ClipResult::Changed {
-            counters.last_progress_neighbor = counters.neighbors_processed;
+            counters
+                .timing_detail
+                .record_progress(counters.neighbors_processed);
         }
         if fallback_rejected {
             break;
@@ -828,16 +731,14 @@ fn clip_batch_source<const SHELL: bool>(
             );
         }
     }
-    #[cfg(feature = "timing")]
-    counters.record_packed_batch_usage(batch.source, batch.n, prefix_consumed);
-    #[cfg(feature = "timing")]
-    if SHELL {
-        counters.shell_layer_batches += 1;
-        counters.shell_layer_slots += batch.n;
-        counters.shell_layer_prefix_consumed += prefix_consumed;
-        counters.shell_midlayer_terminations +=
-            (counters.terminated && prefix_consumed < batch.n) as usize;
-    }
+    counters
+        .timing_detail
+        .record_packed_batch_usage(batch.source, batch.n, prefix_consumed);
+    counters.timing_detail.record_shell_batch::<SHELL>(
+        batch.n,
+        prefix_consumed,
+        counters.terminated,
+    );
 }
 
 /// Phase 2: drive the neighbor stream to termination, failure, or exhaustion.
@@ -1052,24 +953,7 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
         directional_support_hits: counters.directional_support_hits,
         directional_support_saved: counters.directional_support_saved,
         directional_support_false_positive_hits: counters.directional_support_false_positive_hits,
-        #[cfg(feature = "timing")]
-        shell_layer_batches: counters.shell_layer_batches,
-        #[cfg(feature = "timing")]
-        shell_layer_slots: counters.shell_layer_slots,
-        #[cfg(feature = "timing")]
-        shell_layer_prefix_consumed: counters.shell_layer_prefix_consumed,
-        #[cfg(feature = "timing")]
-        shell_midlayer_terminations: counters.shell_midlayer_terminations,
-        #[cfg(feature = "timing")]
-        packed_exact_slots_visited: counters.packed_exact_slots_visited,
-        #[cfg(feature = "timing")]
-        packed_exact_slots_abandoned: counters.packed_exact_slots_abandoned,
-        #[cfg(feature = "timing")]
-        neighbors_after_last_progress: counters
-            .neighbors_processed
-            .saturating_sub(counters.last_progress_neighbor),
-        #[cfg(feature = "timing")]
-        progress_tail_valid: counters.progress_tail_valid,
+        timing_detail: counters.timing_detail.finish(counters.neighbors_processed),
         fallback_projection: counters.fallback_projection,
         fallback_polygon_cap: counters.fallback_polygon_cap,
         fallback_all_constraints: counters.fallback_all_constraints,

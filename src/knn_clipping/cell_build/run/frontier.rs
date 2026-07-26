@@ -68,8 +68,9 @@ pub(super) fn maybe_terminate_or_advance_frontier<'a, 'm, 'p, 'g>(
             // unseen: the batch itself plus what lies beyond it.
             let bound = exact_frontier_bound(batch);
             if builder.can_terminate(bound) {
-                #[cfg(feature = "timing")]
-                counters.record_packed_batch_usage(batch.source, batch.n, 0);
+                counters
+                    .timing_detail
+                    .record_packed_batch_usage(batch.source, batch.n, 0);
                 #[cfg(test)]
                 counters.record_termination_checkpoint(match batch.source {
                     DirectedNeighborBatchSource::ShellExpand => super::TerminationCheckpoint::Shell,
