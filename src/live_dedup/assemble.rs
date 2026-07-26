@@ -1,5 +1,7 @@
 //! Assembly helpers for live dedup.
 
+mod telemetry;
+
 use glam::Vec3;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -233,99 +235,21 @@ fn collect_shard_bookkeeping(shards: &mut [super::shard::ShardState]) -> Collect
     }
 }
 
-pub(super) fn assemble_sharded_live_dedup(
-    mut data: ShardedCellsData,
-) -> Result<super::AssemblyResult, crate::VoronoiError> {
-    let num_bins = data.assignment.num_bins;
+struct ConcatenatedVertices {
+    positions: Vec<Vec3>,
+    keys: super::ShardedVertexKeys,
+    offsets: Vec<u32>,
+}
 
-    let t_bookkeeping = Timer::start();
-    let CollectedShardBookkeeping {
-        mut edge_mismatches,
-        edge_check_overflow,
-        deferred_slots,
-    } = collect_shard_bookkeeping(&mut data.shards);
-    #[allow(unused_variables)]
-    let bookkeeping_time = t_bookkeeping.elapsed();
-
-    let t_overflow = Timer::start();
-    let overflow_timing =
-        resolve_edge_check_overflow(&mut data.shards, &edge_check_overflow, &mut edge_mismatches);
-    #[allow(unused_variables)]
-    let edge_check_overflow_time = t_overflow.elapsed();
-    // Keep the existing nested measurements live for profiling builds even
-    // though this attribution reports the enclosing wall-clock phase.
-    let _overflow_detail_time = overflow_timing.sort + overflow_timing.match_;
-
-    // Dev-only: tally mismatch origins to see which path inflates the residual
-    // (within-bin vs cross-bin). `ComputeReport` already records a clean result,
-    // so keep that path free of both the environment lookup and an all-zero line.
-    if !edge_mismatches.is_empty() && std::env::var("VORONOI_MESH_EDGE_MISMATCH_ORIGINS").is_ok() {
-        use super::types::EdgeMismatchOrigin as O;
-        let mut c = [0usize; 10];
-        for e in &edge_mismatches {
-            let i = match e.origin {
-                O::InBinMissingCheck => 0,
-                O::InBinThirdsMismatch => 1,
-                O::InBinDuplicateSide => 2,
-                O::InBinUnconsumedCheck => 3,
-                O::CrossBinThirdsMismatch => 4,
-                O::CrossBinSingleSided => 5,
-                O::CrossBinDuplicateSide => 6,
-                O::CrossBinSlotConflict => 7,
-                O::PostReconciliationUnpaired => 8,
-                O::EndpointKeyMismatch => 9,
-            };
-            c[i] += 1;
-        }
-        eprintln!(
-            "[origins] total={} | InBin(miss={} thirds={} dup={} unconsumed={}) \
-             CrossBin(thirds={} single={} dup={} slot={}) endpoint_key={}",
-            edge_mismatches.len(),
-            c[0],
-            c[1],
-            c[2],
-            c[3],
-            c[4],
-            c[5],
-            c[6],
-            c[7],
-            c[9]
-        );
-    }
-
-    let t_deferred = Timer::start();
-    let deferred_resolution_drift_exceeded = patch_deferred_slots_with_fallback(
-        &mut data.shards,
-        &data.assignment.generator_bin,
-        deferred_slots,
-    )?;
-    let resolution_drift_exceeded = deferred_resolution_drift_exceeded
-        || data
-            .shards
-            .iter()
-            .any(|shard| shard.output.resolution_drift_exceeded);
-    for shard in &mut data.shards {
-        shard.output.finish_reference_patching();
-    }
-    #[allow(unused_variables)]
-    let deferred_fallback_time = t_deferred.elapsed();
-
-    // Convert to ShardFinal, dropping dedup structures to reduce memory pressure
-    let t_finalize = Timer::start();
-    let mut finals: Vec<ShardFinal> = std::mem::take(&mut data.shards)
-        .into_iter()
-        .map(|s| s.into_final())
-        .collect();
-    #[allow(unused_variables)]
-    let finalize_shards_time = t_finalize.elapsed();
-
-    let t2 = Timer::start();
-
-    // Phase 4: concatenate vertices
-    let mut vertex_offsets: Vec<u32> = vec![0; num_bins];
+#[inline(always)]
+fn concatenate_vertices(
+    finals: &mut [ShardFinal],
+    num_bins: usize,
+) -> Result<ConcatenatedVertices, crate::VoronoiError> {
+    let mut offsets: Vec<u32> = vec![0; num_bins];
     let mut total_vertices = 0usize;
     for (bin, shard) in finals.iter().enumerate() {
-        vertex_offsets[bin] = u32::try_from(total_vertices).map_err(|_| {
+        offsets[bin] = u32::try_from(total_vertices).map_err(|_| {
             crate::VoronoiError::RepresentationLimit(
                 "assembled vertex offsets exceed u32 capacity".to_string(),
             )
@@ -345,19 +269,14 @@ pub(super) fn assemble_sharded_live_dedup(
     }
 
     // Positions are always needed by the diagram, so concatenate them. Vertex
-    // *keys* are only consulted by edge reconciliation (for at most the defect
-    // region), so they are NOT concatenated — kept per-shard in
-    // `ShardedVertexKeys` below.
-    // `Vec3: Copy`, and the parallel scatter below writes every slot exactly once
-    // via the partitioned `vertex_offsets`. Keep the Vec length at zero until
-    // the scatter completes so no uninitialized `Vec3` is ever exposed as a value.
+    // keys are sparse-use reconciliation provenance and remain sharded.
     #[cfg(feature = "parallel")]
-    let all_vertices = {
-        let mut all_vertices = Vec::<Vec3>::with_capacity(total_vertices);
-        let vertices_ptr = all_vertices.spare_capacity_mut().as_mut_ptr() as usize;
+    let positions = {
+        let mut positions = Vec::<Vec3>::with_capacity(total_vertices);
+        let vertices_ptr = positions.spare_capacity_mut().as_mut_ptr() as usize;
         finals
             .par_iter()
-            .zip(vertex_offsets.par_iter())
+            .zip(offsets.par_iter())
             .for_each(|(shard, &offset)| {
                 let count = shard.output.vertices.len();
                 debug_assert_eq!(
@@ -372,65 +291,71 @@ pub(super) fn assemble_sharded_live_dedup(
                     }
                 }
             });
-        // SAFETY: `vertex_offsets` is the prefix sum of all shard lengths, so
-        // each copy targets a disjoint range and their union is `0..total_vertices`.
-        // Rayon has joined all workers, and thus every element is initialized.
+        // SAFETY: `offsets` is the prefix sum of all shard lengths, so each
+        // copy targets a disjoint range whose union is `0..total_vertices`.
         unsafe {
-            all_vertices.set_len(total_vertices);
+            positions.set_len(total_vertices);
         }
-        all_vertices
+        positions
     };
 
     #[cfg(not(feature = "parallel"))]
-    let all_vertices = {
-        let mut all_vertices = Vec::with_capacity(total_vertices);
-        for shard in &finals {
-            all_vertices.extend_from_slice(&shard.output.vertices);
+    let positions = {
+        let mut positions = Vec::with_capacity(total_vertices);
+        for shard in finals.iter() {
+            positions.extend_from_slice(&shard.output.vertices);
         }
-        all_vertices
+        positions
     };
 
-    // Move the per-shard key vecs out of the (about-to-be-dropped) finals into
-    // the sharded accessor — O(num_bins), zero copy. `offsets` is the
-    // prefix-sum (vertex_offsets + total) so a global vid maps to `(bin, local)`.
-    let all_vertex_keys = {
-        let mut offsets = vertex_offsets.clone();
-        offsets.push(total_vertices as u32);
+    let keys = {
+        let mut key_offsets = offsets.clone();
+        key_offsets.push(total_vertices as u32);
         let shard_keys: Vec<Vec<VertexKey>> = finals
             .iter_mut()
-            .map(|s| std::mem::take(&mut s.output.vertex_keys))
+            .map(|shard| std::mem::take(&mut shard.output.vertex_keys))
             .collect();
-        super::ShardedVertexKeys::new(offsets, shard_keys)
+        super::ShardedVertexKeys::new(key_offsets, shard_keys)
     };
 
-    let num_cells = data.assignment.generator_bin.len();
-    #[allow(unused_variables)]
-    let concat_vertices_time = t2.elapsed();
-    let t_cell_prefixes = Timer::start();
+    Ok(ConcatenatedVertices {
+        positions,
+        keys,
+        offsets,
+    })
+}
 
-    // Phase 4: emit cells in generator index order (prefix-sum + direct fill).
-    // Avoid redundant initialization passes in release builds. In debug builds, use sentinels to
-    // assert full coverage.
+struct CellPrefixes {
+    cells: Vec<VoronoiCell>,
+    total_indices: u32,
+}
+
+#[inline(always)]
+fn emit_cell_prefixes(
+    finals: &[ShardFinal],
+    assignment: &super::BinAssignment,
+) -> Result<CellPrefixes, crate::VoronoiError> {
+    let num_cells = assignment.generator_bin.len();
+    // Avoid redundant initialization in release builds. Debug builds retain
+    // sentinels so tests and assertions can prove complete coverage.
     #[cfg(debug_assertions)]
     let mut cells: Vec<VoronoiCell> = vec![VoronoiCell::new(u32::MAX, u16::MAX); num_cells];
     #[cfg(not(debug_assertions))]
     let mut cells: Vec<VoronoiCell> = Vec::with_capacity(num_cells);
 
-    let mut total_cell_indices = 0u32;
-    // The same index addresses initialized debug entries and release spare capacity below.
+    let mut total_indices = 0u32;
+    // The same index addresses initialized debug entries and release spare
+    // capacity below.
     #[allow(clippy::needless_range_loop)]
     for gen_idx in 0..num_cells {
-        let (bin, local) = data.assignment.generator_bin_local(gen_idx);
-        let bin = bin.as_usize();
-        let count = u16::from(finals[bin].output.cell_count(local));
-        let start = total_cell_indices;
-        total_cell_indices = total_cell_indices
-            .checked_add(u32::from(count))
-            .ok_or_else(|| {
-                crate::VoronoiError::RepresentationLimit(
-                    "assembled cell index buffer exceeds u32 capacity".to_string(),
-                )
-            })?;
+        let (bin, local) = assignment.generator_bin_local(gen_idx);
+        let count = u16::from(finals[bin.as_usize()].output.cell_count(local));
+        let start = total_indices;
+        total_indices = total_indices.checked_add(u32::from(count)).ok_or_else(|| {
+            crate::VoronoiError::RepresentationLimit(
+                "assembled cell index buffer exceeds u32 capacity".to_string(),
+            )
+        })?;
         #[cfg(debug_assertions)]
         {
             cells[gen_idx] = VoronoiCell::new(start, count);
@@ -443,38 +368,48 @@ pub(super) fn assemble_sharded_live_dedup(
 
     #[cfg(not(debug_assertions))]
     unsafe {
-        // Every spare-capacity entry was initialized in the checked prefix loop above. On an early
-        // error, the Vec retains length zero and VoronoiCell has no drop state.
+        // Every spare-capacity entry was initialized in the checked prefix
+        // loop. On an early error the Vec retains length zero.
         cells.set_len(num_cells);
     }
-    #[allow(unused_variables)]
-    let emit_cell_prefixes_time = t_cell_prefixes.elapsed();
+    Ok(CellPrefixes {
+        cells,
+        total_indices,
+    })
+}
 
-    let t_incidence = Timer::start();
-    let incidence_summary = {
-        let mut used_vertices = 0usize;
-        let mut low_incidence = false;
-        for shard in &finals {
-            debug_assert_eq!(
-                shard.output.vertex_incidence.len(),
-                shard.output.vertices.len(),
-                "vertex incidence out of sync with positions"
-            );
-            for &count in &shard.output.vertex_incidence {
-                used_vertices += usize::from(count != 0);
-                low_incidence |= count == 1 || count == 2;
-            }
+#[inline(always)]
+fn summarize_incidence(finals: &[ShardFinal], total_cell_indices: u32) -> super::IncidenceSummary {
+    let mut used_vertices = 0usize;
+    let mut low_incidence = false;
+    for shard in finals {
+        debug_assert_eq!(
+            shard.output.vertex_incidence.len(),
+            shard.output.vertices.len(),
+            "vertex incidence out of sync with positions"
+        );
+        for &count in &shard.output.vertex_incidence {
+            used_vertices += usize::from(count != 0);
+            low_incidence |= count == 1 || count == 2;
         }
-        super::IncidenceSummary {
-            used_vertices,
-            live_half_edges: total_cell_indices as usize,
-            low_incidence,
-        }
-    };
-    #[allow(unused_variables)]
-    let incidence_summary_time = t_incidence.elapsed();
+    }
+    super::IncidenceSummary {
+        used_vertices,
+        live_half_edges: total_cell_indices as usize,
+        low_incidence,
+    }
+}
 
-    let t_cell_indices = Timer::start();
+#[inline(always)]
+fn scatter_cell_indices(
+    finals: &[ShardFinal],
+    cells: &[VoronoiCell],
+    assignment: &super::BinAssignment,
+    vertex_offsets: &[u32],
+    total_cell_indices: u32,
+) -> (Vec<u32>, bool) {
+    let num_bins = assignment.num_bins;
+    let num_cells = assignment.generator_bin.len();
     #[cfg(debug_assertions)]
     let mut cell_indices: Vec<u32> = vec![u32::MAX; total_cell_indices as usize];
     #[cfg(not(debug_assertions))]
@@ -496,7 +431,7 @@ pub(super) fn assemble_sharded_live_dedup(
             debug_assert!(
                 cells
                     .windows(2)
-                    .all(|w| w[0].vertex_start() <= w[1].vertex_start()),
+                    .all(|window| window[0].vertex_start() <= window[1].vertex_start()),
                 "prefix sum must be non-decreasing"
             );
             debug_assert_eq!(
@@ -519,27 +454,23 @@ pub(super) fn assemble_sharded_live_dedup(
             cell_indices.spare_capacity_mut().as_mut_ptr() as usize
         }
     };
-    // Capture slices by value so the parallel closure carries their data pointers directly instead
-    // of reloading them through references to the owning Vecs in the per-vertex scatter loop.
-    let finals_ref = finals.as_slice();
-    let cells_ref = cells.as_slice();
-    let vertex_offsets = vertex_offsets.as_slice();
-    let bin_generators = data.assignment.bin_generators.as_slice();
+    // Capture slices by value so the parallel closure carries their data
+    // pointers directly instead of reloading through owning Vec references.
+    let bin_generators = assignment.bin_generators.as_slice();
     let scatter_by_shard = prefer_shard_order_scatter(bin_generators, num_cells);
     if scatter_by_shard {
         maybe_par_into_iter!(0..num_bins).for_each(move |bin| {
-            let shard = &finals_ref[bin];
+            let shard = &finals[bin];
             let generators = &bin_generators[bin];
             debug_assert_eq!(generators.len(), shard.output.cell_starts.len());
             debug_assert_eq!(generators.len(), shard.output.cell_counts.len());
 
-            // Shard cell streams are local-id ordered. Traverse that order so
-            // both metadata and source indices are sequential; final spans
-            // remain at their generator-ordered destinations.
+            // Shard streams are local-id ordered. Their source reads stay
+            // sequential while spans retain generator-ordered destinations.
             for (local_idx, &gen_idx) in generators.iter().enumerate() {
                 let start = shard.output.cell_starts[local_idx] as usize;
                 let count = shard.output.cell_counts[local_idx] as usize;
-                let cell = &cells_ref[gen_idx];
+                let cell = &cells[gen_idx];
                 let dst_start = cell.vertex_start();
 
                 #[cfg(debug_assertions)]
@@ -569,13 +500,12 @@ pub(super) fn assemble_sharded_live_dedup(
             }
         });
     } else {
-        let assignment = &data.assignment;
         maybe_par_into_iter!(0..num_cells).for_each(move |gen_idx| {
             let (bin, local) = assignment.generator_bin_local(gen_idx);
             let bin = bin.as_usize();
-            let shard = &finals_ref[bin];
+            let shard = &finals[bin];
             let start = shard.output.cell_start(local) as usize;
-            let cell = &cells_ref[gen_idx];
+            let cell = &cells[gen_idx];
             let count = cell.vertex_count();
             let dst_start = cell.vertex_start();
 
@@ -609,32 +539,18 @@ pub(super) fn assemble_sharded_live_dedup(
     unsafe {
         cell_indices.set_len(total_cell_indices as usize);
     }
-    #[allow(unused_variables)]
-    let scatter_cell_indices_time = t_cell_indices.elapsed();
+    (cell_indices, scatter_by_shard)
+}
 
-    #[cfg(feature = "timing")]
-    let (shard_order_descents, shard_order_pairs, shard_order_abs_delta) =
-        bin_generators.iter().fold(
-            (0u64, 0u64, 0u64),
-            |(descents, pairs, abs_delta), generators| {
-                let local_descents = generators.windows(2).filter(|w| w[1] < w[0]).count() as u64;
-                let local_abs_delta = generators
-                    .windows(2)
-                    .map(|w| w[1].abs_diff(w[0]) as u64)
-                    .sum::<u64>();
-                (
-                    descents + local_descents,
-                    pairs + generators.len().saturating_sub(1) as u64,
-                    abs_delta + local_abs_delta,
-                )
-            },
-        );
-
-    // The common scatter above reads one narrow local id and performs no
-    // owner branch. Patch the sparse foreign references by their final cell
-    // identity after all disjoint bulk writes have completed.
-    let t_overrides = Timer::start();
-    for shard in &finals {
+#[inline(always)]
+fn patch_reference_overrides(
+    finals: &[ShardFinal],
+    cells: &[VoronoiCell],
+    cell_indices: &mut [u32],
+    vertex_offsets: &[u32],
+    num_bins: usize,
+) {
+    for shard in finals {
         for entry in &shard.output.reference_overrides {
             let cell = &cells[entry.source_cell as usize];
             debug_assert!((entry.source_offset as usize) < cell.vertex_count());
@@ -648,6 +564,160 @@ pub(super) fn assemble_sharded_live_dedup(
             cell_indices[dst] = vertex_offsets[owner_bin] + entry.owner_local;
         }
     }
+}
+
+struct ResolutionHints {
+    edge_hint_cells: Vec<u32>,
+    exact_zero_edge_candidates: Vec<(u32, u32)>,
+    exact_zero_edge_hint_cell_count: usize,
+}
+
+#[inline(always)]
+fn collect_resolution_hints(
+    finals: &[ShardFinal],
+    vertices: &[Vec3],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+) -> ResolutionHints {
+    let mut edge_hint_cells = Vec::new();
+    for shard in finals {
+        edge_hint_cells.extend_from_slice(&shard.output.resolution_edge_hint_cells);
+    }
+    edge_hint_cells.sort_unstable();
+    edge_hint_cells.dedup();
+    let ConfirmedZeroEdgeHints {
+        candidates: exact_zero_edge_candidates,
+        hinted_cells: exact_zero_edge_hint_cells,
+    } = confirm_exact_zero_edge_hints(finals, vertices, cells, cell_indices);
+    ResolutionHints {
+        edge_hint_cells,
+        exact_zero_edge_candidates,
+        exact_zero_edge_hint_cell_count: exact_zero_edge_hint_cells.len(),
+    }
+}
+
+#[cfg(feature = "timing")]
+fn shard_order_stats(bin_generators: &[Vec<usize>]) -> (u64, u64, u64) {
+    bin_generators.iter().fold(
+        (0u64, 0u64, 0u64),
+        |(descents, pairs, abs_delta), generators| {
+            let local_descents = generators.windows(2).filter(|w| w[1] < w[0]).count() as u64;
+            let local_abs_delta = generators
+                .windows(2)
+                .map(|w| w[1].abs_diff(w[0]) as u64)
+                .sum::<u64>();
+            (
+                descents + local_descents,
+                pairs + generators.len().saturating_sub(1) as u64,
+                abs_delta + local_abs_delta,
+            )
+        },
+    )
+}
+
+pub(super) fn assemble_sharded_live_dedup(
+    mut data: ShardedCellsData,
+) -> Result<super::AssemblyResult, crate::VoronoiError> {
+    let num_bins = data.assignment.num_bins;
+
+    let t_bookkeeping = Timer::start();
+    let CollectedShardBookkeeping {
+        mut edge_mismatches,
+        edge_check_overflow,
+        deferred_slots,
+    } = collect_shard_bookkeeping(&mut data.shards);
+    #[allow(unused_variables)]
+    let bookkeeping_time = t_bookkeeping.elapsed();
+
+    let t_overflow = Timer::start();
+    let overflow_timing =
+        resolve_edge_check_overflow(&mut data.shards, &edge_check_overflow, &mut edge_mismatches);
+    #[allow(unused_variables)]
+    let edge_check_overflow_time = t_overflow.elapsed();
+    // Keep the existing nested measurements live for profiling builds even
+    // though this attribution reports the enclosing wall-clock phase.
+    let _overflow_detail_time = overflow_timing.sort + overflow_timing.match_;
+
+    // `ComputeReport` already records a clean result, so keep that path free
+    // of both the environment lookup and an all-zero diagnostic line.
+    if !edge_mismatches.is_empty() {
+        telemetry::maybe_emit_edge_mismatch_origins(&edge_mismatches);
+    }
+
+    let t_deferred = Timer::start();
+    let deferred_resolution_drift_exceeded = patch_deferred_slots_with_fallback(
+        &mut data.shards,
+        &data.assignment.generator_bin,
+        deferred_slots,
+    )?;
+    let resolution_drift_exceeded = deferred_resolution_drift_exceeded
+        || data
+            .shards
+            .iter()
+            .any(|shard| shard.output.resolution_drift_exceeded);
+    for shard in &mut data.shards {
+        shard.output.finish_reference_patching();
+    }
+    #[allow(unused_variables)]
+    let deferred_fallback_time = t_deferred.elapsed();
+
+    // Convert to ShardFinal, dropping dedup structures to reduce memory pressure
+    let t_finalize = Timer::start();
+    let mut finals: Vec<ShardFinal> = std::mem::take(&mut data.shards)
+        .into_iter()
+        .map(|s| s.into_final())
+        .collect();
+    #[allow(unused_variables)]
+    let finalize_shards_time = t_finalize.elapsed();
+
+    let t2 = Timer::start();
+    let ConcatenatedVertices {
+        positions: all_vertices,
+        keys: all_vertex_keys,
+        offsets: vertex_offsets,
+    } = concatenate_vertices(&mut finals, num_bins)?;
+    #[allow(unused_variables)]
+    let concat_vertices_time = t2.elapsed();
+    let t_cell_prefixes = Timer::start();
+    let CellPrefixes {
+        cells,
+        total_indices: total_cell_indices,
+    } = emit_cell_prefixes(&finals, &data.assignment)?;
+    #[allow(unused_variables)]
+    let emit_cell_prefixes_time = t_cell_prefixes.elapsed();
+
+    let t_incidence = Timer::start();
+    let incidence_summary = summarize_incidence(&finals, total_cell_indices);
+    #[allow(unused_variables)]
+    let incidence_summary_time = t_incidence.elapsed();
+
+    let t_cell_indices = Timer::start();
+    #[allow(unused_variables)]
+    let (mut cell_indices, scatter_by_shard) = scatter_cell_indices(
+        &finals,
+        &cells,
+        &data.assignment,
+        &vertex_offsets,
+        total_cell_indices,
+    );
+    #[allow(unused_variables)]
+    let scatter_cell_indices_time = t_cell_indices.elapsed();
+
+    #[cfg(feature = "timing")]
+    let (shard_order_descents, shard_order_pairs, shard_order_abs_delta) =
+        shard_order_stats(&data.assignment.bin_generators);
+
+    // The common scatter above reads one narrow local id and performs no
+    // owner branch. Patch the sparse foreign references by their final cell
+    // identity after all disjoint bulk writes have completed.
+    let t_overrides = Timer::start();
+    patch_reference_overrides(
+        &finals,
+        &cells,
+        &mut cell_indices,
+        &vertex_offsets,
+        num_bins,
+    );
     #[allow(unused_variables)]
     let patch_reference_overrides_time = t_overrides.elapsed();
 
@@ -658,17 +728,11 @@ pub(super) fn assemble_sharded_live_dedup(
     );
 
     let t_zero_hints = Timer::start();
-    let mut resolution_edge_hint_cells = Vec::new();
-    for shard in &finals {
-        resolution_edge_hint_cells.extend_from_slice(&shard.output.resolution_edge_hint_cells);
-    }
-    resolution_edge_hint_cells.sort_unstable();
-    resolution_edge_hint_cells.dedup();
-    let ConfirmedZeroEdgeHints {
-        candidates: exact_zero_edge_candidates,
-        hinted_cells: exact_zero_edge_hint_cells,
-    } = confirm_exact_zero_edge_hints(&finals, &all_vertices, &cells, &cell_indices);
-    let exact_zero_edge_hint_cell_count = exact_zero_edge_hint_cells.len();
+    let ResolutionHints {
+        edge_hint_cells: resolution_edge_hint_cells,
+        exact_zero_edge_candidates,
+        exact_zero_edge_hint_cell_count,
+    } = collect_resolution_hints(&finals, &all_vertices, &cells, &cell_indices);
     #[allow(unused_variables)]
     let exact_zero_hints_time = t_zero_hints.elapsed();
 
