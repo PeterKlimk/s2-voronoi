@@ -87,6 +87,8 @@ pub mod quality;
 pub(crate) mod sort;
 mod spatial_order;
 mod spherical_arc;
+#[cfg(test)]
+mod test_support;
 /// Internal small-N sorting-network entry point, exposed for microbenchmarking only.
 #[cfg(feature = "microbench")]
 #[doc(hidden)]

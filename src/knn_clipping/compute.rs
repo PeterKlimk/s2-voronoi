@@ -1,6 +1,9 @@
 //! Compute entry points for the kNN + clipping Voronoi backend.
 
-use glam::{DVec3, Vec3};
+mod coplanar;
+mod error_mapping;
+
+use glam::Vec3;
 
 use super::edge_reconcile;
 use super::local_rebuild;
@@ -11,14 +14,15 @@ use crate::cube_grid::CubeMapGrid;
 #[cfg(feature = "timing")]
 use crate::cube_grid::CubeMapGridBuildTimings;
 use crate::diagram::VoronoiCell;
-use crate::live_dedup::{self, CellBuildError, CellFailure};
-use crate::policy::{COPLANAR_PERTURBATION_SCALE, REFERENCE_AXIS_COMPONENT_SWITCH_F64};
+use crate::live_dedup;
 use crate::timing::{Timer, TimingBuilder};
-use crate::tolerances::{NEAR_GREAT_CIRCLE_MAX_PLANE_SIN_TOL, NEAR_GREAT_CIRCLE_RMS_PLANE_SIN_TOL};
 use crate::{
     CellKillingPolicy, ComputeOutput, ComputeReport, DegenerateMode, DegenerateReport,
     LocalRebuildMode, LocalRebuildStatus, PreprocessMode, PreprocessReport, VoronoiConfig,
 };
+
+use coplanar::maybe_perturb_coplanar;
+use error_mapping::map_build_cells_error;
 
 /// Per-seed neighbor count for the local rebuild's grid kNN gather (the 2-ring gather
 /// collects each seed's `k + 1` nearest via the shell frontier).
@@ -1235,125 +1239,6 @@ fn canonicalize_cell_cycle_starts(cells: &[VoronoiCell], cell_indices: &mut [u32
     }
 }
 
-fn map_cell_build_error(
-    err: CellBuildError,
-    effective_points: &[Vec3],
-    merge_result: Option<&MergeResult>,
-) -> crate::VoronoiError {
-    let detail_suffix = err
-        .detail
-        .as_deref()
-        .map(|detail| format!(" ({detail})"))
-        .unwrap_or_default();
-
-    match err.failure {
-        CellFailure::ProjectionInvalid => crate::VoronoiError::UnsupportedGeometry {
-            generator_index: err.generator_idx,
-            message: format!(
-                "cell extends to the generator hemisphere boundary; gnomonic projection is invalid{}",
-                detail_suffix
-            ),
-        },
-        CellFailure::UnboundedAfterExhaustion => crate::VoronoiError::ComputationFailed(format!(
-            "cell {} exhausted the neighbor stream before reaching a bounded polygon{}",
-            err.generator_idx, detail_suffix
-        )),
-        CellFailure::TooManyVertices => crate::VoronoiError::ComputationFailed(format!(
-            "cell {} exceeded the clipping vertex budget{}",
-            err.generator_idx, detail_suffix
-        )),
-        CellFailure::ClippedAway => {
-            if let Some(degenerate) =
-                classify_coincident_clipped_away(&err, effective_points, merge_result)
-            {
-                return degenerate;
-            }
-            crate::VoronoiError::ComputationFailed(format!(
-                "cell {} failed during construction with ClippedAway{}",
-                err.generator_idx, detail_suffix
-            ))
-        }
-        other => crate::VoronoiError::ComputationFailed(format!(
-            "cell {} failed during construction with {:?}{}",
-            err.generator_idx, other, detail_suffix
-        )),
-    }
-}
-
-/// Classify a `ClippedAway` failure caused by sub-weld-radius coincidence.
-///
-/// A cell can only be clipped to nothing when other generators sit within the
-/// resolvability scale of its generator (welding is disabled or the requested
-/// radius is below the weld radius). Such inputs get an actionable
-/// `DegenerateInput` naming the coincident generators instead of a generic
-/// computation failure. Emitting a degenerate cell instead is not an option:
-/// the neighbors were already clipped against this generator's bisectors, so
-/// their boundaries would carry edges pairing against a missing cell.
-fn classify_coincident_clipped_away(
-    err: &CellBuildError,
-    effective_points: &[Vec3],
-    merge_result: Option<&MergeResult>,
-) -> Option<crate::VoronoiError> {
-    let generator = *effective_points.get(err.generator_idx)?;
-    let radius_sq = crate::tolerances::weld_radius() * crate::tolerances::weld_radius();
-    let coincident: Vec<usize> = effective_points
-        .iter()
-        .enumerate()
-        .filter(|&(i, p)| i != err.generator_idx && (*p - generator).length_squared() < radius_sq)
-        .map(|(i, _)| original_index_for_effective(i, merge_result))
-        .collect();
-    if coincident.is_empty() {
-        return None;
-    }
-
-    let generator_original = original_index_for_effective(err.generator_idx, merge_result);
-    Some(crate::VoronoiError::DegenerateInput {
-        coincident_pairs: coincident.len(),
-        message: format!(
-            "generator {} is within the weld radius ({:.1e}) of generator(s) {:?} and its cell \
-             is below representable scale; enable welding (PreprocessMode::Weld, the default) \
-             or merge these points",
-            generator_original,
-            crate::tolerances::weld_radius(),
-            coincident
-        ),
-    })
-}
-
-/// First original input index mapping to an effective index (identity when no
-/// welds occurred). O(n) scan; only used on terminal error paths.
-fn original_index_for_effective(effective_idx: usize, merge_result: Option<&MergeResult>) -> usize {
-    match merge_result {
-        Some(mr) => mr
-            .original_to_effective
-            .iter()
-            .position(|&e| e as usize == effective_idx)
-            .unwrap_or(effective_idx),
-        None => effective_idx,
-    }
-}
-
-fn map_build_cells_error(
-    err: live_dedup::BuildCellsError,
-    effective_points: &[Vec3],
-    merge_result: Option<&MergeResult>,
-) -> crate::VoronoiError {
-    match err {
-        live_dedup::BuildCellsError::CellBuild(err) => {
-            map_cell_build_error(err, effective_points, merge_result)
-        }
-        live_dedup::BuildCellsError::PackedLayoutCapacity(err) => {
-            crate::VoronoiError::RepresentationLimit(format!(
-                "packed bin/local layout capacity exceeded in bin {}: population {} exceeds local mask {} (num_bins={}, local_shift={})",
-                err.bin, err.local_population, err.local_mask, err.num_bins, err.local_shift
-            ))
-        }
-        live_dedup::BuildCellsError::RepresentationLimit(message) => {
-            crate::VoronoiError::RepresentationLimit(message)
-        }
-    }
-}
-
 fn validate_generator_capacity(num_points: usize) -> Result<(), crate::VoronoiError> {
     if u32::try_from(num_points).is_ok() {
         return Ok(());
@@ -1439,243 +1324,6 @@ fn validate_and_canonicalize_unit_points(points: &mut [Vec3]) -> Result<(), crat
 
 fn canonicalize_unit_points(points: &mut [Vec3]) {
     let _ = canonicalize_and_find_first_non_finite(points);
-}
-
-#[derive(Debug, Clone, Copy)]
-struct CoplanarClass {
-    normal: DVec3,
-}
-
-fn maybe_perturb_coplanar(points: &[Vec3], err: &crate::VoronoiError) -> Option<Vec<Vec3>> {
-    if !matches!(
-        err,
-        crate::VoronoiError::UnsupportedGeometry { .. } | crate::VoronoiError::ComputationFailed(_)
-    ) {
-        return None;
-    }
-    let mut canonical = points.to_vec();
-    canonicalize_unit_points(&mut canonical);
-    let class = classify_exact_affine_circle(&canonical)
-        .or_else(|| classify_near_great_circle(&canonical))?;
-    Some(perturb_coplanar_points(&canonical, class.normal))
-}
-
-/// Certify affine coplanarity in the actual canonical f32 model. The seed
-/// plane is selected with bounded linear sweeps for a stable perturbation
-/// direction; `orient3d == 0` then decides coplanarity exactly for those
-/// binary input coordinates. No tolerance can turn a merely near-coplanar
-/// ordinary input into this class.
-fn classify_exact_affine_circle(points: &[Vec3]) -> Option<CoplanarClass> {
-    if points.len() < 4 {
-        return None;
-    }
-    let ([a, b, c], normal) = stable_affine_plane(points)?;
-    let a = robust_coord(dvec(points[a]));
-    let b = robust_coord(dvec(points[b]));
-    let c = robust_coord(dvec(points[c]));
-    if points
-        .iter()
-        .all(|&p| robust::orient3d(a, b, c, robust_coord(dvec(p))) == 0.0)
-    {
-        Some(CoplanarClass { normal })
-    } else {
-        None
-    }
-}
-
-/// Choose a well-spread affine plane seed in a fixed number of linear sweeps.
-/// Returns `None` only when fewer than three distinct, non-collinear points are
-/// available or the input is non-finite.
-fn stable_affine_plane(points: &[Vec3]) -> Option<([usize; 3], DVec3)> {
-    fn farthest_from(points: &[Vec3], pivot: usize) -> Option<usize> {
-        let a = dvec(points[pivot]);
-        let mut best = None;
-        let mut best_distance2 = 0.0f64;
-        for (i, &p) in points.iter().enumerate() {
-            let distance2 = (dvec(p) - a).length_squared();
-            if distance2.is_finite() && distance2 > best_distance2 {
-                best_distance2 = distance2;
-                best = Some(i);
-            }
-        }
-        best
-    }
-
-    let mut a = 0usize;
-    let mut b = farthest_from(points, a)?;
-    a = farthest_from(points, b)?;
-    b = farthest_from(points, a)?;
-
-    let pa = dvec(points[a]);
-    let ab = dvec(points[b]) - pa;
-    let mut c = None;
-    let mut best_cross = DVec3::ZERO;
-    let mut best_area2 = 0.0f64;
-    for (i, &p) in points.iter().enumerate() {
-        let cross = ab.cross(dvec(p) - pa);
-        let area2 = cross.length_squared();
-        if area2.is_finite() && area2 > best_area2 {
-            best_area2 = area2;
-            best_cross = cross;
-            c = Some(i);
-        }
-    }
-    let c = c?;
-    Some(([a, b, c], best_cross / best_area2.sqrt()))
-}
-
-#[inline]
-fn robust_coord(p: DVec3) -> robust::Coord3D<f64> {
-    robust::Coord3D {
-        x: p.x,
-        y: p.y,
-        z: p.z,
-    }
-}
-
-/// Compatibility classifier for nominal great-circle input whose canonical
-/// f32 rounding prevents exact affine certification. Unlike the exact path,
-/// this tolerance classifier requires full-circle coverage so an ordinary
-/// large cell in a hemisphere cannot be misclassified as a degeneracy.
-fn classify_near_great_circle(points: &[Vec3]) -> Option<CoplanarClass> {
-    if points.len() < 4 {
-        return None;
-    }
-
-    let normal = stable_rank2_normal(points)?;
-    let mut max_abs_dot = 0.0f64;
-    let mut sum_dot2 = 0.0f64;
-    for &p in points {
-        let d = normal.dot(dvec(p)).abs();
-        max_abs_dot = max_abs_dot.max(d);
-        sum_dot2 += d * d;
-    }
-    let rms_dot = (sum_dot2 / points.len() as f64).sqrt();
-    if max_abs_dot > NEAR_GREAT_CIRCLE_MAX_PLANE_SIN_TOL
-        || rms_dot > NEAR_GREAT_CIRCLE_RMS_PLANE_SIN_TOL
-    {
-        return None;
-    }
-
-    if !covers_great_circle(points, normal) {
-        return None;
-    }
-
-    Some(CoplanarClass { normal })
-}
-
-/// Find a numerically stable candidate normal in a fixed number of linear
-/// sweeps. Fixed-count linear sweeps keep a failed large build from entering a
-/// quadratic all-pairs great-circle probe before returning the original error.
-///
-/// This selection is deliberately conservative: failure to find a pair with
-/// enough angular separation merely declines the perturbation retry. It cannot
-/// create a false rank-2 classification because `classify_near_great_circle`
-/// subsequently checks every point against the candidate plane and verifies
-/// full-circle coverage. Re-pivoting at the farthest point handles ordered
-/// two-arc inputs where no pair involving `points[0]` is sufficiently stable.
-fn stable_rank2_normal(points: &[Vec3]) -> Option<DVec3> {
-    const SWEEPS: usize = 3;
-    const MIN_CROSS_LEN2: f64 = 0.25;
-
-    let mut pivot = 0usize;
-    let mut best_cross = DVec3::ZERO;
-    let mut best_len2 = 0.0f64;
-    for _ in 0..SWEEPS {
-        let a = dvec(points[pivot]);
-        let mut next_pivot = pivot;
-        let mut sweep_best_len2 = 0.0f64;
-        for (i, &b32) in points.iter().enumerate() {
-            let cross = a.cross(dvec(b32));
-            let len2 = cross.length_squared();
-            if len2 > sweep_best_len2 {
-                sweep_best_len2 = len2;
-                next_pivot = i;
-            }
-            if len2 > best_len2 {
-                best_len2 = len2;
-                best_cross = cross;
-            }
-        }
-        if next_pivot == pivot {
-            break;
-        }
-        pivot = next_pivot;
-    }
-    if best_len2 < MIN_CROSS_LEN2 {
-        return None;
-    }
-    Some(best_cross / best_len2.sqrt())
-}
-
-fn covers_great_circle(points: &[Vec3], normal: DVec3) -> bool {
-    let seed = if normal.x.abs() < REFERENCE_AXIS_COMPONENT_SWITCH_F64 {
-        DVec3::X
-    } else {
-        DVec3::Y
-    };
-    let e1 = normal.cross(seed).normalize();
-    let e2 = normal.cross(e1).normalize();
-    let mut angles: Vec<f64> = points
-        .iter()
-        .map(|&p| {
-            let p = dvec(p);
-            p.dot(e2).atan2(p.dot(e1)).rem_euclid(std::f64::consts::TAU)
-        })
-        .collect();
-    angles.sort_by(|a, b| a.total_cmp(b));
-
-    let mut max_gap = 0.0f64;
-    for w in angles.windows(2) {
-        max_gap = max_gap.max(w[1] - w[0]);
-    }
-    if let (Some(first), Some(last)) = (angles.first(), angles.last()) {
-        max_gap = max_gap.max(first + std::f64::consts::TAU - last);
-    }
-
-    // A full great-circle set has no empty semicircle. Smaller arcs are better
-    // treated as hemisphere/large-cell fallback cases, not SoS perturbation.
-    max_gap < std::f64::consts::PI
-}
-
-fn perturb_coplanar_points(points: &[Vec3], normal: DVec3) -> Vec<Vec3> {
-    // This is a realized robust-mode joggle, not a symbolic-only SoS epsilon.
-    // The stored-f32 topology/validation path still sees near-antipodal pole
-    // edges for microscopic offsets on exact great-circle fixtures; the named
-    // scale is the already-tested small-jitter regime for these inputs.
-    let scale = COPLANAR_PERTURBATION_SCALE;
-    points
-        .iter()
-        .enumerate()
-        .map(|(i, &p)| {
-            let amp = scale * stable_signed_unit(i as u64);
-            let q = (dvec(p) + normal * amp).normalize();
-            Vec3::new(q.x as f32, q.y as f32, q.z as f32)
-        })
-        .collect()
-}
-
-fn stable_signed_unit(mut x: u64) -> f64 {
-    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    x ^= x >> 31;
-    let unit = ((x >> 11) as f64) * (1.0 / ((1u64 << 53) as f64));
-    let signed = 2.0 * unit - 1.0;
-    if signed.abs() < 0.125 {
-        if signed < 0.0 {
-            -0.125
-        } else {
-            0.125
-        }
-    } else {
-        signed
-    }
-}
-
-#[inline]
-fn dvec(p: Vec3) -> DVec3 {
-    DVec3::new(p.x as f64, p.y as f64, p.z as f64)
 }
 
 struct PreparedPointsAndGrid {
@@ -1992,18 +1640,22 @@ fn remap_cells_to_original_indices(
 
 #[cfg(test)]
 mod tests {
+    use super::coplanar::{
+        classify_exact_affine_circle, classify_near_great_circle, stable_rank2_normal,
+    };
+    use super::error_mapping::{map_build_cells_error, map_cell_build_error};
     use super::{
         build_query_grid, canonicalize_pipeline_exact_zero_edges, cell_sum_sq_per_n,
-        check_plain_return_signals, classify_exact_affine_circle, classify_near_great_circle,
-        map_build_cells_error, map_cell_build_error, max_cell_occupancy, prepare_points_and_grid,
-        run_core_pipeline, stable_rank2_normal, summarize_topology,
-        validate_and_canonicalize_unit_points, validate_generator_capacity, EffectiveGeometry,
-        EffectiveInput, LocalRebuildCandidate, LocalRebuildOutcome, ResolutionDiscoveryMode,
+        check_plain_return_signals, max_cell_occupancy, prepare_points_and_grid, run_core_pipeline,
+        summarize_topology, validate_and_canonicalize_unit_points, validate_generator_capacity,
+        EffectiveGeometry, EffectiveInput, LocalRebuildCandidate, LocalRebuildOutcome,
+        ResolutionDiscoveryMode,
     };
     use crate::cell_layout::LiveCellLayout;
     use crate::diagram::VoronoiCell;
     use crate::live_dedup::{BuildCellsError, PackedLayoutCapacityError, ShardedVertexKeys};
     use crate::live_dedup::{CellBuildError, CellFailure};
+    use crate::test_support::{effective_arrays, effective_generators, fib_sphere};
     use crate::timing::TimingBuilder;
     use crate::{
         LocalRebuildMode, LocalRebuildStatus, PreprocessMode, VoronoiConfig, VoronoiError,
@@ -2381,41 +2033,6 @@ mod tests {
         )
         .expect("disabled");
         assert_eq!(disabled.report.local_rebuild, LocalRebuildStatus::Disabled);
-    }
-
-    fn fib_sphere(n: usize) -> Vec<[f32; 3]> {
-        let golden = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
-        (0..n)
-            .map(|i| {
-                let y = 1.0 - (i as f32 / (n as f32 - 1.0)) * 2.0;
-                let r = (1.0 - y * y).max(0.0).sqrt();
-                let theta = golden * i as f32;
-                let v = Vec3::new(theta.cos() * r, y, theta.sin() * r).normalize();
-                [v.x, v.y, v.z]
-            })
-            .collect()
-    }
-
-    fn effective_arrays(
-        diagram: &crate::SphericalVoronoi,
-    ) -> (Vec<Vec3>, Vec<VoronoiCell>, Vec<u32>) {
-        let vertices = diagram
-            .vertices()
-            .iter()
-            .map(|v| Vec3::from_array(v.to_array()))
-            .collect();
-        let cells = (0..diagram.num_cells())
-            .map(|i| VoronoiCell::new(diagram.cell_start(i), diagram.cell(i).len() as u16))
-            .collect();
-        (vertices, cells, diagram.cell_indices_raw().to_vec())
-    }
-
-    fn effective_generators(diagram: &crate::SphericalVoronoi) -> Vec<Vec3> {
-        diagram
-            .generators()
-            .iter()
-            .map(|generator| Vec3::from_array(generator.to_array()))
-            .collect()
     }
 
     #[test]

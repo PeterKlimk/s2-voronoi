@@ -1312,6 +1312,7 @@ fn validate_impl(diagram: &SphericalVoronoi) -> ValidationReport {
 #[cfg(test)]
 mod verify_gate_tests {
     use super::*;
+    use crate::test_support::{effective_arrays, effective_generators, fib_sphere};
     use glam::Vec3;
 
     #[test]
@@ -1438,42 +1439,6 @@ mod verify_gate_tests {
         for (case, enabled) in [("disabled", false), ("enabled", true)] {
             run_child(case, enabled);
         }
-    }
-
-    fn fib_sphere(n: usize) -> Vec<[f32; 3]> {
-        let golden = std::f32::consts::PI * (3.0 - 5.0f32.sqrt());
-        (0..n)
-            .map(|i| {
-                let y = 1.0 - (i as f32 / (n as f32 - 1.0)) * 2.0;
-                let r = (1.0 - y * y).max(0.0).sqrt();
-                let theta = golden * i as f32;
-                let v = Vec3::new(theta.cos() * r, y, theta.sin() * r).normalize();
-                [v.x, v.y, v.z]
-            })
-            .collect()
-    }
-
-    /// Extract the effective-space arrays (`weld_map` is `None` for the diagrams
-    /// used here, so the diagram *is* its own effective representation).
-    fn effective_arrays(
-        d: &SphericalVoronoi,
-    ) -> (Vec<Vec3>, Vec<crate::diagram::VoronoiCell>, Vec<u32>) {
-        let verts = d
-            .vertices()
-            .iter()
-            .map(|v| Vec3::from_array(v.to_array()))
-            .collect();
-        let cells = (0..d.num_cells())
-            .map(|i| crate::diagram::VoronoiCell::new(d.cell_start(i), d.cell(i).len() as u16))
-            .collect();
-        (verts, cells, d.cell_indices_raw().to_vec())
-    }
-
-    fn effective_generators(d: &SphericalVoronoi) -> Vec<Vec3> {
-        d.generators()
-            .iter()
-            .map(|g| Vec3::from_array(g.to_array()))
-            .collect()
     }
 
     fn cells_from_cycles(cycles: &[Vec<u32>]) -> (Vec<crate::diagram::VoronoiCell>, Vec<u32>) {
