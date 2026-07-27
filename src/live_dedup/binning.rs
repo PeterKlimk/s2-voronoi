@@ -204,7 +204,10 @@ pub(crate) fn assign_bins_with(
 
     let mut generator_bin: Vec<BinId> = vec![BinId::from(u8::MAX); n];
     let mut generator_layout: Vec<u32> = vec![u32::MAX; n];
-    let mut slot_gen_map: Vec<u32> = vec![u32::MAX; n];
+    // Cells and their point spans are visited in CSR order, so the packed slot
+    // map is produced sequentially. Build it directly instead of initializing
+    // an n-element sentinel buffer that every entry immediately overwrites.
+    let mut slot_gen_map: Vec<u32> = Vec::with_capacity(n);
 
     let mut visited = 0usize;
     for (cell, win) in cell_offsets.windows(2).enumerate() {
@@ -242,7 +245,8 @@ pub(crate) fn assign_bins_with(
                 local_shift,
                 local_mask
             );
-            slot_gen_map[cell_start + offset] = packed;
+            debug_assert_eq!(slot_gen_map.len(), cell_start + offset);
+            slot_gen_map.push(packed);
             visited += 1;
         }
     }
@@ -263,10 +267,7 @@ pub(crate) fn assign_bins_with(
 
     // slot_gen_map is now filled inline during the scatter pass above
     // (fused — no separate read-back pass).
-    debug_assert!(
-        !slot_gen_map.contains(&u32::MAX),
-        "unassigned slot_gen_map entries"
-    );
+    debug_assert_eq!(slot_gen_map.len(), n, "incomplete slot_gen_map");
 
     Ok(BinAssignment {
         generator_bin,
