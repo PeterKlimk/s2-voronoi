@@ -307,20 +307,34 @@ pub(super) fn collect_and_resolve_cell_edges(
         } else {
             // Edge to earlier neighbor → resolve immediately.
             // Search Vec for matching check (cache-friendly sequential access)
-            let found_unmatched = incoming_checks[matched_count..]
+            debug_assert!(matched_count <= incoming_checks.len());
+            // `matched_count` starts at zero and advances only after finding
+            // an entry in this suffix, so it never exceeds the vector length.
+            let unmatched = unsafe { incoming_checks.get_unchecked(matched_count..) };
+            let found_unmatched = unmatched
                 .iter()
                 .position(|check| check.neighbor_slot == slot)
                 .map(|offset| matched_count + offset);
             let (found, duplicate) = if let Some(found_idx) = found_unmatched {
+                debug_assert!(found_idx < incoming_checks.len());
                 if found_idx != matched_count {
-                    incoming_checks.swap(matched_count, found_idx);
+                    // SAFETY: `found_idx` came from the suffix beginning at
+                    // `matched_count`, and both indices are in bounds.
+                    unsafe {
+                        let checks = incoming_checks.as_mut_ptr();
+                        std::ptr::swap(checks.add(matched_count), checks.add(found_idx));
+                    }
                 }
-                let check = incoming_checks[matched_count];
+                // SAFETY: a found suffix entry proves `matched_count < len`.
+                let check = unsafe { *incoming_checks.get_unchecked(matched_count) };
                 matched_count += 1;
                 (Some(check), false)
             } else {
+                // SAFETY: the partition invariant above proves this prefix is
+                // contained in the vector.
+                let matched = unsafe { incoming_checks.get_unchecked(..matched_count) };
                 (
-                    incoming_checks[..matched_count]
+                    matched
                         .iter()
                         .find(|check| check.neighbor_slot == slot)
                         .copied(),
@@ -395,7 +409,10 @@ pub(super) fn collect_and_resolve_cell_edges(
         }
     }
 
-    for check in &incoming_checks[matched_count..] {
+    debug_assert!(matched_count <= incoming_checks.len());
+    // SAFETY: the same partition invariant maintained by the edge loop leaves
+    // this exact suffix unmatched.
+    for check in unsafe { incoming_checks.get_unchecked(matched_count..) } {
         shard.output.edge_mismatches.push(EdgeMismatch {
             key: edge_check_key(cell_idx, *check, slot_points),
             origin: EdgeMismatchOrigin::InBinUnconsumedCheck,
