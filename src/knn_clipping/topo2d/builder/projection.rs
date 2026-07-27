@@ -43,6 +43,11 @@ pub(crate) struct TangentBasis {
 impl TangentBasis {
     pub(crate) fn new(g: DVec3) -> Self {
         let len_sq = g.length_squared();
+        Self::new_with_norm(g, len_sq, len_sq.recip())
+    }
+
+    #[inline]
+    fn new_with_norm(g: DVec3, len_sq: f64, inv_len_sq: f64) -> Self {
         if len_sq == 0.0 || !len_sq.is_finite() {
             return TangentBasis {
                 t1: DVec3::X,
@@ -64,7 +69,6 @@ impl TangentBasis {
         // The closed-form ONB assumes |g| == 1, but production keeps the
         // exact f32-promoted generator. Project out the tiny radial component
         // so the chart axes are tangent to that promoted point set.
-        let inv_len_sq = len_sq.recip();
         t1 -= g * (t1.dot(g) * inv_len_sq);
         t2 -= g * (t2.dot(g) * inv_len_sq);
         TangentBasis { t1, t2, g }
@@ -129,8 +133,11 @@ impl GnomonicBuilder {
         // renormalization would make each chart solve a separately perturbed
         // point set.
         let gen64 = DVec3::new(generator.x as f64, generator.y as f64, generator.z as f64);
-        let inv_two_gg = 0.5 / gen64.length_squared();
-        let basis = TangentBasis::new(gen64);
+        let len_sq = gen64.length_squared();
+        let inv_two_gg = 0.5 / len_sq;
+        // Scaling by two is exact in this normalized finite regime and reuses
+        // the division without perturbing the tangent basis (pinned below).
+        let basis = TangentBasis::new_with_norm(gen64, len_sq, 2.0 * inv_two_gg);
         let generator_dot_g = gen64.dot(basis.g);
         let chart_metric_r2_scale = Self::chart_metric_r2_bound(&basis, inv_two_gg);
 
@@ -165,10 +172,11 @@ impl GnomonicBuilder {
     pub(super) fn reset(&mut self, generator_idx: usize, generator: Vec3) {
         // Preserve the canonicalized f32 bits exactly; do not renormalize.
         let gen64 = DVec3::new(generator.x as f64, generator.y as f64, generator.z as f64);
+        let len_sq = gen64.length_squared();
         self.generator_idx = generator_idx;
         self.generator = gen64;
-        self.inv_two_gg = 0.5 / gen64.length_squared();
-        self.basis = TangentBasis::new(gen64);
+        self.inv_two_gg = 0.5 / len_sq;
+        self.basis = TangentBasis::new_with_norm(gen64, len_sq, 2.0 * self.inv_two_gg);
         self.generator_dot_g = gen64.dot(self.basis.g);
         self.chart_metric_r2_scale = Self::chart_metric_r2_bound(&self.basis, self.inv_two_gg);
         self.constraints.clear();
@@ -424,6 +432,43 @@ impl Topo2DBuilder {
         match &mut self.inner {
             BuilderImpl::Gnomonic(builder) => builder.can_terminate(max_unseen_dot_bound),
             BuilderImpl::Fallback(builder) => builder.can_terminate(max_unseen_dot_bound),
+        }
+    }
+}
+
+#[cfg(test)]
+mod reciprocal_reuse_tests {
+    use super::TangentBasis;
+    use glam::{DVec3, Vec3};
+
+    fn assert_vec_bits_eq(left: DVec3, right: DVec3) {
+        assert_eq!(left.x.to_bits(), right.x.to_bits());
+        assert_eq!(left.y.to_bits(), right.y.to_bits());
+        assert_eq!(left.z.to_bits(), right.z.to_bits());
+    }
+
+    #[test]
+    fn doubled_half_reciprocal_preserves_normalized_generator_basis_bits() {
+        const N: usize = 10_000;
+        const PHI: f64 = 1.618_033_988_749_895;
+
+        for i in 0..N {
+            let y = 1.0 - (2.0 * i as f64 + 1.0) / N as f64;
+            let r = (1.0 - y * y).sqrt();
+            let theta = std::f64::consts::TAU * i as f64 / PHI;
+            let raw =
+                Vec3::new((r * theta.cos()) as f32, y as f32, (r * theta.sin()) as f32).normalize();
+            let g = DVec3::new(raw.x as f64, raw.y as f64, raw.z as f64);
+            let len_sq = g.length_squared();
+            let inv_two_gg = 0.5 / len_sq;
+            let reused_inv_len_sq = 2.0 * inv_two_gg;
+
+            assert_eq!(reused_inv_len_sq.to_bits(), len_sq.recip().to_bits());
+            let direct = TangentBasis::new(g);
+            let reused = TangentBasis::new_with_norm(g, len_sq, reused_inv_len_sq);
+            assert_vec_bits_eq(reused.t1, direct.t1);
+            assert_vec_bits_eq(reused.t2, direct.t2);
+            assert_vec_bits_eq(reused.g, direct.g);
         }
     }
 }

@@ -1152,6 +1152,20 @@ Do not broadly retry these without a materially different design or workload:
   Native uniform, clustered, and mega all improved both counters as well; total text shrank by 8.5
   KiB. Cycle samples were host-noise dominated, so acceptance rests on the cross-target,
   cross-regime structural reduction and the simpler one-call-site codegen shape.
+- A Windows 2.5M Fibonacci incidence audit found N=3/N=4 clips contribute 4.75M/6.28M of 16.45M
+  small-kernel dispatches, with changed clips against the synthetic bounding polygon dominating
+  both sizes (4.21M/4.31M). Packing the entry and exit `(u, v)` interpolations into one `f64x4`
+  reduced native 1M instructions by 0.086%, but enlarged `dispatch_clip` by 731 bytes and regressed
+  cycles in seven of nine pairs because the exit coordinates remained live across the survivor
+  loop. A lifetime-preserving two-coordinate helper compiled to the original scalar operations and
+  was counter-neutral. Keep the separately scheduled scalar interpolations.
+- Reusing the generator norm reciprocal in tangent-basis reset removes one scalar divide per cell:
+  the already-required `0.5 / |g|^2` is doubled exactly for the basis projection's `1 / |g|^2`.
+  Native 1M Fibonacci retired 0.031% fewer instructions and portable 500k retired 0.026% fewer,
+  with branches effectively unchanged. Short Linux cycle sets were neutral/slightly adverse, and
+  Windows 2.5M multithreaded timings remained scheduler/layout dominated (roughly 434--981 ms), so
+  acceptance rests on the removed divide, cross-target structural reduction, and a direct
+  bit-equivalence regression over normalized-f32 generators.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
