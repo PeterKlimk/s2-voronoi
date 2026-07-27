@@ -760,6 +760,16 @@ fn one_thread_scalar_low_incidence_matches_atomic_path() {
         let atomic = two_threads.install(|| summarize_topology(vertex_count, &cells, &indices));
         assert_eq!(scalar, atomic);
     }
+
+    // Exercise the compact-counter overflow path explicitly. Without the
+    // half-edge checksum and exact fallback, 256 references wrap to zero and
+    // incorrectly make the live vertex look unused.
+    let overflow_cells: Vec<VoronoiCell> =
+        (0..256).map(|start| VoronoiCell::new(start, 1)).collect();
+    let overflow_indices = vec![0; 256];
+    let scalar = one_thread.install(|| summarize_topology(1, &overflow_cells, &overflow_indices));
+    let atomic = two_threads.install(|| summarize_topology(1, &overflow_cells, &overflow_indices));
+    assert_eq!(scalar, atomic);
 }
 
 #[test]

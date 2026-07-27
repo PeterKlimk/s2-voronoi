@@ -883,14 +883,17 @@ fn summarize_topology(
     #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
-        use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+        use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
         let threads = rayon::current_num_threads().max(1);
         if threads == 1 {
             return summarize_topology_scalar(vertex_count, cells, cell_indices);
         }
-        // (u32: cannot saturate — total increments are bounded by
-        // `cell_indices.len()`.)
-        let cnt: Vec<AtomicU32> = (0..vertex_count).map(|_| AtomicU32::new(0)).collect();
+        // Ordinary spherical vertices have incidence three. Keep the shared
+        // counter footprint compact and detect the exceptional u8 wrap after
+        // the scan by comparing its reconstructed half-edge total with the
+        // exact total accumulated from the cells. A mismatch falls back to the
+        // exact scalar u32 scan below.
+        let cnt: Vec<AtomicU8> = (0..vertex_count).map(|_| AtomicU8::new(0)).collect();
         let chunk = cells.len().div_ceil(threads * 4).max(1024);
         let layout = LiveCellLayout::new(cells, cell_indices);
         let live_half_edges = cells
@@ -906,13 +909,20 @@ fn summarize_topology(
                 half_edges
             })
             .sum();
-        let (used_vertices, low_incidence) = cnt
+        let (used_vertices, low_incidence, counted_half_edges) = cnt
             .par_iter()
             .map(|c| {
                 let count = c.load(Relaxed);
-                (usize::from(count != 0), count == 1 || count == 2)
+                (
+                    usize::from(count != 0),
+                    count == 1 || count == 2,
+                    usize::from(count),
+                )
             })
-            .reduce(|| (0, false), |a, b| (a.0 + b.0, a.1 || b.1));
+            .reduce(|| (0, false, 0), |a, b| (a.0 + b.0, a.1 || b.1, a.2 + b.2));
+        if counted_half_edges != live_half_edges {
+            return summarize_topology_scalar(vertex_count, cells, cell_indices);
+        }
         TopologySummary {
             used_vertices,
             live_half_edges,
