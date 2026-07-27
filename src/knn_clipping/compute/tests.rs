@@ -5,13 +5,16 @@ use super::error_mapping::{map_build_cells_error, map_cell_build_error};
 use super::{
     build_query_grid, canonicalize_pipeline_exact_zero_edges, cell_sum_sq_per_n,
     check_plain_return_signals, max_cell_occupancy, prepare_points_and_grid, run_core_pipeline,
-    summarize_topology, validate_and_canonicalize_unit_points, validate_generator_capacity,
-    EffectiveGeometry, EffectiveInput, LocalRebuildCandidate, LocalRebuildOutcome,
-    ResolutionDiscoveryMode,
+    summarize_topology, summarize_topology_after_reconcile, validate_and_canonicalize_unit_points,
+    validate_generator_capacity, EffectiveGeometry, EffectiveInput, LocalRebuildCandidate,
+    LocalRebuildOutcome, ResolutionDiscoveryMode,
 };
 use crate::cell_layout::LiveCellLayout;
 use crate::diagram::VoronoiCell;
-use crate::live_dedup::{BuildCellsError, PackedLayoutCapacityError, ShardedVertexKeys};
+use crate::knn_clipping::edge_reconcile::CellCycleSnapshot;
+use crate::live_dedup::{
+    BuildCellsError, IncidenceSummary, PackedLayoutCapacityError, ShardedVertexKeys,
+};
 use crate::live_dedup::{CellBuildError, CellFailure};
 use crate::test_support::{effective_arrays, effective_generators, fib_sphere};
 use crate::timing::TimingBuilder;
@@ -770,6 +773,90 @@ fn one_thread_scalar_low_incidence_matches_atomic_path() {
     let scalar = one_thread.install(|| summarize_topology(1, &overflow_cells, &overflow_indices));
     let atomic = two_threads.install(|| summarize_topology(1, &overflow_cells, &overflow_indices));
     assert_eq!(scalar, atomic);
+}
+
+#[test]
+fn reconciliation_topology_delta_detects_a_new_low_incidence_vertex() {
+    let vertex_keys =
+        ShardedVertexKeys::new(vec![0, 3], vec![vec![[0, 1, 2], [0, 1, 2], [0, 1, 2]]]);
+    let baseline = IncidenceSummary {
+        used_vertices: 3,
+        live_half_edges: 9,
+        low_incidence: false,
+        low_incidence_vertices: Vec::new(),
+    };
+    let snapshots = [CellCycleSnapshot {
+        cell: 0,
+        vertices: vec![0, 1, 2],
+    }];
+    let cells = [
+        VoronoiCell::new(0, 2),
+        VoronoiCell::new(2, 3),
+        VoronoiCell::new(5, 3),
+    ];
+    let indices = [0, 1, 0, 1, 2, 0, 1, 2];
+
+    assert_eq!(
+        summarize_topology_after_reconcile(&baseline, &vertex_keys, &snapshots, &cells, &indices,),
+        Some(super::TopologySummary {
+            used_vertices: 3,
+            live_half_edges: 8,
+            low_incidence: true,
+        })
+    );
+}
+
+#[test]
+fn reconciliation_topology_delta_falls_back_for_ambiguous_baseline() {
+    let vertex_keys = ShardedVertexKeys::new(vec![0, 1], vec![vec![[0, 0, 0]]]);
+    let cells = [VoronoiCell::new(0, 1)];
+    let indices = [0];
+    let snapshots = [CellCycleSnapshot {
+        cell: 0,
+        vertices: vec![0],
+    }];
+
+    let baseline = IncidenceSummary {
+        used_vertices: 1,
+        live_half_edges: 2,
+        low_incidence: true,
+        low_incidence_vertices: Vec::new(),
+    };
+    assert_eq!(
+        summarize_topology_after_reconcile(&baseline, &vertex_keys, &snapshots, &cells, &indices,),
+        None
+    );
+}
+
+#[test]
+fn reconciliation_topology_delta_resolves_sparse_low_incidence_hint() {
+    let vertex_keys =
+        ShardedVertexKeys::new(vec![0, 3], vec![vec![[0, 1, 2], [0, 1, 2], [0, 1, 2]]]);
+    let baseline = IncidenceSummary {
+        used_vertices: 3,
+        live_half_edges: 9,
+        low_incidence: true,
+        low_incidence_vertices: vec![2],
+    };
+    let snapshots = [CellCycleSnapshot {
+        cell: 0,
+        vertices: vec![0, 1, 2],
+    }];
+    let cells = [
+        VoronoiCell::new(0, 3),
+        VoronoiCell::new(3, 3),
+        VoronoiCell::new(6, 3),
+    ];
+    let indices = [0, 1, 2, 0, 1, 2, 0, 1, 2];
+
+    assert_eq!(
+        summarize_topology_after_reconcile(&baseline, &vertex_keys, &snapshots, &cells, &indices,),
+        Some(super::TopologySummary {
+            used_vertices: 3,
+            live_half_edges: 9,
+            low_incidence: false,
+        })
+    );
 }
 
 #[test]

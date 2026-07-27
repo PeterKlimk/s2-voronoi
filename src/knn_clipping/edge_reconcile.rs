@@ -247,6 +247,14 @@ use super::union_find::SparseUnionFind;
 /// Rebuilt cell table and index buffer after reconciliation.
 pub(crate) type ReconciledCells = (Vec<VoronoiCell>, Vec<u32>);
 
+/// A cell's live cycle before any reconciliation mutation. The sparse set is
+/// enough to derive exact incidence deltas after reconciliation.
+#[derive(Debug, PartialEq)]
+pub(crate) struct CellCycleSnapshot {
+    pub(crate) cell: u32,
+    pub(crate) vertices: Vec<u32>,
+}
+
 /// Outcome of [`reconcile_edge_mismatches`].
 ///
 /// `merge_affected_cells` exists for the reconciliation's localized residual scan:
@@ -272,6 +280,9 @@ pub(crate) struct ReconcileResult {
     /// Includes record-owner cells for collinear drops and key-owner cells for
     /// accepted identity merges.
     pub resolution_scan_cells: Vec<u32>,
+    /// Original live cycles for cells that reconciliation could have changed.
+    /// Extra unchanged snapshots are harmless: their old/new deltas cancel.
+    pub changed_cell_snapshots: Vec<CellCycleSnapshot>,
     /// Number of cell cycles examined by the merge-safety face check across
     /// all reconciliation rounds. Exposed to timing telemetry so localized
     /// coverage can be compared with the full diagram size.
@@ -309,6 +320,7 @@ struct ReconcileRunState {
     local_rebuild_seed_pairs: Vec<(u32, u32)>,
     merge_affected_cells: Vec<u32>,
     resolution_scan_cells: Vec<u32>,
+    original_cell_cycles: rustc_hash::FxHashMap<u32, Vec<u32>>,
     merge_safety: MergeSafetyStats,
 }
 
@@ -316,6 +328,23 @@ impl ReconcileRunState {
     fn record_changed_cells(&mut self, candidate_cells: &[u32]) {
         self.resolution_scan_cells
             .extend_from_slice(candidate_cells);
+    }
+
+    fn snapshot_cells(
+        &mut self,
+        cells: &[VoronoiCell],
+        cell_indices: &[u32],
+        candidates: &[u32],
+    ) -> Result<(), crate::VoronoiError> {
+        let layout = LiveCellLayout::new(cells, cell_indices);
+        for &cell in candidates {
+            if (cell as usize) >= cells.len() || self.original_cell_cycles.contains_key(&cell) {
+                continue;
+            }
+            self.original_cell_cycles
+                .insert(cell, cell_vertex_slice_from_layout(cell, layout)?.to_vec());
+        }
+        Ok(())
     }
 
     fn into_result(mut self, residual_pairs: Vec<(u32, u32)>) -> ReconcileResult {
@@ -329,11 +358,18 @@ impl ReconcileRunState {
         }
         self.resolution_scan_cells.sort_unstable();
         self.resolution_scan_cells.dedup();
+        let mut changed_cell_snapshots: Vec<CellCycleSnapshot> = self
+            .original_cell_cycles
+            .drain()
+            .map(|(cell, vertices)| CellCycleSnapshot { cell, vertices })
+            .collect();
+        changed_cell_snapshots.sort_unstable_by_key(|snapshot| snapshot.cell);
         ReconcileResult {
             residual_pairs,
             local_rebuild_seed_pairs: self.local_rebuild_seed_pairs,
             merge_affected_cells: self.merge_affected_cells,
             resolution_scan_cells: self.resolution_scan_cells,
+            changed_cell_snapshots,
             merge_safety_scan_cells: self.merge_safety.scanned_cells,
             merge_safety_global_fallbacks: self.merge_safety.global_fallbacks,
         }
@@ -728,6 +764,7 @@ fn run_reconciliation_rounds(
         // real edge and is exact. One cell can carry such a point where its
         // neighbor sees a straight edge, which is precisely an unpaired-edge
         // defect; this heals it with no cross-cell rewrite.
+        state.snapshot_cells(cells, cell_indices, &candidate_cells)?;
         let dropped =
             drop_degenerate_collinear_vertices(cells, cell_indices, vertex_keys, &candidate_cells);
         let scan_dup_keys = mode == MergeMode::Primary && round == 0;
@@ -771,15 +808,21 @@ fn run_reconciliation_rounds(
             // over every id that entered the union-find (the same coverage
             // set `apply_merges_in_place` derives). Lenient on missing keys —
             // the rebuild backend tolerates synthetic fixtures without them.
+            let mut apply_cells = Vec::new();
             for v in uf.touched_ids() {
                 if let Some(key) = vertex_keys.get(v) {
-                    state
-                        .merge_affected_cells
-                        .extend(key.iter().copied().filter(|&g| (g as usize) < cells.len()));
+                    apply_cells.extend(key.iter().copied().filter(|&g| (g as usize) < cells.len()));
                 }
             }
+            apply_cells.sort_unstable();
+            apply_cells.dedup();
+            state.merge_affected_cells.extend_from_slice(&apply_cells);
             match options.apply {
                 ReconcileApply::Rebuild => {
+                    // The oracle backend rewrites every span, so retain every
+                    // original cycle. It is already deliberately O(diagram).
+                    let all_cells: Vec<u32> = (0..cells.len() as u32).collect();
+                    state.snapshot_cells(cells, cell_indices, &all_cells)?;
                     let (new_cells, new_indices) =
                         apply_merges_rebuild(&mut uf, cells, cell_indices)?;
                     let changed = cell_spans_differ(
@@ -791,6 +834,7 @@ fn run_reconciliation_rounds(
                     changed
                 }
                 ReconcileApply::InPlace => {
+                    state.snapshot_cells(cells, cell_indices, &apply_cells)?;
                     apply_merges_in_place(&mut uf, cells, cell_indices, vertex_keys)?
                 }
             }

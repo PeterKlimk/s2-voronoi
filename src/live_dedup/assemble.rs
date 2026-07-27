@@ -450,21 +450,28 @@ fn emit_cell_prefixes(
 fn summarize_incidence(finals: &[ShardFinal], total_cell_indices: u32) -> super::IncidenceSummary {
     let mut used_vertices = 0usize;
     let mut low_incidence = false;
+    let mut low_incidence_vertices = Vec::new();
+    let mut base = 0u32;
     for shard in finals {
         debug_assert_eq!(
             shard.output.vertex_incidence.len(),
             shard.output.vertices.len(),
             "vertex incidence out of sync with positions"
         );
-        for &count in &shard.output.vertex_incidence {
+        for (local, &count) in shard.output.vertex_incidence.iter().enumerate() {
             used_vertices += usize::from(count != 0);
             low_incidence |= count == 1 || count == 2;
+            if count == 1 || count == 2 {
+                low_incidence_vertices.push(base + local as u32);
+            }
         }
+        base += shard.output.vertex_incidence.len() as u32;
     }
     super::IncidenceSummary {
         used_vertices,
         live_half_edges: total_cell_indices as usize,
         low_incidence,
+        low_incidence_vertices,
     }
 }
 

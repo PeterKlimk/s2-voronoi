@@ -398,6 +398,7 @@ fn run_core_pipeline(
         local_rebuild_seed_pairs,
         merge_affected_cells,
         resolution_scan_cells: reconcile_resolution_scan_cells,
+        changed_cell_snapshots,
         ..
     } = reconcile_result;
     // This is part of the plain-return safety gate, not merely a local rebuild
@@ -419,6 +420,24 @@ fn run_core_pipeline(
                 &geometry.cell_indices,
             ),
             "owner-local incidence summary diverged from the live-window scan"
+        );
+        incremental
+    } else if let Some(incremental) = summarize_topology_after_reconcile(
+        &incidence_summary,
+        &assembly_vertex_keys,
+        &changed_cell_snapshots,
+        &geometry.cells,
+        &geometry.cell_indices,
+    ) {
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(
+            incremental,
+            summarize_topology_scalar(
+                geometry.vertices.len(),
+                &geometry.cells,
+                &geometry.cell_indices,
+            ),
+            "defect-local topology summary diverged from the live-window scan"
         );
         incremental
     } else {
@@ -828,6 +847,98 @@ impl TopologySummary {
     }
 }
 
+/// Update construction-time incidence from the sparse set of cycles observed
+/// before reconciliation. The exact old incidence of each delta-touched
+/// vertex is recovered from the at-most-three cells in its construction key;
+/// a snapshotted cycle supplies the old span and an unsnapshotted cell is, by
+/// definition, unchanged. Thus no whole-diagram count ledger has to survive
+/// assembly.
+///
+/// A pre-existing low-incidence boolean is ambiguous: reconciliation might
+/// repair its last source or leave another untouched source behind. Assembly
+/// therefore retains the sparse ids behind that flag and this routine checks
+/// them exactly alongside the mutation delta. Missing provenance falls back
+/// to the full scan.
+fn summarize_topology_after_reconcile(
+    baseline: &live_dedup::IncidenceSummary,
+    vertex_keys: &live_dedup::ShardedVertexKeys,
+    snapshots: &[edge_reconcile::CellCycleSnapshot],
+    cells: &[VoronoiCell],
+    cell_indices: &[u32],
+) -> Option<TopologySummary> {
+    if snapshots.is_empty()
+        || (baseline.low_incidence && baseline.low_incidence_vertices.is_empty())
+    {
+        return None;
+    }
+
+    use rustc_hash::{FxHashMap, FxHashSet};
+
+    let mut delta: FxHashMap<u32, i32> = FxHashMap::default();
+    let mut original_cycles: FxHashMap<u32, &[u32]> = FxHashMap::default();
+    let mut seen_cells: FxHashSet<u32> = FxHashSet::default();
+    let mut half_edge_delta = 0i64;
+    for snapshot in snapshots {
+        if !seen_cells.insert(snapshot.cell) {
+            return None;
+        }
+        original_cycles.insert(snapshot.cell, &snapshot.vertices);
+        let cell = cells.get(snapshot.cell as usize)?;
+        let start = cell.vertex_start();
+        let end = start.checked_add(cell.vertex_count())?;
+        let final_cycle = cell_indices.get(start..end)?;
+
+        half_edge_delta = half_edge_delta
+            .checked_add(i64::try_from(final_cycle.len()).ok()?)?
+            .checked_sub(i64::try_from(snapshot.vertices.len()).ok()?)?;
+        for &vertex in &snapshot.vertices {
+            *delta.entry(vertex).or_default() -= 1;
+        }
+        for &vertex in final_cycle {
+            *delta.entry(vertex).or_default() += 1;
+        }
+    }
+    for &vertex in &baseline.low_incidence_vertices {
+        delta.entry(vertex).or_default();
+    }
+
+    let mut used_vertices = i64::try_from(baseline.used_vertices).ok()?;
+    let mut low_incidence = false;
+    for (vertex, change) in delta {
+        let key = vertex_keys.get(vertex)?;
+        let mut old = 0i64;
+        for (slot, &owner) in key.iter().enumerate() {
+            if key[..slot].contains(&owner) {
+                continue;
+            }
+            let cycle = if let Some(&original) = original_cycles.get(&owner) {
+                original
+            } else {
+                let cell = cells.get(owner as usize)?;
+                let start = cell.vertex_start();
+                let end = start.checked_add(cell.vertex_count())?;
+                cell_indices.get(start..end)?
+            };
+            old += i64::try_from(cycle.iter().filter(|&&v| v == vertex).count()).ok()?;
+        }
+        let new = old.checked_add(i64::from(change))?;
+        if new < 0 {
+            return None;
+        }
+        used_vertices += i64::from(new != 0) - i64::from(old != 0);
+        low_incidence |= new == 1 || new == 2;
+    }
+
+    let live_half_edges = i64::try_from(baseline.live_half_edges)
+        .ok()?
+        .checked_add(half_edge_delta)?;
+    Some(TopologySummary {
+        used_vertices: usize::try_from(used_vertices).ok()?,
+        live_half_edges: usize::try_from(live_half_edges).ok()?,
+        low_incidence,
+    })
+}
+
 /// Summarize referenced vertices and live half-edges, including whether any
 /// referenced vertex has degree 1 or 2 (a real defect the local rebuild should
 /// examine).
@@ -841,13 +952,13 @@ impl TopologySummary {
 /// buffer counts those stale slots as phantom degree-1/2 vertices and trips a
 /// no-op local rebuild. Counting live windows matches the validators (`validate_impl`,
 /// `verify_sphere_fast`) and the local rebuild's own `low_incidence_gens`.
-/// This scan runs on EVERY build as a plain-return safety signal (and, when
-/// enabled, a local rebuild trigger). It cannot piggyback on reconcile, which
-/// early-returns when no edge is unresolved. Multi-threaded builds use exact
-/// shared atomic counters, read only after the chunk-parallel scan; a one-thread
-/// Rayon pool uses the same plain-counter path as a build without `parallel`.
-/// The scale evidence for avoiding stale-slot false positives is recorded in
-/// `docs/performance.md#source-pinned-performance-decisions`.
+/// Construction supplies the common-path summary, and defect-local
+/// reconciliation updates it from captured cell cycles. This whole-diagram
+/// scan is the conservative escape path for incomplete provenance. When it is
+/// needed, multi-threaded builds use exact shared atomic counters read only
+/// after the chunk-parallel scan; a one-thread Rayon pool uses the same plain
+/// counter path as a build without `parallel`. The scale evidence is recorded
+/// in `docs/performance.md#source-pinned-performance-decisions`.
 fn summarize_topology_scalar(
     vertex_count: usize,
     cells: &[VoronoiCell],

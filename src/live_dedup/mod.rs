@@ -90,11 +90,15 @@ impl ShardedVertexKeys {
 }
 
 /// Construction-time topology facts derived from shard-owner incidence.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct IncidenceSummary {
     pub(crate) used_vertices: usize,
     pub(crate) live_half_edges: usize,
     pub(crate) low_incidence: bool,
+    /// Vertex ids whose owner-local construction count is one or two. Empty
+    /// on ordinary clean topology; retained so a defect path can distinguish
+    /// a real low-incidence vertex from localized mismatch bookkeeping.
+    pub(crate) low_incidence_vertices: Vec<u32>,
 }
 
 /// Result of assembling sharded live-dedup data into global arrays.

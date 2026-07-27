@@ -225,11 +225,19 @@ arithmetic. At 2M single-threaded it reduced retired instructions by 0.18% on Fi
 on uniform input in all three paired runs. Cycles improved 3.5–4.4% on Fibonacci and 2.3–3.9% on
 uniform. The same instruction reduction was visible in the default parallel build.
 
-The always-on low-incidence local-rebuild trigger uses plain `u32` counters when the active Rayon pool has
-one worker, avoiding atomic increments and the parallel final scan. Pools with more than one worker
-retain the atomic implementation. At 2M single-threaded it reduced retired instructions by 0.067%
-on Fibonacci and 0.061% on uniform input, with effectively identical counts in all three paired
-runs. Cycles were too noisy to resolve; the default parallel control was structurally neutral.
+The low-incidence local-rebuild trigger uses the construction-time owner-local summary on clean
+builds. If reconciliation changes cell cycles, it captures only their original spans and updates
+incidence from the sparse old/new delta; exact old counts come from the at-most-three owner cells in
+each vertex key. Assembly also retains the sparse ids behind an owner-local degree-1/2 signal so the
+delta path can resolve real defects versus mismatch-bookkeeping false positives. Missing provenance
+falls back to the whole-diagram scan. That fallback uses plain `u32` counters with one Rayon worker
+and compact atomics with multiple workers.
+
+On the 10M uniform/no-preprocess case, four reconciled cells previously triggered the fallback.
+Removing it reduced Linux native instructions/branches by 0.20%/1.11% and portable instructions/
+branches by 1.90%/3.60% over three interleaved runs. Ten Windows native pairs improved 3.31% with a
+95% paired CI of [2.74%, 3.87%] and ten portable pairs improved 2.13% directionally (CI crossed zero
+at [-0.25%, 4.45%]). A checked 10M run pins the local result equal to the exhaustive scalar oracle.
 
 The N=3/4 small clipper keeps its four SIMD distances in a four-element array instead of padding an
 eight-element array with four zero stores; N=5–8 retains the full eight-lane representation.
@@ -572,6 +580,9 @@ modules without making the non-obvious code shape look accidental.
   which is why the available parallel sort owns that stage. Centralizing paired/boundary/overused/
   same-direction classification was neutral in seven 500k single-threaded pairs (mean ratios
   `0.9999960` instructions and `0.9999938` branches), so the typed classifier is retained.
+  Reconciliation now returns sparse original cell cycles to the topology safety gate; exact
+  key-owner incidence deltas replace the prior whole-diagram atomic rescan when provenance is
+  complete, while checked builds compare the result with the exhaustive live-window oracle.
 - **Local-rebuild cold path.** Reusing the construction grid replaces an all-generator neighbor
   scan that became minutes-long for thousand-generator closures on dense defects. Returning before
   flatten/clone/validation when no splice occurred removed about 12.6 seconds from a 15-second
