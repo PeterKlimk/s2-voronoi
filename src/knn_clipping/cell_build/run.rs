@@ -624,8 +624,17 @@ fn clip_batch_source<const SHELL: bool>(
         // line) instead of two separate random by-slot loads.
         let slot_point = pos_slots[neighbor_slot as usize];
         let neighbor_idx = slot_point.idx as usize;
-        if neighbor_idx == generator_idx {
-            continue;
+        // Packed preparation excludes the query slot from center and ring
+        // candidates. Only shell takeover can rediscover the generator.
+        if SHELL {
+            if neighbor_idx == generator_idx {
+                continue;
+            }
+        } else {
+            debug_assert_ne!(
+                neighbor_idx, generator_idx,
+                "packed neighbor batch must exclude its generator"
+            );
         }
 
         let should_clip =

@@ -268,6 +268,16 @@ timing, tracing, and termination. At 2M single-threaded Fibonacci it reduced ret
 about 0.096%; at 500k clustered it reduced them by about 0.206%, consistently across three pairs.
 Cycles were neutral-to-lower overall.
 
+The same source specialization elides self-neighbor filtering from packed batches: packed center
+and ring construction already exclude the query slot, while shell takeover can rediscover it and
+retains the check. This directly removes the hottest distinct sampled instruction in
+`clip_batch_source<false>`. At 1M single-threaded native Fibonacci, nine pairs reduced retired
+instructions by 0.178% and branches by 1.824% in every run; cycles favored the change in six of nine
+pairs but remained noisy. Generic-target 500k counters reduced instructions by 0.159% and branches
+by 1.805%. Portable Cachegrind at 100k independently showed 0.169% fewer instruction references,
+0.478% fewer conditional branches, and 2.88% fewer conditional branch mispredicts. Fifteen Windows
+native 2.5M pairs were unresolved (8/15 favorable, about -0.4% median) amid large host noise.
+
 The quadratic cube projection computes one absolute-value square root and branchlessly selects the
 positive or negative result. It is bit-identical to the previous finite-input branches, including
 signed zero, subnormals, and grid-boundary-adjacent values. At 2M single-threaded it added about
