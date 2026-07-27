@@ -122,7 +122,11 @@ fn materialize_slot_coordinates(
     let z_addr = zs.spare_capacity_mut().as_mut_ptr() as usize;
 
     let write_slot = |slot: usize, global: u32| {
-        let point = points[global as usize];
+        let global = global as usize;
+        debug_assert!(global < points.len());
+        // SAFETY: `point_indices` is the grid scatter's permutation of
+        // `0..points.len()` and has the same length as `points`.
+        let point = unsafe { *points.get_unchecked(global) };
         // SAFETY: each slot is visited exactly once and lies within all three
         // allocations' spare capacities. The vectors remain length zero until
         // every parallel worker has joined.
@@ -173,8 +177,12 @@ unsafe fn scatter_input_chunk<const WRITE_COORDINATES: bool>(
     for (i, &cell) in point_cells.iter().enumerate() {
         let original_idx = global_offset + i;
         let cell = cell as usize;
-        let pos = cursors[cell] as usize;
-        cursors[cell] += 1;
+        debug_assert!(cell < cursors.len());
+        // SAFETY: every stored cell id was produced for this grid resolution,
+        // whose complete cell domain is represented by `cursors`.
+        let cursor = unsafe { cursors.get_unchecked_mut(cell) };
+        let pos = *cursor as usize;
+        *cursor += 1;
         unsafe {
             (destinations.indices as *mut u32)
                 .add(pos)
