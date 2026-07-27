@@ -1093,6 +1093,14 @@ Do not broadly retry these without a materially different design or workload:
   counter pairs decisively rejected the dispatch/code-footprint cost: whole-build instructions rose
   0.385% and branches 0.972% in every pair; branch misses were neutral (+0.078%) and noisy cycles
   favored the candidate by 0.87%. Keep the separate single-chunk and overlapping-remainder loops.
+- Instrumenting the hottest sampled owner-routing branch in `emit_cell_output` on Windows 2.5M
+  Fibonacci found that 66.381% of vertex keys take the resolved-index fast exit, 33.333% create a
+  local vertex, and only 0.286% defer to another shard. Of keys that reach the owner-bin test,
+  99.149% are therefore local, matching the existing native layout's local fallthrough. Outlining
+  the rare deferred arm reduced the native hot function by 417 bytes, but added 0.522% whole-build
+  instructions while removing 1.058% branches on pinned 1M Linux. Nine rotated Windows pairs were
+  unresolved/slightly adverse (total-time median +0.57%, 5/9 worse; dedup also 5/9 worse). Keep the
+  inline deferred arm and the current resolved-first/local-fallthrough native layout.
 - Zipping the three equal-length threshold-selection streams saved about 0.19% instructions and
   0.49% branches on native 1M Fibonacci (and comparable structural work on uniform), but native
   cycles were worse in 6/8 rotated-order pairs on both distributions, often by several percent.
