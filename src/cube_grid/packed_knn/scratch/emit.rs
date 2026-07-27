@@ -214,31 +214,46 @@ impl PackedKnnCellScratch {
         if k == 0 || out.is_empty() {
             return None;
         }
+        let security_threshold = *self.security_thresholds.get(qi)?;
+        debug_assert!(qi < self.chunk0_keys.len());
+        debug_assert!(qi < self.chunk0_pos.len());
+        debug_assert!(qi < self.tail_keys.len());
+        debug_assert!(qi < self.tail_pos.len());
+        debug_assert!(qi < self.tail_possible.len());
+        debug_assert!(qi < self.thresholds.len());
         let coverage_bound = if self.band_mode.get(qi).copied().unwrap_or(false) {
-            self.center_bound[qi]
+            debug_assert!(qi < self.center_bound.len());
+            // SAFETY: `band_mode` is populated in lockstep with
+            // `center_bound`, so a present true entry proves this index.
+            unsafe { *self.center_bound.get_unchecked(qi) }
         } else {
-            self.security_thresholds[qi]
+            security_threshold
         } + crate::tolerances::GRID_DOT_BOUND_PAD;
 
         let n_target = k.min(out.len());
 
         match stage {
             PackedStage::Chunk0 => {
+                // SAFETY: preparation sizes these per-query arrays together;
+                // the successful `security_thresholds` lookup above proves
+                // that `qi` belongs to the prepared group.
                 let run = emit_run::<true>(
-                    self.chunk0_keys.get_mut(qi)?,
-                    self.chunk0_pos.get_mut(qi)?,
+                    unsafe { self.chunk0_keys.get_unchecked_mut(qi) },
+                    unsafe { self.chunk0_pos.get_unchecked_mut(qi) },
                     n_target,
                     out,
                     timings,
                 )?;
-                let post_chunk_bound = if self.tail_possible[qi] {
-                    self.thresholds[qi] + crate::tolerances::GRID_DOT_BOUND_PAD
+                let tail_possible = unsafe { *self.tail_possible.get_unchecked(qi) };
+                let post_chunk_bound = if tail_possible {
+                    (unsafe { *self.thresholds.get_unchecked(qi) })
+                        + crate::tolerances::GRID_DOT_BOUND_PAD
                 } else {
                     coverage_bound
                 };
                 let unseen_bound = if run.has_more {
                     run.last_dot.max(post_chunk_bound)
-                } else if self.tail_possible[qi] {
+                } else if tail_possible {
                     post_chunk_bound
                 } else {
                     coverage_bound
@@ -254,9 +269,11 @@ impl PackedKnnCellScratch {
                     self.tail_ready_gen.get(qi).copied().unwrap_or(0) == group_gen,
                     "tail stage requested before ensure_tail"
                 );
+                // SAFETY: these arrays share the prepared-group sizing
+                // invariant established above.
                 let run = emit_run::<false>(
-                    self.tail_keys.get_mut(qi)?,
-                    self.tail_pos.get_mut(qi)?,
+                    unsafe { self.tail_keys.get_unchecked_mut(qi) },
+                    unsafe { self.tail_pos.get_unchecked_mut(qi) },
                     n_target,
                     out,
                     timings,
