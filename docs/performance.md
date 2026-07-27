@@ -498,6 +498,20 @@ favorable). A deterministic 100k single-threaded portable Cachegrind guardrail r
 instruction references by 0.152%, conditional branches by 0.178%, and simulated branch misses by
 0.806%; inside `ensure_tail_directed_for` the reductions were 12.34%, 13.09%, and 24.90%.
 
+Ordinary and edge-check clipping share one out-of-line small-polygon specialization dispatcher.
+Inlining the table into both entry points duplicated about 6.0 KiB of native text and 7.6 KiB of
+portable text. The retained wrappers tail-transfer to the shared body; at 1M single-threaded native,
+nine Fibonacci pairs reduced whole-build instructions by 0.205% and hardware cache references by
+18.62%, while uniform reduced them by 0.255% and 17.11%, with every structural pair favorable.
+A same-condition twelve-pair uniform confirmation retained 0.255% fewer instructions and 11.49%
+fewer cache references; cycles were neutral at +0.26% with a -0.28% to +0.80% interval. At 2M/6T,
+instructions fell 0.207% on Fibonacci and 0.267% on uniform, and cache references fell 8.58--8.79%
+in every pair; cycles were neutral. Portable 50k single-threaded Cachegrind reduced instruction
+references by 0.172%/0.227% and simulated I1 misses by 19.24%/23.08% on Fibonacci/uniform.
+Conditional branches rise about 1% because of the shared transfer. Forcing the two tiny wrappers
+back inline reduced that retired branch cost but produced a repeatable 2.94% uniform cycle
+regression over fifteen pairs; retain the layout-stable out-of-line wrappers.
+
 The AVX2 small-sort dispatcher keeps its eight-element network out of line. Inlining that leaf at
 both dispatch sites made every sort preserve two additional callee-saved registers; outlining it
 reduced the dispatcher from 1,538 to 847 bytes and the combined dispatcher/leaf fixed work by

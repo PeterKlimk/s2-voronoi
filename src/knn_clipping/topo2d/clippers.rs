@@ -21,7 +21,10 @@ fn lerp_t_pair(d0: f64, d1: f64, d2: f64, d3: f64) -> (f64, f64) {
 /// - N=3,5,6,7: avoid `% N` in the hot loop via the ptr_d variant.
 ///
 /// We `match` on N first, then branch on bounded/unbounded per arm.
-#[inline(always)]
+// Keep one production copy of the specialization table; both entry wrappers
+// stay out of line so their call-site layout cannot clone or perturb it.
+// See the shared clip-dispatch result in docs/performance.md.
+#[inline(never)]
 fn dispatch_clip(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
     let n = poly.len;
     let has_bounding_ref = poly.has_bounding_ref;
@@ -73,7 +76,7 @@ fn dispatch_clip(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> Cli
 }
 
 /// Clip a convex polygon by a half-plane.
-#[cfg_attr(feature = "profiling", inline(never))]
+#[inline(never)]
 pub(crate) fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffer) -> ClipResult {
     let n = poly.len;
 
@@ -99,7 +102,7 @@ pub(crate) fn clip_convex(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuffe
 ///
 /// This is intended for edgecheck-derived seed constraints where we expect the half-plane to be
 /// active and want to avoid extra branchy prechecks.
-#[cfg_attr(feature = "profiling", inline(never))]
+#[inline(never)]
 pub(crate) fn clip_convex_edgecheck(
     poly: &PolyBuffer,
     hp: &HalfPlane,
