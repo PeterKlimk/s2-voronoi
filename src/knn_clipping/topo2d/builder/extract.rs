@@ -87,15 +87,23 @@ impl GnomonicBuilder {
                     fp::fma_f64(v, self.basis.t2.z, self.basis.g.z),
                 ),
             );
-            let dir = Vec3::new(source.x as f32, source.y as f32, source.z as f32);
-            let len2 = dir.length_squared();
-            // Keep the validity check in the floating-point domain. The upper
-            // bound rejects infinity, while either comparison rejects NaN.
-            let valid_len2 = (EXTRACT_DEGENERATE_LEN2..=f32::MAX).contains(&len2);
+            let len2 = source.length_squared();
+            // The projection-limit gate keeps every reachable chart source
+            // many orders of magnitude inside f32 range, while tangency keeps
+            // it nonzero. Check the same envelope from the f64 norm that
+            // normalization must consume, avoiding a second f32 norm.
+            let valid_len2 = (EXTRACT_DEGENERATE_LEN2 as f64..=f32::MAX as f64).contains(&len2);
+            #[cfg(debug_assertions)]
+            {
+                let dir = Vec3::new(source.x as f32, source.y as f32, source.z as f32);
+                let old_len2 = dir.length_squared();
+                let old_valid = (EXTRACT_DEGENERATE_LEN2..=f32::MAX).contains(&old_len2);
+                debug_assert_eq!(valid_len2, old_valid);
+            }
             if !valid_len2 {
                 return Err(CellFailure::NoValidSeed);
             }
-            let v_pos = crate::types::canonical_vec3_from_dvec3(source);
+            let v_pos = crate::types::canonical_vec3_from_dvec3_with_len_squared(source, len2);
             #[cfg(feature = "profiling")]
             crate::point_audit::record_vec3_from_dvec3(
                 crate::point_audit::PointProducer::GnomonicVertex,

@@ -1166,6 +1166,14 @@ Do not broadly retry these without a materially different design or workload:
   Windows 2.5M multithreaded timings remained scheduler/layout dominated (roughly 434--981 ms), so
   acceptance rests on the removed divide, cross-target structural reduction, and a direct
   bit-equivalence regression over normalized-f32 generators.
+- Gnomonic vertex extraction formerly converted each unnormalized f64 chart source to f32 and
+  computed a second squared length solely for its finite/degenerate guard, then recomputed the f64
+  squared length for mandatory normalization. Reusing the f64 value removes 0.616% of native 1M
+  Fibonacci instructions and 0.701% of portable 500k instructions, with branches effectively
+  unchanged. Native cycles favored the candidate in five of nine noisy pairs; Windows native 2.5M
+  split 8/16 with a roughly +0.2% paired median. The projection-limit and tangency invariants keep
+  live sources inside the same f32 validity envelope; checked builds recompute the former predicate
+  and assert agreement on every extracted vertex.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
