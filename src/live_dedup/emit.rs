@@ -247,6 +247,7 @@ pub(crate) fn emit_cell_output(
             {
                 shard.triplet_keys += 1;
             }
+            let resolved_idx = *vi;
             // Native AVX2 codegen benefits from testing the resolved index
             // before the owner-map load. Generic x86 codegen regresses badly
             // from this branch layout, so retain its owner-first shape below.
@@ -255,17 +256,17 @@ pub(crate) fn emit_cell_output(
                 // A resolved index is necessarily local to this shard: in-bin
                 // edge checks carry shard-local ids, while cross-bin/deferred
                 // endpoints retain INVALID_INDEX until assembly.
-                if *vi != INVALID_INDEX {
+                if resolved_idx != INVALID_INDEX {
                     debug_assert!(
-                        (*vi as usize) < shard.output.vertices.len(),
+                        (resolved_idx as usize) < shard.output.vertices.len(),
                         "resolved vertex index outside its shard"
                     );
                     let representative =
-                        unsafe { *shard.output.vertices.get_unchecked(*vi as usize) };
+                        unsafe { *shard.output.vertices.get_unchecked(resolved_idx as usize) };
                     shard.output.resolution_drift_exceeded |=
                         exceeds_resolution_drift(representative, pos);
-                    shard.output.add_vertex_incidence(*vi);
-                    shard.output.cell_indices.push(*vi);
+                    shard.output.add_vertex_incidence(resolved_idx);
+                    shard.output.cell_indices.push(resolved_idx);
                     continue;
                 }
             }
@@ -281,7 +282,7 @@ pub(crate) fn emit_cell_output(
                     *vi = new_idx;
                 }
                 #[cfg(not(target_feature = "avx2"))]
-                if *vi == INVALID_INDEX {
+                if resolved_idx == INVALID_INDEX {
                     let new_idx = checked_u32(shard.output.vertices.len(), "shard vertex index")?;
                     shard.output.vertices.push(pos);
                     shard.output.vertex_keys.push(key);
@@ -289,10 +290,10 @@ pub(crate) fn emit_cell_output(
                     *vi = new_idx;
                 } else {
                     let representative =
-                        unsafe { *shard.output.vertices.get_unchecked(*vi as usize) };
+                        unsafe { *shard.output.vertices.get_unchecked(resolved_idx as usize) };
                     shard.output.resolution_drift_exceeded |=
                         exceeds_resolution_drift(representative, pos);
-                    shard.output.add_vertex_incidence(*vi);
+                    shard.output.add_vertex_incidence(resolved_idx);
                 }
                 let v_idx = *vi;
                 debug_assert_ne!(v_idx, INVALID_INDEX, "missing on-shard vertex index");
