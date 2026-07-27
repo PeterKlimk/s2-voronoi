@@ -1170,10 +1170,11 @@ Do not broadly retry these without a materially different design or workload:
   computed a second squared length solely for its finite/degenerate guard, then recomputed the f64
   squared length for mandatory normalization. Reusing the f64 value removes 0.616% of native 1M
   Fibonacci instructions and 0.701% of portable 500k instructions, with branches effectively
-  unchanged. Native cycles favored the candidate in five of nine noisy pairs; Windows native 2.5M
-  split 8/16 with a roughly +0.2% paired median. The projection-limit and tangency invariants keep
-  live sources inside the same f32 validity envelope; checked builds recompute the former predicate
-  and assert agreement on every extracted vertex.
+  unchanged. Native cycles favored the candidate in five of nine noisy pairs. A subsequent quiet
+  Windows native 2.5M ring split exactly 12/24, with a -0.11% paired median and +0.04% geometric
+  mean (approximate 95% interval -1.03% to +1.13%). The projection-limit and tangency invariants
+  keep live sources inside the same f32 validity envelope; checked builds recompute the former
+  predicate and assert agreement on every extracted vertex.
 
 Group-wide shell takeover batching is not an isolated query optimization in the current pipeline.
 Same-bin cells are serialized because earlier cells emit live edge checks that seed and reconcile
