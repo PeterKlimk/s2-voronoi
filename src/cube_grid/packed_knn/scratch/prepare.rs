@@ -643,8 +643,81 @@ impl PackedKnnCellScratch {
             let (x_chunks, _) = xs.as_chunks::<8>();
             let (y_chunks, _) = ys.as_chunks::<8>();
             let (z_chunks, _) = zs.as_chunks::<8>();
-            let paired_chunks = full_chunks / 2;
-            for pair in 0..paired_chunks {
+            // `wide::f32x8` is one register under AVX2, where sharing the
+            // broadcasts across three chunks wins. Portable x86 splits it
+            // into two registers; the same batching increases instructions,
+            // so that build deliberately retains the two-chunk loop below.
+            #[cfg(all(target_feature = "avx2", not(feature = "simd_scalar")))]
+            for triplet in 0..full_chunks / 3 {
+                let chunk = triplet * 3;
+                let i = chunk * 8;
+                let candidates_a = fp::PointChunk8::from_array_refs(
+                    &x_chunks[chunk],
+                    &y_chunks[chunk],
+                    &z_chunks[chunk],
+                );
+                let candidates_b = fp::PointChunk8::from_array_refs(
+                    &x_chunks[chunk + 1],
+                    &y_chunks[chunk + 1],
+                    &z_chunks[chunk + 1],
+                );
+                let candidates_c = fp::PointChunk8::from_array_refs(
+                    &x_chunks[chunk + 2],
+                    &y_chunks[chunk + 2],
+                    &z_chunks[chunk + 2],
+                );
+
+                for ((((&qx, &qy), &qz), &threshold), keys) in query_x
+                    .iter()
+                    .zip(query_y)
+                    .zip(query_z)
+                    .zip(thresholds)
+                    .zip(chunk0_keys.iter_mut())
+                {
+                    let (dots_a, dots_b, dots_c) =
+                        candidates_a.dots_triple(&candidates_b, &candidates_c, qx, qy, qz);
+                    let mut mask_a = dots_a.mask_gt(threshold);
+                    let mut mask_b = dots_b.mask_gt(threshold);
+                    let mut mask_c = dots_c.mask_gt(threshold);
+                    if mask_a | mask_b | mask_c == 0 {
+                        continue;
+                    }
+
+                    if mask_a != 0 {
+                        let dots_arr = dots_a.to_array();
+                        while mask_a != 0 {
+                            let lane = mask_a.trailing_zeros() as usize;
+                            let slot = (soa_start + i + lane) as u32;
+                            let dot = dots_arr[lane];
+                            keys.push(make_desc_key(dot, slot));
+                            mask_a &= mask_a - 1;
+                        }
+                    }
+                    if mask_b != 0 {
+                        let dots_arr = dots_b.to_array();
+                        while mask_b != 0 {
+                            let lane = mask_b.trailing_zeros() as usize;
+                            let slot = (soa_start + i + 8 + lane) as u32;
+                            let dot = dots_arr[lane];
+                            keys.push(make_desc_key(dot, slot));
+                            mask_b &= mask_b - 1;
+                        }
+                    }
+                    if mask_c != 0 {
+                        let dots_arr = dots_c.to_array();
+                        while mask_c != 0 {
+                            let lane = mask_c.trailing_zeros() as usize;
+                            let slot = (soa_start + i + 16 + lane) as u32;
+                            let dot = dots_arr[lane];
+                            keys.push(make_desc_key(dot, slot));
+                            mask_c &= mask_c - 1;
+                        }
+                    }
+                }
+            }
+
+            #[cfg(any(not(target_feature = "avx2"), feature = "simd_scalar"))]
+            for pair in 0..full_chunks / 2 {
                 let chunk = pair * 2;
                 let i = chunk * 8;
                 let candidates_a = fp::PointChunk8::from_array_refs(
@@ -695,7 +768,64 @@ impl PackedKnnCellScratch {
                 }
             }
 
-            if full_chunks % 2 != 0 {
+            #[cfg(all(target_feature = "avx2", not(feature = "simd_scalar")))]
+            if full_chunks % 3 == 2 {
+                let chunk = full_chunks - 2;
+                let i = chunk * 8;
+                let candidates_a = fp::PointChunk8::from_array_refs(
+                    &x_chunks[chunk],
+                    &y_chunks[chunk],
+                    &z_chunks[chunk],
+                );
+                let candidates_b = fp::PointChunk8::from_array_refs(
+                    &x_chunks[chunk + 1],
+                    &y_chunks[chunk + 1],
+                    &z_chunks[chunk + 1],
+                );
+
+                for ((((&qx, &qy), &qz), &threshold), keys) in query_x
+                    .iter()
+                    .zip(query_y)
+                    .zip(query_z)
+                    .zip(thresholds)
+                    .zip(chunk0_keys.iter_mut())
+                {
+                    let (dots_a, dots_b) = candidates_a.dots_pair(&candidates_b, qx, qy, qz);
+                    let mut mask_a = dots_a.mask_gt(threshold);
+                    let mut mask_b = dots_b.mask_gt(threshold);
+                    if mask_a | mask_b == 0 {
+                        continue;
+                    }
+
+                    if mask_a != 0 {
+                        let dots_arr = dots_a.to_array();
+                        while mask_a != 0 {
+                            let lane = mask_a.trailing_zeros() as usize;
+                            let slot = (soa_start + i + lane) as u32;
+                            let dot = dots_arr[lane];
+                            keys.push(make_desc_key(dot, slot));
+                            mask_a &= mask_a - 1;
+                        }
+                    }
+                    if mask_b != 0 {
+                        let dots_arr = dots_b.to_array();
+                        while mask_b != 0 {
+                            let lane = mask_b.trailing_zeros() as usize;
+                            let slot = (soa_start + i + 8 + lane) as u32;
+                            let dot = dots_arr[lane];
+                            keys.push(make_desc_key(dot, slot));
+                            mask_b &= mask_b - 1;
+                        }
+                    }
+                }
+            }
+
+            #[cfg(all(target_feature = "avx2", not(feature = "simd_scalar")))]
+            let has_single_full_chunk = full_chunks % 3 == 1;
+            #[cfg(any(not(target_feature = "avx2"), feature = "simd_scalar"))]
+            let has_single_full_chunk = full_chunks % 2 != 0;
+
+            if has_single_full_chunk {
                 let chunk = full_chunks - 1;
                 let i = chunk * 8;
                 let candidates = fp::PointChunk8::from_array_refs(

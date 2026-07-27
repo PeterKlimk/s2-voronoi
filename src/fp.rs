@@ -110,6 +110,24 @@ impl PointChunk8 {
         );
         (Dots8(a), Dots8(b))
     }
+
+    /// Dot three candidate chunks against one query, sharing its broadcast
+    /// values. This is the largest useful batch on the AVX2 register file.
+    #[cfg(any(test, all(target_feature = "avx2", not(feature = "simd_scalar"))))]
+    #[inline(always)]
+    pub(crate) fn dots_triple(
+        &self,
+        b: &Self,
+        c: &Self,
+        qx: f32,
+        qy: f32,
+        qz: f32,
+    ) -> (Dots8, Dots8, Dots8) {
+        let (a, b, c) = backend::dot3_triple(
+            self.x, self.y, self.z, b.x, b.y, b.z, c.x, c.y, c.z, qx, qy, qz,
+        );
+        (Dots8(a), Dots8(b), Dots8(c))
+    }
 }
 
 impl Dots8 {
@@ -237,6 +255,44 @@ mod backend {
         #[cfg(not(feature = "fma"))]
         {
             ((ax * qx + ay * qy) + az * qz, (bx * qx + by * qy) + bz * qz)
+        }
+    }
+
+    #[cfg(any(test, target_feature = "avx2"))]
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn dot3_triple(
+        ax: V,
+        ay: V,
+        az: V,
+        bx: V,
+        by: V,
+        bz: V,
+        cx: V,
+        cy: V,
+        cz: V,
+        qx: f32,
+        qy: f32,
+        qz: f32,
+    ) -> (V, V, V) {
+        let qx = f32x8::splat(qx);
+        let qy = f32x8::splat(qy);
+        let qz = f32x8::splat(qz);
+        #[cfg(feature = "fma")]
+        {
+            (
+                az.mul_add(qz, ax.mul_add(qx, ay * qy)),
+                bz.mul_add(qz, bx.mul_add(qx, by * qy)),
+                cz.mul_add(qz, cx.mul_add(qx, cy * qy)),
+            )
+        }
+        #[cfg(not(feature = "fma"))]
+        {
+            (
+                (ax * qx + ay * qy) + az * qz,
+                (bx * qx + by * qy) + bz * qz,
+                (cx * qx + cy * qy) + cz * qz,
+            )
         }
     }
 
@@ -368,10 +424,16 @@ mod tests {
         let other = PointChunk8::from_arrays(zs, xs, ys);
         let (paired_dots, paired_other) =
             PointChunk8::from_arrays(xs, ys, zs).dots_pair(&other, qx, qy, qz);
+        let third = PointChunk8::from_arrays(ys, zs, xs);
+        let (tripled_dots, tripled_other, tripled_third) =
+            PointChunk8::from_arrays(xs, ys, zs).dots_triple(&other, &third, qx, qy, qz);
         let lanes = dots.to_array();
 
         assert_eq!(paired_dots.to_array(), lanes);
         assert_eq!(paired_other.to_array(), other.dots(qx, qy, qz).to_array());
+        assert_eq!(tripled_dots.to_array(), lanes);
+        assert_eq!(tripled_other.to_array(), other.dots(qx, qy, qz).to_array());
+        assert_eq!(tripled_third.to_array(), third.dots(qx, qy, qz).to_array());
 
         for lane in 0..8 {
             let scalar = dot3_f32(xs[lane], ys[lane], zs[lane], qx, qy, qz);
@@ -465,6 +527,30 @@ mod backend {
         qz: f32,
     ) -> (V, V) {
         (dot3(ax, ay, az, qx, qy, qz), dot3(bx, by, bz, qx, qy, qz))
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn dot3_triple(
+        ax: V,
+        ay: V,
+        az: V,
+        bx: V,
+        by: V,
+        bz: V,
+        cx: V,
+        cy: V,
+        cz: V,
+        qx: f32,
+        qy: f32,
+        qz: f32,
+    ) -> (V, V, V) {
+        (
+            dot3(ax, ay, az, qx, qy, qz),
+            dot3(bx, by, bz, qx, qy, qz),
+            dot3(cx, cy, cz, qx, qy, qz),
+        )
     }
 
     #[inline(always)]

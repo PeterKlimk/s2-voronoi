@@ -477,6 +477,16 @@ multithreaded phase timing reduced `ring_pass` by 6.97% on Fibonacci (95% interv
 1.69--1.95%; uninstrumented whole-build estimates were 0.50% faster on Fibonacci and 0.79% faster
 on uniform but remained below the machine's resolution.
 
+On AVX2, the packed ring path extends that microbatch to three chunks, sharing each query broadcast
+across 24 candidates while preserving A/B/C emission order. The portable path deliberately remains
+two chunks: splitting each `wide::f32x8` across two registers made the triple version execute 0.62%
+more instructions inside `prepare_group_directed`, while the gated portable function is byte-for-byte
+identical to its baseline codegen. Native 50k Cachegrind reduced that function's instructions by
+0.95% and conditional branches by 3.97%; whole-build instructions were effectively flat (+0.035%,
+consistent with layout noise) and branches fell 0.59%. At 2M/6T, phase-timed medians reduced
+`ring_pass` by 7.2% on uniform (11/12 pairs) and 6.1% on Fibonacci (10/10 pairs). Uninstrumented
+whole-build timing was neutral, as expected for a phase accounting for about 4% of the build.
+
 ### Source-pinned performance decisions
 
 Source comments retain the invariant that constrains a local implementation choice and link here
