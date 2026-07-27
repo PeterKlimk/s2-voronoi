@@ -228,16 +228,24 @@ uniform. The same instruction reduction was visible in the default parallel buil
 The low-incidence local-rebuild trigger uses the construction-time owner-local summary on clean
 builds. If reconciliation changes cell cycles, it captures only their original spans and updates
 incidence from the sparse old/new delta; exact old counts come from the at-most-three owner cells in
-each vertex key. Assembly also retains the sparse ids behind an owner-local degree-1/2 signal so the
-delta path can resolve real defects versus mismatch-bookkeeping false positives. Missing provenance
-falls back to the whole-diagram scan. That fallback uses plain `u32` counters with one Rayon worker
-and compact atomics with multiple workers.
+each vertex key. On mismatch-bearing builds, assembly also retains the sparse ids behind an
+owner-local degree-1/2 signal so the delta path can resolve real defects versus mismatch-bookkeeping
+false positives. Clean builds keep the original summary loop and do not collect those ids. Missing
+provenance falls back to the whole-diagram scan. That fallback uses plain `u32` counters with one
+Rayon worker and compact atomics with multiple workers.
 
 On the 10M uniform/no-preprocess case, four reconciled cells previously triggered the fallback.
 Removing it reduced Linux native instructions/branches by 0.20%/1.11% and portable instructions/
 branches by 1.90%/3.60% over three interleaved runs. Ten Windows native pairs improved 3.31% with a
 95% paired CI of [2.74%, 3.87%] and ten portable pairs improved 2.13% directionally (CI crossed zero
 at [-0.25%, 4.45%]). A checked 10M run pins the local result equal to the exhaustive scalar oracle.
+
+A follow-up native Windows ring at 2.5M Fibonacci/no-preprocess isolated a clean-path regression to
+the sparse low-id collection in the first version of this optimization: `2cea6fb -> 1cb94d6` was
++1.26% with a 95% paired CI of [+0.33%, +2.19%]. Gating that collection on nonempty mismatch
+records removes 0.49% retired instructions and 0.88% branches on the clean Fibonacci path while
+preserving the 10M four-cell reconciliation result. The direct Windows fix pair was directionally
+favorable but unresolved (-0.44%, CI [-1.25%, +0.39%]); retain the gate on structural evidence.
 
 The N=3/4 small clipper keeps its four SIMD distances in a four-element array instead of padding an
 eight-element array with four zero stores; N=5–8 retains the full eight-lane representation.

@@ -35,6 +35,27 @@ fn scatter_order_gate_distinguishes_correlated_and_scrambled_ids() {
 }
 
 #[test]
+fn incidence_summary_collects_sparse_low_ids_only_when_requested() {
+    let mut shard0 = ShardState::new(0);
+    shard0.output.vertices = vec![Vec3::ZERO; 4];
+    shard0.output.vertex_incidence = vec![0, 1, 2, 3];
+    let mut shard1 = ShardState::new(0);
+    shard1.output.vertices = vec![Vec3::ZERO; 2];
+    shard1.output.vertex_incidence = vec![2, 3];
+    let finals = vec![shard0.into_final(), shard1.into_final()];
+
+    let clean = summarize_incidence(&finals, 11, false);
+    assert_eq!(clean.used_vertices, 5);
+    assert!(clean.low_incidence);
+    assert!(clean.low_incidence_vertices.is_empty());
+
+    let defect = summarize_incidence(&finals, 11, true);
+    assert_eq!(defect.used_vertices, 5);
+    assert!(defect.low_incidence);
+    assert_eq!(defect.low_incidence_vertices, [1, 2, 4]);
+}
+
+#[test]
 fn exact_zero_hint_confirmation_preserves_count_and_deduplicates_pairs() {
     let mut shard = ShardState::new(2);
     shard.output.exact_zero_edge_hint_cells = vec![0, 1];
