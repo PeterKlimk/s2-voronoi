@@ -1086,6 +1086,13 @@ Do not broadly retry these without a materially different design or workload:
   Fibonacci (instructions -0.007%, branches +0.009%) but regressed 500k native clustered by 0.048%
   instructions, 0.106% branches, and 1.74% cycles. Most activated tail-rescan chunks have at least
   one security-safe lane, so keep computing the high-threshold mask without an extra branch.
+- Fusing the full and overlapping remainder chunks for 9--15 point packed ring ranges shared the
+  query broadcasts and one combined-empty test, directly targeting the hottest sampled branch in
+  `prepare_group_directed`. A rotated Windows 2.5M Fibonacci phase ring was directionally favorable
+  but unresolved (`ring_pass` paired median -4.02%, 10/16 favorable). Nine pinned 1M native Linux
+  counter pairs decisively rejected the dispatch/code-footprint cost: whole-build instructions rose
+  0.385% and branches 0.972% in every pair; branch misses were neutral (+0.078%) and noisy cycles
+  favored the candidate by 0.87%. Keep the separate single-chunk and overlapping-remainder loops.
 - Zipping the three equal-length threshold-selection streams saved about 0.19% instructions and
   0.49% branches on native 1M Fibonacci (and comparable structural work on uniform), but native
   cycles were worse in 6/8 rotated-order pairs on both distributions, often by several percent.
