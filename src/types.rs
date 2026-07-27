@@ -168,7 +168,10 @@ impl SpherePoint {
 /// Normalize in f64 and round once into the backend's packed f32 vector.
 #[inline]
 pub(crate) fn canonical_vec3_from_dvec3(direction: glam::DVec3) -> glam::Vec3 {
-    let normalized = direction / direction.length_squared().sqrt();
+    // Form one scalar reciprocal so native codegen uses a single divide,
+    // followed by scalar/vector multiplies for the three coordinates.
+    let inv_len = direction.length_squared().sqrt().recip();
+    let normalized = direction * inv_len;
     glam::Vec3::new(
         normalized.x as f32,
         normalized.y as f32,
