@@ -487,6 +487,14 @@ consistent with layout noise) and branches fell 0.59%. At 2M/6T, phase-timed med
 `ring_pass` by 7.2% on uniform (11/12 pairs) and 6.1% on Fibonacci (10/10 pairs). Uninstrumented
 whole-build timing was neutral, as expected for a phase accounting for about 4% of the build.
 
+The AVX2 small-sort dispatcher keeps its eight-element network out of line. Inlining that leaf at
+both dispatch sites made every sort preserve two additional callee-saved registers; outlining it
+reduced the dispatcher from 1,538 to 847 bytes and the combined dispatcher/leaf fixed work by
+2.44%. At 500k single-threaded, twelve uniform hardware-counter pairs reduced whole-build retired
+instructions by 0.036% in every pair while adding 0.021% branches; cycles were neutral. The change
+is intentionally AVX2-only because the outlined portable experiment added 0.51% whole-build
+branches. Gating restores byte-identical portable `sort_small` codegen.
+
 ### Source-pinned performance decisions
 
 Source comments retain the invariant that constrains a local implementation choice and link here

@@ -490,7 +490,11 @@ unsafe fn merge_sorted_suffix_back(p: *mut u64, base: usize, rem: usize) {
     }
 }
 
-#[inline(always)]
+// On AVX2, inlining this leaf twice makes the general dispatcher preserve two
+// extra callee-saved registers on every sort. Portable codegen retains the
+// inline form; see the measured boundary in docs/performance.md.
+#[cfg_attr(target_feature = "avx2", inline(never))]
+#[cfg_attr(not(target_feature = "avx2"), inline(always))]
 unsafe fn sort8_in_place(base: *mut u64) {
     let out = sort8_net(
         *base.add(0),
