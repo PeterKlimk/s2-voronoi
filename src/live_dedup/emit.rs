@@ -271,7 +271,12 @@ pub(crate) fn emit_cell_output(
                 }
             }
 
-            let owner_bin = assignment.generator_bin[key[0] as usize];
+            let owner = key[0] as usize;
+            debug_assert!(owner < assignment.generator_bin.len());
+            // SAFETY: vertex keys contain the current generator and two
+            // neighbor ids supplied by the grid, all of which index the
+            // complete per-generator assignment arrays.
+            let owner_bin = unsafe { *assignment.generator_bin.get_unchecked(owner) };
             if owner_bin == bin {
                 #[cfg(target_feature = "avx2")]
                 {
