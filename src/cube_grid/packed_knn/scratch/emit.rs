@@ -142,17 +142,42 @@ impl PackedKnnCellScratch {
                 }
             }
 
-            let tail_start = full_chunks * 8;
-            for i in tail_start..range_len {
-                let cx = xs[i];
-                let cy = ys[i];
-                let cz = zs[i];
-                let slot = (soa_start + i) as u32;
-                debug_assert_ne!(slot, query_slot);
+            let rem = range_len % 8;
+            if rem != 0 {
+                if full_chunks == 0 {
+                    for i in 0..range_len {
+                        let slot = (soa_start + i) as u32;
+                        debug_assert_ne!(slot, query_slot);
+                        let dot = fp::dot3_f32(xs[i], ys[i], zs[i], qx_s, qy_s, qz_s);
+                        if dot > security_threshold && dot <= threshold {
+                            tail_keys.push(super::helpers::make_desc_key(dot, slot));
+                        }
+                    }
+                    continue;
+                }
 
-                let dot = fp::dot3_f32(cx, cy, cz, qx_s, qy_s, qz_s);
-                if dot > security_threshold && dot <= threshold {
-                    tail_keys.push(super::helpers::make_desc_key(dot, slot));
+                // Reuse the final eight stored points and mask away the
+                // overlapping full-chunk lanes. This preserves suffix order
+                // without assembling a padded temporary chunk.
+                let i = range_len - 8;
+                let candidates = fp::PointChunk8::from_array_refs(
+                    xs[i..].try_into().unwrap(),
+                    ys[i..].try_into().unwrap(),
+                    zs[i..].try_into().unwrap(),
+                );
+                let dots = candidates.dots(qx_s, qy_s, qz_s);
+                let valid_bits = (0xffu32 << (8 - rem)) & 0xff;
+                let mut tail_bits =
+                    dots.mask_gt(security_threshold) & !dots.mask_gt(threshold) & valid_bits;
+                if tail_bits != 0 {
+                    let dots_arr = dots.to_array();
+                    while tail_bits != 0 {
+                        let lane = tail_bits.trailing_zeros() as usize;
+                        let slot = (soa_start + i + lane) as u32;
+                        debug_assert_ne!(slot, query_slot);
+                        tail_keys.push(super::helpers::make_desc_key(dots_arr[lane], slot));
+                        tail_bits &= tail_bits - 1;
+                    }
                 }
             }
         }

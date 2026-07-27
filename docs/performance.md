@@ -487,6 +487,17 @@ consistent with layout noise) and branches fell 0.59%. At 2M/6T, phase-timed med
 `ring_pass` by 7.2% on uniform (11/12 pairs) and 6.1% on Fibonacci (10/10 pairs). Uninstrumented
 whole-build timing was neutral, as expected for a phase accounting for about 4% of the build.
 
+Lazy ring-tail rescans evaluate a non-empty remainder by overlapping the final stored eight-point
+chunk and masking away lanes that belonged to the preceding full chunk. Ranges shorter than eight
+points retain the scalar path, and the retained high lanes preserve the original ascending slot
+order. At 2M/6T native, nine uniform hardware-counter pairs reduced whole-build instructions by
+0.074% and branches by 0.185%, with every pair favorable; Fibonacci's lighter fallback incidence
+reduced branches by 0.024% in every pair while instructions were nearly neutral (-0.007%). Twenty
+phase-timed uniform pairs reduced `ring_fallback` by 14.69% (95% interval 13.51--15.86%, 20/20
+favorable). A deterministic 100k single-threaded portable Cachegrind guardrail reduced whole-build
+instruction references by 0.152%, conditional branches by 0.178%, and simulated branch misses by
+0.806%; inside `ensure_tail_directed_for` the reductions were 12.34%, 13.09%, and 24.90%.
+
 The AVX2 small-sort dispatcher keeps its eight-element network out of line. Inlining that leaf at
 both dispatch sites made every sort preserve two additional callee-saved registers; outlining it
 reduced the dispatcher from 1,538 to 847 bytes and the combined dispatcher/leaf fixed work by
