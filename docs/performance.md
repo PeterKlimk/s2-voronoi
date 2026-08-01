@@ -539,6 +539,17 @@ Conditional branches rise about 1% because of the shared transfer. Forcing the t
 back inline reduced that retired branch cost but produced a repeatable 2.94% uniform cycle
 regression over fifteen pairs; retain the layout-stable out-of-line wrappers.
 
+A refreshed timing-only census on the 16-core native Linux host confirmed that the remaining clip
+cost is broad rather than one missed specialization. At 2.5M, Fibonacci made 18.3M clip attempts:
+82.1% changed the polygon, and sizes 3/4/5 accounted for 25.9%/34.3%/23.5%. Uniform made 25.1M
+attempts: 61.8% changed, with sizes 3/4/5 at 22.2%/27.4%/22.4%. A 500k clustered run made 19.2M
+attempts, 83.6% unchanged, spread most heavily across sizes 5--9+. The retained radius certificate
+avoided full dispatch for 1.85M Fibonacci, 1.41M uniform, and 8.12M clustered attempts—respectively
+56.4%, 14.7%, and 50.6% of all unchanged results. Native cycle annotation distributed samples
+across SIMD distance evaluation, interpolation divides, survivor/metadata writes, radius tracking,
+and dispatch overhead. This reinforces the existing individual negative results: no single size,
+result class, or assembly sequence now justifies another narrow clipper variant.
+
 The AVX2 small-sort dispatcher keeps its eight-element network out of line. Inlining that leaf at
 both dispatch sites made every sort preserve two additional callee-saved registers; outlining it
 reduced the dispatcher from 1,538 to 847 bytes and the combined dispatcher/leaf fixed work by
