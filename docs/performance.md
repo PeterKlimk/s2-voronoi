@@ -907,6 +907,15 @@ Do not broadly retry these without a materially different design or workload:
   sort; parallelizing the matcher requires a different patch representation and must justify that
   larger redesign independently.
 
+- Further high-core bin scheduling did not improve on the retained 96-bin policy. A timing-only
+  per-bin census measured exposed construction tails of about 15ms at 2.5M Fibonacci, 12ms at
+  2.5M uniform, and 18ms at 500k clustered. Globally sorting bins by generator count to start
+  predicted-heavy work first destroyed spatial/context locality and slowed all three timing runs
+  by roughly 15--20%. Raising the cube-face ceiling to 216 bins also failed the ordinary-workload
+  gate: ten rotated 96-versus-216 pairs made Fibonacci 0.58% slower (only 2/10 favorable) and were
+  neutral on uniform (+0.07%, 4/10 favorable). Retain spatial bin order and the 96-bin ceiling;
+  further task splitting must preserve locality and avoid creating more cross-shard boundaries.
+
 - **Permutation-boundary two-pass scatter:** staging each cell as its generator id plus
   already-globalized index payload, then filling cache-sized destination windows, passed its
   isolated 2M uniform phase gate only after increasing the partition from the proposed 64 windows
