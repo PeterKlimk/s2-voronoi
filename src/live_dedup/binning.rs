@@ -63,7 +63,13 @@ struct BinLayout {
     num_bins: usize,
 }
 
-/// Target shard count from threads (x2) with the `VORONOI_MESH_BIN_COUNT` override,
+#[inline]
+fn default_target_bin_count(threads: usize) -> usize {
+    let bins_per_thread = if threads >= 16 { 4 } else { 2 };
+    threads.saturating_mul(bins_per_thread)
+}
+
+/// Target shard count from threads with the `VORONOI_MESH_BIN_COUNT` override,
 /// clamped to `[6, 96]` so every cube face can own at least one shard.
 pub(crate) fn target_bin_count() -> usize {
     #[cfg(feature = "parallel")]
@@ -72,9 +78,10 @@ pub(crate) fn target_bin_count() -> usize {
     let threads = 1;
 
     if let Ok(var) = std::env::var("VORONOI_MESH_BIN_COUNT") {
-        var.parse().unwrap_or(threads * 2)
+        var.parse()
+            .unwrap_or_else(|_| default_target_bin_count(threads))
     } else {
-        threads * 2
+        default_target_bin_count(threads)
     }
     .clamp(6, 96)
 }
@@ -284,7 +291,16 @@ pub(crate) fn assign_bins_with(
 
 #[cfg(test)]
 mod tests {
-    use super::{assign_bins_with, validate_local_capacity};
+    use super::{assign_bins_with, default_target_bin_count, validate_local_capacity};
+
+    #[test]
+    fn high_core_default_increases_shard_granularity() {
+        assert_eq!(default_target_bin_count(1), 2);
+        assert_eq!(default_target_bin_count(8), 16);
+        assert_eq!(default_target_bin_count(15), 30);
+        assert_eq!(default_target_bin_count(16), 64);
+        assert_eq!(default_target_bin_count(32), 128);
+    }
 
     #[test]
     fn packed_local_capacity_accepts_values_within_mask() {

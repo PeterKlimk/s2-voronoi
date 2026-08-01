@@ -22,7 +22,7 @@ mutation.
 | Variable | Class | Owner / read boundary | Contract |
 |---|---|---|---|
 | `RAYON_NUM_THREADS` | supported operational | Rayon, before pool initialization | External Rayon contract; used to pin concurrency. |
-| `VORONOI_MESH_BIN_COUNT` | supported tuning | `live_dedup::binning::target_bin_count`, once per computation | Integer shard target, clamped to `[6, 96]`; tests and benchmark invocations may override it. |
+| `VORONOI_MESH_BIN_COUNT` | supported tuning | `live_dedup::binning::target_bin_count`, once per computation | Integer shard target, clamped to `[6, 96]`; defaults to 2x workers below 16 and 4x at 16+, then is quantized to the cube-face layout. Tests and benchmark invocations may override it. |
 | `VORONOI_MESH_GRID_DENSITY` | benchmark tuning | `policy::knn_grid_target_density`, first use via `OnceLock` | Parsed `f64` at least 1; intended for grid-density sweeps, not per-computation mutation. |
 | `VORONOI_MESH_VERIFY` | supported verification | `validation::verify_enabled`, ordinary compute return gate | Exact value `1` enables the fast verifier with an O(E) strict-validation fallback. |
 | `VORONOI_MESH_TIMING_KV` | instrumentation | `timing::real::PhaseTimings::report` | Presence emits machine-readable timing output when the `timing` feature is enabled. |

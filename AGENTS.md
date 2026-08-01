@@ -45,7 +45,8 @@ VORONOI_MESH_TIMING_KV=1 cargo run --release --features tools,timing --bin bench
 ## Common Environment Knobs
 
 - `RAYON_NUM_THREADS=1`: force single-threaded mode (stable perf comparisons).
-- `VORONOI_MESH_BIN_COUNT=<n>`: override sharded bin count (defaults to about 2x threads).
+- `VORONOI_MESH_BIN_COUNT=<n>`: override the sharded bin target (defaults to 2x threads below
+  16 workers and 4x at 16+; the cube-face layout caps the actual count at 96).
 - `VORONOI_MESH_TIMING_KV=1`: emit machine-readable timing lines (`timing` feature).
 
 The authoritative inventory, including diagnostic/oracle knobs and mutation policy, is

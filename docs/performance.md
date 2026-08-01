@@ -79,7 +79,8 @@ Useful flags:
 ## Knobs
 
 - `RAYON_NUM_THREADS=1` — single-threaded, for stable comparisons.
-- `VORONOI_MESH_BIN_COUNT=<n>` — shard count (default ~2x threads).
+- `VORONOI_MESH_BIN_COUNT=<n>` — shard target (default 2x threads below 16 workers, 4x at 16+;
+  the cube-face layout quantizes and caps the actual count at 96).
 - `VORONOI_MESH_TIMING_KV=1` with `--features timing` — machine-readable phase timing.
 - `VORONOI_MESH_RECONCILE_TELEMETRY=1` — on defect-bearing builds, emit a read-only
   `RECONCILE_KV` simulation of the primary reconciliation round before mutation. It reports
@@ -827,6 +828,22 @@ about 5.2ms to 1.5--1.8ms at 1M and measured 3.5--4.0ms at 2.5M. A pinned one-th
 never executes the parallel helper: twelve pairs improved Fibonacci 0.71% and regressed uniform
 0.25%, a small net improvement across the two distributions. Strict 100k Fibonacci and uniform
 validation passed.
+
+The default spatial-shard target now increases from 2x to 4x workers at 16 or more workers, while
+retaining the 96-bin ceiling and the existing 2x policy below that threshold. Cube-face
+quantization means the 16-core case moves from 54 to 96 actual bins. This is deliberately not a
+blanket multiplier increase: on the same host, 6-thread targets of 12 and 24 both quantized to the
+same 24-bin layout, while an 8-thread jump from 24 to 54 actual bins was slower. The high-core
+change provides enough construction tasks to reduce the Rayon tail while accepting more cross-bin
+assembly work. At 2.5M on the native 16-core Linux bench, ten rotated no-preprocessing pairs
+improved Fibonacci by 2.29% (95% bootstrap interval 0.94--3.71%, 8/10 favorable) and uniform by
+3.05% (1.85--4.24%, 9/10). With normal preprocessing, Fibonacci improved 2.92%
+(2.18--3.70%, 10/10) and uniform 1.74% (0.32--3.17%, 6/10). Timing attribution reduced cell
+construction by about 15ms/29ms on Fibonacci/uniform while adding about 5--6ms of dedup work.
+Peak RSS remained within roughly 2MiB around a 704--710MiB envelope. At eight threads, where the
+selected layout is unchanged, uniform wall time was neutral and seven Fibonacci counter pairs
+were structurally neutral (slightly fewer instructions and branches), rejecting a small noisy wall
+regression as changed work.
 
 Untried probes and candidates (2026-07-17 triage; each begins with a cheap measurement gate):
 
