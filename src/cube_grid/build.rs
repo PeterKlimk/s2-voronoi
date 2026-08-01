@@ -86,7 +86,7 @@ pub(super) fn conservative_cell_cap(center: Vec3, corners: &[Vec3; 4]) -> (f32, 
 }
 
 /// Build the slot-ordered AoS records from the SoA coordinate arrays and the
-/// slot->global-index map (one sequential pass; see `CubeMapGrid::cell_points_aos`).
+/// slot->global-index map (see `CubeMapGrid::cell_points_aos`).
 pub(super) fn build_pos_aos(
     xs: &[f32],
     ys: &[f32],
@@ -109,17 +109,23 @@ pub(super) fn build_pos_aos(
 /// The index stream is sequential here; generator positions may be gathered
 /// from caller order. This is the source/destination-locality counterpart to
 /// scattering all four streams while traversing the caller's point slice.
-fn materialize_slot_coordinates(
+fn materialize_slot_coordinates<const WRITE_SLOT_POINTS: bool>(
     points: &[Vec3],
     point_indices: &[u32],
-) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<super::SlotPoint>) {
     let n = point_indices.len();
     let mut xs = Vec::<f32>::with_capacity(n);
     let mut ys = Vec::<f32>::with_capacity(n);
     let mut zs = Vec::<f32>::with_capacity(n);
+    let mut slot_points = if WRITE_SLOT_POINTS {
+        Vec::<super::SlotPoint>::with_capacity(n)
+    } else {
+        Vec::new()
+    };
     let x_addr = xs.spare_capacity_mut().as_mut_ptr() as usize;
     let y_addr = ys.spare_capacity_mut().as_mut_ptr() as usize;
     let z_addr = zs.spare_capacity_mut().as_mut_ptr() as usize;
+    let slot_points_addr = slot_points.spare_capacity_mut().as_mut_ptr() as usize;
 
     let write_slot = |slot: usize, global: u32| {
         let global = global as usize;
@@ -134,6 +140,14 @@ fn materialize_slot_coordinates(
             (x_addr as *mut f32).add(slot).write(point.x);
             (y_addr as *mut f32).add(slot).write(point.y);
             (z_addr as *mut f32).add(slot).write(point.z);
+            if WRITE_SLOT_POINTS {
+                (slot_points_addr as *mut super::SlotPoint)
+                    .add(slot)
+                    .write(super::SlotPoint {
+                        pos: point,
+                        idx: global as u32,
+                    });
+            }
         }
     };
 
@@ -153,8 +167,11 @@ fn materialize_slot_coordinates(
         xs.set_len(n);
         ys.set_len(n);
         zs.set_len(n);
+        if WRITE_SLOT_POINTS {
+            slot_points.set_len(n);
+        }
     }
-    (xs, ys, zs)
+    (xs, ys, zs, slot_points)
 }
 
 #[derive(Clone, Copy)]
@@ -332,7 +349,14 @@ impl CubeMapGrid {
         // These are distinct in implementation between parallel and sequential strategies.
 
         #[cfg(feature = "parallel")]
-        let (cell_offsets, point_indices, cell_points_x, cell_points_y, cell_points_z) = {
+        let (
+            cell_offsets,
+            point_indices,
+            cell_points_x,
+            cell_points_y,
+            cell_points_z,
+            materialized_slot_points,
+        ) = {
             let num_threads = rayon::current_num_threads();
             let chunk_size = points.len().div_ceil(num_threads).max(1);
 
@@ -456,15 +480,30 @@ impl CubeMapGrid {
             unsafe {
                 point_indices.set_len(n);
             }
+            let materialized_slot_points;
             if materialize_coordinates_by_slot {
-                (cell_points_x, cell_points_y, cell_points_z) =
-                    materialize_slot_coordinates(points, &point_indices);
+                if point_views_build == PointViewsBuild::Eager {
+                    (
+                        cell_points_x,
+                        cell_points_y,
+                        cell_points_z,
+                        materialized_slot_points,
+                    ) = materialize_slot_coordinates::<true>(points, &point_indices);
+                } else {
+                    (
+                        cell_points_x,
+                        cell_points_y,
+                        cell_points_z,
+                        materialized_slot_points,
+                    ) = materialize_slot_coordinates::<false>(points, &point_indices);
+                }
             } else {
                 unsafe {
                     cell_points_x.set_len(n);
                     cell_points_y.set_len(n);
                     cell_points_z.set_len(n);
                 }
+                materialized_slot_points = Vec::new();
             }
 
             #[cfg(feature = "timing")]
@@ -478,11 +517,19 @@ impl CubeMapGrid {
                 cell_points_x,
                 cell_points_y,
                 cell_points_z,
+                materialized_slot_points,
             )
         };
 
         #[cfg(not(feature = "parallel"))]
-        let (cell_offsets, point_indices, cell_points_x, cell_points_y, cell_points_z) = {
+        let (
+            cell_offsets,
+            point_indices,
+            cell_points_x,
+            cell_points_y,
+            cell_points_z,
+            materialized_slot_points,
+        ) = {
             // Step 2: Count
             let mut cell_counts = vec![0u32; num_cells];
             for &cell in &point_cells {
@@ -566,15 +613,30 @@ impl CubeMapGrid {
             unsafe {
                 point_indices.set_len(n);
             }
+            let materialized_slot_points;
             if materialize_coordinates_by_slot {
-                (cell_points_x, cell_points_y, cell_points_z) =
-                    materialize_slot_coordinates(points, &point_indices);
+                if point_views_build == PointViewsBuild::Eager {
+                    (
+                        cell_points_x,
+                        cell_points_y,
+                        cell_points_z,
+                        materialized_slot_points,
+                    ) = materialize_slot_coordinates::<true>(points, &point_indices);
+                } else {
+                    (
+                        cell_points_x,
+                        cell_points_y,
+                        cell_points_z,
+                        materialized_slot_points,
+                    ) = materialize_slot_coordinates::<false>(points, &point_indices);
+                }
             } else {
                 unsafe {
                     cell_points_x.set_len(n);
                     cell_points_y.set_len(n);
                     cell_points_z.set_len(n);
                 }
+                materialized_slot_points = Vec::new();
             }
             #[cfg(feature = "timing")]
             if let Some(timings) = timings.as_deref_mut() {
@@ -587,6 +649,7 @@ impl CubeMapGrid {
                 cell_points_x,
                 cell_points_y,
                 cell_points_z,
+                materialized_slot_points,
             )
         };
 
@@ -631,12 +694,16 @@ impl CubeMapGrid {
                 !point_slots.contains(&u32::MAX),
                 "point_slots not fully initialized"
             );
-            let cell_points_aos = build_pos_aos(
-                &cell_points_x,
-                &cell_points_y,
-                &cell_points_z,
-                &point_indices,
-            );
+            let cell_points_aos = if materialized_slot_points.is_empty() {
+                build_pos_aos(
+                    &cell_points_x,
+                    &cell_points_y,
+                    &cell_points_z,
+                    &point_indices,
+                )
+            } else {
+                materialized_slot_points
+            };
             (point_slots, cell_points_aos)
         } else {
             (Vec::new(), Vec::new())

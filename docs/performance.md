@@ -689,6 +689,18 @@ Recently accepted optimizations:
   uniform changed -0.05% (-0.59% to +0.49%, 11/20). Keep the lower-work lifecycle and named build
   modes; the intervals rule out the noisy Linux Fibonacci cycle regression on the outcome host.
 
+- **Fused eager point-view materialization:** when preprocessing is disabled and input order
+  requires slot-coordinate materialization, the existing parallel coordinate pass now emits the
+  slot-ordered `SlotPoint` stream at the same time. This removes the separate sequential AoS pass
+  without widening the direct-scatter or preprocessing-enabled weld paths. On a native Ryzen
+  5900XT, fifteen rotated pairs improved 2.5M Fibonacci/16-thread construction by 5.55% (95%
+  bootstrap interval 4.26--6.73%, 14/15 favorable) and 1M uniform/16-thread construction by 4.75%
+  (2.96--6.55%, 14/15). The 1M Fibonacci single-thread guardrail improved 0.65% (0.38--1.01%,
+  14/15). Seven counter pairs confirmed slightly fewer instructions in both thread regimes;
+  aggregate multithreaded cycles were not an outcome metric because the candidate deliberately
+  replaces serial first-touch with concurrent work. Output fingerprints and topology were
+  unchanged.
+
 Spatial-order materialization policy candidate:
 
 - **Adaptive final index scatter:** phase attribution showed that the apparent final typed point
