@@ -85,6 +85,11 @@ path = "src/bin/bench_simplify.rs"
 required-features = ["tools"]
 
 [[bin]]
+name = "bench_compare"
+path = "src/bin/bench_compare.rs"
+required-features = ["tools"]
+
+[[bin]]
 name = "microbench_clip"
 path = "src/bin/microbench_clip.rs"
 required-features = ["microbench"]
