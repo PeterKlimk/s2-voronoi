@@ -717,6 +717,24 @@ Recently accepted optimizations:
   1M single-threaded uniform pairs favored the bypassed candidate by roughly 0.3%; Fibonacci was
   previously neutral-to-favorable. Correctness and checked fingerprint-support suites passed.
 
+- **Parallel cell-metadata prefix:** final assembly formerly gathered every shard-local cell count
+  and emitted the global cell prefix in one serial generator-order loop. Large parallel builds now
+  use a two-level scan: disjoint chunks gather counts once while writing chunk-local prefixes, a
+  tiny serial scan computes chunk bases, and a contiguous parallel pass applies those bases. The
+  existing loop remains the one-thread and small-input path. Unlike the retired adaptive
+  cell-count scatter, this removes the serial prefix bottleneck instead of adding a locality mode
+  in front of it.
+
+  On a native 16-core Ryzen 5900XT at 2.5M without preprocessing, fifteen rotated pairs improved
+  Fibonacci by 3.89% (95% bootstrap interval 1.22--7.46%, 12/15 favorable) and uniform by 6.87%
+  (4.55--9.40%, 14/15). With normal preprocessing, ten pairs improved Fibonacci by 3.34%
+  (2.67--3.99%, 10/10) and uniform by 4.58% (2.36--6.83%, 9/10). The attributed 1M prefix phase
+  fell from roughly 4--5ms to about 1ms; the candidate's 2.5M phase was about 2ms. Aggregate
+  multithreaded cycles rose 0.6% because the latency reduction deliberately spends concurrent CPU,
+  while instructions were neutral and branches fell 0.7%. Pinned 1M single-thread counters were
+  neutral in task-clock/cycles (+0.07%/+0.05%) with 0.17% fewer instructions and 1.1% fewer
+  branches. Strict 100k validation passed.
+
 Spatial-order materialization policy candidate:
 
 - **Adaptive final index scatter:** phase attribution showed that the apparent final typed point
@@ -844,6 +862,12 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 ### Retired experiments
 
 Do not broadly retry these without a materially different design or workload:
+
+- Extending recycled per-bin state beyond `CellBuildContext` to retain packed-kNN and edge-emission
+  scratch was neutral/noisy in 2.5M throughput and adverse structurally. Seven-run Fibonacci
+  counters increased cycles 0.39%, instructions 0.09%, cache references 9.3%, data-TLB loads 4.9%,
+  and data-TLB misses 2.9%. Recycle only the full-input attempted-neighbor table; allowing the
+  smaller scratch allocations to die between bins preserves better cache behavior.
 
 - **Permutation-boundary two-pass scatter:** staging each cell as its generator id plus
   already-globalized index payload, then filling cache-sized destination windows, passed its

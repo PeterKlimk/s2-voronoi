@@ -398,12 +398,101 @@ struct CellPrefixes {
     total_indices: u32,
 }
 
+#[cfg(feature = "parallel")]
+fn emit_cell_prefixes_parallel(
+    finals: &[ShardFinal],
+    assignment: &super::BinAssignment,
+) -> Result<CellPrefixes, crate::VoronoiError> {
+    let num_cells = assignment.generator_bin.len();
+    let chunk_count = (rayon::current_num_threads() * 4).min(num_cells);
+    let chunk_len = num_cells.div_ceil(chunk_count);
+
+    #[cfg(debug_assertions)]
+    let mut cells: Vec<VoronoiCell> = vec![VoronoiCell::new(u32::MAX, u16::MAX); num_cells];
+    #[cfg(not(debug_assertions))]
+    let mut cells: Vec<VoronoiCell> = Vec::with_capacity(num_cells);
+    let cells_ptr = {
+        #[cfg(debug_assertions)]
+        {
+            cells.as_mut_ptr() as usize
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            cells.spare_capacity_mut().as_mut_ptr() as usize
+        }
+    };
+
+    let chunk_totals: Result<Vec<u32>, crate::VoronoiError> = (0..chunk_count)
+        .into_par_iter()
+        .map(|chunk| {
+            let start = chunk * chunk_len;
+            let end = (start + chunk_len).min(num_cells);
+            let mut local_indices = 0u32;
+            for gen_idx in start..end {
+                let (bin, local) = assignment.generator_bin_local(gen_idx);
+                let count = u16::from(finals[bin.as_usize()].output.cell_count(local));
+                let cell = VoronoiCell::new(local_indices, count);
+                local_indices = local_indices.checked_add(u32::from(count)).ok_or_else(|| {
+                    crate::VoronoiError::RepresentationLimit(
+                        "assembled cell index chunk exceeds u32 capacity".to_string(),
+                    )
+                })?;
+                // SAFETY: chunks cover disjoint generator ranges within the
+                // allocation, and every entry in this range is written once.
+                unsafe {
+                    (cells_ptr as *mut VoronoiCell).add(gen_idx).write(cell);
+                }
+            }
+            Ok(local_indices)
+        })
+        .collect();
+    let chunk_totals = chunk_totals?;
+
+    #[cfg(not(debug_assertions))]
+    unsafe {
+        // Every cell entry was initialized by exactly one successful chunk.
+        cells.set_len(num_cells);
+    }
+
+    let mut chunk_bases = Vec::with_capacity(chunk_totals.len());
+    let mut total_indices = 0u32;
+    for count in chunk_totals {
+        chunk_bases.push(total_indices);
+        total_indices = total_indices.checked_add(count).ok_or_else(|| {
+            crate::VoronoiError::RepresentationLimit(
+                "assembled cell index buffer exceeds u32 capacity".to_string(),
+            )
+        })?;
+    }
+
+    cells
+        .par_chunks_mut(chunk_len)
+        .zip(chunk_bases.par_iter())
+        .for_each(|(chunk, &base)| {
+            for cell in chunk {
+                *cell = VoronoiCell::new(
+                    base + cell.vertex_start() as u32,
+                    cell.vertex_count() as u16,
+                );
+            }
+        });
+
+    Ok(CellPrefixes {
+        cells,
+        total_indices,
+    })
+}
+
 #[inline(always)]
 fn emit_cell_prefixes(
     finals: &[ShardFinal],
     assignment: &super::BinAssignment,
 ) -> Result<CellPrefixes, crate::VoronoiError> {
     let num_cells = assignment.generator_bin.len();
+    #[cfg(feature = "parallel")]
+    if rayon::current_num_threads() > 1 && num_cells >= 65_536 {
+        return emit_cell_prefixes_parallel(finals, assignment);
+    }
     // Avoid redundant initialization in release builds. Debug builds retain
     // sentinels so tests and assertions can prove complete coverage.
     #[cfg(debug_assertions)]
