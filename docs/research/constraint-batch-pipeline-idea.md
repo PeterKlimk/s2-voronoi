@@ -108,7 +108,8 @@ c   = scale(|n|^2, |g|^2) * generator_dot_g - n.g
 ab2 = a*a + b*b
 ```
 
-The implementation must preserve the existing FMA policy and lane-wise operation semantics through
+The implementation must preserve the non-fused arithmetic contract and lane-wise operation
+semantics through
 the `src/fp.rs` backend seam. The neighbor source's stored `f32` dot is suitable for ordering and
 termination bounds; it is not a replacement for the exact `f64 n.g` used by clipping.
 
@@ -190,7 +191,7 @@ unknown constraints that subsequently return `Unchanged` to estimate its ceiling
 The fused path must preserve all of the following:
 
 1. **Exact point model.** Constraint coefficients use the same canonicalized `f32` coordinates
-   promoted to `f64`, norm correction, basis, FMA policy, and strict half-plane convention as the
+   promoted to `f64`, norm correction, basis, non-fused arithmetic contract, and strict half-plane convention as the
    current gnomonic builder.
 2. **Certified candidate order.** Every constraint not proven redundant is presented to the
    mutating clipper in the existing deterministic nearest-first order, including dot/index ties.

@@ -318,7 +318,7 @@ pub(crate) fn run_clip_convex_microbench() {
             let a = scale * c;
             let b = scale * s;
 
-            let norm = ((crate::fp::fma_f64(a, a, b * b)) as f32).sqrt() as f64;
+            let norm = ((crate::fp::mul_add_unfused_f64(a, a, b * b)) as f32).sqrt() as f64;
             let cc = rng.range_f64(-0.6 * norm, 0.6 * norm);
             let hp = HalfPlane::new_unnormalized(a, b, cc, 1_000_000 + changed.len());
             let m = mask_for::<N>(poly, &hp);
@@ -334,7 +334,7 @@ pub(crate) fn run_clip_convex_microbench() {
             let (s, c) = theta.sin_cos();
             let a = scale * c;
             let b = scale * s;
-            let norm = ((crate::fp::fma_f64(a, a, b * b)) as f32).sqrt() as f64;
+            let norm = ((crate::fp::mul_add_unfused_f64(a, a, b * b)) as f32).sqrt() as f64;
 
             let cc = rng.range_f64(0.1 * norm, 2.5 * norm);
             let hp = HalfPlane::new_unnormalized(a, b, cc, 2_000_000 + unchanged.len());

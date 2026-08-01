@@ -13,58 +13,24 @@
 //! Backend-selection measurements and the retired nightly implementation are
 //! recorded in `docs/performance.md#source-pinned-performance-decisions`.
 
-// The `fma` feature is only sound when the SIMD backend actually fuses. On
-// x86/x86_64 the `wide` crate's `mul_add` lowers to a true FMA *only* when the
-// `fma` target feature is enabled; without it, `wide` does a two-rounding
-// `a*b+c`. The scalar `f32::mul_add` (below) always fuses, so the SIMD and
-// scalar kNN-distance paths would round differently and desymmetrize neighbor
-// selection (cell i admits neighbor j while j drops i -> unpaired interior
-// edge). Require `+fma` so both paths fuse identically. The `simd_scalar`
-// backend routes its SIMD dot through `f32::mul_add` too, so it is exempt.
-#[cfg(all(
-    feature = "fma",
-    not(feature = "simd_scalar"),
-    any(target_arch = "x86", target_arch = "x86_64"),
-    not(target_feature = "fma")
-))]
-compile_error!(
-    "the `fma` feature requires the `fma` target feature on x86/x86_64; build \
-     with `RUSTFLAGS=\"-C target-feature=+fma\"` or `-C target-cpu=native`. \
-     Without it the `wide` SIMD dot and the scalar dot round differently and \
-     kNN neighbor selection can desymmetrize, producing invalid topology. Use \
-     the `simd_scalar` backend if you need `fma` without HW FMA."
-);
-
 #[inline(always)]
-pub(crate) fn fma_f32(a: f32, b: f32, c: f32) -> f32 {
-    #[cfg(feature = "fma")]
-    {
-        a.mul_add(b, c)
-    }
-    #[cfg(not(feature = "fma"))]
-    {
-        a * b + c
-    }
+/// Evaluate `a * b + c` with the crate's non-fused, two-rounding contract.
+pub(crate) fn mul_add_unfused_f32(a: f32, b: f32, c: f32) -> f32 {
+    a * b + c
 }
 
 #[inline(always)]
-pub(crate) fn fma_f64(a: f64, b: f64, c: f64) -> f64 {
-    #[cfg(feature = "fma")]
-    {
-        a.mul_add(b, c)
-    }
-    #[cfg(not(feature = "fma"))]
-    {
-        a * b + c
-    }
+/// Evaluate `a * b + c` with the crate's non-fused, two-rounding contract.
+pub(crate) fn mul_add_unfused_f64(a: f64, b: f64, c: f64) -> f64 {
+    a * b + c
 }
 
 #[inline(always)]
 pub(crate) fn dot3_f32(ax: f32, ay: f32, az: f32, bx: f32, by: f32, bz: f32) -> f32 {
     // Match the baseline left-associative order:
     //   (ax*bx + ay*by) + az*bz
-    let ab = fma_f32(ax, bx, ay * by);
-    fma_f32(az, bz, ab)
+    let ab = mul_add_unfused_f32(ax, bx, ay * by);
+    mul_add_unfused_f32(az, bz, ab)
 }
 
 /// Eight candidate points in SoA form, loaded once and dotted against many
@@ -167,7 +133,7 @@ pub(crate) fn interior_security_thresholds8(s_min: [f32; 8], pad: f32) -> ([f32;
 }
 
 /// Signed distances of the first 8 polygon vertices to a half-plane
-/// (`fma_f64(a, u, fma_f64(b, v, c))`, lane-exact with the scalar formula)
+/// (`mul_add_unfused_f64(a, u, mul_add_unfused_f64(b, v, c))`, lane-exact with the scalar formula)
 /// plus the inside bitmask (`d >= neg_eps`, lane i -> bit i).
 ///
 /// Callers may pass slices longer than the live vertex count; lanes past it
@@ -218,15 +184,7 @@ mod backend {
         let qx = f32x8::splat(qx);
         let qy = f32x8::splat(qy);
         let qz = f32x8::splat(qz);
-        #[cfg(feature = "fma")]
-        {
-            let ab = x.mul_add(qx, y * qy);
-            z.mul_add(qz, ab)
-        }
-        #[cfg(not(feature = "fma"))]
-        {
-            (x * qx + y * qy) + z * qz
-        }
+        (x * qx + y * qy) + z * qz
     }
 
     #[inline(always)]
@@ -245,17 +203,7 @@ mod backend {
         let qx = f32x8::splat(qx);
         let qy = f32x8::splat(qy);
         let qz = f32x8::splat(qz);
-        #[cfg(feature = "fma")]
-        {
-            (
-                az.mul_add(qz, ax.mul_add(qx, ay * qy)),
-                bz.mul_add(qz, bx.mul_add(qx, by * qy)),
-            )
-        }
-        #[cfg(not(feature = "fma"))]
-        {
-            ((ax * qx + ay * qy) + az * qz, (bx * qx + by * qy) + bz * qz)
-        }
+        ((ax * qx + ay * qy) + az * qz, (bx * qx + by * qy) + bz * qz)
     }
 
     #[cfg(any(test, target_feature = "avx2"))]
@@ -278,22 +226,11 @@ mod backend {
         let qx = f32x8::splat(qx);
         let qy = f32x8::splat(qy);
         let qz = f32x8::splat(qz);
-        #[cfg(feature = "fma")]
-        {
-            (
-                az.mul_add(qz, ax.mul_add(qx, ay * qy)),
-                bz.mul_add(qz, bx.mul_add(qx, by * qy)),
-                cz.mul_add(qz, cx.mul_add(qx, cy * qy)),
-            )
-        }
-        #[cfg(not(feature = "fma"))]
-        {
-            (
-                (ax * qx + ay * qy) + az * qz,
-                (bx * qx + by * qy) + bz * qz,
-                (cx * qx + cy * qy) + cz * qz,
-            )
-        }
+        (
+            (ax * qx + ay * qy) + az * qz,
+            (bx * qx + by * qy) + bz * qz,
+            (cx * qx + cy * qy) + cz * qz,
+        )
     }
 
     #[inline(always)]
@@ -327,14 +264,7 @@ mod backend {
 
     #[inline(always)]
     fn dists4(a: f64, b: f64, c: f64, u: f64x4, v: f64x4) -> f64x4 {
-        #[cfg(feature = "fma")]
-        {
-            u.mul_add(f64x4::splat(a), v.mul_add(f64x4::splat(b), f64x4::splat(c)))
-        }
-        #[cfg(not(feature = "fma"))]
-        {
-            f64x4::splat(a) * u + (f64x4::splat(b) * v + f64x4::splat(c))
-        }
+        f64x4::splat(a) * u + (f64x4::splat(b) * v + f64x4::splat(c))
     }
 
     #[inline(always)]
@@ -508,7 +438,11 @@ mod backend {
     pub(super) fn dot3(x: V, y: V, z: V, qx: f32, qy: f32, qz: f32) -> V {
         let mut out = [0.0f32; 8];
         for i in 0..8 {
-            out[i] = super::fma_f32(z[i], qz, super::fma_f32(x[i], qx, y[i] * qy));
+            out[i] = super::mul_add_unfused_f32(
+                z[i],
+                qz,
+                super::mul_add_unfused_f32(x[i], qx, y[i] * qy),
+            );
         }
         out
     }
@@ -604,7 +538,7 @@ mod backend {
         let mut dists = [0.0f64; 8];
         let mut mask = 0u32;
         for i in 0..8 {
-            let d = super::fma_f64(a, us[i], super::fma_f64(b, vs[i], c));
+            let d = super::mul_add_unfused_f64(a, us[i], super::mul_add_unfused_f64(b, vs[i], c));
             dists[i] = d;
             mask |= u32::from(d >= neg_eps) << i;
         }
@@ -625,7 +559,7 @@ mod backend {
         let mut dists = [0.0f64; 4];
         let mut mask = 0u32;
         for i in 0..4 {
-            let d = super::fma_f64(a, us[i], super::fma_f64(b, vs[i], c));
+            let d = super::mul_add_unfused_f64(a, us[i], super::mul_add_unfused_f64(b, vs[i], c));
             dists[i] = d;
             mask |= u32::from(d >= neg_eps) << i;
         }

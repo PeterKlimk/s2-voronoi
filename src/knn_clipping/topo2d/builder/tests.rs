@@ -71,12 +71,12 @@ fn install_bounded_radius(builder: &mut Topo2DBuilder, max_r2: f64) {
 fn termination_formula(gnomonic: &GnomonicBuilder, max_r2: f64) -> (f64, f64) {
     let min_cos = gnomonic.chart_min_cos_bound(max_r2);
     let sin_theta = (1.0 - min_cos * min_cos).max(0.0).sqrt();
-    let cos_theta_pad = crate::fp::fma_f64(
+    let cos_theta_pad = crate::fp::mul_add_unfused_f64(
         min_cos,
         gnomonic.term_cos_pad,
         -sin_theta * gnomonic.term_sin_pad,
     );
-    let cos_2max = crate::fp::fma_f64(2.0 * cos_theta_pad, cos_theta_pad, -1.0);
+    let cos_2max = crate::fp::mul_add_unfused_f64(2.0 * cos_theta_pad, cos_theta_pad, -1.0);
     let unseen_norm = if cos_2max >= 0.0 {
         1.0 - crate::tolerances::CANONICAL_UNIT_NORM_SLACK
     } else {

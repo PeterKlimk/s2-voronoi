@@ -183,7 +183,7 @@ prevention rather than an overclaimed proof.
     as topology;
   - retain negative controls for reversed faces, duplicate faces/references, moved vertices, and
     disconnected unions of closed complexes;
-  - compare semantic topology across thread counts, bin counts, default/scalar SIMD, and FMA; and
+  - compare semantic topology across thread counts, bin counts, and default/scalar SIMD; and
   - keep welding and deterministic perturbation in separate expected-policy buckets.
 - **Acceptance:** every supported successful result passes the relevant strict and intrinsic
   geometry checks; Hull3d rebuilding remains a valid success rather than a failure count.

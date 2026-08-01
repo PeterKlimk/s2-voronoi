@@ -213,11 +213,11 @@ impl GnomonicBuilder {
         // achieved by w = g * (|g|^2 + |h|^2) / (2|g|^2) - h dotted with
         // (t1, t2, g). Cache `g`'s projection onto the chart normal so each
         // clip only projects the neighbor and applies the same scale algebra.
-        let scale = fp::fma_f64(len_sq, self.inv_two_gg, 0.5);
+        let scale = fp::mul_add_unfused_f64(len_sq, self.inv_two_gg, 0.5);
         (
             -n_raw.dot(self.basis.t1),
             -n_raw.dot(self.basis.t2),
-            fp::fma_f64(scale, self.generator_dot_g, -n_raw.dot(self.basis.g)),
+            fp::mul_add_unfused_f64(scale, self.generator_dot_g, -n_raw.dot(self.basis.g)),
         )
     }
 
@@ -304,8 +304,8 @@ impl GnomonicBuilder {
 
             let sin_theta = (1.0 - min_cos * min_cos).max(0.0).sqrt();
             let cos_theta_pad =
-                fp::fma_f64(min_cos, self.term_cos_pad, -sin_theta * self.term_sin_pad);
-            let cos_2max = fp::fma_f64(2.0 * cos_theta_pad, cos_theta_pad, -1.0);
+                fp::mul_add_unfused_f64(min_cos, self.term_cos_pad, -sin_theta * self.term_sin_pad);
+            let cos_2max = fp::mul_add_unfused_f64(2.0 * cos_theta_pad, cos_theta_pad, -1.0);
 
             // kNN bounds raw f32 dots, not normalized cosines. Convert the
             // angular threshold into that same space using this generator's

@@ -144,7 +144,6 @@ semver-covered public features:
 - `microbench`: internal microbench harnesses.
 - `manual_probes`: wholly manual/ignored integration-test targets.
 - `simd_scalar`: scalar/autovectorized comparison backend.
-- `fma`: prefer fused multiply-add (`mul_add`) where used.
 - `tools`: benchmark/utility binaries, the fidelity campaign, and quality diagnostics.
 
 ## Tests

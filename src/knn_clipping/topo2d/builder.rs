@@ -428,20 +428,20 @@ impl SphericalPoly {
             let u = poly.us[i];
             let v = poly.vs[i];
             let dir = DVec3::new(
-                crate::fp::fma_f64(
+                crate::fp::mul_add_unfused_f64(
                     u,
                     builder.basis.t1.x,
-                    crate::fp::fma_f64(v, builder.basis.t2.x, builder.basis.g.x),
+                    crate::fp::mul_add_unfused_f64(v, builder.basis.t2.x, builder.basis.g.x),
                 ),
-                crate::fp::fma_f64(
+                crate::fp::mul_add_unfused_f64(
                     u,
                     builder.basis.t1.y,
-                    crate::fp::fma_f64(v, builder.basis.t2.y, builder.basis.g.y),
+                    crate::fp::mul_add_unfused_f64(v, builder.basis.t2.y, builder.basis.g.y),
                 ),
-                crate::fp::fma_f64(
+                crate::fp::mul_add_unfused_f64(
                     u,
                     builder.basis.t1.z,
-                    crate::fp::fma_f64(v, builder.basis.t2.z, builder.basis.g.z),
+                    crate::fp::mul_add_unfused_f64(v, builder.basis.t2.z, builder.basis.g.z),
                 ),
             );
             let len2 = dir.length_squared();

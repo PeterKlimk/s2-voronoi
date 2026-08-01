@@ -194,7 +194,7 @@ Single-threaded, ~1.8s at 1M. Per-build peak memory is roughly 0.65 KB/point.
   rejected rather than silently normalized.
 
 Other Cargo features (`timing`, `profiling`, `microbench`, `manual_probes`,
-`simd_scalar`, `fma`, and `tools`) are internal repository instrumentation, comparison, benchmark,
+`simd_scalar`, and `tools`) are internal repository instrumentation, comparison, benchmark,
 or probe hooks. They are not semver-covered API. See [performance.md](docs/performance.md) for the
 supported benchmark workflows.
 

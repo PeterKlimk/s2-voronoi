@@ -48,8 +48,8 @@ IEEE-754 binary32/binary64 round-to-nearest arithmetic without flushing relevant
 correctly rounded basic operations, and `f64::sqrt`/`sin_cos` accurate to within one ulp. Rust does
 not specify a useful worst-case transcendental error bound, so this is an explicit platform premise
 rather than a language-level theorem. The grid, clipping, and unseen-neighbor error budgets are
-derived under that premise and retain outward reserves for the supported default SIMD,
-`simd_scalar`, and hardware-FMA paths.
+derived under that premise and retain outward reserves for the supported default SIMD and
+`simd_scalar` paths.
 
 Features near the resolution floor (epsilon-length edges, vertices from near-cocircular generators)
 require an explicit output policy. After reconciliation and optional local rebuilding, the current

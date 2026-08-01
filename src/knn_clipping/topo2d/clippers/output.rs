@@ -27,7 +27,7 @@ pub(super) fn build_output(
             let v = $v;
             let vp = $vp;
             out.push_raw(u, v, vp, $ep);
-            max_r2 = max_r2.max(fp::fma_f64(u, u, v * v));
+            max_r2 = max_r2.max(fp::mul_add_unfused_f64(u, u, v * v));
             if track_bounding {
                 has_bounding |= vp.0 == INVALID_PLANE_ID;
             }

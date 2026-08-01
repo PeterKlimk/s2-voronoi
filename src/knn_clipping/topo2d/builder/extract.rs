@@ -71,20 +71,20 @@ impl GnomonicBuilder {
             let (plane_a, plane_b) = poly.vertex_planes[i];
 
             let source = DVec3::new(
-                fp::fma_f64(
+                fp::mul_add_unfused_f64(
                     u,
                     self.basis.t1.x,
-                    fp::fma_f64(v, self.basis.t2.x, self.basis.g.x),
+                    fp::mul_add_unfused_f64(v, self.basis.t2.x, self.basis.g.x),
                 ),
-                fp::fma_f64(
+                fp::mul_add_unfused_f64(
                     u,
                     self.basis.t1.y,
-                    fp::fma_f64(v, self.basis.t2.y, self.basis.g.y),
+                    fp::mul_add_unfused_f64(v, self.basis.t2.y, self.basis.g.y),
                 ),
-                fp::fma_f64(
+                fp::mul_add_unfused_f64(
                     u,
                     self.basis.t1.z,
-                    fp::fma_f64(v, self.basis.t2.z, self.basis.g.z),
+                    fp::mul_add_unfused_f64(v, self.basis.t2.z, self.basis.g.z),
                 ),
             );
             let len2 = source.length_squared();
@@ -250,20 +250,20 @@ impl GnomonicBuilder {
             }
 
             let dir = DVec3::new(
-                fp::fma_f64(
+                fp::mul_add_unfused_f64(
                     u,
                     self.basis.t1.x,
-                    fp::fma_f64(v, self.basis.t2.x, self.basis.g.x),
+                    fp::mul_add_unfused_f64(v, self.basis.t2.x, self.basis.g.x),
                 ),
-                fp::fma_f64(
+                fp::mul_add_unfused_f64(
                     u,
                     self.basis.t1.y,
-                    fp::fma_f64(v, self.basis.t2.y, self.basis.g.y),
+                    fp::mul_add_unfused_f64(v, self.basis.t2.y, self.basis.g.y),
                 ),
-                fp::fma_f64(
+                fp::mul_add_unfused_f64(
                     u,
                     self.basis.t1.z,
-                    fp::fma_f64(v, self.basis.t2.z, self.basis.g.z),
+                    fp::mul_add_unfused_f64(v, self.basis.t2.z, self.basis.g.z),
                 ),
             );
             let dir = Vec3::new(dir.x as f32, dir.y as f32, dir.z as f32);

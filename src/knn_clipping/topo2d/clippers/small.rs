@@ -88,7 +88,7 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
 
     #[inline(always)]
     fn r2_of(u: f64, v: f64) -> f64 {
-        fp::fma_f64(u, u, v * v)
+        fp::mul_add_unfused_f64(u, u, v * v)
     }
 
     let mut max_r2 = 0.0f64;
@@ -118,12 +118,12 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
         )
     };
     let t_entry = d_entry / (d_entry - d_entry_next);
-    let entry_u = fp::fma_f64(
+    let entry_u = fp::mul_add_unfused_f64(
         t_entry,
         poly.us[entry_next] - poly.us[entry_idx],
         poly.us[entry_idx],
     );
-    let entry_v = fp::fma_f64(
+    let entry_v = fp::mul_add_unfused_f64(
         t_entry,
         poly.vs[entry_next] - poly.vs[entry_idx],
         poly.vs[entry_idx],
@@ -152,12 +152,12 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
         )
     };
     let t_exit = d_exit / (d_exit - d_exit_next);
-    let exit_u = fp::fma_f64(
+    let exit_u = fp::mul_add_unfused_f64(
         t_exit,
         poly.us[exit_next] - poly.us[exit_idx],
         poly.us[exit_idx],
     );
-    let exit_v = fp::fma_f64(
+    let exit_v = fp::mul_add_unfused_f64(
         t_exit,
         poly.vs[exit_next] - poly.vs[exit_idx],
         poly.vs[exit_idx],
@@ -259,7 +259,7 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
 
     #[inline(always)]
     fn r2_of(u: f64, v: f64) -> f64 {
-        fp::fma_f64(u, u, v * v)
+        fp::mul_add_unfused_f64(u, u, v * v)
     }
 
     let mut out_len: usize = 0;
@@ -293,12 +293,12 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
         let d_exit = *dists.get_unchecked(exit_idx);
         let d_exit_next = *dists.get_unchecked(exit_next);
         let (t_entry, t_exit) = super::lerp_t_pair(d_entry, d_entry_next, d_exit, d_exit_next);
-        let entry_u = fp::fma_f64(
+        let entry_u = fp::mul_add_unfused_f64(
             t_entry,
             *us.add(entry_next) - *us.add(entry_idx),
             *us.add(entry_idx),
         );
-        let entry_v = fp::fma_f64(
+        let entry_v = fp::mul_add_unfused_f64(
             t_entry,
             *vs.add(entry_next) - *vs.add(entry_idx),
             *vs.add(entry_idx),
@@ -315,12 +315,12 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
             i = (i + 1) % N;
         }
 
-        let exit_u = fp::fma_f64(
+        let exit_u = fp::mul_add_unfused_f64(
             t_exit,
             *us.add(exit_next) - *us.add(exit_idx),
             *us.add(exit_idx),
         );
-        let exit_v = fp::fma_f64(
+        let exit_v = fp::mul_add_unfused_f64(
             t_exit,
             *vs.add(exit_next) - *vs.add(exit_idx),
             *vs.add(exit_idx),
@@ -389,7 +389,7 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
 
     #[inline(always)]
     fn r2_of(u: f64, v: f64) -> f64 {
-        fp::fma_f64(u, u, v * v)
+        fp::mul_add_unfused_f64(u, u, v * v)
     }
 
     let mut out_len: usize = 0;
@@ -426,12 +426,12 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
 
         let (t_entry, t_exit) = super::lerp_t_pair(d_entry, d_entry_next, d_exit, d_exit_next);
 
-        let entry_u = fp::fma_f64(
+        let entry_u = fp::mul_add_unfused_f64(
             t_entry,
             *us.add(entry_next) - *us.add(entry_idx),
             *us.add(entry_idx),
         );
-        let entry_v = fp::fma_f64(
+        let entry_v = fp::mul_add_unfused_f64(
             t_entry,
             *vs.add(entry_next) - *vs.add(entry_idx),
             *vs.add(entry_idx),
@@ -451,12 +451,12 @@ pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
             }
         }
 
-        let exit_u = fp::fma_f64(
+        let exit_u = fp::mul_add_unfused_f64(
             t_exit,
             *us.add(exit_next) - *us.add(exit_idx),
             *us.add(exit_idx),
         );
-        let exit_v = fp::fma_f64(
+        let exit_v = fp::mul_add_unfused_f64(
             t_exit,
             *vs.add(exit_next) - *vs.add(exit_idx),
             *vs.add(exit_idx),

@@ -78,24 +78,24 @@ pub(super) fn clip_bitmask(poly: &PolyBuffer, hp: &HalfPlane, out: &mut PolyBuff
     let (exit_idx, exit_next_idx, exit_d0, exit_d1) = calc_transition(exit_next);
 
     let (t_entry, t_exit) = super::lerp_t_pair(entry_d0, entry_d1, exit_d0, exit_d1);
-    let entry_u = fp::fma_f64(
+    let entry_u = fp::mul_add_unfused_f64(
         t_entry,
         poly.us[entry_next_idx] - poly.us[entry_idx],
         poly.us[entry_idx],
     );
-    let entry_v = fp::fma_f64(
+    let entry_v = fp::mul_add_unfused_f64(
         t_entry,
         poly.vs[entry_next_idx] - poly.vs[entry_idx],
         poly.vs[entry_idx],
     );
     let entry_edge_plane = poly.edge_planes[entry_idx];
 
-    let exit_u = fp::fma_f64(
+    let exit_u = fp::mul_add_unfused_f64(
         t_exit,
         poly.us[exit_next_idx] - poly.us[exit_idx],
         poly.us[exit_idx],
     );
-    let exit_v = fp::fma_f64(
+    let exit_v = fp::mul_add_unfused_f64(
         t_exit,
         poly.vs[exit_next_idx] - poly.vs[exit_idx],
         poly.vs[exit_idx],

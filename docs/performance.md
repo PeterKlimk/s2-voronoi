@@ -559,6 +559,16 @@ modules without making the non-obvious code shape look accidental.
   the beneficial `Σocc²/n` crossover near 450: measured 274/331 cases lost 19%/8%, while 536/712
   cases gained 18%/29%. The selected threshold 500 separates all recorded cases; the superseded
   noisy-host value 2000 placed the crossover 4–7× too high.
+- **Non-fused arithmetic contract.** The internal `fma` feature was retired after isolated
+  measurements showed no dependable throughput benefit. Native Windows 2.5M Fibonacci runs were
+  neutral in multithreaded mode and neutral/slightly adverse single-threaded. On an older Ryzen,
+  pinned 1M single-threaded counters retired about 2.18% fewer instructions but used about 0.73%
+  more cycles. On a Ryzen 5900XT, nine 1M single-threaded pairs favored FMA by 0.51% with native
+  codegen and 0.89% when fairly isolated as AVX versus AVX+FMA, but twenty-one 2.5M/16-thread pairs
+  were unresolved at -0.51% in both builds (95% intervals -1.34% to +0.33% native and -1.41% to
+  +0.39% isolated). Across the latter host, roughly 2.0--2.1% fewer instructions were offset by
+  1.2--1.9% higher CPI. Retain one non-fused evaluation order and fingerprint instead of a
+  hardware-dependent numerical variant with no runtime dispatch.
 - **Pinned hot-path codegen.** Keeping worker setup folded into the shard driver avoided about 1%
   more retired instructions after unrelated cold growth caused LLVM outlining. Verified-cell XOR
   extraction avoided a 1.3% whole-build instruction increase from repeated endpoint membership

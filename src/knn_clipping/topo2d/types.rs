@@ -31,7 +31,7 @@ pub(crate) struct HalfPlane {
 impl HalfPlane {
     /// Construct the strict half-plane `a*u + b*v + c >= 0`.
     pub(crate) fn new_unnormalized(a: f64, b: f64, c: f64, plane_idx: usize) -> Self {
-        let ab2: f64 = fp::fma_f64(a, a, b * b);
+        let ab2: f64 = fp::mul_add_unfused_f64(a, a, b * b);
         HalfPlane {
             a,
             b,
@@ -47,7 +47,7 @@ impl HalfPlane {
     #[cfg(any(test, feature = "microbench", feature = "timing"))]
     #[inline]
     pub(crate) fn signed_dist(&self, u: f64, v: f64) -> f64 {
-        fp::fma_f64(self.a, u, fp::fma_f64(self.b, v, self.c))
+        fp::mul_add_unfused_f64(self.a, u, fp::mul_add_unfused_f64(self.b, v, self.c))
     }
 }
 

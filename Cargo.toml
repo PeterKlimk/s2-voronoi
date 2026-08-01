@@ -22,7 +22,7 @@ categories = ["algorithms", "mathematics", "science::geo", "graphics"]
 
 [package.metadata.docs.rs]
 # Public feature surface; internal flags (timing, profiling, microbench,
-# manual_probes, simd_scalar, fma, tools) are not part of
+# manual_probes, simd_scalar, tools) are not part of
 # the documented contract.
 features = ["parallel", "glam", "serde"]
 
@@ -40,7 +40,6 @@ microbench = ["dep:rand", "dep:rand_chacha"] # Enable internal microbench harnes
 serde = ["dep:serde"] # Serialize/Deserialize for diagram types
 manual_probes = [] # Compile wholly manual/ignored integration-test targets
 simd_scalar = [] # Scalar/autovectorized 8-lane path instead of `wide`; debugging/comparison
-fma = [] # Prefer fused multiply-add via mul_add. On x86/x86_64 requires the `+fma` target feature (RUSTFLAGS="-C target-feature=+fma" or -C target-cpu=native); else compile error (SIMD/scalar dot paths must fuse identically). See src/fp.rs guard.
 tools = ["dep:clap", "dep:fixed", "dep:kiddo", "dep:rand", "dep:rand_chacha"] # Benchmark/utility binaries
 
 [dependencies]
