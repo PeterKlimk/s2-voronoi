@@ -33,6 +33,47 @@ enum PointViewsBuild {
 
 const INPUT_ORDER_SAMPLES: usize = 32;
 
+#[cfg(feature = "parallel")]
+#[inline(never)]
+fn build_parallel_grid_prefixes(
+    chunk_counts: &[Vec<u32>],
+    num_cells: usize,
+) -> (Vec<u32>, Vec<Vec<u32>>) {
+    let cell_totals: Vec<u32> = (0..num_cells)
+        .into_par_iter()
+        .map(|cell_idx| chunk_counts.iter().map(|counts| counts[cell_idx]).sum())
+        .collect();
+
+    let mut cell_offsets = Vec::with_capacity(num_cells + 1);
+    cell_offsets.push(0);
+    let mut global_sum = 0u32;
+    for count in cell_totals {
+        global_sum += count;
+        cell_offsets.push(global_sum);
+    }
+
+    let mut chunk_cursors: Vec<Vec<u32>> = vec![vec![0; num_cells]; chunk_counts.len()];
+    let cursor_rows: Vec<usize> = chunk_cursors
+        .iter_mut()
+        .map(|row| row.as_mut_ptr() as usize)
+        .collect();
+    (0..num_cells).into_par_iter().for_each(|cell_idx| {
+        let mut current_pos = cell_offsets[cell_idx];
+        for (chunk_idx, counts) in chunk_counts.iter().enumerate() {
+            // SAFETY: each parallel iteration owns one distinct cell column
+            // in every cursor row.
+            unsafe {
+                (cursor_rows[chunk_idx] as *mut u32)
+                    .add(cell_idx)
+                    .write(current_pos);
+            }
+            current_pos += counts[cell_idx];
+        }
+        debug_assert_eq!(current_pos, cell_offsets[cell_idx + 1]);
+    });
+    (cell_offsets, chunk_cursors)
+}
+
 fn input_spatial_correlation(
     point_cells: &[u32],
     num_cells: usize,
@@ -385,28 +426,25 @@ impl CubeMapGrid {
             //
             // We want `chunk_starts[chunk][cell]` to be the global index where that chunk
             // should start writing points for `cell`.
-            let mut cell_offsets = Vec::with_capacity(num_cells + 1);
-            cell_offsets.push(0);
-
-            // We'll reuse the memory structure for the cursors.
-            // chunk_cursors[chunk][cell]
-            let mut chunk_cursors: Vec<Vec<u32>> = vec![vec![0; num_cells]; chunk_counts.len()];
-
-            let mut global_sum = 0u32;
-            for cell_idx in 0..num_cells {
-                // For this cell, the chunks write sequentially in the global buffer.
-                // chunk 0 writes at global_sum
-                // chunk 1 writes at global_sum + count[0]
-                // ...
-                let mut current_pos = global_sum;
-                for (chunk_idx, counts) in chunk_counts.iter().enumerate() {
-                    let count = counts[cell_idx];
-                    chunk_cursors[chunk_idx][cell_idx] = current_pos;
-                    current_pos += count;
+            let (cell_offsets, chunk_cursors) = if num_threads == 1 || num_cells < 16_384 {
+                let mut cell_offsets = Vec::with_capacity(num_cells + 1);
+                cell_offsets.push(0);
+                let mut chunk_cursors: Vec<Vec<u32>> = vec![vec![0; num_cells]; chunk_counts.len()];
+                let mut global_sum = 0u32;
+                for cell_idx in 0..num_cells {
+                    let mut current_pos = global_sum;
+                    for (chunk_idx, counts) in chunk_counts.iter().enumerate() {
+                        let count = counts[cell_idx];
+                        chunk_cursors[chunk_idx][cell_idx] = current_pos;
+                        current_pos += count;
+                    }
+                    global_sum = current_pos;
+                    cell_offsets.push(global_sum);
                 }
-                global_sum = current_pos; // This is the end of this cell
-                cell_offsets.push(global_sum);
-            }
+                (cell_offsets, chunk_cursors)
+            } else {
+                build_parallel_grid_prefixes(&chunk_counts, num_cells)
+            };
 
             #[cfg(feature = "timing")]
             if let Some(timings) = timings.as_deref_mut() {

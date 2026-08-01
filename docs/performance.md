@@ -815,6 +815,19 @@ multithreaded uniform rounds produced a 0.9985 ratio with a 0.9906--1.0065 inter
 favorable, while Fibonacci was neutral. Retain the fused generator-order cell-prefix loop rather
 than another A/B materialization path with no retired-work or outcome benefit.
 
+The grid-build prefix was subsequently parallelized without changing count or scatter order. For
+large parallel grids (at least 16,384 cells), workers first sum the existing per-chunk histograms by
+cell, a short serial scan produces global offsets, and workers then fill disjoint cell columns of
+the per-chunk cursor rows. The original fused loop remains the explicit path for one thread and
+small grids. On the native 16-core Linux bench at 2.5M, ten rotated pairs per case improved
+Fibonacci by 3.06% without preprocessing (95% bootstrap interval 1.80--4.38%, 9/10 favorable) and
+4.01% with preprocessing (2.94--5.05%, 10/10). Uniform improved 2.33% without preprocessing
+(1.10--3.56%, 9/10) and 2.86% with it (1.64--4.07%, 9/10). The isolated prefix phase fell from
+about 5.2ms to 1.5--1.8ms at 1M and measured 3.5--4.0ms at 2.5M. A pinned one-thread 1M guardrail
+never executes the parallel helper: twelve pairs improved Fibonacci 0.71% and regressed uniform
+0.25%, a small net improvement across the two distributions. Strict 100k Fibonacci and uniform
+validation passed.
+
 Untried probes and candidates (2026-07-17 triage; each begins with a cheap measurement gate):
 
 - **TLB / huge-page probe (native Linux only):** the measured memory wall is dedup and grid build
@@ -868,6 +881,14 @@ Do not broadly retry these without a materially different design or workload:
   counters increased cycles 0.39%, instructions 0.09%, cache references 9.3%, data-TLB loads 4.9%,
   and data-TLB misses 2.9%. Recycle only the full-input attempted-neighbor table; allowing the
   smaller scratch allocations to die between bins preserves better cache behavior.
+
+- Parallel sorting of cross-bin overflow handles had only a roughly 2ms phase ceiling at 2.5M;
+  serial matching and patching consumed another 4.8--5.6ms. Twenty rotated 16-core pairs split by
+  distribution: Fibonacci improved 0.67% (95% bootstrap interval 0.01--1.28%, 14/20 favorable),
+  while uniform changed -0.27% (-1.47--0.89%, 9/20). Seven-run Fibonacci counters added 0.28%
+  instructions and 6.5% cache references for only 0.19% fewer cycles. Retain the serial unstable
+  sort; parallelizing the matcher requires a different patch representation and must justify that
+  larger redesign independently.
 
 - **Permutation-boundary two-pass scatter:** staging each cell as its generator id plus
   already-globalized index payload, then filling cache-sized destination windows, passed its
