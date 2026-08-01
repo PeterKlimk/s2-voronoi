@@ -701,6 +701,22 @@ Recently accepted optimizations:
   replaces serial first-touch with concurrent work. Output fingerprints and topology were
   unchanged.
 
+- **Recycled per-bin cell-build contexts:** the default keeps about twice as many spatial bins as
+  workers for load balance, but each bin formerly allocated and zeroed its own full-input
+  attempted-neighbor stamp table. Parallel builds now recycle the complete cell-build context
+  after a bin finishes, bounding live/full initialization work by executing workers while retaining
+  the existing bin count and exact candidate behavior. This is distinct from the retired lazy-stamp
+  experiment: ordinary candidate insertion remains one direct spatial stamp access, with no added
+  per-cell vector or transition branch. The one-thread path deliberately bypasses pooling.
+
+  On a native 16-core Ryzen 5900XT at 2.5M with preprocessing disabled, ten rotated pairs improved
+  Fibonacci by 5.80% (95% bootstrap interval 4.86--6.71%, 10/10 favorable) and uniform by 4.97%
+  (2.83--7.14%, 9/10). A separate 15-pair exploratory form produced the same direction before the
+  scalar bypass. Five-run Fibonacci counters attributed the retained form to 3.7% fewer cycles,
+  0.7% fewer instructions, 5.7% fewer data-TLB misses, and 10.5% fewer page faults. Twelve pinned
+  1M single-threaded uniform pairs favored the bypassed candidate by roughly 0.3%; Fibonacci was
+  previously neutral-to-favorable. Correctness and checked fingerprint-support suites passed.
+
 Spatial-order materialization policy candidate:
 
 - **Adaptive final index scatter:** phase attribution showed that the apparent final typed point

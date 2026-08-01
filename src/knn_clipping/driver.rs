@@ -4,6 +4,8 @@
 use glam::Vec3;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+#[cfg(feature = "parallel")]
+use std::sync::Mutex;
 
 use crate::cube_grid::packed_knn::{
     PackedGroupInput, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroup,
@@ -109,6 +111,16 @@ pub(crate) fn build_cells_sharded_live_dedup(
         .map_err(BuildCellsError::PackedLayoutCapacity)?;
     let num_bins = assignment.num_bins;
     let packed_policy = policy;
+    // Bins outnumber active workers to preserve load balance, but the full-N
+    // attempted-neighbor table only needs one live allocation per executing
+    // bin. Recycle the complete context between bin tasks so later tasks do
+    // not allocate and zero another table. Keep the one-thread path direct:
+    // its two bins do not create concurrent full-N allocations, and avoiding
+    // the pool also preserves the scalar codegen/overhead guardrail.
+    #[cfg(feature = "parallel")]
+    let build_context_pool = Mutex::new(Vec::<CellBuildContext>::new());
+    #[cfg(feature = "parallel")]
+    let reuse_build_contexts = rayon::current_num_threads() > 1;
 
     let per_bin: Result<Vec<(ShardState, crate::timing::CellSubAccum)>, BuildCellsError> =
         maybe_par_into_iter!(0..num_bins)
@@ -121,6 +133,17 @@ pub(crate) fn build_cells_sharded_live_dedup(
                 let mut shard = ShardState::new(my_generators.len());
 
                 let mut sub_accum = CellSubAccum::new();
+                #[cfg(feature = "parallel")]
+                let mut build_ctx = if reuse_build_contexts {
+                    build_context_pool
+                        .lock()
+                        .expect("cell-build context pool poisoned")
+                        .pop()
+                        .unwrap_or_else(|| CellBuildContext::new(grid, policy))
+                } else {
+                    CellBuildContext::new(grid, policy)
+                };
+                #[cfg(not(feature = "parallel"))]
                 let mut build_ctx = CellBuildContext::new(grid, policy);
                 let mut live_ctx = SphereCellScratch::new();
                 let vertex_capacity = my_generators.len().saturating_mul(6);
@@ -246,6 +269,14 @@ pub(crate) fn build_cells_sharded_live_dedup(
                     }
                 }
                 debug_assert_eq!(cursor, my_generators.len());
+
+                #[cfg(feature = "parallel")]
+                if reuse_build_contexts {
+                    build_context_pool
+                        .lock()
+                        .expect("cell-build context pool poisoned")
+                        .push(build_ctx);
+                }
 
                 Ok((shard, sub_accum))
             })
