@@ -86,6 +86,9 @@ Use `--sizes` to extend a run. The conservative defaults are `10k 100k`;
 establish time and memory behavior before adding `500k`, `1m`, `2.5m`, or `5m`.
 Raw results go under `target/competitors/results/` and are never committed.
 
+Alternative native/static builds can be selected without replacing the
+baseline artifacts using `--qhull-bin PATH` and `--stripack-bin PATH`.
+
 Summarize medians, bootstrap 95% confidence intervals, and within-round paired
 ratios without altering the raw CSV:
 

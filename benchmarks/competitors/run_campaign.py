@@ -21,7 +21,14 @@ def parse_count(text: str) -> int:
     return int(float(text[:-1] if scale != 1 else text) * scale)
 
 
-def commands(data: Path, repeat: int, threads: int, cpus: str) -> dict[str, list[str]]:
+def commands(
+    data: Path,
+    repeat: int,
+    threads: int,
+    cpus: str,
+    qhull_bin: Path,
+    stripack_bin: Path,
+) -> dict[str, list[str]]:
     prefix = ["taskset", "-c", cpus]
     return {
         "s2-voronoi": prefix
@@ -42,21 +49,21 @@ def commands(data: Path, repeat: int, threads: int, cpus: str) -> dict[str, list
         ],
         "qhull": prefix
         + [
-            str(ROOT / "target/competitors/build/bench_qhull_sphere"),
+            str(qhull_bin),
             str(data),
             "--repeat",
             str(repeat),
         ],
         "stripack": prefix
         + [
-            str(ROOT / "target/competitors/stripack/release/bench-stripack-sphere"),
+            str(stripack_bin),
             str(data),
             "--repeat",
             str(repeat),
         ],
         "stripack-construct": prefix
         + [
-            str(ROOT / "target/competitors/stripack/release/bench-stripack-sphere"),
+            str(stripack_bin),
             str(data),
             "--construct-only",
             "--repeat",
@@ -139,6 +146,16 @@ def main() -> None:
                                  "stripack-construct"),
                         default=["s2-voronoi", "cgal", "qhull", "stripack-construct"])
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--qhull-bin",
+        type=Path,
+        default=ROOT / "target/competitors/build/bench_qhull_sphere",
+    )
+    parser.add_argument(
+        "--stripack-bin",
+        type=Path,
+        default=ROOT / "target/competitors/stripack/release/bench-stripack-sphere",
+    )
     args = parser.parse_args()
     if args.rounds < 1 or args.inner_repeat < 1 or args.threads < 1:
         parser.error("rounds, inner-repeat, and threads must be positive")
@@ -160,7 +177,14 @@ def main() -> None:
         for size in args.sizes:
             data = ROOT / "target/competitors/data" / f"{args.dist}-{size}-seed{args.seed}.f32"
             generate(data, size, args.dist, args.seed)
-            available = commands(data, args.inner_repeat, args.threads, args.cpus)
+            available = commands(
+                data,
+                args.inner_repeat,
+                args.threads,
+                args.cpus,
+                args.qhull_bin.resolve(),
+                args.stripack_bin.resolve(),
+            )
 
             for backend in args.backends:
                 subprocess.run(available[backend][:-2] + ["--repeat", "1"], check=True,
