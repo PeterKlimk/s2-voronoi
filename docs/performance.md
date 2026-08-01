@@ -179,6 +179,17 @@ paired cycles interval remained unresolved around no change. Revisit these thres
 both peak-storage telemetry and end-to-end counter measurements; optimizing away the fallback must
 not restore unbounded retained work.
 
+A refreshed native 2.5M scaling/profile pass on the 16-core Linux host found no packed-specific
+parallel bottleneck. Fibonacci's reported packed phase fell from 615ms at one thread to 58ms at
+sixteen (10.6x), while uniform fell from 743ms to 73ms (10.2x); total cell construction scaled by
+essentially the same factors. Frame-pointer sampling attributed 7.8% of whole-build cycles to
+`prepare_group_directed`, but its descendants remained distributed: small sorting networks were
+about 1.3%, partitioning 0.9%, and tail materialization 1.2%. The current loop already shares each
+candidate coordinate chunk across the group's queries, counts rather than materializes unused
+center-tail keys, and builds tails only on demand. Combined with the retired smaller-prefix,
+streaming-heap, seed-first, and lazy-high-key results, there is no remaining isolated packed
+preparation candidate with a credible work-removal mechanism.
+
 The normal 100k uniform packed-bound comparison remained unresolved after the maximum 160 paired
 wall-time rounds: candidate/base geometric mean `+0.3%`, 95% interval `[-1.1%, +1.8%]`, with the
 candidate faster in 82/160 rounds. This is below the 1% decision resolution on the reference host;
