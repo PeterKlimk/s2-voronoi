@@ -9,6 +9,8 @@ import re
 import subprocess
 import tempfile
 
+import numpy as np
+
 
 ROOT = Path(__file__).resolve().parents[2]
 RESULT_RE = re.compile(r"(?:^|\s)([a-z_]+)=([^\s]+)")
@@ -73,8 +75,13 @@ def commands(
 
 
 def generate(data: Path, size: str, dist: str, seed: int) -> None:
-    if data.exists() and data.stat().st_size == parse_count(size) * 12:
-        return
+    expected_size = parse_count(size) * 12
+    if data.exists() and data.stat().st_size == expected_size:
+        points = np.memmap(data, dtype="<f4", mode="r").reshape(-1, 3)
+        packed = np.ascontiguousarray(points).view(np.dtype((np.void, 12))).ravel()
+        if len(np.unique(packed)) == len(points):
+            return
+        print(f"regenerating {data}: duplicate packed-f32 sites", flush=True)
     subprocess.run(
         [
             "python3",

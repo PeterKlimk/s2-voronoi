@@ -6,6 +6,10 @@ convex-hull and incremental spherical-Delaunay construction.
 All programs read the same headerless binary input: packed little-endian
 `f32` triples `(x, y, z)`. Input generation and loading are outside the timed
 region. Every result is one machine-readable `RESULT key=value...` line.
+The generator deterministically resamples the vanishingly rare sites that
+collide after conversion to packed `f32`; the repair count is printed when a
+dataset is created. The campaign runner also rejects stale cached inputs with
+duplicate triples.
 
 The three initial backends are deliberately different algorithm families:
 
@@ -98,3 +102,38 @@ python3 benchmarks/competitors/analyze_campaign.py \
 python3 benchmarks/competitors/analyze_campaign.py \
   target/competitors/results/fib-t1.csv --metric total_ms
 ```
+
+## August 2026 native Linux result
+
+A seven-round rotated campaign on the 16-core Ryzen host compared the current
+native binaries at 500k, 1M, and 2.5M sites. CPUs 0--15 selected one logical CPU
+per physical core. The 2.5M medians summarize the large-size result:
+
+| input | backend | workers | construct | materialized total | peak RSS |
+|---|---|---:|---:|---:|---:|
+| Fibonacci | voronoi-mesh | 1 | 1,483 ms | 1,514 ms | 611 MiB |
+| Fibonacci | voronoi-mesh | 16 | 210 ms | 243 ms | 654 MiB |
+| Fibonacci | CGAL | 1 | 1,623 ms | 1,838 ms | 568 MiB |
+| uniform | voronoi-mesh | 1 | 2,066 ms | 2,097 ms | 633 MiB |
+| uniform | voronoi-mesh | 16 | 269 ms | 332 ms | 667 MiB |
+| uniform | CGAL | 1 | 1,665 ms | 1,902 ms | 568 MiB |
+
+At 2.5M, `voronoi-mesh` construction scaled by 7.05x on Fibonacci and 7.69x
+on uniform from one to 16 physical cores. Against serial CGAL, its 16-worker
+construction was 7.67x faster by paired geomean on Fibonacci (95% bootstrap
+CI 7.56--7.77x) and 6.23x faster on uniform (6.16--6.28x). For materialized
+total time the corresponding advantages were 7.54x and 5.75x.
+
+The single-worker comparison is the important qualification. Clipping was
+about 9% faster than CGAL construction on Fibonacci at 2.5M, but about 24%
+slower on random uniform input. Once each retained structure was traversed and
+dual points were constructed where needed, the uniform deficit narrowed to
+about 10%. CGAL still retains a triangulation rather than the exact shared-cell
+mesh produced by this crate, so these are useful algorithm-family and scaling
+comparisons, not output-equivalent claims.
+
+The initial 2.5M uniform fixture contained one pair of bit-identical sites after
+conversion to `f32`. With preprocessing deliberately disabled, that correctly
+failed as a duplicate-generator input. The generator and cache check now
+guarantee unique packed triples; exactly one site was deterministically
+resampled for this campaign.
