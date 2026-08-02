@@ -947,6 +947,17 @@ Do not broadly retry these without a materially different design or workload:
   and the fused implementation also required unsafe parallel initialization. Retain the two-pass
   classification/count structure.
 
+- Assigning scrambled-input cell-index backing spans in shard order made both sides of final index
+  assembly sequential while leaving the public cell array in generator order. On the native
+  16-core host at 2.5M uniform, the index-scatter phase fell 47.6% and the complete dedup phase fell
+  13.7% in all ten timing pairs. Production builds improved uniform by 1.87% over twenty pairs
+  (approximate 95% paired interval 1.06--2.68%, 18/20 favorable), by 2.25% with preprocessing, and
+  by 1.52% at eight threads. The implementation was not retained because inactive correlated-input
+  codegen regressed: the final outlined/cold form made 16-core Fibonacci 1.87% slower (0.37--3.39%,
+  only 3/12 favorable), while scalar Fibonacci variants ranged from roughly 0.3--0.7% adverse.
+  The locality mechanism is validated, but retry it only with a representation or code-placement
+  design that preserves the correlated path's generated code.
+
 - **Permutation-boundary two-pass scatter:** staging each cell as its generator id plus
   already-globalized index payload, then filling cache-sized destination windows, passed its
   isolated 2M uniform phase gate only after increasing the partition from the proposed 64 windows
