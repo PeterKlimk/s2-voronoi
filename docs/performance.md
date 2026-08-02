@@ -759,6 +759,22 @@ Recently accepted optimizations:
   1M single-threaded uniform pairs favored the bypassed candidate by roughly 0.3%; Fibonacci was
   previously neutral-to-favorable. Correctness and checked fingerprint-support suites passed.
 
+- **Packed-kNN scratch follows the recycled context:** packed query preparation owns reusable
+  per-query key vectors. They formerly survived groups within one spatial bin but were dropped and
+  regrown when a worker took its next bin. Moving that scratch into the existing build-context pool
+  extends its lifetime only to the next task on the same build; it does not add another live
+  context or increase the ordinary high-water memory model.
+
+  Heaptrack at 500k uniform/16 threads measured 67,232 allocations before and 38,476 after
+  (-42.8%), with temporary allocations falling from 12,323 to 3,676. Peak heap was effectively
+  flat (219.34 versus 220.28 MB). Seven pinned 1M single-threaded pairs improved Fibonacci cycles
+  by 0.69% and uniform by 0.83%. At 2.5M/16 threads, seven pairs improved Fibonacci cycles by
+  1.00%; uniform was neutral (+0.04%). Cachegrind at 20k Fibonacci measured 0.32% more instruction
+  references and 0.87% more simulated conditional mispredicts, consistent with the native counters'
+  roughly 0.3% instruction increase. The measured cycle wins therefore come from avoided allocator
+  calls and growth copies, not reduced geometric work; the flat uniform all-core result is the
+  retained guardrail.
+
 - **Parallel cell-metadata prefix:** final assembly formerly gathered every shard-local cell count
   and emitted the global cell prefix in one serial generator-order loop. Large parallel builds now
   use a two-level scan: disjoint chunks gather counts once while writing chunk-local prefixes, a

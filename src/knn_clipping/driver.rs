@@ -30,7 +30,21 @@ struct SphereCellScratch {
     edge_scratch: EdgeScratch,
 }
 
-type ReusableBuildContext = ((usize, usize), CellBuildContext);
+struct BuildTaskContext {
+    cell: CellBuildContext,
+    packed: PackedKnnCellScratch,
+}
+
+impl BuildTaskContext {
+    fn new(grid: &CubeMapGrid, policy: PackedNeighborPolicy) -> Self {
+        Self {
+            cell: CellBuildContext::new(grid, policy),
+            packed: PackedKnnCellScratch::new(),
+        }
+    }
+}
+
+type ReusableBuildContext = ((usize, usize), BuildTaskContext);
 
 /// Caller-owned storage retained across complete computations.
 pub(crate) struct BuildWorkspace {
@@ -136,11 +150,12 @@ pub(crate) fn build_cells_sharded_live_dedup(
     // Bins outnumber active workers to preserve load balance, but the full-N
     // attempted-neighbor table only needs one live allocation per executing
     // bin. Recycle the complete context between bin tasks so later tasks do
-    // not allocate and zero another table. Keep the one-thread path direct:
-    // its two bins do not create concurrent full-N allocations, and avoiding
-    // the pool also preserves the scalar codegen/overhead guardrail.
+    // not allocate and zero another table. Keep the ordinary one-thread path
+    // direct: its two bins do not create concurrent full-N allocations, and
+    // avoiding the pool also preserves the scalar codegen/overhead guardrail.
+    // An explicit workspace still retains its one serial context across calls.
     #[cfg(feature = "parallel")]
-    let build_context_pool = Mutex::new(Vec::<CellBuildContext>::new());
+    let build_context_pool = Mutex::new(Vec::<BuildTaskContext>::new());
     #[cfg(feature = "parallel")]
     let reuse_build_contexts = rayon::current_num_threads() > 1 || workspace.is_some();
     let reusable_context_key = (points.len(), grid.cell_offsets().len());
@@ -164,7 +179,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
 
                 let mut sub_accum = CellSubAccum::new();
                 #[cfg(feature = "parallel")]
-                let mut build_ctx = if reuse_build_contexts {
+                let mut task_ctx = if reuse_build_contexts {
                     let retained = if let Some(workspace) = workspace {
                         let mut pool = workspace
                             .contexts
@@ -183,12 +198,12 @@ pub(crate) fn build_cells_sharded_live_dedup(
                                 .expect("cell-build context pool poisoned")
                                 .pop()
                         })
-                        .unwrap_or_else(|| CellBuildContext::new(grid, policy))
+                        .unwrap_or_else(|| BuildTaskContext::new(grid, policy))
                 } else {
-                    CellBuildContext::new(grid, policy)
+                    BuildTaskContext::new(grid, policy)
                 };
                 #[cfg(not(feature = "parallel"))]
-                let mut build_ctx = workspace
+                let mut task_ctx = workspace
                     .and_then(|workspace| {
                         let mut pool = workspace
                             .contexts
@@ -198,7 +213,11 @@ pub(crate) fn build_cells_sharded_live_dedup(
                             .position(|(key, _)| *key == reusable_context_key)
                             .map(|index| pool.swap_remove(index).1)
                     })
-                    .unwrap_or_else(|| CellBuildContext::new(grid, policy));
+                    .unwrap_or_else(|| BuildTaskContext::new(grid, policy));
+                let BuildTaskContext {
+                    cell: build_ctx,
+                    packed: packed_scratch,
+                } = &mut task_ctx;
                 let mut live_ctx = SphereCellScratch::new();
                 let vertex_capacity = my_generators.len().saturating_mul(6);
                 shard.output.vertices.reserve(vertex_capacity);
@@ -210,8 +229,6 @@ pub(crate) fn build_cells_sharded_live_dedup(
                     .reserve(my_generators.len().saturating_mul(6));
                 // Conservative estimate for off-shard vertices.
                 shard.output.deferred_slots.reserve(my_generators.len());
-
-                let mut packed_scratch = PackedKnnCellScratch::new();
 
                 #[cfg_attr(
                     not(feature = "timing"),
@@ -271,7 +288,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                             PreparedPackedGroupStatus::Ready(mut prepared) => {
                                 emit_generator_group(
                                     &mut sub_accum,
-                                    &mut build_ctx,
+                                    build_ctx,
                                     &mut live_ctx,
                                     &mut shard,
                                     bin,
@@ -287,7 +304,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                             PreparedPackedGroupStatus::SlowPath => {
                                 emit_generator_group(
                                     &mut sub_accum,
-                                    &mut build_ctx,
+                                    build_ctx,
                                     &mut live_ctx,
                                     &mut shard,
                                     bin,
@@ -310,7 +327,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                     } else {
                         emit_generator_group(
                             &mut sub_accum,
-                            &mut build_ctx,
+                            build_ctx,
                             &mut live_ctx,
                             &mut shard,
                             bin,
@@ -331,12 +348,12 @@ pub(crate) fn build_cells_sharded_live_dedup(
                             .contexts
                             .lock()
                             .expect("cell-build workspace poisoned")
-                            .push((reusable_context_key, build_ctx));
+                            .push((reusable_context_key, task_ctx));
                     } else {
                         build_context_pool
                             .lock()
                             .expect("cell-build context pool poisoned")
-                            .push(build_ctx);
+                            .push(task_ctx);
                     }
                 }
                 #[cfg(not(feature = "parallel"))]
@@ -345,7 +362,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                         .contexts
                         .lock()
                         .expect("cell-build workspace poisoned")
-                        .push((reusable_context_key, build_ctx));
+                        .push((reusable_context_key, task_ctx));
                 }
 
                 Ok((shard, sub_accum))
