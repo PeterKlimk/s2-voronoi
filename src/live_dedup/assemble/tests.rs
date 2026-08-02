@@ -11,9 +11,6 @@ use crate::live_dedup::{EdgeRecord, ShardedCellsData};
 use glam::Vec3;
 use std::collections::BTreeSet;
 
-#[cfg(feature = "parallel")]
-use crate::live_dedup::edge_checks::resolve_edge_check_overflow_for_test;
-
 fn bin(value: usize) -> BinId {
     BinId::from_usize(value)
 }
@@ -255,104 +252,6 @@ fn overflow_matching_patches_cross_bin_slots_before_fallback() {
         shards[1].output.logical_reference(bin(1), 1),
         Some((bin(0), 10))
     );
-}
-
-#[cfg(feature = "parallel")]
-#[test]
-fn dependency_levels_match_serial_override_and_diagnostic_order() {
-    fn fixture() -> (Vec<ShardState>, Vec<EdgeCheckOverflow>) {
-        let mut shards: Vec<_> = (0..5).map(|_| ShardState::new(1)).collect();
-        for shard in &mut shards {
-            shard.output.cell_indices = vec![INVALID_INDEX, INVALID_INDEX];
-        }
-
-        let mut overflow = Vec::new();
-        for (edge, low, high, low_indices, high_indices) in [
-            (pack_edge(0, 1), 0, 1, [10, 11], [20, 21]),
-            (pack_edge(3, 4), 3, 4, [40, 41], [50, 51]),
-            // This later canonical pair deliberately overwrites shard 0's
-            // slots, exercising exact last-writer/conflict attribution.
-            (pack_edge(0, 2), 0, 2, [10, 11], [30, 31]),
-        ] {
-            overflow.push(EdgeCheckOverflow {
-                key: edge,
-                side: 0,
-                source_bin: bin(low),
-                target_bin: bin(high),
-                thirds: [7, 8],
-                indices: low_indices,
-                slots: [0, 1],
-                source_cell: low as u32,
-                source_offsets: [0, 1],
-            });
-            overflow.push(EdgeCheckOverflow {
-                key: edge,
-                side: 1,
-                source_bin: bin(high),
-                target_bin: bin(low),
-                thirds: [8, 7],
-                indices: high_indices,
-                slots: [0, 1],
-                source_cell: high as u32,
-                source_offsets: [0, 1],
-            });
-        }
-        (shards, overflow)
-    }
-
-    let (mut serial_shards, overflow) = fixture();
-    let mut serial_mismatches = Vec::new();
-    resolve_edge_check_overflow_for_test(
-        &mut serial_shards,
-        &overflow,
-        &mut serial_mismatches,
-        false,
-    );
-
-    let (mut parallel_shards, _) = fixture();
-    let mut parallel_mismatches = Vec::new();
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build()
-        .expect("test pool")
-        .install(|| {
-            resolve_edge_check_overflow_for_test(
-                &mut parallel_shards,
-                &overflow,
-                &mut parallel_mismatches,
-                true,
-            );
-        });
-
-    assert_eq!(serial_mismatches.len(), parallel_mismatches.len());
-    for (serial, parallel) in serial_mismatches.iter().zip(&parallel_mismatches) {
-        assert_eq!(serial.key, parallel.key);
-        assert_eq!(serial.origin, parallel.origin);
-    }
-    for (shard_index, (serial, parallel)) in serial_shards.iter().zip(&parallel_shards).enumerate()
-    {
-        assert_eq!(
-            serial.output.reference_overrides.len(),
-            parallel.output.reference_overrides.len()
-        );
-        for (serial, parallel) in serial
-            .output
-            .reference_overrides
-            .iter()
-            .zip(&parallel.output.reference_overrides)
-        {
-            assert_eq!(serial.source_cell, parallel.source_cell);
-            assert_eq!(serial.owner_local, parallel.owner_local);
-            assert_eq!(serial.source_offset, parallel.source_offset);
-            assert_eq!(serial.owner_bin, parallel.owner_bin);
-        }
-        for slot in 0..serial.output.cell_indices.len() as u32 {
-            assert_eq!(
-                serial.output.logical_reference(bin(shard_index), slot),
-                parallel.output.logical_reference(bin(shard_index), slot)
-            );
-        }
-    }
 }
 
 #[test]

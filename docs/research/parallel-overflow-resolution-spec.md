@@ -1,6 +1,21 @@
 # Deterministic Parallel Cross-Bin Overflow Resolution
 
-**Status:** reviewed design; telemetry gate precedes implementation
+**Status:** measured and retired; serial pair-helper extraction retained
+
+## Outcome
+
+The dependency schedule was implemented and proved exact by a forced serial/parallel differential.
+At 2.5M generators it contained 51--52 dependency levels, with a record-weighted theoretical
+parallelism bound of 3.46--3.64x.
+
+Separate binaries initially suggested a large match-phase gain. A same-binary runtime differential
+showed that leveled execution itself was neutral: at 16 threads both modes took about 3.8--4.1 ms,
+and at 32 threads both took about 4.7--5.2 ms. The gain came from extracting the pair-bucket body and
+hoisting mutable shard-pair selection out of the per-edge-run loop. That serial refactor also avoids
+mutexes, 51--52 Rayon barriers, task-local diagnostic buffers, and schedule construction.
+
+Decision: retire dependency-level parallel matching and retain only the simpler serial pair helper.
+The staged fallback below remains a design reference, not active work.
 
 ## 1. Objective
 
