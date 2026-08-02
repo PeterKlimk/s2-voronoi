@@ -326,10 +326,23 @@ impl PhaseTimings {
             ms(self.dedup_sub.exact_zero_hints),
         );
         eprintln!(
-            "    overflow: records={} sort={:.3}ms match={:.3}ms",
+            "    overflow: records={} sort={:.3}ms match={:.3}ms active_pairs={} max_pair_records={} dependency_levels={} max_level_pairs={} max_level_records={} skinny_levels={} skinny_level_records={} weighted_critical_records={} parallelism_bound={:.2}x",
             self.dedup_sub.edge_check_overflow_records,
             ms(self.dedup_sub.edge_check_overflow_sort),
             ms(self.dedup_sub.edge_check_overflow_match),
+            self.dedup_sub.edge_check_overflow_active_pairs,
+            self.dedup_sub.edge_check_overflow_max_pair_records,
+            self.dedup_sub.edge_check_overflow_dependency_levels,
+            self.dedup_sub.edge_check_overflow_max_level_pairs,
+            self.dedup_sub.edge_check_overflow_max_level_records,
+            self.dedup_sub.edge_check_overflow_skinny_levels,
+            self.dedup_sub.edge_check_overflow_skinny_level_records,
+            self.dedup_sub.edge_check_overflow_weighted_critical_records,
+            self.dedup_sub.edge_check_overflow_records as f64
+                / self
+                    .dedup_sub
+                    .edge_check_overflow_weighted_critical_records
+                    .max(1) as f64,
         );
         eprintln!(
             "    shard_order_sample: descents={} / {} ({:.3}%) mean_abs_global_delta={:.1} scatter_by_shard={}",

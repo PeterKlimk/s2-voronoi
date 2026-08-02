@@ -432,6 +432,192 @@ pub(super) fn collect_and_resolve_cell_edges(
 pub(super) struct OverflowResolveTiming {
     pub sort: Duration,
     pub match_: Duration,
+    #[cfg(feature = "timing")]
+    pub active_pairs: u64,
+    #[cfg(feature = "timing")]
+    pub max_pair_records: u64,
+    #[cfg(feature = "timing")]
+    pub dependency_levels: u64,
+    #[cfg(feature = "timing")]
+    pub max_level_pairs: u64,
+    #[cfg(feature = "timing")]
+    pub max_level_records: u64,
+    #[cfg(feature = "timing")]
+    pub skinny_levels: u64,
+    #[cfg(feature = "timing")]
+    pub skinny_level_records: u64,
+    #[cfg(feature = "timing")]
+    pub weighted_critical_records: u64,
+}
+
+#[derive(Clone, Copy)]
+struct OverflowSortHandle {
+    key: EdgeKey,
+    index: usize,
+}
+
+fn resolve_pair_bucket(
+    low_shard: &mut ShardState,
+    low_bin: usize,
+    high_shard: &mut ShardState,
+    high_bin: usize,
+    sorted: &[OverflowSortHandle],
+    edge_check_overflow: &[EdgeCheckOverflow],
+    edge_mismatches: &mut Vec<EdgeMismatch>,
+) {
+    let mut i = 0usize;
+    while i < sorted.len() {
+        let key = sorted[i].key;
+        let mut run_end = i + 1;
+        while run_end < sorted.len() && sorted[run_end].key == key {
+            run_end += 1;
+        }
+        let run_len = run_end - i;
+
+        if run_len == 1 {
+            edge_mismatches.push(EdgeMismatch {
+                key,
+                origin: EdgeMismatchOrigin::CrossBinSingleSided,
+            });
+        } else if run_len == 2 {
+            let a = edge_check_overflow[sorted[i].index];
+            let b = edge_check_overflow[sorted[i + 1].index];
+            if a.side == b.side {
+                edge_mismatches.push(EdgeMismatch {
+                    key: a.key,
+                    origin: EdgeMismatchOrigin::CrossBinDuplicateSide,
+                });
+            } else {
+                let a_bin = a.source_bin.as_usize();
+                let b_bin = b.source_bin.as_usize();
+                assert!(
+                    (a_bin == low_bin && b_bin == high_bin)
+                        || (a_bin == high_bin && b_bin == low_bin),
+                    "overflow pair bucket contains mismatched source bins"
+                );
+                let (a_shard, b_shard) = if a_bin == low_bin {
+                    (&mut *low_shard, &mut *high_shard)
+                } else {
+                    (&mut *high_shard, &mut *low_shard)
+                };
+
+                // The two sides traverse the edge in reverse winding;
+                // every endpoint pairing patches both shards symmetrically.
+                let mut conflict = false;
+                let full = reconcile_edge_endpoints(b.thirds, a.thirds, |bk, ak| {
+                    if a.indices[ak] != INVALID_INDEX {
+                        conflict |= b_shard.output.patch_reference(
+                            b.source_bin,
+                            b.slots[bk],
+                            b.source_cell,
+                            b.source_offsets[bk],
+                            a.source_bin,
+                            a.indices[ak],
+                        );
+                    }
+                    if b.indices[bk] != INVALID_INDEX {
+                        conflict |= a_shard.output.patch_reference(
+                            a.source_bin,
+                            a.slots[ak],
+                            a.source_cell,
+                            a.source_offsets[ak],
+                            b.source_bin,
+                            b.indices[bk],
+                        );
+                    }
+                });
+                if !full {
+                    if !a.thirds.contains(&MALFORMED_THIRD) && !b.thirds.contains(&MALFORMED_THIRD)
+                    {
+                        edge_mismatches.push(EdgeMismatch {
+                            key: a.key,
+                            origin: EdgeMismatchOrigin::CrossBinThirdsMismatch,
+                        });
+                    }
+                } else if conflict {
+                    edge_mismatches.push(EdgeMismatch {
+                        key: a.key,
+                        origin: EdgeMismatchOrigin::CrossBinSlotConflict,
+                    });
+                }
+            }
+        } else {
+            edge_mismatches.push(EdgeMismatch {
+                key,
+                origin: EdgeMismatchOrigin::CrossBinDuplicateSide,
+            });
+            let first_side = edge_check_overflow[sorted[i].index].side;
+            if sorted[i..run_end]
+                .iter()
+                .all(|entry| edge_check_overflow[entry.index].side == first_side)
+            {
+                edge_mismatches.push(EdgeMismatch {
+                    key,
+                    origin: EdgeMismatchOrigin::CrossBinSingleSided,
+                });
+            }
+        }
+        i = run_end;
+    }
+}
+
+#[cfg(feature = "timing")]
+fn overflow_pair_schedule_stats(
+    pair_buckets: &[Vec<impl Copy>],
+    num_bins: usize,
+) -> (u64, u64, u64, u64, u64, u64, u64, u64) {
+    let mut active_pairs = 0usize;
+    let mut max_pair_records = 0usize;
+    let mut last_level = vec![0usize; num_bins];
+    // (pair count, record count, largest bucket) for each dependency level.
+    let mut levels: Vec<(usize, usize, usize)> = Vec::new();
+    for (pair, bucket) in pair_buckets.iter().enumerate() {
+        if bucket.is_empty() {
+            continue;
+        }
+        let records = bucket.len();
+        active_pairs += 1;
+        max_pair_records = max_pair_records.max(records);
+        let a = pair / num_bins;
+        let b = pair % num_bins;
+        let level = 1 + last_level[a].max(last_level[b]);
+        last_level[a] = level;
+        last_level[b] = level;
+        if levels.len() <= level {
+            levels.resize(level + 1, (0, 0, 0));
+        }
+        let stats = &mut levels[level];
+        stats.0 += 1;
+        stats.1 += records;
+        stats.2 = stats.2.max(records);
+    }
+    let levels = levels.get(1..).unwrap_or_default();
+    let max_level_pairs = levels.iter().map(|&(pairs, _, _)| pairs).max().unwrap_or(0);
+    let max_level_records = levels
+        .iter()
+        .map(|&(_, records, _)| records)
+        .max()
+        .unwrap_or(0);
+    let skinny_levels = levels.iter().filter(|&&(pairs, _, _)| pairs == 1).count();
+    let skinny_level_records = levels
+        .iter()
+        .filter(|&&(pairs, _, _)| pairs == 1)
+        .map(|&(_, records, _)| records)
+        .sum::<usize>();
+    let weighted_critical_records = levels
+        .iter()
+        .map(|&(_, _, max_bucket)| max_bucket)
+        .sum::<usize>();
+    (
+        active_pairs as u64,
+        max_pair_records as u64,
+        levels.len() as u64,
+        max_level_pairs as u64,
+        max_level_records as u64,
+        skinny_levels as u64,
+        skinny_level_records as u64,
+        weighted_critical_records as u64,
+    )
 }
 
 /// Matches edge checks across shard boundaries.
@@ -446,12 +632,30 @@ pub(super) fn resolve_edge_check_overflow(
     edge_check_overflow: &[EdgeCheckOverflow],
     edge_mismatches: &mut Vec<EdgeMismatch>,
 ) -> OverflowResolveTiming {
-    #[derive(Clone, Copy)]
-    struct SortHandle {
-        key: EdgeKey,
-        index: usize,
-    }
+    resolve_edge_check_overflow_impl(shards, edge_check_overflow, edge_mismatches, 65_536)
+}
 
+#[cfg(all(test, feature = "parallel"))]
+pub(super) fn resolve_edge_check_overflow_for_test(
+    shards: &mut [ShardState],
+    edge_check_overflow: &[EdgeCheckOverflow],
+    edge_mismatches: &mut Vec<EdgeMismatch>,
+    parallel: bool,
+) -> OverflowResolveTiming {
+    resolve_edge_check_overflow_impl(
+        shards,
+        edge_check_overflow,
+        edge_mismatches,
+        if parallel { 0 } else { usize::MAX },
+    )
+}
+
+fn resolve_edge_check_overflow_impl(
+    shards: &mut [ShardState],
+    edge_check_overflow: &[EdgeCheckOverflow],
+    edge_mismatches: &mut Vec<EdgeMismatch>,
+    parallel_threshold: usize,
+) -> OverflowResolveTiming {
     let t_edge_sort = Timer::start();
     // Resolution only requires contiguous equal-key runs. Group by shard pair
     // first so sorting operates on smaller streams and the subsequent patches
@@ -459,21 +663,21 @@ pub(super) fn resolve_edge_check_overflow(
     // equality and reverse-winding endpoint patching are symmetric; larger
     // runs are deferred as a whole.
     let num_bins = shards.len();
-    let mut pair_buckets: Vec<Vec<SortHandle>> =
+    let mut pair_buckets: Vec<Vec<OverflowSortHandle>> =
         (0..num_bins * num_bins).map(|_| Vec::new()).collect();
     for (index, entry) in edge_check_overflow.iter().enumerate() {
         let a = entry.source_bin.as_usize();
         let b = entry.target_bin.as_usize();
-        debug_assert_ne!(a, b, "overflow edge must cross a shard boundary");
-        debug_assert!(a < num_bins && b < num_bins, "overflow bin out of range");
+        assert_ne!(a, b, "overflow edge must cross a shard boundary");
+        assert!(a < num_bins && b < num_bins, "overflow bin out of range");
         let pair = a.min(b) * num_bins + a.max(b);
-        pair_buckets[pair].push(SortHandle {
+        pair_buckets[pair].push(OverflowSortHandle {
             key: entry.key,
             index,
         });
     }
     #[cfg(feature = "parallel")]
-    if rayon::current_num_threads() > 1 && edge_check_overflow.len() >= 65_536 {
+    if rayon::current_num_threads() > 1 && edge_check_overflow.len() >= parallel_threshold {
         pair_buckets
             .par_iter_mut()
             .for_each(|bucket| bucket.sort_unstable_by_key(|entry| entry.key));
@@ -487,121 +691,137 @@ pub(super) fn resolve_edge_check_overflow(
         bucket.sort_unstable_by_key(|entry| entry.key);
     }
     let edge_checks_overflow_sort_time = t_edge_sort.elapsed();
+    #[cfg(feature = "timing")]
+    let (
+        active_pairs,
+        max_pair_records,
+        dependency_levels,
+        max_level_pairs,
+        max_level_records,
+        skinny_levels,
+        skinny_level_records,
+        weighted_critical_records,
+    ) = overflow_pair_schedule_stats(&pair_buckets, num_bins);
 
     let t_edge_match = Timer::start();
-    // Returns true when the slot already held a DIFFERENT concrete
-    // reference (duplicate same-key vertices reaching this cell through two
-    // edges); the caller records the conflict so reconciliation sees the site even
-    // when the thirds fully agree.
-    for sorted in pair_buckets {
-        let mut i = 0usize;
-        while i < sorted.len() {
-            let key = sorted[i].key;
-            let mut run_end = i + 1;
-            while run_end < sorted.len() && sorted[run_end].key == key {
-                run_end += 1;
-            }
-            let run_len = run_end - i;
+    #[cfg(feature = "parallel")]
+    if rayon::current_num_threads() > 1 && edge_check_overflow.len() >= 65_536 {
+        use std::sync::Mutex;
 
-            if run_len == 1 {
-                edge_mismatches.push(EdgeMismatch {
-                    key,
-                    origin: EdgeMismatchOrigin::CrossBinSingleSided,
-                });
-            } else if run_len == 2 {
-                let a = edge_check_overflow[sorted[i].index];
-                let b = edge_check_overflow[sorted[i + 1].index];
-                if a.side == b.side {
-                    // Two same-side overflow checks for one edge key: a
-                    // duplicate cross-bin attribution (a marginal corner kept by
-                    // an extra cell). Long believed unreachable, but the strict
-                    // strict keep rule gives it a
-                    // natural trigger — e.g. the bounded-plane fixture in the
-                    // `locate` suite. It is recorded as CrossBinDuplicateSide and
-                    // reconciled to strict validity, so it is a handled defect, not
-                    // an invariant violation (hence no abort).
-                    edge_mismatches.push(EdgeMismatch {
-                        key: a.key,
-                        origin: EdgeMismatchOrigin::CrossBinDuplicateSide,
-                    });
-                } else {
-                    let (a_shard, b_shard) =
-                        with_two_mut(shards, a.source_bin.as_usize(), b.source_bin.as_usize());
-
-                    // The two sides traverse the edge in reverse winding;
-                    // every endpoint pairing patches both shards symmetrically.
-                    let mut conflict = false;
-                    let full = reconcile_edge_endpoints(b.thirds, a.thirds, |bk, ak| {
-                        if a.indices[ak] != INVALID_INDEX {
-                            conflict |= b_shard.output.patch_reference(
-                                b.source_bin,
-                                b.slots[bk],
-                                b.source_cell,
-                                b.source_offsets[bk],
-                                a.source_bin,
-                                a.indices[ak],
-                            );
-                        }
-                        if b.indices[bk] != INVALID_INDEX {
-                            conflict |= a_shard.output.patch_reference(
-                                a.source_bin,
-                                a.slots[ak],
-                                a.source_cell,
-                                a.source_offsets[ak],
-                                b.source_bin,
-                                b.indices[bk],
-                            );
-                        }
-                    });
-                    if !full {
-                        // A malformed endpoint (MALFORMED_THIRD) was already
-                        // recorded as EndpointKeyMismatch by the emitting side and
-                        // can never fully reconcile — don't double-report it as a
-                        // thirds mismatch.
-                        if !a.thirds.contains(&MALFORMED_THIRD)
-                            && !b.thirds.contains(&MALFORMED_THIRD)
-                        {
-                            edge_mismatches.push(EdgeMismatch {
-                                key: a.key,
-                                origin: EdgeMismatchOrigin::CrossBinThirdsMismatch,
-                            });
-                        }
-                    } else if conflict {
-                        edge_mismatches.push(EdgeMismatch {
-                            key: a.key,
-                            origin: EdgeMismatchOrigin::CrossBinSlotConflict,
-                        });
-                    }
-                }
-            } else {
-                // A normal cross-bin edge has exactly one record per side. Three
-                // or more records mean at least one cell emitted duplicate edges
-                // for this key. Pairing an arbitrary opposite-side subset would
-                // make patches depend on unstable ordering within a side, so leave
-                // the whole run to the deterministic vertex-key fallback.
-                edge_mismatches.push(EdgeMismatch {
-                    key,
-                    origin: EdgeMismatchOrigin::CrossBinDuplicateSide,
-                });
-                let first_side = edge_check_overflow[sorted[i].index].side;
-                if sorted[i..run_end]
-                    .iter()
-                    .all(|entry| edge_check_overflow[entry.index].side == first_side)
-                {
-                    edge_mismatches.push(EdgeMismatch {
-                        key,
-                        origin: EdgeMismatchOrigin::CrossBinSingleSided,
-                    });
-                }
-            }
-            i = run_end;
+        struct PairWork {
+            pair: usize,
+            bucket: Vec<OverflowSortHandle>,
+            mismatches: Vec<EdgeMismatch>,
         }
+
+        let mut last_level = vec![0usize; num_bins];
+        let mut levels: Vec<Vec<PairWork>> = Vec::new();
+        for (pair, bucket) in pair_buckets.into_iter().enumerate() {
+            if bucket.is_empty() {
+                continue;
+            }
+            let low = pair / num_bins;
+            let high = pair % num_bins;
+            let level = 1 + last_level[low].max(last_level[high]);
+            last_level[low] = level;
+            last_level[high] = level;
+            if levels.len() <= level {
+                levels.resize_with(level + 1, Vec::new);
+            }
+            levels[level].push(PairWork {
+                pair,
+                bucket,
+                mismatches: Vec::new(),
+            });
+        }
+
+        let shard_locks: Vec<Mutex<&mut ShardState>> = shards.iter_mut().map(Mutex::new).collect();
+        for level in levels.iter_mut().skip(1) {
+            level.par_iter_mut().for_each(|work| {
+                let low = work.pair / num_bins;
+                let high = work.pair % num_bins;
+                let mut low_shard = shard_locks[low]
+                    .lock()
+                    .expect("overflow shard lock poisoned");
+                let mut high_shard = shard_locks[high]
+                    .lock()
+                    .expect("overflow shard lock poisoned");
+                resolve_pair_bucket(
+                    &mut low_shard,
+                    low,
+                    &mut high_shard,
+                    high,
+                    &work.bucket,
+                    edge_check_overflow,
+                    &mut work.mismatches,
+                );
+            });
+        }
+        drop(shard_locks);
+
+        let mut completed: Vec<PairWork> = levels.into_iter().flatten().collect();
+        completed.sort_unstable_by_key(|work| work.pair);
+        for work in completed {
+            edge_mismatches.extend(work.mismatches);
+        }
+    } else {
+        for (pair, sorted) in pair_buckets.into_iter().enumerate() {
+            if sorted.is_empty() {
+                continue;
+            }
+            let low = pair / num_bins;
+            let high = pair % num_bins;
+            let (low_shard, high_shard) = with_two_mut(shards, low, high);
+            resolve_pair_bucket(
+                low_shard,
+                low,
+                high_shard,
+                high,
+                &sorted,
+                edge_check_overflow,
+                edge_mismatches,
+            );
+        }
+    }
+    #[cfg(not(feature = "parallel"))]
+    for (pair, sorted) in pair_buckets.into_iter().enumerate() {
+        if sorted.is_empty() {
+            continue;
+        }
+        let low = pair / num_bins;
+        let high = pair % num_bins;
+        let (low_shard, high_shard) = with_two_mut(shards, low, high);
+        resolve_pair_bucket(
+            low_shard,
+            low,
+            high_shard,
+            high,
+            &sorted,
+            edge_check_overflow,
+            edge_mismatches,
+        );
     }
 
     let edge_checks_overflow_match_time = t_edge_match.elapsed();
     OverflowResolveTiming {
         sort: edge_checks_overflow_sort_time,
         match_: edge_checks_overflow_match_time,
+        #[cfg(feature = "timing")]
+        active_pairs,
+        #[cfg(feature = "timing")]
+        max_pair_records,
+        #[cfg(feature = "timing")]
+        dependency_levels,
+        #[cfg(feature = "timing")]
+        max_level_pairs,
+        #[cfg(feature = "timing")]
+        max_level_records,
+        #[cfg(feature = "timing")]
+        skinny_levels,
+        #[cfg(feature = "timing")]
+        skinny_level_records,
+        #[cfg(feature = "timing")]
+        weighted_critical_records,
     }
 }
 
