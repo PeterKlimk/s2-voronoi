@@ -279,6 +279,9 @@ pub(crate) struct CellSubPhases {
 pub(crate) struct DedupSubPhases {
     pub bookkeeping: Duration,
     pub edge_check_overflow: Duration,
+    pub edge_check_overflow_sort: Duration,
+    pub edge_check_overflow_match: Duration,
+    pub edge_check_overflow_records: u64,
     pub deferred_patching: Duration,
     pub finalize_shards: Duration,
     pub concat_vertices: Duration,

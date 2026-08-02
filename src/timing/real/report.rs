@@ -326,6 +326,12 @@ impl PhaseTimings {
             ms(self.dedup_sub.exact_zero_hints),
         );
         eprintln!(
+            "    overflow: records={} sort={:.3}ms match={:.3}ms",
+            self.dedup_sub.edge_check_overflow_records,
+            ms(self.dedup_sub.edge_check_overflow_sort),
+            ms(self.dedup_sub.edge_check_overflow_match),
+        );
+        eprintln!(
             "    shard_order_sample: descents={} / {} ({:.3}%) mean_abs_global_delta={:.1} scatter_by_shard={}",
             self.dedup_sub.shard_order_descents,
             self.dedup_sub.shard_order_pairs,

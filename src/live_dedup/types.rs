@@ -184,6 +184,9 @@ pub(super) struct EdgeCheckOverflow {
     pub(super) key: EdgeKey,
     pub(super) side: u8,
     pub(super) source_bin: BinId,
+    /// Opposite endpoint's bin. This occupies existing record padding and
+    /// lets assembly group cross-bin checks without another global-id lookup.
+    pub(super) target_bin: BinId,
     /// See `EdgeCheck::thirds`.
     pub(super) thirds: [u32; 2],
     pub(super) indices: [u32; 2],
@@ -191,6 +194,8 @@ pub(super) struct EdgeCheckOverflow {
     pub(super) source_cell: u32,
     pub(super) source_offsets: [u8; 2],
 }
+
+const _: () = assert!(std::mem::size_of::<EdgeCheckOverflow>() == 48);
 
 /// Edge record to later-local neighbors (emitted into their incoming edgecheck queues).
 ///
@@ -212,7 +217,10 @@ pub(super) struct EdgeOverflowLocal {
     pub(super) key: EdgeKey,
     pub(super) locals: [u8; 2],
     pub(super) side: u8,
+    pub(super) target_bin: BinId,
 }
+
+const _: () = assert!(std::mem::size_of::<EdgeOverflowLocal>() == 16);
 
 #[derive(Clone, Copy)]
 pub(crate) struct DeferredSlot {

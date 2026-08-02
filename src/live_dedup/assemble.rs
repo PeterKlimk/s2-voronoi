@@ -1031,6 +1031,9 @@ pub(super) fn assemble_sharded_live_dedup(
     let sub_phases = DedupSubPhases {
         bookkeeping: bookkeeping_time,
         edge_check_overflow: edge_check_overflow_time,
+        edge_check_overflow_sort: overflow_timing.sort,
+        edge_check_overflow_match: overflow_timing.match_,
+        edge_check_overflow_records: edge_check_overflow.len() as u64,
         deferred_patching: deferred_fallback_time,
         finalize_shards: finalize_shards_time,
         concat_vertices: concat_vertices_time,

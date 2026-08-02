@@ -867,6 +867,19 @@ selected layout is unchanged, uniform wall time was neutral and seven Fibonacci 
 were structurally neutral (slightly fewer instructions and branches), rejecting a small noisy wall
 regression as changed work.
 
+Cross-bin overflow resolution now groups records by unordered shard pair before sorting and
+matching. The opposite-bin byte fits existing padding in both the per-cell and assembled records,
+so neither representation grows. Pair-local sorting shortens each sort and, more importantly,
+keeps the serial endpoint-patching pass on the same two shard outputs instead of jumping globally
+in generator-key order. At 96 bins and 2.5M sites without preprocessing, the post-PBO native
+16-core host emitted about 133k records. Three final-form timing pairs reduced sorting from roughly
+2.8--3.0ms to 1.8ms; pair-local match/patch samples were also favorable but noisier, ranging from
+5.0--6.5ms versus 6.6ms on Fibonacci and 6.2--8.3ms versus 8.0--8.6ms on uniform. Twenty-four
+ordinary-build pairs improved Fibonacci by 1.61% (approximate 95% paired interval 0.63--2.58%,
+18/24 favorable) and uniform by 0.83% (-1.14--2.76%, 19/24). Twelve pinned one-thread 1M pairs
+were neutral/favorable at 0.13% and 0.20%. Checked one- and 16-thread fingerprints and the full
+release suite passed.
+
 Untried probes and candidates (2026-07-17 triage; each begins with a cheap measurement gate):
 
 - **TLB / huge-page probe (native Linux only):** the measured memory wall is dedup and grid build

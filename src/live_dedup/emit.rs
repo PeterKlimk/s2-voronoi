@@ -156,6 +156,7 @@ impl EdgeScratch {
                 key: entry.key,
                 side: entry.side,
                 source_bin: bin,
+                target_bin: entry.target_bin,
                 thirds,
                 indices,
                 slots: [cell_start + locals[0] as u32, cell_start + locals[1] as u32],

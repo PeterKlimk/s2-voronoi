@@ -2,6 +2,9 @@
 
 use std::mem;
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 use super::binning::BinAssignment;
 use super::packed::{pack_edge, INVALID_INDEX};
 use super::shard::{ShardDedup, ShardState};
@@ -296,6 +299,7 @@ pub(super) fn collect_and_resolve_cell_edges(
                 key: edge_key,
                 locals,
                 side,
+                target_bin: bin_b,
             });
         } else if local_u32 < local_b.as_u32() {
             // Edge to later neighbor → collect for emit
@@ -449,17 +453,39 @@ pub(super) fn resolve_edge_check_overflow(
     }
 
     let t_edge_sort = Timer::start();
-    // Resolution only requires contiguous equal-key runs. Within a two-record run, side equality
-    // and reverse-winding endpoint patching are symmetric; larger runs are deferred as a whole.
-    let mut sorted: Vec<SortHandle> = edge_check_overflow
-        .iter()
-        .enumerate()
-        .map(|(index, entry)| SortHandle {
+    // Resolution only requires contiguous equal-key runs. Group by shard pair
+    // first so sorting operates on smaller streams and the subsequent patches
+    // stay on the same two shard outputs. Within a two-record run, side
+    // equality and reverse-winding endpoint patching are symmetric; larger
+    // runs are deferred as a whole.
+    let num_bins = shards.len();
+    let mut pair_buckets: Vec<Vec<SortHandle>> =
+        (0..num_bins * num_bins).map(|_| Vec::new()).collect();
+    for (index, entry) in edge_check_overflow.iter().enumerate() {
+        let a = entry.source_bin.as_usize();
+        let b = entry.target_bin.as_usize();
+        debug_assert_ne!(a, b, "overflow edge must cross a shard boundary");
+        debug_assert!(a < num_bins && b < num_bins, "overflow bin out of range");
+        let pair = a.min(b) * num_bins + a.max(b);
+        pair_buckets[pair].push(SortHandle {
             key: entry.key,
             index,
-        })
-        .collect();
-    sorted.sort_unstable_by_key(|entry| entry.key);
+        });
+    }
+    #[cfg(feature = "parallel")]
+    if rayon::current_num_threads() > 1 && edge_check_overflow.len() >= 65_536 {
+        pair_buckets
+            .par_iter_mut()
+            .for_each(|bucket| bucket.sort_unstable_by_key(|entry| entry.key));
+    } else {
+        for bucket in &mut pair_buckets {
+            bucket.sort_unstable_by_key(|entry| entry.key);
+        }
+    }
+    #[cfg(not(feature = "parallel"))]
+    for bucket in &mut pair_buckets {
+        bucket.sort_unstable_by_key(|entry| entry.key);
+    }
     let edge_checks_overflow_sort_time = t_edge_sort.elapsed();
 
     let t_edge_match = Timer::start();
@@ -467,106 +493,109 @@ pub(super) fn resolve_edge_check_overflow(
     // reference (duplicate same-key vertices reaching this cell through two
     // edges); the caller records the conflict so reconciliation sees the site even
     // when the thirds fully agree.
-    let mut i = 0usize;
-    while i < sorted.len() {
-        let key = sorted[i].key;
-        let mut run_end = i + 1;
-        while run_end < sorted.len() && sorted[run_end].key == key {
-            run_end += 1;
-        }
-        let run_len = run_end - i;
-
-        if run_len == 1 {
-            edge_mismatches.push(EdgeMismatch {
-                key,
-                origin: EdgeMismatchOrigin::CrossBinSingleSided,
-            });
-        } else if run_len == 2 {
-            let a = edge_check_overflow[sorted[i].index];
-            let b = edge_check_overflow[sorted[i + 1].index];
-            if a.side == b.side {
-                // Two same-side overflow checks for one edge key: a
-                // duplicate cross-bin attribution (a marginal corner kept by
-                // an extra cell). Long believed unreachable, but the strict
-                // strict keep rule gives it a
-                // natural trigger — e.g. the bounded-plane fixture in the
-                // `locate` suite. It is recorded as CrossBinDuplicateSide and
-                // reconciled to strict validity, so it is a handled defect, not
-                // an invariant violation (hence no abort).
-                edge_mismatches.push(EdgeMismatch {
-                    key: a.key,
-                    origin: EdgeMismatchOrigin::CrossBinDuplicateSide,
-                });
-            } else {
-                let (a_shard, b_shard) =
-                    with_two_mut(shards, a.source_bin.as_usize(), b.source_bin.as_usize());
-
-                // The two sides traverse the edge in reverse winding;
-                // every endpoint pairing patches both shards symmetrically.
-                let mut conflict = false;
-                let full = reconcile_edge_endpoints(b.thirds, a.thirds, |bk, ak| {
-                    if a.indices[ak] != INVALID_INDEX {
-                        conflict |= b_shard.output.patch_reference(
-                            b.source_bin,
-                            b.slots[bk],
-                            b.source_cell,
-                            b.source_offsets[bk],
-                            a.source_bin,
-                            a.indices[ak],
-                        );
-                    }
-                    if b.indices[bk] != INVALID_INDEX {
-                        conflict |= a_shard.output.patch_reference(
-                            a.source_bin,
-                            a.slots[ak],
-                            a.source_cell,
-                            a.source_offsets[ak],
-                            b.source_bin,
-                            b.indices[bk],
-                        );
-                    }
-                });
-                if !full {
-                    // A malformed endpoint (MALFORMED_THIRD) was already
-                    // recorded as EndpointKeyMismatch by the emitting side and
-                    // can never fully reconcile — don't double-report it as a
-                    // thirds mismatch.
-                    if !a.thirds.contains(&MALFORMED_THIRD) && !b.thirds.contains(&MALFORMED_THIRD)
-                    {
-                        edge_mismatches.push(EdgeMismatch {
-                            key: a.key,
-                            origin: EdgeMismatchOrigin::CrossBinThirdsMismatch,
-                        });
-                    }
-                } else if conflict {
-                    edge_mismatches.push(EdgeMismatch {
-                        key: a.key,
-                        origin: EdgeMismatchOrigin::CrossBinSlotConflict,
-                    });
-                }
+    for sorted in pair_buckets {
+        let mut i = 0usize;
+        while i < sorted.len() {
+            let key = sorted[i].key;
+            let mut run_end = i + 1;
+            while run_end < sorted.len() && sorted[run_end].key == key {
+                run_end += 1;
             }
-        } else {
-            // A normal cross-bin edge has exactly one record per side. Three
-            // or more records mean at least one cell emitted duplicate edges
-            // for this key. Pairing an arbitrary opposite-side subset would
-            // make patches depend on unstable ordering within a side, so leave
-            // the whole run to the deterministic vertex-key fallback.
-            edge_mismatches.push(EdgeMismatch {
-                key,
-                origin: EdgeMismatchOrigin::CrossBinDuplicateSide,
-            });
-            let first_side = edge_check_overflow[sorted[i].index].side;
-            if sorted[i..run_end]
-                .iter()
-                .all(|entry| edge_check_overflow[entry.index].side == first_side)
-            {
+            let run_len = run_end - i;
+
+            if run_len == 1 {
                 edge_mismatches.push(EdgeMismatch {
                     key,
                     origin: EdgeMismatchOrigin::CrossBinSingleSided,
                 });
+            } else if run_len == 2 {
+                let a = edge_check_overflow[sorted[i].index];
+                let b = edge_check_overflow[sorted[i + 1].index];
+                if a.side == b.side {
+                    // Two same-side overflow checks for one edge key: a
+                    // duplicate cross-bin attribution (a marginal corner kept by
+                    // an extra cell). Long believed unreachable, but the strict
+                    // strict keep rule gives it a
+                    // natural trigger — e.g. the bounded-plane fixture in the
+                    // `locate` suite. It is recorded as CrossBinDuplicateSide and
+                    // reconciled to strict validity, so it is a handled defect, not
+                    // an invariant violation (hence no abort).
+                    edge_mismatches.push(EdgeMismatch {
+                        key: a.key,
+                        origin: EdgeMismatchOrigin::CrossBinDuplicateSide,
+                    });
+                } else {
+                    let (a_shard, b_shard) =
+                        with_two_mut(shards, a.source_bin.as_usize(), b.source_bin.as_usize());
+
+                    // The two sides traverse the edge in reverse winding;
+                    // every endpoint pairing patches both shards symmetrically.
+                    let mut conflict = false;
+                    let full = reconcile_edge_endpoints(b.thirds, a.thirds, |bk, ak| {
+                        if a.indices[ak] != INVALID_INDEX {
+                            conflict |= b_shard.output.patch_reference(
+                                b.source_bin,
+                                b.slots[bk],
+                                b.source_cell,
+                                b.source_offsets[bk],
+                                a.source_bin,
+                                a.indices[ak],
+                            );
+                        }
+                        if b.indices[bk] != INVALID_INDEX {
+                            conflict |= a_shard.output.patch_reference(
+                                a.source_bin,
+                                a.slots[ak],
+                                a.source_cell,
+                                a.source_offsets[ak],
+                                b.source_bin,
+                                b.indices[bk],
+                            );
+                        }
+                    });
+                    if !full {
+                        // A malformed endpoint (MALFORMED_THIRD) was already
+                        // recorded as EndpointKeyMismatch by the emitting side and
+                        // can never fully reconcile — don't double-report it as a
+                        // thirds mismatch.
+                        if !a.thirds.contains(&MALFORMED_THIRD)
+                            && !b.thirds.contains(&MALFORMED_THIRD)
+                        {
+                            edge_mismatches.push(EdgeMismatch {
+                                key: a.key,
+                                origin: EdgeMismatchOrigin::CrossBinThirdsMismatch,
+                            });
+                        }
+                    } else if conflict {
+                        edge_mismatches.push(EdgeMismatch {
+                            key: a.key,
+                            origin: EdgeMismatchOrigin::CrossBinSlotConflict,
+                        });
+                    }
+                }
+            } else {
+                // A normal cross-bin edge has exactly one record per side. Three
+                // or more records mean at least one cell emitted duplicate edges
+                // for this key. Pairing an arbitrary opposite-side subset would
+                // make patches depend on unstable ordering within a side, so leave
+                // the whole run to the deterministic vertex-key fallback.
+                edge_mismatches.push(EdgeMismatch {
+                    key,
+                    origin: EdgeMismatchOrigin::CrossBinDuplicateSide,
+                });
+                let first_side = edge_check_overflow[sorted[i].index].side;
+                if sorted[i..run_end]
+                    .iter()
+                    .all(|entry| edge_check_overflow[entry.index].side == first_side)
+                {
+                    edge_mismatches.push(EdgeMismatch {
+                        key,
+                        origin: EdgeMismatchOrigin::CrossBinSingleSided,
+                    });
+                }
             }
+            i = run_end;
         }
-        i = run_end;
     }
 
     let edge_checks_overflow_match_time = t_edge_match.elapsed();
