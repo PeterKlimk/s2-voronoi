@@ -938,6 +938,15 @@ Do not broadly retry these without a materially different design or workload:
   neutral on uniform (+0.07%, 4/10 favorable). Retain spatial bin order and the 96-bin ceiling;
   further task splitting must preserve locality and avoid creating more cross-shard boundaries.
 
+- Fusing point-to-cell classification with each worker's grid histogram removed a complete reread
+  of the temporary cell-id array, but made the grid builder slower. In ten alternating native
+  16-core pairs at 2.5M without preprocessing, `knn_build` regressed by 5.94% on Fibonacci
+  (approximate 95% paired interval 1.74--10.32%) and 7.93% on uniform (3.76--12.26%). Whole-build
+  time remained unresolved (-0.86% and +0.81%, respectively). Interleaving scattered histogram
+  increments with coordinate projection therefore costs more than the separate regular reread,
+  and the fused implementation also required unsafe parallel initialization. Retain the two-pass
+  classification/count structure.
+
 - **Permutation-boundary two-pass scatter:** staging each cell as its generator id plus
   already-globalized index payload, then filling cache-sized destination windows, passed its
   isolated 2M uniform phase gate only after increasing the partition from the proposed 64 windows
