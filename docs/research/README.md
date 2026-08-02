@@ -9,3 +9,4 @@ an implementation queue and are excluded from the published crate. Promote actio
 - `memory-layout-ideas.md`: representation and memory-traffic catalogue.
 - `constraint-batch-pipeline-idea.md`: selected-neighbor batch pipeline design.
 - `permutation-boundary-scatter-idea.md`: measured and retired scatter experiment.
+- `parallel-overflow-resolution-spec.md`: reviewed dependency-level parallel overflow spec.
