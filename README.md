@@ -186,6 +186,24 @@ Multithreaded on a Ryzen 3600 (6 cores), uniform input:
 Single-threaded, ~1.8s at 1M. Per-build peak memory is roughly 0.65 KB/point.
 [docs/performance.md](docs/performance.md) covers benchmarking and reproduction.
 
+Applications that repeatedly build similarly sized diagrams can explicitly retain construction
+scratch between calls:
+
+```rust
+use voronoi_mesh::VoronoiWorkspace;
+
+let mut workspace = VoronoiWorkspace::new();
+let first = workspace.compute(&points)?;
+let second = workspace.compute(&points)?;
+workspace.clear(); // release retained scratch when the batch is finished
+# let _ = (first, second);
+# Ok::<(), voronoi_mesh::VoronoiError>(())
+```
+
+The workspace does not change results or require platform-specific allocator settings. It retains
+memory proportional to the point count and active worker count, so ordinary `compute` remains the
+better one-shot API.
+
 ## Supported Cargo features
 
 - `parallel` (default): Rayon parallelism across eligible build and query work.

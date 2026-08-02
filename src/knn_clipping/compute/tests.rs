@@ -164,6 +164,7 @@ fn exact_zero_elision_rebuilds_a_strict_compact_mesh() {
         PreprocessMode::Disabled,
         LocalRebuildMode::Hull3d,
         None,
+        None,
     )
     .expect("cell-killing fixture should reach output resolution");
     assert_eq!(state.cell_killing_generators, [1, 10]);
@@ -209,6 +210,7 @@ fn exact_zero_elision_rebuilds_a_strict_compact_mesh() {
         welded_points.clone(),
         PreprocessMode::MergeWithin(1.0e-10),
         LocalRebuildMode::Hull3d,
+        None,
         None,
     )
     .expect("welded extension should reach output resolution");

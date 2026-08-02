@@ -21,6 +21,22 @@ a loop will accumulate high-water RSS — glibc does not return freed arenas to 
 builds, amplified by per-thread rayon arenas. This is allocator behavior, not a leak; build in a
 child process per job, set `MALLOC_ARENA_MAX=2`, or link jemalloc/mimalloc if it matters.
 
+For repeated similarly sized builds, `VoronoiWorkspace` is the portable way to trade retained
+memory for throughput. It keeps the existing per-worker cell-construction contexts, including one
+point-count-sized `u32` visitation table per active context, but no input or output geometry. A
+subsequent computation with an incompatible effective point count or grid shape discards the old
+contexts rather than accumulating multiple sizes. Call `clear()` after the batch to release the
+retained scratch; use ordinary `compute` for one-shot work.
+
+On the 16-core Ryzen test host, four interleaved counter pairs at 2.5M points (four builds per
+process, native code, no preprocessing) found the workspace reduced aggregate cycles by 2.53% on
+uniform input and 3.20% on Fibonacci input. Task-clock fell 2.74% and 2.77%, respectively, while
+retired instructions changed by -0.09% and +0.004%. That pattern supports avoided allocation,
+page-initialization, and cache/TLB disruption rather than an arithmetic shortcut. At 2.5M points
+and 16 active contexts, the retained visitation tables alone are approximately 160 MB.
+The same mechanism is useful without parallelism: four pinned 1M Fibonacci pairs reduced cycles
+and task-clock by 0.76% and instructions by 0.20%, while retaining one approximately 4 MB table.
+
 ## Point-location queries
 
 `SphereLocator::locate` accepts arbitrary finite, nonzero f32 directions and therefore validates
@@ -75,6 +91,9 @@ Useful flags:
 - `fib` evaluates the unbounded phase and latitude in f64 before storing f32 coordinates.
 - `--validate` — compare against the convex-hull ground truth (slow; capped at 100k).
 - `--no-preprocess` — skip welding (isolates construction cost).
+- `--reuse-workspace` — retain construction scratch across `--repeat` iterations. The first
+  iteration is cold; compare aggregate repeated runs and account for the retained memory described
+  above.
 
 ## Knobs
 

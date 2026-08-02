@@ -4,7 +4,6 @@
 use glam::Vec3;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-#[cfg(feature = "parallel")]
 use std::sync::Mutex;
 
 use crate::cube_grid::packed_knn::{
@@ -29,6 +28,28 @@ pub(super) struct GridContext<'a> {
 
 struct SphereCellScratch {
     edge_scratch: EdgeScratch,
+}
+
+type ReusableBuildContext = ((usize, usize), CellBuildContext);
+
+/// Caller-owned storage retained across complete computations.
+pub(crate) struct BuildWorkspace {
+    contexts: Mutex<Vec<ReusableBuildContext>>,
+}
+
+impl BuildWorkspace {
+    pub(crate) fn new() -> Self {
+        Self {
+            contexts: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.contexts
+            .get_mut()
+            .expect("cell-build workspace poisoned")
+            .clear();
+    }
 }
 
 impl SphereCellScratch {
@@ -102,6 +123,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
     grid: &CubeMapGrid,
     point_cell_storage: Vec<u32>,
     positive_chord_threshold: Option<f32>,
+    workspace: Option<&BuildWorkspace>,
 ) -> Result<ShardedCellsData, BuildCellsError> {
     let policy = PackedNeighborPolicy::for_point_count(points.len());
     let positive_resolution_hint_x_threshold =
@@ -120,7 +142,15 @@ pub(crate) fn build_cells_sharded_live_dedup(
     #[cfg(feature = "parallel")]
     let build_context_pool = Mutex::new(Vec::<CellBuildContext>::new());
     #[cfg(feature = "parallel")]
-    let reuse_build_contexts = rayon::current_num_threads() > 1;
+    let reuse_build_contexts = rayon::current_num_threads() > 1 || workspace.is_some();
+    let reusable_context_key = (points.len(), grid.cell_offsets().len());
+    if let Some(workspace) = workspace {
+        workspace
+            .contexts
+            .lock()
+            .expect("cell-build workspace poisoned")
+            .retain(|(key, _)| *key == reusable_context_key);
+    }
 
     let per_bin: Result<Vec<(ShardState, crate::timing::CellSubAccum)>, BuildCellsError> =
         maybe_par_into_iter!(0..num_bins)
@@ -135,16 +165,40 @@ pub(crate) fn build_cells_sharded_live_dedup(
                 let mut sub_accum = CellSubAccum::new();
                 #[cfg(feature = "parallel")]
                 let mut build_ctx = if reuse_build_contexts {
-                    build_context_pool
-                        .lock()
-                        .expect("cell-build context pool poisoned")
-                        .pop()
+                    let retained = if let Some(workspace) = workspace {
+                        let mut pool = workspace
+                            .contexts
+                            .lock()
+                            .expect("cell-build workspace poisoned");
+                        pool.iter()
+                            .position(|(key, _)| *key == reusable_context_key)
+                            .map(|index| pool.swap_remove(index).1)
+                    } else {
+                        None
+                    };
+                    retained
+                        .or_else(|| {
+                            build_context_pool
+                                .lock()
+                                .expect("cell-build context pool poisoned")
+                                .pop()
+                        })
                         .unwrap_or_else(|| CellBuildContext::new(grid, policy))
                 } else {
                     CellBuildContext::new(grid, policy)
                 };
                 #[cfg(not(feature = "parallel"))]
-                let mut build_ctx = CellBuildContext::new(grid, policy);
+                let mut build_ctx = workspace
+                    .and_then(|workspace| {
+                        let mut pool = workspace
+                            .contexts
+                            .lock()
+                            .expect("cell-build workspace poisoned");
+                        pool.iter()
+                            .position(|(key, _)| *key == reusable_context_key)
+                            .map(|index| pool.swap_remove(index).1)
+                    })
+                    .unwrap_or_else(|| CellBuildContext::new(grid, policy));
                 let mut live_ctx = SphereCellScratch::new();
                 let vertex_capacity = my_generators.len().saturating_mul(6);
                 shard.output.vertices.reserve(vertex_capacity);
@@ -272,10 +326,26 @@ pub(crate) fn build_cells_sharded_live_dedup(
 
                 #[cfg(feature = "parallel")]
                 if reuse_build_contexts {
-                    build_context_pool
+                    if let Some(workspace) = workspace {
+                        workspace
+                            .contexts
+                            .lock()
+                            .expect("cell-build workspace poisoned")
+                            .push((reusable_context_key, build_ctx));
+                    } else {
+                        build_context_pool
+                            .lock()
+                            .expect("cell-build context pool poisoned")
+                            .push(build_ctx);
+                    }
+                }
+                #[cfg(not(feature = "parallel"))]
+                if let Some(workspace) = workspace {
+                    workspace
+                        .contexts
                         .lock()
-                        .expect("cell-build context pool poisoned")
-                        .push(build_ctx);
+                        .expect("cell-build workspace poisoned")
+                        .push((reusable_context_key, build_ctx));
                 }
 
                 Ok((shard, sub_accum))

@@ -524,6 +524,65 @@ impl VoronoiConfig {
     }
 }
 
+/// Caller-owned scratch storage for repeated Voronoi computations.
+///
+/// A workspace retains per-worker construction buffers between calls. This
+/// avoids reallocating and initializing point-count-sized scratch tables when
+/// repeatedly building diagrams of a similar size. It never retains input or
+/// output geometry, and using it does not change numerical or topological
+/// behavior.
+///
+/// Retained memory is proportional to the number of points and active worker
+/// threads. Call [`clear`](Self::clear) to release it. Ordinary [`compute`]
+/// calls retain no workspace memory.
+pub struct VoronoiWorkspace {
+    inner: knn_clipping::driver::BuildWorkspace,
+}
+
+impl Default for VoronoiWorkspace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl VoronoiWorkspace {
+    /// Create an empty reusable workspace.
+    pub fn new() -> Self {
+        Self {
+            inner: knn_clipping::driver::BuildWorkspace::new(),
+        }
+    }
+
+    /// Compute a diagram with default settings while retaining reusable
+    /// construction scratch for the next call.
+    pub fn compute<P: UnitVec3Like>(
+        &mut self,
+        points: &[P],
+    ) -> Result<SphericalVoronoi, VoronoiError> {
+        self.compute_with(points, VoronoiConfig::default())
+    }
+
+    /// Compute a diagram with explicit configuration while retaining reusable
+    /// construction scratch for the next call.
+    pub fn compute_with<P: UnitVec3Like>(
+        &mut self,
+        points: &[P],
+        config: VoronoiConfig,
+    ) -> Result<SphericalVoronoi, VoronoiError> {
+        let vec3_points = backend_points(points)?;
+        knn_clipping::compute::compute_voronoi_knn_clipping_with_workspace_owned(
+            vec3_points,
+            &config,
+            &self.inner,
+        )
+    }
+
+    /// Release all retained construction scratch.
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+}
+
 /// Compute a spherical Voronoi diagram with default settings.
 ///
 /// Errors are returned for invalid inputs, unsupported geometry in this

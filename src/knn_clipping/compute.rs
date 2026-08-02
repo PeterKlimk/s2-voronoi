@@ -342,6 +342,7 @@ fn run_core_pipeline(
     preprocess_mode: PreprocessMode,
     local_rebuild_mode: LocalRebuildMode,
     positive_chord_threshold: Option<f32>,
+    workspace: Option<&super::driver::BuildWorkspace>,
 ) -> Result<PipelineState, crate::VoronoiError> {
     validate_generator_capacity(points.len())?;
     let mut points = points;
@@ -366,6 +367,7 @@ fn run_core_pipeline(
         point_cell_storage,
         effective_input.merge_result(),
         positive_chord_threshold,
+        workspace,
         &mut tb,
     )?;
     let assembled = assemble_shards(sharded, &mut tb)?;
@@ -589,8 +591,10 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
     preprocess_mode: PreprocessMode,
     local_rebuild_mode: LocalRebuildMode,
     cell_killing_policy: CellKillingPolicy,
+    workspace: Option<&super::driver::BuildWorkspace>,
 ) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
-    let mut state = run_core_pipeline(points, preprocess_mode, local_rebuild_mode, None)?;
+    let mut state =
+        run_core_pipeline(points, preprocess_mode, local_rebuild_mode, None, workspace)?;
     check_plain_return_signals(
         state.local_rebuild,
         &state.residual_unpaired,
@@ -655,6 +659,23 @@ pub(crate) fn compute_voronoi_knn_clipping_with_config_owned(
             config.preprocess_mode,
             config.local_rebuild_mode,
             config.cell_killing_policy,
+            None,
+        )
+    })
+}
+
+pub(crate) fn compute_voronoi_knn_clipping_with_workspace_owned(
+    points: Vec<Vec3>,
+    config: &VoronoiConfig,
+    workspace: &super::driver::BuildWorkspace,
+) -> Result<crate::SphericalVoronoi, crate::VoronoiError> {
+    with_coplanar_perturb_retry(points, config.degenerate_mode, |points, _| {
+        compute_voronoi_knn_clipping_owned_core(
+            points,
+            config.preprocess_mode,
+            config.local_rebuild_mode,
+            config.cell_killing_policy,
+            Some(workspace),
         )
     })
 }
@@ -732,6 +753,7 @@ fn compute_voronoi_knn_clipping_report_core(
         preprocess_mode,
         local_rebuild_mode,
         positive_chord_threshold,
+        None,
     )?;
     enforce_cell_killing_policy(&state, cell_killing_policy)?;
     let local_rebuild_accepted = state.local_rebuild.accepted();
@@ -1645,6 +1667,7 @@ fn construct_cell_shards(
     point_cell_storage: Vec<u32>,
     merge_result: Option<&MergeResult>,
     positive_chord_threshold: Option<f32>,
+    workspace: Option<&super::driver::BuildWorkspace>,
     tb: &mut TimingBuilder,
 ) -> Result<live_dedup::ShardedCellsData, crate::VoronoiError> {
     let t = Timer::start();
@@ -1653,6 +1676,7 @@ fn construct_cell_shards(
         grid,
         point_cell_storage,
         positive_chord_threshold,
+        workspace,
     )
     .map_err(|err| map_build_cells_error(err, effective_points, merge_result))?;
     #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]

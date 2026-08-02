@@ -10,6 +10,7 @@ use voronoi_mesh::{
     compute, compute_by, compute_simplified_with, compute_simplified_with_by, compute_with,
     compute_with_by, compute_with_report, compute_with_report_by, validation::validate,
     CellSimplificationOptions, DegenerateMode, PreprocessMode, VoronoiConfig, VoronoiError,
+    VoronoiWorkspace,
 };
 
 #[test]
@@ -19,6 +20,42 @@ fn test_compute_basic() {
 
     assert_eq!(diagram.num_cells(), 100);
     assert!(diagram.num_vertices() > 0);
+}
+
+#[test]
+fn reusable_workspace_preserves_exact_output_and_can_be_cleared() {
+    let points = random_sphere_points(500, 0x5EED);
+    let config = VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled);
+    let expected = compute_with(&points, config.clone()).unwrap();
+    let mut workspace = VoronoiWorkspace::new();
+
+    for actual in [
+        workspace.compute_with(&points, config.clone()).unwrap(),
+        workspace.compute_with(&points, config.clone()).unwrap(),
+    ] {
+        assert_eq!(actual.generators(), expected.generators());
+        assert_eq!(actual.vertices(), expected.vertices());
+        assert_eq!(actual.num_cells(), expected.num_cells());
+        assert!(actual
+            .iter_cells()
+            .zip(expected.iter_cells())
+            .all(|(a, b)| a.vertex_indices == b.vertex_indices));
+    }
+
+    let differently_sized = random_sphere_points(600, 0xC0FFEE);
+    workspace
+        .compute_with(&differently_sized, config.clone())
+        .unwrap();
+
+    workspace.clear();
+    let actual = workspace.compute_with(&points, config).unwrap();
+    assert_eq!(actual.generators(), expected.generators());
+    assert_eq!(actual.vertices(), expected.vertices());
+    assert_eq!(actual.num_cells(), expected.num_cells());
+    assert!(actual
+        .iter_cells()
+        .zip(expected.iter_cells())
+        .all(|(a, b)| a.vertex_indices == b.vertex_indices));
 }
 
 #[test]

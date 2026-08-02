@@ -20,7 +20,7 @@ use std::io::{self, Write};
 use std::time::Instant;
 #[cfg(feature = "profiling")]
 use std::{collections::hash_map::DefaultHasher, hash::Hasher};
-use voronoi_mesh::{LocalRebuildMode, PreprocessMode, VoronoiConfig};
+use voronoi_mesh::{LocalRebuildMode, PreprocessMode, VoronoiConfig, VoronoiWorkspace};
 
 fn parse_count(s: &str) -> Result<usize, String> {
     let s = s.to_lowercase();
@@ -274,6 +274,10 @@ struct Args {
     /// Number of iterations to run (useful for profiling)
     #[arg(short = 'n', long, default_value_t = 1)]
     repeat: usize,
+
+    /// Reuse caller-owned construction scratch between iterations.
+    #[arg(long)]
+    reuse_workspace: bool,
 
     /// Profiling-only: report norm envelopes by stored-point producer.
     #[cfg(feature = "profiling")]
@@ -588,6 +592,7 @@ struct BenchResult {
 fn run_benchmark_with_config(
     points: &[[f32; 3]],
     config: VoronoiConfig,
+    workspace: Option<&mut VoronoiWorkspace>,
     #[cfg(feature = "profiling")] point_envelope_audit: bool,
 ) -> BenchResult {
     let n = points.len();
@@ -597,7 +602,12 @@ fn run_benchmark_with_config(
         voronoi_mesh::profile_point_envelopes_reset();
     }
     let t0 = Instant::now();
-    let diagram = voronoi_mesh::compute_with(points, config).expect("voronoi-mesh should succeed");
+    let diagram = match workspace {
+        Some(workspace) => workspace
+            .compute_with(points, config)
+            .expect("voronoi-mesh should succeed"),
+        None => voronoi_mesh::compute_with(points, config).expect("voronoi-mesh should succeed"),
+    };
     let time_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     #[cfg(feature = "profiling")]
@@ -705,11 +715,15 @@ fn main() {
     if args.repeat > 1 {
         println!("  repeat = {}", args.repeat);
     }
+    if args.reuse_workspace {
+        println!("  reusable workspace = enabled");
+    }
 
     #[cfg(feature = "timing")]
     println!("  timing = enabled (detailed sub-phase timing will be printed)");
 
     let mut results: Vec<BenchResult> = Vec::new();
+    let mut workspace = args.reuse_workspace.then(VoronoiWorkspace::new);
 
     for n in &sizes {
         println!("\n{}", "=".repeat(60));
@@ -746,6 +760,7 @@ fn main() {
             let result = run_benchmark_with_config(
                 &unit_points,
                 config.clone(),
+                workspace.as_mut(),
                 #[cfg(feature = "profiling")]
                 args.point_envelope_audit,
             );
