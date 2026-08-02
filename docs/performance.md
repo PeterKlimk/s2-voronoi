@@ -952,11 +952,17 @@ Do not broadly retry these without a materially different design or workload:
   16-core host at 2.5M uniform, the index-scatter phase fell 47.6% and the complete dedup phase fell
   13.7% in all ten timing pairs. Production builds improved uniform by 1.87% over twenty pairs
   (approximate 95% paired interval 1.06--2.68%, 18/20 favorable), by 2.25% with preprocessing, and
-  by 1.52% at eight threads. The implementation was not retained because inactive correlated-input
-  codegen regressed: the final outlined/cold form made 16-core Fibonacci 1.87% slower (0.37--3.39%,
-  only 3/12 favorable), while scalar Fibonacci variants ranged from roughly 0.3--0.7% adverse.
-  The locality mechanism is validated, but retry it only with a representation or code-placement
-  design that preserves the correlated path's generated code.
+  by 1.52% at eight threads. Initial default-codegen arrangements appeared to regress the inactive
+  correlated-input path: the final outlined/cold form made 16-core Fibonacci 1.87% slower
+  (0.37--3.39%, only 3/12 favorable), while scalar variants ranged from roughly 0.3--0.7% adverse.
+  A one-codegen-unit causal control removed that signal: twelve alternating pairs left 1M
+  single-threaded Fibonacci neutral (-0.09%, interval -0.22--+0.05%) and improved 16-thread 2.5M
+  Fibonacci by 1.71% (0.66--2.75%, 10/12 favorable). The corresponding uniform controls improved
+  1M single-threaded time by 0.48% (0.22--0.75%, 11/12) and were directionally 2.22% faster at
+  16 threads despite one system timing spike widening the interval. This identifies the earlier
+  inactive-path movement as code placement rather than executed work, so the adaptive span layout
+  is retained. Checked one- and 16-thread fingerprints preserved the semantic topology hash; the
+  representation hash may differ because backing-span order is intentionally internal.
 
 - **Permutation-boundary two-pass scatter:** staging each cell as its generator id plus
   already-globalized index payload, then filling cache-sized destination windows, passed its

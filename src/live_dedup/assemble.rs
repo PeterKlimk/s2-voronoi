@@ -399,11 +399,90 @@ struct CellPrefixes {
 }
 
 #[cfg(feature = "parallel")]
-fn emit_cell_prefixes_parallel(
+// This alternative setup runs once per diagram; keep it out of the common
+// generator-ordered prefix path while its workers perform the bulk work.
+#[cold]
+#[inline(never)]
+fn emit_cell_prefixes_shard_order_parallel(
     finals: &[ShardFinal],
     assignment: &super::BinAssignment,
 ) -> Result<CellPrefixes, crate::VoronoiError> {
     let num_cells = assignment.generator_bin.len();
+    #[cfg(debug_assertions)]
+    let mut cells = vec![VoronoiCell::new(u32::MAX, u16::MAX); num_cells];
+    #[cfg(not(debug_assertions))]
+    let mut cells = Vec::<VoronoiCell>::with_capacity(num_cells);
+    let cells_ptr = {
+        #[cfg(debug_assertions)]
+        {
+            cells.as_mut_ptr() as usize
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            cells.spare_capacity_mut().as_mut_ptr() as usize
+        }
+    };
+
+    let mut bin_bases = Vec::with_capacity(assignment.num_bins);
+    let mut total_indices = 0u32;
+    for shard in finals {
+        bin_bases.push(total_indices);
+        let count = u32::try_from(shard.output.cell_indices.len()).map_err(|_| {
+            crate::VoronoiError::RepresentationLimit(
+                "assembled shard index buffer exceeds u32 capacity".to_string(),
+            )
+        })?;
+        total_indices = total_indices.checked_add(count).ok_or_else(|| {
+            crate::VoronoiError::RepresentationLimit(
+                "assembled cell index buffer exceeds u32 capacity".to_string(),
+            )
+        })?;
+    }
+
+    (0..assignment.num_bins).into_par_iter().for_each(|bin| {
+        let shard = &finals[bin];
+        let mut start = bin_bases[bin];
+        for (local, &gen_idx) in assignment.bin_generators[bin].iter().enumerate() {
+            let count = u16::from(
+                shard
+                    .output
+                    .cell_count(super::types::LocalId::from_usize(local)),
+            );
+            // SAFETY: every generator belongs to exactly one bin, so workers
+            // initialize disjoint cell records exactly once.
+            unsafe {
+                (cells_ptr as *mut VoronoiCell)
+                    .add(gen_idx)
+                    .write(VoronoiCell::new(start, count));
+            }
+            start += u32::from(count);
+        }
+        debug_assert_eq!(
+            start - bin_bases[bin],
+            shard.output.cell_indices.len() as u32
+        );
+    });
+
+    #[cfg(not(debug_assertions))]
+    unsafe {
+        cells.set_len(num_cells);
+    }
+    Ok(CellPrefixes {
+        cells,
+        total_indices,
+    })
+}
+
+#[cfg(feature = "parallel")]
+fn emit_cell_prefixes_parallel(
+    finals: &[ShardFinal],
+    assignment: &super::BinAssignment,
+    shard_order_spans: bool,
+) -> Result<CellPrefixes, crate::VoronoiError> {
+    let num_cells = assignment.generator_bin.len();
+    if shard_order_spans {
+        return emit_cell_prefixes_shard_order_parallel(finals, assignment);
+    }
     let chunk_count = (rayon::current_num_threads() * 4).min(num_cells);
     let chunk_len = num_cells.div_ceil(chunk_count);
 
@@ -487,11 +566,12 @@ fn emit_cell_prefixes_parallel(
 fn emit_cell_prefixes(
     finals: &[ShardFinal],
     assignment: &super::BinAssignment,
+    #[allow(unused_variables)] shard_order_spans: bool,
 ) -> Result<CellPrefixes, crate::VoronoiError> {
     let num_cells = assignment.generator_bin.len();
     #[cfg(feature = "parallel")]
     if rayon::current_num_threads() > 1 && num_cells >= 65_536 {
-        return emit_cell_prefixes_parallel(finals, assignment);
+        return emit_cell_prefixes_parallel(finals, assignment, shard_order_spans);
     }
     // Avoid redundant initialization in release builds. Debug builds retain
     // sentinels so tests and assertions can prove complete coverage.
@@ -589,6 +669,7 @@ fn scatter_cell_indices(
     assignment: &super::BinAssignment,
     vertex_offsets: &[u32],
     total_cell_indices: u32,
+    #[allow(unused_variables)] shard_order_spans: bool,
 ) -> (Vec<u32>, bool) {
     let num_bins = assignment.num_bins;
     let num_cells = assignment.generator_bin.len();
@@ -608,7 +689,10 @@ fn scatter_cell_indices(
             cell_indices.len(),
             "cell index count mismatch after prefix sum"
         );
-        if let Some(last) = cells.last() {
+        if cells.is_empty() {
+            debug_assert_eq!(total_cell_indices, 0);
+        } else if !shard_order_spans {
+            let last = cells.last().unwrap();
             debug_assert_eq!(cells[0].vertex_start(), 0, "prefix sum must start at 0");
             debug_assert!(
                 cells
@@ -621,8 +705,6 @@ fn scatter_cell_indices(
                 total_cell_indices as usize,
                 "prefix sum final total mismatch"
             );
-        } else {
-            debug_assert_eq!(total_cell_indices, 0);
         }
     }
 
@@ -648,7 +730,8 @@ fn scatter_cell_indices(
             debug_assert_eq!(generators.len(), shard.output.cell_counts.len());
 
             // Shard streams are local-id ordered. Their source reads stay
-            // sequential while spans retain generator-ordered destinations.
+            // sequential; adaptive span assignment can make destinations
+            // sequential as well.
             for (local_idx, &gen_idx) in generators.iter().enumerate() {
                 let start = shard.output.cell_starts[local_idx] as usize;
                 let count = shard.output.cell_counts[local_idx] as usize;
@@ -860,11 +943,20 @@ pub(super) fn assemble_sharded_live_dedup(
     } = concatenate_vertices(&mut finals, num_bins)?;
     #[allow(unused_variables)]
     let concat_vertices_time = t2.elapsed();
+    #[cfg(feature = "parallel")]
+    let shard_order_spans = rayon::current_num_threads() > 1
+        && data.assignment.generator_bin.len() >= 65_536
+        && prefer_shard_order_scatter(
+            &data.assignment.bin_generators,
+            data.assignment.generator_bin.len(),
+        );
+    #[cfg(not(feature = "parallel"))]
+    let shard_order_spans = false;
     let t_cell_prefixes = Timer::start();
     let CellPrefixes {
         cells,
         total_indices: total_cell_indices,
-    } = emit_cell_prefixes(&finals, &data.assignment)?;
+    } = emit_cell_prefixes(&finals, &data.assignment, shard_order_spans)?;
     #[allow(unused_variables)]
     let emit_cell_prefixes_time = t_cell_prefixes.elapsed();
 
@@ -882,6 +974,7 @@ pub(super) fn assemble_sharded_live_dedup(
         &data.assignment,
         &vertex_offsets,
         total_cell_indices,
+        shard_order_spans,
     );
     #[allow(unused_variables)]
     let scatter_cell_indices_time = t_cell_indices.elapsed();
