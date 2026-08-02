@@ -231,6 +231,13 @@ current same-bin sequential order is what makes edge forwarding cheap; batching 
 group should be considered only alongside a scheduling and stitching design that retains that
 benefit or demonstrates a better whole-pipeline tradeoff.
 
+The August 2026 native 16/32-worker profile does not by itself motivate cell-interleaved scheduling.
+SMT added little algorithmic work but sharply increased integer-scheduler and store-queue resource
+stalls; load-queue growth was much smaller, and cache/TLB miss samples were distributed across grid,
+assembly, and construction routines. Treat that as evidence against software-pipelining multiple
+cell clippers on this design. Work balancing remains distinct and should be reopened only for a
+measured non-uniform task tail, not as a response to ordinary SMT inefficiency.
+
 ### Progress-aware high-work handoff
 
 Some pathological cells can remain valid while examining nearly every generator. A handoff should

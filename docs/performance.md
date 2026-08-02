@@ -880,6 +880,23 @@ ordinary-build pairs improved Fibonacci by 1.61% (approximate 95% paired interva
 were neutral/favorable at 0.13% and 0.20%. Checked one- and 16-thread fingerprints and the full
 release suite passed.
 
+The post-PBO 16-core Zen 3 host was also profiled at 16 physical workers versus all 32 SMT
+threads on the retained native 2.5M path. Work was essentially fixed: 32 threads retired only
+about 1.6% more instructions on both Fibonacci and uniform. Aggregate cycles nevertheless rose
+54.5%/50.8%, reducing IPC from 1.81/1.63 to 1.19/1.10. Cache misses rose a much smaller
+13.1%/11.3%; data-TLB misses rose 78.3%/41.3%. Miss sampling attributed translation and cache
+traffic broadly to grid coordinate materialization/prefixes, bin assignment, final index scatter,
+edge collection/emission, and the cell driver rather than one dominant clipping load.
+
+Zen dispatch-token counters supplied the stronger classification. From 16 to 32 workers,
+store-queue resource stalls grew about 2.36x/1.93x and integer-scheduler stalls about 9.1x/25.6x
+on Fibonacci/uniform, while load-queue stalls grew only about 1.24x/1.75x. These multiplexed
+counters are diagnostic rather than exact accounting, but they reject a load-latency explanation:
+SMT is primarily increasing shared backend/scheduler pressure. Flat cycle profiles remained broad
+across clipping, the cell driver, batch clipping, edge collection/emission, and scatter. Partial-SMT
+16/20/24/28/32 sweeps were timing-noisy and produced no stable intermediate optimum. Retain the
+ordinary Rayon policy and do not use this profile to justify phase-specific thread pools.
+
 Untried probes and candidates (2026-07-17 triage; each begins with a cheap measurement gate):
 
 - **TLB / huge-page probe (native Linux only):** the measured memory wall is dedup and grid build
@@ -894,10 +911,12 @@ Untried probes and candidates (2026-07-17 triage; each begins with a cheap measu
   mega/great-circle only.
 - **Cell-interleaving ILP probe:** software-pipelining 2–4 independent cells through the scalar
   clipper only pays if the clip loop is load-latency-bound. The current taxonomy says cell
-  construction is compute-bound (IPC 2.0–2.65), so the prior is low. Gate: pin the clip phase and
-  read IPC plus memory-stall counters; only consider the (large, driver-restructuring) experiment
-  if stalls dominate. Degree-bucketed scheduling for branch coherence is a companion to this item
-  only — Morton ordering was already neutral, so it is not worth trying alone.
+  construction is compute-bound. The native 16-versus-32-worker gate found sharply increasing
+  integer-scheduler and store-queue pressure but much smaller load-queue growth, with no single
+  memory-latency hotspot. The gate is closed negative: interleaving more independent cells would
+  increase the already-constrained in-flight backend state. Degree-bucketed scheduling remains a
+  companion to this rejected item only — Morton ordering was already neutral, so it is not worth
+  trying alone.
 
 Promising workload-specific experiments:
 
