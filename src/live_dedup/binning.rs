@@ -65,8 +65,11 @@ struct BinLayout {
 
 #[inline]
 fn default_target_bin_count(threads: usize) -> usize {
-    let bins_per_thread = if threads >= 16 { 4 } else { 2 };
-    threads.saturating_mul(bins_per_thread)
+    if threads >= 12 {
+        96
+    } else {
+        threads.saturating_mul(2)
+    }
 }
 
 /// Target shard count from threads with the `VORONOI_MESH_BIN_COUNT` override,
@@ -297,9 +300,10 @@ mod tests {
     fn high_core_default_increases_shard_granularity() {
         assert_eq!(default_target_bin_count(1), 2);
         assert_eq!(default_target_bin_count(8), 16);
-        assert_eq!(default_target_bin_count(15), 30);
-        assert_eq!(default_target_bin_count(16), 64);
-        assert_eq!(default_target_bin_count(32), 128);
+        assert_eq!(default_target_bin_count(11), 22);
+        assert_eq!(default_target_bin_count(12), 96);
+        assert_eq!(default_target_bin_count(16), 96);
+        assert_eq!(default_target_bin_count(32), 96);
     }
 
     #[test]

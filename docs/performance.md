@@ -904,6 +904,17 @@ selected layout is unchanged, uniform wall time was neutral and seven Fibonacci 
 were structurally neutral (slightly fewer instructions and branches), rejecting a small noisy wall
 regression as changed work.
 
+A post-optimization scaling census extended the same 96-bin layout down to twelve workers. The old
+24-bin default plateaued between eight and twelve cores; an intermediate 54-bin layout did not
+help, while 96 bins supplied enough tail work to matter. At 2.5M without preprocessing, ten
+alternating 12-core pairs improved uniform by 4.97% (approximate 95% paired interval 0.95--8.82%,
+9/10 favorable) and left Fibonacci neutral (-0.53%, interval -3.02--3.95%). With preprocessing,
+Fibonacci was directionally 0.96% faster and uniform 2.86% faster, though both intervals included
+neutral. Aggregate cycles were essentially flat; the extra cross-bin work added at most 0.54%
+instructions. Ten-pair 1M guards were directionally 3.87%/3.77% faster on Fibonacci/uniform. The
+default therefore uses 2x workers below twelve and the full 96-bin cube layout at twelve or more;
+the eight-worker policy remains unchanged.
+
 Cross-bin overflow resolution now groups records by unordered shard pair before sorting and
 matching. The opposite-bin byte fits existing padding in both the per-cell and assembled records,
 so neither representation grows. Pair-local sorting shortens each sort and, more importantly,
