@@ -513,6 +513,28 @@ mispredictions, and 22% more I1 misses. D1 misses fell 1.0% and last-level data 
 not enough to offset the deterministic front-end work. Retain this only as evidence for an explicit
 memory mode or a lower-overhead custom thin allocation.
 
+### Fixed inline-block follow-up — rejected 2026-08-02
+
+A profiling-only census tested whether a lower-overhead thin allocation was now justified. At
+2.5M points, all but 3 Fibonacci queues fit eight records; uniform had 8,275 queues above eight
+(0.33%) and none above 13. Across 500k clustered, mega, and cubed-sphere cases, only eight queues
+exceeded sixteen records. The existing `Vec` capacities observed when queues were taken totaled
+2.3--2.9 times the records used, while their 24-byte headers cost 12 MB per 500k generators.
+
+The follow-up replaced each slot with an optional pointer to a pooled block containing eight inline
+`EdgeCheck` records and a spill `Vec`. It therefore preserved contiguous iteration and the existing
+take/recycle lifecycle while avoiding a second payload allocation for ordinary queues. At 500k
+uniform, allocations fell from 38,476 to 29,143, peak heap from 220.28 to 212.68 MB, and
+heaptrack-observed RSS from 167.44 to 148.48 MB.
+
+Throughput still rejected the representation. Seven pinned 1M pairs added about 2.2% retired
+instructions; Fibonacci cycles were neutral (-0.08%), while uniform regressed 0.72%. At 2.5M/16
+threads, Fibonacci was cycle-neutral and uniform appeared 1.17% favorable amid noisy task-clock,
+but both retained the roughly 2.1% instruction penalty. This confirms that pointer ownership and
+queue-state dispatch, rather than `Vec` growth alone, dominate the access cost. Do not revisit a
+pointer-owned block queue for the default path. A materially different candidate must keep queue
+metadata and ordinary payload access direct, or target an explicit memory mode.
+
 ## 6. Lower-priority local layout experiments
 
 These may remove load uops or L1 traffic but are less likely to move a true multithreaded memory

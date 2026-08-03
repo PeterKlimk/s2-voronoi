@@ -173,13 +173,26 @@ impl ShardDedup {
         );
 
         let slot = &mut self.edge_checks[local_idx];
+        #[cfg(feature = "profiling")]
+        let old_len = slot.len();
+        #[cfg(feature = "profiling")]
+        let mut reused_pool = false;
         if slot.capacity() == 0 {
-            if let Some(mut v) = self.edge_check_pool.pop() {
-                v.clear();
-                *slot = v;
+            if let Some(mut queue) = self.edge_check_pool.pop() {
+                queue.clear();
+                *slot = queue;
+                #[cfg(feature = "profiling")]
+                {
+                    reused_pool = true;
+                }
             }
         }
+        #[cfg(feature = "profiling")]
+        let capacity_before_push = slot.capacity();
         slot.push(check);
+        #[cfg(feature = "profiling")]
+        self.queue_audit
+            .record_push(old_len, capacity_before_push, slot.capacity(), reused_pool);
     }
 
     pub(crate) fn take_edge_checks(&mut self, local: LocalId) -> Vec<EdgeCheck> {
@@ -188,11 +201,16 @@ impl ShardDedup {
             local_idx < self.edge_checks.len(),
             "edge check local out of bounds"
         );
-        mem::take(&mut self.edge_checks[local_idx])
+        let queue = mem::take(&mut self.edge_checks[local_idx]);
+        #[cfg(feature = "profiling")]
+        self.queue_audit.record_take(queue.len(), queue.capacity());
+        queue
     }
 
-    pub(super) fn recycle_edge_checks(&mut self, v: Vec<EdgeCheck>) {
-        self.edge_check_pool.push(v);
+    pub(super) fn recycle_edge_checks(&mut self, incoming: Vec<EdgeCheck>) {
+        self.edge_check_pool.push(incoming);
+        #[cfg(feature = "profiling")]
+        self.queue_audit.observe_pool(self.edge_check_pool.len());
     }
 }
 

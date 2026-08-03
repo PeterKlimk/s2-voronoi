@@ -94,6 +94,8 @@ Useful flags:
 - `--reuse-workspace` — retain construction scratch across `--repeat` iterations. The first
   iteration is cold; compare aggregate repeated runs and account for the retained memory described
   above.
+- `--edge-queue-audit` with `--features profiling` — emit queue-length, capacity, growth, pool
+  reuse, and per-shard high-water telemetry for the internal live-dedup edge-check queues.
 
 ## Knobs
 
