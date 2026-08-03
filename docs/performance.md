@@ -100,8 +100,9 @@ Useful flags:
 ## Knobs
 
 - `RAYON_NUM_THREADS=1` — single-threaded, for stable comparisons.
-- `VORONOI_MESH_BIN_COUNT=<n>` — shard target (default 2x threads below 16 workers, 4x at 16+;
-  the cube-face layout quantizes and caps the actual count at 96).
+- `VORONOI_MESH_BIN_COUNT=<n>` — explicit shard target, quantized and capped at 96. Without an
+  override, the default is 2x workers below 12 and a 96-bin coarse layout at 12+; severely
+  imbalanced coarse layouts may refine to 216 bins.
 - `VORONOI_MESH_TIMING_KV=1` with `--features timing` — machine-readable phase timing.
 - `VORONOI_MESH_RECONCILE_TELEMETRY=1` — on defect-bearing builds, emit a read-only
   `RECONCILE_KV` simulation of the primary reconciliation round before mutation. It reports
@@ -985,6 +986,29 @@ instructions. Ten-pair 1M guards were directionally 3.87%/3.77% faster on Fibona
 default therefore uses 2x workers below twelve and the full 96-bin cube layout at twelve or more;
 the eight-worker policy remains unchanged.
 
+Severely imbalanced default layouts now refine adaptively from 96 to 216 spatial bins. The gate
+uses only exact integer population counts: the heaviest coarse bin must hold at least seven times
+the mean population, the fine layout must reduce that absolute maximum by at least 10%, and the
+fine local-id capacity must remain sufficient. Explicit `VORONOI_MESH_BIN_COUNT` overrides disable
+the policy. Ordinary inputs get the maximum coarse population from the assignment already being
+built and perform no additional grid scan; only the overloaded cases scan the fine population and
+rebuild assignment when accepted.
+
+A timing-only 96-bin census found 92--94% task efficiency on 2.5M Fibonacci/uniform, but only 61%
+at 16 workers and 40% at 32 on 1M gradient. The gradient closing wave occupied 65--84% of cell
+construction, and coarse generator count predicted bin elapsed time with correlation 0.996--0.998.
+Fixed 216-bin tests improved gradient by 15--18% and bimodal by 9--12%, but regressed clustered by
+4--6% and great-circle by up to 26%, motivating both halves of the adaptive gate rather than a
+generic variance threshold.
+
+With the staged production gate and normal preprocessing, ten native pairs improved 1M gradient
+by 7.50% at 16 workers and 11.05% at 32, every pair favorable. Bimodal 500k was neutral at 16 and
+5.15% faster at 32. Without preprocessing, twelve 32-thread pairs improved gradient by 10.13%
+(95% log interval 8.46--11.87%) and bimodal by 3.19% (2.14--4.28%); the 16-thread results were
+directionally 0.93% and significantly 2.60% faster. Mega, Fibonacci, and uniform controls retained
+the coarse layout and were unresolved around neutral. Great-circle also retained 96 bins; a large
+favorable code-placement movement was not attributed to the adaptive mechanism.
+
 Cross-bin overflow resolution now groups records by unordered shard pair before sorting and
 matching. The opposite-bin byte fits existing padding in both the per-cell and assembled records,
 so neither representation grows. Pair-local sorting shortens each sort and, more importantly,
@@ -1108,14 +1132,15 @@ Do not broadly retry these without a materially different design or workload:
   sort; parallelizing the matcher requires a different patch representation and must justify that
   larger redesign independently.
 
-- Further high-core bin scheduling did not improve on the retained 96-bin policy. A timing-only
+- Unconditional high-core bin scheduling did not improve on the retained 96-bin coarse policy. A timing-only
   per-bin census measured exposed construction tails of about 15ms at 2.5M Fibonacci, 12ms at
   2.5M uniform, and 18ms at 500k clustered. Globally sorting bins by generator count to start
   predicted-heavy work first destroyed spatial/context locality and slowed all three timing runs
   by roughly 15--20%. Raising the cube-face ceiling to 216 bins also failed the ordinary-workload
   gate: ten rotated 96-versus-216 pairs made Fibonacci 0.58% slower (only 2/10 favorable) and were
-  neutral on uniform (+0.07%, 4/10 favorable). Retain spatial bin order and the 96-bin ceiling;
-  further task splitting must preserve locality and avoid creating more cross-shard boundaries.
+  neutral on uniform (+0.07%, 4/10 favorable). Retain spatial bin order; finer task splitting must
+  be gated on a measured, reducible population imbalance so ordinary inputs do not pay its extra
+  cross-shard boundaries. The later adaptive 216-bin policy above satisfies that narrower gate.
 
 - Fusing point-to-cell classification with each worker's grid histogram removed a complete reread
   of the temporary cell-id array, but made the grid builder slower. In ten alternating native

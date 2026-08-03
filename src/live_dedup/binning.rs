@@ -63,6 +63,8 @@ struct BinLayout {
     num_bins: usize,
 }
 
+const IMBALANCED_BIN_TARGET: usize = 216;
+
 #[inline]
 fn default_target_bin_count(threads: usize) -> usize {
     if threads >= 12 {
@@ -74,23 +76,19 @@ fn default_target_bin_count(threads: usize) -> usize {
 
 /// Target shard count from threads with the `VORONOI_MESH_BIN_COUNT` override,
 /// clamped to `[6, 96]` so every cube face can own at least one shard.
-pub(crate) fn target_bin_count() -> usize {
-    #[cfg(feature = "parallel")]
-    let threads = rayon::current_num_threads().max(1);
-    #[cfg(not(feature = "parallel"))]
-    let threads = 1;
-
-    if let Ok(var) = std::env::var("VORONOI_MESH_BIN_COUNT") {
-        var.parse()
-            .unwrap_or_else(|_| default_target_bin_count(threads))
-    } else {
-        default_target_bin_count(threads)
+fn target_bin_count_with_override(threads: usize) -> (usize, bool) {
+    match std::env::var("VORONOI_MESH_BIN_COUNT") {
+        Ok(var) => (
+            var.parse()
+                .unwrap_or_else(|_| default_target_bin_count(threads))
+                .clamp(6, 96),
+            true,
+        ),
+        Err(_) => (default_target_bin_count(threads).clamp(6, 96), false),
     }
-    .clamp(6, 96)
 }
 
-fn choose_bin_layout(grid_res: usize) -> BinLayout {
-    let target_bins = target_bin_count();
+fn choose_bin_layout_for_target(grid_res: usize, target_bins: usize) -> BinLayout {
     let target_per_face = (target_bins as f64 / 6.0).max(1.0);
     let mut bin_res = target_per_face.sqrt().ceil() as usize;
     bin_res = bin_res.clamp(1, grid_res.max(1));
@@ -104,6 +102,41 @@ fn choose_bin_layout(grid_res: usize) -> BinLayout {
         bin_stride,
         num_bins: 6 * bin_res * bin_res,
     }
+}
+
+#[inline]
+fn bin_for_cell(cell: usize, grid_res: usize, layout: &BinLayout) -> usize {
+    let (face, iu, iv) = cell_to_face_ij(cell, grid_res);
+    let bu = (iu / layout.bin_stride).min(layout.bin_res - 1);
+    let bv = (iv / layout.bin_stride).min(layout.bin_res - 1);
+    face * layout.bin_res * layout.bin_res + bv * layout.bin_res + bu
+}
+
+fn max_bin_population(grid: &CubeMapGrid, layout: &BinLayout) -> usize {
+    let mut populations = vec![0usize; layout.num_bins];
+    for (cell, offsets) in grid.cell_offsets().windows(2).enumerate() {
+        populations[bin_for_cell(cell, grid.res(), layout)] += (offsets[1] - offsets[0]) as usize;
+    }
+    populations.into_iter().max().unwrap_or(0)
+}
+
+#[inline]
+fn should_refine_imbalanced_layout(
+    point_count: usize,
+    coarse_bins: usize,
+    coarse_max: usize,
+    fine_max: usize,
+) -> bool {
+    // Require a coarse bin holding at least seven times the mean population,
+    // then require the finer layout to reduce that absolute maximum by 10%.
+    // Integer products make the scheduling decision reproducible.
+    (coarse_max as u128) * (coarse_bins as u128) >= (point_count as u128) * 7
+        && fine_max.saturating_mul(10) <= coarse_max.saturating_mul(9)
+}
+
+#[inline]
+fn is_severely_imbalanced(point_count: usize, coarse_bins: usize, coarse_max: usize) -> bool {
+    (coarse_max as u128) * (coarse_bins as u128) >= (point_count as u128) * 7
 }
 
 fn validate_local_capacity(
@@ -125,34 +158,70 @@ fn validate_local_capacity(
     })
 }
 
+fn max_local_population(num_bins: usize) -> usize {
+    let bin_bits = if num_bins <= 1 {
+        1
+    } else {
+        32 - (num_bins as u32 - 1).leading_zeros()
+    };
+    ((1u64 << (32 - bin_bits)) - 1) as usize
+}
+
 pub(crate) fn assign_bins(
     points: &[Vec3],
     grid: &CubeMapGrid,
     point_cell_storage: Vec<u32>,
 ) -> Result<BinAssignment, PackedLayoutCapacityError> {
-    let layout = choose_bin_layout(grid.res());
+    #[cfg(feature = "parallel")]
+    let threads = rayon::current_num_threads().max(1);
+    #[cfg(not(feature = "parallel"))]
+    let threads = 1;
+    let (target_bins, explicit_override) = target_bin_count_with_override(threads);
+    let layout = choose_bin_layout_for_target(grid.res(), target_bins);
 
     // Construct per-bin generator order directly from the grid's cell-major layout.
     //
     // This preserves the exact `(grid.point_index_to_cell(g), g)` order without a per-bin sort,
     // keeping `LocalId` as the processing rank for edge-check scheduling.
     let res = grid.res();
-    let bin_for_cell = |cell: usize| -> usize {
-        let (face, iu, iv) = cell_to_face_ij(cell, res);
-        let bu = (iu / layout.bin_stride).min(layout.bin_res - 1);
-        let bv = (iv / layout.bin_stride).min(layout.bin_res - 1);
-        face * layout.bin_res * layout.bin_res + bv * layout.bin_res + bu
+    let assign = |layout: &BinLayout, storage| {
+        assign_bins_with(
+            points.len(),
+            6 * res * res,
+            grid.cell_offsets(),
+            grid.point_indices(),
+            layout.num_bins,
+            |cell| bin_for_cell(cell, res, layout),
+            storage,
+        )
     };
+    let assignment = assign(&layout, point_cell_storage)?;
 
-    assign_bins_with(
-        points.len(),
-        6 * res * res,
-        grid.cell_offsets(),
-        grid.point_indices(),
-        layout.num_bins,
-        bin_for_cell,
-        point_cell_storage,
-    )
+    // Preserve explicit diagnostic overrides. The adaptive layout applies only
+    // to the ordinary high-core 96-bin policy, where severe population skew
+    // otherwise leaves one or two construction tasks on the critical tail.
+    // The completed coarse assignment supplies the first gate for free, so
+    // ordinary inputs perform no additional grid scan.
+    let coarse_max = assignment
+        .bin_generators
+        .iter()
+        .map(Vec::len)
+        .max()
+        .unwrap_or(0);
+    if !explicit_override
+        && layout.num_bins == 96
+        && is_severely_imbalanced(points.len(), layout.num_bins, coarse_max)
+    {
+        let fine = choose_bin_layout_for_target(grid.res(), IMBALANCED_BIN_TARGET);
+        let fine_max = max_bin_population(grid, &fine);
+        if should_refine_imbalanced_layout(points.len(), layout.num_bins, coarse_max, fine_max)
+            && fine_max <= max_local_population(fine.num_bins)
+        {
+            return assign(&fine, assignment.bin_cells);
+        }
+    }
+
+    Ok(assignment)
 }
 
 /// Grid-agnostic assignment core over a CSR (cell_offsets, point_indices)
@@ -294,7 +363,23 @@ pub(crate) fn assign_bins_with(
 
 #[cfg(test)]
 mod tests {
-    use super::{assign_bins_with, default_target_bin_count, validate_local_capacity};
+    use super::{
+        assign_bins_with, default_target_bin_count, max_local_population,
+        should_refine_imbalanced_layout, validate_local_capacity,
+    };
+
+    #[test]
+    fn imbalanced_layout_requires_both_overload_and_maximum_reduction() {
+        assert!(should_refine_imbalanced_layout(1_000, 100, 70, 63));
+        assert!(!should_refine_imbalanced_layout(1_000, 100, 69, 60));
+        assert!(!should_refine_imbalanced_layout(1_000, 100, 70, 64));
+    }
+
+    #[test]
+    fn finer_layout_local_capacity_is_explicit() {
+        assert_eq!(max_local_population(96), (1 << 25) - 1);
+        assert_eq!(max_local_population(216), (1 << 24) - 1);
+    }
 
     #[test]
     fn high_core_default_increases_shard_granularity() {
