@@ -30,6 +30,7 @@ def commands(
     cpus: str,
     qhull_bin: Path,
     stripack_bin: Path,
+    vortex_bin: Path,
 ) -> dict[str, list[str]]:
     prefix = ["taskset", "-c", cpus]
     return {
@@ -68,6 +69,29 @@ def commands(
             str(stripack_bin),
             str(data),
             "--construct-only",
+            "--repeat",
+            str(repeat),
+        ],
+        "vortex": prefix
+        + [
+            "env",
+            f"OMP_NUM_THREADS={threads}",
+            str(vortex_bin),
+            str(data),
+            "--threads",
+            str(threads),
+            "--full",
+            "--repeat",
+            str(repeat),
+        ],
+        "vortex-construct": prefix
+        + [
+            "env",
+            f"OMP_NUM_THREADS={threads}",
+            str(vortex_bin),
+            str(data),
+            "--threads",
+            str(threads),
             "--repeat",
             str(repeat),
         ],
@@ -150,8 +174,9 @@ def main() -> None:
     parser.add_argument("--cpus", default="0")
     parser.add_argument("--backends", nargs="+",
                         choices=("s2-voronoi", "cgal", "qhull", "stripack",
-                                 "stripack-construct"),
-                        default=["s2-voronoi", "cgal", "qhull", "stripack-construct"])
+                                 "stripack-construct", "vortex", "vortex-construct"),
+                        default=["s2-voronoi", "cgal", "qhull", "stripack-construct",
+                                 "vortex-construct"])
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--qhull-bin",
@@ -163,9 +188,17 @@ def main() -> None:
         type=Path,
         default=ROOT / "target/competitors/stripack/release/bench-stripack-sphere",
     )
+    parser.add_argument(
+        "--vortex-bin",
+        type=Path,
+        default=ROOT / "target/competitors/vortex-make-t16/bin/bench_vortex_sphere",
+    )
     args = parser.parse_args()
     if args.rounds < 1 or args.inner_repeat < 1 or args.threads < 1:
         parser.error("rounds, inner-repeat, and threads must be positive")
+    if (any(backend.startswith("vortex") for backend in args.backends)
+            and args.threads not in (1, 16)):
+        parser.error("the pinned Vortex adapter supports only 1 or 16 threads")
 
     output = args.output or ROOT / "target/competitors/results" / (
         f"{args.dist}-t{args.threads}.csv"
@@ -175,7 +208,8 @@ def main() -> None:
         "dist", "size", "round", "order", "threads", "cpus", "backend", "n",
         "iteration", "construct_ms", "materialize_ms", "total_ms", "vertices", "cells",
         "incidences", "checksum", "cycles", "instructions", "cache-references",
-        "cache-misses", "page-faults", "context-switches", "cpu-migrations", "max_rss_kib",
+        "failures", "cache-misses", "page-faults", "context-switches", "cpu-migrations",
+        "max_rss_kib",
     ]
 
     with output.open("w", newline="") as stream:
@@ -191,6 +225,7 @@ def main() -> None:
                 args.cpus,
                 args.qhull_bin.resolve(),
                 args.stripack_bin.resolve(),
+                args.vortex_bin.resolve(),
             )
 
             for backend in args.backends:
@@ -212,7 +247,8 @@ def main() -> None:
                             "size": size,
                             "round": round_number,
                             "order": order_number,
-                            "threads": args.threads if backend == "s2-voronoi" else 1,
+                            "threads": args.threads if backend in (
+                                "s2-voronoi", "vortex", "vortex-construct") else 1,
                             "cpus": args.cpus,
                             **result,
                             **counters,
