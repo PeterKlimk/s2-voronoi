@@ -809,6 +809,7 @@ impl CubeMapGrid {
         }
     }
 
+    #[cfg_attr(feature = "timing", allow(dead_code))]
     fn compute_topology(res: usize) -> GridTopology {
         let neighbors = Self::compute_all_neighbors(res);
         let (ring2, ring2_lens) = Self::compute_ring2(res, &neighbors);

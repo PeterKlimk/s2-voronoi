@@ -741,6 +741,19 @@ addresses.
   uniform whole-build movement was downstream code-placement noise because the attributed
   grid phase moved in the opposite direction. Raw runs:
   `/tmp/s2-grid-fused-mt.raw` and `/tmp/s2-grid-fused-phase.raw` (2026-08-03).
+- Do not narrow per-worker grid histograms to `u16` with an exact overflow fallback.
+  On the 2.5M/16-worker grid, halving histogram storage saved only about 0.2ms in the
+  prefix phase, while the required increment overflow guard added about 0.5ms on
+  Fibonacci and 1.3ms on uniform. Fifteen-pair whole-build ratios were 1.014/1.015
+  and unresolved-to-adverse. The histogram byte footprint is not the limiting part
+  of this random increment stream. Raw run: `/tmp/s2-grid-narrow-counts.raw`
+  (2026-08-03).
+- Do not isolate overlapped topology onto a private one-worker Rayon pool. Preserving
+  every global-pool worker for point permutation makes topology too slow to remain
+  hidden: against the accepted shared-pool overlap, fifteen-pair grid time regressed
+  29.4% on Fibonacci and 5.1% on uniform. The accepted high-core schedule relies on
+  work stealing across the shared pool. Raw run: `/tmp/s2-grid-isolated-topology.raw`
+  (2026-08-03).
 
 - Do not merge the point-coordinate SoA and selected-neighbor `SlotPoint` AoS without a new access
   strategy; query SIMD and random selected-neighbor gathers want different layouts.
