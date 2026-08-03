@@ -808,6 +808,13 @@ Recently accepted optimizations:
   can under-parallelize Fibonacci scatter, which is why the existing lower-worker schedule is
   preserved rather than applying a global cap.
 
+  A follow-up crossover sweep covered 100k, 250k, 500k, 1M, and 2.5M at both 16 and 32 workers.
+  The prefix phase improved at every point; aggregate grid time improved in 18/20
+  size/distribution/worker regimes. At 32 workers, grid improvements were 12--23% at 100k and
+  generally 9--21% across uniform sizes. Production whole-build results showed no repeatable
+  small-input loss, so an additional grid-size threshold would discard measured small-scale wins
+  without protecting a demonstrated adverse regime.
+
 - **Recycled per-bin cell-build contexts:** the default keeps about twice as many spatial bins as
   workers for load balance, but each bin formerly allocated and zeroed its own full-input
   attempted-neighbor stamp table. Parallel builds now recycle the complete cell-build context
