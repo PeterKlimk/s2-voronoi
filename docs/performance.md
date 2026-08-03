@@ -1002,6 +1002,28 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- **Uninitialized bin-assignment inverse arrays:** native 2.5M timing on the 16-core Ryzen showed
+  that cell construction still scales about 11.1--11.3x from one to sixteen workers, while grid
+  build scales only 3.8--4.0x and dedup 3.5--4.3x. From eight to sixteen workers, dedup rose from
+  31.8 to 35.3ms on Fibonacci and 32.9 to 38.6ms on uniform, but the complete profile did not show
+  a DRAM-bandwidth wall: DRAM-sourced fills were flat-to-lower, while cross-CCD fills and aggregate
+  cycles rose. An eight-worker affinity control confirmed a regime tradeoff rather than a universal
+  communication bottleneck: splitting workers across the two L3 complexes slowed Fibonacci by
+  3.25% geometrically but improved uniform by 4.68%.
+
+  Call-chain sampling attributed part of the growing `memset` share to `assign_bins`, where
+  point-count-sized `generator_bin` and `generator_layout` sentinel arrays are subsequently
+  overwritten through the grid permutation. A release-only uninitialized-capacity prototype kept
+  debug sentinels and published lengths only after complete initialization. At 1M single-threaded,
+  seven counter pairs reduced cycles by about 0.36--0.56% and hardware cache references by
+  17.7--19.6%, but repeatably added 0.41%/0.67% instructions on Fibonacci/uniform. Fifteen rotated
+  2.5M/16-worker pairs were unresolved: both distributions were directionally about 0.5% faster,
+  with candidate/base intervals of 0.9854--1.0039 and 0.9837--1.0061 and only 7/15 and 8/15
+  favorable. Do not add an unsafe initialization invariant for this sub-noise result. The broader
+  profile also found no hidden lock hotspot: clipping, cell emission, and edge-check collection
+  remained dominant at both worker counts; the residual scaling loss is distributed across lower
+  all-core frequency, cell work, grid construction, and final assembly.
+
 - Extending recycled per-bin state beyond `CellBuildContext` to retain packed-kNN and edge-emission
   scratch was neutral/noisy in 2.5M throughput and adverse structurally. Seven-run Fibonacci
   counters increased cycles 0.39%, instructions 0.09%, cache references 9.3%, data-TLB loads 4.9%,
