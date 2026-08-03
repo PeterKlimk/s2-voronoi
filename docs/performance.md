@@ -945,7 +945,14 @@ Untried probes and candidates (2026-07-17 triage; each begins with a cheap measu
   negative on fib/uniform (+3.9–4.5% instructions), but the residual dense-cap cost after
   band-prune is certificate depth, and mega runs ~11x candidate inflation versus ~1.6x normal.
   Gate it on `grid_rebuilt` exactly like band-prune so the normal path is untouched, and A/B on
-  mega/great-circle only.
+  mega/great-circle only. The gated exact-preflight follow-up is now closed negative. Its timing
+  oracle found a real ceiling at 500k mega (2.79M potentially skipped clips, 5.9% of examined
+  candidates), while great-circle exposed only 0.29%. A minimal production prototype activated
+  only when the dense side index existed and only with at least four batch candidates remaining.
+  Even at 100k mega, where the oracle ceiling was higher at 8.6%, seven native 16-core pairs added
+  about 0.5% retired instructions and cycles were worse in five pairs. Exact all-vertex preflight
+  repeats the dominant clip classification work; the avoided mutation bookkeeping cannot repay it.
+  Do not promote the much larger 64-direction support cache without a new free support statistic.
 - **Cell-interleaving ILP probe:** software-pipelining 2–4 independent cells through the scalar
   clipper only pays if the clip loop is load-latency-bound. The current taxonomy says cell
   construction is compute-bound. The native 16-versus-32-worker gate found sharply increasing
