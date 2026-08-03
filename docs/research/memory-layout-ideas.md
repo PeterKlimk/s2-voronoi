@@ -535,6 +535,15 @@ queue-state dispatch, rather than `Vec` growth alone, dominate the access cost. 
 pointer-owned block queue for the default path. A materially different candidate must keep queue
 metadata and ordinary payload access direct, or target an explicit memory mode.
 
+A smaller follow-up retained `Vec<Vec<EdgeCheck>>` and merely gave newly allocated queues capacity
+eight instead of allowing the first `push` to choose capacity four. At 500k uniform points this cut
+heaptrack's allocation count from 38,476 to 27,611 (-28.2%), with peak heap unchanged and observed
+RSS lower. It still failed the throughput guardrail: Cachegrind at 20k Fibonacci reported 0.42%
+more instruction references, and seven pinned 1M single-thread pairs were slightly adverse in both
+Fibonacci and uniform runs (roughly 0.1--0.3% more cycles). The larger initial allocation is not a
+free replacement for geometric `Vec` growth; retain the allocator traffic rather than spend extra
+work on every ordinary queue.
+
 ## 6. Lower-priority local layout experiments
 
 These may remove load uops or L1 traffic but are less likely to move a true multithreaded memory
