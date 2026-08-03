@@ -57,6 +57,7 @@ pub(crate) struct CubeMapGridBuildTimings {
     pub input_order_abs_delta: u64,
     pub input_order_pairs: u64,
     pub materialize_coordinates_by_slot: bool,
+    pub topology_overlapped: bool,
 }
 
 /// Dummy timings when feature is disabled (zero-sized).

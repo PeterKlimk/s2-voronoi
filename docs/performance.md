@@ -761,6 +761,21 @@ Recently accepted optimizations:
   timing pairs were unresolved around neutral. Checked weld-compaction tests, the complete release
   suite, and all-target clippy passed.
 
+- **Overlap immutable grid topology at high worker counts:** cube-face neighbors, ring-2 cells,
+  cap bounds, and wall planes depend only on grid resolution. At twelve or more Rayon workers and
+  at least 16,384 cells, their construction now runs independently while the main build classifies,
+  counts, and spatially permutes points. Lower worker counts retain the original sequential schedule:
+  a 1M sweep found that overlap lengthened the grid phase 5--9% at four workers and was weak/mixed
+  at eight, while the intended 16-worker regime had enough concurrency to hide the independent work.
+
+  On the native 16-core Ryzen at 2.5M without preprocessing, fifteen rotated timing-build pairs
+  reduced grid wall time 17.2% on Fibonacci (15/15 favorable) and 14.3% on uniform (15/15).
+  Whole-build time improved 3.4% on Fibonacci (95% paired log interval 0.3--6.5%, 12/15) and 1.5%
+  on uniform (0.5--2.5%, 12/15); cell construction remained neutral. A separate twenty-pair
+  non-instrumented run with normal preprocessing kept uniform favorable at 1.71% (0.47--2.94%,
+  14/20) and left Fibonacci directionally 0.59% faster but unresolved. The schedule changes no
+  point or topology ordering and the one-thread/old six-core regime never enters it.
+
 - **Recycled per-bin cell-build contexts:** the default keeps about twice as many spatial bins as
   workers for load balance, but each bin formerly allocated and zeroed its own full-input
   attempted-neighbor stamp table. Parallel builds now recycle the complete cell-build context

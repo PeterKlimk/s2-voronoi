@@ -19,6 +19,20 @@ struct CellBounds {
     v_line_planes: Vec<Vec3>,
 }
 
+struct GridTopology {
+    neighbors: Vec<[u32; 9]>,
+    ring2: Vec<[u32; RING2_MAX]>,
+    ring2_lens: Vec<u8>,
+    bounds: CellBounds,
+}
+
+#[cfg(feature = "timing")]
+struct GridTopologyTimings {
+    neighbors: std::time::Duration,
+    ring2: std::time::Duration,
+    bounds: std::time::Duration,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DenseIndexBuild {
     Eager,
@@ -32,6 +46,11 @@ enum PointViewsBuild {
 }
 
 const INPUT_ORDER_SAMPLES: usize = 32;
+/// Below this worker count, topology competes with the point permutation and
+/// lengthens grid construction. At higher concurrency the independent work
+/// fills otherwise exposed memory stalls. This is a Rayon scheduling policy,
+/// not a hardware or OS feature check.
+const TOPOLOGY_OVERLAP_MIN_WORKERS: usize = 12;
 
 #[cfg(feature = "parallel")]
 #[inline(never)]
@@ -366,6 +385,20 @@ impl CubeMapGrid {
         #[cfg(feature = "timing")]
         let t = std::time::Instant::now();
 
+        // Topology depends only on `res`, not on the input points. Submit it
+        // independently so Rayon can interleave its compute-heavy work with
+        // classification and the memory-heavy point permutation below.
+        #[cfg(all(feature = "parallel", feature = "timing"))]
+        let topology_handle = (rayon::current_num_threads() >= TOPOLOGY_OVERLAP_MIN_WORKERS
+            && num_cells >= 16_384)
+            .then(|| std::thread::spawn(move || Self::compute_topology_timed(res)));
+        #[cfg(all(feature = "parallel", feature = "timing"))]
+        let topology_overlapped = topology_handle.is_some();
+        #[cfg(all(feature = "parallel", not(feature = "timing")))]
+        let topology_handle = (rayon::current_num_threads() >= TOPOLOGY_OVERLAP_MIN_WORKERS
+            && num_cells >= 16_384)
+            .then(|| std::thread::spawn(move || Self::compute_topology(res)));
+
         // Compute cell index for each point in parallel.
         let point_cells: Vec<u32> = maybe_par_iter!(points)
             .map(|p| {
@@ -691,30 +724,40 @@ impl CubeMapGrid {
             )
         };
 
-        // Step 4: Precompute neighbors and ring-2 cells for each cell
-        #[cfg(feature = "timing")]
-        let t = std::time::Instant::now();
-        let neighbors = Self::compute_all_neighbors(res);
-        #[cfg(feature = "timing")]
-        if let Some(timings) = timings.as_deref_mut() {
-            timings.neighbors += t.elapsed();
-        }
-
-        #[cfg(feature = "timing")]
-        let t = std::time::Instant::now();
-        let (ring2, ring2_lens) = Self::compute_ring2(res, &neighbors);
-        #[cfg(feature = "timing")]
-        if let Some(timings) = timings.as_deref_mut() {
-            timings.ring2 += t.elapsed();
-        }
-
-        #[cfg(feature = "timing")]
-        let t = std::time::Instant::now();
-        let bounds = Self::compute_cell_bounds(res);
+        // Step 4: collect the independently scheduled topology, or build it
+        // here when the overlap policy is disabled.
+        #[cfg(all(feature = "parallel", feature = "timing"))]
+        let (topology, topology_timings) = if let Some(handle) = topology_handle {
+            handle.join().expect("cube-grid topology worker panicked")
+        } else {
+            Self::compute_topology_timed(res)
+        };
+        #[cfg(all(feature = "parallel", not(feature = "timing")))]
+        let topology = if let Some(handle) = topology_handle {
+            handle.join().expect("cube-grid topology worker panicked")
+        } else {
+            Self::compute_topology(res)
+        };
+        #[cfg(all(not(feature = "parallel"), feature = "timing"))]
+        let (topology, topology_timings) = Self::compute_topology_timed(res);
+        #[cfg(all(not(feature = "parallel"), not(feature = "timing")))]
+        let topology = Self::compute_topology(res);
         #[cfg(feature = "timing")]
         if let Some(timings) = timings {
-            timings.cell_bounds += t.elapsed();
+            timings.neighbors += topology_timings.neighbors;
+            timings.ring2 += topology_timings.ring2;
+            timings.cell_bounds += topology_timings.bounds;
+            #[cfg(feature = "parallel")]
+            {
+                timings.topology_overlapped = topology_overlapped;
+            }
         }
+        let GridTopology {
+            neighbors,
+            ring2,
+            ring2_lens,
+            bounds,
+        } = topology;
 
         let cell_points_aos = if point_views_build == PointViewsBuild::Eager {
             if materialized_slot_points.is_empty() {
@@ -764,6 +807,44 @@ impl CubeMapGrid {
             cell_points_aos,
             dense_index,
         }
+    }
+
+    fn compute_topology(res: usize) -> GridTopology {
+        let neighbors = Self::compute_all_neighbors(res);
+        let (ring2, ring2_lens) = Self::compute_ring2(res, &neighbors);
+        let bounds = Self::compute_cell_bounds(res);
+        GridTopology {
+            neighbors,
+            ring2,
+            ring2_lens,
+            bounds,
+        }
+    }
+
+    #[cfg(feature = "timing")]
+    fn compute_topology_timed(res: usize) -> (GridTopology, GridTopologyTimings) {
+        let t = std::time::Instant::now();
+        let neighbors = Self::compute_all_neighbors(res);
+        let neighbors_elapsed = t.elapsed();
+        let t = std::time::Instant::now();
+        let (ring2, ring2_lens) = Self::compute_ring2(res, &neighbors);
+        let ring2_elapsed = t.elapsed();
+        let t = std::time::Instant::now();
+        let bounds = Self::compute_cell_bounds(res);
+        let bounds_elapsed = t.elapsed();
+        (
+            GridTopology {
+                neighbors,
+                ring2,
+                ring2_lens,
+                bounds,
+            },
+            GridTopologyTimings {
+                neighbors: neighbors_elapsed,
+                ring2: ring2_elapsed,
+                bounds: bounds_elapsed,
+            },
+        )
     }
 
     /// Compute 3×3 neighborhood for all cells.

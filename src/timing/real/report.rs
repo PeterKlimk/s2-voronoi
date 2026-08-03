@@ -66,6 +66,11 @@ impl PhaseTimings {
                     ms(sub.cell_bounds),
                     sub_pct(sub.cell_bounds)
                 );
+                if sub.topology_overlapped {
+                    eprintln!(
+                        "    grid_topology: overlapped (topology subphase elapsed times are non-additive)"
+                    );
+                }
                 eprintln!(
                     "    grid_security:   {:7.1}ms ({:4.1}%)",
                     ms(sub.security_3x3),
