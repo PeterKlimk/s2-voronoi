@@ -47,6 +47,12 @@ const INPUT_ORDER_SAMPLES: usize = 32;
 /// fills otherwise exposed memory stalls. This is a Rayon scheduling policy,
 /// not a hardware or OS feature check.
 const TOPOLOGY_OVERLAP_MIN_WORKERS: usize = 12;
+/// Grid count/scatter saturates before the rest of the high-core pipeline and
+/// each additional chunk adds two full-cell rows plus prefix work. Preserve
+/// lower-worker schedules, where reducing scatter parallelism does not repay
+/// that saving.
+const GRID_BUILD_CHUNK_CAP_MIN_WORKERS: usize = 16;
+const GRID_BUILD_HIGH_CORE_CHUNKS: usize = 8;
 
 #[cfg(feature = "parallel")]
 #[inline(never)]
@@ -454,7 +460,12 @@ impl CubeMapGrid {
             materialized_slot_points,
         ) = {
             let num_threads = rayon::current_num_threads();
-            let chunk_size = points.len().div_ceil(num_threads).max(1);
+            let num_chunks = if num_threads >= GRID_BUILD_CHUNK_CAP_MIN_WORKERS {
+                GRID_BUILD_HIGH_CORE_CHUNKS
+            } else {
+                num_threads
+            };
+            let chunk_size = points.len().div_ceil(num_chunks).max(1);
 
             // 2. Parallel Count: Compute histograms per chunk.
             let chunk_counts: Vec<Vec<u32>> = point_cells

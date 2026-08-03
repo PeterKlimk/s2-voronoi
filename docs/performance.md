@@ -791,6 +791,23 @@ Recently accepted optimizations:
   by +0.005%/-0.043% and branches fell about 0.11% on Fibonacci/uniform. Workspace and non-workspace
   outputs remain exact because both consume the same immutable tables.
 
+- **Cap high-core grid construction at eight chunks:** worker-local counting and scatter use two
+  full-cell rows per chunk, while the prefix phase visits every row for every grid cell. At 16 or
+  more Rayon workers, grid construction now uses eight input chunks; lower-worker schedules are
+  unchanged. This reduces transient histogram/cursor storage by about 6.3 MiB at resolution 131
+  with 16 workers and about 18.9 MiB relative to 32 rows, while leaving the remaining workers free
+  for independently scheduled topology work.
+
+  Repeated 2.5M/16-worker workspace runs reduced grid time 8--10% versus one chunk per worker; the
+  prefix phase fell roughly 34--47%. Production non-timing binaries were neutral overall at 16
+  physical workers, where grid construction is only about 5% of the build. At the machine's normal
+  32-thread Rayon setting, fifteen no-preprocess pairs improved Fibonacci by 0.96% (95% log interval
+  0.15--1.81%) and uniform directionally by 1.43% (interval -1.31--3.95%). Twelve normal-preprocess
+  pairs improved uniform by 3.14% (interval 1.83--4.44%, 11/12 favorable) and Fibonacci
+  directionally by 0.88% (interval -0.76--2.59%). A 12-worker guardrail showed that eight chunks
+  can under-parallelize Fibonacci scatter, which is why the existing lower-worker schedule is
+  preserved rather than applying a global cap.
+
 - **Recycled per-bin cell-build contexts:** the default keeps about twice as many spatial bins as
   workers for load balance, but each bin formerly allocated and zeroed its own full-input
   attempted-neighbor stamp table. Parallel builds now recycle the complete cell-build context
