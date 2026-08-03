@@ -557,3 +557,24 @@ acceptance; it does provide a specific reason to repeat 500k mega all-core cycle
 The sequential shared schedule is accepted. The resident-by-query tiled kernel remains a separate
 research idea, not an implied next stage: this implementation claims none of the optimistic
 position-load ceiling and already captures the safe traversal reuse without changing dependencies.
+
+### Post-optimization tiled-kernel gate — closed for ordinary workloads (2026-08-03)
+
+A fresh native 16-core profile revisited the remaining tiled-kernel idea after the high-core
+scheduling, materialization, and scratch-reuse changes. At 2.5M without preprocessing,
+`prepare_group_directed` remained the largest non-clip leaf at 11.86% of Fibonacci cycles and
+11.74% of uniform cycles. Zen dispatch sampling attributed about 10.1% of uniform load-queue stalls
+to it, but only 1.2% of store-queue stalls. Machine-wide store-queue stalls were about three times
+load-queue stalls (767M versus 237M on uniform; 578M versus 194M on Fibonacci), so the host is not
+generally resident-load limited.
+
+More importantly, the packed kernel already has the proposed resident-major organization: outer
+SoA candidate chunks are loaded once and evaluated across the same-cell query group. A new tiled
+kernel could therefore affect only resumable shell work. Current timing counters found no shell
+batches on 2.5M Fibonacci and only 172,926 emitted shell slots on uniform, versus 25.10M total
+examined candidates (0.69%). The earlier 100k trace remains valid evidence for pathological shell
+overlap, but it is no longer a credible ordinary-throughput ceiling. Reorganizing shell queries
+would also lose same-block forwarded seeds and require speculative rows, termination masks, and
+per-query ordering/storage. Do not implement it as a default-path optimization unless a named
+production workload makes shell work a material fraction of total time; use the retained sequential
+shared schedule for the current pathological benefit.
