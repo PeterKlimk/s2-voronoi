@@ -726,6 +726,22 @@ addresses.
 
 ## Ideas currently disfavored
 
+- Do not replace the full cube-grid neighbor/ring-2 tables with a boundary-only
+  exception representation. On the 16-core Ryzen at resolution 131, the prototype
+  reduced retained topology from about 9.9 MiB to about 1 MiB, but its lookup and
+  interior-array materialization added 0.11--0.14% retired instructions and branches.
+  Pinned 1M runs reduced cache references 3.4--4.8% while increasing cache misses about
+  3%; 2.5M multithreaded cell construction was neutral on Fibonacci and about 1.6%
+  slower on uniform. The full tables are predictably traversed and cache-friendlier than
+  their size alone suggests. Raw runs: `/tmp/s2-grid-boundary-mt.raw` and
+  `/tmp/s2-grid-boundary-st-perf.raw` (2026-08-03).
+- Do not fuse point classification with worker-local grid histogram counting in its
+  straightforward form. It removes one input-sized classification read, but the native
+  16-thread grid phase was about 3% slower on both ordinary distributions. A large
+  uniform whole-build movement was downstream code-placement noise because the attributed
+  grid phase moved in the opposite direction. Raw runs:
+  `/tmp/s2-grid-fused-mt.raw` and `/tmp/s2-grid-fused-phase.raw` (2026-08-03).
+
 - Do not merge the point-coordinate SoA and selected-neighbor `SlotPoint` AoS without a new access
   strategy; query SIMD and random selected-neighbor gathers want different layouts.
 - Do not recombine the gnomonic half-plane and extraction metadata streams; the measured wider AoS
