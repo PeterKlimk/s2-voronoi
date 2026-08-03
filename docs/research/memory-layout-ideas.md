@@ -748,6 +748,19 @@ addresses.
   and unresolved-to-adverse. The histogram byte footprint is not the limiting part
   of this random increment stream. Raw run: `/tmp/s2-grid-narrow-counts.raw`
   (2026-08-03).
+- Do not overwrite worker-local grid histograms in place with their scatter
+  cursors after computing global totals. At resolution 131 with 16 workers this
+  avoids a second roughly 6.3 MiB matrix allocation and zero-fill, but the
+  separately initialized cursor pages help the following scatter. Seven pinned
+  1M single-threaded pairs reduced Fibonacci instructions 0.11% and hardware
+  cache references 7.7%, yet increased cache misses 5.4%; uniform cycles
+  regressed 0.58% in all seven pairs while cache misses rose 3.4%. Repeated
+  2.5M/16-worker phase measurements likewise made the prefix itself about 12%
+  slower on Fibonacci, and whole-build timing remained unresolved. The memory
+  saving does not justify the adverse cache/cycle evidence on the default path.
+  Raw runs: `/tmp/s2-inplace-grid-cursors-mt.raw`,
+  `/tmp/s2-inplace-grid-cursors-phases.raw`, and
+  `/tmp/s2-inplace-grid-cursors-st-perf.raw` (2026-08-03).
 - Do not isolate overlapped topology onto a private one-worker Rayon pool. Preserving
   every global-pool worker for point permutation makes topology too slow to remain
   hidden: against the accepted shared-pool overlap, fifteen-pair grid time regressed
