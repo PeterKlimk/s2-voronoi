@@ -55,7 +55,7 @@ target/competitors/build/bench_qhull_sphere \
 target/competitors/stripack/release/bench-stripack-sphere \
   target/competitors/data/fib-10k.f32 --repeat 3
 OMP_NUM_THREADS=16 target/competitors/vortex-make-t16/bin/bench_vortex_sphere \
-  target/competitors/data/fib-10k.f32 --threads 16 --repeat 3
+  target/competitors/data/fib-10k.f32 --threads 16 --neighbors 50 --repeat 3
 ```
 
 Vortex's normal sphere CLI Morton-orders sites and uses its sphere quadtree, so
@@ -81,8 +81,16 @@ tracks libMeshb's moving default branch but still names the removed v7 source
 and header, and its Ninja helper targets contain unescaped Make syntax. The
 patch disables unrelated visualization, updates only the libMeshb filenames,
 adds the adapter target, permits the fixed 16-worker capacity, and applies
-native release code generation. The build uses Unix Makefiles; no Vortex
+native release code generation. The build uses Unix Makefiles and enables
+whole-program LTO; the crate's own release profile does not use LTO. No Vortex
 geometry or neighbor-search source is changed.
+
+Vortex clips against a fixed initial candidate budget. The adapter preserves
+its upstream default of 50 with `--neighbors 50`; the campaign runner exposes
+the same choice as `--vortex-neighbors`. A lower budget is only a valid tuning
+result when `failures=0`, because Vortex reports cells whose candidate set was
+insufficient. Tune against every reported distribution and size, and retain the
+failure count with the timing data.
 
 The STRIPACK wrapper requires a `f64` unit norm within `1e-10`, which ordinary
 packed `f32` vectors cannot satisfy. Its input adapter therefore promotes each
@@ -205,7 +213,8 @@ Raw measurements are retained in
 
 ## Vortex same-family comparison
 
-The pinned Vortex adapter was first gated at 100k and 500k sites. These runs
+The pinned Vortex adapter was first gated at 100k and 500k sites using its
+upstream-default 50-neighbor candidate budget and without LTO. These runs
 compare this crate's complete shared diagram against `vortex-construct`, which
 includes Vortex's Morton ordering, sphere-quadtree construction, clipping, and
 mandatory per-cell properties but deliberately omits its optional duplicated
@@ -236,3 +245,29 @@ Median peak RSS at 500k was 162.6/162.7 MiB for serial Vortex versus
 127.8/131.2 MiB for serial `voronoi-mesh`; at 16 workers it was 161.5/161.6 MiB
 versus 145.7/148.1 MiB. The raw CSV files are retained under
 `target/competitors/results/vortex-{fib,uniform}-{100k,500k}-t{1,16}.csv`.
+
+### Tuned fairness audit
+
+A follow-up audit varied Vortex's candidate budget. At 500k uniform sites, 33
+neighbors left two incomplete cells, while 34 was the smallest tested budget
+with no failures; Fibonacci completed at still smaller budgets. We therefore
+used 34 for both inputs rather than selecting a distribution-specific value.
+We also enabled whole-program LTO for Vortex, which improved its serial result
+by 3.53% on both distributions in seven rotated pairs. This is deliberately
+favorable to the competitor: `voronoi-mesh` remained at its normal non-LTO
+release configuration.
+
+| sites | input | workers | voronoi-mesh | tuned Vortex construct-only | Vortex / voronoi-mesh paired geomean |
+|---:|---|---:|---:|---:|---:|
+| 500k | Fibonacci | 1 | 294.9 ms | 2,602.4 ms | 8.77x (95% CI 8.68--8.83) |
+| 500k | uniform | 1 | 398.7 ms | 3,494.6 ms | 8.80x (8.76--8.85) |
+| 500k | Fibonacci | 16 | 51.2 ms | 323.6 ms | 6.55x (6.25--6.83) |
+| 500k | uniform | 16 | 62.8 ms | 397.0 ms | 6.03x (5.62--6.43) |
+
+All tuned runs reported zero failures. Median retired instructions were
+27.0B/35.0B for serial Vortex versus 3.41B/3.87B for this crate on
+Fibonacci/uniform; the 16-worker counts were essentially unchanged. Median
+peak RSS was 131.5/131.5 MiB for serial Vortex versus 127.9/131.3 MiB for this
+crate. At 16 workers, Vortex used 130.4/130.3 MiB versus 146.1/148.2 MiB for
+this crate. The tuned raw CSV files are retained under
+`target/competitors/results/vortex-tuned-lto-{fib,uniform}-500k-t{1,16}.csv`.

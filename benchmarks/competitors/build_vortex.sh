@@ -24,5 +24,6 @@ fi
 cp "$root/benchmarks/competitors/vortex_sphere.cpp" "$source_dir/src/bench_vortex_sphere.cpp"
 
 cmake -S "$source_dir" -B "$build_dir" -G "Unix Makefiles" \
-  -DCMAKE_BUILD_TYPE=Release -Dnum_cores=16
+  -DCMAKE_BUILD_TYPE=Release -Dnum_cores=16 \
+  -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON
 cmake --build "$build_dir" --target bench_vortex_sphere

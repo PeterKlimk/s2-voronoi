@@ -47,12 +47,13 @@ std::vector<double> read_points(const std::string& path) {
 int main(int argc, char** argv) try {
   if (argc < 2) {
     std::cerr << "usage: bench_vortex_sphere INPUT [--threads 1|16] [--full] "
-                 "[--repeat N]\n";
+                 "[--neighbors N] [--repeat N]\n";
     return 2;
   }
   std::string input_path = argv[1];
   size_t threads = 1;
   size_t repeat = 1;
+  size_t neighbors = 50;
   bool full = false;
   for (int i = 2; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -62,12 +63,15 @@ int main(int argc, char** argv) try {
       threads = std::stoul(argv[++i]);
     } else if (arg == "--repeat" && i + 1 < argc) {
       repeat = std::stoul(argv[++i]);
+    } else if (arg == "--neighbors" && i + 1 < argc) {
+      neighbors = std::stoul(argv[++i]);
     } else {
       throw std::runtime_error("unknown or incomplete argument: " + arg);
     }
   }
-  if ((threads != 1 && threads != 16) || repeat == 0)
-    throw std::runtime_error("threads must be 1 or 16 and repeat must be positive");
+  if ((threads != 1 && threads != 16) || repeat == 0 || neighbors == 0)
+    throw std::runtime_error(
+        "threads must be 1 or 16; repeat and neighbors must be positive");
 
   auto sites = read_points(input_path);
   const size_t n = sites.size() / 3;
@@ -76,6 +80,7 @@ int main(int argc, char** argv) try {
   for (size_t iteration = 1; iteration <= repeat; ++iteration) {
     vortex::VoronoiDiagramOptions options;
     options.verbose = false;
+    options.n_neighbors = neighbors;
     options.parallel = threads != 1;
     options.store_mesh = full;
     options.store_facet_data = full;
@@ -126,6 +131,7 @@ int main(int argc, char** argv) try {
                                       .count();
     std::cout << "RESULT backend=" << (full ? "vortex" : "vortex-construct")
               << " n=" << n << " iteration=" << iteration
+              << " n_neighbors=" << neighbors
               << " construct_ms=" << construct_ms
               << " materialize_ms=" << materialize_ms
               << " total_ms=" << construct_ms + materialize_ms

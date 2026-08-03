@@ -31,6 +31,7 @@ def commands(
     qhull_bin: Path,
     stripack_bin: Path,
     vortex_bin: Path,
+    vortex_neighbors: int,
 ) -> dict[str, list[str]]:
     prefix = ["taskset", "-c", cpus]
     return {
@@ -80,6 +81,8 @@ def commands(
             str(data),
             "--threads",
             str(threads),
+            "--neighbors",
+            str(vortex_neighbors),
             "--full",
             "--repeat",
             str(repeat),
@@ -92,6 +95,8 @@ def commands(
             str(data),
             "--threads",
             str(threads),
+            "--neighbors",
+            str(vortex_neighbors),
             "--repeat",
             str(repeat),
         ],
@@ -193,9 +198,11 @@ def main() -> None:
         type=Path,
         default=ROOT / "target/competitors/vortex-make-t16/bin/bench_vortex_sphere",
     )
+    parser.add_argument("--vortex-neighbors", type=int, default=50)
     args = parser.parse_args()
-    if args.rounds < 1 or args.inner_repeat < 1 or args.threads < 1:
-        parser.error("rounds, inner-repeat, and threads must be positive")
+    if (args.rounds < 1 or args.inner_repeat < 1 or args.threads < 1
+            or args.vortex_neighbors < 1):
+        parser.error("rounds, inner-repeat, threads, and vortex-neighbors must be positive")
     if (any(backend.startswith("vortex") for backend in args.backends)
             and args.threads not in (1, 16)):
         parser.error("the pinned Vortex adapter supports only 1 or 16 threads")
@@ -207,7 +214,7 @@ def main() -> None:
     fields = [
         "dist", "size", "round", "order", "threads", "cpus", "backend", "n",
         "iteration", "construct_ms", "materialize_ms", "total_ms", "vertices", "cells",
-        "incidences", "checksum", "cycles", "instructions", "cache-references",
+        "incidences", "n_neighbors", "checksum", "cycles", "instructions", "cache-references",
         "failures", "cache-misses", "page-faults", "context-switches", "cpu-migrations",
         "max_rss_kib",
     ]
@@ -226,6 +233,7 @@ def main() -> None:
                 args.qhull_bin.resolve(),
                 args.stripack_bin.resolve(),
                 args.vortex_bin.resolve(),
+                args.vortex_neighbors,
             )
 
             for backend in args.backends:
