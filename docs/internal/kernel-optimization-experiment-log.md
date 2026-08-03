@@ -578,3 +578,23 @@ would also lose same-block forwarded seeds and require speculative rows, termina
 per-query ordering/storage. Do not implement it as a default-path optimization unless a named
 production workload makes shell work a material fraction of total time; use the retained sequential
 shared schedule for the current pathological benefit.
+
+### Post-optimization instruction-level gate — no isolated arithmetic target (2026-08-03)
+
+Instruction-level `perf annotate` on the same native profile did not reveal a compact remaining
+kernel inside either leading leaf. `prepare_group_directed` compiled to roughly 17.4 KiB with a
+1,408-byte frame, but its samples were broadly distributed across range setup, security bounds,
+threshold selection, and the resident-major candidate passes. The hottest individual instruction
+accounted for only 1.10% of the function's local samples and was in neighbor-range classification;
+there was no load, branch, or arithmetic island large enough to support a focused rewrite. This is
+consistent with the phase already having accumulated several independent, measured
+specializations. Outlining its uncommon paths may change register allocation and code placement,
+but it has no demonstrated work-removal mechanism and is therefore not a production experiment.
+
+`dispatch_clip` compiled to roughly 6.0 KiB. Its hottest annotated region was the expected small-N
+specialization: vertex loads, dot/interpolation multiplies, and the strict-boundary intersection
+divisions. Those divisions are intentional raw `f64` operations with a bit-for-bit regression test;
+the prior packed-intersection experiment reduced a small number of instructions but enlarged code
+and lost cycles. The current profile supplies no new reason to reopen either that numerical contract
+or the rejected packing. Treat both leading leaves as composite/algorithmic targets: a future change
+needs to eliminate candidate or clipping work, not merely rearrange their instructions.
