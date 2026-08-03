@@ -137,3 +137,34 @@ conversion to `f32`. With preprocessing deliberately disabled, that correctly
 failed as a duplicate-generator input. The generator and cache check now
 guarantee unique packed triples; exactly one site was deterministically
 resampled for this campaign.
+
+### Current physical-core scaling curve
+
+After disabling the motherboard's default PBO overclock, a fresh seven-round
+rotated-order run measured the current native build at commit `2774e04`. Each
+point used the first `T` physical cores from CPU 0 through CPU `T - 1`; SMT
+siblings 16--31 were excluded. Inputs were the same cached unique 2.5M-site
+fixtures used by the competitor campaign, with preprocessing disabled and file
+loading outside the timed construction region.
+
+| workers | Fibonacci construct | speedup (95% paired bootstrap CI) | uniform construct | speedup (95% paired bootstrap CI) |
+|---:|---:|---:|---:|---:|
+| 1 | 1,473.8 ms | 1.00x | 2,060.4 ms | 1.00x |
+| 2 | 787.5 ms | 1.87x (1.86--1.88) | 1,071.9 ms | 1.92x (1.91--1.94) |
+| 4 | 450.4 ms | 3.28x (3.26--3.32) | 596.3 ms | 3.46x (3.44--3.48) |
+| 8 | 270.5 ms | 5.45x (5.43--5.48) | 382.0 ms | 5.41x (5.33--5.47) |
+| 12 | 237.0 ms | 6.26x (6.00--6.41) | 315.3 ms | 6.50x (5.96--7.14) |
+| 16 | 210.8 ms | 6.99x (6.87--7.14) | 267.5 ms | 7.73x (7.66--7.87) |
+
+The uniform 12-worker samples were unusually variable (290.8--349.9 ms), but
+the 16-worker samples tightened again (260.0--280.8 ms). This does not indicate
+a terminal memory-bandwidth plateau: both distributions continue improving
+from 8 to 16 physical cores, although efficiency naturally falls as serial
+materialization and memory traffic become larger fractions of elapsed time.
+
+Using the retained seven-round serial-CGAL medians as reference, current
+16-worker construction is 7.70x faster on Fibonacci and 6.22x faster on
+uniform. The qualification above still applies: CGAL retains a spherical
+triangulation, whereas this crate constructs the shared Voronoi-cell mesh.
+Raw measurements are retained in
+`target/competitors/results/s2-current-2.5m-scaling.raw`.
