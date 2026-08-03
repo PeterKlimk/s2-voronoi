@@ -358,7 +358,6 @@ fn run_core_pipeline(
 
     let effective_points_ref = effective_input.points(&points);
 
-    grid.release_point_slots();
     let point_cell_storage = grid.take_point_cells();
 
     let sharded = construct_cell_shards(

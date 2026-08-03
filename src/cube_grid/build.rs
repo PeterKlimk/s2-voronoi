@@ -716,23 +716,8 @@ impl CubeMapGrid {
             timings.cell_bounds += t.elapsed();
         }
 
-        let (point_slots, cell_points_aos) = if point_views_build == PointViewsBuild::Eager {
-            // Inverse mapping: point index -> SOA slot (slot indexes into
-            // point_indices/cell_points_*).
-            let mut point_slots: Vec<u32> = vec![u32::MAX; points.len()];
-            for (slot, &global) in point_indices.iter().enumerate() {
-                let idx = global as usize;
-                debug_assert!(
-                    idx < point_slots.len(),
-                    "grid returned out-of-range point index"
-                );
-                point_slots[idx] = slot as u32;
-            }
-            debug_assert!(
-                !point_slots.contains(&u32::MAX),
-                "point_slots not fully initialized"
-            );
-            let cell_points_aos = if materialized_slot_points.is_empty() {
+        let cell_points_aos = if point_views_build == PointViewsBuild::Eager {
+            if materialized_slot_points.is_empty() {
                 build_pos_aos(
                     &cell_points_x,
                     &cell_points_y,
@@ -741,10 +726,9 @@ impl CubeMapGrid {
                 )
             } else {
                 materialized_slot_points
-            };
-            (point_slots, cell_points_aos)
+            }
         } else {
-            (Vec::new(), Vec::new())
+            Vec::new()
         };
         // Dense-cell side index (punch 1): built only for over-full cells, so
         // None on uniform input. Side structure; leaves the SoA untouched.
@@ -778,7 +762,6 @@ impl CubeMapGrid {
             cell_points_y,
             cell_points_z,
             cell_points_aos,
-            point_slots,
             dense_index,
         }
     }

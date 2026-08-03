@@ -36,13 +36,6 @@ impl CubeMapGrid {
         std::mem::take(&mut self.point_cells)
     }
 
-    /// Release the global-index-to-slot inverse after preprocessing. Weld
-    /// compaction is its final production consumer; construction and local rebuilding
-    /// operate in slot space from this point onward.
-    pub(crate) fn release_point_slots(&mut self) {
-        self.point_slots = Vec::new();
-    }
-
     /// Get grid resolution (cells per face).
     #[inline]
     pub(crate) fn res(&self) -> usize {

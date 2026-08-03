@@ -141,11 +141,6 @@ pub(crate) struct CubeMapGrid {
     /// (built at construction and rebuilt by `compact_welded`).
     pub(super) cell_points_aos: Vec<SlotPoint>,
 
-    /// Inverse mapping from point index to SOA slot index.
-    ///
-    /// `point_slots[point_idx]` gives the slot in `point_indices` / `cell_points_*`.
-    point_slots: Vec<u32>,
-
     /// Dense-cell sub-index ("punch 1", axis-sort): present only when some cell
     /// exceeds `DENSE_CELL_THRESHOLD` (rare). Side structure; does not affect
     /// the SoA. Consulted by the directed packed center pass to band-prune the

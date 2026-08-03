@@ -674,9 +674,10 @@ Bin assignment is a lower-confidence residual. Its spatial traversal appends `bi
 writes `slot_gen_map` sequentially, but scatters `generator_bin` and `generator_layout` by global
 id. Making those inverse arrays global-order would require retaining or rebuilding another inverse
 map or adding a pass, so the extra work may exceed the locality benefit. The point-to-slot inverse
-fusion has already been measured and reverted; the default preprocessing path now avoids that map
-unless compaction actually needs it. Batched locator query reordering is a separate API workload,
-not a continuation of compute-pipeline materialization.
+fusion was first measured and reverted; the subsequent ownership audit found that no consumer
+remained and removed the inverse entirely, including its obsolete compaction maintenance. Batched
+locator query reordering is a separate API workload, not a continuation of compute-pipeline
+materialization.
 
 The first shared classifier is intentionally small, but should not be mistaken for a final cost
 model. It shares only a normalized mean-delta threshold; each caller still owns its sampling, and

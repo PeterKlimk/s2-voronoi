@@ -71,8 +71,8 @@ impl CubeMapGrid {
         threshold: f32,
     ) -> Result<Vec<(u32, u32)>, usize> {
         assert!(
-            self.point_slots.is_empty() && self.cell_points_aos.is_empty(),
-            "point views already initialized"
+            self.cell_points_aos.is_empty(),
+            "slot-point view already initialized"
         );
         let n = self.point_indices.len();
         let mut cell_points_aos = Vec::<super::SlotPoint>::with_capacity(n);
@@ -308,7 +308,7 @@ impl CubeMapGrid {
     /// gives its effective index; `n_eff` is the effective point count.
     ///
     /// Only the point-dependent arrays change (offsets, indices, SoA
-    /// coordinates, AoS positions, per-point cells/slots); the per-cell
+    /// coordinates, AoS positions, and per-point cells); the per-cell
     /// geometry depends only on `res`. Survivors keep their relative (cell,
     /// slot) order, so the slot streams and effective-id maps are rebuilt in
     /// one forward pass without random source reads. The result is bit-identical
@@ -328,16 +328,8 @@ impl CubeMapGrid {
             "slot-point stream must be initialized before compaction"
         );
         assert_eq!(self.point_cells.len(), kept.len());
-        assert!(
-            self.point_slots.is_empty() || self.point_slots.len() == kept.len(),
-            "point-slot inverse is partially initialized"
-        );
-        if self.point_slots.is_empty() {
-            self.point_slots.resize(n_eff, u32::MAX);
-        }
-
         // One slot-order pass compacts the SoA + AoS streams and directly
-        // rebuilds both effective-id maps. The outer cell and forward write
+        // rebuilds the effective-id-to-cell map. The outer cell and forward write
         // cursor already are the surviving point's final cell and slot, so no
         // dropped-slot list or original-id follow-up pass is needed. Writes to
         // effective-id map entries cannot disturb the loop: neither map is a
@@ -367,7 +359,6 @@ impl CubeMapGrid {
                     idx: eff,
                 };
                 self.point_cells[eff_usize] = cell as u32;
-                self.point_slots[eff_usize] = w as u32;
                 w += 1;
             }
             self.cell_offsets[cell + 1] = w as u32;
@@ -380,7 +371,6 @@ impl CubeMapGrid {
         self.cell_points_z.truncate(w);
         self.cell_points_aos.truncate(w);
         self.point_cells.truncate(n_eff);
-        self.point_slots.truncate(n_eff);
 
         // The dense-cell side index is keyed to slot order and cell ranges,
         // both of which compaction just rewrote. Rebuild only when this grid
@@ -503,7 +493,6 @@ mod tests {
         #[cfg(not(feature = "timing"))]
         let mut fused = CubeMapGrid::new_deferred_dense_and_point_views(&points, 13);
 
-        assert!(fused.point_slots.is_empty());
         assert!(fused.cell_points_aos.is_empty());
         let mut expected_pairs = expected.collect_weld_pairs(threshold).unwrap();
         let mut fused_pairs = fused
@@ -513,7 +502,6 @@ mod tests {
         fused_pairs.sort_unstable();
 
         assert_eq!(fused_pairs, expected_pairs);
-        assert!(fused.point_slots.is_empty());
         assert_eq!(fused.cell_points_aos, expected.cell_points_aos);
     }
 
@@ -572,7 +560,6 @@ mod tests {
                     "res={res} seed={seed}"
                 );
                 assert_eq!(grid.point_cells, fresh.point_cells, "res={res} seed={seed}");
-                assert_eq!(grid.point_slots, fresh.point_slots, "res={res} seed={seed}");
                 assert_eq!(
                     grid.cell_points_x, fresh.cell_points_x,
                     "res={res} seed={seed}"

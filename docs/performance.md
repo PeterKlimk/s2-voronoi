@@ -745,6 +745,22 @@ Recently accepted optimizations:
   replaces serial first-touch with concurrent work. Output fingerprints and topology were
   unchanged.
 
+- **Remove the stale point-to-slot inverse:** the grid formerly allocated and sentinel-filled a
+  `u32` per point, then scattered every spatial slot back to its global generator id. No production
+  code still read that inverse: weld compaction had evolved to rebuild its surviving maps directly
+  in slot order, and ordinary construction released the array before cell building. Removing the
+  field and its construction/compaction lifecycle deletes one complete random-write pass and 4
+  transient bytes per point while simplifying the grid invariant.
+
+  At 1M single-threaded with preprocessing disabled, seven native counter pairs reduced Fibonacci
+  cycles by 1.33% and uniform by 0.69%; retired instructions fell 0.10%/0.08%, cache references
+  21.8%/20.1%, and cache misses 2.2%/5.7%. Twenty rotated 2.5M/16-worker pairs improved construction
+  by 1.93% on Fibonacci (95% bootstrap interval 0.42--3.40%, 16/20 favorable) and 1.45% on uniform
+  (0.53--2.37%, 14/20). The normal preprocessing path already deferred the removed inverse and was
+  structurally neutral: pinned 1M instructions changed by about +0.01%, and fifteen 2.5M/16-worker
+  timing pairs were unresolved around neutral. Checked weld-compaction tests, the complete release
+  suite, and all-target clippy passed.
+
 - **Recycled per-bin cell-build contexts:** the default keeps about twice as many spatial bins as
   workers for load balance, but each bin formerly allocated and zeroed its own full-input
   attempted-neighbor stamp table. Parallel builds now recycle the complete cell-build context
