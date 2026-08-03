@@ -12,8 +12,9 @@ pub(crate) use stream::{
 };
 
 use glam::Vec3;
+use std::sync::Arc;
 
-use super::{face_uv_to_cell, point_to_face_uv, CubeMapGrid, CubeMapGridScratch};
+use super::{face_uv_to_cell, point_to_face_uv, CubeMapGrid, CubeMapGridScratch, GridTopology};
 
 impl CubeMapGrid {
     /// Get cell index for a point.
@@ -40,6 +41,10 @@ impl CubeMapGrid {
     #[inline]
     pub(crate) fn res(&self) -> usize {
         self.res
+    }
+
+    pub(crate) fn topology_arc(&self) -> Arc<GridTopology> {
+        Arc::clone(&self.topology)
     }
 
     /// Get cell offsets array (length = num_cells + 1).
@@ -82,7 +87,7 @@ impl CubeMapGrid {
     /// Get the 9 neighbor cells (including self) for a cell.
     #[inline]
     pub(crate) fn cell_neighbors(&self, cell: usize) -> &[u32; 9] {
-        &self.neighbors[cell]
+        &self.topology.neighbors[cell]
     }
 
     /// Materialize the optional dense-cell side index on this grid's current
@@ -130,8 +135,8 @@ impl CubeMapGrid {
     /// Get the ring-2 cells (Chebyshev distance 2) for a cell.
     #[inline]
     pub(crate) fn cell_ring2(&self, cell: usize) -> &[u32] {
-        let len = self.ring2_lens[cell] as usize;
-        &self.ring2[cell][..len]
+        let len = self.topology.ring2_lens[cell] as usize;
+        &self.topology.ring2[cell][..len]
     }
 
     /// Get the u-grid-line plane normal for a face at a given line index.
@@ -146,7 +151,7 @@ impl CubeMapGrid {
             line,
             self.res
         );
-        self.u_line_planes[face * (self.res + 1) + line]
+        self.topology.u_line_planes[face * (self.res + 1) + line]
     }
 
     /// Get the v-grid-line plane normal for a face at a given line index.
@@ -161,7 +166,7 @@ impl CubeMapGrid {
             line,
             self.res
         );
-        self.v_line_planes[face * (self.res + 1) + line]
+        self.topology.v_line_planes[face * (self.res + 1) + line]
     }
 
     /// Create a reusable scratch buffer for fast repeated queries.
@@ -179,11 +184,12 @@ impl CubeMapGrid {
         // near-antipodal query; deriving sin(d) from that endpoint loses an
         // O(sqrt(f32::EPSILON)) transverse term that no fixed O(epsilon)
         // export pad can cover.
-        let center = self.cell_centers[cell].as_dvec3();
-        let cos_d = (query_unit.dot(center) * self.cell_center_inv_norms[cell]).clamp(-1.0, 1.0);
+        let center = self.topology.cell_centers[cell].as_dvec3();
+        let cos_d =
+            (query_unit.dot(center) * self.topology.cell_center_inv_norms[cell]).clamp(-1.0, 1.0);
 
-        let cos_r = self.cell_cos_radius[cell] as f64;
-        let sin_r = self.cell_sin_radius[cell] as f64;
+        let cos_r = self.topology.cell_cos_radius[cell] as f64;
+        let sin_r = self.topology.cell_sin_radius[cell] as f64;
 
         // If the query direction is within the cell's cap, the minimum distance can be 0.
         if cos_d > cos_r {

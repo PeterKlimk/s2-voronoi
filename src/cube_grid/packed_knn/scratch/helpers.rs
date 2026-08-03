@@ -91,7 +91,7 @@ pub(super) fn security_planes_3x3_interior(cell: usize, grid: &CubeMapGrid) -> O
     ];
 
     // Orient all planes so that the interior (containing the cell center) has `n·p >= 0`.
-    let center = grid.cell_centers[cell];
+    let center = grid.topology.cell_centers[cell];
     for n in &mut planes {
         if n.dot(center) < 0.0 {
             *n = -*n;
@@ -119,9 +119,9 @@ pub(super) fn outside_max_dot_xyz(
     let mut max_dot = f32::NEG_INFINITY;
     for &cell in ring2 {
         let idx = cell as usize;
-        let center = grid.cell_centers[idx];
-        let cos_r = grid.cell_cos_radius[idx];
-        let sin_r = grid.cell_sin_radius[idx];
+        let center = grid.topology.cell_centers[idx];
+        let cos_r = grid.topology.cell_cos_radius[idx];
+        let sin_r = grid.topology.cell_sin_radius[idx];
         let dot = max_dot_to_cap_xyz(qx, qy, qz, center, cos_r, sin_r);
         if dot > max_dot {
             max_dot = dot;

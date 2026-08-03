@@ -354,7 +354,7 @@ fn run_core_pipeline(
         effective_input,
         report: preprocess_report,
         mut grid,
-    } = prepare_points_and_grid(&points, preprocess_mode, &mut tb)?;
+    } = prepare_points_and_grid(&points, preprocess_mode, workspace, &mut tb)?;
 
     let effective_points_ref = effective_input.points(&points);
 
@@ -1477,6 +1477,7 @@ struct PreparedPointsAndGrid {
 fn prepare_points_and_grid(
     points: &[Vec3],
     preprocess_mode: PreprocessMode,
+    workspace: Option<&super::driver::BuildWorkspace>,
     tb: &mut TimingBuilder,
 ) -> Result<PreparedPointsAndGrid, crate::VoronoiError> {
     let threshold = match preprocess_mode {
@@ -1485,7 +1486,8 @@ fn prepare_points_and_grid(
         PreprocessMode::MergeWithin(threshold) => Some(threshold),
     };
 
-    let (mut grid, mut dense_index_eligible) = build_query_grid(points, tb, threshold.is_some());
+    let (mut grid, mut dense_index_eligible) =
+        build_query_grid(points, tb, threshold.is_some(), workspace);
 
     let t = Timer::start();
     let mut effective_input = EffectiveInput::Identity;
@@ -1523,7 +1525,8 @@ fn prepare_points_and_grid(
                 }
             })?;
             if result.num_merged > 0 {
-                (grid, dense_index_eligible) = build_query_grid(&result.effective_points, tb, true);
+                (grid, dense_index_eligible) =
+                    build_query_grid(&result.effective_points, tb, true, workspace);
                 effective_input = EffectiveInput::Merged(result);
             }
             grid.finalize_slot_points();
@@ -1585,6 +1588,7 @@ fn build_query_grid(
     effective_points: &[Vec3],
     tb: &mut TimingBuilder,
     defer_point_views: bool,
+    workspace: Option<&super::driver::BuildWorkspace>,
 ) -> (crate::cube_grid::CubeMapGrid, bool) {
     let t = Timer::start();
     let n = effective_points.len();
@@ -1592,26 +1596,26 @@ fn build_query_grid(
     let mut grid_build_timings = CubeMapGridBuildTimings::default();
 
     let build = |res: usize, #[cfg(feature = "timing")] timings: &mut CubeMapGridBuildTimings| {
+        let cached_topology = workspace.and_then(|workspace| workspace.grid_topology(res));
         #[cfg(feature = "timing")]
-        {
-            if defer_point_views {
-                CubeMapGrid::new_deferred_dense_and_point_views_with_build_timings(
-                    effective_points,
-                    res,
-                    timings,
-                )
-            } else {
-                CubeMapGrid::new_deferred_dense_with_build_timings(effective_points, res, timings)
-            }
-        }
+        let grid = CubeMapGrid::new_deferred_with_cached_topology_and_build_timings(
+            effective_points,
+            res,
+            defer_point_views,
+            cached_topology,
+            timings,
+        );
         #[cfg(not(feature = "timing"))]
-        {
-            if defer_point_views {
-                CubeMapGrid::new_deferred_dense_and_point_views(effective_points, res)
-            } else {
-                CubeMapGrid::new_deferred_dense(effective_points, res)
-            }
+        let grid = CubeMapGrid::new_deferred_with_cached_topology(
+            effective_points,
+            res,
+            defer_point_views,
+            cached_topology,
+        );
+        if let Some(workspace) = workspace {
+            workspace.retain_grid_topology(res, grid.topology_arc());
         }
+        grid
     };
 
     let mut res = crate::policy::knn_grid_resolution(n);

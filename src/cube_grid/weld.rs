@@ -233,10 +233,10 @@ impl CubeMapGrid {
             // have a partner in another cell (essentially never on real
             // input — this loop's body is cold).
             let walls = [
-                self.u_line_planes[face * line_count + iu],
-                self.u_line_planes[face * line_count + iu + 1],
-                self.v_line_planes[face * line_count + iv],
-                self.v_line_planes[face * line_count + iv + 1],
+                self.topology.u_line_planes[face * line_count + iu],
+                self.topology.u_line_planes[face * line_count + iu + 1],
+                self.topology.v_line_planes[face * line_count + iv],
+                self.topology.v_line_planes[face * line_count + iv + 1],
             ];
             for i in start..end {
                 let p = Vec3::new(
@@ -247,7 +247,7 @@ impl CubeMapGrid {
                 if !walls.iter().any(|n| n.dot(p).abs() < pad) {
                     continue;
                 }
-                for &nc in &self.neighbors[cell] {
+                for &nc in &self.topology.neighbors[cell] {
                     // Skips the u32::MAX padding and the center entry, and
                     // gates each unordered cell pair to one scanning side.
                     if nc == u32::MAX || (nc as usize) <= cell {

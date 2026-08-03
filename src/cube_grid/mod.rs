@@ -25,6 +25,7 @@ pub(crate) use query::{
 };
 
 use glam::Vec3;
+use std::sync::Arc;
 #[cfg(feature = "timing")]
 use std::time::Duration;
 
@@ -58,6 +59,7 @@ pub(crate) struct CubeMapGridBuildTimings {
     pub input_order_pairs: u64,
     pub materialize_coordinates_by_slot: bool,
     pub topology_overlapped: bool,
+    pub topology_reused: bool,
 }
 
 /// Dummy timings when feature is disabled (zero-sized).
@@ -84,6 +86,18 @@ impl CubeMapGridBuildTimings {
 // diagonal is missing because only 3 faces meet at a cube vertex); 16 remains the safe cap.
 const RING2_MAX: usize = 16;
 
+pub(crate) struct GridTopology {
+    pub(super) neighbors: Vec<[u32; 9]>,
+    pub(super) ring2: Vec<[u32; RING2_MAX]>,
+    pub(super) ring2_lens: Vec<u8>,
+    pub(super) cell_centers: Vec<Vec3>,
+    pub(super) cell_center_inv_norms: Vec<f64>,
+    pub(super) cell_cos_radius: Vec<f32>,
+    pub(super) cell_sin_radius: Vec<f32>,
+    pub(super) u_line_planes: Vec<Vec3>,
+    pub(super) v_line_planes: Vec<Vec3>,
+}
+
 /// Cube-map spatial grid for points on unit sphere.
 pub(crate) struct CubeMapGrid {
     pub(super) res: usize,
@@ -96,34 +110,8 @@ pub(crate) struct CubeMapGrid {
     /// Precomputed cell index per point (for fast query start).
     /// Length: n (number of points)
     point_cells: Vec<u32>,
-    /// Precomputed 3×3 neighborhood for each cell.
-    /// 9 entries per cell (self + 8 neighbors).
-    /// Length: 6 * res²
-    neighbors: Vec<[u32; 9]>,
-    /// Precomputed ring-2 (Chebyshev distance 2) cells for each cell.
-    /// Entries are padded with u32::MAX past ring2_lens.
-    ring2: Vec<[u32; RING2_MAX]>,
-    ring2_lens: Vec<u8>,
-    /// Unit vector at the center of each cell (on the sphere).
-    pub(super) cell_centers: Vec<Vec3>,
-    /// f64 normalization factor for each exactly promoted stored center. Used
-    /// by the shell cap certificate without a per-frontier-cell square root.
-    pub(super) cell_center_inv_norms: Vec<f64>,
-    /// Spherical cap radius around `cell_centers[cell]` that conservatively contains the cell.
-    /// Stored as cos/sin for fast per-query bounds.
-    pub(super) cell_cos_radius: Vec<f32>,
-    pub(super) cell_sin_radius: Vec<f32>,
-
-    /// Precomputed normalized u-grid-line plane normals, indexed by `face * (res+1) + line`.
-    ///
-    /// These are great-circle boundary planes `u = const` in the cube-map parameterization
-    /// used by `point_to_face_uv`.
-    pub(super) u_line_planes: Vec<Vec3>,
-    /// Precomputed normalized v-grid-line plane normals, indexed by `face * (res+1) + line`.
-    ///
-    /// These are great-circle boundary planes `v = const` in the cube-map parameterization
-    /// used by `point_to_face_uv`.
-    pub(super) v_line_planes: Vec<Vec3>,
+    /// Resolution-only immutable topology, shareable by repeated workspace builds.
+    pub(super) topology: Arc<GridTopology>,
 
     // === SoA layout: points stored contiguous by cell ===
     /// X coordinates of points, ordered by cell (use cell_offsets for ranges).

@@ -94,7 +94,7 @@ fn near_antipodal_shell_cap_bounds_raw_dot() {
     let res = 5usize;
     let grid = CubeMapGrid::new(&[], res);
     let cell = grid.point_to_cell(Vec3::X);
-    assert_eq!(grid.cell_centers[cell], Vec3::X);
+    assert_eq!(grid.topology.cell_centers[cell], Vec3::X);
 
     let (_, iu, iv) = cell_to_face_ij(cell, res);
     let s = ((iu + 1) as f32 / res as f32).next_down();
@@ -190,9 +190,9 @@ fn test_security_ring2_captures_outside_cap_max() {
                 }
                 let dot = max_dot_to_cap(
                     q,
-                    grid.cell_centers[other],
-                    grid.cell_cos_radius[other],
-                    grid.cell_sin_radius[other],
+                    grid.topology.cell_centers[other],
+                    grid.topology.cell_cos_radius[other],
+                    grid.topology.cell_sin_radius[other],
                 );
                 outside_max = outside_max.max(dot);
             }
@@ -202,9 +202,9 @@ fn test_security_ring2_captures_outside_cap_max() {
                 let idx = other as usize;
                 let dot = max_dot_to_cap(
                     q,
-                    grid.cell_centers[idx],
-                    grid.cell_cos_radius[idx],
-                    grid.cell_sin_radius[idx],
+                    grid.topology.cell_centers[idx],
+                    grid.topology.cell_cos_radius[idx],
+                    grid.topology.cell_sin_radius[idx],
                 );
                 ring2_max = ring2_max.max(dot);
             }
@@ -232,7 +232,7 @@ fn test_uv_line_planes_match_uv_rect_interior() {
     for face in 0..6usize {
         for &(iu, iv) in &samples {
             let cell = face * res * res + iv * res + iu;
-            let center = grid.cell_centers[cell];
+            let center = grid.topology.cell_centers[cell];
 
             let mut planes = [
                 grid.face_u_line_plane(face, iu - 1),

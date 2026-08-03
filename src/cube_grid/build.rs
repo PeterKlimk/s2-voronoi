@@ -7,8 +7,10 @@ use rayon::prelude::*;
 
 use super::{
     cell_to_face_ij, diagonal_from_edge_neighbors, face_uv_to_3d, face_uv_to_cell,
-    point_to_face_uv, st_to_uv, step_one, CubeMapGrid, CubeMapGridBuildTimings, EdgeDir, RING2_MAX,
+    point_to_face_uv, st_to_uv, step_one, CubeMapGrid, CubeMapGridBuildTimings, EdgeDir,
+    GridTopology, RING2_MAX,
 };
+use std::sync::Arc;
 
 struct CellBounds {
     centers: Vec<Vec3>,
@@ -19,14 +21,8 @@ struct CellBounds {
     v_line_planes: Vec<Vec3>,
 }
 
-struct GridTopology {
-    neighbors: Vec<[u32; 9]>,
-    ring2: Vec<[u32; RING2_MAX]>,
-    ring2_lens: Vec<u8>,
-    bounds: CellBounds,
-}
-
 #[cfg(feature = "timing")]
+#[derive(Default)]
 struct GridTopologyTimings {
     neighbors: std::time::Duration,
     ring2: std::time::Duration,
@@ -290,6 +286,7 @@ impl CubeMapGrid {
             res,
             DenseIndexBuild::Eager,
             PointViewsBuild::Eager,
+            None,
             Some(&mut timings),
         );
         #[cfg(not(feature = "timing"))]
@@ -299,6 +296,7 @@ impl CubeMapGrid {
             DenseIndexBuild::Eager,
             PointViewsBuild::Eager,
             None,
+            None,
         );
     }
 
@@ -306,22 +304,11 @@ impl CubeMapGrid {
     /// index. The compute pipeline uses this while occupancy feedback and
     /// preprocessing may still replace or compact the grid, then materializes
     /// the index once on the retained layout.
-    #[cfg(not(feature = "timing"))]
-    pub(crate) fn new_deferred_dense(points: &[Vec3], res: usize) -> Self {
-        Self::new_impl(
-            points,
-            res,
-            DenseIndexBuild::Deferred,
-            PointViewsBuild::Eager,
-            None,
-        )
-    }
-
     /// Build a provisional compute grid while also deferring its slot/global
     /// point views. Weld-enabled construction initializes the required
     /// slot-ordered stream during the retained grid's cell-major weld
     /// traversal; the inverse is created only if compaction actually occurs.
-    #[cfg(not(feature = "timing"))]
+    #[cfg(all(test, not(feature = "timing")))]
     pub(crate) fn new_deferred_dense_and_point_views(points: &[Vec3], res: usize) -> Self {
         Self::new_impl(
             points,
@@ -329,25 +316,11 @@ impl CubeMapGrid {
             DenseIndexBuild::Deferred,
             PointViewsBuild::Deferred,
             None,
+            None,
         )
     }
 
-    #[cfg(feature = "timing")]
-    pub(crate) fn new_deferred_dense_with_build_timings(
-        points: &[Vec3],
-        res: usize,
-        timings: &mut CubeMapGridBuildTimings,
-    ) -> Self {
-        Self::new_impl(
-            points,
-            res,
-            DenseIndexBuild::Deferred,
-            PointViewsBuild::Eager,
-            Some(timings),
-        )
-    }
-
-    #[cfg(feature = "timing")]
+    #[cfg(all(test, feature = "timing"))]
     pub(crate) fn new_deferred_dense_and_point_views_with_build_timings(
         points: &[Vec3],
         res: usize,
@@ -358,6 +331,50 @@ impl CubeMapGrid {
             res,
             DenseIndexBuild::Deferred,
             PointViewsBuild::Deferred,
+            None,
+            Some(timings),
+        )
+    }
+
+    #[cfg(not(feature = "timing"))]
+    pub(crate) fn new_deferred_with_cached_topology(
+        points: &[Vec3],
+        res: usize,
+        defer_point_views: bool,
+        cached_topology: Option<Arc<GridTopology>>,
+    ) -> Self {
+        Self::new_impl(
+            points,
+            res,
+            DenseIndexBuild::Deferred,
+            if defer_point_views {
+                PointViewsBuild::Deferred
+            } else {
+                PointViewsBuild::Eager
+            },
+            cached_topology,
+            None,
+        )
+    }
+
+    #[cfg(feature = "timing")]
+    pub(crate) fn new_deferred_with_cached_topology_and_build_timings(
+        points: &[Vec3],
+        res: usize,
+        defer_point_views: bool,
+        cached_topology: Option<Arc<GridTopology>>,
+        timings: &mut CubeMapGridBuildTimings,
+    ) -> Self {
+        Self::new_impl(
+            points,
+            res,
+            DenseIndexBuild::Deferred,
+            if defer_point_views {
+                PointViewsBuild::Deferred
+            } else {
+                PointViewsBuild::Eager
+            },
+            cached_topology,
             Some(timings),
         )
     }
@@ -367,6 +384,7 @@ impl CubeMapGrid {
         res: usize,
         dense_index_build: DenseIndexBuild,
         point_views_build: PointViewsBuild,
+        cached_topology: Option<Arc<GridTopology>>,
         #[cfg(feature = "timing")] mut timings: Option<&mut CubeMapGridBuildTimings>,
         #[cfg(not(feature = "timing"))] _timings: Option<&mut CubeMapGridBuildTimings>,
     ) -> Self {
@@ -384,18 +402,22 @@ impl CubeMapGrid {
         // Step 1: Classify points into cells (parallel).
         #[cfg(feature = "timing")]
         let t = std::time::Instant::now();
+        #[cfg(feature = "timing")]
+        let topology_reused = cached_topology.is_some();
 
         // Topology depends only on `res`, not on the input points. Submit it
         // independently so Rayon can interleave its compute-heavy work with
         // classification and the memory-heavy point permutation below.
         #[cfg(all(feature = "parallel", feature = "timing"))]
-        let topology_handle = (rayon::current_num_threads() >= TOPOLOGY_OVERLAP_MIN_WORKERS
+        let topology_handle = (cached_topology.is_none()
+            && rayon::current_num_threads() >= TOPOLOGY_OVERLAP_MIN_WORKERS
             && num_cells >= 16_384)
             .then(|| std::thread::spawn(move || Self::compute_topology_timed(res)));
         #[cfg(all(feature = "parallel", feature = "timing"))]
         let topology_overlapped = topology_handle.is_some();
         #[cfg(all(feature = "parallel", not(feature = "timing")))]
-        let topology_handle = (rayon::current_num_threads() >= TOPOLOGY_OVERLAP_MIN_WORKERS
+        let topology_handle = (cached_topology.is_none()
+            && rayon::current_num_threads() >= TOPOLOGY_OVERLAP_MIN_WORKERS
             && num_cells >= 16_384)
             .then(|| std::thread::spawn(move || Self::compute_topology(res)));
 
@@ -727,38 +749,43 @@ impl CubeMapGrid {
         // Step 4: collect the independently scheduled topology, or build it
         // here when the overlap policy is disabled.
         #[cfg(all(feature = "parallel", feature = "timing"))]
-        let (topology, topology_timings) = if let Some(handle) = topology_handle {
-            handle.join().expect("cube-grid topology worker panicked")
+        let (topology, topology_timings) = if let Some(topology) = cached_topology {
+            (topology, GridTopologyTimings::default())
+        } else if let Some(handle) = topology_handle {
+            let (topology, timings) = handle.join().expect("cube-grid topology worker panicked");
+            (Arc::new(topology), timings)
         } else {
-            Self::compute_topology_timed(res)
+            let (topology, timings) = Self::compute_topology_timed(res);
+            (Arc::new(topology), timings)
         };
         #[cfg(all(feature = "parallel", not(feature = "timing")))]
-        let topology = if let Some(handle) = topology_handle {
-            handle.join().expect("cube-grid topology worker panicked")
+        let topology = if let Some(topology) = cached_topology {
+            topology
+        } else if let Some(handle) = topology_handle {
+            Arc::new(handle.join().expect("cube-grid topology worker panicked"))
         } else {
-            Self::compute_topology(res)
+            Arc::new(Self::compute_topology(res))
         };
         #[cfg(all(not(feature = "parallel"), feature = "timing"))]
-        let (topology, topology_timings) = Self::compute_topology_timed(res);
+        let (topology, topology_timings) = if let Some(topology) = cached_topology {
+            (topology, GridTopologyTimings::default())
+        } else {
+            let (topology, timings) = Self::compute_topology_timed(res);
+            (Arc::new(topology), timings)
+        };
         #[cfg(all(not(feature = "parallel"), not(feature = "timing")))]
-        let topology = Self::compute_topology(res);
+        let topology = cached_topology.unwrap_or_else(|| Arc::new(Self::compute_topology(res)));
         #[cfg(feature = "timing")]
         if let Some(timings) = timings {
             timings.neighbors += topology_timings.neighbors;
             timings.ring2 += topology_timings.ring2;
             timings.cell_bounds += topology_timings.bounds;
+            timings.topology_reused = topology_reused;
             #[cfg(feature = "parallel")]
             {
                 timings.topology_overlapped = topology_overlapped;
             }
         }
-        let GridTopology {
-            neighbors,
-            ring2,
-            ring2_lens,
-            bounds,
-        } = topology;
-
         let cell_points_aos = if point_views_build == PointViewsBuild::Eager {
             if materialized_slot_points.is_empty() {
                 build_pos_aos(
@@ -792,15 +819,7 @@ impl CubeMapGrid {
             cell_offsets,
             point_indices,
             point_cells,
-            neighbors,
-            ring2,
-            ring2_lens,
-            cell_centers: bounds.centers,
-            cell_center_inv_norms: bounds.center_inv_norms,
-            cell_cos_radius: bounds.cos_radius,
-            cell_sin_radius: bounds.sin_radius,
-            u_line_planes: bounds.u_line_planes,
-            v_line_planes: bounds.v_line_planes,
+            topology,
             cell_points_x,
             cell_points_y,
             cell_points_z,
@@ -818,7 +837,12 @@ impl CubeMapGrid {
             neighbors,
             ring2,
             ring2_lens,
-            bounds,
+            cell_centers: bounds.centers,
+            cell_center_inv_norms: bounds.center_inv_norms,
+            cell_cos_radius: bounds.cos_radius,
+            cell_sin_radius: bounds.sin_radius,
+            u_line_planes: bounds.u_line_planes,
+            v_line_planes: bounds.v_line_planes,
         }
     }
 
@@ -838,7 +862,12 @@ impl CubeMapGrid {
                 neighbors,
                 ring2,
                 ring2_lens,
-                bounds,
+                cell_centers: bounds.centers,
+                cell_center_inv_norms: bounds.center_inv_norms,
+                cell_cos_radius: bounds.cos_radius,
+                cell_sin_radius: bounds.sin_radius,
+                u_line_planes: bounds.u_line_planes,
+                v_line_planes: bounds.v_line_planes,
             },
             GridTopologyTimings {
                 neighbors: neighbors_elapsed,

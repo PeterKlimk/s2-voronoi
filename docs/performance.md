@@ -776,6 +776,21 @@ Recently accepted optimizations:
   14/20) and left Fibonacci directionally 0.59% faster but unresolved. The schedule changes no
   point or topology ordering and the one-thread/old six-core regime never enters it.
 
+- **Reuse immutable topology in `VoronoiWorkspace`:** repeated workspace computations now retain
+  reference-counted cube-grid topology for up to two resolutions, covering the ordinary resolution
+  plus a possible occupancy-feedback regrid. Point classification, occupancy, spatial permutation,
+  and every mutable/dense side structure are still rebuilt per input. Ordinary `compute()` calls
+  retain nothing, and `VoronoiWorkspace::clear()` releases both topology and construction scratch.
+
+  On the native 16-core Ryzen at 2.5M without preprocessing, eight rotated processes with five
+  iterations each (discarding each process's cold first iteration) reduced steady-state grid wall
+  time 14.6% on Fibonacci and 10.0% on uniform, with 31/32 samples favorable in both cases. Whole
+  builds improved 2.1% on Fibonacci (95% log interval 0.2--4.0%) and 1.1% on uniform (interval
+  -0.1--2.3%). Fifteen-pair one-shot controls were unresolved around neutral. Seven pinned 1M
+  one-thread counter pairs found no added work from shared topology ownership: instructions changed
+  by +0.005%/-0.043% and branches fell about 0.11% on Fibonacci/uniform. Workspace and non-workspace
+  outputs remain exact because both consume the same immutable tables.
+
 - **Recycled per-bin cell-build contexts:** the default keeps about twice as many spatial bins as
   workers for load balance, but each bin formerly allocated and zeroed its own full-input
   attempted-neighbor stamp table. Parallel builds now recycle the complete cell-build context

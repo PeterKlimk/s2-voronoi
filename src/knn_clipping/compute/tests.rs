@@ -37,7 +37,7 @@ fn prepared_input_owns_only_actual_merges() {
 
     for mode in [PreprocessMode::Disabled, PreprocessMode::Weld] {
         let mut tb = TimingBuilder::new();
-        let prepared = prepare_points_and_grid(&points, mode, &mut tb)
+        let prepared = prepare_points_and_grid(&points, mode, None, &mut tb)
             .expect("separated points should prepare without merging");
         assert!(matches!(
             &prepared.effective_input,
@@ -56,7 +56,7 @@ fn prepared_input_owns_only_actual_merges() {
     let mut duplicated = points;
     duplicated.push(duplicated[0]);
     let mut tb = TimingBuilder::new();
-    let prepared = prepare_points_and_grid(&duplicated, PreprocessMode::Weld, &mut tb)
+    let prepared = prepare_points_and_grid(&duplicated, PreprocessMode::Weld, None, &mut tb)
         .expect("exact duplicate should prepare as one merged input");
     let EffectiveInput::Merged(merge) = &prepared.effective_input else {
         panic!("actual merge must own one complete merge result");
@@ -1219,7 +1219,7 @@ fn clustered_input_triggers_occupancy_rebuild() {
     );
 
     let mut tb = TimingBuilder::new();
-    let (grid, dense_index_eligible) = build_query_grid(&points, &mut tb, false);
+    let (grid, dense_index_eligible) = build_query_grid(&points, &mut tb, false, None);
     assert!(dense_index_eligible);
     let rebuilt_occupancy = max_cell_occupancy(&grid);
     assert!(
@@ -1256,7 +1256,7 @@ fn dense_index_is_deferred_until_retained_grid_finalization() {
         .collect();
 
     let mut tb = TimingBuilder::new();
-    let (mut grid, dense_index_eligible) = build_query_grid(&points, &mut tb, false);
+    let (mut grid, dense_index_eligible) = build_query_grid(&points, &mut tb, false, None);
     assert!(dense_index_eligible, "sub-cell cap must trigger regridding");
     let dense_cell = grid.point_index_to_cell(0) as u32;
     assert!(grid.cell_points(dense_cell as usize).len() > crate::policy::DENSE_CELL_THRESHOLD);
@@ -1271,6 +1271,34 @@ fn dense_index_is_deferred_until_retained_grid_finalization() {
         grid.dense_band_radius(dense_cell, 64).is_some(),
         "retained grid finalization must materialize the dense side index"
     );
+}
+
+#[test]
+fn workspace_reuses_and_clears_grid_topology() {
+    let points: Vec<Vec3> = fib_sphere(1_000)
+        .into_iter()
+        .map(Vec3::from_array)
+        .collect();
+    let mut workspace = crate::knn_clipping::driver::BuildWorkspace::new();
+
+    let mut tb = TimingBuilder::new();
+    let (first, _) = build_query_grid(&points, &mut tb, false, Some(&workspace));
+    let first_topology = first.topology_arc();
+    drop(first);
+
+    let mut tb = TimingBuilder::new();
+    let (second, _) = build_query_grid(&points, &mut tb, false, Some(&workspace));
+    let second_topology = second.topology_arc();
+    assert!(std::sync::Arc::ptr_eq(&first_topology, &second_topology));
+    drop(second);
+
+    workspace.clear();
+    let mut tb = TimingBuilder::new();
+    let (third, _) = build_query_grid(&points, &mut tb, false, Some(&workspace));
+    assert!(!std::sync::Arc::ptr_eq(
+        &first_topology,
+        &third.topology_arc()
+    ));
 }
 
 #[cfg(target_pointer_width = "64")]

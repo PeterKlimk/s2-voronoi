@@ -4,7 +4,7 @@
 use glam::Vec3;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::cube_grid::packed_knn::{
     PackedGroupInput, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroup,
@@ -49,19 +49,52 @@ type ReusableBuildContext = ((usize, usize), BuildTaskContext);
 /// Caller-owned storage retained across complete computations.
 pub(crate) struct BuildWorkspace {
     contexts: Mutex<Vec<ReusableBuildContext>>,
+    grid_topologies: Mutex<Vec<(usize, Arc<crate::cube_grid::GridTopology>)>>,
 }
 
 impl BuildWorkspace {
     pub(crate) fn new() -> Self {
         Self {
             contexts: Mutex::new(Vec::new()),
+            grid_topologies: Mutex::new(Vec::new()),
         }
+    }
+
+    pub(crate) fn grid_topology(&self, res: usize) -> Option<Arc<crate::cube_grid::GridTopology>> {
+        self.grid_topologies
+            .lock()
+            .expect("grid-topology workspace poisoned")
+            .iter()
+            .find(|(cached_res, _)| *cached_res == res)
+            .map(|(_, topology)| Arc::clone(topology))
+    }
+
+    pub(crate) fn retain_grid_topology(
+        &self,
+        res: usize,
+        topology: Arc<crate::cube_grid::GridTopology>,
+    ) {
+        let mut topologies = self
+            .grid_topologies
+            .lock()
+            .expect("grid-topology workspace poisoned");
+        if topologies.iter().any(|(cached_res, _)| *cached_res == res) {
+            return;
+        }
+        if topologies.len() == 2 {
+            topologies.remove(0);
+        }
+        topologies.push((res, topology));
     }
 
     pub(crate) fn clear(&mut self) {
         self.contexts
             .get_mut()
             .expect("cell-build workspace poisoned")
+            .clear();
+        self.grid_topologies
+            .get_mut()
+            .expect("grid-topology workspace poisoned")
             .clear();
     }
 }

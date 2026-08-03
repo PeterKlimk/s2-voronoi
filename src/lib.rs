@@ -541,17 +541,18 @@ impl VoronoiConfig {
     }
 }
 
-/// Caller-owned scratch storage for repeated Voronoi computations.
+/// Caller-owned reusable storage for repeated Voronoi computations.
 ///
 /// A workspace retains per-worker construction buffers between calls. This
 /// avoids reallocating and initializing point-count-sized scratch tables when
-/// repeatedly building diagrams of a similar size. It never retains input or
-/// output geometry, and using it does not change numerical or topological
-/// behavior.
+/// repeatedly building diagrams of a similar size. It also retains immutable
+/// cube-grid topology for up to two recently used resolutions. It never retains
+/// input or output geometry, and using it does not change numerical or
+/// topological behavior.
 ///
-/// Retained memory is proportional to the number of points and active worker
-/// threads. Call [`clear`](Self::clear) to release it. Ordinary [`compute`]
-/// calls retain no workspace memory.
+/// Retained memory is proportional to the number of points, active worker
+/// threads, and cached grid resolutions. Call [`clear`](Self::clear) to release
+/// it. Ordinary [`compute`] calls retain no workspace memory.
 pub struct VoronoiWorkspace {
     inner: knn_clipping::driver::BuildWorkspace,
 }

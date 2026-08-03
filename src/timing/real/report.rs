@@ -70,6 +70,8 @@ impl PhaseTimings {
                     eprintln!(
                         "    grid_topology: overlapped (topology subphase elapsed times are non-additive)"
                     );
+                } else if sub.topology_reused {
+                    eprintln!("    grid_topology: reused from workspace");
                 }
                 eprintln!(
                     "    grid_security:   {:7.1}ms ({:4.1}%)",
