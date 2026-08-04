@@ -67,7 +67,10 @@ const IMBALANCED_BIN_TARGET: usize = 216;
 
 #[inline]
 fn default_target_bin_count(threads: usize) -> usize {
-    if threads >= 12 {
+    // The 24-shard layout keeps the largest-first queue at least three tasks
+    // deep per worker through eight workers. Above that, use the 96-shard
+    // layout so uneven shard costs leave enough work to fill the closing wave.
+    if threads > 8 {
         96
     } else {
         threads.saturating_mul(2)
@@ -385,7 +388,8 @@ mod tests {
     fn high_core_default_increases_shard_granularity() {
         assert_eq!(default_target_bin_count(1), 2);
         assert_eq!(default_target_bin_count(8), 16);
-        assert_eq!(default_target_bin_count(11), 22);
+        assert_eq!(default_target_bin_count(9), 96);
+        assert_eq!(default_target_bin_count(11), 96);
         assert_eq!(default_target_bin_count(12), 96);
         assert_eq!(default_target_bin_count(16), 96);
         assert_eq!(default_target_bin_count(32), 96);

@@ -101,7 +101,7 @@ Useful flags:
 
 - `RAYON_NUM_THREADS=1` — single-threaded, for stable comparisons.
 - `VORONOI_MESH_BIN_COUNT=<n>` — explicit shard target, quantized and capped at 96. Without an
-  override, the default is 2x workers below 12 and a 96-bin coarse layout at 12+; severely
+  override, the default is 2x workers through 8 workers and a 96-bin coarse layout at 9+; severely
   imbalanced coarse layouts may refine to 216 bins.
 - `VORONOI_MESH_TIMING_KV=1` with `--features timing` — machine-readable phase timing.
 - `VORONOI_MESH_RECONCILE_TELEMETRY=1` — on defect-bearing builds, emit a read-only
@@ -975,16 +975,18 @@ selected layout is unchanged, uniform wall time was neutral and seven Fibonacci 
 were structurally neutral (slightly fewer instructions and branches), rejecting a small noisy wall
 regression as changed work.
 
-A post-optimization scaling census extended the same 96-bin layout down to twelve workers. The old
-24-bin default plateaued between eight and twelve cores; an intermediate 54-bin layout did not
-help, while 96 bins supplied enough tail work to matter. At 2.5M without preprocessing, ten
-alternating 12-core pairs improved uniform by 4.97% (approximate 95% paired interval 0.95--8.82%,
-9/10 favorable) and left Fibonacci neutral (-0.53%, interval -3.02--3.95%). With preprocessing,
-Fibonacci was directionally 0.96% faster and uniform 2.86% faster, though both intervals included
-neutral. Aggregate cycles were essentially flat; the extra cross-bin work added at most 0.54%
-instructions. Ten-pair 1M guards were directionally 3.87%/3.77% faster on Fibonacci/uniform. The
-default therefore uses 2x workers below twelve and the full 96-bin cube layout at twelve or more;
-the eight-worker policy remains unchanged.
+A post-optimization scaling census first extended the same 96-bin layout down to twelve workers.
+After whole shards began entering a largest-first dynamic queue, a quieter 16-core follow-up found
+that the useful crossover had moved to nine workers. At 2.5M without preprocessing, twelve paired
+rotated comparisons of 96 versus 24 shards improved Fibonacci/uniform by 3.15%/5.33% at nine
+workers, 7.51%/7.88% at ten, and 10.55%/11.31% at eleven; all corresponding 95% bootstrap
+intervals excluded neutral. At eight workers, six-pair guards left Fibonacci neutral and made
+uniform 2.01% slower. Timing attribution showed why: aggregate shard work stayed similar, but at
+nine and ten workers the 96-bin layout shortened cell construction by roughly 30--75ms and sharply
+reduced the longest shard task; at eight workers the 24-bin layout already supplies exactly three
+tasks per worker, so extra shard boundaries only add overhead. The default therefore retains 2x
+workers through eight and uses the 96-bin cube layout at nine or more: this is a minimum queue-depth
+rule, not a hardware-size cutoff.
 
 Severely imbalanced default layouts now refine adaptively from 96 to 216 spatial bins. The gate
 uses only exact integer population counts: the heaviest coarse bin must hold at least seven times
