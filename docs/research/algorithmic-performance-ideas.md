@@ -280,6 +280,14 @@ candidates. The directly successful `great-circle` benchmark at 1k sites (defaul
 jitter) had median 24, p90 at least 512, and maximum 999. These counters characterize opportunity;
 they do not yet select a handoff or establish its crossover.
 
+An August 2026 exact-cell audit closed the simplest Hull3d version of this idea. The pathological
+`mega 500k` cells are cluster-boundary cells: generators that can cut their long cells may rank
+tens or hundreds of thousands deep by distance from the owner. Even a 2,048-neighbor local hull
+failed a global ownership check on the worst cell. A viable handoff must preserve the active far
+constraints already found by clipping and certify the resulting polygon globally. The current
+preferred experiment is nearest-generator lookup at each polygon vertex; by convexity, vertex
+ownership certifies the whole cell without assuming that its Delaunay neighborhood is kNN-local.
+
 ### High-core-count scaling validation
 
 Single-thread per-op cost is near its floor; the differentiating claim is multithreaded scaling
