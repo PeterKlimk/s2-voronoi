@@ -152,7 +152,6 @@ mod stub {
     pub(crate) struct CellTimingDetail;
 
     impl CellTimingDetail {
-        #[inline(always)]
         pub(crate) fn record_into(
             &self,
             _cell_sub: &mut crate::timing::CellSubAccum,
@@ -164,18 +163,14 @@ mod stub {
     pub(crate) struct BuildTimingDetail;
 
     impl BuildTimingDetail {
-        #[inline(always)]
         pub(crate) fn new() -> Self {
             Self
         }
 
-        #[inline(always)]
         pub(crate) fn invalidate_progress_tail(&mut self) {}
 
-        #[inline(always)]
         pub(crate) fn record_progress(&mut self, _neighbors_processed: usize) {}
 
-        #[inline(always)]
         pub(crate) fn record_packed_batch_usage(
             &mut self,
             _source: DirectedNeighborBatchSource,
@@ -184,7 +179,6 @@ mod stub {
         ) {
         }
 
-        #[inline(always)]
         pub(crate) fn record_shell_batch<const SHELL: bool>(
             &mut self,
             _emitted: usize,
@@ -193,7 +187,6 @@ mod stub {
         ) {
         }
 
-        #[inline(always)]
         pub(crate) fn finish(&self, _neighbors_processed: usize) -> CellTimingDetail {
             CellTimingDetail
         }

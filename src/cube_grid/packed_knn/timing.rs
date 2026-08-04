@@ -26,12 +26,10 @@ pub(super) struct PackedLapTimer;
 
 #[cfg(not(feature = "timing"))]
 impl PackedLapTimer {
-    #[inline(always)]
     pub(super) fn start() -> Self {
         Self
     }
 
-    #[inline(always)]
     pub(super) fn lap(&mut self) -> Duration {
         Duration::ZERO
     }
@@ -268,47 +266,26 @@ impl PackedKnnTimings {
 
 #[cfg(not(feature = "timing"))]
 impl PackedKnnTimings {
-    #[inline(always)]
     pub(crate) fn clear(&mut self) {}
 
-    #[inline(always)]
     pub(crate) fn add_setup(&mut self, _d: Duration) {}
-    #[inline(always)]
     pub(crate) fn add_query_cache(&mut self, _d: Duration) {}
-    #[inline(always)]
     pub(crate) fn add_security_thresholds(&mut self, _d: Duration) {}
-    #[inline(always)]
     pub(crate) fn add_center_pass(&mut self, _d: Duration) {}
-    #[inline(always)]
     pub(crate) fn add_ring_thresholds(&mut self, _d: Duration) {}
-    #[inline(always)]
     pub(crate) fn add_ring_pass(&mut self, _d: Duration) {}
-    #[inline(always)]
     pub(crate) fn add_ring_fallback(&mut self, _d: Duration) {}
-    #[inline(always)]
     pub(crate) fn add_select_prep(&mut self, _d: Duration) {}
-    #[inline(always)]
     pub(crate) fn add_select_query_prep(&mut self, _d: Duration) {}
-    #[inline(always)]
     pub(crate) fn add_select_partition(&mut self, _d: Duration) {}
-    #[inline(always)]
     pub(crate) fn add_select_sort_sized(&mut self, _d: Duration, _n: usize) {}
-    #[inline(always)]
     pub(crate) fn add_select_scatter(&mut self, _d: Duration) {}
-    #[inline(always)]
     pub(crate) fn inc_tail_builds(&mut self) {}
-    #[inline(always)]
     pub(crate) fn observe_key_storage(&mut self, _added: usize, _capacity: usize) {}
-    #[inline(always)]
     pub(crate) fn add_tail_possible_queries(&mut self, _count: usize) {}
-    #[inline(always)]
     pub(crate) fn inc_tail_requested_queries(&mut self) {}
-    #[inline(always)]
     pub(crate) fn add_ring_tail_rescan(&mut self, _empty: bool, _dot_evaluations: usize) {}
-    #[inline(always)]
     pub(crate) fn add_center_tail_keys(&mut self, _count: usize) {}
-    #[inline(always)]
     pub(crate) fn add_center_tail_dot_evaluations(&mut self, _count: usize) {}
-    #[inline(always)]
     pub(crate) fn add_chunk0_keys(&mut self, _count: usize) {}
 }
