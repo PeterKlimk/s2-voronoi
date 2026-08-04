@@ -678,6 +678,13 @@ modules without making the non-obvious code shape look accidental.
   two inner mutation methods still raised instructions by 1.41%/2.12% and cycles by 0.73%/1.10%,
   with every pair worse. The policy-dispatch pair independently reproduced the bad family code
   shape, so both layers remain measured exceptions.
+- **Small-clipper specialization.** The two production clip kernels use ordinary rather than forced
+  inlining, with byte-identical native text; two microbench-only helper hints were removed. Four
+  tiny distance/slice helpers retain forced inlining because relaxing them caused a small adverse
+  placement signal (+0.28% Fibonacci and +0.12% uniform cycles in the family test). Removing inline
+  visibility from the two kernels reduced instructions by 0.70--0.96% but enlarged text by about
+  2.6 KiB and regressed Fibonacci/uniform cycles by 0.31%/0.57%. Retain ordinary visibility on the
+  kernels as the simpler specialization boundary.
 - **Canonicalization and dense-query gating.** The scalar f64-normalize/store pass measured about
   20 ms at 2M single-threaded (roughly 0.5–0.8% of total) and is chunk-parallel by default. The
   dense-cell band plus takeover lost about 13% on the 500k moderate-cluster control, so it remains

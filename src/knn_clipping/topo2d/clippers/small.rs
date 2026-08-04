@@ -10,7 +10,6 @@
 // Retained for the baseline bool clipper (microbench comparisons); the hot
 // clippers use the branchless bitmask form.
 #[cfg(feature = "microbench")]
-#[inline(always)]
 fn find_entry_exit_transitions<const N: usize>(
     inside: &[bool; N],
 ) -> ((usize, usize), (usize, usize)) {
@@ -86,7 +85,6 @@ pub(crate) fn clip_convex_small_bool<const N: usize>(
 
     out.len = 0;
 
-    #[inline(always)]
     fn r2_of(u: f64, v: f64) -> f64 {
         fp::mul_add_unfused_f64(u, u, v * v)
     }
@@ -206,7 +204,7 @@ fn eval_small_dists<const N: usize>(poly: &PolyBuffer, hp: &HalfPlane) -> (Small
 }
 
 /// Small-N clipper using modulo iteration (for N=4,8 where `% N` is a bitmask).
-#[inline(always)]
+#[inline]
 #[allow(clippy::needless_range_loop)] // index drives 3 parallel outputs + pointer reads
 pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
     poly: &PolyBuffer,
@@ -336,7 +334,7 @@ pub(super) fn clip_small_ptr<const N: usize, const TRACK_BOUNDING: bool>(
 }
 
 /// Small-N clipper using modulo-free iteration (for N=3,5,6,7 where `% N` is expensive).
-#[inline(always)]
+#[inline]
 #[allow(clippy::needless_range_loop)] // index drives 3 parallel outputs + pointer reads
 pub(super) fn clip_small_ptr_d<const N: usize, const TRACK_BOUNDING: bool>(
     poly: &PolyBuffer,
