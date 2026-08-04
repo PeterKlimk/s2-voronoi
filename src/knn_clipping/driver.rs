@@ -200,8 +200,16 @@ pub(crate) fn build_cells_sharded_live_dedup(
             .retain(|(key, _)| *key == reusable_context_key);
     }
 
-    let per_bin: Result<Vec<(ShardState, crate::timing::CellSubAccum)>, BuildCellsError> =
-        maybe_par_into_iter!(0..num_bins)
+    let mut bin_order: Vec<usize> = (0..num_bins).collect();
+    bin_order.sort_unstable_by(|&a, &b| {
+        assignment.bin_generators[b]
+            .len()
+            .cmp(&assignment.bin_generators[a].len())
+            .then_with(|| a.cmp(&b))
+    });
+
+    let per_bin: Result<Vec<(usize, ShardState, crate::timing::CellSubAccum)>, BuildCellsError> =
+        maybe_par_bridge!(bin_order)
             .map(|bin_usize| {
                 use crate::timing::CellSubAccum;
 
@@ -211,6 +219,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                 let mut shard = ShardState::new(my_generators.len());
 
                 let mut sub_accum = CellSubAccum::new();
+                let bin_timer = crate::timing::Timer::start();
                 #[cfg(feature = "parallel")]
                 let mut task_ctx = if reuse_build_contexts {
                     let retained = if let Some(workspace) = workspace {
@@ -398,17 +407,20 @@ pub(crate) fn build_cells_sharded_live_dedup(
                         .push((reusable_context_key, task_ctx));
                 }
 
-                Ok((shard, sub_accum))
+                sub_accum.record_bin_task(bin_timer.elapsed());
+                Ok((bin_usize, shard, sub_accum))
             })
             .collect();
-    let per_bin = per_bin?;
+    let mut per_bin: Vec<(usize, ShardState, crate::timing::CellSubAccum)> = per_bin?;
+    per_bin.sort_unstable_by_key(|(bin, _, _)| *bin);
 
     let mut shards: Vec<ShardState> = Vec::with_capacity(num_bins);
     let mut merged_sub = crate::timing::CellSubAccum::new();
-    for (shard, sub) in per_bin {
+    for (_, shard, sub) in per_bin {
         merged_sub.merge(&sub);
         shards.push(shard);
     }
+    merged_sub.record_bin_schedule(&assignment.bin_generators);
 
     assignment.bin_cells = Vec::new();
     assignment.bin_cell_offsets = Vec::new();

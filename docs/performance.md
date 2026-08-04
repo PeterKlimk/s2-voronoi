@@ -1009,6 +1009,30 @@ directionally 0.93% and significantly 2.60% faster. Mega, Fibonacci, and uniform
 the coarse layout and were unresolved around neutral. Great-circle also retained 96 bins; a large
 favorable code-placement movement was not attributed to the adaptive mechanism.
 
+A broader scheduling census tested the cube-face layouts with 6, 24, 54, 96, 150, and 216 total
+shards across 4--32 workers and both ordinary and adversarial distributions. Population-only
+makespan models were useful for smooth density gradients but did not safely replace the retained
+policy. In particular, the odd 3x3 and 5x5 per-face layouts could place a concentrated cap wholly
+inside one central shard rather than across a boundary; `mega` then took roughly three times as
+long as with the even layouts. Great-circle was the decisive model counterexample: at 32 workers
+the 216-shard population schedule looked substantially better than 96, but measured total time was
+slightly worse. Shard layout changes construction work and ordering as well as task balance, so a
+single predicted-efficiency threshold was rejected instead of fitting another machine-specific
+rule. Timing output retains the selected shard count, maximum shard population, summed shard-task
+time, and maximum shard-task time for future scheduling diagnosis.
+
+Construction now admits whole-shard tasks in descending generator-population order through a
+small dynamic Rayon queue, then restores completed results to canonical shard-id order before
+assembly. This preserves the one-writer-per-shard guarantee and generator order within each shard;
+it changes scheduling only, without adding ownership boundaries. Against the preceding native
+production binary, eight rotated no-preprocessing pairs improved 1M gradient by 11.64% at 16
+workers and 4.26% at 32. At 16 workers, 500k bimodal improved 6.99%, mega 2.45%, and 100k
+cube-vertices 3.55%, while great-circle was neutral; the corresponding 32-worker controls were
+neutral to 1.85% faster. Ten-pair 2.5M Fibonacci/uniform guardrails across 8, 12, 16, and 32 workers
+were neutral to favorable overall. An apparent 12-worker uniform regression did not reproduce in a
+focused 30-pair confirmation (2.37% directionally faster, interval spanning neutral). Strict 100k
+validation passed for Fibonacci, gradient, and great-circle at 12 and 32 workers.
+
 Cross-bin overflow resolution now groups records by unordered shard pair before sorting and
 matching. The opposite-bin byte fits existing padding in both the per-cell and assembled records,
 so neither representation grows. Pair-local sorting shortens each sort and, more importantly,

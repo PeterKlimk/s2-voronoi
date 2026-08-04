@@ -104,6 +104,10 @@ impl CellSubAccum {
     #[inline(always)]
     pub(crate) fn merge(&mut self, _other: &CellSubAccum) {}
     #[inline(always)]
+    pub(crate) fn record_bin_schedule(&mut self, _bin_generators: &[Vec<usize>]) {}
+    #[inline(always)]
+    pub(crate) fn record_bin_task(&mut self, _elapsed: Duration) {}
+    #[inline(always)]
     pub(crate) fn into_sub_phases(self) -> CellSubPhases {
         CellSubPhases
     }

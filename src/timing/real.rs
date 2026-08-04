@@ -197,6 +197,10 @@ pub(crate) struct WorkDistribution {
 /// Per-cell-group timing totals aggregated across all shards.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CellSubPhases {
+    pub bin_count: u64,
+    pub bin_population_max: u64,
+    pub bin_task_elapsed_total: Duration,
+    pub bin_task_elapsed_max: Duration,
     pub knn_query: Duration,
     pub packed_knn: Duration,
     pub packed_setup: Duration,
@@ -303,6 +307,10 @@ pub(crate) struct DedupSubPhases {
 /// Accumulator for cell sub-phase timings (used per-bin, then merged).
 #[derive(Clone, Default)]
 pub(crate) struct CellSubAccum {
+    bin_count: u64,
+    bin_population_max: u64,
+    bin_task_elapsed_total: Duration,
+    bin_task_elapsed_max: Duration,
     knn_query: Duration,
     packed_knn: Duration,
     packed_setup: Duration,
@@ -368,6 +376,20 @@ pub(crate) struct CellSubAccum {
 }
 
 impl CellSubAccum {
+    pub(crate) fn record_bin_task(&mut self, elapsed: Duration) {
+        self.bin_task_elapsed_total += elapsed;
+        self.bin_task_elapsed_max = self.bin_task_elapsed_max.max(elapsed);
+    }
+
+    pub(crate) fn record_bin_schedule(&mut self, bin_generators: &[Vec<usize>]) {
+        self.bin_count = bin_generators.len() as u64;
+        self.bin_population_max = bin_generators
+            .iter()
+            .map(|generators| generators.len() as u64)
+            .max()
+            .unwrap_or(0);
+    }
+
     #[inline]
     pub(crate) fn new() -> Self {
         Self::default()
@@ -544,6 +566,8 @@ impl CellSubAccum {
 
     #[inline]
     pub(crate) fn merge(&mut self, other: &CellSubAccum) {
+        self.bin_task_elapsed_total += other.bin_task_elapsed_total;
+        self.bin_task_elapsed_max = self.bin_task_elapsed_max.max(other.bin_task_elapsed_max);
         self.knn_query += other.knn_query;
         self.packed_knn += other.packed_knn;
         self.packed_setup += other.packed_setup;
@@ -625,6 +649,10 @@ impl CellSubAccum {
             );
         }
         CellSubPhases {
+            bin_count: self.bin_count,
+            bin_population_max: self.bin_population_max,
+            bin_task_elapsed_total: self.bin_task_elapsed_total,
+            bin_task_elapsed_max: self.bin_task_elapsed_max,
             knn_query: self.knn_query,
             packed_knn: self.packed_knn,
             packed_setup: self.packed_setup,

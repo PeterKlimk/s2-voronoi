@@ -115,6 +115,20 @@ macro_rules! maybe_par_into_iter {
     }};
 }
 
+/// Conditionally bridge an ordered work queue into the parallel pool.
+macro_rules! maybe_par_bridge {
+    ($v:expr) => {{
+        #[cfg(feature = "parallel")]
+        {
+            $v.into_iter().par_bridge()
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            $v.into_iter()
+        }
+    }};
+}
+
 /// Conditionally parallel `iter` over a slice reference.
 macro_rules! maybe_par_iter {
     ($slice:expr) => {{
