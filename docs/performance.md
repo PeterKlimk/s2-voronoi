@@ -1035,6 +1035,15 @@ were neutral to favorable overall. An apparent 12-worker uniform regression did 
 focused 30-pair confirmation (2.37% directionally faster, interval spanning neutral). Strict 100k
 validation passed for Fibonacci, gradient, and great-circle at 12 and 32 workers.
 
+The adaptive 216-shard refinement was rechecked after largest-first scheduling because both target
+the closing construction tail. Ten rotated native 1M pairs against forced 96 shards retained clear
+wins: gradient improved 8.39% at 16 workers and 11.20% at 32, while bimodal improved 4.79% and
+3.57%; all four 95% bootstrap intervals excluded neutral. Timing runs confirmed that the default
+selected 216 shards, reduced maximum shard population and longest-task time, and paid modestly more
+aggregate task and overflow work. Fibonacci, uniform, mega, great-circle, and clustered 1M controls
+all retained 96 shards. Largest-first therefore complements rather than supersedes the gated finer
+ownership layout; unconditional 216 shards remains unjustified.
+
 Cross-bin overflow resolution now groups records by unordered shard pair before sorting and
 matching. The opposite-bin byte fits existing padding in both the per-cell and assembled records,
 so neither representation grows. Pair-local sorting shortens each sort and, more importantly,
