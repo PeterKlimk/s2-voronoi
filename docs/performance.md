@@ -204,6 +204,17 @@ unresolved at 32. Peak RSS was essentially unchanged for mega and bimodal and fe
 stress run. The rule is deliberately conditioned on the spatial feedback signal rather than an
 input distribution or platform.
 
+A post-change production-counter pass confirmed that this is removed work rather than timing
+movement. Four 16-worker pairs reduced mega instructions/cycles by 24.90%/15.52% and bimodal by
+10.67%/8.79%; Fibonacci changed by -0.01%/+0.04%. Sampling the retained build still placed
+`select_nth_unstable` at 13.8% of mega samples. Sorting the remaining eager prefix after a query
+consumed two batches tested that ceiling: eight pairs improved mega by 3.53% (bootstrap interval
+2.08--5.41%) and left bimodal unresolved at +0.37% candidate/base (-0.53--+1.14%). The prototype
+was nevertheless rejected because its per-query sorted-state path added about 0.24% instructions
+and 0.47% branches to Fibonacci and about 0.25% instructions to bimodal. Revisit repeated
+partitioning only with group-level specialization that leaves the ordinary packed emitter
+unchanged; observed continuation depth is the demonstrated discriminator.
+
 That fallback is intentionally a reliability tradeoff: at 100k clustered it cost approximately
 23% more instructions and 15% more cycles; uniform work remained structurally neutral. The weld
 pair budget added approximately 0.8% instructions to a 500k normal-preprocessing control, while the
