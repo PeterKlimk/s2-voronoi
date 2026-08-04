@@ -354,18 +354,23 @@ fn run_core_pipeline(
         effective_input,
         report: preprocess_report,
         mut grid,
+        occupancy_rebuilt,
     } = prepare_points_and_grid(&points, preprocess_mode, workspace, &mut tb)?;
 
     let effective_points_ref = effective_input.points(&points);
 
     let point_cell_storage = grid.take_point_cells();
+    let construction_policy = CellConstructionPolicy {
+        positive_chord_threshold,
+        occupancy_rebuilt,
+    };
 
     let sharded = construct_cell_shards(
         effective_points_ref,
         &grid,
         point_cell_storage,
         effective_input.merge_result(),
-        positive_chord_threshold,
+        construction_policy,
         workspace,
         &mut tb,
     )?;
@@ -1472,6 +1477,7 @@ struct PreparedPointsAndGrid {
     effective_input: EffectiveInput,
     report: PreprocessReport,
     grid: CubeMapGrid,
+    occupancy_rebuilt: bool,
 }
 
 fn prepare_points_and_grid(
@@ -1555,6 +1561,7 @@ fn prepare_points_and_grid(
         effective_input,
         report,
         grid,
+        occupancy_rebuilt: dense_index_eligible,
     })
 }
 
@@ -1664,12 +1671,18 @@ fn build_query_grid(
     (grid, rebuilt)
 }
 
+#[derive(Clone, Copy)]
+struct CellConstructionPolicy {
+    positive_chord_threshold: Option<f32>,
+    occupancy_rebuilt: bool,
+}
+
 fn construct_cell_shards(
     effective_points: &[Vec3],
     grid: &CubeMapGrid,
     point_cell_storage: Vec<u32>,
     merge_result: Option<&MergeResult>,
-    positive_chord_threshold: Option<f32>,
+    policy: CellConstructionPolicy,
     workspace: Option<&super::driver::BuildWorkspace>,
     tb: &mut TimingBuilder,
 ) -> Result<live_dedup::ShardedCellsData, crate::VoronoiError> {
@@ -1678,7 +1691,8 @@ fn construct_cell_shards(
         effective_points,
         grid,
         point_cell_storage,
-        positive_chord_threshold,
+        policy.positive_chord_threshold,
+        policy.occupancy_rebuilt,
         workspace,
     )
     .map_err(|err| map_build_cells_error(err, effective_points, merge_result))?;

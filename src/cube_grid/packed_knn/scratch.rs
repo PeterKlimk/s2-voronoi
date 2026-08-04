@@ -39,6 +39,8 @@ pub(crate) struct PackedKnnCellScratch {
     band_mode: Vec<bool>,
     /// Reusable scratch for the dense band's gathered candidate slots.
     band_scratch: Vec<u32>,
+    hi_budget: usize,
+    hi_min_queries: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -147,7 +149,12 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
 }
 
 impl PackedKnnCellScratch {
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
+        Self::new_with_hi_policy(crate::policy::PACKED_HI_BUDGET, usize::MAX)
+    }
+
+    pub(crate) fn new_with_hi_policy(hi_budget: usize, hi_min_queries: usize) -> Self {
         Self {
             cell_ranges: Vec::with_capacity(9),
             next_group_gen: 1,
@@ -163,7 +170,14 @@ impl PackedKnnCellScratch {
             center_bound: Vec::new(),
             band_mode: Vec::new(),
             band_scratch: Vec::new(),
+            hi_budget,
+            hi_min_queries,
         }
+    }
+
+    pub(crate) fn set_hi_policy(&mut self, hi_budget: usize, hi_min_queries: usize) {
+        self.hi_budget = hi_budget;
+        self.hi_min_queries = hi_min_queries;
     }
 
     #[inline]

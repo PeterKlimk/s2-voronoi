@@ -194,6 +194,16 @@ the initial packed aggregate-work bound found a 500k uniform peak capacity of 6,
 query×candidate budget reduced the clustered peak to 1,188,540 keys (~9.5 MiB of allocator
 capacity) and routes larger groups to the bounded shell fallback.
 
+Occupancy feedback also changes the packed prefix's cost balance. Once it rebuilds the grid,
+same-cell groups of at least the dense-band work unit (128 queries) use a two-unit (256-candidate)
+high prefix; smaller groups and grids that were not rebuilt retain 32. Alternating native pairs on
+the 16-core host improved 500k mega by 15.96% at 16 workers and 15.27% at 32, and 1M bimodal by
+11.07% and 8.93%. Gradient, clustered, outlier, splittable, Fibonacci, and uniform guardrails were
+unresolved around zero. The 100k cube-vertices stress case improved 6.38% at 16 workers and was
+unresolved at 32. Peak RSS was essentially unchanged for mega and bimodal and fell in that cube
+stress run. The rule is deliberately conditioned on the spatial feedback signal rather than an
+input distribution or platform.
+
 That fallback is intentionally a reliability tradeoff: at 100k clustered it cost approximately
 23% more instructions and 15% more cycles; uniform work remained structurally neutral. The weld
 pair budget added approximately 0.8% instructions to a 500k normal-preprocessing control, while the
@@ -209,8 +219,9 @@ essentially the same factors. Frame-pointer sampling attributed 7.8% of whole-bu
 about 1.3%, partitioning 0.9%, and tail materialization 1.2%. The current loop already shares each
 candidate coordinate chunk across the group's queries, counts rather than materializes unused
 center-tail keys, and builds tails only on demand. Combined with the retired smaller-prefix,
-streaming-heap, seed-first, and lazy-high-key results, there is no remaining isolated packed
-preparation candidate with a credible work-removal mechanism.
+streaming-heap, seed-first, and lazy-high-key results, further packed-preparation changes need a
+similarly explicit work-removal mechanism and must preserve the occupancy-feedback guardrails
+above.
 
 The normal 100k uniform packed-bound comparison remained unresolved after the maximum 160 paired
 wall-time rounds: candidate/base geometric mean `+0.3%`, 95% interval `[-1.1%, +1.8%]`, with the

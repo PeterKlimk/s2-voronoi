@@ -4,7 +4,7 @@ use super::*;
 use crate::fp;
 use crate::policy::{
     DENSE_BAND_RADIUS_INFLATION, PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER,
-    PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER, PACKED_HI_BUDGET,
+    PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -346,7 +346,12 @@ impl PackedKnnCellScratch {
             let t_count = if n_total == 0 {
                 security
             } else {
-                let ratio = ((PACKED_HI_BUDGET as f32) / (n_total as f32)).min(1.0);
+                let hi_budget = if num_queries >= self.hi_min_queries {
+                    self.hi_budget
+                } else {
+                    crate::policy::PACKED_HI_BUDGET
+                };
+                let ratio = ((hi_budget as f32) / (n_total as f32)).min(1.0);
                 let t = 1.0 - (1.0 - security) * ratio;
                 t.clamp(security, 1.0)
             };

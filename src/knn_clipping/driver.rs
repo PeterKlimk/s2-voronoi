@@ -39,8 +39,16 @@ impl BuildTaskContext {
     fn new(grid: &CubeMapGrid, policy: PackedNeighborPolicy) -> Self {
         Self {
             cell: CellBuildContext::new(grid, policy),
-            packed: PackedKnnCellScratch::new(),
+            packed: PackedKnnCellScratch::new_with_hi_policy(
+                policy.hi_budget(),
+                policy.hi_min_queries(),
+            ),
         }
+    }
+
+    fn set_policy(&mut self, policy: PackedNeighborPolicy) {
+        self.packed
+            .set_hi_policy(policy.hi_budget(), policy.hi_min_queries());
     }
 }
 
@@ -170,9 +178,13 @@ pub(crate) fn build_cells_sharded_live_dedup(
     grid: &CubeMapGrid,
     point_cell_storage: Vec<u32>,
     positive_chord_threshold: Option<f32>,
+    occupancy_rebuilt: bool,
     workspace: Option<&BuildWorkspace>,
 ) -> Result<ShardedCellsData, BuildCellsError> {
-    let policy = PackedNeighborPolicy::for_point_count(points.len());
+    let mut policy = PackedNeighborPolicy::for_point_count(points.len());
+    if occupancy_rebuilt {
+        policy = policy.after_occupancy_rebuild();
+    }
     let positive_resolution_hint_x_threshold =
         positive_chord_threshold.map(|threshold| resolution_hint_x_threshold(Some(threshold)));
 
@@ -256,6 +268,9 @@ pub(crate) fn build_cells_sharded_live_dedup(
                             .map(|index| pool.swap_remove(index).1)
                     })
                     .unwrap_or_else(|| BuildTaskContext::new(grid, policy));
+                // A caller-owned workspace can be reused by computations with the
+                // same grid shape but a different occupancy-feedback policy.
+                task_ctx.set_policy(policy);
                 let BuildTaskContext {
                     cell: build_ctx,
                     packed: packed_scratch,

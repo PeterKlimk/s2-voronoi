@@ -152,6 +152,12 @@ pub(crate) const DEFAULT_PACKED_CHUNK_SIZE: usize = 8;
 
 /// Target size for the packed "hi" candidate list before selection gets expensive.
 pub(crate) const PACKED_HI_BUDGET: usize = 32;
+/// After occupancy feedback has selected a finer spatial grid, large same-cell
+/// groups amortize a wider eager prefix across many queries. Tie both sides of
+/// that trade to the existing dense-band work unit instead of adding an
+/// unrelated distribution-specific cutoff.
+pub(crate) const CONCENTRATED_PACKED_HI_MIN_QUERIES: usize = DENSE_BAND_TARGET_COUNT;
+pub(crate) const CONCENTRATED_PACKED_HI_BUDGET: usize = 2 * DENSE_BAND_TARGET_COUNT;
 /// Count-model knob: ignore directed center eligibility when tightening packed thresholds.
 pub(crate) const PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER: bool = false;
 /// Count-model knob: include same-bin-earlier cells when estimating packed candidate pressure.
@@ -162,6 +168,8 @@ pub(crate) const PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER: bool = false;
 pub(crate) struct PackedNeighborPolicy {
     chunk0_size: usize,
     chunk_size: usize,
+    hi_budget: usize,
+    hi_min_queries: usize,
 }
 
 impl PackedNeighborPolicy {
@@ -171,7 +179,16 @@ impl PackedNeighborPolicy {
         Self {
             chunk0_size: DEFAULT_PACKED_CHUNK0_SIZE.min(max_neighbors),
             chunk_size: DEFAULT_PACKED_CHUNK_SIZE.min(max_neighbors),
+            hi_budget: PACKED_HI_BUDGET,
+            hi_min_queries: usize::MAX,
         }
+    }
+
+    #[inline]
+    pub(crate) fn after_occupancy_rebuild(mut self) -> Self {
+        self.hi_budget = CONCENTRATED_PACKED_HI_BUDGET;
+        self.hi_min_queries = CONCENTRATED_PACKED_HI_MIN_QUERIES;
+        self
     }
 
     #[inline]
@@ -192,6 +209,16 @@ impl PackedNeighborPolicy {
     #[inline]
     pub(crate) fn scratch_chunk_capacity(self) -> usize {
         self.chunk0_size.max(self.chunk_size)
+    }
+
+    #[inline]
+    pub(crate) fn hi_budget(self) -> usize {
+        self.hi_budget
+    }
+
+    #[inline]
+    pub(crate) fn hi_min_queries(self) -> usize {
+        self.hi_min_queries
     }
 }
 
@@ -297,5 +324,14 @@ mod tests {
 
         assert_eq!(policy.chunk0_size(), DEFAULT_PACKED_CHUNK0_SIZE);
         assert_eq!(policy.chunk_size(), DEFAULT_PACKED_CHUNK_SIZE);
+        assert_eq!(policy.hi_budget(), PACKED_HI_BUDGET);
+        assert_eq!(policy.hi_min_queries(), usize::MAX);
+
+        let concentrated = policy.after_occupancy_rebuild();
+        assert_eq!(concentrated.hi_budget(), CONCENTRATED_PACKED_HI_BUDGET);
+        assert_eq!(
+            concentrated.hi_min_queries(),
+            CONCENTRATED_PACKED_HI_MIN_QUERIES
+        );
     }
 }
