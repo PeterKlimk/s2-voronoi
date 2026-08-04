@@ -287,6 +287,12 @@ failed a global ownership check on the worst cell. A viable handoff must preserv
 constraints already found by clipping and certify the resulting polygon globally. The current
 preferred experiment is nearest-generator lookup at each polygon vertex; by convexity, vertex
 ownership certifies the whole cell without assuming that its Delaunay neighborhood is kNN-local.
+That experiment was also rejected: it was logically effective but computationally backwards.
+On `great-circle 200k` it certified 5,308 cells and avoided 176.1M candidate clips, while increasing
+runtime from 1.04 s to 4.75 s because thousands of independent unrestricted vertex queries cost
+more than the sequential traversal they replaced. The sparse `mega 500k` case was neutral/slower
+and left uncertified stragglers on the critical path. Revisit only as a shared or batched global
+certificate, not as per-cell nearest lookups.
 
 ### High-core-count scaling validation
 

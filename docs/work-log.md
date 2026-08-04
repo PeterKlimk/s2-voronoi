@@ -283,7 +283,7 @@ default `Preserve` behavior.
 ### PERF-001 — Total-query-work circuit breaker
 
 - **Priority:** P3
-- **Status:** Active experiment; pathological-tail crossover measured 2026-08-04
+- **Status:** Backburner; local-hull and vertex-query handoffs rejected 2026-08-04
 - **Motivation:** Perturbed great-circle inputs can become gnomonically bounded yet process nearly
   every generator for some cells. The existing exhaustion replay is correct but does not detect
   this successful high-work regime.
@@ -306,13 +306,23 @@ default `Preserve` behavior.
   remained globally invalid; the worst omitted cutter ranked 419,000 at small k and still ranked
   56,507 at k=2,048. The k=2,048 naive hull itself cost about 32 ms. Spatially local kNN therefore
   cannot supply a bounded correctness set for this regime.
-- **Next experiment:** After a scale-relative no-progress trigger, snapshot the current polygon and
+- **Tested experiment:** After a scale-relative no-progress trigger, snapshot the current polygon and
   certify each vertex by an exact nearest-generator query through the existing grid. If every
   maximizer is the cell generator or an incident constraint owner (including deterministic tie
   handling), convexity proves that no unseen half-space cuts the polygon. Prototype this as a cold
   path with separate scratch, compare its cost with continued streaming, and differentially check
   every accepted early termination against exhaustive construction. This retains the far owners
   already discovered by clipping and makes no locality assumption about Delaunay adjacency.
+- **Vertex-query result:** The timing-only shadow correctly had zero accepted snapshots followed by
+  a later cut. Certification must consider only unseen winners: already-attempted inactive
+  constraints can legitimately beat a stored owner at a rounded vertex. With that rule, `mega
+  500k` accepted 172/616 triggered cells and could skip 2.41M candidates, but an early-stop build
+  was neutral/slower (2.072 s baseline versus 2.079 s) because uncertified extreme cells retained
+  the critical path. On `great-circle 200k`, 5,308/5,807 cells accepted and skipped 176.1M
+  candidates, yet unrestricted vertex lookups made runtime 4.75 s versus 1.04 s baseline. A shadow
+  run cost 43.3 aggregate worker-seconds in vertex queries. This closes per-cell lookup through the
+  existing grid; reopen only with a shared/batched certificate whose cost is materially below the
+  current shell traversal, not another independent nearest query per vertex.
 - **Reference:** AUD-015 in [`audit-triage.md`](internal/audit-triage.md).
 
 ### PERF-002 — Post-review kernel hypotheses
