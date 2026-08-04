@@ -148,9 +148,6 @@ pub(crate) mod cube_grid;
 pub(crate) mod knn_clipping;
 pub(crate) mod live_dedup;
 pub mod locate;
-#[cfg(feature = "profiling")]
-#[doc(hidden)]
-pub mod point_audit;
 
 /// Run the internal convex-clip microbench harness (feature: `microbench`).
 #[cfg(feature = "microbench")]
@@ -181,20 +178,6 @@ pub use live_dedup::EdgeMismatchOrigin;
 
 pub use locate::{IndexedSphereQueryError, SphereLocator, SphereQueryError};
 pub use types::{SpherePoint, SpherePointError, UnitVec3Like, SPHERE_POINT_MAX_NORM_SQUARED_ERROR};
-
-/// Reset profiling-only spherical point-envelope counters.
-#[cfg(feature = "profiling")]
-#[doc(hidden)]
-pub fn profile_point_envelopes_reset() {
-    point_audit::reset();
-}
-
-/// Snapshot profiling-only spherical point-envelope counters.
-#[cfg(feature = "profiling")]
-#[doc(hidden)]
-pub fn profile_point_envelopes() -> Vec<point_audit::PointEnvelopeSummary> {
-    point_audit::snapshot()
-}
 
 /// Preprocessing mode applied before Voronoi computation.
 #[derive(Debug, Clone, Copy, PartialEq)]

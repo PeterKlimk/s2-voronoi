@@ -637,11 +637,6 @@ impl<'a> WorkingDiagram<'a> {
         let vid = found.unwrap_or_else(|| {
             let vid = self.num_vertices() as u32;
             let position = vertex.mint_pos;
-            #[cfg(feature = "profiling")]
-            crate::point_audit::record_vec3(
-                crate::point_audit::PointProducer::RebuildVertex,
-                position,
-            );
             self.minted_pos.push(position);
             self.minted_key.push(t);
             vid

@@ -18,8 +18,6 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::io::{self, Write};
 use std::time::Instant;
-#[cfg(feature = "profiling")]
-use std::{collections::hash_map::DefaultHasher, hash::Hasher};
 use voronoi_mesh::{LocalRebuildMode, PreprocessMode, VoronoiConfig, VoronoiWorkspace};
 
 fn parse_count(s: &str) -> Result<usize, String> {
@@ -278,11 +276,6 @@ struct Args {
     /// Reuse caller-owned construction scratch between iterations.
     #[arg(long)]
     reuse_workspace: bool,
-
-    /// Profiling-only: report norm envelopes by stored-point producer.
-    #[cfg(feature = "profiling")]
-    #[arg(long)]
-    point_envelope_audit: bool,
 }
 
 fn generate_points(n: usize, seed: u64, lloyd: bool, dist: &str, param: f64) -> Vec<Vec3> {
@@ -593,14 +586,9 @@ fn run_benchmark_with_config(
     points: &[[f32; 3]],
     config: VoronoiConfig,
     workspace: Option<&mut VoronoiWorkspace>,
-    #[cfg(feature = "profiling")] point_envelope_audit: bool,
 ) -> BenchResult {
     let n = points.len();
 
-    #[cfg(feature = "profiling")]
-    if point_envelope_audit {
-        voronoi_mesh::profile_point_envelopes_reset();
-    }
     let t0 = Instant::now();
     let diagram = match workspace {
         Some(workspace) => workspace
@@ -609,50 +597,6 @@ fn run_benchmark_with_config(
         None => voronoi_mesh::compute_with(points, config).expect("voronoi-mesh should succeed"),
     };
     let time_ms = t0.elapsed().as_secs_f64() * 1000.0;
-
-    #[cfg(feature = "profiling")]
-    if point_envelope_audit {
-        std::hint::black_box(diagram.lloyd_step());
-        for row in voronoi_mesh::profile_point_envelopes() {
-            println!(
-                "POINT_ENVELOPE producer={} count={} non_finite={} max={:.9e} gt_1eps={} gt_2eps={} gt_4eps={} gt_8eps={} gt_1e_minus_6={} gt_1e_minus_5={} gt_1e_minus_4={} f32_changed={} f32_max={:.9e} f64_changed={} f64_max={:.9e} rules_differ={}",
-                row.producer,
-                row.count,
-                row.non_finite,
-                row.max_abs_error,
-                row.over_1eps,
-                row.over_2eps,
-                row.over_4eps,
-                row.over_8eps,
-                row.over_1e_minus_6,
-                row.over_1e_minus_5,
-                row.over_1e_minus_4,
-                row.f32_rule_changed,
-                row.f32_rule_max_abs_error,
-                row.f64_rule_changed,
-                row.f64_rule_max_abs_error,
-                row.rules_differ,
-            );
-        }
-        let mut topology = DefaultHasher::new();
-        for cell in diagram.iter_cells() {
-            for &index in cell.vertex_indices {
-                topology.write_u32(index);
-            }
-            topology.write_u8(0xff);
-        }
-        let mut coordinates = DefaultHasher::new();
-        for point in diagram.generators().iter().chain(diagram.vertices()) {
-            coordinates.write_u32(point.x().to_bits());
-            coordinates.write_u32(point.y().to_bits());
-            coordinates.write_u32(point.z().to_bits());
-        }
-        println!(
-            "POINT_AUDIT_HASH topology={:016x} coordinates={:016x}",
-            topology.finish(),
-            coordinates.finish(),
-        );
-    }
 
     #[cfg(debug_assertions)]
     {
@@ -756,13 +700,8 @@ fn main() {
                 io::stdout().flush().unwrap();
             }
 
-            let result = run_benchmark_with_config(
-                &unit_points,
-                config.clone(),
-                workspace.as_mut(),
-                #[cfg(feature = "profiling")]
-                args.point_envelope_audit,
-            );
+            let result =
+                run_benchmark_with_config(&unit_points, config.clone(), workspace.as_mut());
             times.push(result.time_ms);
 
             if args.repeat > 1 {

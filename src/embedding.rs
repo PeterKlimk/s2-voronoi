@@ -343,11 +343,6 @@ fn projected_components_f32(
     embedding.validate_world_point(world)?;
     let u = embedding.project_validated_world(world);
     let point = SpherePoint::from_direction_dvec3(glam::DVec3::from_array(u));
-    #[cfg(feature = "profiling")]
-    crate::point_audit::record_sphere_point_f64_canonical(
-        crate::point_audit::PointProducer::EmbeddingProjection,
-        point,
-    );
     Ok(point)
 }
 

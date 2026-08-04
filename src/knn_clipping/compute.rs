@@ -1424,12 +1424,6 @@ fn canonicalize_and_find_first_non_finite(points: &mut [Vec3]) -> Option<usize> 
             if (0.25..=4.0).contains(&len_sq) {
                 *p = crate::types::canonical_vec3_from_dvec3(v);
             }
-            #[cfg(feature = "profiling")]
-            crate::point_audit::record_vec3_from_dvec3(
-                crate::point_audit::PointProducer::CanonicalGenerator,
-                *p,
-                v,
-            );
         }
         first_bad
     }

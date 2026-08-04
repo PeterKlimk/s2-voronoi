@@ -244,21 +244,11 @@ impl SphericalVoronoi {
         let index = self.canonical_cell_index(index);
         let (centroid, conditioned) = cell_centroid_pass(self, index, None);
         if !conditioned {
-            #[cfg(feature = "profiling")]
-            crate::point_audit::record_sphere_point_f64_canonical(
-                crate::point_audit::PointProducer::Centroid,
-                centroid,
-            );
             return centroid;
         }
         let keys = collect_near_pi_keys(self, &[index]);
         let owners = resolve_owner_pairs(self, &keys);
         let centroid = cell_centroid_pass(self, index, Some(&owners)).0;
-        #[cfg(feature = "profiling")]
-        crate::point_audit::record_sphere_point_f64_canonical(
-            crate::point_audit::PointProducer::Centroid,
-            centroid,
-        );
         centroid
     }
 
@@ -302,13 +292,6 @@ impl SphericalVoronoi {
             if canonical != index {
                 centroids[index] = centroids[canonical];
             }
-        }
-        #[cfg(feature = "profiling")]
-        for &centroid in &centroids {
-            crate::point_audit::record_sphere_point_f64_canonical(
-                crate::point_audit::PointProducer::Centroid,
-                centroid,
-            );
         }
         centroids
     }

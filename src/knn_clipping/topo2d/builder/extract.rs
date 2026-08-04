@@ -104,12 +104,6 @@ impl GnomonicBuilder {
                 return Err(CellFailure::NoValidSeed);
             }
             let v_pos = crate::types::canonical_vec3_from_dvec3_with_len_squared(source, len2);
-            #[cfg(feature = "profiling")]
-            crate::point_audit::record_vec3_from_dvec3(
-                crate::point_audit::PointProducer::GnomonicVertex,
-                v_pos,
-                source,
-            );
 
             let plane_a = plane_a as usize;
             let plane_b = plane_b as usize;
@@ -501,12 +495,6 @@ impl FallbackBuilder {
                 plane_b.neighbor_idx as u32,
             );
             let position = crate::types::canonical_vec3_from_dvec3(vertex.position);
-            #[cfg(feature = "profiling")]
-            crate::point_audit::record_vec3_from_dvec3(
-                crate::point_audit::PointProducer::FallbackVertex,
-                position,
-                vertex.position,
-            );
             buffer.vertices.push((key, position));
 
             let next = vertices[(i + 1) % vertices.len()];
