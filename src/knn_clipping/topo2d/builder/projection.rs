@@ -370,7 +370,6 @@ impl Topo2DBuilder {
     }
 
     #[cold]
-    #[inline(never)]
     fn reset_from_fallback(&mut self, generator_idx: usize, generator: Vec3) {
         self.inner = BuilderImpl::Gnomonic(GnomonicBuilder::new(generator_idx, generator));
     }

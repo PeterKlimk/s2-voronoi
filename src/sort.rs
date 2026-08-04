@@ -513,7 +513,6 @@ unsafe fn sort8_in_place(base: *mut u64) {
 ///
 /// For `n < 32`, padding is done by placing `SENTINEL` values in registers (via a
 /// temporary upper half), never by writing sentinels into `v` beyond `n`.
-#[inline(never)]
 unsafe fn sort32_maybe_padded(base: *mut u64, n: usize) {
     debug_assert!((16..=32).contains(&n));
 

@@ -65,7 +65,6 @@ fn append_exact_zero_edges_for_cell(
 }
 
 #[cfg(feature = "parallel")]
-#[inline(never)]
 fn confirm_exact_zero_edges_parallel(
     hinted_cells: &[u32],
     vertices: &[Vec3],
@@ -402,7 +401,6 @@ struct CellPrefixes {
 // This alternative setup runs once per diagram; keep it out of the common
 // generator-ordered prefix path while its workers perform the bulk work.
 #[cold]
-#[inline(never)]
 fn emit_cell_prefixes_shard_order_parallel(
     finals: &[ShardFinal],
     assignment: &super::BinAssignment,

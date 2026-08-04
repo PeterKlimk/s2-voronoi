@@ -55,7 +55,6 @@ const GRID_BUILD_CHUNK_CAP_MIN_WORKERS: usize = 16;
 const GRID_BUILD_HIGH_CORE_CHUNKS: usize = 8;
 
 #[cfg(feature = "parallel")]
-#[inline(never)]
 fn build_parallel_grid_prefixes(
     chunk_counts: &[Vec<u32>],
     num_cells: usize,

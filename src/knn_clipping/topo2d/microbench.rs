@@ -67,7 +67,6 @@ pub(crate) fn run_clip_convex_microbench() {
         }
     }
 
-    #[inline(never)]
     fn clip_spherical3d(
         poly: &SphericalPolyBench,
         normal: Vec3,
