@@ -174,9 +174,6 @@ pub use embedding::{
     WorldVec3Like,
 };
 pub use error::VoronoiError;
-#[cfg(feature = "profiling")]
-#[doc(hidden)]
-pub use live_dedup::queue_audit::EdgeQueueSummary;
 /// EXPERIMENTAL DIAGNOSTIC re-export — see the type's documentation; not
 /// part of the supported API surface (taxonomy may change in patch releases).
 #[doc(hidden)]
@@ -197,20 +194,6 @@ pub fn profile_point_envelopes_reset() {
 #[doc(hidden)]
 pub fn profile_point_envelopes() -> Vec<point_audit::PointEnvelopeSummary> {
     point_audit::snapshot()
-}
-
-/// Reset profiling-only edge-check queue counters.
-#[cfg(feature = "profiling")]
-#[doc(hidden)]
-pub fn profile_edge_queues_reset() {
-    live_dedup::queue_audit::reset();
-}
-
-/// Snapshot profiling-only edge-check queue counters.
-#[cfg(feature = "profiling")]
-#[doc(hidden)]
-pub fn profile_edge_queues() -> EdgeQueueSummary {
-    live_dedup::queue_audit::snapshot()
 }
 
 /// Preprocessing mode applied before Voronoi computation.

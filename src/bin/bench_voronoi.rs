@@ -283,11 +283,6 @@ struct Args {
     #[cfg(feature = "profiling")]
     #[arg(long)]
     point_envelope_audit: bool,
-
-    /// Profiling-only: report edge-check queue lengths, growth, and reuse.
-    #[cfg(feature = "profiling")]
-    #[arg(long)]
-    edge_queue_audit: bool,
 }
 
 fn generate_points(n: usize, seed: u64, lloyd: bool, dist: &str, param: f64) -> Vec<Vec3> {
@@ -599,17 +594,12 @@ fn run_benchmark_with_config(
     config: VoronoiConfig,
     workspace: Option<&mut VoronoiWorkspace>,
     #[cfg(feature = "profiling")] point_envelope_audit: bool,
-    #[cfg(feature = "profiling")] edge_queue_audit: bool,
 ) -> BenchResult {
     let n = points.len();
 
     #[cfg(feature = "profiling")]
     if point_envelope_audit {
         voronoi_mesh::profile_point_envelopes_reset();
-    }
-    #[cfg(feature = "profiling")]
-    if edge_queue_audit {
-        voronoi_mesh::profile_edge_queues_reset();
     }
     let t0 = Instant::now();
     let diagram = match workspace {
@@ -674,20 +664,6 @@ fn run_benchmark_with_config(
             println!("Validation passed for n={}", n);
         }
     }
-    #[cfg(feature = "profiling")]
-    if edge_queue_audit {
-        let q = voronoi_mesh::profile_edge_queues();
-        println!(
-            "EDGE_QUEUE queues={} len_0={} len_1={} len_2={} len_3={} len_4={} len_5_8={} len_9_16={} len_17p={} pushes={} fresh_allocs={} pool_reuses={} growths={} copied={} used={} capacity={} max_len={} max_active={} max_live={} max_pool={} sum_peak_active={} sum_peak_live={} sum_peak_pool={}",
-            q.queues_taken, q.lengths[0], q.lengths[1], q.lengths[2], q.lengths[3],
-            q.lengths[4], q.lengths[5], q.lengths[6], q.lengths[7], q.pushes,
-            q.fresh_allocations, q.pool_reuses, q.growth_events, q.growth_copied_records,
-            q.used_records_at_take, q.capacity_records_at_take, q.max_queue_len,
-            q.max_active_queues, q.max_live_records, q.max_pool_len,
-            q.sum_shard_peak_active, q.sum_shard_peak_live, q.sum_shard_peak_pool,
-        );
-    }
-
     BenchResult {
         n,
         time_ms,
@@ -786,8 +762,6 @@ fn main() {
                 workspace.as_mut(),
                 #[cfg(feature = "profiling")]
                 args.point_envelope_audit,
-                #[cfg(feature = "profiling")]
-                args.edge_queue_audit,
             );
             times.push(result.time_ms);
 

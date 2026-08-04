@@ -13,8 +13,6 @@ pub(crate) struct ShardDedup {
     pub(super) edge_checks: Vec<Vec<EdgeCheck>>,
     /// Pool of reusable Vecs with existing capacity.
     pub(super) edge_check_pool: Vec<Vec<EdgeCheck>>,
-    #[cfg(feature = "profiling")]
-    pub(super) queue_audit: super::queue_audit::LocalQueueAudit,
 }
 
 impl ShardDedup {
@@ -22,8 +20,6 @@ impl ShardDedup {
         Self {
             edge_checks: (0..num_local_generators).map(|_| Vec::new()).collect(),
             edge_check_pool: Vec::new(),
-            #[cfg(feature = "profiling")]
-            queue_audit: super::queue_audit::LocalQueueAudit::default(),
         }
     }
 }

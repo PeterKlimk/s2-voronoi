@@ -14,8 +14,6 @@ mod cell_output;
 mod edge_checks;
 mod emit;
 mod packed;
-#[cfg(feature = "profiling")]
-pub(crate) mod queue_audit;
 mod shard;
 mod types;
 
