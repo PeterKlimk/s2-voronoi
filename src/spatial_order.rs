@@ -10,7 +10,7 @@ pub(crate) enum SpatialOrderCorrelation {
 }
 
 impl SpatialOrderCorrelation {
-    #[inline(always)]
+    #[inline]
     pub(crate) fn is_scrambled(self) -> bool {
         matches!(self, Self::Scrambled)
     }
@@ -22,7 +22,7 @@ impl SpatialOrderCorrelation {
 /// Callers choose samples from the order they can traverse cheaply. The
 /// absolute floor prevents unit-stride order in domains below 100 entries
 /// from being mislabeled as scrambled.
-#[inline(always)]
+#[inline]
 pub(crate) fn classify_spatial_correlation(
     abs_delta: u64,
     samples: u64,

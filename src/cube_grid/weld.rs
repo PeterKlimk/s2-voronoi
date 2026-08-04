@@ -23,7 +23,7 @@ struct SlotPointInit {
 }
 
 /// The exact computed-f32 edge predicate for the welding threshold graph.
-#[inline(always)]
+#[inline]
 pub(crate) fn is_weld_pair(distance_squared: f32, radius_squared: f32) -> bool {
     distance_squared < radius_squared
 }

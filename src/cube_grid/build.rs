@@ -243,7 +243,7 @@ struct GridScatterDestinations {
     zs: usize,
 }
 
-#[inline(always)]
+#[inline]
 unsafe fn scatter_input_chunk<const WRITE_COORDINATES: bool>(
     points: &[Vec3],
     point_cells: &[u32],
@@ -964,7 +964,7 @@ impl CubeMapGrid {
     fn compute_ring2(res: usize, neighbors: &[[u32; 9]]) -> (Vec<[u32; RING2_MAX]>, Vec<u8>) {
         let num_cells = 6 * res * res;
 
-        #[inline(always)]
+        #[inline]
         fn ring_contains(ring: &[u32; RING2_MAX], ring_len: usize, v: u32) -> bool {
             let mut i = 0usize;
             while i < ring_len {

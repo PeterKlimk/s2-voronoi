@@ -55,7 +55,7 @@ pub(crate) struct DirectedNeighborStream<'a, 'm, 'p, 'g> {
 }
 
 impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
-    #[inline(always)]
+    #[inline]
     fn packed_mut(&mut self, context: &str) -> &mut PackedQuery<'p, 'g, 'm> {
         match self.packed.as_mut() {
             Some(packed) => packed,

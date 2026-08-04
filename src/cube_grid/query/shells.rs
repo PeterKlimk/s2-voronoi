@@ -58,7 +58,7 @@ impl ShellEligibility for UnrestrictedEligibility {
 /// is the slot, preserving the previous ascending-slot tie break exactly.
 type PendingKey = u64;
 
-#[inline(always)]
+#[inline]
 fn f32_to_ordered_u32(value: f32) -> u32 {
     let bits = value.to_bits();
     if bits & 0x8000_0000 != 0 {
@@ -68,7 +68,7 @@ fn f32_to_ordered_u32(value: f32) -> u32 {
     }
 }
 
-#[inline(always)]
+#[inline]
 fn ordered_u32_to_f32(value: u32) -> f32 {
     let bits = if value & 0x8000_0000 != 0 {
         value ^ 0x8000_0000
@@ -78,18 +78,18 @@ fn ordered_u32_to_f32(value: u32) -> f32 {
     f32::from_bits(bits)
 }
 
-#[inline(always)]
+#[inline]
 fn make_pending_key(dot: f32, slot: u32) -> PendingKey {
     let descending_dot = !f32_to_ordered_u32(dot);
     ((descending_dot as u64) << 32) | slot as u64
 }
 
-#[inline(always)]
+#[inline]
 fn pending_key_dot(key: PendingKey) -> f32 {
     ordered_u32_to_f32(!((key >> 32) as u32))
 }
 
-#[inline(always)]
+#[inline]
 fn pending_key_slot(key: PendingKey) -> u32 {
     key as u32
 }

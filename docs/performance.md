@@ -653,6 +653,11 @@ modules without making the non-obvious code shape look accidental.
   (+0.04% Fibonacci, -0.03% uniform) and reduced cycles by 0.88% and 1.03%, respectively. Removing
   the hints also reduced native text by about 3.8 KiB. The 100k mega guardrail was structurally
   neutral and 0.32% slower in cycles; ordinary Fibonacci and uniform placement takes precedence.
+- **Grid/query inline visibility.** Eleven grid-build, shell-key, stream, weld, and spatial-order
+  helpers use ordinary rather than forced inlining. The two forms produced byte-identical native
+  text, so `inline(always)` imposed no additional placement decision. Removing inline visibility
+  entirely was neutral on 500k Fibonacci but regressed 500k uniform cycles by 0.54% in all nine
+  pairs. Retain ordinary `inline` as the simpler cross-codegen boundary for this family.
 - **Canonicalization and dense-query gating.** The scalar f64-normalize/store pass measured about
   20 ms at 2M single-threaded (roughly 0.5–0.8% of total) and is chunk-parallel by default. The
   dense-cell band plus takeover lost about 13% on the 500k moderate-cluster control, so it remains
