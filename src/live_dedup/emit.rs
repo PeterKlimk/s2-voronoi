@@ -11,7 +11,6 @@ use super::types::{
 };
 use super::{BuildCellsError, CellOutputBuffer, VertexData};
 
-#[inline(always)]
 #[allow(clippy::neg_cmp_op_on_partial_ord)] // unordered (NaN) must fail the certificate
 fn exceeds_resolution_drift(representative: Vec3, local: Vec3) -> bool {
     let delta = (f64::from(representative.x) - f64::from(local.x)).abs();
@@ -27,7 +26,6 @@ pub(crate) struct EdgeScratch {
     vertex_indices: Vec<u32>,
 }
 
-#[inline(always)]
 fn assert_endpoint_lengths(cell_vertices: &[VertexData], vertex_indices_len: usize) -> usize {
     let vertex_count = cell_vertices.len();
     assert_eq!(

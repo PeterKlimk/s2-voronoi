@@ -25,7 +25,6 @@ pub(crate) struct BinAssignment {
 }
 
 impl BinAssignment {
-    #[inline(always)]
     pub(crate) fn generator_bin_local(&self, generator: usize) -> (BinId, LocalId) {
         let packed = self.generator_layout[generator];
         (
@@ -34,7 +33,6 @@ impl BinAssignment {
         )
     }
 
-    #[inline(always)]
     pub(crate) fn bin_cells(&self, bin: usize) -> &[u32] {
         let start = self.bin_cell_offsets[bin] as usize;
         let end = self.bin_cell_offsets[bin + 1] as usize;
@@ -42,7 +40,6 @@ impl BinAssignment {
     }
 
     #[cfg(any(debug_assertions, test))]
-    #[inline(always)]
     pub(crate) fn generator_local(&self, generator: usize) -> LocalId {
         LocalId::from(self.generator_layout[generator] & self.local_mask)
     }

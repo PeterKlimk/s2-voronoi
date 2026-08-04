@@ -40,7 +40,6 @@ struct ConfirmedZeroEdgeHints {
     hinted_cells: Vec<u32>,
 }
 
-#[inline(always)]
 fn append_exact_zero_edges_for_cell(
     cell_idx: u32,
     vertices: &[Vec3],
@@ -166,7 +165,6 @@ fn prefer_shard_order_scatter(bin_generators: &[Vec<usize>], num_cells: usize) -
     crate::spatial_order::classify_spatial_correlation(abs_delta, samples, num_cells).is_scrambled()
 }
 
-#[inline(always)]
 unsafe fn scatter_local_indices(
     src: &[u32],
     cell_indices_ptr: usize,
@@ -308,7 +306,6 @@ struct ConcatenatedVertices {
     offsets: Vec<u32>,
 }
 
-#[inline(always)]
 fn concatenate_vertices(
     finals: &mut [ShardFinal],
     num_bins: usize,
@@ -560,7 +557,6 @@ fn emit_cell_prefixes_parallel(
     })
 }
 
-#[inline(always)]
 fn emit_cell_prefixes(
     finals: &[ShardFinal],
     assignment: &super::BinAssignment,
@@ -613,7 +609,6 @@ fn emit_cell_prefixes(
     })
 }
 
-#[inline(always)]
 fn summarize_incidence(
     finals: &[ShardFinal],
     total_cell_indices: u32,
@@ -660,7 +655,6 @@ fn summarize_incidence(
     }
 }
 
-#[inline(always)]
 fn scatter_cell_indices(
     finals: &[ShardFinal],
     cells: &[VoronoiCell],
@@ -805,7 +799,6 @@ fn scatter_cell_indices(
     (cell_indices, scatter_by_shard)
 }
 
-#[inline(always)]
 fn patch_reference_overrides(
     finals: &[ShardFinal],
     cells: &[VoronoiCell],
@@ -835,7 +828,6 @@ struct ResolutionHints {
     exact_zero_edge_hint_cell_count: usize,
 }
 
-#[inline(always)]
 fn collect_resolution_hints(
     finals: &[ShardFinal],
     vertices: &[Vec3],

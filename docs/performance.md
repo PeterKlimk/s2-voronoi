@@ -647,6 +647,12 @@ modules without making the non-obvious code shape look accidental.
   checks. Small-N sorting networks beat `sort_unstable` by about 5% total time at 500k in their
   measured regime, while extracting the shared packed emit sequence out of line added 0.6%
   whole-build instructions; these helpers therefore retain their explicit inline boundaries.
+- **Live-dedup compiler placement.** Forced inlining was removed from nineteen assembly, binning,
+  emission, and shard helpers after a current-toolchain family null. Against the always-inline
+  baseline, nine paired 500k single-threaded runs left instructions effectively neutral
+  (+0.04% Fibonacci, -0.03% uniform) and reduced cycles by 0.88% and 1.03%, respectively. Removing
+  the hints also reduced native text by about 3.8 KiB. The 100k mega guardrail was structurally
+  neutral and 0.32% slower in cycles; ordinary Fibonacci and uniform placement takes precedence.
 - **Canonicalization and dense-query gating.** The scalar f64-normalize/store pass measured about
   20 ms at 2M single-threaded (roughly 0.5–0.8% of total) and is chunk-parallel by default. The
   dense-cell band plus takeover lost about 13% on the 500k moderate-cluster control, so it remains

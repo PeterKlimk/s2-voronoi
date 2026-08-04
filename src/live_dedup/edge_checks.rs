@@ -201,7 +201,6 @@ impl ShardDedup {
 /// edges_to_later and edges_overflow for the emit phase.
 ///
 /// This eliminates the edges_to_earlier intermediate vec
-#[inline(always)]
 fn assert_cell_output_lengths(
     output_buffer: &crate::live_dedup::CellOutputBuffer,
     vertex_indices_len: usize,

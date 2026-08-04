@@ -71,27 +71,22 @@ impl ShardOutput {
         }
     }
 
-    #[inline(always)]
     pub(crate) fn set_cell_start(&mut self, local: LocalId, start: u32) {
         self.cell_starts[local.as_usize()] = start;
     }
 
-    #[inline(always)]
     pub(super) fn cell_start(&self, local: LocalId) -> u32 {
         self.cell_starts[local.as_usize()]
     }
 
-    #[inline(always)]
     pub(super) fn set_cell_count(&mut self, local: LocalId, count: u8) {
         self.cell_counts[local.as_usize()] = count;
     }
 
-    #[inline(always)]
     pub(super) fn cell_count(&self, local: LocalId) -> u8 {
         self.cell_counts[local.as_usize()]
     }
 
-    #[inline(always)]
     pub(super) fn add_vertex_incidence(&mut self, local: u32) {
         let count = &mut self.vertex_incidence[local as usize];
         *count = (*count + 1).min(3);
