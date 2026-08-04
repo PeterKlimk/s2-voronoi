@@ -207,7 +207,6 @@ impl PackedKnnCellScratch {
         })
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     // Loop indices address several parallel per-query arrays at once;
     // iterator zips would obscure rather than clarify.
     #[allow(clippy::needless_range_loop)]

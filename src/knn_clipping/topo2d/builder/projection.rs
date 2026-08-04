@@ -168,7 +168,6 @@ impl GnomonicBuilder {
         }
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn reset(&mut self, generator_idx: usize, generator: Vec3) {
         // Preserve the canonicalized f32 bits exactly; do not renormalize.
         let gen64 = DVec3::new(generator.x as f64, generator.y as f64, generator.z as f64);
@@ -283,7 +282,6 @@ impl GnomonicBuilder {
             .map(|constraint| constraint.neighbor_idx)
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
         if !self.is_bounded() || self.vertex_count() < 3 {
             return false;
@@ -377,7 +375,6 @@ impl Topo2DBuilder {
         self.inner = BuilderImpl::Gnomonic(GnomonicBuilder::new(generator_idx, generator));
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     pub(crate) fn reset(&mut self, generator_idx: usize, generator: Vec3) {
         if let BuilderImpl::Gnomonic(builder) = &mut self.inner {
             builder.reset(generator_idx, generator);
@@ -427,7 +424,6 @@ impl Topo2DBuilder {
         iter
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     pub(crate) fn can_terminate(&mut self, max_unseen_dot_bound: f32) -> bool {
         match &mut self.inner {
             BuilderImpl::Gnomonic(builder) => builder.can_terminate(max_unseen_dot_bound),

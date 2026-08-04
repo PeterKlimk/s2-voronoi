@@ -46,7 +46,6 @@ impl EdgeScratch {
         }
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     fn collect_and_resolve(
         &mut self,
         cell_idx: u32,
@@ -72,7 +71,6 @@ impl EdgeScratch {
         );
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     #[allow(clippy::too_many_arguments)] // compact edge records carry final CSR provenance
     fn emit(
         &mut self,

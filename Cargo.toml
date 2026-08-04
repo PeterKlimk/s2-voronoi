@@ -21,7 +21,7 @@ keywords = ["voronoi", "sphere", "delaunay", "geometry", "mesh"]
 categories = ["algorithms", "mathematics", "science::geo", "graphics"]
 
 [package.metadata.docs.rs]
-# Public feature surface; internal flags (timing, profiling, microbench,
+# Public feature surface; internal flags (timing, microbench,
 # manual_probes, simd_scalar, tools) are not part of
 # the documented contract.
 features = ["parallel", "glam", "serde"]
@@ -35,7 +35,6 @@ default = ["parallel"]
 parallel = ["rayon"]
 glam = []  # Enable public glam::Vec3 / DVec3 input interop
 timing = []  # Enable detailed timing instrumentation
-profiling = [] # Profiling helpers (e.g. disable inlining on hot functions)
 microbench = ["dep:rand", "dep:rand_chacha"] # Enable internal microbench harnesses
 serde = ["dep:serde"] # Serialize/Deserialize for diagram types
 manual_probes = [] # Compile wholly manual/ignored integration-test targets

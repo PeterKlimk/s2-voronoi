@@ -547,7 +547,7 @@ fn clip_seed_neighbors(
 /// builder's certificate fires mid-batch.
 // There is one production call site. Keeping the source-specialized loops
 // visible there avoids a separate outlined copy and reduces total code size.
-#[cfg_attr(not(feature = "profiling"), inline(always))]
+#[inline(always)]
 #[allow(clippy::too_many_arguments)]
 fn clip_batch(
     phase: &mut StreamPhase<'_>,
@@ -603,7 +603,6 @@ fn should_clip_neighbor<const SHELL: bool>(
 
 /// Source-specialized batch loop. `SHELL` removes the invariant source match
 /// from each candidate while retaining one dispatch per exact batch above.
-#[cfg_attr(feature = "profiling", inline(never))]
 #[allow(clippy::too_many_arguments)]
 fn clip_batch_source<const SHELL: bool>(
     phase: &mut StreamPhase<'_>,

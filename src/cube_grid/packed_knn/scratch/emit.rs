@@ -4,7 +4,6 @@ use super::*;
 use crate::fp;
 
 impl PackedKnnCellScratch {
-    #[cfg_attr(feature = "profiling", inline(never))]
     // Tail candidates were already partitioned into (hi, tail, unsafe) buckets
     // during `prepare_group_directed`; bin/local decoding lives there, so no
     // layout context is needed here.
@@ -201,7 +200,6 @@ impl PackedKnnCellScratch {
         }
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn next_chunk(
         &mut self,
         qi: usize,

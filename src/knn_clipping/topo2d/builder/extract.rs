@@ -40,7 +40,6 @@ fn edge_keys_consistent(buffer: &CellOutputBuffer) -> bool {
 }
 
 impl GnomonicBuilder {
-    #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn to_vertex_data_full(
         &self,
         buffer: &mut CellOutputBuffer,
@@ -473,7 +472,6 @@ impl FallbackBuilder {
         vertices
     }
 
-    #[cfg_attr(feature = "profiling", inline(never))]
     pub(super) fn to_vertex_data_full(
         &self,
         buffer: &mut CellOutputBuffer,
@@ -577,7 +575,6 @@ impl FallbackBuilder {
 }
 
 impl Topo2DBuilder {
-    #[cfg_attr(feature = "profiling", inline(never))]
     pub(crate) fn to_vertex_data_full(
         &self,
         buffer: &mut CellOutputBuffer,

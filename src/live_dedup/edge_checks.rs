@@ -214,7 +214,6 @@ fn assert_cell_output_lengths(
     n
 }
 
-#[cfg_attr(feature = "profiling", inline(never))]
 // The argument list is the fused collect+resolve data flow; the two
 // output vecs are caller-owned scratch reused across cells.
 #[allow(clippy::too_many_arguments)]
@@ -557,7 +556,6 @@ fn resolve_pair_bucket(
 /// records and match them by edge key. This allows propagating vertex indices
 /// between bins without global communication during the main clipping phase.
 ///
-#[cfg_attr(feature = "profiling", inline(never))]
 pub(super) fn resolve_edge_check_overflow(
     shards: &mut [ShardState],
     edge_check_overflow: &[EdgeCheckOverflow],
