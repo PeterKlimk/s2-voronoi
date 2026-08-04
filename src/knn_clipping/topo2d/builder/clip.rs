@@ -450,14 +450,12 @@ impl FallbackBuilder {
 }
 
 impl Topo2DBuilder {
-    #[inline(always)]
     pub(crate) fn handle_step_result(
         result: Result<(), CellFailure>,
     ) -> Result<BuilderStepOutcome, CellFailure> {
         Self::classify_step_result(result)
     }
 
-    #[inline(always)]
     pub(crate) fn handle_clip_result(
         result: Result<ClipResult, CellFailure>,
     ) -> Result<BuilderClipOutcome, CellFailure> {

@@ -671,6 +671,13 @@ modules without making the non-obvious code shape look accidental.
   nine pairs, with instructions up about 0.075% in both. Downgrading the five small constructor,
   frontier, and predicate helpers was structurally neutral but cost about 0.2% cycles in both
   regimes. These hints remain a measured exception to compiler-directed placement.
+- **Topo2D builder dispatch.** The two result-classifier wrappers no longer carry inline hints;
+  removing them produced byte-identical native text. The four mutation and policy-dispatch
+  boundaries retain forced flattening. Downgrading all six builder hints to ordinary inline raised
+  500k Fibonacci/uniform instructions by 1.61%/2.37% and cycles by 0.85%/1.70%. Isolating only the
+  two inner mutation methods still raised instructions by 1.41%/2.12% and cycles by 0.73%/1.10%,
+  with every pair worse. The policy-dispatch pair independently reproduced the bad family code
+  shape, so both layers remain measured exceptions.
 - **Canonicalization and dense-query gating.** The scalar f64-normalize/store pass measured about
   20 ms at 2M single-threaded (roughly 0.5–0.8% of total) and is chunk-parallel by default. The
   dense-cell band plus takeover lost about 13% on the 500k moderate-cluster control, so it remains
