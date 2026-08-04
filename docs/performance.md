@@ -215,6 +215,17 @@ and 0.47% branches to Fibonacci and about 0.25% instructions to bimodal. Revisit
 partitioning only with group-level specialization that leaves the ordinary packed emitter
 unchanged; observed continuation depth is the demonstrated discriminator.
 
+The follow-up shell profile did not expose another keeper. Caching the takeover query's normalized
+`DVec3` across layers regressed mega by 1.77% and great-circle by 8.21%; the sampled square roots
+were primarily per-cell conservative cap bounds, while the larger hot frontier state harmed code
+shape. A renewed attempted-slot census found shell duplicate shares of about 1.9% on mega, 16.9%
+on bimodal, 12.9% on clustered, and 0.4% on great-circle. Filtering those slots before shell dot/key
+construction saved only 0.17% instructions on bimodal while adding 1.12% cycles and 3.8% cache
+misses. Clustered saved 0.38% instructions but added 1.76% branches; mega and great-circle added
+instructions/branches, and mega cache misses rose about 5.2%. The earlier rejection therefore
+still holds after the wider prefix: full re-coverage is visible, but consulting the large attempted
+table during spatial scanning costs more than the avoided keys.
+
 That fallback is intentionally a reliability tradeoff: at 100k clustered it cost approximately
 23% more instructions and 15% more cycles; uniform work remained structurally neutral. The weld
 pair budget added approximately 0.8% instructions to a 500k normal-preprocessing control, while the
