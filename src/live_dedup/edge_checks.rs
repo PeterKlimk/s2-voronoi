@@ -384,9 +384,7 @@ pub(super) fn collect_and_resolve_cell_edges(
                     // regression fixtures); the validate / VORONOI_MESH_VERIFY
                     // gates remain the production catch. Debug must not abort
                     // (this only makes debug match release behavior).
-                    unsafe {
-                        *vertex_indices.get_unchecked_mut(local_idx) = check.indices[ck];
-                    }
+                    vertex_indices[local_idx] = check.indices[ck];
                 });
                 // A malformed endpoint on either side already produced an
                 // EndpointKeyMismatch record (here or at the emitter), and a

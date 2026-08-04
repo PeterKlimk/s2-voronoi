@@ -685,6 +685,13 @@ modules without making the non-obvious code shape look accidental.
   visibility from the two kernels reduced instructions by 0.70--0.96% but enlarged text by about
   2.6 KiB and regressed Fibonacci/uniform cycles by 0.31%/0.57%. Retain ordinary visibility on the
   kernels as the simpler specialization boundary.
+- **Safe edge-resolution indexing.** The resolved vertex-index write in the in-bin reconciliation
+  loop uses ordinary checked indexing; it produced byte-identical native text after the existing
+  release length assertion. Converting the whole loop to safe indexing added 1.9--2.2% branches.
+  Keeping the dynamic incoming-check partition unsafe but making the parallel-array reads safe still
+  added about 1% branches and regressed Fibonacci/uniform cycles by 0.51%/0.93%. Direct iteration of
+  the slot array was worse. Retain unchecked reads and partition operations as measured exceptions,
+  while using safe indexing for the write LLVM proves from the dominating length invariant.
 - **Canonicalization and dense-query gating.** The scalar f64-normalize/store pass measured about
   20 ms at 2M single-threaded (roughly 0.5–0.8% of total) and is chunk-parallel by default. The
   dense-cell band plus takeover lost about 13% on the 500k moderate-cluster control, so it remains
