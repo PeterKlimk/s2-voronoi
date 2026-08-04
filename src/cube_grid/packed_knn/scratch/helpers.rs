@@ -2,7 +2,7 @@ use super::super::super::{cell_to_face_ij, CubeMapGrid};
 use crate::sort::sort_small as sort_small_u64;
 use glam::Vec3;
 
-#[inline(always)]
+#[inline]
 fn f32_to_ordered_u32(val: f32) -> u32 {
     let b = val.to_bits();
     if b & 0x8000_0000 != 0 {
@@ -12,7 +12,7 @@ fn f32_to_ordered_u32(val: f32) -> u32 {
     }
 }
 
-#[inline(always)]
+#[inline]
 pub(super) fn make_desc_key(dot: f32, idx: u32) -> u64 {
     // Sorting networks use `u64::MAX` as a padding sentinel (via `sort_small`). For finite
     // floats, `f32_to_ordered_u32` is never 0, so `desc` is never all-ones and the full key can
@@ -24,7 +24,7 @@ pub(super) fn make_desc_key(dot: f32, idx: u32) -> u64 {
     ((desc as u64) << 32) | (idx as u64)
 }
 
-#[inline(always)]
+#[inline]
 pub(super) fn sort_keys_u64(keys: &mut [u64]) {
     // Sorting networks own the measured small-N regime; larger slices keep the
     // standard unstable sort. See
@@ -36,12 +36,12 @@ pub(super) fn sort_keys_u64(keys: &mut [u64]) {
     keys.sort_unstable();
 }
 
-#[inline(always)]
+#[inline]
 pub(super) fn key_to_idx(key: u64) -> u32 {
     (key & 0xFFFF_FFFF) as u32
 }
 
-#[inline(always)]
+#[inline]
 fn ordered_u32_to_f32(val: u32) -> f32 {
     let b = if val & 0x8000_0000 != 0 {
         val ^ 0x8000_0000
@@ -51,7 +51,7 @@ fn ordered_u32_to_f32(val: u32) -> f32 {
     f32::from_bits(b)
 }
 
-#[inline(always)]
+#[inline]
 pub(super) fn key_to_dot(key: u64) -> f32 {
     let desc = (key >> 32) as u32;
     let ord = !desc;

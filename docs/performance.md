@@ -658,6 +658,12 @@ modules without making the non-obvious code shape look accidental.
   text, so `inline(always)` imposed no additional placement decision. Removing inline visibility
   entirely was neutral on 500k Fibonacci but regressed 500k uniform cycles by 0.54% in all nine
   pairs. Retain ordinary `inline` as the simpler cross-codegen boundary for this family.
+- **Packed-scratch inline visibility.** Six packed-key helpers and the const-generic emit runner use
+  ordinary rather than forced inlining; the downgrade produced byte-identical native text. Removing
+  visibility from the key helpers reduced instructions by 0.02--0.06% but regressed Fibonacci and
+  uniform cycles by 0.52% and 0.63%. Removing it from the emit runner was decisively worse:
+  instructions rose 0.43--0.49%, branches 0.57--0.63%, and cycles 0.81--0.94%. Retain ordinary
+  `inline` for cross-codegen specialization without forcing the compiler's final decision.
 - **Canonicalization and dense-query gating.** The scalar f64-normalize/store pass measured about
   20 ms at 2M single-threaded (roughly 0.5–0.8% of total) and is chunk-parallel by default. The
   dense-cell band plus takeover lost about 13% on the 500k moderate-cluster control, so it remains
