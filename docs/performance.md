@@ -692,6 +692,13 @@ modules without making the non-obvious code shape look accidental.
   added about 1% branches and regressed Fibonacci/uniform cycles by 0.51%/0.93%. Direct iteration of
   the slot array was worse. Retain unchecked reads and partition operations as measured exceptions,
   while using safe indexing for the write LLVM proves from the dominating length invariant.
+- **Topo2D extraction initialization.** The spare-capacity extraction loop retains unchecked writes.
+  One release assertion plus safe indexed writes was structurally neutral but regressed 500k
+  Fibonacci/uniform cycles by 0.66%/1.22% in every pair. Zipping the two production output slices
+  added about 8 KiB of text, 1.5% instructions, 3.7--4.1% branches, and roughly 3.3% cycles. Even
+  converting only the vertex-output write added 136 bytes of text and regressed cycles by
+  0.93%/0.63%. Keep the existing reserve, debug assertions, documented unchecked writes, and final
+  initialization certification as a measured exception.
 - **Canonicalization and dense-query gating.** The scalar f64-normalize/store pass measured about
   20 ms at 2M single-threaded (roughly 0.5–0.8% of total) and is chunk-parallel by default. The
   dense-cell band plus takeover lost about 13% on the 500k moderate-cluster control, so it remains
