@@ -664,6 +664,13 @@ modules without making the non-obvious code shape look accidental.
   uniform cycles by 0.52% and 0.63%. Removing it from the emit runner was decisively worse:
   instructions rose 0.43--0.49%, branches 0.57--0.63%, and cycles 0.81--0.94%. Retain ordinary
   `inline` for cross-codegen specialization without forcing the compiler's final decision.
+- **Cell-build phase flattening.** A current-toolchain audit retained the ten forced-inline hints in
+  cell-build orchestration. Removing all hints added about 6 KiB of text, 1.14--1.23% instructions,
+  and 2.00--2.21% cycles on 500k Fibonacci/uniform. Downgrading only the five large phase seams to
+  ordinary inline improved Fibonacci cycles by 0.22% but regressed uniform cycles by 0.53% in all
+  nine pairs, with instructions up about 0.075% in both. Downgrading the five small constructor,
+  frontier, and predicate helpers was structurally neutral but cost about 0.2% cycles in both
+  regimes. These hints remain a measured exception to compiler-directed placement.
 - **Canonicalization and dense-query gating.** The scalar f64-normalize/store pass measured about
   20 ms at 2M single-threaded (roughly 0.5–0.8% of total) and is chunk-parallel by default. The
   dense-cell band plus takeover lost about 13% on the 500k moderate-cluster control, so it remains
