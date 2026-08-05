@@ -268,13 +268,13 @@ fn error_policy_names_generators_with_unrepresentable_cells() {
         .iter()
         .map(|p| [p.x as f64, p.y as f64, p.z as f64])
         .collect();
-    let embedded_error = compute_on_sphere_with_report(
+    let world_error = compute_on_sphere_with_report(
         &world_points,
         SphereEmbedding::new([0.0; 3], 1.0).unwrap(),
         config(),
     )
-    .expect_err("embedded report path must enforce the same policy");
-    assert_eq!(check(embedded_error, points.len()), [1, 10]);
+    .expect_err("world-input report path must enforce the same policy");
+    assert_eq!(check(world_error, points.len()), [1, 10]);
 
     // Error indices use the caller's original input space. If an affected
     // effective cell represents a welded class, every original member of that
@@ -367,21 +367,20 @@ fn explicit_elision_returns_a_dense_valid_cell_mesh() {
             ]
         })
         .collect();
-    let embedded = compute_on_sphere_with_report(
+    let world_resolved = compute_on_sphere_with_report(
         &world_points,
         embedding,
         VoronoiConfig::default().with_preprocess_mode(PreprocessMode::MergeWithin(1.0e-10)),
     )
-    .expect("embedded welded extension should compute")
+    .expect("world-input welded extension should compute")
     .into_elided_cell_mesh()
-    .expect("embedded wrapper must use the same safe unit quotient");
-    assert_eq!(embedded.mesh.mesh().num_cells(), 16);
-    assert_eq!(embedded.mesh.mesh().cell_for_input(18), None);
-    assert_eq!(embedded.mesh.embedding(), embedding);
-    assert!(embedded.mesh.mesh().validate().is_strictly_valid());
-    let unit_vertex = embedded.mesh.mesh().vertex(0);
+    .expect("world-input adapter must use the same safe unit quotient");
+    assert_eq!(world_resolved.mesh.num_cells(), 16);
+    assert_eq!(world_resolved.mesh.cell_for_input(18), None);
+    assert!(world_resolved.mesh.validate().is_strictly_valid());
+    let unit_vertex = world_resolved.mesh.vertex(0);
     assert_eq!(
-        embedded.mesh.vertex_world(0),
+        embedding.point_to_world(unit_vertex),
         [
             2.0 + 7.0 * unit_vertex.x() as f64,
             -3.0 + 7.0 * unit_vertex.y() as f64,

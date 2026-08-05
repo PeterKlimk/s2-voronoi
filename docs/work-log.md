@@ -80,8 +80,8 @@ prevention rather than an overclaimed proof.
 - **Result:** `locate` returns `SphereQueryError`; `locate_many` returns the lowest indexed
   `IndexedSphereQueryError`. A deterministic regression proves that the old raw-dot versus
   normalized-bound mismatch could return a non-nearest generator for scaled input. World-space
-  locators retain their existing projection errors and reuse the checked-point path. Public
-  `locate_point` and `locate_many_points` methods provide that same infallible path for reusable
+  callers explicitly project queries with `SphereEmbedding` and then reuse the checked-point path.
+  Public `locate_point` and `locate_many_points` methods provide that same infallible path for reusable
   canonical queries, avoiding the measured 2.4--5.1% raw-query normalization cost and the
   12-byte/query batch buffer. Raw batch records no longer need to be `Sync`.
   Details are recorded in
@@ -212,8 +212,8 @@ default `Preserve` behavior.
 - **Status:** Completed 2026-07-15
 - **Goal:** expose `Error` and `Elide` behavior when satisfying output resolution would remove an
   effective generator cell. `Error` and explicit cell-mesh `Elide` are implemented.
-- **Implemented:** `CellKillingPolicy::{Preserve, Error}` applies equally to plain, report-bearing,
-  and embedded computations. `CellEliminationRequired` reports original input indices, expanding
+- **Implemented:** `CellKillingPolicy::{Preserve, Error}` applies equally to unit and world-input
+  computations. `CellEliminationRequired` reports original input indices, expanding
   affected preprocessing weld classes, after all safe exact-zero contractions.
 - **Elision transaction:** the implemented direction is an explicit postprocess returning a distinct
   spherical cell mesh with `input -> Option<cell>` and `cell -> canonical input` mappings. A
@@ -229,8 +229,9 @@ default `Preserve` behavior.
   ordered cell cycles, source attribution, combinatorial adjacency, compaction, and generic S2-mesh
   validation. Locator, Delaunay, Lloyd, and conditioned area/centroid APIs remain Voronoi-only until
   separate semantics are justified. Unsafe conversion is all-or-error through a distinct
-  `CellElisionError`; there is no implicit Preserve fallback. Embedded parity is a thin unit-mesh
-  wrapper without locator/Lloyd claims. Rejected conversion retains the original successful output,
+  `CellElisionError`; there is no implicit Preserve fallback. World-input adapters return the same
+  unit mesh without locator/Lloyd claims; callers apply their `SphereEmbedding` explicitly.
+  Rejected conversion retains the original successful output,
   and mesh vertex storage is dense and immutable.
 - **Deferred extension:** decide the generic spherical-arc contract before adding cell-mesh
   area/centroid methods.
@@ -269,7 +270,7 @@ default `Preserve` behavior.
   about 48 ms for 82 terminal candidates/contractions, versus about 2.18 s for the legacy cold
   conversion's 3,403 repeated occurrences/82 commits. The 100k/`1e-3` replacement completed in
   about 748 ms with 10,572 terminal contractions.
-- **Deletion gate:** unit, closure-ingest, configured, and embedded entry-point parity was verified;
+- **Deletion gate:** unit, closure-ingest, configured, and world-input entry-point parity was verified;
   the post-computation conversion, positive policies, work budgets, recoverable simplification
   errors, suppression telemetry, and global fixed-point engine were then deleted. Exact-zero
   elision remains a separate supported conversion.

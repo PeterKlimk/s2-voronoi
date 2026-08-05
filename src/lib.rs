@@ -164,11 +164,8 @@ pub use cell_mesh::{
 pub use diagram::{CellView, EffectiveCellView, SphericalVoronoi};
 pub use embedding::{
     compute_on_sphere, compute_on_sphere_simplified, compute_on_sphere_simplified_with,
-    compute_on_sphere_with, compute_on_sphere_with_report, EmbeddedCellElisionError,
-    EmbeddedCellMeshOutput, EmbeddedComputeOutput, EmbeddedSimplifiedCellMeshOutput,
-    EmbeddedSphereLocator, EmbeddedSphericalCellMesh, EmbeddedSphericalVoronoi,
-    IndexedSphereProjectionError, SphereEmbedding, SphereEmbeddingError, SphereProjectionError,
-    WorldVec3Like,
+    compute_on_sphere_with, compute_on_sphere_with_report, IndexedSphereProjectionError,
+    SphereEmbedding, SphereEmbeddingError, SphereProjectionError, WorldVec3Like,
 };
 pub use error::VoronoiError;
 /// EXPERIMENTAL DIAGNOSTIC re-export — see the type's documentation; not

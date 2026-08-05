@@ -6,10 +6,7 @@
 
 use std::fmt;
 
-use crate::{
-    ComputeOutput, ComputeReport, SphereLocator, SpherePoint, SphericalVoronoi, VoronoiConfig,
-    VoronoiError,
-};
+use crate::{ComputeOutput, SpherePoint, SphericalVoronoi, VoronoiConfig, VoronoiError};
 
 /// A type whose components can be read as f64 world coordinates.
 ///
@@ -300,13 +297,46 @@ impl SphereEmbedding {
         steradians * self.radius * self.radius
     }
 
+    /// Embed a checked stored sphere point in world coordinates.
     #[inline]
-    fn stored_unit_to_world(self, direction: SpherePoint) -> [f64; 3] {
+    pub fn point_to_world(self, direction: SpherePoint) -> [f64; 3] {
         self.unit_to_world([
             direction.x() as f64,
             direction.y() as f64,
             direction.z() as f64,
         ])
+    }
+
+    /// Project a world-space point into the core diagram's checked point type.
+    ///
+    /// Radial distance is discarded. The result uses the same scale-safe
+    /// f64-to-f32 canonicalization as the world-input computation adapters.
+    #[inline]
+    pub fn project_world_to_point<P: WorldVec3Like + ?Sized>(
+        self,
+        point: &P,
+    ) -> Result<SpherePoint, SphereProjectionError> {
+        projected_unit_f32(self, point)
+    }
+
+    /// Project world-space points for core batch-query APIs.
+    ///
+    /// Conversion is deterministic in input order. An invalid point returns
+    /// the lowest invalid input index, and input records need not be [`Sync`].
+    pub fn project_world_points<P: WorldVec3Like>(
+        self,
+        points: &[P],
+    ) -> Result<Vec<SpherePoint>, IndexedSphereProjectionError> {
+        points
+            .iter()
+            .enumerate()
+            .map(|(point_index, point)| {
+                projected_unit_f32(self, point).map_err(|source| IndexedSphereProjectionError {
+                    point_index,
+                    source,
+                })
+            })
+            .collect()
     }
 }
 
@@ -430,311 +460,30 @@ fn project_points<P: WorldVec3Like>(
         .collect()
 }
 
-/// A unit-sphere Voronoi diagram together with its world-space embedding.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct EmbeddedSphericalVoronoi {
-    diagram: SphericalVoronoi,
-    embedding: SphereEmbedding,
-}
-
-impl EmbeddedSphericalVoronoi {
-    /// Wrap an existing canonical unit-sphere diagram.
-    #[inline]
-    pub fn new(diagram: SphericalVoronoi, embedding: SphereEmbedding) -> Self {
-        Self { diagram, embedding }
-    }
-
-    /// Canonical unit-sphere diagram.
-    #[inline]
-    pub fn diagram(&self) -> &SphericalVoronoi {
-        &self.diagram
-    }
-
-    /// Mutable access to the canonical diagram, for operations such as vertex compaction.
-    #[inline]
-    pub fn diagram_mut(&mut self) -> &mut SphericalVoronoi {
-        &mut self.diagram
-    }
-
-    /// World-space embedding.
-    #[inline]
-    pub fn embedding(&self) -> SphereEmbedding {
-        self.embedding
-    }
-
-    /// Consume the wrapper and return its canonical diagram.
-    #[inline]
-    pub fn into_diagram(self) -> SphericalVoronoi {
-        self.diagram
-    }
-
-    /// Consume the wrapper into its canonical diagram and embedding.
-    #[inline]
-    pub fn into_parts(self) -> (SphericalVoronoi, SphereEmbedding) {
-        (self.diagram, self.embedding)
-    }
-
-    /// Canonicalized generator mapped onto the embedded sphere.
-    ///
-    /// This is not necessarily the original world-space input: radial distance
-    /// is discarded and the backend canonicalizes each stored direction to f32.
-    #[track_caller]
-    pub fn generator_world(&self, index: usize) -> [f64; 3] {
-        self.embedding
-            .stored_unit_to_world(self.diagram.generator(index))
-    }
-
-    /// Voronoi vertex mapped onto the embedded sphere.
-    #[track_caller]
-    pub fn vertex_world(&self, index: usize) -> [f64; 3] {
-        self.embedding
-            .stored_unit_to_world(self.diagram.vertex(index))
-    }
-
-    /// Physical surface area of a cell in squared world-coordinate units.
-    ///
-    /// This is the core cell's solid angle multiplied by `radius²`. It can be
-    /// positive infinity when the mathematical area exceeds finite f64 range.
-    /// Welded twins report their canonical cell's area; sum only canonical
-    /// cells when computing the sphere's total area.
-    #[track_caller]
-    pub fn cell_area_world(&self, index: usize) -> f64 {
-        self.embedding
-            .solid_angle_to_area(self.diagram.cell_area(index))
-    }
-
-    /// Spherical centroid/Lloyd target mapped onto the embedded sphere.
-    ///
-    /// This is the direction of the surface-position integral projected back
-    /// to the shell, matching [`SphericalVoronoi::cell_centroid`]. It is not
-    /// the unconstrained Euclidean center of mass of the curved patch.
-    #[track_caller]
-    pub fn cell_centroid_world(&self, index: usize) -> [f64; 3] {
-        self.embedding
-            .stored_unit_to_world(self.diagram.cell_centroid(index))
-    }
-
-    /// World-space Lloyd targets for all cells, in input order.
-    pub fn lloyd_step_world(&self) -> Vec<[f64; 3]> {
-        self.diagram
-            .lloyd_step()
-            .into_iter()
-            .map(|direction| self.embedding.stored_unit_to_world(direction))
-            .collect()
-    }
-
-    /// Build a point locator accepting world-space queries.
-    pub fn build_locator_world(&self) -> EmbeddedSphereLocator {
-        EmbeddedSphereLocator {
-            locator: self.diagram.build_locator(),
-            embedding: self.embedding,
-        }
-    }
-}
-
-/// Report-bearing result of an embedded computation.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct EmbeddedComputeOutput {
-    /// Returned diagram, with one cell per original input point.
-    pub diagram: EmbeddedSphericalVoronoi,
-    /// Existing unit-backend preprocessing, reconciliation, local-rebuild,
-    /// and validation report.
-    pub report: ComputeReport,
-}
-
-impl EmbeddedComputeOutput {
-    /// Number of generators actually solved after preprocessing.
-    #[inline]
-    pub fn effective_cell_count(&self) -> usize {
-        self.diagram.diagram().effective_cell_count()
-    }
-
-    /// Consume this report-bearing computation and explicitly elide cells
-    /// whose exact stored-zero geometry is unrepresentable.
-    ///
-    /// This is the embedded counterpart of
-    /// [`crate::ComputeOutput::into_elided_cell_mesh`]. A rejected transaction
-    /// retains this original successful output inside
-    /// [`EmbeddedCellElisionError`].
-    pub fn into_elided_cell_mesh(self) -> Result<EmbeddedCellMeshOutput, EmbeddedCellElisionError> {
-        let embedding = self.diagram.embedding();
-        let EmbeddedComputeOutput { diagram, report } = self;
-        let unit_output = crate::ComputeOutput {
-            diagram: diagram.into_diagram(),
-            report,
-        };
-        match unit_output.into_elided_cell_mesh() {
-            Ok(output) => Ok(EmbeddedCellMeshOutput {
-                mesh: EmbeddedSphericalCellMesh::new(output.mesh, embedding),
-                compute_report: output.compute_report,
-                elision_report: output.elision_report,
-            }),
-            Err(error) => {
-                let kind = error.kind();
-                let message = error.message().to_owned();
-                let source = error.into_source_output();
-                Err(EmbeddedCellElisionError {
-                    kind,
-                    message,
-                    source_output: Box::new(EmbeddedComputeOutput {
-                        diagram: EmbeddedSphericalVoronoi::new(source.diagram, embedding),
-                        report: source.report,
-                    }),
-                })
-            }
-        }
-    }
-}
-
-/// A simplified spherical cell mesh together with its world-space embedding.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct EmbeddedSphericalCellMesh {
-    mesh: crate::SphericalCellMesh,
-    embedding: SphereEmbedding,
-}
-
-impl EmbeddedSphericalCellMesh {
-    /// Wrap a unit-sphere cell mesh in a world-space embedding.
-    #[inline]
-    pub fn new(mesh: crate::SphericalCellMesh, embedding: SphereEmbedding) -> Self {
-        Self { mesh, embedding }
-    }
-
-    /// Canonical unit-sphere cell mesh.
-    #[inline]
-    pub fn mesh(&self) -> &crate::SphericalCellMesh {
-        &self.mesh
-    }
-
-    /// World-space sphere embedding.
-    #[inline]
-    pub fn embedding(&self) -> SphereEmbedding {
-        self.embedding
-    }
-
-    /// Consume the wrapper into its unit mesh and embedding.
-    #[inline]
-    pub fn into_parts(self) -> (crate::SphericalCellMesh, SphereEmbedding) {
-        (self.mesh, self.embedding)
-    }
-
-    /// Mesh vertex mapped onto the embedded sphere.
-    #[track_caller]
-    pub fn vertex_world(&self, index: usize) -> [f64; 3] {
-        self.embedding.stored_unit_to_world(self.mesh.vertex(index))
-    }
-
-    /// Cell source-site attribution mapped onto the embedded sphere.
-    ///
-    /// This remains provenance only; the simplified mesh has no nearest-site
-    /// locator or Delaunay contract.
-    #[track_caller]
-    pub fn source_site_world(&self, cell: usize) -> [f64; 3] {
-        self.embedding
-            .stored_unit_to_world(self.mesh.source_site(cell))
-    }
-}
-
-/// Report-bearing result of embedded exact-zero cell elision.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct EmbeddedCellMeshOutput {
-    /// Dense simplified cell mesh and its embedding.
-    pub mesh: EmbeddedSphericalCellMesh,
-    /// Original construction, reconciliation, local-rebuild, and
-    /// output-resolution report.
-    pub compute_report: ComputeReport,
-    /// Explicit cell-elision transaction report.
-    pub elision_report: crate::CellElisionReport,
-}
-
-/// Report-bearing result of embedded positive edge simplification.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct EmbeddedSimplifiedCellMeshOutput {
-    /// Dense simplified cell mesh and its world-space embedding.
-    pub mesh: EmbeddedSphericalCellMesh,
-    /// Original construction and repair report.
-    pub compute_report: ComputeReport,
-    /// Positive simplification result telemetry in unit-sphere metrics.
-    pub simplification_report: crate::CellSimplificationReport,
-}
-
-/// Failure of [`EmbeddedComputeOutput::into_elided_cell_mesh`].
-///
-/// The original successful embedded computation remains recoverable without
-/// cloning through [`Self::into_source_output`].
-#[derive(Debug)]
-pub struct EmbeddedCellElisionError {
-    kind: crate::CellElisionErrorKind,
-    message: String,
-    source_output: Box<EmbeddedComputeOutput>,
-}
-
-impl EmbeddedCellElisionError {
-    /// Stable top-level rejection category.
-    #[inline]
-    pub fn kind(&self) -> crate::CellElisionErrorKind {
-        self.kind
-    }
-
-    /// Diagnostic detail. Wording is not a stable API contract.
-    #[inline]
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    /// Borrow the original successful embedded computation.
-    #[inline]
-    pub fn source_output(&self) -> &EmbeddedComputeOutput {
-        &self.source_output
-    }
-
-    /// Recover the original successful embedded computation without cloning.
-    #[inline]
-    pub fn into_source_output(self) -> EmbeddedComputeOutput {
-        *self.source_output
-    }
-}
-
-impl std::fmt::Display for EmbeddedCellElisionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "embedded cell elision {:?}: {}", self.kind, self.message)
-    }
-}
-
-impl std::error::Error for EmbeddedCellElisionError {}
-
-/// Compute an embedded spherical Voronoi diagram with default settings.
+/// Project world-space sites and compute the canonical unit-sphere diagram.
 pub fn compute_on_sphere<P: WorldVec3Like>(
     points: &[P],
     embedding: SphereEmbedding,
-) -> Result<EmbeddedSphericalVoronoi, VoronoiError> {
+) -> Result<SphericalVoronoi, VoronoiError> {
     compute_on_sphere_with(points, embedding, VoronoiConfig::default())
 }
 
-/// Compute an embedded spherical Voronoi diagram with explicit configuration.
+/// Configured world-input adapter returning the canonical unit-sphere diagram.
 pub fn compute_on_sphere_with<P: WorldVec3Like>(
     points: &[P],
     embedding: SphereEmbedding,
     config: VoronoiConfig,
-) -> Result<EmbeddedSphericalVoronoi, VoronoiError> {
+) -> Result<SphericalVoronoi, VoronoiError> {
     let projected = project_points(points, embedding)?;
-    let diagram = crate::knn_clipping::compute::compute_voronoi_knn_clipping_with_config_owned(
-        projected, &config,
-    )?;
-    Ok(EmbeddedSphericalVoronoi::new(diagram, embedding))
+    crate::knn_clipping::compute::compute_voronoi_knn_clipping_with_config_owned(projected, &config)
 }
 
-/// Compute a construction-aware simplified cell mesh on an embedded sphere.
+/// Project world-space sites and compute a simplified unit-sphere cell mesh.
 pub fn compute_on_sphere_simplified<P: WorldVec3Like>(
     points: &[P],
     embedding: SphereEmbedding,
     options: crate::CellSimplificationOptions,
-) -> Result<EmbeddedSimplifiedCellMeshOutput, VoronoiError> {
+) -> Result<crate::SimplifiedCellMeshOutput, VoronoiError> {
     compute_on_sphere_simplified_with(points, embedding, VoronoiConfig::default(), options)
 }
 
@@ -744,7 +493,7 @@ pub fn compute_on_sphere_simplified_with<P: WorldVec3Like>(
     embedding: SphereEmbedding,
     config: VoronoiConfig,
     options: crate::CellSimplificationOptions,
-) -> Result<EmbeddedSimplifiedCellMeshOutput, VoronoiError> {
+) -> Result<crate::SimplifiedCellMeshOutput, VoronoiError> {
     let projected = project_points(points, embedding)?;
     let (output, report) =
         crate::knn_clipping::compute::compute_voronoi_knn_clipping_simplified_owned(
@@ -752,75 +501,17 @@ pub fn compute_on_sphere_simplified_with<P: WorldVec3Like>(
             &config,
             options.chord_threshold(),
         )?;
-    let output = crate::cell_mesh::finish_construction_simplification(output, options, report)?;
-    Ok(EmbeddedSimplifiedCellMeshOutput {
-        mesh: EmbeddedSphericalCellMesh::new(output.mesh, embedding),
-        compute_report: output.compute_report,
-        simplification_report: output.simplification_report,
-    })
+    crate::cell_mesh::finish_construction_simplification(output, options, report)
 }
 
-/// Compute an embedded diagram and return preprocessing and validation metadata.
+/// Project world-space sites and return the core diagram and computation report.
 pub fn compute_on_sphere_with_report<P: WorldVec3Like>(
     points: &[P],
     embedding: SphereEmbedding,
     config: VoronoiConfig,
-) -> Result<EmbeddedComputeOutput, VoronoiError> {
+) -> Result<ComputeOutput, VoronoiError> {
     let projected = project_points(points, embedding)?;
-    let ComputeOutput { diagram, report } =
-        crate::knn_clipping::compute::compute_voronoi_knn_clipping_with_report_owned(
-            projected, &config,
-        )?;
-    Ok(EmbeddedComputeOutput {
-        diagram: EmbeddedSphericalVoronoi::new(diagram, embedding),
-        report,
-    })
-}
-
-/// Point locator for an [`EmbeddedSphericalVoronoi`].
-pub struct EmbeddedSphereLocator {
-    locator: SphereLocator,
-    embedding: SphereEmbedding,
-}
-
-impl EmbeddedSphereLocator {
-    /// Locate one world-space query, returning its canonical cell index.
-    pub fn locate_world<P: WorldVec3Like + ?Sized>(
-        &mut self,
-        query: &P,
-    ) -> Result<usize, SphereProjectionError> {
-        let direction = projected_unit_f32(self.embedding, query)?;
-        Ok(self.locator.locate_point(direction))
-    }
-
-    /// Locate world-space queries in input order.
-    ///
-    /// Conversion is performed deterministically before the existing parallel
-    /// locator runs, so an error always identifies the lowest invalid index.
-    pub fn locate_many_world<P: WorldVec3Like>(
-        &self,
-        queries: &[P],
-    ) -> Result<Vec<usize>, IndexedSphereProjectionError> {
-        let directions: Result<Vec<SpherePoint>, IndexedSphereProjectionError> = queries
-            .iter()
-            .enumerate()
-            .map(|(point_index, query)| {
-                projected_unit_f32(self.embedding, query).map_err(|source| {
-                    IndexedSphereProjectionError {
-                        point_index,
-                        source,
-                    }
-                })
-            })
-            .collect();
-        Ok(self.locator.locate_many_points(&directions?))
-    }
-
-    /// Embedding used to interpret world-space queries.
-    #[inline]
-    pub fn embedding(&self) -> SphereEmbedding {
-        self.embedding
-    }
+    crate::knn_clipping::compute::compute_voronoi_knn_clipping_with_report_owned(projected, &config)
 }
 
 #[cfg(feature = "serde")]

@@ -265,10 +265,10 @@ unstable message. The conversion is all-or-error: it never returns a partially s
 never substitutes `Preserve` on rejection. The error retains the original successful output for
 zero-copy recovery.
 
-Embedded parity is a thin wrapper over the same unit-sphere transaction:
-`EmbeddedComputeOutput::into_elided_cell_mesh` returns an `EmbeddedSphericalCellMesh` plus the same
-mappings and reports. The wrapper maps vertices and source sites into world space, but deliberately
-does not provide an embedded locator or Lloyd operation.
+World-input parity uses the same unit-sphere transaction: `compute_on_sphere_with_report` returns
+an ordinary `ComputeOutput`, whose `into_elided_cell_mesh` method returns the same mappings and
+reports. Callers map mesh vertices and source sites explicitly with
+`SphereEmbedding::point_to_world`; the simplified mesh deliberately has no locator or Lloyd operation.
 
 ## Dimension 2: edge-collapse scope
 

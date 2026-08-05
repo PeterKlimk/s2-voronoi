@@ -91,7 +91,7 @@ src/
 ├── locate.rs                      # Point-location API
 ├── measures.rs                    # Area, centroid, and Lloyd geometry
 ├── spherical_arc.rs               # Owner-conditioned spherical edge geometry
-├── embedding.rs                   # World-space sphere projection/wrappers
+├── embedding.rs                   # World-space sphere projection/adapters
 ├── error.rs                       # VoronoiError
 ├── fp.rs                          # Numeric helper ops
 ├── tolerances.rs                  # Centralized numerical tolerances

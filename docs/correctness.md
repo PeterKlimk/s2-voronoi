@@ -232,7 +232,7 @@ normalization buffer is intentional correctness state, not part of the stored di
 that already hold checked `SpherePoint` queries can use `locate_point` or `locate_many_points`;
 those infallible paths preserve the same ranking model without revalidating or renormalizing.
 
-## Embedded spheres
+## Spheres in world coordinates
 
 `compute_on_sphere` extends the coordinate contract, not the geometric model. A validated
 `SphereEmbedding` supplies a finite f64 center and positive radius. Each finite world input other
@@ -240,11 +240,11 @@ than the center is interpreted only by its ray from that center and normalized i
 ordinary f32 unit-sphere computation. Consequently:
 
 - off-shell inputs are radially projected rather than rejected;
-- `generator_world` reconstructs the backend's canonicalized shell generator, not the original
-  world input;
+- `embedding.point_to_world(diagram.generator(i))` reconstructs the backend's canonicalized shell
+  generator, not the original world input;
 - topology and reports describe the recovered f32 directions, so embeddings that lose direction
   information during world-coordinate rounding cannot promise bit-identical results;
-- core areas remain steradians, while embedded areas multiply them by `radius²` and may be
+- core areas remain steradians; `solid_angle_to_area` multiplies them by `radius²` and may be
   positive infinity if the mathematical physical area exceeds finite f64 range;
 - `MergeWithin` and the default weld radius retain dimensionless unit-chord semantics;
 - the world centroid is the on-shell spherical/Lloyd target, not an unconstrained Euclidean center

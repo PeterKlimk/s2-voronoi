@@ -91,17 +91,18 @@ let points = [
     [10.0, -5.0, 5.0],
     [10.0, -5.0, -1.0],
 ];
-let embedded = compute_on_sphere(&points, sphere)?;
-let world_vertex = embedded.vertex_world(0);
+let diagram = compute_on_sphere(&points, sphere)?;
+let world_vertex = sphere.point_to_world(diagram.vertex(0));
 # let _ = world_vertex;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 World inputs use f64 and are interpreted by their direction from the center: their radial distance
-is deliberately discarded. The returned wrapper stores only the canonical unit diagram plus the
-embedding. World vertices, generators, spherical centroids, physical areas, Lloyd targets, and
-point-location queries are derived without duplicating the topology or geometry buffers. With the
-default `parallel` feature and a multi-threaded Rayon pool, large world inputs are snapshotted once
+is deliberately discarded. The adapter returns the ordinary canonical unit diagram; callers retain
+the lightweight `SphereEmbedding` and map stored points with `point_to_world`, areas with
+`solid_angle_to_area`, and queries with `project_world_to_point` or `project_world_points`. This keeps one geometry API and
+no duplicate topology or geometry buffers. With the default `parallel` feature and a multi-threaded
+Rayon pool, large world inputs are snapshotted once
 in bounded chunks and projected across the pool before the unchanged unit-sphere backend begins.
 Smaller inputs and single-threaded pools stay serial.
 
@@ -118,8 +119,8 @@ Smaller inputs and single-threaded pools stay serial.
   its cell in near-constant time, while `locate_many(&[q])` batches across cores and reports the
   lowest invalid query index. `locate_point` and `locate_many_points` skip repeated validation and
   normalization for queries already stored as checked `SpherePoint` values.
-- `SphereEmbedding` / `compute_on_sphere` — translated and uniformly scaled world-space spheres
-  backed by the same canonical unit diagram.
+- `SphereEmbedding` / `compute_on_sphere` — scale-safe world-input projection returning the same
+  canonical unit diagram; the embedding maps stored results and queries explicitly.
 - `validation::validate` — strict subdivision check.
 - `weld_map()` — generators merged as coincident (see Correctness).
 - `ComputeOutput::into_elided_cell_mesh()` — explicit cold conversion that may remove

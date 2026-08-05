@@ -9,8 +9,8 @@ describes how that works and where the code lives.
 `SphereEmbedding` keeps translation and uniform scale outside the geometric backend. World-space
 sites are converted in f64 to directions from the declared center, normalized with scale-safe
 arithmetic, rounded to the backend's canonical f32 unit directions, and then processed by the
-unchanged pipeline below. `EmbeddedSphericalVoronoi` stores that unit diagram plus the center and
-radius; world positions and physical areas are derived on demand.
+unchanged pipeline below. The world-input adapters return the ordinary unit diagram; callers retain
+the copyable `SphereEmbedding` to derive world positions and physical areas on demand.
 
 Radial distance from the center is intentionally not part of site identity. Translation and
 uniform scaling preserve spherical Voronoi topology, while non-uniform transforms, weighted sites,

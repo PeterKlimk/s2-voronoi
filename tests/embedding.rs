@@ -87,14 +87,14 @@ fn translated_scaled_octahedron_matches_unit_computation() {
         .collect();
 
     let canonical = compute(&unit).unwrap();
-    let embedded = compute_on_sphere(&world, embedding).unwrap();
-    assert_same_diagram(&canonical, embedded.diagram());
+    let diagram = compute_on_sphere(&world, embedding).unwrap();
+    assert_same_diagram(&canonical, &diagram);
 
     for (i, &point) in world.iter().enumerate() {
-        assert_eq!(embedded.generator_world(i), point);
+        assert_eq!(embedding.point_to_world(diagram.generator(i)), point);
     }
-    let total_area: f64 = (0..embedded.diagram().num_cells())
-        .map(|i| embedded.cell_area_world(i))
+    let total_area: f64 = (0..diagram.num_cells())
+        .map(|i| embedding.solid_angle_to_area(diagram.cell_area(i)))
         .sum();
     let expected_area = 4.0 * std::f64::consts::PI * 16.0;
     assert!((total_area - expected_area).abs() / expected_area < 1e-6);
@@ -119,12 +119,17 @@ fn translated_scaled_non_axis_points_match_recovered_unit_computation() {
         .collect();
 
     let canonical = compute(&recovered).unwrap();
-    let embedded = compute_on_sphere(&world, embedding).unwrap();
-    assert_same_diagram(&canonical, embedded.diagram());
+    let diagram = compute_on_sphere(&world, embedding).unwrap();
+    assert_same_diagram(&canonical, &diagram);
+    let projected = embedding.project_world_points(&world).unwrap();
+    assert_eq!(
+        diagram.build_locator().locate_many_points(&projected),
+        (0..world.len()).collect::<Vec<_>>()
+    );
 }
 
 #[test]
-fn embedded_compute_and_locator_accept_non_sync_point_types() {
+fn world_compute_and_queries_accept_non_sync_point_types() {
     let embedding = SphereEmbedding::new([2.0, 3.0, 5.0], 7.0).unwrap();
     let world: Vec<NonSyncPoint> = octahedron_unit()
         .into_iter()
@@ -134,10 +139,11 @@ fn embedded_compute_and_locator_accept_non_sync_point_types() {
         })
         .collect();
 
-    let embedded = compute_on_sphere(&world, embedding).unwrap();
-    let locator = embedded.build_locator_world();
+    let diagram = compute_on_sphere(&world, embedding).unwrap();
+    let locator = diagram.build_locator();
+    let queries = embedding.project_world_points(&world).unwrap();
     assert_eq!(
-        locator.locate_many_world(&world).unwrap(),
+        locator.locate_many_points(&queries),
         (0..6).collect::<Vec<_>>()
     );
 }
@@ -155,8 +161,8 @@ fn radial_distance_is_deliberately_discarded() {
     let embedding = SphereEmbedding::new(center, 9.0).unwrap();
 
     let canonical = compute(&unit).unwrap();
-    let embedded = compute_on_sphere(&world, embedding).unwrap();
-    assert_same_diagram(&canonical, embedded.diagram());
+    let diagram = compute_on_sphere(&world, embedding).unwrap();
+    assert_same_diagram(&canonical, &diagram);
     for i in 0..unit.len() {
         let projected = embedding
             .project_world_to_unit(&world[i])
@@ -166,7 +172,7 @@ fn radial_distance_is_deliberately_discarded() {
             [unit[i].x as f64, unit[i].y as f64, unit[i].z as f64]
         );
         assert_eq!(
-            embedded.generator_world(i),
+            embedding.point_to_world(diagram.generator(i)),
             embedding.unit_to_world(projected)
         );
     }
@@ -244,7 +250,7 @@ fn embedding_and_projection_errors_are_explicit() {
 }
 
 #[test]
-fn embedded_report_exposes_effective_cell_count_without_duplicate_diagram() {
+fn world_report_returns_core_output_with_effective_cell_count() {
     let center = [7.0, -11.0, 13.0];
     let embedding = SphereEmbedding::new(center, 5.0).unwrap();
     let mut unit = octahedron_unit();
@@ -257,18 +263,16 @@ fn embedded_report_exposes_effective_cell_count_without_duplicate_diagram() {
 
     let output =
         compute_on_sphere_with_report(&world, embedding, VoronoiConfig::default()).unwrap();
-    assert_eq!(output.diagram.diagram().num_cells(), 7);
-    assert_eq!(output.diagram.diagram().canonical_cell_index(6), 0);
-    assert_eq!(output.diagram.embedding(), embedding);
+    assert_eq!(output.diagram.num_cells(), 7);
+    assert_eq!(output.diagram.canonical_cell_index(6), 0);
     assert_eq!(output.report.preprocess.original_points, 7);
     assert_eq!(output.report.preprocess.effective_points, 6);
     assert!(output.report.preprocess.did_merge());
-    assert_eq!(output.effective_cell_count(), 6);
-    assert_eq!(output.diagram.diagram().num_cells(), 7);
+    assert_eq!(output.diagram.effective_cell_count(), 6);
 }
 
 #[test]
-fn embedded_positive_simplification_preserves_embedding() {
+fn world_positive_simplification_returns_core_mesh() {
     let center = [7.0, -11.0, 13.0];
     let embedding = SphereEmbedding::new(center, 5.0).unwrap();
     let world: Vec<[f64; 3]> = octahedron_unit()
@@ -283,13 +287,13 @@ fn embedded_positive_simplification_preserves_embedding() {
         CellSimplificationOptions::from_chord_length(f32::from_bits(1)).unwrap(),
     )
     .unwrap();
-    assert_eq!(construction_aware.mesh.embedding(), embedding);
-    assert!(construction_aware
-        .mesh
-        .mesh()
-        .validate()
-        .is_strictly_valid());
-    assert_eq!(construction_aware.mesh.vertex_world(0).len(), 3);
+    assert!(construction_aware.mesh.validate().is_strictly_valid());
+    assert_eq!(
+        embedding
+            .point_to_world(construction_aware.mesh.vertex(0))
+            .len(),
+        3
+    );
 }
 
 #[test]
@@ -302,31 +306,37 @@ fn world_locator_and_lloyd_targets_match_unit_space() {
         .enumerate()
         .map(|(i, &direction)| embed(center, direction, i as f64 + 0.5))
         .collect();
-    let embedded = compute_on_sphere(&world, embedding).unwrap();
+    let diagram = compute_on_sphere(&world, embedding).unwrap();
 
-    let mut locator = embedded.build_locator_world();
+    let mut locator = diagram.build_locator();
     for (i, point) in world.iter().enumerate() {
-        assert_eq!(locator.locate_world(point).unwrap(), i);
+        let query = embedding.project_world_to_point(point).unwrap();
+        assert_eq!(locator.locate_point(query), i);
     }
+    let queries = embedding.project_world_points(&world).unwrap();
     assert_eq!(
-        locator.locate_many_world(&world).unwrap(),
+        locator.locate_many_points(&queries),
         (0..6).collect::<Vec<_>>()
     );
     let mut invalid = world.clone();
     invalid[4] = center;
     invalid[5][1] = f64::INFINITY;
-    let err = locator.locate_many_world(&invalid).unwrap_err();
+    let err = embedding.project_world_points(&invalid).unwrap_err();
     assert_eq!(err.point_index(), 4);
     assert_eq!(err.projection_error(), SphereProjectionError::PointAtCenter);
 
-    let world_lloyd = embedded.lloyd_step_world();
+    let world_lloyd: Vec<_> = diagram
+        .lloyd_step()
+        .into_iter()
+        .map(|point| embedding.point_to_world(point))
+        .collect();
     for (i, point) in world_lloyd.iter().enumerate() {
         let projected = embedding.project_world_to_unit(point).unwrap();
-        let unit_centroid = embedded.diagram().cell_centroid(i);
+        let unit_centroid = diagram.cell_centroid(i);
         assert!((projected[0] - unit_centroid.x() as f64).abs() < 1e-7);
         assert!((projected[1] - unit_centroid.y() as f64).abs() < 1e-7);
         assert!((projected[2] - unit_centroid.z() as f64).abs() < 1e-7);
-        assert_eq!(*point, embedded.cell_centroid_world(i));
+        assert_eq!(*point, embedding.point_to_world(unit_centroid));
     }
 }
 
@@ -361,35 +371,21 @@ fn glam_dvec3_is_a_world_input() {
         .iter()
         .map(|p| glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64) * 2.0)
         .collect();
-    assert_eq!(
-        compute_on_sphere(&world, embedding)
-            .unwrap()
-            .diagram()
-            .num_cells(),
-        6
-    );
+    assert_eq!(compute_on_sphere(&world, embedding).unwrap().num_cells(), 6);
 }
 
 #[cfg(feature = "serde")]
 #[test]
-fn embedded_serde_is_checked_and_round_trips() {
-    let center = [10.0, 20.0, 30.0];
-    let embedding = SphereEmbedding::new(center, 4.0).unwrap();
-    let world: Vec<[f64; 3]> = octahedron_unit()
-        .iter()
-        .map(|&direction| embed(center, direction, 4.0))
-        .collect();
-    let embedded = compute_on_sphere(&world, embedding).unwrap();
-
-    let json = serde_json::to_string(&embedded).unwrap();
-    let restored: voronoi_mesh::EmbeddedSphericalVoronoi = serde_json::from_str(&json).unwrap();
-    assert_eq!(restored.embedding(), embedding);
-    assert_same_diagram(restored.diagram(), embedded.diagram());
+fn embedding_serde_is_checked_and_round_trips() {
+    let embedding = SphereEmbedding::new([10.0, 20.0, 30.0], 4.0).unwrap();
+    let json = serde_json::to_string(&embedding).unwrap();
+    let restored: SphereEmbedding = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, embedding);
 
     let mut malformed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    malformed["embedding"]["radius"] = serde_json::json!(0.0);
-    let err = serde_json::from_value::<voronoi_mesh::EmbeddedSphericalVoronoi>(malformed)
-        .expect_err("invalid embedded radius must be rejected");
+    malformed["radius"] = serde_json::json!(0.0);
+    let err = serde_json::from_value::<SphereEmbedding>(malformed)
+        .expect_err("invalid embedding radius must be rejected");
     assert!(
         err.to_string().contains("radius"),
         "unexpected error: {err}"
