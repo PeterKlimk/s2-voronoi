@@ -1,7 +1,7 @@
 //! Sorting utilities and building blocks.
 //!
 //! This module provides low-level sorting primitives for building custom
-//! sorting algorithms, particularly optimized for small value ranges (0-32).
+//! sorting algorithms, particularly optimized for small value ranges (0-35).
 
 use std::hint::select_unpredictable;
 use std::mem::MaybeUninit;
@@ -10,7 +10,6 @@ use std::ptr;
 use crate::generated::sort_nets::{sort16_tail_out, sort8_net};
 use crate::generated::sort_nets::{sort16_tail_out_12_4, sort24_tail_out, sort24_tail_out_20_4};
 
-#[inline(always)]
 fn cswap_unpredictable_u64(v: &mut [u64], i: usize, j: usize) {
     debug_assert!(i != j);
     debug_assert!(i < v.len());
@@ -28,7 +27,6 @@ fn cswap_unpredictable_u64(v: &mut [u64], i: usize, j: usize) {
     }
 }
 
-#[inline(always)]
 unsafe fn merge_up_u64(
     mut left_src: *const u64,
     mut right_src: *const u64,
@@ -45,7 +43,6 @@ unsafe fn merge_up_u64(
     (left_src, right_src, dst)
 }
 
-#[inline(always)]
 unsafe fn merge_down_u64(
     mut left_src: *const u64,
     mut right_src: *const u64,
@@ -62,7 +59,6 @@ unsafe fn merge_down_u64(
     (left_src, right_src, dst)
 }
 
-#[inline(always)]
 unsafe fn bidirectional_merge_u64(v: *const u64, len: usize, dst: *mut u64) {
     debug_assert!(len >= 2);
 
@@ -194,7 +190,6 @@ pub fn sort_small(v: &mut [u64]) {
 }
 
 /// Insert `rem` suffix elements into the sorted network result.
-#[inline(always)]
 unsafe fn insert_suffix(v: &mut [u64], base: usize, rem: usize) {
     debug_assert!(base <= v.len());
     debug_assert!(base + rem <= v.len());
@@ -249,7 +244,6 @@ unsafe fn insert_suffix(v: &mut [u64], base: usize, rem: usize) {
     merge_sorted_suffix_back(p, base, rem);
 }
 
-#[inline(always)]
 unsafe fn merge_sorted_suffix_back(p: *mut u64, base: usize, rem: usize) {
     debug_assert!(base > 0);
     debug_assert!((2..=3).contains(&rem));
@@ -338,33 +332,7 @@ unsafe fn sort32_maybe_padded(base: *mut u64, n: usize) {
     let mut tmp = MaybeUninit::<[u64; 32]>::uninit();
     let tmp_ptr = tmp.as_mut_ptr() as *mut u64;
     bidirectional_merge_u64(base, n, tmp_ptr);
-    copy_back_u64_16_to_32(base, tmp_ptr, n);
-}
-
-#[inline(always)]
-unsafe fn copy_back_u64_16_to_32(dst: *mut u64, src: *const u64, n: usize) {
-    debug_assert!((16..=32).contains(&n));
-    // Prefer constant-sized copies to encourage inlining vs a call to `memcpy`.
-    match n {
-        16 => ptr::copy_nonoverlapping(src, dst, 16),
-        17 => ptr::copy_nonoverlapping(src, dst, 17),
-        18 => ptr::copy_nonoverlapping(src, dst, 18),
-        19 => ptr::copy_nonoverlapping(src, dst, 19),
-        20 => ptr::copy_nonoverlapping(src, dst, 20),
-        21 => ptr::copy_nonoverlapping(src, dst, 21),
-        22 => ptr::copy_nonoverlapping(src, dst, 22),
-        23 => ptr::copy_nonoverlapping(src, dst, 23),
-        24 => ptr::copy_nonoverlapping(src, dst, 24),
-        25 => ptr::copy_nonoverlapping(src, dst, 25),
-        26 => ptr::copy_nonoverlapping(src, dst, 26),
-        27 => ptr::copy_nonoverlapping(src, dst, 27),
-        28 => ptr::copy_nonoverlapping(src, dst, 28),
-        29 => ptr::copy_nonoverlapping(src, dst, 29),
-        30 => ptr::copy_nonoverlapping(src, dst, 30),
-        31 => ptr::copy_nonoverlapping(src, dst, 31),
-        32 => ptr::copy_nonoverlapping(src, dst, 32),
-        _ => unreachable!("n must be 16..=32 (got {n})"),
-    }
+    ptr::copy_nonoverlapping(tmp_ptr, base, n);
 }
 
 #[cfg(test)]

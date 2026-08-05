@@ -647,6 +647,13 @@ modules without making the non-obvious code shape look accidental.
   checks. Small-N sorting networks beat `sort_unstable` by about 5% total time at 500k in their
   measured regime, while extracting the shared packed emit sequence out of line added 0.6%
   whole-build instructions; these helpers therefore retain their explicit inline boundaries.
+- **Small-sort helper placement and copy-back.** Seven forced-inline hints around the production
+  small-sort helper chain were removed, and the 17-arm constant-length copy-back table became one
+  direct variable-length copy. Nine paired 500k native Fibonacci/uniform runs changed instructions
+  by +0.0018%/+0.0007%, branches by +0.011%/+0.017%, and cycles by +0.18%/+0.16%, all below the
+  host's code-layout floor. The 100k mega guardrail was structurally neutral and 0.74% faster.
+  Portable 50k Cachegrind was likewise neutral on instructions and branches while reducing uniform
+  branch misses by 2.3%. Retain only the separately measured AVX2 eight-way forced-outline seam.
 - **Live-dedup compiler placement.** Forced inlining was removed from nineteen assembly, binning,
   emission, and shard helpers after a current-toolchain family null. Against the always-inline
   baseline, nine paired 500k single-threaded runs left instructions effectively neutral
