@@ -174,12 +174,12 @@ mod backend {
 
     pub(super) type V = f32x8;
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn load_array(a: [f32; 8]) -> V {
         f32x8::from(a)
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn dot3(x: V, y: V, z: V, qx: f32, qy: f32, qz: f32) -> V {
         let qx = f32x8::splat(qx);
         let qy = f32x8::splat(qy);
@@ -187,7 +187,7 @@ mod backend {
         (x * qx + y * qy) + z * qz
     }
 
-    #[inline(always)]
+    #[inline]
     #[allow(clippy::too_many_arguments)]
     pub(super) fn dot3_pair(
         ax: V,
@@ -207,7 +207,7 @@ mod backend {
     }
 
     #[cfg(any(test, target_feature = "avx2"))]
-    #[inline(always)]
+    #[inline]
     #[allow(clippy::too_many_arguments)]
     pub(super) fn dot3_triple(
         ax: V,
@@ -233,12 +233,12 @@ mod backend {
         )
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn mask_gt(v: V, threshold: f32) -> u32 {
         v.cmp_gt(f32x8::splat(threshold)).move_mask() as u32 & 0xff
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn squared_deltas_mask_lt8(values: V, value: f32, threshold_squared: f32) -> u32 {
         let delta = f32x8::splat(value) - values;
         f32x8::splat(threshold_squared)
@@ -247,12 +247,12 @@ mod backend {
             & 0xff
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn to_array(v: V) -> [f32; 8] {
         v.to_array()
     }
 
-    #[inline(always)]
+    #[inline]
     #[cfg(any(test, target_feature = "avx2"))]
     pub(super) fn interior_security_thresholds8(v: V, pad: f32) -> ([f32; 8], u32) {
         let zero = f32x8::ZERO;
@@ -262,12 +262,12 @@ mod backend {
         (threshold.to_array(), valid.move_mask() as u32 & 0xff)
     }
 
-    #[inline(always)]
+    #[inline]
     fn dists4(a: f64, b: f64, c: f64, u: f64x4, v: f64x4) -> f64x4 {
         f64x4::splat(a) * u + (f64x4::splat(b) * v + f64x4::splat(c))
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn signed_dists_mask8(
         a: f64,
         b: f64,
@@ -296,7 +296,7 @@ mod backend {
     /// Four-lane twin of `signed_dists_mask8` for clipping polygons with
     /// N <= 4 (triangles/quads): one `f64x4` instead of two, bit-identical to
     /// lanes 0..4 of the eight-lane path. Only `us[0..4]`/`vs[0..4]` are read.
-    #[inline(always)]
+    #[inline]
     pub(super) fn signed_dists_mask4(
         a: f64,
         b: f64,
@@ -429,12 +429,12 @@ mod tests {
 mod backend {
     pub(super) type V = [f32; 8];
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn load_array(a: [f32; 8]) -> V {
         a
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn dot3(x: V, y: V, z: V, qx: f32, qy: f32, qz: f32) -> V {
         let mut out = [0.0f32; 8];
         for i in 0..8 {
@@ -447,7 +447,7 @@ mod backend {
         out
     }
 
-    #[inline(always)]
+    #[inline]
     #[allow(clippy::too_many_arguments)]
     pub(super) fn dot3_pair(
         ax: V,
@@ -464,7 +464,7 @@ mod backend {
     }
 
     #[cfg(test)]
-    #[inline(always)]
+    #[inline]
     #[allow(clippy::too_many_arguments)]
     pub(super) fn dot3_triple(
         ax: V,
@@ -487,7 +487,7 @@ mod backend {
         )
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn mask_gt(v: V, threshold: f32) -> u32 {
         let mut bits = 0u32;
         for (i, &d) in v.iter().enumerate() {
@@ -496,7 +496,7 @@ mod backend {
         bits
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn squared_deltas_mask_lt8(values: V, value: f32, threshold_squared: f32) -> u32 {
         let mut bits = 0u32;
         for (i, &candidate) in values.iter().enumerate() {
@@ -506,12 +506,12 @@ mod backend {
         bits
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn to_array(v: V) -> [f32; 8] {
         v
     }
 
-    #[inline(always)]
+    #[inline]
     #[cfg(test)]
     pub(super) fn interior_security_thresholds8(v: V, pad: f32) -> ([f32; 8], u32) {
         let mut out = [0.0; 8];
@@ -526,7 +526,7 @@ mod backend {
         (out, valid)
     }
 
-    #[inline(always)]
+    #[inline]
     pub(super) fn signed_dists_mask8(
         a: f64,
         b: f64,
@@ -547,7 +547,7 @@ mod backend {
 
     /// Four-lane twin of `signed_dists_mask8` (scalar backend); see the wide
     /// backend's version. Bit-identical to lanes 0..4 of the eight-lane path.
-    #[inline(always)]
+    #[inline]
     pub(super) fn signed_dists_mask4(
         a: f64,
         b: f64,

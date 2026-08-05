@@ -635,8 +635,14 @@ modules without making the non-obvious code shape look accidental.
   ordinary rather than forced inlining. The downgrade produced byte-identical benchmark native
   text for both the `wide` and `simd_scalar` backends, and likewise produced byte-identical text for
   both backends on the portable target. Their 100k representation and semantic-topology
-  fingerprints also agree exactly. The inner backend implementation hints remain a separate
-  code-generation boundary.
+  fingerprints also agree exactly.
+- **Numeric backend helper placement.** Twenty-one inner `wide` and `simd_scalar` helpers use
+  ordinary rather than forced inlining. At 500k native, `wide` instructions rose only 0.008--0.010%
+  with neutral branches and mixed cycles (-0.31%/+0.07% Fibonacci/uniform); scalar instructions
+  fell about 0.023%, branches fell 0.22--0.23%, and cycles were neutral/favorable. The 100k mega
+  guardrail was structurally neutral for `wide` and favorable for scalar. Portable 50k Cachegrind
+  reduced instruction references by 0.007--0.033% and branch misses by 1.0--1.6% across both
+  backends and both distributions.
 - **Non-fused arithmetic contract.** The internal `fma` feature was retired after isolated
   measurements showed no dependable throughput benefit. Native Windows 2.5M Fibonacci runs were
   neutral in multithreaded mode and neutral/slightly adverse single-threaded. On an older Ryzen,
