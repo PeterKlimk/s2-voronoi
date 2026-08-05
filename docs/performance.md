@@ -568,15 +568,18 @@ multithreaded phase timing reduced `ring_pass` by 6.97% on Fibonacci (95% interv
 1.69--1.95%; uninstrumented whole-build estimates were 0.50% faster on Fibonacci and 0.79% faster
 on uniform but remained below the machine's resolution.
 
-On AVX2, the packed ring path extends that microbatch to three chunks, sharing each query broadcast
-across 24 candidates while preserving A/B/C emission order. The portable path deliberately remains
-two chunks: splitting each `wide::f32x8` across two registers made the triple version execute 0.62%
-more instructions inside `prepare_group_directed`, while the gated portable function is byte-for-byte
-identical to its baseline codegen. Native 50k Cachegrind reduced that function's instructions by
-0.95% and conditional branches by 3.97%; whole-build instructions were effectively flat (+0.035%,
-consistent with layout noise) and branches fell 0.59%. At 2M/6T, phase-timed medians reduced
-`ring_pass` by 7.2% on uniform (11/12 pairs) and 6.1% on Fibonacci (10/10 pairs). Uninstrumented
-whole-build timing was neutral, as expected for a phase accounting for about 4% of the build.
+The AVX2-only three-chunk extension has since been retired in favor of that same two-chunk path on
+all targets. The triplet saved 6--7% in `ring_pass`, but duplicated the loop and its two-chunk
+remainder, added a separate three-vector numeric facade/backend, and did not improve the earlier
+whole-build timing. Removing it deleted 204 source lines and reduced the native
+`prepare_group_directed` symbol by 4,413 bytes; portable benchmark `.text` remained byte-identical.
+On the current compiler, nine paired 500k native Fibonacci/uniform counter runs changed whole-build
+instructions by +0.067%/+0.105% and branches by +0.541%/+0.317%, while cycles improved by
+0.98%/1.04%. Twelve paired wall-time runs likewise improved by 1.1%/1.0%. The simpler pair path was
+9.6--10.2% faster on a 100k great-circle guardrail, neutral on clustered input, and 0.6% slower on
+single-threaded bimodal/mega; at 16 workers it improved ordinary, clustered, and bimodal medians by
+about 0.9--1.2% and regressed mega by 0.9%. The small dense-input loss is accepted for the substantial
+source reduction, unchanged portable code, and favorable ordinary/high-work behavior.
 
 Lazy ring-tail rescans evaluate a non-empty remainder by overlapping the final stored eight-point
 chunk and masking away lanes that belonged to the preceding full chunk. Ranges shorter than eight
