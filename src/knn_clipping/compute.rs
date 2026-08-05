@@ -788,17 +788,6 @@ fn compute_voronoi_knn_clipping_report_core(
         }
     }
 
-    let effective_diagram = state.merge_result().map(|merge| {
-        crate::SphericalVoronoi::from_raw_parts(
-            merge.effective_points.clone(),
-            state.geometry.vertices.clone(),
-            state.geometry.cells.clone(),
-            state.geometry.cell_indices.clone(),
-            None,
-        )
-    });
-    let effective_validation = effective_diagram.as_ref().map(crate::validation::validate);
-
     let t = Timer::start();
     let (cells, cell_indices, weld_map) = remap_cells_to_original_indices(
         &state.points,
@@ -814,7 +803,7 @@ fn compute_voronoi_knn_clipping_report_core(
         cell_indices,
         weld_map,
     );
-    let returned_validation = crate::validation::validate(&diagram);
+    let validation = crate::validation::validate(&diagram);
     state.tb.set_assemble(t.elapsed());
 
     let timings = state.tb.finish();
@@ -824,12 +813,10 @@ fn compute_voronoi_knn_clipping_report_core(
     Ok((
         ComputeOutput {
             diagram,
-            effective_diagram,
             report: ComputeReport {
                 preprocess: state.preprocess_report,
                 degenerate: degenerate_report,
-                returned_validation,
-                effective_validation,
+                validation,
                 assembly_edge_mismatch_count,
                 local_rebuild: state.local_rebuild.report_status(),
                 output_resolution: state.output_resolution,

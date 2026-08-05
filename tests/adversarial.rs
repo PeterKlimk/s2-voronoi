@@ -217,7 +217,7 @@ fn test_hemisphere_origin_outside_hull_is_strict() {
     let output = compute_with_report(&points, VoronoiConfig::default())
         .expect("hemisphere Hull3d regression should compute");
     assert!(!output.report.has_output_residuals());
-    assert!(output.report.preferred_validation().is_strictly_valid());
+    assert!(output.report.validation.is_strictly_valid());
 }
 
 // =============================================================================

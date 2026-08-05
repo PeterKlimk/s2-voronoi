@@ -138,10 +138,10 @@ fn test_report_residual_helper_includes_low_incidence_vertices() {
     assert!(!output.report.has_output_residuals());
 
     output.report.residual_unpaired_edges.clear();
-    output.report.returned_validation.low_incidence_vertices = 1;
+    output.report.validation.low_incidence_vertices = 1;
     assert!(output.report.has_output_residuals());
 
-    output.report.returned_validation.low_incidence_vertices = 0;
+    output.report.validation.low_incidence_vertices = 0;
     output.report.residual_reconciliation_pairs.push((0, 1));
     assert!(output.report.has_output_residuals());
 }
@@ -216,24 +216,16 @@ fn test_compute_with_report_surfaces_preprocess_outcome() {
     );
     assert!(output.report.preprocess.threshold_used.is_some());
     assert!(
-        output.report.returned_validation.is_strictly_valid(),
+        output.report.validation.is_strictly_valid(),
         "expected random-sphere output to validate strictly"
     );
-    assert!(
-        output.report.effective_validation.is_none(),
-        "effective validation should only be present when preprocessing changes the generator set"
-    );
-    assert!(
-        output.effective_diagram.is_none(),
-        "effective diagram should only be present when preprocessing changes the generator set"
-    );
-    assert!(
-        output.report.preferred_validation().is_strictly_valid(),
-        "preferred validation should agree with returned validation when no merges occur"
+    assert_eq!(
+        output.diagram.effective_cell_count(),
+        output.diagram.num_cells()
     );
     assert_eq!(
-        output.preferred_diagram().num_cells(),
-        output.diagram.num_cells()
+        output.diagram.iter_effective_cells().count(),
+        output.report.preprocess.effective_points
     );
 }
 
@@ -268,9 +260,9 @@ fn test_rank2_great_circle_policy_is_explicit() {
         "rank-2 great-circle fixture should take the perturbation retry"
     );
     assert!(
-        perturbed.report.preferred_validation().is_strictly_valid(),
+        perturbed.report.validation.is_strictly_valid(),
         "perturbed rank-2 diagram should validate strictly: {}",
-        perturbed.report.preferred_validation().headline()
+        perturbed.report.validation.headline()
     );
 }
 
@@ -306,9 +298,9 @@ fn test_exact_small_circle_uses_coplanar_perturbation_policy() {
     );
     assert!(perturbed.report.degenerate.perturbation_applied);
     assert!(
-        perturbed.report.preferred_validation().is_strictly_valid(),
+        perturbed.report.validation.is_strictly_valid(),
         "perturbed exact small-circle diagram should validate strictly: {}",
-        perturbed.report.preferred_validation().headline()
+        perturbed.report.validation.headline()
     );
 }
 
@@ -342,14 +334,11 @@ fn test_clustered_cap_tight_report_keeps_default_preprocessing_nonintrusive() {
         report.headline()
     );
     assert!(
-        output.report.returned_validation.is_strictly_valid(),
+        output.report.validation.is_strictly_valid(),
         "returned validation should stay strict-valid when no remap collapse occurs"
     );
-    assert!(output.report.effective_validation.is_none());
-    assert!(output.effective_diagram.is_none());
-    assert!(output.report.preferred_validation().is_strictly_valid());
     assert_eq!(
-        output.preferred_diagram().num_cells(),
+        output.diagram.effective_cell_count(),
         output.diagram.num_cells()
     );
 }
@@ -370,28 +359,19 @@ fn test_clustered_cap_extreme_weld_keeps_returned_diagram_strictly_valid() {
         output.report.preprocess.did_merge(),
         "coarse threshold should exercise the weld-altered contract on this fixture"
     );
-    assert!(
-        output.effective_diagram.is_some(),
-        "welding should expose the effective solved diagram"
-    );
-    assert!(
-        output
-            .report
-            .effective_validation
-            .as_ref()
-            .expect("welding should surface effective validation")
-            .is_strictly_valid(),
-        "effective solved diagram should validate strictly"
+    assert_eq!(
+        output.diagram.effective_cell_count(),
+        output.report.preprocess.effective_points
     );
     // The strengthened contract: the returned diagram is also strictly valid,
     // with welded twins sharing their canonical cell instead of duplicating it.
     assert!(
-        output.report.returned_validation.is_strictly_valid(),
+        output.report.validation.is_strictly_valid(),
         "returned diagram with welds should validate strictly: {}",
-        output.report.returned_validation.headline()
+        output.report.validation.headline()
     );
     assert_eq!(
-        output.report.returned_validation.welded_twin_cells,
+        output.report.validation.welded_twin_cells,
         output.report.preprocess.num_merged
     );
 
@@ -439,7 +419,7 @@ fn test_clustered_cap_extreme_weld_keeps_returned_diagram_strictly_valid() {
 }
 
 #[test]
-fn test_compute_with_report_exposes_effective_diagram_when_merges_occur() {
+fn test_compute_with_report_exposes_effective_cells_without_a_second_diagram() {
     let points = vec![
         TestPoint::new(1.0, 0.0, 0.0),
         TestPoint::new(0.999_999_94, 0.0003, 0.0),
@@ -459,32 +439,32 @@ fn test_compute_with_report_exposes_effective_diagram_when_merges_occur() {
     assert!(output.report.preprocess.did_merge());
     assert_eq!(output.diagram.num_cells(), points.len());
 
-    let effective_diagram = output
-        .effective_diagram
-        .as_ref()
-        .expect("merged preprocessing should expose the effective solved diagram");
     assert_eq!(
-        effective_diagram.num_cells(),
+        output.diagram.effective_cell_count(),
         output.report.preprocess.effective_points
     );
-    assert_eq!(effective_diagram.num_cells(), points.len() - 1);
-    assert!(
-        output
-            .report
-            .effective_validation
-            .as_ref()
-            .expect("merged preprocessing should surface effective validation")
-            .is_strictly_valid(),
-        "effective merged diagram should validate strictly"
-    );
+    assert_eq!(output.diagram.effective_cell_count(), points.len() - 1);
+    let effective = output.diagram.iter_effective_cells().collect::<Vec<_>>();
+    assert_eq!(effective.len(), points.len() - 1);
     assert_eq!(
-        output.preferred_diagram().num_cells(),
-        effective_diagram.num_cells()
+        effective
+            .iter()
+            .map(|cell| cell.input_index)
+            .collect::<Vec<_>>(),
+        [0, 2, 3, 4, 5, 6]
     );
+    for (dense, cell) in effective.iter().enumerate() {
+        assert_eq!(cell.effective_index, dense);
+        assert_eq!(cell.generator, output.diagram.generator(cell.input_index));
+        assert_eq!(
+            cell.vertex_indices,
+            output.diagram.cell(cell.input_index).vertex_indices
+        );
+    }
     assert!(
-        output.report.returned_validation.is_strictly_valid(),
+        output.report.validation.is_strictly_valid(),
         "returned diagram with welds should validate strictly: {}",
-        output.report.returned_validation.headline()
+        output.report.validation.headline()
     );
     // Points 0 and 1 are the welded pair; 0 is the canonical index.
     assert_eq!(output.diagram.canonical_cell_index(1), 0);
@@ -605,8 +585,8 @@ fn test_closure_ingest_matches_direct_input_across_api_family() {
     assert_eq!(mapped.diagram.vertices_xyz(), direct.diagram.vertices_xyz());
     assert_eq!(mapped.report.preprocess, direct.report.preprocess);
     assert_eq!(
-        mapped.report.returned_validation.headline(),
-        direct.report.returned_validation.headline()
+        mapped.report.validation.headline(),
+        direct.report.validation.headline()
     );
 
     let options = CellSimplificationOptions::from_chord_length(f32::from_bits(1)).unwrap();
@@ -987,12 +967,12 @@ fn test_merge_within_large_radius_uses_standalone_detector() {
         "the duplicated point (and any natural sub-0.05 pairs) must weld"
     );
     assert!(
-        output.report.returned_validation.is_strictly_valid(),
+        output.report.validation.is_strictly_valid(),
         "returned diagram should validate strictly: {}",
-        output.report.returned_validation.headline()
+        output.report.validation.headline()
     );
     assert_eq!(
-        output.report.returned_validation.welded_twin_cells,
+        output.report.validation.welded_twin_cells,
         output.report.preprocess.num_merged
     );
 }

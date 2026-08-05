@@ -83,13 +83,13 @@ fn assert_no_stored_cell_collapse(name: &str, points: &[TestPoint]) {
         "{name}: target unexpectedly fell inside the weld predicate"
     );
     assert!(
-        output.report.preferred_validation().is_strictly_valid(),
+        output.report.validation.is_strictly_valid(),
         "{name}: {}",
-        output.report.preferred_validation().headline()
+        output.report.validation.headline()
     );
-    let diagram = output.preferred_diagram();
+    let diagram = output.diagram;
     let collapsed: Vec<_> = (0..diagram.num_cells())
-        .filter(|&cell| exact_position_class_count(diagram, cell) < 3)
+        .filter(|&cell| exact_position_class_count(&diagram, cell) < 3)
         .collect();
     assert!(
         collapsed.is_empty(),
@@ -98,7 +98,7 @@ fn assert_no_stored_cell_collapse(name: &str, points: &[TestPoint]) {
     assert_eq!(
         output
             .report
-            .preferred_validation()
+            .validation
             .cells_with_fewer_than_three_stored_positions,
         0,
         "{name}: validator disagreed with the direct coordinate-class scan"

@@ -529,8 +529,8 @@ fn validate_output(points: &[Vec3], preprocess: bool, local_rebuild: bool, dist:
     )
     .expect("voronoi-mesh should succeed");
     let compute_time = t0.elapsed().as_secs_f64() * 1000.0;
-    let report = output.report.preferred_validation();
-    let mut quality = voronoi_mesh::quality::assess(output.preferred_diagram());
+    let report = &output.report.validation;
+    let mut quality = voronoi_mesh::quality::assess(&output.diagram);
     quality.canonicalization_angular_error =
         voronoi_mesh::quality::assess_canonicalization(&unit_points, &output.diagram);
 
@@ -553,7 +553,7 @@ fn validate_output(points: &[Vec3], preprocess: bool, local_rebuild: bool, dist:
     }
     println!(
         "FIDELITY_KV dist={dist} n={} seed={seed} valid={} pre_defects={} local_rebuild_attempted={} local_rebuild_accepted={} {}",
-        output.preferred_diagram().num_cells(),
+        output.diagram.effective_cell_count(),
         report.is_strictly_valid(),
         output.report.assembly_edge_mismatch_count,
         output.report.local_rebuild.attempted(),

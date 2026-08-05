@@ -120,7 +120,7 @@ fn campaign_case() {
             for &(_, _, origin) in &out.report.reconciliation_edge_records {
                 *origins.entry(origin).or_default() += 1;
             }
-            let valid = out.report.preferred_validation().is_strictly_valid();
+            let valid = out.report.validation.is_strictly_valid();
             let defects = out.report.reconciliation_edge_records.len();
             let reconciliation_residual = out.report.residual_reconciliation_pairs.len();
             let residual_edges = out.report.residual_unpaired_edges.len() + reconciliation_residual;
@@ -233,7 +233,7 @@ fn diag_single_build_peak() {
     let pts = random_sphere_points(n, 1);
     let out = compute_with_report(&pts, VoronoiConfig::default()).expect("compute");
     let defects = out.report.reconciliation_edge_records.len();
-    let valid = out.report.preferred_validation().is_strictly_valid();
+    let valid = out.report.validation.is_strictly_valid();
     println!(
         "PEAKPROBE n={n} peak_rss={} MB defects={defects} valid={valid}",
         peak_rss_mb()

@@ -153,7 +153,7 @@ fn compute_strict(
     })
     .unwrap_or_else(|err| panic!("{name} bins={bins:?}: compute failed: {err:?}"));
 
-    let report = out.report.preferred_validation();
+    let report = &out.report.validation;
     assert!(
         report.is_strictly_valid(),
         "{name} bins={bins:?}: reconciled diagram must validate strictly: {}",
@@ -327,7 +327,7 @@ fn net_reconcile_backends_agree() {
             );
         }
         assert!(
-            surgical.report.preferred_validation().is_strictly_valid(),
+            surgical.report.validation.is_strictly_valid(),
             "{name}: surgical result must validate strictly"
         );
     }
@@ -359,7 +359,7 @@ fn probe_site_scan() {
             compute_with_report(points, VoronoiConfig::default())
         })
         .expect("compute");
-        let gens = out.preferred_diagram().generators().to_vec();
+        let gens = out.diagram.iter_effective_generators().collect::<Vec<_>>();
         print!("{name}: ");
         if out.report.reconciliation_edge_records.is_empty() {
             println!("no defects");
@@ -395,7 +395,7 @@ fn probe_defect_rate_at_scale() {
                 "{name:28} n={:8} defects={:?} strict_valid={}",
                 points.len(),
                 out.report.reconciliation_edge_records,
-                out.report.preferred_validation().is_strictly_valid()
+                out.report.validation.is_strictly_valid()
             ),
             Err(err) => println!("{name:28} n={:8} ERROR: {err:?}", points.len()),
         }
@@ -437,7 +437,7 @@ fn probe_defect_rate_adversarial() {
                 "{name:28} n={:8} defects={:?} strict_valid={}",
                 points.len(),
                 out.report.reconciliation_edge_records,
-                out.report.preferred_validation().is_strictly_valid()
+                out.report.validation.is_strictly_valid()
             ),
             Err(err) => println!("{name:28} n={:8} ERROR: {err:?}", points.len()),
         }
@@ -470,7 +470,7 @@ fn probe_window() {
                 "scaffold={scaffold_n:6}: n={} unresolved={:?} strict_valid={}",
                 fixture.len(),
                 out.report.reconciliation_edge_records,
-                out.report.preferred_validation().is_strictly_valid()
+                out.report.validation.is_strictly_valid()
             ),
             Err(err) => println!("scaffold={scaffold_n:6}: ERROR: {err:?}"),
         }
@@ -498,7 +498,7 @@ fn probe_scaffold_sweep() {
                 Ok(out) => println!(
                     "scaffold={scaffold_n:7} bins={bins:2}: unresolved={:?} strict_valid={}",
                     out.report.reconciliation_edge_records,
-                    out.report.preferred_validation().is_strictly_valid()
+                    out.report.validation.is_strictly_valid()
                 ),
                 Err(err) => println!("scaffold={scaffold_n:7} bins={bins:2}: ERROR: {err:?}"),
             }

@@ -179,14 +179,14 @@ impl ComputeOutput {
 }
 ```
 
-Requiring `ComputeOutput` rather than an arbitrary `SphericalVoronoi` provides the effective
-preprocessed diagram, original-input weld aliases, and the authoritative validation report. The
-operation first rejects a source with post-reconciliation residuals or a non-strict preferred
-validation. It then applies one global, deterministic transaction to the effective diagram and
-composes the result back to original input indices. A source with no cell-killing exact-zero
-component succeeds as an identity conversion to the distinct mesh type. The method is consuming,
-so the implementation can discard duplicated returned/effective diagrams and reuse large buffers.
-A failure owns and returns the original successful `ComputeOutput` through `CellElisionError`,
+Requiring `ComputeOutput` rather than an arbitrary `SphericalVoronoi` provides the preprocessing
+report, original-input weld aliases, and the authoritative validation report. Solved cells are
+read allocation-free through the diagram's dense effective-cell iterator; welded twins remain
+aliases in the single owned returned diagram. The operation first rejects a source with
+post-reconciliation residuals or non-strict validation. It then applies one global, deterministic
+transaction to the effective cells and composes the result back to original input indices. A source
+with no cell-killing exact-zero component succeeds as an identity conversion to the distinct mesh
+type. A failure owns and returns the original successful `ComputeOutput` through `CellElisionError`,
 avoiding both data loss and a defensive whole-diagram clone. This remains a requested cold
 `O(V + E + F)` operation and
 never runs from `compute` or `compute_with_report` implicitly.

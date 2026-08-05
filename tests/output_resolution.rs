@@ -37,7 +37,7 @@ fn hex3_four_generator_core_contracts_stored_zero_edge() {
 
     let output = compute_with_report(&points, VoronoiConfig::default())
         .expect("minimized Hex3 core should compute");
-    assert!(output.report.returned_validation.is_strictly_valid());
+    assert!(output.report.validation.is_strictly_valid());
     assert!(
         output.report.output_resolution.exact_zero_edges_detected > 0,
         "fixture must retain the incident's stored-zero local corner"
@@ -57,7 +57,7 @@ fn hex3_four_generator_core_contracts_stored_zero_edge() {
         output.report.output_resolution.exact_zero_edges_contracted,
         output.report.output_resolution.exact_zero_edges_detected
     );
-    assert_eq!(output.report.returned_validation.zero_length_edges, 0);
+    assert_eq!(output.report.validation.zero_length_edges, 0);
     assert_eq!(output.diagram.num_cells(), points.len());
 
     let strict_resolution = compute_with_report(
@@ -110,9 +110,9 @@ fn separated_tiny_cell_survives_increasing_weld_radius() {
             "fixture sites must remain outside weld radius {radius:.3e}"
         );
         assert!(
-            output.report.returned_validation.is_strictly_valid(),
+            output.report.validation.is_strictly_valid(),
             "weld radius {radius:.3e}: {}",
-            output.report.returned_validation.headline()
+            output.report.validation.headline()
         );
         assert_eq!(
             output
@@ -123,7 +123,7 @@ fn separated_tiny_cell_survives_increasing_weld_radius() {
             "weld radius {radius:.3e} unexpectedly produced a cell-killing zero component"
         );
         assert_eq!(
-            output.report.returned_validation.zero_length_edges, 0,
+            output.report.validation.zero_length_edges, 0,
             "weld radius {radius:.3e} returned zero geometry"
         );
         assert!(
@@ -195,7 +195,7 @@ fn disabled_welding_preserves_cell_killing_zero_components() {
 
     assert_eq!(output.report.preprocess.num_merged, 0);
     assert!(output.diagram.weld_map().is_none());
-    assert!(output.report.returned_validation.is_strictly_valid());
+    assert!(output.report.validation.is_strictly_valid());
     assert_eq!(resolution.exact_zero_edges_detected, 3);
     assert_eq!(resolution.exact_zero_components_detected, 3);
     assert_eq!(resolution.exact_zero_edges_contracted, 0);
@@ -203,11 +203,11 @@ fn disabled_welding_preserves_cell_killing_zero_components() {
     assert_eq!(resolution.cell_killing_components_preserved, 3);
     assert_eq!(resolution.topology_rejected_components, 0);
     assert_eq!(resolution.exact_zero_edges_remaining, 3);
-    assert_eq!(output.report.returned_validation.zero_length_edges, 3);
+    assert_eq!(output.report.validation.zero_length_edges, 3);
     assert!(
         output
             .report
-            .returned_validation
+            .validation
             .cells_with_fewer_than_three_stored_positions
             > 0,
         "fixture must exercise the stored-position telemetry"
@@ -299,7 +299,10 @@ fn explicit_elision_returns_a_dense_valid_cell_mesh() {
         VoronoiConfig::default().with_preprocess_mode(PreprocessMode::Disabled),
     )
     .expect("cell-killing fixture should compute under Preserve");
-    let source_sites = output.preferred_diagram().generators().to_vec();
+    let source_sites = output
+        .diagram
+        .iter_effective_generators()
+        .collect::<Vec<_>>();
     let resolved = output
         .into_elided_cell_mesh()
         .expect("the fixture's exact-zero quotient should be safe");
@@ -399,7 +402,7 @@ fn explicit_elision_is_an_identity_conversion_when_no_cell_is_lost() {
     ];
     let output = compute_with_report(&points, VoronoiConfig::default())
         .expect("octahedral input should compute");
-    let source_vertices = output.preferred_diagram().num_vertices();
+    let source_vertices = output.diagram.num_vertices();
     let resolved = output
         .into_elided_cell_mesh()
         .expect("clean diagrams should convert without elision");

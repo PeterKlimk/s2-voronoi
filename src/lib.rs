@@ -161,7 +161,7 @@ pub use cell_mesh::{
     CellMeshValidationReport, CellSimplificationOptions, CellSimplificationReport,
     CellSimplificationThresholdError, SimplifiedCellMeshOutput, SphericalCellMesh,
 };
-pub use diagram::{CellView, SphericalVoronoi};
+pub use diagram::{CellView, EffectiveCellView, SphericalVoronoi};
 pub use embedding::{
     compute_on_sphere, compute_on_sphere_simplified, compute_on_sphere_simplified_with,
     compute_on_sphere_with, compute_on_sphere_with_report, EmbeddedCellElisionError,
@@ -357,18 +357,15 @@ pub struct ComputeReport {
     pub preprocess: PreprocessReport,
     /// What degenerate-input policy did to the input.
     pub degenerate: DegenerateReport,
-    /// Strict validation of the returned public diagram.
-    pub returned_validation: validation::ValidationReport,
-    /// Strict validation of the effective preprocessed diagram, when preprocessing
-    /// changed the solved generator set.
-    pub effective_validation: Option<validation::ValidationReport>,
+    /// Strict validation of the returned diagram, including its weld mapping.
+    pub validation: validation::ValidationReport,
     /// Number of shared-edge mismatches observed during live dedup before the
     /// post-assembly reconciliation and optional local rebuilding.
     ///
     /// A non-zero count proves a near-degenerate input exercised the reconciliation
     /// machinery; it does not mean the returned diagram is invalid. Check
     /// [`ComputeReport::residual_unpaired_edges`] and
-    /// [`ComputeReport::preferred_validation`] for the output contract.
+    /// [`ComputeReport::validation`] for the output contract.
     pub assembly_edge_mismatch_count: usize,
     /// What the local-rebuild stage did this run.
     pub local_rebuild: LocalRebuildStatus,
@@ -379,14 +376,17 @@ pub struct ComputeReport {
     /// `compute` turns these into a loud error; `compute_with_report` surfaces
     /// them for diagnostics.
     pub residual_unpaired_edges: Vec<(u32, u32)>,
-    /// EXPERIMENTAL DIAGNOSTIC: reconciliation cell pairs rejected by the
-    /// no-chain diameter policy and not cleared by an accepted Hull3d rebuild.
+    /// EXPERIMENTAL DIAGNOSTIC: dense effective-generator pairs rejected by
+    /// the no-chain diameter policy and not cleared by an accepted Hull3d
+    /// rebuild. Indices correspond to [`SphericalVoronoi::iter_effective_cells`].
     #[doc(hidden)]
     pub residual_reconciliation_pairs: Vec<(u32, u32)>,
     /// EXPERIMENTAL DIAGNOSTIC (unsupported surface; taxonomy changes in
     /// patch releases): unresolved shared-edge mismatches handed to
-    /// post-assembly reconciliation, as effective-diagram generator pairs plus
-    /// detection origins. It also contains `PostReconciliationUnpaired` records
+    /// post-assembly reconciliation, as dense effective-generator pairs plus
+    /// detection origins. Indices correspond to
+    /// [`SphericalVoronoi::iter_effective_cells`]. It also contains
+    /// `PostReconciliationUnpaired` records
     /// when [`ComputeReport::residual_unpaired_edges`] is non-empty. Tests use
     /// this to prove defect-forcing inputs exercise each detection path (see
     /// `tests/edge_reconciliation.rs`).
@@ -395,25 +395,13 @@ pub struct ComputeReport {
 }
 
 impl ComputeReport {
-    /// Preferred strict validation view for this computation.
-    ///
-    /// When preprocessing merged generators, this returns the validation result
-    /// for the effective diagram actually solved by the backend. Otherwise it
-    /// returns the validation result for the returned diagram.
-    #[inline]
-    pub fn preferred_validation(&self) -> &validation::ValidationReport {
-        self.effective_validation
-            .as_ref()
-            .unwrap_or(&self.returned_validation)
-    }
-
     /// True when the returned report contains output-invariant residuals that
     /// plain `compute` would reject with an error.
     #[inline]
     pub fn has_output_residuals(&self) -> bool {
         !self.residual_unpaired_edges.is_empty()
             || !self.residual_reconciliation_pairs.is_empty()
-            || !self.preferred_validation().is_strictly_valid()
+            || !self.validation.is_strictly_valid()
             || (self.local_rebuild.attempted() && !self.local_rebuild.accepted())
     }
 }
@@ -425,23 +413,8 @@ pub struct ComputeOutput {
     /// The returned diagram (one cell per input point; welded twins share
     /// their canonical cell).
     pub diagram: SphericalVoronoi,
-    /// Effective diagram actually solved by the backend after preprocessing, if
-    /// preprocessing merged generators.
-    pub effective_diagram: Option<SphericalVoronoi>,
     /// Preprocessing and validation observability for this run.
     pub report: ComputeReport,
-}
-
-impl ComputeOutput {
-    /// Preferred diagram view for this computation.
-    ///
-    /// When preprocessing merged generators, this returns the effective
-    /// preprocessed diagram actually solved by the backend. Otherwise it
-    /// returns the public remapped diagram.
-    #[inline]
-    pub fn preferred_diagram(&self) -> &SphericalVoronoi {
-        self.effective_diagram.as_ref().unwrap_or(&self.diagram)
-    }
 }
 
 /// Configuration for Voronoi computation.

@@ -70,7 +70,7 @@ fn construction_aware_path_rejects_unrepresentable_exact_source() {
 fn construction_aware_path_contracts_a_terminal_short_edge_once() {
     let points = fibonacci_sphere_points(48, 0.35, 91);
     let baseline = compute_with_report(&points, VoronoiConfig::default()).unwrap();
-    let diagram = baseline.preferred_diagram();
+    let diagram = baseline.diagram;
     let mut edges = BTreeSet::new();
     for cell in diagram.iter_cells() {
         for offset in 0..cell.vertex_indices.len() {

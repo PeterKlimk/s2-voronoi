@@ -256,10 +256,12 @@ pub fn assess_canonicalization<P: crate::UnitVec3Like>(
 }
 
 pub fn assess_with_config(diagram: &SphericalVoronoi, config: QualityConfig) -> QualityReport {
-    let generators: Vec<Vec3> = diagram
-        .generators()
+    // Work in the backend's dense effective-generator space. Welded twins
+    // alias canonical cells and must not be counted as distinct owners.
+    let effective_cells: Vec<_> = diagram.iter_effective_cells().collect();
+    let generators: Vec<Vec3> = effective_cells
         .iter()
-        .map(|g| Vec3::from_array(g.to_array()))
+        .map(|cell| Vec3::from_array(cell.generator.to_array()))
         .collect();
     let vertices: Vec<Vec3> = diagram
         .vertices()
@@ -269,7 +271,7 @@ pub fn assess_with_config(diagram: &SphericalVoronoi, config: QualityConfig) -> 
     let normalized_generators: Vec<DVec3> = generators.iter().copied().map(normalize_f64).collect();
     let normalized_vertices: Vec<DVec3> = vertices.iter().copied().map(normalize_f64).collect();
 
-    let sampled_cells = sampled_cell_indices(diagram.num_cells(), config.max_sampled_cells);
+    let sampled_cells = sampled_cell_indices(effective_cells.len(), config.max_sampled_cells);
     let sampled_set: HashSet<usize> = sampled_cells.iter().copied().collect();
 
     let mut vertex_to_cells = vec![Vec::<usize>::new(); diagram.num_vertices()];
@@ -277,10 +279,10 @@ pub fn assess_with_config(diagram: &SphericalVoronoi, config: QualityConfig) -> 
     let mut sampled_vertices = HashSet::<u32>::new();
     let mut sampled_edges = HashSet::<(u32, u32)>::new();
 
-    for cell in diagram.iter_cells() {
+    for (effective_index, cell) in effective_cells.iter().enumerate() {
         for &vi in cell.vertex_indices {
             if (vi as usize) < diagram.num_vertices() {
-                vertex_to_cells[vi as usize].push(cell.generator_index);
+                vertex_to_cells[vi as usize].push(effective_index);
             }
         }
         let len = cell.len();
@@ -292,16 +294,13 @@ pub fn assess_with_config(diagram: &SphericalVoronoi, config: QualityConfig) -> 
                     continue;
                 }
                 let edge = if a < b { (a, b) } else { (b, a) };
-                edge_to_cells
-                    .entry(edge)
-                    .or_default()
-                    .push(cell.generator_index);
-                if sampled_set.contains(&cell.generator_index) {
+                edge_to_cells.entry(edge).or_default().push(effective_index);
+                if sampled_set.contains(&effective_index) {
                     sampled_edges.insert(edge);
                 }
             }
         }
-        if sampled_set.contains(&cell.generator_index) {
+        if sampled_set.contains(&effective_index) {
             for &vi in cell.vertex_indices {
                 if (vi as usize) < diagram.num_vertices() {
                     sampled_vertices.insert(vi);
@@ -311,7 +310,7 @@ pub fn assess_with_config(diagram: &SphericalVoronoi, config: QualityConfig) -> 
     }
 
     let ownership = assess_sampled_ownership(
-        diagram,
+        &effective_cells,
         &generators,
         &vertices,
         &normalized_generators,
@@ -340,7 +339,7 @@ pub fn assess_with_config(diagram: &SphericalVoronoi, config: QualityConfig) -> 
         &sampled_edges,
         config.edge_samples_per_edge,
     );
-    let low_degree = analyze_low_degree_vertices(diagram);
+    let low_degree = analyze_low_degree_vertices(diagram.vertices(), &effective_cells);
 
     QualityReport {
         ownership,
@@ -355,7 +354,7 @@ pub fn assess_with_config(diagram: &SphericalVoronoi, config: QualityConfig) -> 
 }
 
 fn assess_sampled_ownership(
-    diagram: &SphericalVoronoi,
+    effective_cells: &[crate::diagram::EffectiveCellView<'_>],
     generators: &[Vec3],
     vertices: &[Vec3],
     normalized_generators: &[DVec3],
@@ -375,7 +374,7 @@ fn assess_sampled_ownership(
     let mut worst_cross_track_radians = 0.0f64;
 
     for &cell_idx in sampled_cells {
-        let cell = diagram.cell(cell_idx);
+        let cell = effective_cells[cell_idx];
         let len = cell.len();
         if len < 2 {
             continue;
@@ -616,15 +615,17 @@ fn assess_edge_residuals(
     ResidualStats::from_values(residuals)
 }
 
-fn analyze_low_degree_vertices(diagram: &SphericalVoronoi) -> LowDegreeQualityStats {
-    let num_vertices = diagram.num_vertices();
-    let diagram_vertices = diagram.vertices();
+fn analyze_low_degree_vertices(
+    diagram_vertices: &[crate::SpherePoint],
+    effective_cells: &[crate::diagram::EffectiveCellView<'_>],
+) -> LowDegreeQualityStats {
+    let num_vertices = diagram_vertices.len();
     if num_vertices == 0 {
         return LowDegreeQualityStats::default();
     }
 
     let mut vertex_degree: Vec<u32> = vec![0; num_vertices];
-    for cell in diagram.iter_cells() {
+    for cell in effective_cells {
         for &vi in cell.vertex_indices {
             if (vi as usize) < num_vertices {
                 vertex_degree[vi as usize] += 1;
@@ -858,6 +859,28 @@ mod tests {
             report.edge_cross_track_error.overall.max < 1e-5,
             "{}",
             report.headline()
+        );
+    }
+
+    #[test]
+    fn welded_twins_do_not_change_dense_quality_assessment() {
+        let points = fibonacci_sphere_points(64, 0.01);
+        let base = compute(&points).expect("base input should compute");
+        let mut with_twin = points.clone();
+        with_twin.insert(8, points[7]);
+        let welded = compute(&with_twin).expect("exact duplicate should weld");
+        assert_eq!(welded.welded_twin_count(), 1);
+
+        let config = QualityConfig {
+            max_sampled_cells: 64,
+            edge_samples_per_edge: 3,
+        };
+        let base_report = assess_with_config(&base, config);
+        let welded_report = assess_with_config(&welded, config);
+        assert_eq!(welded_report.headline(), base_report.headline());
+        assert_eq!(
+            welded_report.fidelity_kv_fields(),
+            base_report.fidelity_kv_fields()
         );
     }
 

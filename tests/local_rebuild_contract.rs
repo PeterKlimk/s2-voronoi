@@ -40,7 +40,7 @@ fn mega_rebuild_no_residual_implies_strictly_valid() {
             let out = compute_with_report(&pts, VoronoiConfig::default())
                 .expect("report path must not loud-fail");
             let residual = surviving_residual(&out.report);
-            let valid = out.report.preferred_validation().is_strictly_valid();
+            let valid = out.report.validation.is_strictly_valid();
             assert!(
                 valid || residual > 0,
                 "mega seed {seed}: returned diagram is NOT strictly valid yet left NO \
@@ -93,7 +93,7 @@ fn mega_rebuild_cross_bin_contract() {
         let out = compute_with_report(&pts, VoronoiConfig::default())
             .expect("report path must not loud-fail");
         let residual = surviving_residual(&out.report);
-        let valid = out.report.preferred_validation().is_strictly_valid();
+        let valid = out.report.validation.is_strictly_valid();
         assert!(
             valid || residual > 0,
             "mega cross-bin: returned diagram invalid with no surviving residual — silent-invalid"

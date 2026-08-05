@@ -194,9 +194,37 @@ impl SphericalVoronoi {
         (index < self.num_cells()).then(|| self.cell(index))
     }
 
-    /// Iterate over all cells.
+    /// Iterate over all cells, including welded twins.
     pub fn iter_cells(&self) -> impl Iterator<Item = CellView<'_>> {
         (0..self.num_cells()).map(move |i| self.cell(i))
+    }
+
+    /// Number of generators actually solved after preprocessing.
+    #[inline]
+    pub fn effective_cell_count(&self) -> usize {
+        self.num_cells() - self.welded_twin_count()
+    }
+
+    /// Iterate over solved cells in dense backend order. Each item carries both
+    /// its dense effective index and its canonical original-input index.
+    pub fn iter_effective_cells(&self) -> impl Iterator<Item = EffectiveCellView<'_>> + '_ {
+        (0..self.num_cells())
+            .filter(|&input| self.canonical_cell_index(input) == input)
+            .enumerate()
+            .map(|(effective_index, input_index)| {
+                let cell = self.cell(input_index);
+                EffectiveCellView {
+                    effective_index,
+                    input_index,
+                    generator: self.generator(input_index),
+                    vertex_indices: cell.vertex_indices,
+                }
+            })
+    }
+
+    /// Iterate over the generators actually solved after preprocessing.
+    pub fn iter_effective_generators(&self) -> impl Iterator<Item = SpherePoint> + '_ {
+        self.iter_effective_cells().map(|cell| cell.generator)
     }
 
     /// Get the generator (center point) of a cell.
@@ -360,6 +388,34 @@ impl SphericalVoronoi {
         self.cells = new_cells;
         self.cell_indices = new_indices;
         removed
+    }
+}
+
+/// A solved cell viewed in dense effective-generator order.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct EffectiveCellView<'a> {
+    /// Dense index used by the backend after preprocessing.
+    pub effective_index: usize,
+    /// Smallest original input index in this cell's weld class.
+    pub input_index: usize,
+    /// Effective generator chosen from the original input.
+    pub generator: SpherePoint,
+    /// Boundary vertex indices in the diagram's shared vertex array.
+    pub vertex_indices: &'a [u32],
+}
+
+impl EffectiveCellView<'_> {
+    /// Number of vertices in this cell.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.vertex_indices.len()
+    }
+
+    /// Returns true if this cell has no vertices.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.vertex_indices.is_empty()
     }
 }
 

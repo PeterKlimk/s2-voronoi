@@ -17,10 +17,10 @@ fn local_rebuild_makes_mega_strictly_valid() {
         let points = mega_points(100_000, 0.8, seed);
 
         let before = compute_with_report(&points, off()).expect("build");
-        let before_valid = before.report.returned_validation.is_strictly_valid();
+        let before_valid = before.report.validation.is_strictly_valid();
 
         let after = compute_with_report(&points, on()).expect("build");
-        let after_report = &after.report.returned_validation;
+        let after_report = &after.report.validation;
 
         println!(
             "mega 100k s{seed}: off={} on={}",
@@ -68,7 +68,7 @@ fn accepted_default_rebuild_clears_surviving_residual_report() {
         let out = compute_with_report(&points, VoronoiConfig::default())
             .unwrap_or_else(|e| panic!("mega 100k s{seed}: report build failed: {e:?}"));
         assert!(
-            out.report.returned_validation.is_strictly_valid(),
+            out.report.validation.is_strictly_valid(),
             "mega 100k s{seed}: default rebuild was not accepted"
         );
         let post = out.report.residual_unpaired_edges.len();
@@ -118,10 +118,10 @@ fn local_rebuild_broad_sweep() {
     let mut defects = 0usize;
     for (name, points) in &cases {
         let before = compute_with_report(points, off()).expect("build");
-        let before_valid = before.report.returned_validation.is_strictly_valid();
+        let before_valid = before.report.validation.is_strictly_valid();
 
         let after = compute_with_report(points, on()).expect("build");
-        let after_valid = after.report.returned_validation.is_strictly_valid();
+        let after_valid = after.report.validation.is_strictly_valid();
 
         if !before_valid {
             defects += 1;
@@ -132,10 +132,7 @@ fn local_rebuild_broad_sweep() {
             if after_valid {
                 "VALID".into()
             } else {
-                format!(
-                    "{:?}",
-                    after.report.returned_validation.subdivision_issues()
-                )
+                format!("{:?}", after.report.validation.subdivision_issues())
             }
         );
         assert!(

@@ -539,18 +539,16 @@ impl EmbeddedSphericalVoronoi {
 pub struct EmbeddedComputeOutput {
     /// Returned diagram, with one cell per original input point.
     pub diagram: EmbeddedSphericalVoronoi,
-    /// Effective diagram actually solved after preprocessing, when welding changed the generator set.
-    pub effective_diagram: Option<EmbeddedSphericalVoronoi>,
     /// Existing unit-backend preprocessing, reconciliation, local-rebuild,
     /// and validation report.
     pub report: ComputeReport,
 }
 
 impl EmbeddedComputeOutput {
-    /// Preferred embedded diagram for interpreting the computation.
+    /// Number of generators actually solved after preprocessing.
     #[inline]
-    pub fn preferred_diagram(&self) -> &EmbeddedSphericalVoronoi {
-        self.effective_diagram.as_ref().unwrap_or(&self.diagram)
+    pub fn effective_cell_count(&self) -> usize {
+        self.diagram.diagram().effective_cell_count()
     }
 
     /// Consume this report-bearing computation and explicitly elide cells
@@ -562,16 +560,9 @@ impl EmbeddedComputeOutput {
     /// [`EmbeddedCellElisionError`].
     pub fn into_elided_cell_mesh(self) -> Result<EmbeddedCellMeshOutput, EmbeddedCellElisionError> {
         let embedding = self.diagram.embedding();
-        let EmbeddedComputeOutput {
-            diagram,
-            effective_diagram,
-            report,
-        } = self;
-        let diagram = diagram.into_diagram();
-        let effective_diagram = effective_diagram.map(EmbeddedSphericalVoronoi::into_diagram);
+        let EmbeddedComputeOutput { diagram, report } = self;
         let unit_output = crate::ComputeOutput {
-            diagram,
-            effective_diagram,
+            diagram: diagram.into_diagram(),
             report,
         };
         match unit_output.into_elided_cell_mesh() {
@@ -589,9 +580,6 @@ impl EmbeddedComputeOutput {
                     message,
                     source_output: Box::new(EmbeddedComputeOutput {
                         diagram: EmbeddedSphericalVoronoi::new(source.diagram, embedding),
-                        effective_diagram: source
-                            .effective_diagram
-                            .map(|diagram| EmbeddedSphericalVoronoi::new(diagram, embedding)),
                         report: source.report,
                     }),
                 })
@@ -779,17 +767,12 @@ pub fn compute_on_sphere_with_report<P: WorldVec3Like>(
     config: VoronoiConfig,
 ) -> Result<EmbeddedComputeOutput, VoronoiError> {
     let projected = project_points(points, embedding)?;
-    let ComputeOutput {
-        diagram,
-        effective_diagram,
-        report,
-    } = crate::knn_clipping::compute::compute_voronoi_knn_clipping_with_report_owned(
-        projected, &config,
-    )?;
+    let ComputeOutput { diagram, report } =
+        crate::knn_clipping::compute::compute_voronoi_knn_clipping_with_report_owned(
+            projected, &config,
+        )?;
     Ok(EmbeddedComputeOutput {
         diagram: EmbeddedSphericalVoronoi::new(diagram, embedding),
-        effective_diagram: effective_diagram
-            .map(|diagram| EmbeddedSphericalVoronoi::new(diagram, embedding)),
         report,
     })
 }

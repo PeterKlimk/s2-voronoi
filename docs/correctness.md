@@ -201,8 +201,9 @@ pairs, and `lloyd_step` batches all affected cells into one such scan.
 
 A call resolves to one of:
 
-- **Success** — an edge-agreeing, Euler-valid diagram. With welding, the *effective* diagram the backend solved is the
-  authoritative one; `compute_with_report` exposes both the effective and the remapped views.
+- **Success** — an edge-agreeing, Euler-valid diagram. With welding, the returned diagram keeps one
+  cell per input while twins alias their canonical boundary. Dense solved-space cells remain
+  available allocation-free through `SphericalVoronoi::iter_effective_cells`.
 - **Defined error** — `UnsupportedGeometry` (a proven model limit, e.g. a cell reaching the
   generator hemisphere boundary), `RepresentationLimit` (storage/index capacity), `DegenerateInput`
   (sub-weld coincidence, naming the offending generators), `CellEliminationRequired` (the selected

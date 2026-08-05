@@ -134,7 +134,7 @@ fn cubed_sphere_scaling_probe() {
         let out = compute_with_report(&pts, VoronoiConfig::default())
             .unwrap_or_else(|e| panic!("k={k}: {e:?}"));
         let post = out.report.residual_unpaired_edges.len();
-        let v = out.report.preferred_validation();
+        let v = out.report.validation;
         let [_, _, _, d3, d4] = v.degree_counts;
         eprintln!(
             "k={k} n={}: defects={} residual_edges={post} valid={} deg[d3={d3} d4+={d4}]",

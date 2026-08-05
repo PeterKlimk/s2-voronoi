@@ -244,7 +244,7 @@ fn embedding_and_projection_errors_are_explicit() {
 }
 
 #[test]
-fn embedded_report_wraps_returned_and_effective_diagrams() {
+fn embedded_report_exposes_effective_cell_count_without_duplicate_diagram() {
     let center = [7.0, -11.0, 13.0];
     let embedding = SphereEmbedding::new(center, 5.0).unwrap();
     let mut unit = octahedron_unit();
@@ -263,10 +263,8 @@ fn embedded_report_wraps_returned_and_effective_diagrams() {
     assert_eq!(output.report.preprocess.original_points, 7);
     assert_eq!(output.report.preprocess.effective_points, 6);
     assert!(output.report.preprocess.did_merge());
-    let effective = output.effective_diagram.as_ref().unwrap();
-    assert_eq!(effective.diagram().num_cells(), 6);
-    assert_eq!(effective.embedding(), embedding);
-    assert_eq!(output.preferred_diagram().diagram().num_cells(), 6);
+    assert_eq!(output.effective_cell_count(), 6);
+    assert_eq!(output.diagram.diagram().num_cells(), 7);
 }
 
 #[test]

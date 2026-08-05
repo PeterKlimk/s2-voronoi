@@ -119,9 +119,9 @@ fn welding_subradius_cluster_is_strictly_valid() {
 
     assert!(output.report.preprocess.did_merge());
     assert!(
-        output.report.preferred_validation().is_strictly_valid(),
+        output.report.validation.is_strictly_valid(),
         "welded effective diagram should validate strictly: {}",
-        output.report.preferred_validation().headline()
+        output.report.validation.headline()
     );
 }
 
@@ -140,9 +140,9 @@ fn robust_great_circle_perturbation_solves_rank2_fixture() {
         "rank-2 fixture should take the perturbation retry"
     );
     assert!(
-        output.report.preferred_validation().is_strictly_valid(),
+        output.report.validation.is_strictly_valid(),
         "perturbed great-circle diagram should validate strictly: {}",
-        output.report.preferred_validation().headline()
+        output.report.validation.headline()
     );
 }
 
@@ -157,9 +157,9 @@ fn dense_cap_frontier_is_strict_without_local_rebuild() {
     .expect("dense-cap raw path should build");
 
     assert!(
-        raw.report.returned_validation.is_strictly_valid(),
+        raw.report.validation.is_strictly_valid(),
         "f64 fallback should resolve the former dense-cap frontier defect upstream: {}",
-        raw.report.returned_validation.headline()
+        raw.report.validation.headline()
     );
     assert!(
         !raw.report.has_output_residuals(),
@@ -169,9 +169,9 @@ fn dense_cap_frontier_is_strict_without_local_rebuild() {
     let rebuilt = voronoi_mesh::compute_with_report(&points, VoronoiConfig::default())
         .expect("default pipeline should solve the dense-cap frontier fixture");
     assert!(
-        rebuilt.report.returned_validation.is_strictly_valid(),
+        rebuilt.report.validation.is_strictly_valid(),
         "default pipeline should return a strict-valid dense-cap diagram: {}",
-        rebuilt.report.returned_validation.headline()
+        rebuilt.report.validation.headline()
     );
     assert!(
         !rebuilt.report.local_rebuild.attempted(),
@@ -209,8 +209,8 @@ fn classify_weird_geometry_failures() {
         match voronoi_mesh::compute_with_report(&points, VoronoiConfig::default()) {
             Ok(output) => eprintln!(
                 "WEIRDCASE {name}: ok cells={} validation={} assembly_mismatches={}",
-                output.preferred_diagram().num_cells(),
-                output.report.preferred_validation().headline(),
+                output.diagram.effective_cell_count(),
+                output.report.validation.headline(),
                 output.report.assembly_edge_mismatch_count
             ),
             Err(err) => eprintln!("WEIRDCASE {name}: err {err:?}"),

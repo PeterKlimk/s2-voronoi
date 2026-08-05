@@ -634,6 +634,13 @@ modules without making the non-obvious code shape look accidental.
   the beneficial `Σocc²/n` crossover near 450: measured 274/331 cases lost 19%/8%, while 536/712
   cases gained 18%/29%. The selected threshold 500 separates all recorded cases; the superseded
   noisy-host value 2000 placed the crossover 4–7× too high.
+- **Single report diagram.** Report-bearing welded output owns only the returned diagram; dense
+  solved-space cells are reconstructed allocation-free from canonical weld representatives. The
+  retired second diagram cloned generators, vertices, cells, and indices, then repeated full
+  validation. On 300k Fibonacci generators duplicated to 600k inputs, seven 16-thread process pairs
+  reduced median report time from 733 ms to 415 ms with native codegen and from 727 ms to 417 ms
+  with portable codegen; peak RSS fell about 8.5% in both. Nine no-weld 300k pairs were neutral
+  (native +0.8%, portable -0.2%, with wide pair ranges), and backend fingerprints were unchanged.
 - **Numeric façade inline visibility.** The three scalar arithmetic helpers carry no inline hint.
   Twelve paired 500k native Fibonacci/uniform runs changed default-backend instructions by
   -0.0046%/-0.0086%, branches by -0.0080%/-0.0135%, and cycles by -0.012%/-0.012%. The scalar

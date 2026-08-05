@@ -607,21 +607,22 @@ pub(crate) fn prepare_cell_mesh_source(
         ));
     }
 
-    let preferred = source.preferred_diagram();
-    let generators: Vec<glam::Vec3> = preferred
-        .generators()
-        .iter()
+    let effective_count = source.diagram.effective_cell_count();
+    let generators: Vec<glam::Vec3> = source
+        .diagram
+        .iter_effective_generators()
         .map(|site| glam::Vec3::from_array(site.to_array()))
         .collect();
-    let vertices: Vec<glam::Vec3> = preferred
+    let vertices: Vec<glam::Vec3> = source
+        .diagram
         .vertices()
         .iter()
         .map(|vertex| glam::Vec3::from_array(vertex.to_array()))
         .collect();
-    let effective_source_sites = preferred.generators().to_vec();
-    let mut cells = Vec::with_capacity(preferred.num_cells());
+    let effective_source_sites = source.diagram.iter_effective_generators().collect();
+    let mut cells = Vec::with_capacity(effective_count);
     let mut cell_indices = Vec::new();
-    for cell in preferred.iter_cells() {
+    for cell in source.diagram.iter_effective_cells() {
         if cell.vertex_indices.len() > u16::MAX as usize || cell_indices.len() > u32::MAX as usize {
             return Err(representation(
                 "source cell layout exceeds compact mesh index capacity",
@@ -635,22 +636,17 @@ pub(crate) fn prepare_cell_mesh_source(
     }
 
     let original_cells = source.diagram.num_cells();
-    if original_cells > u32::MAX as usize || preferred.num_cells() > u32::MAX as usize {
+    if original_cells > u32::MAX as usize || effective_count > u32::MAX as usize {
         return Err(representation("source input mapping exceeds u32 capacity"));
     }
-    let mut effective_to_input = Vec::with_capacity(preferred.num_cells());
+    let effective_to_input: Vec<u32> = source
+        .diagram
+        .iter_effective_cells()
+        .map(|cell| cell.input_index as u32)
+        .collect();
     let mut canonical_to_effective = vec![u32::MAX; original_cells];
-    for (input, slot) in canonical_to_effective.iter_mut().enumerate() {
-        if source.diagram.canonical_cell_index(input) == input {
-            let effective = effective_to_input.len() as u32;
-            *slot = effective;
-            effective_to_input.push(input as u32);
-        }
-    }
-    if effective_to_input.len() != preferred.num_cells() {
-        return Err(invalid(
-            "source weld mapping does not match the effective diagram",
-        ));
+    for (effective, &input) in effective_to_input.iter().enumerate() {
+        canonical_to_effective[input as usize] = effective as u32;
     }
     let mut input_to_effective = Vec::with_capacity(original_cells);
     for input in 0..original_cells {

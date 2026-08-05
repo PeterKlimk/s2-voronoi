@@ -75,7 +75,7 @@ fn fidelity_case() {
         VoronoiConfig::default().with_local_rebuild_mode(local_rebuild_mode),
     )
     .unwrap_or_else(|e| panic!("{dist} n={original_n} seed={seed}: compute failed: {e}"));
-    let validation = output.report.preferred_validation();
+    let validation = &output.report.validation;
     assert!(
         validation.is_strictly_valid(),
         "{dist} n={original_n} seed={seed}: strict validation failed: {validation}"
@@ -86,7 +86,7 @@ fn fidelity_case() {
     );
 
     let mut report = quality::assess_with_config(
-        output.preferred_diagram(),
+        &output.diagram,
         quality::QualityConfig {
             max_sampled_cells: sampled_cells,
             edge_samples_per_edge: edge_samples,
@@ -97,7 +97,7 @@ fn fidelity_case() {
 
     println!(
         "FIDELITYRESULT dist={dist} original_n={original_n} effective_n={} seed={seed} param={param} merged={} perturbed={} pre_defects={} local_rebuild_attempted={} local_rebuild_accepted={} {}",
-        output.preferred_diagram().num_cells(),
+        output.diagram.effective_cell_count(),
         output.report.preprocess.num_merged,
         output.report.degenerate.perturbation_applied,
         output.report.assembly_edge_mismatch_count,
