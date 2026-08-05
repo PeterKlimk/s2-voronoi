@@ -112,7 +112,9 @@ impl DenseCellIndex {
     pub(crate) fn band_radius(&self, cell: u32, target_count: usize) -> Option<f32> {
         let entry = self.cells.get(&cell)?;
         let occ = entry.sorted_slots.len();
-        debug_assert!(occ > 0);
+        if occ == 0 {
+            return None;
+        }
         let frac = (target_count as f32 / occ as f32).sqrt();
         Some(0.5 * entry.diag * frac)
     }
