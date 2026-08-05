@@ -10,9 +10,7 @@ use crate::cube_grid::{
     DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream, PackedQuery,
 };
 use crate::knn_clipping::topo2d::types::MAX_POLY_VERTICES;
-use crate::knn_clipping::topo2d::{
-    BuilderClipOutcome, BuilderFallbackRequest, BuilderFallbackTrigger, BuilderStepOutcome,
-};
+use crate::knn_clipping::topo2d::{BuilderClipOutcome, BuilderFallbackTrigger, BuilderStepOutcome};
 use crate::live_dedup::EdgeCheck;
 use crate::policy::PackedNeighborPolicy;
 
@@ -111,7 +109,7 @@ fn maybe_force_fallback(
     force_fallback_after_neighbors_processed: &mut Option<usize>,
     points: &[Vec3],
     neighbors_processed: usize,
-    fallback_request: &mut Option<BuilderFallbackRequest>,
+    fallback_trigger: &mut Option<BuilderFallbackTrigger>,
 ) {
     if builder.is_fallback() {
         return;
@@ -123,11 +121,9 @@ fn maybe_force_fallback(
         return;
     }
 
-    let request = BuilderFallbackRequest {
-        trigger: crate::knn_clipping::topo2d::builder::BuilderFallbackTrigger::ProjectionLimit,
-    };
-    *fallback_request = Some(request);
-    let entered = builder.try_enter_fallback(points, request);
+    let trigger = BuilderFallbackTrigger::ProjectionLimit;
+    *fallback_trigger = Some(trigger);
+    let entered = builder.try_enter_fallback(points, trigger);
     debug_assert!(entered);
     *force_fallback_after_neighbors_processed = None;
 }
@@ -235,16 +231,16 @@ impl CellBuildStats {
 fn fallback_detail(
     builder: &crate::knn_clipping::topo2d::Topo2DBuilder,
     failure: CellFailure,
-    fallback_request: Option<BuilderFallbackRequest>,
+    fallback_trigger: Option<BuilderFallbackTrigger>,
 ) -> Option<String> {
-    fallback_request
+    fallback_trigger
         .or_else(|| {
-            crate::knn_clipping::topo2d::Topo2DBuilder::fallback_request_for_failure(failure)
+            crate::knn_clipping::topo2d::Topo2DBuilder::fallback_trigger_for_failure(failure)
         })
-        .map(|request| {
+        .map(|trigger| {
             format!(
                 "fallback trigger={:?}, replay_constraints={}, replay_generator_idx={}",
-                request.trigger,
+                trigger,
                 builder.accepted_constraint_count(),
                 builder.generator_idx()
             )
@@ -257,7 +253,7 @@ pub(super) struct BuildTrace {
     pub(super) last_neighbor_slot: Option<u32>,
     pub(super) last_batch_source: Option<DirectedNeighborBatchSource>,
     pub(super) last_clip_phase: &'static str,
-    fallback_request: Option<BuilderFallbackRequest>,
+    fallback_trigger: Option<BuilderFallbackTrigger>,
 }
 
 impl BuildTrace {
@@ -267,7 +263,7 @@ impl BuildTrace {
             last_neighbor_slot: None,
             last_batch_source: None,
             last_clip_phase: "none",
-            fallback_request: None,
+            fallback_trigger: None,
         }
     }
 }
@@ -347,8 +343,8 @@ impl BuildCounters {
         self.knn_exhausted |= stream.knn_exhausted();
     }
 
-    fn record_fallback(&mut self, request: BuilderFallbackRequest) {
-        match request.trigger {
+    fn record_fallback(&mut self, trigger: BuilderFallbackTrigger) {
+        match trigger {
             BuilderFallbackTrigger::ProjectionLimit => self.fallback_projection += 1,
             BuilderFallbackTrigger::PolygonVertexLimit => self.fallback_polygon_cap += 1,
             BuilderFallbackTrigger::ClippedAway => self.fallback_all_constraints += 1,
@@ -513,10 +509,10 @@ fn clip_seed_neighbors(
                 .clip_with_slot_edgecheck_policy(neighbor_idx, neighbor_slot, neighbor)
             {
                 Ok(BuilderStepOutcome::Applied) => false,
-                Ok(BuilderStepOutcome::NeedsFallback(request)) => {
-                    trace.fallback_request = Some(request);
-                    counters.record_fallback(request);
-                    !ctx.builder.try_enter_fallback(points, request)
+                Ok(BuilderStepOutcome::NeedsFallback(trigger)) => {
+                    trace.fallback_trigger = Some(trigger);
+                    counters.record_fallback(trigger);
+                    !ctx.builder.try_enter_fallback(points, trigger)
                 }
                 Err(_) => break,
             };
@@ -536,7 +532,7 @@ fn clip_seed_neighbors(
             &mut ctx.force_fallback_after_neighbors_processed,
             points,
             counters.neighbors_processed,
-            &mut trace.fallback_request,
+            &mut trace.fallback_trigger,
         );
     }
     counters.clipping_time += t_clip.elapsed();
@@ -656,10 +652,10 @@ fn clip_batch_source<const SHELL: bool>(
                 .clip_with_slot_result_policy(neighbor_idx, neighbor_slot, neighbor)
             {
                 Ok(BuilderClipOutcome::Applied(result)) => (result, false),
-                Ok(BuilderClipOutcome::NeedsFallback(request)) => {
-                    trace.fallback_request = Some(request);
-                    counters.record_fallback(request);
-                    let rejected = !phase.builder.try_enter_fallback(points, request);
+                Ok(BuilderClipOutcome::NeedsFallback(trigger)) => {
+                    trace.fallback_trigger = Some(trigger);
+                    counters.record_fallback(trigger);
+                    let rejected = !phase.builder.try_enter_fallback(points, trigger);
                     (
                         crate::knn_clipping::topo2d::types::ClipResult::Changed,
                         rejected,
@@ -683,7 +679,7 @@ fn clip_batch_source<const SHELL: bool>(
             phase.force_fallback_after_neighbors_processed,
             points,
             counters.neighbors_processed,
-            &mut trace.fallback_request,
+            &mut trace.fallback_trigger,
         );
 
         // All batch sources are sorted, so mid-batch bounds are sound; only
@@ -848,7 +844,7 @@ fn finish_cell(
             return Err(CellBuildError {
                 generator_idx,
                 failure,
-                detail: fallback_detail(&ctx.builder, failure, trace.fallback_request),
+                detail: fallback_detail(&ctx.builder, failure, trace.fallback_trigger),
             });
         }
         return Err(unexpected_failure_error(

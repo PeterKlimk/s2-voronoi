@@ -1302,7 +1302,7 @@ fn projection_invalid_detail_includes_replay_payload_summary() {
     let detail = fallback_detail(
         &builder,
         CellFailure::ProjectionInvalid,
-        Topo2DBuilder::fallback_request_for_failure(CellFailure::ProjectionInvalid),
+        Topo2DBuilder::fallback_trigger_for_failure(CellFailure::ProjectionInvalid),
     )
     .expect("projection invalid should produce fallback detail");
 

@@ -445,9 +445,9 @@ fn projection_invalid_is_classified_as_fallback_handoff() {
         Topo2DBuilder::classify_clip_result(
             Err(crate::live_dedup::CellFailure::ProjectionInvalid,)
         ),
-        Ok(BuilderClipOutcome::NeedsFallback(BuilderFallbackRequest {
-            trigger: BuilderFallbackTrigger::ProjectionLimit,
-        }))
+        Ok(BuilderClipOutcome::NeedsFallback(
+            BuilderFallbackTrigger::ProjectionLimit
+        ))
     );
 }
 
@@ -455,9 +455,9 @@ fn projection_invalid_is_classified_as_fallback_handoff() {
 fn too_many_vertices_is_classified_as_polygon_fallback_handoff() {
     assert_eq!(
         Topo2DBuilder::classify_clip_result(Err(crate::live_dedup::CellFailure::TooManyVertices,)),
-        Ok(BuilderClipOutcome::NeedsFallback(BuilderFallbackRequest {
-            trigger: BuilderFallbackTrigger::PolygonVertexLimit,
-        }))
+        Ok(BuilderClipOutcome::NeedsFallback(
+            BuilderFallbackTrigger::PolygonVertexLimit
+        ))
     );
 }
 
@@ -465,9 +465,9 @@ fn too_many_vertices_is_classified_as_polygon_fallback_handoff() {
 fn clipped_away_is_classified_as_exact_fallback_handoff() {
     assert_eq!(
         Topo2DBuilder::classify_clip_result(Err(crate::live_dedup::CellFailure::ClippedAway,)),
-        Ok(BuilderClipOutcome::NeedsFallback(BuilderFallbackRequest {
-            trigger: BuilderFallbackTrigger::ClippedAway,
-        }))
+        Ok(BuilderClipOutcome::NeedsFallback(
+            BuilderFallbackTrigger::ClippedAway
+        ))
     );
 }
 
@@ -491,9 +491,7 @@ fn clipped_away_handoff_rebuilds_from_constraints() {
 
     let switched = builder.try_enter_fallback(
         &fallback_points(g, h1, h2, h3),
-        BuilderFallbackRequest {
-            trigger: BuilderFallbackTrigger::ClippedAway,
-        },
+        BuilderFallbackTrigger::ClippedAway,
     );
     assert!(switched);
     assert!(builder.is_bounded());
@@ -524,12 +522,7 @@ fn clipped_away_handoff_rejection_preserves_failed_builder() {
         Vec3::new(0.0, eps, 1.0).normalize(),
         Vec3::new(0.0, -eps, 1.0).normalize(),
     );
-    assert!(!builder.try_enter_fallback(
-        &points,
-        BuilderFallbackRequest {
-            trigger: BuilderFallbackTrigger::ClippedAway,
-        },
-    ));
+    assert!(!builder.try_enter_fallback(&points, BuilderFallbackTrigger::ClippedAway));
     assert!(!builder.is_fallback());
     assert!(builder.is_failed());
     assert_eq!(
@@ -582,12 +575,7 @@ fn polygon_vertex_limit_handoff_replays_overflowing_constraint() {
     );
 
     let points = fallback_points4(g, h1, h2, h3, h4);
-    assert!(builder.try_enter_fallback(
-        &points,
-        BuilderFallbackRequest {
-            trigger: BuilderFallbackTrigger::PolygonVertexLimit,
-        },
-    ));
+    assert!(builder.try_enter_fallback(&points, BuilderFallbackTrigger::PolygonVertexLimit));
 
     assert_eq!(builder.as_fallback().constraints.len(), 4);
     assert_eq!(builder.as_fallback().constraints[3].neighbor_idx, 14);
@@ -623,18 +611,11 @@ fn fallback_handoff_switches_builder_variant_and_replays_constraints() {
         Topo2DBuilder::handle_clip_result(Err(crate::live_dedup::CellFailure::ProjectionInvalid))
             .expect("projection invalid should be converted to a fallback handoff");
     let points = fallback_points(g, h1, h2, h3);
-    assert!(builder.try_enter_fallback(
-        &points,
-        BuilderFallbackRequest {
-            trigger: BuilderFallbackTrigger::ProjectionLimit,
-        },
-    ));
+    assert!(builder.try_enter_fallback(&points, BuilderFallbackTrigger::ProjectionLimit));
 
     assert_eq!(
         outcome,
-        BuilderClipOutcome::NeedsFallback(BuilderFallbackRequest {
-            trigger: BuilderFallbackTrigger::ProjectionLimit,
-        })
+        BuilderClipOutcome::NeedsFallback(BuilderFallbackTrigger::ProjectionLimit)
     );
     assert!(!builder.is_failed());
     assert!(builder.is_bounded());
@@ -675,12 +656,7 @@ fn fallback_reconstruction_preserves_constraint_order() {
     );
 
     let points = fallback_points(g, h1, h2, h3);
-    assert!(builder.try_enter_fallback(
-        &points,
-        BuilderFallbackRequest {
-            trigger: BuilderFallbackTrigger::ProjectionLimit,
-        },
-    ));
+    assert!(builder.try_enter_fallback(&points, BuilderFallbackTrigger::ProjectionLimit));
 
     assert_eq!(builder.as_fallback().generator_idx, 0);
     assert_eq!(builder.as_fallback().constraints.len(), 3);
@@ -719,12 +695,7 @@ fn fallback_reconstruction_normalizes_s2_constraints() {
         .expect("normal clip should apply");
 
     let points = fallback_points(g, h1, h2, h3);
-    assert!(builder.try_enter_fallback(
-        &points,
-        BuilderFallbackRequest {
-            trigger: BuilderFallbackTrigger::ProjectionLimit,
-        },
-    ));
+    assert!(builder.try_enter_fallback(&points, BuilderFallbackTrigger::ProjectionLimit));
 
     let expected = |h: Vec3| {
         (glam::DVec3::new(g.x as f64, g.y as f64, g.z as f64).normalize()

@@ -30,16 +30,11 @@ pub(crate) enum BuilderFallbackTrigger {
     ClippedAway,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct BuilderFallbackRequest {
-    pub(crate) trigger: BuilderFallbackTrigger,
-}
-
 #[cfg(test)]
-impl BuilderFallbackRequest {
+impl BuilderFallbackTrigger {
     #[inline]
     pub(crate) fn as_cell_failure(self) -> CellFailure {
-        match self.trigger {
+        match self {
             BuilderFallbackTrigger::ProjectionLimit => CellFailure::ProjectionInvalid,
             BuilderFallbackTrigger::PolygonVertexLimit => CellFailure::TooManyVertices,
             BuilderFallbackTrigger::ClippedAway => CellFailure::ClippedAway,
@@ -50,13 +45,13 @@ impl BuilderFallbackRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BuilderStepOutcome {
     Applied,
-    NeedsFallback(BuilderFallbackRequest),
+    NeedsFallback(BuilderFallbackTrigger),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BuilderClipOutcome {
     Applied(ClipResult),
-    NeedsFallback(BuilderFallbackRequest),
+    NeedsFallback(BuilderFallbackTrigger),
 }
 
 pub(crate) struct GnomonicBuilder {
@@ -173,19 +168,13 @@ pub(crate) enum ExtractionInvariantFailure {
 
 impl Topo2DBuilder {
     #[inline]
-    pub(crate) fn fallback_request_for_failure(
+    pub(crate) fn fallback_trigger_for_failure(
         failure: CellFailure,
-    ) -> Option<BuilderFallbackRequest> {
+    ) -> Option<BuilderFallbackTrigger> {
         match failure {
-            CellFailure::ProjectionInvalid => Some(BuilderFallbackRequest {
-                trigger: BuilderFallbackTrigger::ProjectionLimit,
-            }),
-            CellFailure::TooManyVertices => Some(BuilderFallbackRequest {
-                trigger: BuilderFallbackTrigger::PolygonVertexLimit,
-            }),
-            CellFailure::ClippedAway => Some(BuilderFallbackRequest {
-                trigger: BuilderFallbackTrigger::ClippedAway,
-            }),
+            CellFailure::ProjectionInvalid => Some(BuilderFallbackTrigger::ProjectionLimit),
+            CellFailure::TooManyVertices => Some(BuilderFallbackTrigger::PolygonVertexLimit),
+            CellFailure::ClippedAway => Some(BuilderFallbackTrigger::ClippedAway),
             CellFailure::UnboundedAfterExhaustion | CellFailure::NoValidSeed => None,
         }
     }
@@ -196,8 +185,8 @@ impl Topo2DBuilder {
     ) -> Result<BuilderStepOutcome, CellFailure> {
         match result {
             Ok(()) => Ok(BuilderStepOutcome::Applied),
-            Err(failure) => match Self::fallback_request_for_failure(failure) {
-                Some(request) => Ok(BuilderStepOutcome::NeedsFallback(request)),
+            Err(failure) => match Self::fallback_trigger_for_failure(failure) {
+                Some(trigger) => Ok(BuilderStepOutcome::NeedsFallback(trigger)),
                 None => Err(failure),
             },
         }
@@ -209,8 +198,8 @@ impl Topo2DBuilder {
     ) -> Result<BuilderClipOutcome, CellFailure> {
         match result {
             Ok(clip_result) => Ok(BuilderClipOutcome::Applied(clip_result)),
-            Err(failure) => match Self::fallback_request_for_failure(failure) {
-                Some(request) => Ok(BuilderClipOutcome::NeedsFallback(request)),
+            Err(failure) => match Self::fallback_trigger_for_failure(failure) {
+                Some(trigger) => Ok(BuilderClipOutcome::NeedsFallback(trigger)),
                 None => Err(failure),
             },
         }
@@ -224,11 +213,11 @@ impl Topo2DBuilder {
     pub(crate) fn try_enter_fallback(
         &mut self,
         points: &[glam::Vec3],
-        request: BuilderFallbackRequest,
+        trigger: BuilderFallbackTrigger,
     ) -> bool {
         let fallback = match &self.inner {
             BuilderImpl::Gnomonic(builder) => {
-                FallbackBuilder::from_gnomonic(builder, points, request.trigger)
+                FallbackBuilder::from_gnomonic(builder, points, trigger)
             }
             BuilderImpl::Fallback(builder) => FallbackBuilder::from_fallback(builder),
         };
@@ -238,7 +227,7 @@ impl Topo2DBuilder {
         // If those constraints are genuinely infeasible (e.g. coincident
         // generators), keep the original failed builder so its ClippedAway
         // classification survives to the public error path.
-        if request.trigger == BuilderFallbackTrigger::ClippedAway && fallback.poly.len() < 3 {
+        if trigger == BuilderFallbackTrigger::ClippedAway && fallback.poly.len() < 3 {
             return false;
         }
         self.inner = BuilderImpl::Fallback(fallback);

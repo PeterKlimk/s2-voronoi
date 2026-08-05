@@ -12,9 +12,7 @@ pub(crate) use microbench::run_clip_convex_microbench;
 
 // Re-export core types and builder for external use within the crate
 pub(crate) use builder::Topo2DBuilder;
-pub(crate) use builder::{
-    BuilderClipOutcome, BuilderFallbackRequest, BuilderFallbackTrigger, BuilderStepOutcome,
-};
+pub(crate) use builder::{BuilderClipOutcome, BuilderFallbackTrigger, BuilderStepOutcome};
 
 #[cfg(test)]
 mod tests {
