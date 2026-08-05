@@ -2,10 +2,7 @@ use super::super::timing::PackedLapTimer;
 use super::helpers::{make_desc_key, outside_max_dot_xyz, security_planes_3x3_interior};
 use super::*;
 use crate::fp;
-use crate::policy::{
-    DENSE_BAND_RADIUS_INFLATION, PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER,
-    PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER,
-};
+use crate::policy::DENSE_BAND_RADIUS_INFLATION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DirectedRangeSummary {
@@ -240,7 +237,7 @@ impl PackedKnnCellScratch {
             center_soa_start,
             center_soa_end,
             ring_candidates_eligible,
-            ring_candidates_all,
+            ring_candidates_all: _,
         }) = self.collect_directed_ranges(grid, group)
         else {
             timings.add_setup(t.lap());
@@ -329,19 +326,10 @@ impl PackedKnnCellScratch {
         // and pick a dot threshold t in [security, 1] that targets
         // ~PACKED_HI_BUDGET candidates above t under a simple "uniform on
         // [security, 1]" model. Anything safe at/below t goes to the tail.
-        let ring_candidates_est = if PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER {
-            ring_candidates_all
-        } else {
-            ring_candidates_eligible
-        };
         for qi in 0..num_queries {
             let security = self.security_thresholds[qi];
-            let center_eligible = if PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER {
-                num_queries.saturating_sub(1)
-            } else {
-                num_queries.saturating_sub(qi + 1)
-            };
-            let n_total = ring_candidates_est + center_eligible;
+            let center_eligible = num_queries.saturating_sub(qi + 1);
+            let n_total = ring_candidates_eligible + center_eligible;
             let t_count = if n_total == 0 {
                 security
             } else {

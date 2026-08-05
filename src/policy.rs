@@ -158,11 +158,6 @@ pub(crate) const PACKED_HI_BUDGET: usize = 32;
 /// unrelated distribution-specific cutoff.
 pub(crate) const CONCENTRATED_PACKED_HI_MIN_QUERIES: usize = DENSE_BAND_TARGET_COUNT;
 pub(crate) const CONCENTRATED_PACKED_HI_BUDGET: usize = 2 * DENSE_BAND_TARGET_COUNT;
-/// Count-model knob: ignore directed center eligibility when tightening packed thresholds.
-pub(crate) const PACKED_COUNT_MODEL_IGNORE_DIRECTED_CENTER: bool = false;
-/// Count-model knob: include same-bin-earlier cells when estimating packed candidate pressure.
-pub(crate) const PACKED_COUNT_MODEL_INCLUDE_SAME_BIN_EARLIER: bool = false;
-
 /// Policy decisions that affect packed neighbor sourcing before directed cursor fallback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PackedNeighborPolicy {
