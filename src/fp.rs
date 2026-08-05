@@ -13,19 +13,16 @@
 //! Backend-selection measurements and the retired nightly implementation are
 //! recorded in `docs/performance.md#source-pinned-performance-decisions`.
 
-#[inline]
 /// Evaluate `a * b + c` with the crate's non-fused, two-rounding contract.
 pub(crate) fn mul_add_unfused_f32(a: f32, b: f32, c: f32) -> f32 {
     a * b + c
 }
 
-#[inline]
 /// Evaluate `a * b + c` with the crate's non-fused, two-rounding contract.
 pub(crate) fn mul_add_unfused_f64(a: f64, b: f64, c: f64) -> f64 {
     a * b + c
 }
 
-#[inline]
 pub(crate) fn dot3_f32(ax: f32, ay: f32, az: f32, bx: f32, by: f32, bz: f32) -> f32 {
     // Match the baseline left-associative order:
     //   (ax*bx + ay*by) + az*bz

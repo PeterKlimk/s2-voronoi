@@ -631,18 +631,24 @@ modules without making the non-obvious code shape look accidental.
   the beneficial `Σocc²/n` crossover near 450: measured 274/331 cases lost 19%/8%, while 536/712
   cases gained 18%/29%. The selected threshold 500 separates all recorded cases; the superseded
   noisy-host value 2000 placed the crossover 4–7× too high.
-- **Numeric façade inline visibility.** Fourteen scalar-contract and SIMD façade helpers use
-  ordinary rather than forced inlining. The downgrade produced byte-identical benchmark native
-  text for both the `wide` and `simd_scalar` backends, and likewise produced byte-identical text for
-  both backends on the portable target. Their 100k representation and semantic-topology
-  fingerprints also agree exactly.
+- **Numeric façade inline visibility.** The three scalar arithmetic helpers carry no inline hint.
+  Twelve paired 500k native Fibonacci/uniform runs changed default-backend instructions by
+  -0.0046%/-0.0086%, branches by -0.0080%/-0.0135%, and cycles by -0.012%/-0.012%. The scalar
+  comparison backend changed instructions by -0.0067%/-0.0061%, branches by -0.0142%/-0.0117%,
+  and cycles by +0.10%/+0.13% with mixed pairs; text size was unchanged for both backends. Portable
+  50k Cachegrind changed instruction references by -0.0032%/+0.0030% and branches by
+  -0.0053%/+0.0052%. The eleven SIMD façade helpers retain ordinary visibility: removing it
+  regressed scalar-backend Fibonacci/uniform instructions by 3.83%/5.26% and cycles by
+  5.02%/5.72%. Forced-to-ordinary comparisons remain byte-identical on native and portable targets.
 - **Numeric backend helper placement.** Twenty-one inner `wide` and `simd_scalar` helpers use
   ordinary rather than forced inlining. At 500k native, `wide` instructions rose only 0.008--0.010%
   with neutral branches and mixed cycles (-0.31%/+0.07% Fibonacci/uniform); scalar instructions
   fell about 0.023%, branches fell 0.22--0.23%, and cycles were neutral/favorable. The 100k mega
   guardrail was structurally neutral for `wide` and favorable for scalar. Portable 50k Cachegrind
   reduced instruction references by 0.007--0.033% and branch misses by 1.0--1.6% across both
-  backends and both distributions.
+  backends and both distributions. Removing visibility entirely, with façade visibility retained,
+  was mixed on `wide` but regressed scalar-backend Fibonacci/uniform instructions by 1.86%/1.83%
+  and cycles by 1.89%/1.93%; retain the ordinary cross-backend specialization boundary.
 - **Non-fused arithmetic contract.** The internal `fma` feature was retired after isolated
   measurements showed no dependable throughput benefit. Native Windows 2.5M Fibonacci runs were
   neutral in multithreaded mode and neutral/slightly adverse single-threaded. On an older Ryzen,
