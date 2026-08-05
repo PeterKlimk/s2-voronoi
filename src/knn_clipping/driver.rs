@@ -26,13 +26,10 @@ pub(super) struct GridContext<'a> {
     pub(super) positive_resolution_hint_x_threshold: Option<f32>,
 }
 
-struct SphereCellScratch {
-    edge_scratch: EdgeScratch,
-}
-
 struct BuildTaskContext {
     cell: CellBuildContext,
     packed: PackedKnnCellScratch,
+    edge: EdgeScratch,
 }
 
 impl BuildTaskContext {
@@ -43,6 +40,7 @@ impl BuildTaskContext {
                 policy.hi_budget(),
                 policy.hi_min_queries(),
             ),
+            edge: EdgeScratch::new(),
         }
     }
 
@@ -104,14 +102,6 @@ impl BuildWorkspace {
             .get_mut()
             .expect("grid-topology workspace poisoned")
             .clear();
-    }
-}
-
-impl SphereCellScratch {
-    fn new() -> Self {
-        Self {
-            edge_scratch: EdgeScratch::new(),
-        }
     }
 }
 
@@ -274,8 +264,8 @@ pub(crate) fn build_cells_sharded_live_dedup(
                 let BuildTaskContext {
                     cell: build_ctx,
                     packed: packed_scratch,
+                    edge: edge_scratch,
                 } = &mut task_ctx;
-                let mut live_ctx = SphereCellScratch::new();
                 let vertex_capacity = my_generators.len().saturating_mul(6);
                 shard.output.vertices.reserve(vertex_capacity);
                 shard.output.vertex_keys.reserve(vertex_capacity);
@@ -346,7 +336,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                                 emit_generator_group(
                                     &mut sub_accum,
                                     build_ctx,
-                                    &mut live_ctx,
+                                    edge_scratch,
                                     &mut shard,
                                     bin,
                                     &grid_ctx,
@@ -362,7 +352,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                                 emit_generator_group(
                                     &mut sub_accum,
                                     build_ctx,
-                                    &mut live_ctx,
+                                    edge_scratch,
                                     &mut shard,
                                     bin,
                                     &grid_ctx,
@@ -385,7 +375,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
                         emit_generator_group(
                             &mut sub_accum,
                             build_ctx,
-                            &mut live_ctx,
+                            edge_scratch,
                             &mut shard,
                             bin,
                             &grid_ctx,
@@ -451,7 +441,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
 fn emit_generator_group<'c>(
     sub_accum: &mut crate::timing::CellSubAccum,
     build_ctx: &mut CellBuildContext,
-    live_ctx: &mut SphereCellScratch,
+    edge_scratch: &mut EdgeScratch,
     shard: &mut ShardState,
     bin: BinId,
     grid_ctx: &GridContext<'c>,
@@ -478,7 +468,7 @@ fn emit_generator_group<'c>(
         build_and_emit_cell(
             sub_accum,
             &mut *build_ctx,
-            &mut *live_ctx,
+            &mut *edge_scratch,
             &mut shard_ctx,
             grid_ctx,
             global,
@@ -493,7 +483,7 @@ fn emit_generator_group<'c>(
 fn build_and_emit_cell<'a, 'b, 'c>(
     cell_sub: &'a mut crate::timing::CellSubAccum,
     build_ctx: &'a mut CellBuildContext,
-    live_ctx: &'a mut SphereCellScratch,
+    edge_scratch: &'a mut EdgeScratch,
     shard_ctx: &'a mut ShardContext<'b>,
     grid_ctx: &'a GridContext<'c>,
     generator_idx: usize,
@@ -549,7 +539,7 @@ fn build_and_emit_cell<'a, 'b, 'c>(
     let output_buffer = build_ctx.output_buffer();
     emit_cell_output(
         cell_sub,
-        &mut live_ctx.edge_scratch,
+        edge_scratch,
         shard_ctx,
         grid_ctx.assignment,
         cell_idx,
