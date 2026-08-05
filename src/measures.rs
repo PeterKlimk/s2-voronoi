@@ -248,8 +248,7 @@ impl SphericalVoronoi {
         }
         let keys = collect_near_pi_keys(self, &[index]);
         let owners = resolve_owner_pairs(self, &keys);
-        let centroid = cell_centroid_pass(self, index, Some(&owners)).0;
-        centroid
+        cell_centroid_pass(self, index, Some(&owners)).0
     }
 
     /// The next generator set of Lloyd relaxation: every cell's centroid,
