@@ -711,6 +711,15 @@ modules without making the non-obvious code shape look accidental.
   added about 1% branches and regressed Fibonacci/uniform cycles by 0.51%/0.93%. Direct iteration of
   the slot array was worse. Retain unchecked reads and partition operations as measured exceptions,
   while using safe indexing for the write LLVM proves from the dominating length invariant.
+- **Grid-scatter indexing.** The fused coordinate scatter uses checked indexing for its input-point
+  read. Twelve paired 500k native Fibonacci/uniform runs changed instructions by
+  -0.0015%/-0.0015%, branches by -0.0032%/-0.0038%, and cycles by -0.64%/-0.41%; portable 50k
+  Cachegrind changed instruction references by -0.0011%/+0.0015% and branches by
+  -0.0020%/+0.0023%. Two other safe-indexing candidates retained a per-point check: the
+  slot-coordinate gather added 0.08--0.09% instructions and 0.19--0.23% branches, while the scatter
+  cursor added 0.05--0.06% instructions, 0.20--0.23% branches, and about 0.30% cycles. Retain the
+  invariant-backed unchecked forms for those two reads rather than charging ordinary Fibonacci and
+  uniform inputs for them.
 - **Topo2D extraction initialization.** The spare-capacity extraction loop retains unchecked writes.
   One release assertion plus safe indexed writes was structurally neutral but regressed 500k
   Fibonacci/uniform cycles by 0.66%/1.22% in every pair. Zipping the two production output slices

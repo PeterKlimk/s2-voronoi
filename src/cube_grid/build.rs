@@ -261,12 +261,18 @@ unsafe fn scatter_input_chunk<const WRITE_COORDINATES: bool>(
         let cursor = unsafe { cursors.get_unchecked_mut(cell) };
         let pos = *cursor as usize;
         *cursor += 1;
+        // SAFETY: the per-chunk prefix ranges are disjoint and exhaustive, so
+        // each input initializes its assigned destination slot exactly once.
         unsafe {
             (destinations.indices as *mut u32)
                 .add(pos)
                 .write(original_idx as u32);
-            if WRITE_COORDINATES {
-                let point = *points.get_unchecked(i);
+        }
+        if WRITE_COORDINATES {
+            let point = points[i];
+            // SAFETY: the same scatter partition covers each coordinate
+            // allocation, whose spare capacity is the full input length.
+            unsafe {
                 (destinations.xs as *mut f32).add(pos).write(point.x);
                 (destinations.ys as *mut f32).add(pos).write(point.y);
                 (destinations.zs as *mut f32).add(pos).write(point.z);
