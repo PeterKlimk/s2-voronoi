@@ -1,7 +1,7 @@
-use super::super::timing::PackedLapTimer;
 use super::helpers::{key_to_dot, key_to_idx, sort_keys_u64};
 use super::*;
 use crate::fp;
+use crate::timing::LapTimer;
 
 impl PackedKnnCellScratch {
     // Tail candidates were already partitioned into (hi, tail, unsafe) buckets
@@ -36,7 +36,7 @@ impl PackedKnnCellScratch {
         self.tail_pos[qi] = 0;
         debug_assert!(self.tail_possible.get(qi).copied().unwrap_or(false));
 
-        let mut t_tail = PackedLapTimer::start();
+        let mut t_tail = LapTimer::start();
         let query_count = group.query_count();
         debug_assert!(qi < query_count);
         let query_slot = group.query_slot_start() + qi as u32;
@@ -321,7 +321,7 @@ fn emit_run<const WHOLE_SORT_SMALL: bool>(
     out: &mut [u32],
     timings: &mut PackedKnnTimings,
 ) -> Option<EmittedRun> {
-    let mut t = PackedLapTimer::start();
+    let mut t = LapTimer::start();
     let total = keys.len();
     let start = *pos;
     if start >= total {

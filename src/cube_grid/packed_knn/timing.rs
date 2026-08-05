@@ -1,40 +1,5 @@
 use std::time::Duration;
 
-/// Timer that tracks elapsed time when timing is enabled.
-#[cfg(feature = "timing")]
-pub(super) struct PackedLapTimer(std::time::Instant);
-
-#[cfg(feature = "timing")]
-impl PackedLapTimer {
-    #[inline]
-    pub(super) fn start() -> Self {
-        Self(std::time::Instant::now())
-    }
-
-    #[inline]
-    pub(super) fn lap(&mut self) -> Duration {
-        let now = std::time::Instant::now();
-        let d = now.duration_since(self.0);
-        self.0 = now;
-        d
-    }
-}
-
-/// Dummy timer when feature is disabled (zero-sized).
-#[cfg(not(feature = "timing"))]
-pub(super) struct PackedLapTimer;
-
-#[cfg(not(feature = "timing"))]
-impl PackedLapTimer {
-    pub(super) fn start() -> Self {
-        Self
-    }
-
-    pub(super) fn lap(&mut self) -> Duration {
-        Duration::ZERO
-    }
-}
-
 /// Fine-grained timing breakdown for the packed-kNN per-cell-group flow.
 #[cfg(feature = "timing")]
 #[derive(Debug, Clone)]

@@ -1,8 +1,8 @@
-use super::super::timing::PackedLapTimer;
 use super::helpers::{make_desc_key, outside_max_dot_xyz, security_planes_3x3_interior};
 use super::*;
 use crate::fp;
 use crate::policy::DENSE_BAND_RADIUS_INFLATION;
+use crate::timing::LapTimer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DirectedRangeSummary {
@@ -232,7 +232,7 @@ impl PackedKnnCellScratch {
         }
         self.next_group_gen = group_gen;
 
-        let mut t = PackedLapTimer::start();
+        let mut t = LapTimer::start();
         let Some(DirectedRangeSummary {
             center_soa_start,
             center_soa_end,
