@@ -251,7 +251,7 @@ unsafe fn scatter_input_chunk<const WRITE_COORDINATES: bool>(
     global_offset: usize,
     destinations: GridScatterDestinations,
 ) {
-    debug_assert!(!WRITE_COORDINATES || points.len() == point_cells.len());
+    assert!(!WRITE_COORDINATES || points.len() == point_cells.len());
     for (i, &cell) in point_cells.iter().enumerate() {
         let original_idx = global_offset + i;
         let cell = cell as usize;
