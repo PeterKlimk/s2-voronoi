@@ -631,6 +631,12 @@ modules without making the non-obvious code shape look accidental.
   the beneficial `Σocc²/n` crossover near 450: measured 274/331 cases lost 19%/8%, while 536/712
   cases gained 18%/29%. The selected threshold 500 separates all recorded cases; the superseded
   noisy-host value 2000 placed the crossover 4–7× too high.
+- **Numeric façade inline visibility.** Fourteen scalar-contract and SIMD façade helpers use
+  ordinary rather than forced inlining. The downgrade produced byte-identical benchmark native
+  text for both the `wide` and `simd_scalar` backends, and likewise produced byte-identical text for
+  both backends on the portable target. Their 100k representation and semantic-topology
+  fingerprints also agree exactly. The inner backend implementation hints remain a separate
+  code-generation boundary.
 - **Non-fused arithmetic contract.** The internal `fma` feature was retired after isolated
   measurements showed no dependable throughput benefit. Native Windows 2.5M Fibonacci runs were
   neutral in multithreaded mode and neutral/slightly adverse single-threaded. On an older Ryzen,

@@ -13,19 +13,19 @@
 //! Backend-selection measurements and the retired nightly implementation are
 //! recorded in `docs/performance.md#source-pinned-performance-decisions`.
 
-#[inline(always)]
+#[inline]
 /// Evaluate `a * b + c` with the crate's non-fused, two-rounding contract.
 pub(crate) fn mul_add_unfused_f32(a: f32, b: f32, c: f32) -> f32 {
     a * b + c
 }
 
-#[inline(always)]
+#[inline]
 /// Evaluate `a * b + c` with the crate's non-fused, two-rounding contract.
 pub(crate) fn mul_add_unfused_f64(a: f64, b: f64, c: f64) -> f64 {
     a * b + c
 }
 
-#[inline(always)]
+#[inline]
 pub(crate) fn dot3_f32(ax: f32, ay: f32, az: f32, bx: f32, by: f32, bz: f32) -> f32 {
     // Match the baseline left-associative order:
     //   (ax*bx + ay*by) + az*bz
@@ -46,7 +46,7 @@ pub(crate) struct PointChunk8 {
 pub(crate) struct Dots8(backend::V);
 
 impl PointChunk8 {
-    #[inline(always)]
+    #[inline]
     pub(crate) fn from_arrays(x: [f32; 8], y: [f32; 8], z: [f32; 8]) -> Self {
         Self {
             x: backend::load_array(x),
@@ -55,13 +55,13 @@ impl PointChunk8 {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn from_array_refs(x: &[f32; 8], y: &[f32; 8], z: &[f32; 8]) -> Self {
         Self::from_arrays(*x, *y, *z)
     }
 
     /// Lane-wise dot products against a broadcast query point.
-    #[inline(always)]
+    #[inline]
     pub(crate) fn dots(&self, qx: f32, qy: f32, qz: f32) -> Dots8 {
         Dots8(backend::dot3(self.x, self.y, self.z, qx, qy, qz))
     }
@@ -69,7 +69,7 @@ impl PointChunk8 {
     /// Dot two candidate chunks against one query, sharing its broadcast
     /// values. The packed ring walk consumes adjacent chunks this way so the
     /// query coordinates and threshold setup are paid once per 16 candidates.
-    #[inline(always)]
+    #[inline]
     pub(crate) fn dots_pair(&self, other: &Self, qx: f32, qy: f32, qz: f32) -> (Dots8, Dots8) {
         let (a, b) = backend::dot3_pair(
             self.x, self.y, self.z, other.x, other.y, other.z, qx, qy, qz,
@@ -80,7 +80,7 @@ impl PointChunk8 {
     /// Dot three candidate chunks against one query, sharing its broadcast
     /// values. This is the largest useful batch on the AVX2 register file.
     #[cfg(any(test, all(target_feature = "avx2", not(feature = "simd_scalar"))))]
-    #[inline(always)]
+    #[inline]
     pub(crate) fn dots_triple(
         &self,
         b: &Self,
@@ -98,12 +98,12 @@ impl PointChunk8 {
 
 impl Dots8 {
     /// Bitmask of lanes with dot > threshold (lane i -> bit i).
-    #[inline(always)]
+    #[inline]
     pub(crate) fn mask_gt(&self, threshold: f32) -> u32 {
         backend::mask_gt(self.0, threshold)
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn to_array(&self) -> [f32; 8] {
         backend::to_array(self.0)
     }
@@ -114,7 +114,7 @@ impl Dots8 {
 /// weld detector's exact scalar gate:
 ///
 /// `let d = value - values[i]; d * d < threshold_squared`
-#[inline(always)]
+#[inline]
 pub(crate) fn squared_deltas_mask_lt8(
     values: &[f32; 8],
     value: f32,
@@ -126,7 +126,7 @@ pub(crate) fn squared_deltas_mask_lt8(
 /// Convert eight positive finite inward-plane distances to conservative
 /// outside-dot thresholds. The returned mask marks lanes where this interior
 /// formula is valid; callers retain their geometric fallback for other lanes.
-#[inline(always)]
+#[inline]
 #[cfg(any(test, all(target_feature = "avx2", not(feature = "simd_scalar"))))]
 pub(crate) fn interior_security_thresholds8(s_min: [f32; 8], pad: f32) -> ([f32; 8], u32) {
     backend::interior_security_thresholds8(backend::load_array(s_min), pad)
@@ -138,7 +138,7 @@ pub(crate) fn interior_security_thresholds8(s_min: [f32; 8], pad: f32) -> ([f32;
 ///
 /// Callers may pass slices longer than the live vertex count; lanes past it
 /// compute on stale-but-finite data and must be masked off by the caller.
-#[inline(always)]
+#[inline]
 pub(crate) fn signed_dists_mask8(
     a: f64,
     b: f64,
@@ -154,7 +154,7 @@ pub(crate) fn signed_dists_mask8(
 /// the N <= 4 clip kernels (triangles/quads) to halve the SIMD distance eval.
 /// Reads `us[0..4]`/`vs[0..4]`; the result is bit-identical to lanes 0..4 of
 /// the eight-lane path.
-#[inline(always)]
+#[inline]
 pub(crate) fn signed_dists_mask4(
     a: f64,
     b: f64,
