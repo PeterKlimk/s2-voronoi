@@ -1,68 +1,9 @@
 //! Disjoint-set (union-find) with path compression.
 
-/// Dense disjoint-set. No production caller since edge_reconcile moved to
-/// [`SparseUnionFind`]; retained as the semantics oracle for the sparse
-/// equivalence test.
-#[cfg(test)]
-#[derive(Debug)]
-pub(crate) struct UnionFind {
-    parent: Vec<u32>,
-    rank: Vec<u8>,
-}
-
-#[cfg(test)]
-impl UnionFind {
-    pub(crate) fn new(n: usize) -> Self {
-        let mut parent = Vec::with_capacity(n);
-        for i in 0..n {
-            parent.push(i as u32);
-        }
-        Self {
-            parent,
-            rank: vec![0; n],
-        }
-    }
-
-    pub(crate) fn find(&mut self, x: u32) -> u32 {
-        let idx = x as usize;
-        let p = self.parent[idx];
-        if p != x {
-            let root = self.find(p);
-            self.parent[idx] = root;
-        }
-        self.parent[idx]
-    }
-
-    /// Union by rank. Returns `true` if `a` and `b` were in different sets.
-    ///
-    /// No production caller since edge_reconcile moved to `SparseUnionFind`;
-    /// retained as the semantics oracle for the sparse equivalence test.
-    pub(crate) fn union(&mut self, a: u32, b: u32) -> bool {
-        let ra = self.find(a);
-        let rb = self.find(b);
-        if ra == rb {
-            return false;
-        }
-        let ra_idx = ra as usize;
-        let rb_idx = rb as usize;
-        if self.rank[ra_idx] < self.rank[rb_idx] {
-            self.parent[ra_idx] = rb;
-        } else if self.rank[ra_idx] > self.rank[rb_idx] {
-            self.parent[rb_idx] = ra;
-        } else {
-            self.parent[rb_idx] = ra;
-            self.rank[ra_idx] = self.rank[ra_idx].saturating_add(1);
-        }
-        true
-    }
-}
-
 /// Sparse disjoint-set over a large implicit id space: ids not present in
 /// the map are their own roots, so construction is O(1) regardless of the
-/// universe size. Mirrors `UnionFind`'s union-by-rank semantics exactly
-/// (same representatives for the same union sequence — pinned by the
-/// equivalence test below), so swapping it in for a sparsely-used dense
-/// instance is behavior-preserving; only the O(universe) init is avoided.
+/// universe size. Union-by-rank ties keep the first root, while
+/// [`union_keep_min`](Self::union_keep_min) explicitly keeps the smaller id.
 ///
 /// Lookups never iterate the map, so map ordering cannot leak into results.
 #[derive(Debug, Default)]
@@ -96,17 +37,18 @@ impl SparseUnionFind {
         self.nodes.entry(x).or_insert((x, 0)).0 = p;
     }
 
-    /// All ids that have entered the structure, sorted for determinism.
-    /// Every id that participated in a successful union is included (both
-    /// representatives and merged-away ids).
+    /// All ids with stored parent or rank state, sorted for determinism.
+    ///
+    /// This includes every id whose representative can differ from itself. A
+    /// minimum representative used only as an implicit root can remain absent.
     pub(crate) fn touched_ids(&self) -> Vec<u32> {
         let mut ids: Vec<u32> = self.nodes.keys().copied().collect();
         ids.sort_unstable();
         ids
     }
 
-    /// Order-dependent union: the smaller index always becomes the
-    /// representative. Returns `true` if `a` and `b` were in different sets.
+    /// The smaller index always becomes the representative.
+    /// Returns `true` if `a` and `b` were in different sets.
     pub(crate) fn union_keep_min(&mut self, a: u32, b: u32) -> bool {
         let ra = self.find(a);
         let rb = self.find(b);
@@ -118,7 +60,7 @@ impl SparseUnionFind {
         true
     }
 
-    /// Union by rank, with `UnionFind::union`'s exact tie-breaking.
+    /// Union by rank, keeping `a`'s root when the ranks are equal.
     /// Returns `true` if `a` and `b` were in different sets.
     pub(crate) fn union(&mut self, a: u32, b: u32) -> bool {
         let ra = self.find(a);
@@ -145,33 +87,27 @@ impl SparseUnionFind {
 mod tests {
     use super::*;
 
-    /// The sparse implementation must produce identical representatives to
-    /// the dense one for any union sequence (edge_reconcile relies on this
-    /// to make the dense->sparse swap behavior-preserving).
     #[test]
-    fn sparse_matches_dense_representatives() {
-        const N: u32 = 1000;
-        // Deterministic pseudo-random union sequence (LCG).
-        let mut state = 0x2545F4914F6CDD1Du64;
-        let mut next = move || {
-            state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            ((state >> 33) as u32) % N
-        };
+    fn union_modes_pin_representatives_and_touched_ids() {
+        let mut ranked = SparseUnionFind::new();
+        assert!(ranked.union(8, 3));
+        assert!(ranked.union(4, 5));
+        assert!(ranked.union(4, 8));
+        assert!(!ranked.union(3, 5));
+        for id in [3, 4, 5, 8] {
+            assert_eq!(ranked.find(id), 4);
+        }
+        assert_eq!(ranked.touched_ids(), [3, 4, 5, 8]);
+        assert_eq!(ranked.find(99), 99);
+        assert_eq!(ranked.touched_ids(), [3, 4, 5, 8]);
 
-        let mut dense = UnionFind::new(N as usize);
-        let mut sparse = SparseUnionFind::new();
-        for _ in 0..600 {
-            let (a, b) = (next(), next());
-            assert_eq!(dense.union(a, b), sparse.union(a, b));
+        let mut minimum = SparseUnionFind::new();
+        assert!(minimum.union_keep_min(8, 3));
+        assert!(minimum.union_keep_min(7, 8));
+        assert!(!minimum.union_keep_min(8, 7));
+        for id in [3, 7, 8] {
+            assert_eq!(minimum.find(id), 3);
         }
-        for x in 0..N {
-            assert_eq!(
-                dense.find(x),
-                sparse.find(x),
-                "representative mismatch at {x}"
-            );
-        }
+        assert_eq!(minimum.touched_ids(), [7, 8]);
     }
 }

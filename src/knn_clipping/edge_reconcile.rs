@@ -1274,9 +1274,8 @@ fn collect_merges(
     options: ReconcileOptions,
 ) -> Result<(SparseUnionFind, usize), crate::VoronoiError> {
     // Sparse: only the handful of vertices named by defective edges ever
-    // enter the structure, so clean and near-clean runs skip the O(V) init
-    // a dense UnionFind would pay. Representative choice is identical to
-    // the dense version (see SparseUnionFind docs), so output is unchanged.
+    // enter the structure, so clean and near-clean runs skip an O(V) init.
+    // Union-by-rank tie-breaking keeps representative selection deterministic.
     let mut uf = SparseUnionFind::new();
     let mut merged = 0usize;
     let degenerate_len_eps_sq: f32 = degenerate_len_eps * degenerate_len_eps;
