@@ -20,6 +20,11 @@ query loops remained flat when extraction changed code generation or lacked an o
 Reopen a closed boundary only for a new consumer or ownership invariant, a correctness defect, or
 materially changed compiler/codegen evidence. Function length alone is not a reopening condition.
 
+Generated or tightly siloed kernel expansion is not charged line-for-line as general-algorithm
+complexity. Judge such modules by the clarity of their generator or local implementation, their
+interface, and their pinned invariants. Do not replace a performant siloed kernel with new
+cross-cutting handwritten machinery solely to reduce expanded source size.
+
 ## Lifecycle and effective-state ownership
 
 **Decision.** Four correlated-state migrations were accepted:
