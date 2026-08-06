@@ -1342,6 +1342,15 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Partitioning live vertex emission by a per-cell resolved-index mask removed the hot resolved/
+  unresolved branch and reduced branch misses by about 0.63%. It first reserved the cell's complete
+  index span, then iterated resolved and unresolved bitsets separately with `trailing_zeros`.
+  On native 1M single-threaded uniform (seven three-build counter pairs), however, it added 0.81%
+  instructions, 0.41% branches, and 0.46% cycles. Five 4M/16-worker pairs confirmed the structural
+  regressions (+0.75% instructions, +0.35% branches) despite noisy wall time. The extra mask scan,
+  bit iteration, random-position stores, and eager span fill cost more than the well-predicted
+  original branch; retain ordered single-pass emission.
+
 - **Uninitialized bin-assignment inverse arrays:** native 2.5M timing on the 16-core Ryzen showed
   that cell construction still scales about 11.1--11.3x from one to sixteen workers, while grid
   build scales only 3.8--4.0x and dedup 3.5--4.3x. From eight to sixteen workers, dedup rose from
