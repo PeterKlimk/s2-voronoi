@@ -879,6 +879,15 @@ tasks and are not duplicated here.
   the ordinary and forced-inline forms raised median 500k Fibonacci/uniform retired instructions by
   about 0.2--0.4%, so the existing `ResolutionView`-based orchestration remains. Counter artifacts
   are under `/tmp/s2-exp-resolution-phase/`.
+- **Accepted report-evidence finalization cleanup:** a proposed `ReconciliationEvidence` owner was
+  rejected because assembly detection history and output-surviving residuals have different
+  invalidation rules; grouping their three vectors added a one-use wrapper without making that
+  state structural. The narrower cleanup instead names assembly history explicitly, moves rejected
+  merge seeds into the report, and extends the final pair list directly from already-normalized
+  residuals. This removes the residual pair-to-record-to-pair round trip and the now-unused
+  `pack_edge` facade. Native linked text fell 712 bytes. Paired hardware counters were neutral on
+  plain 500k Fibonacci/uniform and report-path Fibonacci, mega, and cubed probes; no wall-clock gate
+  was used. Evidence is under `/tmp/s2-exp-reconciliation-evidence/`.
 - **Rejected cold sharing and Tail networks:** one shared directed-link-cycle predicate removed
   duplicated cold logic but saved only 39 net lines and repeatedly added about 1.45% uniform cycles
   despite neutral/favorable retired instructions, so it was restored. Making Tail use whole-network

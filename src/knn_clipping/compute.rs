@@ -39,7 +39,7 @@ struct PipelineState {
     effective_input: EffectiveInput,
     preprocess_report: PreprocessReport,
     geometry: EffectiveGeometry,
-    edge_mismatches: Vec<live_dedup::EdgeRecord>,
+    assembly_edge_mismatches: Vec<live_dedup::EdgeRecord>,
     residual_unpaired: Vec<(u32, u32)>,
     local_rebuild_seed_pairs: Vec<(u32, u32)>,
     local_rebuild: LocalRebuildOutcome,
@@ -531,7 +531,7 @@ fn run_core_pipeline(
         effective_input,
         preprocess_report,
         geometry,
-        edge_mismatches,
+        assembly_edge_mismatches: edge_mismatches,
         residual_unpaired,
         local_rebuild_seed_pairs,
         local_rebuild,
@@ -764,7 +764,7 @@ fn compute_voronoi_knn_clipping_report_core(
     // Surface output-invariant residuals alongside the detection records. If
     // local rebuild was accepted, the returned diagram is strictly valid and
     // these residuals no longer survive to output.
-    let assembly_edge_mismatch_count = state.edge_mismatches.len();
+    let assembly_edge_mismatch_count = state.assembly_edge_mismatches.len();
     let residual_unpaired_edges: Vec<(u32, u32)> = if local_rebuild_accepted {
         Vec::new()
     } else {
@@ -777,15 +777,8 @@ fn compute_voronoi_knn_clipping_report_core(
     let residual_reconciliation_pairs = if local_rebuild_accepted {
         Vec::new()
     } else {
-        state.local_rebuild_seed_pairs.clone()
+        state.local_rebuild_seed_pairs
     };
-    if !local_rebuild_accepted {
-        for &(a, b) in &state.residual_unpaired {
-            state.edge_mismatches.push(live_dedup::EdgeRecord {
-                key: live_dedup::pack_edge(a, b),
-            });
-        }
-    }
 
     let t = Timer::start();
     let (cells, cell_indices, weld_map) = remap_cells_to_original_indices(
@@ -809,6 +802,17 @@ fn compute_voronoi_knn_clipping_report_core(
     timings.report(diagram.num_cells());
 
     let positive_resolution = state.positive_resolution.take();
+    let mut reconciliation_edge_pairs: Vec<_> = state
+        .assembly_edge_mismatches
+        .iter()
+        .map(|record| {
+            let (a, b) = edge_reconcile::unpack_edge(record.key.as_u64());
+            (a.min(b), a.max(b))
+        })
+        .collect();
+    if !local_rebuild_accepted {
+        reconciliation_edge_pairs.extend_from_slice(&residual_unpaired_edges);
+    }
     Ok((
         ComputeOutput {
             diagram,
@@ -821,14 +825,7 @@ fn compute_voronoi_knn_clipping_report_core(
                 output_resolution: state.output_resolution,
                 residual_unpaired_edges,
                 residual_reconciliation_pairs,
-                reconciliation_edge_pairs: state
-                    .edge_mismatches
-                    .iter()
-                    .map(|record| {
-                        let (a, b) = edge_reconcile::unpack_edge(record.key.as_u64());
-                        (a.min(b), a.max(b))
-                    })
-                    .collect(),
+                reconciliation_edge_pairs,
             },
         },
         positive_resolution,

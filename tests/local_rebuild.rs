@@ -76,6 +76,10 @@ fn accepted_default_rebuild_clears_surviving_residual_report() {
             post, 0,
             "mega 100k s{seed}: accepted rebuild left surviving residual records"
         );
+        assert!(
+            out.report.residual_reconciliation_pairs.is_empty(),
+            "mega 100k s{seed}: accepted rebuild left rejected-merge seed pairs"
+        );
     }
 }
 
