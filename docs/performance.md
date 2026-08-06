@@ -1476,6 +1476,13 @@ Do not broadly retry these without a materially different design or workload:
   remained dominant at both worker counts; the residual scaling loss is distributed across lower
   all-core frequency, cell work, grid construction, and final assembly.
 
+  The release-only form was re-audited at the current 4M uniform/16-worker gate after compact
+  edge-check queues landed. Nine pinned 1M pairs remained structurally strong (cycles -1.05%,
+  instructions -0.41%, branches -0.96%), but twenty interleaved 4M pairs were throughput-neutral:
+  cycles -0.16% geometrically (11/20 favorable) while wall time was +0.17% (9/20 favorable).
+  Retain initialized safe vectors; the single-thread win still does not justify the unsafe
+  publication invariant in the target regime.
+
 - Extending recycled per-bin state beyond `CellBuildContext` to retain packed-kNN and edge-emission
   scratch was neutral/noisy in 2.5M throughput and adverse structurally. Seven-run Fibonacci
   counters increased cycles 0.39%, instructions 0.09%, cache references 9.3%, data-TLB loads 4.9%,
@@ -1536,6 +1543,10 @@ Do not broadly retry these without a materially different design or workload:
   distribution-sensitive scatter mode. The prototype and private switch were removed; the full
   phase sweep and counter matrix are recorded in the repository-only
   [`permutation-boundary-scatter-idea.md`](https://github.com/PeterKlimk/voronoi-mesh/blob/main/docs/research/permutation-boundary-scatter-idea.md#experiment-result).
+  A later retained design supersedes this staging proposal: scrambled inputs now assign cell spans
+  directly in shard order, making both the existing source reads and destination writes sequential
+  without the extra 28 bytes/cell staging traffic. Do not reopen the windowed scatter on the
+  current representation.
 - Implementing `LiveCellLayout` checked spans with `slice.get(start..end)` added a redundant range
   validity branch to clean-path reconciliation traversal. Seven interleaved 500k single-threaded
   Fibonacci pairs showed +0.1337% instructions and +1.6620% branches. Preserve the accepted
@@ -1639,8 +1650,10 @@ Do not broadly retry these without a materially different design or workload:
   minor faults by 7--10%, but added 0.025% instructions/0.030% branches on Fibonacci and about
   0.005%/0.004% on uniform. The 4x form saved only 12--13 MB and 2--4% of faults while still adding
   roughly 0.006% Fibonacci instructions/branches; uniform was neutral. Six bins showed essentially
-  no RSS or counter effect. Retain 6x for the speed-oriented default; revisit a smaller factor only
-  as an explicit memory-mode policy.
+  no RSS or counter effect. The current `ShardOutput` representation has since superseded this
+  experiment: position, key, and incidence vectors start empty and grow lazily, so there is no
+  longer a 6x live-dedup reserve factor to reduce. The exact per-cell index reservation is a
+  separate retained optimization.
 - Packing `DeferredSlot`'s `(source_bin: u8, source_slot: u32)` into a `u64` does not shrink the
   32-byte record: the key and position consume 24 bytes and the packed field raises alignment to
   eight. Packing both into `u32` could reach 28 bytes but would reduce the source-slot range to 24
@@ -1821,7 +1834,11 @@ Do not broadly retry these without a materially different design or workload:
   but unresolved (`ring_pass` paired median -4.02%, 10/16 favorable). Nine pinned 1M native Linux
   counter pairs decisively rejected the dispatch/code-footprint cost: whole-build instructions rose
   0.385% and branches 0.972% in every pair; branch misses were neutral (+0.078%) and noisy cycles
-  favored the candidate by 0.87%. Keep the separate single-chunk and overlapping-remainder loops.
+  favored the candidate by 0.87%. A current 4M uniform activation census found only 50,769 such
+  ring ranges and 1,005,286 query-range visits: about 0.25 fused opportunities per generator against
+  40.7M processed candidates and 24.0M emitted half-edges. This is below the predeclared whole-build
+  ceiling for reconstructing the larger kernel. Keep the separate single-chunk and overlapping-
+  remainder loops.
 - Instrumenting the hottest sampled owner-routing branch in `emit_cell_output` on Windows 2.5M
   Fibonacci found that 66.381% of vertex keys take the resolved-index fast exit, 33.333% create a
   local vertex, and only 0.286% defer to another shard. Of keys that reach the owner-bin test,
