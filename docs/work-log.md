@@ -865,11 +865,16 @@ tasks and are not duplicated here.
   maximum-resolution grid made ordinary Fibonacci/uniform roughly 6.9x slower and great-circle
   about 5.4x slower. The trigger, one rebuild, dense band, and concentrated prefix form one
   justified adaptive policy rather than removable micro-tuning.
-- **Deferred cold sharing and tail selection:** one shared directed-link-cycle predicate removed
+- **Rejected cold sharing and Tail networks:** one shared directed-link-cycle predicate removed
   duplicated cold logic but saved only 39 net lines and repeatedly added about 1.45% uniform cycles
   despite neutral/favorable retired instructions, so it was restored. Making Tail use whole-network
   sorting for 9--16 candidates simplified its dual path but added about 0.38%/0.48% ordinary
-  instructions; a purpose-built ordered top-8 selection network remains the better hypothesis.
+  instructions. Exact-length ordered top-8 networks were then backward-sliced and exhaustively
+  verified: they saved only 15 of 340 comparators across N=9--16 while adding 1,053 source/data lines
+  and about 4.0 KiB native text. The best outlined variant reduced ordinary instructions by up to
+  0.22% but regressed interleaved Fibonacci/uniform/clustered wall time by 0.52%/0.71%/0.60%; its
+  2.3% mega gain does not justify eight new size kernels. An N=16-only variant was retired-work
+  neutral and made mega cycles 0.79% worse. Raw results are under `/tmp/s2-exp-select8-build/`.
 
 ### WORK-001 — Output-resolution certificate soak and component hardening
 

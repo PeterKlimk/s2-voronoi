@@ -628,6 +628,16 @@ unconditional maximum-resolution grid moved the cliff to ordinary inputs: Fibona
 roughly 6.9x slower and great-circle 5.4x slower. Retain the initial coarse grid, catastrophic-work
 trigger, single bounded rebuild, dense band, and concentrated prefix as one adaptive mechanism.
 
+Tail selection-network experiments also retain the existing partition-plus-sort path. Exact-length
+ordered top-8 networks for N=9--16 were formed by backward-slicing proven full networks and passed
+exhaustive zero-one plus randomized multiset differentials. The slice saved no comparators for
+N=9--12 and only 15 of 340 in aggregate, while requiring eight new kernels, 1,053 generated/source
+data lines, and about 4.0 KiB native text. Outlining the kernels was best: ordinary instructions
+fell by up to 0.22%, but interleaved Fibonacci/uniform/clustered wall time rose by
+0.52%/0.71%/0.60%. Mega improved 2.3%, but an N=16-only kernel was retired-work neutral and made
+mega cycles 0.79% worse. Do not add this concentrated-input specialization without a substantially
+simpler network family or a demonstrated ordinary-input win.
+
 The AVX2 small-sort dispatcher keeps its eight-element network out of line. Inlining that leaf at
 both dispatch sites made every sort preserve two additional callee-saved registers; outlining it
 reduced the dispatcher from 1,538 to 847 bytes and the combined dispatcher/leaf fixed work by
