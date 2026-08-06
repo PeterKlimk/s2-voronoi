@@ -260,6 +260,22 @@ distribution, while a six-bin single-thread guardrail remained cycle-neutral. Pe
 repeatably from about 1,082,000 KiB to 1,013,000 KiB (roughly 68 MiB). Keep the compact handle table
 as an all-core locality and memory-envelope improvement, not as a scalar retired-work optimization.
 
+A clean post-queue 4M uniform/16-worker IBS refresh took 453ms and lost no samples. Current inlining
+folds clipping, edge collection, and emission into `build_and_emit_cell`, which accounted for 26.6%
+of exclusive operation samples and 32.5% of branch-miss samples. `dispatch_clip` remained independently
+visible at 11.9%/16.4%; the bin worker, including packed preparation, contributed another 8.6%/21.4%.
+Outside construction, slot-coordinate materialization was 3.8% of operations, final index scatter
+2.6%, and shard-order prefix emission 2.2%. The compact queue changed memory footprint and symbol
+boundaries but did not expose a new assembly or scheduling bottleneck: clipping/control flow remains
+the primary target, with packed preparation and edge forwarding secondary.
+
+Moving payload-pool adoption under first queue activation was tested in two source arrangements to
+remove the capacity test from repeated pushes. The closer arrangement reduced static branches by
+0.10% in all fifteen physically pinned 4M/16-worker pairs, but added 0.07% instructions; cycles were
+neutral (-0.04%, 7/15 favorable), branch misses neutral, and wall time unresolved. The more aggressive
+arrangement regressed twelve three-build all-core cycle pairs by 0.36% geometrically. Keep the simple
+capacity test: removing a predictable repeated branch does not improve target throughput.
+
 The telemetry feature reports `weld_pairs`, `weld_pair_capacity`,
 `packed_keys_materialized`, `packed_key_capacity_peak`, tail possible/requested counts, ring-tail
 rescan/dot counts, total/unrequested center-tail candidates, and total/unused high-threshold
