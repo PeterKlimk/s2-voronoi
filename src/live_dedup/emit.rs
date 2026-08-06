@@ -26,6 +26,16 @@ pub(crate) struct EdgeScratch {
     vertex_indices: Vec<u32>,
 }
 
+#[inline(always)]
+unsafe fn push_reserved_index(indices: &mut Vec<u32>, value: u32) {
+    let len = indices.len();
+    debug_assert!(len < indices.capacity());
+    unsafe {
+        indices.as_mut_ptr().add(len).write(value);
+        indices.set_len(len + 1);
+    }
+}
+
 fn assert_endpoint_lengths(cell_vertices: &[VertexData], vertex_indices_len: usize) -> usize {
     let vertex_count = cell_vertices.len();
     assert_eq!(
@@ -226,6 +236,10 @@ pub(crate) fn emit_cell_output(
 
     let cell_count = checked_u8(count, "cell vertex count")?;
     shard.output.set_cell_count(local, cell_count);
+    // Every path publishes exactly one index per cell vertex. Establish that
+    // capacity once so the compiler can keep growth checks out of the mixed
+    // resolved/local/deferred loop.
+    shard.output.cell_indices.reserve(count);
 
     {
         let vertex_indices = &mut scratch.vertex_indices;
@@ -258,7 +272,8 @@ pub(crate) fn emit_cell_output(
                     shard.output.resolution_drift_exceeded |=
                         exceeds_resolution_drift(representative, pos);
                     shard.output.add_vertex_incidence(resolved_idx);
-                    shard.output.cell_indices.push(resolved_idx);
+                    // SAFETY: the per-cell reserve covers one append for every loop iteration.
+                    unsafe { push_reserved_index(&mut shard.output.cell_indices, resolved_idx) };
                     continue;
                 }
             }
@@ -294,7 +309,8 @@ pub(crate) fn emit_cell_output(
                 }
                 let v_idx = *vi;
                 debug_assert_ne!(v_idx, INVALID_INDEX, "missing on-shard vertex index");
-                shard.output.cell_indices.push(v_idx);
+                // SAFETY: the per-cell reserve covers one append for every loop iteration.
+                unsafe { push_reserved_index(&mut shard.output.cell_indices, v_idx) };
             } else {
                 debug_assert_eq!(*vi, INVALID_INDEX, "received index for off-shard owner");
                 let source_slot =
@@ -303,7 +319,8 @@ pub(crate) fn emit_cell_output(
                     shard.output.cell_indices.len() - cell_start as usize,
                     "deferred source offset",
                 )?;
-                shard.output.cell_indices.push(INVALID_INDEX);
+                // SAFETY: the per-cell reserve covers one append for every loop iteration.
+                unsafe { push_reserved_index(&mut shard.output.cell_indices, INVALID_INDEX) };
                 shard.output.deferred_slots.push(DeferredSlot {
                     key,
                     pos,

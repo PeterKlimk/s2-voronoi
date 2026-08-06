@@ -229,6 +229,18 @@ neutral branches and neutral-to-lower cycles. Retain the representation-level re
 smaller default-codegen effect and mixed native cycle samples are code-placement evidence, not a
 claim of a precise wall-time gain.
 
+Cell-index emission now reserves the exact per-cell span once and fills it through a small unchecked
+push helper whose capacity proof is local: every vertex path appends exactly one index, no intervening
+operation can shrink the vector, and the loop executes at most the reserved `count` times. Calling
+`reserve(count)` while retaining ordinary `Vec::push` was negative (+0.07% instructions and +0.12%
+branches at 1M), because LLVM kept the per-push growth checks. Removing those now-redundant checks
+reduced native 1M instructions by 0.39%/0.47% and branches by 0.70%/0.79% on uniform/Fibonacci;
+cycles improved directionally by 0.20%/0.15%, and branch misses were neutral-to-lower. Five 4M
+all-core uniform pairs retained 0.36% fewer instructions and 0.64% fewer branches with neutral noisy
+cycles. Generic-target instructions fell 0.15%/0.20%; its static branch count rose about 0.66%/0.74%,
+but branch misses fell 0.92%/0.48% and cycles improved 0.55%/0.11%. Keep the exact reserve-plus-fill
+data flow, not reserve alone.
+
 The telemetry feature reports `weld_pairs`, `weld_pair_capacity`,
 `packed_keys_materialized`, `packed_key_capacity_peak`, tail possible/requested counts, ring-tail
 rescan/dot counts, total/unrequested center-tail candidates, and total/unused high-threshold
@@ -1341,6 +1353,14 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 ### Retired experiments
 
 Do not broadly retry these without a materially different design or workload:
+
+- Replacing the reusable `Vec<EdgeToLater>` with a 24-entry fixed-capacity scratch removed its
+  capacity branch and reduced native branches by 0.34--0.55% and instructions by 0.11--0.21% at 1M
+  Fibonacci/uniform. It nevertheless raised branch misses 0.35--0.82% and cycles 0.40--0.59% in
+  pinned runs. Boxing the fixed array to preserve the surrounding context layout kept the branch
+  reduction but lost the instruction saving and still added 0.53% cycles. Five 4M all-core sets were
+  noisy/directionally favorable in cycles but retained the branch-miss increase. Keep the reusable
+  vector: its predictable capacity check is cheaper than the fixed-scratch code/layout changes.
 
 - Caching `neighbors_processed` in a batch-local variable removed repeated counter-field traffic
   and reduced native instructions by 0.13% at 1M, but it changed loop lowering enough to add 0.82%
