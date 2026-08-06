@@ -1342,6 +1342,14 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+- Caching monotonic builder boundedness inside `clip_batch_source` added 0.11% instructions and
+  0.33% branches on native 1M single-threaded uniform; 4M/16-worker counters showed the same
+  direction. A full initial-unbounded/steady-bounded loop split was worse: despite outlining the
+  shared candidate operation, it added 0.47% instructions, 1.55% branches, and 0.37% cycles in seven
+  three-build 1M pairs, then added 0.41% instructions, 1.47% branches, and 1.40% cycles in five 4M
+  all-core pairs. The current in-loop `is_bounded && unchanged` test lowers better than either extra
+  phase transition; retain it unless the clip operation itself can be redesigned around phases.
+
 - Partitioning live vertex emission by a per-cell resolved-index mask removed the hot resolved/
   unresolved branch and reduced branch misses by about 0.63%. It first reserved the cell's complete
   index span, then iterated resolved and unresolved bitsets separately with `trailing_zeros`.
