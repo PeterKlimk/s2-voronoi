@@ -221,24 +221,90 @@ fn fallback_detail(
         })
 }
 
+/// Compact classification of the most recent clip attempt.
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum LastClipKind {
+    None,
+    EdgecheckSeed,
+    PackedChunk0,
+    PackedTail,
+    ShellExpand,
+}
+
+impl LastClipKind {
+    #[inline]
+    fn from_batch_source(source: DirectedNeighborBatchSource) -> Self {
+        match source {
+            DirectedNeighborBatchSource::PackedChunk0 => Self::PackedChunk0,
+            DirectedNeighborBatchSource::PackedTail => Self::PackedTail,
+            DirectedNeighborBatchSource::ShellExpand => Self::ShellExpand,
+        }
+    }
+
+    fn phase(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::EdgecheckSeed => "edgecheck_seed",
+            Self::PackedChunk0 | Self::PackedTail | Self::ShellExpand => "stream",
+        }
+    }
+
+    fn batch_source(self) -> Option<DirectedNeighborBatchSource> {
+        match self {
+            Self::None | Self::EdgecheckSeed => None,
+            Self::PackedChunk0 => Some(DirectedNeighborBatchSource::PackedChunk0),
+            Self::PackedTail => Some(DirectedNeighborBatchSource::PackedTail),
+            Self::ShellExpand => Some(DirectedNeighborBatchSource::ShellExpand),
+        }
+    }
+}
+
 /// Diagnostic trail of the most recent clip, for unexpected-failure reports.
 pub(super) struct BuildTrace {
-    pub(super) last_neighbor_idx: Option<usize>,
-    pub(super) last_neighbor_slot: Option<u32>,
-    pub(super) last_batch_source: Option<DirectedNeighborBatchSource>,
-    pub(super) last_clip_phase: &'static str,
+    // Both values originate as u32 grid identifiers. Keeping them in one word
+    // avoids publishing two independent Option fields on every clip attempt.
+    last_neighbor: u64,
+    last_clip_kind: LastClipKind,
     fallback_trigger: Option<BuilderFallbackTrigger>,
 }
 
 impl BuildTrace {
     fn new() -> Self {
         Self {
-            last_neighbor_idx: None,
-            last_neighbor_slot: None,
-            last_batch_source: None,
-            last_clip_phase: "none",
+            last_neighbor: 0,
+            last_clip_kind: LastClipKind::None,
             fallback_trigger: None,
         }
+    }
+
+    #[inline(always)]
+    fn record_edgecheck(&mut self, neighbor_idx: u32, neighbor_slot: u32) {
+        self.last_neighbor = (u64::from(neighbor_idx) << 32) | u64::from(neighbor_slot);
+        self.last_clip_kind = LastClipKind::EdgecheckSeed;
+    }
+
+    #[inline(always)]
+    fn record_stream(&mut self, neighbor_idx: u32, neighbor_slot: u32, kind: LastClipKind) {
+        self.last_neighbor = (u64::from(neighbor_idx) << 32) | u64::from(neighbor_slot);
+        self.last_clip_kind = kind;
+    }
+
+    pub(super) fn last_neighbor_idx(&self) -> Option<usize> {
+        (!matches!(self.last_clip_kind, LastClipKind::None))
+            .then_some((self.last_neighbor >> 32) as usize)
+    }
+
+    pub(super) fn last_neighbor_slot(&self) -> Option<u32> {
+        (!matches!(self.last_clip_kind, LastClipKind::None)).then_some(self.last_neighbor as u32)
+    }
+
+    pub(super) fn last_clip_phase(&self) -> &'static str {
+        self.last_clip_kind.phase()
+    }
+
+    pub(super) fn last_batch_source(&self) -> Option<DirectedNeighborBatchSource> {
+        self.last_clip_kind.batch_source()
     }
 }
 
@@ -390,10 +456,7 @@ fn clip_seed_neighbors(
         let neighbor_slot = check.neighbor_slot;
         let neighbor_point = pos_slots[neighbor_slot as usize];
         let neighbor_idx = neighbor_point.idx as usize;
-        trace.last_neighbor_idx = Some(neighbor_idx);
-        trace.last_neighbor_slot = Some(neighbor_slot);
-        trace.last_batch_source = None;
-        trace.last_clip_phase = "edgecheck_seed";
+        trace.record_edgecheck(neighbor_point.idx, neighbor_slot);
 
         if !ctx.attempted_neighbors.insert(neighbor_slot as usize) {
             continue;
@@ -505,6 +568,7 @@ fn clip_batch_source<const SHELL: bool>(
     counters: &mut BuildCounters,
 ) {
     let packed_chunk = &phase.packed_chunk[..batch.n];
+    let last_clip_kind = LastClipKind::from_batch_source(batch.source);
     let mut prefix_consumed = 0usize;
     for pos in 0..batch.n {
         prefix_consumed = pos + 1;
@@ -532,10 +596,7 @@ fn clip_batch_source<const SHELL: bool>(
             continue;
         }
 
-        trace.last_neighbor_idx = Some(neighbor_idx);
-        trace.last_neighbor_slot = Some(neighbor_slot);
-        trace.last_batch_source = Some(batch.source);
-        trace.last_clip_phase = "stream";
+        trace.record_stream(slot_point.idx, neighbor_slot, last_clip_kind);
 
         // Position from the fused record loaded above (spatial order → clustered,
         // cache-friendly); bit-identical to points[neighbor_idx].

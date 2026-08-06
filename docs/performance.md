@@ -217,6 +217,18 @@ This profile does not support a DRAM-bandwidth or floating-point execution-resou
 cell construction. The priorities are profiling leads, not permission to trade away exact clipping,
 directed ownership, deterministic output, or cross-distribution guardrails.
 
+The first generic follow-up compacted the hot-loop diagnostic trail from separate optional neighbor
+id, slot, batch-source, and phase fields into one `(id, slot)` word plus a compact clip kind. Failure
+reports reconstruct the same values, while the ordinary loop publishes two values instead of four.
+Default-codegen native counters reduced instructions by about 0.30--0.41% and branches by
+0.05--0.06% at 1M Fibonacci/uniform; five 4M/16-worker uniform pairs reduced instructions by 0.39%
+and branch misses by 0.36%, while cycles remained noise-dominated. Generic-target counters reduced
+instructions by 0.33--0.42%, branches by about 0.09%, and cycles by 0.16--0.40%. A native
+one-codegen-unit causal control made the removed work clearer: instructions fell 1.04--1.27%, with
+neutral branches and neutral-to-lower cycles. Retain the representation-level reduction; the
+smaller default-codegen effect and mixed native cycle samples are code-placement evidence, not a
+claim of a precise wall-time gain.
+
 The telemetry feature reports `weld_pairs`, `weld_pair_capacity`,
 `packed_keys_materialized`, `packed_key_capacity_peak`, tail possible/requested counts, ring-tail
 rescan/dot counts, total/unrequested center-tail candidates, and total/unused high-threshold
