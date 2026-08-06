@@ -199,6 +199,24 @@ verdict on this machine. Effects below the cycles noise floor should proceed to 
 
 ### Resource-bound calibration
 
+A 2026-08 system-wide IBS pass on the native AVX2 16-core host used 4M uniform points, seed 12345,
+and no preprocessing. The clean run took 494ms with no lost samples. Of classified user-space
+memory operations, 95.7% hit L1, 3.2% hit L2, 0.35% came from another same-node cache, and 0.69%
+reached DRAM. IPC was 1.70, the retired-branch miss rate was 4.90%, and sampling attributed most
+branch misses to the cell-build worker loop, `dispatch_clip`, `clip_batch_source`, live output
+emission, and edge-check collection. Store-queue stalls instead concentrated in grid slot
+materialization, while data-TLB misses concentrated in final prefix/index assembly and grid
+permutation. This supports four priorities for the ordinary large uniform workload:
+
+1. Reduce branch/control flow in `dispatch_clip`, `clip_batch_source`, and the cell-build loop.
+2. Reduce clipping bookkeeping and live edge-emission work.
+3. Treat sequential/store behavior in grid materialization as a separate, smaller target.
+4. Treat assembly scatter/TLB behavior as real but secondary to cell construction.
+
+This profile does not support a DRAM-bandwidth or floating-point execution-resource diagnosis for
+cell construction. The priorities are profiling leads, not permission to trade away exact clipping,
+directed ownership, deterministic output, or cross-distribution guardrails.
+
 The telemetry feature reports `weld_pairs`, `weld_pair_capacity`,
 `packed_keys_materialized`, `packed_key_capacity_peak`, tail possible/requested counts, ring-tail
 rescan/dot counts, total/unrequested center-tail candidates, and total/unused high-threshold
