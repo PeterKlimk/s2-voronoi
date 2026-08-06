@@ -1391,6 +1391,19 @@ Lower-confidence cleanup candidates, to attempt only with structural counters or
 
 Do not broadly retry these without a materially different design or workload:
 
+A bounded 2026-08 re-audit corrected manual comparisons whose baseline and candidate had different
+`argv[0]` lengths. Preserved binaries were invoked through equal-length aliases for fifteen
+three-build 4M uniform pairs on sixteen physical workers. None changed disposition. Uninitialized
+bin inverses and unchecked compact-queue handles were cycle-neutral (-0.17%, 9/15 favorable and
+-0.10%, 9/15); their residual unsafe invariants remain unjustified. The two first-activation queue
+arrangements were either adverse (+1.72%, 3/15) or unresolved (-0.42%, 8/15). Delayed single
+publication was neutral (-0.02%, 7/15) while adding branches and misses. Fixed and boxed
+`EdgeToLater` scratch were only -0.18%/-0.27% with 9/15 favorable and 0.62%/0.45% more branch
+misses. Optional unchecked vertex publication initially appeared 0.41% favorable, but twenty more
+pairs shrank that to 0.05%; the combined 35-pair result was -0.20% (24/35), pinned cycles were
+neutral, and static branches consistently rose. Stronger regressions and equal-name results were
+outside this deliberately narrow re-audit.
+
 - Removing dense edge-queue-table bounds checks after compact handles were accepted reduced another
   0.11% instructions and 0.51--0.54% branches in every pinned and all-core pair. Branch misses rose
   slightly, however, and seven 4M pairs were wall-time neutral/adverse (only 2/7 favorable; geometric
