@@ -212,7 +212,7 @@ better one-shot API.
 - `serde`: `Serialize`/checked `Deserialize` for diagram types; invalid stored sphere points are
   rejected rather than silently normalized.
 
-Other Cargo features (`timing`, `microbench`, `manual_probes`,
+Other Cargo features (`timing`, `telemetry`, `microbench`, `manual_probes`,
 `simd_scalar`, and `tools`) are internal repository instrumentation, comparison, benchmark,
 or probe hooks. They are not semver-covered API. See [performance.md](docs/performance.md) for the
 supported benchmark workflows.

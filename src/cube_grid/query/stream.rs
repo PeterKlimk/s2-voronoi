@@ -244,11 +244,11 @@ impl<'a, 'm, 'p, 'g> DirectedNeighborStream<'a, 'm, 'p, 'g> {
 }
 
 #[cfg(test)]
-#[allow(clippy::default_constructed_unit_structs, clippy::needless_range_loop)] // PackedKnnTimings is feature-dependent; qi indexes parallel arrays
+#[allow(clippy::default_constructed_unit_structs, clippy::needless_range_loop)] // PackedKnnTelemetry is feature-dependent; qi indexes parallel arrays
 mod tests {
     use super::*;
     use crate::cube_grid::packed_knn::{
-        PackedGroupInput, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroupStatus,
+        PackedGroupInput, PackedKnnCellScratch, PackedKnnTelemetry, PreparedPackedGroupStatus,
     };
     use crate::packed_layout::PackedSlotLayout;
     use crate::policy::PackedNeighborPolicy;
@@ -341,9 +341,9 @@ mod tests {
             layout,
         );
         let mut packed_scratch = PackedKnnCellScratch::new();
-        let mut packed_timings = PackedKnnTimings::default();
+        let mut packed_telemetry = PackedKnnTelemetry::default();
         let PreparedPackedGroupStatus::Ready(mut prepared) =
-            packed_scratch.prepare_group_directed(&grid, group, &mut packed_timings)
+            packed_scratch.prepare_group_directed(&grid, group, &mut packed_telemetry)
         else {
             panic!("packed prepare unexpectedly fell back to slow path");
         };
@@ -355,7 +355,7 @@ mod tests {
         let mut grid_scratch = grid.make_scratch();
         let packed = PackedQuery::new(
             &mut prepared,
-            &mut packed_timings,
+            &mut packed_telemetry,
             qi,
             PackedNeighborPolicy::for_point_count(points.len()),
         );
@@ -442,9 +442,9 @@ mod tests {
             );
             {
                 let mut packed_scratch = PackedKnnCellScratch::new();
-                let mut packed_timings = PackedKnnTimings::default();
+                let mut packed_telemetry = PackedKnnTelemetry::default();
                 let PreparedPackedGroupStatus::Ready(mut prepared) =
-                    packed_scratch.prepare_group_directed(&grid, group, &mut packed_timings)
+                    packed_scratch.prepare_group_directed(&grid, group, &mut packed_telemetry)
                 else {
                     panic!("packed prepare unexpectedly fell back to slow path");
                 };
@@ -457,7 +457,7 @@ mod tests {
                     let mut grid_scratch = grid.make_scratch();
                     let packed = PackedQuery::new(
                         &mut prepared,
-                        &mut packed_timings,
+                        &mut packed_telemetry,
                         qi,
                         PackedNeighborPolicy::for_point_count(points.len()),
                     );

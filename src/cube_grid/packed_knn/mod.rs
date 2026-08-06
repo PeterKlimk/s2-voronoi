@@ -4,7 +4,7 @@
 //! directed live-dedup backend, so we keep the implementation focused on that use-case.
 
 mod scratch;
-mod timing;
+mod telemetry;
 
 use super::CubeMapGrid;
 use crate::packed_layout::PackedSlotLayout;
@@ -12,7 +12,7 @@ use crate::policy::PackedNeighborPolicy;
 
 pub(crate) use scratch::PackedKnnCellScratch;
 pub(crate) use scratch::{PreparedPackedGroup, PreparedPackedGroupStatus};
-pub(crate) use timing::PackedKnnTimings;
+pub(crate) use telemetry::PackedKnnTelemetry;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PackedGroupInput<'a> {
@@ -168,34 +168,34 @@ enum PackedQueryStage {
 
 pub(crate) struct PackedQuery<'a, 'p, 'g> {
     prepared: &'a mut PreparedPackedGroup<'p, 'g>,
-    timings: &'a mut PackedKnnTimings,
+    telemetry: &'a mut PackedKnnTelemetry,
     query_index: usize,
     policy: PackedNeighborPolicy,
     stage: PackedQueryStage,
     cached_frontier: Option<CachedFrontier>,
     tail_used: bool,
     safe_exhausted: bool,
-    #[cfg(feature = "timing")]
+    #[cfg(feature = "telemetry")]
     exact_batches_emitted_in_stage: usize,
 }
 
 impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
     pub(crate) fn new(
         prepared: &'a mut PreparedPackedGroup<'p, 'g>,
-        timings: &'a mut PackedKnnTimings,
+        telemetry: &'a mut PackedKnnTelemetry,
         query_index: usize,
         policy: PackedNeighborPolicy,
     ) -> Self {
         Self {
             prepared,
-            timings,
+            telemetry,
             query_index,
             policy,
             stage: PackedQueryStage::Chunk0,
             cached_frontier: None,
             tail_used: false,
             safe_exhausted: false,
-            #[cfg(feature = "timing")]
+            #[cfg(feature = "telemetry")]
             exact_batches_emitted_in_stage: 0,
         }
     }
@@ -254,10 +254,7 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
         } else {
             out.truncate(k);
         }
-        if let Some(chunk) = self
-            .prepared
-            .next_chunk(self.query_index, stage, k, out, self.timings)
-        {
+        if let Some(chunk) = self.prepared.next_chunk(self.query_index, stage, k, out) {
             out.truncate(chunk.n);
             let batch = PackedNeighborBatch {
                 n: chunk.n,
@@ -265,10 +262,10 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
                 unseen_bound: chunk.unseen_bound,
                 source,
             };
-            #[cfg(feature = "timing")]
+            #[cfg(feature = "telemetry")]
             {
                 let first = self.exact_batches_emitted_in_stage == 0;
-                self.timings
+                self.telemetry
                     .record_exact_batch_emitted(source, first, chunk.n);
                 self.exact_batches_emitted_in_stage += 1;
             }
@@ -303,10 +300,10 @@ impl<'a, 'p, 'g> PackedQuery<'a, 'p, 'g> {
     fn advance_stage(&mut self, grid: &CubeMapGrid) {
         if self.stage == PackedQueryStage::Chunk0 && self.prepared.tail_possible(self.query_index) {
             self.prepared
-                .ensure_tail_directed_for(self.query_index, grid, self.timings);
+                .ensure_tail_directed_for(self.query_index, grid, self.telemetry);
             self.stage = PackedQueryStage::Tail;
             self.tail_used = true;
-            #[cfg(feature = "timing")]
+            #[cfg(feature = "telemetry")]
             {
                 self.exact_batches_emitted_in_stage = 0;
             }

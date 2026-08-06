@@ -93,6 +93,7 @@ mod test_support;
 #[cfg(feature = "microbench")]
 #[doc(hidden)]
 pub use crate::sort::sort_small as bench_sort_small;
+pub(crate) mod telemetry;
 pub(crate) mod timing;
 pub(crate) mod tolerances;
 mod types;

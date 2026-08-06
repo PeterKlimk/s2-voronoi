@@ -15,8 +15,6 @@ use super::types::{
 use super::with_two_mut;
 use crate::live_dedup::VertexKey;
 use crate::packed_layout::PackedSlotLayout;
-use crate::timing::Timer;
-use std::time::Duration;
 
 #[inline]
 pub(super) fn unpack_edge_key(key: EdgeKey) -> (u32, u32) {
@@ -420,12 +418,6 @@ pub(super) fn collect_and_resolve_cell_edges(
     }
 }
 
-/// Timing breakdown for the overflow resolution phase.
-pub(super) struct OverflowResolveTiming {
-    pub sort: Duration,
-    pub match_: Duration,
-}
-
 #[derive(Clone, Copy)]
 struct OverflowSortHandle {
     key: EdgeKey,
@@ -535,8 +527,7 @@ pub(super) fn resolve_edge_check_overflow(
     shards: &mut [ShardState],
     edge_check_overflow: &[EdgeCheckOverflow],
     edge_mismatches: &mut Vec<EdgeRecord>,
-) -> OverflowResolveTiming {
-    let t_edge_sort = Timer::start();
+) {
     // Resolution only requires contiguous equal-key runs. Group by shard pair
     // first so sorting operates on smaller streams and the subsequent patches
     // stay on the same two shard outputs. Within a two-record run, side
@@ -570,8 +561,6 @@ pub(super) fn resolve_edge_check_overflow(
     for bucket in &mut pair_buckets {
         bucket.sort_unstable_by_key(|entry| entry.key);
     }
-    let edge_checks_overflow_sort_time = t_edge_sort.elapsed();
-    let t_edge_match = Timer::start();
     for (pair, sorted) in pair_buckets.into_iter().enumerate() {
         if sorted.is_empty() {
             continue;
@@ -588,12 +577,6 @@ pub(super) fn resolve_edge_check_overflow(
             edge_check_overflow,
             edge_mismatches,
         );
-    }
-
-    let edge_checks_overflow_match_time = t_edge_match.elapsed();
-    OverflowResolveTiming {
-        sort: edge_checks_overflow_sort_time,
-        match_: edge_checks_overflow_match_time,
     }
 }
 

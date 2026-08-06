@@ -1,150 +1,37 @@
-use super::KnnCellStage;
 use std::time::Duration;
 
-/// Dummy timer when `timing` is disabled (zero-sized).
 pub(crate) struct Timer;
-
 impl Timer {
+    #[inline]
     pub(crate) fn start() -> Self {
         Self
     }
-
+    #[inline]
     pub(crate) fn elapsed(&self) -> Duration {
         Duration::ZERO
     }
 }
 
-/// Dummy lap timer when `timing` is disabled (zero-sized).
-pub(crate) struct LapTimer;
-
-impl LapTimer {
-    pub(crate) fn start() -> Self {
-        Self
-    }
-
-    pub(crate) fn lap(&mut self) -> Duration {
-        Duration::ZERO
-    }
-}
-
-/// Dummy cell sub-phases when `timing` is disabled (zero-sized).
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct CellSubPhases;
-
-/// Dummy dedup sub-phases when `timing` is disabled (zero-sized).
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct DedupSubPhases;
-
-/// Dummy accumulator when `timing` is disabled (zero-sized).
-#[derive(Clone, Copy, Default)]
-pub(crate) struct CellSubAccum;
-
-impl CellSubAccum {
-    pub(crate) fn new() -> Self {
-        Self
-    }
-    pub(crate) fn add_knn(&mut self, _d: Duration) {}
-    pub(crate) fn add_packed_knn(&mut self, _d: Duration) {}
-    pub(crate) fn add_clip(&mut self, _d: Duration) {}
-    pub(crate) fn add_cert(&mut self, _d: Duration) {}
-    pub(crate) fn add_key_dedup(&mut self, _d: Duration) {}
-    pub(crate) fn add_edge_collect(&mut self, _d: Duration) {}
-    pub(crate) fn add_edge_resolve(&mut self, _d: Duration) {}
-    pub(crate) fn add_edge_emit(&mut self, _d: Duration) {}
-    #[allow(clippy::too_many_arguments)] // mirrors the real timing API
-    pub(crate) fn add_cell_stage(
-        &mut self,
-        _stage: KnnCellStage,
-        _knn_exhausted: bool,
-        _neighbors_processed: usize,
-        _final_edges: usize,
-        _packed_tail_used: bool,
-        _packed_safe_exhausted: bool,
-        _used_knn: bool,
-        _incoming_edgechecks: usize,
-        _edgecheck_seed_clips: usize,
-    ) {
-    }
-    #[allow(clippy::too_many_arguments)] // mirrors the real timing API
-    pub(crate) fn add_directional_shadow(
-        &mut self,
-        _checks: usize,
-        _candidate_tests: usize,
-        _hits: usize,
-        _saved: usize,
-        _support_candidate_tests: usize,
-        _support_hits: usize,
-        _support_saved: usize,
-        _support_false_positive_hits: usize,
-    ) {
-    }
-    pub(crate) fn add_fallbacks(
-        &mut self,
-        _projection: usize,
-        _polygon_cap: usize,
-        _all_constraints: usize,
-    ) {
-    }
-    pub(crate) fn merge(&mut self, _other: &CellSubAccum) {}
-    pub(crate) fn record_bin_schedule(&mut self, _bin_generators: &[Vec<usize>]) {}
-    pub(crate) fn record_bin_task(&mut self, _elapsed: Duration) {}
-    pub(crate) fn into_sub_phases(self) -> CellSubPhases {
-        CellSubPhases
-    }
-}
-
-/// Dummy timings when `timing` is disabled (zero-sized).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PhaseTimings;
-
 impl PhaseTimings {
     pub(crate) fn report(&self, _n: usize) {}
 }
 
-/// Dummy builder when `timing` is disabled.
 pub(crate) struct TimingBuilder;
-
 impl TimingBuilder {
     pub(crate) fn new() -> Self {
         Self
     }
-
+    pub(crate) fn set_input_validation(&mut self, _d: Duration) {}
     pub(crate) fn set_preprocess(&mut self, _d: Duration) {}
-
-    pub(crate) fn set_weld_pair_stats(&mut self, _len: usize, _capacity: usize) {}
-
-    pub(crate) fn set_knn_build(&mut self, _d: Duration) {}
-
-    pub(crate) fn add_knn_build(&mut self, _d: Duration) {}
-
-    pub(crate) fn set_grid_stats(&mut self, _res: usize, _max_occupancy: u64, _rebuilt: bool) {}
-
-    pub(crate) fn set_cell_construction(&mut self, _d: Duration, _sub: CellSubPhases) {}
-
-    pub(crate) fn set_dedup(&mut self, _d: Duration, _sub: DedupSubPhases) {}
-
-    pub(crate) fn set_edge_reconcile(
-        &mut self,
-        _d: Duration,
-        _merge_safety_scan_cells: usize,
-        _merge_safety_global_fallbacks: usize,
-    ) {
-    }
-
-    pub(crate) fn set_assemble(&mut self, _d: Duration) {}
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn set_output_resolution_discovery(
-        &mut self,
-        _drift_fallback: bool,
-        _reconcile_scan_cells: usize,
-        _rebuild_scan_cells: usize,
-        _hint_cells: usize,
-        _hinted_candidates: usize,
-        _detected_edges: usize,
-    ) {
-    }
-
+    pub(crate) fn add_grid_build(&mut self, _d: Duration) {}
+    pub(crate) fn set_cell_construction(&mut self, _d: Duration) {}
+    pub(crate) fn set_shard_assembly(&mut self, _d: Duration) {}
+    pub(crate) fn set_edge_reconcile(&mut self, _d: Duration) {}
+    pub(crate) fn set_postprocess(&mut self, _d: Duration) {}
+    pub(crate) fn set_output_remap(&mut self, _d: Duration) {}
+    pub(crate) fn set_output_validation(&mut self, _d: Duration) {}
     pub(crate) fn finish(self) -> PhaseTimings {
         PhaseTimings
     }

@@ -431,7 +431,7 @@ fn assembly_then_reconcile_handles_overflow_fallback_and_unresolved_edge() {
     let sharded = ShardedCellsData {
         assignment,
         shards: vec![shard0, shard1],
-        cell_sub: crate::timing::CellSubAccum::new(),
+        cell_telemetry: crate::telemetry::CellTelemetryAccum::new(),
     };
 
     let assembled = assemble_sharded_live_dedup(sharded).expect("assembly should succeed");

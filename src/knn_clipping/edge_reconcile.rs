@@ -280,7 +280,7 @@ pub(crate) struct ReconcileResult {
     /// Extra unchanged snapshots are harmless: their old/new deltas cancel.
     pub changed_cell_snapshots: Vec<CellCycleSnapshot>,
     /// Number of cell cycles examined by the merge-safety face check across
-    /// all reconciliation rounds. Exposed to timing telemetry so localized
+    /// all reconciliation rounds. Exposed to algorithmic telemetry so localized
     /// coverage can be compared with the full diagram size.
     pub merge_safety_scan_cells: usize,
     /// Number of rounds whose merge-safety cover could not be certified from

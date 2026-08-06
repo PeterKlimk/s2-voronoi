@@ -6,7 +6,7 @@ use super::{
     CellBuildRequest, StreamPhase, TerminationCheckpoint,
 };
 use crate::cube_grid::packed_knn::{
-    PackedGroupInput, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroupStatus,
+    PackedGroupInput, PackedKnnCellScratch, PackedKnnTelemetry, PreparedPackedGroupStatus,
 };
 use crate::cube_grid::{
     CubeMapGrid, DirectedEligibility, DirectedNeighborFrontier, DirectedNeighborStream,
@@ -457,7 +457,6 @@ fn probe_early_extraction_cell(
                 &mut ctx.packed_chunk,
                 &mut counters.used_knn,
                 &mut counters.knn_stage,
-                &mut counters.knn_query_time,
             );
 
             match frontier {
@@ -494,7 +493,6 @@ fn probe_early_extraction_cell(
                             &mut stream,
                             &mut ctx.packed_chunk,
                             &mut ctx.builder,
-                            pos_slots,
                             &mut counters,
                         );
                     }
@@ -1172,9 +1170,9 @@ fn packed_termination_checkpoints_survive_all_omitted_constraints() {
         let group =
             PackedGroupInput::new(cell, 0, grid.cell_offsets()[cell], queries.len(), 0, layout);
         let mut packed_scratch = PackedKnnCellScratch::new();
-        let mut timings = PackedKnnTimings::default();
+        let mut telemetry = PackedKnnTelemetry::default();
         let PreparedPackedGroupStatus::Ready(mut prepared) =
-            packed_scratch.prepare_group_directed(&grid, group, &mut timings)
+            packed_scratch.prepare_group_directed(&grid, group, &mut telemetry)
         else {
             panic!("packed oracle group unexpectedly chose the slow path");
         };
@@ -1185,7 +1183,7 @@ fn packed_termination_checkpoints_survive_all_omitted_constraints() {
         let generator_idx = grid.point_indices()[query_slot as usize] as usize;
         let directed_ctx = DirectedEligibility::from_layout(0, 0, layout);
         let policy = PackedNeighborPolicy::for_point_count(points.len());
-        let packed = crate::cube_grid::PackedQuery::new(&mut prepared, &mut timings, 0, policy);
+        let packed = crate::cube_grid::PackedQuery::new(&mut prepared, &mut telemetry, 0, policy);
         let mut ctx = CellBuildContext::new(&grid, policy);
         let stats = build_cell_into(
             &mut ctx,

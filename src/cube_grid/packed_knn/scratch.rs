@@ -7,7 +7,7 @@ mod prepare;
 mod tests;
 
 use super::super::CubeMapGrid;
-use super::{PackedChunk, PackedGroupInput, PackedKnnTimings, PackedStage};
+use super::{PackedChunk, PackedGroupInput, PackedKnnTelemetry, PackedStage};
 
 // Hard cap on total candidates in a 3x3 neighborhood to avoid pathological allocations.
 const MAX_CANDIDATES_HARD: usize = 65_536;
@@ -75,10 +75,8 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
         stage: PackedStage,
         k: usize,
         out: &mut [u32],
-        timings: &mut PackedKnnTimings,
     ) -> Option<PackedChunk> {
-        self.scratch
-            .next_chunk(qi, self.group_gen, stage, k, out, timings)
+        self.scratch.next_chunk(qi, self.group_gen, stage, k, out)
     }
 
     #[inline]
@@ -86,7 +84,7 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
         &mut self,
         qi: usize,
         grid: &CubeMapGrid,
-        timings: &mut PackedKnnTimings,
+        telemetry: &mut PackedKnnTelemetry,
     ) {
         self.scratch.ensure_tail_directed_for(
             qi,
@@ -94,7 +92,7 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
             self.group_gen,
             &mut self.tail_built_any,
             grid,
-            timings,
+            telemetry,
         );
     }
 
@@ -113,8 +111,8 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
         self.scratch.tail_upper_bound(qi)
     }
 
-    #[cfg(feature = "timing")]
-    pub(crate) fn record_tail_usage(&self, timings: &mut PackedKnnTimings) {
+    #[cfg(feature = "telemetry")]
+    pub(crate) fn record_tail_usage(&self, telemetry: &mut PackedKnnTelemetry) {
         let mut unused_center_keys = 0usize;
         let mut unused_chunk0_keys = 0usize;
         for qi in 0..self.group.query_count() {
@@ -130,8 +128,8 @@ impl<'a, 'g> PreparedPackedGroup<'a, 'g> {
                 .len()
                 .saturating_sub(self.scratch.chunk0_pos[qi]);
         }
-        timings.add_unused_center_tail_keys(unused_center_keys);
-        timings.add_unused_chunk0_keys(unused_chunk0_keys);
+        telemetry.add_unused_center_tail_keys(unused_center_keys);
+        telemetry.add_unused_chunk0_keys(unused_chunk0_keys);
     }
 }
 

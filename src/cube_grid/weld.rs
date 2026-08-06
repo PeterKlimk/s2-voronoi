@@ -480,17 +480,6 @@ mod tests {
         let threshold = crate::tolerances::weld_radius();
         let points = points_with_twins(400, 40, threshold * 0.5, 91);
         let expected = CubeMapGrid::new(&points, 13);
-
-        #[cfg(feature = "timing")]
-        let mut fused = {
-            let mut timings = crate::cube_grid::CubeMapGridBuildTimings::default();
-            CubeMapGrid::new_deferred_dense_and_point_views_with_build_timings(
-                &points,
-                13,
-                &mut timings,
-            )
-        };
-        #[cfg(not(feature = "timing"))]
         let mut fused = CubeMapGrid::new_deferred_dense_and_point_views(&points, 13);
 
         assert!(fused.cell_points_aos.is_empty());

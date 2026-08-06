@@ -44,7 +44,7 @@ impl HalfPlane {
     // The production clippers now evaluate distances 8 wide via
     // fp::signed_dists_mask8 (lane math identical to this formula); the
     // scalar form remains the reference for tests, diagnostics, and microbenches.
-    #[cfg(any(test, feature = "microbench", feature = "timing"))]
+    #[cfg(any(test, feature = "microbench"))]
     #[inline]
     pub(crate) fn signed_dist(&self, u: f64, v: f64) -> f64 {
         fp::mul_add_unfused_f64(self.a, u, fp::mul_add_unfused_f64(self.b, v, self.c))

@@ -10,11 +10,10 @@ use super::local_rebuild;
 use super::output_resolution;
 use super::preprocess::{try_merge_close_points, MergeResult};
 use crate::cell_layout::LiveCellLayout;
-use crate::cube_grid::CubeMapGrid;
-#[cfg(feature = "timing")]
-use crate::cube_grid::CubeMapGridBuildTimings;
+use crate::cube_grid::{CubeMapGrid, CubeMapGridBuildTelemetry};
 use crate::diagram::VoronoiCell;
 use crate::live_dedup;
+use crate::telemetry::TelemetryBuilder;
 use crate::timing::{Timer, TimingBuilder};
 use crate::{
     CellKillingPolicy, ComputeOutput, ComputeReport, DegenerateMode, DegenerateReport,
@@ -47,6 +46,7 @@ struct PipelineState {
     positive_resolution: Option<output_resolution::PositiveResolutionReport>,
     cell_killing_generators: Vec<usize>,
     tb: TimingBuilder,
+    telemetry: TelemetryBuilder,
 }
 
 /// Coherent effective-space diagram storage from assembly through final
@@ -344,18 +344,21 @@ fn run_core_pipeline(
     positive_chord_threshold: Option<f32>,
     workspace: Option<&super::driver::BuildWorkspace>,
 ) -> Result<PipelineState, crate::VoronoiError> {
+    let mut tb = TimingBuilder::new();
+    let t_input = Timer::start();
     validate_generator_capacity(points.len())?;
     let mut points = points;
     validate_and_canonicalize_unit_points(&mut points)?;
     validate_preprocess_mode(preprocess_mode)?;
-    let mut tb = TimingBuilder::new();
+    tb.set_input_validation(t_input.elapsed());
+    let mut telemetry = TelemetryBuilder::new();
 
     let PreparedPointsAndGrid {
         effective_input,
         report: preprocess_report,
         mut grid,
         concentrated_mode,
-    } = prepare_points_and_grid(&points, preprocess_mode, workspace, &mut tb)?;
+    } = prepare_points_and_grid(&points, preprocess_mode, workspace, &mut tb, &mut telemetry)?;
 
     let effective_points_ref = effective_input.points(&points);
 
@@ -373,8 +376,9 @@ fn run_core_pipeline(
         construction_policy,
         workspace,
         &mut tb,
+        &mut telemetry,
     )?;
-    let assembled = assemble_shards(sharded, &mut tb)?;
+    let assembled = assemble_shards(sharded, &mut tb, &mut telemetry)?;
     let live_dedup::AssemblyResult {
         vertices,
         vertex_keys: assembly_vertex_keys,
@@ -386,7 +390,7 @@ fn run_core_pipeline(
         exact_zero_edge_hint_cells,
         resolution_drift_exceeded,
         incidence_summary,
-        dedup_sub: _,
+        dedup_telemetry: _,
     } = assembled;
     let mut geometry = EffectiveGeometry {
         vertices,
@@ -398,6 +402,7 @@ fn run_core_pipeline(
         &assembly_vertex_keys,
         &edge_mismatches,
         &mut tb,
+        &mut telemetry,
     )?;
     let edge_reconcile::ReconcileResult {
         residual_pairs: residual_unpaired,
@@ -407,10 +412,10 @@ fn run_core_pipeline(
         changed_cell_snapshots,
         ..
     } = reconcile_result;
+    let t_postprocess = Timer::start();
     // This is part of the plain-return safety gate, not merely a local rebuild
     // trigger. Compute it even when local rebuild is disabled so that mode cannot
     // suppress a known-invalid low-incidence output.
-    let t_low_incidence = std::time::Instant::now();
     let topology = if reconcile_resolution_scan_cells.is_empty() {
         let incremental = TopologySummary {
             used_vertices: incidence_summary.used_vertices,
@@ -453,7 +458,6 @@ fn run_core_pipeline(
             &geometry.cell_indices,
         )
     };
-    let low_incidence_scan_time = t_low_incidence.elapsed();
     let LocalRebuildResult {
         outcome: local_rebuild,
         resolution_scan_cells: local_rebuild_resolution_scan_cells,
@@ -466,7 +470,6 @@ fn run_core_pipeline(
         &local_rebuild_seed_pairs,
         &merge_affected_cells,
         topology,
-        low_incidence_scan_time,
         local_rebuild_mode,
     );
     let reconcile_resolution_scan_cell_count = reconcile_resolution_scan_cells.len();
@@ -518,7 +521,7 @@ fn run_core_pipeline(
     } else {
         None
     };
-    tb.set_output_resolution_discovery(
+    telemetry.set_output_resolution_discovery(
         resolution_mode.drift_fallback(),
         reconcile_resolution_scan_cell_count,
         local_rebuild_resolution_scan_cell_count,
@@ -526,6 +529,7 @@ fn run_core_pipeline(
         hinted_candidate_count,
         resolution_outcome.report.exact_zero_edges_detected,
     );
+    tb.set_postprocess(t_postprocess.elapsed());
     Ok(PipelineState {
         points,
         effective_input,
@@ -539,6 +543,7 @@ fn run_core_pipeline(
         positive_resolution,
         cell_killing_generators: resolution_outcome.cell_killing_generators,
         tb,
+        telemetry,
     })
 }
 
@@ -621,13 +626,17 @@ pub(super) fn compute_voronoi_knn_clipping_owned_core(
         cell_indices,
         weld_map,
     );
-    state.tb.set_assemble(t.elapsed());
+    state.tb.set_output_remap(t.elapsed());
 
-    // Report timing if feature enabled
+    let t_validation = Timer::start();
+    let verification = crate::validation::verify_sphere_if_enabled(&diagram);
+    state.tb.set_output_validation(t_validation.elapsed());
+
     let timings = state.tb.finish();
     timings.report(diagram.num_cells());
+    state.telemetry.report(diagram.num_cells());
 
-    crate::validation::verify_sphere_if_enabled(&diagram)?;
+    verification?;
     Ok(diagram)
 }
 
@@ -795,11 +804,14 @@ fn compute_voronoi_knn_clipping_report_core(
         cell_indices,
         weld_map,
     );
+    state.tb.set_output_remap(t.elapsed());
+    let t_validation = Timer::start();
     let validation = crate::validation::validate(&diagram);
-    state.tb.set_assemble(t.elapsed());
+    state.tb.set_output_validation(t_validation.elapsed());
 
     let timings = state.tb.finish();
     timings.report(diagram.num_cells());
+    state.telemetry.report(diagram.num_cells());
 
     let positive_resolution = state.positive_resolution.take();
     let mut reconciliation_edge_pairs: Vec<_> = state
@@ -1145,7 +1157,6 @@ impl LocalRebuildCandidate {
         effective_points: &[Vec3],
         geometry: &mut EffectiveGeometry,
         debug: bool,
-        materialization_started: std::time::Instant,
     ) -> Option<Vec<u32>> {
         let Self {
             minted_vertices,
@@ -1155,8 +1166,6 @@ impl LocalRebuildCandidate {
         } = self;
         let base_vertex_count = geometry.vertices.len();
         geometry.vertices.extend(minted_vertices);
-        let flat_elapsed = materialization_started.elapsed();
-        let t_gate = std::time::Instant::now();
 
         // Whole-diagram never-worse gate: accept only if the rebuilt diagram is
         // strictly valid. Validate the effective arrays in place via
@@ -1172,9 +1181,7 @@ impl LocalRebuildCandidate {
         );
         if debug {
             eprintln!(
-                "local rebuild commit: into_flat {:?}, gate {:?} ({} verts, {} cells, gate {})",
-                flat_elapsed,
-                t_gate.elapsed(),
+                "local rebuild commit: {} verts, {} cells, gate {}",
                 geometry.vertices.len(),
                 cells.len(),
                 if gate.is_ok() { "accepted" } else { "rejected" },
@@ -1266,7 +1273,6 @@ fn maybe_rebuild_effective(
     local_rebuild_seed_pairs: &[(u32, u32)],
     merge_affected_cells: &[u32],
     topology: TopologySummary,
-    low_incidence_scan_time: std::time::Duration,
     local_rebuild_mode: LocalRebuildMode,
 ) -> LocalRebuildResult {
     let has_low_incidence = topology.low_incidence;
@@ -1297,8 +1303,7 @@ fn maybe_rebuild_effective(
     let diagnostics = LocalRebuildDiagnostics::read_from_env();
     if diagnostics.debug {
         eprintln!(
-            "local rebuild trigger: low-incidence scan {:?} (defect_pairs={}, unpaired={}, no_chain={}, low_incidence={})",
-            low_incidence_scan_time,
+            "local rebuild trigger: defect_pairs={}, unpaired={}, no_chain={}, low_incidence={}",
             defect_pairs.len(),
             residual_unpaired.len(),
             local_rebuild_seed_pairs.len(),
@@ -1344,10 +1349,9 @@ fn maybe_rebuild_effective(
     // borrowing the geometry it was built over. The base vertex array is
     // extended in place — and truncated back on rejection — so an accepted
     // local rebuild never copies the base positions.
-    let t_flat = std::time::Instant::now();
     let candidate = LocalRebuildCandidate::from_work(work);
     let Some(resolution_scan_cells) =
-        candidate.try_commit(effective_points, geometry, diagnostics.debug, t_flat)
+        candidate.try_commit(effective_points, geometry, diagnostics.debug)
     else {
         return LocalRebuildResult::unchanged(outcome(LocalRebuildStatus::Rejected));
     };
@@ -1462,6 +1466,7 @@ fn prepare_points_and_grid(
     preprocess_mode: PreprocessMode,
     workspace: Option<&super::driver::BuildWorkspace>,
     tb: &mut TimingBuilder,
+    telemetry: &mut TelemetryBuilder,
 ) -> Result<PreparedPointsAndGrid, crate::VoronoiError> {
     let threshold = match preprocess_mode {
         PreprocessMode::Disabled => None,
@@ -1470,9 +1475,10 @@ fn prepare_points_and_grid(
     };
 
     let (mut grid, mut concentrated_mode) =
-        build_query_grid(points, tb, threshold.is_some(), workspace);
+        build_query_grid(points, tb, telemetry, threshold.is_some(), workspace);
 
-    let t = Timer::start();
+    let mut preprocess_elapsed = std::time::Duration::ZERO;
+    let mut t = Timer::start();
     let mut effective_input = EffectiveInput::Identity;
     if let Some(threshold) = threshold {
         if threshold <= grid.max_grid_weld_threshold() {
@@ -1485,7 +1491,7 @@ fn prepare_points_and_grid(
                         crate::cube_grid::MAX_RETAINED_WELD_PAIRS
                     ),
                 })?;
-            tb.set_weld_pair_stats(pairs.len(), pairs.capacity());
+            telemetry.set_weld_pair_stats(pairs.len(), pairs.capacity());
             if !pairs.is_empty() {
                 let (result, kept) = super::preprocess::merge_result_from_pairs(points, &pairs);
                 grid.compact_welded(
@@ -1508,14 +1514,16 @@ fn prepare_points_and_grid(
                 }
             })?;
             if result.num_merged > 0 {
+                preprocess_elapsed += t.elapsed();
                 (grid, concentrated_mode) =
-                    build_query_grid(&result.effective_points, tb, true, workspace);
+                    build_query_grid(&result.effective_points, tb, telemetry, true, workspace);
+                t = Timer::start();
                 effective_input = EffectiveInput::Merged(result);
             }
             grid.finalize_slot_points();
         }
     }
-    tb.set_preprocess(t.elapsed());
+    tb.set_preprocess(preprocess_elapsed + t.elapsed());
 
     // Every grid built above is provisional: occupancy feedback may replace
     // it, and preprocessing may compact or rebuild it. Materialize the
@@ -1524,7 +1532,7 @@ fn prepare_points_and_grid(
     if concentrated_mode {
         let t_dense = Timer::start();
         grid.build_dense_index();
-        tb.add_knn_build(t_dense.elapsed());
+        tb.add_grid_build(t_dense.elapsed());
     }
 
     let report = PreprocessReport {
@@ -1571,31 +1579,38 @@ fn cell_sum_sq_per_n(grid: &crate::cube_grid::CubeMapGrid, n: usize) -> f64 {
 fn build_query_grid(
     effective_points: &[Vec3],
     tb: &mut TimingBuilder,
+    telemetry: &mut TelemetryBuilder,
     defer_point_views: bool,
     workspace: Option<&super::driver::BuildWorkspace>,
 ) -> (crate::cube_grid::CubeMapGrid, bool) {
     let t = Timer::start();
     let n = effective_points.len();
-    #[cfg(feature = "timing")]
-    let mut grid_build_timings = CubeMapGridBuildTimings::default();
+    #[cfg_attr(
+        not(feature = "telemetry"),
+        allow(unused_mut, clippy::default_constructed_unit_structs)
+    )]
+    let mut grid_build_telemetry = CubeMapGridBuildTelemetry::default();
 
-    let build = |res: usize, #[cfg(feature = "timing")] timings: &mut CubeMapGridBuildTimings| {
+    let build = |res: usize, telemetry: &mut CubeMapGridBuildTelemetry| {
         let cached_topology = workspace.and_then(|workspace| workspace.grid_topology(res));
-        #[cfg(feature = "timing")]
-        let grid = CubeMapGrid::new_deferred_with_cached_topology_and_build_timings(
+        #[cfg(feature = "telemetry")]
+        let grid = CubeMapGrid::new_deferred_with_cached_topology_and_telemetry(
             effective_points,
             res,
             defer_point_views,
             cached_topology,
-            timings,
+            telemetry,
         );
-        #[cfg(not(feature = "timing"))]
-        let grid = CubeMapGrid::new_deferred_with_cached_topology(
-            effective_points,
-            res,
-            defer_point_views,
-            cached_topology,
-        );
+        #[cfg(not(feature = "telemetry"))]
+        let grid = {
+            let _ = telemetry;
+            CubeMapGrid::new_deferred_with_cached_topology(
+                effective_points,
+                res,
+                defer_point_views,
+                cached_topology,
+            )
+        };
         if let Some(workspace) = workspace {
             workspace.retain_grid_topology(res, grid.topology_arc());
         }
@@ -1603,10 +1618,7 @@ fn build_query_grid(
     };
 
     let mut res = crate::policy::knn_grid_resolution(n);
-    #[cfg(feature = "timing")]
-    let grid = build(res, &mut grid_build_timings);
-    #[cfg(not(feature = "timing"))]
-    let grid = build(res);
+    let grid = build(res, &mut grid_build_telemetry);
     let mut max_occupancy = max_cell_occupancy(&grid);
     let sum_sq_per_n = cell_sum_sq_per_n(&grid, n);
 
@@ -1622,10 +1634,7 @@ fn build_query_grid(
             Some(new_res) => {
                 res = new_res;
                 rebuilt = true;
-                #[cfg(feature = "timing")]
-                let regrid = build(new_res, &mut grid_build_timings);
-                #[cfg(not(feature = "timing"))]
-                let regrid = build(new_res);
+                let regrid = build(new_res, &mut grid_build_telemetry);
                 max_occupancy = max_cell_occupancy(&regrid);
                 regrid
             }
@@ -1641,10 +1650,9 @@ fn build_query_grid(
     // trip the rebuild close fast in the packed path, so the band and takeover
     // are disabled there. The gate is scale-invariant, unlike a fixed occupancy
     // threshold. See docs/performance.md#source-pinned-performance-decisions.
-    tb.set_knn_build(t.elapsed());
-    tb.set_grid_stats(res, max_occupancy as u64, rebuilt);
-    #[cfg(feature = "timing")]
-    tb.set_knn_build_sub(grid_build_timings);
+    tb.add_grid_build(t.elapsed());
+    telemetry.set_grid_stats(res, max_occupancy as u64, rebuilt);
+    telemetry.set_grid_build_stats(&grid_build_telemetry);
     (grid, rebuilt)
 }
 
@@ -1654,6 +1662,7 @@ struct CellConstructionPolicy {
     concentrated_mode: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn construct_cell_shards(
     effective_points: &[Vec3],
     grid: &CubeMapGrid,
@@ -1662,6 +1671,7 @@ fn construct_cell_shards(
     policy: CellConstructionPolicy,
     workspace: Option<&super::driver::BuildWorkspace>,
     tb: &mut TimingBuilder,
+    telemetry: &mut TelemetryBuilder,
 ) -> Result<live_dedup::ShardedCellsData, crate::VoronoiError> {
     let t = Timer::start();
     let sharded = super::driver::build_cells_sharded_live_dedup(
@@ -1673,21 +1683,20 @@ fn construct_cell_shards(
         workspace,
     )
     .map_err(|err| map_build_cells_error(err, effective_points, merge_result))?;
-    #[cfg_attr(not(feature = "timing"), allow(clippy::clone_on_copy))]
-    tb.set_cell_construction(t.elapsed(), sharded.cell_sub.clone().into_sub_phases());
+    tb.set_cell_construction(t.elapsed());
+    telemetry.set_cell(sharded.cell_telemetry.clone().into_telemetry());
     Ok(sharded)
 }
 
 fn assemble_shards(
     sharded: live_dedup::ShardedCellsData,
     tb: &mut TimingBuilder,
+    telemetry: &mut TelemetryBuilder,
 ) -> Result<live_dedup::AssemblyResult, crate::VoronoiError> {
     let t = Timer::start();
     let assembled = live_dedup::assemble_sharded_live_dedup(sharded)?;
-    // clone is required under the timing feature (real DedupSubPhases is
-    // not Copy); the stub is Copy, hence the allow.
-    #[allow(clippy::clone_on_copy)]
-    tb.set_dedup(t.elapsed(), assembled.dedup_sub.clone());
+    tb.set_shard_assembly(t.elapsed());
+    telemetry.set_dedup(assembled.dedup_telemetry);
     Ok(assembled)
 }
 
@@ -1696,6 +1705,7 @@ fn reconcile_edges(
     vertex_keys: &live_dedup::ShardedVertexKeys,
     edge_mismatches: &[live_dedup::EdgeRecord],
     tb: &mut TimingBuilder,
+    telemetry: &mut TelemetryBuilder,
 ) -> Result<edge_reconcile::ReconcileResult, crate::VoronoiError> {
     // Snapshot reconciliation oracle choices once, but only after a mismatch
     // exists. A clean computation remains free of environment lookups.
@@ -1720,8 +1730,8 @@ fn reconcile_edges(
     // unpaired interior edge is surfaced as a residual error by the caller
     // (valid-or-error contract — see docs/correctness.md; the dropped
     // post-hoc Tier-2 local rebuild investigation lives in git history).
-    tb.set_edge_reconcile(
-        t.elapsed(),
+    tb.set_edge_reconcile(t.elapsed());
+    telemetry.set_edge_reconcile(
         reconcile_result.merge_safety_scan_cells,
         reconcile_result.merge_safety_global_fallbacks,
     );

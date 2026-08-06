@@ -101,15 +101,16 @@ Useful flags:
 - `VORONOI_MESH_BIN_COUNT=<n>` — explicit shard target, quantized and capped at 96. Without an
   override, the default is 2x workers through 8 workers and a 96-bin coarse layout at 9+; severely
   imbalanced coarse layouts may refine to 216 bins.
-- `VORONOI_MESH_TIMING_KV=1` with `--features timing` — machine-readable phase timing.
+- `VORONOI_MESH_TIMING_KV=1` with `--features timing` — machine-readable coarse pipeline wall timing.
+- `VORONOI_MESH_TELEMETRY_KV=1` with `--features telemetry` — machine-readable algorithmic work counters.
 - `VORONOI_MESH_GRID_DENSITY=<f>` — spatial-grid target density (points per cell) for sweeps. It is
   snapshotted on first use; run each density in a separate process.
 
 The complete supported, diagnostic, campaign, and manual-probe inventory is maintained in
 [`environment-knobs.md`](environment-knobs.md).
 
-Timing builds also expose scale-relative construction-work telemetry in both the human report and
-`TIMING_KV`:
+Telemetry builds expose scale-relative construction work in both the human report and
+`TELEMETRY_KV`:
 
 - `candidate_work_*` describes all examined candidates per generator;
 - `no_progress_tail_*` describes candidates examined after the final polygon-changing constraint;
@@ -122,6 +123,27 @@ Timing builds also expose scale-relative construction-work telemetry in both the
 per-candidate clip outcomes. Those cells still contribute to total candidate work. Use raw
 quantiles across input sizes to measure natural scaling, then use the run-relative tail counts to
 distinguish a few exceptional cells from a broadly expensive distribution.
+
+### Timing versus profiling
+
+The `timing` feature deliberately contains only low-frequency clocks around whole-pipeline
+boundaries. It does not time cells, candidate batches, packed selection, or assembly inner loops,
+and it does not rescale summed worker CPU durations into estimated wall time. Those fine clocks
+previously distorted optimized multithreaded runs enough to make their attribution misleading.
+
+Use a production-shaped sampling profile for fine attribution. The `profiled` Cargo profile keeps
+optimized code and line tables:
+
+```bash
+RUSTFLAGS="-C target-cpu=native" \
+  cargo build --profile profiled --features tools --bin bench_voronoi
+RAYON_NUM_THREADS=32 perf record -e cycles:u -F 999 -- \
+  target/profiled/bench_voronoi 3m --dist uniform --no-preprocess -n 5
+perf report --no-children
+```
+
+Keep `telemetry` separate from attribution: its counters intentionally instrument hot loops and
+are useful for workload shape and resource bounds, not for production wall-time percentages.
 
 ## Local-rebuild cold path
 
@@ -177,10 +199,10 @@ verdict on this machine. Effects below the cycles noise floor should proceed to 
 
 ### Resource-bound calibration
 
-The timing feature reports `weld_pairs`, `weld_pair_capacity`,
+The telemetry feature reports `weld_pairs`, `weld_pair_capacity`,
 `packed_keys_materialized`, `packed_key_capacity_peak`, tail possible/requested counts, ring-tail
 rescan/dot counts, total/unrequested center-tail candidates, and total/unused high-threshold
-`chunk0_keys` in `TIMING_KV`. Measurements leading to
+`chunk0_keys` in `TELEMETRY_KV`. Measurements leading to
 the initial packed aggregate-work bound found a 500k uniform peak capacity of 6,464 keys versus
 2,220,652 keys (~17.8 MiB of `u64` payload in one worker) for the clustered distribution. The 1M
 query×candidate budget reduced the clustered peak to 1,188,540 keys (~9.5 MiB of allocator
@@ -393,9 +415,9 @@ error returns before the driver can consume the buffer. Poison-buffer tests cove
 and a terminal error retaining stale poison. At 2M single-threaded this reduced retired instructions
 by about 0.041% on Fibonacci and 0.038% on uniform input in all three pairs; cycles were unresolved.
 
-The timing-only directional-support audit caches its 64 unit directions once instead of recomputing
-their sines and cosines whenever a polygon invalidates the support cache. This does not affect
-production builds. On 500k single-threaded Fibonacci with native instructions, the diagnostic build
+The retired timing-only directional-support audit cached its 64 unit directions once instead of
+recomputing their sines and cosines whenever a polygon invalidated the support cache. The audit,
+shadow clipping path, and cache have since been removed; they never affected production builds. On 500k single-threaded Fibonacci with native instructions, the diagnostic build
 dropped from 9.39B to 7.07B instructions and from 5.09B to 3.75B cycles. All audit counters were
 unchanged, including 1,300,400 support tests, 112,559 hits, and zero false positives.
 
@@ -1089,7 +1111,7 @@ scatter codegen by a repeatable +0.228% whole-build instructions. A flattened ge
 source-distance probe also failed to distinguish Fibonacci from uniform. Keep the compact
 site-specific samplers and the pre-prefix numeric-cell proxy. The shared classifier now adds only a
 one-element floor for domains below 100. Rebuild telemetry reports the retained grid and exports the
-decision through `TIMING_KV`.
+decision through `TELEMETRY_KV`.
 
 That minimal retained form reduced 1M Linux instructions by 0.162% on Fibonacci and 0.147% on
 uniform, and branches by 0.382%/0.339%, in all three confirmation pairs. On the quiet Mac at 2M

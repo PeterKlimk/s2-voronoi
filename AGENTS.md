@@ -34,8 +34,11 @@ cargo test --release --test api --test correctness
 # Large-scale benchmark driver
 cargo run --release --features tools --bin bench_voronoi -- 100k 500k 1m
 
-# Detailed sub-phase timing
+# Coarse pipeline timing
 VORONOI_MESH_TIMING_KV=1 cargo run --release --features tools,timing --bin bench_voronoi -- 500k --no-preprocess
+
+# Algorithmic work telemetry
+VORONOI_MESH_TELEMETRY_KV=1 cargo run --release --features tools,telemetry --bin bench_voronoi -- 500k --no-preprocess
 
 # Inter-commit perf comparisons
 ./scripts/bench_build.sh --chain 6
@@ -48,7 +51,8 @@ VORONOI_MESH_TIMING_KV=1 cargo run --release --features tools,timing --bin bench
 - `VORONOI_MESH_BIN_COUNT=<n>`: override the sharded bin target (defaults to 2x threads through
   8 workers and a 96-bin coarse layout at 9+; severely imbalanced default layouts may refine
   to 216 bins).
-- `VORONOI_MESH_TIMING_KV=1`: emit machine-readable timing lines (`timing` feature).
+- `VORONOI_MESH_TIMING_KV=1`: emit machine-readable coarse phase timing (`timing` feature).
+- `VORONOI_MESH_TELEMETRY_KV=1`: emit machine-readable algorithmic work counters (`telemetry` feature).
 
 The authoritative inventory, including diagnostic/oracle knobs and mutation policy, is
 `docs/environment-knobs.md`.
@@ -112,7 +116,8 @@ src/
 │   ├── cell_build/                # Single-cell construction loop
 │   └── topo2d/                    # Gnomonic/topological clipping
 ├── live_dedup/                    # Sharded dedup + assembly
-├── timing/                        # Real/zero-sized timing backends
+├── timing/                        # Coarse whole-pipeline wall timing
+├── telemetry/                     # Optional algorithmic work counters
 ├── cube_grid/                     # Spatial index + query stack
 │   ├── build.rs                   # Grid construction
 │   ├── dense.rs                   # Dense-cell detection and feedback policy
@@ -141,7 +146,8 @@ current consumer and contract tests. `src/generated/sort_nets.rs` must be change
 These are repository instrumentation, benchmark, comparison, or probe hooks and are not
 semver-covered public features:
 
-- `timing`: detailed timing instrumentation.
+- `timing`: coarse whole-pipeline wall-clock instrumentation.
+- `telemetry`: hot-path algorithmic work counters for diagnostic runs.
 - `profiling`: helpers for profiling runs (e.g. inline control).
 - `microbench`: internal microbench harnesses.
 - `manual_probes`: wholly manual/ignored integration-test targets.

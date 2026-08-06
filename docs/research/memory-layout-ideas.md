@@ -702,7 +702,7 @@ that the shard-to-global destination sample separates cleanly (about 443 versus 
 Keep site-specific sampling and boundary-specific choices. The shared classifier now only adds an
 absolute one-element floor so unit-stride domains below 100 entries remain correlated. Grid rebuild
 telemetry retains the selected final sample instead of combining resolutions, and the grid decision
-is included in `TIMING_KV`. This minimal form reduced 1M Linux instructions by 0.162% on Fibonacci
+is included in `TELEMETRY_KV`. This minimal form reduced 1M Linux instructions by 0.162% on Fibonacci
 and 0.147% on uniform, and branches by 0.382%/0.339%, in all three confirmation pairs. The quiet-Mac
 2M multithreaded guardrail was neutral: Fibonacci medians were 641.4ms/641.0ms and uniform's paired
 ratio was 0.9972 with a 0.9885--1.0059 interval (12/20 favorable).

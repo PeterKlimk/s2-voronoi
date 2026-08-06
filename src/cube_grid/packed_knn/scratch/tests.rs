@@ -1,4 +1,4 @@
-// PackedKnnTimings is only a unit struct without the `timing` feature, and
+// PackedKnnTelemetry is only a unit struct without the `telemetry` feature, and
 // the qi loops index several parallel arrays.
 #![allow(clippy::default_constructed_unit_structs, clippy::needless_range_loop)]
 use super::*;
@@ -83,7 +83,7 @@ fn out_of_range_group_uses_slow_path_after_valid_prepare() {
     let slot_gen_map: Vec<u32> = (0..points.len() as u32).collect();
     let layout = PackedSlotLayout::new(&slot_gen_map, LOCAL_SHIFT, LOCAL_MASK);
     let mut scratch = PackedKnnCellScratch::new();
-    let mut timings = PackedKnnTimings::default();
+    let mut telemetry = PackedKnnTelemetry::default();
 
     let valid = PackedGroupInput::new(
         cell,
@@ -94,13 +94,13 @@ fn out_of_range_group_uses_slow_path_after_valid_prepare() {
         layout,
     );
     assert!(matches!(
-        scratch.prepare_group_directed(&grid, valid, &mut timings),
+        scratch.prepare_group_directed(&grid, valid, &mut telemetry),
         PreparedPackedGroupStatus::Ready(_)
     ));
 
     let invalid = PackedGroupInput::new(6 * grid.res * grid.res, QUERY_BIN, 0, 0, 0, layout);
     assert!(matches!(
-        scratch.prepare_group_directed(&grid, invalid, &mut timings),
+        scratch.prepare_group_directed(&grid, invalid, &mut telemetry),
         PreparedPackedGroupStatus::SlowPath
     ));
 }
@@ -124,10 +124,10 @@ fn aggregate_candidate_work_uses_slow_path() {
         layout,
     );
     let mut scratch = PackedKnnCellScratch::new();
-    let mut timings = PackedKnnTimings::default();
+    let mut telemetry = PackedKnnTelemetry::default();
 
     assert!(matches!(
-        scratch.prepare_group_directed(&grid, group, &mut timings),
+        scratch.prepare_group_directed(&grid, group, &mut telemetry),
         PreparedPackedGroupStatus::SlowPath
     ));
 }
@@ -160,9 +160,9 @@ fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
             layout,
         );
         let mut scratch = PackedKnnCellScratch::new();
-        let mut timings = PackedKnnTimings::default();
+        let mut telemetry = PackedKnnTelemetry::default();
         let PreparedPackedGroupStatus::Ready(mut prepared) =
-            scratch.prepare_group_directed(&grid, group, &mut timings)
+            scratch.prepare_group_directed(&grid, group, &mut telemetry)
         else {
             panic!("packed prepare unexpectedly fell back to slow path");
         };
@@ -182,7 +182,7 @@ fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
                     PackedStage::Tail => 8,
                 };
                 let mut out = vec![u32::MAX; k];
-                let chunk = prepared.next_chunk(qi, stage, k, &mut out, &mut timings);
+                let chunk = prepared.next_chunk(qi, stage, k, &mut out);
                 match chunk {
                     Some(chunk) => {
                         assert!(
@@ -202,7 +202,7 @@ fn packed_chunks_match_safe_bruteforce_order_and_bounds() {
                         }
                     }
                     None if stage == PackedStage::Chunk0 && prepared.tail_possible(qi) => {
-                        prepared.ensure_tail_directed_for(qi, &grid, &mut timings);
+                        prepared.ensure_tail_directed_for(qi, &grid, &mut telemetry);
                         stage = PackedStage::Tail;
                     }
                     None => break,
@@ -258,9 +258,9 @@ fn directed_center_chunk_boundaries_match_safe_bruteforce() {
             layout,
         );
         let mut scratch = PackedKnnCellScratch::new();
-        let mut timings = PackedKnnTimings::default();
+        let mut telemetry = PackedKnnTelemetry::default();
         let PreparedPackedGroupStatus::Ready(mut prepared) =
-            scratch.prepare_group_directed(&grid, group, &mut timings)
+            scratch.prepare_group_directed(&grid, group, &mut telemetry)
         else {
             panic!("packed prepare unexpectedly fell back for n={n}");
         };
@@ -280,7 +280,7 @@ fn directed_center_chunk_boundaries_match_safe_bruteforce() {
                     PackedStage::Tail => 8,
                 };
                 let mut out = vec![u32::MAX; k];
-                match prepared.next_chunk(qi, stage, k, &mut out, &mut timings) {
+                match prepared.next_chunk(qi, stage, k, &mut out) {
                     Some(chunk) => {
                         assert!(
                             chunk.unseen_bound <= prev_bound + EPS,
@@ -290,7 +290,7 @@ fn directed_center_chunk_boundaries_match_safe_bruteforce() {
                         emitted.extend_from_slice(&out[..chunk.n]);
                     }
                     None if stage == PackedStage::Chunk0 && prepared.tail_possible(qi) => {
-                        prepared.ensure_tail_directed_for(qi, &grid, &mut timings);
+                        prepared.ensure_tail_directed_for(qi, &grid, &mut telemetry);
                         stage = PackedStage::Tail;
                     }
                     None => break,

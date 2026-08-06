@@ -1,4 +1,4 @@
-// PackedKnnTimings is only a unit struct without the `timing` feature, and
+// PackedKnnTelemetry is only a unit struct without the `telemetry` feature, and
 // the loop indices address parallel per-cell arrays.
 #![allow(clippy::default_constructed_unit_structs, clippy::needless_range_loop)]
 //! Contract tests for the neighbor-source layer, in isolation from the
@@ -28,7 +28,7 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use super::super::packed_knn::{
-    PackedGroupInput, PackedKnnCellScratch, PackedKnnTimings, PackedQuery,
+    PackedGroupInput, PackedKnnCellScratch, PackedKnnTelemetry, PackedQuery,
     PreparedPackedGroupStatus,
 };
 use super::super::projection::{face_uv_to_3d, st_to_uv};
@@ -253,9 +253,9 @@ impl Harness {
             );
             {
                 let mut packed_scratch = PackedKnnCellScratch::new();
-                let mut timings = PackedKnnTimings::default();
+                let mut telemetry = PackedKnnTelemetry::default();
                 let PreparedPackedGroupStatus::Ready(mut prepared) =
-                    packed_scratch.prepare_group_directed(&self.grid, group, &mut timings)
+                    packed_scratch.prepare_group_directed(&self.grid, group, &mut telemetry)
                 else {
                     // SlowPath groups are exercised by the cursor-only pass.
                     continue;
@@ -269,7 +269,7 @@ impl Harness {
                     let mut scratch = self.grid.make_scratch();
                     let packed = PackedQuery::new(
                         &mut prepared,
-                        &mut timings,
+                        &mut telemetry,
                         qi,
                         PackedNeighborPolicy::for_point_count(n),
                     );

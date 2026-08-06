@@ -1,10 +1,8 @@
 mod failure;
 mod frontier;
+mod telemetry_detail;
 #[cfg(test)]
 mod tests;
-mod timing_detail;
-
-use std::time::Duration;
 
 use crate::cube_grid::{
     DirectedNeighborBatchSource, DirectedNeighborFrontier, DirectedNeighborStream, PackedQuery,
@@ -17,7 +15,7 @@ use crate::policy::PackedNeighborPolicy;
 use crate::live_dedup::{CellBuildError, CellFailure, CellOutputBuffer};
 use failure::{classify_terminal_failure, unexpected_failure_error};
 use frontier::{complete_exact_bound, maybe_terminate_or_advance_frontier, probe_frontier};
-use timing_detail::{BuildTimingDetail, CellTimingDetail};
+use telemetry_detail::{BuildTelemetryDetail, CellTelemetryDetail};
 
 use glam::Vec3;
 
@@ -140,20 +138,9 @@ pub(crate) struct CellBuildRequest<'a, 'm, 'p, 'g, 's> {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CellBuildStats {
-    knn_query: Duration,
-    clipping: Duration,
-    certification: Duration,
     neighbors_processed: usize,
     final_edges: usize,
-    directional_shadow_checks: usize,
-    directional_shadow_candidate_tests: usize,
-    directional_shadow_hits: usize,
-    directional_shadow_saved: usize,
-    directional_support_candidate_tests: usize,
-    directional_support_hits: usize,
-    directional_support_saved: usize,
-    directional_support_false_positive_hits: usize,
-    timing_detail: CellTimingDetail,
+    telemetry_detail: CellTelemetryDetail,
     fallback_projection: usize,
     fallback_polygon_cap: usize,
     fallback_all_constraints: usize,
@@ -164,7 +151,7 @@ pub(crate) struct CellBuildStats {
     did_packed: bool,
     packed_tail_used: bool,
     packed_safe_exhausted: bool,
-    knn_stage: crate::timing::KnnCellStage,
+    knn_stage: crate::telemetry::KnnCellStage,
     #[cfg(test)]
     termination_checkpoint: Option<TerminationCheckpoint>,
 }
@@ -180,41 +167,28 @@ enum TerminationCheckpoint {
 
 impl CellBuildStats {
     #[inline]
-    pub(crate) fn record_into(&self, cell_sub: &mut crate::timing::CellSubAccum) {
-        cell_sub.add_knn(self.knn_query);
-        cell_sub.add_clip(self.clipping);
-        cell_sub.add_cert(self.certification);
-        cell_sub.add_directional_shadow(
-            self.directional_shadow_checks,
-            self.directional_shadow_candidate_tests,
-            self.directional_shadow_hits,
-            self.directional_shadow_saved,
-            self.directional_support_candidate_tests,
-            self.directional_support_hits,
-            self.directional_support_saved,
-            self.directional_support_false_positive_hits,
-        );
-        cell_sub.add_fallbacks(
+    pub(crate) fn record_into(&self, cell_telemetry: &mut crate::telemetry::CellTelemetryAccum) {
+        cell_telemetry.add_fallbacks(
             self.fallback_projection,
             self.fallback_polygon_cap,
             self.fallback_all_constraints,
         );
-        self.timing_detail
-            .record_into(cell_sub, self.neighbors_processed);
+        self.telemetry_detail
+            .record_into(cell_telemetry, self.neighbors_processed);
 
         let stage = if self.used_knn {
             self.knn_stage
         } else if self.did_packed {
             if self.packed_tail_used {
-                crate::timing::KnnCellStage::PackedTail
+                crate::telemetry::KnnCellStage::PackedTail
             } else {
-                crate::timing::KnnCellStage::PackedChunk0
+                crate::telemetry::KnnCellStage::PackedChunk0
             }
         } else {
             self.knn_stage
         };
 
-        cell_sub.add_cell_stage(
+        cell_telemetry.add_cell_stage(
             stage,
             self.knn_exhausted,
             self.neighbors_processed,
@@ -268,28 +242,17 @@ impl BuildTrace {
     }
 }
 
-/// Counters and timings accumulated across the build phases.
+/// Algorithmic counters accumulated across the build phases.
 pub(super) struct BuildCounters {
     pub(super) neighbors_processed: usize,
     edgecheck_seed_clips: usize,
-    knn_query_time: Duration,
-    clipping_time: Duration,
-    certification_time: Duration,
     pub(super) used_knn: bool,
-    knn_stage: crate::timing::KnnCellStage,
+    knn_stage: crate::telemetry::KnnCellStage,
     pub(super) knn_exhausted: bool,
     pub(super) did_packed: bool,
     packed_tail_used: bool,
     packed_safe_exhausted: bool,
-    directional_shadow_checks: usize,
-    directional_shadow_candidate_tests: usize,
-    directional_shadow_hits: usize,
-    directional_shadow_saved: usize,
-    directional_support_candidate_tests: usize,
-    directional_support_hits: usize,
-    directional_support_saved: usize,
-    directional_support_false_positive_hits: usize,
-    timing_detail: BuildTimingDetail,
+    telemetry_detail: BuildTelemetryDetail,
     fallback_projection: usize,
     fallback_polygon_cap: usize,
     fallback_all_constraints: usize,
@@ -303,24 +266,13 @@ impl BuildCounters {
         Self {
             neighbors_processed: 0,
             edgecheck_seed_clips: 0,
-            knn_query_time: Duration::ZERO,
-            clipping_time: Duration::ZERO,
-            certification_time: Duration::ZERO,
             used_knn: false,
-            knn_stage: crate::timing::KnnCellStage::ShellExpand,
+            knn_stage: crate::telemetry::KnnCellStage::ShellExpand,
             knn_exhausted: false,
             did_packed: false,
             packed_tail_used: false,
             packed_safe_exhausted: false,
-            directional_shadow_checks: 0,
-            directional_shadow_candidate_tests: 0,
-            directional_shadow_hits: 0,
-            directional_shadow_saved: 0,
-            directional_support_candidate_tests: 0,
-            directional_support_hits: 0,
-            directional_support_saved: 0,
-            directional_support_false_positive_hits: 0,
-            timing_detail: BuildTimingDetail::new(),
+            telemetry_detail: BuildTelemetryDetail::new(),
             fallback_projection: 0,
             fallback_polygon_cap: 0,
             fallback_all_constraints: 0,
@@ -363,7 +315,7 @@ fn recover_unbounded_after_exhaustion(
     generator: Vec3,
     counters: &mut BuildCounters,
 ) -> bool {
-    counters.timing_detail.invalidate_progress_tail();
+    counters.telemetry_detail.invalidate_progress_tail();
     let pos_slots = grid.point_pos_slots();
     let mut seed_slots = Vec::new();
     let mut seeded = false;
@@ -407,60 +359,6 @@ fn recover_unbounded_after_exhaustion(
             .is_ok()
 }
 
-#[cfg(feature = "timing")]
-fn audit_directional_batch_skip(
-    builder: &mut crate::knn_clipping::topo2d::Topo2DBuilder,
-    remaining_slots: &[u32],
-    unseen_bound_after_batch: f32,
-    pos_slots: &[crate::cube_grid::SlotPoint],
-    counters: &mut BuildCounters,
-) {
-    if counters.timing_detail.directional_shadow_terminated()
-        || remaining_slots.is_empty()
-        || !builder.is_bounded()
-    {
-        return;
-    }
-    counters.directional_shadow_checks += 1;
-
-    // Conservative lower-bound prototype: if the existing scalar certificate
-    // would pass after this exact batch, and every remaining known candidate in
-    // the batch is all-inside against the current polygon, a direction-aware
-    // known-batch certificate could skip those candidates and terminate here.
-    if !builder.can_terminate(unseen_bound_after_batch) {
-        return;
-    }
-
-    let mut support_all_unchanged = true;
-    for &slot in remaining_slots {
-        counters.directional_support_candidate_tests += 1;
-        let neighbor = pos_slots[slot as usize].pos;
-        if !builder.candidate_would_be_unchanged_support(neighbor) {
-            support_all_unchanged = false;
-            break;
-        }
-    }
-
-    for &slot in remaining_slots {
-        counters.directional_shadow_candidate_tests += 1;
-        let neighbor = pos_slots[slot as usize].pos;
-        if !builder.candidate_would_be_unchanged(neighbor) {
-            if support_all_unchanged {
-                counters.directional_support_false_positive_hits += 1;
-            }
-            return;
-        }
-    }
-
-    counters.directional_shadow_hits += 1;
-    counters.directional_shadow_saved += remaining_slots.len();
-    if support_all_unchanged {
-        counters.directional_support_hits += 1;
-        counters.directional_support_saved += remaining_slots.len();
-    }
-    counters.timing_detail.mark_directional_shadow_terminated();
-}
-
 /// The disjoint `CellBuildContext` borrows the stream-consumption phase needs
 /// (the stream itself holds the context's scratch for its whole life, so the
 /// remaining fields are threaded explicitly).
@@ -488,7 +386,6 @@ fn clip_seed_neighbors(
     if incoming_checks.is_empty() {
         return;
     }
-    let t_clip = crate::timing::Timer::start();
     for check in incoming_checks {
         let neighbor_slot = check.neighbor_slot;
         let neighbor_point = pos_slots[neighbor_slot as usize];
@@ -521,7 +418,7 @@ fn clip_seed_neighbors(
         // tail. Treat each accepted seed as progress; the subsequent stream
         // tail remains exact.
         counters
-            .timing_detail
+            .telemetry_detail
             .record_progress(counters.neighbors_processed);
         if fallback_rejected {
             break;
@@ -535,7 +432,6 @@ fn clip_seed_neighbors(
             &mut trace.fallback_trigger,
         );
     }
-    counters.clipping_time += t_clip.elapsed();
     counters.edgecheck_seed_clips = counters.neighbors_processed;
 }
 
@@ -555,7 +451,6 @@ fn clip_batch(
     trace: &mut BuildTrace,
     counters: &mut BuildCounters,
 ) {
-    let t_clip = crate::timing::Timer::start();
     match batch.source {
         DirectedNeighborBatchSource::ShellExpand => clip_batch_source::<true>(
             phase,
@@ -580,7 +475,6 @@ fn clip_batch(
             )
         }
     }
-    counters.clipping_time += t_clip.elapsed();
 }
 
 #[inline(always)]
@@ -667,7 +561,7 @@ fn clip_batch_source<const SHELL: bool>(
         counters.neighbors_processed += 1;
         if clip_result == crate::knn_clipping::topo2d::types::ClipResult::Changed {
             counters
-                .timing_detail
+                .telemetry_detail
                 .record_progress(counters.neighbors_processed);
         }
         if fallback_rejected {
@@ -725,20 +619,12 @@ fn clip_batch_source<const SHELL: bool>(
                 counters.terminated = true;
                 break;
             }
-            #[cfg(feature = "timing")]
-            audit_directional_batch_skip(
-                phase.builder,
-                &packed_chunk[pos + 1..batch.n],
-                batch.unseen_bound,
-                pos_slots,
-                counters,
-            );
         }
     }
     counters
-        .timing_detail
+        .telemetry_detail
         .record_packed_batch_usage(batch.source, batch.n, prefix_consumed);
-    counters.timing_detail.record_shell_batch::<SHELL>(
+    counters.telemetry_detail.record_shell_batch::<SHELL>(
         batch.n,
         prefix_consumed,
         counters.terminated,
@@ -764,7 +650,6 @@ fn consume_stream(
             phase.packed_chunk,
             &mut counters.used_knn,
             &mut counters.knn_stage,
-            &mut counters.knn_query_time,
         );
 
         match frontier {
@@ -787,7 +672,6 @@ fn consume_stream(
                         stream,
                         phase.packed_chunk,
                         phase.builder,
-                        pos_slots,
                         counters,
                     );
                 }
@@ -826,7 +710,6 @@ fn finish_cell(
             counters.knn_exhausted,
         ) {
             if failure == CellFailure::UnboundedAfterExhaustion {
-                let t_cert = crate::timing::Timer::start();
                 let recovered = recover_unbounded_after_exhaustion(
                     ctx,
                     grid,
@@ -836,10 +719,8 @@ fn finish_cell(
                 );
                 if recovered {
                     counters.fallback_all_constraints += 1;
-                    counters.certification_time += t_cert.elapsed();
                     return Ok(());
                 }
-                counters.certification_time += t_cert.elapsed();
             }
             return Err(CellBuildError {
                 generator_idx,
@@ -857,8 +738,6 @@ fn finish_cell(
             ctx.builder.failure(),
         ));
     }
-
-    let t_cert = crate::timing::Timer::start();
     if let Err(failure) = ctx.builder.to_vertex_data_full(&mut ctx.output_buffer) {
         return Err(unexpected_failure_error(
             ctx,
@@ -870,7 +749,6 @@ fn finish_cell(
             Some(failure),
         ));
     }
-    counters.certification_time += t_cert.elapsed();
     Ok(())
 }
 
@@ -944,20 +822,11 @@ pub(crate) fn build_cell_into<'a, 'm, 'p, 'g, 's>(
     )?;
 
     Ok(CellBuildStats {
-        knn_query: counters.knn_query_time,
-        clipping: counters.clipping_time,
-        certification: counters.certification_time,
         neighbors_processed: counters.neighbors_processed,
         final_edges: ctx.output_buffer.vertices.len(),
-        directional_shadow_checks: counters.directional_shadow_checks,
-        directional_shadow_candidate_tests: counters.directional_shadow_candidate_tests,
-        directional_shadow_hits: counters.directional_shadow_hits,
-        directional_shadow_saved: counters.directional_shadow_saved,
-        directional_support_candidate_tests: counters.directional_support_candidate_tests,
-        directional_support_hits: counters.directional_support_hits,
-        directional_support_saved: counters.directional_support_saved,
-        directional_support_false_positive_hits: counters.directional_support_false_positive_hits,
-        timing_detail: counters.timing_detail.finish(counters.neighbors_processed),
+        telemetry_detail: counters
+            .telemetry_detail
+            .finish(counters.neighbors_processed),
         fallback_projection: counters.fallback_projection,
         fallback_polygon_cap: counters.fallback_polygon_cap,
         fallback_all_constraints: counters.fallback_all_constraints,

@@ -2,7 +2,6 @@ use super::helpers::{make_desc_key, outside_max_dot_xyz, security_planes_3x3_int
 use super::*;
 use crate::fp;
 use crate::policy::DENSE_BAND_RADIUS_INFLATION;
-use crate::timing::LapTimer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DirectedRangeSummary {
@@ -194,9 +193,9 @@ impl PackedKnnCellScratch {
         &'a mut self,
         grid: &CubeMapGrid,
         group: PackedGroupInput<'g>,
-        timings: &mut PackedKnnTimings,
+        telemetry: &mut PackedKnnTelemetry,
     ) -> PreparedPackedGroupStatus<'a, 'g> {
-        timings.clear();
+        telemetry.clear();
 
         let cell = group.cell();
         let num_cells = 6 * grid.res * grid.res;
@@ -214,18 +213,14 @@ impl PackedKnnCellScratch {
             self.tail_ready_gen.fill(0);
         }
         self.next_group_gen = group_gen;
-
-        let mut t = LapTimer::start();
         let Some(DirectedRangeSummary {
             center_soa_start,
             center_soa_end,
             ring_candidates_eligible,
         }) = self.collect_directed_ranges(grid, group)
         else {
-            timings.add_setup(t.lap());
             return PreparedPackedGroupStatus::SlowPath;
         };
-        timings.add_setup(t.lap());
 
         let ring2 = grid.cell_ring2(cell);
         let interior_planes = security_planes_3x3_interior(cell, grid);
@@ -236,7 +231,6 @@ impl PackedKnnCellScratch {
         let qx_src = &grid.cell_points_x[center_soa_start..center_soa_end];
         let qy_src = &grid.cell_points_y[center_soa_start..center_soa_end];
         let qz_src = &grid.cell_points_z[center_soa_start..center_soa_end];
-        timings.add_query_cache(t.lap());
 
         self.security_thresholds.clear();
         self.security_thresholds.reserve(num_queries);
@@ -262,7 +256,6 @@ impl PackedKnnCellScratch {
                 );
             }
         }
-        timings.add_security_thresholds(t.lap());
 
         self.thresholds.resize(num_queries, 0.0);
 
@@ -296,7 +289,6 @@ impl PackedKnnCellScratch {
         if self.tail_ready_gen.len() < num_queries {
             self.tail_ready_gen.resize(num_queries, 0);
         }
-        timings.add_select_prep(t.lap());
 
         // === Threshold selection (before the center pass: the count model
         // uses only the security bound and candidate counts, so the center
@@ -327,7 +319,6 @@ impl PackedKnnCellScratch {
             self.thresholds[qi] = t_count;
             self.tail_possible[qi] = t_count > security;
         }
-        timings.add_ring_thresholds(t.lap());
 
         // === Center cell pass (directed triangular).
         let PackedCellRange {
@@ -592,7 +583,6 @@ impl PackedKnnCellScratch {
                 self.tail_possible[qi] = true;
             }
         }
-        timings.add_center_pass(t.lap());
 
         // === Ring pass: collect "hi" candidates into chunk0.
         //
@@ -754,21 +744,21 @@ impl PackedKnnCellScratch {
                 }
             }
         }
-        timings.add_ring_pass(t.lap());
         let chunk0_candidates = chunk0_keys.iter().map(Vec::len).sum::<usize>();
         let keys = chunk0_keys.iter().map(Vec::len).sum::<usize>()
             + tail_keys.iter().map(Vec::len).sum::<usize>();
         let capacity = chunk0_keys.iter().map(Vec::capacity).sum::<usize>()
             + tail_keys.iter().map(Vec::capacity).sum::<usize>();
-        timings.observe_key_storage(keys, capacity);
-        timings.add_chunk0_keys(chunk0_candidates);
-        timings.add_tail_possible_queries(
+        telemetry.observe_key_storage(keys, capacity);
+        telemetry.add_chunk0_keys(chunk0_candidates);
+        telemetry.add_tail_possible_queries(
             self.tail_possible[..num_queries]
                 .iter()
                 .filter(|&&possible| possible)
                 .count(),
         );
-        timings.add_center_tail_keys(self.center_tail_counts[..num_queries].iter().sum::<usize>());
+        telemetry
+            .add_center_tail_keys(self.center_tail_counts[..num_queries].iter().sum::<usize>());
 
         PreparedPackedGroupStatus::Ready(PreparedPackedGroup {
             scratch: self,

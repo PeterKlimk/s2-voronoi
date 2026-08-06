@@ -83,8 +83,9 @@ Usage: bench_run.sh [opts] [-- bench_voronoi_args...]
   -c, --cooldown N    Seconds between rounds (default: 5)
   -p, --pin CORE      Pin to CPU core (default: 0); --no-pin to disable
   -1, --single        Single-threaded (default); --multi to allow rayon
-  -m, --metric M      total|timing_total|preprocess|knn_build|cell_construction|
-                      dedup|edge_reconcile|assemble (default: total)
+  -m, --metric M      total|timing_total|input_validation|grid_build|preprocess|
+                      cell_construction|shard_assembly|edge_reconcile|postprocess|
+                      output_remap|output_validation (default: total)
       --no-preprocess Pass --no-preprocess (default); --preprocess to disable
       --              Forward remaining args to bench_voronoi
 EOF
@@ -207,7 +208,7 @@ run_cell() { # size dist seed
         for offset in $(seq 0 $((NUM_VERSIONS - 1))); do
             local i=$(( (start + offset) % NUM_VERSIONS )) idx label out ms
             idx="${INDICES[$i]}"; label="${LABELS[$i]}"
-            out=$($TASKSET "$TMP_DIR/bench_$idx" "${bench_args[@]}" 2>&1)
+            out=$(VORONOI_MESH_TIMING_KV=1 $TASKSET "$TMP_DIR/bench_$idx" "${bench_args[@]}" 2>&1)
             if ! ms="$(extract_metric_ms "$out" "$METRIC")"; then
                 echo "  $label: FAILED (metric '$METRIC' not found)"; continue
             fi

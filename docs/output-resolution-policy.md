@@ -412,10 +412,10 @@ Reconciliation and Hull3d rebuilding pay only for an exact scan of their changed
 construction, link checks, rollback state, and cold transaction telemetry stay off the
 no-candidate path.
 
-When built with `timing`, `TIMING_KV` exposes whether discovery used the certified sparse hint or
+When built with `telemetry`, `TELEMETRY_KV` exposes whether discovery used the certified sparse hint or
 the exhaustive drift fallback, reconciliation/repair cells scanned locally, and hint-cell,
 candidate, and detected-edge counts. These fields are campaign diagnostics rather than public
-resolution policy. The default non-timing implementation compiles the setter to an inlined no-op.
+resolution policy. The default non-telemetry implementation compiles the setter to an inlined no-op.
 
 ## Reporting and consumer contract
 

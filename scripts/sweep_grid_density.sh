@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Sweep the query-grid target density across input sizes to fit the density
-# curve. Emits TIMING_KV lines (note neighbors_total /
+# curve. Emits TELEMETRY_KV lines (note neighbors_total /
 # neighbors_max / grid_res / grid_max_occ for the explanatory model).
 #
 # Run on the reference machine (Ryzen 3600, target-cpu=native) for numbers
@@ -16,14 +16,14 @@ REPS="${REPS:-3}"
 BIN=target/release/bench_voronoi
 
 RUSTFLAGS="${RUSTFLAGS:--C target-cpu=native}" \
-    cargo build --release --features tools,timing --bin bench_voronoi >/dev/null
+    cargo build --release --features tools,telemetry --bin bench_voronoi >/dev/null
 
 for rep in $(seq 1 "$REPS"); do
     for d in $DENSITIES; do
         for s in $SIZES; do
-            RAYON_NUM_THREADS=1 VORONOI_MESH_TIMING_KV=1 VORONOI_MESH_GRID_DENSITY="$d" \
+            RAYON_NUM_THREADS=1 VORONOI_MESH_TELEMETRY_KV=1 VORONOI_MESH_GRID_DENSITY="$d" \
                 "$BIN" "$s" --no-preprocess 2>&1 |
-                grep TIMING_KV | sed "s/^/density=$d rep=$rep /"
+                grep TELEMETRY_KV | sed "s/^/density=$d rep=$rep /"
         done
     done
 done

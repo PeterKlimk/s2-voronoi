@@ -145,7 +145,7 @@ impl ShardOutput {
 pub(crate) struct ShardState {
     pub(crate) dedup: ShardDedup,
     pub(crate) output: ShardOutput,
-    #[cfg(feature = "timing")]
+    #[cfg(feature = "telemetry")]
     pub(super) triplet_keys: u64,
 }
 
@@ -154,7 +154,7 @@ impl ShardState {
         Self {
             dedup: ShardDedup::new(num_local_generators),
             output: ShardOutput::new(num_local_generators),
-            #[cfg(feature = "timing")]
+            #[cfg(feature = "telemetry")]
             triplet_keys: 0,
         }
     }
@@ -162,7 +162,7 @@ impl ShardState {
     pub(super) fn into_final(self) -> ShardFinal {
         ShardFinal {
             output: self.output,
-            #[cfg(feature = "timing")]
+            #[cfg(feature = "telemetry")]
             triplet_keys: self.triplet_keys,
         }
         // self.dedup dropped here automatically
@@ -172,6 +172,6 @@ impl ShardState {
 /// Shard state after construction, with dedup dropped.
 pub(super) struct ShardFinal {
     pub(crate) output: ShardOutput,
-    #[cfg(feature = "timing")]
+    #[cfg(feature = "telemetry")]
     pub(super) triplet_keys: u64,
 }

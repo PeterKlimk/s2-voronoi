@@ -7,7 +7,7 @@ use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 
 use crate::cube_grid::packed_knn::{
-    PackedGroupInput, PackedKnnCellScratch, PackedKnnTimings, PreparedPackedGroup,
+    PackedGroupInput, PackedKnnCellScratch, PackedKnnTelemetry, PreparedPackedGroup,
     PreparedPackedGroupStatus,
 };
 use crate::cube_grid::{CubeMapGrid, PackedQuery};
@@ -18,6 +18,7 @@ use crate::live_dedup::{
 };
 use crate::packed_layout::PackedSlotLayout;
 use crate::policy::PackedNeighborPolicy;
+use crate::telemetry::CellTelemetryAccum;
 
 pub(super) struct GridContext<'a> {
     pub(super) points: &'a [Vec3],
@@ -210,18 +211,15 @@ pub(crate) fn build_cells_sharded_live_dedup(
             .then_with(|| a.cmp(&b))
     });
 
-    let per_bin: Result<Vec<(usize, ShardState, crate::timing::CellSubAccum)>, BuildCellsError> =
+    let per_bin: Result<Vec<(usize, ShardState, CellTelemetryAccum)>, BuildCellsError> =
         maybe_par_bridge!(bin_order)
             .map(|bin_usize| {
-                use crate::timing::CellSubAccum;
-
                 let bin = BinId::from_usize(bin_usize);
                 let my_generators = &assignment.bin_generators[bin_usize];
                 let bin_cells = assignment.bin_cells(bin_usize);
                 let mut shard = ShardState::new(my_generators.len());
 
-                let mut sub_accum = CellSubAccum::new();
-                let bin_timer = crate::timing::Timer::start();
+                let mut telemetry_accum = CellTelemetryAccum::new();
                 #[cfg(feature = "parallel")]
                 let mut task_ctx = if reuse_build_contexts {
                     let retained = if let Some(workspace) = workspace {
@@ -278,10 +276,10 @@ pub(crate) fn build_cells_sharded_live_dedup(
                 shard.output.deferred_slots.reserve(my_generators.len());
 
                 #[cfg_attr(
-                    not(feature = "timing"),
+                    not(feature = "telemetry"),
                     allow(clippy::default_constructed_unit_structs)
                 )]
-                let mut packed_timings = PackedKnnTimings::default();
+                let mut packed_telemetry = PackedKnnTelemetry::default();
 
                 #[cfg(debug_assertions)]
                 {
@@ -323,18 +321,16 @@ pub(crate) fn build_cells_sharded_live_dedup(
                             query_local_start,
                             packed_layout,
                         );
-
-                        #[cfg(not(feature = "timing"))]
-                        let t_packed = crate::timing::Timer::start();
-                        let prepared =
-                            packed_scratch.prepare_group_directed(grid, group, &mut packed_timings);
-                        #[cfg(not(feature = "timing"))]
-                        let packed_elapsed = t_packed.elapsed();
+                        let prepared = packed_scratch.prepare_group_directed(
+                            grid,
+                            group,
+                            &mut packed_telemetry,
+                        );
 
                         match prepared {
                             PreparedPackedGroupStatus::Ready(mut prepared) => {
                                 emit_generator_group(
-                                    &mut sub_accum,
+                                    &mut telemetry_accum,
                                     build_ctx,
                                     edge_scratch,
                                     &mut shard,
@@ -343,14 +339,14 @@ pub(crate) fn build_cells_sharded_live_dedup(
                                     &my_generators[group_start..cursor],
                                     group_start,
                                     query_slot_start,
-                                    Some((&mut prepared, &mut packed_timings, packed_policy)),
+                                    Some((&mut prepared, &mut packed_telemetry, packed_policy)),
                                 )?;
-                                #[cfg(feature = "timing")]
-                                prepared.record_tail_usage(&mut packed_timings);
+                                #[cfg(feature = "telemetry")]
+                                prepared.record_tail_usage(&mut packed_telemetry);
                             }
                             PreparedPackedGroupStatus::SlowPath => {
                                 emit_generator_group(
-                                    &mut sub_accum,
+                                    &mut telemetry_accum,
                                     build_ctx,
                                     edge_scratch,
                                     &mut shard,
@@ -364,16 +360,10 @@ pub(crate) fn build_cells_sharded_live_dedup(
                             }
                         }
 
-                        #[cfg(feature = "timing")]
-                        {
-                            sub_accum.add_packed_knn(packed_timings.total());
-                            sub_accum.add_packed_knn_breakdown(&packed_timings);
-                        }
-                        #[cfg(not(feature = "timing"))]
-                        sub_accum.add_packed_knn(packed_elapsed);
+                        telemetry_accum.add_packed_telemetry(&packed_telemetry);
                     } else {
                         emit_generator_group(
-                            &mut sub_accum,
+                            &mut telemetry_accum,
                             build_ctx,
                             edge_scratch,
                             &mut shard,
@@ -412,15 +402,14 @@ pub(crate) fn build_cells_sharded_live_dedup(
                         .push((reusable_context_key, task_ctx));
                 }
 
-                sub_accum.record_bin_task(bin_timer.elapsed());
-                Ok((bin_usize, shard, sub_accum))
+                Ok((bin_usize, shard, telemetry_accum))
             })
             .collect();
-    let mut per_bin: Vec<(usize, ShardState, crate::timing::CellSubAccum)> = per_bin?;
+    let mut per_bin: Vec<(usize, ShardState, CellTelemetryAccum)> = per_bin?;
     per_bin.sort_unstable_by_key(|(bin, _, _)| *bin);
 
     let mut shards: Vec<ShardState> = Vec::with_capacity(num_bins);
-    let mut merged_sub = crate::timing::CellSubAccum::new();
+    let mut merged_sub = CellTelemetryAccum::new();
     for (_, shard, sub) in per_bin {
         merged_sub.merge(&sub);
         shards.push(shard);
@@ -439,7 +428,7 @@ pub(crate) fn build_cells_sharded_live_dedup(
 /// lives here once.
 #[allow(clippy::too_many_arguments)]
 fn emit_generator_group<'c>(
-    sub_accum: &mut crate::timing::CellSubAccum,
+    telemetry_accum: &mut CellTelemetryAccum,
     build_ctx: &mut CellBuildContext,
     edge_scratch: &mut EdgeScratch,
     shard: &mut ShardState,
@@ -450,7 +439,7 @@ fn emit_generator_group<'c>(
     query_slot_start: u32,
     mut packed: Option<(
         &mut PreparedPackedGroup<'_, 'c>,
-        &mut PackedKnnTimings,
+        &mut PackedKnnTelemetry,
         crate::policy::PackedNeighborPolicy,
     )>,
 ) -> Result<(), BuildCellsError> {
@@ -461,12 +450,12 @@ fn emit_generator_group<'c>(
             bin,
             local,
         };
-        let query = packed.as_mut().map(|(prepared, timings, policy)| {
-            PackedQuery::new(prepared, timings, offset, *policy)
+        let query = packed.as_mut().map(|(prepared, telemetry, policy)| {
+            PackedQuery::new(prepared, telemetry, offset, *policy)
         });
         let query_slot = query_slot_start + offset as u32;
         build_and_emit_cell(
-            sub_accum,
+            telemetry_accum,
             &mut *build_ctx,
             &mut *edge_scratch,
             &mut shard_ctx,
@@ -481,7 +470,7 @@ fn emit_generator_group<'c>(
 
 #[allow(clippy::too_many_arguments)]
 fn build_and_emit_cell<'a, 'b, 'c>(
-    cell_sub: &'a mut crate::timing::CellSubAccum,
+    cell_telemetry: &'a mut CellTelemetryAccum,
     build_ctx: &'a mut CellBuildContext,
     edge_scratch: &'a mut EdgeScratch,
     shard_ctx: &'a mut ShardContext<'b>,
@@ -534,11 +523,10 @@ fn build_and_emit_cell<'a, 'b, 'c>(
         },
     )
     .map_err(BuildCellsError::CellBuild)?;
-    stats.record_into(cell_sub);
+    stats.record_into(cell_telemetry);
 
     let output_buffer = build_ctx.output_buffer();
     emit_cell_output(
-        cell_sub,
         edge_scratch,
         shard_ctx,
         grid_ctx.assignment,

@@ -83,10 +83,6 @@ pub(crate) struct GnomonicBuilder {
     /// Chart metric stretch bound folded into every angular-radius use
     /// (near-pole tangent-basis distortion; see `chart_metric_r2_bound`).
     chart_metric_r2_scale: f64,
-    #[cfg(feature = "timing")]
-    support_cache_valid: bool,
-    #[cfg(feature = "timing")]
-    support_min_proj: [f64; 64],
 }
 
 #[derive(Clone, Copy)]

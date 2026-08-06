@@ -16,6 +16,7 @@ use crate::live_dedup::{
     BuildCellsError, IncidenceSummary, PackedLayoutCapacityError, ShardedVertexKeys,
 };
 use crate::live_dedup::{CellBuildError, CellFailure};
+use crate::telemetry::TelemetryBuilder;
 use crate::test_support::{effective_arrays, effective_generators, fib_sphere};
 use crate::timing::TimingBuilder;
 use crate::{LocalRebuildMode, LocalRebuildStatus, PreprocessMode, VoronoiConfig, VoronoiError};
@@ -37,7 +38,8 @@ fn prepared_input_owns_only_actual_merges() {
 
     for mode in [PreprocessMode::Disabled, PreprocessMode::Weld] {
         let mut tb = TimingBuilder::new();
-        let prepared = prepare_points_and_grid(&points, mode, None, &mut tb)
+        let mut telemetry = TelemetryBuilder::new();
+        let prepared = prepare_points_and_grid(&points, mode, None, &mut tb, &mut telemetry)
             .expect("separated points should prepare without merging");
         assert!(matches!(
             &prepared.effective_input,
@@ -56,8 +58,15 @@ fn prepared_input_owns_only_actual_merges() {
     let mut duplicated = points;
     duplicated.push(duplicated[0]);
     let mut tb = TimingBuilder::new();
-    let prepared = prepare_points_and_grid(&duplicated, PreprocessMode::Weld, None, &mut tb)
-        .expect("exact duplicate should prepare as one merged input");
+    let mut telemetry = TelemetryBuilder::new();
+    let prepared = prepare_points_and_grid(
+        &duplicated,
+        PreprocessMode::Weld,
+        None,
+        &mut tb,
+        &mut telemetry,
+    )
+    .expect("exact duplicate should prepare as one merged input");
     let EffectiveInput::Merged(merge) = &prepared.effective_input else {
         panic!("actual merge must own one complete merge result");
     };
@@ -425,7 +434,7 @@ fn local_rebuild_candidate_commits_positions_arrays_and_footprint_together() {
     };
 
     let footprint = candidate
-        .try_commit(&generators, &mut geometry, false, std::time::Instant::now())
+        .try_commit(&generators, &mut geometry, false)
         .expect("equivalent replacement should pass the whole-diagram gate");
 
     assert_eq!(footprint, [2, 7, 11]);
@@ -458,8 +467,7 @@ fn local_rebuild_candidate_rejection_restores_base_geometry() {
     let base_cells_ptr = geometry.cells.as_ptr();
     let base_indices_ptr = geometry.cell_indices.as_ptr();
 
-    let footprint =
-        candidate.try_commit(&generators, &mut geometry, false, std::time::Instant::now());
+    let footprint = candidate.try_commit(&generators, &mut geometry, false);
 
     assert!(footprint.is_none());
     assert_eq!(geometry.vertices, vertices);
@@ -1193,6 +1201,7 @@ fn map_clipped_away_without_coincidence_stays_computation_failed() {
 #[test]
 fn clustered_input_triggers_occupancy_rebuild() {
     use crate::cube_grid::CubeMapGrid;
+    use crate::telemetry::TelemetryBuilder;
     use crate::timing::TimingBuilder;
 
     // Deterministic golden-angle spiral cluster in a ~0.1 rad cap around
@@ -1219,7 +1228,9 @@ fn clustered_input_triggers_occupancy_rebuild() {
     );
 
     let mut tb = TimingBuilder::new();
-    let (grid, dense_index_eligible) = build_query_grid(&points, &mut tb, false, None);
+    let mut telemetry = TelemetryBuilder::new();
+    let (grid, dense_index_eligible) =
+        build_query_grid(&points, &mut tb, &mut telemetry, false, None);
     assert!(dense_index_eligible);
     let rebuilt_occupancy = max_cell_occupancy(&grid);
     assert!(
@@ -1239,6 +1250,7 @@ fn clustered_input_triggers_occupancy_rebuild() {
 
 #[test]
 fn dense_index_is_deferred_until_retained_grid_finalization() {
+    use crate::telemetry::TelemetryBuilder;
     use crate::timing::TimingBuilder;
 
     // A sub-cell cap remains dense even after occupancy feedback reaches
@@ -1256,7 +1268,9 @@ fn dense_index_is_deferred_until_retained_grid_finalization() {
         .collect();
 
     let mut tb = TimingBuilder::new();
-    let (mut grid, dense_index_eligible) = build_query_grid(&points, &mut tb, false, None);
+    let mut telemetry = TelemetryBuilder::new();
+    let (mut grid, dense_index_eligible) =
+        build_query_grid(&points, &mut tb, &mut telemetry, false, None);
     assert!(dense_index_eligible, "sub-cell cap must trigger regridding");
     let dense_cell = grid.point_index_to_cell(0) as u32;
     assert!(grid.cell_points(dense_cell as usize).len() > crate::policy::DENSE_CELL_THRESHOLD);
@@ -1282,19 +1296,22 @@ fn workspace_reuses_and_clears_grid_topology() {
     let mut workspace = crate::knn_clipping::driver::BuildWorkspace::new();
 
     let mut tb = TimingBuilder::new();
-    let (first, _) = build_query_grid(&points, &mut tb, false, Some(&workspace));
+    let mut telemetry = TelemetryBuilder::new();
+    let (first, _) = build_query_grid(&points, &mut tb, &mut telemetry, false, Some(&workspace));
     let first_topology = first.topology_arc();
     drop(first);
 
     let mut tb = TimingBuilder::new();
-    let (second, _) = build_query_grid(&points, &mut tb, false, Some(&workspace));
+    let mut telemetry = TelemetryBuilder::new();
+    let (second, _) = build_query_grid(&points, &mut tb, &mut telemetry, false, Some(&workspace));
     let second_topology = second.topology_arc();
     assert!(std::sync::Arc::ptr_eq(&first_topology, &second_topology));
     drop(second);
 
     workspace.clear();
     let mut tb = TimingBuilder::new();
-    let (third, _) = build_query_grid(&points, &mut tb, false, Some(&workspace));
+    let mut telemetry = TelemetryBuilder::new();
+    let (third, _) = build_query_grid(&points, &mut tb, &mut telemetry, false, Some(&workspace));
     assert!(!std::sync::Arc::ptr_eq(
         &first_topology,
         &third.topology_arc()

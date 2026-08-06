@@ -80,6 +80,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --native/--no-native       Toggle -C target-cpu=native (default: on)"
             echo "  --features \"a,b\"           Cargo features to enable (default: tools)"
             echo "  --timing                   Shorthand for --features timing"
+            echo "  --telemetry                Shorthand for --features telemetry"
             echo "  --rustflags \"...\"          Extra RUSTFLAGS (appended)"
             echo ""
             echo "Note: HEAD builds the current working tree (including uncommitted changes)."

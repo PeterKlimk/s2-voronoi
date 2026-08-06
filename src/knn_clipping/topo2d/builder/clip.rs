@@ -37,10 +37,6 @@ impl GnomonicBuilder {
                     neighbor_slot,
                 });
                 self.term_cache_valid = false;
-                #[cfg(feature = "timing")]
-                {
-                    self.support_cache_valid = false;
-                }
                 self.failed = Some(CellFailure::TooManyVertices);
                 return Err(CellFailure::TooManyVertices);
             }
@@ -51,10 +47,6 @@ impl GnomonicBuilder {
                 });
                 self.use_a = !self.use_a;
                 self.term_cache_valid = false;
-                #[cfg(feature = "timing")]
-                {
-                    self.support_cache_valid = false;
-                }
             }
             ClipResult::Unchanged => return Ok(ClipResult::Unchanged),
         }
@@ -101,10 +93,10 @@ impl GnomonicBuilder {
         self.commit_clip(clip_result, neighbor_idx, neighbor_slot)
     }
 
-    /// Shadow/profiling helper: test whether a candidate's bisector would leave
+    /// Test helper: check whether a candidate's bisector would leave
     /// the current polygon unchanged. This mirrors the ordinary clipper's
     /// all-inside decision without mutating builder state.
-    #[cfg(any(feature = "timing", test))]
+    #[cfg(test)]
     pub(super) fn candidate_would_be_unchanged(&self, neighbor: Vec3) -> bool {
         if !self.is_bounded() || self.vertex_count() < 3 {
             return false;
@@ -118,60 +110,6 @@ impl GnomonicBuilder {
             }
         }
         true
-    }
-
-    #[cfg(feature = "timing")]
-    fn rebuild_support_cache(&mut self) {
-        use std::sync::OnceLock;
-
-        const K: usize = 64;
-        static DIRECTIONS: OnceLock<[(f64, f64); K]> = OnceLock::new();
-        let directions = DIRECTIONS.get_or_init(|| {
-            std::array::from_fn(|sector| {
-                let angle = (sector as f64) * std::f64::consts::TAU / K as f64;
-                let (sin, cos) = angle.sin_cos();
-                (sin, cos)
-            })
-        });
-        let poly = self.current_poly().clone();
-        for (sector, &(sin, cos)) in directions.iter().enumerate() {
-            let mut min_proj = f64::INFINITY;
-            for i in 0..poly.len {
-                min_proj = min_proj.min(cos * poly.us[i] + sin * poly.vs[i]);
-            }
-            self.support_min_proj[sector] = min_proj;
-        }
-        self.support_cache_valid = true;
-    }
-
-    /// Conservative O(1) support-envelope version of
-    /// `candidate_would_be_unchanged`. False means "unknown"; true should imply
-    /// the exact all-vertices test is also true.
-    #[cfg(feature = "timing")]
-    pub(super) fn candidate_would_be_unchanged_support(&mut self, neighbor: Vec3) -> bool {
-        const K: usize = 64;
-        const SECTOR_PENALTY: f64 = 2.0 * 0.024_541_228_522_912_288_f64; // 2 * sin(pi / (2K))
-
-        if !self.is_bounded() || self.vertex_count() < 3 {
-            return false;
-        }
-        if !self.support_cache_valid {
-            self.rebuild_support_cache();
-        }
-
-        let (a, b, c) = self.bisector_coefficients(neighbor);
-        let hp = HalfPlane::new_unnormalized(a, b, c, self.constraints.len());
-        if hp.ab2 <= 0.0 || !hp.ab2.is_finite() {
-            return hp.c >= 0.0;
-        }
-
-        let angle = b.atan2(a).rem_euclid(std::f64::consts::TAU);
-        let sector = ((angle * K as f64 / std::f64::consts::TAU).round() as usize) & (K - 1);
-        let poly = self.current_poly();
-        let radius = poly.max_r2.max(0.0).sqrt();
-        let support_lb = self.support_min_proj[sector] - SECTOR_PENALTY * radius;
-        let hp_len = hp.ab2.sqrt();
-        hp_len * support_lb + hp.c >= 0.0
     }
 
     pub(super) fn clip_with_slot_edgecheck(
@@ -437,14 +375,8 @@ impl FallbackBuilder {
     }
 
     #[inline]
-    #[cfg(any(feature = "timing", test))]
+    #[cfg(test)]
     pub(super) fn candidate_would_be_unchanged(&self, _neighbor: Vec3) -> bool {
-        false
-    }
-
-    #[inline]
-    #[cfg(feature = "timing")]
-    pub(super) fn candidate_would_be_unchanged_support(&mut self, _neighbor: Vec3) -> bool {
         false
     }
 }
@@ -547,24 +479,11 @@ impl Topo2DBuilder {
     }
 
     #[inline]
-    #[cfg(any(feature = "timing", test))]
+    #[cfg(test)]
     pub(crate) fn candidate_would_be_unchanged(&self, neighbor: Vec3) -> bool {
         match &self.inner {
             BuilderImpl::Gnomonic(builder) => builder.candidate_would_be_unchanged(neighbor),
             BuilderImpl::Fallback(builder) => builder.candidate_would_be_unchanged(neighbor),
-        }
-    }
-
-    #[inline]
-    #[cfg(feature = "timing")]
-    pub(crate) fn candidate_would_be_unchanged_support(&mut self, neighbor: Vec3) -> bool {
-        match &mut self.inner {
-            BuilderImpl::Gnomonic(builder) => {
-                builder.candidate_would_be_unchanged_support(neighbor)
-            }
-            BuilderImpl::Fallback(builder) => {
-                builder.candidate_would_be_unchanged_support(neighbor)
-            }
         }
     }
 }

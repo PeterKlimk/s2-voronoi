@@ -13,7 +13,7 @@ use super::types::{BinId, DeferredSlot, EdgeCheckOverflow, EdgeRecord};
 use super::ShardedCellsData;
 use crate::diagram::VoronoiCell;
 use crate::live_dedup::VertexKey;
-use crate::timing::{DedupSubPhases, Timer};
+use crate::telemetry::DedupTelemetry;
 
 const SHARD_ORDER_SAMPLES_PER_BIN: usize = 32;
 #[cfg(feature = "parallel")]
@@ -849,7 +849,7 @@ fn collect_resolution_hints(
     }
 }
 
-#[cfg(feature = "timing")]
+#[cfg(feature = "telemetry")]
 fn shard_order_stats(bin_generators: &[Vec<usize>]) -> (u64, u64, u64) {
     bin_generators.iter().fold(
         (0u64, 0u64, 0u64),
@@ -872,29 +872,15 @@ pub(super) fn assemble_sharded_live_dedup(
     mut data: ShardedCellsData,
 ) -> Result<super::AssemblyResult, crate::VoronoiError> {
     let num_bins = data.assignment.num_bins;
-
-    let t_bookkeeping = Timer::start();
     let CollectedShardBookkeeping {
         mut edge_mismatches,
         edge_check_overflow,
         deferred_slots,
     } = collect_shard_bookkeeping(&mut data.shards);
-    #[allow(unused_variables)]
-    let bookkeeping_time = t_bookkeeping.elapsed();
-
-    let t_overflow = Timer::start();
-    let overflow_timing =
-        resolve_edge_check_overflow(&mut data.shards, &edge_check_overflow, &mut edge_mismatches);
-    #[allow(unused_variables)]
-    let edge_check_overflow_time = t_overflow.elapsed();
-    // Keep the existing nested measurements live for profiling builds even
-    // though this attribution reports the enclosing wall-clock phase.
-    let _overflow_detail_time = overflow_timing.sort + overflow_timing.match_;
+    resolve_edge_check_overflow(&mut data.shards, &edge_check_overflow, &mut edge_mismatches);
 
     // `ComputeReport` already records a clean result, so keep that path free
     // of both the environment lookup and an all-zero diagnostic line.
-
-    let t_deferred = Timer::start();
     let deferred_resolution_drift_exceeded = patch_deferred_slots_with_fallback(
         &mut data.shards,
         &data.assignment.generator_bin,
@@ -908,26 +894,17 @@ pub(super) fn assemble_sharded_live_dedup(
     for shard in &mut data.shards {
         shard.output.finish_reference_patching();
     }
-    #[allow(unused_variables)]
-    let deferred_fallback_time = t_deferred.elapsed();
 
     // Convert to ShardFinal, dropping dedup structures to reduce memory pressure
-    let t_finalize = Timer::start();
     let mut finals: Vec<ShardFinal> = std::mem::take(&mut data.shards)
         .into_iter()
         .map(|s| s.into_final())
         .collect();
-    #[allow(unused_variables)]
-    let finalize_shards_time = t_finalize.elapsed();
-
-    let t2 = Timer::start();
     let ConcatenatedVertices {
         positions: all_vertices,
         keys: all_vertex_keys,
         offsets: vertex_offsets,
     } = concatenate_vertices(&mut finals, num_bins)?;
-    #[allow(unused_variables)]
-    let concat_vertices_time = t2.elapsed();
     #[cfg(feature = "parallel")]
     let shard_order_spans = rayon::current_num_threads() > 1
         && data.assignment.generator_bin.len() >= 65_536
@@ -937,21 +914,12 @@ pub(super) fn assemble_sharded_live_dedup(
         );
     #[cfg(not(feature = "parallel"))]
     let shard_order_spans = false;
-    let t_cell_prefixes = Timer::start();
     let CellPrefixes {
         cells,
         total_indices: total_cell_indices,
     } = emit_cell_prefixes(&finals, &data.assignment, shard_order_spans)?;
-    #[allow(unused_variables)]
-    let emit_cell_prefixes_time = t_cell_prefixes.elapsed();
-
-    let t_incidence = Timer::start();
     let incidence_summary =
         summarize_incidence(&finals, total_cell_indices, !edge_mismatches.is_empty());
-    #[allow(unused_variables)]
-    let incidence_summary_time = t_incidence.elapsed();
-
-    let t_cell_indices = Timer::start();
     #[allow(unused_variables)]
     let (mut cell_indices, scatter_by_shard) = scatter_cell_indices(
         &finals,
@@ -961,17 +929,14 @@ pub(super) fn assemble_sharded_live_dedup(
         total_cell_indices,
         shard_order_spans,
     );
-    #[allow(unused_variables)]
-    let scatter_cell_indices_time = t_cell_indices.elapsed();
 
-    #[cfg(feature = "timing")]
+    #[cfg(feature = "telemetry")]
     let (shard_order_descents, shard_order_pairs, shard_order_abs_delta) =
         shard_order_stats(&data.assignment.bin_generators);
 
     // The common scatter above reads one narrow local id and performs no
     // owner branch. Patch the sparse foreign references by their final cell
     // identity after all disjoint bulk writes have completed.
-    let t_overrides = Timer::start();
     patch_reference_overrides(
         &finals,
         &cells,
@@ -979,23 +944,17 @@ pub(super) fn assemble_sharded_live_dedup(
         &vertex_offsets,
         num_bins,
     );
-    #[allow(unused_variables)]
-    let patch_reference_overrides_time = t_overrides.elapsed();
 
     #[cfg(debug_assertions)]
     debug_assert!(
         !cell_indices.contains(&u32::MAX),
         "unresolved foreign cell reference after sparse patch"
     );
-
-    let t_zero_hints = Timer::start();
     let ResolutionHints {
         edge_hint_cells: resolution_edge_hint_cells,
         exact_zero_edge_candidates,
         exact_zero_edge_hint_cell_count,
     } = collect_resolution_hints(&finals, &all_vertices, &cells, &cell_indices);
-    #[allow(unused_variables)]
-    let exact_zero_hints_time = t_zero_hints.elapsed();
 
     #[cfg(debug_assertions)]
     {
@@ -1012,21 +971,9 @@ pub(super) fn assemble_sharded_live_dedup(
             "unwritten cells remain after assembly (vertex_count sentinel)"
         );
     }
-    #[cfg(feature = "timing")]
-    let sub_phases = DedupSubPhases {
-        bookkeeping: bookkeeping_time,
-        edge_check_overflow: edge_check_overflow_time,
-        edge_check_overflow_sort: overflow_timing.sort,
-        edge_check_overflow_match: overflow_timing.match_,
+    #[cfg(feature = "telemetry")]
+    let telemetry = DedupTelemetry {
         edge_check_overflow_records: edge_check_overflow.len() as u64,
-        deferred_patching: deferred_fallback_time,
-        finalize_shards: finalize_shards_time,
-        concat_vertices: concat_vertices_time,
-        emit_cell_prefixes: emit_cell_prefixes_time,
-        incidence_summary: incidence_summary_time,
-        scatter_cell_indices: scatter_cell_indices_time,
-        patch_reference_overrides: patch_reference_overrides_time,
-        exact_zero_hints: exact_zero_hints_time,
         shard_order_descents,
         shard_order_pairs,
         shard_order_abs_delta,
@@ -1043,8 +990,8 @@ pub(super) fn assemble_sharded_live_dedup(
             .sum(),
     };
 
-    #[cfg(not(feature = "timing"))]
-    let sub_phases = DedupSubPhases;
+    #[cfg(not(feature = "telemetry"))]
+    let telemetry = DedupTelemetry;
 
     Ok(super::AssemblyResult {
         vertices: all_vertices,
@@ -1057,7 +1004,7 @@ pub(super) fn assemble_sharded_live_dedup(
         exact_zero_edge_hint_cells: exact_zero_edge_hint_cell_count,
         resolution_drift_exceeded,
         incidence_summary,
-        dedup_sub: sub_phases,
+        dedup_telemetry: telemetry,
     })
 }
 

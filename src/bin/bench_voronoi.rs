@@ -8,8 +8,9 @@
 //!   bench_voronoi --lloyd      Use Lloyd-relaxed points
 //!   bench_voronoi -n 10        Run 10 iterations (for profiling)
 //!
-//! For detailed sub-phase timing, build with:
+//! For coarse pipeline timing or algorithmic work telemetry, build with:
 //!   cargo run --release --features tools,timing --bin bench_voronoi
+//!   cargo run --release --features tools,telemetry --bin bench_voronoi
 
 use clap::Parser;
 use glam::Vec3;
@@ -663,7 +664,10 @@ fn main() {
     }
 
     #[cfg(feature = "timing")]
-    println!("  timing = enabled (detailed sub-phase timing will be printed)");
+    println!("  timing = enabled (coarse pipeline wall timing will be printed)");
+
+    #[cfg(feature = "telemetry")]
+    println!("  telemetry = enabled (algorithmic work counters will be printed)");
 
     let mut results: Vec<BenchResult> = Vec::new();
     let mut workspace = args.reuse_workspace.then(VoronoiWorkspace::new);

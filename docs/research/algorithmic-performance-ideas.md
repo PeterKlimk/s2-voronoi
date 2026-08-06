@@ -254,7 +254,7 @@ candidate work, and repair-region size, and must prove that handoff cannot turn 
 success into failure. The authoritative tracked form of this idea is `PERF-001` in
 [`work-log.md`](../work-log.md#perf-001--total-query-work-circuit-breaker).
 
-Timing builds now record two per-cell distributions: all examined candidates and candidates after
+Telemetry builds record two per-cell distributions: all examined candidates and candidates after
 the final polygon-changing constraint. They report raw quantiles together with counts at least
 4x/16x/64x each run's own median. This normalization is essential: candidate work per generator can
 grow naturally with total input size and density contrast, so an absolute count is not a pathology

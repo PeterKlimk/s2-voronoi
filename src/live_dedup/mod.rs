@@ -133,13 +133,13 @@ pub(crate) struct AssemblyResult {
     /// live cell window.
     pub incidence_summary: IncidenceSummary,
     /// Timing sub-phases for the dedup stage.
-    pub dedup_sub: crate::timing::DedupSubPhases,
+    pub dedup_telemetry: crate::telemetry::DedupTelemetry,
 }
 
 pub(crate) struct ShardedCellsData {
     assignment: BinAssignment,
     shards: Vec<ShardState>,
-    pub(super) cell_sub: crate::timing::CellSubAccum,
+    pub(super) cell_telemetry: crate::telemetry::CellTelemetryAccum,
 }
 
 impl ShardedCellsData {
@@ -147,12 +147,12 @@ impl ShardedCellsData {
     pub(crate) fn from_parts(
         assignment: BinAssignment,
         shards: Vec<ShardState>,
-        cell_sub: crate::timing::CellSubAccum,
+        cell_telemetry: crate::telemetry::CellTelemetryAccum,
     ) -> Self {
         Self {
             assignment,
             shards,
-            cell_sub,
+            cell_telemetry,
         }
     }
 }

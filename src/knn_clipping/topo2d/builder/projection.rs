@@ -161,10 +161,6 @@ impl GnomonicBuilder {
             term_threshold_cache: 0.0,
             term_cache_valid: false,
             chart_metric_r2_scale,
-            #[cfg(feature = "timing")]
-            support_cache_valid: false,
-            #[cfg(feature = "timing")]
-            support_min_proj: [0.0; 64],
         }
     }
 
@@ -185,10 +181,6 @@ impl GnomonicBuilder {
         self.use_a = true;
         self.failed = None;
         self.term_cache_valid = false;
-        #[cfg(feature = "timing")]
-        {
-            self.support_cache_valid = false;
-        }
     }
 
     /// Compute the bisector half-plane coefficients (a, b, c) for a neighbor.

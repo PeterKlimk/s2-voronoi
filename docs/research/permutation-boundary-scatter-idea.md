@@ -139,7 +139,8 @@ helper rather than three site-specific rewrites, but measure the assembly site a
 
 ## Gate
 
-No new instrumentation is needed. `dedup_indices_ms` is already in `TIMING_KV`, and
+The old `dedup_indices_ms` hot-path clock was removed because fine-grained timing distorted the
+workload. Use a production-shaped `perf` profile for attribution, and
 `scatter_by_shard`, `shard_order_pairs`, `shard_order_descents`, and `shard_order_abs_delta` already
 report which branch fired and why.
 
@@ -152,8 +153,8 @@ report which branch fired and why.
    regress). Prefer paired `perf` cycles and cache counters over wall time, per the host calibration
    section.
 
-Falsification: if the isolated `dedup_indices_ms` phase at 2M uniform does not fall below roughly
-30 ms, the staged traffic is not repaying the removed random access and the whole family is dead —
+Falsification: if a production-shaped profile still attributes roughly 30 ms or more to the
+scatter/prefix work at 2M uniform, the staged traffic is not repaying the removed random access and the whole family is dead —
 retire it with the same finality as the vertex-concatenation-drop experiment. A win confined to
 uniform with a `cubed` or Fibonacci regression is also a rejection: a distribution-sensitive
 heuristic here would repeat the rejected shell-scan specialization.

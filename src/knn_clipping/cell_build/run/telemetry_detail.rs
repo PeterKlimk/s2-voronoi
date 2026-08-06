@@ -1,9 +1,9 @@
-#[cfg(feature = "timing")]
+#[cfg(feature = "telemetry")]
 mod real {
     use crate::cube_grid::DirectedNeighborBatchSource;
 
     #[derive(Debug, Clone, Copy)]
-    pub(crate) struct CellTimingDetail {
+    pub(crate) struct CellTelemetryDetail {
         shell_layer_batches: usize,
         shell_layer_slots: usize,
         shell_layer_prefix_consumed: usize,
@@ -17,24 +17,24 @@ mod real {
         progress_tail_valid: bool,
     }
 
-    impl CellTimingDetail {
+    impl CellTelemetryDetail {
         #[inline]
         pub(crate) fn record_into(
             &self,
-            cell_sub: &mut crate::timing::CellSubAccum,
+            cell_telemetry: &mut crate::telemetry::CellTelemetryAccum,
             neighbors_processed: usize,
         ) {
-            cell_sub.add_shell_layer_usage(
+            cell_telemetry.add_shell_layer_usage(
                 self.shell_layer_batches,
                 self.shell_layer_slots,
                 self.shell_layer_prefix_consumed,
                 self.shell_midlayer_terminations,
             );
-            cell_sub.add_packed_batch_usage(
+            cell_telemetry.add_packed_batch_usage(
                 self.packed_exact_slots_visited,
                 self.packed_exact_slots_abandoned,
             );
-            cell_sub.add_work_profile(
+            cell_telemetry.add_work_profile(
                 neighbors_processed,
                 self.neighbors_after_last_progress,
                 self.progress_tail_valid,
@@ -42,7 +42,7 @@ mod real {
         }
     }
 
-    pub(crate) struct BuildTimingDetail {
+    pub(crate) struct BuildTelemetryDetail {
         shell_layer_batches: usize,
         shell_layer_slots: usize,
         shell_layer_prefix_consumed: usize,
@@ -52,10 +52,9 @@ mod real {
         packed_exact_slots_abandoned: [usize; 4],
         last_progress_neighbor: usize,
         progress_tail_valid: bool,
-        directional_shadow_terminated: bool,
     }
 
-    impl BuildTimingDetail {
+    impl BuildTelemetryDetail {
         #[inline]
         pub(crate) fn new() -> Self {
             Self {
@@ -68,7 +67,6 @@ mod real {
                 packed_exact_slots_abandoned: [0; 4],
                 last_progress_neighbor: 0,
                 progress_tail_valid: true,
-                directional_shadow_terminated: false,
             }
         }
 
@@ -118,18 +116,8 @@ mod real {
         }
 
         #[inline]
-        pub(crate) fn directional_shadow_terminated(&self) -> bool {
-            self.directional_shadow_terminated
-        }
-
-        #[inline]
-        pub(crate) fn mark_directional_shadow_terminated(&mut self) {
-            self.directional_shadow_terminated = true;
-        }
-
-        #[inline]
-        pub(crate) fn finish(&self, neighbors_processed: usize) -> CellTimingDetail {
-            CellTimingDetail {
+        pub(crate) fn finish(&self, neighbors_processed: usize) -> CellTelemetryDetail {
+            CellTelemetryDetail {
                 shell_layer_batches: self.shell_layer_batches,
                 shell_layer_slots: self.shell_layer_slots,
                 shell_layer_prefix_consumed: self.shell_layer_prefix_consumed,
@@ -144,25 +132,25 @@ mod real {
     }
 }
 
-#[cfg(not(feature = "timing"))]
+#[cfg(not(feature = "telemetry"))]
 mod stub {
     use crate::cube_grid::DirectedNeighborBatchSource;
 
     #[derive(Debug, Clone, Copy)]
-    pub(crate) struct CellTimingDetail;
+    pub(crate) struct CellTelemetryDetail;
 
-    impl CellTimingDetail {
+    impl CellTelemetryDetail {
         pub(crate) fn record_into(
             &self,
-            _cell_sub: &mut crate::timing::CellSubAccum,
+            _cell_telemetry: &mut crate::telemetry::CellTelemetryAccum,
             _neighbors_processed: usize,
         ) {
         }
     }
 
-    pub(crate) struct BuildTimingDetail;
+    pub(crate) struct BuildTelemetryDetail;
 
-    impl BuildTimingDetail {
+    impl BuildTelemetryDetail {
         pub(crate) fn new() -> Self {
             Self
         }
@@ -187,13 +175,13 @@ mod stub {
         ) {
         }
 
-        pub(crate) fn finish(&self, _neighbors_processed: usize) -> CellTimingDetail {
-            CellTimingDetail
+        pub(crate) fn finish(&self, _neighbors_processed: usize) -> CellTelemetryDetail {
+            CellTelemetryDetail
         }
     }
 }
 
-#[cfg(feature = "timing")]
-pub(super) use real::{BuildTimingDetail, CellTimingDetail};
-#[cfg(not(feature = "timing"))]
-pub(super) use stub::{BuildTimingDetail, CellTimingDetail};
+#[cfg(feature = "telemetry")]
+pub(super) use real::{BuildTelemetryDetail, CellTelemetryDetail};
+#[cfg(not(feature = "telemetry"))]
+pub(super) use stub::{BuildTelemetryDetail, CellTelemetryDetail};

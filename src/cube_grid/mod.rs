@@ -26,8 +26,6 @@ pub(crate) use query::{
 
 use glam::Vec3;
 use std::sync::Arc;
-#[cfg(feature = "timing")]
-use std::time::Duration;
 
 /// Slot-ordered point record: a point's position fused with its global point
 /// index into one 16-byte, cache-line-aligned record. The clip hot loop gathers
@@ -44,17 +42,10 @@ pub(crate) struct SlotPoint {
     pub idx: u32,
 }
 
-/// Fine-grained timings for `CubeMapGrid::new`.
-#[cfg(feature = "timing")]
+/// Non-clock telemetry describing choices made while building a query grid.
+#[cfg(feature = "telemetry")]
 #[derive(Debug, Clone, Default)]
-pub(crate) struct CubeMapGridBuildTimings {
-    pub count_cells: Duration,
-    pub prefix_sum: Duration,
-    pub scatter_soa: Duration,
-    pub neighbors: Duration,
-    pub ring2: Duration,
-    pub cell_bounds: Duration,
-    pub security_3x3: Duration,
+pub(crate) struct CubeMapGridBuildTelemetry {
     pub input_order_abs_delta: u64,
     pub input_order_pairs: u64,
     pub materialize_coordinates_by_slot: bool,
@@ -62,24 +53,9 @@ pub(crate) struct CubeMapGridBuildTimings {
     pub topology_reused: bool,
 }
 
-/// Dummy timings when feature is disabled (zero-sized).
-#[cfg(not(feature = "timing"))]
+#[cfg(not(feature = "telemetry"))]
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct CubeMapGridBuildTimings;
-
-#[cfg(feature = "timing")]
-impl CubeMapGridBuildTimings {
-    #[inline]
-    pub(crate) fn total(&self) -> Duration {
-        self.count_cells
-            + self.prefix_sum
-            + self.scatter_soa
-            + self.neighbors
-            + self.ring2
-            + self.cell_bounds
-            + self.security_3x3
-    }
-}
+pub(crate) struct CubeMapGridBuildTelemetry;
 
 // A regular 3×3 neighborhood has a ring-2 size of 16. The stitched cube surface can be slightly
 // less regular near cube vertices, where a "3×3" neighborhood has only 7 unique neighbors (one

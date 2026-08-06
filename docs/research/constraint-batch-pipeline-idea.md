@@ -326,10 +326,11 @@ costs. A future fused classifier must eliminate vertex evaluation or make its un
 directly reusable by the real clip kernel.
 
 **Experiment result (2026-07-16): 64-sector support-envelope classification rejected.** The
-prototype promoted the timing-only directional support audit into the exact-batch frontier and
+prototype promoted the now-retired timing-only directional support audit into the exact-batch
+frontier and
 mid-batch production paths. It first proved that every post-batch unseen candidate was outside the
 current termination radius, then tested the known batch remainder against a cached conservative
-support envelope. Timing builds retained the exact all-vertices test as a differential oracle; it
+support envelope. The prototype retained the exact all-vertices test as a differential oracle; it
 reported zero false-positive skips.
 
 On a 100k corrected-Fibonacci run, the classifier tested 74,500 candidates and accepted 6,361

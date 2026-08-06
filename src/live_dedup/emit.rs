@@ -196,7 +196,6 @@ pub(crate) fn checked_local_id(value: usize, context: &str) -> Result<LocalId, B
 /// edge checks to later cells.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_cell_output(
-    cell_sub: &mut crate::timing::CellSubAccum,
     scratch: &mut EdgeScratch,
     shard_ctx: &mut ShardContext<'_>,
     assignment: &BinAssignment,
@@ -211,7 +210,6 @@ pub(crate) fn emit_cell_output(
         slot_points[cell_slot as usize].idx, cell_idx,
         "forwarded edge-check slot must identify its source generator"
     );
-    let mut t_post = crate::timing::LapTimer::start();
     scratch.collect_and_resolve(
         cell_idx,
         shard_ctx,
@@ -220,9 +218,6 @@ pub(crate) fn emit_cell_output(
         assignment,
         incoming_checks,
     );
-    let collect_resolve_time = t_post.lap();
-    cell_sub.add_edge_collect(collect_resolve_time / 2);
-    cell_sub.add_edge_resolve(collect_resolve_time / 2);
 
     let count = output_buffer.vertices.len();
     let shard = &mut *shard_ctx.shard;
@@ -240,7 +235,7 @@ pub(crate) fn emit_cell_output(
             .copied()
             .zip(vertex_indices.iter_mut())
         {
-            #[cfg(feature = "timing")]
+            #[cfg(feature = "telemetry")]
             {
                 shard.triplet_keys += 1;
             }
@@ -320,7 +315,6 @@ pub(crate) fn emit_cell_output(
             }
         }
     }
-    cell_sub.add_key_dedup(t_post.lap());
 
     scratch.emit(
         shard,
@@ -331,7 +325,6 @@ pub(crate) fn emit_cell_output(
         bin,
         output_buffer.edge_keys_verified,
     );
-    cell_sub.add_edge_emit(t_post.lap());
 
     debug_assert_eq!(
         shard.output.cell_indices.len() as u32 - cell_start,

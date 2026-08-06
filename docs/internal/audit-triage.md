@@ -1094,10 +1094,10 @@ an unhinted zero edge created in a rewritten cell canonicalizes identically to g
 A separate pipeline-stage drift regression proves the global fallback. Boundary tests pin
 `+r`/`-r`, signed zero, exact, and adjacent-f32 threshold cases.
 
-With the `timing` feature, `TIMING_KV` reports certified versus exhaustive discovery, drift
+With the `telemetry` feature, `TELEMETRY_KV` reports certified versus exhaustive discovery, drift
 fallback, reconciliation/Local3d cells scanned locally, hint-cell and exact-candidate counts, and
-detected exact-zero edges. The default build retains an inlined no-op setter, so collecting these
-diagnostics adds no environment lookup or telemetry work to the ordinary path.
+detected exact-zero edges. The default build retains an inlined no-op setter, so the ordinary path performs no environment
+lookup or counter work.
 
 Existing generator-triplet keys recover the complete incident neighborhood after a candidate is
 confirmed, keeping component work sparse. At 500k sites, eight-round interleaved single-thread

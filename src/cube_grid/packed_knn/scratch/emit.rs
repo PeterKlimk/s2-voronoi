@@ -1,7 +1,6 @@
 use super::helpers::{key_to_dot, key_to_idx, sort_keys_u64};
 use super::*;
 use crate::fp;
-use crate::timing::LapTimer;
 
 impl PackedKnnCellScratch {
     // Tail candidates were already partitioned into (hi, tail, unsafe) buckets
@@ -14,7 +13,7 @@ impl PackedKnnCellScratch {
         group_gen: u32,
         tail_built_any: &mut bool,
         grid: &CubeMapGrid,
-        timings: &mut PackedKnnTimings,
+        telemetry: &mut PackedKnnTelemetry,
     ) {
         let Some(gen) = self.tail_ready_gen.get(qi).copied() else {
             return;
@@ -22,10 +21,10 @@ impl PackedKnnCellScratch {
         if gen == group_gen {
             return;
         }
-        timings.inc_tail_requested_queries();
+        telemetry.inc_tail_requested_queries();
         if !*tail_built_any {
             *tail_built_any = true;
-            timings.inc_tail_builds();
+            telemetry.inc_tail_builds();
         }
         self.tail_ready_gen[qi] = group_gen;
 
@@ -35,8 +34,6 @@ impl PackedKnnCellScratch {
         // avoided retaining the overwhelmingly-unused keys.
         self.tail_pos[qi] = 0;
         debug_assert!(self.tail_possible.get(qi).copied().unwrap_or(false));
-
-        let mut t_tail = LapTimer::start();
         let query_count = group.query_count();
         debug_assert!(qi < query_count);
         let query_slot = group.query_slot_start() + qi as u32;
@@ -92,7 +89,7 @@ impl PackedKnnCellScratch {
                 ));
             }
         }
-        timings.add_center_tail_dot_evaluations(center_end - center_start - center_pos - 1);
+        telemetry.add_center_tail_dot_evaluations(center_end - center_start - center_pos - 1);
         let ring_old_len = tail_keys.len();
         let mut ring_dot_evaluations = 0usize;
         for r in &self.cell_ranges[1..] {
@@ -175,10 +172,9 @@ impl PackedKnnCellScratch {
                 }
             }
         }
-        timings.add_ring_fallback(t_tail.lap());
         let added = tail_keys.len() - old_len;
         let ring_added = tail_keys.len() - ring_old_len;
-        timings.add_ring_tail_rescan(ring_added == 0, ring_dot_evaluations);
+        telemetry.add_ring_tail_rescan(ring_added == 0, ring_dot_evaluations);
         let tail_empty = tail_keys.is_empty();
         let capacity = self.chunk0_keys[..query_count]
             .iter()
@@ -188,7 +184,7 @@ impl PackedKnnCellScratch {
                 .iter()
                 .map(Vec::capacity)
                 .sum::<usize>();
-        timings.observe_key_storage(added, capacity);
+        telemetry.observe_key_storage(added, capacity);
 
         if tail_empty {
             self.tail_possible[qi] = false;
@@ -202,7 +198,6 @@ impl PackedKnnCellScratch {
         stage: PackedStage,
         k: usize,
         out: &mut [u32],
-        timings: &mut PackedKnnTimings,
     ) -> Option<PackedChunk> {
         if k == 0 || out.is_empty() {
             return None;
@@ -235,7 +230,6 @@ impl PackedKnnCellScratch {
                     unsafe { self.chunk0_pos.get_unchecked_mut(qi) },
                     n_target,
                     out,
-                    timings,
                 )?;
                 let tail_possible = unsafe { *self.tail_possible.get_unchecked(qi) };
                 let post_chunk_bound = if tail_possible {
@@ -269,7 +263,6 @@ impl PackedKnnCellScratch {
                     unsafe { self.tail_pos.get_unchecked_mut(qi) },
                     n_target,
                     out,
-                    timings,
                 )?;
                 let unseen_bound = if run.has_more {
                     run.last_dot.max(coverage_bound)
@@ -314,36 +307,28 @@ fn emit_run<const WHOLE_SORT_SMALL: bool>(
     pos: &mut usize,
     n_target: usize,
     out: &mut [u32],
-    timings: &mut PackedKnnTimings,
 ) -> Option<EmittedRun> {
-    let mut t = LapTimer::start();
     let total = keys.len();
     let start = *pos;
     if start >= total {
         return None;
     }
     let remaining = &mut keys[start..];
-    timings.add_select_query_prep(t.lap());
 
     let n = if WHOLE_SORT_SMALL && remaining.len() <= 2 * n_target {
-        let sort_len = remaining.len();
         sort_keys_u64(remaining);
-        timings.add_select_sort_sized(t.lap(), sort_len);
         remaining.len().min(n_target)
     } else {
         let n = n_target.min(remaining.len());
         if remaining.len() > n {
             remaining.select_nth_unstable(n - 1);
-            timings.add_select_partition(t.lap());
         }
         sort_keys_u64(&mut remaining[..n]);
-        timings.add_select_sort_sized(t.lap(), n);
         n
     };
     for (dst, key) in out[..n].iter_mut().zip(remaining.iter()) {
         *dst = key_to_idx(*key);
     }
-    timings.add_select_scatter(t.lap());
     let first_dot = key_to_dot(remaining[0]);
     let last_dot = key_to_dot(remaining[n - 1]);
     *pos = start + n;
